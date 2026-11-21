@@ -328,16 +328,31 @@ pub fn legal_holds(command: crate::cli::LegalHoldsCommand) -> anyhow::Result<()>
             )?
         }
         LegalHoldsCommand::Lift(args) => {
-            let request = sdk::LegalHoldLiftRequest {
+            // The lift is one-way: it shows the hold it takes, read from this
+            // vault through the shared preview, and acts only on what it
+            // showed (DEC-0006 #undo-class).
+            let mut request = sdk::LegalHoldLiftRequest {
                 hold_id: hold_id_arg(&args.hold)?,
+                confirm: None,
             };
+            let memory = vault.memory(actor, oneiron::EdgeActorClass::Human);
+            let preview = sdk::preview_owner_confirm(
+                &memory,
+                &owner,
+                sdk::OwnerConfirmPreviewRequest {
+                    verb: "vault.legal_holds.lift".to_owned(),
+                    input: serde_json::to_value(&request)?,
+                },
+            )?;
+            eprintln!("{}", serde_json::to_string_pretty(&preview.takes)?);
+            request.confirm = Some(preview.confirm);
             hooked_row(
                 &vault,
                 actor,
                 "vault.legal_holds.lift",
                 request,
                 |request: sdk::LegalHoldLiftRequest| {
-                    Ok(vault.lift_legal_hold(&owner, request.hold_id)?)
+                    sdk::lift_legal_hold_as(&vault, &owner, request).map_err(memory_refusal)
                 },
             )?
         }

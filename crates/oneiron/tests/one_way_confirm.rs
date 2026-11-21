@@ -333,6 +333,10 @@ fn every_one_way_verb_meets_the_shared_confirm() {
     let fx = fixture();
     let note = fx.put_note_with_history("a note the census purges");
     let mut inputs: BTreeMap<&str, Value> = BTreeMap::new();
+    inputs.insert(
+        "vault.legal_holds.lift",
+        json!({ "hold_id": EntityId::now().to_hex() }),
+    );
     inputs.insert("vault.legal_holds.lift_and_erase", json!({ "records": [] }));
     // One Owner: the purge takes its erase-now branch, which is gated.
     inputs.insert("vault.notes.history_purge", json!({ "note_ref": note }));

@@ -18,8 +18,8 @@ use oneiron::deletion::{LIFT_AND_ERASE_PROMPT, LIFT_AND_ERASE_TITLE};
 use oneiron::task_verb::sdk::{
     EmptyRequest, LegalHoldLiftAndEraseRequest, LegalHoldLiftRequest, LegalHoldPlaceRequest,
     LegalHoldProduceRequest, LegalHoldWidenRequest, OwnerConfirmPreview,
-    OwnerConfirmPreviewRequest, lift_legal_hold_and_erase_as, preview_owner_confirm,
-    produce_legal_hold_as,
+    OwnerConfirmPreviewRequest, lift_legal_hold_and_erase_as, lift_legal_hold_as,
+    preview_owner_confirm, produce_legal_hold_as,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -203,7 +203,9 @@ async fn widen(
 
 /// `POST /v1/owner/legal-holds/lift`: lifts the owner's customer hold
 /// `hold_id` and destroys its sealed copy. Nothing in the vault is erased
-/// by it.
+/// by it. The engine admits only the `confirm` of the shared
+/// `vault.owner_confirm.preview` of this lift, so a hold widened since its
+/// preview is not lifted.
 async fn lift(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -218,7 +220,9 @@ async fn lift(
             actor,
             "vault.legal_holds.lift",
             request,
-            |request: LegalHoldLiftRequest| Ok(vault.lift_legal_hold(&owner, request.hold_id)?),
+            |request: LegalHoldLiftRequest| {
+                lift_legal_hold_as(vault, &owner, request).map_err(memory_refusal)
+            },
         )
     })
     .await?;
