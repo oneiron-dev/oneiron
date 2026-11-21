@@ -2,6 +2,14 @@
 //! build script places it in `side_table`'s catalogue.
 
 crate::side_table::side_tables! {
+    /// The answer-schema hold: the engine's pause of the Dreamer's claim extraction answer
+    /// schema, with the suspension that caused it. Key: (). Absence = no hold.
+    DREAMER_ANSWER_SCHEMA_HOLD: VaultMeta b"dreamer:answer_schema:hold:v1" Named Engine
+        [restore: live] [family: unclassified] [tier: canonical];
+    /// One answer-schema event: a suspension or a re-arm, content-free. Key: id16 (the event,
+    /// time-ordered).
+    DREAMER_ANSWER_SCHEMA_EVENT: VaultMeta b"dreamer:answer_schema:event:v1:" Named Engine
+        [restore: live] [family: unclassified] [tier: canonical];
     /// FIX 2425: one candidate a Dreamer attempt decided a correction for, kept before the
     /// branch builds, filters or selects it: its subject, the claim it corrects and its kept
     /// decisions, never its value. Key: id16 (attempt) + u64be(position).

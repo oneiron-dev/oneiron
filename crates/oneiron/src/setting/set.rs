@@ -448,10 +448,17 @@ fn set_in_txn(
     });
     let prior_weight = prior_row.as_ref().and_then(|row| row.weight_runs);
     let prior_value = prior_row.map(|row| row.value);
+    // An owner's equal write on a key with `records_equal_owner_write` is itself the act
+    // (the answer-schema re-arm): it records a change and runs on_change. A clear of an
+    // absent row stays a no-op.
+    let equal_owner_write_records = change.spec.records_equal_owner_write
+        && matches!(caller, SettingCaller::Owner(_))
+        && change.value.is_some();
     let unchanged = readable
         && !setter_changes
         && prior_value.as_ref() == change.value
-        && prior_weight == change.weight_runs;
+        && prior_weight == change.weight_runs
+        && !equal_owner_write_records;
     let by_owner = matches!(caller, SettingCaller::Owner(_) | SettingCaller::Engine(_));
     // Which way the change moves its row, against the rows this write sees (A3: the key's
     // comparator gives the direction). A change that leaves the row as it is moves nothing.

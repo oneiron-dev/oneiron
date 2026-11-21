@@ -66,6 +66,9 @@ pub struct ProactivityDigestView {
     /// The drafter line (FIX 14977).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub drafter: Option<crate::drafter::DigestDrafter>,
+    /// The answer-schema line (HOUSE-SCHEMA-SWITCH).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answer_schema: Option<crate::dreamer_consolidation::answer_schema::DigestAnswerSchema>,
     /// The Coach's agent-health cards.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub health_cards: Vec<ConcernCardSummary>,
@@ -87,6 +90,7 @@ impl ProactivityDigestView {
             && self.note_tombstones.is_none()
             && self.applied.is_none()
             && self.drafter.is_none()
+            && self.answer_schema.is_none()
             && self.health_cards.is_empty()
     }
 }
@@ -185,9 +189,12 @@ pub(crate) fn digest_content_hash_for_test(digest: &ProactivityDigest) -> Result
     content_hash(digest)
 }
 
-/// Every field of `digest` but its locator and its content hash.
+/// Every field of `digest` but its locator and its content hash. A digest with no
+/// answer-schema line shows the sixteen fields it showed before that line existed, in their
+/// bytes, so a stored digest keeps its locator and its content hash (stored change: keep); one
+/// with the line shows those fields, then the line.
 fn shown(digest: &ProactivityDigest) -> impl Serialize + '_ {
-    (
+    let fields = (
         digest.created_at,
         digest.recipient,
         digest.urgent,
@@ -204,7 +211,20 @@ fn shown(digest: &ProactivityDigest) -> impl Serialize + '_ {
         &digest.voice_style,
         &digest.presentation,
         &digest.witness,
-    )
+    );
+    match &digest.answer_schema {
+        None => Shown::Fields(fields),
+        Some(line) => Shown::FieldsAndLine(fields, line),
+    }
+}
+
+/// What [`shown`] serializes: the fields alone, as before the answer-schema line, or the
+/// fields and the line as a pair.
+#[derive(Serialize)]
+#[serde(untagged)]
+enum Shown<F, L> {
+    Fields(F),
+    FieldsAndLine(F, L),
 }
 
 /// BLAKE3 over `value`'s JSON, under `purpose`. The locator is a stored row's key and the
@@ -258,6 +278,7 @@ pub(super) fn digest_view_for_in(
         note_tombstones: digest.note_tombstones.clone(),
         applied: digest.applied.clone(),
         drafter: digest.drafter.clone(),
+        answer_schema: digest.answer_schema.clone(),
         health_cards: digest.health_cards.clone(),
         rendered,
         voice_style: digest.voice_style.clone(),
@@ -268,8 +289,8 @@ pub(super) fn digest_view_for_in(
 /// digest was assembled under: each display group and its items, then the
 /// recipient's judge asks, the eval label asks, the training offers, the
 /// cleanup line, the NOTE tombstone line, the applied after-notice, the
-/// drafter line and the health cards. Assembly writes the stored text so, from every group; a
-/// view rebuilds it from the groups it keeps.
+/// drafter line, the answer-schema line and the health cards. Assembly writes the stored text
+/// so, from every group; a view rebuilds it from the groups it keeps.
 pub(super) fn render(
     digest: &ProactivityDigest,
     groups: &BTreeMap<String, Vec<DigestProposal>>,
@@ -335,6 +356,17 @@ pub(super) fn render(
             &presentation.group_template,
             &presentation.item_template,
             alias(presentation, crate::drafter::DRAFTER_GROUP),
+            &mut rendered,
+        );
+    }
+    if let Some(line) = &digest.answer_schema {
+        line.render(
+            &presentation.group_template,
+            &presentation.item_template,
+            alias(
+                presentation,
+                crate::dreamer_consolidation::answer_schema::ANSWER_SCHEMA_GROUP,
+            ),
             &mut rendered,
         );
     }

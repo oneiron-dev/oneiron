@@ -599,10 +599,15 @@ pub(crate) async fn execute_bound_step(
     let rules = failure_rules::load(ctx.vault)?;
     let material = render_host_material(loan.material);
     let transcript = format!("{material}{}", prepared.transcript);
+    let answer_schema = {
+        let txn = ctx.vault.store.env.read_txn().map_err(crate::Error::from)?;
+        super::answer_schema::answer_schema_in_force_in_txn(ctx.vault, &txn)?
+    };
     let mut request = ConsolidationExecutor::request_over(
         &loan.call,
         loan.prompt,
         None,
+        answer_schema,
         transcript,
         &prepared.scope,
     )?;

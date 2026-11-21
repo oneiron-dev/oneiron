@@ -3,6 +3,7 @@
 //! its `corrections` child.
 
 use super::*;
+use crate::dreamer_consolidation::answer_schema::request_over_params;
 use crate::dreamer_consolidation::call_labels::{CallLabelMap, CandidateRel};
 use crate::dreamer_consolidation::extracted_people::MintNamespace;
 use crate::dreamer_consolidation::provenance::KeptDecision;
@@ -115,6 +116,7 @@ impl ConsolidationExecutor<'_> {
     /// The extraction request over one child's `transcript`, rendered with
     /// `labels` (FIX 7506): the map and the person-mint `namespace` bind
     /// into the request's identity, so its memo is read only against them.
+    /// `answer_schema` is the switch in force, read before the request builds.
     pub(in crate::dreamer_consolidation) fn extraction_request(
         call: &RoleCall<'_>,
         prompt: &ExtractionPrompt,
@@ -122,8 +124,16 @@ impl ConsolidationExecutor<'_> {
         labels: &CallLabelMap,
         scope: &oneiron_model::llm::Scope,
         namespace: &MintNamespace,
+        answer_schema: bool,
     ) -> Result<LlmRequest> {
-        let mut request = Self::request_over(call, prompt, None, transcript.to_owned(), scope)?;
+        let mut request = Self::request_over(
+            call,
+            prompt,
+            None,
+            answer_schema,
+            transcript.to_owned(),
+            scope,
+        )?;
         labels.bind_request(&mut request, Some(&namespace.identity()));
         Ok(request)
     }
@@ -154,15 +164,17 @@ impl ConsolidationExecutor<'_> {
 
     /// The extraction request over `source` in `prompt`'s words, `source_rule`
     /// before it: a NOTE review's rule is `note_classification`'s (OF-073).
-    /// It carries [`extraction_request_params`]: a TURN extraction call
-    /// (`source_rule` none) with the answer schema, a NOTE review without.
+    /// It carries [`extraction_request_params`]: a TURN extraction call with the answer
+    /// schema while the switch is in force, a NOTE review never.
     pub(in crate::dreamer_consolidation) fn request_over(
         call: &RoleCall<'_>,
         prompt: &ExtractionPrompt,
         source_rule: Option<String>,
+        answer_schema: bool,
         source: String,
         scope: &oneiron_model::llm::Scope,
     ) -> Result<LlmRequest> {
+        let params = request_over_params(source_rule.is_some(), answer_schema)?;
         let locality = call.inference.selected_locality().ok_or_else(|| {
             crate::Error::InvalidConfig("consolidation host binding needs locality".into())
         })?;
@@ -175,7 +187,6 @@ impl ConsolidationExecutor<'_> {
                 signature: None,
             }],
         };
-        let answer_schema = source_rule.is_none();
         let mut messages = vec![text(LlmMessageRole::System, prompt.system.clone())];
         for example in &prompt.examples {
             messages.push(text(LlmMessageRole::User, example.user.clone()));
@@ -212,7 +223,7 @@ impl ConsolidationExecutor<'_> {
             }.with_purpose_defaults(),
             messages,
             tools: Vec::new(),
-            params: extraction_request_params(answer_schema)?,
+            params,
             provider_options: BTreeMap::new(),
             host_segments: None,
         })

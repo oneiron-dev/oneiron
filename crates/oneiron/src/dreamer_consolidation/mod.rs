@@ -24,6 +24,7 @@
 //! also re-dirty their TURN without changing its row. Each scope consumes
 //! exactly the carrier identity its queued round selected.
 
+pub mod answer_schema;
 mod assembly;
 mod attempt_reads;
 mod branch;

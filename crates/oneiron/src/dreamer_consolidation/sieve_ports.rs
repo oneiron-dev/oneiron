@@ -426,6 +426,10 @@ async fn read_rung(rung: SieveRungCall<'_>) -> SieveRungRead {
 /// checked step instead, and calls no model (JointIE, L2-03).
 async fn extract_slices(child: NeighbourhoodExtraction<'_>) -> DurableStepResult<Vec<SliceStep>> {
     let vault = child.step.vault;
+    let answer_schema = {
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        super::answer_schema::answer_schema_in_force_in_txn(vault, &txn)?
+    };
     let mut requests = Vec::with_capacity(child.slices.len());
     let mut authored = Vec::with_capacity(child.slices.len());
     for slice in &child.slices {
@@ -456,6 +460,7 @@ async fn extract_slices(child: NeighbourhoodExtraction<'_>) -> DurableStepResult
             slice.labels,
             slice.scope,
             &child.namespace,
+            answer_schema,
         )?;
         if let Some(rules) = child.rules {
             rules.bind(Stage::Extraction, &mut request);
