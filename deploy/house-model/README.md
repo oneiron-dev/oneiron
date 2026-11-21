@@ -445,6 +445,12 @@ ported onto this server without editing exllamav3. Its sampling changes
 - **Identity.** A server with any part on names them in its server settings
   (`speed_parts`; the default names `prompt_lookup`); with every part off,
   the identity is as before.
+- **Session snapshots.** The fused projections and FP16 prefill change the KV
+  a prefill writes (`KV_ARITHMETIC_PARTS`). A worker with either on names it
+  in its snapshot compatibility, so a worker imports a snapshot only when
+  the exporting worker had the same of these parts on. A refused import
+  (`snapshot_incompatible`) is a cache miss: the host recomputes the prefix.
+  With both off, the compatibility is as before.
 - **Per request.** A request body that sets top-level
   `"oneiron_prompt_lookup": false` takes no lookup proposal: the draft
   proposes every block of its Jobs, as on a server with lookup off. `true`

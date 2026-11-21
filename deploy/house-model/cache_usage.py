@@ -126,11 +126,16 @@ class BackendIdentity:
     `draft_digest` is the identity of the draft the Generator loaded, as the
     launch manifest names it (FIX 14976): a vault's own load set or the
     stock draft. Every identity names it, so the supervisor's probe checks
-    which draft answers."""
+    which draft answers.
+
+    `kv_arithmetic` names the speed parts that are on and change the KV the
+    target writes (`exl3_server.KV_ARITHMETIC_PARTS`); a session snapshot is
+    bound to them (`exl3_session.layer.compatibility`)."""
 
     def __init__(self, target_dir, template_source, cache_settings, server_settings,
-                 model_digest=None, launch=None, draft_digest=None):
+                 model_digest=None, launch=None, draft_digest=None, kv_arithmetic=()):
         self.epoch = uuid.uuid4().hex
+        self.kv_arithmetic = sorted(kv_arithmetic)
         self.model = model_digest
         self.draft = draft_digest
         self.template = sha256_hex(template_source.encode("utf-8"))

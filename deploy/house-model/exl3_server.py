@@ -165,6 +165,13 @@ SPEED_PART_DEFAULTS = {
     "prompt_lookup": True,         # A-0009 + A-0012: proposals from the request's own history
     "draft_window_tables": False,  # A-0016: the draft's block tables cut to its live window
 }
+# The speed parts that change the arithmetic of the target's own forward, and
+# so the KV a prefill writes. A session snapshot names those that were on, and
+# a worker imports only a snapshot whose list is its own
+# (`exl3_session.layer.compatibility`), so KV computed one way is never
+# installed, unreplayed, on a worker that computes it the other way. Prompt
+# lookup and the window tables change only what is proposed and verified.
+KV_ARITHMETIC_PARTS = ("fuse_projections", "fp16_prefill")
 # FP16 accumulation runs in a reconstructed prefill GEMM of at least this many
 # rows into an FP16 output (`install_fp16_prefill`).
 FP16_PREFILL_MIN_ROWS = 384
@@ -578,6 +585,11 @@ def speed_parts(args, ring, draft_dir):
     return parts
 
 
+def kv_arithmetic(parts):
+    """The parts that are on in `parts` (`speed_parts`) and change the KV the target writes, sorted."""
+    return sorted(name for name in KV_ARITHMETIC_PARTS if parts.get(name))
+
+
 SPEED_PART_HELP = {
     "fuse_projections": "keep same-input projections fused at every bitrate (EXL3_MGEMM_K_THRESHOLD=0)",
     "fp16_prefill": f"FP16 accumulation in reconstructed prefill GEMMs of at least {FP16_PREFILL_MIN_ROWS} rows",
@@ -738,7 +750,8 @@ def load(args):
         cache_settings=cache_settings,
         server_settings=server_settings,
         model_digest=model_digest, launch=launch,
-        draft_digest=launch_draft_identity(args.launch_manifest) if draft is not None else None)
+        draft_digest=launch_draft_identity(args.launch_manifest) if draft is not None else None,
+        kv_arithmetic=kv_arithmetic(parts))
     stop_ids = set()
     eos = getattr(target_config, "eos_token_id", None)
     for token in eos if isinstance(eos, list) else [eos]:
