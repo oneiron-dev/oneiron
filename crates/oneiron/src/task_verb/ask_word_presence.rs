@@ -26,7 +26,8 @@
 //! would have recorded. The read checks the latest human word on an approving
 //! repeat, including its answer unit on a bound ask, and checks silent member
 //! TASKs and pending waiter traps before asking. A `proceed` word releasing a
-//! durable verb hook asks for the person; after an ask has its result, only a
+//! durable verb hook asks for the person; after an ask has its result, and on
+//! an ask its settlement here cuts stale, which decides nothing, only a
 //! code consent word can still ask. The read never asks whether an owner key
 //! proves now: a key that rests under a device PIN proves only inside the
 //! window the ask's PIN step opens, so the mint answers that after the ask.

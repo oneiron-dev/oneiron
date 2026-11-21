@@ -143,6 +143,26 @@ fn first_cut_reads_in(
     Ok(read_result(vault, txn, id)?.is_none() && ask_record::owns_revision(vault, txn, id, group)?)
 }
 
+/// Whether a word can still decide the ask `id`: it has no result, and the
+/// settlement this node runs on its next word does not cut it Stale. A Stale
+/// cut decides nothing: it takes the hold default, every kind's resolver
+/// passes it over, and a verb hook's stopped call stays stopped. A node that
+/// does not own the revision cuts nothing, so there the ask stays open to a
+/// word.
+pub(super) fn decision_open_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    group: &AskGroup,
+) -> Result<bool> {
+    if read_result(vault, txn, id)?.is_some() {
+        return Ok(false);
+    }
+    let cuts_stale =
+        ask_record::owns_revision(vault, txn, id, group)? && is_stale(vault, txn, group)?;
+    Ok(!cuts_stale)
+}
+
 /// Reads the same silent member TASKs as settlement, treating `answering`'s
 /// own word as already recorded.
 pub(super) fn silent_members_read_in(

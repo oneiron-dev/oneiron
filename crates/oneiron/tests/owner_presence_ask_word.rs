@@ -1013,6 +1013,66 @@ fn a_proceed_word_on_a_verb_hook_ask_asks_for_the_person_once() {
 }
 
 #[test]
+fn a_proceed_word_on_a_stale_verb_hook_ask_raises_no_prompt() {
+    let fx = Fixture::open();
+    fx.device
+        .enrol_owner_key()
+        .expect("the owner key is enrolled");
+    let vault = &fx.device.vault;
+    let owner = fx.device.owner;
+    let authenticate = || {
+        let decision = vault.new_entity_id().expect("a fresh decision id");
+        vault
+            .authenticate_owner(
+                owner,
+                &owner.to_hex(),
+                true,
+                GateDecisionId::from_bytes(*decision.as_bytes()),
+            )
+            .expect("the owner has a native proof")
+    };
+    let hook = HookAsk::on_verb(vault, owner, &authenticate(), "self.use")
+        .expect("the owner binds a pre-hook that asks");
+    let actor = WriteActor::new(owner, EdgeActorClass::Human);
+    let invocation = InvocationId::of_run_step(b"owner-device-stale-verb-hook", 1);
+    let handle = TaskAskHandle {
+        group_ref: hook
+            .ask(vault, &actor, invocation)
+            .expect("the hook parks its call"),
+    };
+    // The dial rewrites the binding claim, the ask's question, in place. No
+    // status is read before the word: a status read would cut the ask first.
+    hook.turn_off(vault, &authenticate())
+        .expect("the owner turns the hook off");
+
+    let memory = fx.owner_device();
+    let presence = scripted_gate(vault, []);
+    memory
+        .tasks_answer(&handle, &option_word(put_turn(vault), "proceed"))
+        .expect("proceed on the stale ask is recorded with nobody asked");
+    assert_eq!(
+        presence.prompts(),
+        0,
+        "a word the stale cut passes over does not prompt"
+    );
+    let status = memory
+        .tasks_ask_status(handle)
+        .expect("the settled ask reads");
+    let TaskAskStatus::Settled(result) = &status else {
+        panic!("the word's write cuts the stale ask: {status:?}");
+    };
+    assert_eq!(result.settlement.reason, TaskAskSettlementReason::Stale);
+    assert_ne!(
+        hook.retry(vault, &actor, invocation)
+            .expect("the hook wait is readable"),
+        SavedAsk::Resume {
+            ask: handle.group_ref
+        },
+        "the stale cut releases no stopped call"
+    );
+}
+
+#[test]
 fn an_approving_word_on_an_ask_that_has_its_result_raises_no_prompt() {
     let fx = Fixture::open();
     fx.device
@@ -1073,6 +1133,75 @@ fn an_approving_word_on_an_ask_that_has_its_result_raises_no_prompt() {
         1,
         "The late approval asks nobody after the cut."
     );
+}
+
+#[test]
+fn an_approving_word_on_a_stale_ask_raises_no_prompt() {
+    let fx = Fixture::open();
+    fx.device
+        .enrol_owner_key()
+        .expect("The owner key is enrolled for signing.");
+    let vault = &fx.device.vault;
+    let asker = vault.memory(fx.device.owner, EdgeActorClass::Human);
+    let contact = create_attendee_contact(vault, fx.device.owner, "speaker-a@contacts.example");
+    let raise = |session_key: &str| {
+        let turn = put_turn(vault);
+        let handle = asker
+            .raise_unknown_attendee_ask(&UnknownAttendeeAsk {
+                session_key: session_key.to_owned(),
+                speaker_key: "speaker-1".to_owned(),
+                roster_revision: 1,
+                trigger_turn: Some(turn),
+                candidates: vec![contact],
+                until: 4_102_444_800,
+            })
+            .expect("The owner raises an ask whose question is its trigger TURN.")
+            .handle;
+        (turn, handle)
+    };
+    let (turn, stale) = raise("stale-attendee-session");
+    let (_, control) = raise("live-attendee-session");
+    // No status is read before the word: a status read would cut the ask first.
+    assert!(
+        vault
+            .delete_entity(&turn)
+            .expect("The ordinary delete door runs."),
+        "The trigger TURN existed."
+    );
+
+    let memory = fx.owner_device();
+    let presence = scripted_gate(vault, []);
+    let approve = attendee_word(vault, AttendeeIdentityChoice::Contact(contact));
+    memory
+        .tasks_answer(&stale, &approve)
+        .expect("The word on the stale ask is recorded with nobody asked.");
+    assert_eq!(
+        presence.prompts(),
+        0,
+        "A word the stale cut passes over does not prompt."
+    );
+    let status = memory
+        .tasks_ask_status(stale)
+        .expect("The settled ask reads.");
+    let TaskAskStatus::Settled(result) = &status else {
+        panic!("The word's write cuts the stale ask: {status:?}");
+    };
+    assert_eq!(result.settlement.reason, TaskAskSettlementReason::Stale);
+
+    let presence = scripted_gate(vault, [Ok(())]);
+    let approve = attendee_word(vault, AttendeeIdentityChoice::Contact(contact));
+    memory
+        .tasks_answer(&control, &approve)
+        .expect("The same word on the ask whose question stands is admitted.");
+    assert_eq!(presence.prompts(), 1, "The live approval prompts once.");
+    assert_eq!(presence.reasons(), ["confirm who a speaker is"]);
+    let status = memory
+        .tasks_ask_status(control)
+        .expect("The control ask reads.");
+    let TaskAskStatus::Settled(result) = &status else {
+        panic!("The live word settles the ask: {status:?}");
+    };
+    assert_eq!(result.settlement.reason, TaskAskSettlementReason::FirstWord);
 }
 
 #[test]

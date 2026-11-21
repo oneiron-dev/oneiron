@@ -20,7 +20,8 @@ pub(super) fn waits_open_on(row: &VerbAsk, binding: EntityId, group: EntityId) -
 /// stopped call run: the key is a verb hook ask's, its row still waits open
 /// on this ask for this binding, and the word says proceed. A saved row that
 /// does not decode answers false, as settlement passes it over; only the
-/// caller's retry reports it.
+/// caller's retry reports it. Whether the ask's decision is still open to a
+/// word (no result yet, no stale cut) is the caller's read.
 ///
 /// # Errors
 ///

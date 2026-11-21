@@ -124,7 +124,9 @@ struct AskApproval {
     /// The one line the device's prompt shows for an approving word
     /// ([`owner_presence_reasons`]).
     reason: &'static str,
-    /// Whether a word given after the ask has its result can still act.
+    /// Whether a word can still act once the ask's decision is closed
+    /// ([`ask_settlement::decision_open_in`]): it has its result, or its
+    /// settlement here cuts it Stale.
     acts_past_the_cut: bool,
     /// The kind's own read of whether the approved act still stands
     /// ([`approved_act_stands_in`]); `None` for a kind whose writer refuses
@@ -365,7 +367,7 @@ fn approval_in(
         });
         if let Some(approval) = approval
             && !approval.acts_past_the_cut
-            && ask_settlement::read_result(vault, txn, id)?.is_some()
+            && !ask_settlement::decision_open_in(vault, txn, id, group)?
         {
             return Ok(ApprovalRoute::Routed(None));
         }
@@ -386,6 +388,9 @@ fn approval_in(
 /// and again in its write (`super::ask_word_presence`). The kind of an ask
 /// is its intent key's, and an option's meaning is its kind's. Once the
 /// ask has its result, only a kind that can act past the cut still approves.
+/// The same holds for an ask this node's settlement cuts Stale on its next
+/// word ([`ask_settlement::decision_open_in`]): that cut decides nothing, so
+/// a word on it approves no act and releases no stopped call.
 ///
 /// # Errors
 ///
@@ -406,7 +411,7 @@ pub(super) fn approved_act_in(
                 id,
                 &group.requested.intent_key,
                 word.option.as_ref(),
-            )? && ask_settlement::read_result(vault, txn, id)?.is_none()
+            )? && ask_settlement::decision_open_in(vault, txn, id, group)?
             {
                 Ok(Some(owner_presence_reasons::ANSWER_VERB_HOOK_ASK))
             } else {
