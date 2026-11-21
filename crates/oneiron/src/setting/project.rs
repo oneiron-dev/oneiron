@@ -605,14 +605,6 @@ pub(super) fn project_target_in_txn(
     let bound = local.as_ref().filter(|bound| spec.kind.decodes(bound));
     let projected = met_with_local(spec, projected, bound);
     let birth = birth_of_in_txn(vault, txn, (&reads, &fold.name_counts), spec, &heads)?;
-    let changed = write_row_in_txn(
-        vault,
-        txn,
-        (spec, &slot),
-        &projected,
-        (local.as_ref(), birth),
-        now,
-    )?;
     // A pin keeps its release only while every act it comes from counts in full here: one that
     // counts as a safe move keeps its value and is read as a value row (DESIGN 1.6, "The read
     // of one slot", step 3). A pin on a key with no meet never takes a safe move's own value.
@@ -622,6 +614,10 @@ pub(super) fn project_target_in_txn(
             .counts
             .values()
             .any(|counted| counted.count != ChoiceCount::Full);
+    // Recorded before the row's write, in the row's savepoint: the key's hook, and the equal row's
+    // refusal of a key whose reader holds the line, read the row as this projection reads it (a
+    // pin read as a value row since the last pass among them; REVIEW-10343 round 2 P1-1), and a
+    // refusal takes the record back with the row.
     record_projection_in_txn(
         vault,
         txn,
@@ -634,6 +630,14 @@ pub(super) fn project_target_in_txn(
             beside: reads.into_seen(!projected.keep),
             unknown_key: None,
         },
+    )?;
+    let changed = write_row_in_txn(
+        vault,
+        txn,
+        (spec, &slot),
+        &projected,
+        (local.as_ref(), birth),
+        now,
     )?;
     Ok(TargetProjected {
         changed: if changed { vec![spec] } else { Vec::new() },

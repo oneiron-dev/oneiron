@@ -557,7 +557,8 @@ impl<T: SettingValue> Setting<T> {
     }
 
     /// The slot of the row that decides [`Self::read_in_txn`] at the vault with `item`: the pin
-    /// where a pin decides, else the value row or carried row the read takes. A row that does not
+    /// where a pin decides, else the value row or carried row the read takes; a pin read as a
+    /// value row is the pin where no value row is stored at its scope. A row that does not
     /// decode is the pin where a pin is stored at its scope. With no one row deciding (the
     /// default, a learned fit, a meet) it is the value row at the vault, which the owner's change
     /// writes. A refused projection's notice and tap name this row of a key its hook judges a row
@@ -580,8 +581,21 @@ impl<T: SettingValue> Setting<T> {
         };
         Ok(match self.read_in_txn(vault, txn, &[], item)?.source {
             SettingSource::Pin(scope) => slot(SettingMode::Pin, scope),
+            // A pin read as a value row decides as one (stage 7b-3), and its row is the pin: with
+            // no value row at its scope, the pin stored there (REVIEW-10343 round 2 P1-2).
             SettingSource::Row(scope) | SettingSource::Seeded(scope) => {
-                slot(SettingMode::Value, scope)
+                let value = slot(SettingMode::Value, scope.clone());
+                let pin = slot(SettingMode::Pin, scope);
+                let table = table_of(self.spec);
+                if table
+                    .get_bytes(&vault.store, txn, &value.encode())?
+                    .is_none()
+                    && table.get_bytes(&vault.store, txn, &pin.encode())?.is_some()
+                {
+                    pin
+                } else {
+                    value
+                }
             }
             SettingSource::Carried(scope) => slot(SettingMode::Carried, scope),
             SettingSource::Unreadable(scope) => {
