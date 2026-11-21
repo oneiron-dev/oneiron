@@ -48,6 +48,13 @@ pub struct PrefilterScreen {
     /// Summed [`estimated_prompt_tokens`](crate::dreamer_prefilter::estimated_prompt_tokens) of the SKIPPED turns — the budget
     /// this round did not spend.
     pub estimated_tokens_saved: u64,
+    /// Whether the screen read MESSAGE rows for any scanned turn's words,
+    /// whatever they gave it. The receipts of a round that did stand on rows
+    /// they do not name: a turn's score is measured against the round's
+    /// earlier turns, and its own MESSAGE rows are read as the Dreamer. So
+    /// only the vault owner reads them
+    /// ([`super::prefilter_receipt_read_message_rows`]).
+    pub read_message_rows: bool,
 }
 
 impl PrefilterScreen {
@@ -62,6 +69,7 @@ impl PrefilterScreen {
             passed: turns.len(),
             skipped: 0,
             estimated_tokens_saved: 0,
+            read_message_rows: false,
         }
     }
 }
@@ -71,7 +79,9 @@ impl PrefilterScreen {
 /// `None` when it has none the screen may read.
 pub type PrefilterScreenInput = (WorkingSetTurn, Option<String>);
 
-/// Screens a batch. Pure — every storage read happened in the caller.
+/// Screens a batch. Pure — every storage read happened in the caller, and
+/// the caller that read a turn's words from its MESSAGE rows says so on the
+/// result ([`PrefilterScreen::read_message_rows`], `false` here).
 ///
 /// Turns are scored in the batch's own order because the novelty window is
 /// causal: turn *n* is judged against turns *0..n*, never against turns that
@@ -91,6 +101,7 @@ pub fn screen_turn_inputs(
         passed: 0,
         skipped: 0,
         estimated_tokens_saved: 0,
+        read_message_rows: false,
     };
     let mut window = NoveltyWindow::new();
     for (turn, text) in inputs {
@@ -150,7 +161,16 @@ fn screens_message_words(config: &PrefilterConfig) -> bool {
     config.enabled && config.threshold > 0.0
 }
 
-/// The words the screen scores one planned TURN on, or `None` when it has
+/// The words the screen scores one planned TURN on, and whether its MESSAGE
+/// rows were read for them.
+struct ScreenWords {
+    /// `None` when the TURN has none the screen may read.
+    words: Option<String>,
+    /// Whether the TURN's MESSAGE rows were read, whatever they gave.
+    read_message_rows: bool,
+}
+
+/// The words the screen scores one planned TURN on, or none when it has
 /// none the screen may read.
 ///
 /// A TURN that carries its own words (`txt|text`) is scored on them as
@@ -169,10 +189,11 @@ fn screens_message_words(config: &PrefilterConfig) -> bool {
 /// at, so every snapshot this runs in is opened, or moved, at a persisted
 /// grant clock first, as a branch's read snapshot is: the committed screen
 /// through [`committed_screen_snapshot`], a planning writer through
-/// [`observe_grant_clock_for_message_screen_in_txn`], and the turn wake's
-/// read snapshot behind its sieve pass, which persists the clock before
-/// either reads. A grant that expired since this store last judged one lends
-/// the screen no words.
+/// [`observe_grant_clock_for_message_screen_in_txn`], and each read of the
+/// turn wake through `dreamer_wake::read_phase`'s
+/// `read_then_write_at_grant_clock`, which observes the clock before every
+/// one, a retry and the one-writer read too. A grant that expired since this
+/// store last judged one lends the screen no words.
 ///
 /// # Errors
 ///
@@ -183,20 +204,30 @@ fn screen_words_in_txn(
     config: &PrefilterConfig,
     turn: &EntityId,
     raw: Option<&[u8]>,
-) -> Result<Option<String>> {
+) -> Result<ScreenWords> {
     let Some((_, _, own_words)) =
         raw.and_then(|raw| screen_text_from_raw(raw, &vault.config.assistant_display_names))
     else {
-        return Ok(None);
+        return Ok(ScreenWords {
+            words: None,
+            read_message_rows: false,
+        });
     };
     if own_words.is_some() || !screens_message_words(config) {
-        return Ok(own_words);
+        return Ok(ScreenWords {
+            words: own_words,
+            read_message_rows: false,
+        });
     }
-    match projected_turn_text_in(vault, txn, turn) {
-        Ok(words) => Ok(words),
-        Err(Error::InvalidClaimBody(_)) => Ok(None),
-        Err(error) => Err(error),
-    }
+    let words = match projected_turn_text_in(vault, txn, turn) {
+        Ok(words) => words,
+        Err(Error::InvalidClaimBody(_)) => None,
+        Err(error) => return Err(error),
+    };
+    Ok(ScreenWords {
+        words,
+        read_message_rows: true,
+    })
 }
 
 /// The read snapshot one committed screen runs in, and the policy it holds.
@@ -275,12 +306,16 @@ pub(crate) fn prefilter_partition_input(
         return Ok(PrefilterScreen::disabled(turns, config.threshold));
     }
     let mut inputs = Vec::with_capacity(turns.len());
+    let mut read_message_rows = false;
     for turn in turns {
         let raw = vault.get_raw_sealed_in_txn(&txn, &turn.turn_id)?;
-        let words = screen_words_in_txn(vault, &txn, &config, &turn.turn_id, raw.as_deref())?;
-        inputs.push((*turn, words));
+        let read = screen_words_in_txn(vault, &txn, &config, &turn.turn_id, raw.as_deref())?;
+        read_message_rows |= read.read_message_rows;
+        inputs.push((*turn, read.words));
     }
-    Ok(screen_turn_inputs(&config, &inputs, &BTreeSet::new()))
+    let mut screen = screen_turn_inputs(&config, &inputs, &BTreeSet::new());
+    screen.read_message_rows = read_message_rows;
+    Ok(screen)
 }
 
 /// [`prefilter_partition_input`] through a caller-owned write transaction —
@@ -307,6 +342,7 @@ pub(crate) fn prefilter_partition_input_in_txn(
         return Ok(PrefilterScreen::disabled(turns, config.threshold));
     }
     let mut inputs = Vec::with_capacity(turns.len());
+    let mut read_message_rows = false;
     for turn in turns {
         // A withdrawn TURN's words are gone, as `Vault::get_raw` reads them.
         let raw = match vault.get_raw_in(txn, &turn.turn_id)? {
@@ -317,10 +353,13 @@ pub(crate) fn prefilter_partition_input_in_txn(
             }
             _ => None,
         };
-        let words = screen_words_in_txn(vault, txn, &config, &turn.turn_id, raw.as_deref())?;
-        inputs.push((*turn, words));
+        let read = screen_words_in_txn(vault, txn, &config, &turn.turn_id, raw.as_deref())?;
+        read_message_rows |= read.read_message_rows;
+        inputs.push((*turn, read.words));
     }
-    Ok(screen_turn_inputs(&config, &inputs, &BTreeSet::new()))
+    let mut screen = screen_turn_inputs(&config, &inputs, &BTreeSet::new());
+    screen.read_message_rows = read_message_rows;
+    Ok(screen)
 }
 
 // ---------------------------------------------------------------------------

@@ -42,6 +42,11 @@
 //! its axes for a skipped turn, never the words or a hash of them. A turn
 //! whose words that projection refuses passes unscored.
 //!
+//! A score is measured against the round's earlier turns, and MESSAGE rows
+//! are read as the Dreamer, so the receipts of a round whose screen read
+//! MESSAGE rows stand on rows they do not name. `vault.receipts` serves
+//! them to the vault owner alone ([`prefilter_receipt_read_message_rows`]).
+//!
 //! # The shipped default is a no-op
 //!
 //! [`PrefilterConfig::default`] is `enabled` with `threshold = 0.0`, and a
