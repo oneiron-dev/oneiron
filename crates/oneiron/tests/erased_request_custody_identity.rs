@@ -16,6 +16,14 @@
 //! era); a value custody takes after the erase changes nothing. With no
 //! custody read in reach the row reads by its stand-in identity, as before.
 //!
+//! The erase also pins each record at the newest generation custody held a
+//! value of it at (FIX ERASED-IDENTITY-ROTATION-GENERATION). The call made
+//! again is first read for those records' values up to those generations,
+//! the read the erase took, so a value a record takes by a later rotation
+//! never changes how the identical call reads. Past a miss, the read with
+//! every value the records hold still meets a call holding a value one of
+//! them took since: it names the same record.
+//!
 //! Each case stores one call in an agent's replay record through the wall,
 //! erases it with the agent's replies by the agent's delete, and reads it
 //! against the call made again, as the replay cursor reads an erased row.
@@ -63,6 +71,12 @@ const SHORT_VALUE: &str = "fox";
 const SHORT_VALUE_AND_RUN: &str = "fox ! AAAAAAAAZm94AAAAAAAA";
 /// A longer value an unrelated record takes: its reach spans that run.
 const UNRELATED_VALUE: &str = "violet ledger";
+/// Values the held passphrase's record rotates to: words [`words`] holds
+/// before the passphrase, those words and the passphrase, and a new
+/// passphrase.
+const WORDS_BEFORE_THE_PASSPHRASE: &str = "the archive";
+const PASSPHRASE_WITH_WORDS: &str = "archive with winter orchard notebook lantern";
+const ROTATED_PASSPHRASE: &str = "summer river garden kettle";
 
 fn vault() -> TestResult<(tempfile::TempDir, Vault)> {
     vault_holding(&[
@@ -85,11 +99,11 @@ fn vault_holding(values: &[(&str, &str)]) -> TestResult<(tempfile::TempDir, Vaul
     Ok((directory, vault))
 }
 
-/// The owner rotates the custody record named `name` to `value`.
-fn rotate(vault: &Vault, name: &str, value: &str) -> TestResult {
+/// The owner rotates the custody record named `name` to `value` at `at`.
+fn rotate(vault: &Vault, name: &str, value: &str, at: u64) -> TestResult {
     let owner = vault.ensure_embedded_owner_actor()?;
     let owner = vault.authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())?;
-    vault.rotate_secret_as_owner(&owner, name, value.as_bytes(), 5)?;
+    vault.rotate_secret_as_owner(&owner, name, value.as_bytes(), at)?;
     Ok(())
 }
 
@@ -455,7 +469,7 @@ fn an_erased_call_meets_its_call_after_its_record_rotates_to_a_value_spanning_it
 -> TestResult {
     let (_directory, vault) = vault()?;
     let call = erased_call(&vault, &words(FIRST_SHAPED_KEY), |_| Ok(()))?;
-    rotate(&vault, "first key", SHAPED_KEY_WITH_WORDS)?;
+    rotate(&vault, "first key", SHAPED_KEY_WITH_WORDS, 5)?;
     assert!(stored_call_is(
         &vault,
         call,
@@ -488,5 +502,72 @@ fn an_erased_call_meets_its_call_after_an_unrelated_record_takes_a_longer_value(
         &words(SHORT_VALUE_AND_RUN),
         true
     )?);
+    Ok(())
+}
+
+/// Custody holds a passphrase, and an erased row held it after other words.
+/// The owner then rotates its record to a shorter value: words the row
+/// holds before the passphrase. The call made again still meets its row:
+/// it is read for the record's values up to the generation the erase
+/// pinned (FIX ERASED-IDENTITY-ROTATION-GENERATION). Red on main
+/// a1dc3dd3c27: every read there takes `the archive` as the record's
+/// handle, the read with all its values and the reread at the shorter
+/// length alike, and the call drifted.
+#[test]
+fn an_erased_call_meets_its_call_after_its_record_rotates_to_shorter_words_it_holds() -> TestResult
+{
+    let (_directory, vault) = vault()?;
+    let call = erased_call(&vault, &words(HELD_PASSPHRASE), |_| Ok(()))?;
+    rotate(&vault, "orchard passphrase", WORDS_BEFORE_THE_PASSPHRASE, 5)?;
+    assert!(
+        stored_call_is(&vault, call, &words(HELD_PASSPHRASE), true)?,
+        "FAILBEFORE ERASED-IDENTITY-ROTATION-GENERATION: one rotation"
+    );
+    assert!(
+        !stored_call_is(&vault, call, &words(OTHER_HELD_PASSPHRASE), true)?,
+        "another passphrase custody holds is another call"
+    );
+    Ok(())
+}
+
+/// The row's case: the record rotates twice, first to a value spanning the
+/// passphrase and the words before it, then to a shorter value, words the
+/// row holds before the passphrase. The call made again still meets its
+/// row. Red on main a1dc3dd3c27: the shorter value a later rotation added
+/// reads first at every length the rereads try.
+#[test]
+fn an_erased_call_meets_its_call_after_its_record_rotates_twice() -> TestResult {
+    let (_directory, vault) = vault()?;
+    let call = erased_call(&vault, &words(HELD_PASSPHRASE), |_| Ok(()))?;
+    rotate(&vault, "orchard passphrase", PASSPHRASE_WITH_WORDS, 5)?;
+    rotate(&vault, "orchard passphrase", WORDS_BEFORE_THE_PASSPHRASE, 6)?;
+    assert!(
+        stored_call_is(&vault, call, &words(HELD_PASSPHRASE), true)?,
+        "FAILBEFORE ERASED-IDENTITY-ROTATION-GENERATION: two rotations"
+    );
+    assert!(
+        !stored_call_is(&vault, call, &words(OTHER_HELD_PASSPHRASE), true)?,
+        "another passphrase custody holds is another call"
+    );
+    Ok(())
+}
+
+/// Guard: once the record rotates to a new passphrase, the call made again
+/// with that passphrase still names the record and meets the row, on the
+/// base and the head (Engine ANSWER 19 Nov 02:54 = B: its values name the
+/// same records). The pinned read misses it; the read with every value the
+/// record holds meets it, as before.
+#[test]
+fn an_erased_call_made_again_with_its_records_rotated_passphrase_meets_its_row() -> TestResult {
+    let (_directory, vault) = vault()?;
+    let call = erased_call(&vault, &words(HELD_PASSPHRASE), |_| Ok(()))?;
+    rotate(&vault, "orchard passphrase", ROTATED_PASSPHRASE, 5)?;
+    assert!(stored_call_is(
+        &vault,
+        call,
+        &words(ROTATED_PASSPHRASE),
+        true
+    )?);
+    assert!(stored_call_is(&vault, call, &words(HELD_PASSPHRASE), true)?);
     Ok(())
 }
