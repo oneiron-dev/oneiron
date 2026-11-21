@@ -463,6 +463,35 @@ ported onto this server without editing exllamav3. Its sampling changes
   exllamav3 extension the server loaded; the `DRAFT_RING` line gives the
   window tables' width in pages (0 when off).
 
+### GEMM FP16 accumulators
+
+exllamav3's EXL3 GEMM accumulates its MMA results in FP16 within each
+k-slice and folds them into FP32 once per slice, where FP32 accumulation runs
+at half rate; upstream turns this on for sm_86 (RTX 3090) only, and gives
+its error as about 1 % of output RMS at k=4096. `build-exl3-ext.sh <dir>`
+builds exllamav3 v1.6.0's extension with the same path on for sm_89 (RTX
+4090): one line of `exllamav3_ext/quant/exl3_gemm_inner.cuh` (QWEN-EVAL-1
+arm opus-skill A-0008). It needs a CUDA 12.8 toolkit (`CUDA_HOME`) and a host
+compiler nvcc 12.8 takes (`CUDAHOSTCXX`, gcc 14 or older), takes about 13
+minutes with 2 nvcc jobs, and writes `exllamav3_ext.build.json` beside the
+module.
+
+`ONEIRON_HOUSE_EXL3_EXT_DIR=<dir>` puts the module first on PYTHONPATH and
+passes `--exllamav3-ext-dir`. The server refuses to start when the
+extension it loaded is not that directory's, and names the module's SHA-256
+in its server settings (`exllamav3_ext`) and in its session snapshots'
+compatibility, so its answers and KV are never taken for the installed
+build's. Unset, the server runs the installed extension and identifies as
+before. The managed worker runs the installed extension.
+
+Measured on the Dreamer's nightly call (GPU run 4, mel's RTX 4090 at 400 W,
+on the ring, pool and prompt lookup; opus-skill's own build of the same
+line): 280.13 against 273.72 packets/h with lookup alone (x1.023), JSON valid
+19 and 20 of 20 against 16 and 17, graded +0.126 [-0.007, +0.275]; on the
+held-out pack with its own body, x1.031, JSON 18 against 19 of 20 (M02_en10's
+json fence is left open), graded -0.035 [-0.107, +0.003]. Worst-case VRAM
+23712 MiB, 852 MiB spare. Rollback: unset `ONEIRON_HOUSE_EXL3_EXT_DIR`.
+
 ### Solo admission
 
 A request body that sets top-level `"oneiron_solo": true` runs alone. When it

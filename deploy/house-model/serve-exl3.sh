@@ -41,6 +41,18 @@ for part in FUSE_PROJECTIONS FP16_PREFILL PROMPT_LOOKUP DRAFT_WINDOW_TABLES; do
     *) echo "serve-exl3.sh: $var must be 0, 1 or unset, not '${!var}'" >&2; exit 2 ;;
   esac
 done
+# A rebuilt exllamav3 extension (README, "GEMM FP16 accumulators"): the
+# directory build-exl3-ext.sh wrote; unset, the extension installed with
+# exllamav3. It goes first on PYTHONPATH, and the server checks that the
+# extension it loaded came from it.
+: "${ONEIRON_HOUSE_EXL3_EXT_DIR:=}"
+if [ -n "$ONEIRON_HOUSE_EXL3_EXT_DIR" ]; then
+  if ! compgen -G "$ONEIRON_HOUSE_EXL3_EXT_DIR/exllamav3_ext*.so" >/dev/null; then
+    echo "serve-exl3.sh: $ONEIRON_HOUSE_EXL3_EXT_DIR holds no exllamav3_ext module (build-exl3-ext.sh writes one)" >&2
+    exit 2
+  fi
+  export PYTHONPATH="$ONEIRON_HOUSE_EXL3_EXT_DIR${PYTHONPATH:+:$PYTHONPATH}"
+fi
 : "${ONEIRON_HOUSE_EXL3_GPU:=0}"
 : "${ONEIRON_HOUSE_EXL3_PORT:=18091}"
 : "${ONEIRON_HOUSE_PYTHON:=/opt/oneiron-house/.venv/bin/python}"
@@ -60,6 +72,7 @@ exec "$ONEIRON_HOUSE_PYTHON" "$(dirname "$0")/exl3_server.py" \
   ${ONEIRON_HOUSE_EXL3_CACHE_TOKENS:+--cache-tokens "$ONEIRON_HOUSE_EXL3_CACHE_TOKENS"} \
   ${ONEIRON_HOUSE_EXL3_DRAFT_RING_PAGES:+--draft-ring-pages "$ONEIRON_HOUSE_EXL3_DRAFT_RING_PAGES"} \
   ${speed_parts[@]+"${speed_parts[@]}"} \
+  ${ONEIRON_HOUSE_EXL3_EXT_DIR:+--exllamav3-ext-dir "$ONEIRON_HOUSE_EXL3_EXT_DIR"} \
   ${ONEIRON_HOUSE_EXL3_NATIVE_SOCKET:+--native-socket "$ONEIRON_HOUSE_EXL3_NATIVE_SOCKET"} \
   --model-id qwen3.8-27b \
   --host 127.0.0.1 --port "$ONEIRON_HOUSE_EXL3_PORT"
