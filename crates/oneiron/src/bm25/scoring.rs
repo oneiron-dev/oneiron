@@ -95,8 +95,11 @@ pub(super) fn score_query_terms(
                 counted
             }
         };
-        // The list's own length checks the index and floors a union's count,
-        // clamp or none; only the IDF takes the audience's count.
+        // The list's own length checks the index, clamp or none. A union's
+        // count floor takes the audience's count, as the IDF does: a room's
+        // pinned count can sit below base postings that joined later, and a
+        // floor on the whole list would raise one term's count by its hidden
+        // rows alone.
         let postings = entries.len() as f64;
         if postings > n && !union {
             return Err(corrupted_with_diagnostic(
@@ -105,8 +108,8 @@ pub(super) fn score_query_terms(
                 Bm25DiagnosticKind::MalformedPostingAlignment,
             ));
         }
-        let n = n.max(postings);
         let df = counted as f64;
+        let n = n.max(df);
         let idf = ((n - df + 0.5) / (df + 0.5) + 1.0).ln();
         'entries: for entry in entries {
             let id = entry.id;

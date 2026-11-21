@@ -566,14 +566,9 @@ impl Memory<'_> {
                     // time words on the recall's clock.
                     let scored = if execution.deadline.is_some() {
                         let limit = lane.search_candidate_limit(PPR_SEED_LIMIT)?;
-                        let raw = self.vault.search_text_scoped_planned(
-                            &lane,
-                            &plan,
-                            query,
-                            limit,
-                            |_, _| {},
-                            None,
-                        )?;
+                        let raw = self
+                            .vault
+                            .search_text_scoped_planned(&lane, &plan, query, limit)?;
                         lane.filter_scored_entities(raw)?
                     } else {
                         lane.search_text_as_of(query, PPR_SEED_LIMIT, None, execution.as_of)?
