@@ -141,14 +141,12 @@ impl NativeVault {
         // Crash output never carries world text: the engine's hook goes in before
         // any vault opens (owner ruling 2026-10-14, fix 6).
         oneiron::panic_report::install_panic_hook();
-        if let Some(model) = embedding_model.as_deref() {
-            oneiron::store::validate_embedding_model_id(model).map_err(display)?;
-        }
+        // RED: the open ignores the host's model, as main's did.
+        let _ = &embedding_model;
         let mut config = VaultConfig::device();
         config.machine_device_class = device_class;
         config.machine_reported_name = machine_reported_name;
         config.machine_reported_model = machine_reported_model;
-        config.embedding_model = embedding_model;
         Vault::open(path, config)
             .map(|vault| Self::opened(Arc::new(vault)))
             .map_err(display)
@@ -229,16 +227,11 @@ impl NativeVault {
         mark: Option<EmbeddingProvenance>,
     ) -> Result<(), String> {
         let id = EntityId::from_hex(id).map_err(display)?;
-        match (self.bound_memory(), mark) {
-            (Some(memory), Some(mark)) => memory
-                .raw_put_vector_with_provenance(&id, vector, mark)
-                .map_err(display),
-            (Some(memory), None) => memory.raw_put_vector(&id, vector).map_err(display),
-            (None, Some(mark)) => self
-                .vault
-                .put_vector_with_provenance(&id, vector, mark)
-                .map_err(display),
-            (None, None) => self.vault.put_vector(&id, vector).map_err(display),
+        // RED: the put drops the mark, as main's did.
+        let _ = mark;
+        match self.bound_memory() {
+            Some(memory) => memory.raw_put_vector(&id, vector).map_err(display),
+            None => self.vault.put_vector(&id, vector).map_err(display),
         }
     }
     /// The `limit` nearest entities to `query`, however many it asks for.
