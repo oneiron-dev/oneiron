@@ -71,6 +71,7 @@ pub mod owner_check;
 pub mod owner_key_change_report;
 pub mod parked_step_resume;
 pub mod pre_idle_reuse;
+pub mod prefix_refresh;
 pub mod question_heads;
 pub mod raw_stream;
 #[cfg(unix)]
