@@ -140,6 +140,9 @@ impl SyncClient {
         {
             return Err(refused());
         }
+        // The selector is authorized again at this clock: a grant that lapsed
+        // while the window was filtered signs nothing.
+        crate::sync::selector::authorize_sync_selector(vault, grant.scope, &selector)?;
         let body = ConnectWindow {
             pact: request.pact,
             epoch: state.pact_epoch,

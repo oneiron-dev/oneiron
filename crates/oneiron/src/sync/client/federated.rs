@@ -638,8 +638,7 @@ impl SyncClient {
             .map_err(map_federated_admission_err)?;
         crate::sync::ingest::record_peer_rows(&self.vault, window_key, part.peer_rows())
             .map_err(map_federated_admission_err)?;
-        let delivery =
-            delivery.map(|delivery| Delivery::new(&self.vault, grant, delivery, part.delivered()));
+        let delivery = delivery.map(|delivery| Delivery::new(&self.vault, grant, delivery, part));
         if let Some(delivery) = &delivery {
             delivery
                 .record_intents(&self.vault)

@@ -429,6 +429,7 @@ fn admit_window_update(
             births,
             peer_rows,
             delivered,
+            tombstones: crate::sync::ingest::delivered_tombstones(&admitted.get_map("tombstones")),
             born_with,
             placements,
             lane: lane.clone(),
