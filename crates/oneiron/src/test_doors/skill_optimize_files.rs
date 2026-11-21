@@ -263,6 +263,7 @@ impl HeldOutReplayNotes for MarkerScorer {
                 rule: None,
                 local: None,
                 system_one: Some(&self.provider),
+                precision: None,
                 escalation: None,
                 big: None,
                 human: &NoPerson,

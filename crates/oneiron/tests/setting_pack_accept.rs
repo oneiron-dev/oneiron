@@ -17,6 +17,15 @@
 //!   and the door's head then holds nothing back;
 //! - a vault with no authority root is one machine: its yes appends nothing.
 //!
+//! A table row per act (FIX SETTING-PACK-TABLE-ERASED-ROW-BLOCKS-SAME-TABLE): the door's head and
+//! the owner's yes each carry the table's bytes in a row of their own, and a reader takes any copy
+//! that is the table:
+//! - a copy erased here keeps no later yes to the same table from bringing its own copy, which
+//!   lands that yes;
+//! - a yes on a build that weighed the table from the bytes beside another yes carries a copy;
+//! - a vault that holds the one row per pack and table that earlier builds wrote reads it as
+//!   before.
+//!
 //! Review fixes (stage 7c-3c review):
 //! - on an install that is not the owner's machine, his yes carries the owner key's proof the
 //!   install holds, so it stands, where without it the yes would wait and be refused;
@@ -33,16 +42,21 @@ use std::sync::Arc;
 
 use oneiron::authority::{HostSlipIssuer, MachineOwnership, MachineRole};
 use oneiron::consent::AuthenticatedOwner;
+#[cfg(feature = "sync")]
+use oneiron::deletion::DeleteEntityOptions;
 use oneiron::memory::Memory;
 use oneiron::setting::{ENGINE_PACK, ENGINE_PACK_VERSION, PackApplied, Setter};
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::invoke;
+#[cfg(feature = "sync")]
+use oneiron::test_doors::setting::land_pack_table_from_peer;
 use oneiron::test_doors::setting::{
-    EnrolledMachine, PackHeadView, apply_pack_defaults_at, enroll_machine_with_key,
-    land_pack_table, land_setting_pack_accept_from, land_setting_pack_head_from, pack_head_digest,
-    pack_head_version, pack_row_revision, pack_table_here, pack_table_of, setting_change,
-    setting_pack_accept_frontier_of, setting_pack_accepts, setting_pack_frontier_of,
-    setting_pack_heads,
+    EnrolledMachine, PackHeadView, SignedSettingAct, apply_pack_defaults_at,
+    enroll_machine_with_key, land_pack_table, land_pack_table_shared_row,
+    land_setting_pack_accept_from, land_setting_pack_head_from, land_signed_pack_act,
+    pack_head_digest, pack_head_version, pack_row_revision, pack_table_here, pack_table_of,
+    setting_change, setting_pack_accept_frontier_of, setting_pack_accepts,
+    setting_pack_frontier_of, setting_pack_heads, sign_setting_pack_accept_from,
 };
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
@@ -184,12 +198,39 @@ impl Fixture {
         .expect("the act lands")
     }
 
-    /// Lands `pack`'s table of `defaults` beside its head acts, as a peer's row arrives; its
-    /// digest.
-    fn table_arrives(&self, defaults: &[(&str, Value)]) -> String {
+    /// The owner's yes to the engine pack's defaults `accepted` of the table of `defaults`,
+    /// decided on `machine` under `version` and signed on the pack's acts as they stand now, not
+    /// landed; with that table's digest and bytes.
+    fn sign_yes_from(
+        &self,
+        machine: &EnrolledMachine,
+        (version, defaults): (&str, &[(&str, Value)]),
+        accepted: &[&str],
+    ) -> (SignedSettingAct, String, Vec<u8>) {
         let (digest, bytes) = pack_table_of(ENGINE_PACK, defaults).expect("the table encodes");
-        land_pack_table(&self.vault, (ENGINE_PACK, &digest), &bytes).expect("the row lands");
-        digest
+        let frontier =
+            setting_pack_accept_frontier_of(&self.vault, (ENGINE_PACK, &digest)).expect("frontier");
+        let yes = sign_setting_pack_accept_from(
+            &self.vault,
+            (machine, &frontier),
+            (ENGINE_PACK, version, &digest, &[]),
+            (self.owner, accepted),
+            T0,
+        )
+        .expect("the act signs");
+        (yes, digest, bytes)
+    }
+
+    /// Lands `held` as the row of the engine pack's table `digest` beside `yes`, as a peer's row
+    /// arrives (before or after its act); the row's id.
+    fn table_arrives(&self, (yes, digest): (&SignedSettingAct, &str), held: &[u8]) -> EntityId {
+        let act = yes.hash().expect("the act hashes");
+        land_pack_table(&self.vault, (ENGINE_PACK, digest), &act, held).expect("the row lands")
+    }
+
+    /// Lands `yes` here, as a peer's entry lands: whether the fold here counts it.
+    fn land_yes(&self, yes: &SignedSettingAct) -> bool {
+        land_signed_pack_act(&self.vault, yes, T0).expect("the act lands")
     }
 }
 
@@ -267,13 +308,16 @@ fn the_owners_yes_on_a_rooted_vault_appends_one_head_act_naming_its_table_and_ke
     assert_eq!(heads[0].owner, None);
     assert_eq!(heads[0].digest, table);
 
-    // The table the yes names is beside it.
+    // The table the yes names is beside it, and beside the door's head, each in a row of its
+    // own: the yes's is a copy, as this build does not ship the table.
     let (digest, bytes) = pack_table_of(ENGINE_PACK, &[(CAP, json!(20))]).expect("encodes");
     assert_eq!(digest, table);
-    assert_eq!(
-        pack_table_here(&fx.vault, (ENGINE_PACK, &table)).expect("the row reads"),
-        Some(bytes)
-    );
+    for act in [yeses[0].act, heads[0].act] {
+        assert_eq!(
+            pack_table_here(&fx.vault, (ENGINE_PACK, &table), &act).expect("the row reads"),
+            Some(bytes.clone())
+        );
+    }
 }
 
 #[test]
@@ -316,14 +360,16 @@ fn a_peers_yes_to_a_newer_engine_table_lands_from_the_table_beside_it() {
         .expect("this build's defaults");
 
     // A newer build loosens the cap and tightens the budget; its door held the cap, and the
-    // owner said yes to it there. The table's bytes arrive beside the act.
-    let table = fx.table_arrives(&[(CAP, json!(20)), (BUDGET, json!(5))]);
+    // owner said yes to it there. The table's bytes arrive beside the act, before it.
+    let newer: &[(&str, Value)] = &[(CAP, json!(20)), (BUDGET, json!(5))];
+    let (yes, table, bytes) = fx.sign_yes_from(&other, ("2.0.0", newer), &[CAP]);
+    fx.table_arrives((&yes, &table), &bytes);
     assert_eq!(
         value(&owner, CAP),
         json!(10),
         "a table alone proves nothing"
     );
-    assert!(fx.yes_from(&other, ("2.0.0", &table), &[CAP]), "counted");
+    assert!(fx.land_yes(&yes), "counted");
 
     assert_eq!(value(&owner, CAP), json!(20), "the owner's yes");
     assert_eq!(
@@ -356,7 +402,8 @@ fn a_yes_to_a_newer_table_whose_bytes_have_not_arrived_lands_when_they_do() {
     assert_eq!(value(&owner, CAP), json!(10), "as before the yes");
     assert_eq!(fx.version(), "1.0.0");
 
-    land_pack_table(&fx.vault, (ENGINE_PACK, &table), &bytes).expect("the row lands");
+    let yes = fx.accepts(&table)[0].act;
+    land_pack_table(&fx.vault, (ENGINE_PACK, &table), &yes, &bytes).expect("the row lands");
     assert_eq!(value(&owner, CAP), json!(20));
     assert_eq!(fx.version(), "2.0.0");
 }
@@ -368,11 +415,11 @@ fn a_newer_table_beside_a_yes_that_is_not_the_named_table_reads_strictest() {
     let other = fx.second_machine(7);
     fx.update_at("1.0.0", &[(CAP, json!(10))])
         .expect("this build's defaults");
-    let (table, _) = pack_table_of(ENGINE_PACK, &[(CAP, json!(20))]).expect("encodes");
+    let (yes, table, _) = fx.sign_yes_from(&other, ("2.0.0", &[(CAP, json!(20))]), &[CAP]);
     let (_, other_bytes) = pack_table_of(ENGINE_PACK, &[(CAP, json!(30))]).expect("encodes");
-    land_pack_table(&fx.vault, (ENGINE_PACK, &table), &other_bytes).expect("the row lands");
+    fx.table_arrives((&yes, &table), &other_bytes);
 
-    assert!(fx.yes_from(&other, ("2.0.0", &table), &[CAP]), "counted");
+    assert!(fx.land_yes(&yes), "counted");
     let read = call(&owner, GET, json!({ "key": CAP }));
     assert_eq!(read["value"], json!(0), "the key's strictest value");
     assert_eq!(
@@ -383,15 +430,40 @@ fn a_newer_table_beside_a_yes_that_is_not_the_named_table_reads_strictest() {
 }
 
 #[test]
+fn a_key_a_yes_left_strictest_is_weighed_from_its_row_when_this_build_ships_a_newer_table() {
+    let fx = Fixture::rooted();
+    let owner = fx.as_owner();
+    let other = fx.second_machine(7);
+    fx.update_at("1.0.0", &[(CAP, json!(10))])
+        .expect("this build's defaults");
+    let (yes, table, _) = fx.sign_yes_from(&other, ("2.0.0", &[(CAP, json!(20))]), &[CAP]);
+    let (_, other_bytes) = pack_table_of(ENGINE_PACK, &[(CAP, json!(30))]).expect("encodes");
+    fx.table_arrives((&yes, &table), &other_bytes);
+    assert!(fx.land_yes(&yes), "counted");
+    assert_eq!(value(&owner, CAP), json!(0), "the key's strictest value");
+
+    // This build now ships a table newer than the yes's, which changes nothing here any more: the
+    // door weighs the key from the row the yes found, and its looser default waits for a holder.
+    let applied = fx
+        .update_at("3.0.0", &[(CAP, json!(30))])
+        .expect("this build's defaults");
+    assert!(applied.lost.is_empty(), "{applied:?}");
+    assert_eq!(value(&owner, CAP), json!(10), "the row before the yes");
+    assert_eq!(fx.version(), "3.0.0");
+    assert_eq!(entry(&owner, CAP)["proposed_default"]["value"], json!(30));
+}
+
+#[test]
 fn a_peers_yes_to_an_older_table_changes_nothing_here() {
     let fx = Fixture::rooted();
     let owner = fx.as_owner();
     let other = fx.second_machine(7);
     fx.update_at("2.0.0", &[(CAP, json!(30))])
         .expect("this build's defaults");
-    let older = fx.table_arrives(&[(CAP, json!(20))]);
+    let (yes, older, bytes) = fx.sign_yes_from(&other, ("1.0.0", &[(CAP, json!(20))]), &[CAP]);
+    fx.table_arrives((&yes, &older), &bytes);
 
-    assert!(fx.yes_from(&other, ("1.0.0", &older), &[CAP]), "counted");
+    assert!(fx.land_yes(&yes), "counted");
     assert_eq!(value(&owner, CAP), json!(10));
     assert_eq!(fx.version(), "2.0.0");
     assert_eq!(entry(&owner, CAP)["proposed_default"]["value"], json!(30));
@@ -545,4 +617,100 @@ fn a_yes_a_later_entry_holds_back_gives_back_the_rows_it_landed() {
     );
     assert_eq!(accepted, json!({ "keys": [CAP] }));
     assert_eq!(value(&owner, CAP), json!(20));
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn a_table_copy_erased_here_keeps_no_later_yes_to_the_table_out() {
+    let fx = Fixture::rooted();
+    let owner = fx.as_owner();
+    let other = fx.second_machine(7);
+    fx.update_at("1.0.0", &[(CAP, json!(10))])
+        .expect("this build's defaults");
+
+    // The owner's yes to a newer table on the other machine: its copy of the table arrives, and
+    // is erased here before the yes does.
+    let newer: &[(&str, Value)] = &[(CAP, json!(20))];
+    let (first, table, bytes) = fx.sign_yes_from(&other, ("2.0.0", newer), &[CAP]);
+    let first_act = first.hash().expect("the act hashes");
+    let row = land_pack_table_from_peer(&fx.vault, (ENGINE_PACK, &table), &first_act, &bytes)
+        .expect("the row lands");
+    assert!(
+        fx.vault
+            .delete_entity_with_options(&row, DeleteEntityOptions { purge: true })
+            .expect("the erase"),
+        "the row was here"
+    );
+    assert!(fx.land_yes(&first), "counted");
+    assert_eq!(value(&owner, CAP), json!(0), "the key's strictest value");
+    assert_eq!(fx.version(), "1.0.0", "no table was weighed");
+
+    // The owner says yes to the same table there again: a new act, with its own copy beside it.
+    let (second, again, _) = fx.sign_yes_from(&other, ("2.0.0", newer), &[CAP]);
+    assert_eq!(again, table);
+    assert!(fx.land_yes(&second), "counted");
+    let second_act = second.hash().expect("the act hashes");
+    let landed = land_pack_table_from_peer(&fx.vault, (ENGINE_PACK, &table), &second_act, &bytes);
+    assert!(
+        landed.is_ok(),
+        "an erased copy refuses no later act's copy: {landed:?}"
+    );
+    assert_eq!(value(&owner, CAP), json!(20), "the owner's yes");
+    assert_eq!(fx.version(), "2.0.0");
+    assert_eq!(fx.digest(), table);
+}
+
+#[test]
+fn a_yes_on_a_build_that_weighed_the_table_from_a_copy_carries_a_copy() {
+    let fx = Fixture::rooted();
+    let owner = fx.as_owner();
+    let other = fx.second_machine(7);
+    fx.update_at("1.0.0", &[(CAP, json!(10)), (BUDGET, json!(10))])
+        .expect("this build's defaults");
+
+    // A newer build loosens both keys, and the owner said yes to the cap there. This install
+    // weighs the table from the copy beside that yes: the cap lands, the budget waits.
+    let newer: &[(&str, Value)] = &[(CAP, json!(20)), (BUDGET, json!(20))];
+    let (yes, table, bytes) = fx.sign_yes_from(&other, ("2.0.0", newer), &[CAP]);
+    fx.table_arrives((&yes, &table), &bytes);
+    assert!(fx.land_yes(&yes), "counted");
+    assert_eq!(value(&owner, CAP), json!(20));
+    assert_eq!(fx.digest(), table);
+    assert_eq!(
+        entry(&owner, BUDGET)["proposed_default"]["value"],
+        json!(20)
+    );
+
+    // The owner's yes to the budget here: this build does not ship the table, so the yes carries
+    // the copy this install weighed it from, for a machine that never saw the first yes.
+    let accepted = call(
+        &owner,
+        ACCEPT,
+        json!({ "pack": ENGINE_PACK, "proposal": waiting_proposal(&owner, BUDGET) }),
+    );
+    assert_eq!(accepted, json!({ "keys": [BUDGET] }));
+    let yeses = fx.accepts(&table);
+    assert_eq!(yeses.len(), 1, "the yes replaces the first: {yeses:?}");
+    assert_eq!(yeses[0].accepted, vec![CAP.to_owned(), BUDGET.to_owned()]);
+    assert_eq!(
+        pack_table_here(&fx.vault, (ENGINE_PACK, &table), &yeses[0].act).expect("the row reads"),
+        Some(bytes)
+    );
+}
+
+#[test]
+fn a_yes_whose_table_is_in_the_row_earlier_builds_wrote_reads_it() {
+    let fx = Fixture::rooted();
+    let owner = fx.as_owner();
+    let other = fx.second_machine(7);
+    fx.update_at("1.0.0", &[(CAP, json!(10))])
+        .expect("this build's defaults");
+
+    // A vault holds the one row per pack and table that builds before rows per act wrote.
+    let (table, bytes) = pack_table_of(ENGINE_PACK, &[(CAP, json!(20))]).expect("encodes");
+    land_pack_table_shared_row(&fx.vault, (ENGINE_PACK, &table), &bytes).expect("the row lands");
+
+    assert!(fx.yes_from(&other, ("2.0.0", &table), &[CAP]), "counted");
+    assert_eq!(value(&owner, CAP), json!(20), "the owner's yes");
+    assert_eq!(fx.version(), "2.0.0");
 }

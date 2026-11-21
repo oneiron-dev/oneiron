@@ -441,6 +441,7 @@ fn review(fixture: &Fixture, critic: WriteActor, run: &str) -> oneiron::Result<R
             rule: None,
             local: Some(&script),
             system_one: None,
+            precision: None,
             escalation: None,
             big: None,
             human: &NoPerson,
