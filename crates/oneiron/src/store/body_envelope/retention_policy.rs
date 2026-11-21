@@ -367,6 +367,19 @@ impl Store {
         }
         Ok(())
     }
+    /// How many holder records of kept body instances this vault's local
+    /// custody keeps; `0` without one (test doors).
+    ///
+    /// # Errors
+    ///
+    /// Custody faults, and a record that does not decode.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn image_holder_record_count(&self) -> Result<usize> {
+        match self.core.key_custody.local() {
+            Some(custody) => custody.image_holder_record_count(),
+            None => Ok(0),
+        }
+    }
 }
 
 impl crate::Vault {

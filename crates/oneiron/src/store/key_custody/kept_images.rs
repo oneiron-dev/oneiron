@@ -168,6 +168,17 @@ impl LocalCustody<'_> {
         Ok(kept)
     }
 
+    /// How many holder records this custody keeps, each read: one per kept
+    /// image copy and one per archive a restore's swap parked.
+    ///
+    /// # Errors
+    ///
+    /// Custody faults, and a record that does not decode.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn image_holder_record_count(&self) -> Result<usize> {
+        Ok(self.holder_records()?.len())
+    }
+
     fn holder_records(&self) -> Result<Vec<(PathBuf, ([u8; 32], Vec<[u8; 16]>))>> {
         let dir = self.journal()?.dir().join(IMAGES);
         let entries = match std::fs::read_dir(&dir) {
