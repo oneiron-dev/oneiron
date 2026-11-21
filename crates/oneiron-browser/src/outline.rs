@@ -304,17 +304,13 @@ impl<'a> Walk<'a> {
         // A closed menu, list or tree shows its own row and none of its items.
         if state(raw, "expanded").as_deref() != Some("false") {
             let by_id = self.by_id;
-            let children: Vec<&'a Value> = raw
-                .get("childIds")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter_map(|child| child.as_str().and_then(|id| by_id.get(id).copied()))
-                .collect();
             let inside = in_control || control;
             stack.extend(
-                children
+                raw.get("childIds")
+                    .and_then(Value::as_array)
                     .into_iter()
+                    .flatten()
+                    .filter_map(|child| child.as_str().and_then(|id| by_id.get(id).copied()))
                     .rev()
                     .map(|child| Step::Enter(child, inside, frame)),
             );

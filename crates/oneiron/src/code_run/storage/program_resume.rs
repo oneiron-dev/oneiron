@@ -10,12 +10,14 @@
 //! record's rows, the write receipts and the program's steps hold those. A
 //! restarter reads the head and its pages, never the record whole.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::code_run::payload::{decode_self_dispatch_outcome, self_call_request_value};
 use crate::code_run::replay::{CodeRunBridgeCall, CodeRunReplayRecord};
-use crate::code_run::spawn_replay::{ReplayRequestMatch, replay_request_match};
+use crate::code_run::spawn_replay::{BaseKnownRead, ReplayRequestMatch, replay_request_match};
 use crate::code_run::types::{SelfCall, SelfDispatchOutcome, SelfDurableWait};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -261,6 +263,17 @@ fn put_resume_in_txn(
     let kept = previous.as_ref().map_or(0, |head| {
         head.applied.min(applied).min(commit.injected) / PROGRAM_RESUME_PAGE_CALLS
     });
+    // Each request digest a page lists is its row's as this writer stored
+    // it, past the put fence and the side-row wall (blind review round 1 of
+    // #9692): the commit read its calls off the rows before the wall, where
+    // a passphrase custody holds is still written as given, and a row the
+    // fence erased keeps its stand-in identity, never the live one.
+    let held = super::replay_rows::held(&vault.store, &*txn, &run)?;
+    let stored: BTreeMap<u64, &CodeRunBridgeCall> = held
+        .iter()
+        .flat_map(|held| &held.bridge_calls)
+        .map(|row| (row.seq, row))
+        .collect();
     for page in kept..pages {
         let start = usize::try_from(page * PROGRAM_RESUME_PAGE_CALLS)
             .map_err(|_| Error::ArithmeticOverflow("program resume page"))?;
@@ -268,7 +281,18 @@ fn put_resume_in_txn(
             .calls
             .len()
             .min(start.saturating_add(PROGRAM_RESUME_PAGE_CALLS as usize));
-        let calls = commit.calls[start..end].to_vec();
+        let calls = commit.calls[start..end]
+            .iter()
+            .map(|call| -> Result<ProgramResumeCall> {
+                let row = stored.get(&call.row).ok_or(Error::CorruptedIndex(
+                    "a program resume call names a row its record does not hold",
+                ))?;
+                Ok(ProgramResumeCall {
+                    request_digest: row.request_identity()?,
+                    ..*call
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
         RESUME.put(
             vault,
             txn,
@@ -321,12 +345,19 @@ impl CodeRunBridgeCall {
     /// the very call it recorded, the same effect and canonical request
     /// under the row's own bridge stamp (a request the side-row wall masked
     /// still matches the secrets it holds); a miss for the same spawn asked
-    /// for another project or objectives; drift for any other call.
+    /// for another project or objectives; drift for any other call. A value
+    /// base custody holds, read through `base_known`, meets the handle it
+    /// took in the row (FIX REPLAY-COMPARE-KNOWN-MATCHER).
     ///
     /// # Errors
     ///
-    /// A request or an outcome that does not encode or decode.
-    pub(crate) fn program_answer_for(&self, call: &SelfCall) -> Result<ProgramRowAnswer> {
+    /// A request or an outcome that does not encode or decode, or the read
+    /// of base custody's values.
+    pub(crate) fn program_answer_for(
+        &self,
+        call: &SelfCall,
+        base_known: BaseKnownRead<'_>,
+    ) -> Result<ProgramRowAnswer> {
         if self.effect != call.effect() {
             return Ok(ProgramRowAnswer::Drifted);
         }
@@ -337,7 +368,7 @@ impl CodeRunBridgeCall {
         // A re-offered call meets its row by the guest's original request
         // (FIX 1442 H4: match stays on original).
         Ok(
-            match replay_request_match(self.effect, &self.request, &request)? {
+            match replay_request_match(self.effect, &self.request, &request, Some(base_known))? {
                 ReplayRequestMatch::Hit => ProgramRowAnswer::Settled(Box::new(
                     decode_self_dispatch_outcome(&self.outcome)?,
                 )),
@@ -450,4 +481,45 @@ impl Vault {
         }
         Ok(None)
     }
+}
+
+/// Puts `record`, the replay record of `actor`'s run `run`, in the vault's
+/// own writer, and joins there a pinned entry's resume checkpoint listing
+/// each of its calls, read off its rows before the put, as a checkpoint's
+/// commit does: the door of `test_doors::erased_request_identity`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_record_with_resume_listing_its_calls(
+    vault: &Vault,
+    record: &CodeRunReplayRecord,
+    run: EntityId,
+    actor: EntityId,
+) -> Result<()> {
+    let calls = record
+        .bridge_calls
+        .iter()
+        .map(|row| program_resume_call(row, None))
+        .collect::<Result<Vec<_>>>()?;
+    let commit = ProgramResumeCommit {
+        attempt: [0; 16],
+        skill: EntityId::now(),
+        content_hash: String::new(),
+        contract_digest: [0; 32],
+        entry_start: 0,
+        calls,
+        injected: 0,
+        wait: None,
+        at: 1,
+        preparation: None,
+    };
+    let mut wtxn = vault.store.env.write_txn()?;
+    super::response_owners::stamp_response_owner_in_txn(
+        vault,
+        &mut wtxn,
+        record.run_id,
+        run,
+        actor,
+    )?;
+    vault.put_code_run_replay_record_in_txn(&mut wtxn, record)?;
+    join_program_resume_in_txn(vault, &mut wtxn, record, &commit);
+    Ok(wtxn.commit()?)
 }

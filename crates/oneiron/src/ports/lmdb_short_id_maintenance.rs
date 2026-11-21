@@ -86,9 +86,20 @@ pub(super) fn recompute_short_id_hashes(
             return Err(Error::InvalidKey);
         }
 
-        // The logical body's hash: a file-plane ASSET's from its manifest
-        // (FIX 3677).
-        let new_hash = crate::store::short_content_hash_in_txn(&vault.store, wtxn, &id, &blob)?;
+        // The hash a live read issues the row's short ref with: a
+        // document-backed row's document projection, never its stored
+        // pointer (FIX RECOMPUTE-SHORT-ID-POINTER-HASH). A NOTE and a row no
+        // live read serves keep the stored row's logical body hash, a
+        // file-plane ASSET's from its manifest (FIX 3677).
+        let new_hash = match crate::vault::entity_revision::live_read_short_content_hash_in_txn(
+            &vault.store,
+            wtxn,
+            &id,
+            &blob,
+        )? {
+            Some(hash) => hash,
+            None => crate::store::short_content_hash_in_txn(&vault.store, wtxn, &id, &blob)?,
+        };
         if new_hash != current_hash {
             let mut updated_value = Vec::with_capacity(short_id.len() + 1);
             updated_value.extend_from_slice(short_id.as_bytes());

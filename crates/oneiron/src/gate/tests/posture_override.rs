@@ -490,7 +490,19 @@ fn opt_out_receipt_names_value_row_and_precedence_fallback() -> Result<()> {
         ),
     ] {
         let (_tmp, vault) = temp_vault();
-        put_policy_manifest_bytes(&vault, test_id(seed), &body)?;
+        if seed == 0xB0 {
+            // FIX 11769: only authenticated authoring makes this precedence row effective.
+            let actor = vault.ensure_embedded_owner_actor().expect("embedded owner");
+            let owner = vault.authenticate_owner(
+                actor,
+                &actor.to_hex(),
+                true,
+                crate::store::GateDecisionId::now(),
+            )?;
+            vault.install_owner_policy_manifest(&owner, test_id(seed), body, 1)?;
+        } else {
+            put_policy_manifest_bytes(&vault, test_id(seed), &body)?;
+        }
         opted_out_contact(
             &vault,
             test_id(seed + 1),

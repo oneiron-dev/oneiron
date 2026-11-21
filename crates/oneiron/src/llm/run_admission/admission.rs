@@ -313,6 +313,17 @@ impl RunAdmission {
         next
     }
 
+    /// The refusal of the first of this handle's text pre-send conditions
+    /// that refuses now, if one does: a call whose own condition fell (a
+    /// source fence whose row was withdrawn) ends with it, not as a call an
+    /// offer's rest stopped.
+    #[must_use]
+    pub fn text_dispatch_refusal(&self) -> Option<LlmError> {
+        self.text_dispatch_releases
+            .iter()
+            .find_map(|release| release().err())
+    }
+
     #[must_use]
     pub fn run(&self) -> &str {
         &self.inner.run

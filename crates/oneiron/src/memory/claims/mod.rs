@@ -294,7 +294,9 @@ impl RecordRefusal {
 pub use crate::deletion::SafeDeleteReason;
 
 #[doc(hidden)]
-pub use oneiron_records::memory::claims::{DeleteReceipt, DeleteRequestState, PendingWrite};
+pub use oneiron_records::memory::claims::{
+    DELETE_RECEIPT_VERSION_RELEASE, DeleteReceipt, DeleteRequestState, PendingWrite,
+};
 
 /// One receipt: a gate decision, or, when `vault.receipts` names `kinds`,
 /// a receipt of the unified family in the same shape.

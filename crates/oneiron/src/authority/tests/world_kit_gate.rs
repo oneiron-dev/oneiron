@@ -7,6 +7,7 @@ use super::machine_identity::{Host, host, request_for};
 use super::support::ed_key;
 use super::world_key_doors::{Fresh, enrol_own, fresh_install, own_request};
 use super::world_privacy::stored_entries;
+use super::world_reissue::{profiled, with_predecessor};
 use super::*;
 use crate::Vault;
 use crate::error::{Error, KitRecord, SecretError};
@@ -88,11 +89,15 @@ fn publish_with_machine(host: &Host, seed: &RecoveryRootSeed, key: u8) -> Recove
         machine: request.machine,
         owner: host.owner.actor(),
         machine_key: request.machine_key,
+        device_class: request.device_class,
         encryption_key: request.encryption_key.clone(),
         role: MachineRole::Owned(MachineOwnership::Yours),
         revision: 1,
         machine_proof: request.machine_proof,
         seen_world_edits: BTreeSet::new(),
+        carrier: None,
+        act: None,
+        restored_from: None,
     });
     let fold = host.vault.authority_fold().unwrap();
     let entry = anchor_signed_entry(&fold, &seed.anchor(), mark, 2).unwrap();
@@ -121,16 +126,12 @@ fn pinned(vault: &Vault) -> Option<RecoveryRootId> {
 fn a_forged_kit_piece_never_pins() {
     let host = host();
     enrol_own(&host);
+    with_predecessor(&host, &host.vault, &host.owner);
     let prepared = host.vault.prepare_owner_root(&host.owner).unwrap();
     let genuine = rebuilt(host.vault_id, prepared.seed(), 2);
     let owners = prepared.seed().public(&host.vault_id).unwrap().id;
     host.vault
-        .activate_owner_root(
-            &host.owner,
-            EditOrigin::ThisMachine,
-            prepared,
-            &BTreeSet::new(),
-        )
+        .activate_owner_root(&host.owner, prepared, &BTreeSet::new())
         .unwrap();
     let theirs_seed = RecoveryRootSeed::generate().unwrap();
     let theirs = publish_with_machine(&host, &theirs_seed, 61);
@@ -139,40 +140,47 @@ fn a_forged_kit_piece_never_pins() {
     let Fresh { vault, owner, .. } = &fresh_install(&host);
     let own = own_request(vault);
     let stored = stored_entries(vault).len();
-    let here = EditOrigin::ThisMachine;
     assert!(unverified(
-        vault.restore_world_keys(owner, here, &forged, None),
+        vault.restore_world_keys(owner, &forged, None),
         KitRecord::Stored
     ));
     assert!(unverified(
-        vault.anchor_machine(owner, here, &forged, &own, None, None),
+        vault.anchor_machine(owner, &forged, &own, None, None),
         KitRecord::Stored
     ));
     let owners_print = Some(KitConfirmation::Fingerprint(owners));
     assert!(
         vault
-            .restore_world_keys(owner, here, &forged, owners_print)
+            .restore_world_keys(owner, &forged, owners_print)
             .is_err()
     );
     assert!(
         vault
-            .anchor_machine(owner, here, &forged, &own, None, owners_print)
+            .anchor_machine(owner, &forged, &own, None, owners_print)
             .is_err()
     );
     assert_eq!(stored_entries(vault).len(), stored);
     assert_eq!(pinned(vault), None);
 
-    vault
-        .restore_world_keys(owner, here, &genuine, None)
-        .unwrap();
+    vault.restore_world_keys(owner, &genuine, None).unwrap();
     let view = vault.owner_root_view(None, 16).unwrap();
     assert_eq!(view.pinned, Some(owners));
     assert!(view.foreign.contains_key(&theirs));
 
-    let Fresh { vault, owner, .. } = &fresh_install(&host);
+    // A restored copy stands only once a live machine joins it
+    // (RESTORED-COPIES-ENROL-EACH-OTHER): the host's enrolment joins it, as
+    // work or school, so only the genuine piece's anchor makes it mine.
+    let joined = fresh_install(&host);
+    profiled(
+        &host,
+        &joined.vault,
+        MachineRole::Owned(MachineOwnership::WorkSchool),
+    );
+    let Fresh { vault, owner, .. } = &joined;
+    assert!(!vault.local_machine().unwrap().unwrap().mine);
     let own = own_request(vault);
     let anchored = vault
-        .anchor_machine(owner, here, &genuine, &own, None, None)
+        .anchor_machine(owner, &genuine, &own, None, None)
         .unwrap();
     assert!(anchored.repin.is_some());
     assert_eq!(pinned(vault), Some(owners));
@@ -187,30 +195,41 @@ fn a_forged_kit_piece_never_pins() {
 #[test]
 fn a_withheld_owner_root_is_published_again_from_the_kit() {
     let host = host();
-    enrol_own(&host);
+    let me = enrol_own(&host);
     let owners_seed = RecoveryRootSeed::generate().unwrap();
     let owners = owners_seed.public(&host.vault_id).unwrap().id;
+    // WAYBACK-KIT-RESTORE-NO-LIVE-R = A (29240de17a6, #8798): the kit-restore
+    // door requires the kit's root authority key R live on the roster
+    // (kit_restore.rs:131-148). Enrol R on the host before install, without
+    // publishing its root record, so the checkpoint-carried fresh install holds
+    // R live while the root stays withheld.
+    host.vault
+        .enrol_recovery_authority_key_as_host(
+            &ActAuthority::Owner(host.owner.clone(), ActSurface::ThisInstall),
+            me,
+            &owners_seed,
+            &host.issuer,
+        )
+        .unwrap();
     let theirs = publish_with_machine(&host, &RecoveryRootSeed::generate().unwrap(), 62);
     let one = rebuilt(host.vault_id, &owners_seed, 1);
     let two = rebuilt(host.vault_id, &owners_seed, 2);
-    let here = EditOrigin::ThisMachine;
-
     let Fresh { vault, owner, .. } = &fresh_install(&host);
     assert!(unverified(
-        vault.restore_world_keys(owner, here, &one, None),
+        vault.restore_world_keys(owner, &one, None),
         KitRecord::Mismatch
     ));
     assert_eq!(pinned(vault), None);
     assert!(vault.local_machine().unwrap().is_none());
     vault
-        .restore_world_keys(owner, here, &one, Some(KitConfirmation::Owner))
+        .restore_world_keys(owner, &one, Some(KitConfirmation::Owner(owners)))
         .unwrap();
     let view = vault.owner_root_view(None, 16).unwrap();
     assert_eq!(view.pinned, Some(owners));
     assert!(view.foreign.contains_key(&theirs));
 
     let Fresh { vault, owner, .. } = &fresh_install(&host);
-    vault.restore_world_keys(owner, here, &two, None).unwrap();
+    vault.restore_world_keys(owner, &two, None).unwrap();
     assert_eq!(pinned(vault), Some(owners));
     assert!(vault.owner_root_records().unwrap().contains_key(&owners));
 }
@@ -222,20 +241,31 @@ fn a_withheld_owner_root_is_published_again_from_the_kit() {
 #[test]
 fn with_no_root_stored_the_kit_is_never_a_lockout() {
     let host = host();
-    enrol_own(&host);
+    let me = enrol_own(&host);
     let seed = RecoveryRootSeed::generate().unwrap();
     let root = seed.public(&host.vault_id).unwrap().id;
+    // WAYBACK-KIT-RESTORE-NO-LIVE-R = A (29240de17a6, #8798): the kit-restore
+    // door requires the kit's root authority key R live on the roster
+    // (kit_restore.rs:131-148). Enrol R on the host before install. An R
+    // enrolment is a roster row, not an OwnerRoot record, so "no root stored"
+    // still holds.
+    host.vault
+        .enrol_recovery_authority_key_as_host(
+            &ActAuthority::Owner(host.owner.clone(), ActSurface::ThisInstall),
+            me,
+            &seed,
+            &host.issuer,
+        )
+        .unwrap();
     let one = rebuilt(host.vault_id, &seed, 1);
     let two = rebuilt(host.vault_id, &seed, 2);
-    let here = EditOrigin::ThisMachine;
-
     let Fresh { vault, owner, .. } = &fresh_install(&host);
     assert!(unverified(
-        vault.restore_world_keys(owner, here, &one, None),
+        vault.restore_world_keys(owner, &one, None),
         KitRecord::None
     ));
     let unstored = RecoveryRootId([7; 32]);
-    let report = vault.pin_owner_root(owner, here, unstored).unwrap();
+    let report = vault.pin_owner_root(owner, unstored).unwrap();
     assert_eq!(report.awaiting, Some(unstored));
     // The refusal came before any write, and a fingerprint the log does not
     // hold yet is only awaited, in the pin row: this genuinely fresh install
@@ -243,12 +273,12 @@ fn with_no_root_stored_the_kit_is_never_a_lockout() {
     // is named by the identity.
     assert!(vault.local_machine().unwrap().is_none());
     vault
-        .restore_world_keys(owner, here, &one, Some(KitConfirmation::Owner))
+        .restore_world_keys(owner, &one, Some(KitConfirmation::Owner(root)))
         .unwrap();
     assert_eq!(pinned(vault), Some(root));
 
     let Fresh { vault, owner, .. } = &fresh_install(&host);
-    vault.restore_world_keys(owner, here, &two, None).unwrap();
+    vault.restore_world_keys(owner, &two, None).unwrap();
     assert_eq!(pinned(vault), Some(root));
 }
 
@@ -259,18 +289,14 @@ fn with_no_root_stored_the_kit_is_never_a_lockout() {
 fn an_old_machine_never_approves_a_new_one_with_a_forged_piece() {
     let host = host();
     enrol_own(&host);
+    with_predecessor(&host, &host.vault, &host.owner);
     let prepared = host.vault.prepare_owner_root(&host.owner).unwrap();
     let owners = prepared.seed().public(&host.vault_id).unwrap().id;
     host.vault
-        .activate_owner_root(
-            &host.owner,
-            EditOrigin::ThisMachine,
-            prepared,
-            &BTreeSet::new(),
-        )
+        .activate_owner_root(&host.owner, prepared, &BTreeSet::new())
         .unwrap();
     let theirs_seed = RecoveryRootSeed::generate().unwrap();
-    publish_with_machine(&host, &theirs_seed, 63);
+    let theirs = publish_with_machine(&host, &theirs_seed, 63);
     let forged = rebuilt(host.vault_id, &theirs_seed, 1);
     let new = request_for(host.vault_id, EntityId::now(), &ed_key(64));
     let unpinned = fresh_install(&host);
@@ -280,17 +306,10 @@ fn an_old_machine_never_approves_a_new_one_with_a_forged_piece() {
         (&unpinned.vault, &unpinned.owner, None),
     ] {
         let stored = stored_entries(vault).len();
-        for confirm in [None, Some(KitConfirmation::Owner)] {
+        for confirm in [None, Some(KitConfirmation::Owner(theirs))] {
             assert!(
                 vault
-                    .anchor_machine(
-                        owner,
-                        EditOrigin::ThisMachine,
-                        &forged,
-                        &new,
-                        Some(new.code()),
-                        confirm,
-                    )
+                    .anchor_machine(owner, &forged, &new, Some(new.code()), confirm)
                     .is_err()
             );
         }

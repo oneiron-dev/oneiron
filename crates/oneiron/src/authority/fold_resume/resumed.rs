@@ -26,6 +26,9 @@ pub(in crate::authority) struct Resumed<'a> {
     pub(in crate::authority) chain: Vec<(AuthorityEntryHash, &'a FoldState)>,
     /// Every binding any state holds, by key, the new rows' included.
     pub(in crate::authority) writers: &'a BTreeMap<AuthorityKey, BTreeSet<(EntityId, String)>>,
+    /// Every binding any state of the base holds, by key: a base row is a
+    /// write frontier only for a binding in it (FIX 11760).
+    pub(in crate::authority) base_writers: &'a BTreeMap<AuthorityKey, BTreeSet<(EntityId, String)>>,
     /// A frontier the base cannot answer: an earlier row may hold a binding
     /// the final one now judges differently.
     pub(in crate::authority) missed: Cell<bool>,
@@ -37,7 +40,8 @@ impl RowStates for Resumed<'_> {
         merged: &FoldState,
         _valid: &ValidEntries,
     ) -> BTreeSet<AuthorityEntryHash> {
-        // No chain row is a machine profile.
+        // A resumed chain holds no machine profile; an adopted image's tail
+        // brings its own marks in `marks` (FIX 11760).
         self.marks
             .iter()
             .filter(|(_, proof)| proof.accepted(merged))
@@ -68,7 +72,7 @@ impl RowStates for Resumed<'_> {
             let required = merged
                 .actor_revocation_hashes
                 .get(key)
-                .cloned()
+                .map(|hashes| hashes.to_btree_set())
                 .unwrap_or_default();
             let unchanged = self.fold.actor_bindings.get(key).is_some_and(|old| {
                 old.status == ActorBindingStatus::Active
@@ -83,7 +87,17 @@ impl RowStates for Resumed<'_> {
                     .cloned()
                     .unwrap_or_default()
             } else {
-                if self.bound_keys.contains(key) {
+                // A base row is a frontier only where its own state binds
+                // the key live to this actor and class
+                // (`causal_write::is_frontier`): a key the base bound live,
+                // and to this binding in some state, may have one the base
+                // cannot name. A binding no base state holds, such as a
+                // rebinding to a new actor, has its frontiers in the chain
+                // alone (FIX 11760).
+                let held = self.base_writers.get(key).is_none_or(|bindings| {
+                    bindings.contains(&(binding.actor_ref, binding.actor_class.clone()))
+                });
+                if self.bound_keys.contains(key) && held {
                     self.missed.set(true);
                 }
                 BTreeSet::new()

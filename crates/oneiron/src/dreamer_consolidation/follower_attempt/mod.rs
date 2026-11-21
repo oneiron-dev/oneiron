@@ -11,13 +11,15 @@
 
 mod output;
 mod request;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::{output::cache_identity_digest_for_test, request::route_digest_for_test};
 
 use super::executor::ConsolidationExecutor;
 use super::roles::{DREAMER_EXTRACTION_ROLE, RoleCall, bind_reasoning};
 use super::step_charge::{StepChargeTally, reply_text, retry_fallback};
 use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerParkCause};
 use crate::dreamer_wake::follower::{
-    self, AskWork, CallEvidence, FoldWork, FollowerCall, KeyframeCommit, Next, Pin, Publication,
+    self, AskWork, CallEvidence, FoldWork, FollowerCall, KeyframeCommit, Next, Publication,
     Receipt, Sizing, Writer,
 };
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext, WakeRecipePolicy};
@@ -167,6 +169,9 @@ impl ConsolidationExecutor<'_> {
         let mut charges = StepChargeTally {
             units,
             step_bindings,
+            parse_retries: 0,
+            #[cfg(oneiron_test_support)]
+            spent_observations: Vec::new(),
         };
         let call = RoleCall::resolve(
             &self.roles,
@@ -288,9 +293,13 @@ impl ConsolidationExecutor<'_> {
             output::decode(response, &check_labels, &check_candidates).map(|_| ())
         };
         let before = (charges.units, charges.step_bindings.len());
+        // Sent on the rows its parts were read from: each rung, wait and
+        // resend of the step asks them first
+        // ([DREAMER-STEP-RESENDS-ERASED-SOURCE-WORDS]).
+        let call_backend = leg.call.call_backend(Some(work.sources.clone()));
         let (response, memoized) = match call_as_step_checked(
             &step,
-            leg.call.backend,
+            call_backend.get(),
             self.guard,
             request,
             &check,
@@ -355,13 +364,15 @@ impl ConsolidationExecutor<'_> {
                 {
                     charges.record_usage(usage);
                 }
-                return hand_back(leg, work, charges);
+                return hand_back(leg, work, charges)
+                    .map(|stop| stop.or_else(|| window_failed(&error, charges)));
             }
             Err(DurableStepError::Engine(error)) if charges.units == 0 => return Err(error),
             Err(error) => {
-                return Ok(Some(
-                    charges.end_on_step_error("sieve follower step failed", &error),
-                ));
+                return Ok(Some(charges.end_on_step_error_with_spend(
+                    "sieve follower step failed",
+                    &error,
+                )));
             }
         };
         let Ok(readings) = output::decode(&response, &labels, &candidates) else {
@@ -412,10 +423,7 @@ impl ConsolidationExecutor<'_> {
                     if leg.ctx.deadline.expired() {
                         return Ok(Some(charges.checkpoint()));
                     }
-                    if let Some(stop) = self
-                        .fold_call(leg, &work.pins, group, charges, &mut run)
-                        .await?
-                    {
+                    if let Some(stop) = self.fold_call(leg, work, group, charges, &mut run).await? {
                         return Ok(Some(stop));
                     }
                 }
@@ -445,11 +453,12 @@ impl ConsolidationExecutor<'_> {
         }
     }
 
-    /// One fold call over `group`; its text joins `run`. `Some` parks.
+    /// One fold call of `work` over `group`; its text joins `run`. `Some`
+    /// parks.
     async fn fold_call(
         &self,
         leg: &Leg<'_>,
-        pins: &[Pin],
+        work: &FoldWork,
         group: &[String],
         charges: &mut StepChargeTally,
         run: &mut FoldRun,
@@ -463,7 +472,7 @@ impl ConsolidationExecutor<'_> {
             leg.paid,
             &leg.policy.follower_keyframe_instruction,
             group,
-            pins,
+            &work.pins,
         );
         let (request, step_hash) = match admit(leg, request) {
             Ok(admitted) => admitted,
@@ -482,7 +491,10 @@ impl ConsolidationExecutor<'_> {
             }
             Ok(())
         };
-        match call_as_step_checked(&step, leg.call.backend, self.guard, request, &check).await {
+        // A group of a later level folds earlier folds of the same parts:
+        // every call of the fold sends on all of its rows.
+        let call_backend = leg.call.call_backend(Some(work.sources.clone()));
+        match call_as_step_checked(&step, call_backend.get(), self.guard, request, &check).await {
             Ok(StepOutcome::Finished {
                 response,
                 memoized,
@@ -542,14 +554,33 @@ impl ConsolidationExecutor<'_> {
                 {
                     charges.record_usage(usage);
                 }
-                hand_back_owed(leg, charges)
+                hand_back_owed(leg, charges).map(|stop| match stop {
+                    Some(DreamerAttemptExecution::Completed { .. }) => {
+                        window_failed(&error, charges).or(stop)
+                    }
+                    stop => stop,
+                })
             }
             Err(DurableStepError::Engine(error)) if charges.units == 0 => Err(error),
-            Err(error) => Ok(Some(
-                charges.end_on_step_error("sieve follower keyframe step failed", &error),
-            )),
+            Err(error) => Ok(Some(charges.end_on_step_error_with_spend(
+                "sieve follower keyframe step failed",
+                &error,
+            ))),
         }
     }
+}
+
+/// The end of a try whose refused call's spans went back to their own
+/// rungs, once that hand-back has landed: a window refusal ends it `Failed`
+/// with its text and its spend, once, so it never reads as Completed or
+/// goes on (Engine 21 Nov 07:38). A suffix's hand-back set the fold its
+/// next suffix waits on, which the next follower try runs. `None` for a
+/// bare request refusal, which keeps its stop, as before.
+fn window_failed(
+    error: &DurableStepError,
+    charges: &StepChargeTally,
+) -> Option<DreamerAttemptExecution> {
+    crate::dreamer_wake::step_refuses_window(error).then(|| charges.fail_for(&error.to_string()))
 }
 
 /// Hands a refused suffix's spans back to their own rungs; the session goes

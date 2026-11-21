@@ -70,3 +70,34 @@ fn anchor_position(
         .filter(|stamp| stamp.version == 2 && stamp.kind == anchor_kind)
         .map(|stamp| stamp.scope))
 }
+
+/// The world the identity topology event `id` of `kind` sits in, as
+/// `record_world_in` answers it (FIX DISTINCT-EVENT-WORLD-RESIDENCE): the one
+/// world its birth stamp names. An AssertDistinct event, and the disposition
+/// and author sidecars that annotate it, are stamped at their CLAIM's world
+/// (`identity_event_position`), so every door that judges a row by its
+/// world reads them where it reads the CLAIM: a read narrowed on worlds, and
+/// the exports of a world kept on this device, which then keep them here
+/// with the CLAIM (`settings::device_only`). Their window partition stays
+/// the base window (`sync::types::entity_world` reads bytes only): every
+/// door that serves a base window's rows to a reader judges each row here
+/// or by its stamp. An event with no stamp of its kind bound here (a
+/// replica: a peer mints no position, FIX 11925), or with no single world
+/// stamped, is base reality, as every event read before this rule; one
+/// stamped before FIX DISTINCT-EVENT-DEFAULT-PROJECT-STAMP carries the default
+/// base stamp and reads as before.
+pub(super) fn identity_event_world(
+    store: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    kind: u8,
+) -> Result<Option<Option<EntityId>>> {
+    let world = match stored_scope(store, txn, id, kind)?.map(|scope| scope.worlds) {
+        Some(ScopeAxis::Some(worlds)) if worlds.len() == 1 => worlds
+            .first()
+            .map(|world| world.0)
+            .filter(|world| *world != crate::claim::base_world_id()),
+        _ => None,
+    };
+    Ok(Some(world))
+}

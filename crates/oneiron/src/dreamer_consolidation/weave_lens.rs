@@ -135,7 +135,9 @@ async fn lens_step(
             Err(DurableStepError::Engine(error)) => {
                 return spent_or_deferred(error, ctx, charges).map(LensStep::Exit);
             }
-            Err(other) => LensStep::Exit(charges.end_on_step_error(&other.to_string(), &other)),
+            Err(other) => {
+                LensStep::Exit(charges.end_on_step_error_with_spend(&other.to_string(), &other))
+            }
         },
     )
 }

@@ -81,8 +81,8 @@ impl ConsolidationExecutor<'_> {
             mut charges,
         } = started;
         let run_started = Instant::now();
-        let run = self
-            .run_partition_attempt(
+        let run = build_boxed_future(|| {
+            self.run_partition_attempt(
                 &payload,
                 &resources,
                 ctx,
@@ -91,19 +91,22 @@ impl ConsolidationExecutor<'_> {
                 &mut charges,
                 stages,
             )
-            .await;
+        })
+        .await;
         stages.close_model_run(run_started);
-        self.settle_partition_run(
-            &resources,
-            run,
-            &widened,
-            widened_round,
-            &originals,
-            &returned,
-            ctx,
-            &mut charges,
-            stages,
-        )
+        build_boxed_future(|| {
+            self.settle_partition_run(
+                &resources,
+                run,
+                &widened,
+                widened_round,
+                &originals,
+                &returned,
+                ctx,
+                &mut charges,
+                stages,
+            )
+        })
         .await
     }
 
@@ -198,6 +201,7 @@ impl ConsolidationExecutor<'_> {
         charges: &mut StepChargeTally,
         stages: &mut PartitionStages,
     ) -> Result<DreamerAttemptExecution> {
+        stages.parse_retries = charges.parse_retries;
         // Empty unless this branch's finish ran early in a window; from
         // here on the branch writes its rows at once.
         let held = resources.take_held_escalations();
@@ -223,6 +227,9 @@ impl ConsolidationExecutor<'_> {
             Ok(PartitionRun::BudgetRefused { reason, refusal }) => {
                 Ok(charges.fail_refused(&reason, refusal))
             }
+            // A window refusal ends the try Failed with its text, once, with
+            // what it already spent (Engine 21 Nov 07:38).
+            Ok(PartitionRun::WindowRefused { reason }) => Ok(charges.fail_for(&reason)),
             // A spent model seat refused a step: the try parks on the seat
             // with what it already spent (SEAT-PARK-MODEL-STEP-PATH).
             Ok(PartitionRun::SeatRefused {
@@ -236,8 +243,8 @@ impl ConsolidationExecutor<'_> {
                 if let Err(error) = held.publish(ctx.vault, self.actor, resources) {
                     return super::super::residency::spent_or_deferred(error, ctx, &charges);
                 }
-                if let Err(error) = self
-                    .commit_candidates(
+                if let Err(error) = build_boxed_future(|| {
+                    self.commit_candidates(
                         &resources,
                         candidates,
                         widened,
@@ -247,7 +254,8 @@ impl ConsolidationExecutor<'_> {
                         ctx,
                         stages,
                     )
-                    .await
+                })
+                .await
                 {
                     return super::super::residency::spent_or_deferred(error, ctx, &charges);
                 }
@@ -263,8 +271,8 @@ impl ConsolidationExecutor<'_> {
                 if let Err(error) = held.publish(ctx.vault, self.actor, resources) {
                     return super::super::residency::spent_or_deferred(error, ctx, &charges);
                 }
-                if let Err(error) = self
-                    .commit_candidates(
+                if let Err(error) = build_boxed_future(|| {
+                    self.commit_candidates(
                         &resources,
                         candidates,
                         &[],
@@ -274,7 +282,8 @@ impl ConsolidationExecutor<'_> {
                         ctx,
                         stages,
                     )
-                    .await
+                })
+                .await
                 {
                     return super::super::residency::spent_or_deferred(error, ctx, &charges);
                 }

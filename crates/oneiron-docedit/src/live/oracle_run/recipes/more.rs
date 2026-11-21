@@ -10,7 +10,7 @@ use super::super::edits::{Ids, Scope, Subject, add, frame};
 use super::super::record::{OfficeCheck, Res};
 use super::super::spec::Recipe;
 use super::{Plan, markup, table_of};
-use crate::edit::{Digest, Preset};
+use crate::edit::Digest;
 use crate::live::{
     ChartCategories, ChartCategory, ChartKind, ChartSeries, ChartSource, Coord, DeckOp, GeomPath,
     HeldMedia, NodeId, NodeKind, NodePayload, PathCommand, PathPoint, SmartArtNode,
@@ -98,7 +98,7 @@ pub(super) fn plan(recipe: Recipe, subject: &Subject<'_>, ids: &mut Ids) -> Res<
         }
         Recipe::SmartArtRestructure => {
             let (art, nodes) = held_smart_art(subject)?;
-            let mut moved = nodes.clone();
+            let mut moved = nodes;
             let last = moved.pop().ok_or("the held SmartArt has no node")?;
             moved.insert(0, last);
             Plan::of(

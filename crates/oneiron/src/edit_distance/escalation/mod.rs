@@ -59,6 +59,7 @@
 //! ruling covered — and [`StandingPolicy::covers_ask`] is the one place that
 //! comparison happens, so ES-07 consults a decision rather than re-deriving it.
 
+pub(crate) mod archive_restore;
 mod explicit;
 mod ledger;
 mod policy;
@@ -82,14 +83,12 @@ pub use self::policy::{
 pub(crate) use self::policy::{accept_standing_policy_at, maybe_propose_standing_policy_at};
 pub(crate) use self::receipts::escalation_receipts;
 pub use self::receipts::{is_escalation_receipt, is_standing_policy_receipt};
-pub(crate) use self::scope_erase::erase_escalation_scope_in_txn;
+pub(crate) use self::scope_erase::{erase_escalation_scope_in_txn, standing_policy_records};
 pub use self::types::{
     EscalationReceipt, EscalationRuling, EscalationStats, EscalationTrigger, StandingPolicy,
     StandingPolicyStatus,
 };
 
-// FIX [LIBTEST-QUARANTINE-EDIT-DISTANCE-ESCALATION-TESTS]: the lib test target's type check fails here (4 errors: E0061 x4); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

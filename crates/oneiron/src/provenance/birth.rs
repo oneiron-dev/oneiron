@@ -35,6 +35,67 @@ pub(crate) use crate::store::birth_record::{
     trigger_is_live_in_txn,
 };
 
+/// Stamps `row`'s birth in the write that births it
+/// ([`stamp_row_birth_in_txn`]), then raises the row's floor over what its
+/// words came from (READ-LINEAGE L1 hook 1): the door for a write that holds
+/// the vault.
+///
+/// # Errors
+///
+/// As [`stamp_row_birth_in_txn`], and storage failures.
+pub(crate) fn stamp_birth_with_floor_in_txn(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    row: &crate::EntityId,
+    birth: &RowBirth,
+) -> crate::Result<()> {
+    stamp_row_birth_in_txn(&vault.store, txn, row, birth)?;
+    crate::source_audience::seal_births_from_erased_inputs_in_txn(vault, txn, &[*row])?;
+    crate::source_audience::raise_floors_in_txn(vault, txn, [*row])
+}
+
+/// Seals the row `row`, which arrived with its birth (sync, an archive), when
+/// the write that stamped that birth here names an input this vault erased,
+/// as a local birth is sealed; then raises its floor, as
+/// [`stamp_birth_with_floor_in_txn`] does. `before` is the row's birth as it
+/// stood before the stamp: a birth already here is not stamped again, and
+/// seals nothing (#9289 Opus review 3 P2-4).
+///
+/// # Errors
+///
+/// Storage failures.
+pub(crate) fn raise_landed_birth_floor_in_txn(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    row: &crate::EntityId,
+    before: Option<&RowBirth>,
+) -> crate::Result<()> {
+    if row_birth_in_txn(&vault.store, txn, row)?.as_ref() != before {
+        crate::source_audience::seal_births_from_erased_inputs_in_txn(vault, txn, &[*row])?;
+    }
+    crate::source_audience::raise_floors_in_txn(vault, txn, [*row])
+}
+
+/// [`stamp_birth_if_absent_in_txn`], then the row's floor, as
+/// [`stamp_birth_with_floor_in_txn`] raises it.
+///
+/// # Errors
+///
+/// As [`stamp_birth_if_absent_in_txn`], and storage failures.
+pub(crate) fn stamp_birth_with_floor_if_absent_in_txn(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    row: &crate::EntityId,
+    birth: &RowBirth,
+) -> crate::Result<()> {
+    let born = !ROW_BIRTH.contains(&vault.store, txn, row)?;
+    stamp_birth_if_absent_in_txn(&vault.store, txn, row, birth)?;
+    if born {
+        crate::source_audience::seal_births_from_erased_inputs_in_txn(vault, txn, &[*row])?;
+    }
+    crate::source_audience::raise_floors_in_txn(vault, txn, [*row])
+}
+
 /// Erasing `actor` (FIX 6074): every birth that names it as its process
 /// actor goes, with its born-from index row, in the erase's own transaction,
 /// and so does every window carrier of one this vault keeps (FIX 6279). A

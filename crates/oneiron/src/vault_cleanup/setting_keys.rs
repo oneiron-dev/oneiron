@@ -1,7 +1,7 @@
 //! The setting keys `vault_cleanup` declares (DESIGN 15-setting-primitive): the crate's build
 //! script lists each row in the setting catalogue.
 
-use crate::setting::{Kind, higher_is_tighter};
+use crate::setting::Kind;
 
 /// On: only the owner, or for an attempt delete a live vault Admin, acts.
 const fn owner_acts_alone() -> bool {
@@ -18,7 +18,7 @@ crate::setting::setting_keys! {
         "vault_cleanup.attempt_delete.owner_or_admin_only" {
         kind: Kind::new(owner_acts_alone)
             .strictest(owner_acts_alone)
-            .tighter(higher_is_tighter::<bool>),
+            .higher(),
     };
     /// Whether only the owner decides an open cleanup proposal (`vault.cleanup.decide`). On by
     /// default. Off, an agent whose live owner Grant names `vault.cleanup.decide` decides one
@@ -29,6 +29,6 @@ crate::setting::setting_keys! {
     pub(crate) DECIDE_OWNER_ONLY: bool = "vault_cleanup.decide.owner_only" {
         kind: Kind::new(owner_acts_alone)
             .strictest(owner_acts_alone)
-            .tighter(higher_is_tighter::<bool>),
+            .higher(),
     };
 }

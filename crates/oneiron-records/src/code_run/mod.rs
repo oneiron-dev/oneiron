@@ -19,6 +19,7 @@ pub use crate::code_run::contribution::source_admission::ContributionSourceReadR
 pub use crate::code_run::reader::DEFAULT_READER_FOLD_RESERVE_MS;
 pub use crate::code_run::reader::ReaderActor;
 pub use crate::code_run::reader::ReaderJobState;
+pub use crate::code_run::reader::ReaderJobStatus;
 pub use crate::code_run::reader::ReaderReportReceipt;
 pub use crate::code_run::reader::ReaderRoute;
 pub use crate::code_run::reader::ReaderSpawnReceipt;

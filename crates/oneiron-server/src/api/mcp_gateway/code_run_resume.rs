@@ -476,12 +476,33 @@ impl Drop for McpCodeRunEntry {
 /// whose record moved since it registered loses its registration. Then each
 /// run a restart left parked on a code consent wait is built again from its
 /// wait and enters the same way. Called on the settler's blocking worker,
-/// inside its admitted pass.
+/// inside its admitted pass. A copy restored and not joined enters none (row
+/// RESTORED-UNJOINED-STARTS-NO-WORK): its parked runs keep their waits and
+/// registrations, and the settler's first pass after the join enters them.
 pub(crate) fn reenter_ready_mcp_code_runs(server: &Arc<SyncServer>) {
+    if restored_copy_holds_runs(server) {
+        return;
+    }
     for continuation in server.mcp_code_run_continuations.idle() {
         reenter_if_ready(server, continuation);
     }
     recovery::reenter_recovered_mcp_code_runs(server);
+}
+
+/// Whether this install is a copy restored and not joined, so no parked run enters again (row
+/// RESTORED-UNJOINED-STARTS-NO-WORK): each keeps its wait and registration for the settler's
+/// first pass after the join. An unreadable answer holds them too, until a later pass reads it.
+fn restored_copy_holds_runs(server: &SyncServer) -> bool {
+    match server.vault.restored_unjoined() {
+        Ok(unjoined) => unjoined,
+        Err(error) => {
+            tracing::warn!(
+                %error,
+                "whether this copy has joined could not be read; parked MCP code runs wait for the next pass"
+            );
+            true
+        }
+    }
 }
 
 fn reenter_if_ready(server: &Arc<SyncServer>, continuation: McpCodeRunContinuation) {
@@ -489,6 +510,13 @@ fn reenter_if_ready(server: &Arc<SyncServer>, continuation: McpCodeRunContinuati
         McpCodeRunReadiness::Parked => {}
         McpCodeRunReadiness::Moved => server.mcp_code_run_continuations.discard(&continuation),
         McpCodeRunReadiness::Delivered => {
+            // The settler's drain asked first; an entry that ended after its
+            // reply was delivered comes here directly, so it asks too, before
+            // it takes the slot: its registration stays for the first pass
+            // after the join.
+            if restored_copy_holds_runs(server) {
+                return;
+            }
             // A re-entry writes as the host's own background work: it takes
             // the host's write admission before it is spawned and holds it
             // through its last write. While none is admitted (a managed

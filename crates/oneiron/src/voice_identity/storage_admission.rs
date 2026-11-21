@@ -296,14 +296,7 @@ pub(super) fn admit_enrollment_consent(
             "voice enrollment consent must precede the enrollment request",
         ));
     }
-    let withdrawn = read_consent_events(store, rtxn, &request.subject_ref)?
-        .into_iter()
-        .any(|candidate| {
-            candidate.state == VoiceConsentState::Withdrawn
-                && candidate.covers(&request.purpose)
-                && candidate.occurred_at >= event.occurred_at
-        });
-    if withdrawn {
+    if super::consent_void::grant_withdrawn_for(store, rtxn, &event, &request.purpose)? {
         return Err(invalid_voice(
             "voice consent for this purpose was withdrawn after the cited grant",
         ));

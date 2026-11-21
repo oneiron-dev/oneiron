@@ -3,9 +3,9 @@ mod captured;
 use super::*;
 use captured::CapturedEntityDeindex;
 
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 
-use heed::RwTxn;
+use heed::{RoTxn, RwTxn};
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, RegistryError, Result};
@@ -48,6 +48,7 @@ pub(super) fn reject_engine_authored_delete(
     crate::conversation_dag::guard_room_turn_delete(store, wtxn, id)?;
     crate::conversation::guard_room_message_delete(store, wtxn, *id)?;
     crate::blob_artifact::esign::reject_event_delete(store, wtxn, id)?;
+    crate::blob_artifact::reject_lone_version_claim_delete(store, wtxn, id)?;
     crate::store::task_authority_guard::reject_fact_delete(store, wtxn, id)?;
     store
         .delete_guards
@@ -97,6 +98,41 @@ pub(crate) fn deindex_entity_with_machine_history(
         had_graph_mutation |= graph;
     }
     Ok((existed, had_vector, had_graph_mutation, neighbors))
+}
+
+/// Whether a legal hold or a cooperative restriction keeps a record that
+/// [`deindex_entity_with_machine_history`] would tear for `id`: the row, the
+/// signed history controls its pin names, and the lexical-hint claims of each,
+/// with theirs. Each of those tears refuses a held record, and the refusal
+/// fails the whole writer. A caller that may leave the row as it is asks
+/// first, so a hold refuses none of its other writes.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn deindex_with_machine_history_held_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    let mut pending = VecDeque::from([*id]);
+    pending.extend(
+        crate::claim::history_store::machine_history_ids_retired_by_delete(store, txn, *id)?
+            .unwrap_or_default(),
+    );
+    let mut visited = HashSet::new();
+    while let Some(record) = pending.pop_front() {
+        if !visited.insert(record) {
+            continue;
+        }
+        if crate::store::legal_hold::held_in_txn(store, txn, record.as_bytes())? {
+            return Ok(true);
+        }
+        pending.extend(lexical_query_hint_claim_ids_for_target(
+            store, txn, &record,
+        )?);
+    }
+    Ok(false)
 }
 
 /// Stages the tombstone a cascade deindex owes its replicas: the same wire
@@ -336,6 +372,9 @@ fn capture_entity_deindex(
     crate::embed::delete_media_vectors_in_txn(store, wtxn, id)?;
     // FIX 9398: and every room's staged copies of them.
     crate::embed::drop_room_media_copies_in_txn(store, wtxn, id);
+    // The floors waiting on the row are sealed before its lineage goes
+    // (#9289 Opus review 3 P1-A).
+    crate::source_audience::seal_floors_awaiting_in_txn(store, wtxn, id)?;
     crate::deletion::tear_derived_rows_in_txn(write, wtxn, id, true)?;
     crate::store::pending_comm_stop::clear_pending_stop_for_delete(store, wtxn, id)?;
     crate::hnsw::hnsw_deindex(store, wtxn, id)?;
@@ -392,7 +431,7 @@ pub(crate) fn drop_seeded_actor_row(
     store.port_remove_entity_row(wtxn, id)?;
     Ok(())
 }
-#[cfg(test)]
+#[cfg(any(test, oneiron_test_support))]
 pub(crate) fn deindex_entity_for_test(
     vault: &crate::Vault,
     wtxn: &mut RwTxn<'_>,

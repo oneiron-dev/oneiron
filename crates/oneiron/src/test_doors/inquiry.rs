@@ -7,6 +7,8 @@
 //! retained-copy check through [`retained_copy_admits`].
 //! `tests/archive_import_owner_installs_side_receipts.rs` stores a terms
 //! change's Share receipt through [`record_terms_change`].
+//! `tests/inquiry_leaving_holdings.rs` reads whether the standing honour
+//! setting's delete still runs through [`setting_delete_runs`].
 
 use crate::error::Result;
 use crate::inquiry::{
@@ -98,12 +100,49 @@ pub fn cancel_task(vault: &Vault, task: EntityId, actor: EntityId) -> Result<()>
     })
 }
 
+/// [`cancel_task`] in a raw write transaction outside the write door, as a
+/// writer outside a post-commit scope commits: no post-commit work runs
+/// after it. A held answer whose task ends this way is left to the
+/// holder's backstops, each touch and each housekeeping pass.
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn cancel_task_outside_write_door(
+    vault: &Vault,
+    task: EntityId,
+    actor: EntityId,
+) -> Result<()> {
+    let mut txn = vault.store.env.write_txn()?;
+    let now = crate::ports::recorded_at_in_txn(&vault.store, &mut txn)?;
+    crate::context_board::cancel_task_in_txn(vault, &mut txn, task, actor, now)?;
+    txn.commit()?;
+    Ok(())
+}
+
 /// How many task-held inquiry answers `vault` holds now. Unlike
 /// `Vault::held_inquiry_answer`, it drops none first, so a test sees what a
 /// housekeeping pass dropped.
 #[must_use]
 pub fn held_inquiry_answer_count(vault: &Vault) -> usize {
     vault.inquiry_answers.held_count()
+}
+
+/// Whether the filed courtesy ask (`pact_id`, `nonce`) still runs the
+/// standing setting's delete operation `operation_id`: the check each of
+/// that operation's delete writes reads
+/// (`deletion/coop_delivery/setting_answer.rs`).
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn setting_delete_runs(
+    vault: &Vault,
+    pact_id: &[u8; 32],
+    nonce: &[u8; 16],
+    operation_id: EntityId,
+) -> Result<bool> {
+    vault.setting_delete_runs(pact_id, nonce, operation_id)
 }
 
 /// The tables whose actor scrub [`erase_actor_in_inquiry_tables`] runs.

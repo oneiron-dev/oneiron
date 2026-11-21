@@ -158,6 +158,11 @@ pub enum SlotKind {
     /// alone names it; no vault erase, delete, key retirement or forget
     /// path deletes it.
     LegalHoldStore,
+    /// A box recovery's held authority seed (OPUS-WAYBACK): R's released
+    /// seed, kept on the door install from the hold until the landing or
+    /// the cancel, keyed by the successor key's bytes. Deleted at landing,
+    /// on cancel, and when the hold voids.
+    RecoveryHold([u8; 32]),
 }
 
 impl SlotKind {
@@ -177,6 +182,13 @@ impl SlotKind {
             Self::LegalCloneOrder(order) => {
                 let mut label = String::from("legal-clone-order-");
                 for byte in order {
+                    push_hex(&mut label, byte);
+                }
+                return Cow::Owned(label);
+            }
+            Self::RecoveryHold(successor) => {
+                let mut label = String::from("recovery-hold-");
+                for byte in successor {
                     push_hex(&mut label, byte);
                 }
                 return Cow::Owned(label);

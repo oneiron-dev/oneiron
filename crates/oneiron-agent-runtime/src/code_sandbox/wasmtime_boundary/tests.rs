@@ -19,6 +19,25 @@ impl GuestImports for Host {
         }
         Ok(vec![7; n as usize])
     }
+    // No fixture here streams a result or a proposed file.
+    fn output_text(&mut self, _: String, _: bool, _: String) -> Result<u64, String> {
+        Err("no result stream".into())
+    }
+    fn output_bytes(&mut self, _: String, _: Vec<u8>) -> Result<u64, String> {
+        Err("no result stream".into())
+    }
+    fn store_bytes(&mut self, _: bool, _: Vec<u8>) -> Result<u64, String> {
+        Err("no result stream".into())
+    }
+    fn proposal_open(&mut self, _: String) -> Result<u64, String> {
+        Err("no proposal stream".into())
+    }
+    fn proposal_chunk(&mut self, _: u64, _: Vec<u8>) -> Result<u64, String> {
+        Err("no proposal stream".into())
+    }
+    fn proposal_close(&mut self, _: u64) -> Result<u64, String> {
+        Err("no proposal stream".into())
+    }
     fn agents_put(&mut self, input: AgentPutInput) -> Result<AgentPutOutput, String> {
         Ok(AgentPutOutput {
             id: input.id,
@@ -94,12 +113,14 @@ fn foreign_writes_and_all_wasi_imports_fail_construction() {
 #[test]
 fn foreign_proposal_paths_and_claims_are_validated_without_writing() {
     use super::{bindings, validate_step_result};
-    let file = |path: &str| bindings::StepResult {
+    // A proposed file no longer rides in the step result: it streams through
+    // the proposal imports, whose host checks its path. A delete still rides
+    // here, and only a workspace file may be deleted.
+    let delete = |path: &str| bindings::StepResult {
         result_json: "{}".into(),
-        proposals: vec![bindings::ProposalDelta::FileWrite(bindings::FileProposal {
-            path: path.into(),
-            bytes: vec![1, 2],
-        })],
+        proposals: vec![bindings::ProposalDelta::FileDelete(
+            bindings::FileDeleteProposal { path: path.into() },
+        )],
     };
     for path in [
         "/etc/passwd",
@@ -107,13 +128,14 @@ fn foreign_proposal_paths_and_claims_are_validated_without_writing() {
         "/mnt/skills/code",
         "/mnt/outputs/../escape",
         "/mnt/workspace//bad",
+        "/mnt/outputs/result.txt",
+        "/mnt/workspace",
     ] {
-        assert!(validate_step_result(&file(path), SandboxGuestTier::Foreign).is_err());
+        assert!(validate_step_result(&delete(path), SandboxGuestTier::Foreign).is_err());
     }
-    for path in ["/mnt/outputs/result.txt", "/mnt/workspace/patch.txt"] {
-        assert!(validate_step_result(&file(path), SandboxGuestTier::Foreign).is_ok());
-        assert!(validate_step_result(&file(path), SandboxGuestTier::FirstPartyDreamer).is_err());
-    }
+    let path = "/mnt/workspace/patch.txt";
+    assert!(validate_step_result(&delete(path), SandboxGuestTier::Foreign).is_ok());
+    assert!(validate_step_result(&delete(path), SandboxGuestTier::FirstPartyDreamer).is_err());
     let mut claim = bindings::ClaimInput {
         id: crate::EntityId::from_bytes([1; 16]).unwrap().to_hex(),
         predicate: "test.proposal".into(),
