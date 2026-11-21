@@ -500,6 +500,13 @@ pub struct StoreCore {
     /// one store per vault path, so the vault's own lock keeps every caller
     /// of the process that reaches the slot in one line.
     pub(crate) owner_signing_slot_lock: Mutex<()>,
+    /// Held for one host root move of this vault, a re-root or a kit
+    /// recovery: the move reads this install's host issuer seed slot, writes
+    /// its successor seed there, moves the root, and on a failure puts back
+    /// the slot it read. It was a process-wide lock; the slot belongs to this
+    /// vault, and a process holds one store per vault path, so the vault's own
+    /// lock keeps every move of the process on the slot in one line.
+    pub(crate) host_root_move_lock: Mutex<()>,
     /// This vault's test seams. `#[cfg(test)]` so a production `StoreCore`
     /// carries neither the field nor its types: see [`TestHooks`] for why a
     /// test seam is exactly the state that must not be process-wide.
