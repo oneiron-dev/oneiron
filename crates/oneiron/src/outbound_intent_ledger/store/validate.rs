@@ -95,11 +95,6 @@ pub(in crate::outbound_intent_ledger) fn validate_record(
             "outbound intent payload hash mismatch",
         ));
     }
-    if bytes_to_hex_lower(&record.id) != record.idempotency_key {
-        return Err(IntentLedgerError::InvalidRecord(
-            "outbound intent idempotency key mismatch",
-        ));
-    }
     let derived = derive_intent_id(
         record.attempt_id,
         record.call_seq,
@@ -110,6 +105,28 @@ pub(in crate::outbound_intent_ledger) fn validate_record(
     if derived != record.id {
         return Err(IntentLedgerError::InvalidRecord(
             "outbound intent identity hash mismatch",
+        ));
+    }
+    // The provider-native key is the hex of this row's id, or of the id the
+    // attempt it names derives, under this row's call, tool and payload.
+    let key_id = match record.idempotency_attempt_id {
+        Some(attempt) if attempt == record.attempt_id => {
+            return Err(IntentLedgerError::InvalidRecord(
+                "outbound intent names its own attempt as its idempotency attempt",
+            ));
+        }
+        Some(attempt) => derive_intent_id(
+            attempt,
+            record.call_seq,
+            &record.server,
+            &record.tool,
+            &record.payload_hash,
+        )?,
+        None => record.id,
+    };
+    if bytes_to_hex_lower(&key_id) != record.idempotency_key {
+        return Err(IntentLedgerError::InvalidRecord(
+            "outbound intent idempotency key mismatch",
         ));
     }
     Ok(())

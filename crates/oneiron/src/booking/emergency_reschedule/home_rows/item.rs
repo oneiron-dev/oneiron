@@ -14,15 +14,15 @@ use crate::Vault;
 use crate::booking::CalendarRevision;
 use crate::booking::emergency_reschedule::lookup::{self, EFFECT, PENDING_EVENT};
 use crate::booking::emergency_reschedule::planning::{
-    EMERGENCY_ITEM_META_PREFIX, EmergencyItem, ITEM,
+    EMERGENCY_ITEM_META_PREFIX, EmergencyItem, ITEM, ReadoptedSend,
 };
 use crate::booking::emergency_reschedule::uncertain_send::{self, UNCERTAIN_SEND, owed_effects};
 use crate::booking::emergency_reschedule::{EmergencyLocalBasis, EmergencyPick, state};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::outbound_intent_ledger::{
-    IntentLedgerError, IntentLedgerRecord, IntentResolution, IntentState, RetryDisposition,
-    UnconfirmedDelivery, read_intent_for_attempt_in_txn,
+    IntentLedgerError, IntentLedgerRecord, IntentResolution, IntentState, UnconfirmedDelivery,
+    read_intent_for_attempt_in_txn,
 };
 use crate::side_table::{self, SideTableDecl};
 use crate::sync::home_handoff::{
@@ -186,71 +186,30 @@ fn uncertain_lanes(
     Ok(uncertain)
 }
 
-/// Whether a home that adopted a checkpoint back takes a fresh ledger attempt for an owed effect
-/// whose send its own ledger holds as `record` under the effect's current identity, at `now`
-/// (review round 1 of #10220). It does where that send's replay never sends it again, while any
-/// other new home sends it (Engine ANSWER BK-EMERGENCY-PENDING-ITEM-MOVE = A), and a fresh send
-/// reaches the provider as that home's would:
-/// - a send with no provider-native key reaches its provider under the intent's own key at every
-///   generation (`state::effect_generation_ref`). Deferred (FIX 7960), stopped, or admitted with
-///   no outcome and no longer mid-call (its replay reads it back or abandons it unasked, FIX
-///   9379), it takes one;
-/// - a send with a provider-native key carries its own row's key, which a fresh row changes. It
-///   takes one only once stopped with no delivery possible. Deferred, its remote task under the
-///   key the provider holds settles it, as on a home that never moved; stopped with its delivery
-///   unknown, a fresh key would keep a provider that drops a repeated key from dropping a repeat;
-///   pending, its replay sends it again under the same key.
-///
-/// A delivered send never takes one.
-fn takes_fresh_attempt(record: &IntentLedgerRecord, now: u64) -> bool {
-    let intent_keyed = !record.idempotency_supported;
-    match IntentResolution::from_record(record) {
-        Ok(IntentResolution::Stopped {
-            delivery: UnconfirmedDelivery::DefiniteNonDelivery,
-            ..
-        }) => true,
-        Ok(
-            IntentResolution::Deferred
-            | IntentResolution::Stopped {
-                delivery: UnconfirmedDelivery::Unresolved,
-                ..
-            },
-        ) => intent_keyed,
-        // Only a send with no provider-native key, admitted with no outcome, has no retry.
-        Ok(IntentResolution::Pending {
-            retry: RetryDisposition::NoAutomaticRetry,
-            ..
-        }) => !mid_call(record, now),
-        Ok(IntentResolution::Pending { .. } | IntentResolution::Delivered) | Err(_) => false,
-    }
-}
-
-/// Raises the ledger generation of each effect `item` owes while this node's outbound ledger
-/// holds its send under the effect's current identity as one that takes a fresh attempt
-/// ([`takes_fresh_attempt`]; FIX [BK-EMERGENCY-DEFERRED-SEND-STRANDED-ON-FORMER-HOME]). Every
-/// other send keeps its identity: its replay completes it or sends it again, or its remote task
-/// settles it.
-fn raise_stranded_generations(
-    vault: &Vault,
-    txn: &RoTxn<'_>,
-    item: &mut EmergencyItem,
-) -> Result<()> {
-    let now = vault.store.clock.now_recorded_at();
+/// Marks each effect `item` owes whose send this node's own outbound ledger holds, undelivered,
+/// under the effect's current ledger identity: this home adopts the checkpoint back over that
+/// send (`EmergencyItem::readopted_sends`; FIX
+/// [BK-EMERGENCY-DEFERRED-SEND-STRANDED-ON-FORMER-HOME]). The owner's resume here decides from
+/// that row as it then reads whether the effect takes a fresh ledger attempt
+/// (`state::readopted_send_takes_fresh_attempt`; review round 2 of #10220): the row can settle
+/// after the move (its remote task completes or fails, FIX 7960), and its replay reads a send
+/// with no provider key and no outcome back before anything goes (FIX 9379).
+fn mark_readopted_sends(vault: &Vault, txn: &RoTxn<'_>, item: &mut EmergencyItem) -> Result<()> {
     for (lane, hash) in owed_effects(item) {
-        while ledger_record_at(
-            vault,
-            txn,
-            item,
-            lane,
-            hash,
-            state::ledger_generation(item, lane),
-        )?
-        .is_some_and(|record| takes_fresh_attempt(&record, now))
-        {
-            let generation = item.ledger_generations.entry(lane.to_owned()).or_default();
-            *generation = generation
-                .checked_add(1)
-                .ok_or_else(|| invalid("an emergency effect has no next ledger generation"))?;
+        let generation = state::ledger_generation(item, lane);
+        if ledger_record_at(vault, txn, item, lane, hash, generation)?.is_some_and(|record| {
+            !matches!(
+                IntentResolution::from_record(&record),
+                Ok(IntentResolution::Delivered)
+            )
+        }) {
+            item.readopted_sends.insert(
+                lane.to_owned(),
+                ReadoptedSend {
+                    generation,
+                    replayed: false,
+                },
+            );
         }
     }
     Ok(())
@@ -372,6 +331,8 @@ impl HomeTable for EmergencyItemRows {
                 apology_delivered,
                 picked,
                 ledger_generations,
+                // This home's own: the next home reads its own ledger.
+                readopted_sends: _,
             } = item;
             let (plan, mut owner, mut booker) = split_plan(&key, plan)?;
             booker.actions = actions;
@@ -420,8 +381,8 @@ impl HomeTable for EmergencyItemRows {
     }
 
     /// Lands each whole item as the module doc says and indexes its pending event and its
-    /// effects, each owed effect whose send this node's own ledger holds as one that takes a fresh
-    /// attempt under its next ledger generation ([`raise_stranded_generations`]). On a node whose
+    /// effects, each owed effect whose send this node's own ledger holds undelivered marked as a
+    /// readopted send ([`mark_readopted_sends`]). On a node whose
     /// rows are history both lookups are rebuilt from the landed items alone. Each EVENT's
     /// pending lookup names one landed item that still owes a delivery: the one the old home's
     /// names, else the one owed at the highest revision. Landing order never decides it, so an
@@ -494,8 +455,9 @@ impl HomeTable for EmergencyItemRows {
                 apology_delivered,
                 picked,
                 ledger_generations,
+                readopted_sends: BTreeMap::new(),
             };
-            raise_stranded_generations(vault, txn, &mut item)?;
+            mark_readopted_sends(vault, txn, &mut item)?;
             match ITEM.get_lenient(&vault.store, txn, &key)? {
                 Some(here) if here == item => {}
                 Some(_) if !history => return Ok(TableAdopt::Conflict),

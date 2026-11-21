@@ -189,6 +189,11 @@ pub struct OutboundCallRequest {
     /// did (FIX 11591): every later send of it rechecks that this owner is
     /// still a live owner.
     authorizing_owner: Option<EntityId>,
+    /// The attempt whose row id names this call's provider-native key, when
+    /// that is not its own: a later local attempt of one logical send reaches
+    /// its provider under the key its first attempt's row carries
+    /// ([`IntentLedgerRecord::idempotency_attempt_id`]).
+    idempotency_attempt_id: Option<AttemptId>,
     pub now_ms: u64,
 }
 
@@ -212,6 +217,7 @@ impl OutboundCallRequest {
             resolved_endpoint: None,
             capability_provenance: None,
             authorizing_owner: None,
+            idempotency_attempt_id: None,
             now_ms,
         }
     }
@@ -237,6 +243,15 @@ impl OutboundCallRequest {
     #[must_use]
     pub(crate) fn with_authorizing_owner(mut self, owner: Option<EntityId>) -> Self {
         self.authorizing_owner = owner;
+        self
+    }
+
+    /// Names the attempt whose row id this call's provider-native key derives
+    /// from (`OutboundDispatchRequest::idempotency_identity_ref`). `None`, or
+    /// this call's own attempt, keeps the row's own key.
+    #[must_use]
+    pub(crate) fn with_idempotency_attempt(mut self, attempt: Option<AttemptId>) -> Self {
+        self.idempotency_attempt_id = attempt.filter(|attempt| *attempt != self.attempt_id);
         self
     }
 
@@ -548,6 +563,13 @@ pub struct IntentLedgerRecord {
     pub payload_hash: [u8; 32],
     pub(super) payload: Vec<u8>,
     pub idempotency_key: String,
+    /// The attempt whose row id `idempotency_key` is the hex of, when it is not
+    /// this row's own `attempt_id`: a later local attempt of one logical send,
+    /// admitted under a ledger identity of its own, that reaches its provider
+    /// under the key its first attempt's row carries, so a provider that drops
+    /// a repeated key drops a repeat of that send. `None` for every other row,
+    /// whose key is the hex of its own id.
+    pub(crate) idempotency_attempt_id: Option<AttemptId>,
     pub idempotency_supported: bool,
     pub authorization_binding: Option<OutboundAuthorizationBinding>,
     pub(crate) admitted_approval: Option<AdmittedApproval>,
@@ -607,6 +629,16 @@ impl IntentLedgerRecord {
             &request.tool,
             &payload_hash,
         )?;
+        let key_id = match request.idempotency_attempt_id {
+            Some(attempt) => derive_intent_id(
+                attempt,
+                request.call_seq,
+                &request.server,
+                &request.tool,
+                &payload_hash,
+            )?,
+            None => id,
+        };
         Ok(Self {
             id,
             attempt_id: request.attempt_id,
@@ -615,7 +647,8 @@ impl IntentLedgerRecord {
             tool: request.tool,
             payload_hash,
             payload: request.payload,
-            idempotency_key: bytes_to_hex_lower(&id),
+            idempotency_key: bytes_to_hex_lower(&key_id),
+            idempotency_attempt_id: request.idempotency_attempt_id,
             idempotency_supported,
             authorization_binding: request.authorization_binding,
             admitted_approval: None,
@@ -652,6 +685,7 @@ impl fmt::Debug for OutboundCallRequest {
             .field("authorization_binding", &self.authorization_binding)
             .field("resolved_endpoint", &self.resolved_endpoint)
             .field("capability_provenance", &self.capability_provenance)
+            .field("idempotency_attempt_id", &self.idempotency_attempt_id)
             .field("now_ms", &self.now_ms)
             .finish()
     }
@@ -692,6 +726,7 @@ impl fmt::Debug for IntentLedgerRecord {
                 &format_args!("[{} bytes redacted]", self.payload.len()),
             )
             .field("idempotency_key", &self.idempotency_key)
+            .field("idempotency_attempt_id", &self.idempotency_attempt_id)
             .field("idempotency_supported", &self.idempotency_supported)
             .field("authorization_binding", &self.authorization_binding)
             .field("binding_version", &self.binding_version)

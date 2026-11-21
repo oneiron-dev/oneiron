@@ -811,7 +811,9 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     );
     request.authorization_binding = authorization_binding;
     request.resolved_endpoint = prepared.resolved_endpoint;
-    request = request.with_authorizing_owner(authorizing_owner);
+    request = request
+        .with_authorizing_owner(authorizing_owner)
+        .with_idempotency_attempt(prepared.idempotency_attempt);
     if let Some(capability) = capability_provenance {
         request = request.with_capability_provenance(capability);
     }

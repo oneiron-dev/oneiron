@@ -161,6 +161,7 @@ pub(crate) fn execute_outbound_call<S: OutboundSender + ?Sized>(
         payload_hash: call.payload_hash,
         payload: call.payload.to_vec(),
         idempotency_key,
+        idempotency_attempt_id: None,
         idempotency_supported,
         authorization_binding: Some(authorization_binding),
         admitted_approval: None,

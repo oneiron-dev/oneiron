@@ -171,6 +171,15 @@ pub struct OutboundDispatchRequest {
     /// chokepoint refuses this send's first admission while the sibling's
     /// call may have gone.
     pub exclusive_route_ref: Option<String>,
+    /// The identity of the logical send whose first ledger row's id names
+    /// this send's provider-native idempotency key, when the send is admitted
+    /// under a ledger identity of its own (`ledger_identity_ref`): a later
+    /// local attempt of one send reaches its provider under the key every
+    /// first attempt of it carries, so a provider that drops a repeated key
+    /// drops a repeat of it. The admitted row keeps the attempt it names
+    /// (`IntentLedgerRecord::idempotency_attempt_id`). `None` keys the send
+    /// by its own row, as every other send.
+    pub idempotency_identity_ref: Option<String>,
     /// Set when the pipeline resolves this send's sender: its outbound send
     /// runs under the posture the default manifest ships, because the
     /// vault's manifests name no act row for its pairing. The dispatch
@@ -260,6 +269,7 @@ impl OutboundDispatchRequest {
             publisher_signature: None,
             ambient_alternative: None,
             exclusive_route_ref: None,
+            idempotency_identity_ref: None,
             sender_posture_fallback: false,
             send_executor_fence: None,
             agent_run_fence: None,

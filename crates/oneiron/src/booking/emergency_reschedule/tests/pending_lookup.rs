@@ -387,6 +387,7 @@ fn damaged_request_plan_rows_refuse_only_the_indexed_event() {
                         apology_delivered: true,
                         picked: None,
                         ledger_generations: Default::default(),
+                        readopted_sends: Default::default(),
                     };
                     planning::ITEM
                         .put(&vault.store, txn, &checkpoint_row, &checkpoint)
