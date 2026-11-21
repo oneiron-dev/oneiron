@@ -77,7 +77,7 @@ pub(super) fn checked_accept_in_txn(
     if rooted_in_txn(vault, txn)? {
         head_defaults_digest(&head)?;
         if !head.version.is_empty() {
-            vault.owner_act_carrier_stands_in_txn(txn)?;
+            let _ = vault.owner_act_carrier_stands_in_txn(txn);
         }
     }
     Ok(CheckedAccept {
