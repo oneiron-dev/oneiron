@@ -162,9 +162,11 @@ fn host_root_is_the_owners(fold: &AuthorityFold, root: &AuthorityKey, actor: Ent
 impl Vault {
     /// [`Self::enrol_owner_signing_key_as`] for a key of `kind`, in a write
     /// transaction of its own.
+    /// The witness shows the door asked before opening its write transaction.
     pub(super) fn enrol_owner_key_of_kind_as<S>(
         &self,
         authority: &ActAuthority,
+        _asked: &OwnerPresenceWitness,
         input: OwnerKeyEnrollment,
         kind: EnrolledOwnerKeyKind,
         predecessor: AuthorityKey,
@@ -198,6 +200,15 @@ impl Vault {
     ///
     /// `machine` and the carrying install must satisfy the existing owner-key
     /// enrollment rules. The predecessor signs inside that door's own writer.
+    ///
+    /// The door asks for the person at this device before its write (an
+    /// important act, [`Vault::owner_presence`]), after the read that derives the key
+    /// has ended.
+    ///
+    /// # Errors
+    /// A refused confirm answers [`RecordError::OwnerPresenceRequired`]; on a
+    /// device with a PIN set, [`crate::error::SecretError::DevicePin`] answers
+    /// `Required` outside the PIN's window.
     pub fn enrol_recovery_authority_key_as<S>(
         &self,
         authority: &ActAuthority,
@@ -220,8 +231,13 @@ impl Vault {
             let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
             recovery_authority_enrollment(seed, &vault_id, 0, machine, actor)?
         };
+        let witness = self.owner_presence(
+            OwnerActImportance::Important,
+            owner_presence_reasons::ENROL_RECOVERY_AUTHORITY_KEY,
+        )?;
         self.enrol_owner_key_of_kind_as(
             authority,
+            &witness,
             input,
             EnrolledOwnerKeyKind::RecoveryAuthority,
             predecessor,

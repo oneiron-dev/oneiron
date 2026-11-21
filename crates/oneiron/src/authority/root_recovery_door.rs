@@ -30,8 +30,8 @@ use super::owner_key_enrollment_door::EntrySigner;
 use super::*;
 use crate::consent::AuthenticatedOwner;
 use crate::world_keys::{
-    DevicePin, KitConfirmation, OwnerRootSigner, OwnerSigningSlot, RecoveryAuthoritySigner,
-    RecoveryRootSeed,
+    DevicePin, KitConfirmation, OwnerActImportance, OwnerRootSigner, OwnerSigningSlot,
+    RecoveryAuthoritySigner, RecoveryRootSeed, owner_presence_reasons,
 };
 use crate::{EntityId, Result, Vault};
 
@@ -116,7 +116,14 @@ impl Vault {
     /// possession. Each arm checks its own condition again in its writer
     /// transaction, and writes everything or nothing.
     ///
+    /// The door asks for the person at this device before its write (an
+    /// important act, [`Vault::owner_presence`]), in the chosen arm after its checks
+    /// and before taking the PIN step or slot lock.
+    ///
     /// # Errors
+    /// A refused confirm answers [`crate::error::RecordError::OwnerPresenceRequired`];
+    /// on a device with a PIN set, [`crate::error::SecretError::DevicePin`]
+    /// answers `Required` outside the PIN's window.
     /// [`crate::error::RecordError::AuthorityRefused`] when neither arm
     /// serves, for a lost key the root's key may not revoke, or for an entry
     /// the fold does not count; each arm's own refusals
@@ -189,6 +196,15 @@ impl Vault {
     /// the roster reads its slot's key revoked there, and is held as a
     /// checkpoint root signer once the transaction commits, as at the device
     /// door.
+    ///
+    /// The door asks for the person at this device before its write (an
+    /// important act, [`Vault::owner_presence`]), after signing readiness and before
+    /// taking the PIN step or slot lock.
+    ///
+    /// # Errors
+    /// A refused confirm answers [`crate::error::RecordError::OwnerPresenceRequired`];
+    /// on a device with a PIN set, [`crate::error::SecretError::DevicePin`]
+    /// answers `Required` outside the PIN's window.
     fn vouch_with_root_key(
         &self,
         (owner, authority): (&AuthenticatedOwner, &ActAuthority),
@@ -214,6 +230,10 @@ impl Vault {
             )),
             RootSuccessor::Device(_) => None,
         };
+        let _asked = self.owner_presence(
+            OwnerActImportance::Important,
+            owner_presence_reasons::RECOVER_OWNER_ROOT,
+        )?;
         let root_key = signer.authority_key();
         let mut sign_enrolment =
             |_: &AuthorityFold, transcript: &[u8]| signer.sign_authority_transcript(transcript);

@@ -29,6 +29,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use ed25519_dalek::Signer;
 
 use crate::error::{Error, OwnerKeyMoveStep, RecordError, Result, SecretError};
+use crate::world_keys::{OwnerActImportance, OwnerPresenceWitness, owner_presence_reasons};
 use crate::{EntityId, TimeRange, Vault};
 
 use super::*;
@@ -438,7 +439,13 @@ impl Vault {
     /// device binds them with the key it enrolled, which signs the binding
     /// itself ([`Self::prepare_owner_key_binding_as`]).
     ///
+    /// The door asks for the person at this device before its write (an
+    /// important act, [`Vault::owner_presence`]), after revalidating the owner.
+    ///
     /// # Errors
+    /// A refused confirm answers [`RecordError::OwnerPresenceRequired`]; on a
+    /// device with a PIN set, [`crate::error::SecretError::DevicePin`] answers
+    /// `Required` outside the PIN's window.
     /// [`RecordError::AuthorityRefused`] for an agent's act, an install that
     /// cannot carry it, or an enrollment the fold does not count;
     /// [`RecordError::InvalidAuthorityLogBody`] for a key the roster already
@@ -455,8 +462,14 @@ impl Vault {
     where
         S: FnMut(&[u8]) -> Result<Vec<u8>>,
     {
+        self.owner_key_act_owner(authority)?;
+        let witness = self.owner_presence(
+            OwnerActImportance::Important,
+            owner_presence_reasons::ENROL_OWNER_SIGNING_KEY,
+        )?;
         self.enrol_owner_signing_key_on_entry_fold_as(
             authority,
+            &witness,
             input,
             predecessor,
             |_, transcript| sign_predecessor(transcript),
@@ -472,11 +485,14 @@ impl Vault {
     /// binding. So the key is asked on the roster its entry is judged by,
     /// never on an earlier read's.
     ///
+    /// The witness shows the door asked before opening its write transaction.
+    ///
     /// # Errors
     /// As [`Self::enrol_owner_signing_key_as`].
     pub(super) fn enrol_owner_signing_key_on_entry_fold_as<S>(
         &self,
         authority: &ActAuthority,
+        asked: &OwnerPresenceWitness,
         input: OwnerKeyEnrollment,
         predecessor: AuthorityKey,
         sign_predecessor: S,
@@ -487,6 +503,7 @@ impl Vault {
         let device = enrolled_device(input.public_key, input.proof, EnrolledOwnerKeyKind::Device);
         let (entry, machine) = self.enrol_owner_device_as(
             authority,
+            asked,
             Some(input.machine),
             device,
             predecessor,
@@ -504,9 +521,11 @@ impl Vault {
     /// the carrier is named in its place. Answers the counted entry and the
     /// machine it names. `sign_predecessor` takes each entry's fold
     /// ([`Self::write_owner_key_enroll_as`]).
+    /// The witness shows the door asked before opening its write transaction.
     fn enrol_owner_device_as<S>(
         &self,
         authority: &ActAuthority,
+        asked: &OwnerPresenceWitness,
         holder: Option<EntityId>,
         device: DeviceAuthority,
         predecessor: AuthorityKey,
@@ -517,6 +536,7 @@ impl Vault {
     {
         self.write_owner_key_enroll_as(
             authority,
+            asked,
             holder,
             device,
             predecessor,
@@ -536,9 +556,15 @@ impl Vault {
     /// signed on: the one the enrollment is built on, after any frontier
     /// join, and for the owner's binding the fold after the enrollment. A
     /// predecessor that checks its own right to sign reads the roster there.
+    /// The witness shows the door asked before opening its write transaction.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the enrollment's authority, presence witness, holder, device, predecessor, signer and confirming vouch"
+    )]
     fn write_owner_key_enroll_as<S>(
         &self,
         authority: &ActAuthority,
+        _asked: &OwnerPresenceWitness,
         holder: Option<EntityId>,
         device: DeviceAuthority,
         predecessor: AuthorityKey,
@@ -830,7 +856,14 @@ impl Vault {
     /// predecessor: `issuer` signs the transcript in process, and no signing
     /// door of it leaves this module.
     ///
+    /// The door asks for the person at this device before its write (an
+    /// important act, [`Vault::owner_presence`]), through the signing key door after it
+    /// revalidates the owner.
+    ///
     /// # Errors
+    /// A refused confirm answers [`RecordError::OwnerPresenceRequired`]; on a
+    /// device with a PIN set, [`crate::error::SecretError::DevicePin`] answers
+    /// `Required` outside the PIN's window.
     /// As [`Self::enrol_owner_signing_key_as`].
     pub fn enrol_owner_signing_key_as_host(
         &self,
@@ -841,6 +874,25 @@ impl Vault {
         self.enrol_owner_signing_key_as(authority, input, issuer.public_key(), |transcript| {
             Ok(issuer.sign_slip(transcript))
         })
+    }
+
+    /// The host enrollment for a caller that already asked and may hold the
+    /// device PIN's step. The witness shows the door asked before opening its
+    /// write transaction.
+    pub(crate) fn enrol_owner_signing_key_as_host_witnessed(
+        &self,
+        authority: &ActAuthority,
+        asked: &OwnerPresenceWitness,
+        input: OwnerKeyEnrollment,
+        issuer: &HostSlipIssuer,
+    ) -> Result<OwnerKeyEnrollmentReceipt> {
+        self.enrol_owner_signing_key_on_entry_fold_as(
+            authority,
+            asked,
+            input,
+            issuer.public_key(),
+            |_, transcript| Ok(issuer.sign_slip(transcript)),
+        )
     }
 
     /// The challenge a passkey's assertion names to enrol on this vault for
@@ -886,7 +938,14 @@ impl Vault {
     /// it binds an owner whom no live `human` binding names to the passkey, as
     /// the device door binds them to a device key (OWNER-ENROL).
     ///
+    /// The door asks for the person at this device before its write (an
+    /// important act, [`Vault::owner_presence`]), after decoding the input and
+    /// revalidating the owner.
+    ///
     /// # Errors
+    /// A refused confirm answers [`RecordError::OwnerPresenceRequired`]; on a
+    /// device with a PIN set, [`crate::error::SecretError::DevicePin`] answers
+    /// `Required` outside the PIN's window.
     /// As [`Self::enrol_owner_signing_key_as`]; a key, a credential id or an
     /// assertion that does not decode is
     /// [`RecordError::InvalidAuthorityLogBody`].
@@ -901,10 +960,19 @@ impl Vault {
         S: FnMut(&[u8]) -> Result<Vec<u8>>,
     {
         let (public_key, device) = passkey_enrollment_device(input)?;
-        let (entry, machine) =
-            self.enrol_owner_device_as(authority, None, device, predecessor, |_, transcript| {
-                sign_predecessor(transcript)
-            })?;
+        self.owner_key_act_owner(authority)?;
+        let witness = self.owner_presence(
+            OwnerActImportance::Important,
+            owner_presence_reasons::ENROL_OWNER_PASSKEY,
+        )?;
+        let (entry, machine) = self.enrol_owner_device_as(
+            authority,
+            &witness,
+            None,
+            device,
+            predecessor,
+            |_, transcript| sign_predecessor(transcript),
+        )?;
         Ok(OwnerPasskeyEnrollmentReceipt {
             entry,
             machine,
@@ -924,7 +992,14 @@ impl Vault {
     /// its own limits stay (it re-roots nothing and revokes no other owner
     /// key, Engine ruling WEBPASSKEY-PASSKEY-OWN-REVOKE = B).
     ///
+    /// The door asks for the person at this device before its write (an
+    /// important act, [`Vault::owner_presence`]), after decoding the input and
+    /// revalidating the owner.
+    ///
     /// # Errors
+    /// A refused confirm answers [`RecordError::OwnerPresenceRequired`]; on a
+    /// device with a PIN set, [`crate::error::SecretError::DevicePin`] answers
+    /// `Required` outside the PIN's window.
     /// As [`Self::confirm_owner_key_as`]; a key, a credential id or an
     /// assertion that does not decode is
     /// [`RecordError::InvalidAuthorityLogBody`].
@@ -939,8 +1014,14 @@ impl Vault {
         S: FnMut(&[u8]) -> Result<Vec<u8>>,
     {
         let (public_key, device) = passkey_enrollment_device(input)?;
+        self.owner_key_act_owner(authority)?;
+        let witness = self.owner_presence(
+            OwnerActImportance::Important,
+            owner_presence_reasons::CONFIRM_OWNER_PASSKEY,
+        )?;
         let (entry, machine) = self.write_owner_key_enroll_as(
             authority,
+            &witness,
             None,
             device,
             predecessor,
@@ -958,7 +1039,14 @@ impl Vault {
     /// [`Self::enrol_owner_passkey_as`] with this host's own root as the
     /// predecessor: `issuer` signs the transcript in process.
     ///
+    /// The door asks for the person at this device before its write (an
+    /// important act, [`Vault::owner_presence`]), through the passkey door after
+    /// it decodes the input and revalidates the owner.
+    ///
     /// # Errors
+    /// A refused confirm answers [`RecordError::OwnerPresenceRequired`]; on a
+    /// device with a PIN set, [`crate::error::SecretError::DevicePin`] answers
+    /// `Required` outside the PIN's window.
     /// As [`Self::enrol_owner_passkey_as`].
     pub fn enrol_owner_passkey_as_host(
         &self,
@@ -980,7 +1068,13 @@ impl Vault {
     /// key's own enrollment input again (its proof of possession is the
     /// same), and nothing on the roster changes.
     ///
+    /// The door asks for the person at this device before its write (an
+    /// important act, [`Vault::owner_presence`]), after revalidating the owner.
+    ///
     /// # Errors
+    /// A refused confirm answers [`RecordError::OwnerPresenceRequired`]; on a
+    /// device with a PIN set, [`crate::error::SecretError::DevicePin`] answers
+    /// `Required` outside the PIN's window.
     /// As [`Self::enrol_owner_signing_key_as`]; a key the roster does not
     /// name is [`RecordError::InvalidAuthorityLogBody`], and one that is not
     /// passkey-vouched, or a predecessor that may not confirm it (a passkey,
@@ -996,9 +1090,15 @@ impl Vault {
     where
         S: FnMut(&[u8]) -> Result<Vec<u8>>,
     {
+        self.owner_key_act_owner(authority)?;
+        let witness = self.owner_presence(
+            OwnerActImportance::Important,
+            owner_presence_reasons::CONFIRM_OWNER_SIGNING_KEY,
+        )?;
         let device = enrolled_device(input.public_key, input.proof, EnrolledOwnerKeyKind::Device);
         let (entry, machine) = self.write_owner_key_enroll_as(
             authority,
+            &witness,
             Some(input.machine),
             device,
             predecessor,
@@ -1019,7 +1119,13 @@ impl Vault {
     /// no signature, and the challenge its predecessor's assertion names. A
     /// frontier join this needs is written and kept; nothing else is.
     ///
+    /// The door asks for the person at this device before its write (an
+    /// important act, [`Vault::owner_presence`]), after revalidating the owner.
+    ///
     /// # Errors
+    /// A refused confirm answers [`RecordError::OwnerPresenceRequired`]; on a
+    /// device with a PIN set, [`crate::error::SecretError::DevicePin`] answers
+    /// `Required` outside the PIN's window.
     /// As [`Self::enrol_owner_signing_key_as`], before any signature; an
     /// authority refusal for an enrollment that would bind its owner to the
     /// key (OWNER-ENROL), whose second entry a prepared enrollment does not
@@ -1030,6 +1136,11 @@ impl Vault {
         input: OwnerKeyEnrollment,
         predecessor: AuthorityKey,
     ) -> Result<PreparedOwnerKeyEnrollment> {
+        self.owner_key_act_owner(authority)?;
+        let _asked = self.owner_presence(
+            OwnerActImportance::Important,
+            owner_presence_reasons::ENROL_OWNER_SIGNING_KEY,
+        )?;
         let mut txn = self.store.env.write_txn()?;
         let device = enrolled_device(input.public_key, input.proof, EnrolledOwnerKeyKind::Device);
         let (entry, _, _) = self.unsigned_owner_key_enroll_in_txn(
@@ -1065,7 +1176,14 @@ impl Vault {
     /// the heads read here. It never lands a second vouch for a key the
     /// roster names: a confirmation goes through [`Self::confirm_owner_key_as`].
     ///
+    /// The door asks for the person at this device before its write (an
+    /// important act, [`Vault::owner_presence`]), after decoding the entry and
+    /// revalidating the owner.
+    ///
     /// # Errors
+    /// A refused confirm answers [`RecordError::OwnerPresenceRequired`]; on a
+    /// device with a PIN set, [`crate::error::SecretError::DevicePin`] answers
+    /// `Required` outside the PIN's window.
     /// [`RecordError::InvalidAuthorityLogBody`] for an entry this install
     /// does not carry for this owner, for a key the roster names by now, or
     /// for a predecessor revoked or past the entry's sequence or a holding
@@ -1083,6 +1201,11 @@ impl Vault {
             ActAuthority::Agent(_) => return Err(authority_refused(OWNER_ONLY)),
         };
         let mut entry = decode_unsigned_entry(entry).ok_or_else(|| not_valid(NOT_PREPARED))?;
+        self.owner_key_act_owner(authority)?;
+        let _asked = self.owner_presence(
+            OwnerActImportance::Important,
+            owner_presence_reasons::ENROL_OWNER_SIGNING_KEY,
+        )?;
         let mut txn = self.store.env.write_txn()?;
         let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;

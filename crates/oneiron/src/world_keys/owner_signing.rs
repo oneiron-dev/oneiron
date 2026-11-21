@@ -53,10 +53,10 @@ use std::sync::{Arc, PoisonError};
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron_keystore::{DeviceKeystore, KeystoreSlot, SlotKind};
 
-use super::DevicePin;
 use super::device_pin::{
     SlotSeedBar, device_pin_is_set, no_device_pin_here, pin_refused, slot_seed_bar,
 };
+use super::{DevicePin, OwnerActImportance, owner_presence_reasons};
 use crate::authority::{
     ACTOR_CLASS_HUMAN, ActAuthority, AuthorityEntryHash, AuthorityFold, AuthorityKey,
     AuthorityLogEntry, AuthorityOp, AuthorityVaultId, CheckpointRootSigner, DeviceOwnerKeyVouch,
@@ -394,7 +394,14 @@ impl Vault {
     /// installed a device PIN, an enrollment is one step with a PIN's set,
     /// change and forget, and with every other enrollment under that PIN.
     ///
+    /// The door asks for the person at this device before its write (an
+    /// important act, [`Vault::owner_presence`]), after signing readiness and before
+    /// taking the PIN step.
+    /// After the check, the door reads the slot under the PIN step if present
+    /// and answers an already live key's receipt without writing an enrollment.
+    ///
     /// # Errors
+    /// A refused confirm answers [`RecordError::OwnerPresenceRequired`].
     /// `KeystoreUnavailable` while the host installed no keystore; the
     /// enrollment's own refusals. On a device with a PIN set,
     /// [`crate::error::SecretError::DevicePin`]: `Required` outside a window,
@@ -412,11 +419,15 @@ impl Vault {
         let machine = self.prepare_install_signing()?;
         let slot = self.owner_signing_slot(machine);
         let pin = self.device_pin();
+        let witness = self.owner_presence(
+            OwnerActImportance::Important,
+            owner_presence_reasons::ENROL_THIS_DEVICE_OWNER_SIGNING_KEY,
+        )?;
         let step = pin.as_deref().map(DevicePin::step);
         if device_pin_is_set(keystore.as_ref()).map_err(super::keystore_error)? {
             return match (pin.as_ref(), step) {
                 (Some(pin), Some(step)) => self.enrol_pin_bound_owner_signing_key(
-                    &step, pin, authority, issuer, machine, slot,
+                    &step, pin, authority, issuer, machine, slot, &witness,
                 ),
                 _ => Err(no_device_pin_here()),
             };
@@ -434,7 +445,9 @@ impl Vault {
                         public_key: signer.public_key(),
                         proof: signer.sign_possession(&challenge),
                     };
-                    let receipt = self.enrol_owner_signing_key_as_host(authority, input, issuer)?;
+                    let receipt = self.enrol_owner_signing_key_as_host_witnessed(
+                        authority, &witness, input, issuer,
+                    )?;
                     (signer, receipt)
                 }
             };

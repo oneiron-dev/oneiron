@@ -35,7 +35,10 @@
 
 use std::sync::PoisonError;
 
-use super::{DevicePin, KitConfirmation, OwnerSigningSlot, RecoveryRootSeed, SlotRenewal, refused};
+use super::{
+    DevicePin, KitConfirmation, OwnerActImportance, OwnerSigningSlot, RecoveryRootSeed,
+    SlotRenewal, owner_presence_reasons, refused,
+};
 use crate::Vault;
 use crate::authority::{
     AuthorityKey, PinnedRoot, RootAppointmentReceipt, read_pin_row_in_txn,
@@ -64,7 +67,14 @@ impl Vault {
     /// root key again. `confirm` is the kit confirmation the kit-restored
     /// seed rule reads, as at the other seed doors.
     ///
+    /// The door asks for the person at this device before its write (an
+    /// important act, [`Vault::owner_presence`]), after the read checks and signing
+    /// readiness, before taking the PIN step or slot lock.
+    ///
     /// # Errors
+    /// A refused confirm answers [`crate::error::RecordError::OwnerPresenceRequired`];
+    /// on a device with a PIN set, [`crate::error::SecretError::DevicePin`]
+    /// answers `Required` outside the PIN's window.
     /// [`crate::error::SecretError::WorldKeyRefused`] for a bound proof, a
     /// root not stored or not pinned here, a roster that still holds a live
     /// root key, a burned anchor, an ancestry over which the appointment
@@ -84,6 +94,15 @@ impl Vault {
     /// read-only check and before its writer: the gap in which another run
     /// of the door can commit first (the test door
     /// `test_doors::root_appointment::appoint_owner_root_between`).
+    ///
+    /// The door asks for the person at this device before its write (an
+    /// important act, [`Vault::owner_presence`]), after the read checks and signing
+    /// readiness, before taking the PIN step or slot lock.
+    ///
+    /// # Errors
+    /// A refused confirm answers [`crate::error::RecordError::OwnerPresenceRequired`];
+    /// on a device with a PIN set, [`crate::error::SecretError::DevicePin`]
+    /// answers `Required` outside the PIN's window.
     pub(crate) fn appoint_owner_root_between(
         &self,
         owner: &AuthenticatedOwner,
@@ -100,6 +119,10 @@ impl Vault {
         })?;
         between();
         let slot = self.device_owner_signing_slot()?;
+        let _asked = self.owner_presence(
+            OwnerActImportance::Important,
+            owner_presence_reasons::RECOVER_OWNER_ROOT,
+        )?;
         // One step with a first PIN's set, entered before the writer and
         // held to its commit (row OCS-OWNER-PIN): no PIN of this process is
         // set between the successor's making and the commit. So the
