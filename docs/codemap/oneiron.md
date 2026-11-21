@@ -529,7 +529,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/owner_key_changes.rs` | src | m | 1 struct · 1 enum · 2 fn | OwnerKeyChange, OwnerKeyChangeKind | The owner's list of owner key changes (the owner's ruling AUTH-5, pass 27 section 4.4): every enrolment… |
 | `src/authority/owner_key_enrollment.rs` | src | m | 14 crate-vis | — | The fold's judge of the owner's enrollment of one of his devices' own owner signing keys (FIX 4920; Engine… |
 | `src/authority/owner_key_enrollment_door.rs` | src | XL | 7 struct · 1 enum · 13 fn · 3 re-export · 24 crate-vis | EnrolledOwnerKey, EnrolledOwnerKeyKind, EnrolledOwnerPasskey, OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt, OwnerPasskeyEnrollment, OwnerPasskeyEnrollmentReceipt, PreparedOwnerKeyEnrollment | The owner's enrollment of one of his devices' own owner signing keys (FIX 4920 part 2; Engine 10-20 00:5x… |
-| `src/authority/owner_key_enrollment_door/owner_authority_closure.rs` | src | s | 4 crate-vis | — | The owner authority a person's removal ends (row OWNER-REVOKE-BY-NAMED-ATTRIBUTION; ruled… |
+| `src/authority/owner_key_enrollment_door/owner_authority_closure.rs` | src | s | 6 crate-vis | — | The owner authority a person's removal ends (row OWNER-REVOKE-BY-NAMED-ATTRIBUTION; ruled… |
 | `src/authority/owner_key_enrollment_door/owner_key_binding.rs` | src | m | 2 struct · 2 fn · 1 crate-vis | OwnerKeyBindingReceipt, PreparedOwnerKeyBinding | An Owner's `human` binding to an owner device key of their own, signed by that key (lead ruling… |
 | `src/authority/owner_key_enrollment_door/owner_passkey_binding.rs` | src | m | 2 struct · 2 fn | OwnerPasskeyBindingReceipt, PreparedOwnerPasskeyBinding | An Owner's `human` binding to their own passkey, signed by that passkey (the Oneiron lead 21 Nov 04:5x: "a… |
 | `src/authority/owner_key_enrollment_door/recovery_authority.rs` | src | m | 1 struct · 3 fn · 8 crate-vis | WaysBack | The recovery root's authority key R on the owner's roster: its enrolment under its own attestation kind… |
@@ -1479,7 +1479,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/check_in/act_class.rs` | src | s | 1 re-export | — | The shipped act table (ARCH-0082 #act-table and #catastrophe-floor) |
 | `src/check_in/asker.rs` | src | m | 7 crate-vis | — | The asking side of the agent verbs `vault.check_in.preflight` and `vault.check_in.open` (ARCH-0082… |
 | `src/check_in/chain.rs` | src | m | 11 crate-vis | — | The ladder from verified records (ARCH-0082 #ladder; ROLES-CHECKIN P2.2, piece 2c; Engine ruling P22-SHAPE… |
-| `src/check_in/effect.rs` | src | m | 17 fn · 1 const · 1 re-export · 11 crate-vis | — | A door's own check-in for a person's act (ARCH-0082 #composing; ROLES-CHECKIN P2.4b, piece 2i; Engine ruling… |
+| `src/check_in/effect.rs` | src | m | 17 fn · 1 const · 1 re-export · 13 crate-vis | — | A door's own check-in for a person's act (ARCH-0082 #composing; ROLES-CHECKIN P2.4b, piece 2i; Engine ruling… |
 | `src/check_in/mod.rs` | src | s | 15 re-export · 17 crate-vis | — | Check-in: one mechanism for every act that may need an ask (ONEIRON-ARCH-0082; owner ruling ROLES-CHECKIN =… |
 | `src/check_in/mode.rs` | src | s | 1 re-export | — | The three check-in modes and their stable wire tokens |
 | `src/check_in/pending.rs` | src | m | 3 struct · 1 enum · 1 fn · 2 re-export · 10 crate-vis | DelayWindowOpen, HolderReply, OpenPendingCheckIn, RungMembers | The durable Wait handle (ARCH-0082 #ladder and #waits; ROLES-CHECKIN P2.2, pieces 2b and 2d; Engine ruling… |
@@ -3782,7 +3782,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/federation/shared_act/export_records.rs` | src | s | 1 fn · 1 crate-vis | — | The record ids an export-first removal's export counted, beside its receipt (FIX 11886) |
 | `src/federation/shared_act/member_ask.rs` | src | m | 1 struct · 2 enum · 6 fn · 1 const · 1 re-export · 3 crate-vis | MemberAskChange, SharedMemberAsk, SharedMemberChange | Steward member asks (untangle 6.3d; ARCH-0043 Steward, S63-4): a Steward looks after a shared vault's… |
 | `src/federation/shared_act/member_ask/tests.rs` | test | s | — | — | A Steward's membership acts are asks (untangle 6.3d, ARCH-0043 Steward): its add-member call writes an ask… |
-| `src/federation/shared_act/membership.rs` | src | L | 8 fn · 2 re-export · 19 crate-vis | — | Membership effects: Owner additions and handovers, and the ordinary member changes an Admin's named power… |
+| `src/federation/shared_act/membership.rs` | src | XL | 8 fn · 2 re-export · 21 crate-vis | — | Membership effects: Owner additions and handovers, and the ordinary member changes an Admin's named power… |
+| `src/federation/shared_act/membership/departure_importance.rs` | src | s | 3 crate-vis | — | What a member's removal or leave asks the person at the device |
 | `src/federation/shared_act/membership/invitation.rs` | src | m | 1 struct · 7 fn · 1 const · 1 re-export · 10 crate-vis | SharedInvitation | Invitee acceptance (CROSS-ARCH-0024: "Only an accepted, vault-specific invitation" grants membership) |
 | `src/federation/shared_act/membership/invitation/inquiry_edge.rs` | src | s | 1 fn | — | An acceptance that carries the member's inquiry edge (federation.md #inquiry-first-build: "the edge is… |
 | `src/federation/shared_act/membership/owner_recovery.rs` | src | s | 1 enum · 2 fn · 1 crate-vis | OwnerRecoveryAuthorization | Who authorized a proof-of-control owner recovery (ARCH-0043, OF-163; FIX 1812) |
@@ -8476,6 +8477,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/masked_checkout.rs` | src | s | 3 fn | — | Doors for `tests/runner_fence_masked_checkout.rs` ([RUNNER-FENCE-MASKED-CHECKOUT]): a masked copy's… |
 | `src/test_doors/media_vector_replica.rs` | src | s | 2 fn | — | Doors for `tests/media_vector_replica.rs` (census L7-43): the receiver's install of a media vector replica… |
 | `src/test_doors/meeting_follow_up.rs` | src | s | 1 fn | — | Door for `tests/calendar_meeting_follow_up.rs` (CAL-08 PR-E1): the check the connector executor asks before… |
+| `src/test_doors/member_departure_between.rs` | src | s | 3 fn | — | Doors for ending a member's standing between the door's check and write |
 | `src/test_doors/membership.rs` | src | s | 1 fn | — | A shared vault's member grants, for integration tests (primitive A, slice 6.4f: the Steward arm of the run… |
 | `src/test_doors/memory_frontier.rs` | src | s | 4 fn · 1 re-export | — | Doors for `tests/memory_frontier_timeline.rs` and `tests/graph_fs_memory_fork.rs` to the vault's memory… |
 | `src/test_doors/merge_queue_check.rs` | src | s | 2 fn | — | Doors to the merge queue's check slots and check work rows for tests/queue_check_reuse_source.rs (L4-30) |
@@ -8483,7 +8485,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/mesh_machine_endpoint_index.rs` | src | s | 1 enum · 5 fn | IndexedEndpoint | Doors for `tests/mesh_machine_endpoint_index.rs` (census L3-28B): the endpoint lookup as the MACHINE… |
 | `src/test_doors/meso_extraction_width.rs` | src | m | 1 struct · 1 enum · 1 fn · 5 crate-vis | ExtractionWidth, PriorScenario | Door for `tests/dreamer_meso_width.rs` (FIX 21927 P2): measure the extraction calls in flight during one… |
 | `src/test_doors/microsoft_token.rs` | src | s | 1 struct · 6 fn · 1 crate-vis | ExchangedMicrosoftGrant | Door for `tests/microsoft365_oauth.rs` and `tests/microsoft365_refresh_write_back.rs`… |
-| `src/test_doors/mod.rs` | src | m | 1 fn · 389 mod · 3 re-export | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
+| `src/test_doors/mod.rs` | src | m | 1 fn · 390 mod · 3 re-export | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
 | `src/test_doors/model_binding_proposer.rs` | src | m | 1 struct · 2 fn · 1 const | TrialFixture | Fixture for the `model_binding_proposer_grant` server test: one completed held-out trial offer for a role… |
 | `src/test_doors/model_call_turn_link.rs` | src | s | 1 fn | — | Doors for `oneiron-server/tests/chat_model_call_turn_link.rs` (UNBUILT3-41, FIX [TURN-MODEL-LINK]): the… |
 | `src/test_doors/model_step_submission_codec.rs` | src | s | 1 fn | — | Doors for `tests/model_step_submission_codec.rs` (STEP-CORRECTION-HEALTH-PARK): a model step's submission… |
@@ -10210,6 +10212,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/owner_presence_before_install_signing.rs` | test | m | — | — | [KIT-ACTIVATION-DOORS-READY-THIS-INSTALLS-SIGNING-KEYS-BEFORE-THE-CONFIRM] A declined confirm at each kit… |
 | `tests/owner_presence_doors.rs` | test | L | — | — | Every door that signs an owner proof asks for the person first (row OWNER-CONFIRM-SHEET, PR 4b-1): a… |
 | `tests/owner_presence_enrolment_doors.rs` | test | XL | — | — | Every owner key enrolment door asks for the person first (row OWNER-CONFIRM-SHEET, PR 4b-2): a declined… |
+| `tests/owner_presence_member_departure_doors.rs` | test | m | — | — | The removal and leave doors read before they ask (row OWNER-CONFIRM-SHEET, PR 4b-3d1) |
 | `tests/owner_presence_policy_doors.rs` | test | L | — | — | Five owner policy doors read the value in force before they ask (row OWNER-CONFIRM-SHEET, PR 4b-3c1) |
 | `tests/owner_presence_recovery_preset_doors.rs` | test | L | — | — | Recovery preset doors check owner presence before drawing or readying signing keys, and after every refusal… |
 | `tests/owner_presence_removal_doors.rs` | test | L | — | — | The two removal doors read before they ask (row OWNER-CONFIRM-SHEET, PR 4b-3b) |
