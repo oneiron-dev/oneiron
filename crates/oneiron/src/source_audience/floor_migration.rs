@@ -71,8 +71,8 @@ const CLEAR_PAGE: usize = 1024;
 /// # Errors
 ///
 /// Storage failures.
-pub(super) fn old_backfill_done_in(vault: &Vault, txn: &RoTxn<'_>) -> Result<bool> {
-    Ok(BACKFILL.get(&vault.store, txn, &())?.unwrap_or(false))
+pub(super) fn old_backfill_done_in(store: &crate::store::Store, txn: &RoTxn<'_>) -> Result<bool> {
+    Ok(BACKFILL.get(store, txn, &())?.unwrap_or(false))
 }
 
 /// Whether `row` was judged since the old backfill began.
@@ -80,8 +80,12 @@ pub(super) fn old_backfill_done_in(vault: &Vault, txn: &RoTxn<'_>) -> Result<boo
 /// # Errors
 ///
 /// Storage failures.
-pub(super) fn raised_in(vault: &Vault, txn: &RoTxn<'_>, row: &EntityId) -> Result<bool> {
-    RAISED.contains(&vault.store, txn, row)
+pub(super) fn raised_in(
+    store: &crate::store::Store,
+    txn: &RoTxn<'_>,
+    row: &EntityId,
+) -> Result<bool> {
+    RAISED.contains(store, txn, row)
 }
 
 /// Marks `row` judged, in a write while the migration runs.
@@ -89,11 +93,15 @@ pub(super) fn raised_in(vault: &Vault, txn: &RoTxn<'_>, row: &EntityId) -> Resul
 /// # Errors
 ///
 /// Storage failures.
-pub(super) fn mark_judged_in_txn(vault: &Vault, txn: &mut RwTxn<'_>, row: &EntityId) -> Result<()> {
-    if old_backfill_done_in(vault, txn)? {
+pub(super) fn mark_judged_in_txn(
+    store: &crate::store::Store,
+    txn: &mut RwTxn<'_>,
+    row: &EntityId,
+) -> Result<()> {
+    if old_backfill_done_in(store, txn)? {
         return Ok(());
     }
-    RAISED.put(&vault.store, txn, row, &())
+    RAISED.put(store, txn, row, &())
 }
 
 /// Whether `row` still holds an old build's wait (a mark, or its pending
@@ -103,7 +111,7 @@ pub(super) fn mark_judged_in_txn(vault: &Vault, txn: &mut RwTxn<'_>, row: &Entit
 ///
 /// Storage failures.
 pub(super) fn has_old_marks_in(
-    vault: &Vault,
+    store: &crate::store::Store,
     txn: &RoTxn<'_>,
     row: &EntityId,
     migrated: bool,
@@ -111,9 +119,9 @@ pub(super) fn has_old_marks_in(
     if migrated {
         return Ok(false);
     }
-    Ok(PENDING.contains(&vault.store, txn, row)?
+    Ok(PENDING.contains(store, txn, row)?
         || WAITS
-            .iter_from(&vault.store, txn, row.as_bytes())?
+            .iter_from(store, txn, row.as_bytes())?
             .next()
             .is_some())
 }
@@ -126,7 +134,7 @@ pub(super) fn has_old_marks_in(
 ///
 /// Storage failures.
 pub(super) fn old_marks_of_in(
-    vault: &Vault,
+    store: &crate::store::Store,
     txn: &RoTxn<'_>,
     row: &EntityId,
     migrated: bool,
@@ -135,12 +143,12 @@ pub(super) fn old_marks_of_in(
     if migrated {
         return Ok(marks);
     }
-    for (_, awaited) in WAITS.scan_keys(&vault.store, txn, row.as_bytes())? {
+    for (_, awaited) in WAITS.scan_keys(store, txn, row.as_bytes())? {
         marks
             .entries
-            .push((awaited, mark_flags_in(vault, txn, row, &awaited)?));
+            .push((awaited, mark_flags_in(store, txn, row, &awaited)?));
     }
-    marks.pending = marks.entries.is_empty() && PENDING.contains(&vault.store, txn, row)?;
+    marks.pending = marks.entries.is_empty() && PENDING.contains(store, txn, row)?;
     Ok(marks)
 }
 
@@ -156,14 +164,14 @@ pub(super) struct OldMarks {
 /// The flags of the entry a mark of `row` on `awaited` becomes: an old
 /// fact's, at the level of the delete, when `awaited` reads erased now.
 fn mark_flags_in(
-    vault: &Vault,
+    store: &crate::store::Store,
     txn: &RoTxn<'_>,
     row: &EntityId,
     awaited: &EntityId,
 ) -> Result<OpenFlags> {
-    if awaited != row && crate::ports::erased_in_txn(&vault.store, txn, awaited)? {
+    if awaited != row && crate::ports::erased_in_txn(store, txn, awaited)? {
         return Ok(OpenFlags::before_floors(source_state::delete_level_in(
-            vault, txn, awaited,
+            store, txn, awaited,
         )?));
     }
     Ok(OpenFlags::ORDINARY)
@@ -229,8 +237,8 @@ fn marks_page_in_txn(vault: &Vault, txn: &mut RwTxn<'_>) -> Result<(u64, bool)> 
     let mut converted = 0_u64;
     for (row, awaited) in &marks {
         if vault.get_raw_in(txn, row)?.is_some() {
-            let flags = mark_flags_in(vault, txn, row, awaited)?;
-            source_state::open_entry_in_txn(vault, txn, row, awaited, flags)?;
+            let flags = mark_flags_in(&vault.store, txn, row, awaited)?;
+            source_state::open_entry_in_txn(&vault.store, txn, row, awaited, flags)?;
             converted = converted.saturating_add(1);
         }
         AWAITED.delete(&vault.store, txn, &(*awaited, *row))?;
@@ -273,14 +281,14 @@ fn judge_page_in_txn(
         }
     }
     let mut judged = 0_u64;
-    let done = old_backfill_done_in(vault, txn)?;
+    let done = old_backfill_done_in(&vault.store, txn)?;
     for row in &rows {
         if vault.get_raw_in(txn, row)?.is_none()
             || crate::ports::erased_in_txn(&vault.store, txn, row)?
         {
             continue;
         }
-        if done || raised_in(vault, txn, row)? {
+        if done || raised_in(&vault.store, txn, row)? {
             source_state::heal_row_in_txn(vault, txn, row)?;
         } else {
             source_state::judge_row_in_txn(vault, txn, row, &source_state::Fresh::None, true)?;
@@ -324,7 +332,7 @@ fn clear_page_in_txn(vault: &Vault, txn: &mut RwTxn<'_>) -> Result<bool> {
     AWAITED.delete_from(&vault.store, txn, &[])?;
     WAITS.delete_from(&vault.store, txn, &[])?;
     BACKFILL.delete_from(&vault.store, txn, &[])?;
-    source_state::mark_migrated_in_txn(vault, txn)?;
+    source_state::mark_migrated_in_txn(&vault.store, txn)?;
     Ok(true)
 }
 
