@@ -31,6 +31,7 @@ mod kit;
 mod kit_piece;
 mod machine;
 mod owner_presence;
+pub(crate) mod owner_presence_reasons;
 mod owner_signing;
 mod owner_work;
 mod pad_custody;
