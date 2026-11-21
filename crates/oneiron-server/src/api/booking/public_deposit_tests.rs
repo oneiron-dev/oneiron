@@ -1730,11 +1730,11 @@ async fn an_ask_again_behind_a_short_hand_refund_answers_the_earlier_failed_refu
 
 /// The owner marks `payment_id`'s owed refund refunded outside Stripe, for
 /// `amount_minor`: the mark's receipt, and the owner's booking card reader.
-fn mark_refunded_outside(
-    fixture: &Fixture,
+fn mark_refunded_outside<'a>(
+    fixture: &'a Fixture,
     payment_id: &str,
     amount_minor: u64,
-) -> (Value, impl Fn() -> Value + '_) {
+) -> (Value, impl Fn() -> Value + use<'a>) {
     let event_ref = booking_deposit_for_payment(&fixture.server.vault, payment_id)
         .expect("read")
         .expect("the deposit exists")
