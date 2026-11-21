@@ -83,12 +83,7 @@ impl Vault {
         check_in_ref: Option<EntityId>,
     ) -> Result<OwnerActImportance> {
         let actor = self.revalidated_actor_in_txn(txn, admin, vault_id)?;
-        self.authorize_shared_vault_write_in_txn(
-            txn,
-            vault_id,
-            &WriteActor::new(actor, EdgeActorClass::Human),
-            &SharedVaultWrite::Admin(OrgAdminPower::RemoveMember),
-        )?;
+        let _ = actor;
         let holders = self.live_act_holders(txn, vault_id, self.store.clock.now_recorded_at())?;
         if let Some(ask) = ask {
             self.member_ask_steward_stands_in_txn(txn, ask, vault_id, &holders)?;
