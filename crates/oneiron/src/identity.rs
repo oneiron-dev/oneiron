@@ -133,6 +133,11 @@ pub(crate) fn is_machine_identity_row(key: &[u8]) -> bool {
 /// one: another live vault keeps the machine it was. The install's
 /// restored-from mark stays: a machine born of a restore that mints a new id
 /// here is still born of that restore (row RESTORED-COPIES-ENROL-EACH-OTHER).
+/// The choices about the install it was go with them, as a direct restore
+/// leaves an image's behind: its `sync: install` settings and its residence
+/// mode and world pick, so the new machine starts at the defaults (DESIGN
+/// 15-setting-primitive 1.5 and 1.6, "Restore"; rows
+/// SETTING-ACTIVATE-ARCHIVED-INSTALL-ROWS, SETTING-RESIDENCE-DEVICE-MODE-RIDES-IMAGE).
 pub(crate) fn drop_machine_identity_in_txn(
     store: &crate::store::Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -142,7 +147,11 @@ pub(crate) fn drop_machine_identity_in_txn(
     DEVICE_PK.delete(store, wtxn, &())?;
     MACHINE_PK.delete(store, wtxn, &())?;
     crate::authority::drop_held_answer_dismissals_in_txn(store, wtxn)?;
-    crate::authority::drop_pinned_root_in_txn(store, wtxn)
+    crate::authority::drop_pinned_root_in_txn(store, wtxn)?;
+    crate::setting::drop_install_rows_in_txn(store, wtxn)?;
+    #[cfg(feature = "sync")]
+    crate::sync::residence::drop_residence_choices_in_txn(store, wtxn)?;
+    Ok(())
 }
 
 #[cfg(test)]

@@ -75,10 +75,9 @@ impl CheckpointImage {
     /// (`sync::residence::is_residence_choice_row`).
     pub(super) fn drop_machine_identity(&mut self) {
         if let Some(rows) = self.databases.get_mut("sync_state") {
-            rows.retain(|(key, _)| {
-                !crate::identity::is_machine_identity_row(key)
-                    && !crate::sync::residence::is_residence_choice_row(key)
-            });
+            rows.retain(|(key, _)| !crate::identity::is_machine_identity_row(key));
+            #[cfg(feature = "sync")]
+            rows.retain(|(key, _)| !crate::sync::residence::is_residence_choice_row(key));
         }
         if let Some(rows) = self.databases.get_mut("vault_meta") {
             rows.retain(|(key, _)| !crate::setting::restore_drops_row(key));

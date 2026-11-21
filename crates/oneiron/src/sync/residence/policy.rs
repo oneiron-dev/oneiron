@@ -28,9 +28,9 @@ pub(crate) fn is_residence_choice_row(key: &[u8]) -> bool {
     key == PREFERENCE_KEY.as_bytes() || key == WORLD_PICK_KEY.as_bytes()
 }
 
-/// Deletes this machine's residence rows ([`is_residence_choice_row`]) from `store` in `wtxn`: an
-/// archive the owner activates joins as a new machine (`Vault::activate_archived`), which starts
-/// at the defaults.
+/// Deletes this machine's residence rows ([`is_residence_choice_row`]) from `store` in `wtxn`: a
+/// vault that forgets its machine joins as a new one (`identity::drop_machine_identity_in_txn`),
+/// which starts at the defaults.
 ///
 /// # Errors
 ///

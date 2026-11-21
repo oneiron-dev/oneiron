@@ -115,10 +115,10 @@ pub(super) fn install_choice(key: &[u8]) -> bool {
 }
 
 /// Deletes, in `wtxn`, every `SETTING` and `SETTING_CONTENT` row of `store` that
-/// [`restore_drops_row`] names. An archive the owner activates beside its replacement joins as a
-/// new machine (`Vault::activate_archived`), so the choices about the install it was stay with
-/// that replacement, as a direct restore leaves an image's behind (row
-/// SETTING-ACTIVATE-ARCHIVED-INSTALL-ROWS).
+/// [`restore_drops_row`] names: a vault that forgets its machine and joins as a new one
+/// (`identity::drop_machine_identity_in_txn`), as an archive the owner activates beside its
+/// replacement does (`Vault::activate_archived`), leaves the choices about the install it was,
+/// as a direct restore leaves an image's behind (row SETTING-ACTIVATE-ARCHIVED-INSTALL-ROWS).
 ///
 /// # Errors
 ///
