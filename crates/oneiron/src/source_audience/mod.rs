@@ -58,6 +58,7 @@ use crate::store::source_audience_obligation::SourceAudienceObligation;
 use crate::{EntityId, Vault};
 
 pub(crate) use floor::{FloorSource, SOURCE_READERS, SourceReaders, floor_source_in};
+pub(crate) use floor_migration::visit_row_in_txn;
 #[cfg(any(test, feature = "test-support", oneiron_test_support))]
 pub(crate) use floor_migration::{
     end_backfill_without_archived_rows_in_txn, mark_backfill_done_in_txn, mark_raised_in_txn,

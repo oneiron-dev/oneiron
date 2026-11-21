@@ -344,7 +344,9 @@ fn a_fact_archived_over_an_erased_input_waits_for_good_after_the_floor_state_was
 /// `fact` follows its mark, `linked` is raised again, and both then hold the
 /// mailbox's policy. `kept`, learnt from `input` while it stood, keeps
 /// reading to the mailbox's reader through that run though `input` was
-/// erased since: the run holds no live row for good.
+/// erased since: the run holds no live row for good. Fable design pass 31
+/// (case 64): before the migration visits them, a read judges `fact` and
+/// `linked` as the migration will, so both read so at once.
 #[test]
 fn a_vault_backfilled_before_archived_rows_were_raised_raises_them_in_one_more_run() {
     let late = EntityId::now();
@@ -367,11 +369,8 @@ fn a_vault_backfilled_before_archived_rows_were_raised_raises_them_in_one_more_r
         .expect("FIXTURE: that backfill left fact waiting on the archived source");
     end_backfill_without_archived_rows(&mailbox.vault)
         .expect("FIXTURE: the backfill ended before it raised archived rows");
-    assert_no_stranger_or_reader_reads(&mailbox, fact, "while it waits on the archived source");
-    assert!(
-        reads(&mailbox.vault, linked, &[mailbox.stranger]).expect("the stranger's read"),
-        "precondition: that backfill left the row linked to the archived source open",
-    );
+    assert_reads_as_its_landed_source(&mailbox, fact, mailbox.policy, "before the migration");
+    assert_reads_as_its_landed_source(&mailbox, linked, mailbox.policy, "before the migration");
     housekeeping_pass(&mailbox);
     assert_reads_as_its_landed_source(&mailbox, fact, mailbox.policy, "after one more run");
     assert_reads_as_its_landed_source(&mailbox, linked, mailbox.policy, "after one more run");
@@ -634,6 +633,82 @@ fn a_run_again_raises_rows_an_older_pass_left_marked_raised() {
     housekeeping_pass(&mailbox);
     assert_reads_as_its_landed_source(&mailbox, linked, mailbox.policy, "after the run again");
     assert_reads_as_its_landed_source(&mailbox, fact, mailbox.policy, "after the run again");
+}
+
+/// Fable design pass 31, case 63 (#10265 Opus review P2-1): in a vault
+/// whose backfill ended before it raised archived rows, `fact` was learnt
+/// from `input`, a row with no source, so `fact`'s floor is empty, and
+/// `kid` from `fact` and the mailbox's row; the owner erased `input` since.
+/// The cleanup archives `fact` before the migration reaches it: the archive
+/// judges `fact` first, while it is live, as a row an older build raised,
+/// so the erased input takes nothing off its floor and holds nothing.
+/// `fact` does not wait, and `kid` reads to the mailbox's reader after the
+/// migration and after `fact`'s restore. Judged once archived, `fact` would
+/// read as a row that backfill never raised (archived, no stored floor) and
+/// wait for good on its erased input, and `kid` on `fact`.
+#[test]
+fn a_live_row_archived_before_the_migration_reaches_it_keeps_reading_as_its_floor_says() {
+    let mailbox = owners_mailbox();
+    let input = claim_born_from(&mailbox, &[], "learnt from no source");
+    let fact = claim_born_from(&mailbox, &[input], "learnt from input");
+    let kid = claim_born_from(
+        &mailbox,
+        &[mailbox.row, fact],
+        "learnt from fact and the row",
+    );
+    erase(&mailbox, input);
+    forget_floor_state(&mailbox.vault).expect("FIXTURE: a vault an older build backfilled");
+    end_backfill_without_archived_rows(&mailbox.vault)
+        .expect("FIXTURE: that backfill ended before it raised archived rows");
+    archive(&mailbox, fact);
+    housekeeping_pass(&mailbox);
+    assert!(
+        !floor_waits(&mailbox.vault, fact).expect("the floor's state"),
+        "a row archived while live waits for good on an input erased after its floor was taken",
+    );
+    assert_reads_as_its_landed_source(&mailbox, kid, mailbox.policy, "after the migration");
+    restore(&mailbox, fact);
+    assert_reads_as_its_landed_source(&mailbox, kid, mailbox.policy, "once fact is restored");
+}
+
+/// Fable design pass 31, M3 in a vault whose backfill ended before it
+/// raised archived rows: in a vault that held no policy yet, `fact` was
+/// learnt from `input` and is `DerivedFrom` `linked`, both learnt from the
+/// mailbox's row, then on its way; the cleanup archived `fact`, the row
+/// landed, and the owner erased `input`. That backfill never raised the
+/// archived `fact`. The owner's erase of `linked` judges `fact` for its
+/// link to `linked` before the edge goes (`fact` takes its floor), and
+/// marks `fact` an old fact, so the migration then judges its every link as
+/// one: `input` was erased before `fact` was raised, so `fact` waits for
+/// good and reads to no stranger and to no reader once restored. Taken for
+/// a row an older build raised (it now holds a floor), `fact` would be
+/// healed, its erased input left alone, and the reader would read it.
+#[test]
+fn an_archived_old_fact_a_delete_judges_for_one_link_stays_an_old_fact() {
+    let late = EntityId::now();
+    let mut mailbox = mailbox_with_no_policy_yet(late);
+    let input = claim_born_before_floors(&mailbox, &[late], "fact.erased_before_its_raise");
+    let linked = claim_born_before_floors(&mailbox, &[late], "fact.erased_after_its_link");
+    let fact = claim_born_before_floors(&mailbox, &[input], "fact.archived_old_fact");
+    mailbox
+        .vault
+        .put_edge(&fact, EdgeKind::DerivedFrom, &linked, 1.0)
+        .expect("FIXTURE: fact names linked");
+    archive(&mailbox, fact);
+    mailbox.policy = bound_row_read_by(&mailbox.vault, late, &[mailbox.reader])
+        .expect("late lands, bound to a member's mailbox");
+    erase(&mailbox, input);
+    forget_floor_state(&mailbox.vault).expect("FIXTURE: a vault an older build backfilled");
+    end_backfill_without_archived_rows(&mailbox.vault)
+        .expect("FIXTURE: that backfill ended before it raised archived rows");
+    erase(&mailbox, linked);
+    housekeeping_pass(&mailbox);
+    restore(&mailbox, fact);
+    assert_no_stranger_or_reader_reads(&mailbox, fact, "once restored");
+    assert!(
+        floor_waits(&mailbox.vault, fact).expect("the floor's state"),
+        "an archived old fact whose input was erased before its raise no longer waits",
+    );
 }
 
 /// #10265 Opus review 3 P2-1: `turn` is a peer's TURN whose phone mark

@@ -5,13 +5,14 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use heed::RoTxn;
 
+use super::judge::Act;
 use super::{
     DeleteLevel, MAX_DEPTH, SHELL_ERASED, SourceState, Verdict, delete_level_in, has_open_in,
     later_owner_erase_in, migrated_in, open_of_in,
 };
 use crate::error::{Error, Result};
 use crate::source_audience::floor::{FloorSource, OwnSource};
-use crate::source_audience::floor_migration;
+use crate::source_audience::floor_migration::{self, Visit};
 use crate::{EntityId, Vault};
 
 /// One link of a row to a row its words came from.
@@ -76,7 +77,8 @@ pub(crate) struct StateReader<'a, 't> {
     /// ([`crate::source_audience::floor::floors_possible_in`]).
     pub(super) floors_possible: bool,
     migrated: bool,
-    old_backfill_done: bool,
+    /// Whether the migration has judged every row here.
+    judged_all: bool,
     verdicts: BTreeMap<EntityId, Verdict>,
     /// The rows whose verdict this read is judging now.
     judging: Vec<EntityId>,
@@ -98,18 +100,19 @@ impl<'a, 't> StateReader<'a, 't> {
             txn,
             floors_possible: crate::source_audience::floor::floors_possible_in(vault, txn)?,
             migrated,
-            old_backfill_done: migrated
-                || floor_migration::old_backfill_done_in(&vault.store, txn)?,
+            judged_all: super::judged_all_in(&vault.store, txn)?,
             verdicts: BTreeMap::new(),
             judging: Vec::new(),
             cuts: 0,
         })
     }
 
-    /// Whether `row` was judged here: the migration has ended, the old
-    /// backfill raised every row, or a judgement since marked it.
-    fn judged(&self, row: &EntityId) -> Result<bool> {
-        Ok(self.old_backfill_done || floor_migration::raised_in(&self.vault.store, self.txn, row)?)
+    /// Where `row` stands in the migration ([`floor_migration::visit_in`]).
+    fn visit(&self, row: &EntityId) -> Result<Visit> {
+        if self.judged_all {
+            return Ok(Visit::Visited);
+        }
+        floor_migration::visit_in(&self.vault.store, self.txn, row)
     }
 
     /// What `input` is now (section 1.3).
@@ -138,7 +141,7 @@ impl<'a, 't> StateReader<'a, 't> {
                 input,
                 self.migrated,
             )?
-            && self.judged(input)?
+            && self.visit(input)? == Visit::Visited
         {
             return Ok(SourceState::Bound(crate::source_audience::floor::floor_in(
                 self.vault, self.txn, input, &raw,
@@ -239,17 +242,28 @@ impl<'a, 't> StateReader<'a, 't> {
                 },
             }
         }
-        // A row this vault has not judged yet (written before floors, the
-        // migration not there yet) is judged one level here, as the
-        // migration would judge it.
+        // A row the migration has not visited yet is judged one level
+        // here, as the migration would judge it: an old fact every link, a
+        // row an older build raised by its birth inputs and dependency
+        // sources.
         if let Some(raw) = raw
-            && !self.judged(row)?
             && !crate::source_audience::obligation::row_obligation(raw).is_present()
         {
-            match self.old_fact(row, raw, &mut sources)? {
-                OldFact::Whole => {}
-                OldFact::Waits => waits = true,
-                OldFact::Sealed => return Ok(Verdict::Sealed),
+            let visit = self.visit(row)?;
+            match visit {
+                Visit::Visited => {}
+                Visit::OldFact | Visit::Raised => {
+                    let level = if visit == Visit::OldFact {
+                        self.old_fact(row, raw, &mut sources)?
+                    } else {
+                        self.healed(row, raw, &mut sources)?
+                    };
+                    match level {
+                        OneLevel::Whole => {}
+                        OneLevel::Waits => waits = true,
+                        OneLevel::Sealed => return Ok(Verdict::Sealed),
+                    }
+                }
             }
         }
         for source in &sources {
@@ -306,6 +320,35 @@ impl<'a, 't> StateReader<'a, 't> {
         })
     }
 
+    /// The one-level heal of a row an older build raised (section 5, M2),
+    /// as [`super::heal_row_in_txn`] stores it ([`super::judge::heal_acts_in`]).
+    fn healed(
+        &mut self,
+        row: &EntityId,
+        raw: &[u8],
+        sources: &mut BTreeSet<EntityId>,
+    ) -> Result<OneLevel> {
+        let (vault, txn) = (self.vault, self.txn);
+        let mut waits = false;
+        for (_, act) in super::judge::heal_acts_in(self, vault, txn, row, raw)? {
+            match act {
+                Act::Take(floor) => sources.extend(floor),
+                Act::Open(_) => waits = true,
+                Act::OpenSelf => match self.resolved_self(row, Some(raw))? {
+                    SelfEntry::Waits => waits = true,
+                    SelfEntry::Sealed => return Ok(OneLevel::Sealed),
+                    SelfEntry::Resolved(floor) => sources.extend(floor),
+                },
+                Act::Seal | Act::Free => {}
+            }
+        }
+        Ok(if waits {
+            OneLevel::Waits
+        } else {
+            OneLevel::Whole
+        })
+    }
+
     /// The one-level judgement of a row written before floors (section 5,
     /// M2): a bound input's floor joins `sources`; a pending input keeps it
     /// waiting (a walked input only when it is held here); an erased input no
@@ -317,7 +360,7 @@ impl<'a, 't> StateReader<'a, 't> {
         row: &EntityId,
         raw: &[u8],
         sources: &mut BTreeSet<EntityId>,
-    ) -> Result<OldFact> {
+    ) -> Result<OneLevel> {
         let links = Links::of(self.vault, self.txn, row, raw)?;
         let mut waits = links.unresolved;
         let supports: Vec<EntityId> = links.supports().copied().collect();
@@ -333,7 +376,7 @@ impl<'a, 't> StateReader<'a, 't> {
                         waits = true;
                     }
                 }
-                SourceState::Sealed => return Ok(OldFact::Sealed),
+                SourceState::Sealed => return Ok(OneLevel::Sealed),
                 SourceState::Erased => {
                     if *kind != LinkKind::Unwalked
                         || took_floor_of_in(self.vault, self.txn, input, sources)?
@@ -343,16 +386,16 @@ impl<'a, 't> StateReader<'a, 't> {
                     if delete_level_in(&self.vault.store, self.txn, input)? == DeleteLevel::Soft
                         && SHELL_ERASED.contains(&self.vault.store, self.txn, input)?
                     {
-                        return Ok(OldFact::Sealed);
+                        return Ok(OneLevel::Sealed);
                     }
                     waits = true;
                 }
             }
         }
         Ok(if waits {
-            OldFact::Waits
+            OneLevel::Waits
         } else {
-            OldFact::Whole
+            OneLevel::Whole
         })
     }
 }
@@ -364,8 +407,9 @@ enum SelfEntry {
     Resolved(BTreeSet<EntityId>),
 }
 
-/// What the one-level judgement of an old fact gives.
-enum OldFact {
+/// What the one-level judgement of a row the migration has not visited
+/// gives.
+enum OneLevel {
     Whole,
     Waits,
     Sealed,
