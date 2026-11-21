@@ -657,7 +657,8 @@ impl Vault {
                 }
                 let decision = self
                     .supersede_granted_deferred_claim_in_txn(txn, id, &old, now, checker, closer)?;
-                self.store.close_pending_gate_consent_as_in_txn(
+                // Receipted as the door's verified closer (review 10097 P1).
+                self.store.close_pending_gate_consent_closed_by_in_txn(
                     txn,
                     id,
                     GateReceiptOutcome::Superseded,
@@ -665,6 +666,7 @@ impl Vault {
                     None,
                     // Keep the outer Clear's existing obligation result.
                     critical_confirm.unwrap_or(crate::store::TrayRemoval::Unanswered),
+                    closer,
                 )?;
                 let envelope = super::supersession_provenance::envelope(&body)?;
                 super::supersession_provenance::write_companion(
