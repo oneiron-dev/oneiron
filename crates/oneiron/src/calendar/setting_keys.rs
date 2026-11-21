@@ -69,6 +69,7 @@ crate::setting::setting_keys! {
         kind: Kind::new(no_seat).strictest(no_seat),
         item: Some(ItemDomain { name: "calendar seat refs", admits: is_seat_ref }),
         on_change: Some(seat_setup_changed_in_txn),
+        refusal_offers_clear: false,
         write_turn: Some(ADMISSION_WRITE_TURN),
     };
     /// One ICS feed the owner installed, keyed by its system: the custody name of its URL and its

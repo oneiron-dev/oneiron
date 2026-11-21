@@ -12,6 +12,15 @@ pub struct EnrolledMachine {
     key: ed25519_dalek::SigningKey,
 }
 
+#[cfg(feature = "test-support")]
+impl EnrolledMachine {
+    /// The machine's MACHINE row: the carrier its acts name.
+    #[must_use]
+    pub fn machine(&self) -> EntityId {
+        self.machine
+    }
+}
+
 /// Enrols a machine whose install key is derived from `seed` as one of the owner's own
 /// machines, by the owner's answer on this install.
 ///
