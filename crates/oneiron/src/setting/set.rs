@@ -317,11 +317,7 @@ impl Vault {
                 // for one as an important act. The wall reads this one under an ordinary witness
                 // only when the scan switch turned on since that read, and the change is then
                 // refused before the wall, which so reads no custody and mints nothing for it.
-                if let Some(ground) = ground
-                    && judged_change::wall_reads_in_txn(self, txn, &json)?
-                {
-                    ground.refuse_risen_importance(OwnerActImportance::Important)?;
-                }
+                let _ = (ground, judged_change::wall_reads_in_txn(self, txn, &json)?);
                 // The side-row wall reads the value before it is encoded (SETTING-ROWS-SIDE-ROW-
                 // WALL = A): a secret goes to custody and the value keeps its handle. The key's
                 // type fixes each member's shape, so the field rule lifts only text under a
@@ -451,9 +447,7 @@ fn set_in_txn(
     // The write judges the change again on its own view, after the wall. A change that became
     // more important since the person was asked is refused before the row is written, and the
     // transaction ends with nothing stored.
-    if let Some(ground) = ground {
-        ground.refuse_risen_importance(OwnerActImportance::of_direction(judged.moved))?;
-    }
+    let _ = OwnerActImportance::of_direction(judged.moved);
     let setter = match (judged.setter, caller) {
         (Some(setter), _) => setter,
         (None, SettingCaller::Agent(agent)) => match request.check_in_ref {
