@@ -5,7 +5,10 @@
 //! the close is then judged as the owner's act. The case: a Dreamer Keep of
 //! imported words the owner approved, so its tray row is gone. Judged under
 //! its own envelope, its source trust is still pending with no row left to
-//! redeem, and the close does not land as the owner asked.
+//! redeem, and the close does not land as the owner asked. The second case
+//! (review 10099 P1): a Dreamer claim on a mirroring-prone predicate the
+//! owner approved. The owner's close keeps the Dreamer's birth envelope, but
+//! it admits nothing new, so GATE-13 isolation does not pend it.
 //!
 //! Needs the doors:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
@@ -128,7 +131,44 @@ fn approved_imported_keep(fixture: &Fixture) -> (EntityId, EntityId, Authenticat
         (ClaimApprovalStatus::Proposed, ClaimLifecycleStatus::Active),
         "FIXTURE: the imported Keep waits for the owner's approval"
     );
+    let (owner, proof) = owner_approves(fixture, staged);
+    (staged, owner, proof)
+}
 
+/// The Dreamer's `core.opinion.coffee` claim about the person, which GATE-13
+/// isolates as mirroring-prone, approved by the owner: an Approved, Active
+/// MACHINE claim of a Dreamer birth envelope whose tray row is gone. Its id,
+/// the owner, and the owner's proof.
+fn approved_isolated_dreamer_claim(fixture: &Fixture) -> (EntityId, EntityId, AuthenticatedOwner) {
+    let committed = commit(
+        &fixture.vault,
+        fixture.dreamer,
+        EdgeActorClass::System,
+        "run-opinion",
+        &[Derived::Claim(Claim {
+            local: "opinion",
+            predicate: "core.opinion.coffee",
+            subject: Named::Stored(fixture.person),
+            value: json!("a cortado beats a flat white"),
+            evidence: vec![Named::Stored(fixture.turn)],
+        })],
+    )
+    .expect("FIXTURE: commit");
+    let [item] = committed.items.as_slice() else {
+        panic!("FIXTURE: one item: {:?}", committed.items);
+    };
+    assert!(
+        item.landed && item.approval.as_deref() == Some("proposed"),
+        "FIXTURE: GATE-13 isolates the Dreamer's mirroring-prone claim as a proposal: {item:?}"
+    );
+    let staged = item.rows[0];
+    let (owner, proof) = owner_approves(fixture, staged);
+    (staged, owner, proof)
+}
+
+/// The owner approves the staged proposal `staged`: it is then Approved and
+/// Active, with its tray row gone. The owner and the owner's proof.
+fn owner_approves(fixture: &Fixture, staged: EntityId) -> (EntityId, AuthenticatedOwner) {
     let owner = fixture
         .vault
         .ensure_embedded_owner_actor()
@@ -136,28 +176,27 @@ fn approved_imported_keep(fixture: &Fixture) -> (EntityId, EntityId, Authenticat
     fixture
         .vault
         .approve_machine_claim_as(staged, WriteActor::new(owner, EdgeActorClass::Human))
-        .expect("FIXTURE: the owner approves the staged Keep");
+        .expect("FIXTURE: the owner approves the staged proposal");
     let approved = fixture
         .vault
         .get_claim(&staged)
         .expect("FIXTURE: read")
-        .expect("FIXTURE: the approved Keep");
+        .expect("FIXTURE: the approved claim");
     assert_eq!(
         (approved.approval, approved.lifecycle),
         (ClaimApprovalStatus::Approved, ClaimLifecycleStatus::Active),
-        "FIXTURE: the owner's approval stands and the Keep is active"
+        "FIXTURE: the owner's approval stands and the claim is active"
     );
     let proof = fixture
         .vault
         .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
         .expect("FIXTURE: the owner's proof");
-    (staged, owner, proof)
+    (owner, proof)
 }
 
-#[test]
-fn the_owner_supersedes_an_approved_imported_keep_through_the_vault_owner_door() {
-    let fixture = fixture();
-    let (staged, owner, proof) = approved_imported_keep(&fixture);
+/// The owner writes an active replacement and supersedes `old` with it
+/// through `Vault::supersede_claim_as_owner`; `old` must then be Superseded.
+fn owner_supersedes(fixture: &Fixture, owner: EntityId, proof: &AuthenticatedOwner, old: EntityId) {
     let input: ClaimInput = serde_json::from_value(json!({
         "predicate": "note.reviewed",
         "subject_ref": fixture.person.to_hex(),
@@ -169,7 +208,7 @@ fn the_owner_supersedes_an_approved_imported_keep_through_the_vault_owner_door()
     let receipt = fixture
         .vault
         .memory(owner, EdgeActorClass::Human)
-        .with_owner_authorship(&proof)
+        .with_owner_authorship(proof)
         .claim_upsert(&input)
         .expect("FIXTURE: the owner writes the replacement");
     let replacement = oneiron::memory::resolve_entity_ref(&fixture.vault, &receipt.claim_short_id)
@@ -186,24 +225,39 @@ fn the_owner_supersedes_an_approved_imported_keep_through_the_vault_owner_door()
     );
 
     let supersede = fixture.vault.supersede_claim_as_owner(
-        &proof,
+        proof,
         &replacement,
-        &staged,
+        &old,
         fixture.vault.now_recorded_at(),
     );
     assert!(
         supersede.is_ok(),
-        "the owner's supersede through the vault owner door closes the approved Keep as the \
+        "the owner's supersede through the vault owner door closes the approved claim as the \
          owner's act: {supersede:?}"
     );
     let superseded = fixture
         .vault
-        .get_claim(&staged)
+        .get_claim(&old)
         .expect("read")
-        .expect("the superseded Keep remains stored");
+        .expect("the superseded claim remains stored");
     assert_eq!(
         superseded.lifecycle,
         ClaimLifecycleStatus::Superseded,
-        "the owner's supersede closes the approved Keep, held for no source trust"
+        "the owner's supersede closes the approved claim, held for no source trust and no \
+         Dreamer isolation"
     );
+}
+
+#[test]
+fn the_owner_supersedes_an_approved_imported_keep_through_the_vault_owner_door() {
+    let fixture = fixture();
+    let (staged, owner, proof) = approved_imported_keep(&fixture);
+    owner_supersedes(&fixture, owner, &proof, staged);
+}
+
+#[test]
+fn the_owner_supersedes_an_approved_mirroring_isolated_dreamer_claim() {
+    let fixture = fixture();
+    let (staged, owner, proof) = approved_isolated_dreamer_claim(&fixture);
+    owner_supersedes(&fixture, owner, &proof, staged);
 }
