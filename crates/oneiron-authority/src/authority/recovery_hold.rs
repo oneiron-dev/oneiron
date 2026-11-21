@@ -69,7 +69,10 @@ pub struct RecoveryHold {
     pub owner: EntityId,
     /// The successor's enrolment input, held verbatim until landing.
     pub enrolment: RecoveryHoldEnrolment,
-    /// The lost keys the landing revokes, each once, never the successor.
+    /// The lost keys, each once, never the successor. The landing revokes
+    /// each one the root door's rule still admits then (`oneiron`'s
+    /// `Vault::revocable_lost_keys_in_txn`): a live owner key of `owner`,
+    /// never R.
     pub lost: Vec<AuthorityKey>,
     /// Unix seconds the wait ends at, on the door install's clock: its
     /// `instant_in_write_txn` reading at the hold plus the wait.

@@ -446,21 +446,44 @@ impl Vault {
         (root_key, new_key): (&AuthorityKey, Option<&AuthorityKey>),
         lost: &[AuthorityKey],
     ) -> Result<BTreeSet<AuthorityKey>> {
-        let enrolled: BTreeSet<AuthorityKey> = self
-            .live_owner_keys_enrolled_for_in_txn(txn, actor)?
-            .into_iter()
-            .collect();
         let named: BTreeSet<AuthorityKey> = lost.iter().cloned().collect();
-        for key in &named {
-            if key == root_key
-                || Some(key) == new_key
-                || !enrolled.contains(key)
-                || !live_owner_key(fold, key)
-            {
-                return Err(authority_refused(NOT_A_LOST_KEY));
-            }
+        if self.revocable_lost_keys_in_txn(txn, fold, actor, (root_key, new_key), lost)? != named {
+            return Err(authority_refused(NOT_A_LOST_KEY));
         }
         Ok(named)
+    }
+
+    /// The keys of `lost` that the root's key `root_key` may revoke as
+    /// `owner`'s lost keys in `fold`, once each: each a live owner key that
+    /// `owner` enrolled, a device key or a passkey, and never `root_key`
+    /// itself or `new_key`. The door refuses a request that names any other
+    /// key ([`Self::lost_keys_in_txn`]). A hold's landing revokes only these
+    /// keys, read again at the landing (row
+    /// RECOVERY-HOLD-LOST-KEY-RULE-AT-FOLD), so a hold that R signs by hand,
+    /// with R itself or a key outside this rule among its lost keys, never
+    /// lands more than the door would have held.
+    pub(super) fn revocable_lost_keys_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        fold: &AuthorityFold,
+        owner: EntityId,
+        (root_key, new_key): (&AuthorityKey, Option<&AuthorityKey>),
+        lost: &[AuthorityKey],
+    ) -> Result<BTreeSet<AuthorityKey>> {
+        let enrolled: BTreeSet<AuthorityKey> = self
+            .live_owner_keys_enrolled_for_in_txn(txn, owner)?
+            .into_iter()
+            .collect();
+        Ok(lost
+            .iter()
+            .filter(|key| {
+                *key != root_key
+                    && Some(*key) != new_key
+                    && enrolled.contains(*key)
+                    && live_owner_key(fold, key)
+            })
+            .cloned()
+            .collect())
     }
 }
 

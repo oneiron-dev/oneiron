@@ -78,6 +78,13 @@
 //! `a_removed_owners_hold_never_holds_the_successor_key_against_another_owner`,
 //! both failing on `a7a9486fe5f7`.
 //!
+//! The lost-key pins (row RECOVERY-HOLD-LOST-KEY-RULE-AT-FOLD), each over a
+//! hold R signs by hand, since the door never writes one:
+//! `a_hold_that_names_its_root_key_lost_lands_with_the_root_key_live` and
+//! `a_hold_never_revokes_a_lost_key_that_is_no_owner_key_of_its_owner`.
+//! Both fail on main `8418b839a4ad`, where the landing revoked every live
+//! key a hold named.
+//!
 //! Red on the kit-only rotation head `5adc0295753f`: the file does not
 //! compile there (no `RecoveryHold` ops, no hold view, no answer doors, no
 //! landing, no `RootRecovery::Held`, no `recover_owner_root_waiting`).
@@ -101,10 +108,10 @@ use oneiron::authority::{
     AuthorityLogEntry, AuthorityOp, AuthoritySignature, AuthorityTier, CheckpointRootSigner,
     DeviceAuthority, HostSlipIssuer, MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineEncryptionKey,
     MachineRole, OwnerKeyEnrollment, OwnerRootRecord, RECOVERY_WAIT_DEFAULT, ROLE_AGENT,
-    RecoveryBoxCancelProof, RecoveryHoldAnswer, RecoveryHoldAnswerKind, RecoveryHoldLanding,
-    RecoveryHoldState, RecoveryHoldView, RootMaterial, RootRecovery, RootSuccessor,
-    authority_entry_hash, authority_log_entity_id_from_hash, authority_transcript,
-    decode_authority_log_entry_body, encode_authority_log_entry_body,
+    RecoveryBoxCancelProof, RecoveryHold, RecoveryHoldAnswer, RecoveryHoldAnswerKind,
+    RecoveryHoldEnrolment, RecoveryHoldLanding, RecoveryHoldState, RecoveryHoldView, RootMaterial,
+    RootRecovery, RootSuccessor, authority_entry_hash, authority_log_entity_id_from_hash,
+    authority_transcript, decode_authority_log_entry_body, encode_authority_log_entry_body,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::error::{OwnerPresenceRefusal, RecordError};
@@ -118,7 +125,9 @@ use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::store::recovery_kit::KitPiece;
 use oneiron::test_doors::owner_key_release::release_owner_keys;
-use oneiron::test_doors::root_recovery::{recover_owner_root_waiting, released_authority_seed};
+use oneiron::test_doors::root_recovery::{
+    recover_owner_root_waiting, released_authority_seed, stage_orphan_recovery_hold_seed,
+};
 use oneiron::test_support::bind_host_owner;
 use oneiron::world_keys::{
     NoRecoveryBox, RecoveryAuthoritySigner, RecoveryBoxCanceller, RecoveryBoxHold,
@@ -3930,4 +3939,180 @@ fn a_removed_owners_hold_never_holds_the_successor_key_against_another_owner() {
         "the hold is the first owner's"
     );
     assert_eq!(view.state, RecoveryHoldState::Waiting);
+}
+
+/// Writes a hold that R signs by hand, a shape no door writes: the owner's
+/// recovery to `successor` with `lost` as its lost keys and its wait over
+/// at `lands_at`. Then puts R's seed in this install's hold slot for
+/// `successor`, as the door's hold attempt does. Answers the hold's entry
+/// hash, which the fold counts.
+fn hold_signed_by_hand(
+    fixture: &Fixture,
+    successor: &SigningKey,
+    lost: Vec<AuthorityKey>,
+    lands_at: u64,
+) -> AuthorityEntryHash {
+    let root_seed = released_authority_seed(&fixture.seed(), &fixture.vault_id, 0);
+    let r_signing = SigningKey::from_bytes(&root_seed);
+    let root_key = key_of(&r_signing);
+    let input = fixture.enrollment(successor);
+    let mut row = AuthorityLogEntry {
+        schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+        vault_id: Some(fixture.vault_id),
+        seq: fixture.next_seq(&root_key),
+        parent_hashes: fixture.heads(),
+        op: AuthorityOp::RecoveryHold(RecoveryHold {
+            owner: fixture.person,
+            enrolment: RecoveryHoldEnrolment {
+                machine: input.machine,
+                public_key: input.public_key,
+                proof: input.proof,
+            },
+            lost,
+            lands_at,
+        }),
+        signer: AuthoritySignature {
+            suite: root_key.suite(),
+            public_key: root_key.clone(),
+            signature: vec![0; 64],
+        },
+        cosigns: Vec::new(),
+        ts: T0,
+    };
+    let transcript = authority_transcript(&row).expect("the transcript");
+    row.signer.signature = r_signing.sign(&transcript).to_bytes().to_vec();
+    let hash = authority_entry_hash(&row).expect("a hash");
+    fixture
+        .vault
+        .import_signed_authority_history(&[
+            encode_authority_log_entry_body(&row).expect("the bytes")
+        ])
+        .expect("the import stores the hold");
+    assert!(
+        fixture
+            .vault
+            .authority_fold()
+            .expect("the fold")
+            .valid_entries
+            .contains(&hash),
+        "the fold counts the hold R signed by hand"
+    );
+    stage_orphan_recovery_hold_seed(&fixture.vault, input.public_key, &root_seed)
+        .expect("R's seed goes in the hold's slot");
+    hash
+}
+
+/// A hold that names R itself among its lost keys lands as the door's
+/// rule reads it (row RECOVERY-HOLD-LOST-KEY-RULE-AT-FOLD): the owner's own
+/// lost key is revoked, the successor is enrolled under R, and R stays
+/// live, since the door never names R lost.
+#[test]
+fn a_hold_that_names_its_root_key_lost_lands_with_the_root_key_live() {
+    let fixture = fixture();
+    let root_key = AuthorityKey::Ed25519(fixture.generation_key(0));
+    let lost_key = key_of(&fixture.enrol_device_key(LOST_KEY_SEED));
+    let new_key = SigningKey::from_bytes(&[NEW_KEY_SEED; 32]);
+    let new = key_of(&new_key);
+    let lands_at = T0 + WAIT.as_secs();
+    let hold = hold_signed_by_hand(
+        &fixture,
+        &new_key,
+        vec![lost_key.clone(), root_key.clone()],
+        lands_at,
+    );
+    assert_eq!(
+        fixture.hold_view(&hold).state,
+        RecoveryHoldState::Waiting,
+        "the hold waits"
+    );
+
+    fixture.at(lands_at + 60);
+    let landings = fixture.land();
+    assert_eq!(landings.len(), 1, "the due hold lands");
+    assert_eq!(landings[0].hold, hold);
+    assert_eq!(landings[0].state, RecoveryHoldState::Landed);
+    assert_eq!(
+        landings[0].revoked.len(),
+        1,
+        "one revocation: the owner's lost key alone"
+    );
+    assert!(fixture.live(&root_key), "R stays live");
+    assert!(!fixture.live(&lost_key), "the owner's lost key is revoked");
+    assert!(fixture.live(&new), "the successor is enrolled");
+    assert_eq!(fixture.hold_view(&hold).state, RecoveryHoldState::Landed);
+}
+
+/// A hold whose lost keys name a live key that is no owner key of its
+/// owner, here an agent-only device, never revokes that key at its landing
+/// (row RECOVERY-HOLD-LOST-KEY-RULE-AT-FOLD): the door refuses such a key
+/// as lost ("is not a live owner key the owner enrolled"), and the landing
+/// reads the same rule.
+#[test]
+fn a_hold_never_revokes_a_lost_key_that_is_no_owner_key_of_its_owner() {
+    let fixture = fixture();
+    let lost_key = key_of(&fixture.enrol_device_key(LOST_KEY_SEED));
+    let keeper = fixture.enrol_device_key(KEEPER_KEY_SEED);
+    let keeper_key = key_of(&keeper);
+    let new_key = SigningKey::from_bytes(&[NEW_KEY_SEED; 32]);
+    let new = key_of(&new_key);
+    // An agent-only device, enrolled by a crafted row an owner key signs,
+    // as `an_agent_key_never_answers_a_hold` enrols it.
+    let agent_key = key_of(&SigningKey::from_bytes(&[AGENT_KEY_SEED; 32]));
+    let mut enroll = AuthorityLogEntry {
+        schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+        vault_id: Some(fixture.vault_id),
+        seq: fixture.next_seq(&keeper_key),
+        parent_hashes: fixture.heads(),
+        op: AuthorityOp::EnrollDevice {
+            device: agent_device(AGENT_KEY_SEED),
+        },
+        signer: AuthoritySignature {
+            suite: keeper_key.suite(),
+            public_key: keeper_key.clone(),
+            signature: vec![0; 64],
+        },
+        cosigns: Vec::new(),
+        ts: T0,
+    };
+    let transcript = authority_transcript(&enroll).expect("the transcript");
+    enroll.signer.signature = keeper.sign(&transcript).to_bytes().to_vec();
+    fixture
+        .vault
+        .import_signed_authority_history(&[
+            encode_authority_log_entry_body(&enroll).expect("the bytes")
+        ])
+        .expect("the import stores the enrolment");
+    assert!(fixture.live(&agent_key), "the agent key is enrolled");
+
+    let refused = fixture
+        .recover_wait(
+            WAIT,
+            fixture.released_material(0),
+            RootSuccessor::Device(fixture.enrollment(&new_key)),
+            &[lost_key.clone(), agent_key.clone()],
+        )
+        .expect_err("the door never names an agent key lost");
+    assert_refused(&refused, "is not a live owner key the owner enrolled");
+
+    let lands_at = T0 + WAIT.as_secs();
+    let hold = hold_signed_by_hand(
+        &fixture,
+        &new_key,
+        vec![lost_key.clone(), agent_key.clone()],
+        lands_at,
+    );
+    fixture.at(lands_at + 60);
+    let landings = fixture.land();
+    assert_eq!(landings.len(), 1, "the due hold lands");
+    assert_eq!(landings[0].hold, hold);
+    assert_eq!(landings[0].state, RecoveryHoldState::Landed);
+    assert_eq!(
+        landings[0].revoked.len(),
+        1,
+        "one revocation: the owner's lost key alone"
+    );
+    assert!(fixture.live(&agent_key), "the agent key stays live");
+    assert!(!fixture.live(&lost_key), "the owner's lost key is revoked");
+    assert!(fixture.live(&keeper_key), "the keeper is untouched");
+    assert!(fixture.live(&new), "the successor is enrolled");
 }
