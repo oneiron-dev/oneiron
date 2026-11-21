@@ -96,7 +96,7 @@ impl BoundBranchRead {
                 };
                 Ok(speaker.clone())
             },
-            |id| crate::compaction::turn_session_membership_in_txn(&read.vault().store, txn, id),
+            |_| Ok(None),
         )
     }
 
