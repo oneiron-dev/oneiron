@@ -142,6 +142,9 @@ impl EntityStore for Vault {
             .apply(txn)
     }
     fn port_entity_delete(&self, txn: &mut RwTxn<'_>, id: &EntityId) -> Result<bool> {
+        // This public port carries no owner act, and only the owner's revoke
+        // ends an audit_read grant (Astra delta-3 N2).
+        crate::access_grant::reject_audit_read_grant_delete_in_txn(&self.store, txn, id)?;
         // The public delete facade still owns publish/receipt/sweep ordering.
         let (existed, vector, graph, neighbors) =
             crate::batch::deindex_entity(&crate::secret_custody::CustodyWrite::of(self), txn, id)?;

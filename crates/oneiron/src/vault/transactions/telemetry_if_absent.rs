@@ -4,7 +4,7 @@
 //! telemetry batch takes, so a commit of telemetry alone moves no backup
 //! watermark (FIX 6730).
 
-use super::check_generic_sync_state_key;
+use super::{check_generic_sync_state_key, reject_audit_read_grant_marker_in_txn};
 use crate::Vault;
 use crate::error::Result;
 use crate::store::Callback;
@@ -15,7 +15,9 @@ impl Vault {
     /// [`Self::sync_state_put_telemetry_batch`] classes its write: when every
     /// key is a host's telemetry the commit moves no backup watermark; any
     /// other key makes the whole write content. Refuses an undeclared key,
-    /// as `sync_state_put` does. Returns how many rows it wrote.
+    /// as `sync_state_put` does, and a cleanup-archive marker or pending
+    /// tombstone that names a stored audit_read grant (Astra delta-4 F1).
+    /// Returns how many rows it wrote.
     #[doc(hidden)]
     pub fn sync_state_put_telemetry_batch_if_absent(
         &self,
@@ -29,6 +31,7 @@ impl Vault {
             let mut written = 0;
             for (key, value) in rows {
                 if self.store.sync_state.get(wtxn, key)?.is_none() {
+                    reject_audit_read_grant_marker_in_txn(self, wtxn, key)?;
                     crate::side_table::host_sync_state_put(self, wtxn, key, value)?;
                     written += 1;
                 }

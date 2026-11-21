@@ -38,6 +38,7 @@ pub(crate) use grants::{
     DerivedGrantOrigin, DerivedGrantSetting, land_carried_grant_row_in_txn,
     record_standing_grant_use_for_store_in_txn, standing_grant_rows_in_txn,
 };
+pub(crate) use owner::slip_reaches_verb;
 pub(crate) use queue_check::QueuedCheckApproval;
 
 // ---------------------------------------------------------------------------

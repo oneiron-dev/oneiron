@@ -42,6 +42,7 @@ mod aging_doors;
 mod archive_judge_doors;
 mod artifact_hosting_doors;
 mod asr_doors;
+mod audit_read_doors;
 mod authority_history_doors;
 mod blob_body;
 mod board_stream_doors;

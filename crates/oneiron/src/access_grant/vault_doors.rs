@@ -40,6 +40,10 @@ impl Vault {
         })
     }
 
+    /// Refuses a grant whose scope only its own door writes, and any write
+    /// over such a grant: a ChannelIdentity, a DiaryCoreference, and the
+    /// audit_read power, which only the owner's audit_read verbs write
+    /// (RULING AUDITREAD-GRANT-HOME = A).
     fn check_channel_identity_access_write(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -48,7 +52,9 @@ impl Vault {
     ) -> Result<()> {
         if matches!(
             grant.scope,
-            AccessGrantScope::ChannelIdentity { .. } | AccessGrantScope::DiaryCoreference { .. }
+            AccessGrantScope::ChannelIdentity { .. }
+                | AccessGrantScope::DiaryCoreference { .. }
+                | AccessGrantScope::VaultAudit
         ) {
             return Err(invalid_grant());
         }
@@ -69,6 +75,7 @@ impl Vault {
                 },
                 AccessGrantScope::ChannelIdentity { .. }
                     | AccessGrantScope::DiaryCoreference { .. }
+                    | AccessGrantScope::VaultAudit
             )
         {
             return Err(invalid_grant());
@@ -166,9 +173,17 @@ impl Vault {
         self.apply_access_grant_body(wtxn, id, grant.created_at, data)
     }
 
-    /// Revokes an AccessGrant by rewriting the same record as revoked.
+    /// Revokes an AccessGrant by rewriting the same record as revoked. An
+    /// audit_read grant is refused: the owner's own verb alone revokes it,
+    /// and records his act (RULING AUDITREAD-GRANT-HOME = A).
     pub fn revoke_access_grant(&self, id: &EntityId, revoked_at: u64) -> Result<AccessGrant> {
-        self.revoke_admitted_access_grant(id, revoked_at, |_| Ok(()))
+        self.revoke_admitted_access_grant(id, revoked_at, |grant| {
+            if matches!(grant.scope, AccessGrantScope::VaultAudit) {
+                Err(invalid_grant())
+            } else {
+                Ok(())
+            }
+        })
     }
 
     /// Revokes a companion-profile grant through the companion surface. A
