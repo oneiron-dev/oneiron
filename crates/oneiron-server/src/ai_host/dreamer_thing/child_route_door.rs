@@ -2,8 +2,13 @@
 //! ([DREAMER-UNSOURCED-ROLE-CALLS-SEND-UNFENCED]): a Dreamer thing child's
 //! generation as its host builds it, over one seat of a runtime whose rests
 //! are kept in the test's vault, as a served vault's are.
+//! And the generation such a child lends its compaction, as its host
+//! builds it at launch.
 use std::sync::Arc;
 
+use oneiron::attempt_queue::AttemptId;
+use oneiron::code_run::{ScopedChildGeneration, ScopedChildStop};
+use oneiron::llm::WorkContext;
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::RunAdmission;
 use oneiron::{EntityId, LlmBackend, ModelId, Vault};
@@ -60,4 +65,27 @@ pub fn thing_child_route(
         backend,
         _runtime: runtime,
     })
+}
+
+/// The generation a thing child lent slices read from `lent` lends its
+/// compaction, as its host builds it at launch: on a generation count of
+/// its own attempt line, under no stop, in a default work context.
+#[must_use]
+pub fn thing_child_generation(
+    vault: &Arc<Vault>,
+    lent: Vec<EntityId>,
+) -> Arc<dyn ScopedChildGeneration> {
+    let count = Arc::new(super::generation::GenerationCount::new(
+        Arc::clone(vault),
+        "thing-child-generation".to_owned(),
+        AttemptId::now(),
+        EntityId::now(),
+    ));
+    // The launch lends its compaction none of the rows.
+    drop(lent);
+    Arc::new(super::compaction::Generation::new(
+        count,
+        ScopedChildStop::default(),
+        WorkContext::default(),
+    ))
 }

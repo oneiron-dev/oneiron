@@ -32,6 +32,24 @@
 //! fails, and nothing more reaches the model. On main the ladder sends it
 //! again after the wait and it is answered (RED).
 //!
+//! The child's compaction (review P1 on #10301): the child's console, which
+//! may hold a lent row's words, is sealed into a window that names no row
+//! (row ids come from bridge outcomes, not the loan), and its compaction
+//! pass is admitted on the child's own generation (`profiled::seat`). Each
+//! pass goes out on code mode's house route, its calls metered on the
+//! generation the child's host lends
+//! (`test_doors::dreamer_thing_child_route::thing_child_generation`).
+//!
+//! Test 3, a pass after the erase: a child lent both rows compacts a window
+//! holding both rows' words and is answered (guard). The owner erases one
+//! row. The child's next pass over those words fails and reaches nothing,
+//! while a child lent the kept row alone compacts its window and is
+//! answered (guard). On main the pass reaches the model and is answered
+//! (RED).
+//!
+//! Test 4, a rate wait's resend: as test 2, for a compaction pass. On main
+//! the pass is sent again after the wait and answered (RED).
+//!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p
 //! oneiron-server --all-features --test
 //! thing_child_fences_lent_source_rows`.
@@ -49,6 +67,9 @@ use std::time::Duration;
 
 use engine_stack::run_on_engine_stack;
 use fake_llm::{FakeLlm, Reply};
+use oneiron::authority::MachineRole;
+use oneiron::code_run::ScopedChildGeneration;
+use oneiron::compaction::CompactionRequest;
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::MemoryReceipts;
 use oneiron::memory::{EraseOptions, EraseReason};
@@ -60,9 +81,15 @@ use oneiron::{
     TierPrecedence, TimeRange, Vault, VaultConfig,
 };
 use oneiron_keystore::MemoryKeystore;
+use oneiron_server::ai_host::AiHost;
+use oneiron_server::config::SyncServerConfig;
 use oneiron_server::config::models::ModelsConfig;
 use oneiron_server::models::undeclared_run;
-use oneiron_server::test_doors::dreamer_thing_child_route::{ThingChildRoute, thing_child_route};
+use oneiron_server::server::SyncServer;
+use oneiron_server::test_doors::compaction_pass::profiled_house_pass;
+use oneiron_server::test_doors::dreamer_thing_child_route::{
+    ThingChildRoute, thing_child_generation, thing_child_route,
+};
 use serde_json::{Value, json};
 
 /// The words of the CLAIM the owner erases, which only that row holds.
@@ -227,23 +254,119 @@ fn rate_limited() -> Reply {
     }
 }
 
+/// The text of one request message: a string, or its text parts joined.
+fn message_text(message: &Value) -> String {
+    match &message["content"] {
+        Value::String(text) => text.clone(),
+        Value::Array(parts) => parts
+            .iter()
+            .filter_map(|part| part["text"].as_str())
+            .collect::<Vec<_>>()
+            .join(""),
+        _ => String::new(),
+    }
+}
+
 /// Every text part of a request body the model received, joined.
 fn sent_text(body: &Value) -> String {
     body["messages"]
         .as_array()
         .into_iter()
         .flatten()
-        .map(|message| match &message["content"] {
-            Value::String(text) => text.clone(),
-            Value::Array(parts) => parts
-                .iter()
-                .filter_map(|part| part["text"].as_str())
-                .collect::<Vec<_>>()
-                .join(""),
-            _ => String::new(),
-        })
+        .map(message_text)
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// The scripted model's summary, which only its reply holds.
+const SUMMARY: &str = "The owner noted one crossing time.";
+
+/// The scripted model's answer to a compaction call: a summary of the span
+/// its input names.
+fn summary_reply(body: &Value) -> String {
+    let input: Value = body["messages"]
+        .as_array()
+        .and_then(|messages| messages.last())
+        .and_then(|message| serde_json::from_str(&message_text(message)).ok())
+        .unwrap_or(Value::Null);
+    json!({"from": input["from"], "through": input["through"], "summary": SUMMARY}).to_string()
+}
+
+/// One local provider as the chat role's one-rung seat, with code mode's
+/// compaction live on it under the workspace's test prompt package.
+fn compaction_models(model: &FakeLlm) -> ModelsConfig {
+    let prompts = oneiron::prompt::workspace_test_prompt_package_root()
+        .expect("FIXTURE: the workspace's test prompt package");
+    ModelsConfig::from_toml(
+        &format!(
+            "default = \"local:test-model\"\n\
+             [dreamer]\nenabled = false\n[workflows]\nenabled = false\n\
+             [code_mode]\nprompt_package = {:?}\n\
+             [code_mode.compaction]\nwindow_tokens = 1500\nhot_steps = 1\n\
+             [providers.local]\nkind = \"local-openai-compat\"\nbase_url = \"{}\"\n\
+             context_tokens = 32768\n",
+            prompts.display().to_string(),
+            model.base_url,
+        ),
+        None,
+    )
+    .expect("FIXTURE: a valid models config")
+}
+
+/// A rooted vault in `dir` served with its AI host attached under
+/// `models`, as `oneiron serve` starts one: the keystore before the server,
+/// then the host root and this install's live machine profile.
+async fn served(dir: &Path, models: &ModelsConfig) -> (Arc<SyncServer>, AiHost) {
+    let vault = opened(dir);
+    let server = SyncServer::new(
+        Arc::clone(&vault),
+        SyncServerConfig {
+            auth_secret: Some("thing-child-source-fence".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let issuer = vault.load_host_slip_issuer().unwrap();
+    vault.ensure_host_root_slip(&issuer).unwrap();
+    vault
+        .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+        .unwrap();
+    let (server, host) = AiHost::attach(server, Some(models)).await;
+    (Arc::new(server), host)
+}
+
+/// The child's console sealed into a window over `texts`: it names no row.
+fn sealed(vault: &Vault, texts: &[&str]) -> CompactionRequest {
+    oneiron::test_doors::compaction_request::sealed_window(vault, texts, 200)
+        .expect("FIXTURE: the sealed window")
+}
+
+/// One house compaction pass of `request` on the child's `generation`, off
+/// the runtime the pass blocks on.
+async fn child_pass(
+    server: &Arc<SyncServer>,
+    generation: &Arc<dyn ScopedChildGeneration>,
+    request: CompactionRequest,
+) -> Result<(), String> {
+    let server = Arc::clone(server);
+    let generation = Arc::clone(generation);
+    ended(tokio::task::spawn_blocking(move || {
+        profiled_house_pass(&server, budget(), generation, &request)
+    }))
+    .await
+    .expect("FIXTURE: the pass thread ends")
+    .map(|answer| assert!(answer.summary.contains(SUMMARY), "FIXTURE: {answer:?}"))
+}
+
+/// Every compaction call the scripted model saw: its system message is the
+/// compaction prompt.
+fn compaction_calls(model: &FakeLlm) -> Vec<Value> {
+    model
+        .seen()
+        .into_iter()
+        .map(|seen| seen.body)
+        .filter(|body| message_text(&body["messages"][0]).contains("You compact"))
+        .collect()
 }
 
 /// `sent`, which must end within [`CALL_LIMIT`].
@@ -361,6 +484,101 @@ fn a_rate_wait_resend_sends_nothing_once_a_lent_row_is_erased() {
             model.seen().len(),
             3,
             "the rate wait's resend of a step of a child lent a row erased since reached the model"
+        );
+    });
+}
+
+#[test]
+fn a_compaction_pass_sends_nothing_once_a_lent_row_is_erased() {
+    run_on_engine_stack("thing-child-erased-compaction", || async {
+        let model =
+            FakeLlm::start(Vec::new(), Some(Reply::Computed(Arc::new(summary_reply)))).await;
+        let dir = tempfile::tempdir().unwrap();
+        let (server, _host) = served(dir.path(), &compaction_models(&model)).await;
+        let vault = server.vault();
+        let person = stored_person(vault);
+        let erased = stored_claim(vault, person, ERASED_WORDS);
+        let kept = stored_claim(vault, person, KEPT_WORDS);
+        let both = thing_child_generation(vault, vec![erased, kept]);
+        let alone = thing_child_generation(vault, vec![kept]);
+
+        // Guard: a pass of a child lent live rows goes out and is answered.
+        child_pass(&server, &both, sealed(vault, &[ERASED_WORDS, KEPT_WORDS]))
+            .await
+            .expect("FIXTURE: a pass of a child lent live rows is answered");
+        assert_eq!(
+            compaction_calls(&model).len(),
+            1,
+            "FIXTURE: the pass reached the model"
+        );
+
+        privacy_erase(vault, erased);
+        let again = child_pass(&server, &both, sealed(vault, &[ERASED_WORDS, KEPT_WORDS])).await;
+        assert!(
+            again.is_err(),
+            "a compaction pass of a child lent a row erased since was answered"
+        );
+        // Guard: the pass of a child lent the kept row alone still goes out.
+        child_pass(&server, &alone, sealed(vault, &[KEPT_WORDS]))
+            .await
+            .expect("FIXTURE: a pass of a child lent the kept row alone is answered");
+        let calls = compaction_calls(&model);
+        assert_eq!(
+            calls.len(),
+            2,
+            "the compaction pass of a child lent a row erased since reached the model"
+        );
+        assert!(
+            !sent_text(&calls[1]).contains(ERASED_WORDS),
+            "FIXTURE: the kept row's pass holds none of the erased words"
+        );
+    });
+}
+
+#[test]
+fn a_compaction_rate_wait_resend_sends_nothing_once_a_lent_row_is_erased() {
+    run_on_engine_stack("thing-child-erased-compaction-rate", || async {
+        let model =
+            FakeLlm::start(Vec::new(), Some(Reply::Computed(Arc::new(summary_reply)))).await;
+        let dir = tempfile::tempdir().unwrap();
+        let (server, _host) = served(dir.path(), &compaction_models(&model)).await;
+        let vault = server.vault();
+        let person = stored_person(vault);
+        let erased = stored_claim(vault, person, ERASED_WORDS);
+        let kept = stored_claim(vault, person, KEPT_WORDS);
+        let both = thing_child_generation(vault, vec![erased, kept]);
+        let alone = thing_child_generation(vault, vec![kept]);
+
+        // Guard: a pass of a child lent the kept row, refused for its rate,
+        // waits the limit out and is answered by its resend.
+        model.push(rate_limited());
+        child_pass(&server, &alone, sealed(vault, &[KEPT_WORDS]))
+            .await
+            .expect("FIXTURE: a rate-refused pass of a live row is answered after the wait");
+        assert_eq!(
+            compaction_calls(&model).len(),
+            2,
+            "FIXTURE: the wait's resend went out and was answered"
+        );
+
+        // The same refusal for a pass of a child lent both rows, held by the
+        // model until the owner's erase has committed.
+        model.push(Reply::HoldThen(Box::new(rate_limited())));
+        let sent = child_pass(&server, &both, sealed(vault, &[ERASED_WORDS, KEPT_WORDS]));
+        let erase = async {
+            model.wait_holding().await;
+            privacy_erase(vault, erased);
+            model.release();
+        };
+        let (outcome, ()) = tokio::join!(sent, erase);
+        assert!(
+            outcome.is_err(),
+            "a compaction pass whose lent row was erased in its rate wait was answered by its resend"
+        );
+        assert_eq!(
+            compaction_calls(&model).len(),
+            3,
+            "the rate wait's resend of a pass of a child lent a row erased since reached the model"
         );
     });
 }
