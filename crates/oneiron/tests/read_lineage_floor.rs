@@ -26,6 +26,8 @@ use oneiron::{
     EdgeActorClass, EdgeKind, EntityId, TimeRange, Vault, VaultConfig,
 };
 
+mod erased_sources;
+
 const AT: u64 = 1_769_947_200;
 
 struct Mailbox {
@@ -129,11 +131,23 @@ fn claim_born_with(
     role: MadeByInputRole,
     value: &str,
 ) -> EntityId {
+    claim_of_predicate_born_with(mailbox, inputs, role, "profile.preference", value)
+}
+
+/// [`claim_born_with`] under `predicate`, so CLAIMs of distinct predicates
+/// never supersede one another.
+fn claim_of_predicate_born_with(
+    mailbox: &Mailbox,
+    inputs: &[EntityId],
+    role: MadeByInputRole,
+    predicate: &str,
+    value: &str,
+) -> EntityId {
     let id = EntityId::now();
     put_claim_made_by(
         &mailbox.vault,
         id,
-        &claim_body(mailbox, "profile.preference", value),
+        &claim_body(mailbox, predicate, value),
         made_by(mailbox, inputs, role),
     )
     .expect("FIXTURE: the CLAIM and its birth");
@@ -190,6 +204,42 @@ fn a_claim_born_from_a_mailbox_row_reads_only_to_the_mailboxs_readers() {
     assert!(
         !reads(&mailbox.vault, learnt, &[mailbox.stranger]).expect("the stranger reads it"),
         "LEAK: a stranger reads a CLAIM whose birth names a mailbox's row",
+    );
+}
+
+/// The measured case (OPUS-LINEAGE-MEASURE set C3, 21 Nov 04:22): under the
+/// walk alone, a reader named by no policy read every one of 5,000 CLAIMs
+/// born from a mailbox's rows by their birth's inputs alone. With the floor
+/// it reads none of them, and the mailbox's reader reads every one.
+#[test]
+fn a_reader_named_by_no_policy_reads_none_of_the_claims_learnt_from_a_mailbox() {
+    let mailbox = mailbox();
+    let learnt: Vec<EntityId> = (0..50)
+        .map(|n| {
+            claim_of_predicate_born_with(
+                &mailbox,
+                &[mailbox.row],
+                MadeByInputRole::Input,
+                &format!("fact.mailbox_n{n}"),
+                "learnt from the mailbox",
+            )
+        })
+        .collect();
+    let read_by = |viewer: EntityId| {
+        learnt
+            .iter()
+            .filter(|claim| reads(&mailbox.vault, **claim, &[viewer]).expect("the walk reads"))
+            .count()
+    };
+    assert_eq!(
+        read_by(mailbox.stranger),
+        0,
+        "LEAK: a reader named by no policy reads CLAIMs learnt from the mailbox",
+    );
+    assert_eq!(
+        read_by(mailbox.reader),
+        learnt.len(),
+        "the mailbox's reader reads every CLAIM learnt from it",
     );
 }
 
@@ -515,45 +565,5 @@ fn a_claim_waiting_for_its_source_does_not_travel_on_a_restricted_lane() {
     assert!(
         !travels_restricted(&mailbox.vault, learnt).expect("the waiting CLAIM's travel"),
         "LEAK: a CLAIM whose floor waits travels on a restricted lane",
-    );
-}
-
-/// #9289 review 3 P1-1, P1-6: a row waiting on a source that is then erased
-/// waits on nothing that can land. The next housekeeping pass (the floor
-/// sweep, now on the schedule) raises it again, so it stops waiting and its
-/// readers read it again.
-#[test]
-fn a_row_whose_awaited_source_was_erased_stops_waiting_at_the_next_pass() {
-    let mailbox = owners_mailbox();
-    let middle = claim_born_from(&mailbox, &[EntityId::now()], "learnt from a row on its way");
-    let derived = claim_born_from(&mailbox, &[], "derived from middle");
-    mailbox
-        .vault
-        .put_edge(&derived, EdgeKind::DerivedFrom, &middle, 1.0)
-        .expect("FIXTURE: the derived row names middle");
-    assert!(
-        floor_waits(&mailbox.vault, derived).expect("the floor's state"),
-        "precondition: a row written from a waiting row waits too",
-    );
-    assert!(
-        !reads(&mailbox.vault, derived, &[mailbox.reader]).expect("the reader's read"),
-        "precondition: a waiting row reads to no one but the owner",
-    );
-    mailbox
-        .vault
-        .memory(mailbox.owner, EdgeActorClass::Human)
-        .safe_delete(&middle.to_hex(), SafeDeleteReason::UserDelete)
-        .expect("the owner deletes middle");
-    mailbox
-        .vault
-        .housekeeping_all(HousekeepingBudget::unbounded())
-        .expect("a housekeeping pass runs the floor sweep");
-    assert!(
-        !floor_waits(&mailbox.vault, derived).expect("the floor's state"),
-        "STUCK: a row whose awaited source was erased still waits after a housekeeping pass",
-    );
-    assert!(
-        reads(&mailbox.vault, derived, &[mailbox.reader]).expect("the reader's read"),
-        "a row that no longer waits reads to the reader again",
     );
 }
