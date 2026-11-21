@@ -55,6 +55,7 @@ pub fn record_kept_position_receipt(
         }],
         links: Vec::new(),
         analysis: None,
+        restates: None,
     };
     let row = vault.with_write_txn(|txn| vault.store.record_gate_receipt_in_txn(txn, receipt))?;
     Ok((row, candidate))

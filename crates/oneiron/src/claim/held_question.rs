@@ -113,7 +113,9 @@ pub(crate) fn open_owner_question_in_txn(
 /// reasons, which carry the checker's explanation the owner reads in the
 /// tray. Both come from the engine's own ledger row, never from a caller. It
 /// also keeps the asked decision's loop links, and drops the drift tripwire's
-/// normal-baseline token: a restatement is no second write by the agent.
+/// normal-baseline token: a restatement is no second write by the agent. For
+/// the same reason its context names the asked decision as the one it
+/// restates, so the auto checker's signals count no write for it.
 pub(crate) fn restate_owner_question_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -159,6 +161,7 @@ pub(crate) fn restate_owner_question_in_txn(
             })
             .collect();
     }
+    receipt.context.restates = Some(question.decision_id);
     let decision = store.record_gate_receipt_in_txn(wtxn, receipt)?;
     store.stamp_claim_gate_retention_context_in_txn(
         wtxn,
