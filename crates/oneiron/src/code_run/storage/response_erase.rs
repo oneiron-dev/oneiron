@@ -42,7 +42,9 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::super::replay::{CodeRunRawOutput, CodeRunReplayRecord, ResultOccurrence};
-use super::replay_bodies::{CODE_RUN_OUTPUT_PREVIEW_ERASED, erase_replies};
+use super::replay_bodies::{
+    CODE_RUN_OUTPUT_PREVIEW_ERASED, WriterCustody, erase_replies_in_writer,
+};
 use super::replay_capsule::{
     actor_gone_in_txn, actor_hard_erased_in_store, capsule_bodies_in_txn, capsule_runs_in_txn,
     names_no_actor, retire_source_step_starts_in_txn,
@@ -152,10 +154,14 @@ fn scrub_actor_responses_in_txn(
     let mut scope = runs.to_vec();
     scope.extend(wait_holder_runs_in_txn(store, wtxn, actor)?);
     let records = actor_records_in_txn(store, wtxn, actor, &scope)?;
+    let custody = WriterCustody::default();
     for (&record_id, &run) in &records {
         let mut released = Vec::new();
-        if let Some(record) = replay_rows::get_lenient(store, wtxn, &record_id)? {
+        if let Some(mut record) = replay_rows::get_lenient(store, wtxn, &record_id)? {
             released = release_reply_outputs_in_txn(store, wtxn, run, &record)?;
+            // Each request keeps the custody records it names (FIX
+            // ERASED-IDENTITY-ONE-STAND-IN), custody read once per scrub.
+            custody.erase_replies(store, wtxn, &mut record)?;
             replay_rows::put_erased(store, wtxn, &record_id, Erased::of(record)?)?;
         } else if unreadable_record_in_txn(store, wtxn, &record_id)? {
             // Stored but not decoded: its reply bodies are its owner row's
@@ -194,7 +200,8 @@ fn scrub_actor_responses_in_txn(
 /// bodies released all the same, and a Deleted row of it turns Erased here;
 /// an erased row stays erased. A removed row or a pending `df:` or `pt:`
 /// fence without that marker is no completed erasure: the row stays
-/// Deleted, with its bodies, for the retirement still to come.
+/// Deleted, with its bodies, for the retirement still to come. The caller
+/// lands what this returns with [`replay_rows::put_fenced`].
 ///
 /// # Errors
 ///
@@ -223,7 +230,7 @@ pub(crate) fn fence_replay_in_txn<'r>(
     }
     let run = owner.as_ref().map_or(record.run_id, |owner| owner.run);
     let released = release_reply_outputs_in_txn(&vault.store, wtxn, run, &record)?;
-    erase_replies(record.to_mut())?;
+    erase_replies_in_writer(&vault.store, wtxn, record.to_mut())?;
     let kept = owner
         .as_ref()
         .and_then(ResponseOwner::retirement_actor)

@@ -168,23 +168,31 @@ fn raster<A: Admission, R: RasterView>(
     }, rgb_bytes)))
 }
 
+/// The page one side's loop burns its fields onto, with what every field on
+/// that page shares: the output document, the page's resource dictionary,
+/// its crop box, the font's resource name, the signature rasters, and the
+/// raster objects already written. Each loop builds it once per page.
+pub struct BurnTarget<'p, R> {
+    pub out: &'p mut Document,
+    pub resources: &'p mut Dictionary,
+    pub crop: [f64; 4],
+    pub font_name: &'p [u8],
+    pub rasters: &'p BTreeMap<String, R>,
+    pub images: &'p mut ImageCache,
+}
+
 /// One field's burn-in over `ops`: the rectangle the percent box projects
 /// to, then the clip, the marks, and their arms. Unfilled fields draw
 /// nothing. Each side's loop calls this once per field with its projected
 /// geometry and value, so the per-field error order stays exactly as today.
-#[allow(clippy::too_many_arguments)]
 pub fn burn_field<A: Admission, R: RasterView>(
     ops: &mut Vec<Operation>,
-    out: &mut Document,
-    resources: &mut Dictionary,
-    crop: [f64; 4],
-    font_name: &[u8],
+    target: &mut BurnTarget<'_, R>,
     geometry: &FieldGeometry,
     value: Option<LeafValue<'_>>,
-    rasters: &BTreeMap<String, R>,
-    images: &mut ImageCache,
     admit: &A,
 ) -> Result<(), BurnError<A::Error>> {
+    let (crop, font_name, rasters) = (target.crop, target.font_name, target.rasters);
     let rect = render_field_geometry(geometry, crop).map_err(BurnError::into_burn)?;
     if value.is_none() {
         return Ok(());
@@ -255,17 +263,17 @@ pub fn burn_field<A: Admission, R: RasterView>(
                 let image = rasters
                     .get(&image_ref)
                     .ok_or(BurnError::InvalidSignatureImage)?;
-                let id = if let Some(id) = images.ids.get(&image_ref) {
+                let id = if let Some(id) = target.images.ids.get(&image_ref) {
                     *id
                 } else {
-                    let id = raster(out, image, admit)?;
+                    let id = raster(target.out, image, admit)?;
                     admit
                         .admit_image_entry(image_ref.len())
                         .map_err(BurnError::Admit)?;
-                    images.ids.insert(image_ref.clone(), id);
+                    target.images.ids.insert(image_ref.clone(), id);
                     id
                 };
-                let name = resource(resources, b"XObject", id, admit)?;
+                let name = resource(target.resources, b"XObject", id, admit)?;
                 let scale = (rect.width / f64::from(image.width()))
                     .min(rect.height / f64::from(image.height()));
                 let (w, h) = (

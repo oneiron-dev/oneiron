@@ -18,12 +18,16 @@ pub enum IdentityEffect {
     Share,
 }
 
-/// A settled ask.
+/// A settled ask, or a member's proposal on it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct IdentitySettled {
     pub ask: String,
-    /// The entity the mention names, as 32 hex.
+    /// The entity the mention names, as 32 hex; empty on a proposal.
     pub entity: String,
+    /// A member's "someone new": a proposal to the owner, applied when he
+    /// accepts it. Nothing is settled until then.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub proposed: bool,
 }
 
 /// `self.identity.answer`'s input: the person's choice on one ask.

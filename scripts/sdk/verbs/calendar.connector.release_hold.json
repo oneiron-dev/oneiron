@@ -1,0 +1,17 @@
+{
+  "name": "calendar.connector.release_hold",
+  "description": "Under owner proof and the owner's confirm, releases the pulls an out-of-service seat's outbox rows hold for one booking; a host cancel of it then asks the owner to refund by hand and never refunds by itself.",
+  "input": "crate::calendar::connectors::door::CalendarConnectorReleaseHoldRequest",
+  "output": "crate::calendar::connectors::door::CalendarConnectorReleaseHoldReceipt",
+  "call": "crate::task_verb::sdk::release_calendar_hold(memory, &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "security_control_disable",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

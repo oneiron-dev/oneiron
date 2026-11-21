@@ -14,7 +14,7 @@ use std::{
         },
     },
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Stdio,
     sync::Arc,
     time::SystemTime,
 };
@@ -88,7 +88,7 @@ impl SecretSource {
                     .map_err(|_| anyhow::anyhow!("unknown host secret"))?,
             )),
             Self::Keychain(service) => {
-                let output = Command::new("/usr/bin/security")
+                let output = oneiron_spawn::command("/usr/bin/security")
                     .args(["find-generic-password", "-s", service, "-a", name, "-w"])
                     .env_clear()
                     .stdin(Stdio::null())

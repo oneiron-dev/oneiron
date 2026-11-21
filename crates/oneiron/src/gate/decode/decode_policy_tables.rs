@@ -335,7 +335,7 @@ pub(super) fn parse_owner_policy_rows(value: &Value) -> Option<Vec<PolicyOwnerPo
     Some(parsed)
 }
 
-pub(super) fn parse_owner_row_action(action: &str) -> Option<OwnerRowAction> {
+pub(in crate::gate) fn parse_owner_row_action(action: &str) -> Option<OwnerRowAction> {
     match action {
         "warn" => Some(OwnerRowAction::Warn),
         "reword" => Some(OwnerRowAction::Reword),

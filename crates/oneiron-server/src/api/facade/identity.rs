@@ -263,9 +263,14 @@ fn authorship_refusal(error: oneiron::Error) -> ApiError {
     ApiError::internal_server_error("owner authorship did not finish on this server")
 }
 
-/// The one verb whose direct request binds the requesting person's own
-/// proof rather than only the owner's (OF-417).
-pub(super) const PERSON_PROOF_VERB: &str = "vault.workspace.work_companion.set";
+/// The verbs whose direct request binds the requesting person's own proof
+/// rather than only the owner's: the work-companion setting (OF-417), and a
+/// member's own work-talk open and one-vault acknowledge (L7-05).
+pub(super) const PERSON_PROOF_VERBS: [&str; 3] = [
+    "vault.workspace.work_companion.set",
+    "vault.workspace.work_talk.open",
+    "vault.workspace.one_vault.acknowledge",
+];
 
 /// The verb whose direct request binds, when the caller is not the owner on
 /// his own full slip, the answering person's own person-tier proof (UC-05):
@@ -278,12 +283,12 @@ pub(super) const ANSWER_VERB: &str = "tasks.answer";
 pub(super) const GUEST_REVOKING_DELETE_VERB: &str = "vault.delete";
 
 /// The proof a direct request (outside any room turn) binds onto its
-/// caller's surface for `verb`. `vault.workspace.work_companion.set` takes
-/// the person's own proof ([`shared_act_doors::person`]): the owner's, or a
-/// live person's on their own verified human credential, whose
-/// workspace-settings power the engine then checks; any other caller binds
-/// none and the engine refuses it. `tasks.answer` binds the owner's own
-/// authorship, or else the answering person's person-tier proof
+/// caller's surface for `verb`. A [`PERSON_PROOF_VERBS`] row takes the
+/// person's own proof ([`shared_act_doors::person`]): the owner's, or a live
+/// person's on their own verified human credential, whose power the engine
+/// then checks (workspace settings, or the member's own roster row); any
+/// other caller binds none and the engine refuses it. `tasks.answer` binds the
+/// owner's own authorship, or else the answering person's person-tier proof
 /// ([`answer_person_proof`]). Every other verb binds the owner's own
 /// authorship ([`owner_authorship`]), or none.
 pub(in crate::api) fn direct_authorship(
@@ -291,7 +296,7 @@ pub(in crate::api) fn direct_authorship(
     server: &SyncServer,
     verb: &str,
 ) -> Result<Option<oneiron::consent::AuthenticatedOwner>, ApiError> {
-    if verb == PERSON_PROOF_VERB {
+    if PERSON_PROOF_VERBS.contains(&verb) {
         return match shared_act_doors::person(server, auth, verb) {
             Ok(proof) => Ok(Some(proof)),
             // A store fault the person's proof met is this server's 500,

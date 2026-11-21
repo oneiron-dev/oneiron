@@ -437,9 +437,13 @@ impl SessionOverlay {
         Ok(())
     }
 
+    /// Refuses `incoming_bytes` past the budget: what the room stages now,
+    /// the values it keeps in its own custody (REVIEW-10003 round 2) and the
+    /// incoming bytes together.
     fn ensure_budget(&self, current_bytes: usize, incoming_bytes: usize) -> Result<()> {
         let attempted_bytes = current_bytes
-            .checked_add(incoming_bytes)
+            .checked_add(self.room_secret_bytes())
+            .and_then(|bytes| bytes.checked_add(incoming_bytes))
             .ok_or(Error::ArithmeticOverflow("overlay attempted byte count"))?;
         if attempted_bytes > self.budget_bytes {
             return Err(Error::OffRecord(OffRecordError::OffRecordOverlayFull {

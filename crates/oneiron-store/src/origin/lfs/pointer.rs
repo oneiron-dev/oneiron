@@ -62,9 +62,15 @@ impl LfsPushedPointer {
     /// `oid` and `size` while `version` stays context.
     ///
     /// `content` is the blob's bytes, split here on `\n`; a blank line, the
-    /// trailing newline's included, is no field.
+    /// trailing newline's included, is no field. A blob of
+    /// [`LFS_POINTER_SIZE_CUTOFF`] bytes or more is no pointer, whatever its
+    /// lines: git-lfs reads none as one, so its checkout is the blob itself,
+    /// and every reader of a pushed blob draws the line where git-lfs does.
     #[must_use]
     pub fn from_pointer_content(path: impl AsRef<[u8]>, content: &[u8]) -> Option<Self> {
+        if u64::try_from(content.len()).ok()? >= LFS_POINTER_SIZE_CUTOFF {
+            return None;
+        }
         let mut oid = None;
         let mut size_bytes = None;
         let mut fields = 0_usize;

@@ -38,6 +38,7 @@ fn workflow_round_trips_updates_forks_and_rejects_dangling_steps() -> Result<()>
             ENTITY_TYPE_WORKFLOW,
             TimeRange { start: 10, end: 10 },
             10,
+            None,
             &encode_workflow(&definition)?,
         )
         .commit()?;

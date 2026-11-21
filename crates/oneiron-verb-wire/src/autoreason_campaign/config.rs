@@ -120,7 +120,7 @@ pub struct CampaignTournamentConfig {
 }
 
 /// The single budget lease line the campaign reserves against.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
 pub struct CampaignBudgetLine {
     /// Budget line id.

@@ -34,8 +34,7 @@ pub fn truncate_embedded_owner_person_row(vault: &Vault) -> Result<EntityId> {
             ))?;
         vault
             .store
-            .entities
-            .put(txn, owner.as_bytes(), &raw[..TRUNCATED_LEN])?;
+            .put_entity_row_bytes_for_test(txn, &owner, &raw[..TRUNCATED_LEN])?;
         Ok(owner)
     })
 }

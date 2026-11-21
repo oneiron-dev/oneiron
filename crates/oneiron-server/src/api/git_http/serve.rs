@@ -15,6 +15,7 @@ use axum::http::HeaderName;
 use axum::http::HeaderValue;
 use axum::http::StatusCode;
 use axum::http::header::CONTENT_LENGTH;
+use axum::http::header::LOCATION;
 use axum::response::Response;
 use oneiron::EntityId;
 use oneiron::federation::GitPushCaller;
@@ -65,16 +66,26 @@ pub(super) async fn run_serve(
     // A push runs under the lease this host holds over the repository, read
     // from the vault's own authority row and this install's machine, never
     // from the request. A mirror, or a repository another host writes, is
-    // told so before it queues, as is one whose writer was erased: it names
-    // the owner's cutover. A repository that does not resolve leaves the
-    // answer to the exchange.
+    // told so before it queues (and an admitted pusher is sent to the
+    // writer's door when the owner's cutover named one), as is one whose
+    // writer was erased: it names the owner's cutover. A repository that
+    // does not resolve leaves the answer to the exchange.
     let authority = if request.is_push() {
         let vault = Arc::clone(server.vault());
         let name = repo.clone();
+        let pusher = caller.as_ref();
         match tokio::task::spawn_blocking(move || vault.origin_host_authority(&name)).await {
             Ok(Ok(OriginHostAuthority::Held(lease))) => Some(lease),
-            Ok(Ok(OriginHostAuthority::Mirror(row))) => return not_the_writer(&row, true),
-            Ok(Ok(OriginHostAuthority::Elsewhere(row))) => return not_the_writer(&row, false),
+            Ok(Ok(OriginHostAuthority::Mirror(row))) => {
+                let why = NotTheWriter::Mirror;
+                return not_the_writer(&server, &repo, &request, pusher, push_selection, &row, why)
+                    .await;
+            }
+            Ok(Ok(OriginHostAuthority::Elsewhere(row))) => {
+                let why = NotTheWriter::Elsewhere;
+                return not_the_writer(&server, &repo, &request, pusher, push_selection, &row, why)
+                    .await;
+            }
             Ok(Ok(OriginHostAuthority::WriterErased(_))) => {
                 return text_response(StatusCode::FORBIDDEN, ORIGIN_WRITER_ERASED_REFUSAL);
             }
@@ -366,25 +377,79 @@ pub(super) fn landed_response(
 
 pub(super) type ResponseHead = (u16, Vec<(String, String)>);
 
+/// Why this host does not write a repository a push names.
+#[derive(Clone, Copy)]
+enum NotTheWriter {
+    /// The repository is a read-only mirror here.
+    Mirror,
+    /// Another host writes the current epoch.
+    Elsewhere,
+}
+
 /// A push to a repository this host does not write: a read-only mirror, or
 /// one whose current epoch another host holds. Reads still serve here.
-fn not_the_writer(row: &OriginAuthority, mirror: bool) -> Response {
-    let message = if mirror {
-        format!(
+///
+/// The old origin redirects (RA7). When the owner's cutover named the
+/// writer's git door, a pusher the push gate admits is sent there: the ref
+/// advertisement a stock `git push` starts with answers `307` with the same
+/// repository at that door, which git follows for the whole push. A push
+/// request past the advertisement, or one bound to this host's checkout
+/// lease (which the writer does not hold), is refused naming the door. A
+/// pusher the gate refuses gets that refusal. With no door, or when the
+/// decision fails, the refusal names none, as before.
+async fn not_the_writer(
+    server: &Arc<SyncServer>,
+    repo: &str,
+    request: &smart_http::ServeRequest,
+    caller: Option<&GitPushCaller>,
+    push_selection: Option<(RepoPortableId, EntityId)>,
+    row: &OriginAuthority,
+    why: NotTheWriter,
+) -> Response {
+    let message = match why {
+        NotTheWriter::Mirror => format!(
             "this origin is a read-only mirror at authority epoch {}; push to the authoritative origin",
             row.epoch
-        )
-    } else {
-        format!(
+        ),
+        NotTheWriter::Elsewhere => format!(
             "another host writes this repository at authority epoch {} ({}); push to that origin",
             row.epoch,
             match row.residence {
                 OriginResidence::LocalVault => "local-vault",
                 OriginResidence::CloudVault => "cloud-vault",
             }
-        )
+        ),
     };
-    text_response(StatusCode::FORBIDDEN, &message)
+    let Some(door) = row.writer_door.as_deref() else {
+        return text_response(StatusCode::FORBIDDEN, &message);
+    };
+    match super::gate::admitted(server, repo, request, caller, push_selection).await {
+        Ok(()) => {}
+        Err(Some(refused)) => return refused,
+        Err(None) => return text_response(StatusCode::FORBIDDEN, &message),
+    }
+    let writer_repo = format!("{door}/{repo}.git");
+    let leased = request
+        .query_string
+        .split('&')
+        .any(|pair| pair.starts_with("checkout-lease="));
+    if !request.is_ref_advertisement() || leased {
+        return text_response(StatusCode::FORBIDDEN, &format!("{message}: {writer_repo}"));
+    }
+    writer_redirect(&format!("{writer_repo}/info/refs?service=git-receive-pack"))
+}
+
+/// `307` to `location`: the ref advertisement of the same repository at the
+/// writer's door. Temporary, as a later cutover moves the writer again.
+fn writer_redirect(location: &str) -> Response {
+    let mut response = text_response(StatusCode::TEMPORARY_REDIRECT, location);
+    match HeaderValue::from_str(location) {
+        Ok(value) => {
+            response.headers_mut().insert(LOCATION, value);
+            response
+        }
+        Err(_) => text_response(StatusCode::FORBIDDEN, location),
+    }
 }
 
 /// The exchange waited its whole deadline for its turn. Nothing was started.

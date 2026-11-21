@@ -187,8 +187,9 @@ impl Drop for KnownEntry {
 /// reads them: held for that pass alone, every byte wiped when it drops.
 pub(crate) struct KnownHistory {
     pub(crate) master: Zeroizing<[u8; 32]>,
-    /// Each holder with live entries, in id order.
-    pub(crate) holders: Vec<(EntityId, Vec<KnownEntry>)>,
+    /// Each holder with live entries, in id order, each entry with the
+    /// custody slot it is held at (FIX ERASED-IDENTITY-ROTATION-GENERATION).
+    pub(crate) holders: Vec<(EntityId, Vec<(u64, KnownEntry)>)>,
 }
 
 fn index_subject(binding: &CustodyBinding) -> Result<CustodySubject> {
@@ -209,16 +210,20 @@ fn copy_master(secret: &CustodySecret) -> Result<Zeroizing<[u8; 32]>> {
     Ok(key)
 }
 
-/// `holder`'s live entries at `slots` in `custody`. One retired is skipped
-/// (erased, or being); one missing or damaged is custody lost and fails.
-/// The caller holds the LMDB writer or the custody read guard.
+/// `holder`'s live entries at `slots` in `custody`, each with its slot.
+/// One retired is skipped (erased, or being); one missing or damaged is
+/// custody lost and fails. The caller holds the LMDB writer or the custody
+/// read guard.
 fn read_entries(
     custody: LocalCustody<'_>,
     holder: &EntityId,
     slots: impl Iterator<Item = u64>,
-) -> Result<Vec<KnownEntry>> {
-    let tagged = read_entries_tagged(custody, holder, slots.map(|slot| (0, slot)))?;
-    Ok(tagged.into_iter().map(|(_, entry)| entry).collect())
+) -> Result<Vec<(u64, KnownEntry)>> {
+    let read = read_entries_referenced(custody, holder, slots.map(|slot| (0, slot)))?;
+    Ok(read
+        .into_iter()
+        .map(|(_, slot, entry)| (slot, entry))
+        .collect())
 }
 
 /// `holder`'s live entries at the `(generation, slot)` references in
@@ -230,6 +235,20 @@ fn read_entries_tagged(
     holder: &EntityId,
     refs: impl Iterator<Item = (u32, u64)>,
 ) -> Result<Vec<(u32, KnownEntry)>> {
+    let read = read_entries_referenced(custody, holder, refs)?;
+    Ok(read
+        .into_iter()
+        .map(|(generation, _, entry)| (generation, entry))
+        .collect())
+}
+
+/// [`read_entries_tagged`], each entry with its slot too (FIX
+/// ERASED-IDENTITY-ROTATION-GENERATION).
+fn read_entries_referenced(
+    custody: LocalCustody<'_>,
+    holder: &EntityId,
+    refs: impl Iterator<Item = (u32, u64)>,
+) -> Result<Vec<(u32, u64, KnownEntry)>> {
     let subject = holder_subject(custody.binding(), holder)?;
     let mut entries = Vec::new();
     for (generation, slot) in refs {
@@ -242,7 +261,7 @@ fn read_entries_tagged(
         let secret = custody.read(&id)?;
         let entry = KnownEntry::from_secret(&secret)
             .ok_or_else(|| CustodyKind::KnownValueEntry.corrupt())?;
-        entries.push((generation, entry));
+        entries.push((generation, slot, entry));
     }
     Ok(entries)
 }
@@ -399,6 +418,29 @@ impl Store {
         wtxn: &RwTxn<'_>,
         holder: &EntityId,
     ) -> Result<Option<(Zeroizing<[u8; 32]>, Vec<(u32, KnownEntry)>)>> {
+        let Some((master, entries)) = self.known_slot_entries_for_in_writer(wtxn, holder)? else {
+            return Ok(None);
+        };
+        let entries = entries
+            .into_iter()
+            .map(|(generation, _, entry)| (generation, entry))
+            .collect();
+        Ok(Some((master, entries)))
+    }
+
+    /// [`Self::known_entries_for_in_writer`], each entry with the custody
+    /// slot it is held at too: what a matcher over that holder's named
+    /// generations keeps beside each value (FIX
+    /// ERASED-IDENTITY-ROTATION-GENERATION).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::known_entries_for_in_writer`]'s.
+    pub(crate) fn known_slot_entries_for_in_writer(
+        &self,
+        wtxn: &RwTxn<'_>,
+        holder: &EntityId,
+    ) -> Result<Option<(Zeroizing<[u8; 32]>, Vec<(u32, u64, KnownEntry)>)>> {
         let Some(at) = INDEX.get(self, wtxn, &())? else {
             return Ok(None);
         };
@@ -407,7 +449,7 @@ impl Store {
         };
         let custody = self.core.key_custody.bind_in_txn(self, wtxn)?;
         let master = copy_master(&custody.read(&index_subject(custody.binding())?.at(at))?)?;
-        let entries = read_entries_tagged(custody, holder, refs.tagged())?;
+        let entries = read_entries_referenced(custody, holder, refs.tagged())?;
         Ok(Some((master, entries)))
     }
 

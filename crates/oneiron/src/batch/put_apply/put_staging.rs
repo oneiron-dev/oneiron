@@ -73,6 +73,12 @@ pub(in crate::batch) fn stage_entity_body_row(
         id,
         Some((entity_type, data)),
     )?;
+    crate::task_verb::speaker_entry_index::reindex_speaker_entry(
+        store,
+        wtxn,
+        id,
+        Some((entity_type, data)),
+    )?;
     store.port_stage_entity_row(wtxn, id, &payload.0)?;
     crate::vault::entity_revision::index_name_phonetic(store, wtxn, id, entity_type, data)?;
     crate::conversation_dag::pin_typed_record(store, wtxn, id, entity_type, data)?;
@@ -431,6 +437,15 @@ pub(super) fn validate_domain_carriers(
         crate::registry::ENTITY_TYPE_TURN | crate::registry::ENTITY_TYPE_CONVERSATION
     ) {
         crate::memory::guard_import_stamp(store, txn, id, data)?;
+    }
+    if matches!(
+        entity_type,
+        crate::registry::ENTITY_TYPE_CONVERSATION
+            | crate::registry::ENTITY_TYPE_TURN
+            | crate::registry::ENTITY_TYPE_MESSAGE
+            | crate::registry::ENTITY_TYPE_SESSION
+    ) {
+        crate::memory::guard_phone_thread_mark(store, txn, id, data)?;
     }
     if entity_type == crate::registry::ENTITY_TYPE_EVENT {
         crate::calendar::origin::validate_event_write(store, txn, id, data, replicated)?;

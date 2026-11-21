@@ -125,8 +125,10 @@ async fn execute(
     // An authenticated caller past a window waits for it and is admitted
     // again (`turn::Turn`), so the clock and the facts are read each time.
     // A hold, the one request that can wait, first takes its place in its
-    // page session's line: it runs admission only once every hold on that
-    // session that came first is answered (ARCH-0062 #booking-turn-divergence).
+    // page session's line: an authenticated hold runs admission only once
+    // every hold on that session that came first is answered (ARCH-0062
+    // #booking-turn-divergence); an anonymous hold takes an empty line or is
+    // answered "retry after" before any admission (`turn::Turn::line_up`).
     let mut turn = turn::Turn::new(server, transport.credential.is_some());
     if let BookingOperationRequest::Book(BookingBookInput::Hold(input)) = &request {
         turn.line_up(session_key(page_ref, &input.session_ref))
@@ -210,17 +212,18 @@ async fn execute(
 
     // A personal link that ended while the attempt ran stopped it at a
     // writer's recheck; its caller gets a dead link's 404 (BK-PERSONAL-LINKS).
-    dispatch(
+    let (response, rows) = dispatch(
         server,
         request,
         transport,
         page_ref,
         now,
         public_authority,
-        listed,
+        turn,
     )
     .await
-    .map_err(|error| public::dead_link_or(server, page_token, error))
+    .map_err(|error| public::dead_link_or(server, page_token, error))?;
+    Ok((response, with_reads(listed, rows)))
 }
 
 /// The caller whose own live calendar grants an availability answer shows
@@ -235,6 +238,9 @@ fn granted_viewer(transport: &BookingAdmissionContext) -> Option<EntityId> {
 }
 
 // ── 3, 4, 5. parse, dispatch, project ───────────────────────────────────
+/// The answer, beside the rows its solve or writer read, which the caller
+/// joins to the publication's listed rows. `turn` holds the request's line
+/// place until it returns; a hold's write takes it.
 async fn dispatch(
     server: &Arc<SyncServer>,
     request: BookingOperationRequest,
@@ -242,8 +248,8 @@ async fn dispatch(
     page_ref: EntityId,
     now: u64,
     public_authority: Option<oneiron::booking::publication::PublicBookingAuthority>,
-    listed: Option<Vec<EntityId>>,
-) -> Result<(BookingOperationResponse, Option<Vec<EntityId>>), ApiError> {
+    mut turn: turn::Turn<'_>,
+) -> Result<(BookingOperationResponse, Vec<EntityId>), ApiError> {
     let viewer = granted_viewer(&transport);
     match request {
         BookingOperationRequest::Availability(mut input) => {
@@ -274,60 +280,45 @@ async fn dispatch(
                     public_availability::granted_view(server, page_ref, &input, viewer, now)
                 })
                 .transpose()?;
-            let (response, sources) = public_availability::solve(
+            let (response, mut rows) = public_availability::solve(
                 server,
                 page_ref,
                 input,
                 now,
                 public_authority.as_ref(),
             )?;
-            let listed = listed.map(|mut rows| {
-                rows.extend(sources);
-                rows
-            });
             // `solve` cached the caller-free answer; the view goes on after.
             match granted {
-                Some((view, reads)) => Ok((
-                    public_availability::with_granted_view(response, view),
-                    listed.map(|mut rows| {
-                        rows.extend(reads);
-                        rows
-                    }),
-                )),
-                None => Ok((response, listed)),
+                Some((view, reads)) => {
+                    rows.extend(reads);
+                    Ok((public_availability::with_granted_view(response, view), rows))
+                }
+                None => Ok((response, rows)),
             }
         }
         BookingOperationRequest::Book(BookingBookInput::Hold(input)) => {
-            let (response, sources) = execute_hold(
+            // The hold's write holds its place in the line until it returns.
+            let place = turn.take_place();
+            execute_hold(
                 server,
                 page_ref,
                 input,
                 now,
                 public_authority,
                 transport.owner_verified,
+                place,
             )
-            .await?;
-            let listed = listed.map(|mut rows| {
-                rows.extend(sources);
-                rows
-            });
-            Ok((response, listed))
+            .await
         }
         BookingOperationRequest::Book(BookingBookInput::Confirm(mut input)) => {
             admission::strip_form_honeypot(&transport, &mut input.intake);
-            let (response, reads) =
-                execute_confirm(server, page_ref, input, now, public_authority).await?;
-            Ok((response, with_reads(listed, reads)))
+            execute_confirm(server, page_ref, input, now, public_authority).await
         }
         BookingOperationRequest::Reschedule(input) => {
-            let (response, reads) =
-                execute_reschedule(server, page_ref, input, now, public_authority).await?;
-            Ok((response, with_reads(listed, reads)))
+            execute_reschedule(server, page_ref, input, now, public_authority).await
         }
         BookingOperationRequest::Cancel(input) => {
-            let (response, reads) =
-                execute_cancel(server, page_ref, input, now, public_authority).await?;
-            Ok((response, with_reads(listed, reads)))
+            execute_cancel(server, page_ref, input, now, public_authority).await
         }
     }
 }

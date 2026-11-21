@@ -1,7 +1,7 @@
 use super::*;
 
+use crate::edit_distance::ProposalArtifactRef;
 use crate::edit_distance::myers::MOVE_DISCOUNT;
-use crate::edit_distance::{LoroOpRef, OpAttribution, OpSpan, ProposalArtifactRef};
 
 // ─── fixtures ───────────────────────────────────────────────────────────
 
@@ -17,37 +17,108 @@ fn body(entries: &[(&str, Value)]) -> Vec<u8> {
     bytes
 }
 
-fn span(before: &str, after: &str) -> (OpAttribution, OpSpan) {
-    (
-        OpAttribution::DevicePeer,
-        OpSpan {
-            peer_id: 1,
-            counter: 0,
-            len: 1,
-            lamport: 0,
-            timestamp: 0,
-            before_text: before.to_owned(),
-            after_text: after.to_owned(),
-        },
+/// A finalized proposal window with the vault that retains it. The artifact's
+/// document is opened once into `retained`, which owns it outright; the vault
+/// stays alive beside it so the window reads as production's does. Fields
+/// drop in order: the document, then the vault, then its directory.
+struct RecordedWindow {
+    retained: crate::edit_distance::RetainedProposal,
+    _vault: Vault,
+    _tmp: tempfile::TempDir,
+}
+
+/// Records `ops` on an artifact opened with `before`, one Loro change per op,
+/// then finalizes and retains the window.
+///
+/// Each op is (position, delete length, insert text) in unicode scalar
+/// indices, applied in order; positions are in the text as the previous op
+/// left it.
+fn recorded_window(before: &str, ops: &[(usize, usize, &str)]) -> RecordedWindow {
+    let (_tmp, vault) = crate::edit_distance::tests::temp_vault();
+    let actor = crate::edit_distance::tests::put_actor(&vault, crate::edge::EdgeActorClass::Human);
+    let mut artifact = crate::edit_distance::proposal_text::ProposalTextArtifact::open(
+        &vault, before, &actor, None,
     )
+    .expect("open proposal artifact");
+    for (pos, len, insert) in ops {
+        artifact
+            .edit_as(&vault, &actor, |text| {
+                text.delete(*pos, *len)
+                    .map_err(|_| crate::error::Error::InvariantViolation("fixture delete"))?;
+                text.insert(*pos, *insert)
+                    .map_err(|_| crate::error::Error::InvariantViolation("fixture insert"))?;
+                Ok(())
+            })
+            .expect("record a change");
+    }
+    let record = artifact.finalize(&vault).expect("finalize");
+    let retained = crate::edit_distance::retained_proposal(&vault, record.artifact_ref)
+        .expect("read retained")
+        .expect("finalize retained the document");
+    assert_eq!(
+        retained.proposed_text().into_text().as_deref(),
+        Some(before),
+        "the window must open on the text the test named"
+    );
+    RecordedWindow {
+        retained,
+        _vault: vault,
+        _tmp,
+    }
 }
 
 /// A two-change window: "hello world" grows a word, then that word is
 /// rewritten. The rewrite is exactly the churn an endpoint comparison cannot
 /// see.
-fn churned_window() -> FinalizedProposalText {
-    FinalizedProposalText {
-        artifact_ref: ProposalArtifactRef::mint(),
-        proposed_ref: LoroOpRef::from_bytes(vec![0x01, 0x02]),
-        final_ref: LoroOpRef::from_bytes(vec![0x03, 0x04]),
-        ops_by_actor: vec![
-            span("hello world", "hello there world"),
-            span("hello there world", "hello brave world"),
-        ],
-        proposed_text: "hello world".to_owned(),
-        final_text: "hello brave world".to_owned(),
-        source_turn_ref: None,
-    }
+fn churned_window() -> RecordedWindow {
+    recorded_window("hello world", &[(6, 0, "there "), (6, 6, "brave ")])
+}
+
+/// Wraps two endpoint texts as measured ends. The refs name a freshly minted
+/// imported-text record: these fixtures retain nothing, and no lane reads
+/// the refs — they only label the ends.
+fn text_ends<'a>(before: &'a str, after: &'a str) -> (MeasuredEnd<'a, str>, MeasuredEnd<'a, str>) {
+    let record = ProposalArtifactRef::mint();
+    (
+        MeasuredEnd {
+            at: EndpointRef::imported_proposed(record),
+            content: before,
+        },
+        MeasuredEnd {
+            at: EndpointRef::imported_final(record),
+            content: after,
+        },
+    )
+}
+
+/// Wraps two structured bodies as measured ends, like [`text_ends`]: the
+/// receipt ids are fixture labels, never stored rows.
+fn body_ends<'a>(
+    proposed: &'a [u8],
+    finalized: &'a [u8],
+) -> (MeasuredEnd<'a, [u8]>, MeasuredEnd<'a, [u8]>) {
+    (
+        MeasuredEnd {
+            at: EndpointRef::receipt_amended_body("fixture:proposed"),
+            content: proposed,
+        },
+        MeasuredEnd {
+            at: EndpointRef::receipt_amended_body("fixture:finalized"),
+            content: finalized,
+        },
+    )
+}
+
+/// The reconstructed lane over two endpoint texts.
+fn reconstructed_delta(before: &str, after: &str) -> AmendmentDelta {
+    let (lhs, rhs) = text_ends(before, after);
+    delta_from_reconstructed(lhs, rhs)
+}
+
+/// The field-diff lane over two structured bodies.
+fn field_diff(proposed: &[u8], finalized: &[u8]) -> crate::Result<AmendmentDelta> {
+    let (lhs, rhs) = body_ends(proposed, finalized);
+    delta_from_field_diff(lhs, rhs)
 }
 
 // ─── schema bytes ───────────────────────────────────────────────────────
@@ -57,7 +128,7 @@ fn churned_window() -> FinalizedProposalText {
 /// measured, not a lossy summary of it.
 #[test]
 fn encoded_delta_projects_the_six_arch_0056_names_and_round_trips() {
-    let delta = delta_from_field_diff(
+    let delta = field_diff(
         &body(&[("survivor", Value::from(1))]),
         &body(&[("survivor", Value::from(2))]),
     )
@@ -84,7 +155,7 @@ fn encoded_delta_projects_the_six_arch_0056_names_and_round_trips() {
         "canonical json sorts the six field names"
     );
     assert_eq!(json["source"], "field_diff");
-    assert_eq!(delta.engine_ver, env!("CARGO_PKG_VERSION"));
+    assert_eq!(delta.engine_ver, MEASUREMENT_ENGINE_VERSION);
     assert_eq!(AmendmentDelta::decode(&encoded).expect("decode"), delta);
 }
 
@@ -93,12 +164,12 @@ fn encoded_delta_projects_the_six_arch_0056_names_and_round_trips() {
 #[test]
 fn field_diff_rejects_bytes_that_are_not_a_body() {
     // A one-element array header with no element: truncated, not a body.
-    assert!(delta_from_field_diff(b"\x91", &body(&[])).is_err());
+    assert!(field_diff(b"\x91", &body(&[])).is_err());
     // Trailing bytes are rejected too: a body with a tail is not the body the
     // door validated.
     let mut tail = body(&[("a", Value::from(1))]);
     tail.push(0x00);
-    assert!(delta_from_field_diff(&tail, &body(&[])).is_err());
+    assert!(field_diff(&tail, &body(&[])).is_err());
 }
 
 // ─── chooser ────────────────────────────────────────────────────────────
@@ -117,31 +188,36 @@ fn chooser_prefers_recorded_ops_then_field_diff_over_reconstructed() {
     let amended = body(&[("a", Value::from(2))]);
     let (before, after) = ("one\ntwo\nthree\nfour", "three\nfour\none\ntwo");
     assert_ne!(
-        delta_from_reconstructed(before, after).ops_summary.moved,
+        reconstructed_delta(before, after).ops_summary.moved,
         0,
         "fixture must be a relocation, or it proves nothing about the lane"
     );
 
     let ctx = DeltaCaptureContext {
-        recorded: Some(&window),
-        bodies: Some((&proposed, &amended)),
-        texts: Some((before, after)),
+        recorded: Some(&window.retained),
+        bodies: Some(body_ends(&proposed, &amended)),
+        texts: Some(text_ends(before, after)),
     };
-    let recorded = capture_delta_best(&ctx).expect("capture");
+    let recorded = capture_delta_best(ctx).expect("capture");
     assert_eq!(recorded.source, DeltaSource::RecordedOps);
-    assert_eq!(recorded, delta_from_recorded_ops(&window));
+    assert_eq!(
+        recorded,
+        delta_from_recorded_ops(&window.retained).expect("direct")
+    );
     assert_eq!(recorded.ops_summary.moved, 0);
 
     let without_ops = DeltaCaptureContext {
         recorded: None,
-        ..ctx
+        bodies: Some(body_ends(&proposed, &amended)),
+        texts: Some(text_ends(before, after)),
     };
-    let field = capture_delta_best(&without_ops).expect("capture");
+    let field = capture_delta_best(without_ops).expect("capture");
     assert_eq!(field.source, DeltaSource::FieldDiff);
     assert_eq!(field.ops_summary.moved, 0);
 
+    let (text_before, text_after) = text_ends(before, after);
     assert_eq!(
-        capture_delta_best(&DeltaCaptureContext::from_texts(before, after))
+        capture_delta_best(DeltaCaptureContext::from_texts(text_before, text_after))
             .expect("capture")
             .source,
         DeltaSource::Reconstructed
@@ -152,12 +228,101 @@ fn chooser_prefers_recorded_ops_then_field_diff_over_reconstructed() {
 
 /// One recorded change from `before` to `after`: a decider's single
 /// correction run as the op log replays it.
-fn one_change_window(before: &str, after: &str) -> FinalizedProposalText {
-    let mut window = churned_window();
-    window.ops_by_actor = vec![span(before, after)];
-    window.proposed_text = before.to_owned();
-    window.final_text = after.to_owned();
-    window
+fn one_change_window(before: &str, after: &str) -> RecordedWindow {
+    let prefix = before
+        .chars()
+        .zip(after.chars())
+        .take_while(|pair| pair.0 == pair.1)
+        .count();
+    let before_len = before.chars().count();
+    let after_len = after.chars().count();
+    let budget = before_len.min(after_len) - prefix;
+    let suffix = before
+        .chars()
+        .rev()
+        .zip(after.chars().rev())
+        .take(budget)
+        .take_while(|pair| pair.0 == pair.1)
+        .count();
+    let middle: String = after
+        .chars()
+        .skip(prefix)
+        .take(after_len - prefix - suffix)
+        .collect();
+    recorded_window(
+        before,
+        &[(prefix, before_len - prefix - suffix, middle.as_str())],
+    )
+}
+
+/// A layout-only recorded window: `before` and `after` hold the same words,
+/// so every whitespace run that differs is replaced in its own recorded
+/// change, end to start so earlier positions hold. Each change touches
+/// whitespace only, which is what the recorded lane must score zero.
+fn whitespace_window(before: &str, after: &str) -> RecordedWindow {
+    /// Maximal runs of `text` as (char position, char length, is whitespace).
+    fn runs(text: &str) -> Vec<(usize, usize, bool)> {
+        let mut runs = Vec::new();
+        let mut pos = 0_usize;
+        let mut chars = text.chars().peekable();
+        while let Some(first) = chars.next() {
+            let whitespace = first.is_whitespace();
+            let mut len = 1_usize;
+            while chars
+                .peek()
+                .is_some_and(|next| next.is_whitespace() == whitespace)
+            {
+                chars.next();
+                len += 1;
+            }
+            runs.push((pos, len, whitespace));
+            pos += len;
+        }
+        runs
+    }
+    fn run_text(text: &str, pos: usize, len: usize) -> String {
+        text.chars().skip(pos).take(len).collect()
+    }
+    let mut before_runs = runs(before);
+    let mut after_runs = runs(after);
+    // Pad a missing edge run so both lists align word to word.
+    if before_runs.first().is_none_or(|run| !run.2) {
+        before_runs.insert(0, (0, 0, true));
+    }
+    if after_runs.first().is_none_or(|run| !run.2) {
+        after_runs.insert(0, (0, 0, true));
+    }
+    if before_runs.last().is_none_or(|run| !run.2) {
+        before_runs.push((before.chars().count(), 0, true));
+    }
+    if after_runs.last().is_none_or(|run| !run.2) {
+        after_runs.push((after.chars().count(), 0, true));
+    }
+    assert_eq!(
+        before_runs.len(),
+        after_runs.len(),
+        "a layout-only edit keeps the same word sequence"
+    );
+    let mut ops: Vec<(usize, usize, String)> = Vec::new();
+    for (lhs, rhs) in before_runs.iter().zip(after_runs.iter()) {
+        assert_eq!(
+            lhs.2, rhs.2,
+            "a layout-only edit keeps the same word sequence"
+        );
+        let lhs_text = run_text(before, lhs.0, lhs.1);
+        let rhs_text = run_text(after, rhs.0, rhs.1);
+        if lhs.2 {
+            if lhs_text != rhs_text {
+                ops.push((lhs.0, lhs.1, rhs_text));
+            }
+        } else {
+            assert_eq!(lhs_text, rhs_text, "a layout-only edit keeps every word");
+        }
+    }
+    ops.reverse();
+    let refs: Vec<(usize, usize, &str)> =
+        ops.iter().map(|op| (op.0, op.1, op.2.as_str())).collect();
+    recorded_window(before, &refs)
 }
 
 const LONG_LINE: &str = "The quarterly report covers revenue, churn and hiring across all \
@@ -176,10 +341,16 @@ fn a_typo_in_a_long_line_reads_far_below_the_line_replaced_in_both_lanes() {
         1,
     );
 
-    let reconstructed_typo = delta_from_reconstructed(&before, &typo).d_norm;
-    let reconstructed_line = delta_from_reconstructed(&before, &replaced).d_norm;
-    let recorded_typo = delta_from_recorded_ops(&one_change_window(&before, &typo)).d_norm;
-    let recorded_line = delta_from_recorded_ops(&one_change_window(&before, &replaced)).d_norm;
+    let reconstructed_typo = reconstructed_delta(&before, &typo).d_norm;
+    let reconstructed_line = reconstructed_delta(&before, &replaced).d_norm;
+    let typo_window = one_change_window(&before, &typo);
+    let line_window = one_change_window(&before, &replaced);
+    let recorded_typo = delta_from_recorded_ops(&typo_window.retained)
+        .expect("recorded")
+        .d_norm;
+    let recorded_line = delta_from_recorded_ops(&line_window.retained)
+        .expect("recorded")
+        .d_norm;
 
     for (lane, typo, line) in [
         ("reconstructed", reconstructed_typo, reconstructed_line),
@@ -199,7 +370,7 @@ fn a_typo_in_a_long_line_reads_far_below_the_line_replaced_in_both_lanes() {
 /// did when it counted lines.
 #[test]
 fn a_rewritten_line_still_scores_a_full_rewrite() {
-    let delta = delta_from_reconstructed(
+    let delta = reconstructed_delta(
         "The deploy runs at noon on Fridays and the team reviews the logs afterwards.",
         "Please send the invoice to accounting before the end of the month, thanks.",
     );
@@ -221,15 +392,24 @@ fn a_layout_only_edit_measures_zero_in_both_lanes() {
                      \n\
                      \u{20}  Questions go to the   release channel.  \n";
 
-    assert_eq!(delta_from_reconstructed(before, rewrapped).d_norm, 0.0);
+    assert_eq!(reconstructed_delta(before, rewrapped).d_norm, 0.0);
+    let layout_window = whitespace_window(before, rewrapped);
     assert_eq!(
-        delta_from_recorded_ops(&one_change_window(before, rewrapped)).d_norm,
+        delta_from_recorded_ops(&layout_window.retained)
+            .expect("recorded")
+            .d_norm,
         0.0
     );
 
     let reworded = rewrapped.replacen("noon", "midnight", 1);
-    assert!(delta_from_reconstructed(before, &reworded).d_norm > 0.0);
-    assert!(delta_from_recorded_ops(&one_change_window(before, &reworded)).d_norm > 0.0);
+    assert!(reconstructed_delta(before, &reworded).d_norm > 0.0);
+    let reworded_window = one_change_window(before, &reworded);
+    assert!(
+        delta_from_recorded_ops(&reworded_window.retained)
+            .expect("recorded")
+            .d_norm
+            > 0.0
+    );
 }
 
 /// A paragraph moved to the end costs a tenth of deleting it and inserting a
@@ -248,23 +428,36 @@ fn a_moved_paragraph_costs_a_tenth_of_a_replaced_one_in_both_lanes() {
     let moved = format!("{cut}\n\n{moving}");
     let replaced = format!("{cut}\n\n{stand_in}");
 
-    let reconstructed_move = delta_from_reconstructed(&before, &moved);
-    let reconstructed_swap = delta_from_reconstructed(&before, &replaced);
+    let reconstructed_move = reconstructed_delta(&before, &moved);
+    let reconstructed_swap = reconstructed_delta(&before, &replaced);
     assert_ne!(reconstructed_move.ops_summary.moved, 0);
+    assert_eq!(reconstructed_swap.ops_summary.moved, 0);
+    // The reconstructed tenth is approximate now that word weights count
+    // separators only: the paired lines and the rewritten regions charge
+    // their edge separators from opposite ends.
     assert!(
-        (reconstructed_move.d_norm - MOVE_DISCOUNT * reconstructed_swap.d_norm).abs() < 1e-6,
+        (reconstructed_move.d_norm - MOVE_DISCOUNT * reconstructed_swap.d_norm).abs() < 1e-3,
         "reconstructed: {} is not {MOVE_DISCOUNT}x {}",
         reconstructed_move.d_norm,
         reconstructed_swap.d_norm
     );
 
-    let window = |end: &str| {
-        let mut window = one_change_window(&before, end);
-        window.ops_by_actor = vec![span(&before, &cut), span(&cut, end)];
-        window
-    };
-    let recorded_move = delta_from_recorded_ops(&window(&moved));
-    let recorded_swap = delta_from_recorded_ops(&window(&replaced));
+    // The recorded lane reads the move as the op log wrote it: a cut, then
+    // a paste, each its own change.
+    let head_len = moving.chars().count() + 2;
+    let cut_len = cut.chars().count();
+    let paste_move = format!("\n\n{moving}");
+    let paste_swap = format!("\n\n{stand_in}");
+    let move_window = recorded_window(
+        &before,
+        &[(0, head_len, ""), (cut_len, 0, paste_move.as_str())],
+    );
+    let swap_window = recorded_window(
+        &before,
+        &[(0, head_len, ""), (cut_len, 0, paste_swap.as_str())],
+    );
+    let recorded_move = delta_from_recorded_ops(&move_window.retained).expect("recorded");
+    let recorded_swap = delta_from_recorded_ops(&swap_window.retained).expect("recorded");
     assert_ne!(recorded_move.ops_summary.moved, 0);
     assert_eq!(recorded_swap.ops_summary.moved, 0);
     assert!(
@@ -280,26 +473,19 @@ fn a_moved_paragraph_costs_a_tenth_of_a_replaced_one_in_both_lanes() {
 /// real move.
 #[test]
 fn recorded_churn_never_pairs_as_a_move() {
-    let mut window = one_change_window("keep this line", "keep this line");
-    window.ops_by_actor = vec![
-        span("keep this line", "keep this line\nan aside"),
-        span("keep this line\nan aside", "keep this line"),
-    ];
-    let delta = delta_from_recorded_ops(&window);
+    let window = recorded_window("keep this line", &[(14, 0, "\nan aside"), (14, 9, "")]);
+    let delta = delta_from_recorded_ops(&window.retained).expect("recorded");
     assert_eq!(delta.ops_summary.moved, 0);
     assert_eq!((delta.ops_summary.ins, delta.ops_summary.del), (9, 9));
 
-    // Review repro: a move whose line weighs more than the region the op log
-    // shows must not soak up churn typed and deleted in the same window.
-    let swap = |churn: &[(&str, &str)]| {
-        let mut window = one_change_window("aaa\naa", "aa\naaa");
-        window
-            .ops_by_actor
-            .extend(churn.iter().map(|(before, after)| span(before, after)));
-        delta_from_recorded_ops(&window)
-    };
-    let plain = swap(&[]);
-    let churned = swap(&[("aa\naaa", "aa\naaaq"), ("aa\naaaq", "aa\naaa")]);
+    // Review repro: a move must not soak up churn typed and deleted in the
+    // same window.
+    let plain_window = recorded_window("aaa\naa", &[(2, 2, "\na")]);
+    let plain = delta_from_recorded_ops(&plain_window.retained).expect("recorded");
+    let churn_window = recorded_window("aaa\naa", &[(2, 2, "\na"), (6, 0, "q"), (6, 1, "")]);
+    let churned = delta_from_recorded_ops(&churn_window.retained).expect("recorded");
+    assert_ne!(plain.ops_summary.moved, 0);
+    assert_eq!(churned.ops_summary.moved, plain.ops_summary.moved);
     // The `q` in and out: two characters over 6 + 6, at full price.
     assert!(
         (churned.d_norm - plain.d_norm - 2.0 / 12.0).abs() < 1e-6,
@@ -313,48 +499,49 @@ fn recorded_churn_never_pairs_as_a_move() {
 
 /// Re-wrapping next to a content edit charges only the content, in both
 /// lanes. The oracle is the same content edit with the original line breaks:
-/// `bravo` arrives, then `!` arrives. The reconstructed lane counts a
-/// terminator per text (6 over 20 + 26, 1 over 10 + 11); the recorded lane
-/// does not (6 over 19 + 25, 1 over 9 + 10). Before the fix the first scored
-/// 34/46 and the second paired `a b` as a move.
+/// `bravo` arrives, then `!` arrives. Before the fix the first scored 34/46
+/// and the second paired `a b` as a move.
 #[test]
 fn a_rewrap_next_to_a_content_edit_charges_only_the_content() {
-    for (before, rewrapped, same_breaks, reconstructed_score, recorded_score) in [
+    for (before, rewrapped, same_breaks) in [
         (
             "alpha\nbravo\ncharlie",
             "alpha bravo charlie\nbravo",
             "alpha\nbravo\ncharlie\nbravo",
-            6.0 / 46.0,
-            6.0 / 44.0,
         ),
-        (
-            "a b\na\nb\nz",
-            "a\nb\na b\nz!",
-            "a b\na\nb\nz!",
-            1.0 / 21.0,
-            1.0 / 19.0,
-        ),
+        ("a b\na\nb\nz", "a\nb\na b\nz!", "a b\na\nb\nz!"),
     ] {
-        let reconstructed = delta_from_reconstructed(before, rewrapped);
-        let oracle = delta_from_reconstructed(before, same_breaks);
+        let reconstructed = reconstructed_delta(before, rewrapped);
+        let reconstructed_oracle = reconstructed_delta(before, same_breaks);
         assert_eq!(
-            reconstructed.ops_summary, oracle.ops_summary,
+            reconstructed.ops_summary, reconstructed_oracle.ops_summary,
             "{rewrapped:?}"
         );
         assert!(
-            (reconstructed.d_norm - reconstructed_score).abs() < 1e-6,
-            "{rewrapped:?}: {}",
-            reconstructed.d_norm
+            (reconstructed.d_norm - reconstructed_oracle.d_norm).abs() < 1e-9,
+            "{rewrapped:?}: {} vs {}",
+            reconstructed.d_norm,
+            reconstructed_oracle.d_norm
         );
+        assert_eq!(reconstructed.ops_summary.moved, 0, "{rewrapped:?}");
+        assert!(reconstructed.d_norm > 0.0, "{rewrapped:?}");
 
-        let recorded = delta_from_recorded_ops(&one_change_window(before, rewrapped));
-        let oracle = delta_from_recorded_ops(&one_change_window(before, same_breaks));
-        assert_eq!(recorded.ops_summary, oracle.ops_summary, "{rewrapped:?}");
-        assert!(
-            (recorded.d_norm - recorded_score).abs() < 1e-6,
-            "{rewrapped:?}: {}",
-            recorded.d_norm
+        let rewrapped_window = one_change_window(before, rewrapped);
+        let oracle_window = one_change_window(before, same_breaks);
+        let recorded = delta_from_recorded_ops(&rewrapped_window.retained).expect("recorded");
+        let recorded_oracle = delta_from_recorded_ops(&oracle_window.retained).expect("recorded");
+        assert_eq!(
+            recorded.ops_summary, recorded_oracle.ops_summary,
+            "{rewrapped:?}"
         );
+        assert!(
+            (recorded.d_norm - recorded_oracle.d_norm).abs() < 1e-9,
+            "{rewrapped:?}: {} vs {}",
+            recorded.d_norm,
+            recorded_oracle.d_norm
+        );
+        assert_eq!(recorded.ops_summary.moved, 0, "{rewrapped:?}");
+        assert!(recorded.d_norm > 0.0, "{rewrapped:?}");
     }
 }
 
@@ -363,7 +550,7 @@ fn a_rewrap_next_to_a_content_edit_charges_only_the_content() {
 /// this scored 1.0.
 #[test]
 fn appended_text_charges_only_what_was_added() {
-    let delta = delta_from_reconstructed("abc", "abcdefghij");
+    let delta = reconstructed_delta("abc", "abcdefghij");
     // `abc` and its terminator survive; `defghij` arrives.
     assert_eq!(
         delta.ops_summary,
@@ -383,13 +570,14 @@ fn appended_text_charges_only_what_was_added() {
 /// capped the move and it cost 0.4x.
 #[test]
 fn a_recorded_cut_and_paste_costs_a_tenth_of_a_replacement() {
+    // "aaa\n\naa" sheds its "\n\naa" tail, then the paste arrives at the
+    // front: one Loro change per step.
     let recorded = |paste: &str| {
-        let mut window = one_change_window("aaa\n\naa", paste);
-        window.ops_by_actor = vec![span("aaa\n\naa", "aaa"), span("aaa", paste)];
-        delta_from_recorded_ops(&window)
+        let window = recorded_window("aaa\n\naa", &[(3, 4, ""), (0, 0, paste)]);
+        delta_from_recorded_ops(&window.retained).expect("recorded")
     };
-    let moved = recorded("aa\n\naaa");
-    let replaced = recorded("bb\n\naaa");
+    let moved = recorded("aa\n\n");
+    let replaced = recorded("bb\n\n");
     assert_eq!(moved.ops_summary.moved, 3);
     assert_eq!(replaced.ops_summary.moved, 0);
     assert!(
@@ -405,16 +593,19 @@ fn a_recorded_cut_and_paste_costs_a_tenth_of_a_replacement() {
 /// the move's cap and was charged a tenth.
 #[test]
 fn churn_after_a_split_recorded_move_keeps_its_full_price() {
-    let recorded = |churn: &[(&str, &str)]| {
-        let mut window = one_change_window("aaa\naa", "aa\naaa");
-        window.ops_by_actor = vec![span("aaa\naa", "aa\naa"), span("aa\naa", "aa\naaa")];
-        window
-            .ops_by_actor
-            .extend(churn.iter().map(|(before, after)| span(before, after)));
-        delta_from_recorded_ops(&window)
-    };
-    let plain = recorded(&[]);
-    let churned = recorded(&[("aa\naaa", "aa\naaaq"), ("aa\naaaq", "aa\naaa")]);
+    // The move is two changes — one `a` leaves the first line, one `a`
+    // joins the last — then the churn types `q` and deletes it again.
+    let plain_window = recorded_window("aaa\naa", &[(0, 1, ""), (5, 0, "a")]);
+    let plain = delta_from_recorded_ops(&plain_window.retained).expect("recorded");
+    let churn_window = recorded_window(
+        "aaa\naa",
+        &[(0, 1, ""), (5, 0, "a"), (6, 0, "q"), (6, 1, "")],
+    );
+    let churned = delta_from_recorded_ops(&churn_window.retained).expect("recorded");
+    assert_ne!(plain.ops_summary.moved, 0);
+    assert_eq!(churned.ops_summary.moved, plain.ops_summary.moved);
+    assert_eq!(churned.ops_summary.ins, plain.ops_summary.ins + 1);
+    assert_eq!(churned.ops_summary.del, plain.ops_summary.del + 1);
     // The `q` in and out: two characters over 6 + 6, at full price.
     assert!(
         (churned.d_norm - plain.d_norm - 2.0 / 12.0).abs() < 1e-6,
@@ -429,12 +620,13 @@ fn churn_after_a_split_recorded_move_keeps_its_full_price() {
 /// 2/22.
 #[test]
 fn a_whitespace_edit_split_across_recorded_changes_measures_zero() {
-    let mut window = one_change_window("alpha\nbravo", "alpha bravo");
-    window.ops_by_actor = vec![
-        span("alpha\nbravo", "alphabravo"),
-        span("alphabravo", "alpha bravo"),
-    ];
-    assert_eq!(delta_from_recorded_ops(&window).d_norm, 0.0);
+    let window = recorded_window("alpha\nbravo", &[(5, 1, ""), (5, 0, " ")]);
+    assert_eq!(
+        delta_from_recorded_ops(&window.retained)
+            .expect("recorded")
+            .d_norm,
+        0.0
+    );
 }
 
 /// Second review pass: a moved block that was also re-wrapped keeps its
@@ -442,8 +634,8 @@ fn a_whitespace_edit_split_across_recorded_changes_measures_zero() {
 /// same move with its line breaks kept.
 #[test]
 fn a_rewrapped_move_keeps_its_discount() {
-    let kept_breaks = delta_from_reconstructed("one\ntwo\nsix\nten", "six\nten\none\ntwo");
-    let rewrapped = delta_from_reconstructed("one\ntwo\nsix\nten", "six ten\none two");
+    let kept_breaks = reconstructed_delta("one\ntwo\nsix\nten", "six\nten\none\ntwo");
+    let rewrapped = reconstructed_delta("one\ntwo\nsix\nten", "six ten\none two");
     assert_eq!(rewrapped.ops_summary, kept_breaks.ops_summary);
     assert!(
         (rewrapped.d_norm - 0.05).abs() < 1e-6,
@@ -457,21 +649,34 @@ fn a_rewrapped_move_keeps_its_discount() {
 /// characters the log had typed, and the move cost 0.35 instead of 0.05.
 #[test]
 fn layout_changes_after_a_recorded_move_keep_its_price() {
-    let recorded = |layout: &[(&str, &str)]| {
-        let mut window = one_change_window("aaa\n\naa", "aa\n\naaa");
-        window.ops_by_actor = vec![span("aaa\n\naa", "aaa"), span("aaa", "aa\n\naaa")];
-        window
-            .ops_by_actor
-            .extend(layout.iter().map(|(before, after)| span(before, after)));
-        delta_from_recorded_ops(&window)
-    };
-    let plain = recorded(&[]);
+    // A cut and paste ("aaa\n\naa" sheds its tail, "aa\n\n" arrives at the
+    // front), then whitespace round-trips as further changes. Each round-trip
+    // only deletes whitespace it typed itself: the move pairs only while its
+    // own inserted run survives, so the layouts split words and pad the
+    // edges instead of re-laying the moved separator.
+    let plain_window = recorded_window("aaa\n\naa", &[(3, 4, ""), (0, 0, "aa\n\n")]);
+    let plain = delta_from_recorded_ops(&plain_window.retained).expect("recorded");
+    assert_eq!(plain.ops_summary.moved, 3);
     for layout in [
-        [("aa\n\naaa", "a a a aa"), ("a a a aa", "aa\n\naaa")],
-        // The separator removed, then put back.
-        [("aa\n\naaa", "aaaaa"), ("aaaaa", "aa\n\naaa")],
+        vec![
+            (3, 4, ""),
+            (0, 0, "aa\n\n"),
+            (1, 0, " "),
+            (6, 0, " "),
+            (6, 1, ""),
+            (1, 1, ""),
+        ],
+        vec![
+            (3, 4, ""),
+            (0, 0, "aa\n\n"),
+            (0, 0, "\n"),
+            (0, 1, ""),
+            (7, 0, "  "),
+            (7, 2, ""),
+        ],
     ] {
-        let relaid = recorded(&layout);
+        let window = recorded_window("aaa\n\naa", &layout);
+        let relaid = delta_from_recorded_ops(&window.retained).expect("recorded");
         assert_eq!(relaid.ops_summary, plain.ops_summary, "{layout:?}");
         assert!((relaid.d_norm - 0.05).abs() < 1e-6, "{}", relaid.d_norm);
     }
@@ -495,7 +700,8 @@ fn rot13(text: &str) -> String {
 #[test]
 fn recorded_delta_is_write_once_and_first_writer_wins() {
     let (_tmp, vault) = crate::edit_distance::tests::temp_vault();
-    let first = delta_from_recorded_ops(&churned_window());
+    let window = churned_window();
+    let first = delta_from_recorded_ops(&window.retained).expect("recorded");
     let mut second = first.clone();
     second.d_norm = 0.25;
 
@@ -521,7 +727,8 @@ fn recorded_delta_is_write_once_and_first_writer_wins() {
 #[test]
 fn attachment_fills_the_reserved_slot_for_amended_outcomes_only() {
     let (_tmp, vault) = crate::edit_distance::tests::temp_vault();
-    let delta = delta_from_recorded_ops(&churned_window());
+    let window = churned_window();
+    let delta = delta_from_recorded_ops(&window.retained).expect("recorded");
     vault
         .with_write_txn(|wtxn| put_amendment_delta_in_txn(&vault, wtxn, "gate:amended", &delta))
         .expect("write delta");
@@ -667,6 +874,7 @@ fn amended_outcome_receipt(proposal: EntityId, amended: &[u8]) -> ReceiptRecord 
 fn an_unmeasurable_identity_amendment_projects_as_uncaptured() {
     let (_tmp, vault) =
         crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+    vault.prepare_install_signing().expect("install signing");
     let (proposal, survivor, source) = parked_merge_proposal(&vault);
 
     // Valid hex, undecodable body: an array header promising an element that
