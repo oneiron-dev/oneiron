@@ -81,6 +81,7 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
     policy: &PolicyManifestResolution,
     mode: GateWriteMode,
     recorded_decision: &mut Option<RecordedClaimGateDecision>,
+    owner_amendment: &mut Option<super::OwnerRevisionAmendment>,
     preflight_receipt: Option<PreflightReceipt>,
     operation_effect_body: bool,
     skip_precommit: bool,
@@ -756,6 +757,16 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
                 .is_some_and(|row| pending_row_holds_critical_confirm(&row))
         {
             store.remove_pending_gate_consent_in_txn(wtxn, id, TrayRemoval::Silent)?;
+        }
+        // The owner's own revision of a held MACHINE claim answers its
+        // question (MACHINE-BIRTH-HELD-QUESTION-OWNER-SUCCESSOR = A).
+        if resolve_pending && decision.outcome() == GateOutcome::Allow {
+            let landing = mode.record_decision.then_some(&decision_record);
+            let landing = (landing, preflight_receipt.map(|receipt| receipt.decision));
+            let writer = (envelope, owner_write);
+            *owner_amendment = redeem_held_row_by_owner_revision(
+                store, wtxn, id, body, &binding, writer, landing,
+            )?;
         }
         enforce_claim_gate_decision_with_consent(
             store,

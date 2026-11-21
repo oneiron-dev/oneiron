@@ -249,7 +249,9 @@ impl ScopedRead<'_> {
     /// the CONTENT rule, save by a personal ceiling's peer read
     /// (`room_peer`), which stands in the thread under CURRENT (FIX 5545).
     /// A private thread's notice reads only to its recipient and to readers
-    /// of that thread (FIX 6473).
+    /// of that thread (FIX 6473); any other notice addressed to a person
+    /// reads only to them and to the owner's read
+    /// ([`Self::notice_recipient_readable_in`]).
     pub(in crate::claim::scoped_read) fn private_threads_readable_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -257,7 +259,9 @@ impl ScopedRead<'_> {
         raw: &[u8],
     ) -> Result<bool> {
         let viewers: Vec<_> = self.actor_key.authenticated_person().into_iter().collect();
-        if !self.thread_notice_readable_in(txn, raw, &viewers)? {
+        if !self.thread_notice_readable_in(txn, raw, &viewers)?
+            || !self.notice_recipient_readable_in(txn, id, raw, &viewers)?
+        {
             return Ok(false);
         }
         crate::conversation::private_threads_readable_with_read_in(

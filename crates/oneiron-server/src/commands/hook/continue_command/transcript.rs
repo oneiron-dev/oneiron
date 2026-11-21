@@ -1,6 +1,9 @@
 //! The session `oneiron continue --cloud` sends: one Claude Code session log
 //! and its subagents' logs, each gzip-compressed in standard base64, as
-//! `vault.imports.hook_transcript` takes them.
+//! `vault.imports.hook_transcript` takes them. The hooks' hand-over to a
+//! selected hosted vault sends the log its event names the same way
+//! ([`read_hook_log`]), and another host's one log by its source
+//! ([`read_one_below`]).
 //!
 //! The log is the one `--transcript` names, as the hook's `transcript_path`
 //! does, or else the newest session log of the project folder Claude Code
@@ -10,30 +13,57 @@
 //! or digit as '-'>/<session id>.jsonl`, where `<config>` is
 //! `$CLAUDE_CONFIG_DIR` or `~/.claude`. A log of a folder above the repo, of
 //! a repo nested in it, or of another repo whose path folds to the same
-//! name, is never sent. Its subagents' logs are
-//! `<session id>/subagents/agent-*.jsonl` beside it.
+//! name, is never sent. Its subagents' logs are the `agent-*.jsonl` files
+//! anywhere under `<session id>/subagents/` beside it, a workflow run's
+//! folder included.
 //!
+//! Below `<config>/projects` (below the folder of a log the person names,
+//! whose path is theirs to follow), every folder on the way to the log, the
+//! session's folder beside it, and every folder and log under that, is
+//! opened relative to the one above and never through a link, as the local
+//! import's drain reads a queued session; a link there is passed over, so
+//! nothing outside the session's own folders is sent. Finding the newest
+//! log passes over a project folder or a log that is a link the same way.
 //! Each log is read through one descriptor, opened without blocking and
 //! checked to be a regular file, so a FIFO or device at the path, even one
 //! put there after it was listed, never blocks the command. A log with a
 //! line that is not a whole JSON record (the last one cut mid-write, say) is
 //! not sent: the importer would land the rest without it.
+//!
+//! The logs go in calls the selection's carrier takes ([`calls_within`]);
+//! over the owner's socket, a request longer than one call goes in parts
+//! ([`parts`]; FIX HOOK-TRANSCRIPT-IMPORT-PAST-CARRIER).
 
+use std::ffi::{OsStr, OsString};
+use std::fs::File;
 use std::io::{BufRead as _, Read as _, Write as _};
-use std::os::unix::fs::OpenOptionsExt as _;
+use std::os::fd::OwnedFd;
+use std::os::unix::ffi::OsStrExt as _;
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::time::{Instant, SystemTime};
 
 use base64::Engine as _;
 use oneiron::ingest::history::{
-    HOOK_TRANSCRIPT_MAX_SUBAGENTS, HookSubagentTranscript, HookTranscriptImportRequest,
+    HOOK_TRANSCRIPT_MAX_BYTES, HOOK_TRANSCRIPT_MAX_SUBAGENTS, HOOK_TRANSCRIPT_STAGED_MAX_BYTES,
+    HookSubagentTranscript, HookTranscriptImportRequest, HookTranscriptPartRequest,
+    HookTranscriptSource,
 };
+use rustix::fs::{CWD, Dir, Mode, OFlags, openat};
+
+use crate::commands::hook::hosted_selection::HostedAuthMode;
+use crate::commands::mcp_bridge;
+use crate::files_intake::confined;
 
 /// A session log, read and encoded.
 pub(super) struct SessionLogs {
     /// The session's own log.
     pub(super) path: PathBuf,
     pub(super) request: HookTranscriptImportRequest,
+    /// The session log's length in bytes, as the vault inflates it.
+    log_bytes: usize,
+    /// Each subagent log's length in bytes, as the vault inflates it, in
+    /// the request's order.
+    subagent_bytes: Vec<usize>,
 }
 
 /// The session log `named`, else the newest of `dir`'s project folder, and
@@ -43,49 +73,385 @@ pub(super) fn read(
     dir: &Path,
     deadline: Instant,
 ) -> anyhow::Result<SessionLogs> {
-    let path = match named {
-        Some(path) => path.to_path_buf(),
-        None => newest_session(&claude_config_dir()?.join("projects"), dir, deadline)?,
+    let Some(named) = named else {
+        let projects = projects_dir()?;
+        let path = newest_session(&projects, dir, deadline)?;
+        return read_below(&projects, &path);
     };
+    // The path the person names is theirs to follow, as in any path typed;
+    // nothing below the log's own folder is.
+    let real = std::fs::canonicalize(named)
+        .map_err(|error| anyhow::anyhow!("read {}: {error}", named.display()))?;
+    let folder = real.parent().ok_or_else(|| not_a_session_log(named))?;
+    let mut logs = read_below(folder, &real)?;
+    logs.path = named.to_path_buf();
+    Ok(logs)
+}
+
+/// The hooks' hand-over: the session log at `path`, which a Claude Code
+/// event of the session `session` names, and its subagents' logs. The log
+/// must be that session's own (`<session>.jsonl`), so an event never sends
+/// another session's log where its own session's starts bound, and must sit
+/// below Claude Code's `projects` folder, as a queued log must sit below
+/// the local import's root.
+pub(super) fn read_hook_log(path: &Path, session: &str) -> anyhow::Result<SessionLogs> {
+    anyhow::ensure!(
+        path.file_name() == Some(OsStr::new(&format!("{session}.jsonl"))),
+        "{} is not the log of session {session}, whose event named it",
+        path.display()
+    );
+    read_below(&projects_dir()?, path)
+}
+
+/// The one log at `path`, below `root`, of a host whose log holds its
+/// subagents, as `source`'s import reads the file it names `session`: read
+/// through one descriptor, every folder below `root` and the log opened
+/// through no link ([`confined`]), at most [`HOOK_TRANSCRIPT_MAX_BYTES`],
+/// as one call carries, and encoded.
+pub(super) fn read_one_below(
+    root: &Path,
+    path: &Path,
+    session: String,
+    source: HookTranscriptSource,
+) -> anyhow::Result<SessionLogs> {
+    let relative = path
+        .strip_prefix(root)
+        .map_err(|_| anyhow::anyhow!("{} is not under {}", path.display(), root.display()))?;
+    let (_, log) = confined::open_below(root, relative)?;
+    let most = u64::try_from(HOOK_TRANSCRIPT_MAX_BYTES)
+        .unwrap_or(u64::MAX)
+        .saturating_add(1);
+    let mut bytes = Vec::new();
+    log.take(most)
+        .read_to_end(&mut bytes)
+        .map_err(|error| anyhow::anyhow!("read {}: {error}", path.display()))?;
+    anyhow::ensure!(
+        bytes.len() <= HOOK_TRANSCRIPT_MAX_BYTES,
+        "{} is longer than the {HOOK_TRANSCRIPT_MAX_BYTES} bytes one call to the hosted vault \
+         inflates; import the session on the machine it ran on: oneiron import {} {}",
+        path.display(),
+        source.history_source().source_id(),
+        path.display()
+    );
+    Ok(SessionLogs {
+        path: path.to_path_buf(),
+        request: HookTranscriptImportRequest {
+            session,
+            transcript_gzip_base64: encode(path, &bytes)?,
+            subagents: Vec::new(),
+            source: Some(source),
+        },
+        log_bytes: bytes.len(),
+        subagent_bytes: Vec::new(),
+    })
+}
+
+/// The requests that land `logs`, each in one call or, past one call, in
+/// parts. Each spec is at most `carried` bytes, as the selection's carrier
+/// takes one call, and its logs at most [`HOOK_TRANSCRIPT_MAX_BYTES`]
+/// inflated, as the vault takes one. The session's log goes with all its
+/// subagents' logs in one call where they fit, else with them shared out in
+/// order over several calls, each with the session's log again, which the
+/// import lands once. Where the session's log, alone or with one of its
+/// subagents' logs, is too long for one call and the carrier stages a
+/// longer request in parts (`staged`: the owner's socket,
+/// [`staged_bytes`]), the logs are shared out the same way over requests of
+/// at most `staged` bytes; each one longer than `carried` then goes in
+/// [`parts`]. A request that could never land is refused before anything is
+/// sent.
+pub(super) fn calls_within(
+    logs: &SessionLogs,
+    carried: usize,
+    staged: Option<usize>,
+) -> anyhow::Result<Vec<HookTranscriptImportRequest>> {
+    match requests_within(logs, carried)? {
+        Ok(requests) => Ok(requests),
+        Err(too_long) => match staged.filter(|&staged| staged > carried) {
+            Some(staged) => requests_within(logs, staged)?
+                .map_err(|too_long| too_long.refusal(logs, staged, "one staged import")),
+            None => Err(too_long.refusal(logs, carried, "one call")),
+        },
+    }
+}
+
+/// A log too long for the requests [`requests_within`] shares the logs out
+/// over.
+enum TooLong {
+    /// The session's own log.
+    Session,
+    /// The session's log with this subagent's log.
+    Subagent(String),
+}
+
+impl TooLong {
+    /// The refusal of `logs` for requests of at most `bound` bytes, each
+    /// going as `what`.
+    fn refusal(self, logs: &SessionLogs, bound: usize, what: &str) -> anyhow::Error {
+        // The import that lands the session on the machine it ran on.
+        let source = logs
+            .request
+            .source
+            .unwrap_or_default()
+            .history_source()
+            .source_id();
+        let path = logs.path.display();
+        let caps = format!(
+            "(at most {bound} bytes encoded and {HOOK_TRANSCRIPT_MAX_BYTES} inflated); import the \
+             session on the machine it ran on: oneiron import {source} {path}"
+        );
+        match self {
+            Self::Session => anyhow::anyhow!(
+                "{path} is too long for {what} to the hosted vault over this sign-in {caps}"
+            ),
+            Self::Subagent(stem) => anyhow::anyhow!(
+                "{path}'s subagent log {stem} is too long to go with it in {what} to the hosted \
+                 vault over this sign-in {caps}"
+            ),
+        }
+    }
+}
+
+/// The requests that land `logs`, each spec at most `bound` bytes and its
+/// logs at most [`HOOK_TRANSCRIPT_MAX_BYTES`] inflated, as
+/// [`calls_within`] shares them out; the log too long for one, if any.
+fn requests_within(
+    logs: &SessionLogs,
+    bound: usize,
+) -> anyhow::Result<Result<Vec<HookTranscriptImportRequest>, TooLong>> {
+    let alone = HookTranscriptImportRequest {
+        session: logs.request.session.clone(),
+        transcript_gzip_base64: logs.request.transcript_gzip_base64.clone(),
+        subagents: Vec::new(),
+        source: logs.request.source,
+    };
+    let base = serde_json::to_vec(&alone)?.len();
+    let fits =
+        |bytes: usize, inflated: usize| bytes <= bound && inflated <= HOOK_TRANSCRIPT_MAX_BYTES;
+    if !fits(base, logs.log_bytes) {
+        return Ok(Err(TooLong::Session));
+    }
+    let mut requests = Vec::new();
+    let mut batch = Vec::new();
+    let (mut bytes, mut inflated) = (base, logs.log_bytes);
+    for (subagent, &raw) in logs.request.subagents.iter().zip(&logs.subagent_bytes) {
+        // Its entry and the comma before it.
+        let entry = serde_json::to_vec(subagent)?.len() + 1;
+        if !fits(base + entry, logs.log_bytes + raw) {
+            return Ok(Err(TooLong::Subagent(subagent.stem.clone())));
+        }
+        if !fits(bytes + entry, inflated + raw) {
+            requests.push(HookTranscriptImportRequest {
+                subagents: std::mem::take(&mut batch),
+                ..alone.clone()
+            });
+            (bytes, inflated) = (base, logs.log_bytes);
+        }
+        batch.push(subagent.clone());
+        bytes += entry;
+        inflated += raw;
+    }
+    requests.push(HookTranscriptImportRequest {
+        subagents: batch,
+        ..alone
+    });
+    Ok(Ok(requests))
+}
+
+/// The parts `request` goes in over a carrier whose calls take at most
+/// `carried` bytes of spec (`vault.imports.hook_transcript_part`): its JSON
+/// text cut in order under one upload id drawn at random, each part's spec
+/// within `carried`, the last marked so that the vault lands the request.
+pub(super) fn parts(
+    request: &HookTranscriptImportRequest,
+    carried: usize,
+) -> anyhow::Result<Vec<HookTranscriptPartRequest>> {
+    let text = serde_json::to_string(request)?;
+    let upload = mint_upload_id();
+    // A part's spec with no text, at its longest (the longest offset, and
+    // `false` the longer mark): what each part's spec adds to its text.
+    let frame = serde_json::to_vec(&HookTranscriptPartRequest {
+        upload: upload.clone(),
+        offset: u64::MAX,
+        text: String::new(),
+        last: false,
+    })?
+    .len();
+    let room = carried.saturating_sub(frame);
+    anyhow::ensure!(
+        room >= JSON_CHAR_WIDTH_MAX,
+        "a call over this sign-in carries no part of a request ({carried} bytes)"
+    );
+    let mut parts = Vec::new();
+    let mut start = 0;
+    while start < text.len() {
+        let end = part_end(&text, start, room);
+        parts.push(HookTranscriptPartRequest {
+            upload: upload.clone(),
+            offset: u64::try_from(start)?,
+            text: text[start..end].to_owned(),
+            last: end == text.len(),
+        });
+        start = end;
+    }
+    Ok(parts)
+}
+
+/// The most bytes one character takes in a JSON string: `\u001f`.
+const JSON_CHAR_WIDTH_MAX: usize = 6;
+
+/// Where the part of `text` that starts at `start` ends: on a character's
+/// edge, as far as it fits `room` bytes as a JSON string's contents, at
+/// least one character on.
+fn part_end(text: &str, start: usize, room: usize) -> usize {
+    let mut used = 0;
+    for (index, character) in text[start..].char_indices() {
+        let width = json_width(character);
+        if index > 0 && used + width > room {
+            return start + index;
+        }
+        used += width;
+    }
+    text.len()
+}
+
+/// The bytes `character` takes in a JSON string, as `serde_json` writes it.
+fn json_width(character: char) -> usize {
+    match character {
+        '"' | '\\' | '\n' | '\r' | '\t' | '\u{8}' | '\u{c}' => 2,
+        '\0'..='\u{1f}' => JSON_CHAR_WIDTH_MAX,
+        _ => character.len_utf8(),
+    }
+}
+
+/// A fresh upload id: 32 lowercase hex digits from the OS CSPRNG.
+fn mint_upload_id() -> String {
+    let mut id = [0_u8; 16];
+    rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut id);
+    oneiron_hex::encode(&id)
+}
+
+/// The longest request one upload stages for a selection signed in in
+/// `mode`: the owner's, whose calls ride the socket alone, stages a request
+/// up to [`HOOK_TRANSCRIPT_STAGED_MAX_BYTES`] in parts; any other's go over
+/// HTTP, one call each, and stage none.
+pub(super) fn staged_bytes(mode: HostedAuthMode) -> Option<usize> {
+    match mode {
+        HostedAuthMode::Owner => Some(HOOK_TRANSCRIPT_STAGED_MAX_BYTES),
+        HostedAuthMode::Slip | HostedAuthMode::OAuth => None,
+    }
+}
+
+/// What `oneiron mcp` adds to a call's spec on the way: the JSON-RPC line
+/// around it, the `_meta` the bridge adds, and the socket's frame.
+const CALL_ENVELOPE_BYTES: usize = 16 * 1024;
+
+/// The longest spec one call carries for a selection signed in in `mode`.
+/// The owner's calls go over the vault's socket alone, so within its frame;
+/// any other's go over HTTP past the socket's frame, so within the longest
+/// line `oneiron mcp` reads.
+pub(super) fn carried_bytes(mode: HostedAuthMode) -> usize {
+    let line = match mode {
+        HostedAuthMode::Owner => mcp_bridge::SOCKET_MAX_OUTBOUND_FRAME,
+        HostedAuthMode::Slip | HostedAuthMode::OAuth => mcp_bridge::MAX_FRAME_BYTES,
+    };
+    line - CALL_ENVELOPE_BYTES
+}
+
+/// The session log at `path`, below `root`, and its subagents' logs, read
+/// and encoded, every folder and log below `root` opened through no link
+/// ([`confined`]).
+fn read_below(root: &Path, path: &Path) -> anyhow::Result<SessionLogs> {
     let session = path
         .file_name()
         .and_then(|name| name.to_str())
         .and_then(|name| name.strip_suffix(".jsonl"))
         .filter(|stem| session_id(stem))
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "{} is not a Claude Code session log (<session id>.jsonl)",
-                path.display()
-            )
-        })?
+        .ok_or_else(|| not_a_session_log(path))?
         .to_owned();
-    let transcript_gzip_base64 = encoded(&path)?;
-    let mut subagents = Vec::new();
-    for log in subagent_logs(&path.with_extension("").join("subagents"))? {
-        let stem = log
-            .file_stem()
-            .and_then(|stem| stem.to_str())
-            .unwrap_or_default()
-            .to_owned();
-        subagents.push(HookSubagentTranscript {
-            stem,
-            transcript_gzip_base64: encoded(&log)?,
-        });
-    }
+    let relative = path.strip_prefix(root).map_err(|_| {
+        anyhow::anyhow!(
+            "{} is not under {}, where Claude Code keeps its session logs",
+            path.display(),
+            root.display()
+        )
+    })?;
+    let (folder, session_log) = confined::open_below(root, relative)?;
+    let (transcript_gzip_base64, log_bytes) = encoded(session_log, path)?;
+    let (subagents, subagent_bytes) = match confined::open_dir_in(&folder, OsStr::new(&session))? {
+        Some(own) => subagent_logs(&own, &path.with_extension(""))?,
+        None => (Vec::new(), Vec::new()),
+    };
     Ok(SessionLogs {
-        path,
+        path: path.to_path_buf(),
         request: HookTranscriptImportRequest {
             session,
             transcript_gzip_base64,
             subagents,
+            source: None,
         },
+        log_bytes,
+        subagent_bytes,
     })
+}
+
+/// The subagents' logs of the session whose folder is open at `own`, shown
+/// as `shown`: every `agent-*.jsonl` anywhere under its `subagents` folder,
+/// in name order, a workflow run's folder included, each with its length
+/// before it was encoded; none when it has no such folder.
+fn subagent_logs(
+    own: &OwnedFd,
+    shown: &Path,
+) -> anyhow::Result<(Vec<HookSubagentTranscript>, Vec<usize>)> {
+    let Some(folder) = confined::open_dir_in(own, OsStr::new("subagents"))? else {
+        return Ok((Vec::new(), Vec::new()));
+    };
+    let shown = shown.join("subagents");
+    let mut logs: Vec<HookSubagentTranscript> = Vec::new();
+    let mut lengths: Vec<usize> = Vec::new();
+    let mut visit = |log: &Path, file: File| -> anyhow::Result<()> {
+        let Some(stem) = log
+            .file_stem()
+            .and_then(OsStr::to_str)
+            .filter(|stem| subagent_stem(stem))
+        else {
+            return Ok(());
+        };
+        anyhow::ensure!(
+            logs.len() < HOOK_TRANSCRIPT_MAX_SUBAGENTS,
+            "{} holds more than the {HOOK_TRANSCRIPT_MAX_SUBAGENTS} subagent logs one call carries",
+            shown.display()
+        );
+        anyhow::ensure!(
+            !logs.iter().any(|sent| sent.stem == stem),
+            "two subagent logs under {} are named {stem}.jsonl, and the vault takes one",
+            shown.display()
+        );
+        let (transcript_gzip_base64, length) = encoded(file, log)?;
+        logs.push(HookSubagentTranscript {
+            stem: stem.to_owned(),
+            transcript_gzip_base64,
+        });
+        lengths.push(length);
+        Ok(())
+    };
+    confined::walk(&folder, &shown, confined::LOGS, &mut visit)?;
+    Ok((logs, lengths))
+}
+
+/// The refusal of a log at `path` not named as a session's own.
+fn not_a_session_log(path: &Path) -> anyhow::Error {
+    anyhow::anyhow!(
+        "{} is not a Claude Code session log (<session id>.jsonl)",
+        path.display()
+    )
 }
 
 /// The newest session log under `projects` of the project folder Claude
 /// Code keeps for `dir` or its nearest parent inside the repo that has one,
 /// among the logs whose recorded working directory git places in this repo
-/// ([`in_repo`]).
+/// ([`in_repo`]). Below `projects`, a project folder or a log that is a link
+/// is passed over and the search goes on, as reading it would refuse it
+/// ([`confined`]).
 pub(super) fn newest_session(
     projects: &Path,
     dir: &Path,
@@ -93,37 +459,38 @@ pub(super) fn newest_session(
 ) -> anyhow::Result<PathBuf> {
     let dir = std::fs::canonicalize(dir)?;
     let top = std::fs::canonicalize(super::hand_off::repo_top(&dir, deadline)?)?;
-    for folder in dir
+    // `projects` is in the person's config folder, theirs to reach through a
+    // link; nothing below it is.
+    let root = openat(
+        CWD,
+        projects,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .ok();
+    for name in dir
         .ancestors()
         .take_while(|path| path.starts_with(&top))
-        .map(|path| projects.join(project_folder_name(path)))
+        .map(project_folder_name)
     {
-        let Ok(entries) = std::fs::read_dir(&folder) else {
+        let Some(folder) = root.as_ref().and_then(|root| {
+            confined::open_dir_in(root, OsStr::new(&name))
+                .ok()
+                .flatten()
+        }) else {
             continue;
         };
-        let mut logs: Vec<_> = entries
-            .filter_map(Result::ok)
-            .filter(|entry| {
-                entry
-                    .file_name()
-                    .to_str()
-                    .and_then(|name| name.strip_suffix(".jsonl"))
-                    .is_some_and(session_id)
-            })
-            .filter_map(|entry| {
-                let modified = entry.metadata().ok()?.modified().ok()?;
-                entry
-                    .file_type()
-                    .ok()?
-                    .is_file()
-                    .then(|| (modified, entry.path()))
-            })
-            .collect();
+        let shown = projects.join(&name);
+        let mut logs = session_logs_in(&folder, &shown);
         logs.sort_by_key(|(modified, _)| std::cmp::Reverse(*modified));
-        if let Some((_, path)) = logs.into_iter().find(|(_, path)| {
-            recorded_dir(path).is_some_and(|recorded| in_repo(&recorded, &top, deadline))
-        }) {
-            return Ok(path);
+        for (_, log) in logs {
+            let path = shown.join(&log);
+            let Ok(file) = confined::open_file(&folder, &log, &path) else {
+                continue;
+            };
+            if recorded_dir(file).is_some_and(|recorded| in_repo(&recorded, &top, deadline)) {
+                return Ok(path);
+            }
         }
     }
     anyhow::bail!(
@@ -132,6 +499,31 @@ pub(super) fn newest_session(
         top.display(),
         projects.display()
     )
+}
+
+/// The session logs in the open project folder `folder`, shown as `shown`:
+/// each regular file there named `<session id>.jsonl`, never a link, with
+/// when it was last written.
+fn session_logs_in(folder: &OwnedFd, shown: &Path) -> Vec<(SystemTime, OsString)> {
+    let Ok(entries) = Dir::read_from(folder) else {
+        return Vec::new();
+    };
+    entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let name = OsStr::from_bytes(entry.file_name().to_bytes()).to_owned();
+            let session_log = name
+                .to_str()
+                .and_then(|name| name.strip_suffix(".jsonl"))
+                .is_some_and(session_id);
+            if !session_log {
+                return None;
+            }
+            let file = confined::open_file(folder, &name, &shown.join(&name)).ok()?;
+            let modified = file.metadata().ok()?.modified().ok()?;
+            Some((modified, name))
+        })
+        .collect()
 }
 
 /// Whether git's top directory for `dir` is `top` itself: `dir` is in this
@@ -144,11 +536,11 @@ fn in_repo(dir: &Path, top: &Path, deadline: Instant) -> bool {
         .is_some_and(|found| found == top)
 }
 
-/// The working directory a session log records, from its first entry that
-/// names one (`cwd`); `None` when no entry names one or the log cannot be
-/// read.
-fn recorded_dir(log: &Path) -> Option<PathBuf> {
-    let lines = std::io::BufReader::new(open_log(log).ok()?).lines();
+/// The working directory the session log `log` records, from its first
+/// entry that names one (`cwd`); `None` when no entry names one or the log
+/// cannot be read.
+fn recorded_dir(log: File) -> Option<PathBuf> {
+    let lines = std::io::BufReader::new(log).lines();
     for line in lines {
         let line = line.ok()?;
         if !line.contains("\"cwd\"") {
@@ -162,6 +554,11 @@ fn recorded_dir(log: &Path) -> Option<PathBuf> {
         }
     }
     None
+}
+
+/// Claude Code's folder of project folders, in its config folder.
+fn projects_dir() -> anyhow::Result<PathBuf> {
+    Ok(claude_config_dir()?.join("projects"))
 }
 
 /// Claude Code's config folder: `$CLAUDE_CONFIG_DIR`, else `~/.claude`.
@@ -187,32 +584,9 @@ fn project_folder_name(dir: &Path) -> String {
         .collect()
 }
 
-/// The subagent logs in `folder`, by name; none when it does not exist.
-fn subagent_logs(folder: &Path) -> anyhow::Result<Vec<PathBuf>> {
-    let entries = match std::fs::read_dir(folder) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(error) => anyhow::bail!("read {}: {error}", folder.display()),
-    };
-    let mut logs: Vec<PathBuf> = entries
-        .filter_map(Result::ok)
-        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.file_name()
-                .and_then(|name| name.to_str())
-                .and_then(|name| name.strip_suffix(".jsonl"))
-                .is_some_and(|stem| stem.len() > "agent-".len() && stem.starts_with("agent-"))
-        })
-        .collect();
-    logs.sort();
-    anyhow::ensure!(
-        logs.len() <= HOOK_TRANSCRIPT_MAX_SUBAGENTS,
-        "{} holds {} subagent logs, more than the {HOOK_TRANSCRIPT_MAX_SUBAGENTS} one call carries",
-        folder.display(),
-        logs.len()
-    );
-    Ok(logs)
+/// Whether `stem` names a subagent's log: `agent-<id>`.
+fn subagent_stem(stem: &str) -> bool {
+    stem.len() > "agent-".len() && stem.starts_with("agent-")
 }
 
 /// A session id as Claude Code names its logs: 36 hex digits and dashes.
@@ -220,38 +594,23 @@ fn session_id(stem: &str) -> bool {
     stem.len() == 36 && stem.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
 }
 
-/// `path`'s bytes, gzip-compressed, in standard base64, once every record
-/// of them is whole ([`whole_records`]).
-fn encoded(path: &Path) -> anyhow::Result<String> {
+/// The bytes of the log `file`, shown as `path`, gzip-compressed, in
+/// standard base64, once every record of them is whole ([`whole_records`]),
+/// and how many there were.
+fn encoded(mut file: File, path: &Path) -> anyhow::Result<(String, usize)> {
     let mut bytes = Vec::new();
-    open_log(path)?
-        .read_to_end(&mut bytes)
+    file.read_to_end(&mut bytes)
         .map_err(|error| anyhow::anyhow!("read {}: {error}", path.display()))?;
-    whole_records(path, &bytes)?;
-    let mut gzip = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
-    gzip.write_all(&bytes)?;
-    Ok(base64::engine::general_purpose::STANDARD.encode(gzip.finish()?))
+    Ok((encode(path, &bytes)?, bytes.len()))
 }
 
-/// `path` opened for reading without blocking, once the open descriptor is
-/// a regular file. Opening a FIFO with no writer would otherwise block, and
-/// a check of the path before the open could see another file than the one
-/// opened. A regular file reads the same either way.
-fn open_log(path: &Path) -> anyhow::Result<std::fs::File> {
-    let file = std::fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NONBLOCK)
-        .open(path)
-        .map_err(|error| anyhow::anyhow!("read {}: {error}", path.display()))?;
-    let kind = file
-        .metadata()
-        .map_err(|error| anyhow::anyhow!("read {}: {error}", path.display()))?;
-    anyhow::ensure!(
-        kind.is_file(),
-        "{} is not a regular file, so it is not a Claude Code session log",
-        path.display()
-    );
-    Ok(file)
+/// `bytes`, the log at `path`, gzip-compressed, in standard base64, once
+/// every record of them is whole ([`whole_records`]).
+fn encode(path: &Path, bytes: &[u8]) -> anyhow::Result<String> {
+    whole_records(path, bytes)?;
+    let mut gzip = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    gzip.write_all(bytes)?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(gzip.finish()?))
 }
 
 /// Refuses a log with a line that is not a whole JSON record as the

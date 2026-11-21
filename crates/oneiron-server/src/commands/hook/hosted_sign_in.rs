@@ -14,6 +14,14 @@
 //! owner-only file ([`crate::commands::oauth_sign_in`]). Nothing here mints
 //! authority: the hook then reaches the vault as an ordinary OAuth agent in
 //! the owner's consent registry, at the tier he allowed.
+//!
+//! The continue step-up ([`SignInAsk::Continue`]) runs the same flow for
+//! the vault's `/mcp` and `/git` in one sign-in at the `full` tier, as the
+//! client the recall sign-in registered, so the owner's ask names the same
+//! agent and says it asks to continue this session in his hosted vault
+//! (lead rulings CONTINUE-PUSH-GIT-TIER = C, Sat 21 Nov 05:4x, and
+//! CONTINUE-STEP-UP-MCP-WRITE = A, 06:1x). The recall sign-in stays `read`
+//! at `/mcp` ([`super::hosted_continue_sign_in`]).
 
 use std::io::{Read as _, Write as _};
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
@@ -25,14 +33,18 @@ use rand_core::{OsRng, RngCore as _};
 use serde::Deserialize;
 
 use crate::api::{
-    AUTHORIZE_PATH, PROTECTED_RESOURCE_MCP_METADATA_PATH, REGISTER_PATH, REVOKE_PATH, TOKEN_PATH,
+    AUTHORIZE_PATH, PROTECTED_RESOURCE_GIT_METADATA_PATH, PROTECTED_RESOURCE_MCP_METADATA_PATH,
+    REGISTER_PATH, REVOKE_PATH, TOKEN_PATH,
 };
 use crate::commands::oauth_sign_in::{self, MAX_ANSWER_BYTES, OAuthSignIn, SignInParty};
 
 /// Where the browser comes back to on the loopback.
 const CALLBACK_PATH: &str = "/oauth/callback";
-/// The tier asked for: a hook recalls, and writes nothing.
-const REQUESTED_SCOPE: &str = "read";
+/// The tier a recall sign-in asks for: a hook recalls, and writes nothing.
+const RECALL_SCOPE: &str = "read";
+/// The tier the continue step-up asks for: the import and the start are
+/// Write rows, and every receive-pack needs `core:write`.
+pub(super) const CONTINUE_SCOPE: &str = "full";
 /// The name the owner's ask and consent registry show for the client.
 const CLIENT_NAME: &str = "oneiron hosted login";
 /// The most of a callback request read: its request line and headers.
@@ -56,30 +68,94 @@ struct Registered {
     client_id: String,
 }
 
-/// Signs this user in at the vault at `origin` and writes the sign-in to
-/// `token_file`, within `timeout` from the start to the browser's return.
-/// Runs on the blocking pool of the command's runtime.
-pub(super) fn sign_in(origin: &str, token_file: &Path, timeout: Duration) -> anyhow::Result<()> {
+/// What one sign-in asks the vault for.
+#[derive(Clone, Copy, Debug)]
+pub(super) enum SignInAsk<'a> {
+    /// `hosted login`: a client registered now, the `/mcp` resource, the
+    /// `read` tier.
+    Recall,
+    /// The continue step-up: the client `client_id` (the recall sign-in's),
+    /// the `/mcp` and `/git` resources, the `full` tier.
+    Continue { client_id: &'a str },
+}
+
+impl SignInAsk<'_> {
+    /// The paths of the protected-resource documents of the resources
+    /// asked, in the order the request names them: `/mcp` first, whose
+    /// document names the issuer.
+    const fn metadata_paths(self) -> &'static [&'static str] {
+        match self {
+            Self::Recall => &[PROTECTED_RESOURCE_MCP_METADATA_PATH],
+            Self::Continue { .. } => &[
+                PROTECTED_RESOURCE_MCP_METADATA_PATH,
+                PROTECTED_RESOURCE_GIT_METADATA_PATH,
+            ],
+        }
+    }
+
+    /// The tier asked, as its scope.
+    const fn scope(self) -> &'static str {
+        match self {
+            Self::Recall => RECALL_SCOPE,
+            Self::Continue { .. } => CONTINUE_SCOPE,
+        }
+    }
+
+    /// What the person is asked to sign in for, after "To ".
+    const fn why(self) -> &'static str {
+        match self {
+            Self::Recall => "sign in to",
+            Self::Continue { .. } => "let `oneiron continue --cloud` move this session to",
+        }
+    }
+}
+
+/// Signs this user in at the vault at `origin` for what `ask` names and
+/// writes the sign-in to `token_file`, within `timeout` from the start to
+/// the browser's return. Runs on the blocking pool of the command's
+/// runtime.
+pub(super) fn sign_in(
+    origin: &str,
+    token_file: &Path,
+    timeout: Duration,
+    ask: SignInAsk<'_>,
+) -> anyhow::Result<()> {
     let runtime = tokio::runtime::Handle::try_current()
         .map_err(|_| anyhow::anyhow!("hosted login signs in on the command's runtime"))?;
     let deadline = Instant::now() + timeout;
     let client = oauth_sign_in::endpoint_client()?;
-    let document: ProtectedResource = runtime.block_on(get_json(
-        &client,
-        &format!("{origin}{PROTECTED_RESOURCE_MCP_METADATA_PATH}"),
-    ))?;
-    let issuer = document
-        .authorization_servers
-        .into_iter()
-        .next()
+    let mut documents = Vec::with_capacity(ask.metadata_paths().len());
+    for path in ask.metadata_paths() {
+        let document: ProtectedResource =
+            runtime.block_on(get_json(&client, &format!("{origin}{path}")))?;
+        documents.push(document);
+    }
+    let issuer = documents
+        .first()
+        .and_then(|document| document.authorization_servers.first())
+        .cloned()
         .ok_or_else(|| anyhow::anyhow!("{origin} names no authorization server for its MCP"))?;
+    anyhow::ensure!(
+        documents
+            .iter()
+            .all(|document| document.authorization_servers.first() == Some(&issuer)),
+        "{origin}'s protected resources name different authorization servers"
+    );
+    // The first resource, `/mcp`, is the one the code is traded for and the
+    // tokens refresh for; the family reaches every one named.
+    let resource = documents[0].resource.clone();
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
         .map_err(|error| anyhow::anyhow!("listen on the loopback: {error}"))?;
     let redirect_uri = format!(
         "http://127.0.0.1:{}{CALLBACK_PATH}",
         listener.local_addr()?.port()
     );
-    let client_id = runtime.block_on(register(&client, origin, &redirect_uri))?;
+    // A loopback redirect matches the client's on any port (RFC 8252 §7.3),
+    // so the step-up's client is the recall sign-in's own.
+    let client_id = match ask {
+        SignInAsk::Recall => runtime.block_on(register(&client, origin, &redirect_uri))?,
+        SignInAsk::Continue { client_id } => client_id.to_owned(),
+    };
     let verifier = random_text(32);
     let state = random_text(16);
     let challenge = oneiron::dispatch_byoa::pkce_s256_challenge(&verifier)
@@ -93,13 +169,18 @@ pub(super) fn sign_in(origin: &str, token_file: &Path, timeout: Duration) -> any
         .append_pair("code_challenge", &challenge)
         .append_pair("code_challenge_method", "S256")
         .append_pair("state", &state)
-        .append_pair("scope", REQUESTED_SCOPE)
-        .append_pair("resource", &document.resource);
+        .append_pair("scope", ask.scope());
+    for document in &documents {
+        authorize
+            .query_pairs_mut()
+            .append_pair("resource", &document.resource);
+    }
     let _ = writeln!(
         std::io::stderr().lock(),
-        "To sign in to {origin}, open this page in a browser on this machine:\n  {authorize}\n\
+        "To {} {origin}, open this page in a browser on this machine:\n  {authorize}\n\
          It shows a match code. Allow the request in your Oneiron inbox when its match code is \
          the same; this command waits up to {}s.",
+        ask.why(),
         timeout.as_secs()
     );
     open_in_browser(authorize.as_str());
@@ -114,14 +195,14 @@ pub(super) fn sign_in(origin: &str, token_file: &Path, timeout: Duration) -> any
             ("redirect_uri", redirect_uri.as_str()),
             ("client_id", client_id.as_str()),
             ("code_verifier", verifier.as_str()),
-            ("resource", document.resource.as_str()),
+            ("resource", resource.as_str()),
         ],
     ))?;
     let party = SignInParty {
         token_endpoint,
         revocation_endpoint: format!("{origin}{REVOKE_PATH}"),
         client_id,
-        resource: document.resource,
+        resource,
     };
     OAuthSignIn::from_answer(party, answer, oauth_sign_in::now_ms())?.write(token_file)
 }

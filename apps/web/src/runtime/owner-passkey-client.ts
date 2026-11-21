@@ -15,6 +15,14 @@
  * Nothing here holds or derives a key, and nothing decides who may act: the
  * routes refuse what the vault does not allow (a key a passkey vouched for
  * acts in part until a key that is no passkey confirms it).
+ *
+ * On a managed host the passkey's enrollment binds no one: the host's root
+ * signs it, and the vault counts no `human` binding that only the host
+ * signs. So right after enrolling, the passkey signs the owner's own first
+ * binding with a second assertion (`/v1/owner/owner-passkeys/bind/prepare`,
+ * then `/bind/land`; row PASSKEY-SELF-BIND), and the owner's owner acts pass.
+ * That is the one binding a passkey signs. An owner device key binds them
+ * with `/v1/owner/owner-signing-keys/bind` instead.
  */
 
 /** The COSE algorithm of ES256 (ECDSA P-256 with SHA-256): the only kind the engine enrolls. */
@@ -106,6 +114,25 @@ export type OwnerPasskeyEnrollmentReceipt = Readonly<{
   publicKey: string
   credentialId: string
 }>
+
+/** The receipt of the owner's binding to their own passkey. */
+export type OwnerPasskeyBindingReceipt = Readonly<{
+  entry: string
+  owner: string
+  publicKey: string
+  epoch: number
+}>
+
+/**
+ * How the owner's binding to their passkey ended: it landed now, a binding
+ * named the owner already (nothing to do), or it failed or was cancelled.
+ * A failed binding leaves the passkey enrolled; bind it again with
+ * `bindWithOwnerPasskey`, never by enrolling again.
+ */
+export type OwnerPasskeyBindingOutcome =
+  | Readonly<{ state: 'bound'; receipt: OwnerPasskeyBindingReceipt }>
+  | Readonly<{ state: 'already-bound' }>
+  | Readonly<{ state: 'failed'; error: unknown }>
 
 /** The receipt of a device key a passkey vouched for. */
 export type OwnerKeyVouchReceipt = Readonly<{
@@ -309,6 +336,105 @@ export async function vouchWithOwnerPasskey(
     machine: text(receipt, 'machine', landRoute),
     publicKey: text(receipt, 'public_key', landRoute),
   }
+}
+
+/** The engine's refusal text when a live `human` binding names the owner already. */
+const OWNER_ALREADY_BOUND_DETAIL = 'a live human binding already names this owner'
+
+/**
+ * The owner's enrolled passkey `credentialId` (base64url) signs their own
+ * first `human` binding: the engine prepares the binding with the passkey as
+ * its one signer, the person asserts its challenge with that passkey, and the
+ * engine lands it once the vault counted it. Answers `already-bound` when a
+ * binding names the owner already, at prepare or (a binding that landed
+ * elsewhere in between) at land. Other refusals and a cancelled assertion
+ * throw, and nothing is bound.
+ */
+export async function bindWithOwnerPasskey(
+  { transport, credentials }: OwnerPasskeyDependencies,
+  credentialId: string,
+  signal?: AbortSignal,
+): Promise<OwnerPasskeyBindingOutcome> {
+  const rawId = base64UrlDecode(credentialId)
+  const prepareRoute = `${OWNER_PASSKEYS_ROUTE}/bind/prepare`
+  const answer = await askUnlessBound(transport, prepareRoute, { credential_id: credentialId })
+  if (answer === ALREADY_BOUND) return { state: 'already-bound' }
+  const prepared = record(answer, prepareRoute)
+  const entry = text(prepared, 'entry', prepareRoute)
+  const assertion = await requestAssertion(
+    credentials,
+    rawId,
+    text(prepared, 'challenge', prepareRoute),
+    signal,
+  )
+
+  // A binding that landed elsewhere since prepare answers the same refusal here.
+  const landRoute = `${OWNER_PASSKEYS_ROUTE}/bind/land`
+  const landed = await askUnlessBound(transport, landRoute, {
+    entry,
+    authenticator_data: assertion.authenticatorData,
+    client_data_json: assertion.clientDataJson,
+    signature: assertion.signature,
+  })
+  if (landed === ALREADY_BOUND) return { state: 'already-bound' }
+  const receipt = record(landed, landRoute)
+  const epoch = receipt.epoch
+  if (typeof epoch !== 'number') throw malformedReply(landRoute)
+  return {
+    state: 'bound',
+    receipt: {
+      entry: text(receipt, 'entry', landRoute),
+      owner: text(receipt, 'owner', landRoute),
+      publicKey: text(receipt, 'public_key', landRoute),
+      epoch,
+    },
+  }
+}
+
+/** What `askUnlessBound` answers when a live binding names the owner already. */
+const ALREADY_BOUND = Symbol('already-bound')
+
+/**
+ * `transport`'s answer to `body` at `route`, or `ALREADY_BOUND` when the
+ * engine refused it because a live `human` binding names the owner already.
+ * Every other refusal throws.
+ */
+async function askUnlessBound(
+  transport: OwnerRouteTransport,
+  route: string,
+  body: Readonly<Record<string, string>>,
+): Promise<unknown> {
+  try {
+    return await transport('POST', route, body)
+  } catch (error) {
+    if (error instanceof OwnerRouteRefusal && error.detail.includes(OWNER_ALREADY_BOUND_DETAIL)) {
+      return ALREADY_BOUND
+    }
+    throw error
+  }
+}
+
+/**
+ * Enrolls a new passkey (`enrollOwnerPasskey`), then has it sign the
+ * owner's own binding (`bindWithOwnerPasskey`) with a second assertion. The
+ * enrollment stands whatever the binding does: a failed or cancelled binding
+ * answers `failed` with its error, and the page offers to bind this passkey
+ * again.
+ */
+export async function enrollAndBindOwnerPasskey(
+  dependencies: OwnerPasskeyDependencies,
+  enrollment: OwnerPasskeyEnrollment,
+): Promise<
+  Readonly<{ enrollment: OwnerPasskeyEnrollmentReceipt; binding: OwnerPasskeyBindingOutcome }>
+> {
+  const enrolled = await enrollOwnerPasskey(dependencies, enrollment)
+  let binding: OwnerPasskeyBindingOutcome
+  try {
+    binding = await bindWithOwnerPasskey(dependencies, enrolled.credentialId, enrollment.signal)
+  } catch (error) {
+    binding = { state: 'failed', error }
+  }
+  return { enrollment: enrolled, binding }
 }
 
 type AssertionParts = Readonly<{

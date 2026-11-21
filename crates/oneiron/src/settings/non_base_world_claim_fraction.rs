@@ -12,7 +12,7 @@
 //! the owner, or a holder of any `engine.controls` class, checked at the read,
 //! as every dial read is (untangle 6.6f; S66F-READ = C).
 
-use crate::authority::ActSurface;
+use crate::authority::{ActSurface, OwnerProofGround};
 use crate::batch::export::archive_side_install::{
     ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
 };
@@ -24,6 +24,7 @@ use crate::error::Result;
 use crate::memory::{Memory, MemoryResult};
 use crate::policy_setting_doors::{PolicySetting, record_policy_setting_act_in_txn};
 use crate::side_table::{self, Named, SideTable};
+use crate::world_keys::{OwnerActImportance, owner_presence_reasons};
 use crate::{Vault, WriteActor};
 
 #[doc(hidden)]
@@ -90,6 +91,11 @@ impl Vault {
         setting: NonBaseWorldClaimFraction,
     ) -> Result<NonBaseWorldClaimFraction> {
         setting.validate()?;
+        let witness = self.owner_presence(
+            OwnerActImportance::Ordinary,
+            owner_presence_reasons::NON_BASE_WORLD_CLAIM_FRACTION,
+        )?;
+        let ground = OwnerProofGround::witnessed(&witness);
         self.with_write_txn_grouped(|txn| {
             let actor = owner.revalidate_in_txn(self, txn)?;
             let prior = fraction_in_txn(self, txn)?;
@@ -106,7 +112,7 @@ impl Vault {
                 )?;
                 // The signed record goes last, best effort (FIX 4624).
                 if let Some(act) = signed {
-                    self.record_policy_setting_op_in_txn(txn, act);
+                    self.record_policy_setting_op_in_txn(txn, Some(&ground), act);
                 }
             }
             Ok(setting)

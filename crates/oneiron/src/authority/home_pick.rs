@@ -20,6 +20,7 @@
 
 use crate::error::{Error, Result};
 use crate::store::Store;
+use crate::world_keys::{OwnerActImportance, owner_presence_reasons};
 use crate::{HostingPrivacyPosture, TimeRange, Vault};
 
 use super::machine_standing::InstallCounted;
@@ -203,6 +204,11 @@ impl Vault {
             ActAuthority::Owner(owner, surface) => (owner, *surface),
             ActAuthority::Agent(_) => return Err(authority_refused(OWNER_ONLY)),
         };
+        let witness = self.owner_presence(
+            OwnerActImportance::Ordinary,
+            owner_presence_reasons::HOME_PICK,
+        )?;
+        let ground = OwnerProofGround::witnessed(&witness);
         let mut txn = self.store.env.write_txn()?;
         let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
@@ -227,7 +233,13 @@ impl Vault {
             return Err(authority_refused(NO_CARRIER));
         }
         // FIX 7908: join a frontier wider than one entry names, else today's path.
-        let joiner = FrontierSigner::Install(machine, &key);
+        // The owner key this install holds proves the act; its join carries
+        // the proof only for the owner's own write (row
+        // OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS, REVIEW-9962 P1).
+        let proof = self.owner_proof_signer(&fold, &ground);
+        let proves_joins = owner.proves_joins_in_txn(self, &txn)?;
+        let joiner =
+            FrontierSigner::install(machine, &key, proof.as_ref().filter(|_| proves_joins));
         let fold = self
             .prepare_authority_frontier_in_txn(&mut txn, &fold, joiner, MAX_PARENTS)?
             .unwrap_or(fold);
@@ -256,7 +268,7 @@ impl Vault {
                 node_id,
             }),
             now,
-            self.owner_proof_signer(&fold).as_ref(),
+            proof.as_ref(),
         )?;
         let act = authority_entry_hash(&entry)?;
         let at = TimeRange {

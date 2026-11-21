@@ -134,10 +134,14 @@ pub trait CheckpointRootSigner: Send + Sync {
     /// `vault`, the one the entry is signed on. A signature made over
     /// another fold proves nothing: the vault's fold takes a proof only from
     /// a key it trusts at the entry's parent state.
+    ///
+    /// The caller hands the ground the proof is signed on. The signer does
+    /// not read it. A call with no ground does not compile.
     fn sign_owner_proof(
         &self,
         vault: &Vault,
         fold: &AuthorityFold,
+        ground: &OwnerProofGround,
         transcript: &[u8],
     ) -> Result<Vec<u8>>;
     /// Whether the root proves an owner act on `vault` at this moment, by
@@ -208,6 +212,7 @@ impl CheckpointRootSigner for HostSlipIssuer {
         &self,
         vault: &Vault,
         fold: &AuthorityFold,
+        _ground: &OwnerProofGround,
         transcript: &[u8],
     ) -> Result<Vec<u8>> {
         let _ = (vault, fold);

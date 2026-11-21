@@ -114,6 +114,58 @@ pub fn store_note_call_in_room(
     Ok([agent, run])
 }
 
+/// A note held as a map of `fields`, each a text.
+fn fields_note(fields: &[(&str, &str)]) -> Value {
+    Value::Map(
+        fields
+            .iter()
+            .map(|(key, value)| (Value::from(*key), Value::from(*value)))
+            .collect(),
+    )
+}
+
+/// [`store_note_call_in_room`] for a note held as a map of `fields`, each a
+/// text, staged live: a field the wall lifts whole holds the bare room
+/// handle (REVIEW-10003).
+///
+/// # Errors
+///
+/// The agent cannot be put, the run cannot be bound to the room, or the
+/// record cannot be stored.
+pub fn store_fields_call_in_room(
+    vault: &Vault,
+    session: &OffRecordSession<'_>,
+    fields: &[(&str, &str)],
+) -> Result<[EntityId; 2]> {
+    let ([agent, run], record) = new_note_run(vault, fields_note(fields))?;
+    ExecutorStorage::for_session(session, agent)?
+        .put_owned_code_run_replay_record(&record, None, run, agent)?;
+    Ok([agent, run])
+}
+
+/// Puts the replay record of `run` that `session`'s room holds again, as
+/// `agent`'s run, through the session's storage on its route now: into base
+/// once the stretch is on record, as an on-record append of a run the room
+/// began writes its whole record (REVIEW-10003 round 2).
+///
+/// # Errors
+///
+/// The record cannot be read in the room, or the put's refusal.
+pub fn put_room_record_again(
+    session: &OffRecordSession<'_>,
+    [agent, run]: [EntityId; 2],
+) -> Result<()> {
+    let record = session
+        .routed_side_read(|rtxn, read| replay_rows::get(&read, rtxn, &run))?
+        .ok_or(Error::InvariantViolation(
+            "the room holds no record of the run",
+        ))?;
+    let expected = Some(record.generation()?);
+    ExecutorStorage::for_session(session, agent)?
+        .put_owned_code_run_replay_record(&record, expected, run, agent)
+        .map(drop)
+}
+
 /// The one call `record` holds.
 fn first_call(record: Option<CodeRunReplayRecord>) -> Result<CodeRunBridgeCall> {
     record
@@ -141,10 +193,19 @@ fn call_is(
     note: Value,
     custody: bool,
 ) -> Result<bool> {
-    let offered = note_row(agent, note)?.request;
     let read: BaseKnownRead<'_> = &|| vault.known_values_now();
-    let known = CompareKnown::new(custody.then_some(read));
-    stored.request_identity_is(&offered, &known)
+    call_is_read(stored, agent, note, custody.then_some(read))
+}
+
+/// [`call_is`] with the values `read` reads, or none.
+fn call_is_read(
+    stored: &CodeRunBridgeCall,
+    agent: EntityId,
+    note: Value,
+    read: Option<BaseKnownRead<'_>>,
+) -> Result<bool> {
+    let offered = note_row(agent, note)?.request;
+    stored.request_identity_is(&offered, &CompareKnown::new(read))
 }
 
 /// Whether the call `run`'s stored record holds is in its erased form.
@@ -210,25 +271,68 @@ pub fn stored_body_call_is(
     )
 }
 
-/// [`stored_call_is`] for the record `session`'s room holds.
+/// [`stored_call_is`] for the record `session`'s room holds, read as a run
+/// bound to the room reads it: with the values base custody holds and the
+/// values the room keeps in its own custody (ROOM-LOCAL-CUSTODY) when
+/// `custody` is in reach, else with none.
 ///
 /// # Errors
 ///
 /// The record cannot be read in the room, or the compare fails.
 pub fn room_stored_call_is(
-    vault: &Vault,
+    _vault: &Vault,
     session: &OffRecordSession<'_>,
     [agent, run]: [EntityId; 2],
     words: &str,
     custody: bool,
 ) -> Result<bool> {
-    call_is(
-        vault,
+    let read: BaseKnownRead<'_> = &|| session.base_known_values();
+    call_is_read(
         &room_stored_call(session, run)?,
         agent,
         Value::from(words),
-        custody,
+        custody.then_some(read),
     )
+}
+
+/// [`room_stored_call_is`] for a call made again writing a note held as a
+/// map of `fields`, each a text.
+///
+/// # Errors
+///
+/// The record cannot be read in the room, or the compare fails.
+pub fn room_stored_fields_call_is(
+    session: &OffRecordSession<'_>,
+    [agent, run]: [EntityId; 2],
+    fields: &[(&str, &str)],
+    custody: bool,
+) -> Result<bool> {
+    let read: BaseKnownRead<'_> = &|| session.base_known_values();
+    call_is_read(
+        &room_stored_call(session, run)?,
+        agent,
+        fields_note(fields),
+        custody.then_some(read),
+    )
+}
+
+/// Whether the request of the call `run`'s record holds in `session`'s room
+/// holds `text` in one of its texts.
+///
+/// # Errors
+///
+/// The record cannot be read in the room.
+pub fn room_stored_call_holds(
+    session: &OffRecordSession<'_>,
+    run: EntityId,
+    text: &str,
+) -> Result<bool> {
+    let mut encoded = Vec::new();
+    rmpv::encode::write_value(&mut encoded, &room_stored_call(session, run)?.request)
+        .map_err(|_| Error::InvariantViolation("a stored call's request did not encode"))?;
+    Ok(encoded
+        .windows(text.len())
+        .any(|window| window == text.as_bytes()))
 }
 
 /// The handle custody gives `record`, or `None` when it gives none.
@@ -262,7 +366,8 @@ pub fn store_note_call_across_delete(
     session: Option<&OffRecordSession<'_>>,
     words: &str,
 ) -> Result<[EntityId; 3]> {
-    store_note_across_delete(vault, session, &Value::from(words))
+    let note = Value::from(words);
+    store_note_across_delete(vault, session, [&note, &note])
 }
 
 /// [`store_note_call_across_delete`] in the vault, for a note held as the
@@ -273,16 +378,37 @@ pub fn store_note_call_across_delete(
 ///
 /// As [`store_note_call_across_delete`].
 pub fn store_note_body_across_delete(vault: &Vault, body: &[u8]) -> Result<[EntityId; 3]> {
-    store_note_across_delete(vault, None, &Value::Binary(body.to_vec()))
+    store_note_bodies_across_delete(vault, [body, body])
 }
 
-/// [`store_note_call_across_delete`] for the note `note`.
+/// [`store_note_body_across_delete`] with the first run's note held as the
+/// bytes of `scrubbed` and the second run's as the bytes of `fenced` (FIX
+/// REQUEST-IDENTITY-NESTED-SHAPED-KEY-AS-WRITTEN): a key the wall lifts
+/// from the first body, and another the put fence erases from the second
+/// before any wall reads it.
+///
+/// # Errors
+///
+/// As [`store_note_call_across_delete`].
+pub fn store_note_bodies_across_delete(
+    vault: &Vault,
+    [scrubbed, fenced]: [&[u8]; 2],
+) -> Result<[EntityId; 3]> {
+    let notes = [
+        Value::Binary(scrubbed.to_vec()),
+        Value::Binary(fenced.to_vec()),
+    ];
+    store_note_across_delete(vault, None, [&notes[0], &notes[1]])
+}
+
+/// [`store_note_call_across_delete`] for the first run's note `scrubbed`
+/// and the second run's note `fenced`.
 fn store_note_across_delete(
     vault: &Vault,
     session: Option<&OffRecordSession<'_>>,
-    note: &Value,
+    [scrubbed_note, fenced_note]: [&Value; 2],
 ) -> Result<[EntityId; 3]> {
-    let ([agent, scrubbed], record) = new_note_run(vault, note.clone())?;
+    let ([agent, scrubbed], record) = new_note_run(vault, scrubbed_note.clone())?;
     let storage = match session {
         Some(session) => ExecutorStorage::for_session(session, agent)?,
         None => ExecutorStorage::Canonical(vault),
@@ -292,7 +418,9 @@ fn store_note_across_delete(
     vault.delete_entity(&agent)?;
     let fenced = EntityId::now();
     let mut again = CodeRunReplayRecord::with_determinism(fenced, None);
-    again.bridge_calls.push(note_row(agent, note.clone())?);
+    again
+        .bridge_calls
+        .push(note_row(agent, fenced_note.clone())?);
     storage.put_owned_code_run_replay_record(&again, None, fenced, agent)?;
     Ok([agent, scrubbed, fenced])
 }
@@ -362,4 +490,71 @@ pub fn resume_page_request_digest(vault: &Vault, run: EntityId) -> Result<Option
 /// The request does not encode.
 pub fn note_call_identity_as_written(agent: EntityId, words: &str) -> Result<[u8; 32]> {
     note_row(agent, Value::from(words))?.request_identity()
+}
+
+/// Whether the call `run`'s stored record holds, live as the wall stored it,
+/// admits the call `agent` makes again writing a note held as the bytes of
+/// `body`, in a compare with no custody read in reach, as a replay of a
+/// record read in memory compares (FIX
+/// REQUEST-IDENTITY-NESTED-SHAPED-KEY-AS-WRITTEN).
+///
+/// # Errors
+///
+/// The record cannot be read, or the compare fails.
+pub fn stored_body_call_admits_in_memory(
+    vault: &Vault,
+    [agent, run]: [EntityId; 2],
+    body: &[u8],
+) -> Result<bool> {
+    let offered = note_row(agent, Value::Binary(body.to_vec()))?.request;
+    CompareKnown::new(None).admits(&stored_call(vault, run)?.request, &offered)
+}
+
+/// Whether the call `run`'s stored record holds, live as the wall stored it,
+/// erased with no custody read in reach in the form every erase took before
+/// FIX REQUEST-IDENTITY-NESTED-SHAPED-KEY-AS-WRITTEN, is the call `agent`
+/// makes again writing a note held as the bytes of `body`, read as
+/// [`stored_call_is`] reads it: a row a scrub erased before that fix.
+///
+/// # Errors
+///
+/// The record cannot be read, its request cannot be erased, or the compare
+/// fails.
+pub fn stored_body_call_erased_before_is(
+    vault: &Vault,
+    [agent, run]: [EntityId; 2],
+    body: &[u8],
+    custody: bool,
+) -> Result<bool> {
+    let mut stored = stored_call(vault, run)?;
+    erase_as_before(&mut stored, &CompareKnown::new(None))?;
+    call_is(vault, &stored, agent, Value::Binary(body.to_vec()), custody)
+}
+
+/// Whether the call `agent` makes writing a note held as the bytes of
+/// `held`, erased before any wall read it, with the values `vault`'s base
+/// custody holds in reach, in the form every erase took before FIX
+/// REQUEST-IDENTITY-NESTED-SHAPED-KEY-AS-WRITTEN, is the call made again
+/// writing a note held as the bytes of `body`, read as [`stored_call_is`]
+/// reads it: a row a put fence erased before that fix.
+///
+/// # Errors
+///
+/// The request cannot be erased, or the compare fails.
+pub fn fenced_body_call_erased_before_is(
+    vault: &Vault,
+    agent: EntityId,
+    [held, body]: [&[u8]; 2],
+    custody: bool,
+) -> Result<bool> {
+    let mut fenced = note_row(agent, Value::Binary(held.to_vec()))?;
+    let read: BaseKnownRead<'_> = &|| vault.known_values_now();
+    erase_as_before(&mut fenced, &CompareKnown::new(Some(read)))?;
+    call_is(vault, &fenced, agent, Value::Binary(body.to_vec()), custody)
+}
+
+/// `call`'s request erased as an erase took it before FIX
+/// REQUEST-IDENTITY-NESTED-SHAPED-KEY-AS-WRITTEN.
+fn erase_as_before(call: &mut CodeRunBridgeCall, custody: &CompareKnown<'_>) -> Result<bool> {
+    call.erase_request_with_nested_bodies_as_written(custody)
 }

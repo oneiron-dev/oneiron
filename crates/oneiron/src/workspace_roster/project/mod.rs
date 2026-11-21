@@ -111,6 +111,7 @@ mod review_tests;
 pub(crate) use leader_chat::CHAT_FIELD as LEADER_CHAT_FIELD;
 #[cfg(oneiron_test_support)]
 pub(crate) use leader_chat::bind_leader_chat_in_txn;
+pub(crate) use leader_chat::bound_writers_in as leader_chat_writers_in;
 pub use leader_chat::{LEADER_CHAT_RULE_PREDICATE, LeaderChat};
 pub(crate) use leader_chat::{
     admit_turn as admit_leader_chat_turn, admit_witness as admit_leader_chat_witness,
@@ -718,11 +719,10 @@ impl Vault {
             read::stored(&self.store, txn, id, self.project_type_byte()?)?.is_none_or(|old| {
                 old.authority() != body.authority() || old.write_proof != body.write_proof
             });
+        let created = !EntityStoreRead::port_entity_present(&self.store, txn, &id)?;
         // A leader's signed spawn needs no owner birth; the shared door
         // verifies its proof.
-        if !EntityStoreRead::port_entity_present(&self.store, txn, &id)?
-            && body.write_proof.is_none()
-        {
+        if created && body.write_proof.is_none() {
             let posture = self.privacy_posture();
             match crate::gate::project_depth::birth_for_project(&self.store, txn, id)? {
                 Some((_, birth))
@@ -755,6 +755,9 @@ impl Vault {
                 }
             }
         }
+        // A write that changes the parents moves the project: its settings carry the rows of
+        // the lines it leaves (stage 6.0), in this write.
+        let lines_before = self.lines_before_move_in_txn(txn, id, &body.parents)?;
         self.batch_in()
             .put(
                 &id,
@@ -767,6 +770,13 @@ impl Vault {
                 &encode(&body)?,
             )
             .apply(txn)?;
+        if let Some(before) = lines_before {
+            crate::setting::carry_settings_in_txn(self, txn, id, &before)?;
+        }
+        // A new project starts with its row of each `born` setting key (stage 7c-2).
+        if created {
+            crate::setting::write_born_rows_in_txn(self, txn, id)?;
+        }
         let frontier = ProjectReader::new(&self.store, txn, self.privacy_posture())?
             .ok_or_else(invalid)?
             .frontier(id)?
@@ -964,6 +974,7 @@ impl Vault {
                 &encode(&child)?,
             )
             .apply(txn)?;
+        crate::setting::write_born_rows_in_txn(self, txn, child_id)?;
         Ok(child)
     }
 
@@ -1043,6 +1054,7 @@ impl Vault {
                     &encode(&body)?,
                 )
                 .apply(txn)?;
+            crate::setting::write_born_rows_in_txn(self, txn, id)?;
             self.require_owner_head_in_txn(txn, id, &body)?;
             Ok(())
         })
@@ -1097,6 +1109,64 @@ impl Vault {
             None => Ok(None),
         }
     }
+    /// The lines of `project` a setting read walks (DESIGN 1.5, "The read", step 2): the project
+    /// itself, then every ancestor over the stored parents, breadth-first and nearest first, a
+    /// row's parents in their stored order; each ancestor once. The lines are the stored
+    /// structure, whatever authority the fold serves: a line only ever narrows a read, so a
+    /// parent the fold does not serve still narrows it.
+    ///
+    /// # Errors
+    ///
+    /// A stored parent that is not an id; storage errors.
+    pub(crate) fn project_lines_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        project: EntityId,
+    ) -> Result<Vec<EntityId>> {
+        let Some(kind) = project_type(&self.store) else {
+            return Ok(vec![project]);
+        };
+        let mut lines = Vec::new();
+        let mut pending = std::collections::VecDeque::from([project]);
+        let mut seen = BTreeSet::new();
+        while let Some(id) = pending.pop_front() {
+            if !seen.insert(id) {
+                continue;
+            }
+            lines.push(id);
+            if let Some(record) = read::stored(&self.store, txn, id, kind)? {
+                for parent in &record.parents {
+                    pending.push_back(EntityId::from_hex(parent)?);
+                }
+            }
+        }
+        Ok(lines)
+    }
+
+    /// The lines of `project` before a write that stores `parents_after` as its parents, when
+    /// that write moves it: `None` for a new project or unchanged parents. A door passes them to
+    /// [`crate::setting::carry_settings_in_txn`] once its write has landed.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::project_lines_in_txn`].
+    pub(crate) fn lines_before_move_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        project: EntityId,
+        parents_after: &[String],
+    ) -> Result<Option<Vec<EntityId>>> {
+        let Some(kind) = project_type(&self.store) else {
+            return Ok(None);
+        };
+        match read::stored(&self.store, txn, project, kind)? {
+            Some(stored) if stored.parents != parents_after => {
+                self.project_lines_in_txn(txn, project).map(Some)
+            }
+            _ => Ok(None),
+        }
+    }
+
     /// The stored project if the read fold accepts it, without the depth row.
     pub(crate) fn visible_project_in_txn(
         &self,
@@ -1319,6 +1389,9 @@ pub(crate) fn seed_root_project(vault: &Vault) -> Result<()> {
                 &encode(&body)?,
             )
             .apply(txn)?;
+        // The root starts with its row of each `born` setting key, as every new project does
+        // (stage 7c-2).
+        crate::setting::write_born_rows_in_txn(vault, txn, id)?;
         Ok(())
     })?;
     // A vault from before revisions were kept: capture every stored chain once.

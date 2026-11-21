@@ -5,7 +5,9 @@
 //! still holds its lease; FIX 4889: what an agent run's TASK says its
 //! machines committed of its launch).
 
-use crate::agent_dispatch::{AgentDispatcher, ChildSpend, SpendScope, SpendScopeId};
+use crate::agent_dispatch::{
+    AgentDispatcher, ChildSpend, SpendScope, SpendScopeId, SpendSettlement,
+};
 use crate::attempt_queue::AttemptId;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -35,6 +37,26 @@ pub fn reserve_child_scope(
     )?;
     txn.commit()?;
     Ok(scope)
+}
+
+/// Settles reader child `child` of the run whose try is `spawner`, as the
+/// reader queue does when a metered reader ends (census L9-37): the
+/// reader's tokens reach the spawner's read-shape stamp. Commits it.
+///
+/// # Errors
+///
+/// As [`AgentDispatcher::settle_child`].
+pub fn settle_spawned_child(
+    vault: &Vault,
+    child: &AttemptId,
+    spawner: AttemptId,
+    now: u64,
+) -> Result<Option<SpendSettlement>> {
+    let mut txn = vault.store.env.write_txn()?;
+    let settlement =
+        AgentDispatcher::new(vault).settle_spawned_child_in_txn(&mut txn, child, spawner, now)?;
+    txn.commit()?;
+    Ok(settlement)
 }
 
 /// What the machines that ran the agent run whose original try is `attempt`

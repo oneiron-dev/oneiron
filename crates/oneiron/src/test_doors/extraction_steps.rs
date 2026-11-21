@@ -110,7 +110,7 @@ impl DreamerDecisionLender for FixtureStepLender {
                 backend: Arc::clone(&backend),
                 model: model.clone(),
                 binding: binding.clone(),
-                sourced: None,
+                sourced: Some(verdict.sourced_route()),
             },
         );
         let call = RoleCall::resolve(
@@ -217,6 +217,13 @@ pub fn native_extraction_slice_transcripts_for_bound(
 /// Returns every spent generation the step legs accounted, in order.
 pub fn fixture_step_spent_observations(fixture: &ExtractionStepFixture) -> Vec<NativePackSpent> {
     fixture_spent_observations(&fixture.verdict)
+}
+
+/// Returns the rows of every model call the fixture's lends sent bound since the last
+/// take, in call order, and forgets them, as
+/// [`ExtractionVerdictFixture::take_bound_source_rows`] returns them.
+pub fn fixture_step_bound_source_rows(fixture: &ExtractionStepFixture) -> Vec<Vec<String>> {
+    fixture.verdict.take_bound_source_rows()
 }
 
 /// Returns the units the fixture's shared tally charged.

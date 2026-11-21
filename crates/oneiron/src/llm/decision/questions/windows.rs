@@ -245,12 +245,24 @@ pub(super) fn standing_windows(
     question: EntityId,
 ) -> Result<Vec<StandingWindow>> {
     let txn = vault.store.env.read_txn()?;
-    super::store::owned_head(vault, &txn, principal, question)?;
-    let answers = super::outcomes::stored_answers(vault, &txn, question)?;
-    let policy = crate::gate::resolve_policy_manifest(&vault.store, &txn)?;
+    standing_windows_in_txn(vault, &txn, principal, question)
+}
+
+/// [`standing_windows`] in the caller's snapshot `txn`, so a reader that
+/// judges each window's rows does it at the instant it read the windows
+/// (FIX QUESTION-OUTCOMES-REPLY-SPANS-SNAPSHOTS).
+pub(super) fn standing_windows_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    principal: EntityId,
+    question: EntityId,
+) -> Result<Vec<StandingWindow>> {
+    super::store::owned_head(vault, txn, principal, question)?;
+    let answers = super::outcomes::stored_answers(vault, txn, question)?;
+    let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
     let labels = super::outcomes::standing_labels_in_txn(
         vault,
-        &txn,
+        txn,
         &policy,
         principal,
         question,
@@ -259,7 +271,7 @@ pub(super) fn standing_windows(
     )?;
     let mut standing = Vec::new();
     for (_, close) in
-        QUESTION_WINDOW.scan_from(&vault.store, &txn, &family_prefix(question, b"window"))?
+        QUESTION_WINDOW.scan_from(&vault.store, txn, &family_prefix(question, b"window"))?
     {
         let answer = answers.iter().find(|answer| answer.claim == close.answer);
         let rests_on: Vec<Vec<EntityId>> = match close.outcome {
@@ -269,7 +281,7 @@ pub(super) fn standing_windows(
                 .map(|label| label.derived_from.clone())
                 .collect(),
             WindowOutcome::Silence(_) => {
-                silence_rests_on(vault, &txn, &policy, principal, question, &close, answer)?
+                silence_rests_on(vault, txn, &policy, principal, question, &close, answer)?
             }
             WindowOutcome::Unknown => vec![answer.map_or_else(
                 || vec![question, close.answer],

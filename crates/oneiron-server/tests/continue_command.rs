@@ -19,6 +19,9 @@
 //!   folds to the same project folder name.
 //! - A FIFO named as the log is refused at once.
 //!
+//! Review round 2 of #9834: discovery passes a project folder that is a link
+//! over and goes on to the next folder.
+//!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p
 //! oneiron-server --all-features --test continue_command`.
 
@@ -390,6 +393,36 @@ fn discovery_skips_a_nested_repos_log_that_folds_alike() {
         discovered_session(projects.path(), &here),
         Ok(ours),
         "the newer log of the nested repo is not this repo's"
+    );
+}
+
+#[test]
+fn discovery_passes_a_linked_project_folder_over() {
+    let root = tempfile::tempdir().expect("temp root");
+    let main = root.path().join("main");
+    std::fs::create_dir_all(main.join("sub")).expect("make main/sub");
+    git(&main, &["init", "--initial-branch=main"]);
+    let main = std::fs::canonicalize(&main).expect("resolve main");
+    let here = main.join("sub");
+
+    // The subfolder's project folder is a link to a folder holding a newer
+    // log of this repo; the repo root's own project folder holds an older
+    // one.
+    let projects = tempfile::tempdir().expect("temp projects");
+    let real = projects.path().join(project_folder(&main));
+    std::fs::create_dir_all(&real).expect("make the root's project folder");
+    let elsewhere = root.path().join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).expect("make the linked folder");
+    std::os::unix::fs::symlink(&elsewhere, projects.path().join(project_folder(&here)))
+        .expect("link the subfolder's project folder");
+    let newest = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+    let ours = log_in(&real, SESSION, &main, newest - Duration::from_secs(60));
+    log_in(&elsewhere, OTHER_SESSION, &here, newest);
+
+    assert_eq!(
+        discovered_session(projects.path(), &here),
+        Ok(ours),
+        "the log behind the linked project folder was taken"
     );
 }
 

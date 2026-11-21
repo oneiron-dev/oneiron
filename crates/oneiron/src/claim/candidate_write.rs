@@ -72,11 +72,10 @@ impl Vault {
             let preflight = HashMap::from([(id, VecDeque::from([Some(decision)]))]);
             gate_mode = gate_mode.with_preflight_gate_decision_ids(preflight);
         }
-        crate::batch::apply_ops_with_gate_mode(
-            &self.store,
-            &self.config,
-            &self.analyzer,
+        self.apply_ops_restoring_claim_subjects_in_txn(
             txn,
+            // The batch door's pairing: an overwrite drops the prospective
+            // query hints the prior claim carried (H83).
             vec![
                 BatchOp::ClaimCandidate {
                     id,
@@ -91,10 +90,38 @@ impl Vault {
                     keep: Vec::new(),
                 },
             ],
+            gate_mode,
+        )
+    }
+
+    /// [`crate::batch::apply_ops_with_gate_mode`] of `ops` on this vault in
+    /// `txn`, then the restore of each PERSON a claim candidate of `ops`
+    /// that landed is about, in the same write
+    /// ([`Self::restore_subjects_of_landed_claims_in_txn`]; FIX
+    /// PUT-CLAIM-LANDS-ON-ARCHIVED-PERSON): the apply of each claim door that
+    /// applies its own candidates.
+    ///
+    /// # Errors
+    ///
+    /// The apply's, and the restore's.
+    pub(crate) fn apply_ops_restoring_claim_subjects_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        ops: Vec<BatchOp>,
+        gate_mode: ApplyOpsGateMode,
+    ) -> Result<()> {
+        let claims = crate::vault_cleanup::candidate_claim_subjects(&ops);
+        crate::batch::apply_ops_with_gate_mode(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            txn,
+            ops,
             self.text_index_trusted
                 .load(std::sync::atomic::Ordering::Acquire),
             gate_mode,
-        )
+        )?;
+        self.restore_subjects_of_landed_claims_in_txn(txn, &claims)
     }
 
     /// A semantic edit of an active, non-MACHINE evidence claim retains the

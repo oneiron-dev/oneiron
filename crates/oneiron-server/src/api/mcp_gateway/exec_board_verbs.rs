@@ -189,6 +189,8 @@ pub(super) async fn execute_mcp_board_verb(
                 frame.epoch,
             )
             .await;
+            // Its items go to this machine's home as prefetch seeds, whoever runs the session.
+            crate::board_seed_report::report_delivered_board(server, board.rows.iter().copied());
             oneiron::board_verb::BoardVerbOutput::Frame(frame)
         }
         other => other,
@@ -335,6 +337,8 @@ pub(crate) async fn execute_run_board_verb_in_session(
                 frame.epoch,
             )
             .await;
+            // An agent run's board too: its items go to this machine's home as prefetch seeds.
+            crate::board_seed_report::report_delivered_board(server, board.rows.iter().copied());
             let _superseded = server
                 .mcp_registry
                 .lock()

@@ -96,6 +96,7 @@ impl<'v> ScopedRead<'v> {
         lane.judged_at = self.judged_at;
         lane.read_filter.clone_from(&self.read_filter);
         lane.receipts_include_live_grants = self.receipts_include_live_grants;
+        lane.cited_support = self.cited_support;
         Ok(lane)
     }
 }
@@ -105,6 +106,15 @@ impl ScopedRead<'_> {
     #[must_use]
     pub(crate) fn with_claim_status(mut self, status: ClaimReadStatus) -> Self {
         self.claim_status = status;
+        self
+    }
+
+    /// The same lane reading claim history: a claim whose cited claim the
+    /// owner retracted stays in the record
+    /// ([`crate::claim::evidence_support::CitedSupport::History`]); every other check applies.
+    #[must_use]
+    pub(crate) fn for_claim_history(mut self) -> Self {
+        self.cited_support = crate::claim::evidence_support::CitedSupport::History;
         self
     }
 
@@ -186,7 +196,12 @@ impl ScopedRead<'_> {
         if crate::claim::history_store::machine_history_kind(&body.predicate).is_some() {
             return Ok(false);
         }
-        if !crate::claim::has_live_support_in_txn(&self.store_read(), rtxn, body)? {
+        if !crate::claim::evidence_support::has_live_support_under_in_txn(
+            &self.store_read(),
+            rtxn,
+            body,
+            self.cited_support,
+        )? {
             return Ok(false);
         }
         let principal = claim_principal_id(body)?;
