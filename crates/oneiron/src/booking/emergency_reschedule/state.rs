@@ -165,20 +165,41 @@ pub(crate) fn pending_effect_fences_in(
     Ok(false)
 }
 
-/// The local outbound ledger identity of `item`'s effect on `lane`, whose idempotency key is
-/// [`effect_ref`]: that key itself at ledger generation 0, else the key with its generation
-/// appended (`EmergencyItem::ledger_generations`). The send's attempt id derives from it
-/// (`outbound_dispatch_attempt_id`), and the provider's idempotency key stays [`effect_ref`].
+/// The current ledger generation of `item`'s effect on `lane` (`EmergencyItem::ledger_generations`):
+/// 0 until a home adopted the checkpoint back over its own earlier send of that effect.
+pub(super) fn ledger_generation(item: &EmergencyItem, lane: &str) -> u32 {
+    item.ledger_generations.get(lane).copied().unwrap_or(0)
+}
+
+/// The local outbound ledger identity of `item`'s effect on `lane` at ledger `generation`: its
+/// idempotency key [`effect_ref`] at generation 0, else that key with the generation appended.
+/// The send's attempt id, and so its ledger row and that row's own key, derives from it
+/// (`outbound_dispatch_attempt_id`). A send with no provider-native key reaches its provider
+/// under the intent's key, [`effect_ref`] at every generation; a send with one carries its row's
+/// key, so a home takes a later generation for it only where its earlier send never reached the
+/// provider (`home_rows::item`'s `takes_fresh_attempt`; review round 1 of #10220).
+pub(super) fn effect_generation_ref(
+    item: &EmergencyItem,
+    lane: &str,
+    hash: [u8; 32],
+    generation: u32,
+) -> Result<String, BookingError> {
+    let reference = effect_ref(item, lane, hash)?;
+    Ok(if generation == 0 {
+        reference
+    } else {
+        format!("{reference}:ledger-generation:{generation}")
+    })
+}
+
+/// The local outbound ledger identity `item`'s next send of its effect on `lane` is admitted by:
+/// its current generation's ([`effect_generation_ref`]).
 pub(super) fn effect_ledger_ref(
     item: &EmergencyItem,
     lane: &str,
     hash: [u8; 32],
 ) -> Result<String, BookingError> {
-    let reference = effect_ref(item, lane, hash)?;
-    Ok(match item.ledger_generations.get(lane) {
-        None | Some(0) => reference,
-        Some(generation) => format!("{reference}:ledger-generation:{generation}"),
-    })
+    effect_generation_ref(item, lane, hash, ledger_generation(item, lane))
 }
 
 pub(super) fn effect_ref(

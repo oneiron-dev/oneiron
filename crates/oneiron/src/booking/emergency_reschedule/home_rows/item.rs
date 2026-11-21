@@ -97,6 +97,46 @@ const ITEM_DECLS: [&SideTableDecl; 4] = [
 /// keeps as the row's `updated_ms` (review round 2 of #10109).
 const MID_CALL_BOUND_SECS: u64 = 60;
 
+/// This node's outbound ledger row of `item`'s effect on `lane` at ledger `generation`
+/// (`state::effect_generation_ref`), if any. A row that does not read as a ledger row is none:
+/// only a store failure is an error.
+fn ledger_record_at(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    item: &EmergencyItem,
+    lane: &str,
+    hash: [u8; 32],
+    generation: u32,
+) -> Result<Option<IntentLedgerRecord>> {
+    let reference =
+        state::effect_generation_ref(item, lane, hash, generation).map_err(booking_failure)?;
+    let attempt = crate::outbound::outbound_dispatch_attempt_id(&reference)
+        .map_err(|_| invalid("an emergency effect has no outbound attempt id"))?;
+    match read_intent_for_attempt_in_txn(vault, txn, attempt, 0) {
+        Ok(record) => Ok(record),
+        Err(IntentLedgerError::Engine(error)) => Err(error),
+        Err(_) => Ok(None),
+    }
+}
+
+/// This node's outbound ledger rows of `item`'s effect on `lane` under every ledger generation
+/// the effect has had, the earliest first. A send an earlier generation made can still settle
+/// after this home took a fresh attempt (its remote task completes, FIX 7960), so the move's
+/// reads take each one (review round 1 of #10220).
+fn ledger_records(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    item: &EmergencyItem,
+    lane: &str,
+    hash: [u8; 32],
+) -> Result<Vec<IntentLedgerRecord>> {
+    let mut records = Vec::new();
+    for generation in 0..=state::ledger_generation(item, lane) {
+        records.extend(ledger_record_at(vault, txn, item, lane, hash, generation)?);
+    }
+    Ok(records)
+}
+
 /// This node's outbound ledger row of `item`'s effect on `lane` under the effect's current
 /// ledger identity (`state::effect_ledger_ref`), if any. A row that does not read as a ledger
 /// row is none: only a store failure is an error.
@@ -218,6 +258,29 @@ fn with_ledger_deliveries(
         }
     }
     Ok(item)
+}
+
+/// The ids of this node's outbound ledger rows for the `lane` effect (`"calendar"`,
+/// `"apology"` or `"pick"`) of every emergency checkpoint it holds, under each ledger generation
+/// the effect has had, the earliest first: the test door
+/// `test_doors::booking_home_move::emergency_effect_ledger_rows` (review round 1 of #10220).
+#[cfg(oneiron_test_support)]
+pub(crate) fn effect_ledger_rows_for_doors(vault: &Vault, lane: &str) -> Result<Vec<[u8; 32]>> {
+    let txn = vault.store.custody_snapshot()?;
+    let mut rows = Vec::new();
+    for (_, item) in ITEM.scan(&vault.store, &txn)? {
+        let hash = match (lane, &item.picked) {
+            ("pick", Some(picked)) => picked.content_hash,
+            ("pick", None) => continue,
+            _ => item.plan.content_hash,
+        };
+        rows.extend(
+            ledger_records(vault, &txn, &item, lane, hash)?
+                .into_iter()
+                .map(|record| record.id),
+        );
+    }
+    Ok(rows)
 }
 
 impl HomeTable for EmergencyItemRows {
