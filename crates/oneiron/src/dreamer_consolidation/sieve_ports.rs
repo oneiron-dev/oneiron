@@ -563,12 +563,17 @@ fn slice_request(
 }
 
 /// `step` asked once more with prompt lookup off when its reply failed the
-/// JSON parse (the lead, 21 Nov 11:5x): the house server's lookup draft can
-/// break a reply's JSON where the same request without it parses. It runs
+/// JSON parse (the lead, 21 Nov 11:5x): a reply re-drawn without lookup's
+/// proposals can parse where the first did not (L06_20k, GPU run 5). It runs
 /// before the refused slice's normal Retry park. The retry's params, so its
 /// request hash, differ: it is a durable step of its own, a new call and
 /// never a replay of the refused reply (a refused reply is never memoized),
 /// and it takes the slice's place with the refused reply's spend to charge.
+/// It goes out whichever rung answered: the sealed request's locality is
+/// its ladder's widest route, and a seat whose own server comes before a
+/// hosted rung seals as a third party's while its own server answers. A
+/// hosted rung's wire drops the switch, so there the retry is the same
+/// request sent again at once, ahead of the Retry park that asks it later.
 /// A cut reply, a contract or citation fault, any other outcome, or a retry
 /// request that cannot be built leaves `step` as it was.
 async fn retry_without_prompt_lookup(
