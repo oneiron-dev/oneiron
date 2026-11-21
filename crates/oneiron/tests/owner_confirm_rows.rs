@@ -2,7 +2,8 @@
 //!
 //! The table names each verb the shared confirm gates, each row's proof
 //! matches its verb row's `host_door_proof`, and only the hold keeps until
-//! used. Only one-way acts but sign take the confirm: erase, vault delete
+//! used. Beside the one-way verbs, the table holds the owner's resume of
+//! paused turn programs, by ruling. Only one-way acts but sign take the confirm: erase, vault delete
 //! and the protected-ref rewrite or delete. No verb row has the last class
 //! (a protected-ref push asks through the origin's own floor).
 //!
@@ -25,13 +26,17 @@ fn the_confirm_table_names_every_owner_confirmed_verb() {
             confirmed.insert(row.0);
         }
     }
+    // The owner's resume of paused turn programs is no one-way act, but goes
+    // through the sheet by ruling (ASK TURNPROGRAM-PAUSED-ARMINGS-OWNER-VERBS
+    // = A, the lead 21 Nov 10:01).
+    confirmed.insert("vault.turn_programs.resume");
     let mut table: BTreeSet<&str> = BTreeSet::new();
     for row in &OWNER_CONFIRM_ROWS {
         table.insert(row.verb);
     }
     assert_eq!(
         table, confirmed,
-        "the table names every owner-confirmed verb"
+        "the table names every owner-confirmed verb and the ruled resume of paused programs"
     );
     let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../scripts/sdk/verbs");
     for row in &OWNER_CONFIRM_ROWS {

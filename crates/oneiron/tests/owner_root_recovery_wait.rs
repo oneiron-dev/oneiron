@@ -97,8 +97,8 @@ use oneiron::test_doors::owner_key_release::release_owner_keys;
 use oneiron::test_doors::root_recovery::{recover_owner_root_waiting, released_authority_seed};
 use oneiron::test_support::bind_host_owner;
 use oneiron::world_keys::{
-    NoRecoveryBox, RecoveryAuthoritySigner, RecoveryBoxCanceller, RecoveryBoxHold, RecoveryPreset,
-    RecoveryRootSeed,
+    NoRecoveryBox, RecoveryAuthoritySigner, RecoveryBoxCanceller, RecoveryBoxHold,
+    RecoveryBoxRelease, RecoveryPreset, RecoveryRootSeed,
 };
 use oneiron::{
     EdgeActorClass, EntityId, ErrorKind, HostingPrivacyPosture, TimeRange, Vault, VaultConfig,
@@ -2659,13 +2659,13 @@ fn a_retry_after_a_cancelled_hold_keeps_its_seed_and_lands() {
 /// `opened` gives the root's authority key out at `opened` plus the last
 /// reported wait, or 24 hours before any report. With `fail_report`, a
 /// report answers `Err`. It records each Cancel with who cancelled and the
-/// receipt it names; the first Cancel voids the pending release, so a later
+/// release it names; the first Cancel voids the pending release, so a later
 /// one finds nothing pending.
 #[derive(Default)]
 struct WaitingBox {
     reports: RefCell<Vec<Duration>>,
     fail_report: bool,
-    cancels: RefCell<Vec<(RecoveryBoxCanceller, Option<u64>)>>,
+    cancels: RefCell<Vec<(RecoveryBoxCanceller, Option<RecoveryBoxRelease>)>>,
 }
 
 impl RecoveryBoxHold for WaitingBox {
@@ -2686,10 +2686,10 @@ impl RecoveryBoxHold for WaitingBox {
     fn cancel_pending_box_release(
         &self,
         cancelled_by: &RecoveryBoxCanceller,
-        release_receipt: Option<u64>,
+        release: Option<RecoveryBoxRelease>,
     ) -> oneiron::Result<bool> {
         let mut cancels = self.cancels.borrow_mut();
-        cancels.push((*cancelled_by, release_receipt));
+        cancels.push((*cancelled_by, release));
         Ok(cancels.len() == 1)
     }
 }
@@ -2873,6 +2873,19 @@ const CANCEL_PROOF_NOT_VALID: &str = "the cancel's signature does not verify for
 const CANCEL_PROOF_STALE: &str =
     "the cancel was signed more than five minutes from this node's clock";
 
+/// The pending release named by its receipt alone, as a device that read no
+/// start names it.
+fn receipt_only(receipt: u64) -> Option<RecoveryBoxRelease> {
+    Some(RecoveryBoxRelease {
+        receipt,
+        started_at_ms: None,
+    })
+}
+
+/// The start of the box's pending release in unix milliseconds, as its
+/// recovery-started act gives it: one second after T0.
+const RELEASE_STARTED_AT_MS: u64 = (T0 + 1) * 1000;
+
 /// `key`'s Cancel of the box's pending release for `person`, signed by hand
 /// over the door's transcript for `vault_id`: an owner device install of its
 /// own.
@@ -2881,13 +2894,13 @@ fn signed_cancel(
     key: &SigningKey,
     person: EntityId,
     issued_at: u64,
-    release_receipt: Option<u64>,
+    release: Option<RecoveryBoxRelease>,
 ) -> RecoveryBoxCancelProof {
     let mut proof = RecoveryBoxCancelProof {
         person,
         key: key.verifying_key().to_bytes(),
         issued_at,
-        release_receipt,
+        release,
         signature: Vec::new(),
     };
     proof.signature = key.sign(&proof.transcript(vault_id)).to_bytes().to_vec();
@@ -2910,7 +2923,7 @@ fn an_owner_devices_cancel_during_the_box_wait_voids_the_release_and_names_them(
 
     let proof = fixture
         .vault
-        .sign_recovery_box_cancel_as(&fixture.authority(), Some(7))
+        .sign_recovery_box_cancel_as(&fixture.authority(), receipt_only(7))
         .expect("the device signs its cancel");
     assert_eq!(proof.person, fixture.person, "the cancel names the owner");
     assert_eq!(
@@ -2922,7 +2935,7 @@ fn an_owner_devices_cancel_during_the_box_wait_voids_the_release_and_names_them(
         "signed on this clock: {}",
         proof.issued_at
     );
-    assert_eq!(proof.release_receipt, Some(7));
+    assert_eq!(proof.release, receipt_only(7));
 
     fixture.at(T0 + 60);
     let cancelled = fixture
@@ -2937,7 +2950,7 @@ fn an_owner_devices_cancel_during_the_box_wait_voids_the_release_and_names_them(
                 owner: fixture.person,
                 key: enrolled.public_key,
             },
-            Some(7),
+            receipt_only(7),
         )],
         "the box is asked once, naming who cancelled and the release"
     );
@@ -2969,7 +2982,13 @@ fn every_owner_of_the_vault_cancels_the_box_wait_with_their_own_key() {
             .expect("the co-Owner cancels"),
         "the co-Owner's cancel voids the pending release"
     );
-    let first_owners = signed_cancel(&co.vault_id, &first_key, co.first_owner, T0, Some(3));
+    let first_owners = signed_cancel(
+        &co.vault_id,
+        &first_key,
+        co.first_owner,
+        T0,
+        receipt_only(3),
+    );
     co.vault
         .cancel_box_recovery_as(&co.first_owner_authority(), &first_owners, &recovery_box)
         .expect("the first owner cancels");
@@ -2988,7 +3007,7 @@ fn every_owner_of_the_vault_cancels_the_box_wait_with_their_own_key() {
                     owner: co.first_owner,
                     key: first_key.verifying_key().to_bytes(),
                 },
-                Some(3),
+                receipt_only(3),
             ),
         ],
         "each cancel names its owner and key"
@@ -3066,20 +3085,153 @@ fn a_stale_or_altered_cancel_never_reaches_the_box() {
         &keeper,
         fixture.person,
         T0 + 400,
-        Some(7),
+        receipt_only(7),
     );
     assert_refused(&node(&ahead), CANCEL_PROOF_STALE);
-    let mut altered = signed_cancel(&fixture.vault_id, &keeper, fixture.person, T0, Some(7));
-    altered.release_receipt = Some(8);
+    let mut altered = signed_cancel(
+        &fixture.vault_id,
+        &keeper,
+        fixture.person,
+        T0,
+        receipt_only(7),
+    );
+    altered.release = receipt_only(8);
     assert_refused(&node(&altered), CANCEL_PROOF_NOT_VALID);
-    let other_vault = signed_cancel(&[9; 32], &keeper, fixture.person, T0, Some(7));
+    let other_vault = signed_cancel(&[9; 32], &keeper, fixture.person, T0, receipt_only(7));
     assert_refused(&node(&other_vault), CANCEL_PROOF_NOT_VALID);
-    let behind = signed_cancel(&fixture.vault_id, &keeper, fixture.person, T0, Some(7));
+    let behind = signed_cancel(
+        &fixture.vault_id,
+        &keeper,
+        fixture.person,
+        T0,
+        receipt_only(7),
+    );
     fixture.at(T0 + 400);
     assert_refused(&node(&behind), CANCEL_PROOF_STALE);
     assert!(
         recovery_box.cancels.borrow().is_empty(),
         "nothing reached the box"
+    );
+}
+
+/// A Cancel names the release it stops by its receipt and its start
+/// ([RECOVERY-BOX-CANCEL-RELEASE-STARTED-AT]): a control-plane snapshot
+/// restore gives receipts out again, so the box needs both to void only that
+/// release. The device signs both, the node hands both to the box as signed,
+/// and a start changed or dropped after signing never reaches the box.
+#[test]
+fn a_cancel_names_its_release_by_receipt_and_start_and_the_box_gets_both() {
+    let fixture = fixture();
+    let enrolled = fixture
+        .vault
+        .enrol_device_owner_signing_key(&fixture.authority(), &fixture.issuer)
+        .expect("this device's owner key enrols");
+    let recovery_box = WaitingBox::default();
+    let release = RecoveryBoxRelease {
+        receipt: 7,
+        started_at_ms: Some(RELEASE_STARTED_AT_MS),
+    };
+
+    let proof = fixture
+        .vault
+        .sign_recovery_box_cancel_as(&fixture.authority(), Some(release))
+        .expect("the device signs its cancel");
+    assert_eq!(
+        proof.release,
+        Some(release),
+        "the cancel names the receipt and the start"
+    );
+
+    let mut later_start = proof.clone();
+    later_start.release = Some(RecoveryBoxRelease {
+        started_at_ms: Some(RELEASE_STARTED_AT_MS + 1),
+        ..release
+    });
+    let mut start_dropped = proof.clone();
+    start_dropped.release = receipt_only(7);
+    for altered in [&later_start, &start_dropped] {
+        let error = fixture
+            .vault
+            .cancel_box_recovery_as(&fixture.authority(), altered, &recovery_box)
+            .expect_err("a start changed after signing never verifies");
+        assert_refused(&error, CANCEL_PROOF_NOT_VALID);
+    }
+    assert!(
+        recovery_box.cancels.borrow().is_empty(),
+        "nothing reached the box"
+    );
+
+    assert!(
+        fixture
+            .vault
+            .cancel_box_recovery_as(&fixture.authority(), &proof, &recovery_box)
+            .expect("the node takes the cancel"),
+        "the box cancelled the release"
+    );
+    assert_eq!(
+        *recovery_box.cancels.borrow(),
+        vec![(
+            RecoveryBoxCanceller {
+                owner: fixture.person,
+                key: enrolled.public_key,
+            },
+            Some(release),
+        )],
+        "the box is asked once, with the receipt and the start as signed"
+    );
+}
+
+/// A Cancel that names no start signs the bytes a box Cancel signed before
+/// starts were named, so an owner device that reads no start still cancels
+/// at a node that knows them; a start adds its own tag and eight bytes.
+/// Each layout, built by hand.
+#[test]
+fn a_cancel_without_a_start_signs_the_bytes_it_signed_before() {
+    let fixture = fixture();
+    let key = [6_u8; 32];
+    let issued_at = T0 + 2;
+    let proof = |release: Option<RecoveryBoxRelease>| RecoveryBoxCancelProof {
+        person: fixture.person,
+        key,
+        issued_at,
+        release,
+        signature: Vec::new(),
+    };
+    let head = |tag: u8| {
+        let mut bytes = b"oneiron/recovery-box-cancel/v1".to_vec();
+        bytes.extend_from_slice(&fixture.vault_id);
+        bytes.extend_from_slice(fixture.person.as_bytes());
+        bytes.extend_from_slice(&key);
+        bytes.extend_from_slice(&issued_at.to_be_bytes());
+        bytes.push(tag);
+        bytes
+    };
+
+    let mut none = head(0);
+    none.extend_from_slice(&[0; 8]);
+    assert_eq!(
+        proof(None).transcript(&fixture.vault_id),
+        none,
+        "no release: tag 0 and eight zero bytes"
+    );
+    let mut receipt = head(1);
+    receipt.extend_from_slice(&7_u64.to_be_bytes());
+    assert_eq!(
+        proof(receipt_only(7)).transcript(&fixture.vault_id),
+        receipt,
+        "a receipt alone: tag 1 and the receipt, the bytes signed before starts"
+    );
+    let mut both = head(2);
+    both.extend_from_slice(&7_u64.to_be_bytes());
+    both.extend_from_slice(&RELEASE_STARTED_AT_MS.to_be_bytes());
+    assert_eq!(
+        proof(Some(RecoveryBoxRelease {
+            receipt: 7,
+            started_at_ms: Some(RELEASE_STARTED_AT_MS),
+        }))
+        .transcript(&fixture.vault_id),
+        both,
+        "a receipt with its start: tag 2, the receipt, then the start"
     );
 }
 
