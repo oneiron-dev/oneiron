@@ -134,14 +134,16 @@ impl Vault {
     /// `assertion` (the passkey's assertion envelope over its challenge) as
     /// its one signature. The entry must be a passkey's Cancel for this
     /// vault in its one encoding; its passkey must still be a live passkey
-    /// of the owner `authority` proves now, past its last sequence, and its
-    /// hold still live. It lands only when the fold counts it, and is marked
-    /// for the live mirror and announced as the device door's answer is.
+    /// of the owner `authority` proves now, at the next sequence prepare
+    /// named, and its hold still live. It lands only when the fold counts
+    /// it, and is marked for the live mirror and announced as the device
+    /// door's answer is.
     /// Answers the Cancel's entry hash.
     ///
     /// # Errors
     /// [`crate::error::RecordError::InvalidAuthorityLogBody`] for an entry
-    /// that is not such a Cancel, and for a passkey that signed a later
+    /// that is not such a Cancel, for one at a sequence above the passkey's
+    /// next (none prepare built), and for a passkey that signed a later
     /// entry since prepare; [`crate::error::RecordError::AuthorityRefused`]
     /// for an agent's act, a hold that is no longer live, a key that is not
     /// a live passkey of the actor's, and a Cancel the fold does not count;
@@ -168,8 +170,17 @@ impl Vault {
         }
         let passkey = entry.signer_key().clone();
         self.refuse_passkey_cancel_in_txn(&txn, &fold, actor, hold, &passkey)?;
-        if entry.seq < next_sequence(&fold, &passkey)? {
+        let next = next_sequence(&fold, &passkey)?;
+        if entry.seq < next {
             return Err(not_valid(CANCEL_STALE));
+        }
+        // Prepare names the passkey's next sequence, which only grows: an
+        // entry above it is none prepare built. Landed, the fold would count
+        // it and move the passkey's next sequence to its own, at `u64::MAX`
+        // past every one it could sign (review round 2 of #9857, P1; as
+        // `land_owner_key_enrollment_as` refuses it).
+        if entry.seq > next {
+            return Err(not_valid(CANCEL_NOT_PREPARED));
         }
         entry.signer.signature = assertion;
         let hash = self.put_recovery_hold_answer_in_txn(&mut txn, entry)?;
