@@ -502,7 +502,8 @@ pub(crate) fn outranking_wake_row_in_txn(
         return Ok(None);
     }
     // A row of an actor erased here is answered by no row: it leaves the
-    // window (`scrub_turn_programs`).
+    // window (`scrub_turn_programs`), and the wake it stands for goes on its
+    // own machine with the actor's erase there.
     if vault.carrier_actor_erased_in_txn(txn, &actor)? {
         return Ok(None);
     }

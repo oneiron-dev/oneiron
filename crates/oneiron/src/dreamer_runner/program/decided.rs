@@ -15,11 +15,14 @@ use crate::error::Result;
 use oneiron_records::dreamer_runner::program::replica::encode;
 
 /// Whether `actor` is erased here (FIX TURNPROGRAM-ERASE-KEEPS-DECIDED). This
-/// machine keeps no decision of such an actor's wake and writes no decision
-/// row for one: the erase deleted what was kept, the merge refuses a row
-/// that names the actor, and the scrub takes such rows out of the windows.
-/// A decision whose actor this machine never learned (`None`) is no erased
-/// actor's by anything it holds, and is taken as before.
+/// machine writes no decision row for such an actor and keeps no decision
+/// from a row that names it: the merge refuses the row, and the scrub takes
+/// such rows out of the windows. What it kept before, the erase's scrub
+/// deleted. A batch delete marks its actor erased and runs no scrub
+/// (`mark_torn_actor_row_in_txn`): a decision kept under that actor stays
+/// with its actor, as the actor's other rows here do, and is written into no
+/// window. A decision whose actor this machine never learned (`None`) is no
+/// erased actor's by anything it holds, and is taken as before.
 pub(super) fn erased_here_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -84,6 +87,12 @@ pub(super) fn decision_actor_in_txn(
 /// under the proven actor, since a refusal would leave a live actor's wake
 /// owed here for a second decision. A row that names no actor is refused for
 /// no erase: nothing ties it to one.
+///
+/// Where no wake owed here proves it, the actor a row names is the row's
+/// word, as its admission is: a machine that does not owe the wake holds
+/// nothing to check either against. No writer names another actor than its
+/// wake's ([`turn_decided_rows_in_txn`], [`admitted_row_in_txn`],
+/// `retraction::outranking_wake_row_in_txn`).
 pub(super) fn consume_decided_wake_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -118,6 +127,9 @@ pub(super) fn consume_decided_wake_in_txn(
             // A decision first kept here: what its row says, and nothing an
             // earlier decision under the key left.
             (RowMerge::Written, None) => named,
+            // A decision kept before keeps its actor, also one a batch
+            // delete has since marked erased with no scrub: cleared, the
+            // decision would go into the windows again, under no actor.
             (_, None) => super::index::decided_actor_in_txn(vault, &*txn, key)?.or(named),
         };
         super::index::index_decided_in_txn(vault, txn, key, actor)?;

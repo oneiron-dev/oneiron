@@ -159,8 +159,10 @@ pub(crate) fn erase_turn_program_actor_in_txn(
     #[cfg(feature = "sync")]
     super::retraction::erase_actor_in_txn(vault, txn, actor)?;
     // And each decision another machine made of one of its wakes, with the
-    // actor kept beside it (FIX TURNPROGRAM-ERASE-KEEPS-DECIDED). No row of
-    // the actor brings one back: the merge refuses them all.
+    // actor kept beside it (FIX TURNPROGRAM-ERASE-KEEPS-DECIDED). No row
+    // that names the actor brings one back: its merge refuses it
+    // (`decided`). A decision row that names no actor is kept as before,
+    // under none.
     #[cfg(feature = "sync")]
     super::index::erase_actor_decisions_in_txn(vault, txn, actor)?;
     scrub_actor_admission_instruments_in_txn(vault, txn, actor)?;
