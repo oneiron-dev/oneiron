@@ -226,6 +226,9 @@ impl ConsolidationExecutor<'_> {
             Ok(PartitionRun::BudgetRefused { reason, refusal }) => {
                 Ok(charges.fail_refused(&reason, refusal))
             }
+            // A window refusal ends the try Failed with its text, once, with
+            // what it already spent (Engine 21 Nov 07:38).
+            Ok(PartitionRun::WindowRefused { reason }) => Ok(charges.fail_for(&reason)),
             // A spent model seat refused a step: the try parks on the seat
             // with what it already spent (SEAT-PARK-MODEL-STEP-PATH).
             Ok(PartitionRun::SeatRefused {

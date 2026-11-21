@@ -115,6 +115,7 @@ pub mod device_succession_fold;
 pub mod disclosure_word_sources;
 pub mod do_not_contact_subject_reads;
 pub mod dreamer_attempt_binding;
+pub mod dreamer_context_refusal;
 pub mod dreamer_exclusion_forgets;
 pub mod dreamer_extraction_room;
 pub mod dreamer_partition_window;

@@ -530,6 +530,14 @@ pub async fn run_free_time_for_human(
             return Ok(charges.end_on_step_error(&other.to_string(), &other));
         }
         Err(other) => {
+            // A window refusal ends the try Failed, once, settling the
+            // refused call's paid usage from the tally (Engine 21 Nov 07:38).
+            if crate::dreamer_wake::step_refuses_window(&other) {
+                if let DurableStepError::SpentLlm { usage, .. } = &other {
+                    charges.record_usage(usage);
+                }
+                return Ok(charges.end_on_step_error(&other.to_string(), &other));
+            }
             // A spent model seat refused the step: the try parks on that seat
             // (SEAT-PARK-MODEL-STEP-PATH).
             if let Some((seat, reset_at_s)) =
