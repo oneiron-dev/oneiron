@@ -70,6 +70,23 @@ pub fn plant_undecodable_row(vault: &Vault, key: &str, scope: SettingScope) -> R
     crate::setting::put_stored_bytes(vault, key, SettingMode::Value, scope, &[0xc1, 0xc1])
 }
 
+/// What a fresh emergency reschedule plan of `proposals` live replacement times meets under the
+/// owner's proposal count and floor in force: `Err` with the refusal's words where it refuses (row
+/// SETTING-PROJECTED-ROW-REFUSING-HOOKS, SETTING-PROJECTED-EMERGENCY-PAIR = A).
+///
+/// # Errors
+///
+/// Storage errors.
+#[cfg(feature = "test-support")]
+pub fn emergency_plan_admission(
+    vault: &Vault,
+    proposals: usize,
+) -> Result<std::result::Result<(), String>> {
+    let policy =
+        crate::booking::emergency_reschedule::setting_keys::emergency_proposal_policy(vault)?;
+    Ok(policy.admit(proposals))
+}
+
 /// Makes each of `requests` as the owner through `Vault::set_setting_in_txn`, all in one write,
 /// then fails that write when `fail` is set: the changes commit together or not at all. Once the
 /// write commits, it runs the changes' after-commit hooks, as every such caller does.

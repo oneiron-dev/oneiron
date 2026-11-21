@@ -37,6 +37,16 @@
 //!   its system;
 //! - two rows of one act, each refused against its own row, raise a notice each.
 //!
+//! PR 3 of the row, the booking pair (SETTING-PROJECTED-EMERGENCY-PAIR = A: signed values land
+//! everywhere, a fresh plan refuses and names the cause, and the notice offers both values):
+//! - the other machine's count lands here though this install's hook refuses it against the
+//!   floor, a fresh plan refuses and names the floor above the count, and the notice leads with
+//!   the owner's words and offers both values in one tap; a later pass lands nothing again;
+//! - the other machine lands the floor the same way and finds the same notice;
+//! - the owner's tap, edited, settles the pair in one act, and a plan goes out again;
+//! - an ordinary change that ends the conflict ends the notice's tap, though the refused act
+//!   stands as it was.
+//!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test setting_refusal_notice`.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
@@ -54,7 +64,7 @@ use oneiron::task_verb::sdk::invoke;
 #[cfg(feature = "sync")]
 use oneiron::test_doors::setting::land_notification_copy_without_receipts;
 use oneiron::test_doors::setting::{
-    EnrolledMachine, SettingFrontier, SlotName, enroll_machine_with_key,
+    EnrolledMachine, SettingFrontier, SlotName, emergency_plan_admission, enroll_machine_with_key,
     forget_projected_setting_rows, forget_setting_projection_records, land_setting_act_from,
     land_setting_batch_from, set_setting_as_engine, setting_changes, setting_frontier_of,
     setting_slot_heads,
@@ -1060,4 +1070,185 @@ fn two_rows_of_one_act_refused_each_against_its_own_row_raise_a_notice_each() {
             "{system}: {notices:#?}"
         );
     }
+}
+
+/// The booking pair set on two machines at once (SETTING-PROJECTED-EMERGENCY-PAIR = A): the
+/// owner sets the count to 3 on this install, the other machine reads it and lowers it to 2, and
+/// the owner raises the floor to 3 here before that act arrives. This install's hook refuses the
+/// other machine's count: the floor of 3 above it. The owner's floor act.
+fn emergency_pair_set_at_once(fx: &Fixture) -> AuthorityEntryHash {
+    fx.owner_sets(MAX_PROPOSALS, json!(3));
+    let frontier = setting_frontier_of(&fx.vault, &[vault_row(MAX_PROPOSALS)]).expect("frontier");
+    fx.owner_sets(MIN_PROPOSALS, json!(3));
+    let floor_act = the_head(fx, vault_row(MIN_PROPOSALS));
+    fx.desktop_sets(&frontier, MAX_PROPOSALS, json!(2));
+    floor_act
+}
+
+#[test]
+fn the_booking_pairs_count_lands_here_though_the_hook_refuses_it_and_a_fresh_plan_refuses() {
+    let fx = Fixture::rooted();
+    let floor_act = emergency_pair_set_at_once(&fx);
+    let count_act = the_head(&fx, vault_row(MAX_PROPOSALS));
+    assert_eq!(
+        fx.reads(MAX_PROPOSALS),
+        json!(2),
+        "the other machine's count lands here too"
+    );
+    assert_eq!(fx.reads(MIN_PROPOSALS), json!(3));
+    let refusal = emergency_plan_admission(&fx.vault, 2)
+        .expect("the policy read")
+        .expect_err("a fresh plan refuses");
+    assert!(
+        refusal.contains(
+            "emergency rescheduling is off: booking.emergency.min_proposals (3) is above \
+             booking.emergency.max_proposals (2)"
+        ),
+        "the plan names the floor above the count: {refusal:?}"
+    );
+
+    let notice = fx.the_notice();
+    let mut named = vec![entry_of(count_act), entry_of(floor_act)];
+    named.sort();
+    assert_eq!(named_refs(&notice), named, "the notice names both acts");
+    let words = words_of(&notice);
+    for phrase in [
+        "Emergency rescheduling is off: you set min 3 above max 2. Fix it?",
+        "Laptop applied your `booking.emergency.max_proposals` = 2, set on Desktop, though",
+        "It meets your `booking.emergency.min_proposals` = 3, set on Laptop",
+    ] {
+        assert!(words.contains(phrase), "{phrase:?} in {words:?}");
+    }
+    assert_eq!(
+        notice["actions"],
+        json!([{
+            "verb": "vault.settings.set",
+            "args": {
+                "key": MAX_PROPOSALS,
+                "item": null,
+                "scope": { "kind": "vault" },
+                "pin": false,
+                "value": 2,
+                "further": [{
+                    "key": MIN_PROPOSALS,
+                    "item": null,
+                    "scope": { "kind": "vault" },
+                    "pin": false,
+                    "value": 3,
+                }],
+            },
+        }]),
+        "one tap over both values as they stand here, which the owner may edit"
+    );
+
+    // A later pass reads nothing again, and adds no notice.
+    let changes = setting_changes(&fx.vault).expect("the change stream").len();
+    fx.vault.project_settings().expect("the pass");
+    assert_eq!(
+        setting_changes(&fx.vault).expect("the change stream").len(),
+        changes,
+        "the landed row is not projected again"
+    );
+    assert_eq!(fx.the_notice()["id"], notice["id"]);
+}
+
+#[test]
+fn the_other_machine_lands_the_booking_pairs_floor_and_finds_the_same_notice() {
+    let fx = Fixture::rooted();
+    emergency_pair_set_at_once(&fx);
+    let notice = fx.the_notice();
+
+    // This install as the other machine holds the pair: its own count of 2 landed, and the
+    // owner's floor of 3 arrives from the log. Its hook refuses the floor this time.
+    forget_projected_setting_rows(&fx.vault).expect("the rows forgotten");
+    set_setting_as_engine(
+        &fx.vault,
+        None,
+        SetSetting::vault_value(MAX_PROPOSALS, json!(2)),
+    )
+    .expect("the count as the other machine holds it");
+    fx.vault.project_settings().expect("the pass");
+    assert_eq!(fx.reads(MAX_PROPOSALS), json!(2));
+    assert_eq!(
+        fx.reads(MIN_PROPOSALS),
+        json!(3),
+        "the floor lands there too: the pair reads alike on both machines"
+    );
+
+    let same = fx.the_notice();
+    assert_eq!(
+        same["id"], notice["id"],
+        "one notice for the pair on every machine"
+    );
+    let args = &same["actions"][0]["args"];
+    assert_eq!(
+        (&args["key"], &args["value"]),
+        (&json!(MIN_PROPOSALS), &json!(3)),
+        "the tap there names the row it refused, as it holds it: {same:#?}"
+    );
+    assert_eq!(
+        (&args["further"][0]["key"], &args["further"][0]["value"]),
+        (&json!(MAX_PROPOSALS), &json!(2))
+    );
+}
+
+#[test]
+fn the_owners_tap_of_the_booking_pair_as_edited_settles_it_in_one_act() {
+    let fx = Fixture::rooted();
+    emergency_pair_set_at_once(&fx);
+    let tap = fx.the_notice()["actions"][0].clone();
+    assert_eq!(
+        tap["args"]["value"],
+        json!(2),
+        "the tap holds the count that landed here"
+    );
+
+    // The owner raises the count back to 3 in the tap and keeps the floor of 3.
+    let mut args = tap["args"].clone();
+    args["value"] = json!(3);
+    invoke(
+        &fx.as_owner(),
+        tap["verb"].as_str().expect("the verb"),
+        args,
+    )
+    .expect("the owner's tap");
+    assert_eq!(fx.reads(MAX_PROPOSALS), json!(3));
+    assert_eq!(fx.reads(MIN_PROPOSALS), json!(3));
+    assert_eq!(
+        the_head(&fx, vault_row(MAX_PROPOSALS)),
+        the_head(&fx, vault_row(MIN_PROPOSALS)),
+        "one act heads both rows, so every machine projects both"
+    );
+    assert_eq!(
+        emergency_plan_admission(&fx.vault, 3).expect("the policy read"),
+        Ok(()),
+        "a plan of three times goes out again"
+    );
+
+    fx.vault.project_settings().expect("the pass");
+    assert_eq!(
+        fx.the_notice()["actions"],
+        Value::Null,
+        "a refusal that no longer stands offers no tap"
+    );
+}
+
+#[test]
+fn an_ordinary_change_that_ends_the_booking_pairs_conflict_ends_its_tap() {
+    let fx = Fixture::rooted();
+    emergency_pair_set_at_once(&fx);
+    assert_eq!(fx.reads(MAX_PROPOSALS), json!(2));
+
+    // The owner lowers the floor to 2 through the key's own door: the count the other machine set
+    // is no longer under it, though that act stands as it was here.
+    fx.owner_sets(MIN_PROPOSALS, json!(2));
+    assert_eq!(
+        emergency_plan_admission(&fx.vault, 2).expect("the policy read"),
+        Ok(())
+    );
+    assert_eq!(
+        fx.the_notice()["actions"],
+        Value::Null,
+        "no tap once the rows no longer conflict"
+    );
 }
