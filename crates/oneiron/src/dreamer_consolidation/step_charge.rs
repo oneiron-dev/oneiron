@@ -96,6 +96,24 @@ impl StepChargeTally {
         )
     }
 
+    /// [`Self::end_on_step_error`] once the paid usage `error` carries (a
+    /// spent correction's or a failed fallback's) has joined the tally, so
+    /// the try's end settles it beside its receipts instead of refunding it
+    /// (FIX 11554), a window refusal after a paid first reply among them:
+    /// for a site whose earlier arms record no such usage.
+    pub(super) fn end_on_step_error_with_spend(
+        &mut self,
+        reason: &str,
+        error: &DurableStepError,
+    ) -> DreamerAttemptExecution {
+        if let DurableStepError::SpentLlm { usage, .. }
+        | DurableStepError::SpentFallback { usage, .. } = error
+        {
+            self.record_usage(usage);
+        }
+        self.end_on_step_error(reason, error)
+    }
+
     /// Parks on the spent model `seat` that refused a step, with `reason`
     /// and what the try already spent; the seat's available write resumes
     /// it (SEAT-PARK-MODEL-STEP-PATH).
@@ -524,20 +542,21 @@ pub(super) fn tally_slice_outcome(
 /// the run a slice already decided, in the finish loop's order:
 /// `Trapped` when any slice trapped, as that step already parked the
 /// attempt under its durable trap and the caller must never extract
-/// past it (FIX 12487 round 2); else, with no spend scope's refusal for
-/// good, `WindowRefused` when the provider refused a slice for its
-/// window, since a park or a rerun would resend that call (Engine 21 Nov
-/// 07:38), and `SeatRefused` when a spent model seat refused a slice, so
-/// the try waits on that seat instead of a Retry that a later pass
-/// would resume (and ask the seat again) before the seat's available
-/// write (review round 2 of #7340). `None` leaves the caller's own arm.
+/// past it (FIX 12487 round 2); else `BudgetRefused`, typed, when a spend
+/// scope refused a slice for good; else `WindowRefused` when the provider
+/// refused a slice for its window, since a park or a rerun would resend
+/// that call (Engine 21 Nov 07:38); else `SeatRefused` when a spent model
+/// seat refused a slice, so the try waits on that seat instead of a Retry
+/// that a later pass would resume (and ask the seat again) before the
+/// seat's available write (review round 2 of #7340). Each comes before the
+/// caller's own arm, a park or a checkpoint, which `None` leaves.
 pub(super) fn tally_extracted_outcomes(
     vault: &Vault,
     extracted: ExtractedPartition,
     charges: &mut StepChargeTally,
 ) -> Result<Option<PartitionRun>> {
     let mut trapped = false;
-    let mut budget_refused = false;
+    let mut budget_refused = None;
     let mut window_refused = None;
     let mut seat_refused = None;
     for SliceStep {
@@ -548,7 +567,9 @@ pub(super) fn tally_extracted_outcomes(
     {
         match tally_slice_outcome(vault, outcome, unsaved_usage, charges)? {
             SliceFate::Trapped => trapped = true,
-            SliceFate::BudgetRefused { .. } => budget_refused = true,
+            SliceFate::BudgetRefused { reason, refusal } => {
+                budget_refused.get_or_insert((reason, refusal));
+            }
             SliceFate::WindowRefused { reason } => {
                 window_refused.get_or_insert(reason);
             }
@@ -565,8 +586,8 @@ pub(super) fn tally_extracted_outcomes(
     if trapped {
         return Ok(Some(PartitionRun::Trapped));
     }
-    if budget_refused {
-        return Ok(None);
+    if let Some((reason, refusal)) = budget_refused {
+        return Ok(Some(PartitionRun::BudgetRefused { reason, refusal }));
     }
     if let Some(reason) = window_refused {
         return Ok(Some(PartitionRun::WindowRefused { reason }));

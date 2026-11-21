@@ -368,17 +368,19 @@ impl ConsolidationExecutor<'_> {
         if trapped {
             return Ok(PartitionRun::Trapped);
         }
-        // A window refusal fails before a seat park or checkpoint resends it (Engine 21 Nov 07:38).
-        if let (None, Some(reason)) = (&budget_refused, window_refused) {
+        // A refusal for good ends the try before a seat park, a checkpoint
+        // or a retry resends a call: a spend scope's first, then the
+        // provider's window refusal (Engine 21 Nov 07:38).
+        if let Some((reason, refusal)) = budget_refused {
+            return Ok(PartitionRun::BudgetRefused { reason, refusal });
+        }
+        if let Some(reason) = window_refused {
             return Ok(PartitionRun::WindowRefused { reason });
         }
         // A spent seat waits for its login or its reset, even once the pass
         // is out of time or stopped: a checkpoint would let a later pass ask
-        // the seat again before its available write. A spend scope's refusal
-        // for good still comes first (SEAT-PARK-MODEL-STEP-PATH).
-        if budget_refused.is_none()
-            && let Some((reason, seat, reset_at_s)) = seat_refused
-        {
+        // the seat again before its available write (SEAT-PARK-MODEL-STEP-PATH).
+        if let Some((reason, seat, reset_at_s)) = seat_refused {
             return Ok(PartitionRun::SeatRefused {
                 reason,
                 seat,
@@ -387,10 +389,6 @@ impl ConsolidationExecutor<'_> {
         }
         if checkpoint || ctx.deadline.expired() || ctx.cancel_requested() {
             return Ok(PartitionRun::Checkpoint);
-        }
-        // A refusal for good ends the try, before a reply a retry may fix.
-        if let Some((reason, refusal)) = budget_refused {
-            return Ok(PartitionRun::BudgetRefused { reason, refusal });
         }
         if let Some(reason) = refused {
             return Ok(PartitionRun::Refused { reason });

@@ -826,9 +826,9 @@ impl ConsolidationExecutor<'_> {
                             // account the prefix and park without
                             // finishing - the serial pass never reaches
                             // its commit. A slice that already decided
-                            // the try (a trap, a window refusal or a spent
-                            // seat's refusal) settles as the finish would
-                            // have settled it (review round 2 of #7340).
+                            // the try (a trap, a spend scope's or a window
+                            // refusal, a spent seat's) settles as the finish
+                            // would have settled it (review round 2 of #7340).
                             stages.close_model_run(run_started);
                             match super::super::step_charge::tally_extracted_outcomes(
                                 ctx.vault,

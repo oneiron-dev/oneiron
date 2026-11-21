@@ -359,13 +359,15 @@ impl ConsolidationExecutor<'_> {
                 {
                     charges.record_usage(usage);
                 }
-                return hand_back(leg, work, charges);
+                return hand_back(leg, work, charges)
+                    .map(|stop| stop.or_else(|| window_failed(&error, charges)));
             }
             Err(DurableStepError::Engine(error)) if charges.units == 0 => return Err(error),
             Err(error) => {
-                return Ok(Some(
-                    charges.end_on_step_error("sieve follower step failed", &error),
-                ));
+                return Ok(Some(charges.end_on_step_error_with_spend(
+                    "sieve follower step failed",
+                    &error,
+                )));
             }
         };
         let Ok(readings) = output::decode(&response, &labels, &candidates) else {
@@ -546,14 +548,33 @@ impl ConsolidationExecutor<'_> {
                 {
                     charges.record_usage(usage);
                 }
-                hand_back_owed(leg, charges)
+                hand_back_owed(leg, charges).map(|stop| match stop {
+                    Some(DreamerAttemptExecution::Completed { .. }) => {
+                        window_failed(&error, charges).or(stop)
+                    }
+                    stop => stop,
+                })
             }
             Err(DurableStepError::Engine(error)) if charges.units == 0 => Err(error),
-            Err(error) => Ok(Some(
-                charges.end_on_step_error("sieve follower keyframe step failed", &error),
-            )),
+            Err(error) => Ok(Some(charges.end_on_step_error_with_spend(
+                "sieve follower keyframe step failed",
+                &error,
+            ))),
         }
     }
+}
+
+/// The end of a try whose refused call's spans went back to their own
+/// rungs, once that hand-back has landed: a window refusal ends it `Failed`
+/// with its text and its spend, once, so it never reads as Completed or
+/// goes on (Engine 21 Nov 07:38). A suffix's hand-back set the fold its
+/// next suffix waits on, which the next follower try runs. `None` for a
+/// bare request refusal, which keeps its stop, as before.
+fn window_failed(
+    error: &DurableStepError,
+    charges: &StepChargeTally,
+) -> Option<DreamerAttemptExecution> {
+    crate::dreamer_wake::step_refuses_window(error).then(|| charges.fail_for(&error.to_string()))
 }
 
 /// Hands a refused suffix's spans back to their own rungs; the session goes

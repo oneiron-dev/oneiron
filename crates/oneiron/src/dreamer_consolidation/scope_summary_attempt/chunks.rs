@@ -69,7 +69,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         let result: Result<DreamerAttemptExecution> = async {
             'layouts: loop {
                 if ctx.deadline.expired() {
-                    return Ok(charges.checkpoint());
+                    return Ok(stop_or_fail(&charges, refusal.as_deref(), charges.checkpoint()));
                 }
                 let schema = output::session_schema();
                 let params = serde_json::to_vec(&(
@@ -168,7 +168,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 let mut replies = Vec::with_capacity(steps.len());
                 for (request, step_hash, labels) in steps {
                     if ctx.deadline.expired() {
-                        return Ok(charges.checkpoint());
+                        return Ok(stop_or_fail(&charges, refusal.as_deref(), charges.checkpoint()));
                     }
                     // Each page answers to the page contract inside its step.
                     let check_labels = labels.clone();
@@ -199,13 +199,14 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                         }
                         Err(DurableStepError::SpentFinalizeRefused { usage }) => {
                             charges.record_usage(&usage);
-                            return Ok(charges.checkpoint());
+                            return Ok(stop_or_fail(&charges, refusal.as_deref(), charges.checkpoint()));
                         }
-                        Err(DurableStepError::DeadlineHardCut) => return Ok(charges.checkpoint()),
+                        Err(DurableStepError::DeadlineHardCut) => {
+                            return Ok(stop_or_fail(&charges, refusal.as_deref(), charges.checkpoint()));
+                        }
                         Err(DurableStepError::FinalizeRefused) => {
-                            return Ok(
-                                charges.park_for("wake pass finalize window", DreamerParkCause::Checkpoint)
-                            );
+                            let stop = charges.park_for("wake pass finalize window", DreamerParkCause::Checkpoint);
+                            return Ok(stop_or_fail(&charges, refusal.as_deref(), stop));
                         }
                         Err(DurableStepError::Engine(error)) => return Ok(charges.park_on_error(&error)),
                         Err(other @ DurableStepError::SpentSchemaValidation { .. }) => {
@@ -240,7 +241,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                     }
                 }
                 if ctx.deadline.expired() {
-                    return Ok(charges.checkpoint());
+                    return Ok(stop_or_fail(&charges, refusal.as_deref(), charges.checkpoint()));
                 }
                 let composition = match output::assemble(replies) {
                     Ok(composition) => composition,
@@ -289,6 +290,24 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             ctx.note_spend_before_error(charges.units, &charges.step_bindings);
         }
         result
+    }
+}
+
+/// `stop`, the park a paged composition makes on its pass's deadline or
+/// finalize window, unless a window refusal brought the sitting to this
+/// layout: a resume starts again at the first size and resends that refused,
+/// unmemoized call, so the try ends Failed with the refusal and its spend
+/// instead, once (Engine 21 Nov 07:38).
+fn stop_or_fail(
+    charges: &StepChargeTally,
+    refusal: Option<&str>,
+    stop: DreamerAttemptExecution,
+) -> DreamerAttemptExecution {
+    match refusal {
+        Some(refusal) => charges.fail_for(&format!(
+            "{refusal}; the wake pass ended before a smaller page layout landed"
+        )),
+        None => stop,
     }
 }
 
