@@ -1731,6 +1731,148 @@ fn a_second_seat_s_cancelled_version_of_a_masked_write_in_flight_is_no_host_canc
     );
 }
 
+/// Registers the shared seat system name as a custody value, so an outbox
+/// row staged from now on keeps it as a custody handle while its key is
+/// still derived from the literal name.
+fn mask_seat_system(fixture: &Fixture, now: u64) {
+    fixture
+        .vault
+        .register_test_secret(
+            "seat-system-canary",
+            HOST_SEAT_SYSTEM.as_bytes(),
+            Vec::new(),
+            now,
+        )
+        .expect("the shared system name is a custody value");
+}
+
+/// Asserts that the staged outbox row of `uid` keeps the shared system as a
+/// custody handle.
+fn assert_staged_system_masked(fixture: &Fixture, uid: &str) {
+    let masked = oneiron::calendar::connectors::calendar_write_outbox_rows(&fixture.vault)
+        .expect("the outbox rows")
+        .into_iter()
+        .find(|row| row.uid == uid)
+        .expect("the writing seat's row is staged");
+    assert!(
+        masked.system != HOST_SEAT_SYSTEM && masked.system.contains("[secret sc"),
+        "FIXTURE: the stored row keeps the known system as a custody handle: {}",
+        masked.system
+    );
+}
+
+#[test]
+fn a_second_seat_s_tombstone_of_a_masked_cancelled_write_in_flight_is_no_host_cancel() {
+    // CAL-OUTBOX-SCAN-MASKED-SYSTEM-MISSES-ROW (review round 1 of #10020,
+    // P1-2): a feed the booking was not written to cancels it, and the
+    // engine writes the cancelled EVENT through the first seat; the answer
+    // is lost, so the write is still in flight. The shared system name is a
+    // custody value by then, so the stored outbox row keeps it as a custody
+    // handle while its key is still derived from the literal name. The
+    // provider keeps the cancel as a deleted resource, and the second seat's
+    // delta reports it gone. The feed's passport votes on the EVENT, so only
+    // the write in flight holds that tombstone back: the second seat must
+    // find the row by key, not by the readable strings, or the engine's own
+    // cancel refunds the deposit as the host's.
+    let fixture = Fixture::open(Some(two_hour_terms()));
+    fixture.enable_host_feed();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let second = seat.install_second_seat(&fixture.vault, "seat:host-second");
+    let (booked, _, _) = written_live_then_cancelled_elsewhere(
+        &fixture,
+        &seat,
+        b"second-seat-masked-tombstone",
+        "pi_second_seat_masked_tombstone",
+    );
+    mask_seat_system(&fixture, NOW + 130);
+    seat.write_with_lost_answer(&fixture.vault, booked.calendar.event_ref, NOW + 150);
+    assert_staged_system_masked(&fixture, &booked.calendar.uid);
+
+    second
+        .pull(
+            &fixture.vault,
+            &[SeatChange::tombstone(&booked.calendar.uid)],
+            NOW + 160,
+        )
+        .expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_second_seat_masked_tombstone"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "the second seat's tombstone of the masked cancelled write in flight moves no money"
+    );
+}
+
+#[test]
+fn a_second_seat_s_omission_of_a_masked_cancelled_write_in_flight_is_no_host_cancel() {
+    // CAL-OUTBOX-SCAN-MASKED-SYSTEM-MISSES-ROW: as above, but the booking is
+    // written only to the host's calendar, so the second seat's tombstone is
+    // held until a complete listing's omission settles it as the host's
+    // cancel. The second seat read the booking's resource before, so its
+    // complete listing can leave it out. While the masked cancelled write is
+    // in flight, that omission may be the engine's own cancel coming back
+    // too: it stays owed and settles no held tombstone.
+    let fixture = Fixture::open(Some(two_hour_terms()));
+    fixture.enable_host_feed();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let second = seat.install_second_seat(&fixture.vault, "seat:host-second");
+    let booked = written_only_booking(
+        &fixture,
+        &seat,
+        b"second-seat-masked-omission",
+        "pi_second_seat_masked_omission",
+    );
+    second
+        .pull(
+            &fixture.vault,
+            &[seat.stored_own_write(&booked.calendar.uid)],
+            NOW + 57,
+        )
+        .expect("seat pull");
+    assert!(
+        second.lists_member(&fixture.vault, &booked.calendar.uid),
+        "FIXTURE: the second seat's collection counts the booking's resource"
+    );
+    fixture
+        .cancel(&booked.cancel_token, NOW + 60)
+        .expect("the visitor cancels");
+    mask_seat_system(&fixture, NOW + 65);
+    seat.write_with_lost_answer(&fixture.vault, booked.calendar.event_ref, NOW + 70);
+    assert_staged_system_masked(&fixture, &booked.calendar.uid);
+
+    second
+        .pull(
+            &fixture.vault,
+            &[SeatChange::tombstone(&booked.calendar.uid)],
+            NOW + 80,
+        )
+        .expect("seat pull");
+    second
+        .pull(
+            &fixture.vault,
+            &[SeatChange::omitted(&booked.calendar.uid)],
+            NOW + 90,
+        )
+        .expect("seat pull");
+    assert_eq!(
+        cancel_statuses(
+            &fixture,
+            &booked.calendar.event_ref,
+            CalendarStatusBasis::ImportedCancel
+        ),
+        0,
+        "the second seat's omission of the masked cancelled write in flight is no host cancel"
+    );
+    assert_eq!(
+        state_of(&fixture, "pi_second_seat_masked_omission"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "the second seat's omission of the masked cancelled write in flight moves no money"
+    );
+}
+
 #[test]
 fn a_second_seat_s_host_cancel_below_the_first_seat_s_write_in_flight_refunds_at_once() {
     // Review round 2 of #10020: the owner's cancelled write never reaches

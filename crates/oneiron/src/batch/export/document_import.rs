@@ -1477,6 +1477,7 @@ pub(super) fn stamp_archived_birth<R: Read + Seek>(
     let birth = row
         .birth
         .renamed_refs(|row| renamed.get(&row).copied().unwrap_or(row));
+    let before = crate::provenance::birth::row_birth_in_txn(&vault.store, wtxn, id)?;
     match crate::provenance::birth::stamp_replicated_row_birth_in_txn(
         &vault.store,
         wtxn,
@@ -1485,8 +1486,14 @@ pub(super) fn stamp_archived_birth<R: Read + Seek>(
     ) {
         // READ-LINEAGE L1, as on sync (`stamp_birth_or_warn`): a row that
         // arrived with its birth reads under the inputs this vault holds
-        // (#9289 review 2 P2-4).
-        Ok(()) => crate::source_audience::raise_floors_in_txn(vault, wtxn, [*id]),
+        // (#9289 review 2 P2-4), and is sealed when its birth names an
+        // input this vault erased (#9289 Opus review 3 P2-4).
+        Ok(()) => crate::provenance::birth::raise_landed_birth_floor_in_txn(
+            vault,
+            wtxn,
+            id,
+            before.as_ref(),
+        ),
         Err(error @ (Error::InvalidConfig(_) | Error::InvariantViolation(_))) => {
             tracing::warn!(
                 entity = %id.to_hex(),

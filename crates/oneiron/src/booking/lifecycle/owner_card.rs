@@ -24,7 +24,10 @@
 //! ([`BOOKING_HELD_DEPOSIT_ITEM_PREFIX`]) until the deposit holds nothing.
 //! A live owner's kept booking handle opens the card on any day, after its
 //! row has left the same-day listing
-//! ([`booking_owner_card_row_of_handle`]).
+//! ([`booking_owner_card_row_of_handle`]). The card of a booking the visitor
+//! picked again from the owner's emergency cancel's proposals says where
+//! the return of the deposit from before that cancel stands
+//! ([`emergency_return`]).
 
 use std::collections::BTreeSet;
 
@@ -33,7 +36,9 @@ use serde::{Deserialize, Serialize};
 use super::CalendarCancellation;
 use super::authorship::counts_in_txn;
 use super::claim::read_booking_facts;
-use super::deposit::{held_deposit_in_txn, unattributed_cancel_sequence_in_txn};
+use super::deposit::{
+    emergency_return_in_txn, held_deposit_in_txn, unattributed_cancel_sequence_in_txn,
+};
 use super::occurrence::inclusive_occurrence;
 use super::storage::decode_claim_value;
 use super::types::{
@@ -52,8 +57,10 @@ use crate::inbox::view_values::{AgentInboxItemKind, AgentInboxParticipant, Inbox
 use crate::registry::ENTITY_TYPE_EVENT;
 use crate::{EntityId, Vault};
 
+mod emergency_return;
 mod held_deposit;
 
+pub use self::emergency_return::{BookingDepositReturned, BookingOwnerCardEmergencyReturn};
 pub use self::held_deposit::{
     BookingDepositHeld, BookingDepositHeldReason, BookingOwnerCardDeposit,
 };
@@ -104,6 +111,12 @@ pub struct BookingOwnerCard {
     /// booking with no deposit, or one that holds nothing now.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deposit: Option<BookingOwnerCardDeposit>,
+    /// On a booking the visitor picked again from the owner's emergency
+    /// cancel's proposals: no deposit is held, and the return of the deposit
+    /// from before that cancel stands pending or made (RULING
+    /// DEPOSIT-PICK-AFTER-EMERGENCY-CANCEL = A); `None` on every other card.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub emergency_return: Option<BookingOwnerCardEmergencyReturn>,
 }
 
 /// One door a booking card offers: the input of the owner's emergency door
@@ -431,6 +444,16 @@ fn card_in_txn(
         && calendar_cancel_reported_in_txn(vault, rtxn, event_ref);
     let deposit =
         held_deposit::deposit_note(&facts, held, cancel_reported, zone.as_deref(), now, reader);
+    // Only the visitor's pick of an emergency proposal confirms an
+    // emergency-cancelled booking again: confirmed, with the emergency
+    // cancel's mark on its deposit, the booking is that pick.
+    let emergency_return = if status == BookingStatus::Confirmed {
+        emergency_return_in_txn(vault, rtxn, event_ref)?.map(|returned| {
+            emergency_return::emergency_return_note(returned, facts.slot.start, zone.as_deref())
+        })
+    } else {
+        None
+    };
     let selected_hosts = facts
         .context
         .as_ref()
@@ -447,6 +470,7 @@ fn card_in_txn(
         recorded_at,
         offers,
         deposit,
+        emergency_return,
     };
     Ok(Some(CardRead {
         card,

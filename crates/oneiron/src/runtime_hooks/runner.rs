@@ -139,10 +139,11 @@ pub(crate) fn fact_bindings(
 
 /// The due watcher ticks and timer turn programs a fact-hook runner pass
 /// runs ahead of the housekeeping tick: the due rows of their two jobs alone,
-/// within one [`HOOK_RUNNER_TICK`], on the node that releases ticks (stage
-/// 5b-3). While a housekeeping pass holds the schedule's runner it runs
-/// nothing, and that pass runs them. Answers whether due rows may be left for
-/// the next pass, which then starts at once.
+/// within one [`HOOK_RUNNER_TICK`]; the ticks on the node that releases ticks
+/// (stage 5b-3), the timer programs on the machine that holds their armings.
+/// While a housekeeping pass holds the schedule's runner it runs nothing, and
+/// that pass runs them. Answers whether due rows may be left for the next
+/// pass, which then starts at once.
 fn run_due_ticks_and_timers(vault: &Vault) -> Result<bool> {
     let deadline =
         crate::store::housekeeping_schedule::HousekeepingBudget::within(HOOK_RUNNER_TICK)

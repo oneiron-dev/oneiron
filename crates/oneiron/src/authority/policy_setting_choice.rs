@@ -212,7 +212,9 @@ pub(super) fn apply_policy_setting(
 /// source's heads ([`birth_names_source_heads`]). Every row is judged against
 /// the state before the entry, and only then do they all land.
 /// `needs_proof_off_the_line` is the owner key's line's mark on the entry
-/// ([`super::owner_key_line`]), which marks no setting copy yet (FIX
+/// ([`super::owner_key_line`]): a copy outside a proving owner-key
+/// enrolment's line that a carrier other than the owner's machine put there
+/// unproven waits, as on parents that hold the key (FIX
 /// SETTING-COPY-OUTSIDE-OWNER-KEY-LINE).
 pub(super) fn apply_setting_copy(
     state: &mut FoldState,
@@ -349,8 +351,9 @@ fn birth_names_source_heads(state: &FoldState, row: &SettingCopyRow) -> Result<b
 /// act on its own target ([`SettingPackHead::target`]): his liveness and his proof are tested as
 /// for every setting act, and one that waits for his proof is in no frontier.
 /// `needs_proof_off_the_line` is the owner key's line's mark on the entry
-/// ([`super::owner_key_line`]), which marks no pack head yet, his yes included, as no setting
-/// copy (FIX SETTING-COPY-OUTSIDE-OWNER-KEY-LINE).
+/// ([`super::owner_key_line`]): a head outside a proving owner-key enrolment's line, his yes
+/// included, that a carrier other than the owner's machine put there unproven waits, as a
+/// setting copy does (FIX SETTING-COPY-OUTSIDE-OWNER-KEY-LINE).
 pub(super) fn apply_setting_pack_head(
     state: &mut FoldState,
     entry: &AuthorityLogEntry,
@@ -439,10 +442,12 @@ impl Vault {
 
     /// Records `act` as a signed `PolicySettingSet` in the write `txn` that
     /// changed the setting, best effort ([`super::carried_act`]): the
-    /// setting and the door's own record stand whatever this meets.
+    /// setting and the door's own record stand whatever this meets. It signs
+    /// on `ground`, or with no owner proof where that is `None`.
     pub(crate) fn record_policy_setting_op_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
+        ground: Option<&OwnerProofGround>,
         act: PolicySettingAct,
     ) -> Option<AuthorityEntryHash> {
         let PolicySettingAct {
@@ -451,7 +456,7 @@ impl Vault {
             prior,
             value,
         } = act;
-        self.record_carried_act_in_txn(txn, "policy setting", |machine| {
+        self.record_carried_act_in_txn(txn, "policy setting", ground, |machine| {
             AuthorityOp::PolicySettingSet(PolicySettingSet {
                 act,
                 machine,
@@ -472,7 +477,8 @@ impl Vault {
     /// effort: the act is the write, so whatever stops it (no live machine
     /// profile to carry it, a fold that does not count it, a storage fault)
     /// fails the change, and the savepoint it ran in is rolled back with it.
-    /// The entry's hash.
+    /// The entry's hash. It signs on `ground`, or with no owner proof
+    /// where that is `None`.
     ///
     /// # Errors
     ///
@@ -481,6 +487,7 @@ impl Vault {
     pub(crate) fn append_setting_slot_act_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
+        ground: Option<&OwnerProofGround>,
         act: SettingSlotAct,
     ) -> Result<AuthorityEntryHash> {
         let SettingSlotAct {
@@ -500,7 +507,7 @@ impl Vault {
                 .collect::<Result<Vec<_>>>()?
         };
         let carried_by = setting_act_of((owner, surface), rows)?;
-        self.append_carried_act_in_savepoint(txn, |machine| {
+        self.append_carried_act_in_savepoint(txn, ground, |machine| {
             AuthorityOp::PolicySettingSet(carried_by(machine))
         })
     }
@@ -534,7 +541,8 @@ impl Vault {
     /// copies, and the `seen` of its own target, read in `txn`. Not best
     /// effort here: whatever stops it fails the call, and its savepoint is
     /// rolled back; the carry keeps its rows on this install whatever this
-    /// meets. The entry's hash.
+    /// meets. The entry's hash. A copy is signed by the mover's install
+    /// key alone: it takes no ground.
     ///
     /// # Errors
     ///
@@ -557,7 +565,7 @@ impl Vault {
                 })
                 .collect::<Result<Vec<_>>>()?
         };
-        self.append_carried_act_in_savepoint(txn, |machine| {
+        self.append_carried_act_in_savepoint(txn, None, |machine| {
             AuthorityOp::SettingCopy(SettingCopy { machine, rows })
         })
     }
@@ -565,7 +573,8 @@ impl Vault {
     /// Appends `pack`'s head as one signed `SettingPackHead` in the pack door's write `txn`
     /// (stage 7c-3a): its version, the digest of its table, the keys held at their earlier
     /// accepted value, and the `seen` of the pack's target, read in `txn`. Not best effort here:
-    /// whatever stops it fails the call, and its savepoint is rolled back. The entry's hash.
+    /// whatever stops it fails the call, and its savepoint is rolled back. The entry's hash. A
+    /// head is the engine's statement, signed by this install's key alone: it takes no ground.
     ///
     /// # Errors
     ///
@@ -578,14 +587,15 @@ impl Vault {
         digest: [u8; 32],
         held: Vec<String>,
     ) -> Result<AuthorityEntryHash> {
-        self.append_pack_head_in_txn(txn, (pack, version, digest, held), None)
+        self.append_pack_head_in_txn(txn, None, (pack, version, digest, held), None)
     }
 
     /// Appends the owner `owner`'s yes to `pack`'s held defaults `accepted`, from `surface`, as
     /// one signed `SettingPackHead` with his act, in the yes's write `txn` (stage 7c-3c): the
     /// version and the digest of the table it names, the keys still held, and the `seen` of the
     /// yes's target ([`setting_pack_accept_target`]), read in `txn`. Not best effort: whatever
-    /// stops it fails the call, and its savepoint is rolled back. The entry's hash.
+    /// stops it fails the call, and its savepoint is rolled back. The entry's hash. The yes is
+    /// the owner's act: it signs on `ground`.
     ///
     /// # Errors
     ///
@@ -593,17 +603,20 @@ impl Vault {
     pub(crate) fn append_setting_pack_accept_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
+        ground: &OwnerProofGround,
         head: (&str, &str, [u8; 32], Vec<String>),
         (owner, surface): (EntityId, ActSurface),
         accepted: Vec<String>,
     ) -> Result<AuthorityEntryHash> {
-        self.append_pack_head_in_txn(txn, head, Some((owner, surface, accepted)))
+        self.append_pack_head_in_txn(txn, Some(ground), head, Some((owner, surface, accepted)))
     }
 
-    /// [`Self::append_setting_pack_head_in_txn`], and with `accept` the owner's yes.
+    /// [`Self::append_setting_pack_head_in_txn`], and with `accept` the owner's yes, which
+    /// signs on `ground`.
     fn append_pack_head_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
+        ground: Option<&OwnerProofGround>,
         (pack, version, digest, held): (&str, &str, [u8; 32], Vec<String>),
         accept: Option<(EntityId, ActSurface, Vec<String>)>,
     ) -> Result<AuthorityEntryHash> {
@@ -619,7 +632,7 @@ impl Vault {
             act: OwnerAct::by_owner(owner, OwnerActKind::PolicySetting, target, surface, seen),
             accepted,
         });
-        self.append_carried_act_in_savepoint(txn, |machine| {
+        self.append_carried_act_in_savepoint(txn, ground, |machine| {
             AuthorityOp::SettingPackHead(SettingPackHead {
                 machine,
                 pack: pack.to_owned(),

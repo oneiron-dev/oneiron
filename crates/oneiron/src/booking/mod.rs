@@ -100,7 +100,8 @@ pub use lifecycle::{
 };
 pub use lifecycle::{
     BOOKING_HELD_DEPOSIT_ITEM_PREFIX, BOOKING_OWNER_CARD_ITEM_PREFIX, BookingDepositHeld,
-    BookingDepositHeldReason, BookingOwnerCard, BookingOwnerCardDeposit, BookingOwnerCardOffer,
+    BookingDepositHeldReason, BookingDepositReturned, BookingOwnerCard, BookingOwnerCardDeposit,
+    BookingOwnerCardEmergencyReturn, BookingOwnerCardOffer,
 };
 pub use public_lens::{
     BookingPageLens, BookingPageModel, BookingPageModelError, BookingPagePresentation,

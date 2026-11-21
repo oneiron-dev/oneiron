@@ -288,6 +288,24 @@ pub(crate) fn erase_derived_policies_in_txn(
     DERIVED.delete(store, txn, row).map(drop)
 }
 
+/// Seals, in the write that erases `row`, the floor of each row that waits
+/// on it (`floor_state::seal_rows_awaiting_in_txn`; #9289 Opus review 3
+/// P1-A). Each delete door runs it before the record's body and edges go:
+/// the physical purge, the soft erase (but a soft tombstone replayed over a
+/// soft scrub already applied here), and the first application of a peer's
+/// tombstone of a row this vault never held (#10108 reviews).
+///
+/// # Errors
+///
+/// Storage failures.
+pub(crate) fn seal_floors_awaiting_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    row: &EntityId,
+) -> Result<()> {
+    floor_state::seal_rows_awaiting_in_txn(store, txn, row)
+}
+
 /// The policy the row `record` was born under, if it was bound.
 pub(crate) fn binding_in(
     vault: &Vault,
