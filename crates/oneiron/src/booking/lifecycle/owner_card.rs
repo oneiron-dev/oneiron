@@ -117,17 +117,17 @@ pub struct BookingOwnerCard {
     /// booking with no deposit, or one that holds nothing now.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deposit: Option<BookingOwnerCardDeposit>,
+    /// The latest refund of the booking's deposit that an owner marked
+    /// refunded outside Stripe, on any card of the booking; `None` while no
+    /// owner marked one (FIX [BK-DEPOSIT-FAILED-REFUND-MARK-PAID]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refund_marked_outside: Option<BookingOwnerCardRefundMarkedOutside>,
     /// On a booking the visitor picked again from the owner's emergency
     /// cancel's proposals: no deposit is held, and the return of the deposit
     /// from before that cancel stands pending or made (RULING
     /// DEPOSIT-PICK-AFTER-EMERGENCY-CANCEL = A); `None` on every other card.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub emergency_return: Option<BookingOwnerCardEmergencyReturn>,
-    /// The latest refund of the booking's deposit that an owner marked
-    /// refunded outside Stripe, on any card of the booking; `None` while no
-    /// owner marked one (FIX [BK-DEPOSIT-FAILED-REFUND-MARK-PAID]).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub refund_marked_outside: Option<BookingOwnerCardRefundMarkedOutside>,
 }
 
 /// One door a booking card offers: the input of the owner's emergency door
@@ -510,8 +510,8 @@ fn card_in_txn(
         recorded_at,
         offers,
         deposit,
-        emergency_return,
         refund_marked_outside,
+        emergency_return,
     };
     Ok(Some(CardRead {
         card,
