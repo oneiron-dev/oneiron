@@ -11,7 +11,7 @@ use super::world_key_doors::{
 };
 use super::world_kit_gate::publish_root;
 use super::world_privacy::{settings, world_row};
-use super::world_reissue::sync;
+use super::world_reissue::{profiled, sync};
 use super::*;
 use crate::store::GateDecisionId;
 use crate::world_keys::{RecoveryRootSeed, machine_secret};
@@ -111,6 +111,11 @@ fn a_hosted_vaults_kit_restores_and_the_hosts_material_opens_nothing() {
     let world = world_row(&host);
     let (root, seed, id, first_machine) = {
         let first = fresh_install_with(&host, hosted());
+        // The host's enrolment joins the restored install, so the install
+        // carries its owner key's enrolment (FIX 2222; REVIEW-9674 P1). The
+        // host holds no owner key, so it files the install unanswered: its
+        // "yours" would wait for an owner key's proof.
+        profiled(&host, &first.vault, MachineRole::Unanswered);
         first
             .vault
             .enrol_device_owner_signing_key(
@@ -124,10 +129,6 @@ fn a_hosted_vaults_kit_restores_and_the_hosts_material_opens_nothing() {
         first
             .vault
             .activate_owner_root(&first.owner, prepared, &BTreeSet::new())
-            .unwrap();
-        first
-            .vault
-            .join_restored_install(&host.issuer, &first.owner, MachineRole::Unanswered)
             .unwrap();
         first
             .vault
@@ -233,6 +234,11 @@ fn a_dishonest_host_never_wins_the_root() {
         };
         let early = host_first.then(|| host_moves(&host));
         sync(&host.vault, &owner.vault);
+        // The host's enrolment joins the restored install, so the install
+        // carries its owner key's enrolment (FIX 2222; REVIEW-9674 P1). The
+        // host holds no owner key, so it files the install unanswered: its
+        // "yours" would wait for an owner key's proof.
+        profiled(&host, &owner.vault, MachineRole::Unanswered);
         owner
             .vault
             .enrol_device_owner_signing_key(
@@ -246,10 +252,6 @@ fn a_dishonest_host_never_wins_the_root() {
         owner
             .vault
             .activate_owner_root(&owner.owner, prepared, &BTreeSet::new())
-            .unwrap();
-        owner
-            .vault
-            .join_restored_install(&host.issuer, &owner.owner, MachineRole::Unanswered)
             .unwrap();
         sync(&owner.vault, &host.vault);
         let theirs = early.unwrap_or_else(|| host_moves(&host));

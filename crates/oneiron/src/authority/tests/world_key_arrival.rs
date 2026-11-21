@@ -282,7 +282,9 @@ impl Graph {
         self.forged_key(like, seq, parents, to_root, self.root.recovery.public_key())
     }
 
-    /// [`Self::backdated_key`], wrapped to `to` alone with `public`.
+    /// [`Self::backdated_key`], wrapped to `to` alone with `public`, and
+    /// permitting `to` alone: a record's `permitted` names exactly the
+    /// recipients its wraps seal to, or its body refuses.
     pub(super) fn forged_key(
         &self,
         like: &AuthorityLogEntry,
@@ -313,6 +315,7 @@ impl Graph {
             key: *key.id(),
             commitment: key.commitment(),
             wraps: vec![(to, envelope.to_bytes())],
+            permitted: vec![to],
             ..record.clone()
         };
         (

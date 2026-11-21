@@ -216,6 +216,7 @@ impl ConsolidationExecutor<'_> {
         let inputs = commit_host_inputs(ctx.vault, parent_run, self.actor.entity_ref(), inputs)?;
         let bound = pass.resources.request_scope();
         let scope = input::lent_scope(&bound, &lent_slices);
+        let sources = input::lent_sources(&lent_slices);
         let launch = ThingChildLaunch {
             ctx,
             leased: &leased,
@@ -228,6 +229,7 @@ impl ConsolidationExecutor<'_> {
             ports: thing_ports(),
             intent_key: format!("thing-child-g{generation}"),
             ask: policy.thing_child_instruction,
+            sources,
         };
         Ok(match host.launch(launch)? {
             ThingChildStart::Launched(session) => Ok(LaunchedChild {

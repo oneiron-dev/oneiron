@@ -6646,7 +6646,17 @@
      "path": "src/authority/root_recovery_door/box_wait.rs",
      "purpose": "The root's door after the recovery box's own wait (WAYBACK-BOX-WAIT-ENGINE-HOLD-ONE-WAIT = A): on a hosted…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/root_recovery_door/hold_arm.rs",
+     "purpose": "The root's door's box arm with a wait (WAYBACK-RECOVERY-HOLD-WIRE = A): one `RecoveryHold` signed by R in…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -24777,7 +24787,7 @@
      "path": "src/compaction/conversation.rs",
      "purpose": "A conversation's self-written compaction (FIX 4465 D): a self agent's chat turn compacts as the agent",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 2,
       "fn": 4,
       "re-export": 2,
@@ -24838,7 +24848,7 @@
      "path": "src/compaction/conversation/pieces.rs",
      "purpose": "A first turn past the writer's input room, read in pieces (FIX-LIST…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 8
      }
     },
     {
@@ -34258,7 +34268,7 @@
      "path": "src/dreamer_consolidation/thing_agent/input.rs",
      "purpose": "The owned, framed inputs a thing's agent is lent (FIX 7508): each of the branch's clean extraction slices…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -36287,8 +36297,28 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/dreamer_runner/maintenance/compaction_check/conversation/judge_protocol.rs",
+     "purpose": "The conversation judge's protocol: the request the check sends for one part (the host's rubric, the reply…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/dreamer_runner/maintenance/compaction_check/judge_room.rs",
      "purpose": "The judge's input room (FIX-LIST COMPACTION-CHECK-JUDGE-READS-WHOLE-OVER-ROOM-TURN; Engine ruling…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/compaction_check/judge_step.rs",
+     "purpose": "One judge call of a compaction check, as a durable step of the check's own attempt",
      "surface": {
       "crate-vis": 3
      }
@@ -54166,7 +54196,7 @@
       "const": 1,
       "crate-vis": 12,
       "enum": 1,
-      "fn": 34,
+      "fn": 35,
       "re-export": 3,
       "struct": 2
      }
@@ -97816,11 +97846,14 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "ProgramCallPass"
+     ],
      "path": "src/test_doors/held_program.rs",
      "purpose": "A held turn-program attempt for release tests: plant a Diverged hold as the admission and the program…",
      "surface": {
-      "fn": 2
+      "fn": 4,
+      "struct": 1
      }
     },
     {
@@ -107409,7 +107442,7 @@
      "path": "src/world_keys/appoint_owner_root.rs",
      "purpose": "The owner anchor's appointment of a successor root key (row OWNER-ANCHOR-ROOT-RECOVERY, PLAN v3 section 7…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 1
      }
     },
@@ -109488,6 +109521,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/auto_signals_recent_writes.rs",
+     "purpose": "AUTO-SIGNALS-RECENT-WRITES-COUNTS-TRAY-CLOSE-RECEIPTS: the auto checker's `recent_writes` signal counts the…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -109713,6 +109754,14 @@
      "notable": [],
      "path": "tests/bootstrap_loop_skills.rs",
      "purpose": "The loop's shipped skills (ARCH-0053:273 #r4b-hubs: they \"version with\" the engine, and restore defaults…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/bound_extraction_read_window_refusal.rs",
+     "purpose": "A bound extraction read the provider refuses for its context window (row…",
      "surface": {}
     },
     {
@@ -110459,6 +110508,14 @@
      "notable": [],
      "path": "tests/claim_supersede_as_owner_closer.rs",
      "purpose": "The vault owner's supersede door names the owner as the old head's closer (FIX…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/claim_supersede_tray_close_closer.rs",
+     "purpose": "The tray close of a parked supersession names the settle's closer (FIX…",
      "surface": {}
     },
     {
@@ -116161,6 +116218,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/prefilter_message_round_hook_tail.rs",
+     "purpose": "A verb hook's receipt tail holds no receipt of a MESSAGE-screened prefilter round (FIX…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/prefilter_message_round_receipt_readers.rs",
      "purpose": "Who reads the prefilter receipts of a MESSAGE-screened round",
      "surface": {}
@@ -116927,6 +116992,14 @@
      "notable": [],
      "path": "tests/restored_machine_round2_guards.rs",
      "purpose": "Row RESTORED-COPIES-R2-TESTS: the round 2 fixes of the blind review of stack #9512 (row…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/restored_unjoined_hold_paths.rs",
+     "purpose": "Rows [RESTORED-UNJOINED-ROUND1-TESTS] and [RESTORED-UNJOINED-ROUND2-TESTS] (parent row…",
      "surface": {}
     },
     {
@@ -119204,6 +119277,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/turn_program_outbound_step_time.rs",
+     "purpose": "A turn program's outbound step settles at the intent ledger's own time, Unix seconds, on both paths that…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -120052,7 +120133,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 344,
+     "files": 345,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -120528,7 +120609,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 256,
+     "files": 258,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -121720,8 +121801,8 @@
    },
    "over_bar": 272,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8494,
-   "test_files": 2221
+   "source_files": 8497,
+   "test_files": 2227
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -136550,6 +136631,14 @@
      "surface": {
       "crate-vis": 5
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/restored_unjoined_deadlines.rs",
+     "purpose": "Row [RESTORED-UNJOINED-ROUND2-TESTS] (parent row RESTORED-UNJOINED-STARTS-NO-WORK): the round-2 timer fix…",
+     "surface": {}
     }
    ],
    "modules": {
@@ -136592,7 +136681,7 @@
    "over_bar": 2,
    "purpose": "oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02)",
    "source_files": 41,
-   "test_files": 30
+   "test_files": 31
   },
   "oneiron-esign-render": {
    "files": [
@@ -145865,13 +145954,16 @@
      "kind": "src",
      "notable": [
       "ConversationEvidence",
+      "ConversationTurnPiece",
+      "ConversationTurnReading",
       "ConversationTurnSpan"
      ],
      "path": "src/compaction/conversation.rs",
      "purpose": "Moved from `crates/oneiron/src/compaction/conversation.rs` (lib split R2: record types below the lib)",
      "surface": {
+      "enum": 1,
       "fn": 1,
-      "struct": 2
+      "struct": 3
      }
     },
     {
@@ -159599,7 +159691,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "PassAnswer"
@@ -159607,7 +159699,7 @@
      "path": "src/ai_host/compaction/pass_door.rs",
      "purpose": "Doors for `tests/compaction_seat_exact_model.rs` (FIX-LIST SELF-WRITER-HOUSE-FALLBACK-SEAT-EXACT-REFUSED)…",
      "surface": {
-      "fn": 5,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -159893,13 +159985,26 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/dreamer_thing.rs",
      "purpose": "The served thing-child host (FIX 7508): what this server lends a thing branch's scoped code-mode agent",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ThingChildRoute"
+     ],
+     "path": "src/ai_host/dreamer_thing/child_route_door.rs",
+     "purpose": "Door for `tests/thing_child_fences_lent_source_rows.rs` ([DREAMER-UNSOURCED-ROLE-CALLS-SEND-UNFENCED]): a…",
+     "surface": {
+      "fn": 4,
+      "struct": 1
      }
     },
     {
@@ -160197,7 +160302,7 @@
      "path": "src/ai_host/mod.rs",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
-      "crate-vis": 32,
+      "crate-vis": 33,
       "mod": 4,
       "re-export": 1,
       "struct": 2
@@ -168393,6 +168498,16 @@
      "notable": [],
      "path": "src/api/tests/ai_chat_check_judge_room.rs",
      "purpose": "FIX-LIST COMPACTION-CHECK-JUDGE-READS-WHOLE-OVER-ROOM-TURN (Engine ruling…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/api/tests/ai_chat_check_per_chunk.rs",
+     "purpose": "FIX-LIST COMPACTION-CHECK-JUDGES-PER-CHUNK (Engine answer 21 Nov 07:39; the Oneiron lead: \"the check judges…",
      "surface": {}
     },
     {
@@ -168402,7 +168517,7 @@
      "path": "src/api/tests/ai_chat_self_compaction.rs",
      "purpose": "L10-33 (RULING L10-33-SCOPE = B): under a self row on the retained turns, a self agent's chat compacts as…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 8
      }
     },
     {
@@ -181645,6 +181760,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/dreamer_thing_child_route.rs",
+     "purpose": "Door for `tests/thing_child_fences_lent_source_rows.rs` ([DREAMER-UNSOURCED-ROLE-CALLS-SEND-UNFENCED]): a…",
+     "surface": {
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/embedded_peer_fixture.rs",
      "purpose": "An enrolled device vault for the L7-47 mesh peer path tests",
      "surface": {
@@ -181963,7 +182088,7 @@
      "path": "src/test_doors/mod.rs",
      "purpose": "Doors for the integration tests to crate-private items, as in `oneiron::test_doors`",
      "surface": {
-      "mod": 82
+      "mod": 83
      }
     },
     {
@@ -185749,6 +185874,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/thing_child_fences_lent_source_rows.rs",
+     "purpose": "A Dreamer thing child sends nothing of its input again once a row its lent slices were read from is erased…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/timeline_shell_projection_recheck.rs",
      "purpose": "[TIMELINE-SHELL-TWO-SNAPSHOT-CAP]: the core memory timeline route (`GET /v1/core/memory/{id}/timeline`)…",
      "surface": {}
@@ -186330,14 +186463,14 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 149,
+     "files": 150,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 838,
+     "files": 839,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -186883,7 +187016,7 @@
      "purpose": "Request fixtures mint real logged slips before crossing the production router"
     },
     "test_doors": {
-     "files": 85,
+     "files": 86,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -186955,8 +187088,8 @@
    },
    "over_bar": 65,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 2100,
-   "test_files": 561
+   "source_files": 2102,
+   "test_files": 563
   },
   "oneiron-setting-contract": {
    "files": [

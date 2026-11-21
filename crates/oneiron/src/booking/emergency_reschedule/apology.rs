@@ -189,7 +189,7 @@ fn raw_apology_claims_in(
     }
     let bytes = sent_apology_bytes(item)?;
     let artifact = blob_id(&bytes)?;
-    let hash = *blake3::hash(&bytes).as_bytes();
+    let hash = *oneiron_contracts::fingerprint::ContentHash::of(&bytes).as_bytes();
     let mut claims = Vec::new();
     for claim in vault
         .claims_for_subject_in_txn(txn, &artifact)

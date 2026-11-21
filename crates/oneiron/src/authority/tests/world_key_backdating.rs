@@ -562,6 +562,7 @@ fn an_own_record_of_a_key_id_vouches_for_no_other_bytes() {
             commitment: j.commitment(),
             machine: graph.a.machine(),
             wraps: vec![(to_root, envelope.to_bytes())],
+            permitted: vec![to_root],
             ..record.clone()
         }),
     );
@@ -724,6 +725,7 @@ fn a_pre_wrap_signs_no_bytes_but_those_of_the_pair_that_stands() {
             commitment: j.commitment(),
             machine: graph.a.machine(),
             wraps: vec![(to_b, envelope.to_bytes())],
+            permitted: vec![to_b],
             ..record.clone()
         }),
     );

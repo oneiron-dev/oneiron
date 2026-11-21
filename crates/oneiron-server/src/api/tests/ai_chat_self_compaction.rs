@@ -122,6 +122,21 @@ pub(super) async fn self_row_server(
     Arc<SyncServer>,
     AiHost,
 ) {
+    self_row_server_on(base_url, source, 32_768).await
+}
+
+/// [`self_row_server`] with the served model's context `context_tokens`,
+/// the room its cheap writer reads a window in.
+pub(super) async fn self_row_server_on(
+    base_url: &str,
+    source: oneiron::llm::SelfCompactionSource,
+    context_tokens: u64,
+) -> (
+    tempfile::TempDir,
+    tempfile::TempDir,
+    Arc<SyncServer>,
+    AiHost,
+) {
     let prompts = prompt_package_with_frame();
     let models = models_toml(&format!(
         "default = \"local:test-model\"\nextraction_egress = true\n\
@@ -129,7 +144,7 @@ pub(super) async fn self_row_server(
          [code_mode]\nprompt_package = {:?}\n\
          [code_mode.compaction]\nwindow_tokens = 1500\nhot_steps = 1\n\
          [providers.local]\nkind = \"local-openai-compat\"\nbase_url = \"{base_url}\"\n\
-         context_tokens = 32768\n",
+         context_tokens = {context_tokens}\n",
         prompts.path().display().to_string(),
     ));
     let (dir, vault) = rooted_vault();
@@ -181,9 +196,19 @@ async fn send(server: &Arc<SyncServer>, mut request: Request<Body>) -> (StatusCo
 }
 
 async fn chat_turn(server: &Arc<SyncServer>, conversation: &str, turn: usize) {
+    chat_text(
+        server,
+        conversation,
+        &format!("Log the north pier tide, turn {turn}."),
+    )
+    .await;
+}
+
+/// The owner says `text` in `conversation`, and the chat answers.
+pub(super) async fn chat_text(server: &Arc<SyncServer>, conversation: &str, text: &str) {
     let body = json!({
         "conversation_ref": conversation,
-        "text": format!("Log the north pier tide, turn {turn}."),
+        "text": text,
     });
     let (status, answer) = send(
         server,
@@ -324,18 +349,13 @@ pub(super) fn log_report(
     format!("{log}; transcript: {transcript}; stored: {stored}")
 }
 
-/// Opens the owner's sitting on this machine, then sends chat turns until a
-/// compaction call reaches the fake, at most six. Returns the owner and the
-/// next turn's number.
-pub(super) async fn turns_until_compaction(
-    server: &Arc<SyncServer>,
-    fake: &FakeLlm,
-    conversation: &str,
-) -> (oneiron::EntityId, usize) {
-    // A chat window compacts one sitting's turns, and with the Dreamer off no
-    // AppOpen ever mints that sitting: open the owner's sitting on this
-    // machine first, under the key each turn's witness bumps, so every turn
-    // below joins it.
+/// Opens the owner's sitting on this machine and answers the owner and the
+/// sitting's key. A chat window compacts one sitting's turns, and with the
+/// Dreamer off no AppOpen ever mints that sitting: it opens under the key
+/// each turn's witness bumps, so every later turn joins it.
+pub(super) fn open_owner_sitting(
+    server: &SyncServer,
+) -> (oneiron::EntityId, oneiron::session_lifecycle::SessionKey) {
     let owner = server
         .vault()
         .ensure_embedded_owner_actor()
@@ -353,6 +373,18 @@ pub(super) async fn turns_until_compaction(
         ),
         "the owner's sitting opens for the turns to join"
     );
+    (owner, sitting)
+}
+
+/// Opens the owner's sitting on this machine, then sends chat turns until a
+/// compaction call reaches the fake, at most six. Returns the owner and the
+/// next turn's number.
+pub(super) async fn turns_until_compaction(
+    server: &Arc<SyncServer>,
+    fake: &FakeLlm,
+    conversation: &str,
+) -> (oneiron::EntityId, usize) {
+    let (owner, sitting) = open_owner_sitting(server);
 
     // The cold-start threshold is 750 tokens for this 1500-token window.
     // A tiny first flight can be rejected; later flights include a long answer.

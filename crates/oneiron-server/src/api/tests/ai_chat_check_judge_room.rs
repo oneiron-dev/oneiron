@@ -105,7 +105,7 @@ impl RecordingJudge {
 }
 
 /// Every text token `request` sends, by the context-pack tokenizer.
-fn request_tokens(request: &LlmRequest) -> u64 {
+pub(super) fn request_tokens(request: &LlmRequest) -> u64 {
     request
         .messages
         .iter()
@@ -196,7 +196,7 @@ fn allow_judge_extraction(_: &LlmRequest) -> bool {
 }
 
 /// The seconds clock the queue admits by.
-fn now_seconds() -> u64 {
+pub(super) fn now_seconds() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -285,7 +285,7 @@ async fn landed_check() -> LandedCheck {
 
 /// Runs `check` as the Dreamer's host runs it, its judge `judge` on the
 /// window `window_tokens`, and answers how the attempt ended.
-async fn run_check(
+pub(super) async fn run_check(
     server: &SyncServer,
     check: &DreamerAdmittedAttempt,
     judge: &dyn LlmBackend,
@@ -297,7 +297,7 @@ async fn run_check(
 /// [`run_check`] on the window `window_tokens`, if any, with the typed
 /// support verdict on `decisions`' ladder as the server's host lends it:
 /// up to its Big rung, so no person is asked.
-async fn run_check_lent(
+pub(super) async fn run_check_lent(
     server: &SyncServer,
     check: &DreamerAdmittedAttempt,
     judge: &dyn LlmBackend,
@@ -353,7 +353,7 @@ async fn run_check_lent(
 }
 
 /// The check's finding about `writer`, its whole value.
-fn finding(server: &SyncServer, writer: &EntityId) -> Option<Value> {
+pub(super) fn finding(server: &SyncServer, writer: &EntityId) -> Option<Value> {
     let vault = server.vault();
     vault
         .claims_for_subject(writer)

@@ -7,7 +7,8 @@ use crate::dreamer_consolidation::extraction_pack::{
     ExtractionReadExecution, execute_checked_read,
 };
 use crate::memory::{
-    MEMORY_CODE_INTERNAL, MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryResult,
+    MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_INTERNAL, MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError,
+    MemoryResult,
 };
 use crate::model_step_error::DurableStepError;
 use crate::verbs::{AiVerdict, AiVerdictPackEntry, AiVerdictRequest};
@@ -141,10 +142,25 @@ impl DreamerAttemptBinding {
     }
 }
 
-/// Preserves engine failures and reports a native read that could not answer.
+/// Preserves engine failures, refuses a read the provider refused for its context
+/// window as a bad request, and reports any other native read that could not answer.
+///
+/// A window refusal is no outage (Engine 21 Nov 07:38): the same pack meets it on
+/// every send, so the host gets the refusal a resend cannot change, named as the
+/// window, never the model-unavailable a host may wait out and send again.
 fn extraction_read_error(error: DurableStepError) -> MemoryError {
     match error {
         DurableStepError::Engine(error) => error.into(),
+        error if crate::dreamer_wake::step_refuses_window(&error) => MemoryError::new(
+            MEMORY_CODE_BAD_REQUEST,
+            format!(
+                "the native extraction read does not fit the verdict model's context window: {error}"
+            ),
+            &[
+                "The provider refuses this pack for its context window on every send: do not send it again.",
+                "A verdict route to a model with a larger context window can read it.",
+            ],
+        ),
         error => MemoryError::new(
             MEMORY_CODE_MODEL_UNAVAILABLE,
             format!("the native extraction read failed: {error}"),
