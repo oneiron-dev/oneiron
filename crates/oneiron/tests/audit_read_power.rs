@@ -65,7 +65,7 @@ fn fixture() -> Result<Fixture, Box<dyn std::error::Error>> {
     let clock = ManualClock::new(start);
     let mut config = VaultConfig::device();
     config.store_clock = clock.bundle();
-    let vault = Vault::open(dir.path(), config)?;
+    let vault = Vault::open_owned(dir.path(), config)?;
     vault.install_device_keystore(Arc::new(MemoryKeystore::new()));
     let issuer = HostSlipIssuer::from_secret(b"oneiron-test-audit-read-power")?;
     vault.ensure_host_root_slip(&issuer)?;
