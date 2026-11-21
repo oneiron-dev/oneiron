@@ -39,16 +39,30 @@ pub fn walked_policies_of(
 }
 
 /// Whether the floor of `row` is not known whole here (#9289 review 2
-/// P1-1, P1-2): it waits on a row or binding that has not landed, or the
-/// floor backfill has not raised it yet while it names a birth input or a
-/// dependency source.
+/// P1-1, P1-2; Fable design pass 31): its verdict waits on an input that is
+/// not bound and whole yet, or the migration has not judged it yet while it
+/// names one.
 ///
 /// # Errors
 ///
 /// Storage failures.
 pub fn floor_waits(vault: &Vault, row: EntityId) -> Result<bool> {
     let txn = vault.store.env.read_txn()?;
-    crate::source_audience::floor_waits_in(vault, &txn, &row)
+    Ok(crate::source_audience::floor_read_in(vault, &txn, &row)?
+        == crate::source_audience::FloorRead::Waiting)
+}
+
+/// Whether `row` reads to no one, the owner included (READ-LINEAGE-L3 = A):
+/// its verdict is sealed, by a source on its stored floor that names no
+/// source or by an open input that reads erased (Fable design pass 31).
+///
+/// # Errors
+///
+/// Storage failures.
+pub fn floor_sealed(vault: &Vault, row: EntityId) -> Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(crate::source_audience::floor_read_in(vault, &txn, &row)?
+        == crate::source_audience::FloorRead::Sealed)
 }
 
 /// Whether the row passes `withheld_from_replication_in` on
@@ -68,9 +82,9 @@ pub fn travels_restricted(vault: &Vault, row: EntityId) -> Result<bool> {
     )?)
 }
 
-/// Forgets every floor's state and the floor backfill's, so the vault reads
-/// as one whose rows were written before floors were (#9289 review 2 P1-2).
-/// The floors already raised stay.
+/// Forgets every floor's open set and the migration's state, so the vault
+/// reads as one whose rows were written before floors were (#9289 review 2
+/// P1-2). The floors already taken stay.
 ///
 /// # Errors
 ///
@@ -83,15 +97,15 @@ pub fn forget_floor_state(vault: &Vault) -> Result<()> {
 }
 
 /// Lands the binding of `row` here as a replicated binding does once its
-/// policy resolves (`bind_replicated_in_txn`): the rows waiting on `row` are
-/// raised again (#9289 Opus review 3 P1-B).
+/// policy resolves (`bind_replicated_in_txn`): the rows waiting on `row`
+/// take its floor if it is bound and whole now (#9289 Opus review 3 P1-B).
 ///
 /// # Errors
 ///
 /// Storage failures.
 pub fn binding_lands(vault: &Vault, row: EntityId) -> Result<()> {
     let mut txn = vault.store.env.write_txn()?;
-    crate::source_audience::binding_landed_in_txn(vault, &mut txn, &row)?;
+    crate::source_audience::fold_waiters_in_txn(vault, &mut txn, &row)?;
     txn.commit()?;
     Ok(())
 }

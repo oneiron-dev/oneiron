@@ -547,6 +547,11 @@ impl Vault {
         asset: EntityId,
         receipt: &mut DocsDeepReceipt,
     ) -> Result<()> {
+        let before = crate::source_audience::LinksBefore::read_in(
+            self,
+            txn,
+            claims.iter().map(|(claim, _)| *claim),
+        )?;
         for (claim, chunk) in claims {
             crate::ports::record_derived_edge_in_txn(&self.store, txn, claim, chunk)?;
             // The dependency index is one hop, not recursive. Bind the root
@@ -554,11 +559,7 @@ impl Vault {
             crate::ports::record_derived_edge_in_txn(&self.store, txn, claim, &asset)?;
             receipt.claim_refs.push(claim.to_hex());
         }
-        crate::source_audience::raise_floors_in_txn(
-            self,
-            txn,
-            claims.iter().map(|(claim, _)| *claim),
-        )
+        before.judge_in_txn(self, txn)
     }
 
     fn deep_chunk_in(

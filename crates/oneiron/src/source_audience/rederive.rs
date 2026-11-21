@@ -2,9 +2,10 @@
 //! design pass 30, section 4.7; READ-LINEAGE-L3 = A).
 //!
 //! A sealed row (an id on its stored floor names no source here:
-//! [`super::floor::sealed_source`], or a policy that does not resolve) reads
-//! to no one, the vault owner included, and a floor only grows, so no act
-//! unseals it. What the owner can do is have its fact written again from
+//! [`super::floor::sealed_source`], or a policy that does not resolve; or an
+//! input it still waits on reads erased: its verdict is sealed, Fable design
+//! pass 31) reads to no one, the vault owner included, and a floor only
+//! grows, so no act unseals it. What the owner can do is have its fact written again from
 //! the sources that resolve now, as a new row born under their floors, which
 //! takes the sealed row's place:
 //! - a CLAIM is superseded by a current CLAIM that states the same fact and
@@ -19,7 +20,7 @@
 //!   generation is born under its sources' floors, so one born from an
 //!   input this vault erased is sealed again and stays counted, and one
 //!   whose sources have not landed yet waits for them
-//!   ([`super::floor_state`]);
+//!   ([`super::source_state`]);
 //! - every other row is kept: no generator here writes it again.
 //!
 //! Only a sealed row that is still current is counted or acted on: a
@@ -90,16 +91,27 @@ fn names_unknown_source(
     Ok(false)
 }
 
-/// The rows this vault reads to no one because an id on their stored floor
-/// names no source, and that are still current: held, a CLAIM still
-/// `active`, a scope SUMMARY its projection has not replaced.
+/// The rows this vault reads to no one, and that are still current: held,
+/// a CLAIM still `active`, a scope SUMMARY its projection has not replaced.
+/// A row reads to no one when an id on its stored floor names no source, or
+/// when its verdict is sealed by an input it waits on that reads erased.
 fn current_sealed_rows_in(vault: &Vault, txn: &RoTxn<'_>) -> Result<Vec<(EntityId, Sealed)>> {
-    let mut rows = Vec::new();
+    let mut sealed_rows = BTreeSet::new();
     for entry in super::DERIVED.iter_from(&vault.store, txn, &[])? {
         let (row, floor) = entry?;
-        if !names_unknown_source(vault, txn, &floor)? {
-            continue;
+        if names_unknown_source(vault, txn, &floor)? {
+            sealed_rows.insert(row);
         }
+    }
+    for row in super::source_state::rows_with_open_entries_in(vault, txn)? {
+        if !sealed_rows.contains(&row)
+            && super::verdict_in(vault, txn, &row)? == super::Verdict::Sealed
+        {
+            sealed_rows.insert(row);
+        }
+    }
+    let mut rows = Vec::new();
+    for row in sealed_rows {
         let Some(raw) = vault.get_raw_in(txn, &row)? else {
             continue;
         };
