@@ -43,7 +43,8 @@
 //! reads a row again once a value beside an act it read, or one the row's value came from, holds
 //! otherwise. On a key that names no strictest value such a row reads no value of it: the key's
 //! default, `Quarantined`. A pass projects each row in a savepoint of its own: a row a key's hook
-//! refuses on this install stays as it was, logged, and the next pass reads it again.
+//! refuses on this install stays as it was, and the next pass reads it again; the pass raises the
+//! owner's notice of it, which names the acts and offers the fix (`refusal`).
 //!
 //! The read on proofs (stage 7b-3; DESIGN 1.6, "The read of one slot", "Fold states" and
 //! "Receipts"):
@@ -89,6 +90,10 @@ use projection_rows::{
     basis_of, empty_of_in_txn, leave_in_txn, met_with_local, own_carry_bound_in_txn,
     project_pack_target_in_txn, record_projection_in_txn, target_key, write_row_in_txn,
 };
+mod refusal;
+pub(super) use refusal::slot_refused_here_in_txn;
+pub(crate) use refusal::{SETTING_REFUSAL_NOTIFICATION_PRODUCER, setting_refusal_taps_in_txn};
+use refusal::{raise_refusal_notice_in_txn, record_refusal_in_txn};
 
 use serde::{Deserialize, Serialize};
 
@@ -126,6 +131,10 @@ use crate::side_table::{self, Named, SideTable, SideTableDbs};
 /// One projected row per act target.
 const PROJECTIONS: SideTable<Vec<u8>, Projection, Named> =
     SideTable::new(&side_table::SETTING_PROJECTION);
+
+/// Per act target, the basis ([`basis_of`]) of the acts this install's pass last found its key's
+/// hook refusing (`refusal`); a projection of the target removes it.
+const REFUSALS: SideTable<Vec<u8>, [u8; 32], Named> = SideTable::new(&side_table::SETTING_REFUSAL);
 
 /// A value no MessagePack decoder reads (the format's one unused byte): the row a quarantined
 /// slot keeps, so every read of it takes the key's strictest value as for any row that does not
@@ -696,6 +705,28 @@ pub(crate) fn forget_projected_rows_in_txn(
             forgotten += 1;
         }
         PROJECTIONS.delete(&vault.store, txn, &target)?;
+    }
+    Ok(forgotten)
+}
+
+/// Forgets every record of a projection and leaves the rows it wrote (row
+/// SETTING-PROJECTED-ROW-REFUSING-HOOKS tests): each row then holds its value while its acts read
+/// as moved, as a row does once a peer's act arrived and before the pass read it. The records
+/// forgotten.
+///
+/// # Errors
+///
+/// Storage errors.
+#[cfg(all(oneiron_test_support, feature = "test-support"))]
+pub(crate) fn forget_projection_records_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+) -> Result<usize> {
+    let mut forgotten = 0;
+    for (target, _) in PROJECTIONS.scan(&vault.store, txn)? {
+        if PROJECTIONS.delete(&vault.store, txn, &target)? {
+            forgotten += 1;
+        }
     }
     Ok(forgotten)
 }

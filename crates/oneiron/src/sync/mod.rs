@@ -163,4 +163,4 @@ pub use transport::{
 pub use types::{MessagePresenceScope, ScopedPresenceFrame, SyncConfig, WindowKey};
 
 #[cfg(oneiron_test_support)]
-pub(crate) use self::ingest::asset_digest_for_test;
+pub(crate) use self::ingest::{asset_digest_for_test, ingest_carried_entity_for_test};

@@ -4,6 +4,7 @@ use oneiron_authority::authority::{Direction, Permitted};
 use oneiron_setting_contract::ChangeDirection;
 
 use super::super::SettingSync;
+use super::super::project::slot_refused_here_in_txn;
 use super::super::restored::{RESTORED_NOT_JOINED_CHANGE, restored_unjoined_in_txn};
 use super::{
     Change, StoredRow, agent_reading_in_txn, authority_direction, checked_slot, checked_weight,
@@ -127,8 +128,15 @@ pub(super) fn judge_change_in_txn(
     });
     let prior_weight = prior_row.as_ref().and_then(|row| row.weight_runs);
     let prior_value = prior_row.map(|row| row.value);
+    // The owner's equal value of a row whose acts this install's hook refused signs its act all
+    // the same (row SETTING-PROJECTED-ROW-REFUSING-HOOKS): the act replaces the refused one on
+    // every machine, the one step the refusal's notice offers (`project/refusal.rs`).
+    let replaces_refused = matches!(caller, SettingCaller::Owner(_))
+        && travels(change.spec)
+        && slot_refused_here_in_txn(vault, txn, &change.key)?;
     let unchanged = readable
         && !setter_changes
+        && !replaces_refused
         && prior_value.as_ref() == change.value
         && prior_weight == change.weight_runs;
     // An install born of a restore that has not joined changes no setting the vault's machines

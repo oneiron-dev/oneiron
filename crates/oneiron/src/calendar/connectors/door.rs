@@ -186,7 +186,8 @@ fn retire_seat_system_in_txn(
 /// The `calendar.connector_seat` hook, in the write that changes a seat's row. It keeps the
 /// rules the configure door had: a value row at a seat ref, naming that ref, installed once.
 /// A configured seat is immutable (a change or a clear is refused; a new configuration takes a
-/// new seat ref), but for the setting projection's taking it out of service, which keeps its
+/// new seat ref; the same setup again is a no-op), but for the setting projection's taking it out
+/// of service, which keeps its
 /// system its own; and a seat ref that a seat already used is never installed again, so no
 /// cursor or kill switch outlives its seat. A seat never imports under the system of an
 /// installed ICS feed: each complete poll of the feed cancels every event of its system that
@@ -230,8 +231,13 @@ pub(crate) fn seat_setup_changed_in_txn(
     // seat: the seat's value beside its signed act was erased here or no longer matches it
     // (`Quarantined`), or installs at its ref meet with no common predecessor (`Conflict`), so
     // every machine reads no seat there. Its system stays its own ([`seat_of_system_in_txn`]).
-    // Nobody's change of an installed seat lands.
+    // Nobody's change of an installed seat lands. The setup installed already, set again, changes
+    // nothing: the row changes hands (another owner's act of it, the owner's set over a row he
+    // did not set), and the seat runs on.
     if let Some(installed) = decode(change.prior.as_ref()) {
+        if setup.as_ref() == Some(&installed) {
+            return Ok(());
+        }
         let out_of_service = setup.is_none()
             && matches!(
                 change.standing,

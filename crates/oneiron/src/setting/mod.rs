@@ -96,8 +96,11 @@ pub(crate) use self::pack::{
 };
 pub use self::page_max::PageMax;
 pub use self::project::SettingsProjected;
+pub(crate) use self::project::{
+    SETTING_REFUSAL_NOTIFICATION_PRODUCER, setting_refusal_taps_in_txn,
+};
 #[cfg(all(oneiron_test_support, feature = "test-support"))]
-pub(crate) use self::project::forget_projected_rows_in_txn;
+pub(crate) use self::project::{forget_projected_rows_in_txn, forget_projection_records_in_txn};
 pub use self::proposal::SettingProposal;
 pub use self::publish::SettingsPublished;
 #[cfg(all(oneiron_test_support, feature = "test-support"))]
@@ -207,6 +210,17 @@ pub type LooseningNote =
 /// refusal there leaves the row out and its archived copy retained (`archive_restore`).
 pub type OnChange = fn(&Vault, &mut heed::RwTxn<'_>, &SettingChange) -> Result<()>;
 
+/// The rows a key's hook judges one of its rows against (row SETTING-PROJECTED-ROW-REFUSING-HOOKS):
+/// for the refused row and the value its act sets (its JSON; `None` for a clear), read in the
+/// projection pass's write. The owner's notice of a refused projection names the acts behind
+/// those rows beside the refused one, so every machine that refuses either side finds one notice.
+pub type RefusalPeers = fn(
+    &Vault,
+    &heed::RoTxn<'_>,
+    &oneiron_setting_contract::RowKey,
+    Option<&serde_json::Value>,
+) -> Result<Vec<oneiron_setting_contract::RowKey>>;
+
 /// The one hook a key may run once the write that changed it has committed: wake a host that
 /// reads the key (a reader woken inside the write would see the last commit's value).
 pub type OnCommitted = fn(&Vault);
@@ -255,6 +269,14 @@ pub struct SettingSpec {
     /// owner should read a fact about first (the spend cap in force for a payment item).
     pub loosening_note: Option<LooseningNote>,
     pub on_change: Option<OnChange>,
+    /// The rows `on_change` judges a row against, for a hook that reads other rows
+    /// ([`RefusalPeers`]): a refused projection's notice names their acts too. `None`: the
+    /// notice names the refused act alone, with the hook's reason.
+    pub refusal_peers: Option<RefusalPeers>,
+    /// Whether that notice may offer a tap that leaves a row of the key with no value: `false`
+    /// for a key whose hook refuses such a change of a row a machine holds in service (a
+    /// calendar seat), whose act that machine would keep refusing.
+    pub refusal_offers_clear: bool,
     /// Run after the commit of each write that applied a change to the key (not on an equal
     /// value, not on a change that waits on a check-in).
     pub after_commit: Option<OnCommitted>,
@@ -293,6 +315,8 @@ impl SettingSpec {
         sync: SettingSync::Vault,
         loosening_note: None,
         on_change: None,
+        refusal_peers: None,
+        refusal_offers_clear: true,
         after_commit: None,
         write_turn: None,
         born: None,
