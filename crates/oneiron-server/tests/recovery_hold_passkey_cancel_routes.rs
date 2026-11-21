@@ -14,10 +14,18 @@
 //! names the hold cancelled by the owner, and a second prepare is refused,
 //! since the hold is no longer live.
 //!
-//! Red on main (beff0851b5bf): the routes do not exist, so the list answers
-//! 404. Green on the head.
+//! A credential id names no key across owners (enrolment takes the id the
+//! browser posts): on a shared vault whose co-owner enrolled a passkey with
+//! the owner's credential id, listed first, the owner's prepare still picks
+//! the owner's own passkey, and its Cancel lands (review round 1 of #10288,
+//! P1).
 //!
-//! One test function: one server serves every step in process
+//! Red on main (beff0851b5bf): the routes do not exist, so the list and the
+//! prepare answer 404. Red at the routes that picked a passkey by credential
+//! id alone: the co-owner's key prepares, and the door refuses it as not the
+//! acting owner's. Green on the head.
+//!
+//! Each test function: one server serves every step in process
 //! (`build_app(..).oneshot(..)`, no TCP ports, no sleeps, no models) with
 //! the owner's own full human slip, on an engine-sized stack.
 //!
@@ -45,15 +53,17 @@ use oneiron::authority::{
     RootSuccessor, holder_proof,
 };
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::federation::{FederationGrantRole, InitialSharedMember};
 use oneiron::recovery::{
     CodeKeeping, KitIssue, KitSecretKind, PassphraseCost, PieceHome, restore_kit,
 };
+use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::store::recovery_kit::KitPiece;
 use oneiron::test_doors::root_recovery::{recover_owner_root_waiting, released_authority_seed};
 use oneiron::test_support::bind_host_owner;
 use oneiron::world_keys::{RecoveryAuthoritySigner, RecoveryRootSeed};
-use oneiron::{EntityId, Vault, VaultConfig};
+use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_server::{build_app, config::SyncServerConfig, server::SyncServer};
 use p256::ecdsa::signature::Signer as _;
 use p256::ecdsa::{Signature as P256Signature, SigningKey as P256SigningKey};
@@ -81,6 +91,10 @@ const ORIGIN: &str = "https://oneiron.test";
 const FLAGS_PRESENT_VERIFIED: u8 = 0x05;
 /// User present alone.
 const FLAGS_PRESENT_ONLY: u8 = 0x01;
+/// The scalar of the owner's passkey.
+const OWNER_PASSKEY_SCALAR: u8 = 0x5A;
+/// The shared vault's id.
+const SHARED: u64 = 44;
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
@@ -98,9 +112,33 @@ fn b64url_decode(value: &str) -> TestResult<Vec<u8>> {
         .map_err(|error| format!("expected base64url, saw {value:?}: {error}").into())
 }
 
-/// The passkey a platform authenticator holds, as a software key.
+/// A passkey a platform authenticator holds, as a software key.
+fn passkey_of(scalar: u8) -> P256SigningKey {
+    P256SigningKey::from_slice(&[scalar; 32]).expect("a P-256 scalar")
+}
+
+/// The owner's passkey.
 fn passkey() -> P256SigningKey {
-    P256SigningKey::from_slice(&[0x5A; 32]).expect("a P-256 scalar")
+    passkey_of(OWNER_PASSKEY_SCALAR)
+}
+
+/// `key`'s public key as the roster names it: compressed SEC1.
+fn compressed(key: &P256SigningKey) -> Vec<u8> {
+    key.verifying_key()
+        .to_encoded_point(true)
+        .as_bytes()
+        .to_vec()
+}
+
+/// A co-owner's passkey whose key sorts before the owner's, so a lookup by
+/// credential id alone meets it first in the list, which is ascending by key.
+fn co_owner_passkey() -> P256SigningKey {
+    let owner = compressed(&passkey());
+    (1..=u8::MAX)
+        .filter(|scalar| *scalar != OWNER_PASSKEY_SCALAR)
+        .map(passkey_of)
+        .find(|key| compressed(key) < owner)
+        .expect("a P-256 key that sorts before the owner's")
 }
 
 /// What `navigator.credentials.get` returns for `challenge` when the
@@ -114,6 +152,11 @@ struct Assertion {
 }
 
 fn assert_with(challenge: &[u8], flags: u8) -> Assertion {
+    assert_by(&passkey(), challenge, flags)
+}
+
+/// [`assert_with`] for the passkey `key`.
+fn assert_by(key: &P256SigningKey, challenge: &[u8], flags: u8) -> Assertion {
     let mut authenticator_data = Sha256::digest(b"oneiron.test").to_vec();
     authenticator_data.push(flags);
     authenticator_data.extend_from_slice(&[0; 4]);
@@ -124,7 +167,7 @@ fn assert_with(challenge: &[u8], flags: u8) -> Assertion {
     .into_bytes();
     let mut signed = authenticator_data.clone();
     signed.extend_from_slice(&Sha256::digest(&client_data_json));
-    let signature: P256Signature = passkey().sign(&signed);
+    let signature: P256Signature = key.sign(&signed);
     Assertion {
         authenticator_data,
         client_data_json,
@@ -260,18 +303,25 @@ impl Home {
         Ok(AuthorityKey::Ed25519(key.verifying_key().to_bytes()))
     }
 
-    /// Enrols the passkey under the host root, its assertion over the
-    /// enrollment challenge at its own origin.
+    /// Enrols the owner's passkey under the host root, its assertion over
+    /// the enrollment challenge at its own origin.
     fn enrol_passkey(&self) -> TestResult {
-        let public_key = passkey()
+        self.enrol_passkey_as(self.person, &passkey())
+    }
+
+    /// Enrols `key` as `person`'s passkey, with the credential id
+    /// [`CREDENTIAL_ID`], under the host root.
+    fn enrol_passkey_as(&self, person: EntityId, key: &P256SigningKey) -> TestResult {
+        let authority = ActAuthority::Owner(proof(&self.vault, person)?, ActSurface::ThisInstall);
+        let public_key = key
             .verifying_key()
             .to_encoded_point(false)
             .as_bytes()
             .to_vec();
         let challenge = self
             .vault
-            .owner_passkey_enrollment_challenge_as(&self.authority()?, &public_key)?;
-        let assertion = assert_with(&challenge, FLAGS_PRESENT_VERIFIED);
+            .owner_passkey_enrollment_challenge_as(&authority, &public_key)?;
+        let assertion = assert_by(key, &challenge, FLAGS_PRESENT_VERIFIED);
         let input = OwnerPasskeyEnrollment {
             credential_id: CREDENTIAL_ID.to_vec(),
             public_key,
@@ -280,8 +330,37 @@ impl Home {
             signature: assertion.signature,
         };
         self.vault
-            .enrol_owner_passkey_as_host(&self.authority()?, &input, &self.issuer)?;
+            .enrol_owner_passkey_as_host(&authority, &input, &self.issuer)?;
         Ok(())
+    }
+
+    /// Makes the vault shared and adds a live person as a co-Owner, as
+    /// `add_owner` runs at once for its only owner; the co-Owner's id.
+    fn add_co_owner(&self) -> TestResult<EntityId> {
+        self.vault.initialize_shared_vault(
+            &self.owner()?,
+            SHARED,
+            None,
+            &[InitialSharedMember {
+                member_ref: self.person,
+                role: Some(FederationGrantRole::Owner),
+            }],
+            1,
+        )?;
+        let co_owner = EntityId::now();
+        self.vault.put_entity(
+            &co_owner,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"human",
+        )?;
+        let act = self
+            .vault
+            .propose_add_owner(&self.owner()?, SHARED, co_owner)?;
+        self.vault
+            .execute_completed_shared_act(&self.owner()?, &act.id, Some(&self.issuer))?;
+        Ok(co_owner)
     }
 
     /// Generation 0's key as the box releases it: a box recovery.
@@ -502,6 +581,72 @@ async fn passkey_owner_reads_a_box_recovery_and_cancels_it() -> TestResult {
     assert!(
         !status.is_success(),
         "a cancelled hold prepares no second Cancel: {answer}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_co_owners_passkey_under_the_same_credential_id_never_signs_for_the_owner() -> TestResult {
+    on_engine_stack(co_owners_passkey_under_the_same_credential_id_never_signs_for_the_owner)
+}
+
+async fn co_owners_passkey_under_the_same_credential_id_never_signs_for_the_owner() -> TestResult {
+    let home = Home::serve()?;
+    home.enrol_passkey()?;
+    let lost = home.enrol_device_key(LOST_KEY_SEED)?;
+    let co_owner = home.add_co_owner()?;
+    home.enrol_passkey_as(co_owner, &co_owner_passkey())?;
+    let first = home
+        .vault
+        .enrolled_owner_passkeys()?
+        .into_iter()
+        .find(|passkey| passkey.live && passkey.credential_id == CREDENTIAL_ID)
+        .ok_or("a live passkey with the credential id")?;
+    assert_eq!(
+        first.owner, co_owner,
+        "the co-owner's passkey is listed first under the shared credential id"
+    );
+    let successor = SigningKey::from_bytes(&[NEW_KEY_SEED; 32]);
+    let (hold, _) = home.hold(&successor, &lost)?;
+
+    // The owner's prepare picks the owner's own passkey.
+    let (status, answer) = home
+        .send(
+            "POST",
+            CANCEL_PREPARE,
+            Some(json!({"hold": hex(&hold), "credential_id": b64url_encode(CREDENTIAL_ID)})),
+        )
+        .await?;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "the owner's own passkey prepares the Cancel: {answer}"
+    );
+    let entry = answer["entry"]
+        .as_str()
+        .ok_or("the prepare answers the entry as base64url")?
+        .to_owned();
+    let challenge = b64url_decode(
+        answer["challenge"]
+            .as_str()
+            .ok_or("the prepare answers the challenge as base64url")?,
+    )?;
+
+    // The owner's passkey signs it, and it lands.
+    let verified = assert_with(&challenge, FLAGS_PRESENT_VERIFIED);
+    let (status, answer) = home
+        .send("POST", CANCEL_LAND, Some(land_body(&entry, &verified)))
+        .await?;
+    assert_eq!(status, StatusCode::OK, "the owner's Cancel lands: {answer}");
+    let listed = home.listed_hold().await?;
+    assert_eq!(
+        listed["state"], "cancelled",
+        "the hold is cancelled: {listed}"
+    );
+    assert_eq!(
+        listed["cancelled_by"],
+        json!([home.person.to_hex()]),
+        "the owner cancelled it: {listed}"
     );
     Ok(())
 }
