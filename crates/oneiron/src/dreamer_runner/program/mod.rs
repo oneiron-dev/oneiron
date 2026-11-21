@@ -40,6 +40,8 @@ mod authority;
 mod bodies;
 #[cfg(feature = "sync")]
 mod carried_row_placement;
+#[cfg(feature = "sync")]
+mod decided;
 mod erase;
 mod hold_index;
 mod index;
