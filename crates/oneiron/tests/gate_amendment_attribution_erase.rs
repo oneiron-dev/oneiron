@@ -20,6 +20,8 @@
 // `bind_host_owner` exists only under `test-support`; the door only under the cfg.
 #![cfg(all(feature = "test-support", oneiron_test_support))]
 
+use std::sync::Arc;
+
 use ed25519_dalek::{Signer as _, SigningKey};
 use oneiron::authority::HostSlipIssuer;
 use oneiron::edit_distance::attribution::{
@@ -56,7 +58,8 @@ fn person(vault: &Vault, now: u64) -> EntityId {
     id
 }
 
-/// A rooted vault with an enrolled MACHINE and a bound owner.
+/// A rooted vault with this install's keystore, an enrolled MACHINE and a
+/// bound owner.
 struct Seeded {
     _dir: tempfile::TempDir,
     vault: Vault,
@@ -69,6 +72,13 @@ struct Seeded {
 fn seed() -> Seeded {
     let dir = tempfile::tempdir().expect("temporary vault directory");
     let vault = Vault::open(dir.path(), VaultConfig::device()).expect("fresh vault");
+    // The owner's hard delete signs its receipt with this install's key, so
+    // the keystore goes in as a host installs it after each open. Without it
+    // the erase is refused at setup (proof9967, the owner-revision erase test).
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    vault
+        .prepare_install_signing()
+        .expect("FIXTURE: this install's signing keys");
     let now = vault.now_recorded_at();
     let issuer = HostSlipIssuer::from_secret(SECRET).expect("host issuer");
     vault.ensure_host_root_slip(&issuer).expect("host root");
