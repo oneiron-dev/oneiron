@@ -277,13 +277,14 @@ pub(crate) fn receipts_of_kinds_for(
     let vault = reader.receipt_vault();
     let content = reader.receipt_content();
     // A credential cut refills past withheld receipts like the off-device
-    // one (FIX 9955): an unbound handle keeps its single fetch.
+    // one (FIX 9955), and so does the owner's: an unbound handle that every
+    // receipt reaches keeps its single fetch.
     let mut fetch = limit;
     let mut kept = loop {
         let query = family_query(fetch, kinds)?;
         let receipts = vault.receipts_for_caller(query, reader.receipt_destination(), content)?;
         let exhausted = receipts.len() < fetch;
-        let filtered = credential_kept_receipts(reader, receipts)?;
+        let filtered = reader_kept_receipts(reader, receipts)?;
         if filtered.len() >= limit || exhausted || fetch >= MAX_RECEIPT_QUERY_SCAN {
             break filtered;
         }
@@ -293,6 +294,36 @@ pub(crate) fn receipts_of_kinds_for(
     // A world's name on the owner's own share receipt is his (FIX 5493).
     crate::share_travel::screen_owner_notice_fields(|| reader.reads_owner_notices(), &mut kept);
     Ok(kept.into_iter().map(family_receipt).collect())
+}
+
+/// `receipts` cut to what `reader` reads, before any page cut: the receipts
+/// only the vault owner reads leave first ([`owner_kept_receipts`]), then
+/// the ones `reader`'s credential does not read
+/// ([`credential_kept_receipts`]).
+fn reader_kept_receipts(
+    reader: &impl ReceiptReader,
+    receipts: Vec<ReceiptRecord>,
+) -> MemoryResult<Vec<ReceiptRecord>> {
+    credential_kept_receipts(reader, owner_kept_receipts(reader, receipts))
+}
+
+/// `receipts` less the ones only the vault owner reads, for any other
+/// reader, bound to a credential or not: a prefilter receipt of a round whose
+/// screen read MESSAGE rows
+/// ([`crate::dreamer_prefilter::prefilter_receipt_read_message_rows`]). Its
+/// score, its axes and its round's counts stand on the words of the round's
+/// other turns and on MESSAGE rows read as the Dreamer, and it names its own
+/// TURN alone, so a reader of that TURN would learn of words it may not
+/// read. The owner is asked for only when such a receipt is on the page.
+fn owner_kept_receipts(
+    reader: &impl ReceiptReader,
+    mut receipts: Vec<ReceiptRecord>,
+) -> Vec<ReceiptRecord> {
+    let owner_only = crate::dreamer_prefilter::prefilter_receipt_read_message_rows;
+    if receipts.iter().any(owner_only) && !reader.reads_owner_notices() {
+        receipts.retain(|receipt| !owner_only(receipt));
+    }
+    receipts
 }
 
 /// `receipts` cut to what `reader`'s credential reads, before any page cut
@@ -488,7 +519,7 @@ fn family_page(
         };
         let (read, walked, exhausted) =
             vault.receipts_window_for_caller(pass, reader.receipt_destination(), content)?;
-        records.extend(credential_kept_receipts(reader, read)?);
+        records.extend(reader_kept_receipts(reader, read)?);
         if records.len() > page || exhausted {
             break;
         }

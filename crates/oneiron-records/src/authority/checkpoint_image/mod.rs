@@ -129,12 +129,18 @@ use serde::Serialize;
 /// SETTING-COPY-OUTSIDE-OWNER-KEY-LINE).
 /// 59: the fold keeps every key ever enrolled as the recovery root's authority key, so a recovery
 /// hold's signer R and an answer's owner key judge apart (OPUS-WAYBACK, the box recovery's wait).
-/// 60: a removal names the TASK facts the machine carried that its writer held, and a removed
+/// 60: an owner act stands only while every roster revision outside its past that took its
+/// carrier's key away (a removal, a new key) saw it, whatever the raw roster head names, and
+/// removals of its carrier that cross alone never unmake it, nor an owner choice, world edit or
+/// grant travel choice it carried (FIX ACT-STANDS-RAW-HEAD-SKIPS-KEY-ROTATION, FIX
+/// MACHINE-CROSSING-REMOVALS-UNMAKE-CARRIED-OWNER-ACTS, FIX
+/// MACHINE-CROSSING-REMOVALS-UNMAKE-CARRIED-OWNER-CHOICES).
+/// 61: a removal names the TASK facts the machine carried that its writer held, and a removed
 /// machine's signature proves a fact only if every removal saw it; the image's fold names, per
 /// machine, what every removal in the roster's chain saw and the key it removed the machine under
 /// while nothing poisons that key, so removals that cross still meet (row
 /// TASK-FACT-REMOVED-CARRIER-NEW-FACTS).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 60;
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 61;
 
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";

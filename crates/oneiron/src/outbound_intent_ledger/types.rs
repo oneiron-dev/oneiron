@@ -548,6 +548,9 @@ pub struct IntentLedgerRecord {
     pub payload_hash: [u8; 32],
     pub(super) payload: Vec<u8>,
     pub idempotency_key: String,
+    /// The attempt whose row id `idempotency_key` is the hex of, when not this
+    /// row's own (`IntentLedgerRecord::with_idempotency_attempt`); else `None`.
+    pub(crate) idempotency_attempt_id: Option<AttemptId>,
     pub idempotency_supported: bool,
     pub authorization_binding: Option<OutboundAuthorizationBinding>,
     pub(crate) admitted_approval: Option<AdmittedApproval>,
@@ -616,6 +619,7 @@ impl IntentLedgerRecord {
             payload_hash,
             payload: request.payload,
             idempotency_key: bytes_to_hex_lower(&id),
+            idempotency_attempt_id: None,
             idempotency_supported,
             authorization_binding: request.authorization_binding,
             admitted_approval: None,
@@ -692,6 +696,7 @@ impl fmt::Debug for IntentLedgerRecord {
                 &format_args!("[{} bytes redacted]", self.payload.len()),
             )
             .field("idempotency_key", &self.idempotency_key)
+            .field("idempotency_attempt_id", &self.idempotency_attempt_id)
             .field("idempotency_supported", &self.idempotency_supported)
             .field("authorization_binding", &self.authorization_binding)
             .field("binding_version", &self.binding_version)

@@ -69,7 +69,8 @@ impl StepChargeTally {
 
     /// Ends the try on a failed durable step: `Failed`, typed, with what
     /// the try already spent and its paid steps' receipts, when a spend
-    /// scope refused the step for good; a park on the seat, with the same
+    /// scope refused the step for good or the provider refused it for its
+    /// window (Engine 21 Nov 07:38); a park on the seat, with the same
     /// spend, when a spent model seat refused it (SEAT-PARK-MODEL-STEP-PATH);
     /// any other step error parks for `reason` with that error's cause, as
     /// [`Self::park_for`] does (BUDGET-TRAP-UNTYPED-NO-SENDER).
@@ -93,6 +94,24 @@ impl StepChargeTally {
             reason,
             crate::dreamer_runner::dreamer_park_cause_of_step(error),
         )
+    }
+
+    /// [`Self::end_on_step_error`] once the paid usage `error` carries (a
+    /// spent correction's or a failed fallback's) has joined the tally, so
+    /// the try's end settles it beside its receipts instead of refunding it
+    /// (FIX 11554), a window refusal after a paid first reply among them:
+    /// for a site whose earlier arms record no such usage.
+    pub(super) fn end_on_step_error_with_spend(
+        &mut self,
+        reason: &str,
+        error: &DurableStepError,
+    ) -> DreamerAttemptExecution {
+        if let DurableStepError::SpentLlm { usage, .. }
+        | DurableStepError::SpentFallback { usage, .. } = error
+        {
+            self.record_usage(usage);
+        }
+        self.end_on_step_error(reason, error)
     }
 
     /// Parks on the spent model `seat` that refused a step, with `reason`
@@ -125,6 +144,19 @@ impl StepChargeTally {
             reason: reason.to_owned(),
             completed_units: self.units,
             budget_refusal: Some(refusal),
+            step_bindings: self.step_bindings.clone(),
+        }
+    }
+
+    /// Ends the try `Failed` for `reason`, untyped, with what it already
+    /// spent and its paid steps' receipts: a call the provider refused for
+    /// its window, which the same input meets on every call, so no later
+    /// pass resends it (Engine 21 Nov 07:38).
+    pub(super) fn fail_for(&self, reason: &str) -> DreamerAttemptExecution {
+        DreamerAttemptExecution::Failed {
+            reason: reason.to_owned(),
+            completed_units: self.units,
+            budget_refusal: None,
             step_bindings: self.step_bindings.clone(),
         }
     }
@@ -356,6 +388,17 @@ pub(super) fn retry_fallback(response: &LlmResponse) -> bool {
     )
 }
 
+/// The text of the window refusal a deterministic fallback's `response`
+/// stood in for ([`crate::dreamer_wake::fatal_refuses_window`]), if it stood
+/// in for one. Its reply carries nothing the call read, and the same input
+/// meets the same refusal on every call: the try ends Failed with that text,
+/// once, never as an empty extraction (Engine 21 Nov 07:38).
+pub(super) fn window_fallback(response: &LlmResponse) -> Option<String> {
+    oneiron_model::llm::FallbackRegistry::source_of(response)
+        .filter(crate::dreamer_wake::fatal_refuses_window)
+        .map(|source| source.to_string())
+}
+
 /// What one slice's terminal step left, once its spend is accounted:
 /// the single classification the serial finish and the window arms
 /// that never reach a finish both tally by, so a paid extraction
@@ -374,6 +417,11 @@ pub(super) enum SliceFate {
     BudgetRefused {
         reason: String,
         refusal: StepBudgetRefusal,
+    },
+    /// The provider refused the slice's step for its context window: the try
+    /// ends `Failed` with `reason`, once (Engine 21 Nov 07:38).
+    WindowRefused {
+        reason: String,
     },
     /// A spent model seat refused the slice's step: the try parks on the
     /// seat (SEAT-PARK-MODEL-STEP-PATH).
@@ -446,15 +494,19 @@ pub(super) fn tally_slice_outcome(
 ) -> Result<SliceFate> {
     charge_borrowed_slice_outcome(vault, &outcome, unsaved_usage.as_ref(), charges)?;
     Ok(match outcome {
+        // A fallback that stood in for a window refusal is that refusal.
         Ok(StepOutcome::Finished {
             binding,
             response,
             failure_policy,
             ..
-        }) => SliceFate::Finished {
-            binding,
-            response,
-            failure_policy,
+        }) => match window_fallback(&response) {
+            Some(reason) => SliceFate::WindowRefused { reason },
+            None => SliceFate::Finished {
+                binding,
+                response,
+                failure_policy,
+            },
         },
         Ok(StepOutcome::Trapped { .. }) => SliceFate::Trapped,
         Err(DurableStepError::SpentFinalizeRefused { .. }) => SliceFate::Checkpoint,
@@ -474,6 +526,9 @@ pub(super) fn tally_slice_outcome(
                 seat,
                 reset_at_s,
             },
+            None if crate::dreamer_wake::step_refuses_window(&error) => SliceFate::WindowRefused {
+                reason: error.to_string(),
+            },
             None => SliceFate::Refused(error.to_string()),
         },
     })
@@ -487,18 +542,22 @@ pub(super) fn tally_slice_outcome(
 /// the run a slice already decided, in the finish loop's order:
 /// `Trapped` when any slice trapped, as that step already parked the
 /// attempt under its durable trap and the caller must never extract
-/// past it (FIX 12487 round 2); else `SeatRefused` when a spent model
-/// seat refused a slice and no spend scope refused one for good, so
-/// the try waits on that seat instead of a Retry that a later pass
-/// would resume (and ask the seat again) before the seat's available
-/// write (review round 2 of #7340). `None` leaves the caller's own arm.
+/// past it (FIX 12487 round 2); else `BudgetRefused`, typed, when a spend
+/// scope refused a slice for good; else `WindowRefused` when the provider
+/// refused a slice for its window, since a park or a rerun would resend
+/// that call (Engine 21 Nov 07:38); else `SeatRefused` when a spent model
+/// seat refused a slice, so the try waits on that seat instead of a Retry
+/// that a later pass would resume (and ask the seat again) before the
+/// seat's available write (review round 2 of #7340). Each comes before the
+/// caller's own arm, a park or a checkpoint, which `None` leaves.
 pub(super) fn tally_extracted_outcomes(
     vault: &Vault,
     extracted: ExtractedPartition,
     charges: &mut StepChargeTally,
 ) -> Result<Option<PartitionRun>> {
     let mut trapped = false;
-    let mut budget_refused = false;
+    let mut budget_refused = None;
+    let mut window_refused = None;
     let mut seat_refused = None;
     for SliceStep {
         outcome,
@@ -508,7 +567,12 @@ pub(super) fn tally_extracted_outcomes(
     {
         match tally_slice_outcome(vault, outcome, unsaved_usage, charges)? {
             SliceFate::Trapped => trapped = true,
-            SliceFate::BudgetRefused { .. } => budget_refused = true,
+            SliceFate::BudgetRefused { reason, refusal } => {
+                budget_refused.get_or_insert((reason, refusal));
+            }
+            SliceFate::WindowRefused { reason } => {
+                window_refused.get_or_insert(reason);
+            }
             SliceFate::SeatRefused {
                 reason,
                 seat,
@@ -522,7 +586,13 @@ pub(super) fn tally_extracted_outcomes(
     if trapped {
         return Ok(Some(PartitionRun::Trapped));
     }
-    let Some((reason, seat, reset_at_s)) = seat_refused.filter(|_| !budget_refused) else {
+    if let Some((reason, refusal)) = budget_refused {
+        return Ok(Some(PartitionRun::BudgetRefused { reason, refusal }));
+    }
+    if let Some(reason) = window_refused {
+        return Ok(Some(PartitionRun::WindowRefused { reason }));
+    }
+    let Some((reason, seat, reset_at_s)) = seat_refused else {
         return Ok(None);
     };
     Ok(Some(PartitionRun::SeatRefused {

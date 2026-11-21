@@ -773,6 +773,14 @@ name = "selector_release_recheck"
 path = "tests/selector_release_recheck.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks"]
 
+# CROSS-VAULT-DELETE-SELECTOR-ANSWER-RELEASE: a socket answer carries the owner's delete of a row
+# an earlier answer sent; its grant is seeded with `put_selector_test_federation_grant`
+# (`oneiron/test-hooks`).
+[[test]]
+name = "selector_answer_carries_released_row_delete"
+path = "tests/selector_answer_carries_released_row_delete.rs"
+required-features = ["oneiron/test-hooks"]
+
 [lints]
 workspace = true
 

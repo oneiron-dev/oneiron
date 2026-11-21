@@ -11,7 +11,6 @@
 //! Dreamer's or an actor's confirmation makes the real, synced entity, under
 //! the same id, or names an existing entity in its place.
 
-#[cfg(feature = "sync")]
 use std::collections::BTreeSet;
 use std::ops::Bound;
 

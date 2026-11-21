@@ -350,11 +350,15 @@ fn a_stated_row_past_the_vector_fetch_is_found() {
 /// A claim with no stamped birth takes its class from its source: the
 /// bounded channel reads the admitted claim body for it, as the post-blend
 /// filter does, so an unborn UserStated claim behind concluded rows is
-/// still found.
+/// still found. The claim is learned now and occurs when the stated row of
+/// [`Fixture::stated_behind_concluded`] does, so the unsliced call ranks it
+/// first as it ranks that row.
 #[test]
 fn an_unborn_stated_claim_past_the_vector_fetch_is_found() {
     let mut fixture = fixture();
-    let claim = put_stated_claim(&fixture.vault);
+    let past = u64::try_from(CONCLUDED_ROWS + 1).expect("small count");
+    let at = ANCHOR - 60 * past;
+    let claim = put_stated_claim(&fixture.vault, TimeRange { start: at, end: at });
     fixture
         .vault
         .put_vector(&claim, &far_vector())
@@ -559,7 +563,11 @@ fn an_out_of_slice_exact_phonetic_hit_neither_counts_nor_seeds() {
 #[test]
 fn an_exact_phonetic_hit_of_a_refused_kind_adds_no_suppression() {
     let fixture = fixture_with_capture(true);
-    let claim = put_claim(&fixture.vault, ClaimApprovalStatus::Proposed);
+    let claim = put_claim(
+        &fixture.vault,
+        ClaimApprovalStatus::Proposed,
+        (TimeRange { start: 10, end: 99 }, 10),
+    );
     let exact: Vec<String> = generate_phonetic_codes(WALK_CONCLUDED_NAME)
         .into_iter()
         .filter(|code| !code.starts_with("ipa:"))
@@ -640,13 +648,27 @@ fn a_call_the_nearest_rows_match_keeps_its_nearest_row() {
 
 /// One live, UserStated claim by a human writer about a person, written
 /// through the public batch (no birth stamp), as
-/// `tests/vault_embedding_spaces_doors.rs` writes it.
-fn put_stated_claim(vault: &Vault) -> EntityId {
-    put_claim(vault, ClaimApprovalStatus::Auto)
+/// `tests/vault_embedding_spaces_doors.rs` writes it, occurring over
+/// `occurred` and learned now. The blend reads a row's learned time twice:
+/// as its recency, and, for a claim alone, as an access factor that halves
+/// with age down to `ACCESS_FACTOR_FLOOR` (0.05) while a PERSON row keeps
+/// 1.0. A claim learned in 1970 loses on both, so no unsliced call ranks it
+/// above the concluded rows.
+fn put_stated_claim(vault: &Vault, occurred: TimeRange) -> EntityId {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("FIXTURE: the clock reads after 1970")
+        .as_secs();
+    put_claim(vault, ClaimApprovalStatus::Auto, (occurred, now))
 }
 
-/// [`put_stated_claim`], written with approval `approval`.
-fn put_claim(vault: &Vault, approval: ClaimApprovalStatus) -> EntityId {
+/// One claim as [`put_stated_claim`] writes it, with approval `approval`,
+/// occurring over `occurred` and learned at `learned_at`.
+fn put_claim(
+    vault: &Vault,
+    approval: ClaimApprovalStatus,
+    (occurred, learned_at): (TimeRange, u64),
+) -> EntityId {
     let actor = WriteActor::new(EntityId::now(), EdgeActorClass::Human);
     let subject = EntityId::now();
     for id in [actor.entity_ref(), subject] {
@@ -679,8 +701,8 @@ fn put_claim(vault: &Vault, approval: ClaimApprovalStatus) -> EntityId {
                 1.0,
             ),
             &envelope,
-            TimeRange { start: 10, end: 99 },
-            10,
+            occurred,
+            learned_at,
         )
         .commit()
         .expect("FIXTURE: write the claim");

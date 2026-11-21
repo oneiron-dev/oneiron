@@ -819,7 +819,8 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         request,
         prepared.idempotency_supported,
         budget_accounting,
-    )?;
+    )?
+    .with_idempotency_attempt(prepared.idempotency_attempt)?;
     // The proof is the Gate's ACTUAL selected tap under this writer lock,
     // not an availability observation from dispatch preparation. Spend,
     // decision, typed proof, budget marker and Pending insert commit together.

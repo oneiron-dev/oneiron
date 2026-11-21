@@ -2013,7 +2013,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sandbox_vendor/protobuf.rs` | src | s | 18 crate-vis | — | The protobuf wire format of the few messages a vendor's gRPC API takes and answers (L8-43) |
 | `src/sandbox_vendor/vendor_http.rs` | src | m | 31 crate-vis | — | What every vendor's sandbox client keeps the same way (L8-43): the owner's key, read at the custody door… |
 | `src/saved_query_sweep.rs` | src | m | 2 crate-vis | — | The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is… |
-| `src/selector_release.rs` | src | s | 10 crate-vis | — | A selector answer leaves a socket only while what it was made under still stands (SELECTOR-RELEASE-POINT =… |
+| `src/selector_release.rs` | src | s | 12 crate-vis | — | A selector answer leaves a socket only while what it was made under still stands (SELECTOR-RELEASE-POINT =… |
 | `src/server/artifact_previews.rs` | src | s | 1 fn · 7 crate-vis | — | Host-authenticated process declarations and their existing private preview leases |
 | `src/server/board_publisher.rs` | src | m | 5 crate-vis | — | The board publisher: committed TASK writes reach STREAM subscribers |
 | `src/server/booking_calls.rs` | src | s | 2 crate-vis | — | Authenticated booking calls, counted per actor in the current minute (FIX 128-131) |
@@ -2564,6 +2564,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/seal_judge_host_wire.rs` | test | m | — | — | The host seal check's wire ([SEAL-JUDGE-HOST-WIRE-UNTESTED]): the `SealJudge` decision provider and… |
 | `tests/secret_label_purpose_doors.rs` | test | m | — | — | The owner's display edits on one secret at their served doors (FIX [SECRETS-LABEL-PURPOSE-VERBS]): `POST… |
 | `tests/secret_list_doors.rs` | test | m | — | — | The owner's list of every secret in custody at its served doors (FIX [SECRETS-OWNER-LIST-READ]… |
+| `tests/selector_answer_carries_released_row_delete.rs` | test | m | — | — | A selector socket answer to another vault's machine carries the owner's delete of a row an earlier answer… |
 | `tests/selector_home_clearance_ws.rs` | test | m | — | — | A served selector fetch carries no stamped claim to a member homed elsewhere (L5-02 PR 4, RULING… |
 | `tests/selector_release_recheck.rs` | test | L | — | — | Socket regressions for SELECTOR-RELEASE-POINT = B: a selector answer is judged again where it leaves, so one… |
 | `tests/self_actor_bounded_credential.rs` | test | m | — | — | `self.actor` answers a bounded credential (leg A1, E2E HOOKS-03 cause 1) |

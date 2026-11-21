@@ -64,6 +64,7 @@ mod window;
 pub(crate) use self::{
     arc_children::arc_parts_params_hash_for_test,
     arc_compose::arc_composition_params_hash_for_test, chunks::session_pages_params_hash_for_test,
+    window::correction_overflow_for_test,
 };
 use reply_and_pins::{check_summary_reply, note_read_in, summary_output};
 pub(crate) use reply_and_pins::{
@@ -253,6 +254,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                     &evidence,
                     instruction,
                     window,
+                    None,
                     StepChargeTally::default(),
                 )
                 .await;
@@ -398,8 +400,24 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                     && let Some(window) = session_window.and_then(window::smaller_window)
                 {
                     return self
-                        .compose_pages(attempt, ctx, &plan, &evidence, instruction, window, charges)
+                        .compose_pages(
+                            attempt,
+                            ctx,
+                            &plan,
+                            &evidence,
+                            instruction,
+                            window,
+                            Some(other.to_string()),
+                            charges,
+                        )
                         .await;
+                }
+                if let Some(failed) = crate::dreamer_runner::dreamer_failed_on_refused_step(
+                    &other,
+                    charges.units,
+                    &charges.step_bindings,
+                ) {
+                    return Ok(failed);
                 }
                 ctx.note_spend_before_error(charges.units, &charges.step_bindings);
                 // A spent model seat refused the step: the try parks on that seat
