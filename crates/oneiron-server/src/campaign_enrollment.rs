@@ -113,28 +113,16 @@ pub(crate) fn spawn(
                         let repair = std::mem::take(&mut repair_asks);
                         let ran = tokio::task::spawn_blocking(move || {
                             let _pass = pass;
-                            // A copy restored and not joined writes nothing (row
-                            // RESTORED-UNJOINED-STARTS-NO-WORK), and even a repair
-                            // that changes no row commits a Content write, which
-                            // stamps the backup mark: the repair stays pending for
-                            // the first pass after the join. A predicate read error
-                            // holds it too; the pump then fails on the same read.
-                            let held = !matches!(server.vault().restored_unjoined(), Ok(false));
-                            if repair && !held {
-                                if let Err(error) = server.vault().repair_campaign_enrollment_owner_asks() {
-                                    tracing::warn!(%error, "campaign enrollment owner asks were not repaired");
-                                }
-                            }
-                            (repair && held, pump(&server))
+                            campaign_pass(&server, repair)
                         })
                         .await;
                         match ran {
-                            Ok((repair_held, Ok(more))) => {
-                                repair_asks |= repair_held;
+                            Ok((repair_owed, Ok(more))) => {
+                                repair_asks |= repair_owed;
                                 more
                             }
-                            Ok((repair_held, Err(error))) => {
-                                repair_asks |= repair_held;
+                            Ok((repair_owed, Err(error))) => {
+                                repair_asks |= repair_owed;
                                 tracing::warn!(kind = ?error.kind(), "the campaign enrollment pump failed; it runs again next pass");
                                 false
                             }
@@ -163,18 +151,35 @@ pub(crate) fn spawn(
     })
 }
 
+/// One admitted pass: the owner-ask repair when it is due, then [`pump`].
+/// Returns whether the repair is still owed, with the pump's result.
+///
+/// A copy restored and not joined writes nothing (row
+/// RESTORED-UNJOINED-STARTS-NO-WORK), so one read of the hold decides the
+/// whole pass: even a repair that changes no row commits a Content write,
+/// which stamps the backup mark. While the copy is held the pass runs
+/// nothing (no repair, no designation elect, no claim, no send) and the rows
+/// wait for the first pass after the join. A failed read fails the pass as a
+/// pump failure does. Either way the repair stays owed.
+fn campaign_pass(server: &SyncServer, repair: bool) -> (bool, oneiron::Result<bool>) {
+    match server.vault().restored_unjoined() {
+        Ok(false) => {}
+        Ok(true) => return (repair, Ok(false)),
+        Err(error) => return (repair, Err(error)),
+    }
+    if repair && let Err(error) = server.vault().repair_campaign_enrollment_owner_asks() {
+        tracing::warn!(%error, "campaign enrollment owner asks were not repaired");
+    }
+    (false, pump(server))
+}
+
 /// One pass: on the campaign home node, claims up to [`PUMP_ATTEMPTS`]
 /// attempts, runs each one's membership leg and, when it applied with a send
 /// owed, its outward leg, and settles it. Returns whether the bound stopped
-/// the pass with attempts possibly left.
+/// the pass with attempts possibly left. Its caller, [`campaign_pass`], has
+/// read the restored-copy hold first.
 fn pump(server: &SyncServer) -> oneiron::Result<bool> {
     let vault = server.vault();
-    // A copy restored and not joined runs no campaign enrollment (row
-    // RESTORED-UNJOINED-STARTS-NO-WORK): rows wait, and the first pass after the
-    // join claims them. Writes nothing: no designation elect, no claim, no send.
-    if vault.restored_unjoined()? {
-        return Ok(false);
-    }
     let now = vault.now_recorded_at();
     let Some(node) = campaign_home_node(vault, now)? else {
         return Ok(false);
