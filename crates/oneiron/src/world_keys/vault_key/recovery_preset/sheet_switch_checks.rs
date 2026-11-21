@@ -46,9 +46,6 @@ impl Vault {
         current: RecoveryPreset,
         rotation: Option<&PreparedRotation>,
     ) -> Result<Option<crate::authority::OwnerProofGround>> {
-        if current == preset {
-            return Ok(None);
-        }
         let rotates = current == RecoveryPreset::Standard
             && preset.is_nobody_but_me()
             && rotation.is_some_and(|prepared| prepared.live_pre.is_some());

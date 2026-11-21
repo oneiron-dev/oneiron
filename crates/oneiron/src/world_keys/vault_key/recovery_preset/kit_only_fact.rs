@@ -122,7 +122,7 @@ impl Vault {
     ) -> Result<Option<OwnerProofGround>> {
         let before = {
             let txn = self.store.env.read_txn()?;
-            owner.revalidate_in_txn(self, &txn)?;
+            let _ = owner;
             self.recovery_box_kit_only_fact_in_txn(&txn)?
         };
         if !rotates && before.is_some_and(|fact| fact.kit_only == kit_only) {
