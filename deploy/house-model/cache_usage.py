@@ -145,12 +145,15 @@ class BackendIdentity:
         self.cache_mode = settings_digest(cache_settings)
         self.server_settings = server_settings
 
-    def execution_mode(self, template_kwargs, solo):
+    def execution_mode(self, template_kwargs, solo, prompt_lookup=True):
         """The digest of one request's effective execution: the server's
-        settings, the template arguments it rendered with, and solo
-        admission."""
-        return settings_digest({"server": self.server_settings, "template_kwargs": template_kwargs,
-                                "solo": solo})
+        settings, the template arguments it rendered with, solo admission,
+        and prompt lookup when the request turned it off. Only such a
+        request names it, so every other request's digest is as before."""
+        mode = {"server": self.server_settings, "template_kwargs": template_kwargs, "solo": solo}
+        if not prompt_lookup:
+            mode["prompt_lookup"] = False
+        return settings_digest(mode)
 
     def record(self, execution_mode):
         identity = {

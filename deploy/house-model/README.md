@@ -246,7 +246,8 @@ the answer keeps that room after a full thought. A `response_format` schema
 constrains the answer only. A prompt that fills the context is refused with
 `400` and `code = "context_length_exceeded"`. By default up to four
 requests run at once; one that sets `"oneiron_solo": true` runs alone (see
-"Solo admission"). A request's `tools` reach the chat template, and a tool
+"Solo admission"), and one that sets `"oneiron_prompt_lookup": false` takes
+no prompt-lookup proposal (see "Speed parts"). A request's `tools` reach the chat template, and a tool
 call the model writes (the template's `<tool_call>` block, JSON or
 `<function=...>` form) comes back as OpenAI `tool_calls`, with
 `finish_reason` `tool_calls`; a replayed tool round's string `arguments` are
@@ -444,6 +445,14 @@ ported onto this server without editing exllamav3. Its sampling changes
 - **Identity.** A server with any part on names them in its server settings
   (`speed_parts`; the default names `prompt_lookup`); with every part off,
   the identity is as before.
+- **Per request.** A request body that sets top-level
+  `"oneiron_prompt_lookup": false` takes no lookup proposal: the draft
+  proposes every block of its Jobs, as on a server with lookup off. `true`
+  or no field keeps the server's setting (it never turns lookup on where the
+  server has it off); any other value is a `400`. Only a request that turns
+  it off names it in its execution mode (`"prompt_lookup": false`), so every
+  other request's identity is as before. It is for the engine's one retry of
+  a reply that failed its JSON parse: the retry runs without lookup.
 - **Logs.** One `SPEED_PARTS` line at load gives each part's state and the
   exllamav3 extension the server loaded; the `DRAFT_RING` line gives the
   window tables' width in pages (0 when off).

@@ -14,7 +14,9 @@ its pages fit in the shared cache beside the pages the admitted ones hold. A
 request that does not fit waits; none is refused for its size, cut short or
 evicted. A request whose body sets `"oneiron_solo": true` runs alone: it
 waits its turn in arrival order, the scheduler lets what is in flight finish,
-runs it by itself, then admits again.
+runs it by itself, then admits again. A request whose body sets
+`"oneiron_prompt_lookup": false` takes no prompt-lookup proposal (the speed
+part prompt_lookup): every proposal it is offered is the draft's.
 
 A thinking reply is split as llama.cpp's `--reasoning-format deepseek` splits
 it: the text before `</think>` comes back as `reasoning_content`, the answer as
@@ -131,6 +133,11 @@ DEFAULT_IN_FLIGHT = 4
 # The request body's field that asks for solo admission: true runs the request
 # with nothing else in flight.
 SOLO_FIELD = "oneiron_solo"
+# The request body's field that turns prompt lookup off for one request: false
+# gives its Jobs no lookup proposal, so the draft proposes every block; true or
+# absent keeps the server's setting (a server with lookup off offers none).
+# The engine sends false on its one retry of a reply that failed its JSON parse.
+PROMPT_LOOKUP_FIELD = "oneiron_prompt_lookup"
 # The draft's KV ring, in pages per in-flight slot, when the launcher names
 # none (`install_draft_ring`). Every layer of the DFlash2 draft slides over
 # 2048 tokens, and a ring covers the window plus 3 pages, so 11 is the least
@@ -506,13 +513,16 @@ def install_prompt_lookup(generator):
     LOOKUP_MIN_MATCH tokens with a full draft-depth continuation is a candidate. Candidates fall in three buckets by
     match length (LOOKUP_BUCKET_MATCHES), and a job takes one when its bucket's verified acceptance, counted from
     LOOKUP_PRIOR on this job's own rounds only, is at least LOOKUP_MIN_ACCEPTANCE, or on every LOOKUP_RETRY_EVERY-th
-    candidate of the bucket. When every job in the round takes one, the draft model does not run that round."""
+    candidate of the bucket. When every job in the round takes one, the draft model does not run that round. A Job
+    whose request set PROMPT_LOOKUP_FIELD false (`prompt_lookup` False) is never offered one."""
     import torch
     from exllamav3.ext import exllamav3_ext as ext
     depth = generator.num_draft_tokens
     base = generator.iterate_draftmodel_dflash_gen
 
     def candidate(job):
+        if not getattr(job, "prompt_lookup", True):
+            return None
         ids = job.sequences[0].sequence_ids.torch()
         if getattr(job, "lookup_matcher", None) is None:
             job.lookup_matcher = ext.BC_SAM()
@@ -571,7 +581,8 @@ def speed_parts(args, ring, draft_dir):
 SPEED_PART_HELP = {
     "fuse_projections": "keep same-input projections fused at every bitrate (EXL3_MGEMM_K_THRESHOLD=0)",
     "fp16_prefill": f"FP16 accumulation in reconstructed prefill GEMMs of at least {FP16_PREFILL_MIN_ROWS} rows",
-    "prompt_lookup": "propose a request's own earlier continuations, per request where they verify well",
+    "prompt_lookup": "propose a request's own earlier continuations, per request where they verify well; "
+                     f"a request that sets {PROMPT_LOOKUP_FIELD} false takes none",
     "draft_window_tables": "cut the draft's block tables to its sliding window (needs the draft KV ring)",
 }
 
@@ -883,7 +894,7 @@ class Request:
     `final_stats`, both set before its terminal event."""
 
     def __init__(self, request_id, prompt, ids, max_tokens, budget, schema, stops, seed, samplers, solo,
-                 accepted_ns=None, tools=None):
+                 accepted_ns=None, tools=None, prompt_lookup=True):
         # Inputs.
         self.request_id = request_id
         # When the worker accepted the request, before it was rendered
@@ -894,6 +905,9 @@ class Request:
         # Runs alone: admitted once nothing else is in flight, with nothing
         # admitted beside it until it ends.
         self.solo = solo
+        # False when the request turned prompt lookup off (PROMPT_LOOKUP_FIELD):
+        # its Jobs then take no lookup proposal.
+        self.prompt_lookup = prompt_lookup
         self.prompt = prompt
         self.ids = ids
         self.prompt_tokens = int(ids.numel())
@@ -1664,6 +1678,8 @@ class Scheduler:
                 job = evaluation.job(PlainJob, fields, phase)
             else:
                 job = PlainJob(**fields)
+            # Prompt lookup (`install_prompt_lookup`) reads it on the Job.
+            job.prompt_lookup = req.prompt_lookup
             serial = self.generator.enqueue(job)
             if evaluation is not None:
                 evaluation.enqueued(job, phase)
@@ -2011,14 +2027,17 @@ class Server:
         solo = body.get(SOLO_FIELD, False)
         if not isinstance(solo, bool):
             raise RequestError(f"{SOLO_FIELD} must be true or false")
+        prompt_lookup = body.get(PROMPT_LOOKUP_FIELD, True)
+        if not isinstance(prompt_lookup, bool):
+            raise RequestError(f"{PROMPT_LOOKUP_FIELD} must be true or false")
         samplers = {"reason": make_sampler(body), "answer": make_sampler(body)}
         req = Request(request_id, prompt, ids, max_tokens, budget, schema, stops, seed, samplers, solo,
-                      accepted_ns=accepted_ns, tools=tools)
+                      accepted_ns=accepted_ns, tools=tools, prompt_lookup=prompt_lookup)
         if work is None:
             work = exl3_executor.http_context(body, time.monotonic_ns())
             self.scheduler.executor.open_grant(work)
         req.work = work
-        req.execution_mode = self.identity.execution_mode(template_kwargs, solo)
+        req.execution_mode = self.identity.execution_mode(template_kwargs, solo, prompt_lookup)
         if not req.thinking:
             req.answer_prompt = prompt
             req.answer_ids = ids
