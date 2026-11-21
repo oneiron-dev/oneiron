@@ -167,4 +167,22 @@ pub struct CanonicalSnapshot {
     /// policies they reach (Engine A), by map key. Absent when empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub source_audiences: Vec<CanonicalSourceAudience>,
+    /// The carrier-signed task authority facts the source keeps refused
+    /// under the window's TASKs, by task, fact and body. Absent when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub refused_task_facts: Vec<CanonicalRefusedTaskFact>,
+}
+
+/// One task authority fact its source refused because its id was deleted
+/// there first, kept under its task as it arrived. The recovered vault keeps
+/// it so, and its task's read judges it as the source's read would: a fact
+/// whose carrier's profile arrives after the recovery counts once it has
+/// (FIX TASK-FACT-REFUSED-PENDING-NOT-CAPTURED).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CanonicalRefusedTaskFact {
+    pub task: [u8; 16],
+    pub fact: [u8; 16],
+    /// The fact row's body as it arrived, its carrier's signature included.
+    pub body: Vec<u8>,
 }

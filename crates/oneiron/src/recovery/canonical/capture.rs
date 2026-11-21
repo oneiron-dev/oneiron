@@ -215,6 +215,7 @@ impl CanonicalCapture {
             withdrawn_cutoffs: Vec::new(),
             asset_body_refs: Vec::new(),
             source_audiences: Vec::new(),
+            refused_task_facts: Vec::new(),
         };
         for (key, blob) in binary_rows_within(doc, "entities", budget)? {
             // A pad row goes by its bare reference, its pad in current custody
@@ -569,9 +570,28 @@ impl CanonicalCapture {
         for entity in &snapshot.entity_blobs {
             if crate::batch::EntityMetadataHeader::parse(&entity.blob)
                 .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_TASK)
-                && vault.task_fact_suppressed_in(txn, id(entity.id)?)?
+                && vault.task_fact_suppression_mark_in(txn, id(entity.id)?)?
             {
                 snapshot.suppressed_tasks.push(entity.id);
+            }
+        }
+        // And each signed fact the vault keeps refused under a window TASK rides with it as
+        // it arrived, so the recovered vault judges it as this one would, a fact whose
+        // carrier's profile arrives after the recovery included (FIX
+        // TASK-FACT-REFUSED-PENDING-NOT-CAPTURED).
+        for entity in &snapshot.entity_blobs {
+            if crate::batch::EntityMetadataHeader::parse(&entity.blob)
+                .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_TASK)
+            {
+                for (fact, body) in
+                    crate::task_authority::refused_facts_in(&vault.store, txn, &id(entity.id)?)?
+                {
+                    snapshot.refused_task_facts.push(CanonicalRefusedTaskFact {
+                        task: entity.id,
+                        fact: *fact.as_bytes(),
+                        body,
+                    });
+                }
             }
         }
         let carried: std::collections::BTreeMap<_, _> =
