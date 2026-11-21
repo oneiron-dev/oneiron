@@ -2517,6 +2517,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/owner_key_change_report.rs` | test | m | — | — | The hosted vault's owner key change report (Engine ruling 21 Nov 06:00): one sweep sends every listed change… |
 | `tests/owner_key_removal_routes.rs` | test | s | — | — | Row AUTH-5 PR b (the owner's ruling AUTH-5): a managed host holds no owner key, so its server removes none |
 | `tests/owner_passkey_binding_routes.rs` | test | m | — | — | PASSKEY-SELF-BIND over HTTP (row PASSKEY-SELF-BIND): the passkey-only owner of a managed host's vault binds… |
+| `tests/owner_passkey_vouch_routes.rs` | test | m | — | — | PASSKEY-VOUCH-PREPARE-PICKS-BY-CREDENTIAL-ID-ALONE over HTTP: the owner's passkey vouches for a new device… |
 | `tests/owner_plane_refusal_answers.rs` | test | s | — | — | The owner plane's refusal maps make the same owner refusal of each engine code before and after they share… |
 | `tests/owner_refusal_catch_all.rs` | test | s | — | — | `POST /v1/owner/steer`, `POST /v1/owner/inbox/concern/move` and `GET /v1/owner/inbox` answer an engine… |
 | `tests/pairing_owner_act.rs` | test | m | — | — | A pairing link and a slip revocation are owner acts, and a holder revokes its own slips (FIX 8216, lead… |
