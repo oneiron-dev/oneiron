@@ -29,7 +29,7 @@ use oneiron::idle_fold::{self, CachedPrefixHorizon};
 use oneiron::llm::registry::{ModelRegistryRow, ModelWireFormat};
 use oneiron::llm::{self, LlmCatalogCost, LlmCatalogEntry, ServedCacheHorizon};
 use oneiron::setting::{
-    self, ScopeKind, SetBy, SetSetting, SetSettingOutcome, SettingCaller, SettingMode, SettingScope,
+    self, ScopeKind, SetBy, SetSetting, SetSettingOutcome, SettingCaller, SettingScope,
 };
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::idle_fold::{self as doors, FoldLedgerView, IdleCallView};
@@ -249,17 +249,7 @@ fn owner_sets_keep_through(vault: &Vault, secs: u64) -> TestResult {
     let proof = vault.authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())?;
     let outcome = vault.set_setting(
         SettingCaller::Owner(&proof),
-        SetSetting {
-            key: KEEP_THROUGH.to_owned(),
-            item: None,
-            scope: SettingScope::Vault,
-            mode: SettingMode::Value,
-            value: Some(json!(secs)),
-            expected_revision: None,
-            why: None,
-            check_in_ref: None,
-            weight_runs: None,
-        },
+        SetSetting::vault_value(KEEP_THROUGH, json!(secs)),
     )?;
     assert!(
         matches!(&outcome, SetSettingOutcome::Applied { value, .. } if *value == json!(secs)),
