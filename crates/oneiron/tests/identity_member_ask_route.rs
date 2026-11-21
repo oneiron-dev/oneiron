@@ -31,7 +31,11 @@
 //! and fourth tests): a member's "someone new" is refused there as the
 //! owner's decision. The guards hold on both: the owner's "someone new" on
 //! an ask he cannot read, with no proposal on it, is no answer; and an ask
-//! every owner reads still goes to the owner alone.
+//! every owner reads still goes to the owner alone. Red on PR 3b's round-1
+//! head (review round 1 of #10279): the proposal's tap names no proposal,
+//! so an owner's bare "someone new" accepts whichever proposal stands; and
+//! a member's act-now ask the Dreamer cannot read stays "deciding" with no
+//! notice to anyone.
 //!
 //! Each `FIXTURE:` assertion checks the setup, never the fix.
 //!
@@ -46,10 +50,12 @@ use std::sync::Arc;
 use oneiron::authority::VerifiedSlip;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::dreamer_runner::maintenance::identity::{
-    IDENTITY_NOTIFICATION_PRODUCER, IdentityAnswerRequest, IdentitySettled,
+    IDENTITY_NOTIFICATION_PRODUCER, IdentityActNow, IdentityActNowRequest,
+    IdentityAnswerEvidenceRequest, IdentityAnswerRequest, IdentityEffect, IdentitySettled,
+    maintenance_reader,
 };
 use oneiron::edge::EdgeActorClass;
-use oneiron::inbox::{NotificationAction, NotificationKind, NotificationRow};
+use oneiron::inbox::{NotificationKind, NotificationRow};
 use oneiron::memory::extraction::{EncoderOutput, NerSpan};
 use oneiron::memory::{MemoryError, WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessTurn};
 use oneiron::registry::ENTITY_TYPE_PERSON;
@@ -248,6 +254,34 @@ impl Fixture {
             .memory(self.owner, EdgeActorClass::Human)
             .with_owner_authorship(&self.owner_proof)
             .identity_answer(request)
+    }
+
+    /// The owner's tap `request` through `self.identity.answer`'s own door,
+    /// on his owner proof: the verb's input as the tap names it.
+    fn owners_tap(
+        &self,
+        request: &IdentityAnswerEvidenceRequest,
+    ) -> Result<IdentitySettled, MemoryError> {
+        self.vault
+            .memory(self.owner, EdgeActorClass::Human)
+            .identity_answer_with_evidence_as_owner(&self.owner_proof, request)
+    }
+
+    /// The member's agent, about to send to the person it knows as
+    /// [`MENTION`], under the member's own lane: `self.identity.settle`.
+    fn members_agent_settles(&self) -> IdentityActNow {
+        self.vault
+            .memory(self.member, EdgeActorClass::Human)
+            .with_read_proof(&self.member_proof)
+            .identity_act_now(&IdentityActNowRequest {
+                name: MENTION.to_owned(),
+                conversation: None,
+                effect: IdentityEffect::Send,
+                prompt: "Which Owan?".to_owned(),
+                someone_new: "Someone new".to_owned(),
+                provisional: None,
+            })
+            .expect("the member's act-now read")
     }
 
     /// The mention's own provisional person, as the save minted it.
@@ -501,13 +535,20 @@ fn a_members_someone_new_answer_goes_to_the_owner_as_a_proposal_of_ids_alone() {
         !words.contains("Owan") && !words.contains("Smyth") && !words.contains("called"),
         "the proposal carries no name and no excerpt: {words}"
     );
+    let [tap] = notice.actions.as_slice() else {
+        panic!("the proposal offers the owner one tap, his acceptance: {notice:?}");
+    };
+    assert_eq!(tap.verb, ANSWER_VERB, "{tap:?}");
     assert_eq!(
-        notice.actions,
-        vec![NotificationAction {
-            verb: ANSWER_VERB.to_owned(),
-            args: serde_json::json!({ "ask": ask, "choice": "someone_new" }),
-        }],
-        "the proposal offers the owner one tap, his acceptance: {notice:?}"
+        (&tap.args["ask"], &tap.args["choice"]),
+        (&serde_json::json!(ask), &serde_json::json!("someone_new")),
+        "the tap answers someone new on the ask: {tap:?}"
+    );
+    assert!(
+        tap.args["proposal"]
+            .as_str()
+            .is_some_and(|token| token.len() == 32 && EntityId::from_hex(token).is_ok()),
+        "the tap names the proposal it accepts by its token: {tap:?}"
     );
     assert!(
         fixture.identity_asks(fixture.owner).is_empty()
@@ -542,10 +583,10 @@ fn the_owners_acceptance_applies_a_members_someone_new_proposal() {
         "a proposal is accepted, never answered otherwise by an owner who cannot read the ask: \
          {naming_owen:?}"
     );
-    let request: IdentityAnswerRequest =
+    let request: IdentityAnswerEvidenceRequest =
         serde_json::from_value(tap.args.clone()).expect("the tap's args are the verb's input");
     let settled = fixture
-        .owners_answer(&request)
+        .owners_tap(&request)
         .expect("the owner's acceptance applies");
 
     assert_eq!(
@@ -597,6 +638,116 @@ fn the_owners_someone_new_on_an_ask_he_cannot_read_with_no_proposal_is_no_answer
         matches!(saved.mentions[0].link, MentionLink::Minted { .. }),
         "the refused answer settled nothing: {:?}",
         saved.mentions
+    );
+}
+
+/// Review round 1 of #10279, P1 1: a tap kept from an earlier notice must not
+/// accept a later proposal on the same ask. The owner's "someone new" on an
+/// ask he cannot read accepts only the proposal its tap names by token.
+#[test]
+fn an_owners_someone_new_that_names_no_standing_proposal_accepts_none() {
+    let fixture = Fixture::open();
+    let (_owen, turn) = fixture.owen_is_asked_about_in_a_source_read_by(&[fixture.member]);
+    let provisional = fixture.provisional(turn);
+    let ask = fixture.members_ask();
+    fixture
+        .members_answer(&ask, "someone_new")
+        .expect("a member's someone-new answer is taken as a proposal");
+    let proposals = fixture.proposals(fixture.owner);
+    let [notice] = proposals.as_slice() else {
+        panic!("the owner gets one proposal: {proposals:?}");
+    };
+    let [tap] = notice.actions.as_slice() else {
+        panic!("the proposal offers one tap: {notice:?}");
+    };
+
+    let unnamed = fixture.owners_answer(&IdentityAnswerRequest {
+        ask: ask.clone(),
+        choice: "someone_new".to_owned(),
+    });
+    assert!(
+        unnamed.is_err(),
+        "a someone-new that names no proposal accepts none, though one stands: {unnamed:?}"
+    );
+    let mut other = tap.args.clone();
+    other["proposal"] = serde_json::json!("00000000000000000000000000000000");
+    let other: IdentityAnswerEvidenceRequest =
+        serde_json::from_value(other).expect("the verb's input with another token");
+    let refused = fixture.owners_tap(&other);
+    assert!(
+        refused.is_err(),
+        "a token that names no standing proposal accepts none: {refused:?}"
+    );
+    let saved = fixture
+        .vault
+        .turn_tags(&turn)
+        .expect("tags read")
+        .expect("the turn keeps its tags");
+    assert!(
+        matches!(saved.mentions[0].link, MentionLink::Minted { .. }),
+        "the refused answers settled nothing: {:?}",
+        saved.mentions
+    );
+
+    let own: IdentityAnswerEvidenceRequest =
+        serde_json::from_value(tap.args.clone()).expect("the tap's args are the verb's input");
+    let settled = fixture
+        .owners_tap(&own)
+        .expect("the tap naming the standing proposal applies");
+    assert_eq!(settled.entity, provisional.to_hex(), "{settled:?}");
+}
+
+/// Review round 1 of #10279, P1 2: an act-now ask raised from a member's own
+/// source, which the Dreamer's lane cannot read, never makes the host's due
+/// list, so the ladder never sends it. It goes to the person at once: the
+/// member's agent gets the choice card, the member the Ask and the owner the
+/// stub.
+#[test]
+fn an_act_now_ask_the_host_cannot_read_from_a_members_own_source_goes_to_the_member_at_once() {
+    let fixture = Fixture::open();
+    let (_owen, turn) = fixture.owen_is_asked_about();
+    bind_turn_read_by(&fixture.vault, turn, &[fixture.member]).expect("FIXTURE: the turn is bound");
+    let dreamer = maintenance_reader(&fixture.vault, NOW, false)
+        .expect("FIXTURE: the Dreamer's lane")
+        .expect("FIXTURE: an open ask is work");
+    assert!(
+        fixture
+            .vault
+            .identity_asks_due(&dreamer, NOW, 4)
+            .expect("FIXTURE: the due list")
+            .is_empty(),
+        "FIXTURE: the Dreamer's lane does not read the ask, so the host never decides it"
+    );
+
+    let settling = fixture.members_agent_settles();
+
+    let IdentityActNow::NeedsPerson { ask, card } = settling else {
+        panic!("the member's act-now ask waits on the person, not the host: {settling:?}");
+    };
+    assert!(
+        card.is_object(),
+        "the answer carries the choice card: {card}"
+    );
+    assert_eq!(fixture.members_ask(), ask, "the member gets the ask's Ask");
+    assert_eq!(
+        fixture.stubs(fixture.owner).len(),
+        1,
+        "the owner gets the stub: {:?}",
+        fixture.inbox(fixture.owner)
+    );
+    assert!(
+        fixture.identity_asks(fixture.owner).is_empty(),
+        "the owner gets no Ask he cannot open"
+    );
+    let again = fixture.members_agent_settles();
+    assert!(
+        matches!(&again, IdentityActNow::NeedsPerson { ask: same, .. } if *same == ask),
+        "the ask stays with the person: {again:?}"
+    );
+    assert_eq!(
+        fixture.identity_asks(fixture.member).len(),
+        1,
+        "it is sent once"
     );
 }
 
