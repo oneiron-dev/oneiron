@@ -316,6 +316,78 @@ fn world_scoped_arm_with_no_hidden_share_serves_every_match() {
     assert_eq!(per_query[1]["returned"], 1);
 }
 
+/// Write an unembedded `search` slice of one corpus whose one query's only
+/// relevant record the partition hides, beside one readable filler. Returns
+/// the hidden record's id.
+fn write_hidden_answer_pack(dir: &Path) -> String {
+    let hidden_only = pick(1, true).remove(0);
+    let filler = pick(1, false).remove(0);
+    let manifest = json!({
+        "contract": "oneiron.retrieval_pack.v1",
+        "pack_id": "world-scoped-hidden-answer-fixture",
+        "revision": "r1",
+        "slice": "search",
+        "source": {
+            "dataset": "LongMemEval-S",
+            "dataset_sha256": sha256_hex(b"fixture-dataset"),
+            "license": "MIT",
+            "split_sha256": sha256_hex(b"fixture-split"),
+        },
+        "embedding": Value::Null,
+        "records": [
+            record(&hidden_only, "mountain trail snowfall"),
+            record(&filler, "city bus schedule"),
+        ],
+        "corpora": [
+            {"corpus_id": "corpus-mountain", "sessions": [
+                {"session_id": "sess-mountain", "time": "2026-01-01T00:00:00Z", "record_ids": [hidden_only, filler]},
+            ]},
+        ],
+        "queries": [
+            {"query_id": "query-mountain", "slice": "search", "corpus_id": "corpus-mountain", "category": "single-session-user", "text": "mountain snowfall", "now": "2026-01-02T00:00:00Z", "qrels": {hidden_only.clone(): 2}, "expect_empty": false},
+        ],
+    });
+    let mut pretty = serde_json::to_vec_pretty(&manifest).expect("manifest JSON");
+    pretty.push(b'\n');
+    std::fs::write(dir.join("search.json"), pretty).expect("manifest write");
+    hidden_only
+}
+
+/// A partition that leaves no query a readable relevant record still runs
+/// (REVIEW-10085 round 2): every record lands as a claim and its landing is
+/// checked, and the card grades no query. Before, the arm refused the
+/// partition and wrote nothing.
+#[test]
+fn world_scoped_arm_with_every_query_dropped_still_writes_every_record() {
+    let dir = tempfile::tempdir().expect("scorecard fixture dir");
+    let hidden_only = write_hidden_answer_pack(dir.path());
+    let card_path = dir.path().join("world-scoped-hidden-answer.json");
+    let result = run_arm(dir.path(), &card_path, HIDDEN_SHARE);
+    let stdout = String::from_utf8_lossy(&result.stdout);
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(
+        result.status.success(),
+        "a partition that hides the only relevant record ({hidden_only}) of every query still          runs: stdout {stdout} stderr {stderr}"
+    );
+    let line = summary(&result);
+    assert_eq!(line["records_hidden"], 1);
+    assert_eq!(line["records_readable"], 1);
+    assert_eq!(
+        line["records_written"], 2,
+        "both records land as claims though no query is graded"
+    );
+    assert_eq!(line["queries_dropped"], 1);
+    let card: Value =
+        serde_json::from_slice(&std::fs::read(&card_path).expect("scorecard file reads"))
+            .expect("scorecard file is JSON");
+    assert_eq!(card["query_count"], 0);
+    assert_eq!(
+        card["per_query"].as_array().map(Vec::len),
+        Some(0),
+        "the card grades no query"
+    );
+}
+
 /// Write an unembedded `search` slice of one corpus: the relevant record
 /// "orchard harvest" from 2020 and the newer "orchard harvest notes" from
 /// 2025, plus a filler, queried the day after the newer session.
