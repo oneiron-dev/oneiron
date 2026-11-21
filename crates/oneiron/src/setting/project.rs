@@ -91,9 +91,9 @@ use projection_rows::{
     project_pack_target_in_txn, record_projection_in_txn, target_key, write_row_in_txn,
 };
 mod refusal;
-use refusal::raise_refusal_notice_in_txn;
 pub(super) use refusal::slot_refused_here_in_txn;
 pub(crate) use refusal::{SETTING_REFUSAL_NOTIFICATION_PRODUCER, setting_refusal_tap_in_txn};
+use refusal::{raise_refusal_notice_in_txn, record_refusal_in_txn};
 
 use serde::{Deserialize, Serialize};
 
@@ -131,6 +131,10 @@ use crate::side_table::{self, Named, SideTable, SideTableDbs};
 /// One projected row per act target.
 const PROJECTIONS: SideTable<Vec<u8>, Projection, Named> =
     SideTable::new(&side_table::SETTING_PROJECTION);
+
+/// Per act target, the basis ([`basis_of`]) of the acts this install's pass last found its key's
+/// hook refusing (`refusal`); a projection of the target removes it.
+const REFUSALS: SideTable<Vec<u8>, [u8; 32], Named> = SideTable::new(&side_table::SETTING_REFUSAL);
 
 /// A value no MessagePack decoder reads (the format's one unused byte): the row a quarantined
 /// slot keeps, so every read of it takes the key's strictest value as for any row that does not
@@ -701,6 +705,28 @@ pub(crate) fn forget_projected_rows_in_txn(
             forgotten += 1;
         }
         PROJECTIONS.delete(&vault.store, txn, &target)?;
+    }
+    Ok(forgotten)
+}
+
+/// Forgets every record of a projection and leaves the rows it wrote (row
+/// SETTING-PROJECTED-ROW-REFUSING-HOOKS tests): each row then holds its value while its acts read
+/// as moved, as a row does once a peer's act arrived and before the pass read it. The records
+/// forgotten.
+///
+/// # Errors
+///
+/// Storage errors.
+#[cfg(all(oneiron_test_support, feature = "test-support"))]
+pub(crate) fn forget_projection_records_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+) -> Result<usize> {
+    let mut forgotten = 0;
+    for (target, _) in PROJECTIONS.scan(&vault.store, txn)? {
+        if PROJECTIONS.delete(&vault.store, txn, &target)? {
+            forgotten += 1;
+        }
     }
     Ok(forgotten)
 }
