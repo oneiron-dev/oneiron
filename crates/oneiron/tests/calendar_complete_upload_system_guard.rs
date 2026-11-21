@@ -10,6 +10,11 @@
 //!   owner uninstalls the feed, the retired system is open to an upload.
 //! - An upload, a seat install and a feed install under a `mail_pack:` system
 //!   are refused: only pack calendar sources take one.
+//! - CAL-PASSPORT-STORES-NO-SYSTEM-IDENTITY: an upload system the claim door
+//!   stored as a custody handle of a record that holds that one value reads
+//!   as its name: a second complete upload under it marks absent the
+//!   passport it leaves out, and the owner moves an occurrence of a series
+//!   uploaded under it (with the same move under a system in clear beside it).
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test calendar_complete_upload_system_guard`.
@@ -23,13 +28,17 @@ use oneiron::calendar::CalendarError;
 use oneiron::calendar::claims::{
     CalendarPassportPresence, CalendarPassportValue, CalendarStatus, PREDICATE_CALENDAR_STATUS,
 };
-use oneiron::calendar::ingest::door::{CalendarIcsImportRequest, import_ics_as_owner};
+use oneiron::calendar::ingest::door::{
+    CalendarIcsImportReceipt, CalendarIcsImportRequest, CalendarInstanceMoveRequest,
+    import_ics_as_owner, move_instance_as_owner,
+};
 use oneiron::calendar::ingest::feed_door::{
     self as feed, CalendarIcsFeedConsent, CalendarIcsFeedRequest, CalendarIcsFeedReviewDecision,
     CalendarIcsFeedReviewRequest, CalendarIcsPollResult,
 };
 use oneiron::calendar::ingest::{IcsFeedFetcher, IcsFeedPollConfig, IcsFetchResponse};
 use oneiron::calendar::passport::{live_passports_for_event, resolve_event_by_uid};
+use oneiron::claim::ClaimApprovalStatus;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::mail_pack::{
     ICS_CALENDAR_CONNECTOR_EFFECTOR, MailCalendarFeed, MailCalendarRead, MailCalendarWire,
@@ -37,7 +46,10 @@ use oneiron::mail_pack::{
     install_mail_calendar_pack_embedded,
 };
 use oneiron::memory::hook_regen_doors::PackPutOutcome;
-use oneiron::memory::{BlobArtifactInput, BlobVersionAppendOutcome, Memory};
+use oneiron::memory::{
+    BlobArtifactInput, BlobVersionAppendOutcome, ClaimProposalReviewRequest, ClaimSettleDecision,
+    ClaimSettleRequest, Memory,
+};
 use oneiron::registry::ENTITY_TYPE_EVENT;
 use oneiron::secret_custody::{CustodyTier, SECRET_SCOPE_READ, SecretBinding};
 use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
@@ -143,6 +155,11 @@ impl Fixture {
 
     /// The owner uploads [`ICS`] as a complete feed under `system`.
     fn upload(&self, system: &str) -> Result<(), String> {
+        self.upload_ics(system, ICS).map(|_| ())
+    }
+
+    /// The owner puts `body` as an upload's bytes: its artifact and version.
+    fn put_ics(&self, body: &str) -> (String, u64) {
         let memory = self.memory();
         let artifact = memory
             .put_blob_artifact(&BlobArtifactInput {
@@ -154,25 +171,125 @@ impl Fixture {
             })
             .expect("the upload's artifact");
         let BlobVersionAppendOutcome::Landed(version) = memory
-            .append_blob_version(&artifact.id_hex, ICS.as_bytes(), None, NOW, None)
+            .append_blob_version(&artifact.id_hex, body.as_bytes(), None, NOW, None)
             .expect("the upload's bytes")
         else {
             panic!("an owner upload lands at once");
         };
+        (artifact.id_hex, version.version)
+    }
+
+    /// The owner uploads `body` as a complete feed under `system`.
+    fn upload_ics(&self, system: &str, body: &str) -> Result<CalendarIcsImportReceipt, String> {
+        let (source_blob_ref, source_version) = self.put_ics(body);
         import_ics_as_owner(
-            &memory,
+            &self.memory(),
             &self.proof,
             &CalendarIcsImportRequest {
                 system: system.to_owned(),
-                source_blob_ref: artifact.id_hex.clone(),
-                source_version: version.version,
+                source_blob_ref,
+                source_version,
             },
             None,
         )
-        .map(|_| ())
+        .map_err(|error| error.to_string())
+    }
+
+    /// The owner approves every claim an upload proposed on `event`: an
+    /// upload files its claims pending review, and the move door amends an
+    /// occurrence of an admitted series only.
+    fn approve_proposed_claims(&self, event: &EntityId) {
+        let memory = self.memory();
+        for id in self
+            .vault
+            .claims_for_subject(event)
+            .expect("read the EVENT's claims")
+        {
+            let Some(claim) = self.vault.get_claim(&id).expect("read the claim") else {
+                continue;
+            };
+            if claim.lifecycle != ClaimLifecycleStatus::Active
+                || claim.approval != ClaimApprovalStatus::Proposed
+            {
+                continue;
+            }
+            let claim_ref = id.to_hex();
+            let review = memory
+                .claim_review_as_owner(
+                    &self.proof,
+                    &ClaimProposalReviewRequest {
+                        claim_ref: claim_ref.clone(),
+                        grant_ref: None,
+                    },
+                )
+                .expect("FIXTURE: the owner reviews the upload's claim");
+            memory
+                .claim_settle_as_owner(
+                    &self.proof,
+                    &ClaimSettleRequest {
+                        claim_ref,
+                        review_id: review.review_id,
+                        decision: ClaimSettleDecision::Approve,
+                        grant_ref: None,
+                    },
+                )
+                .expect("FIXTURE: the owner approves the upload's claim");
+        }
+    }
+
+    /// The owner uploads [`SERIES_ICS`] under `system` and approves its
+    /// claims: the series master EVENT.
+    fn upload_admitted_series(&self, system: &str) -> EntityId {
+        self.upload_ics(system, SERIES_ICS)
+            .expect("FIXTURE: the owner's series upload lands");
+        let master = resolve_event_by_uid(&self.vault, SERIES_UID)
+            .expect("resolve the series UID")
+            .expect("FIXTURE: the series UID resolves to its master EVENT");
+        self.approve_proposed_claims(&master);
+        master
+    }
+
+    /// The owner moves the series' second occurrence to [`MOVED_START`]
+    /// through the move door under `system`, with [`MOVED_ICS`] as its
+    /// source.
+    fn move_second_occurrence(&self, system: &str) -> Result<CalendarIcsImportReceipt, String> {
+        let (source_blob_ref, source_version) = self.put_ics(MOVED_ICS);
+        move_instance_as_owner(
+            &self.memory(),
+            &self.proof,
+            &CalendarInstanceMoveRequest {
+                system: system.to_owned(),
+                source_blob_ref,
+                source_version,
+                uid: SERIES_UID.to_owned(),
+                original_start_utc: SECOND_OCCURRENCE,
+                start_utc: MOVED_START,
+                end_utc: MOVED_END,
+            },
+            None,
+        )
         .map_err(|error| error.to_string())
     }
 }
+
+/// The UID of [`SERIES_ICS`].
+const SERIES_UID: &str = "standup-1@example.test";
+/// A daily series of five from 2026-03-02 10:00 UTC.
+const SERIES_ICS: &str = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//oneiron//test//EN\r\n\
+BEGIN:VEVENT\r\nUID:standup-1@example.test\r\nDTSTAMP:20260302T070000Z\r\n\
+DTSTART:20260302T100000Z\r\nDTEND:20260302T110000Z\r\nRRULE:FREQ=DAILY;COUNT=5\r\n\
+SEQUENCE:0\r\nSUMMARY:Standup\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+/// 2026-03-03 10:00 UTC: the series' second occurrence.
+const SECOND_OCCURRENCE: u64 = 1_772_532_000;
+/// 2026-03-03 12:00 UTC: where the owner moves the second occurrence.
+const MOVED_START: u64 = 1_772_539_200;
+/// 2026-03-03 13:00 UTC.
+const MOVED_END: u64 = 1_772_542_800;
+/// The series' second occurrence detached at [`MOVED_START`]..[`MOVED_END`].
+const MOVED_ICS: &str = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//oneiron//test//EN\r\n\
+BEGIN:VEVENT\r\nUID:standup-1@example.test\r\nDTSTAMP:20260302T080000Z\r\n\
+RECURRENCE-ID:20260303T100000Z\r\nDTSTART:20260303T120000Z\r\nDTEND:20260303T130000Z\r\n\
+SEQUENCE:1\r\nSUMMARY:Standup\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
 
 fn applied(outcome: Result<SetSettingOutcome, String>, what: &str) {
     match outcome {
@@ -532,5 +649,114 @@ fn a_pack_source_keeps_a_masked_uid_live_when_its_complete_listing_carries_it() 
         sole_passport(&vault, &event).presence,
         CalendarPassportPresence::Live,
         "the same complete pack listing still cannot sweep its carried masked UID"
+    );
+}
+
+/// The receipt of a move of the series' second occurrence names that one
+/// detached instance.
+fn moved_the_second_occurrence(receipt: &CalendarIcsImportReceipt) -> bool {
+    matches!(
+        receipt.events.as_slice(),
+        [event] if event.uid == SERIES_UID && event.original_start_utc == Some(SECOND_OCCURRENCE)
+    )
+}
+
+// CAL-PASSPORT-STORES-NO-SYSTEM-IDENTITY: a complete upload sweeps its own masked passport.
+#[test]
+fn a_complete_upload_marks_absent_the_masked_passport_of_its_own_system_it_leaves_out() {
+    const UPLOAD_SYSTEM: &str = "owner-calendar-export";
+    const NEXT_UID: &str = "export-2@example.test";
+
+    let fx = Fixture::open();
+    fx.vault
+        .register_test_secret(
+            "calendar-export-system",
+            UPLOAD_SYSTEM.as_bytes(),
+            Vec::new(),
+            NOW,
+        )
+        .expect("FIXTURE: custody registers the upload system");
+    fx.upload(UPLOAD_SYSTEM)
+        .expect("FIXTURE: the owner's first complete upload lands");
+    let first = resolve_event_by_uid(&fx.vault, ICS_UID)
+        .expect("resolve the first upload's UID")
+        .expect("FIXTURE: the first upload's UID resolves to its EVENT");
+    let uploaded = sole_passport(&fx.vault, &first);
+    assert!(
+        uploaded.system != UPLOAD_SYSTEM && uploaded.system.contains("[secret sc"),
+        "FIXTURE: the upload passport stored the system as a custody handle: {uploaded:?}"
+    );
+    assert!(
+        uploaded.presence == CalendarPassportPresence::Live
+            && uploaded.direction.is_inbound_bearing(),
+        "FIXTURE: the upload passport starts live and inbound: {uploaded:?}"
+    );
+
+    fx.upload_ics(UPLOAD_SYSTEM, &ICS.replace(ICS_UID, NEXT_UID))
+        .expect("FIXTURE: the owner's second complete upload lands");
+    let next = resolve_event_by_uid(&fx.vault, NEXT_UID)
+        .expect("resolve the second upload's UID")
+        .expect("FIXTURE: the second upload's UID resolves to its EVENT");
+    assert_eq!(
+        sole_passport(&fx.vault, &next).presence,
+        CalendarPassportPresence::Live,
+        "FIXTURE: the second upload's own passport is live"
+    );
+    assert_eq!(
+        sole_passport(&fx.vault, &first).presence,
+        CalendarPassportPresence::Absent,
+        "a second complete upload under the masked system marks absent the passport it leaves out"
+    );
+    assert!(
+        has_cancelled_status(&fx.vault, &first),
+        "the EVENT no live source reports any more is cancelled"
+    );
+}
+
+// CAL-PASSPORT-STORES-NO-SYSTEM-IDENTITY: the move door finds a series' masked upload passport.
+#[test]
+fn the_owner_moves_an_occurrence_of_a_series_uploaded_under_a_masked_system() {
+    const UPLOAD_SYSTEM: &str = "owner-standup-export";
+
+    let fx = Fixture::open();
+    fx.vault
+        .register_test_secret(
+            "standup-export-system",
+            UPLOAD_SYSTEM.as_bytes(),
+            Vec::new(),
+            NOW,
+        )
+        .expect("FIXTURE: custody registers the upload system");
+    let master = fx.upload_admitted_series(UPLOAD_SYSTEM);
+    let passport = sole_passport(&fx.vault, &master);
+    assert!(
+        passport.system != UPLOAD_SYSTEM && passport.system.contains("[secret sc"),
+        "FIXTURE: the series passport stored the system as a custody handle: {passport:?}"
+    );
+
+    let moved = fx.move_second_occurrence(UPLOAD_SYSTEM);
+    assert!(
+        moved.as_ref().is_ok_and(moved_the_second_occurrence),
+        "the owner moves an occurrence of a series whose upload system is masked: {moved:?}"
+    );
+}
+
+// Control for the test above: the same move under an upload system in clear.
+#[test]
+fn the_owner_moves_an_occurrence_of_a_series_uploaded_under_a_system_in_clear() {
+    const UPLOAD_SYSTEM: &str = "owner-standup-export";
+
+    let fx = Fixture::open();
+    let master = fx.upload_admitted_series(UPLOAD_SYSTEM);
+    assert_eq!(
+        sole_passport(&fx.vault, &master).system,
+        UPLOAD_SYSTEM,
+        "FIXTURE: the series passport stored the system in clear"
+    );
+
+    let moved = fx.move_second_occurrence(UPLOAD_SYSTEM);
+    assert!(
+        moved.as_ref().is_ok_and(moved_the_second_occurrence),
+        "FIXTURE: the owner moves an occurrence of a series uploaded in clear: {moved:?}"
     );
 }
