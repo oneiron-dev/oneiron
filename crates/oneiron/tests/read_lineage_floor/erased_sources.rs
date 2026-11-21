@@ -15,7 +15,12 @@
 //! what waits on it waiting until the purge seals it.
 //!
 //! #10139 review: a blob's release of a row is no erase, so what waits on
-//! that row keeps waiting.
+//! that row through a birth input keeps waiting. #10139 round 2 reviews: the
+//! release seals a row that waits on it through an edge the release tears;
+//! a peer's tombstone of a released row seals what waits on it; a soft
+//! tombstone replayed over a scrubbed epoch summary seals nothing; and a
+//! purge that lands before the backfill raised a row written from the purged
+//! row leaves that row no stranger reads.
 
 use oneiron::deletion::TombstoneReason;
 use oneiron::housekeeping::HousekeepingBudget;
@@ -23,6 +28,7 @@ use oneiron::memory::SafeDeleteReason;
 use oneiron::provenance::made_by::MadeByInputRole;
 use oneiron::test_doors::claim_refinement_erase::apply_replayed_tombstone;
 use oneiron::test_doors::coach::fence_row_for_hard_delete;
+use oneiron::test_doors::epoch_lineage_pointer::put_inline_epoch;
 use oneiron::test_doors::read_lineage_floor::{
     binding_lands, floor_waits, forget_floor_state, release_as_unheld_asset,
 };
@@ -624,5 +630,147 @@ fn a_row_waiting_on_a_released_asset_keeps_waiting() {
         hidden_source_unknown(&mailbox),
         0,
         "doctor counts a fact waiting on a released row as sealed",
+    );
+}
+
+/// A claim about the owner under `predicate` whose words came from
+/// `middle` by a `DerivedFrom` edge, with no birth input.
+fn claim_derived_from(mailbox: &Mailbox, middle: EntityId, predicate: &str) -> EntityId {
+    let derived = super::claim_of_predicate_born_with(
+        mailbox,
+        &[],
+        MadeByInputRole::Input,
+        predicate,
+        "derived from middle",
+    );
+    mailbox
+        .vault
+        .put_edge(&derived, EdgeKind::DerivedFrom, &middle, 1.0)
+        .expect("FIXTURE: the derived row names middle");
+    derived
+}
+
+/// #10139 Opus review 2 P1-1: `derived` reads `middle` through a
+/// `DerivedFrom` edge and waits on it, since `middle`'s own source is not
+/// here yet. The blob lifecycle releases `middle`, and the release's tear
+/// takes the edge, so no return of the bytes could raise `derived` again:
+/// the release seals it. No one reads it, before or after a housekeeping
+/// pass, and doctor counts it. Before the fix the release skipped the seal,
+/// the pass settled `derived` with no floor from `middle`, and a stranger
+/// read it.
+#[test]
+fn a_row_reading_a_released_asset_through_an_edge_is_sealed_by_the_release() {
+    let mailbox = owners_mailbox();
+    let middle = claim_born_from(&mailbox, &[EntityId::now()], "learnt from a row on its way");
+    let derived = claim_derived_from(&mailbox, middle, "fact.derived_from_released");
+    assert!(
+        floor_waits(&mailbox.vault, derived).expect("the floor's state"),
+        "precondition: a row derived from a waiting row waits on it",
+    );
+    release_as_unheld_asset(&mailbox.vault, middle).expect("the blob lifecycle releases middle");
+    assert_no_stranger_or_reader_reads(&mailbox, derived, "once middle was released");
+    housekeeping_pass(&mailbox);
+    assert_no_stranger_or_reader_reads(&mailbox, derived, "after a pass once middle was released");
+    assert_eq!(
+        hidden_source_unknown(&mailbox),
+        1,
+        "doctor counts the row the release sealed",
+    );
+}
+
+/// #10139 review round 2 P1-1 (Opus review 2 P2-1): `fact` waits on
+/// `middle`, which the blob lifecycle releases, so `fact` keeps waiting.
+/// Then a peer's hard tombstone of `middle` replays: an erase of the
+/// released row, which seals `fact`. The owner reads it no more, and doctor
+/// counts it. Before the fix the seal skipped every row under a release
+/// fence, the tombstone sealed nothing, and the owner read `fact` for good.
+#[test]
+fn a_tombstone_of_a_released_asset_seals_what_waits_on_it() {
+    let mailbox = owners_mailbox();
+    let middle = claim_born_from(&mailbox, &[EntityId::now()], "learnt from a row on its way");
+    let fact = claim_born_from(&mailbox, &[middle], "learnt from middle");
+    release_as_unheld_asset(&mailbox.vault, middle).expect("the blob lifecycle releases middle");
+    housekeeping_pass(&mailbox);
+    assert!(
+        reads(&mailbox.vault, fact, &[mailbox.owner]).expect("the owner's read"),
+        "precondition: the owner reads a fact waiting on a released row",
+    );
+    replay(&mailbox, middle, TombstoneReason::UserHardDelete);
+    assert!(
+        !reads(&mailbox.vault, fact, &[mailbox.owner]).expect("the owner's read"),
+        "the tombstone of a released row left the owner reading a fact that waited on it",
+    );
+    housekeeping_pass(&mailbox);
+    assert_no_stranger_or_reader_reads(&mailbox, fact, "after the released row's tombstone");
+    assert_eq!(
+        hidden_source_unknown(&mailbox),
+        1,
+        "doctor counts the fact the tombstone sealed",
+    );
+}
+
+/// #10139 review round 2 P1-2 (Opus review 2 P2-3): a fact held before
+/// floors whose birth input, an epoch SUMMARY, was soft-deleted before the
+/// backfill raised it waits for good. The soft delete kept the summary's
+/// header and keyframe. The same soft tombstone replays: the summary is
+/// already what erasure leaves of it, so nothing changes, and the owner
+/// reads the fact as before. Before the fix only a header-only row read as
+/// scrubbed, so the replay sealed the fact.
+#[test]
+fn a_replayed_soft_tombstone_of_a_scrubbed_epoch_summary_leaves_a_fact_waiting_for_good() {
+    let mailbox = owners_mailbox();
+    let summary = put_inline_epoch(
+        &mailbox.vault,
+        &EntityId::now(),
+        None,
+        1,
+        0,
+        3,
+        "an epoch's words",
+        &mailbox.owner,
+    )
+    .expect("FIXTURE: an epoch SUMMARY");
+    let fact = claim_born_before_floors(&mailbox, &[summary], "fact.held_from_epoch");
+    erase(&mailbox, summary);
+    forget_floor_state(&mailbox.vault).expect("FIXTURE: a vault written before floors");
+    housekeeping_pass(&mailbox);
+    assert!(
+        reads(&mailbox.vault, fact, &[mailbox.owner]).expect("the owner's read"),
+        "precondition: the owner reads a fact that waits for good (ruling A)",
+    );
+    replay(&mailbox, summary, TombstoneReason::UserDelete);
+    assert!(
+        reads(&mailbox.vault, fact, &[mailbox.owner]).expect("the owner's read"),
+        "SEALED: a soft tombstone replayed over a scrubbed epoch summary sealed a fact waiting on it",
+    );
+    assert_no_stranger_or_reader_reads(&mailbox, fact, "once the soft tombstone replayed");
+    assert_eq!(
+        hidden_source_unknown(&mailbox),
+        0,
+        "doctor counts no sealed fact",
+    );
+}
+
+/// #10139 Opus review 2 P2-5: `derived` reads `middle` through a
+/// `DerivedFrom` edge, and `middle` waits on a row not here yet. The hard
+/// delete of `middle` is published, the floor state is lost inside that
+/// window, and the purge lands before the backfill raised `derived`. The
+/// purge's tear carries `middle`'s floor onto `derived`, which is not known
+/// whole, so `derived` takes the seal: no one reads it once the backfill
+/// raised it. Before the fix the purge took the edge, the backfill settled
+/// `derived` with no floor from `middle`, and a stranger read it.
+#[test]
+fn a_row_read_through_an_edge_whose_source_is_purged_before_the_backfill_raised_it_is_sealed() {
+    let mailbox = owners_mailbox();
+    let middle = claim_born_from(&mailbox, &[EntityId::now()], "learnt from a row on its way");
+    let derived = claim_derived_from(&mailbox, middle, "fact.derived_from_purged");
+    fence_row_for_hard_delete(&mailbox.vault, middle).expect("middle's hard delete is published");
+    forget_floor_state(&mailbox.vault).expect("FIXTURE: the floor state lost inside the window");
+    replay(&mailbox, middle, TombstoneReason::UserHardDelete);
+    housekeeping_pass(&mailbox);
+    assert_no_stranger_or_reader_reads(&mailbox, derived, "once the backfill raised it");
+    assert!(
+        !reads(&mailbox.vault, derived, &[mailbox.owner]).expect("the owner's read"),
+        "the owner reads a row whose source the purge took while its floor was not whole",
     );
 }
