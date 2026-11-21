@@ -19,7 +19,7 @@ use crate::calendar::claims::{
     decode_replay_cancel_evidence_value, encode_replay_cancel_evidence_value,
 };
 use crate::calendar::safeguard::CalendarInboundBody;
-use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimSource};
+use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject};
 use crate::registry::ENTITY_TYPE_EVENT;
 use crate::{EntityId, Vault};
 
@@ -81,7 +81,9 @@ pub(super) fn record_replay_cancel_evidence_in_txn(
 /// claims a seat's replay proof recorded, the earliest proved (claim id breaks
 /// a tie); `None` while none was. A claim of the predicate that no replay
 /// proof recorded, or whose value does not decode, proves nothing and is
-/// skipped.
+/// skipped. So is a proof whose signed subject is another EVENT: any writer
+/// may add a `claim_of` edge, and the walk follows it (review round 2 of
+/// #10166).
 ///
 /// # Errors
 ///
@@ -97,6 +99,7 @@ pub(crate) fn replay_cancel_evidence_in_txn(
             continue;
         };
         if body.predicate != PREDICATE_CALENDAR_REPLAY_CANCEL_EVIDENCE
+            || body.subject != ClaimSubject::Entity(*event_ref)
             || body.lifecycle != ClaimLifecycleStatus::Active
             || !recorded_by_replay_proof(&body)
         {

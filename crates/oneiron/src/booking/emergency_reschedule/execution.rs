@@ -11,8 +11,8 @@ use super::*;
 #[derive(Debug, Clone, PartialEq)]
 pub struct EmergencyExecution {
     pub item: EmergencyItem,
-    /// Each delivered effect that may reach the booker twice, answered once
-    /// (`super::uncertain_send`).
+    /// Each delivered effect that may reach the booker twice, answered by every run over the
+    /// checkpoint (`super::uncertain_send`).
     pub repeat_notices: Vec<EmergencyRepeatNotice>,
 }
 
@@ -42,10 +42,10 @@ pub fn execute_emergency_plan(
     sink: &mut impl crate::outbound::OutboundExecutionSink,
 ) -> Result<EmergencyExecution, BookingError> {
     let item = deliver_emergency_effects(vault, request, plan, calendars, input, sink)?;
-    let repeat_notices = super::uncertain_send::answer_delivered(vault, &item)?;
-    // A picked checkpoint sends nothing of its old revision. Its run still answers a repeat a
-    // run delivered and then stopped before answering, since once the booker picked no other
-    // run would (review round 1 of #10166); with none left it refuses, as before.
+    let repeat_notices = super::uncertain_send::repeat_notices(vault, &item)?;
+    // A picked checkpoint sends nothing of its old revision. Its run still answers each repeat a
+    // run delivered, since once the booker picked no other run would (review round 1 of
+    // #10166), and again on each later run (round 2); with none it refuses, as before.
     if item.picked.is_some() && repeat_notices.is_empty() {
         return Err(refused(
             "a picked emergency item cannot send its old revision",
