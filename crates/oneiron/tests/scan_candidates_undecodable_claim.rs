@@ -1,8 +1,8 @@
 //! [SCAN-CANDIDATES-UNDECODABLE-CLAIM-TEST]: a live CLAIM whose stored body
 //! does not decode is no candidate of a scoped text scan, and it does not end
 //! the scan (`ScopedRead::scan_candidates_in`, #10111 round-1 fix 4). An
-//! agent's key under the relationship gate, with no Grant, runs
-//! `vault.search` twice: filtered on the vault
+//! agent's key under the relationship gate, which reads through a policy
+//! read row and holds no Grant, runs `vault.search` twice: filtered on the vault
 //! (`Vault::search_text_scoped_observed`) and in a room
 //! (`memory::scoped_session_text`). Each meets one such row, holding the
 //! query's final token, beside a readable match for the other term, and
@@ -24,11 +24,12 @@ use oneiron::code_run::{
     HostSelfDispatcher, SelfCall, SelfDispatchOutcome, SelfDispatcher, SelfMemorySearchCall,
 };
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::memory::{
     AllRelationships, ClaimRelationships, ClaimScope, ReadFilterInput, ScopedClaimInput,
 };
 use oneiron::off_record::OffRecordBackendClass;
-use oneiron::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
+use oneiron::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST};
 use oneiron::test_doors::claim_body_damage::damage_stored_claim_body;
 use oneiron::test_doors::label_writers::embedded_owner;
 use oneiron::verbs::{AgentDefinitionCreateRequest, create_agent_definition_as};
@@ -44,6 +45,7 @@ const QUERY: &str = "kestrel lantern";
 const SEARCH_LIMIT: usize = 10;
 const PUBLIC_BAND: u8 = 0;
 const OCCURRED_AT: u64 = 1_769_947_200;
+const SHIPPED_POLICY_PACK: &str = "oneiron-default-policy";
 
 struct Fixture {
     vault: Vault,
@@ -156,16 +158,54 @@ fn damage(fixture: &Fixture, claim: EntityId) {
 }
 
 /// An enabled agent, and its key under the relationship gate
-/// (`require_access_grants`) with no Grant: no agent Grant holder and no kept
-/// Grant alternative, so the row gate's first read of a CLAIM body is the
-/// relationship gate's own. A public CLAIM with no relationship passes that
-/// gate with no Grant, so the key reads both claims before the damage.
+/// (`require_access_grants`). The key reads through a policy read row
+/// ([`permit_claim_reads`]) and holds no Grant: no agent Grant holder and no
+/// kept Grant alternative, so the row gate's first read of a CLAIM body that
+/// can fail is the relationship gate's own. A public CLAIM with no
+/// relationship passes that gate with no Grant.
 fn reader(fixture: &Fixture) -> (EntityId, ScopedReadActorKey) {
     let agent = create_enabled_agent(&fixture.vault, &fixture.owner_proof);
+    permit_claim_reads(fixture, agent);
     let key = ScopedReadActorKey::with_actor_class(agent.to_hex(), "agent")
         .expect("FIXTURE: the agent's read key")
         .require_access_grants(Some(agent));
     (agent, key)
+}
+
+/// Adds a read row for `agent` to the shipped policy manifest, as
+/// `tests/agent_room_offer.rs` does for conversations: `core:read` of CLAIM
+/// rows. It gives the agent's key a read floor that is no agent Grant.
+fn permit_claim_reads(fixture: &Fixture, agent: EntityId) {
+    let vault = &fixture.vault;
+    let (id, mut manifest) = vault
+        .entities_by_type(ENTITY_TYPE_POLICY_MANIFEST)
+        .expect("FIXTURE: list the policy manifests")
+        .into_iter()
+        .find_map(|id| {
+            let bytes = vault.get(&id).expect("FIXTURE: read a policy manifest")?;
+            let manifest: serde_json::Value =
+                rmp_serde::from_slice(&bytes).expect("FIXTURE: decode a policy manifest");
+            (manifest["pack_id"] == SHIPPED_POLICY_PACK).then_some((id, manifest))
+        })
+        .expect("FIXTURE: the vault holds the shipped policy manifest");
+    let mut read = Scope::top();
+    read.verbs = ScopeAxis::Some(BTreeSet::from(["read".to_owned()]));
+    manifest["scoped_grants"]
+        .as_array_mut()
+        .expect("FIXTURE: the shipped policy manifest has scoped grants")
+        .push(json!({
+            "actor_ref": agent.to_hex(),
+            "effector": "core:read",
+            "scope": read,
+            "receipt_required": false,
+            "selectors": {"entity_types": [ENTITY_TYPE_CLAIM]},
+        }));
+    oneiron::test_support::put_policy_manifest_bytes(
+        vault,
+        id,
+        &rmp_serde::to_vec_named(&manifest).expect("FIXTURE: encode the policy manifest"),
+    )
+    .expect("FIXTURE: store the agent's read row");
 }
 
 fn create_enabled_agent(vault: &Vault, owner_proof: &AuthenticatedOwner) -> EntityId {
