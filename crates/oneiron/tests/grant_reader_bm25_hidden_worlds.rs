@@ -10,6 +10,10 @@
 //! credential-backed lane has been held to its Grants' worlds since
 //! [WORLD-SCOPE-BM25-DF-COUNTS-HIDDEN-POSTINGS] (#10062).
 //!
+//! Its receipts counted such a claim the same way: a withheld row it counts
+//! said a row exists there (DEC-0005: hidden worlds stay hidden, no name, no
+//! count).
+//!
 //! A world one of its Grants reaches hides nothing: the claims there are
 //! served and counted.
 //!
@@ -294,6 +298,37 @@ fn an_agent_identity_text_search_ranks_alike_with_claims_of_a_world_its_grant_le
         "FAILBEFORE GRANT-READER-BM25-DF-COUNTS-HIDDEN-WORLDS: claims of a world every Grant of \
          the agent leaves out count in no word's document frequency under its identity key, so \
          the rarer readable word's claim still leads its search"
+    );
+}
+
+/// The agent's receipt under its identity key: `edges_out` adds a withheld
+/// centre to its receipt's suppressed count, and a claim of a world the
+/// agent's Grant leaves out was such a centre, so the count said a row exists
+/// in that world.
+#[test]
+fn an_agent_identity_receipt_counts_no_claim_of_a_world_its_grant_leaves_out() {
+    let fixture = fixture(GrantWorlds::BaseOnly);
+    let base = put_text_claim(&fixture, None, COMMON);
+    let hidden = put_text_claim(&fixture, Some(fixture.second_world), RARE);
+    let read = fixture.vault.scoped_read(agent_identity_key(&fixture));
+    let readable = read
+        .edges_out(&base)
+        .expect("the agent's edges of a base claim");
+    assert!(
+        readable.value.is_some(),
+        "FIXTURE: the agent reads a base claim through its Grant"
+    );
+    let withheld = read
+        .edges_out(&hidden)
+        .expect("the agent's edges of a second-world claim");
+    assert!(
+        withheld.value.is_none(),
+        "FIXTURE: the agent reads no claim of the second world"
+    );
+    assert_eq!(
+        withheld.receipt.suppressed_count, 0,
+        "FAILBEFORE GRANT-READER-BM25-DF-COUNTS-HIDDEN-WORLDS: a claim of a world every Grant of \
+         the agent leaves out has no count in its receipt under its identity key"
     );
 }
 
