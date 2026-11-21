@@ -724,6 +724,8 @@ fn a_narrower_credential_of_the_caller_reads_no_receipt_whose_input_showed_a_row
             "rows": [{"claim_ref": restricted.to_hex(), "value": RESTRICTED_WORDS}],
         }),
     );
+    // A later call's input names this call's receipts in its `receipt_tail`,
+    // so only an input whose own `invocation` is the call counts as its hook's.
     let shown: Vec<usize> = {
         let inputs = HOOK_INPUTS
             .lock()
@@ -734,7 +736,12 @@ fn a_narrower_credential_of_the_caller_reads_no_receipt_whose_input_showed_a_row
                 let want = call.to_hex();
                 inputs
                     .iter()
-                    .filter(|input| input.contains(&want) && input.contains(RESTRICTED_WORDS))
+                    .filter(|input| {
+                        serde_json::from_str::<serde_json::Value>(input).is_ok_and(|parsed| {
+                            parsed.get("invocation").and_then(serde_json::Value::as_str)
+                                == Some(want.as_str())
+                        }) && input.contains(RESTRICTED_WORDS)
+                    })
                     .count()
             })
             .collect()
