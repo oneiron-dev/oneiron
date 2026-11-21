@@ -173,6 +173,25 @@ pub(crate) async fn call_as_step_checked_with_unsaved_usage(
     (outcome, unsaved_usage)
 }
 
+/// `request`'s saved work in this attempt alone: its memo or saved payload
+/// finished as [`durable_step`] finishes it, or `None` when it has none.
+/// Nothing is admitted, sent or charged, and a miss writes nothing. A reply
+/// a check refused is never saved, so it answers `None`.
+pub(crate) fn recover_saved_step(
+    ctx: &DurableStepContext<'_>,
+    guard: &BudgetGuard,
+    request: &LlmRequest,
+) -> DurableStepResult<Option<StepOutcome>> {
+    let step_hash = request.canonical_hash()?;
+    let recovery = {
+        let txn = ctx.vault.store.env.read_txn().map_err(Error::from)?;
+        recovery_in_txn(ctx.vault, &txn, ctx.attempt_id, &step_hash, request)?
+    };
+    recovery
+        .map(|recovery| recover_step(ctx, request, recovery, Some(guard)))
+        .transpose()
+}
+
 /// Durable step with an explicitly owned deterministic runner registry.
 pub async fn call_as_step_with_fallbacks(
     ctx: &DurableStepContext<'_>,

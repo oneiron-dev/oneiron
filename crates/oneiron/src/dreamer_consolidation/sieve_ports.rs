@@ -31,16 +31,16 @@ use super::step_charge::StepChargeTally;
 use crate::dreamer_wake::WakePassDeadline;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::llm::call_as_step_checked_with_unsaved_usage;
 use crate::llm::decision::AskTo;
+use crate::llm::{call_as_step_checked_with_unsaved_usage, recover_saved_step};
 use crate::model_binding::ModelRole;
 use crate::model_decision::{DecisionQuestion, EvidenceVersion};
 use crate::model_step_context::{DurableStepContext, StepEffectBinding, StepOutcome};
 use crate::model_step_error::{DurableStepError, DurableStepResult, ReplyCheck};
 use oneiron_model::llm::{
-    BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, LlmBackend, LlmMessage,
-    LlmMessageRole, LlmRequest, LlmResponse, LlmUsage, ModelTierRef, ResponseFormat, Scope,
-    TierPrecedence,
+    BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, LlmBackend, LlmError,
+    LlmMessage, LlmMessageRole, LlmRequest, LlmResponse, LlmUsage, ModelTierRef, ResponseFormat,
+    Scope, TierPrecedence,
 };
 
 /// A port's work: a future on the caller's own async path.
@@ -253,22 +253,35 @@ pub struct SliceStep {
     pub outcome: DurableStepResult<StepOutcome>,
     /// A fresh response's usage when serialization or its checkpoint write failed.
     pub unsaved_usage: Option<LlmUsage>,
-    /// When this step is the one retry, with prompt lookup off, of a reply
-    /// that failed the JSON parse: that refused reply's spend.
-    pub parse_retry_usage: Option<LlmUsage>,
+    /// Set when this step is the one retry, with prompt lookup off, of a
+    /// reply that failed the JSON parse.
+    pub parse_retry: Option<ParseRetry>,
+}
+
+/// The one retry, with prompt lookup off, of an extraction reply that failed
+/// the JSON parse.
+pub struct ParseRetry {
+    /// The refused reply's spend, charged whether or not the retry went out.
+    pub refused_usage: LlmUsage,
+    /// Whether the retry asked the model in this run: the stage line counts
+    /// only these (review round 1 of #10269, P1 2).
+    pub sent: bool,
 }
 
 impl SliceStep {
     /// This step's outcome and unsaved usage, once `charges` holds the spend
-    /// of a refused reply its retry replaced and counts that retry. Every
-    /// tally of a slice step takes it through here, so both calls are
-    /// charged exactly once.
+    /// of a refused reply its retry replaced and counts that retry if it went
+    /// out. Every tally of a slice step takes it through here, so both calls
+    /// are charged exactly once.
     pub(super) fn charge_parse_retry(
         self,
         charges: &mut StepChargeTally,
     ) -> (DurableStepResult<StepOutcome>, Option<LlmUsage>) {
-        if let Some(usage) = &self.parse_retry_usage {
-            charges.record_parse_retry(usage);
+        if let Some(retry) = &self.parse_retry {
+            charges.record_usage(&retry.refused_usage);
+            if retry.sent {
+                charges.count_parse_retry();
+            }
         }
         (self.outcome, self.unsaved_usage)
     }
@@ -507,6 +520,17 @@ async fn extract_slices(child: NeighbourhoodExtraction<'_>) -> DurableStepResult
                     Some(authored) => authored,
                     None => backend.get(),
                 };
+                // A relation reply calls no model, so it has no parse retry.
+                let retry = match authored {
+                    Some(_) => None,
+                    None => parse_retry_request(child, slice),
+                };
+                if let Some(saved) = retry
+                    .as_ref()
+                    .and_then(|retry| saved_parse_retry(child, retry))
+                {
+                    return saved;
+                }
                 let (outcome, unsaved_usage) = call_as_step_checked_with_unsaved_usage(
                     child.step,
                     backend,
@@ -519,11 +543,13 @@ async fn extract_slices(child: NeighbourhoodExtraction<'_>) -> DurableStepResult
                     step_hash: *step_hash,
                     outcome,
                     unsaved_usage,
-                    parse_retry_usage: None,
+                    parse_retry: None,
                 };
-                match authored {
-                    Some(_) => step,
-                    None => retry_without_prompt_lookup(child, slice, backend, check, step).await,
+                match retry {
+                    Some(retry) => {
+                        retry_without_prompt_lookup(child, retry, backend, check, step).await
+                    }
+                    None => step,
                 }
             },
         )
@@ -574,11 +600,11 @@ fn slice_request(
 /// hosted rung seals as a third party's while its own server answers. A
 /// hosted rung's wire drops the switch, so there the retry is the same
 /// request sent again at once, ahead of the Retry park that asks it later.
-/// A cut reply, a contract or citation fault, any other outcome, or a retry
-/// request that cannot be built leaves `step` as it was.
+/// A cut reply, a contract or citation fault, or any other outcome leaves
+/// `step` as it was.
 async fn retry_without_prompt_lookup(
     child: &NeighbourhoodExtraction<'_>,
-    slice: &SliceCall<'_>,
+    (step_hash, request): ([u8; 32], LlmRequest),
     backend: &dyn LlmBackend,
     check: &ReplyCheck,
     step: SliceStep,
@@ -591,19 +617,89 @@ async fn retry_without_prompt_lookup(
         }
         _ => return step,
     };
-    let Ok((step_hash, request)) = slice_request(child, slice, true)
-        .and_then(|request| Ok((request.canonical_hash()?, request)))
-    else {
-        return step;
-    };
     let (outcome, unsaved_usage) =
         call_as_step_checked_with_unsaved_usage(child.step, backend, child.guard, request, check)
             .await;
+    let sent = retry_went_out(&outcome, unsaved_usage.as_ref());
     SliceStep {
         step_hash,
         outcome,
         unsaved_usage,
-        parse_retry_usage: Some(refused_usage),
+        parse_retry: Some(ParseRetry {
+            refused_usage,
+            sent,
+        }),
+    }
+}
+
+/// `slice`'s parse retry request and its hash: the slice's own request with
+/// prompt lookup off. `None` when it cannot be built: the slice then runs
+/// with no retry, as before it had one.
+fn parse_retry_request(
+    child: &NeighbourhoodExtraction<'_>,
+    slice: &SliceCall<'_>,
+) -> Option<([u8; 32], LlmRequest)> {
+    slice_request(child, slice, true)
+        .and_then(|request| Ok((request.canonical_hash()?, request)))
+        .ok()
+}
+
+/// The saved reply of a slice's parse `retry` when an earlier run of this
+/// attempt asked it (review round 1 of #10269, P1 1): a thing branch's
+/// fan-out replaying the steps its agent ran, or a try resumed after a cut
+/// pass. The reply that failed the parse was never saved, so the slice's own
+/// request has no memo: sent again, it would ask the model a third time, and
+/// a reply that parsed could drop what the retry extracted. The retry's memo
+/// or saved payload answers with nothing sent. Its spend is charged as any
+/// replayed step's is; the refused reply's was charged by the run that sent
+/// it. `None` when the retry has no saved work.
+fn saved_parse_retry(
+    child: &NeighbourhoodExtraction<'_>,
+    (step_hash, request): &([u8; 32], LlmRequest),
+) -> Option<SliceStep> {
+    let outcome = match recover_saved_step(child.step, child.guard, request) {
+        Ok(None) => return None,
+        Ok(Some(outcome)) => Ok(outcome),
+        Err(error) => Err(error),
+    };
+    Some(SliceStep {
+        step_hash: *step_hash,
+        outcome,
+        unsaved_usage: None,
+        parse_retry: None,
+    })
+}
+
+/// Whether a parse retry's `outcome` asked the model in this run (review
+/// round 1 of #10269, P1 2). The step layer refuses some steps before a call
+/// goes out: in the finalize window, on a spend scope's refusal, a budget
+/// trap or a budget denial, at a hard cut, for a request it cannot hash, and
+/// on an engine fault with no reply's usage (an owner already gone among
+/// them); saved work answers with nothing sent. A fresh reply, a refused or
+/// failed one, and one whose save failed went out.
+fn retry_went_out(
+    outcome: &DurableStepResult<StepOutcome>,
+    unsaved_usage: Option<&LlmUsage>,
+) -> bool {
+    if unsaved_usage.is_some() {
+        return true;
+    }
+    match outcome {
+        Ok(StepOutcome::Finished { memoized, .. }) => !memoized,
+        Ok(StepOutcome::Trapped { .. }) => false,
+        Err(
+            DurableStepError::FinalizeRefused
+            | DurableStepError::DeadlineHardCut
+            | DurableStepError::BudgetRefused(_)
+            | DurableStepError::Canonical(_)
+            | DurableStepError::Engine(_)
+            | DurableStepError::Llm(LlmError::BudgetDenied(_))
+            | DurableStepError::ClassifiedLlm {
+                source: LlmError::BudgetDenied(_),
+                ..
+            },
+        ) => false,
+        Err(_) => true,
     }
 }
 

@@ -70,7 +70,8 @@ pub(crate) struct PartitionStages {
     /// Sealing the write, the checker's turn and the promotion commit.
     pub(super) commit_ms: u64,
     /// The extraction replies that failed the JSON parse and were asked
-    /// again once with prompt lookup off, as the attempt's settle counted.
+    /// again once with prompt lookup off, as the attempt's settle counted:
+    /// only a retry that went out.
     pub(super) parse_retries: u32,
     landing: LandingTally,
 }

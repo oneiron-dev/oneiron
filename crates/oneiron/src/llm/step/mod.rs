@@ -58,6 +58,7 @@ pub(crate) use self::budget_wait::{
 pub(crate) use self::compaction_step::{compaction_response_holders_in, is_compaction_step_row};
 pub use self::media_step::{MediaStepOutcome, call_media_as_step};
 
+pub(crate) use self::execute::recover_saved_step;
 pub(crate) use self::execute::{ExecutedModelWitness, call_as_step_checked_with_unsaved_usage};
 pub use self::execute::{call_as_step, call_as_step_checked, call_as_step_with_fallbacks};
 pub(crate) use self::execute::{

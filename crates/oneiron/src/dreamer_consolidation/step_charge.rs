@@ -23,7 +23,8 @@ pub struct StepChargeTally {
     pub(super) units: u64,
     pub(super) step_bindings: Vec<StepEffectBinding>,
     /// How many extraction replies failed the JSON parse and were asked
-    /// again once with prompt lookup off: the partition's stage line shows it.
+    /// again once with prompt lookup off, a retry refused before it went out
+    /// not among them: the partition's stage line shows it.
     pub(super) parse_retries: u32,
     /// Holds every spent generation the shared verdict execution accounted, in order.
     /// It serves test observation only: production settlement reads units and bindings
@@ -279,10 +280,10 @@ impl StepChargeTally {
         self.units = self.units.saturating_add(usage_units(usage));
     }
 
-    /// Charges the `usage` of an extraction reply that failed the JSON parse
-    /// and was asked again once with prompt lookup off, and counts that retry.
-    pub(super) fn record_parse_retry(&mut self, usage: &LlmUsage) {
-        self.record_usage(usage);
+    /// Counts one extraction reply that failed the JSON parse and whose retry
+    /// with prompt lookup off went out; the refused reply's spend is charged
+    /// through [`Self::record_usage`] whether or not it went out.
+    pub(super) fn count_parse_retry(&mut self) {
         self.parse_retries = self.parse_retries.saturating_add(1);
     }
 
