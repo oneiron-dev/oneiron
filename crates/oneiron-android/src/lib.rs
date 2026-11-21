@@ -31,6 +31,8 @@ pub mod engine;
 pub mod reads;
 // Public so its JNI export is a reachable item, as this file's are.
 pub mod limit_questions;
+#[cfg(test)]
+mod vector_mark_tests;
 
 struct NativeVault {
     vault: Arc<Vault>,
