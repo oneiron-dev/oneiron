@@ -44,15 +44,30 @@ const AUTHORITY_FRONTIER_KEY: &str = "authority_frontier";
 pub(crate) struct OwnerArchiveRestorePermit {
     owner: EntityId,
     receipt: GateDecisionId,
+    /// Whether the archive is this install's own export
+    /// ([`crate::batch::export::archive_exported_by_this_install_in_txn`]), judged in the
+    /// restore's writer.
+    own_export: bool,
 }
 
 impl OwnerArchiveRestorePermit {
-    pub(super) fn mint(owner: EntityId, receipt: GateDecisionId) -> Self {
-        Self { owner, receipt }
+    pub(super) fn mint(owner: EntityId, receipt: GateDecisionId, own_export: bool) -> Self {
+        Self {
+            owner,
+            receipt,
+            own_export,
+        }
     }
 
     pub(crate) fn owner(&self) -> EntityId {
         self.owner
+    }
+
+    /// Whether this restore lands the archive's choices about the install that wrote it (the
+    /// `sync: install` setting rows): only from this install's own export (Engine ANSWER
+    /// SETTING-ARCHIVE-RESTORE-INSTALL-ROWS = A, 21 Nov 12:46).
+    pub(crate) fn lands_install_choices(&self) -> bool {
+        self.own_export
     }
 
     pub(super) fn receipt_ref(&self) -> String {

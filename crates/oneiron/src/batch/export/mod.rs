@@ -50,7 +50,8 @@ pub use archive_provenance::{
     ARCHIVE_PROVENANCE_DOMAIN, ArchiveProvenance, archive_provenance_transcript,
 };
 pub(crate) use archive_provenance::{
-    ArchiveSigner, ArchiveVerifierState, archive_signer, sign_archive_manifest,
+    ArchiveSigner, ArchiveVerifierState, archive_exported_by_this_install_in_txn, archive_signer,
+    sign_archive_manifest,
 };
 mod export_authority;
 mod export_diary;

@@ -9,6 +9,13 @@
 //! and its revision: an absent row installs, equal bytes are unchanged, a different live row is
 //! kept.
 //!
+//! A row of a `sync: install` key is a choice about the install that set it, and it goes with
+//! that install's machine identity (DESIGN 15 section 1.5). It lands only from this install's
+//! own export, whose provenance signature stands and names this install's machine
+//! ([`OwnerArchiveRestorePermit::lands_install_choices`]); from any other archive it is held
+//! back as an install choice (Engine ANSWER SETTING-ARCHIVE-RESTORE-INSTALL-ROWS = A, 21 Nov
+//! 12:46). Its change history still installs: it is a record, and it sets nothing.
+//!
 //! A key's change hook is its own check on this vault's state and the start of its effect (a
 //! seat ref that is never installed twice, a route the manifest in force admits, a feed's poll
 //! chain). An absent row of such a key installs through the hook, as a change with no prior,
@@ -29,6 +36,7 @@ use oneiron_setting_contract::RowKey;
 
 use super::change::{CHANGE_NEXT, CHANGES, SettingChange};
 use super::read::{CONTENT_ROWS, ROWS, StoredRow, table_of};
+use super::restored::install_choice;
 use super::{OnChange, OnCommitted, SettingMode, SettingSpec, WriteTurn, spec_named};
 use crate::Vault;
 use crate::batch::export::archive_side_install::{
@@ -105,7 +113,7 @@ pub(crate) fn land_archived_setting_rows_in_txn(
     wakes: &mut Vec<OnCommitted>,
 ) -> Result<Vec<ArchivedSideRowOutcome>> {
     use ArchivedSideRowOutcome::HeldBack;
-    use RetainedSideHeldBackReason::InvalidEncoding;
+    use RetainedSideHeldBackReason::{InstallChoice, InvalidEncoding};
 
     let mut outcomes: Vec<Option<ArchivedSideRowOutcome>> = Vec::new();
     outcomes.resize_with(rows.len(), || None);
@@ -146,6 +154,13 @@ pub(crate) fn land_archived_setting_rows_in_txn(
                 continue;
             }
         };
+        // A choice about the install that wrote the archive stays with that install unless it is
+        // this one (SETTING-ARCHIVE-RESTORE-INSTALL-ROWS = A), as a restore into an empty place
+        // and an activated archive leave it behind (`super::restored`).
+        if !permit.lands_install_choices() && install_choice(&checked.key_bytes) {
+            outcomes[at] = Some(HeldBack(InstallChoice));
+            continue;
+        }
         // Only an absent row passes its key's hook: a live row is compared, never replaced.
         if let Some(on_change) = checked.spec.on_change
             && table.get_bytes(vault, txn, &checked.key_bytes)?.is_none()
