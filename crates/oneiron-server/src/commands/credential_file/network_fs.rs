@@ -23,9 +23,15 @@
 //!
 //! On any other file system the mode decides alone, unless it reports an
 //! NFSv4 list, which is then judged.
+//!
+//! The kind of mount is read from the kernel's own mount table, and reading
+//! it sends no request to a server. `fstatfs` would send an NFS server an
+//! FSSTAT call, which a hard mount retries without end while the server does
+//! not answer, so the credential would wait forever (REVIEW-10143 round 2).
 
 use std::fs::File;
 use std::io;
+use std::os::fd::AsRawFd;
 
 /// The environment variable by which the host owner trusts a network file
 /// system server's own access list, where this host does not read it, for
@@ -39,15 +45,17 @@ pub(crate) const TRUST_NETWORK_FS_ACL_VARIABLE: &str =
 /// The extended attribute a Linux NFSv4 mount reports a file's list in.
 const NFS4_ACL_ATTRIBUTE: &str = "system.nfs4_acl";
 
-/// The `statfs` magic number of a CIFS mount (`<linux/magic.h>`).
-const CIFS_MAGIC_NUMBER: u64 = 0xFF53_4D42;
+/// The mount table of this process's mount namespace
+/// (`proc_pid_mountinfo(5)`).
+const MOUNTINFO_PATH: &str = "/proc/self/mountinfo";
 
-/// The `statfs` magic number of an SMB2 or SMB3 mount (`<linux/magic.h>`).
-const SMB2_MAGIC_NUMBER: u64 = 0xFE53_4D42;
+/// The types `mountinfo` gives an SMB mount: `cifs` (CIFS, SMB2 and SMB3),
+/// `smb3` (the same client mounted by that name) and `smbfs` (the SMB1
+/// client that Linux 2.6.37 removed).
+const SMB_FILE_SYSTEM_TYPES: [&str; 3] = ["cifs", "smb3", "smbfs"];
 
-/// The `statfs` magic number of an NFS mount of any version
-/// (`<linux/magic.h>`).
-const NFS_MAGIC_NUMBER: u64 = 0x6969;
+/// The types `mountinfo` gives an NFS mount, of any version.
+const NFS_FILE_SYSTEM_TYPES: [&str; 2] = ["nfs", "nfs4"];
 
 /// Why a file on an SMB mount is refused, to follow its path.
 const SMB_UNREAD_LIST_REASON: &str = "is on an SMB (CIFS) mount, where the server's own access \
@@ -81,7 +89,7 @@ const REFUSED_GRANTS: [(u32, &str); 5] = [
 /// The longest principal name a refusal repeats, in characters.
 const PRINCIPAL_TEXT_LIMIT: usize = 64;
 
-/// The kind of file system a `statfs` magic number names, as the judge
+/// The kind of file system a mount's type in `mountinfo` names, as the judge
 /// tells them apart.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum MountKind {
@@ -95,13 +103,14 @@ pub(crate) enum MountKind {
 }
 
 impl MountKind {
-    /// The kind the `statfs` magic number `magic` names. The magic is 32 bits
-    /// wide, so the high half of a sign-extended field is ignored.
-    pub(crate) fn of_magic(magic: u64) -> Self {
-        match magic & 0xFFFF_FFFF {
-            CIFS_MAGIC_NUMBER | SMB2_MAGIC_NUMBER => Self::Smb,
-            NFS_MAGIC_NUMBER => Self::Nfs,
-            _ => Self::Other,
+    /// The kind the `mountinfo` file system type `file_system_type` names.
+    pub(crate) fn of_file_system_type(file_system_type: &str) -> Self {
+        if SMB_FILE_SYSTEM_TYPES.contains(&file_system_type) {
+            Self::Smb
+        } else if NFS_FILE_SYSTEM_TYPES.contains(&file_system_type) {
+            Self::Nfs
+        } else {
+            Self::Other
         }
     }
 }
@@ -162,9 +171,7 @@ impl std::fmt::Display for NetworkFsRefusal {
 /// `None` when the mode alone decides. An error when the file system or the
 /// list cannot be read, which refuses the file too.
 pub(crate) fn judge(file: &File, principals: Principals) -> io::Result<Option<NetworkFsRefusal>> {
-    // The field is signed: a 32-bit host's carries the magic sign-extended,
-    // which `MountKind::of_magic` reads back.
-    let mount = MountKind::of_magic(rustix::fs::fstatfs(file)?.f_type as u64);
+    let mount = MountKind::of_file_system_type(&file_system_type(file)?);
     let list = match mount {
         MountKind::Smb => None,
         MountKind::Nfs | MountKind::Other => nfs4_list(file)?,
@@ -200,6 +207,52 @@ pub(crate) fn judge_mount(
              that server's list: every user the list admits can then read this credential"
         ),
     }))
+}
+
+/// The type of the mount the open `file` is on, from the kernel's mount
+/// table: its descriptor's mount ID in `/proc/self/fdinfo`, looked up in
+/// [`MOUNTINFO_PATH`]. Neither read reaches a network file system's server.
+/// An error when a table cannot be read or does not list the mount.
+pub(crate) fn file_system_type(file: &File) -> io::Result<String> {
+    let fdinfo_path = format!("/proc/self/fdinfo/{}", file.as_raw_fd());
+    let fdinfo = read_table(&fdinfo_path)?;
+    let mountinfo = read_table(MOUNTINFO_PATH)?;
+    file_system_type_in(&fdinfo, &mountinfo)
+        .map(str::to_owned)
+        .ok_or_else(|| {
+            io::Error::other(format!(
+                "{fdinfo_path} names no mount that {MOUNTINFO_PATH} lists"
+            ))
+        })
+}
+
+/// The text of the kernel table at `path`, or an error that names it.
+fn read_table(path: &str) -> io::Result<String> {
+    std::fs::read_to_string(path)
+        .map_err(|error| io::Error::new(error.kind(), format!("read {path}: {error}")))
+}
+
+/// The type of the mount whose ID the `fdinfo` text gives on its `mnt_id:`
+/// line, as the `mountinfo` text lists it: the first field after the ` - `
+/// that ends a line's optional fields (`proc_pid_mountinfo(5)`; a space in a
+/// path is written `\040`, so ` - ` occurs in a line only as that
+/// separator). `None` when `fdinfo` gives no mount ID or `mountinfo` lists
+/// no mount by it.
+pub(crate) fn file_system_type_in<'a>(fdinfo: &str, mountinfo: &'a str) -> Option<&'a str> {
+    let mount_id: u64 = fdinfo
+        .lines()
+        .find_map(|line| line.strip_prefix("mnt_id:"))?
+        .trim()
+        .parse()
+        .ok()?;
+    mountinfo.lines().find_map(|line| {
+        let (location, file_system) = line.split_once(" - ")?;
+        let listed: u64 = location.split(' ').next()?.parse().ok()?;
+        if listed != mount_id {
+            return None;
+        }
+        file_system.split(' ').next()
+    })
 }
 
 /// Whether the host owner trusts a server's list that is not read here

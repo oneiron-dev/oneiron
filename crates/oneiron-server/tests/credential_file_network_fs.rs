@@ -5,12 +5,16 @@
 //! but its owner (and, for a group-shared relay token, its group) read or
 //! write of its data or a change of its list or owner; the refusal names the
 //! entry. A file whose server's list is not read here, on an SMB mount or on
-//! an NFS mount that reports no NFSv4 list (REVIEW-10143), is refused by its
-//! `statfs` magic unless the host owner trusts the server's list.
+//! an NFS mount that reports no NFSv4 list (REVIEW-10143), is refused unless
+//! the host owner trusts the server's list. The mount's type is read from the
+//! kernel's mount table, which sends no request to a server, never by
+//! `fstatfs`, which on a hard NFS mount waits forever for a silent server
+//! (REVIEW-10143 round 2).
 //!
 //! The fleet has no NFS or SMB mount, so the lists are handed to the judge
 //! as the bytes a mount reports in `system.nfs4_acl` (RFC 7530 section
-//! 6.2.1, in XDR), with the magic number of the mount they come from.
+//! 6.2.1, in XDR), with the type of the mount they come from, and the mount
+//! table reader is handed table text in the kernel's format.
 //!
 //! Fleet command: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron-server --all-features --test credential_file_network_fs`.
@@ -279,28 +283,26 @@ fn a_list_that_does_not_read_to_its_end_is_refused() {
     assert_eq!(door::judge_nfs4_list_for_owner(&one_entry), Ok(None));
 }
 
-/// The `statfs` magic numbers of SMB mounts (CIFS, SMB2 and SMB3), also as
-/// a 32-bit host's signed field carries them.
-const SMB_MAGICS: [u64; 4] = [
-    0xFF53_4D42,
-    0xFE53_4D42,
-    0xFFFF_FFFF_FF53_4D42,
-    0xFFFF_FFFF_FE53_4D42,
-];
+/// The `mountinfo` types of SMB mounts: CIFS, SMB2 and SMB3 by the `cifs`
+/// client and its `smb3` name, and the old SMB1 client.
+const SMB_TYPES: [&str; 3] = ["cifs", "smb3", "smbfs"];
 
-/// The `statfs` magic number of an NFS mount of any version.
-const NFS_MAGIC: u64 = 0x6969;
+/// The `mountinfo` types of NFS mounts, of any version.
+const NFS_TYPES: [&str; 2] = ["nfs", "nfs4"];
 
-/// The `statfs` magic numbers of file systems that are neither: ext4, tmpfs,
-/// btrfs, XFS, overlayfs, FUSE, and none.
-const OTHER_MAGICS: [u64; 7] = [
-    0xEF53,
-    0x0102_1994,
-    0x9123_683E,
-    0x5846_5342,
-    0x794C_7630,
-    0x6573_5546,
-    0,
+/// The `mountinfo` types of file systems that are neither, among them the
+/// NFS server's and the RPC client's own pseudo file systems, a FUSE network
+/// mount, and none.
+const OTHER_TYPES: [&str; 9] = [
+    "ext4",
+    "tmpfs",
+    "btrfs",
+    "xfs",
+    "overlay",
+    "nfsd",
+    "rpc_pipefs",
+    "fuse.sshfs",
+    "",
 ];
 
 /// A file whose server's list this host does not read is refused, naming
@@ -310,18 +312,20 @@ const OTHER_MAGICS: [u64; 7] = [
 /// admits it.
 #[test]
 fn a_file_whose_server_list_is_not_read_is_refused_unless_trusted() {
-    let mounts = SMB_MAGICS
+    let mounts = SMB_TYPES
         .iter()
-        .map(|&magic| (magic, "is on an SMB (CIFS) mount"))
-        .chain([(
-            NFS_MAGIC,
-            "is on an NFS mount that reports no NFSv4 access control list",
-        )]);
-    for (magic, mount) in mounts {
-        let refusal = door::judge_mount_for_owner(magic, None, false)
+        .map(|&kind| (kind, "is on an SMB (CIFS) mount"))
+        .chain(NFS_TYPES.iter().map(|&kind| {
+            (
+                kind,
+                "is on an NFS mount that reports no NFSv4 access control list",
+            )
+        }));
+    for (kind, mount) in mounts {
+        let refusal = door::judge_mount_for_owner(kind, None, false)
             .expect("nothing to read")
-            .unwrap_or_else(|| panic!("{magic:#x} is refused"));
-        assert!(refusal.starts_with(mount), "{magic:#x}: {refusal}");
+            .unwrap_or_else(|| panic!("{kind} is refused"));
+        assert!(refusal.starts_with(mount), "{kind}: {refusal}");
         assert!(
             refusal.contains(&format!("set {}=1", door::TRUST_NETWORK_FS_ACL_VARIABLE)),
             "{refusal}"
@@ -335,9 +339,9 @@ fn a_file_whose_server_list_is_not_read_is_refused_unless_trusted() {
             "{refusal}"
         );
         assert_eq!(
-            door::judge_mount_for_owner(magic, None, true),
+            door::judge_mount_for_owner(kind, None, true),
             Ok(None),
-            "{magic:#x} trusted"
+            "{kind} trusted"
         );
     }
 }
@@ -352,29 +356,89 @@ fn a_list_that_is_read_is_judged_and_no_list_leaves_the_mode() {
         (ALLOW, 0, OWNER_READ_WRITE, "OWNER@"),
         (ALLOW, 0, READ_DATA, "EVERYONE@"),
     ]);
-    for magic in OTHER_MAGICS.into_iter().chain([NFS_MAGIC]) {
+    for kind in OTHER_TYPES.into_iter().chain(NFS_TYPES) {
         for trusted in [false, true] {
             assert_eq!(
-                door::judge_mount_for_owner(magic, Some(&KNFSD_LIST_MODE_0600), trusted),
+                door::judge_mount_for_owner(kind, Some(&KNFSD_LIST_MODE_0600), trusted),
                 Ok(None),
-                "{magic:#x}"
+                "{kind}"
             );
-            let refusal = door::judge_mount_for_owner(magic, Some(&granted), trusted)
+            let refusal = door::judge_mount_for_owner(kind, Some(&granted), trusted)
                 .expect("the list reads")
-                .unwrap_or_else(|| panic!("{magic:#x} refuses the entry"));
+                .unwrap_or_else(|| panic!("{kind} refuses the entry"));
             assert!(
                 refusal.contains("entry 2 of 2 grants `EVERYONE@` READ_DATA"),
-                "{magic:#x}: {refusal}"
+                "{kind}: {refusal}"
             );
         }
     }
-    for magic in OTHER_MAGICS {
+    for kind in OTHER_TYPES {
         assert_eq!(
-            door::judge_mount_for_owner(magic, None, false),
+            door::judge_mount_for_owner(kind, None, false),
             Ok(None),
-            "{magic:#x}"
+            "{kind}"
         );
     }
+}
+
+/// A mount table in the kernel's format (`proc_pid_mountinfo(5)`): an NFSv4
+/// home, an NFSv3 mount, an SMB share whose mount point has a space and
+/// whose line has two optional fields, and local mounts. The IDs share
+/// digits, so a lookup by prefix would pick the wrong line.
+const MOUNTINFO: &str = "\
+22 28 0:21 / /proc rw,nosuid,nodev,noexec,relatime shared:12 - proc proc rw
+28 1 259:2 / / rw,relatime shared:1 - ext4 /dev/nvme0n1p2 rw
+29 28 0:26 / /run/user/1000 rw,nosuid,nodev,relatime shared:13 - tmpfs tmpfs rw,size=1638400k
+97 28 0:52 / /home rw,relatime shared:60 - nfs4 fileserver:/export/home rw,vers=4.2,hard,sec=sys
+98 28 0:53 / /mnt/archive-old rw,relatime - nfs fileserver:/export/old rw,vers=3,hard,proto=tcp
+99 28 0:54 / /mnt/team\\040share rw,relatime shared:61 master:3 - cifs //fileserver/team rw,vers=3.1.1
+";
+
+/// `/proc/<pid>/fdinfo/<fd>` text that gives the mount ID `mount_id`.
+fn fdinfo(mount_id: &str) -> String {
+    format!("pos:\t0\nflags:\t0100002\nmnt_id:\t{mount_id}\nino:\t1835\n")
+}
+
+/// The mount table reader takes the type after the ` - ` separator of the
+/// line whose mount ID the descriptor gives, whatever optional fields come
+/// before it, and finds nothing for an ID the table does not list or a
+/// descriptor that gives none.
+#[test]
+fn the_mount_type_is_read_from_the_line_of_the_descriptors_mount() {
+    for (mount_id, expected) in [
+        ("97", Some("nfs4")),
+        ("98", Some("nfs")),
+        ("99", Some("cifs")),
+        ("28", Some("ext4")),
+        ("22", Some("proc")),
+        ("29", Some("tmpfs")),
+        ("2", None),
+        ("9", None),
+        ("100", None),
+        ("", None),
+    ] {
+        assert_eq!(
+            door::file_system_type_in(&fdinfo(mount_id), MOUNTINFO),
+            expected,
+            "mount ID {mount_id:?}"
+        );
+    }
+    assert_eq!(
+        door::file_system_type_in("pos:\t0\nflags:\t0100002\n", MOUNTINFO),
+        None,
+        "a descriptor that gives no mount ID"
+    );
+}
+
+/// The judge reads the mount of a real descriptor from this process's own
+/// tables: a file under `/proc` is on the `proc` file system.
+#[test]
+fn the_mount_type_of_an_open_file_is_read_from_the_kernel_tables() {
+    let status = std::fs::File::open("/proc/self/status").expect("open /proc/self/status");
+    assert_eq!(
+        door::file_system_type_of_file(&status),
+        Ok("proc".to_owned())
+    );
 }
 
 /// The control: a file on the test host's own file system has no network
