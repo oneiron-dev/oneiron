@@ -28,8 +28,9 @@
 //! FIX 8875 stage 2: before it stages a handoff's parts, a delivery sends the
 //! erasable keys its actors' content is sealed under, to the key session the
 //! target offers on the same socket; a target that offers none or refuses
-//! them lands those actors' rows as their facts alone, and the delivery goes
-//! on. After each round the worker asks every holder this node owes a
+//! them gets no part, and the round waits for the next one, as for a refused
+//! part. Only an actor erased since the freeze lands as its rows' facts alone
+//! there. After each round the worker asks every holder this node owes a
 //! retired key's copy to retire it, and clears each debt the holder's answer
 //! proves; a holder out of reach keeps its debt for a later round.
 
@@ -90,21 +91,26 @@ async fn keep_ack(
 }
 
 /// FIX 8875: sends `frozen`'s keys to its target on `lane`, sealed to the key
-/// session the target offers there. A target that offers no session or
-/// refuses the keys, or keys that do not seal, are logged: the delivery goes
-/// on, and those actors' rows land there as their facts alone. A call that
-/// fails ends the round, as a part's does.
+/// session the target offers there; whether its parts may follow. A target
+/// that offers no session or refuses the keys, or keys that do not seal, get
+/// no part: the round waits for the next one, as for a refused part, which
+/// asks a fresh session (review round 1 of #10109). Parts sent past a key
+/// still live here would land its actor's rows there as their facts alone,
+/// and a row that lands only whole (an emergency checkpoint) would be lost
+/// with the ack. Only a key whose actor was erased here since the freeze
+/// stays behind (`home_handoff::transit_keys`). A call that fails ends the
+/// round, as a part's does.
 async fn send_keys(
     vault: &Arc<Vault>,
     lane: &mut HandoffLane,
     frozen: &FrozenHandoff,
-) -> Result<(), TransportError> {
+) -> Result<bool, TransportError> {
     if frozen.keys.is_empty() {
-        return Ok(());
+        return Ok(true);
     }
     let Some(offer) = lane.session(&frozen.id, &frozen.digest).await? else {
         tracing::debug!("a home handoff's target offered no key session");
-        return Ok(());
+        return Ok(false);
     };
     let exporting = Arc::clone(vault);
     let handoff = frozen.clone();
@@ -112,8 +118,8 @@ async fn send_keys(
         match blocking(move || home_handoff::transit_keys(&exporting, &handoff, &offer)).await {
             Ok(keys) => keys,
             Err(error) => {
-                tracing::debug!(%error, "a home handoff's keys were not sealed");
-                return Ok(());
+                tracing::warn!(%error, "a home handoff's keys were not sealed");
+                return Ok(false);
             }
         };
     if lane
@@ -122,8 +128,9 @@ async fn send_keys(
         .is_none()
     {
         tracing::debug!("a home handoff's target refused its keys");
+        return Ok(false);
     }
-    Ok(())
+    Ok(true)
 }
 
 /// FIX 8875: asks `debt`'s holder, on a socket that proves it, to retire its
@@ -176,13 +183,14 @@ pub(super) fn feed_move_routes(
 impl SyncConnection {
     /// Runs a delivery round at start, then each time the upkeep wakes it or
     /// an election moves the home or this node's recorded move. A federation
-    /// lane runs none. Each round holds the host's admission, a pause waited
+    /// or member lane runs none (H8-SHARED-ENV-LANE = B). Each round holds the
+    /// host's admission, a pause waited
     /// out (FIX 12036).
     pub(super) async fn run_home_handoff(
         &self,
         events: mpsc::UnboundedSender<SyncEvent>,
     ) -> Infallible {
-        if !HOME_HANDOFF_DELIVERY || self.config.client_config.federation_peer.is_some() {
+        if !HOME_HANDOFF_DELIVERY || self.config.client_config.residence_mode_is_fixed() {
             match std::future::pending::<Infallible>().await {}
         }
         let vault = Arc::clone(self.manager.vault());
@@ -323,7 +331,9 @@ impl SyncConnection {
         };
         // FIX 8875: the keys go before the parts, so a target that holds
         // every part holds them too and its own arrival opens the content.
-        send_keys(vault, &mut lane, frozen).await?;
+        if !send_keys(vault, &mut lane, frozen).await? {
+            return Ok(());
+        }
         for index in staged..frozen.parts {
             let reading = Arc::clone(vault);
             let id = frozen.id;

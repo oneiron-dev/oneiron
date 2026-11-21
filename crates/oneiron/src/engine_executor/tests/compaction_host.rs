@@ -65,6 +65,7 @@ impl crate::code_run::AgentVerbDoor for ShutDoor {
     > {
         Ok(Err(crate::code_run::AgentVerbRefusal {
             code: crate::code_run::AGENT_VERB_DOOR_UNBOUND.to_owned(),
+            hook_notice: None,
         }))
     }
 
@@ -78,6 +79,7 @@ impl crate::code_run::AgentVerbDoor for ShutDoor {
         if self.0.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(crate::code_run::AgentVerbRefusal {
                 code: "door_shut".to_owned(),
+                hook_notice: None,
             });
         }
         Ok(None)
@@ -215,7 +217,7 @@ struct LongRun {
 }
 
 impl LongRun {
-    fn start(hard_steps: u32) -> Self {
+    fn start(_hard_steps: u32) -> Self {
         let (dir, vault) = open_test_vault();
         let note = seed_person(&vault, 0x51);
         vault
@@ -235,13 +237,7 @@ impl LongRun {
         .with_calls([vec![SelfCall::MemorySearch(SelfMemorySearchCall::new(
             NOTE_WORD, 4,
         ))]]);
-        let config = executor_config(
-            run_id,
-            EngineExecutorLimits {
-                soft_steps: 2,
-                hard_steps,
-            },
-        );
+        let config = executor_config(run_id, EngineExecutorLimits { soft_steps: 2 });
         let outcome = block_on_ready(
             EngineNativeExecutor::new(&vault, &backend, &lease, &mut runtime, &gated_write)
                 .with_output_decay(no_decay())
@@ -348,13 +344,7 @@ impl LongRun {
             }
         }))
         .with_calls(calls);
-        let config = executor_config(
-            self.run_id,
-            EngineExecutorLimits {
-                soft_steps,
-                hard_steps,
-            },
-        );
+        let config = executor_config(self.run_id, EngineExecutorLimits { soft_steps });
         let outcome = block_on_ready(
             EngineNativeExecutor::new(
                 &self.vault,
@@ -755,6 +745,7 @@ fn a_step_whose_input_fits_the_seat_to_the_token_compacts() {
             .iter()
             .filter_map(|message| crate::engine_executor::compaction::failure_pin(&message.content))
             .collect::<Vec<_>>(),
+        request.note.as_deref(),
         request.summary_token_budget,
     );
 

@@ -14,6 +14,7 @@ use sha2::{Digest, Sha256};
 use crate::error::GenerateError;
 use crate::facade_types::inventory::{row_field, type_text};
 use crate::facade_types::{Inventory, Ir, compound, substring_not_found, ts_key};
+use crate::generate::common::is_js_reserved;
 use crate::py::json::dumps_str;
 use crate::py::text::{splitlines, strip};
 use crate::py::value::{Dict, Value};
@@ -60,6 +61,13 @@ const POSITIONAL: &[(&str, &[&str])] = &[(
 )];
 /// Names no reached type may take.
 const TAKEN: &[&str] = &["StoredResult", VAULT_HOST];
+/// The `self` members the code-run host declares in its own `declare namespace self` (a function, or the `json`
+/// namespace), in `crates/oneiron/wit/generated/code-run.d.ts`, which `scripts/code-sandbox/generate.py` writes from
+/// `code-run.wit`. A program is checked against that file and this fragment together, so a `const` at one of these
+/// names redeclares the host's (TS2451). A row here is declared as function overloads and a branch as a namespace
+/// instead, the two forms that merge with the host's declaration; the runtime installs the rows on the host's own
+/// function (`components/code-run-quickjs/bootstrap.js`).
+const SELF_HOST_MEMBERS: &[&str] = &["express", "json", "report_blocked", "speak", "think"];
 
 /// `POSITIONAL.get(name)` (and `name in POSITIONAL`): a dict lookup, so the name is hashed first.
 fn positional(name: &Value) -> Result<Option<&'static [&'static str]>, GenerateError> {
@@ -345,6 +353,10 @@ impl<'r> Fragment<'r> {
             let node = &children[name];
             out.push_str(&Self::doc(node, &indent));
             match node.row() {
+                // A member `new(...)` opens a construct signature, so that verb is a property of its call type.
+                Some(row) if node.children.is_empty() && name == "new" => {
+                    out.push_str(&format!("{indent}{name}: {};\n", self.call(row)?));
+                }
                 Some(row) if node.children.is_empty() => {
                     for (params, result) in self.signatures(row)? {
                         out.push_str(&format!("{indent}{name}{params}: {result};\n"));
@@ -356,6 +368,19 @@ impl<'r> Fragment<'r> {
         Ok(out)
     }
 
+    /// Refuses a name the verb layout binds (a root's `const`, a bare verb's `function`, a `self` member's `const`,
+    /// `function` or `namespace`) when it is a JavaScript reserved word: such a declaration does not parse, and,
+    /// unlike a parameter, it cannot be renamed, since code mode calls the verb by that name.
+    fn refuse_reserved_binding(path: &str, name: &str) -> Result<(), GenerateError> {
+        if is_js_reserved(name) {
+            return Err(GenerateError::value(format!(
+                "{path}: {name} is a JavaScript reserved word, which a code-mode root, \
+                 bare verb or self member cannot be named"
+            )));
+        }
+        Ok(())
+    }
+
     /// The verb layout, root by root in name order.
     fn verbs(&mut self) -> Result<String, GenerateError> {
         let tree = self.tree()?;
@@ -365,22 +390,52 @@ impl<'r> Fragment<'r> {
             if root == "self" {
                 out.push_str("declare namespace self {\n");
                 for name in sorted(&node.children) {
+                    Self::refuse_reserved_binding(&format!("self.{name}"), name)?;
                     let child = &node.children[name];
                     out.push_str(&Self::doc(child, "  "));
-                    out.push_str(&format!("  const {name}: {};\n", self.kind(child, 1)?));
+                    if SELF_HOST_MEMBERS.contains(&name.as_str()) {
+                        out.push_str(&self.self_host_member(name, child)?);
+                    } else {
+                        out.push_str(&format!("  const {name}: {};\n", self.kind(child, 1)?));
+                    }
                 }
                 out.push_str("}\n");
             } else if let Some(row) = node.row().filter(|_| node.children.is_empty()) {
+                Self::refuse_reserved_binding(root, root)?;
                 out.push_str(&Self::doc(node, ""));
                 for (params, result) in self.signatures(row)? {
                     out.push_str(&format!("declare function {root}{params}: {result};\n"));
                 }
             } else {
+                Self::refuse_reserved_binding(root, root)?;
                 out.push_str(&Self::doc(node, ""));
                 let extends = self.extends(root, node)?;
                 let kind = self.kind(node, 0)?;
                 out.push_str(&format!("declare const {root}: {extends}{kind};\n"));
             }
+        }
+        Ok(out)
+    }
+
+    /// A `self` member the code-run host also declares ([`SELF_HOST_MEMBERS`]), in the forms that merge with the
+    /// host's: its row as `function` overloads, its members as a `namespace` of constants. A member's name must then
+    /// be an identifier a `const` may take (no reserved word).
+    fn self_host_member(&mut self, name: &str, node: &Node<'r>) -> Result<String, GenerateError> {
+        let mut out = String::new();
+        if let Some(row) = node.row() {
+            for (params, result) in self.signatures(row)? {
+                out.push_str(&format!("  function {name}{params}: {result};\n"));
+            }
+        }
+        if !node.children.is_empty() {
+            out.push_str(&format!("  namespace {name} {{\n"));
+            for member in sorted(&node.children) {
+                Self::refuse_reserved_binding(&format!("self.{name}.{member}"), member)?;
+                let child = &node.children[member];
+                out.push_str(&Self::doc(child, "    "));
+                out.push_str(&format!("    const {member}: {};\n", self.kind(child, 2)?));
+            }
+            out.push_str("  }\n");
         }
         Ok(out)
     }
@@ -522,10 +577,11 @@ pub(crate) fn revision(text: &str) -> String {
 }
 
 /// For `re.match`: a line of the verb layout opens a root or a namespace, declares a verb, or both. Python's pattern:
-/// `(?:declare (?:namespace|const|function) |const )?(\w+)(\(|: | \{$)`. `re.match` anchors at the start (`\A`); the
-/// line is stripped, so Python's `$` (the end, or before a final newline) is the end (`\z`); `\w` is Python's
-/// (`py::re::translate`).
-const LAYOUT_LINE: &str = r"\A(?:declare (?:namespace|const|function) |const )?(\w+)(\(|: | \{\z)";
+/// `(?:declare (?:namespace|const|function) |const )?(\w+)(\(|: | \{$)`, plus the bare `function ` and `namespace `
+/// a [`SELF_HOST_MEMBERS`] member takes inside `self`. `re.match` anchors at the start (`\A`); the line is stripped, so
+/// Python's `$` (the end, or before a final newline) is the end (`\z`); `\w` is Python's (`py::re::translate`).
+const LAYOUT_LINE: &str =
+    r"\A(?:declare (?:namespace|const|function) |const |function |namespace )?(\w+)(\(|: | \{\z)";
 
 /// `LAYOUT_LINE.match(line)`: the verb name, the form after it, and the line past the match (`line[head.end():]`).
 fn layout_match<'l>(layout: &regex::Regex, line: &'l str) -> Option<(&'l str, &'l str, &'l str)> {
@@ -831,5 +887,150 @@ declare const ünï: {
             assert_eq!(got, expected);
         }
         fs::remove_dir_all(&root).expect("cleanup");
+    }
+
+    #[test]
+    fn a_reserved_word_binding_is_refused_and_a_reserved_member_stays() {
+        // FIX-LIST [SDK-TS-RESERVED-WORD-IDENTIFIERS]: a root, a bare verb and a `self` member are declared as
+        // bindings (`declare const`, `declare function`, `const`, `function`, `namespace`), where a reserved word
+        // does not parse; deeper in a path a reserved word is a member name, which TypeScript takes (`new` as a
+        // property, since `new(...)` is a construct signature).
+        let root = tree("reserved");
+        let pins = Value::Dict(Dict::new());
+        let rows_of = |text: &str| {
+            let Value::List(rows) = loads(text).expect("rows") else {
+                panic!("a list of rows");
+            };
+            rows
+        };
+        let refusal = " is a JavaScript reserved word, which a code-mode root, \
+                       bare verb or self member cannot be named";
+        for (name, expected) in [
+            ("delete", "delete: delete"),
+            ("new.zz", "new: new"),
+            ("self.default", "self.default: default"),
+            ("self.let.zz", "self.let: let"),
+            ("self.think.static", "self.think.static: static"),
+        ] {
+            let rows = rows_of(&format!(
+                r#"[{{"name": "{name}", "input": "ZzIn", "output": "String"}}]"#
+            ));
+            let rows: Vec<&Dict> = rows.iter().filter_map(Value::as_dict).collect();
+            let got = catalog_fragment(&root, &rows, "// h\n", &pins, &mut BTreeSet::new())
+                .expect_err("a refusal")
+                .to_string();
+            assert_eq!(got, format!("ValueError: {expected}{refusal}"), "{name}");
+        }
+        let rows = rows_of(
+            r#"[{"name": "zz.delete", "input": "ZzIn", "output": "String"},
+            {"name": "zz.new", "input": "ZzIn", "output": "String"},
+            {"name": "self.zz.export", "input": "ZzIn", "output": "String"}]"#,
+        );
+        let rows: Vec<&Dict> = rows.iter().filter_map(Value::as_dict).collect();
+        let outputs = catalog_fragment(&root, &rows, "// h\n", &pins, &mut BTreeSet::new())
+            .expect("a fragment");
+        fs::remove_dir_all(&root).expect("cleanup");
+        let text = &outputs[0].1;
+        assert!(
+            text.contains("\ndeclare const zz: {\n  delete(input: Sdk."),
+            "{text}"
+        );
+        // `new(...)` in a type literal is a construct signature: `zz.new` is a property of its call type.
+        assert!(text.contains("\n  new: (input: Sdk."), "{text}");
+        assert!(!text.contains("  new("), "{text}");
+        assert!(
+            text.contains("\n  const zz: {\n    export(input: Sdk."),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn self_host_members_are_the_code_run_self_members() {
+        // The functions and namespaces directly inside code-run.d.ts's `declare namespace self`.
+        let host = fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../oneiron/wit/generated/code-run.d.ts"
+        ))
+        .expect("the checked-in code-run declarations");
+        let open = host
+            .find("declare namespace self {\n")
+            .expect("a self namespace");
+        let body = &host[open..];
+        let body = &body[..body.find("\n}\n").expect("its close")];
+        let mut members: Vec<&str> = body
+            .lines()
+            .filter_map(|line| {
+                let member = line
+                    .strip_prefix("  function ")
+                    .or_else(|| line.strip_prefix("  namespace "))?;
+                member
+                    .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                    .next()
+            })
+            .collect();
+        members.sort_unstable();
+        members.dedup();
+        assert_eq!(members, SELF_HOST_MEMBERS);
+    }
+
+    #[test]
+    fn a_self_host_member_merges_with_the_host_declaration() {
+        // A `const` at a host member redeclares the host's function (TS2451); a row is a function and a branch a
+        // namespace, and the census still reads every row back.
+        let root = tree("self-host");
+        let rows = r#"[{"name": "self.report_blocked", "input": "ZzIn", "output": "String"},
+            {"name": "self.think.aloud", "input": "ZzIn", "output": "String"},
+            {"name": "self.zz", "input": "ZzIn", "output": "String"}]"#;
+        let Value::List(rows) = loads(rows).expect("rows") else {
+            panic!("a list of rows");
+        };
+        let rows: Vec<&Dict> = rows.iter().filter_map(Value::as_dict).collect();
+        let outputs = catalog_fragment(
+            &root,
+            &rows,
+            "// h\n",
+            &Value::Dict(Dict::new()),
+            &mut BTreeSet::new(),
+        )
+        .expect("a fragment");
+        fs::remove_dir_all(&root).expect("cleanup");
+        let text = &outputs[0].1;
+        let lines: Vec<&str> = text.lines().collect();
+        let at = |prefix: &str| {
+            lines
+                .iter()
+                .position(|line| line.starts_with(prefix))
+                .unwrap_or_else(|| panic!("no line {prefix:?} in\n{text}"))
+        };
+        at("  function report_blocked(input: Sdk.");
+        let think = at("  namespace think {");
+        assert!(
+            lines[think + 1].starts_with("    const aloud: (input: Sdk."),
+            "{text}"
+        );
+        assert_eq!(lines[think + 2], "  }", "{text}");
+        at("  const zz: (input: Sdk.");
+        assert!(
+            !text.contains("const report_blocked") && !text.contains("const think"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn declared_reads_the_self_host_member_forms() {
+        let text = "declare namespace Sdk {
+  type A = { a: number };
+}
+declare namespace self {
+  function report_blocked(input: Sdk.A): Promise<unknown>;
+  namespace think {
+    const aloud: (input: Sdk.A) => Promise<unknown>;
+  }
+  const zz: (input: Sdk.A) => Promise<unknown>;
+}
+";
+        let mut got: Vec<String> = declared(text).expect("a layout").into_iter().collect();
+        got.sort();
+        assert_eq!(got, ["self.report_blocked", "self.think.aloud", "self.zz"]);
     }
 }

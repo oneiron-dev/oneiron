@@ -232,6 +232,7 @@ fn claim(turn: EntityId) -> RoomSideRow {
             actor: fixed(0x41).to_hex(),
             receipt_ref: "r".to_owned(),
             at: 1,
+            generation: 0,
         },
     }
 }

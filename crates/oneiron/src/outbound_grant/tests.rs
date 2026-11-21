@@ -567,6 +567,7 @@ fn a_restore_goes_ahead_past_a_grant_use_and_refuses_a_revocation() -> Result<()
     )?;
     let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
+    vault.ensure_vault_key().expect("mint the vault data key");
     vault.snapshot_checkpoint(&image, 100)?;
     let key = vault.checkpoint_key()?;
     let restore = |destination: &std::path::Path| {
@@ -589,7 +590,11 @@ fn a_restore_goes_ahead_past_a_grant_use_and_refuses_a_revocation() -> Result<()
     let error = restore(&destination)
         .err()
         .expect("the restore must be refused");
-    assert!(error.to_string().contains("outbound grants"), "{error}");
+    // FIX 11874: a standing outbound grant is a standing consent Grant row; OUTBOUND_GRANT has no writer.
+    assert!(
+        error.to_string().contains("standing consent grants"),
+        "{error}"
+    );
     assert!(!destination.exists());
     Ok(())
 }

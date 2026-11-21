@@ -28,11 +28,13 @@ pub(super) struct Measured<'a> {
 }
 
 /// Fields that stay text though they may read as numbers.
-const TEXT_FIELDS: [&str; 6] = [
+const TEXT_FIELDS: [&str; 8] = [
     "attempt",
+    "body",
     "landed_ids",
     "outcome",
     "scope",
+    "step",
     "stop",
     "trigger",
 ];
@@ -297,6 +299,7 @@ pub(super) fn report(m: &Measured<'_>) -> Value {
         "proof": proof,
         "recalls": recalls_json(m),
         "server_log": server_log,
+        "model_sends": lines_json(&m.scan.sends, 0.0, t0),
         "pass": verdicts,
     })
 }

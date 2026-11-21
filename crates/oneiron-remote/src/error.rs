@@ -35,6 +35,7 @@ pub(crate) fn sdk_error(
         message: message.into(),
         suggestions: suggestions.iter().map(|s| (*s).to_owned()).collect(),
         successor_short_id: None,
+        extraction_layout: None,
         gate_denial: None,
         read_receipt: None,
         policy_denial: None,

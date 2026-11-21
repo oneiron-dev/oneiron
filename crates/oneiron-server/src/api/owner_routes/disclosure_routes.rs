@@ -28,11 +28,12 @@ use oneiron::disclosure::AttendeeIdentityChoice;
 use oneiron::federation::Scope;
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, blocking_with, owner, owner_error};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::params::hex_bytes;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
+use crate::error::ApiError;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
 
@@ -383,6 +384,27 @@ fn delta_bytes(value: &str) -> OwnerResult<Vec<u8>> {
         .collect()
 }
 
+/// The owner's answer to one frozen offer, refused because the offer is
+/// missing, settled, lapsed or changed: the widen proposal's state, as the
+/// core widen route answers it (`widen_refusal`; [DISCLOSURE-CONFIRM-STALE-500]).
+/// Every other refusal answers as on any owner route. The entry routes keep
+/// `owner_error`'s neutral state: there the same kinds also refuse an entry
+/// whose contact is already cleared or is no contact at all.
+fn offer_answer_refusal(error: OwnerError) -> ApiError {
+    match &error {
+        OwnerError::Engine(engine)
+            if matches!(
+                engine.kind(),
+                oneiron::ErrorKind::InvalidConsentGrantRow
+                    | oneiron::ErrorKind::InvalidConsentBound
+            ) =>
+        {
+            ApiError::invalid_state(Some("consent_widen_proposal"))
+        }
+        _ => owner_error(error),
+    }
+}
+
 /// `GET /v1/owner/disclosure/offer?proposal_ref=<64 hex>`: one frozen
 /// contact-disclosure offer, the private ask the owner answers.
 async fn offer(
@@ -417,18 +439,21 @@ async fn confirm(
 ) -> OwnerReply<ClearanceReceipt> {
     let owner = owner(&auth, &server)?;
     let request = payload.read(&server).await?;
-    let receipt = blocking(move || -> OwnerResult<ClearanceReceipt> {
-        let delta = delta_bytes(&request.expected_delta)?;
-        Ok(server
-            .vault()
-            .confirm_contact_disclosure(
-                &owner,
-                &request.proposal_ref,
-                &delta,
-                request.outcome.into(),
-            )?
-            .into())
-    })
+    let receipt = blocking_with(
+        offer_answer_refusal,
+        move || -> OwnerResult<ClearanceReceipt> {
+            let delta = delta_bytes(&request.expected_delta)?;
+            Ok(server
+                .vault()
+                .confirm_contact_disclosure(
+                    &owner,
+                    &request.proposal_ref,
+                    &delta,
+                    request.outcome.into(),
+                )?
+                .into())
+        },
+    )
     .await?;
     Ok(Json(receipt))
 }

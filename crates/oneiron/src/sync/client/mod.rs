@@ -41,6 +41,7 @@
 //!   answer the VV exchange from the persisted state vector without
 //!   loading the window doc.
 
+mod admitted_rewrite;
 mod artifacts;
 mod ask_forward;
 mod base;
@@ -64,6 +65,8 @@ mod sync_frames;
 mod types;
 mod window_pads;
 
+#[cfg(oneiron_test_support)]
+pub(crate) use self::admitted_rewrite::admitted_rewrite;
 #[cfg(oneiron_test_support)]
 pub(crate) use self::base::ResidenceReceipt;
 pub use self::base::SyncClient;
@@ -89,9 +92,10 @@ pub use self::residence::{
     request_ask_option_link, sealed_bundle_relay_observation,
 };
 pub(crate) use self::residence::{
-    catch_up_authority, exchange_checkpoint_roots, fetch_owed_machine_history,
-    mark_ungranted_windows_in_txn, observe_sealed_bundle_relay, pinned_checkpoint_pending,
-    relay_sealed_bundle, request_media_vectors, retry_refused_retains, search_resident,
+    catch_up_authority, exchange_checkpoint_roots, exchange_machine_names,
+    fetch_owed_machine_history, mark_ungranted_windows_in_txn, observe_sealed_bundle_relay,
+    pinned_checkpoint_pending, refresh_followed_tombstones, relay_sealed_bundle,
+    request_media_vectors, retry_refused_retains, search_resident,
 };
 pub(crate) use self::sealed_updates::{send_sealed_updates, world_relays_sealed};
 pub(crate) use self::staged_body_pull::StagedBodyPump;
@@ -101,8 +105,6 @@ pub use self::types::{
     SyncClientConfig, SyncEvent, SyncResidenceMode, SyncStatus, SyncTransportCredential,
 };
 
-// FIX [LIBTEST-QUARANTINE-SYNC-CLIENT-TESTS]: the lib test target's type check fails here (9 errors: E0061 x9); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

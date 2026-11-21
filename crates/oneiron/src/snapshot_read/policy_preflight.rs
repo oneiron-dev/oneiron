@@ -92,7 +92,9 @@ pub enum PolicyPreflightRef {
         /// along the lineage that read judges: those carried to it and the
         /// one binding it, and those of every row its words came from (of a
         /// CLAIM's supports, each one the caller reads; of a witnessed TURN,
-        /// each MESSAGE row its text was read from). A row derived from it
+        /// each MESSAGE row its text was read from). While the floor of a
+        /// row on that lineage is not whole yet, the read meets every source
+        /// policy the vault holds, and each is named. A row derived from it
         /// reads under them too. Empty for a row no source policy reaches.
         audience: Vec<EntityId>,
         /// For the acts `derive` and `archive`, the derive verdict on the
