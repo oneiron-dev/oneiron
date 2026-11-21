@@ -7,10 +7,12 @@ import {
   base64UrlDecode,
   base64UrlEncode,
   bindWithOwnerPasskey,
+  cancelRecoveryHoldWithOwnerPasskey,
   enrollAndBindOwnerPasskey,
   enrollOwnerPasskey,
   fetchOwnerRouteTransport,
   listOwnerPasskeys,
+  listRecoveryHolds,
   vouchWithOwnerPasskey,
   type OwnerRouteTransport,
   type PasskeyCredentials,
@@ -623,6 +625,147 @@ describe('listing enrolled owner passkeys', () => {
         at: listed.at,
       },
     ])
+  })
+})
+
+describe('a box recovery\'s wait and the passkey\'s Cancel of it', () => {
+  const HOLDS = '/v1/owner/recovery-holds'
+  const CANCEL_PREPARE = '/v1/owner/owner-passkeys/recovery-hold-cancel/prepare'
+  const CANCEL_LAND = '/v1/owner/owner-passkeys/recovery-hold-cancel/land'
+  const HOLD = '7a'.repeat(32)
+  const CANCEL_ENTRY = base64UrlEncode(bytes(6, 5, 4, 3))
+  const listedHold = {
+    hold: HOLD,
+    owner: '34'.repeat(16),
+    successor_machine: '56'.repeat(16),
+    successor_key: '78'.repeat(32),
+    lost: ['9a'.repeat(32)],
+    lands_at: 1_795_000_000,
+    state: 'waiting',
+    cancelled_by: [],
+  }
+
+  it('lists each hold with its state, its landing second and who cancelled it', async () => {
+    const { calls, transport } = recordingTransport({
+      [HOLDS]: {
+        holds: [
+          { ...listedHold, hold: 'bc'.repeat(32), state: 'cancelled', cancelled_by: ['34'.repeat(16)] },
+          listedHold,
+        ],
+      },
+    })
+
+    const holds = await listRecoveryHolds(transport)
+
+    assert.deepEqual(calls, [{ method: 'GET', path: HOLDS }])
+    assert.deepEqual(holds, [
+      {
+        hold: 'bc'.repeat(32),
+        owner: listedHold.owner,
+        successorMachine: listedHold.successor_machine,
+        successorKey: listedHold.successor_key,
+        lost: listedHold.lost,
+        landsAt: listedHold.lands_at,
+        state: 'cancelled',
+        cancelledBy: ['34'.repeat(16)],
+      },
+      {
+        hold: HOLD,
+        owner: listedHold.owner,
+        successorMachine: listedHold.successor_machine,
+        successorKey: listedHold.successor_key,
+        lost: listedHold.lost,
+        landsAt: listedHold.lands_at,
+        state: 'waiting',
+        cancelledBy: [],
+      },
+    ])
+  })
+
+  it('refuses a hold whose state the engine never answers', async () => {
+    const { transport } = recordingTransport({
+      [HOLDS]: { holds: [{ ...listedHold, state: 'paused' }] },
+    })
+    await assert.rejects(
+      listRecoveryHolds(transport),
+      (error: unknown) =>
+        error instanceof OwnerPasskeyCeremonyError && error.reason === 'malformed-reply',
+    )
+  })
+
+  it('prepares the Cancel, asserts its challenge with that passkey and lands it', async () => {
+    const { calls, transport } = recordingTransport({
+      [CANCEL_PREPARE]: { entry: CANCEL_ENTRY, challenge: base64UrlEncode(CHALLENGE) },
+      [CANCEL_LAND]: { entry: 'de'.repeat(32) },
+    })
+    const { created, requested, credentials } = fakeCredentials({})
+
+    const receipt = await cancelRecoveryHoldWithOwnerPasskey(
+      { transport, credentials },
+      { hold: HOLD, credentialId: base64UrlEncode(RAW_ID) },
+    )
+
+    assert.equal(created.length, 0)
+    assert.deepEqual(calls, [
+      {
+        method: 'POST',
+        path: CANCEL_PREPARE,
+        body: { hold: HOLD, credential_id: base64UrlEncode(RAW_ID) },
+      },
+      {
+        method: 'POST',
+        path: CANCEL_LAND,
+        body: {
+          entry: CANCEL_ENTRY,
+          authenticator_data: base64UrlEncode(AUTHENTICATOR_DATA),
+          client_data_json: base64UrlEncode(CLIENT_DATA_JSON),
+          signature: base64UrlEncode(SIGNATURE),
+        },
+      },
+    ])
+    const request = requested[0].publicKey
+    assert.ok(request)
+    assert.deepEqual(asBytes(request.challenge), CHALLENGE)
+    assert.equal(request.userVerification, 'required')
+    assert.equal(request.allowCredentials?.length, 1)
+    assert.deepEqual(asBytes(request.allowCredentials?.[0].id), RAW_ID)
+    assert.deepEqual(receipt, { entry: 'de'.repeat(32) })
+  })
+
+  it('lands nothing when the assertion comes from another credential', async () => {
+    const { calls, transport } = recordingTransport({
+      [CANCEL_PREPARE]: { entry: CANCEL_ENTRY, challenge: base64UrlEncode(CHALLENGE) },
+      [CANCEL_LAND]: { entry: 'de'.repeat(32) },
+    })
+    const { credentials } = fakeCredentials({ assertionRawId: bytes(9, 9) })
+    await assert.rejects(
+      cancelRecoveryHoldWithOwnerPasskey(
+        { transport, credentials },
+        { hold: HOLD, credentialId: base64UrlEncode(RAW_ID) },
+      ),
+      (error: unknown) =>
+        error instanceof OwnerPasskeyCeremonyError && error.reason === 'credential-mismatch',
+    )
+    assert.deepEqual(
+      calls.map((call) => call.path),
+      [CANCEL_PREPARE],
+    )
+  })
+
+  it('asks for no assertion when the engine refuses the prepare', async () => {
+    const transport: OwnerRouteTransport = async (_method, path) => {
+      throw new OwnerRouteRefusal(409, path, 'the recovery hold is not live')
+    }
+    const { requested, credentials } = fakeCredentials({})
+    await assert.rejects(
+      cancelRecoveryHoldWithOwnerPasskey(
+        { transport, credentials },
+        { hold: HOLD, credentialId: base64UrlEncode(RAW_ID) },
+      ),
+      (error: unknown) =>
+        error instanceof OwnerRouteRefusal && error.detail === 'the recovery hold is not live',
+    )
+    assert.equal(requested.length, 0)
   })
 })
 

@@ -23,6 +23,14 @@
  * then `/bind/land`; row PASSKEY-SELF-BIND), and the owner's owner acts pass.
  * That is the one binding a passkey signs. An owner device key binds them
  * with `/v1/owner/owner-signing-keys/bind` instead.
+ *
+ * A box recovery waits before it lands (`/v1/owner/recovery-holds` lists each
+ * attempt, "recovery started, lands at <time>, cancel?"), and any owner of the
+ * vault may stop one. An owner whose passkey is an owner key stops it with a
+ * Cancel the passkey signs alone (`/v1/owner/owner-passkeys/recovery-hold-cancel/prepare`,
+ * then `/land`; row RECOVERY-HOLD-PASSKEY-CANCEL-ROUTE). A passkey answers a
+ * hold with a Cancel and nothing else: it revokes no other owner key, so it
+ * never says "it is me".
  */
 
 /** The COSE algorithm of ES256 (ECDSA P-256 with SHA-256): the only kind the engine enrolls. */
@@ -139,6 +147,52 @@ export type OwnerKeyVouchReceipt = Readonly<{
   entry: string
   machine: string
   publicKey: string
+}>
+
+/** What a recovery hold is now, on the engine's clock. */
+export type RecoveryHoldState = 'waiting' | 'due' | 'landed' | 'cancelled' | 'void'
+
+const RECOVERY_HOLD_STATES: readonly RecoveryHoldState[] = [
+  'waiting',
+  'due',
+  'landed',
+  'cancelled',
+  'void',
+]
+
+/** One box recovery's attempt, as `GET /v1/owner/recovery-holds` lists it. */
+export type RecoveryHold = Readonly<{
+  /** The attempt id: the hold's authority entry, 64 hex. */
+  hold: string
+  /** The owner whose recovery this is, 32 hex. */
+  owner: string
+  /** The machine that holds the successor key, 32 hex. */
+  successorMachine: string
+  /** The successor key the landing enrols, hex. */
+  successorKey: string
+  /** The lost keys the landing revokes, hex. */
+  lost: readonly string[]
+  /** Unix seconds the wait ends at. */
+  landsAt: number
+  /** `waiting` and `due` are live: a Cancel still stops them. */
+  state: RecoveryHoldState
+  /** Who stopped the attempt, 32 hex each; empty unless cancelled. */
+  cancelledBy: readonly string[]
+}>
+
+/** A live recovery hold for an enrolled passkey to cancel. */
+export type RecoveryHoldCancel = Readonly<{
+  /** The hold, 64 hex, as `listRecoveryHolds` names it. */
+  hold: string
+  /** The owner's enrolled passkey that signs the Cancel, by its credential id, base64url. */
+  credentialId: string
+  signal?: AbortSignal
+}>
+
+/** The receipt of a passkey's Cancel of a recovery hold. */
+export type RecoveryHoldCancelReceipt = Readonly<{
+  /** The Cancel's authority entry, 64 hex. */
+  entry: string
 }>
 
 export type OwnerPasskeyEnrollment = Readonly<{
@@ -437,6 +491,78 @@ export async function enrollAndBindOwnerPasskey(
   return { enrollment: enrolled, binding }
 }
 
+const RECOVERY_HOLDS_ROUTE = '/v1/owner/recovery-holds'
+
+/**
+ * Every recovery hold the vault's log holds, with its state on the engine's
+ * clock: landed first, then cancelled, void, and the live ones.
+ */
+export async function listRecoveryHolds(
+  transport: OwnerRouteTransport,
+): Promise<readonly RecoveryHold[]> {
+  const reply = record(await transport('GET', RECOVERY_HOLDS_ROUTE), RECOVERY_HOLDS_ROUTE)
+  if (!Array.isArray(reply.holds)) throw malformedReply(RECOVERY_HOLDS_ROUTE)
+  return reply.holds.map((value: unknown) => {
+    const hold = record(value, RECOVERY_HOLDS_ROUTE)
+    const state = RECOVERY_HOLD_STATES.find((known) => known === hold.state)
+    if (state === undefined || typeof hold.lands_at !== 'number') {
+      throw malformedReply(RECOVERY_HOLDS_ROUTE)
+    }
+    return {
+      hold: text(hold, 'hold', RECOVERY_HOLDS_ROUTE),
+      owner: text(hold, 'owner', RECOVERY_HOLDS_ROUTE),
+      successorMachine: text(hold, 'successor_machine', RECOVERY_HOLDS_ROUTE),
+      successorKey: text(hold, 'successor_key', RECOVERY_HOLDS_ROUTE),
+      lost: texts(hold, 'lost', RECOVERY_HOLDS_ROUTE),
+      landsAt: hold.lands_at,
+      state,
+      cancelledBy: texts(hold, 'cancelled_by', RECOVERY_HOLDS_ROUTE),
+    }
+  })
+}
+
+/**
+ * Cancels the live recovery hold `cancel.hold` with the owner's enrolled
+ * passkey: the engine prepares the Cancel with the passkey as its one
+ * signer, the person asserts its challenge with that passkey, and the engine
+ * lands it once the vault counted it. The hold then never lands. A refusal
+ * (the hold ended, the passkey is not the acting owner's) and a cancelled
+ * assertion throw, and nothing is cancelled.
+ */
+export async function cancelRecoveryHoldWithOwnerPasskey(
+  { transport, credentials }: OwnerPasskeyDependencies,
+  cancel: RecoveryHoldCancel,
+): Promise<RecoveryHoldCancelReceipt> {
+  const rawId = base64UrlDecode(cancel.credentialId)
+  const prepareRoute = `${OWNER_PASSKEYS_ROUTE}/recovery-hold-cancel/prepare`
+  const prepared = record(
+    await transport('POST', prepareRoute, {
+      hold: cancel.hold,
+      credential_id: cancel.credentialId,
+    }),
+    prepareRoute,
+  )
+  const entry = text(prepared, 'entry', prepareRoute)
+  const assertion = await requestAssertion(
+    credentials,
+    rawId,
+    text(prepared, 'challenge', prepareRoute),
+    cancel.signal,
+  )
+
+  const landRoute = `${OWNER_PASSKEYS_ROUTE}/recovery-hold-cancel/land`
+  const receipt = record(
+    await transport('POST', landRoute, {
+      entry,
+      authenticator_data: assertion.authenticatorData,
+      client_data_json: assertion.clientDataJson,
+      signature: assertion.signature,
+    }),
+    landRoute,
+  )
+  return { entry: text(receipt, 'entry', landRoute) }
+}
+
 type AssertionParts = Readonly<{
   authenticatorData: string
   clientDataJson: string
@@ -555,5 +681,13 @@ function record(value: unknown, route: string): Record<string, unknown> {
 function text(reply: Record<string, unknown>, field: string, route: string): string {
   const value = reply[field]
   if (typeof value !== 'string') throw malformedReply(route)
+  return value
+}
+
+function texts(reply: Record<string, unknown>, field: string, route: string): readonly string[] {
+  const value = reply[field]
+  if (!Array.isArray(value) || !value.every((item) => typeof item === 'string')) {
+    throw malformedReply(route)
+  }
   return value
 }
