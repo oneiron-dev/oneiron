@@ -341,21 +341,36 @@ impl ModelRuntime {
                 }
             }
         }
-        // Each chat model a supervised worker serves natively, alone by its
-        // own id at its on-device route (I2-LOCAL): no owner's fallback past
-        // the device takes its calls.
-        for (name, local) in &native {
-            let provider = &config.providers[name];
-            for model in referenced_models(config, name) {
-                let Some(rung) = native_rung(name, provider, local, &model, 0, None, false) else {
-                    continue;
+        // Each chat model a supervised worker serves natively, and each
+        // reranker model a `listen = "unix"` worker serves on its own socket
+        // (L9-15), alone by its own id at its on-device route (I2-LOCAL), so
+        // a manifest's or a local-GPU model pack's on-device pin of it takes
+        // that channel alone: no owner's fallback past the device takes its
+        // calls. A reranker model that also serves a chat role keeps its chat
+        // view, as its default route does.
+        for (rerank, locals) in [(false, &native), (true, &native_rerankers)] {
+            for (name, local) in locals {
+                let provider = &config.providers[name];
+                let models = if rerank {
+                    reranker_models(config, name)
+                } else {
+                    referenced_models(config, name)
                 };
-                let ladder = OfferLadder::bare(rung, Arc::clone(&rests)).scoped(SeatScope {
-                    wire: Wire::Chat,
-                    locality_ceiling: Some(ModelLocality::OnDevice),
-                    ..SeatScope::default()
-                });
-                router.insert_on_device(ladder.model().clone(), Arc::new(ladder));
+                for model in models {
+                    let Some(rung) = native_rung(name, provider, local, &model, 0, None, rerank)
+                    else {
+                        continue;
+                    };
+                    if rerank && router.chat_models().any(|chat| *chat == rung.model) {
+                        continue;
+                    }
+                    let ladder = OfferLadder::bare(rung, Arc::clone(&rests)).scoped(SeatScope {
+                        wire: if rerank { Wire::Rerank } else { Wire::Chat },
+                        locality_ceiling: Some(ModelLocality::OnDevice),
+                        ..SeatScope::default()
+                    });
+                    router.insert_on_device(ladder.model().clone(), Arc::new(ladder));
+                }
             }
         }
         let mut seats = BTreeMap::new();
