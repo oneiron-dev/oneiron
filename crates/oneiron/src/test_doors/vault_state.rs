@@ -29,9 +29,10 @@ pub(crate) struct VaultTestDoorState {
 pub struct VaultTestDoorExtensions(Mutex<HashMap<TypeId, Arc<dyn Any + Send + Sync>>>);
 
 impl VaultTestDoorExtensions {
-    /// The `T` kept here, made with `T::default()` at its first use. The default is made with the
-    /// map unlocked, so a `T::default()` that reads another value of this map does not deadlock;
-    /// when two first uses race, the value inserted first is kept and the other is dropped.
+    /// The `T` kept here, made with `T::default()` at its first use. The default is made, and a
+    /// default that lost a race is dropped, with the map unlocked, so a `T::default()` or a
+    /// `T::drop` that reads another value of this map does not deadlock; when two first uses
+    /// race, the value inserted first is kept.
     #[must_use]
     pub fn get<T: Any + Default + Send + Sync>(&self) -> Arc<T> {
         let key = TypeId::of::<T>();
@@ -43,13 +44,16 @@ impl VaultTestDoorExtensions {
             .cloned();
         let value = kept.unwrap_or_else(|| {
             let made: Arc<dyn Any + Send + Sync> = Arc::new(T::default());
-            Arc::clone(
+            let inserted = Arc::clone(
                 self.0
                     .lock()
                     .unwrap_or_else(PoisonError::into_inner)
                     .entry(key)
-                    .or_insert(made),
-            )
+                    .or_insert_with(|| Arc::clone(&made)),
+            );
+            // The map is unlocked here: a `made` that lost the race drops its last handle now.
+            drop(made);
+            inserted
         });
         value
             .downcast::<T>()

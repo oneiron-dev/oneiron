@@ -507,7 +507,7 @@ fn a_selector_update_queued_before_its_grant_is_deleted_never_leaves() {
         let fx = fixture().await;
         let vault = Arc::clone(&fx.vault);
         let grant = fx.grant_id;
-        arm(&fx.vault, grant, move || {
+        let _armed_hook = arm(&fx.vault, grant, move || {
             vault.delete_entity(&grant).unwrap();
         });
         assert!(
@@ -537,7 +537,7 @@ fn a_selector_update_queued_before_its_grant_narrows_never_leaves() {
         let vault = Arc::clone(&fx.vault);
         let grant = fx.grant_id;
         let before = fx.grant.clone();
-        arm(&fx.vault, grant, move || {
+        let _armed_hook = arm(&fx.vault, grant, move || {
             let mut narrow = before.clone();
             narrow.authority_scope.bands = ScopeAxis::Some(BTreeSet::from([ENTITY_TYPE_CLAIM]));
             put_selector_test_federation_grant(&vault, &grant, &narrow, vault.now_recorded_at())
@@ -569,7 +569,7 @@ fn a_residence_reply_queued_before_its_grant_is_deleted_is_refused() {
         let fx = fixture().await;
         let vault = Arc::clone(&fx.vault);
         let grant = fx.grant_id;
-        arm(&fx.vault, grant, move || {
+        let _armed_hook = arm(&fx.vault, grant, move || {
             vault.delete_entity(&grant).unwrap();
         });
         assert!(
@@ -646,7 +646,7 @@ fn a_selector_update_queued_before_its_delegate_grant_expires_never_leaves() {
         let held = Arc::new(AtomicBool::new(false));
         let vault = Arc::clone(&fx.vault);
         let done = Arc::clone(&held);
-        arm(&fx.vault, delegate_id, move || {
+        let _armed_hook = arm(&fx.vault, delegate_id, move || {
             // Holds the answer in its queue until the expiry second has come.
             let deadline = std::time::Instant::now() + Duration::from_secs(2 * DELEGATE_LEAD_SECS);
             while vault.now_recorded_at() < expires_at && std::time::Instant::now() < deadline {
@@ -701,6 +701,48 @@ fn a_selector_answer_whose_grant_stands_leaves() {
         )
         .await;
         assert_eq!(index["items"][0]["entity_id"], fx.item.to_hex(), "{index}");
+    });
+}
+
+/// Sets its flag when it is dropped: a hook that holds one shows when the
+/// hook, and every handle it holds, is dropped.
+struct DroppedFlag(Arc<AtomicBool>);
+
+impl Drop for DroppedFlag {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
+
+#[test]
+fn an_unrun_hook_and_the_vault_it_holds_are_dropped_with_its_arming() {
+    run_on_engine_stack("selector-release-disarm", || async {
+        let fx = fixture().await;
+        let grant = fx.grant_id;
+        let replaced = Arc::new(AtomicBool::new(false));
+        let held = (Arc::clone(&fx.vault), DroppedFlag(Arc::clone(&replaced)));
+        let first = arm(&fx.vault, grant, move || drop(held));
+        let disarmed = Arc::new(AtomicBool::new(false));
+        let held = (Arc::clone(&fx.vault), DroppedFlag(Arc::clone(&disarmed)));
+        let second = arm(&fx.vault, grant, move || drop(held));
+        assert!(
+            replaced.load(Ordering::SeqCst),
+            "arming the grant again drops its unrun hook"
+        );
+        drop(first);
+        assert!(
+            armed(&fx.vault, &grant),
+            "dropping a replaced arming leaves the later hook armed"
+        );
+        drop(second);
+        assert!(
+            !armed(&fx.vault, &grant),
+            "dropping the arming disarms its unrun hook"
+        );
+        assert!(
+            disarmed.load(Ordering::SeqCst),
+            "the disarmed hook and the vault handle it held are dropped"
+        );
     });
 }
 
@@ -845,7 +887,7 @@ async fn forwarded_search_reply(
         },
     );
     let vault = Arc::clone(&fx.vault);
-    arm(&fx.vault, grant_id, move || {
+    let _armed_hook = arm(&fx.vault, grant_id, move || {
         hook(&vault, access, caller_expires_at)
     });
     assert!(
@@ -1007,7 +1049,7 @@ fn a_selector_update_carrying_a_message_its_members_revoked_grant_admits_never_l
         );
         let vault = Arc::clone(&fx.vault);
         let grant = fx.grant_id;
-        arm(&fx.vault, grant, move || {
+        let _armed_hook = arm(&fx.vault, grant, move || {
             vault
                 .revoke_access_grant(&access, vault.now_recorded_at())
                 .unwrap();
@@ -1172,7 +1214,7 @@ fn a_selector_update_carrying_a_coreference_link_its_owner_unlinks_never_leaves(
         let vault = Arc::clone(&fx.vault);
         let grant = fx.grant_id;
         let (person_a, person_b) = (case.person_a, case.person_b);
-        arm(&fx.vault, grant, move || {
+        let _armed_hook = arm(&fx.vault, grant, move || {
             unlink_coreference_link(&vault, &owner, person_a, person_b).unwrap();
         });
         assert!(
@@ -1204,7 +1246,7 @@ fn a_selector_update_carrying_a_coreference_link_whose_share_consent_is_retracte
         let vault = Arc::clone(&fx.vault);
         let grant = fx.grant_id;
         let consent = case.consent;
-        arm(&fx.vault, grant, move || {
+        let _armed_hook = arm(&fx.vault, grant, move || {
             vault
                 .retract_claim(&consent, vault.now_recorded_at())
                 .unwrap();
@@ -1239,7 +1281,7 @@ fn a_residence_index_carrying_a_coreference_link_its_owner_unlinks_is_refused() 
         let vault = Arc::clone(&fx.vault);
         let grant = fx.grant_id;
         let (person_a, person_b) = (case.person_a, case.person_b);
-        arm(&fx.vault, grant, move || {
+        let _armed_hook = arm(&fx.vault, grant, move || {
             unlink_coreference_link(&vault, &owner, person_a, person_b).unwrap();
         });
         assert!(
@@ -1279,7 +1321,7 @@ fn a_selector_update_carrying_no_coreference_link_leaves_when_an_omitted_link_is
         let vault = Arc::clone(&fx.vault);
         let grant = fx.grant_id;
         let consent = case.consent;
-        arm(&fx.vault, grant, move || {
+        let _armed_hook = arm(&fx.vault, grant, move || {
             vault
                 .retract_claim(&consent, vault.now_recorded_at())
                 .unwrap();
@@ -1515,7 +1557,7 @@ fn an_asset_body_queued_before_its_grant_is_deleted_never_leaves() {
         .await;
         let update = wait_update(&mut socket, &fx.window).await;
         // The UPDATE is an answer under the grant too: arm only after it arrived.
-        arm(&fx.vault, grant, move || {
+        let _armed_hook = arm(&fx.vault, grant, move || {
             vault.delete_entity(&grant).unwrap();
         });
         assert!(
