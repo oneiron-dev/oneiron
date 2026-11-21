@@ -15,7 +15,9 @@
 //! a node holds for an emergency effect under each of its ledger generations
 //! (review round 1 of #10220). A machine also holds none of the old home's
 //! public page token index and deny-only publication markers, which no sync
-//! carries (FIX [BK-HOME-MOVE-PUBLIC-PAGE-INDEX-NOT-CARRIED]).
+//! carries (FIX [BK-HOME-MOVE-PUBLIC-PAGE-INDEX-NOT-CARRIED]). The emergency
+//! apology's blob as an earlier build wrote it, and the booker's text its send
+//! carries (FIX [BK-EMERGENCY-APOLOGY-BLOB-HOLDS-RAW-PICK-TOKENS]).
 
 use crate::side_table::{self, SideTableDbs, SideTableDecl};
 use crate::sync::home_handoff::{
@@ -222,5 +224,45 @@ pub fn deliver_emergency_without_answer(
 ) -> std::result::Result<crate::booking::EmergencyItem, crate::booking::BookingError> {
     crate::booking::emergency_reschedule::deliver_emergency_effects(
         vault, request, plan, calendars, input, sink,
+    )
+}
+
+/// Writes on the home `vault` the blob an earlier build wrote as `item`'s
+/// emergency apology: the booker's text with the raw pick links, which this
+/// build's run never writes (FIX
+/// [BK-EMERGENCY-APOLOGY-BLOB-HOLDS-RAW-PICK-TOKENS]). Its `blob:` content
+/// ref.
+///
+/// # Errors
+///
+/// The owner's instruction or the home's writer refusing; store errors.
+pub fn write_raw_emergency_apology(
+    vault: &Vault,
+    request: &crate::booking::EmergencyRescheduleRequest,
+    item: &crate::booking::EmergencyItem,
+) -> std::result::Result<String, crate::booking::BookingError> {
+    crate::booking::emergency_reschedule::write_raw_apology_for_doors(vault, request, item)
+}
+
+/// The text the served sinks send for the send `intent_ref` to `target` of
+/// `content_ref` on `vault` when it is an emergency apology's own send: the
+/// booker's text, filled in from the home's checkpoint with the raw pick
+/// links. `None` for any other send.
+///
+/// # Errors
+///
+/// An emergency apology send this node does not fill: not the home, no such
+/// checkpoint or no links left, another recipient or another content.
+pub fn emergency_apology_send_text(
+    vault: &Vault,
+    intent_ref: &str,
+    target: &str,
+    content_ref: &str,
+) -> std::result::Result<Option<String>, crate::booking::BookingError> {
+    crate::booking::emergency_reschedule::emergency_apology_send_text(
+        vault,
+        intent_ref,
+        target,
+        content_ref,
     )
 }

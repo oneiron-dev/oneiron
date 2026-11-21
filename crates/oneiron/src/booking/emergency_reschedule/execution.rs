@@ -94,17 +94,14 @@ pub(crate) fn deliver_emergency_effects(
         mark_delivered(vault, &mut item, true)?;
     }
     if !item.apology_delivered {
-        let bytes = state::apology_bytes(&item)?;
         let content = booking_writer(vault, |txn| {
             verify_plan_in(vault, txn, plan)?;
-            persist_content_in(
+            super::apology::apology_send_content_in(
                 vault,
                 txn,
                 request,
+                &item,
                 &plan.booking.event_type.0,
-                "application/json",
-                &bytes,
-                item.committed_at,
             )
         })?;
         dispatch_item_effect(
