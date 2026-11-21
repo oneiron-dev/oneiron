@@ -1067,11 +1067,7 @@ fn revert_stands_again_as_it_was_in_txn(
         return Ok(false);
     }
     if !crate::authority::machine_claim_needs_history(&vault.store, txn, body)? {
-        return Ok(!(body.approval == ClaimApprovalStatus::Auto
-            && body
-                .source
-                .unwrap_or(ClaimSource::Generated)
-                .requires_explicit_auto_permit()));
+        return Ok(true);
     }
     if !matches!(
         body.approval,
