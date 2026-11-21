@@ -97,13 +97,41 @@ pub(crate) fn floor_source_in(
     txn: &RoTxn<'_>,
     source: &EntityId,
 ) -> Result<FloorSource> {
-    if super::POLICIES.contains(&vault.store, txn, source)? {
+    floor_source_of_in(&vault.store, txn, source)
+}
+
+/// Whether `floor` names a source that reads to no one here
+/// ([`FloorSource::Unknown`]): a floor that does reads sealed.
+///
+/// # Errors
+///
+/// Storage failures.
+pub(crate) fn names_unknown_source_in(
+    store: &crate::store::Store,
+    txn: &RoTxn<'_>,
+    floor: &BTreeSet<EntityId>,
+) -> Result<bool> {
+    for source in floor {
+        if floor_source_of_in(store, txn, source)? == FloorSource::Unknown {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// [`floor_source_in`] for a read that holds only the store.
+fn floor_source_of_in(
+    store: &crate::store::Store,
+    txn: &RoTxn<'_>,
+    source: &EntityId,
+) -> Result<FloorSource> {
+    if super::POLICIES.contains(store, txn, source)? {
         return Ok(FloorSource::Policy);
     }
     if *source == sealed_source() {
         return Ok(FloorSource::Unknown);
     }
-    let Some(raw) = vault.get_raw_in(txn, source)? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, source)? else {
         return Ok(FloorSource::Unknown);
     };
     let thread = EntityMetadataHeader::parse(&raw).is_some_and(|header| {

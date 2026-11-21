@@ -354,7 +354,9 @@ pub(super) fn step_in_txn(
 }
 
 /// One write of M1: converts the first marks into open entries, each with
-/// its two index rows and its row's pending row. Whether marks are left.
+/// its two index rows and its row's pending row, a mark on a support into a
+/// support's entry ([`source_state::mark_entry_in`]). Whether marks are
+/// left.
 fn marks_page_in_txn(vault: &Vault, txn: &mut RwTxn<'_>) -> Result<(u64, bool)> {
     let mut marks: Vec<(EntityId, EntityId)> = AWAITED
         .iter_from(&vault.store, txn, &[])?
@@ -373,9 +375,14 @@ fn marks_page_in_txn(vault: &Vault, txn: &mut RwTxn<'_>) -> Result<(u64, bool)> 
     }
     let mut converted = 0_u64;
     for (row, awaited) in &marks {
-        if vault.get_raw_in(txn, row)?.is_some() {
+        if let Some(raw) = vault.get_raw_in(txn, row)? {
             let flags = mark_flags_in(&vault.store, txn, row, awaited)?;
-            source_state::open_entry_in_txn(&vault.store, txn, row, awaited, flags)?;
+            // A mark names no kind of link: one on a support is a support's
+            // entry, and none once a support frees the row (case 72).
+            if let Some(flags) = source_state::mark_entry_in(vault, txn, row, &raw, awaited, flags)?
+            {
+                source_state::open_entry_in_txn(&vault.store, txn, row, awaited, flags)?;
+            }
             converted = converted.saturating_add(1);
         }
         AWAITED.delete(&vault.store, txn, &(*awaited, *row))?;

@@ -179,8 +179,8 @@ pub(crate) fn judge_rows_in_txn(
 /// judged once, in the write that creates it here), so the judgement after
 /// the write judges in full only the links the write created: every link of
 /// a row this vault did not hold (or held erased), and each link a held row
-/// did not have. Read before the write, judged after it
-/// ([`Self::judge_in_txn`]).
+/// did not have, or had as another kind of link ([`Links::changed_since`]).
+/// Read before the write, judged after it ([`Self::judge_in_txn`]).
 pub(crate) struct LinksBefore {
     rows: Vec<(EntityId, Before)>,
 }
@@ -189,8 +189,8 @@ pub(crate) struct LinksBefore {
 enum Before {
     /// Not held here, or held erased: every link it has after is new.
     NotHeld,
-    /// Held, with these links.
-    Held(BTreeSet<EntityId>),
+    /// Held, with these links, by input.
+    Held(BTreeMap<EntityId, LinkKind>),
     /// Held while no row here could have a floor: its links were never
     /// judged, and the migration judges them as an old fact's.
     Unread,
@@ -217,7 +217,7 @@ impl LinksBefore {
             let before = match vault.get_raw_in(txn, &row)? {
                 Some(_) if crate::ports::erased_in_txn(&vault.store, txn, &row)? => Before::NotHeld,
                 Some(_) if !floors_possible => Before::Unread,
-                Some(raw) => Before::Held(Links::of(vault, txn, &row, &raw)?.inputs()),
+                Some(raw) => Before::Held(Links::of(vault, txn, &row, &raw)?.by_input()),
                 None => Before::NotHeld,
             };
             held.push((row, before));
@@ -241,13 +241,9 @@ impl LinksBefore {
                 Before::NotHeld => Fresh::Row,
                 Before::Unread => Fresh::None,
                 Before::Held(held) => match vault.get_raw_in(txn, &row)? {
-                    Some(raw) => Fresh::Links(
-                        Links::of(vault, txn, &row, &raw)?
-                            .inputs()
-                            .difference(&held)
-                            .copied()
-                            .collect(),
-                    ),
+                    Some(raw) => {
+                        Fresh::Links(Links::of(vault, txn, &row, &raw)?.changed_since(&held))
+                    }
                     None => Fresh::None,
                 },
             };

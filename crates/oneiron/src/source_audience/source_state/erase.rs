@@ -21,12 +21,12 @@ use heed::{RoTxn, RwTxn};
 
 use super::judge::{fold_entry_in_txn, judge_row_in_txn, take_floor_in_store_txn};
 use super::{
-    DeleteLevel, Fresh, OPEN, OPEN_BY, OpenFlags, SHELL_ERASED, close_entry_in_txn, has_open_in,
-    judged_all_in, migrated_in, open_entry_in_txn,
+    DeleteLevel, Fresh, OPEN, OPEN_BY, OpenFlags, SHELL_ERASED, close_entry_in_txn, entry_flags_in,
+    has_open_in, judged_all_in, migrated_in, open_entry_in_txn,
 };
 use crate::error::Result;
 use crate::source_audience::floor::{
-    OwnSource, floor_of_in, floors_possible_of_in, own_source_of_in,
+    OwnSource, floor_of_in, floors_possible_of_in, names_unknown_source_in, own_source_of_in,
 };
 use crate::source_audience::floor_migration::{self, Visit};
 use crate::{EntityId, Vault};
@@ -112,8 +112,9 @@ fn migrating_in(store: &crate::store::Store, txn: &RoTxn<'_>) -> Result<bool> {
 
 /// The floor of `row` when it reads bound and whole here and a read of the
 /// store alone can tell: held, not erased, not held back, its binding
-/// landed, visited by the migration, and no open entry or old mark of its
-/// own.
+/// landed, visited by the migration, no open entry or old mark of its own,
+/// and no source on it that reads to no one (a floor that names one reads
+/// sealed, as [`super::StateReader::state`] reads it; #10315 review 1 P1-2).
 fn whole_floor_in(
     store: &crate::store::Store,
     txn: &RoTxn<'_>,
@@ -134,7 +135,11 @@ fn whole_floor_in(
     {
         return Ok(None);
     }
-    Ok(Some(floor_of_in(store, txn, row, &raw)?))
+    let floor = floor_of_in(store, txn, row, &raw)?;
+    if names_unknown_source_in(store, txn, &floor)? {
+        return Ok(None);
+    }
+    Ok(Some(floor))
 }
 
 /// M3: each old fact the migration has not judged that names `erased` by a
@@ -182,7 +187,13 @@ fn judge_edge_rows_in_txn(
                 take_floor_in_store_txn(store, txn, &row, &raw, floor)?;
             }
             None => {
+                // M3 reads the link by its edge, not its kind: an entry
+                // already there keeps whether its input is a support.
                 let flags = level.map_or(OpenFlags::ORDINARY, OpenFlags::before_floors);
+                let flags = match entry_flags_in(store, txn, &row, erased)? {
+                    Some(held) => held.merge(flags),
+                    None => flags,
+                };
                 open_entry_in_txn(store, txn, &row, erased, flags)?;
             }
         }
