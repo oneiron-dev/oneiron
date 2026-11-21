@@ -22,6 +22,38 @@ use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::error::Error;
 
+impl IntentLedgerRecord {
+    /// This row with its provider-native key named by `attempt` where that is
+    /// not its own: a later local attempt of one logical send, admitted under a
+    /// ledger identity of its own, reaches its provider under the key its first
+    /// attempt's row carries, so a provider that drops a repeated key drops a
+    /// repeat of that send (`OutboundDispatchRequest::idempotency_identity_ref`).
+    /// The row keeps the attempt (`idempotency_attempt_id`).
+    pub(crate) fn with_idempotency_attempt(
+        mut self,
+        attempt: Option<AttemptId>,
+    ) -> IntentLedgerResult<Self> {
+        self.idempotency_attempt_id = attempt.filter(|attempt| *attempt != self.attempt_id);
+        self.idempotency_key = crate::entity_id::bytes_to_hex_lower(&self.idempotency_key_id()?);
+        Ok(self)
+    }
+
+    /// The id whose hex is this row's provider-native key: its own, or the one
+    /// its idempotency attempt derives under its call, tool and payload.
+    pub(super) fn idempotency_key_id(&self) -> IntentLedgerResult<[u8; 32]> {
+        match self.idempotency_attempt_id {
+            Some(attempt) => derive_intent_id(
+                attempt,
+                self.call_seq,
+                &self.server,
+                &self.tool,
+                &self.payload_hash,
+            ),
+            None => Ok(self.id),
+        }
+    }
+}
+
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum IntentRecoveryEntry {
     Valid(IntentLedgerRecord),

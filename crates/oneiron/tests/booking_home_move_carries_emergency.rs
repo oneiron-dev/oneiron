@@ -701,7 +701,7 @@ fn emergency_crashed_on_apology(seed: &Machine) -> Emergency {
                     &seed.consumer(NOW + 90),
                     &mut ApologyCrashingSink,
                 )
-                .map(|_| ())
+                .is_ok()
             })
             .join()
     });

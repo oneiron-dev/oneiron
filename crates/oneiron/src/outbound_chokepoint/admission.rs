@@ -811,9 +811,7 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     );
     request.authorization_binding = authorization_binding;
     request.resolved_endpoint = prepared.resolved_endpoint;
-    request = request
-        .with_authorizing_owner(authorizing_owner)
-        .with_idempotency_attempt(prepared.idempotency_attempt);
+    request = request.with_authorizing_owner(authorizing_owner);
     if let Some(capability) = capability_provenance {
         request = request.with_capability_provenance(capability);
     }
@@ -821,7 +819,8 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         request,
         prepared.idempotency_supported,
         budget_accounting,
-    )?;
+    )?
+    .with_idempotency_attempt(prepared.idempotency_attempt)?;
     // The proof is the Gate's ACTUAL selected tap under this writer lock,
     // not an availability observation from dispatch preparation. Spend,
     // decision, typed proof, budget marker and Pending insert commit together.
