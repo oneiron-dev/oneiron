@@ -14,7 +14,9 @@
 //! human review holds every send for that press.
 //!
 //! Only a campaign that names a voice guide or pins human review is governed;
-//! every other campaign sends as before.
+//! every other campaign sends as before. The owner can turn copy review off
+//! for one campaign (`campaign.copy_review.skip`, lead ruling
+//! COPY-REVIEW-JUDGE-BY-DEFAULT = B): its sends then go out unreviewed.
 
 use std::time::{Duration, Instant};
 
@@ -111,8 +113,8 @@ pub struct CopyReviewVerdict {
 #[derive(Debug, Clone, PartialEq)]
 pub enum CopyReviewOutcome {
     /// Copy review does not govern this send: not a campaign leg with an
-    /// outward call, or the campaign names no voice guide and pins no human
-    /// review.
+    /// outward call, the owner turned copy review off for the campaign, or
+    /// the campaign names no voice guide and pins no human review.
     NotGoverned,
     /// The campaign pins human review: no judge runs, and the send holds
     /// for the owner's press.
@@ -148,6 +150,40 @@ impl CopyReviewHold {
             Self::Missing => "copy_review_missing",
         }
     }
+}
+
+/// Who reviews one campaign's copy, as the store holds the campaign and the
+/// owner's skip setting now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CopyReviewRule {
+    /// Copy review does not govern the campaign: the owner turned it off
+    /// (`campaign.copy_review.skip`), or the campaign names no voice guide and
+    /// pins no human review.
+    NotGoverned,
+    /// The campaign pins human review: every send holds for the owner.
+    Human,
+    /// The judge checks each body against this voice guide NOTE.
+    Judge(EntityId),
+}
+
+/// The rule for `campaign_ref`'s copy under `definition`, in `txn`. The
+/// owner's skip wins over any voice guide or review mode the campaign names.
+fn copy_review_rule_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    campaign_ref: EntityId,
+    definition: &CampaignDefinition,
+) -> Result<CopyReviewRule> {
+    if crate::campaign::setting_keys::copy_review_skipped_in_txn(store, txn, campaign_ref)? {
+        return Ok(CopyReviewRule::NotGoverned);
+    }
+    if definition.copy_review == CopyReviewMode::Human {
+        return Ok(CopyReviewRule::Human);
+    }
+    Ok(match definition.voice_guide_ref {
+        Some(guide) => CopyReviewRule::Judge(guide),
+        None => CopyReviewRule::NotGoverned,
+    })
 }
 
 /// The verdict key: the campaign, then the body digest the retained request
@@ -197,15 +233,15 @@ impl Vault {
             return Ok(CopyReviewOutcome::NotGoverned);
         };
         let definition = &record.definition;
-        if !definition.copy_review_governs() {
-            return Ok(CopyReviewOutcome::NotGoverned);
-        }
-        let Some(guide) = definition.voice_guide_ref else {
-            return Ok(CopyReviewOutcome::HumanReview);
+        let rule = {
+            let txn = self.store.env.read_txn()?;
+            copy_review_rule_in_txn(&self.store, &txn, event.campaign_ref, definition)?
         };
-        if definition.copy_review == CopyReviewMode::Human {
-            return Ok(CopyReviewOutcome::HumanReview);
-        }
+        let guide = match rule {
+            CopyReviewRule::NotGoverned => return Ok(CopyReviewOutcome::NotGoverned),
+            CopyReviewRule::Human => return Ok(CopyReviewOutcome::HumanReview),
+            CopyReviewRule::Judge(guide) => guide,
+        };
         let Some(guide_view) = read_voice_guide(self, definition.owner_actor, guide)? else {
             return Ok(CopyReviewOutcome::GuideUnreadable);
         };
@@ -408,16 +444,11 @@ pub(crate) fn campaign_copy_review_gate(
     let Some(record) = load_registered_campaign_in_txn(store, txn, facts.campaign_ref)? else {
         return Ok(None);
     };
-    let definition = &record.definition;
-    if !definition.copy_review_governs() {
-        return Ok(None);
-    }
-    let Some(guide) = definition.voice_guide_ref else {
-        return Ok(Some(CopyReviewHold::Missing));
+    let guide = match copy_review_rule_in_txn(store, txn, facts.campaign_ref, &record.definition)? {
+        CopyReviewRule::NotGoverned => return Ok(None),
+        CopyReviewRule::Human => return Ok(Some(CopyReviewHold::Missing)),
+        CopyReviewRule::Judge(guide) => guide,
     };
-    if definition.copy_review == CopyReviewMode::Human {
-        return Ok(Some(CopyReviewHold::Missing));
-    }
     Ok(
         match covering_verdict_in_txn(store, txn, facts.campaign_ref, facts.payload_digest, guide)?
         {
@@ -432,7 +463,7 @@ pub(crate) fn campaign_copy_review_gate(
 /// review mode and, when a verdict covers the held send's body
 /// (`payload_digest`) at the guide's live version, its result and reason
 /// class, as the Gate read them. `None` when copy review does not govern the
-/// campaign.
+/// campaign, the owner's skip among the reasons.
 pub(super) fn copy_review_ask_state_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -442,14 +473,12 @@ pub(super) fn copy_review_ask_state_in_txn(
     let Some(record) = load_registered_campaign_in_txn(store, txn, campaign_ref)? else {
         return Ok(None);
     };
-    if !record.definition.copy_review_governs() {
-        return Ok(None);
-    }
-    let verdict = match record.definition.voice_guide_ref {
-        Some(guide) if record.definition.copy_review != CopyReviewMode::Human => {
+    let verdict = match copy_review_rule_in_txn(store, txn, campaign_ref, &record.definition)? {
+        CopyReviewRule::NotGoverned => return Ok(None),
+        CopyReviewRule::Human => None,
+        CopyReviewRule::Judge(guide) => {
             covering_verdict_in_txn(store, txn, campaign_ref, payload_digest, guide)?
         }
-        _ => None,
     };
     Ok(Some(serde_json::json!({
         "mode": record.definition.copy_review.as_str(),

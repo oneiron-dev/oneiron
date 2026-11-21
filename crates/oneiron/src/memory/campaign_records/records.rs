@@ -53,7 +53,8 @@ impl CampaignLifecycle {
 ///
 /// The review governs a campaign only when it names a voice guide or pins
 /// human review: a [`Self::Judge`] campaign with no voice guide has nothing
-/// to check its copy against, and sends as before.
+/// to check its copy against, and sends as before. The owner's
+/// `campaign.copy_review.skip` turns it off for one campaign.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum CopyReviewMode {
     /// A judge model checks each body version against the voice guide; copy
@@ -144,15 +145,6 @@ pub struct CampaignDefinition {
     pub copy_review: CopyReviewMode,
     /// How this campaign's mail goes out, and so its opt-out form.
     pub send_mode: CampaignSendMode,
-}
-
-impl CampaignDefinition {
-    /// Whether copy review holds this campaign's sends: it names a voice
-    /// guide, or it pins human review.
-    #[must_use]
-    pub fn copy_review_governs(&self) -> bool {
-        self.voice_guide_ref.is_some() || self.copy_review == CopyReviewMode::Human
-    }
 }
 
 /// A stored campaign.
