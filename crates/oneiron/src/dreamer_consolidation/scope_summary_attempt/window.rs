@@ -195,6 +195,15 @@ pub(super) fn correction_overflow(error: &crate::model_step_error::DurableStepEr
     )
 }
 
+/// [`correction_overflow`] for the door (`test_doors::dreamer_context_refusal`).
+/// Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn correction_overflow_for_test(
+    error: &crate::model_step_error::DurableStepError,
+) -> bool {
+    correction_overflow(error)
+}
+
 /// Search a smaller layout only after a corrective call actually overflowed.
 pub(super) fn smaller_window(window: u64) -> Option<u64> {
     (window / 2 > 0).then_some(window / 2)

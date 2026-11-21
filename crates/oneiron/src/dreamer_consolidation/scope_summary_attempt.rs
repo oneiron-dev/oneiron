@@ -63,6 +63,7 @@ mod window;
 pub(crate) use self::{
     arc_children::arc_parts_params_hash_for_test,
     arc_compose::arc_composition_params_hash_for_test, chunks::session_pages_params_hash_for_test,
+    window::correction_overflow_for_test,
 };
 
 use window::summary_input;
