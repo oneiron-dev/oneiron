@@ -10,6 +10,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use loro::LoroDoc;
+use oneiron_contracts::fingerprint::ContentHash;
 
 use crate::Vault;
 use crate::batch::EntityMetadataHeader;
@@ -165,7 +166,7 @@ fn admitted_home(
     if is_membership_or_topology_kind(header.entity_type) {
         return Ok(None);
     }
-    let held = *blake3::hash(&row).as_bytes();
+    let held = *ContentHash::of(&row).as_bytes();
     let Some(delivered) = history.get(&id).and_then(|records| {
         records.iter().find(|record| {
             record.delivering_pact == lane.delivery.pact

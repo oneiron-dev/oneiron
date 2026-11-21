@@ -28,6 +28,7 @@ use std::collections::BTreeSet;
 use super::*;
 use crate::error::{Error, RecordError, Result};
 use crate::temporal::TimeRange;
+use crate::world_keys::{OwnerActImportance, owner_presence_reasons};
 use crate::{EntityId, Vault};
 
 /// A device's rows that are not the confirm its plan names.
@@ -87,6 +88,17 @@ fn not_valid(reason: &'static str) -> Error {
     Error::Record(RecordError::InvalidAuthorityLogBody(reason))
 }
 
+/// The distinct parents a move plan's rows name; refused
+/// ([`OWNER_KEY_MOVE_NOT_PLANNED`]) for a plan that ends no key, names no
+/// parent, or names more than one entry carries.
+fn planned_parents(plan: &OwnerKeyMovePlan) -> Result<BTreeSet<AuthorityEntryHash>> {
+    let parents: BTreeSet<AuthorityEntryHash> = plan.parents.iter().copied().collect();
+    if plan.revoked.is_empty() || parents.is_empty() || parents.len() > MAX_PARENTS {
+        return Err(not_valid(OWNER_KEY_MOVE_NOT_PLANNED));
+    }
+    Ok(parents)
+}
+
 /// The `RevokeDevice` rows that confirm `plan`, signed by `signer`, one of
 /// the plan's signers, through `sign` (an owner key's signature over an
 /// authority transcript): one row per revoked key, `signer`'s own last when
@@ -111,10 +123,7 @@ where
         .find(|candidate| candidate.public_key == signer)
         .map(|candidate| candidate.seq)
         .ok_or_else(|| not_valid(OWNER_KEY_MOVE_NOT_PLANNED))?;
-    let mut parents: BTreeSet<AuthorityEntryHash> = plan.parents.iter().copied().collect();
-    if plan.revoked.is_empty() || parents.is_empty() || parents.len() > MAX_PARENTS {
-        return Err(not_valid(OWNER_KEY_MOVE_NOT_PLANNED));
-    }
+    let mut parents = planned_parents(plan)?;
     let signer_key = AuthorityKey::Ed25519(signer);
     let mut keys = plan.revoked.clone();
     // A key that proves the others ends last, after it proved them (as the
@@ -307,9 +316,9 @@ impl Vault {
             return Err(not_valid(OWNER_KEY_MOVE_NOT_SYNCED));
         }
         let signer = self
-            .owner_proof_signer(&fold)
+            .proving_root_signer(&fold)
             .ok_or_else(|| not_valid(OWNER_KEY_MOVE_NO_HELD_KEY))?;
-        let AuthorityKey::Ed25519(held) = signer.key() else {
+        let AuthorityKey::Ed25519(held) = signer.root else {
             return Err(not_valid(OWNER_KEY_MOVE_NO_HELD_KEY));
         };
         let own = keys
@@ -318,11 +327,23 @@ impl Vault {
         if !own || !plan.signers.iter().any(|named| named.public_key == held) {
             return Err(not_valid(OWNER_KEY_MOVE_NO_HELD_KEY));
         }
+        // The plan's shape is judged before the confirm, as every check
+        // above is, so a plan the signing refuses never prompts.
+        planned_parents(plan)?;
         drop(txn);
-        sign_owner_key_move(plan, held, |transcript| signer.sign(&fold, transcript))?
-            .iter()
-            .map(encode_authority_log_entry_body)
-            .collect()
+        let witness = self.owner_presence(
+            OwnerActImportance::Important,
+            owner_presence_reasons::SIGN_OWNER_KEY_MOVE,
+        )?;
+        let ground = OwnerProofGround::witnessed(&witness);
+        sign_owner_key_move(plan, held, |transcript| {
+            signer
+                .signer
+                .sign_owner_proof(self, &fold, &ground, transcript)
+        })?
+        .iter()
+        .map(encode_authority_log_entry_body)
+        .collect()
     }
 
     /// Lands a device's confirm of a move that ends `member`'s owner keys,

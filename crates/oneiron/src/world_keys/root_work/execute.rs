@@ -21,14 +21,17 @@ use std::collections::BTreeSet;
 
 use super::super::kit::KitSeed;
 use super::super::root_doors::ACTIVATION_OWNER_ONLY;
-use super::super::{ConfirmedWorldKit, RecoveryRootSeed, WorldKitRestore, refused};
+use super::super::{
+    ConfirmedWorldKit, OwnerActImportance, RecoveryRootSeed, WorldKitRestore,
+    owner_presence_reasons, refused,
+};
 use super::{
     RootMaterial, RootRecheck, RootSecret, RootWorkDone, material_refused, request_confirmation,
 };
 use crate::authority::{
     ActAuthority, ActSurface, AuthorityEntryHash, AuthorityFold, MachineEnrolmentRequest,
-    OwnerWorkBody, OwnerWorkOutcome, OwnerWorkRefusal, OwnerWorkRequest, RecoveryRootId,
-    RequestCode, RootChange, authority_refused,
+    OwnerProofGround, OwnerWorkBody, OwnerWorkOutcome, OwnerWorkRefusal, OwnerWorkRequest,
+    RecoveryRootId, RequestCode, RootChange, authority_refused,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
@@ -337,6 +340,11 @@ impl Vault {
         };
         let (row, prepared) = self.draw_kit_confirm(owner, pieces, passphrase)?;
         let (secret, request, predecessor) = self.activation_prep(owner, &prepared, carry)?;
+        let witness = self.owner_presence(
+            OwnerActImportance::Important,
+            owner_presence_reasons::KIT_ACTIVATION,
+        )?;
+        let ground = OwnerProofGround::witnessed(&witness);
         let transition = self.begin_wrap_transition()?;
         let confirmed = self.answer_root_request(asked, Answer::Enacted, |txn| {
             let activated = self.activate_owner_root_in_txn(
@@ -347,6 +355,7 @@ impl Vault {
                 &prepared,
                 carry,
                 &predecessor,
+                &ground,
             )?;
             let (replaced, escrow) = self.confirm_kit_rows_in_txn(txn, &transition, &row)?;
             Ok(ConfirmedWorldKit {

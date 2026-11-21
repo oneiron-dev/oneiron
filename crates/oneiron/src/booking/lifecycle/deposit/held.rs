@@ -3,9 +3,15 @@
 //! return). The owner's return ([`super::refund_booking_deposit_as_owner`])
 //! and the owner's line on the booking card read it from the one rule here
 //! ([`held_of`]), so the line shows exactly when the return moves money.
+//! Beside it, what an owner's emergency cancel gave back
+//! ([`emergency_return_in_txn`]), for the card of the booking the visitor
+//! picks again (PR 3).
 
-use super::{DEPOSIT, DEPOSIT_BOOKING, DepositRow, DepositState, UnattributedCancel, booking_key};
-use crate::error::Result;
+use super::{
+    DEPOSIT, DEPOSIT_BOOKING, DepositRow, DepositState, UnattributedCancel, booking_key,
+    put_deposit,
+};
+use crate::error::{Error, Result};
 use crate::{EntityId, Vault};
 
 /// Which part of a deposit is still held.
@@ -95,6 +101,52 @@ pub(in crate::booking::lifecycle) fn held_deposit_in_txn(
     }))
 }
 
+/// Where the whole return an owner's BK-09 emergency cancel gave a deposit
+/// stands ([`super::refund_on_host_cancel_in_writer`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::booking::lifecycle) enum EmergencyReturn {
+    /// The captured deposit is owed back; the provider has not refunded it
+    /// yet.
+    RefundDue,
+    /// The provider refunded it.
+    Refunded,
+    /// The capture still due is to be released; the provider has not voided
+    /// it yet.
+    VoidDue,
+    /// The provider voided it: nothing was captured.
+    Voided,
+}
+
+/// What an owner's BK-09 emergency cancel gave back of the deposit of the
+/// booking `event_ref`, read in `rtxn`; `None` for a booking this node holds
+/// no deposit for, and for one whose deposit no emergency cancel moved.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(in crate::booking::lifecycle) fn emergency_return_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    event_ref: &EntityId,
+) -> Result<Option<EmergencyReturn>> {
+    let Some(link) = DEPOSIT_BOOKING.get(&vault.store, rtxn, &booking_key(event_ref))? else {
+        return Ok(None);
+    };
+    let Some(row) = DEPOSIT.get(&vault.store, rtxn, &link.deposit_key)? else {
+        return Ok(None);
+    };
+    if row.emergency_return_sequence.is_none() {
+        return Ok(None);
+    }
+    Ok(match row.state {
+        DepositState::RefundDue { .. } => Some(EmergencyReturn::RefundDue),
+        DepositState::Refunded { .. } => Some(EmergencyReturn::Refunded),
+        DepositState::VoidDue => Some(EmergencyReturn::VoidDue),
+        DepositState::Voided => Some(EmergencyReturn::Voided),
+        _ => None,
+    })
+}
+
 /// The SEQUENCE of the replay proof that noted a cancel Oneiron cannot
 /// attribute on the deposit of the booking `event_ref`
 /// ([`note_unattributed_cancel_in_txn`]), read in `rtxn`; `None` for a
@@ -127,9 +179,17 @@ pub(in crate::booking::lifecycle) fn unattributed_cancel_sequence_in_txn(
 /// captured) is marked, and only once; an EVENT with no deposit is left
 /// alone.
 ///
+/// The row is written through the deposits' one writer, so the home-move
+/// fence holds here too (review round 2 of #10058, FIX
+/// [BK-LIFECYCLE-ROWS-NOT-CARRIED-BY-HOME-MOVE]): a node that froze its
+/// booking rows for a move writes no note on their history. It refuses, the
+/// replay's proof writer drops whole, and the outbox keeps the proof owed, so
+/// a later write or pull of the seat proves it again; it lands here once a
+/// cancelled move gives the rows back.
+///
 /// # Errors
 ///
-/// Storage errors.
+/// Storage errors; a refusal on a node that froze its booking rows.
 pub(crate) fn note_unattributed_cancel_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -156,5 +216,6 @@ pub(crate) fn note_unattributed_cancel_in_txn(
         noted_at: now,
     });
     row.updated_at = now;
-    DEPOSIT.put(&vault.store, wtxn, &link.deposit_key, &row)
+    put_deposit(vault, wtxn, &link.deposit_key, &row)
+        .map_err(|error| Error::InvalidConfig(error.to_string()))
 }

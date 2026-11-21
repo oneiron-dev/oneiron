@@ -22,7 +22,7 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use oneiron::authority::{ActSurface, HostSlipIssuer, MachineRole};
+use oneiron::authority::{ActSurface, HostSlipIssuer, MachineOwnership, MachineRole};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::setting::{
     SetSetting, SetSettingOutcome, Setter, SettingCaller, SettingChange, SettingMode, SettingScope,
@@ -90,7 +90,9 @@ impl Fixture {
         }
     }
 
-    /// A vault rooted when it opened, whose install carries the owner's acts.
+    /// A vault rooted when it opened, whose install carries the owner's acts: the owner's own
+    /// machine, so a copy its move hook appends lands where the root gives the owner's proof (FIX
+    /// SETTING-COPY-TEST-UNANSWERED-INSTALL).
     fn rooted() -> Self {
         let mut fx = Self::unrooted();
         let issuer = fx.vault.bootstrap_host_slip_issuer().expect("host issuer");
@@ -99,7 +101,7 @@ impl Fixture {
             .provision_engine_machine_identities(&issuer)
             .expect("engine machine identities");
         fx.vault
-            .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+            .ensure_serving_install_profile(&issuer, MachineRole::Owned(MachineOwnership::Yours))
             .expect("serving install profile");
         fx._issuer = Some(issuer);
         fx

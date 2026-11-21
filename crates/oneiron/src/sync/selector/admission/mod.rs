@@ -35,6 +35,8 @@ use self::blobs::copy_admitted_entities;
 pub(crate) use self::blobs::is_peer_task_authority_fact_refusal;
 pub(crate) use self::blobs::{FEDERATION_IMPORT_SOURCE, admit_federated_entity_blob};
 #[cfg(feature = "sync")]
+pub(in crate::sync) use self::peer_tombstones::is_membership_or_topology_kind;
+#[cfg(feature = "sync")]
 use self::peer_tombstones::{DeliveringPact, TombstoneAdmission, admitted_peer_tombstones};
 #[cfg(feature = "test-hooks")]
 pub use self::revalidate::put_selector_test_federation_grant;
@@ -264,7 +266,7 @@ fn staged_lane(receipt_id: &[u8; 32]) -> String {
 /// its row, a new part when none does, and every other is dropped; anywhere
 /// else, one refuses the whole update.
 #[cfg(feature = "sync")]
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 fn admit_window_update(
     vault: &Vault,
     key: &WindowKey,
@@ -427,6 +429,7 @@ fn admit_window_update(
             births,
             peer_rows,
             delivered,
+            tombstones: crate::sync::ingest::delivered_tombstones(&admitted.get_map("tombstones")),
             born_with,
             placements,
             lane: lane.clone(),

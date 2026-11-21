@@ -2,7 +2,9 @@
 //!
 //! Bounds: the critical-confirm sweep walks 256 pending rows a page and the
 //! gate-decision sweep removes at most the manifest's rows a pass, both
-//! stopping between pages at the pass deadline. The signing sweeps and the
+//! stopping between pages at the pass deadline; the gate-decision sweep then
+//! reconciles the amendment projections once, a read and a write only when a
+//! row must change. The signing sweeps and the
 //! cache eviction walk their tables a page at a time from a durable cursor and
 //! stop between pages at the deadline; a signing page that fails is retried a
 //! document at a time, so one document that fails cannot hold the others. The
@@ -314,6 +316,12 @@ fn gate_decisions(vault: &Vault, deadline: &Deadline) -> Result<Run> {
                 break;
             }
         }
+    }
+    // What a judgment this pass or another writer dropped still holds up:
+    // its edit-cost rows, its lesson and its reliability share (FIX
+    // [AMENDMENT-TARGET-RETRACT-WAITS-FOR-NEXT-SETTLE]).
+    if let Err(error) = crate::edit_distance::attribution::reconcile_amendment_projections(vault) {
+        tracing::warn!(%error, "amendment projections not reconciled");
     }
     Ok(Run {
         work: SweepWork::GateDecisions { removed },

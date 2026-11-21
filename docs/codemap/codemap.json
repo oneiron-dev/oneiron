@@ -5670,7 +5670,7 @@
      "surface": {
       "crate-vis": 88,
       "mod": 2,
-      "re-export": 93
+      "re-export": 94
      }
     },
     {
@@ -5934,7 +5934,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "WaysBack"
@@ -6043,12 +6043,15 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "OwnerProofGround"
+     ],
      "path": "src/authority/owner_proof.rs",
      "purpose": "An owner act's proof (row CARRIER-OWNER-PROOF; the lead's rulings 15 Nov 12:1x and 13:2x, FIX…",
      "surface": {
-      "crate-vis": 26,
-      "fn": 2
+      "crate-vis": 36,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -12316,7 +12319,7 @@
      "path": "src/booking/lifecycle/deposit/held.rs",
      "purpose": "What a booking's deposit still holds that its owner may give back…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 8
      }
     },
     {
@@ -12439,8 +12442,23 @@
      "surface": {
       "const": 2,
       "crate-vis": 4,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BookingDepositReturned",
+      "BookingOwnerCardEmergencyReturn"
+     ],
+     "path": "src/booking/lifecycle/owner_card/emergency_return.rs",
+     "purpose": "The owner's note on a booking the visitor picked again from an emergency cancel's proposals…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "struct": 1
      }
     },
     {
@@ -12454,7 +12472,7 @@
      "path": "src/booking/lifecycle/owner_card/held_deposit.rs",
      "purpose": "The owner's line for a booking's held deposit (BK-DEPOSIT-HOST-CANCEL-AFTER-START-OWNER-LINE, PR 2 of the…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 2,
       "struct": 1
      }
@@ -13240,7 +13258,7 @@
      "path": "src/calendar/connectors/mod.rs",
      "purpose": "Shared calendar connector kernel (CAL-05, ONE-1787)",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "mod": 1,
       "re-export": 4
      }
@@ -32924,7 +32942,7 @@
      "path": "src/dreamer_consolidation/retained_keep.rs",
      "purpose": "Keeping a conflict's retained alternative (OF-023, FIX 496): where the Keep lands it, and what a Keep of…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 1,
       "struct": 1
      }
@@ -106495,7 +106513,7 @@
      "path": "src/world_keys/mod.rs",
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…",
      "surface": {
-      "crate-vis": 31,
+      "crate-vis": 32,
       "fn": 3,
       "re-export": 24,
       "struct": 2
@@ -106515,6 +106533,16 @@
       "enum": 2,
       "fn": 5,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/world_keys/owner_presence_reasons.rs",
+     "purpose": "The one line each owner door hands the device's prompt (row OWNER-CONFIRM-SHEET): what the person at the…",
+     "surface": {
+      "crate-vis": 33
      }
     },
     {
@@ -106833,7 +106861,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ActivatedRoot",
@@ -106844,7 +106872,7 @@
      "path": "src/world_keys/root_doors.rs",
      "purpose": "The root doors (contract §4-§5): activating a kit's root, anchoring a machine with the kit's seed, restoring…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "enum": 1,
       "fn": 4,
       "struct": 3
@@ -108288,7 +108316,7 @@
      "path": "tests/booking_host_seat_support/mod.rs",
      "purpose": "The host's own calendar as a connector seat the booking is written to",
      "surface": {
-      "crate-vis": 31
+      "crate-vis": 32
      }
     },
     {
@@ -108364,7 +108392,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/calendar_first_write_copy.rs",
@@ -109928,7 +109956,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "tests/derive_settlement.rs",
@@ -113967,6 +113995,14 @@
      "notable": [],
      "path": "tests/owner_presence.rs",
      "purpose": "The vault's owner presence check on its public paths, without a platform prompt",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/owner_presence_doors.rs",
+     "purpose": "Every door that signs an owner proof asks for the person first (row OWNER-CONFIRM-SHEET, PR 4b-1): a…",
      "surface": {}
     },
     {
@@ -118194,7 +118230,7 @@
      "purpose": "—"
     },
     "booking": {
-     "files": 94,
+     "files": 95,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -119804,17 +119840,17 @@
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)"
     },
     "world_keys": {
-     "files": 88,
+     "files": 89,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 311,
+   "over_bar": 313,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8370,
-   "test_files": 2154
+   "source_files": 8372,
+   "test_files": 2155
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -124397,7 +124433,7 @@
      "path": "src/scorecard/run.rs",
      "purpose": "`scorecard run`: replay one pack slice through fresh throwaway vaults, grade the run",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -124408,6 +124444,36 @@
      "purpose": "`scorecard tune-bm25f`: coordinate ascent over the BM25F rank profile on the search slice",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/scorecard/world_scoped/fixture.rs",
+     "purpose": "The world-scoped arm's pack vault: a rooted vault with a second world, a corpus's records written as the…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/scorecard/world_scoped/mod.rs",
+     "purpose": "`scorecard run --arm world-scoped`: the retrieval ruler as a world-scoped reader…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/scorecard/world_scoped/partition.rs",
+     "purpose": "The world-scoped arm's partition: which records the agent's Grant leaves out, and the grading view of the…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -124559,6 +124625,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/scorecard_world_scoped.rs",
+     "purpose": "[SCORECARD-WORLD-SCOPED-ARM]: `scorecard run --arm world-scoped` replays a slice as an agent whose one Grant…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -124653,7 +124727,7 @@
      "purpose": "Offline replay of finalized, turn-indexed retrieval runs"
     },
     "scorecard": {
-     "files": 13,
+     "files": 16,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -124690,8 +124764,8 @@
    },
    "over_bar": 3,
    "purpose": "oneiron-bench — benchmark harness drivers",
-   "source_files": 202,
-   "test_files": 26
+   "source_files": 205,
+   "test_files": 27
   },
   "oneiron-broker": {
    "files": [

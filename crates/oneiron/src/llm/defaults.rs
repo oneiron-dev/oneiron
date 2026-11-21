@@ -5,7 +5,9 @@ use super::{
     CallEnvelope, PurposeDefault, PurposeDefaultTable, ValidatedPurposeDefaults,
     VoiceBackendBinding, VoiceLane, VoicePrecedence,
 };
+use crate::authority::OwnerProofGround;
 use crate::side_table::{self, LegacyJson, SideTable};
+use crate::world_keys::{OwnerActImportance, owner_presence_reasons};
 use crate::{
     Vault,
     error::{Error, Result},
@@ -61,13 +63,20 @@ impl Vault {
     /// The delegated agent door is narrower than the host's owner-authored
     /// setter. Admit the caller, compare and replace inside one write
     /// transaction. The owner act `admit` returns is signed last, after the
-    /// replace, best effort (FIX 4624).
+    /// replace, best effort (FIX 4624). The setter refuses every widening in
+    /// its own write, so the owner's act it records is ordinary and asks for
+    /// no confirm.
     pub(crate) fn set_resident_purpose_default_table(
         &self,
         next: &PurposeDefaultTable,
         admit: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<Option<crate::authority::PolicySettingAct>>,
     ) -> Result<()> {
         next.validate()?;
+        let witness = self.owner_presence(
+            OwnerActImportance::Ordinary,
+            owner_presence_reasons::INFERENCE_DEFAULTS,
+        )?;
+        let ground = OwnerProofGround::witnessed(&witness);
         let mut txn = self.store.env.write_txn()?;
         let signed = admit(&mut txn)?;
         let prior = read_effective_defaults(&self.store, &txn)?.table().clone();
@@ -88,7 +97,7 @@ impl Vault {
         }
         POLICY.put(&self.store, &mut txn, &(), next)?;
         if let Some(act) = signed {
-            self.record_policy_setting_op_in_txn(&mut txn, act);
+            self.record_policy_setting_op_in_txn(&mut txn, Some(&ground), act);
         }
         txn.commit()?;
         Ok(())
