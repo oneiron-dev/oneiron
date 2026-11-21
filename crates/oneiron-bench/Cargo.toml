@@ -21,7 +21,8 @@ serde_bytes = "0.11"
 oneiron = { path = "../oneiron", features = ["sync", "test-support"] }
 # Census L9-34: the action bench deletes in its temp vaults, and a delete
 # signs its receipt with the install's key, so each vault gets a keystore in
-# process memory, as a test host's vault does.
+# process memory, as a test host's vault does. `scorecard run --arm
+# world-scoped` roots each throwaway pack vault on such a keystore too.
 oneiron-keystore = { path = "../oneiron-keystore", features = ["test-keystore"] }
 oneiron-llm = { path = "../oneiron-llm", features = ["oneiron-rpc"] }
 oneiron-organ-protocol = { path = "../oneiron-organ-protocol" }

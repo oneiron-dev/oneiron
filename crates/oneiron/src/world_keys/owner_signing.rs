@@ -61,9 +61,9 @@ use crate::authority::{
     ACTOR_CLASS_HUMAN, ActAuthority, AuthorityEntryHash, AuthorityFold, AuthorityKey,
     AuthorityLogEntry, AuthorityOp, AuthorityVaultId, CheckpointRootSigner, DeviceOwnerKeyVouch,
     EnrolledOwnerKey, HostSlipIssuer, OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt,
-    OwnerKeyVouchRequest, RecoveryRootId, authority_refused, authority_transcript,
-    checkpoint_statement_domain, invalid_authority, label_is_valid, label_not_valid,
-    root_appointment_challenge,
+    OwnerKeyVouchRequest, OwnerProofGround, RecoveryRootId, authority_refused,
+    authority_transcript, checkpoint_statement_domain, invalid_authority, label_is_valid,
+    label_not_valid, root_appointment_challenge,
 };
 use crate::entity_id::EntityId;
 use crate::error::{DevicePinRefusal, Error, RecordError, Result};
@@ -284,6 +284,7 @@ impl CheckpointRootSigner for OwnerRootSigner {
         &self,
         vault: &Vault,
         fold: &AuthorityFold,
+        _ground: &OwnerProofGround,
         transcript: &[u8],
     ) -> Result<Vec<u8>> {
         match self.refusal(vault, Some(fold)) {

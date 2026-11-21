@@ -123,12 +123,16 @@ use serde::Serialize;
 /// 57: a passkey that a key in the host's custody enrolled signs its own first `human` binding to
 /// the owner that enrolment names, and the binding counts with no other key's proof; the image's
 /// fold names each such passkey's owners (row PASSKEY-SELF-BIND).
-/// 58: a removal names the TASK facts the machine carried that its writer held, and a removed
+/// 58: a setting copy or pack head (the owner's yes on a pack too) that a carrier not the
+/// owner's signs outside every owner key's line waits for an owner key's proof, as the owner's
+/// other choices do, so an image that put one in force is not adopted (FIX
+/// SETTING-COPY-OUTSIDE-OWNER-KEY-LINE).
+/// 59: a removal names the TASK facts the machine carried that its writer held, and a removed
 /// machine's signature proves a fact only if every removal saw it; the image's fold names, per
 /// machine, what every removal in the roster's chain saw and the key it removed the machine under
 /// while nothing poisons that key, so removals that cross still meet (row
 /// TASK-FACT-REMOVED-CARRIER-NEW-FACTS).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 58;
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 59;
 
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";

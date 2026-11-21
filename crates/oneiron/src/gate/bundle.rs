@@ -5,6 +5,7 @@ use std::collections::BTreeSet;
 use rmpv::Value;
 use sha2::Sha256;
 
+use crate::authority::OwnerProofGround;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, SessionClaimBundle,
@@ -92,8 +93,10 @@ pub(crate) fn append_reviewed_run_decision_in_txn(
 /// Who settles a Dreamer consent bundle.
 #[derive(Clone, Copy)]
 enum BundleSettler<'a> {
-    /// The owner, under the proof a host minted from the request.
-    Owner(&'a AuthenticatedOwner),
+    /// The owner, under the proof a host minted from the request, and the
+    /// ground a proactivity policy member's rows sign on: the owner's door
+    /// makes it before the write when the bundle it approves holds one.
+    Owner(&'a AuthenticatedOwner, Option<&'a OwnerProofGround>),
     /// An agent the owner's `gate.consent_bundle.delegate_resolution` row
     /// admits, under its live Grant listing the verb (restriction census
     /// C29), as its handle writes: with the run attempt its host bound, so
@@ -105,7 +108,7 @@ impl BundleSettler<'_> {
     /// The class every member replay and the unit's ledger row write as.
     const fn actor_class(self) -> EdgeActorClass {
         match self {
-            Self::Owner(_) => EdgeActorClass::Human,
+            Self::Owner(..) => EdgeActorClass::Human,
             Self::Agent(_) => EdgeActorClass::Agent,
         }
     }
@@ -370,6 +373,14 @@ impl Vault {
     /// and its retry returns [`Error::EntityNotFound`], not success. Decline does
     /// not consolidate; annotation/reappraisal predicates are never exempted
     /// from the canonical rejection when approved.
+    ///
+    /// An approved proactivity policy request sets the digest's rows as the
+    /// owner's change. Those rows travel (stage 7c-1), so in a rooted vault
+    /// their acts can carry an owner key's proof: when the bundle holds such
+    /// a member, an approval asks for the person at this device before its
+    /// write ([`Vault::owner_presence`]) and refuses with that check's
+    /// refusal. A decline, and a bundle with no such member, sign no owner
+    /// proof here and are not asked.
     pub fn resolve_gate_consent_bundle(
         &self,
         owner: &AuthenticatedOwner,
@@ -378,13 +389,42 @@ impl Vault {
         action: GateConsentBundleAction,
         now: u64,
     ) -> Result<GateConsentBundleReceipt> {
+        // The confirm is for an owner proof, so it stands before the write
+        // opens, while the door holds nothing: the prompt can block.
+        let ground = if action == GateConsentBundleAction::Approve
+            && self
+                .bundle_holds_proactivity_policy_request(dreamer_run_id)
+                .unwrap_or(false)
+        {
+            let witness = self.owner_presence(
+                crate::world_keys::OwnerActImportance::Important,
+                crate::world_keys::owner_presence_reasons::PROACTIVITY_POLICY,
+            )?;
+            Some(OwnerProofGround::witnessed(&witness))
+        } else {
+            None
+        };
         self.settle_gate_consent_bundle(
-            BundleSettler::Owner(owner),
+            BundleSettler::Owner(owner, ground.as_ref()),
             expected_bundle_id,
             dreamer_run_id,
             action,
             now,
             |_| Ok(None),
+        )
+    }
+
+    /// Whether a live member of the run's bundle is a proactivity policy
+    /// request, read before the settlement's write so the owner's door knows
+    /// to ask. The door reads a failure here as "no": the write then refuses
+    /// the bundle with its own reason. The bundle's id names its members, so
+    /// the write settles the members this read saw or none.
+    fn bundle_holds_proactivity_policy_request(&self, dreamer_run_id: &str) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        Ok(
+            gate_consent_bundle_members_in_txn(&self.store, &txn, dreamer_run_id)?
+                .iter()
+                .any(|entry| entry.body.predicate == PROACTIVITY_POLICY_REQUEST_PREDICATE),
         )
     }
 
@@ -410,7 +450,7 @@ impl Vault {
         let (receipt, recorded_decisions) = self.try_with_write_txn_grouped::<_, _, E>(|wtxn| {
             let grant = admit(&mut *wtxn)?;
             let (actor, owner_answer) = match settler {
-                BundleSettler::Owner(owner) => (
+                BundleSettler::Owner(owner, _) => (
                     // The proof is rechecked where the decision commits: an
                     // owner whose person, credential or ownership went away
                     // while the call waited for the writer decides nothing.
@@ -441,7 +481,7 @@ impl Vault {
             let policy = resolve_policy_manifest(&self.store, &*wtxn)?;
             let actor = match settler {
                 BundleSettler::Agent(agent) => agent,
-                BundleSettler::Owner(_) => WriteActor::new(actor, settler.actor_class()),
+                BundleSettler::Owner(..) => WriteActor::new(actor, settler.actor_class()),
             };
             let bundle_ref = gate_consent_bundle_ref(&bundle_id);
             let (member_outcome, member_reason) = match action {
@@ -545,8 +585,12 @@ impl Vault {
                     .into());
                 }
                 match settler {
-                    BundleSettler::Owner(owner) if action == GateConsentBundleAction::Approve => {
-                        self.confirm_bundled_proactivity_policy_in_txn(wtxn, owner, id, &body)?;
+                    BundleSettler::Owner(owner, ground)
+                        if action == GateConsentBundleAction::Approve =>
+                    {
+                        self.confirm_bundled_proactivity_policy_in_txn(
+                            wtxn, ground, owner, id, &body,
+                        )?;
                     }
                     // The agent's door refuses such a bundle before it settles.
                     BundleSettler::Agent(_)
@@ -557,7 +601,7 @@ impl Vault {
                         )
                         .into());
                     }
-                    BundleSettler::Owner(_) | BundleSettler::Agent(_) => {}
+                    BundleSettler::Owner(..) | BundleSettler::Agent(_) => {}
                 }
                 if machine {
                     let approve = action == GateConsentBundleAction::Approve;
@@ -612,7 +656,7 @@ impl Vault {
                 }
                 // An owner's answer to a Coach heal counts as its review
                 // (OF-418); an agent's reached no person.
-                if let BundleSettler::Owner(_) = settler {
+                if let BundleSettler::Owner(..) = settler {
                     crate::dreamer_runner::maintenance::coach_heal::record_owner_review_in_txn(
                         self,
                         wtxn,

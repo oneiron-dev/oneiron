@@ -419,6 +419,7 @@ impl SyncServer {
             config,
             managed_issuer: None,
             recovery_box_hold: std::sync::OnceLock::new(),
+            owner_key_change_report: std::sync::OnceLock::new(),
             host_root_issuer: issuer,
             policy_doors: Default::default(),
             account_keys: None,

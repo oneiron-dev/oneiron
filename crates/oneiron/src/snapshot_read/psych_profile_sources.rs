@@ -13,9 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use super::SourceVersion;
 use super::source_version::blake3_ref;
-use super::strength_observations::{
-    observation_reader_scope_for_actor_in_txn, observed_claim_reads_in_txn,
-};
+use super::strength_observations::{live_steward_reader_scope_in_txn, observed_claim_reads_in_txn};
 use crate::claim::{ClaimReadStatus, ClaimSource, ScopedRead, ScopedReadResult};
 use crate::dreamer_runner::DreamerAttemptBinding;
 use crate::federation::Scope;
@@ -156,8 +154,9 @@ fn sources_page(
     })
 }
 
-/// The live grant's record scope, or the whole vault for the proven owner
-/// and a base agent whose manifest rows still stand in place of a grant.
+/// The live grant's record scope, or the whole vault for the proven owner.
+/// A base agent with no standing Steward row is refused as any reader
+/// without a grant is ([`live_steward_reader_scope_in_txn`]).
 ///
 /// # Errors
 ///
@@ -171,8 +170,8 @@ pub(crate) fn psych_profile_reader_scope_in_txn(
         owner.revalidate_as_vault_owner_in_txn(vault, txn)?;
         return Ok(None);
     }
-    match observation_reader_scope_for_actor_in_txn(vault, txn, memory.actor())? {
-        Some(scope) => Ok(scope),
+    match live_steward_reader_scope_in_txn(vault, txn, memory.actor())? {
+        Some(scope) => Ok(Some(scope)),
         None => Err(MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
             "psych profile sources read for the owner under its proof or a live Steward reader",

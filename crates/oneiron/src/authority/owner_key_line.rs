@@ -11,10 +11,12 @@
 //! owner-key enrolment nor lies beneath it is outside that enrolment's line,
 //! and there:
 //!
-//! - outside a proving enrolment's line, an owner choice or a carried
-//!   machine answer needs the proof: unproven and carried by a carrier that
-//!   is not the owner's machine, the choice waits and the answer is held, as
-//!   on parents that hold the key;
+//! - outside a proving enrolment's line, an owner choice, an engine
+//!   statement on the setting register (a move's setting copy, a pack's
+//!   head; FIX SETTING-COPY-OUTSIDE-OWNER-KEY-LINE) or a carried machine
+//!   answer needs the proof: unproven and carried by a carrier that is not
+//!   the owner's machine, the choice or the statement waits and the answer
+//!   is held, as on parents that hold the key;
 //! - an enrolment of the key that enrolment enrolled (any op, any role, and a
 //!   rotation or a handoff that names it as the successor) is an invalid
 //!   entry, so the roster merge cannot narrow the owner's key away.
@@ -56,14 +58,15 @@
 //! When one's line changes the lines in force, the log folds again with the
 //! lines of every enrolment taken so far ([`OwnerKeyLines`] in the context).
 //! It folds again, too, when a fold no longer keeps an enrolment taken
-//! before. An owner choice that descends from that enrolment falls with it,
-//! and a world edit's refold ([`super::world_refold`]) brings it back past
-//! it, on the state its parents leave, which lacks the key; there it needs
-//! the owner's proof, as it did on the enrolment's state where the key gives
-//! it (blind review F1, 16 Nov). So for an owner choice a fallen proving
-//! enrolment's line holds only its ancestry; a fallen enrolment whose key
-//! gives no proof asks for none, as it never did. A carried machine answer
-//! that falls with it does not come back.
+//! before. An owner choice or an engine statement that descends from that
+//! enrolment falls with it, and a world edit's refold
+//! ([`super::world_refold`]) brings it back past it, on the state its parents
+//! leave, which lacks the key; there it needs the owner's proof, as it did on
+//! the enrolment's state where the key gives it (blind review F1, 16 Nov). So
+//! for an owner choice or an engine statement a fallen proving enrolment's
+//! line holds only its ancestry; a fallen enrolment whose key gives no proof
+//! asks for none, as it never did. A carried machine answer that falls with
+//! it does not come back.
 //! A line makes a row wait, be held or be refused. That can let another
 //! enrolment fold (a held removal keeps its holder machine live), and it can
 //! end one: where each of two branches enrolled the other's owner key as an
@@ -80,11 +83,12 @@
 //! fold refused, because it did not name a choice that a later fold keeps
 //! waiting, can fold in the later one: it is judged against what counts, as
 //! every row is. An enrolment taken in one fold that a later fold ends keeps
-//! its line, narrowed to its ancestry for an owner choice, which only adds
-//! waits. That holds for the enrolment taken last too: a row its own line lets
-//! fold can end it (an enrolment of another key that folds once a wait frees
-//! its parent, whose own line then refuses this enrolment's ancestry, Astra
-//! review OP-02, 16 Nov), or another line can refuse it. The rows outside then
+//! its line, narrowed to its ancestry for an owner choice or an engine
+//! statement, which only adds waits. That holds for the enrolment taken last
+//! too: a row its own line lets fold can end it (an enrolment of another key
+//! that folds once a wait frees its parent, whose own line then refuses this
+//! enrolment's ancestry, Astra review OP-02, 16 Nov), or another line can
+//! refuse it. The rows outside then
 //! wait for the owner's proof with no key yet to give it, and the owner
 //! answers them with the next key it enrols. A line dropped with its
 //! enrolment would let the rows that ended it stand outside it, the dodge this
@@ -117,7 +121,8 @@ struct TakenEnrolment {
     key: AuthorityKey,
     /// Whether that key gave the owner's proof in the state the enrolment
     /// left, in a fold that took it: its line then also makes the owner
-    /// choices and carried machine answers outside it wait for the proof.
+    /// choices, engine statements and carried machine answers outside it
+    /// wait for the proof.
     proving: bool,
 }
 
@@ -216,8 +221,9 @@ impl OwnerKeyEnrolments {
         let proving = |enrolment: &AuthorityEntryHash| {
             self.taken.get(enrolment).is_some_and(|taken| taken.proving)
         };
-        // An owner choice that descends from a fallen proving enrolment: a
-        // refold brings it back past the enrolment (blind review F1).
+        // An owner choice or an engine statement that descends from a fallen
+        // proving enrolment: a refold brings it back past the enrolment
+        // (blind review F1).
         let past_a_fallen = |row: &AuthorityEntryHash| {
             self.fallen
                 .iter()
@@ -245,7 +251,7 @@ impl OwnerKeyEnrolments {
                     .taken
                     .keys()
                     .any(|enrolment| proving(enrolment) && outside(hash, enrolment))
-                    || (owner_choice_kind(&entry.op) && past_a_fallen(hash)))
+                    || (choice_kind(&entry.op) && past_a_fallen(hash)))
             {
                 lines.unproven_outside.insert(*hash);
             }
@@ -274,9 +280,9 @@ impl OwnerKeyEnrolments {
 /// The entries a fold judges outside an owner-key enrolment's line.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(super) struct OwnerKeyLines {
-    /// Owner choices and carried machine answers outside some proving
-    /// enrolment's line, and owner choices that descend from a fallen one:
-    /// each needs the owner's proof.
+    /// Owner choices, engine statements and carried machine answers outside
+    /// some proving enrolment's line, and owner choices and engine statements
+    /// that descend from a fallen one: each needs the owner's proof.
     unproven_outside: BTreeSet<AuthorityEntryHash>,
     /// Enrolments, other than an `OwnerKeyEnroll`, of a key an owner-key
     /// enrolment enrolled (a rotation or a handoff naming it among them),
@@ -287,8 +293,9 @@ pub(super) struct OwnerKeyLines {
 }
 
 impl OwnerKeyLines {
-    /// Whether `hash` is an owner choice or a carried machine answer outside
-    /// a proving enrolment's line: it needs the owner's proof there.
+    /// Whether `hash` is an owner choice, an engine statement or a carried
+    /// machine answer outside a proving enrolment's line: it needs the
+    /// owner's proof there.
     pub(super) fn needs_proof(&self, hash: &AuthorityEntryHash) -> bool {
         self.unproven_outside.contains(hash)
     }
@@ -316,20 +323,25 @@ impl OwnerKeyLines {
     }
 }
 
-/// Whether the op is one the two proof gates judge: the seven owner choice
-/// kinds ([`super::owner_choice::owner_choice_landing`]) and a carried
-/// machine answer ([`super::machine_profile::apply_owner_answer`]).
+/// Whether the op is one the two proof gates judge: a choice on an owner
+/// choice register ([`choice_kind`]) and a carried machine answer
+/// ([`super::machine_profile::apply_owner_answer`]).
 fn needs_proof_off_the_line(op: &AuthorityOp) -> bool {
     match op {
         AuthorityOp::MachineProfile(profile) => profile.act.is_some(),
-        _ => owner_choice_kind(op),
+        _ => choice_kind(op),
     }
 }
 
-/// Whether the op is one of the seven owner choice kinds. A world edit's
-/// refold brings each back past a row the fold did not keep
+/// Whether the op lands on an owner choice register through the owner-proof
+/// gate ([`super::owner_choice::choice_landing`]): the seven owner choice
+/// kinds ([`super::owner_choice::owner_choice_landing`]) and the two engine
+/// statements on the setting register, a move's setting copy (stage 7a-4)
+/// and a pack's head (stage 7c-3a), the owner's yes included (stage 7c-3c;
+/// FIX SETTING-COPY-OUTSIDE-OWNER-KEY-LINE). A world edit's refold brings
+/// each back past a row the fold did not keep
 /// ([`super::world_refold::refolds`]).
-fn owner_choice_kind(op: &AuthorityOp) -> bool {
+fn choice_kind(op: &AuthorityOp) -> bool {
     matches!(
         op,
         AuthorityOp::CheckpointPolicySet(_)
@@ -339,6 +351,8 @@ fn owner_choice_kind(op: &AuthorityOp) -> bool {
             | AuthorityOp::ConversationTrainingSet(_)
             | AuthorityOp::ConversationTrainingVaultSet(_)
             | AuthorityOp::PolicySettingSet(_)
+            | AuthorityOp::SettingCopy(_)
+            | AuthorityOp::SettingPackHead(_)
     )
 }
 
@@ -363,7 +377,7 @@ fn enrolled_key(op: &AuthorityOp) -> Option<&AuthorityKey> {
 /// Whether a tail past an adopted image needs the whole log to judge it (row
 /// CARRIER-PROOF-OLD-PARENTS):
 ///
-/// - any tail, where a covered row a line reads (an owner choice, a carried
+/// - any tail, where a covered row a line reads (a choice, a carried
 ///   machine answer, an enrolment of the key a covered `OwnerKeyEnroll` row
 ///   enrols) lies outside that covered enrolment's line: the covered log may
 ///   have folded more than once, and the image's admission keeps only the
@@ -378,7 +392,7 @@ fn enrolled_key(op: &AuthorityOp) -> Option<&AuthorityKey> {
 ///   tail row that names no parent lies outside every line, and its
 ///   transition refuses it for its ancestry wherever it lies; Astra review
 ///   OP-04, 16 Nov), so its folds judge as the image's admission does;
-/// - an owner choice or a carried machine answer in the tail, where a
+/// - a choice or a carried machine answer in the tail, where a
 ///   covered row a tail row names lies outside the line of a covered
 ///   `OwnerKeyEnroll` row (that row and its covered descendants). No kept
 ///   state decides it: a tail row folds on the merge of its parents, past
@@ -530,7 +544,7 @@ impl CoveredLog<'_> {
 
     /// Whether a covered row a line reads lies outside the line of one of
     /// `enrolments` (the covered `OwnerKeyEnroll` rows, each with its key):
-    /// an owner choice or a carried machine answer, or an enrolment of the
+    /// a choice or a carried machine answer, or an enrolment of the
     /// same key other than that row. Here a line holds the enrolment's
     /// covered ancestors as well as its descendants, as a fold's line does.
     /// It reads every row any fold of the covered log could have taken, so

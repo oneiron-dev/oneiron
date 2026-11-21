@@ -19,10 +19,10 @@
 
 use super::SHARED_VAULT_CREATION;
 use crate::Vault;
-use crate::authority::{ActSurface, AuthorityFold, authority_refused};
+use crate::authority::{ActSurface, AuthorityFold, OwnerProofGround, authority_refused};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
-use crate::world_keys::PolicyRevision;
+use crate::world_keys::{OwnerActImportance, PolicyRevision, owner_presence_reasons};
 
 /// The question identity's own domain.
 const QUESTION_CONTEXT: &str = "oneiron shared vault setup training question v1";
@@ -148,6 +148,9 @@ impl Vault {
     /// with the counted admin choice of the setting in force now. Setup never
     /// reopens.
     ///
+    /// The door does not read the value in force before its write, so it asks
+    /// for every change it cannot tell from its arguments to be a narrowing.
+    ///
     /// # Errors
     /// A refusal when the proof is no longer a live person of this vault or
     /// is no admin of it, when the vault was never shared, when the question
@@ -163,6 +166,14 @@ impl Vault {
         surface: ActSurface,
         answer: &SharedTrainingSetupAnswer,
     ) -> Result<SharedTrainingSetupQuestion> {
+        let importance = if answer.on {
+            OwnerActImportance::Important
+        } else {
+            OwnerActImportance::Ordinary
+        };
+        let witness =
+            self.owner_presence(importance, owner_presence_reasons::SHARED_TRAINING_SETUP)?;
+        let ground = OwnerProofGround::witnessed(&witness);
         let mut txn = self.store.env.write_txn()?;
         let person = owner.revalidate_person_in_txn(self, &txn)?;
         self.require_learning_admin_in_txn(&txn, person)?;
@@ -195,6 +206,7 @@ impl Vault {
         }
         let (setting_act, view, answered_at) = self.set_conversation_learning_in_txn(
             &mut txn,
+            &ground,
             owner,
             surface,
             answer.on,
