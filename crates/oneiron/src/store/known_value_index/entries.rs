@@ -19,6 +19,25 @@ impl KnownValues {
             .any(|known| matches!(known.origin, ValueOrigin::Custody(_)) && known.handle == handle)
     }
 
+    /// Whether the custody record `handle` names holds one value the index
+    /// knows, and no other: a handle meets every value its record ever held,
+    /// so only the handle of a record that never took a second value stands
+    /// for one value alone (blind review round 1 of #10312).
+    pub(crate) fn holds_one_value(&self, handle: &str) -> bool {
+        let mut value = None;
+        for known in self.buckets.iter().flat_map(|bucket| &bucket.known) {
+            if !matches!(known.origin, ValueOrigin::Custody(_)) || known.handle != handle {
+                continue;
+            }
+            match value {
+                None => value = Some(&known.fingerprint),
+                Some(first) if *first == known.fingerprint => {}
+                Some(_) => return false,
+            }
+        }
+        value.is_some()
+    }
+
     /// Each value a custody record `holds` takes holds in `data`, past those
     /// `keep` exempts, as [`Self::spans_except`] reads them, with every
     /// other value out before the longest at a place is chosen (FIX

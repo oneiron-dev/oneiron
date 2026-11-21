@@ -62,9 +62,7 @@ pub(crate) fn held_row_meets(
     if held == offered {
         return Ok(true);
     }
-    let mut records = BTreeSet::new();
-    named_records(held, &mut records);
-    records.retain(|handle| known.holds_handle(handle));
+    let records = known_records(held, known);
     if records.is_empty() {
         return Ok(false);
     }
@@ -75,6 +73,34 @@ pub(crate) fn held_row_meets(
         reads: MAX_SLOT_READS,
     }
     .meets(held, offered, None)
+}
+
+/// Whether `held`, a live row the side-row wall stored, holds a handle that
+/// names a record custody knows (`known`): a row that holds none meets an
+/// offer only as written ([`held_row_meets`]).
+pub(crate) fn names_known_record(held: &Value, known: &KnownValues) -> bool {
+    !known_records(held, known).is_empty()
+}
+
+/// Whether `held` holds a handle, and each handle it holds names a record
+/// custody knows (`known`) to hold one value alone
+/// ([`KnownValues::holds_one_value`]): `held` then meets one offer alone,
+/// as a compare reads it ([`held_row_meets`]). A handle meets every value
+/// its record ever held, so `held` with a handle of a record that took a
+/// second value meets each of them (blind review round 1 of #10312).
+pub(crate) fn names_single_value_records(held: &Value, known: &KnownValues) -> bool {
+    let mut records = BTreeSet::new();
+    named_records(held, &mut records);
+    !records.is_empty() && records.iter().all(|handle| known.holds_one_value(handle))
+}
+
+/// Each record a handle in `held` names that custody knows (`known`), by its
+/// bare handle.
+fn known_records(held: &Value, known: &KnownValues) -> BTreeSet<String> {
+    let mut records = BTreeSet::new();
+    named_records(held, &mut records);
+    records.retain(|handle| known.holds_handle(handle));
+    records
 }
 
 /// One compare of a held row with an offer.
