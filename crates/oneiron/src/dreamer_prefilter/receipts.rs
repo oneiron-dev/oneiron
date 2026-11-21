@@ -63,9 +63,9 @@ pub(super) struct PrefilterSkipRow {
     pub(super) threshold: f32,
     pub(super) estimated_tokens: u64,
     pub(super) features: BTreeMap<String, f32>,
-    /// Whether the round's screen read MESSAGE rows
-    /// ([`PrefilterScreen::read_message_rows`]). A row of a round that read
-    /// none stores no such field, as before the screen read any.
+    /// Whether the round's screen asked for a turn's words from its MESSAGE
+    /// rows ([`PrefilterScreen::read_message_rows`]). A row of a round that
+    /// asked for none stores no such field, as before the screen read any.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(super) read_message_rows: bool,
 }
@@ -82,9 +82,9 @@ pub(super) struct PrefilterRoundRow {
     pub(super) skipped: u64,
     pub(super) estimated_tokens_saved: u64,
     pub(super) threshold: f32,
-    /// Whether the round's screen read MESSAGE rows
-    /// ([`PrefilterScreen::read_message_rows`]). A row of a round that read
-    /// none stores no such field, as before the screen read any.
+    /// Whether the round's screen asked for a turn's words from its MESSAGE
+    /// rows ([`PrefilterScreen::read_message_rows`]). A row of a round that
+    /// asked for none stores no such field, as before the screen read any.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(super) read_message_rows: bool,
 }
@@ -98,9 +98,9 @@ pub(super) struct PrefilterRoundRow {
 /// input and screen here. Any storage/accounting error aborts the surrounding
 /// enqueue and watermark transaction; no reconstruction error becomes success.
 ///
-/// Every row of a round whose screen read MESSAGE rows says so, and its
-/// receipts are the vault owner's alone
-/// ([`prefilter_receipt_read_message_rows`]).
+/// Every row of a round whose screen asked for MESSAGE words says so, and
+/// `vault.receipts` serves its receipts to the vault owner on this device
+/// alone ([`prefilter_receipt_read_message_rows`]).
 pub(crate) fn write_prefilter_receipts_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -243,19 +243,21 @@ fn prefilter_round_receipt(round: &[u8], row: &PrefilterRoundRow) -> ReceiptReco
     }
 }
 
-/// Whether `receipt` is a prefilter receipt of a round whose screen read
-/// MESSAGE rows: a turn row or the rollup that carries
-/// [`FIELD_PREFILTER_READ_MESSAGE_ROWS`].
+/// Whether `receipt` is a prefilter receipt of a round whose screen asked
+/// for a turn's words from its MESSAGE rows: a turn row or the rollup that
+/// carries [`FIELD_PREFILTER_READ_MESSAGE_ROWS`].
 ///
-/// Such a receipt stands on rows it does not name. A turn's score and its
-/// novelty axis are measured against the words of every turn the round
-/// scored before it, the round's counts follow from every score, and a
-/// turn's MESSAGE rows are read as the Dreamer, which may read one its
-/// TURN's reader may not. Its trigger names its own TURN alone, so no row
-/// screen can judge it for a reader: a `vault.receipts` read serves it to
-/// the vault owner and to no other reader, bound to a credential or not
-/// (`memory::reads::receipt_page`). [`Vault::receipts`], the engine's own
-/// unscreened read, still answers it.
+/// Such a receipt stands on rows it does not name. A turn's novelty axis,
+/// and through it the score, is measured against the words of the turns the
+/// round scored just before it, the round's counts follow from every score,
+/// and a turn's MESSAGE rows are read as the Dreamer, which may read one its
+/// TURN's reader may not. A turn row's trigger names its own TURN alone and
+/// the rollup names no row, so no row screen can judge either for a reader.
+/// A `vault.receipts` read serves it to the vault owner and to no other
+/// reader, bound to a credential or not (`memory::reads::receipt_page`), and
+/// to no caller off this device (`receipt::off_device`); no verb hook
+/// chain's receipt tail holds it (`Memory::hook_tail_receipts`).
+/// [`Vault::receipts`], the engine's own unscreened read, still answers it.
 #[must_use]
 pub(crate) fn prefilter_receipt_read_message_rows(receipt: &ReceiptRecord) -> bool {
     receipt.receipt_kind == ReceiptKind::Extraction
