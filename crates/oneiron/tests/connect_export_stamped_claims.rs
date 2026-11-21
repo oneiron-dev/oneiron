@@ -47,7 +47,9 @@ use std::sync::Arc;
 
 use ed25519_dalek::{Signer, SigningKey};
 use loro::{LoroDoc, LoroValue, ValueOrContainer};
-use oneiron::authority::{CausalWriteDisposition, HostSlipIssuer, PeerMachine, VerifiedSlip};
+use oneiron::authority::{
+    CausalWriteDisposition, HostSlipIssuer, MachineRole, PeerMachine, VerifiedSlip,
+};
 use oneiron::claim::CallerLocality;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::deletion::LegalHoldTarget;
@@ -67,6 +69,7 @@ use oneiron::sync::{
 };
 use oneiron::test_doors::disclosure_word_sources::install_shipped_policy_with_ordinary_predicate;
 use oneiron::test_doors::membership::stand_member_grant;
+use oneiron::test_doors::owner_key_release::bind_owner_with_owner_key;
 use oneiron::write_envelope::MachineWriteSignature;
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimCandidate, ClaimLifecycleStatus, ClaimSource,
@@ -373,6 +376,13 @@ struct SourcePact<'a> {
     claims: &'a Claims,
 }
 
+/// The pact world's own month window. Every claim of a world lives in that
+/// world's windows (`sync::types::entity_belongs_to_window`), never in the
+/// base month window `WINDOW`.
+fn world_window(world: EntityId) -> String {
+    format!("{WINDOW}@{}", world.to_hex())
+}
+
 /// The owner's Connect export of the pact's world: its Loro update.
 fn connect_window_update(pact: &SourcePact<'_>) -> TestResult<Vec<u8>> {
     let delivery = SyncClient::export_connect_window_as(
@@ -381,7 +391,7 @@ fn connect_window_update(pact: &SourcePact<'_>) -> TestResult<Vec<u8>> {
         pact.issuer,
         ConnectExportRequest {
             pact: pact.pact.clone(),
-            window_key: WINDOW.to_owned(),
+            window_key: world_window(pact.world),
             world_ref: pact.world,
             facets: vec![],
             bands: vec![],
@@ -427,7 +437,7 @@ fn guest_fetched_update(pact: &SourcePact<'_>, proof: &VerifiedSlip) -> TestResu
         &GuestDocumentShareRequest {
             grant_ref: pact.grant,
             world_ref: pact.world,
-            window_key: WINDOW.to_owned(),
+            window_key: world_window(pact.world),
             facets: vec![],
             bands: vec![],
         },
@@ -525,7 +535,7 @@ fn pact_window_from<T>(
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
     let manager = manager(&vault);
-    manager.open_window(&WindowKey::new(WINDOW))?;
+    manager.open_window(&WindowKey::new(world_window(world)))?;
     let update = window(&SourcePact {
         vault: &vault,
         owner: &owner,
@@ -612,8 +622,17 @@ fn a_connect_grant_carries_a_summary_whose_words_come_from_its_world() -> TestRe
 fn a_connect_grant_withholds_a_summary_whose_words_come_from_a_use_limited_claim() -> TestResult {
     let mut hosted = VaultConfig::default();
     hosted.privacy.posture = HostingPrivacyPosture::Hosted;
-    let (doc, claims, (summary, covered)) =
-        connect_export_from(hosted, Sensitivity::Private, |vault, owner, _, world, _| {
+    let (doc, claims, (summary, covered)) = connect_export_from(
+        hosted,
+        Sensitivity::Private,
+        |vault, owner, issuer, world, _| {
+            // A Hosted root binds no person, and the erase below needs the
+            // owner's binding: the owner binds with this install's owner key,
+            // whose enrolment needs a keystore and a serving install profile.
+            vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+            vault.ensure_serving_install_profile(issuer, MachineRole::Unanswered)?;
+            let actor = vault.ensure_embedded_owner_actor()?;
+            bind_owner_with_owner_key(vault, owner, issuer, actor)?;
             let subject = put_person(vault, "kenji")?;
             let covered = put_claim(
                 vault,
@@ -630,7 +649,6 @@ fn a_connect_grant_withholds_a_summary_whose_words_come_from_a_use_limited_claim
                 Some("matter-9526".to_owned()),
             )?;
             assert!(hold.stands(), "FIXTURE: the customer hold stands: {hold:?}");
-            let actor = vault.ensure_embedded_owner_actor()?;
             let memory = vault.memory(actor, EdgeActorClass::Human);
             let preview = memory
                 .preview_entity_delete(&covered)
@@ -655,7 +673,8 @@ fn a_connect_grant_withholds_a_summary_whose_words_come_from_a_use_limited_claim
                 "FIXTURE: the kept erase use-limits the covered claim"
             );
             Ok((summary, covered))
-        })?;
+        },
+    )?;
     assert!(
         carries(&doc, claims.private),
         "FIXTURE: the Connect export carries the plain private claim in W"
