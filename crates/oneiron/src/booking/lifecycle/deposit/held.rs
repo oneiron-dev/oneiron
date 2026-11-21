@@ -144,7 +144,8 @@ pub(in crate::booking::lifecycle) enum EmergencyReturn {
     /// The captured deposit is owed back; the provider has not refunded it
     /// yet.
     RefundDue,
-    /// The provider refunded it.
+    /// The provider refunded it, or the owner marked its refund refunded
+    /// outside the provider.
     Refunded,
     /// The capture still due is to be released; the provider has not voided
     /// it yet.
@@ -178,6 +179,9 @@ pub(in crate::booking::lifecycle) fn emergency_return_in_txn(
         return Ok(None);
     }
     Ok(match row.state {
+        DepositState::RefundDue { .. } if row.marks_owed_refund() => {
+            Some(EmergencyReturn::Refunded)
+        }
         DepositState::RefundDue { .. } => Some(match held_of(&row) {
             Some((HeldDepositKind::RefundEndedUnpaid { .. }, _)) => {
                 EmergencyReturn::RefundEndedUnpaid

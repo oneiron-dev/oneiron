@@ -1,6 +1,6 @@
 //! One deposit settle row on the attempt queue: its payload (the deposit,
-//! and the retry count it was queued under), its enqueue, and the three ways
-//! a claim of it ends.
+//! and what the deposit stood at when it was queued), its enqueue, and the
+//! three ways a claim of it ends.
 
 use serde::{Deserialize, Serialize};
 
@@ -31,11 +31,27 @@ struct DepositSettlePayload {
     /// before any retry, or before the count existed, reads as 0.
     #[serde(default, skip_serializing_if = "is_zero")]
     refund_retry: u32,
+    /// The refund owed when the row was queued stood marked refunded outside
+    /// the provider ([`super::DepositRow::marks_owed_refund`]): a row queued
+    /// before the mark ends once it runs, so only the mark's row finds the
+    /// refund (FIX [BK-DEPOSIT-FAILED-REFUND-MARK-PAID]). Unset, and left
+    /// out, on every other row.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    marked_outside: bool,
+}
+
+/// What a deposit stood at when a settle row of it was queued: its retry
+/// count, and whether the refund it owed stood marked refunded outside the
+/// provider.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct QueuedStamp {
+    pub(super) refund_retry: u32,
+    pub(super) marked_outside: bool,
 }
 
 /// Queues `key`'s next owed move as one settle row, deduplicated by the
-/// deposit and `cause`, stamped with the deposit's retry count as `wtxn`
-/// reads it.
+/// deposit and `cause`, stamped with the deposit as `wtxn` reads it
+/// ([`QueuedStamp`]).
 pub(super) fn enqueue_settle(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -44,13 +60,16 @@ pub(super) fn enqueue_settle(
     now_utc: u64,
 ) -> Result<(), BookingError> {
     let hex = hex_lower(key);
-    let refund_retry = DEPOSIT
+    let (refund_retry, marked_outside) = DEPOSIT
         .get(&vault.store, &*wtxn, key)
         .map_err(|error| engine_failure("meta read", error))?
-        .map_or(0, |row| row.refund_retry);
+        .map_or((0, false), |row| {
+            (row.refund_retry, row.marks_owed_refund())
+        });
     let payload = serde_json::to_vec(&DepositSettlePayload {
         deposit_key: hex.clone(),
         refund_retry,
+        marked_outside,
     })
     .map_err(|_| refused("booking deposit settle payload did not encode"))?;
     crate::ports::JobQueue::port_job_enqueue(
@@ -82,12 +101,19 @@ pub(super) fn requeue_reason(reason: &str) -> String {
     }
 }
 
-/// The deposit a settle row names, and the retry count it was queued under.
-pub(super) fn settle_payload_key(record: &AttemptRecord) -> Result<([u8; 32], u32), BookingError> {
+/// The deposit a settle row names, and what it stood at when the row was
+/// queued.
+pub(super) fn settle_payload_key(
+    record: &AttemptRecord,
+) -> Result<([u8; 32], QueuedStamp), BookingError> {
     let payload: DepositSettlePayload = serde_json::from_slice(&record.payload)
         .map_err(|_| refused("booking deposit settle payload did not decode"))?;
+    let stamp = QueuedStamp {
+        refund_retry: payload.refund_retry,
+        marked_outside: payload.marked_outside,
+    };
     oneiron_hex::decode::<32>(&payload.deposit_key)
-        .map(|key| (key, payload.refund_retry))
+        .map(|key| (key, stamp))
         .ok_or_else(|| refused("booking deposit settle payload names no deposit"))
 }
 
