@@ -351,7 +351,8 @@ belongs to. The same code runs one request at a time and up to four.
   Prefill and decode times are per-job intervals, which contain other jobs'
   work when several are in flight. They are not exclusive GPU time.
 
-Three knobs, set in `/etc/oneiron-house.env`:
+Three knobs, and the speed parts' switches ("Speed parts"), set in
+`/etc/oneiron-house.env`:
 
 | Variable | Flag | Default | What it sets |
 |---|---|---|---|
@@ -414,6 +415,35 @@ draft has no ring.
 The server logs one `DRAFT_RING` line with the ring and the draft cache's
 tokens. A ring changes the cache identity (`draft_ring_pages` in its cache
 settings); without one, the identity is as before the ring existed.
+
+### Speed parts
+
+Four switches, each off by default (`SPEED_PART_DEFAULTS` in
+`exl3_server.py`) until its measurement on the Dreamer's nightly call keeps
+it. `ONEIRON_HOUSE_EXL3_<PART>=1` passes `--<part>`, `0` passes
+`--no-<part>`, and unset keeps the default. They come from QWEN-EVAL-1's
+astra-skill arm (`mel:/data/qwen-eval-20261120/arms/astra-skill/LEDGER.md`),
+ported onto this server without editing exllamav3. Its sampling changes
+(A-0017) are not among them.
+
+| Variable | Flag | What it changes |
+|---|---|---|
+| `ONEIRON_HOUSE_EXL3_FUSE_PROJECTIONS` | `--fuse-projections` | same-input projections stay one fused GEMM at every bitrate (`EXL3_MGEMM_K_THRESHOLD=0`), where by default a low-bitrate pair runs as separate int8 GEMVs (A-0026) |
+| `ONEIRON_HOUSE_EXL3_FP16_PREFILL` | `--fp16-prefill` | a prefill GEMM over a reconstructed FP16 weight with at least 384 rows and an FP16 output accumulates in FP16 (`torch.mm` under `allow_fp16_accumulation`) instead of FP32; decode is unchanged (A-0028) |
+| `ONEIRON_HOUSE_EXL3_PROMPT_LOOKUP` | `--prompt-lookup` | a request whose own sequence repeats an earlier stretch is offered that stretch's continuation in place of the draft's block, per request and match length, only where its own verified lookups have done well (A-0009, A-0012) |
+| `ONEIRON_HOUSE_EXL3_DRAFT_WINDOW_TABLES` | `--draft-window-tables` | the draft forward reads only the pages its 2048-token window can see, so its attention is sized to the window, not the sequence; needs the draft KV ring (A-0016) |
+
+- **Outputs.** Prompt lookup and the window tables keep the target's
+  distribution: every proposed token is verified as a draft's is, and the
+  window tables read exactly the keys the window shows. Like the pool, they
+  change which samples are drawn, not the model. The fused projections and
+  FP16 prefill change the arithmetic, so their answers drift as under any
+  numerics change, and each is kept only with a measured output check.
+- **Identity.** A server with any part on names them in its server settings
+  (`speed_parts`); with every part off, the identity is as before.
+- **Logs.** One `SPEED_PARTS` line at load gives each part's state and the
+  exllamav3 extension the server loaded; the `DRAFT_RING` line gives the
+  window tables' width in pages (0 when off).
 
 ### Solo admission
 
