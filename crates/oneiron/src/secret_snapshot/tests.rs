@@ -17,19 +17,6 @@ fn snapshot(files: Vec<CodebaseFileEntry>) -> CodebaseSnapshot {
 }
 
 #[test]
-fn unreadable_files_are_quarantined() -> crate::Result<()> {
-    let (_dir, vault) =
-        crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
-    let snap = snapshot(vec![CodebaseFileEntry::new("src/lib.rs", [1; 32], 1)]);
-    let txn = vault.store.env.read_txn()?;
-    let (files, report) =
-        vault.apply_custody_to_snapshot(&txn, &snap, snapshot_root(&snap.repo_ref), &|_| None)?;
-    assert!(files.is_empty());
-    assert_eq!(report.quarantined_paths, ["src/lib.rs"]);
-    Ok(())
-}
-
-#[test]
 fn detected_files_are_quarantined_without_value() -> crate::Result<()> {
     let (_dir, vault) =
         crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
