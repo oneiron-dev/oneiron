@@ -25,8 +25,8 @@ use crate::vault::Vault;
 /// where something else pins it, since a custody record keeps every value it
 /// held and one handle meets each of them. The UID must be pinned to the
 /// passport's EVENT ([`uid_pinned_to_event_in_txn`]); the system must be one
-/// of the vault's calendar systems that no other of them could stand for
-/// ([`passport_system_is`]).
+/// of the vault's calendar systems, stored under handles whose records each
+/// hold that one value ([`passport_system_is`]).
 pub(super) struct MaskedKey<'k> {
     system: &'k str,
     uid: &'k str,
@@ -174,19 +174,59 @@ pub(in crate::calendar) fn passport_uid_among(
     Ok(false)
 }
 
+/// Whether `held`, the UID a passport on `event_ref` stored, is one of
+/// `uids` that `derive` mints `event_ref` for: one custody reads `held` as
+/// ([`passport_uid_is`]) and whose derived EVENT id is `event_ref`, or the
+/// master `event_ref` is a detached instance of. A pack calendar source
+/// mints its EVENT at an id derived from the source and the UID and writes
+/// no UID index entry for it, so the derived id is what pins such a UID
+/// (blind review round 1 of #10312). A stored UID that holds no handle
+/// custody knows meets only itself, which [`passport_uid_among`] has read.
+///
+/// # Errors
+///
+/// Store failures, `derive`'s, the custody read's, and an exception claim
+/// that does not decode.
+pub(in crate::calendar) fn derived_uid_among(
+    vault: &Vault,
+    event_ref: &EntityId,
+    held: &str,
+    uids: &BTreeSet<&str>,
+    known: &CompareKnown<'_>,
+    derive: impl Fn(&str) -> Result<EntityId, CalendarError>,
+) -> Result<bool, CalendarError> {
+    if uids.is_empty() || known.reads_as_written_only(&rmpv::Value::from(held))? {
+        return Ok(false);
+    }
+    let master = {
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        live_series_master_in_txn(vault, &txn, event_ref)?
+    };
+    for &uid in uids {
+        if !passport_uid_is(held, uid, known)? {
+            continue;
+        }
+        let minted = derive(uid)?;
+        if minted == *event_ref || master == Some(minted) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// Whether `held`, the system name a passport stored, is `system`: as
 /// written, or with a custody handle in place of a value custody holds
 /// ([`passport_uid_is`]'s read), when `system` is one of `systems`, the
-/// vault's calendar systems, and no other of them, nor a system the engine
-/// files its own passports under ([`ENGINE_PASSPORT_SYSTEMS`]), reads as
-/// `held`. A custody record keeps every value it held, so once a record that
-/// held a value in one seat's system name holds one in another seat's, one
-/// handle meets both names: a passport stored under such a handle is read as
-/// written only, so one calendar's pull never takes another calendar's
-/// passport, whose deletes would then read as the first calendar's host
-/// cancels, and a seat's write never takes a booking's or an invite's
-/// passport as its own copy. A system no seat or feed of the vault names (an
-/// upload's own) is read as written only too.
+/// vault's calendar systems, and each handle `held` holds names a record
+/// that holds one value alone ([`CompareKnown::reads_as_one_value`]). A
+/// custody record keeps every value it held, so once a record that held one
+/// source's system name holds another's, one handle meets both names, and
+/// the registry cannot tell them apart when one is a system no seat or feed
+/// names (an upload's own, a pack source's): a passport stored under such a
+/// handle is read as written only, so one calendar's pull never takes or
+/// sweeps another source's passport, whose deletes would then read as the
+/// first calendar's host cancels (blind review round 1 of #10312). A system
+/// no seat or feed of the vault names is read as written only too.
 ///
 /// # Errors
 ///
@@ -200,26 +240,13 @@ fn passport_system_is(
     if held == system {
         return Ok(true);
     }
-    if !systems.iter().any(|named| named == system) || !passport_uid_is(held, system, known)? {
+    if !systems.iter().any(|named| named == system)
+        || !known.reads_as_one_value(&rmpv::Value::from(held))?
+    {
         return Ok(false);
     }
-    let others = systems.iter().map(String::as_str);
-    for named in others.chain(ENGINE_PASSPORT_SYSTEMS) {
-        if named != system && passport_uid_is(held, named, known)? {
-            return Ok(false);
-        }
-    }
-    Ok(true)
+    passport_uid_is(held, system, known)
 }
-
-/// The systems the engine files its own passports under: a booking's and an
-/// iMIP invite's. No seat or feed imports under them, so they are no
-/// calendar systems, yet a handle that reads as one of them may be that
-/// passport's and so is no seat's alone ([`passport_system_is`]).
-const ENGINE_PASSPORT_SYSTEMS: [&str; 2] = [
-    crate::booking::BOOKING_PASSPORT_SYSTEM,
-    crate::calendar::CALENDAR_INVITE_PASSPORT_SYSTEM,
-];
 
 /// The calendar systems the vault names, as `txn` reads them: each connector
 /// seat's, installed or taken out of service

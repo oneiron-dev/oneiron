@@ -39,7 +39,9 @@ pub(crate) use self::mask::carrier::{
 };
 pub(crate) use self::mask::claim_value_plan::plan_masked_claim_value_in_txn;
 pub(crate) use self::mask::custody_form::{custody_record_form, custody_records_named};
-pub(crate) use self::mask::held_template::{MapOrder, held_row_meets, names_known_record};
+pub(crate) use self::mask::held_template::{
+    MapOrder, held_row_meets, names_known_record, names_single_value_records,
+};
 #[cfg(oneiron_test_support)]
 pub(crate) use self::mask::mark_text_value_in_txn;
 pub(super) use self::mask::mask_batch_ops;
