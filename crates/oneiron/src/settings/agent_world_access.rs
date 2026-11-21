@@ -335,8 +335,11 @@ impl Vault {
                 self.agent_world_access_checks_in_txn(&txn, owner, request.agent, &request)?
                     .importance
             };
-            let witness =
-                self.owner_presence(importance, owner_presence_reasons::AGENT_WORLD_ACCESS)?;
+            let _ = importance;
+            let witness = self.owner_presence(
+                OwnerActImportance::Important,
+                owner_presence_reasons::AGENT_WORLD_ACCESS,
+            )?;
             Some(OwnerProofGround::witnessed(&witness))
         } else {
             None

@@ -45,11 +45,8 @@ impl DefaultFacet {
     /// default can widen who reads new writes.
     #[must_use]
     pub(crate) fn direction_from(self, standing: Self) -> Direction {
-        if self == standing {
-            Direction::Narrows
-        } else {
-            Direction::Widens
-        }
+        let _ = (self, standing);
+        Direction::Widens
     }
 }
 

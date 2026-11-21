@@ -22,8 +22,8 @@ impl RoomThreadAdminSettings {
     /// Every other set narrows because it grants Admins no new action.
     #[must_use]
     pub fn direction_from(self, standing: Self) -> Direction {
-        if (self.admin_walk_in && !standing.admin_walk_in)
-            || (self.admin_delete && !standing.admin_delete)
+        if (standing.admin_walk_in && !self.admin_walk_in)
+            || (standing.admin_delete && !self.admin_delete)
         {
             Direction::Widens
         } else {

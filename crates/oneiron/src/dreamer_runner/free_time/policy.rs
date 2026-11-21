@@ -521,8 +521,11 @@ impl Vault {
                     )?
                     .importance
                 };
-                let witness =
-                    self.owner_presence(importance, owner_presence_reasons::FREE_TIME_POLICY)?;
+                let _ = importance;
+                let witness = self.owner_presence(
+                    OwnerActImportance::Important,
+                    owner_presence_reasons::FREE_TIME_POLICY,
+                )?;
                 Some(OwnerProofGround::witnessed(&witness))
             }
             FreeTimeAuthority::Agent(_) => None,
