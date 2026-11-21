@@ -13,8 +13,8 @@
 //! goes, a Deputy's add and a Member's raise to Admin go on the person's own
 //! judgment, and a Deputy's other moves and removes wait for an Owner's
 //! answer. The receipt records the decision.
+mod departure_importance;
 mod invitation;
-mod move_importance;
 mod owner_recovery;
 mod pending_execution;
 
@@ -139,16 +139,6 @@ fn move_revokes_slips(from: Role, to: Option<Role>) -> bool {
         (Some(from), Some(to)) => to < from,
         _ => to != from,
     })
-}
-
-/// Whether moving a member from `from` to `to` (`None` leaves the vault)
-/// retires the owner authority they hold on this vault's log: the member
-/// leaves, or an Owner stops being one. An owner root of theirs signs any
-/// authority entry, and a binding passes every owner verb. Only the vault's
-/// live host root signs that revocation, so a move with no issuer is refused
-/// while the member holds either (REVIEW-7931).
-fn move_retires_owner_authority(from: Role, to: Option<Role>) -> bool {
-    to.is_none() || (from == Role::Owner && to != Some(Role::Owner))
 }
 
 impl Vault {
@@ -335,13 +325,7 @@ impl Vault {
                 (MEMBERS_CHANGE_VERB, act, member, Some(from), Some(to))
             }
             MemberChange::Remove { member } => {
-                refuse_house_mind_move_in_txn(self, txn, &member)?;
-                let from = self
-                    .member_role_in_txn(txn, vault_id, member)?
-                    .ok_or_else(invalid)?;
-                if from == Role::Owner {
-                    return Err(invalid());
-                }
+                let from = self.removable_member_role_in_txn(txn, vault_id, member)?;
                 let act = ActClass::MemberRemove;
                 (MEMBERS_REMOVE_VERB, act, member, Some(from), None)
             }
@@ -517,9 +501,9 @@ impl Vault {
     /// Owner standing ends or it leaves, the owner keys and `human` bindings
     /// that name it (OWNER-ENROL); without `slips` such a move is refused
     /// while any of those is live (REVIEW-7931). A move that ends owner keys
-    /// signs their revocation on `ground`. The door derived the move's
-    /// importance on a read before it asked, and the write refuses here when
-    /// the move became important since.
+    /// signs their revocation on `ground`, and a `ground` that witnessed an
+    /// ordinary act is refused where those revocations are signed
+    /// ([`Vault::revoke_owner_authority_in_txn`]).
     #[allow(clippy::too_many_arguments)]
     fn move_member_in_txn(
         &self,
@@ -534,11 +518,6 @@ impl Vault {
         now: u64,
     ) -> Result<MemberMove> {
         refuse_house_mind_move_in_txn(self, txn, &member)?;
-        // The door derived the importance on a read before it asked; a move
-        // that became important since is refused here, before the first
-        // write. A standing ground refuses nothing.
-        ground
-            .refuse_risen_importance(self.member_move_importance_in_txn(txn, member, from, to)?)?;
         let mut grants = Vec::new();
         if let Some(role) = to {
             grants.extend(self.set_member_role_in_txn(txn, vault_id, member, role, now)?);
@@ -574,7 +553,7 @@ impl Vault {
         // owner verb. Only the vault's live host root signs that revocation,
         // so a move with no issuer is refused while the member holds either
         // (REVIEW-7931).
-        if move_retires_owner_authority(from, to) {
+        if to.is_none() || (from == Role::Owner && to != Some(Role::Owner)) {
             match slips {
                 Some(issuer) => self.revoke_owner_authority_in_txn(txn, ground, issuer, member)?,
                 None => self.refuse_unrevoked_owner_authority_in_txn(txn, member)?,
@@ -1089,14 +1068,15 @@ impl Vault {
         )
     }
     /// Remove `member`, who is not an Owner, from the vault at once. The door
-    /// reads its checks on a read transaction before it asks, and asks as
-    /// important only when the move ends owner authority the member holds;
-    /// every other removal is ordinary. The write derives the importance
-    /// again and answers [`Error::ConcurrentWrite`] when the act became more
-    /// important since the person was asked.
+    /// makes its checks on a read before it asks, so a refusal raises no
+    /// prompt. It asks as important only where the member holds owner
+    /// authority on this vault's log, which the removal ends; every other
+    /// removal is a narrowing and ordinary. The write refuses a revoke of
+    /// owner authority the person was not asked for.
     ///
     /// # Errors
-    /// [`Error::ConcurrentWrite`] when the move became important since the person was asked.
+    /// [`Error::ConcurrentWrite`] when the member came to hold owner authority after the person
+    /// was asked.
     pub fn remove_shared_member(
         &self,
         admin: &AuthenticatedOwner,
@@ -1143,11 +1123,9 @@ impl Vault {
     }
     /// [`Self::remove_shared_member_for_ask`], with `between` run after the door asked and
     /// before its write opens: the gap in which another writer can commit first (the test
-    /// door `test_doors::member_departure_between`). The door reads its checks on a read
-    /// before it asks, and asks as important only when the move ends owner authority the
-    /// member holds; every other removal is ordinary. The write derives the importance
-    /// again and answers [`Error::ConcurrentWrite`] when the act became more important
-    /// since the person was asked.
+    /// door `test_doors::member_departure_between`). A Deputy's removal that waits for a
+    /// check-in files that wait in the write, whatever the door asked: the wait signs
+    /// nothing, and the call that spends it reads and asks again.
     #[expect(
         clippy::too_many_arguments,
         reason = "one removal: the applier's proof, the vault, the member, the slip issuer, the Steward's ask, the check-in it spends and the gap between the ask and the write"
@@ -1164,7 +1142,7 @@ impl Vault {
     ) -> Result<SharedActExecutionReceipt> {
         let importance = {
             let txn = self.store.env.read_txn()?;
-            self.member_removal_importance_in_txn(&txn, admin, vault_id, member)?
+            self.member_removal_importance_in_txn(&txn, admin, vault_id, member, ask)?
         };
         let witness =
             self.owner_presence(importance, owner_presence_reasons::REMOVE_SHARED_MEMBER)?;
@@ -1324,14 +1302,15 @@ impl Vault {
     /// Leave the vault. Leave covers access only: the personal vault goes
     /// with the person and company-scoped claims stay. An Owner leaves
     /// through the `remove_owner` act, naming a successor when last. The door
-    /// reads its checks on a read transaction before it asks, and asks as
-    /// important only when the move ends owner authority the member holds;
-    /// every other leave is ordinary. The write derives the importance again
-    /// and answers [`Error::ConcurrentWrite`] when the act became more
-    /// important since the person was asked.
+    /// makes its checks on a read before it asks, so a refusal raises no
+    /// prompt. It asks as important only where the member holds owner
+    /// authority on this vault's log, which the leave ends; every other leave
+    /// is a narrowing and ordinary. The write refuses a revoke of owner
+    /// authority the person was not asked for.
     ///
     /// # Errors
-    /// [`Error::ConcurrentWrite`] when the move became important since the person was asked.
+    /// [`Error::ConcurrentWrite`] when the member came to hold owner authority after the person
+    /// was asked.
     pub fn leave_shared_vault(
         &self,
         member: &AuthenticatedOwner,
@@ -1342,11 +1321,7 @@ impl Vault {
     }
     /// [`Self::leave_shared_vault`], with `between` run after the door asked and before its
     /// write opens: the gap in which another writer can commit first (the test door
-    /// `test_doors::member_departure_between`). The door reads its checks on a read before
-    /// it asks, and asks as important only when the move ends owner authority the member
-    /// holds; every other leave is ordinary. The write derives the importance again and
-    /// answers [`Error::ConcurrentWrite`] when the act became more important since the
-    /// person was asked.
+    /// `test_doors::member_departure_between`).
     pub(crate) fn leave_shared_vault_between(
         &self,
         member: &AuthenticatedOwner,

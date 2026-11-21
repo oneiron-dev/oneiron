@@ -1930,7 +1930,9 @@ impl Vault {
     /// binding the move ends that the root's revoke does not end, and
     /// neither `issuer` nor any key this install holds proves for the owner
     /// (the caller's writer, which holds the move's other changes, drops with
-    /// it); an entry the fold does not count.
+    /// it); [`Error::ConcurrentWrite`], before this writes any authority
+    /// entry, when `ground` is the witness of an ordinary act and the move
+    /// ends a key or a binding; an entry the fold does not count.
     pub(crate) fn revoke_owner_authority_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -1971,6 +1973,8 @@ impl Vault {
                 }));
             }
         }
+        // A revoke the person was not asked for is refused where it is signed.
+        owner_authority_closure::refuse_unasked_revokes(ground, !keys.is_empty())?;
         // A proof key the move ends ends last, after it proved the other
         // revokes and every binding's.
         let proof_key = proof.as_ref().map(OwnerProofSigner::key);
@@ -1987,6 +1991,7 @@ impl Vault {
         let fold = self.authority_view_readonly_in_txn(txn)?;
         // A binding on the proof key the move ends ends with its revoke.
         let bindings = owner_move_bindings(&fold, person, &closure.signed_bindings, &last);
+        owner_authority_closure::refuse_unasked_revokes(ground, !bindings.is_empty())?;
         for (authority_key, epoch) in bindings {
             let op = AuthorityOp::RevokeActor {
                 authority_key,

@@ -10,7 +10,7 @@ use oneiron::authority::{
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::error::{DevicePinRefusal, OwnerPresenceRefusal, RecordError, SecretError};
-use oneiron::federation::{FederationGrantRole as Role, InitialSharedMember};
+use oneiron::federation::{FederationGrantRole as Role, InitialSharedMember, MemberAskChange};
 use oneiron::recovery::PassphraseCost;
 use oneiron::registry::{ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_PERSON};
 use oneiron::store::GateDecisionId;
@@ -18,7 +18,7 @@ use oneiron::test_doors::member_departure_between::{
     leave_shared_vault_between, remove_shared_member_between,
 };
 use oneiron::test_doors::passkey_vouch_limits::{SignedRow, append_signed_rows};
-use oneiron::test_support::{bind_host_owner, provision_engine_machines};
+use oneiron::test_support::bind_host_owner;
 use oneiron::world_keys::DevicePin;
 use oneiron::{EntityId, Error, TimeRange, Vault, VaultConfig};
 use oneiron_authority::authority::ACTOR_CLASS_HUMAN;
@@ -63,7 +63,9 @@ fn scripted_gate(
     presence
 }
 
-/// A rooted shared vault whose embedded owner the host root binds, with one plain member.
+/// A rooted, self-hosted shared vault whose embedded owner the host root binds, with one
+/// plain member. The host seed rests in this install's keystore, so a door given no issuer
+/// loads the vault's own.
 struct Departure {
     vault: Vault,
     issuer: HostSlipIssuer,
@@ -79,7 +81,11 @@ impl Departure {
         let vault = Vault::open(dir.path(), VaultConfig::device()).expect("vault");
         let keystore = Arc::new(MemoryKeystore::default());
         vault.install_device_keystore(keystore.clone());
-        let issuer = provision_engine_machines(&vault);
+        let issuer = vault.bootstrap_host_slip_issuer().expect("the host seed");
+        vault.ensure_host_root_slip(&issuer).expect("the host root");
+        vault
+            .provision_engine_machine_identities(&issuer)
+            .expect("engine machines");
         vault
             .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
             .expect("this install's live machine profile");
@@ -129,6 +135,23 @@ impl Departure {
 
     fn member_proof(&self) -> AuthenticatedOwner {
         proof(&self.vault, self.member)
+    }
+
+    /// `person` joins the shared vault at `role`: the Owner invites them and they accept.
+    fn join(&self, person: EntityId, role: Role) {
+        self.vault
+            .add_shared_member(&self.owner_proof(), SHARED, person, Some(role))
+            .expect("the Owner invites the person");
+        let invitation = self
+            .vault
+            .shared_invitations(&proof(&self.vault, person), SHARED)
+            .expect("invitations")
+            .into_iter()
+            .find(|open| open.role == role)
+            .expect("the invitation");
+        self.vault
+            .accept_shared_invitation(&proof(&self.vault, person), SHARED, &invitation.id)
+            .expect("the invitee accepts");
     }
 
     /// The role `who` holds in the shared vault now, from its grant rows.
@@ -187,6 +210,15 @@ impl Departure {
             .enrol_owner_signing_key_as_host(&authority, input, &self.issuer)
             .expect("an Owner enrols an owner key of their own");
         key
+    }
+
+    /// The Owner enrols one more owner key, made from `seed`, and `signer`'s owner key signs
+    /// a `human` binding of `person` on it: `person` then holds owner authority and no key.
+    fn bound_key(&self, person: EntityId, signer: &SigningKey, seed: u8) -> AuthorityKey {
+        let key = self.enrol_device_key(self.owner, seed);
+        let bound = AuthorityKey::Ed25519(key.verifying_key().to_bytes());
+        self.bind_on(&bound, person, signer);
+        bound
     }
 
     /// `signer`'s owner key signs a `human` binding of `person` on `key`, which holds none
@@ -248,11 +280,17 @@ fn assert_refused_unasked<T: std::fmt::Debug>(answer: &oneiron::Result<T>, what:
     );
 }
 
-/// A removal the door refuses on its read raises no prompt and stores nothing.
+/// A removal the door refuses on its read raises no prompt and stores nothing. Each target
+/// holds owner authority, so each removal would ask as important if it passed the read.
 #[test]
 fn a_removal_refused_on_its_read_raises_no_prompt() {
     let dep = Departure::new();
+    let holding = person(&dep.vault);
+    dep.join(holding, Role::Member);
     let stranger = person(&dep.vault);
+    let signer = dep.enrol_device_key(dep.owner, 7);
+    let held = dep.bound_key(holding, &signer, 15);
+    let strangers = dep.bound_key(stranger, &signer, 23);
     let history = dep.history();
     let presence = scripted_gate(&dep.vault, []);
     let vault = &dep.vault;
@@ -265,20 +303,45 @@ fn a_removal_refused_on_its_read_raises_no_prompt() {
         "the removal of an Owner",
     );
     assert_refused_unasked(
-        &vault.remove_shared_member(&dep.member_proof(), SHARED, dep.owner, None),
-        "a removal by a caller without the power",
+        &vault.remove_shared_member(&dep.member_proof(), SHARED, holding, None),
+        "a removal by a Member, who holds no remove power",
     );
     assert_eq!(presence.prompts(), 0, "no refusal showed a prompt");
     assert_eq!(dep.history(), history, "the log holds the entries it held");
-    assert_eq!(dep.role_of(dep.member), Some(Role::Member));
+    assert_eq!(dep.role_of(holding), Some(Role::Member));
     assert_eq!(dep.role_of(dep.owner), Some(Role::Owner));
+    assert_eq!(
+        dep.bound_to(&held),
+        Some(holding),
+        "the member's binding stays"
+    );
+    assert_eq!(
+        dep.bound_to(&strangers),
+        Some(stranger),
+        "the binding stays"
+    );
+    // The same member's removal by the Owner passes the read, and it asks.
+    let asked = vault.remove_shared_member(&dep.owner_proof(), SHARED, holding, None);
+    assert!(
+        matches!(
+            asked,
+            Err(Error::Record(RecordError::OwnerPresenceRequired {
+                here: OwnerPresenceRefusal::Declined
+            }))
+        ),
+        "a removal that passes the read asks: {asked:?}"
+    );
+    assert_eq!(presence.prompts(), 1, "that removal showed one prompt");
 }
 
-/// A leave the door refuses on its read raises no prompt and stores nothing.
+/// A leave the door refuses on its read raises no prompt and stores nothing. Each person
+/// holds owner authority, so each leave would ask as important if it passed the read.
 #[test]
 fn a_leave_refused_on_its_read_raises_no_prompt() {
     let dep = Departure::new();
     let stranger = person(&dep.vault);
+    let signer = dep.enrol_device_key(dep.owner, 7);
+    let strangers = dep.bound_key(stranger, &signer, 15);
     let history = dep.history();
     let presence = scripted_gate(&dep.vault, []);
     assert_refused_unasked(
@@ -294,6 +357,47 @@ fn a_leave_refused_on_its_read_raises_no_prompt() {
     assert_eq!(presence.prompts(), 0, "no refusal showed a prompt");
     assert_eq!(dep.history(), history, "the log holds the entries it held");
     assert_eq!(dep.role_of(dep.owner), Some(Role::Owner));
+    assert_eq!(
+        dep.bound_to(&strangers),
+        Some(stranger),
+        "the binding stays"
+    );
+}
+
+/// An Owner applies a Steward's ask to remove a member after the Steward lost the role: the
+/// door refuses on its read, before it asks. The member holds owner authority, so the
+/// removal would ask as important if it passed the read.
+#[test]
+fn an_applied_ask_whose_steward_lost_the_role_raises_no_prompt() {
+    let dep = Departure::new();
+    let steward = person(&dep.vault);
+    dep.join(steward, Role::Steward);
+    let signer = dep.enrol_device_key(dep.owner, 7);
+    let bound = dep.bound_key(dep.member, &signer, 15);
+    let ask = dep
+        .vault
+        .ask_shared_member_change(
+            &proof(&dep.vault, steward),
+            SHARED,
+            MemberAskChange::Remove {
+                member: dep.member.to_hex(),
+            },
+        )
+        .expect("the Steward's ask");
+    dep.vault
+        .change_shared_member_role(&dep.owner_proof(), SHARED, steward, Role::Member, None)
+        .expect("the Owner makes the Steward a Member");
+    let history = dep.history();
+    let presence = scripted_gate(&dep.vault, []);
+    assert_refused_unasked(
+        &dep.vault
+            .apply_shared_member_ask(&dep.owner_proof(), &ask.id, None),
+        "an ask whose Steward lost the role",
+    );
+    assert_eq!(presence.prompts(), 0, "the refusal showed no prompt");
+    assert_eq!(dep.history(), history, "the log holds the entries it held");
+    assert_eq!(dep.role_of(dep.member), Some(Role::Member));
+    assert_eq!(dep.bound_to(&bound), Some(dep.member), "the binding stays");
 }
 
 /// Removing a member who holds a binding asks, and a declined confirm stores nothing.
@@ -437,6 +541,7 @@ fn a_member_who_gains_owner_authority_after_the_door_asked_is_a_conflict() {
     let second = dep.enrol_device_key(dep.owner, 15);
     let bound = AuthorityKey::Ed25519(second.verifying_key().to_bytes());
     let presence = scripted_gate(&dep.vault, [Err(PresenceError::Declined)]);
+    let before = dep.history();
     let conflict =
         leave_shared_vault_between(&dep.vault, &dep.member_proof(), SHARED, None, || {
             dep.bind_on(&bound, dep.member, &first);
@@ -451,6 +556,12 @@ fn a_member_who_gains_owner_authority_after_the_door_asked_is_a_conflict() {
         Some(Role::Member),
         "the member still holds their role"
     );
+    assert_eq!(
+        dep.bound_to(&bound),
+        Some(dep.member),
+        "between's binding stands"
+    );
+    assert_eq!(dep.history().len(), before.len() + 1, "only between wrote");
 }
 
 /// An ordinary removal lands unasked on a PIN device whose window ended, while an important one answers PIN required.
@@ -458,24 +569,10 @@ fn a_member_who_gains_owner_authority_after_the_door_asked_is_a_conflict() {
 fn a_removal_on_a_device_whose_pin_window_ended() {
     let dep = Departure::new();
     let holding = person(&dep.vault);
-    dep.vault
-        .add_shared_member(&dep.owner_proof(), SHARED, holding, Some(Role::Member))
-        .expect("the Owner invites a second Member");
-    let invitation = dep
-        .vault
-        .shared_invitations(&proof(&dep.vault, holding), SHARED)
-        .expect("invitations")
-        .into_iter()
-        .find(|open| open.role == Role::Member)
-        .expect("the invitation");
-    dep.vault
-        .accept_shared_invitation(&proof(&dep.vault, holding), SHARED, &invitation.id)
-        .expect("the member accepts");
+    dep.join(holding, Role::Member);
     // The enrolments ask as important acts, so they come before the PIN is set.
-    let first = dep.enrol_device_key(dep.owner, 7);
-    let second = dep.enrol_device_key(dep.owner, 15);
-    let bound = AuthorityKey::Ed25519(second.verifying_key().to_bytes());
-    dep.bind_on(&bound, holding, &first);
+    let signer = dep.enrol_device_key(dep.owner, 7);
+    dep.bound_key(holding, &signer, 15);
     let pin = DevicePin::with_clock_and_cost(
         dep.keystore.clone(),
         ManualPresenceClock::new(1_000_000, 1_000_000),
