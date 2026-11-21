@@ -8,9 +8,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::source_version::{SourceVersion, source_version_in_txn};
-use super::strength_observations::{
-    observation_reader_scope_for_actor_in_txn, observed_claim_reads_in_txn,
-};
+use super::strength_observations::{live_steward_reader_scope_in_txn, observed_claim_reads_in_txn};
 use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::claim::{ClaimReadStatus, ScopedRead, ScopedReadResult};
 use crate::dreamer_consolidation::routing::PredicateKeyRules;
@@ -309,12 +307,9 @@ pub(crate) fn extraction_reader_scope_in_txn(
         owner.revalidate_as_vault_owner_in_txn(vault, txn)?;
         return Ok(None);
     }
-    // The helper answers the whole vault (`Some(None)`) for a base agent with
-    // no standing row, whose manifest rows read the sibling pages. This page
-    // serves a live grant only, so that answer is no reach here.
-    match observation_reader_scope_for_actor_in_txn(vault, txn, memory.actor())? {
-        Some(Some(scope)) => Ok(Some(scope)),
-        Some(None) | None => Err(MemoryError::new(
+    match live_steward_reader_scope_in_txn(vault, txn, memory.actor())? {
+        Some(scope) => Ok(Some(scope)),
+        None => Err(MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
             "extraction inputs read for the owner under its proof or a live Steward reader",
             &[],

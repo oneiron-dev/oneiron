@@ -272,7 +272,7 @@ impl RefundView {
 enum OwedRefund {
     /// The refund made under the row's own key: the one found, or a new one.
     Keyed(RefundView),
-    /// The payment holds refunds made under no such key (a person's, in the
+    /// The payment holds refunds made under no settle key (a person's, in the
     /// Stripe dashboard), and none under the row's that pays or may still
     /// pay: what of them succeeded, and what Stripe still holds. The row
     /// asked for no refund in this pass.
@@ -486,7 +486,12 @@ impl<'v> StripeClient<'v> {
     /// Stripe dedupes a repeated key for a day only, so a refund it holds
     /// pending longer is never made twice.
     ///
-    /// A payment that already holds a refund made under no such key (a
+    /// A refund under another of the deposit's settle keys is an earlier
+    /// refund the deposit has recorded (a visitor's late cancel's, before the
+    /// owner's return of the balance; review round 2 of #9977): it is
+    /// neither this key's refund nor one made elsewhere, and is passed over.
+    ///
+    /// A payment that already holds a refund made under no settle key (a
     /// person's, in the Stripe dashboard) is never refunded here: a settle
     /// row lives while its refund is owed, so it would pay the visitor a
     /// second time once an outage or a refusal ends. The answer is then what
@@ -521,6 +526,9 @@ impl<'v> StripeClient<'v> {
                 if keyed_unpaid.is_none() {
                     keyed_unpaid = Some(refund);
                 }
+                return ControlFlow::Continue(());
+            }
+            if refund.metadata.contains_key(SETTLE_KEY_METADATA) {
                 return ControlFlow::Continue(());
             }
             match refund.status.as_str() {

@@ -6,10 +6,24 @@
 //! and `source()` are the leaf's, so every message string is what it was when
 //! these variants sat flat on `Error`.
 
+use serde::{Deserialize, Serialize};
+
 use crate::entity_id::EntityId;
+use crate::register::Register;
 use crate::room_join::RoomJoinHold;
 
 use super::ErrorKind;
+
+mod owner_key_move;
+
+pub use owner_key_move::{
+    OWNER_KEY_ACT_REASON_PREFIX, OWNER_KEY_MEMBER_REASON_PREFIX, OWNER_KEY_MOVE_CONFIRM_STEP,
+    OWNER_KEY_MOVE_CONFIRM_SUGGESTION, OWNER_KEY_MOVE_CONFIRM_TEXT,
+    OWNER_KEY_MOVE_DEVICE_CONFIRM_OWN_TEXT, OWNER_KEY_MOVE_DEVICE_CONFIRM_TEXT,
+    OWNER_KEY_MOVE_ENROL_STEP, OWNER_KEY_MOVE_ENROL_SUGGESTION, OWNER_KEY_MOVE_ENROL_TEXT,
+    OWNER_KEY_MOVE_NEXT_STEP, OWNER_KEY_MOVE_REFUSAL_TEXT, OWNER_KEY_MOVE_SUGGESTION,
+    OWNER_KEY_NEXT_STEP_REASON_PREFIX, OwnerKeyMoveStep,
+};
 
 /// The voice call that holds a room's assembly: live in `room`, with its
 /// roster missing or a speaker it must place not entered yet. `call` is the
@@ -83,129 +97,49 @@ impl std::fmt::Display for ErasedHoldTarget {
 /// route's refusal state, and a facade or MCP refusal's reason code.
 pub const OWNER_KEY_REQUIRED: &str = "owner_key_required";
 
-/// The prefix of the reason code that names what a client offers next after
-/// an owner-key refusal of a membership move
-/// ([`RecordError::OwnerKeyMoveRefused`]), followed by the step itself.
-pub const OWNER_KEY_NEXT_STEP_REASON_PREFIX: &str = "next_step:";
+/// The stable reason code of [`RecordError::OwnerPresenceRequired`].
+pub const OWNER_PRESENCE_REQUIRED: &str = "owner_presence_required";
 
-/// The next step [`RecordError::OwnerKeyMoveRefused`] names where no install
-/// of this vault can prove the move and no device confirm reaches it (row
-/// HOSTED-ROOT-REVOKES-OWNER-KEY): an operator's or a proof-of-control
-/// recovery, so a client offers no retry. A hosted server holds no owner key,
-/// and a device holds no host issuer to make the move with.
-pub const OWNER_KEY_MOVE_NEXT_STEP: &str = "owner_device_proof_unavailable";
+/// The prefix of the reason code that names why this device did not confirm the person.
+pub const OWNER_PRESENCE_HERE_REASON_PREFIX: &str = "here:";
 
-/// The next step of a refused shared act whose executor holds a live owner
-/// key on a device of theirs (row HOSTED-OWNER-MOVE-TWO-PHASE): the act stays
-/// pending, and that device confirms it.
-pub const OWNER_KEY_MOVE_CONFIRM_STEP: &str = "confirm_on_owner_device";
-
-/// The next step of a refused shared act whose executor holds no live owner
-/// key (row HOSTED-OWNER-MOVE-TWO-PHASE): the act stays pending until they
-/// enrol an owner key on a device of theirs and confirm it there.
-pub const OWNER_KEY_MOVE_ENROL_STEP: &str = "enrol_owner_device";
-
-/// The prefix of the reason code that names the member whose owner keys a
-/// refused membership move would end ([`RecordError::OwnerKeyMoveRefused`]),
-/// followed by their id in hex.
-pub const OWNER_KEY_MEMBER_REASON_PREFIX: &str = "member:";
-
-/// The prefix of the reason code that names the pending shared act a refused
-/// membership move ran for ([`RecordError::OwnerKeyMoveRefused`]), followed
-/// by its id: the act a device confirms.
-pub const OWNER_KEY_ACT_REASON_PREFIX: &str = "act:";
-
-/// The engine's words for [`RecordError::OwnerKeyMoveRefused`] with
-/// [`OWNER_KEY_MOVE_NEXT_STEP`], kept in this one place with each step's
-/// suggestion (the lead, 15 Nov 21:42: the text stays easy to change). They
-/// say plainly that the move needs a device that holds an owner key (Engine
-/// RULING OWNERKEY-HOSTED-MOVE-NEXT-STEP = A, 16 Nov 19:53).
-pub const OWNER_KEY_MOVE_REFUSAL_TEXT: &str = "This move ends a member's owner keys, so it needs a device that holds your owner key, and this install holds none: nothing was changed.";
-
-/// What [`RecordError::OwnerKeyMoveRefused`] suggests with
-/// [`OWNER_KEY_MOVE_NEXT_STEP`].
-pub const OWNER_KEY_MOVE_SUGGESTION: &str = "This move needs a device that holds your owner key, and none can confirm it here: the member keeps their owner standing until then.";
-
-/// The engine's words with [`OWNER_KEY_MOVE_CONFIRM_STEP`] (Engine RULING
-/// OWNERKEY-HOSTED-MOVE-NEXT-STEP = A: "confirm this on one of your
-/// devices").
-pub const OWNER_KEY_MOVE_CONFIRM_TEXT: &str = "This move ends a member's owner keys: confirm this on one of your devices. Nothing was changed yet.";
-
-/// What [`RecordError::OwnerKeyMoveRefused`] suggests with
-/// [`OWNER_KEY_MOVE_CONFIRM_STEP`].
-pub const OWNER_KEY_MOVE_CONFIRM_SUGGESTION: &str =
-    "Confirm this on one of your devices that holds your owner key; the move waits until then.";
-
-/// The engine's words with [`OWNER_KEY_MOVE_ENROL_STEP`].
-pub const OWNER_KEY_MOVE_ENROL_TEXT: &str = "This move ends a member's owner keys, so you confirm it on a device that holds your owner key, and you hold none yet. Nothing was changed.";
-
-/// What [`RecordError::OwnerKeyMoveRefused`] suggests with
-/// [`OWNER_KEY_MOVE_ENROL_STEP`].
-pub const OWNER_KEY_MOVE_ENROL_SUGGESTION: &str =
-    "Add an owner key on one of your devices, then confirm this there; the move waits until then.";
-
-/// The words the Owner's device shows before it signs a move's owner-key
-/// revokes (Engine ANSWER OWNERKEY-TWO-PHASE-MEMBER-CONFIRM = A). The client
-/// fills `{member}` with the member's name from the device's own copy, never
-/// from the server's plan, and passes that member to
-/// `vault.shared.owner_key_move_sign`.
-pub const OWNER_KEY_MOVE_DEVICE_CONFIRM_TEXT: &str =
-    "End {member}'s owner keys on this vault? They will no longer be an Owner.";
-
-/// [`OWNER_KEY_MOVE_DEVICE_CONFIRM_TEXT`] for an Owner's own leave.
-pub const OWNER_KEY_MOVE_DEVICE_CONFIRM_OWN_TEXT: &str =
-    "End your own owner keys on this vault? You will no longer be an Owner.";
-
-/// What a client offers after [`RecordError::OwnerKeyMoveRefused`]: its
-/// next step, each with one constant for its code, its words and its
-/// suggestion.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OwnerKeyMoveStep {
-    /// No device confirm reaches the move ([`OWNER_KEY_MOVE_NEXT_STEP`]).
-    Unavailable,
-    /// The executor's device confirms the pending act
-    /// ([`OWNER_KEY_MOVE_CONFIRM_STEP`]).
-    ConfirmOnOwnerDevice,
-    /// The executor enrols an owner key on a device first
-    /// ([`OWNER_KEY_MOVE_ENROL_STEP`]).
-    EnrolOwnerDevice,
+/// Why this device did not confirm the person for an owner act.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Register)]
+#[serde(rename_all = "snake_case")]
+#[register("owner.presence.refusal")]
+#[non_exhaustive]
+pub enum OwnerPresenceRefusal {
+    /// The person was asked and did not confirm, so the act stops here.
+    Declined,
+    /// The prompt was shown and nobody answered in time.
+    NoAnswer,
+    /// The screen is locked or locked during the prompt, so confirm again here once unlocked.
+    ScreenLocked,
+    /// The device's prompt failed for a platform reason.
+    PromptFailed,
 }
 
-impl OwnerKeyMoveStep {
-    /// The step's code, after [`OWNER_KEY_NEXT_STEP_REASON_PREFIX`].
-    #[must_use]
-    pub const fn code(self) -> &'static str {
-        match self {
-            Self::Unavailable => OWNER_KEY_MOVE_NEXT_STEP,
-            Self::ConfirmOnOwnerDevice => OWNER_KEY_MOVE_CONFIRM_STEP,
-            Self::EnrolOwnerDevice => OWNER_KEY_MOVE_ENROL_STEP,
-        }
-    }
-
-    /// The refusal's words with this step.
-    #[must_use]
-    pub const fn refusal_text(self) -> &'static str {
-        match self {
-            Self::Unavailable => OWNER_KEY_MOVE_REFUSAL_TEXT,
-            Self::ConfirmOnOwnerDevice => OWNER_KEY_MOVE_CONFIRM_TEXT,
-            Self::EnrolOwnerDevice => OWNER_KEY_MOVE_ENROL_TEXT,
-        }
-    }
-
-    /// The refusal's suggestion with this step.
+impl OwnerPresenceRefusal {
+    /// The single suggestion a surface gives with this refusal.
     #[must_use]
     pub const fn suggestion(self) -> &'static str {
         match self {
-            Self::Unavailable => OWNER_KEY_MOVE_SUGGESTION,
-            Self::ConfirmOnOwnerDevice => OWNER_KEY_MOVE_CONFIRM_SUGGESTION,
-            Self::EnrolOwnerDevice => OWNER_KEY_MOVE_ENROL_SUGGESTION,
+            Self::Declined => "Stop this action here.",
+            Self::NoAnswer => "Try again when you are ready to answer the prompt.",
+            Self::ScreenLocked => "Unlock this device, then try again here.",
+            Self::PromptFailed => "Try again when this device's unlock prompt is working.",
         }
     }
 }
 
-impl std::fmt::Display for OwnerKeyMoveStep {
+impl std::fmt::Display for OwnerPresenceRefusal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.refusal_text())
+        f.write_str(match self {
+            Self::Declined => "Confirmation was declined on this device, so nothing was changed.",
+            Self::NoAnswer => "The prompt on this device went unanswered, so nothing was changed.",
+            Self::ScreenLocked => "The screen was locked, so nothing was changed.",
+            Self::PromptFailed => "This device's prompt failed, so nothing was changed.",
+        })
     }
 }
 
@@ -394,6 +328,11 @@ pub enum RecordError {
         "This machine is not the owner's and holds no owner key: decide it on an owner device."
     )]
     OwnerKeyRequired,
+    /// An owner act that needs the person at this device was refused before
+    /// anything was written. [`OWNER_PRESENCE_REQUIRED`] is its stable reason
+    /// code on every surface; `here` names the local refusal beside it.
+    #[error("{here}")]
+    OwnerPresenceRequired { here: OwnerPresenceRefusal },
     /// A membership move that would end `member`'s owner keys, refused on an
     /// install that holds no owner key the vault trusts (row
     /// HOSTED-ROOT-REVOKES-OWNER-KEY): a revoke of an owner key counts only
@@ -593,9 +532,9 @@ pub enum RecordError {
     /// The authority fold needs history this vault does not hold (OF-469):
     /// no fold answers until an import closes it. `missing` ascends; on a
     /// vault that adopted a checkpoint image it may name covered rows, which
-    /// a late fork or an op the image cannot fold past needs. Fetching them
-    /// may name further ancestors: ask for the vault's history request again
-    /// after each import.
+    /// a late fork or an op the image cannot fold past needs, and `reason`
+    /// says which. Fetching them may name further ancestors: ask for the
+    /// vault's history request again after each import.
     #[error("authority history incomplete: {} rows required", missing.len())]
     AuthorityHistoryRequired {
         /// The authority vault (its genesis hash) the history belongs to.
@@ -604,6 +543,8 @@ pub enum RecordError {
         checkpoint: Option<[u8; 32]>,
         /// The authority entry hashes the fold needs, ascending.
         missing: Vec<[u8; 32]>,
+        /// Why it needs them; None only where a refusal names none.
+        reason: Option<crate::authority::AuthorityHistoryReason>,
     },
     /// The persisted authority clock floor is present and does not decode
     /// (FIX 10106): the vault no longer knows the least second it has
@@ -695,6 +636,7 @@ impl RecordError {
             Self::OwnerKeyRequired | Self::OwnerKeyMoveRefused { .. } => {
                 ErrorKind::OwnerKeyRequired
             }
+            Self::OwnerPresenceRequired { .. } => ErrorKind::OwnerPresenceRequired,
             Self::WorldRecipientLimit(_) => ErrorKind::WorldRecipientLimit,
             Self::WorldPlacementUnverifiable(_) => ErrorKind::WorldPlacementUnverifiable,
             Self::InvalidAccessGrantBody(_) => ErrorKind::InvalidAccessGrantBody,

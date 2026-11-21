@@ -445,6 +445,15 @@ impl FacadeApiError {
         refusal
     }
 
+    /// Whether a verb hook holds the call on its ask: a retry under the
+    /// call's invocation reaches the held call again.
+    pub(crate) fn held_on_ask(&self) -> bool {
+        matches!(
+            self.body.error.hook.as_deref(),
+            Some(oneiron::runtime_hooks::VerbHookStop::Pending { .. })
+        )
+    }
+
     /// The result a verb hook's `Completed` stop carries, beside the
     /// invocation it ran under, for a door that releases a drained call's
     /// saved result before it answers (FIX 1435). `None` for any other

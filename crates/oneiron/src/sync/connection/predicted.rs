@@ -135,11 +135,12 @@ impl SyncConnection {
 
     /// Runs one predicted upkeep pass: ask when due and the fetch gate is open, fetch the
     /// adopted set's windows and documents, and evict what the set dropped, at any time. A
-    /// federation lane does nothing. The home's outage ends the pass quietly. A fault in one
-    /// stage holds back no later stage, eviction least of all: the pass answers its first fault
-    /// once every stage ran.
+    /// federation or member lane does nothing: its residence mode is fixed, and a member lane
+    /// stays Opened for its life (H8-SHARED-ENV-LANE = B). The home's outage ends the pass
+    /// quietly. A fault in one stage holds back no later stage, eviction least of all: the pass
+    /// answers its first fault once every stage ran.
     pub(crate) async fn run_predicted_pass(&self) -> Result<(), TransportError> {
-        if self.config.client_config.federation_peer.is_some() {
+        if self.config.client_config.residence_mode_is_fixed() {
             return Ok(());
         }
         let vault = self.manager.vault();
@@ -175,6 +176,33 @@ impl SyncConnection {
             pass,
             unless_home_offline(self.evict_predictions(&target)).await,
         )
+    }
+
+    /// Reports the items one board showed on this machine to its home, at most
+    /// [`crate::sync::residence::BOARD_SEEDS_MAX`] of them, whoever ran the board (lead ruling
+    /// PREDICTED-BOARD-SEED-SIGNAL = A, 21 Nov): the home records each one this machine may hold
+    /// as a seed of its next prediction, and the answer is how many it recorded. A machine the
+    /// owner did not set to the predicted level reports nothing (0), and so does a federation
+    /// lane. Nothing is kept for a home that is down: a prediction freezes while it is.
+    ///
+    /// # Errors
+    ///
+    /// As [`crate::sync::SyncClient`]'s residence calls: a refusal for more items than that, for
+    /// a mode other than opened or a missing residence selector; the home's outage; storage.
+    pub async fn report_board_seeds(
+        &self,
+        items: &[crate::EntityId],
+    ) -> Result<u64, TransportError> {
+        if items.is_empty() || self.config.client_config.federation_peer.is_some() {
+            return Ok(0);
+        }
+        let predicted = crate::sync::residence::load_device_sync_preference(self.manager.vault())
+            .map_err(storage)?
+            .is_some_and(|preference| preference.predicted);
+        if !predicted {
+            return Ok(0);
+        }
+        self.client()?.report_board_seeds(items).await
     }
 
     /// Asks the home for a prediction when one is due, and takes a pushed one through the

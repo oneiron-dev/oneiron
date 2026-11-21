@@ -94,7 +94,7 @@ pub(super) fn admit_federated_authority_log(
         )?
     {
         return Err(Error::Record(RecordError::InvalidAuthorityLogBody(
-            "authority row signed by a key a handoff retired",
+            "authority row standing on a retired key",
         )));
     }
     Ok(())

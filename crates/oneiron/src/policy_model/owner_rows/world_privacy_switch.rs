@@ -27,7 +27,7 @@ use crate::batch::export::archive_side_install::{
 use crate::batch::export::{
     ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
 };
-use crate::consent::AuthenticatedOwner;
+use crate::consent::{AuthenticatedOwner, OwnerAuthoredWrite};
 use crate::error::{Error, Result};
 use crate::gate::PolicyRowScope;
 use crate::side_table::{self, Named, SideTable};
@@ -181,21 +181,21 @@ impl Vault {
     /// commit: `key_owner` is the live vault owner PERSON the world's key
     /// binds, whoever made the change (a holder, or an agent within its
     /// Grant). `owner_authored` when the edit is the vault owner's own, made
-    /// in person ([`WorldEditAuthor`]): the key records it writes carry the
-    /// owner key's proof the edit carries.
+    /// in person ([`WorldEditAuthor`]): the key records and the key work
+    /// request it writes carry the owner key's proof the edit carries.
     pub(super) fn finish_world_key_work_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         key_owner: EntityId,
         receipt: WorldPrivacyReceipt,
         secret: Result<&crate::world_keys::MachineSecret>,
-        owner_authored: Option<&crate::consent::OwnerAuthoredWrite>,
+        owner_authored: Option<&OwnerAuthoredWrite>,
     ) -> Result<WorldPrivacyReceipt> {
         let world = EntityId::from_hex(&receipt.world)
             .map_err(|_| Error::InvariantViolation("world privacy receipt world"))?;
         let status =
             self.world_key_for_edit_in_txn(txn, key_owner, world, secret, owner_authored)?;
-        self.settle_world_key_work_by_in_txn(txn, key_owner, receipt, status)
+        self.settle_world_key_work_by_in_txn(txn, key_owner, receipt, status, owner_authored)
     }
 
     /// The door's work in the caller's write transaction, for a door that
@@ -288,16 +288,18 @@ impl Vault {
     /// root, holds a wrap of the world's current key: a first key minted on
     /// a bridge record (Docs Q06) still awaits the holder's next wrap. Key
     /// work that awaits a holder names one in the same commit
-    /// ([`Self::settle_world_key_work_by_in_txn`]).
+    /// ([`Self::settle_world_key_work_by_in_txn`]). `owner_authored` as
+    /// the edit's door took it from `owner`.
     pub(crate) fn settle_world_key_work_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         owner: &AuthenticatedOwner,
         receipt: WorldPrivacyReceipt,
         status: Option<WorldKeyStatus>,
+        owner_authored: Option<&OwnerAuthoredWrite>,
     ) -> Result<WorldPrivacyReceipt> {
         let key_owner = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
-        self.settle_world_key_work_by_in_txn(txn, key_owner, receipt, status)
+        self.settle_world_key_work_by_in_txn(txn, key_owner, receipt, status, owner_authored)
     }
 
     /// [`Self::settle_world_key_work_in_txn`] for any author, the world's key
@@ -306,12 +308,16 @@ impl Vault {
     /// owns the vault or not, or an agent within its Grant; FIX 4704): an
     /// owner work request for the settings revision right after the edit,
     /// carrying the edit's own act, signed by this install as its carrier.
+    /// `owner_authored` when the edit is the vault owner's own, made in
+    /// person: the request then carries the owner key's proof the edit
+    /// carries.
     pub(super) fn settle_world_key_work_by_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         key_owner: EntityId,
         mut receipt: WorldPrivacyReceipt,
         status: Option<WorldKeyStatus>,
+        owner_authored: Option<&OwnerAuthoredWrite>,
     ) -> Result<WorldPrivacyReceipt> {
         let mut key_work = key_work_of(&receipt.next, status);
         let world = EntityId::from_hex(&receipt.world)
@@ -335,8 +341,13 @@ impl Vault {
             ))?;
             let after = parse_revision(&receipt.revision_after)
                 .ok_or(Error::InvariantViolation("world privacy receipt revision"))?;
-            receipt.owner_work =
-                Some(self.record_world_privacy_work_in_txn(txn, edit.0, key_owner, after.0)?);
+            receipt.owner_work = Some(self.record_world_privacy_work_in_txn(
+                txn,
+                edit.0,
+                key_owner,
+                after.0,
+                owner_authored,
+            )?);
         }
         RECEIPTS.put(&self.store, txn, &receipt.revision, &receipt)?;
         Ok(receipt)

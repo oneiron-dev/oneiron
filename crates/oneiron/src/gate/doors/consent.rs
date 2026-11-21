@@ -29,14 +29,8 @@ impl GateConsentBinding {
         body: &ClaimBody,
         policy: &PolicyManifestResolution,
     ) -> Result<Self> {
-        let mut normalized = body.clone();
-        normalized.approval = ClaimApprovalStatus::Proposed;
-        let encoded = crate::claim::encode_claim_body(&normalized)?;
-        let mut hasher = Sha256::new();
-        hasher.update(b"oneiron.gate.claim_diff.v0");
-        hasher.update(&encoded);
         Ok(Self {
-            diff_handle: hasher.finalize().to_vec(),
+            diff_handle: claim_diff_handle(body)?,
             read_frontier_hash: policy.read_frontier_hash()?,
         })
     }
@@ -51,6 +45,19 @@ impl GateConsentBinding {
             read_frontier_hash: policy.read_frontier_hash()?,
         })
     }
+}
+
+/// The diff handle a claim decision on `body` binds: the body in its
+/// Proposed form, hashed, so the binding names the content and not the
+/// approval the write asks for.
+pub(in crate::gate) fn claim_diff_handle(body: &ClaimBody) -> Result<Vec<u8>> {
+    let mut normalized = body.clone();
+    normalized.approval = ClaimApprovalStatus::Proposed;
+    let encoded = crate::claim::encode_claim_body(&normalized)?;
+    let mut hasher = Sha256::new();
+    hasher.update(b"oneiron.gate.claim_diff.v0");
+    hasher.update(&encoded);
+    Ok(hasher.finalize().to_vec())
 }
 
 /// The diff handle an external-effect decision on `input` records: its

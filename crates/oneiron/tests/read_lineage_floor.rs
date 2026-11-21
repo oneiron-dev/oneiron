@@ -129,11 +129,23 @@ fn claim_born_with(
     role: MadeByInputRole,
     value: &str,
 ) -> EntityId {
+    claim_of_predicate_born_with(mailbox, inputs, role, "profile.preference", value)
+}
+
+/// [`claim_born_with`] under `predicate`, so CLAIMs of distinct predicates
+/// never supersede one another.
+fn claim_of_predicate_born_with(
+    mailbox: &Mailbox,
+    inputs: &[EntityId],
+    role: MadeByInputRole,
+    predicate: &str,
+    value: &str,
+) -> EntityId {
     let id = EntityId::now();
     put_claim_made_by(
         &mailbox.vault,
         id,
-        &claim_body(mailbox, "profile.preference", value),
+        &claim_body(mailbox, predicate, value),
         made_by(mailbox, inputs, role),
     )
     .expect("FIXTURE: the CLAIM and its birth");
@@ -190,6 +202,42 @@ fn a_claim_born_from_a_mailbox_row_reads_only_to_the_mailboxs_readers() {
     assert!(
         !reads(&mailbox.vault, learnt, &[mailbox.stranger]).expect("the stranger reads it"),
         "LEAK: a stranger reads a CLAIM whose birth names a mailbox's row",
+    );
+}
+
+/// The measured case (OPUS-LINEAGE-MEASURE set C3, 21 Nov 04:22): under the
+/// walk alone, a reader named by no policy read every one of 5,000 CLAIMs
+/// born from a mailbox's rows by their birth's inputs alone. With the floor
+/// it reads none of them, and the mailbox's reader reads every one.
+#[test]
+fn a_reader_named_by_no_policy_reads_none_of_the_claims_learnt_from_a_mailbox() {
+    let mailbox = mailbox();
+    let learnt: Vec<EntityId> = (0..50)
+        .map(|n| {
+            claim_of_predicate_born_with(
+                &mailbox,
+                &[mailbox.row],
+                MadeByInputRole::Input,
+                &format!("fact.mailbox_n{n}"),
+                "learnt from the mailbox",
+            )
+        })
+        .collect();
+    let read_by = |viewer: EntityId| {
+        learnt
+            .iter()
+            .filter(|claim| reads(&mailbox.vault, **claim, &[viewer]).expect("the walk reads"))
+            .count()
+    };
+    assert_eq!(
+        read_by(mailbox.stranger),
+        0,
+        "LEAK: a reader named by no policy reads CLAIMs learnt from the mailbox",
+    );
+    assert_eq!(
+        read_by(mailbox.reader),
+        learnt.len(),
+        "the mailbox's reader reads every CLAIM learnt from it",
     );
 }
 

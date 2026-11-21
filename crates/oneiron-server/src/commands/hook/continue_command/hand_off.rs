@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 use oneiron_vault_contract::BINDING_HEADER;
 
 use crate::commands::api::signed_binding_for_seed;
+use crate::commands::oauth_sign_in::OAuthSession;
 
 mod lfs;
 
@@ -87,16 +88,44 @@ pub(super) fn repo_top(dir: &Path, deadline: Instant) -> anyhow::Result<PathBuf>
     git_path(dir, ["rev-parse", "--show-toplevel"], deadline)
 }
 
-/// The custody repo a hand-off goes to, and the paired slip that pushes it.
+/// The custody repo a hand-off goes to, and the credential that pushes it.
 pub(crate) struct CustodyRepo<'a> {
     /// The hosted vault's origin, e.g. `https://vault.example`.
     pub(crate) origin: &'a str,
     /// The repo's served name, as the push URL's `{repo}`.
     pub(crate) repo: &'a str,
-    /// The slip, `v2.slip.…`.
-    pub(crate) token: &'a str,
-    /// The slip's holder seed, 64 hex.
-    pub(crate) seed: &'a str,
+    /// What each request of the push carries.
+    pub(crate) credential: PushCredential<'a>,
+}
+
+/// What pushes a hand-off.
+pub(crate) enum PushCredential<'a> {
+    /// A paired slip, `v2.slip.…`, and its holder seed, 64 hex: each request
+    /// carries the slip and a fresh holder proof.
+    Slip { token: &'a str, seed: &'a str },
+    /// An OAuth continue sign-in, `full` at the vault's `/mcp` and `/git`
+    /// (CONTINUE-STEP-UP-MCP-WRITE = A): each request carries its bearer alone,
+    /// refreshed when due, and the vault signs the request's holder proof
+    /// for the slip it holds for the token.
+    OAuth(&'a OAuthSession),
+}
+
+impl PushCredential<'_> {
+    /// `request` with this credential's headers.
+    fn prove(
+        &self,
+        request: reqwest::blocking::RequestBuilder,
+    ) -> anyhow::Result<reqwest::blocking::RequestBuilder> {
+        Ok(match self {
+            Self::Slip { token, seed } => request
+                .header(reqwest::header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(BINDING_HEADER, signed_binding_for_seed(token, seed)?),
+            Self::OAuth(session) => request.header(
+                reqwest::header::AUTHORIZATION,
+                format!("Bearer {}", session.bearer().map_err(anyhow::Error::msg)?),
+            ),
+        })
+    }
 }
 
 /// Pushes `commit` to `git_ref` of `custody` over git's smart HTTP
@@ -104,17 +133,18 @@ pub(crate) struct CustodyRepo<'a> {
 /// needs a holder proof of its own (the vault spends a proof's nonce on the
 /// request it admits), and stock git repeats one static header on every
 /// request of a push. So the ref advertisement and the push each carry the
-/// slip and a fresh proof; the pack is `git pack-objects` of what the commit
-/// reaches and the advertised refs do not. Before the pack, the Git-LFS
-/// objects of the pointers the push adds go up through the custody repo's
-/// LFS door, each request with the slip and a fresh proof too
-/// ([`lfs::send_objects`]): the landing refuses a pointer whose object the
-/// vault lacks. The ref is the conversation's own hand-off ref, so a later
+/// slip and a fresh proof (an OAuth continue sign-in's bearer alone: the vault
+/// proves each of its requests itself, [`PushCredential::OAuth`]); the pack
+/// is `git pack-objects` of what the commit reaches and the advertised refs
+/// do not. Before the pack, the Git-LFS objects of the pointers the push
+/// adds go up through the custody repo's LFS door, each request with the
+/// same credential ([`lfs::send_objects`]): the landing refuses a pointer
+/// whose object the vault lacks. The ref is the conversation's own hand-off ref, so a later
 /// hand-off of it replaces it whatever it held. The repo's pre-push hook does
 /// not run: it guards pushes to the user's own remotes, and a hand-off ref is
 /// none of them. The requests go straight to the vault, never through a proxy
-/// the environment names: they carry the slip, a fresh proof and the
-/// workspace. Each request ends by `deadline`.
+/// the environment names: they carry the credential and the workspace. Each
+/// request ends by `deadline`.
 pub(crate) fn push(
     top: &Path,
     custody: &CustodyRepo<'_>,
@@ -133,17 +163,7 @@ pub(crate) fn push(
         .connect_timeout(Duration::from_secs(30))
         .timeout(deadline.saturating_duration_since(Instant::now()))
         .build()?;
-    let proven = |request: reqwest::blocking::RequestBuilder| -> anyhow::Result<_> {
-        Ok(request
-            .header(
-                reqwest::header::AUTHORIZATION,
-                format!("Bearer {}", custody.token),
-            )
-            .header(
-                BINDING_HEADER,
-                signed_binding_for_seed(custody.token, custody.seed)?,
-            ))
-    };
+    let proven = |request: reqwest::blocking::RequestBuilder| custody.credential.prove(request);
 
     let answer =
         proven(client.get(format!("{base}/info/refs?service=git-receive-pack")))?.send()?;
@@ -587,8 +607,37 @@ pub(crate) mod test_support {
         let custody = CustodyRepo {
             origin,
             repo,
-            token,
-            seed,
+            credential: PushCredential::Slip { token, seed },
+        };
+        push(&hand_off.top, &custody, &hand_off.commit, git_ref, deadline)
+            .map_err(|error| format!("{error:#}"))?;
+        Ok(hand_off.commit)
+    }
+
+    /// As [`push_hand_off`], on the OAuth sign-in in `sign_in_file` (the
+    /// continue sign-in `oneiron continue --cloud` pushes with) in place of
+    /// a slip: each request carries its bearer alone. Runs on the blocking
+    /// pool of a runtime, which refreshes the sign-in when due.
+    pub fn push_hand_off_signed_in(
+        dir: &Path,
+        origin: &str,
+        repo: &str,
+        sign_in_file: &Path,
+        git_ref: &str,
+    ) -> Result<String, String> {
+        let runtime =
+            tokio::runtime::Handle::try_current().map_err(|error| format!("{error:#}"))?;
+        let door =
+            reqwest::Url::parse(&format!("{origin}/git")).map_err(|error| format!("{error:#}"))?;
+        let session = OAuthSession::open(sign_in_file, &door, runtime)
+            .map_err(|error| format!("{error:#}"))?;
+        let deadline = Instant::now() + super::super::DEADLINE;
+        let hand_off = hand_off_commit(dir, "a test hand-off", deadline)
+            .map_err(|error| format!("{error:#}"))?;
+        let custody = CustodyRepo {
+            origin,
+            repo,
+            credential: PushCredential::OAuth(&session),
         };
         push(&hand_off.top, &custody, &hand_off.commit, git_ref, deadline)
             .map_err(|error| format!("{error:#}"))?;

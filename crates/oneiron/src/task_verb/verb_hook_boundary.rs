@@ -4,7 +4,11 @@
 //! MCP and code-mode dispatch, the HTTP routes that run a row themselves,
 //! code mode's browser rows and the native handles that call the engine
 //! directly. Each door wraps the row's own call, never a wrapper around it,
-//! so a hook fires once per logical verb. A hook's stop reaches the caller as
+//! so a hook fires once per logical verb. A transport-only row
+//! (`host_door_transport_only`: `vault.imports.hook_transcript_part`, FIX
+//! HOOK-TRANSCRIPT-IMPORT-PAST-CARRIER) is no logical verb of its own: it
+//! stages a part of another verb's request, crosses no boundary, and the
+//! request it carries crosses its own verb's once. A hook's stop reaches the caller as
 //! a refusal whose `hook` carries the typed stop. A call the generated
 //! `invoke` runs saves how to run it again with its ask, so settlement
 //! resumes it (`Vault::drain_verb_asks`); a retry then answers what it

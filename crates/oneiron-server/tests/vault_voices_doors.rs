@@ -38,6 +38,9 @@
 //!   consent-log verb `vault.voices.recognition.consent` logs a
 //!   counterparty's spoken withdrawal on a call, the owner is told which
 //!   consent was withdrawn, and the withdrawal only narrows;
+//! - a withdrawal dated before a grant it covers is accepted and voids that
+//!   grant, while a yes recorded after it stands (VOICE-BACKDATED-WITHDRAWAL-SHAPE
+//!   = B); red on main, where the voided grant enrols a print again;
 //! - logging voice-recognition consent enrols nothing (VOICE-CONSENT-LOG-WHO = A;
 //!   oneiron-arch-0061 "the agent logs who/when/what"): a person logs their own
 //!   voice, the owner any subject's, and an agent with the consent-log Grant a
@@ -76,7 +79,8 @@ use oneiron::authority::{
     CapabilitySlip, HostSlipIssuer, PairingPrincipal, pairing_binding_transcript,
 };
 use oneiron::federation::{Scope, ScopeAxis};
-use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::inbox::decode_notification_body;
+use oneiron::registry::{ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_PERSON};
 use oneiron::voice_identity::{
     VoiceConsentBasis, VoiceConsentEventV1, VoiceConsentState, VoiceEmbeddingFamily,
     VoiceEmbeddingSpaceV1, VoiceEnrollmentLegalContext, VoiceEnrollmentOrigin,
@@ -221,13 +225,32 @@ async fn pair(
     class: &str,
     seed: [u8; 32],
 ) -> Holder {
+    pair_with_verbs(
+        vault,
+        app,
+        issuer,
+        principal,
+        class,
+        seed,
+        &["core:read", "core:write"],
+    )
+    .await
+}
+
+/// [`pair`] with the link narrowed to `verbs`.
+async fn pair_with_verbs(
+    vault: &Vault,
+    app: &Router,
+    issuer: &HostSlipIssuer,
+    principal: EntityId,
+    class: &str,
+    seed: [u8; 32],
+    verbs: &[&str],
+) -> Holder {
     let key = SigningKey::from_bytes(&seed);
     let binding_key = key.verifying_key().to_bytes();
     let mut scope = Scope::top();
-    scope.verbs = ScopeAxis::Some(BTreeSet::from([
-        "core:read".to_owned(),
-        "core:write".to_owned(),
-    ]));
+    scope.verbs = ScopeAxis::Some(verbs.iter().map(|verb| (*verb).to_owned()).collect());
     let link = vault
         .issue_pairing_link_for_principal(
             issuer,
@@ -1148,6 +1171,83 @@ fn a_recognition_withdrawal_deletes_the_print_and_keeps_the_consent_record() {
     });
 }
 
+/// A withdrawal dated before a grant it covers is never refused, and it
+/// voids that grant (FIX [VOICE-WITHDRAWAL-BACKDATED-LEAVES-GRANT];
+/// VOICE-BACKDATED-WITHDRAWAL-SHAPE = B: "It voids every covered grant dated
+/// after it, and a yes recorded later still stands"). Red on main: the old
+/// grant enrols a new print again, since main blocks a grant only by a
+/// withdrawal dated at or after it.
+#[test]
+fn a_backdated_withdrawal_voids_the_later_dated_grant_and_a_later_yes_stands() {
+    run_on_engine_stack("voices-recognition-backdated-withdrawal", || async {
+        let served = served().await;
+        let now = served.vault.now_recorded_at();
+        let owner = served.owner_person;
+        served.enroll_print(owner, "backdated-old-grant", &axis_vector(0), now);
+        assert_eq!(
+            served.recognized("before-backdated-withdrawal", &axis_vector(0)),
+            Some(owner),
+            "setup: the enrolled print recognizes the owner"
+        );
+
+        // The owner logs a "stop" said ten minutes before the grant's time.
+        let withdrawal = recognition_withdrawal("backdated-withdrawal", now - 600, None);
+        let receipt = served
+            .ok(Caller::Owner, RECOGNITION_WITHDRAW, withdrawal.clone())
+            .await;
+        assert_eq!(receipt["replayed"], false, "{receipt}");
+        assert_eq!(
+            receipt["deleted_print"], true,
+            "the backdated withdrawal is accepted and deletes the print: {receipt}"
+        );
+        assert!(
+            served
+                .vault
+                .enroll_voice_print(&enrollment(
+                    owner,
+                    "backdated-old-grant",
+                    &axis_vector(0),
+                    now,
+                ))
+                .is_err(),
+            "the grant dated after the withdrawal it was recorded before enrolls no new print"
+        );
+        assert_eq!(
+            served.recognized("after-backdated-withdrawal", &axis_vector(0)),
+            None,
+            "no print recognizes the owner after the backdated withdrawal"
+        );
+
+        // A yes recorded after the withdrawal stands on its own date, even
+        // dated between the withdrawal and the voided grant, and a replay of
+        // the withdrawal voids nothing new.
+        let later = served
+            .ok(
+                Caller::Owner,
+                RECOGNITION_CONSENT,
+                recognition_consent("later-yes", now - 300, None, &["meeting_attribution"]),
+            )
+            .await;
+        assert_eq!(
+            later["replayed"], false,
+            "setup: the later yes is logged: {later}"
+        );
+        let replay = served
+            .ok(Caller::Owner, RECOGNITION_WITHDRAW, withdrawal)
+            .await;
+        assert_eq!(replay["replayed"], true, "{replay}");
+        served
+            .vault
+            .enroll_voice_print(&enrollment(owner, "later-yes", &axis_vector(0), now))
+            .expect("the yes recorded after the backdated withdrawal enrolls a print");
+        assert_eq!(
+            served.recognized("after-later-yes", &axis_vector(0)),
+            Some(owner),
+            "the print the later yes enrolled recognizes the owner"
+        );
+    });
+}
+
 /// A person withdraws recognition consent for their own voice, and only the
 /// vault owner for another subject's, such as a counterparty who holds no
 /// credential here. A person naming another subject and an agent with no
@@ -1653,6 +1753,1119 @@ fn an_agent_with_the_consent_log_grant_logs_a_counterpartys_consent_and_tells_th
         assert_eq!(
             served.recognized("after-agent-consent", &axis_vector(2)),
             Some(counterparty)
+        );
+    });
+}
+
+impl Served {
+    /// The member's own inbox rows of an agent-logged withdrawal of their
+    /// voice, read as the member reads them: `self.inbox.list` on their own
+    /// credential and holder proof.
+    async fn member_withdrawal_rows(&self) -> Vec<Value> {
+        let page = self
+            .ok(Caller::Person, "self.inbox.list", json!({"limit": 100}))
+            .await;
+        page["rows"]
+            .as_array()
+            .unwrap_or_else(|| panic!("the member's inbox page: {page}"))
+            .iter()
+            .filter(|row| row["kind"] == "voice_recognition_withdrawal_logged_for_subject")
+            .cloned()
+            .collect()
+    }
+
+    /// The member's own inbox notices that an agent logged their spoken
+    /// recognition withdrawal, as (result, detail).
+    async fn member_withdrawal_notices(&self) -> Vec<(Option<String>, Option<String>)> {
+        let text = |value: &Value| value.as_str().map(str::to_owned);
+        self.member_withdrawal_rows()
+            .await
+            .iter()
+            .map(|row| {
+                (
+                    text(&row["source"]["result"]),
+                    text(&row["source"]["detail"]),
+                )
+            })
+            .collect()
+    }
+
+    /// Every stored notice of an agent-logged withdrawal addressed to
+    /// `recipient`, as (result, detail), read from the raw rows: an inbox
+    /// lists only its caller's own rows, and a person who holds no credential
+    /// here has no inbox door to read.
+    fn stored_subject_withdrawal_notices(
+        &self,
+        recipient: EntityId,
+    ) -> Vec<(Option<String>, Option<String>)> {
+        let recipient = recipient.to_hex();
+        self.vault
+            .entities_by_type(ENTITY_TYPE_NOTIFICATION)
+            .expect("the notification rows")
+            .into_iter()
+            .filter_map(|id| self.vault.get(&id).expect("a notification row"))
+            .map(|body| decode_notification_body(&body).expect("a notification body"))
+            .filter(|body| {
+                serde_json::to_value(body.kind).ok()
+                    == Some(json!("voice_recognition_withdrawal_logged_for_subject"))
+                    && body.recipient.as_deref() == Some(recipient.as_str())
+            })
+            .map(|body| (body.source.result, body.source.detail))
+            .collect()
+    }
+}
+
+/// An agent logs recognition consent only for a person who holds no
+/// credential in this vault (VOICE-CONSENT-LOG-MEMBERS, consent = B): a live
+/// member consents on their own proof. The refusal logs nothing and tells
+/// no one, and the member's own consent on their own proof still lands.
+#[test]
+fn an_agent_never_logs_consent_for_a_live_member() {
+    run_on_engine_stack("voices-recognition-consent-member", || async {
+        let served = served().await;
+        let now = served.vault.now_recorded_at();
+        let member = served.person.actor;
+        served.grant_agent(&[RECOGNITION_CONSENT]).await;
+
+        let input = recognition_consent(
+            "member-spoken-consent",
+            now,
+            Some(member),
+            &["meeting_attribution"],
+        );
+        let (status, body) = served.post(Caller::Agent, RECOGNITION_CONSENT, input).await;
+        assert_eq!(
+            error_code(&body),
+            Some("FORBIDDEN"),
+            "the agent on a live member's voice is refused: {status} {body}"
+        );
+        assert!(
+            served.consent_notices().is_empty(),
+            "a refusal tells no one"
+        );
+
+        let own = served
+            .ok(
+                Caller::Person,
+                RECOGNITION_CONSENT,
+                recognition_consent("member-own-consent", now, None, &["meeting_attribution"]),
+            )
+            .await;
+        assert_eq!(own["subject"], member.to_hex(), "{own}");
+        assert_eq!(own["recorded_by"], member.to_hex(), "{own}");
+    });
+}
+
+/// An agent's logged withdrawal of a live member's voice stands
+/// (VOICE-CONSENT-LOG-MEMBERS, withdrawal = A: it only narrows), and the
+/// member is told in the same write that the agent recorded they asked to
+/// stop voice recognition. The owner is told as before; a counterparty, who
+/// holds no credential here, gets no such notice; a replay tells no one
+/// again.
+#[test]
+fn an_agent_logs_a_live_members_withdrawal_and_tells_the_member() {
+    run_on_engine_stack("voices-recognition-withdraw-member", || async {
+        let served = served().await;
+        let now = served.vault.now_recorded_at();
+        let owner = served.owner_person;
+        let member = served.person.actor;
+        let agent = served.agent.actor;
+        let counterparty = EntityId::now();
+        served.enroll_print(member, "member-grant", &axis_vector(1), now);
+        served.enroll_print(counterparty, "counterparty-grant", &axis_vector(2), now);
+        let grant = served.grant_agent(&[RECOGNITION_CONSENT]).await;
+
+        let withdrawal = recognition_withdrawal("member-spoken-withdrawal", now, Some(member));
+        let receipt = served
+            .ok(Caller::Agent, RECOGNITION_WITHDRAW, withdrawal.clone())
+            .await;
+        assert_eq!(receipt["subject"], member.to_hex(), "{receipt}");
+        assert_eq!(receipt["recorded_by"], agent.to_hex(), "{receipt}");
+        assert_eq!(receipt["replayed"], false, "{receipt}");
+        assert_eq!(
+            served.recognized("after-member-withdrawal", &axis_vector(1)),
+            None,
+            "recognition of the member stops in the same write"
+        );
+
+        let told = served.member_withdrawal_notices().await;
+        assert_eq!(told.len(), 1, "one notice for the member: {told:?}");
+        let (result, detail) = &told[0];
+        assert_eq!(result.as_deref(), Some("member-spoken-withdrawal"));
+        let detail = detail.as_deref().expect("the notice says who recorded it");
+        assert!(
+            detail.contains("recorded that you asked to stop voice recognition"),
+            "{detail}"
+        );
+        assert!(
+            detail.contains(&agent.to_hex()) && detail.contains(&grant),
+            "the notice names the agent and its Grant: {detail}"
+        );
+        assert_eq!(
+            served.withdrawal_notices().len(),
+            1,
+            "the owner is told as before"
+        );
+        assert!(
+            served.stored_subject_withdrawal_notices(owner).is_empty(),
+            "the owner's notice is the owner's kind"
+        );
+
+        let counterparty_withdrawal =
+            recognition_withdrawal("counterparty-spoken-withdrawal", now, Some(counterparty));
+        served
+            .ok(Caller::Agent, RECOGNITION_WITHDRAW, counterparty_withdrawal)
+            .await;
+        assert!(
+            served
+                .stored_subject_withdrawal_notices(counterparty)
+                .is_empty(),
+            "a counterparty who holds no credential here is not told"
+        );
+
+        let replay = served
+            .ok(Caller::Agent, RECOGNITION_WITHDRAW, withdrawal)
+            .await;
+        assert_eq!(replay["replayed"], true, "{replay}");
+        assert_eq!(
+            served.member_withdrawal_notices().await.len(),
+            1,
+            "a replay tells no one again"
+        );
+    });
+}
+
+impl Served {
+    /// The taps the member's own notices of an agent-logged withdrawal offer
+    /// them, as their inbox door answers them.
+    async fn member_withdrawal_taps(&self) -> Vec<Value> {
+        self.member_withdrawal_rows()
+            .await
+            .iter()
+            .flat_map(|row| row["actions"].as_array().cloned().unwrap_or_default())
+            .collect()
+    }
+}
+
+/// The member's "that wasn't me" on their notice of an agent-logged
+/// withdrawal (VOICE-WITHDRAW-UNDO-SHAPE = B): one tap, on their own proof,
+/// logs a new recognition grant for the purposes the withdrawal ended. It
+/// restores consent only: the print stays deleted, and a fresh enrolment on
+/// the restored grant recognizes the member again. An agent cannot send the
+/// tap, and a tapped notice offers it no more.
+#[test]
+fn a_member_disowns_an_agent_logged_withdrawal_and_restores_consent_only() {
+    run_on_engine_stack("voices-recognition-withdraw-disown", || async {
+        let served = served().await;
+        let now = served.vault.now_recorded_at();
+        let member = served.person.actor;
+        served.enroll_print(member, "member-grant", &axis_vector(1), now);
+        served.grant_agent(&[RECOGNITION_CONSENT]).await;
+        served
+            .ok(
+                Caller::Agent,
+                RECOGNITION_WITHDRAW,
+                // Spoken a moment before the agent logs it: the tap dates the
+                // restore one second after the withdrawal, which must not be
+                // past the vault's clock.
+                recognition_withdrawal("member-spoken-withdrawal", now - 5, Some(member)),
+            )
+            .await;
+
+        let taps = served.member_withdrawal_taps().await;
+        assert_eq!(taps.len(), 1, "one tap on the member's notice: {taps:?}");
+        let tap = &taps[0];
+        assert_eq!(tap["verb"], RECOGNITION_CONSENT, "{tap}");
+        assert!(
+            tap["args"].get("subject").is_none(),
+            "the tap is of the member's own voice: {tap}"
+        );
+        let notices = served.member_withdrawal_notices().await;
+        let detail = notices[0].1.as_deref().expect("the notice's detail");
+        assert!(detail.contains("fresh enrolment"), "{detail}");
+
+        let (status, body) = served
+            .post(Caller::Agent, RECOGNITION_CONSENT, tap["args"].clone())
+            .await;
+        assert!(
+            !status.is_success(),
+            "an agent cannot send the member's tap: {status} {body}"
+        );
+
+        let restored = served
+            .ok(Caller::Person, RECOGNITION_CONSENT, tap["args"].clone())
+            .await;
+        assert_eq!(restored["subject"], member.to_hex(), "{restored}");
+        assert_eq!(restored["recorded_by"], member.to_hex(), "{restored}");
+        assert_eq!(restored["replayed"], false, "{restored}");
+        let purposes: BTreeSet<&str> = restored["purposes"]
+            .as_array()
+            .expect("the restored purposes")
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        assert_eq!(
+            purposes,
+            BTreeSet::from(["live_interlocutor", "meeting_attribution"]),
+            "the purposes the withdrawal ended: {restored}"
+        );
+        assert_eq!(
+            served.recognized("after-disown", &axis_vector(1)),
+            None,
+            "the print stays deleted"
+        );
+        assert!(
+            served.member_withdrawal_taps().await.is_empty(),
+            "a tapped notice offers it no more"
+        );
+
+        let event_id = tap["args"]["event_id"]
+            .as_str()
+            .expect("the restore's event id");
+        let at = tap["args"]["occurred_at"]
+            .as_u64()
+            .expect("the restore's date");
+        served
+            .vault
+            .enroll_voice_print(&enrollment(member, event_id, &axis_vector(1), at + 10))
+            .expect("a fresh enrolment on the restored grant");
+        assert_eq!(
+            served.recognized("after-fresh-enrolment", &axis_vector(1)),
+            Some(member)
+        );
+    });
+}
+
+/// A withdrawal dated past the vault's clock is never refused
+/// (VOICE-FUTURE-DATED-WITHDRAWAL = B, Engine 21 Nov 05:31: "A withdrawal is
+/// never refused"): every door records it at the vault's clock, and its
+/// receipt states both dates. A yes recorded after it still stands, and the
+/// recorder's retry of the same request is a replay, not a conflict. Red
+/// before the clamp: each door refuses the withdrawal.
+#[test]
+fn a_withdrawal_dated_past_the_vault_clock_lands_at_the_clock() {
+    run_on_engine_stack("voices-recognition-withdraw-future", || async {
+        let served = served().await;
+        let now = served.vault.now_recorded_at();
+        let member = served.person.actor;
+        served.enroll_print(member, "member-grant", &axis_vector(1), now);
+        served.grant_agent(&[RECOGNITION_CONSENT]).await;
+
+        let asked = now + 3_600;
+        let mut latest = now;
+        for (caller, subject) in [
+            (Caller::Agent, Some(member)),
+            (Caller::Person, None),
+            (Caller::Owner, Some(member)),
+        ] {
+            let input = recognition_withdrawal(&format!("future-{caller:?}"), asked, subject);
+            let (status, receipt) = served.post(caller, RECOGNITION_WITHDRAW, input).await;
+            assert_eq!(
+                status,
+                StatusCode::OK,
+                "{caller:?}: a withdrawal dated an hour ahead is accepted: {receipt}"
+            );
+            assert_eq!(receipt["replayed"], false, "{caller:?}: {receipt}");
+            assert_eq!(
+                receipt["requested_occurred_at"], asked,
+                "{caller:?}: the receipt states the asked date: {receipt}"
+            );
+            let recorded = receipt["occurred_at"]
+                .as_u64()
+                .unwrap_or_else(|| panic!("{caller:?}: the recorded date: {receipt}"));
+            assert!(
+                recorded >= now && recorded < asked,
+                "{caller:?}: recorded at the vault's clock, not the asked date: {receipt}"
+            );
+            latest = latest.max(recorded);
+        }
+        assert_eq!(
+            served.recognized("after-future-withdrawals", &axis_vector(1)),
+            None,
+            "the withdrawal stops recognition in its write"
+        );
+
+        let retry = recognition_withdrawal("future-Agent", asked, Some(member));
+        let replay = served.ok(Caller::Agent, RECOGNITION_WITHDRAW, retry).await;
+        assert_eq!(
+            replay["replayed"], true,
+            "the recorder's retry of the same request is a replay, not a conflict: {replay}"
+        );
+        assert!(
+            replay["occurred_at"]
+                .as_u64()
+                .is_some_and(|at| at <= latest),
+            "a replay answers the date first recorded: {replay}"
+        );
+
+        // The clock moves on; a yes recorded then stands, though it is dated
+        // before the date the withdrawals asked for.
+        served
+            .vault
+            .advance_authority_clock_for_test(latest + 10)
+            .expect("the vault's clock moves on");
+        let yes = served
+            .ok(
+                Caller::Person,
+                RECOGNITION_CONSENT,
+                recognition_consent("later-yes", latest + 5, None, &["meeting_attribution"]),
+            )
+            .await;
+        assert_eq!(
+            yes["replayed"], false,
+            "setup: the later yes is logged: {yes}"
+        );
+        served
+            .vault
+            .enroll_voice_print(&enrollment(
+                member,
+                "later-yes",
+                &axis_vector(1),
+                latest + 10,
+            ))
+            .expect("the yes recorded after the future-dated withdrawals enrols a print");
+        assert_eq!(
+            served.recognized("after-later-yes", &axis_vector(1)),
+            Some(member),
+            "the print the later yes enrolled recognizes the member"
+        );
+    });
+}
+
+/// A request under a withdrawal's event id that asks for another date is
+/// refused, never taken for the recorder's retry (REVIEW-10046 P1): the
+/// replay compares the asked date with the date the withdrawal's own request
+/// asked for. The member withdraws, consents again and enrols afresh; the
+/// same id asked again for a later date answers an error, and the fresh print
+/// still recognizes them. Red before: the second request answered a replay
+/// and deleted nothing.
+#[test]
+fn a_withdrawal_id_asked_again_for_another_date_is_refused() {
+    run_on_engine_stack("voices-recognition-withdraw-other-date", || async {
+        let served = served().await;
+        let now = served.vault.now_recorded_at();
+        let member = served.person.actor;
+        served.enroll_print(member, "member-grant", &axis_vector(1), now - 600);
+
+        let first = served
+            .ok(
+                Caller::Person,
+                RECOGNITION_WITHDRAW,
+                recognition_withdrawal("member-withdrawal", now - 500, None),
+            )
+            .await;
+        assert_eq!(first["replayed"], false, "setup: {first}");
+        served.enroll_print(member, "member-again", &axis_vector(1), now - 300);
+        assert_eq!(
+            served.recognized("after-fresh-enrolment", &axis_vector(1)),
+            Some(member),
+            "setup: the yes recorded after the withdrawal enrols a fresh print"
+        );
+
+        let (status, body) = served
+            .post(
+                Caller::Person,
+                RECOGNITION_WITHDRAW,
+                recognition_withdrawal("member-withdrawal", now - 200, None),
+            )
+            .await;
+        assert!(
+            !status.is_success(),
+            "the same withdrawal id asked for another date is refused: {status} {body}"
+        );
+        assert_eq!(
+            served.recognized("after-refused-request", &axis_vector(1)),
+            Some(member),
+            "a refused request deletes nothing"
+        );
+    });
+}
+
+/// The member's tap stays on offer when a grant shares its withdrawal's
+/// second: enrolment and recognition let a withdrawal beat a grant dated in
+/// the same second, so that withdrawal is still the member's latest
+/// decision, and the restore dated one second after it stands.
+#[test]
+fn a_withdrawal_in_its_grants_second_still_offers_the_members_tap() {
+    run_on_engine_stack("voices-recognition-withdraw-same-second", || async {
+        let served = served().await;
+        let now = served.vault.now_recorded_at();
+        let member = served.person.actor;
+        // `enroll_print` dates the member's grant `now - 20`.
+        served.enroll_print(member, "member-grant", &axis_vector(1), now);
+        served.grant_agent(&[RECOGNITION_CONSENT]).await;
+        served
+            .ok(
+                Caller::Agent,
+                RECOGNITION_WITHDRAW,
+                recognition_withdrawal("member-same-second-withdrawal", now - 20, Some(member)),
+            )
+            .await;
+        assert_eq!(
+            served.recognized("after-same-second-withdrawal", &axis_vector(1)),
+            None,
+            "the withdrawal beats the grant of its own second"
+        );
+
+        let taps = served.member_withdrawal_taps().await;
+        assert_eq!(
+            taps.len(),
+            1,
+            "a grant of the withdrawal's own second does not hide the tap: {taps:?}"
+        );
+        let tap = &taps[0];
+        let at = tap["args"]["occurred_at"]
+            .as_u64()
+            .expect("the restore's date");
+        assert_eq!(at, now - 19, "the restore is dated one second after it");
+        let restored = served
+            .ok(Caller::Person, RECOGNITION_CONSENT, tap["args"].clone())
+            .await;
+        assert_eq!(restored["replayed"], false, "{restored}");
+        assert!(
+            served.member_withdrawal_taps().await.is_empty(),
+            "a tapped notice offers it no more"
+        );
+        let event_id = tap["args"]["event_id"]
+            .as_str()
+            .expect("the restore's event id");
+        served
+            .vault
+            .enroll_voice_print(&enrollment(member, event_id, &axis_vector(1), at + 10))
+            .expect("a fresh enrolment on the restored grant");
+        assert_eq!(
+            served.recognized("after-same-second-restore", &axis_vector(1)),
+            Some(member)
+        );
+    });
+}
+
+/// The member's tap stays on offer when the agent-logged withdrawal is
+/// backdated before the member's grant (VOICE-BACKDATED-WITHDRAWAL-SHAPE = B
+/// with VOICE-WITHDRAW-UNDO-SHAPE = B): the withdrawal voided that grant, so
+/// the grant is no decision after it, and the withdrawal is still the
+/// member's latest word. The restore, dated one second after the withdrawal,
+/// stands and enrols afresh; the voided grant stays void.
+#[test]
+fn a_backdated_withdrawal_that_voids_the_members_grant_still_offers_the_tap() {
+    run_on_engine_stack("voices-recognition-withdraw-backdated-tap", || async {
+        let served = served().await;
+        let now = served.vault.now_recorded_at();
+        let member = served.person.actor;
+        // `enroll_print` dates the member's grant `now - 20`.
+        served.enroll_print(member, "member-grant", &axis_vector(1), now);
+        served.grant_agent(&[RECOGNITION_CONSENT]).await;
+        served
+            .ok(
+                Caller::Agent,
+                RECOGNITION_WITHDRAW,
+                recognition_withdrawal("member-backdated-withdrawal", now - 600, Some(member)),
+            )
+            .await;
+        assert_eq!(
+            served.recognized("after-backdated-member-withdrawal", &axis_vector(1)),
+            None,
+            "setup: the backdated withdrawal stops recognition"
+        );
+        assert_eq!(
+            served.member_withdrawal_notices().await.len(),
+            1,
+            "setup: the member is told"
+        );
+
+        let taps = served.member_withdrawal_taps().await;
+        assert_eq!(
+            taps.len(),
+            1,
+            "a grant the withdrawal voided does not hide the tap: {taps:?}"
+        );
+        let tap = &taps[0];
+        let at = tap["args"]["occurred_at"]
+            .as_u64()
+            .expect("the restore's date");
+        assert_eq!(at, now - 599, "the restore is dated one second after it");
+        let restored = served
+            .ok(Caller::Person, RECOGNITION_CONSENT, tap["args"].clone())
+            .await;
+        assert_eq!(restored["replayed"], false, "{restored}");
+        assert!(
+            served
+                .vault
+                .enroll_voice_print(&enrollment(member, "member-grant", &axis_vector(1), now))
+                .is_err(),
+            "the voided grant stays void after the restore"
+        );
+        let event_id = tap["args"]["event_id"]
+            .as_str()
+            .expect("the restore's event id");
+        served
+            .vault
+            .enroll_voice_print(&enrollment(member, event_id, &axis_vector(1), at + 10))
+            .expect("a fresh enrolment on the restored grant");
+        assert_eq!(
+            served.recognized("after-backdated-restore", &axis_vector(1)),
+            Some(member)
+        );
+    });
+}
+
+impl Served {
+    /// A fresh live PERSON holding one human-class slip with core read and
+    /// write, minted on the host issuer; `single_use` makes it one-shot.
+    fn slip_holding_person(&self, slip_id: [u8; 32], single_use: bool) -> EntityId {
+        let person = EntityId::now();
+        self.vault
+            .put_entity(
+                &person,
+                ENTITY_TYPE_PERSON,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"a slip holder",
+            )
+            .expect("a live PERSON");
+        let key = SigningKey::from_bytes(&slip_id);
+        let mut claims = self.owner_slip.claims.clone();
+        claims.parent_id = None;
+        claims.slip_id = slip_id;
+        claims.holder_ref = person.to_hex();
+        claims.binding_key = key.verifying_key().to_bytes();
+        claims.actor_class = Some("human".to_owned());
+        claims.single_use = single_use;
+        if single_use {
+            // A one-shot slip lives at most five minutes (the one-shot door's
+            // ceiling); the host root's ten years would fail validation.
+            claims.expires_at = claims.issued_at + 300;
+            claims.ttl_secs = 300;
+        }
+        claims.scope = Scope::top();
+        claims.scope.verbs = ScopeAxis::Some(BTreeSet::from([
+            "core:read".to_owned(),
+            "core:write".to_owned(),
+        ]));
+        self.vault
+            .mint_capability_slip(&self.issuer, claims)
+            .expect("the minted slip");
+        person
+    }
+
+    /// A fresh live PERSON whose one credential is a pending invitation's
+    /// human-class slip, minted on the host issuer as vault_workflows_doors.rs
+    /// mints one: it reaches only its invitation's doors.
+    fn invitee_slip_holding_person(&self, slip_id: [u8; 32]) -> EntityId {
+        let person = EntityId::now();
+        self.vault
+            .put_entity(
+                &person,
+                ENTITY_TYPE_PERSON,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"an invitee",
+            )
+            .expect("a live PERSON");
+        let mut claims = self.owner_slip.claims.clone();
+        claims.parent_id = None;
+        claims.slip_id = slip_id;
+        claims.holder_ref = person.to_hex();
+        claims.binding_key = SigningKey::from_bytes(&slip_id).verifying_key().to_bytes();
+        claims.actor_class = Some("human".to_owned());
+        claims.invitation_ref = Some(EntityId::now().to_hex());
+        self.vault
+            .mint_capability_slip(&self.issuer, claims)
+            .expect("the invitee slip");
+        person
+    }
+}
+
+/// The holder of a limited-purpose credential is no counterparty either
+/// (VOICE-MEMBER-CREDENTIAL-SCOPE = B, Engine 21 Nov 06:27): an agent never
+/// logs consent for a person whose only credential is a pending invitation's
+/// slip, and the owner logs it for them (VOICE-CONSENT-LOG-WHO = A). Their
+/// withdrawal stays open to the agent, and they get no member notice: the
+/// slip reaches neither their inbox nor the consent door. Red before: the
+/// agent's consent for the invitee was logged.
+#[test]
+fn an_agent_never_logs_consent_for_an_invitation_slip_holder() {
+    run_on_engine_stack("voices-recognition-consent-invitee", || async {
+        let served = served().await;
+        let now = served.vault.now_recorded_at();
+        let owner = served.owner_person;
+        let invitee = served.invitee_slip_holding_person([0x79; 32]);
+        served.grant_agent(&[RECOGNITION_CONSENT]).await;
+
+        let (status, body) = served
+            .post(
+                Caller::Agent,
+                RECOGNITION_CONSENT,
+                recognition_consent(
+                    "invitee-spoken-consent",
+                    now,
+                    Some(invitee),
+                    &["meeting_attribution"],
+                ),
+            )
+            .await;
+        assert_eq!(
+            error_code(&body),
+            Some("FORBIDDEN"),
+            "the agent on an invitee's voice is refused: {status} {body}"
+        );
+        assert!(
+            served.consent_notices().is_empty(),
+            "a refusal tells no one"
+        );
+
+        let logged = served
+            .ok(
+                Caller::Owner,
+                RECOGNITION_CONSENT,
+                recognition_consent(
+                    "invitee-consent-by-owner",
+                    now,
+                    Some(invitee),
+                    &["meeting_attribution"],
+                ),
+            )
+            .await;
+        assert_eq!(logged["subject"], invitee.to_hex(), "{logged}");
+        assert_eq!(
+            logged["recorded_by"],
+            owner.to_hex(),
+            "the owner logs the invitee's word: {logged}"
+        );
+
+        served
+            .ok(
+                Caller::Agent,
+                RECOGNITION_WITHDRAW,
+                recognition_withdrawal("invitee-spoken-withdrawal", now, Some(invitee)),
+            )
+            .await;
+        assert!(
+            served.stored_subject_withdrawal_notices(invitee).is_empty(),
+            "an invitee gets no member notice"
+        );
+        assert_eq!(
+            served.withdrawal_notices().len(),
+            1,
+            "the owner is told of the agent-logged withdrawal"
+        );
+    });
+}
+
+/// A single-use human slip makes no member: it serves only the one-shot
+/// door it was minted for, never the inbox or the consent door, so its
+/// holder gets no notice of an agent-logged withdrawal and no tap they
+/// could not send. The holder of an ordinary human slip is told, and the
+/// owner is told of both.
+#[test]
+fn a_single_use_slip_holder_gets_no_member_withdrawal_notice() {
+    run_on_engine_stack("voices-recognition-withdraw-single-use", || async {
+        let served = served().await;
+        let now = served.vault.now_recorded_at();
+        let single_use = served.slip_holding_person([0x77; 32], true);
+        let ordinary = served.slip_holding_person([0x78; 32], false);
+        served.grant_agent(&[RECOGNITION_CONSENT]).await;
+        for (event_id, subject) in [
+            ("single-use-holder-withdrawal", single_use),
+            ("ordinary-holder-withdrawal", ordinary),
+        ] {
+            served
+                .ok(
+                    Caller::Agent,
+                    RECOGNITION_WITHDRAW,
+                    recognition_withdrawal(event_id, now, Some(subject)),
+                )
+                .await;
+        }
+        assert_eq!(
+            served.stored_subject_withdrawal_notices(ordinary).len(),
+            1,
+            "an ordinary human slip's holder is a member and is told"
+        );
+        assert!(
+            served
+                .stored_subject_withdrawal_notices(single_use)
+                .is_empty(),
+            "a single-use slip's holder is not"
+        );
+        assert_eq!(
+            served.withdrawal_notices().len(),
+            2,
+            "the owner is told of both"
+        );
+    });
+}
+
+/// A tap the member fetched before their own withdrawal in the same second
+/// restores nothing (REVIEW-10022 P1): the consent door admits a restore id
+/// only while the withdrawal it names is still open to disown, checked in the
+/// grant's write. Red before: the cached tap logged a grant dated after both
+/// withdrawals, which the member's own withdrawal, recorded before it, never
+/// voided.
+#[test]
+fn a_cached_tap_restores_nothing_after_the_members_own_withdrawal() {
+    run_on_engine_stack("voices-recognition-withdraw-cached-tap", || async {
+        let served = served().await;
+        let now = served.vault.now_recorded_at();
+        let member = served.person.actor;
+        served.enroll_print(member, "member-grant", &axis_vector(1), now);
+        served.grant_agent(&[RECOGNITION_CONSENT]).await;
+        served
+            .ok(
+                Caller::Agent,
+                RECOGNITION_WITHDRAW,
+                recognition_withdrawal("agent-logged-withdrawal", now - 5, Some(member)),
+            )
+            .await;
+        let taps = served.member_withdrawal_taps().await;
+        assert_eq!(
+            taps.len(),
+            1,
+            "setup: one tap on the member's notice: {taps:?}"
+        );
+        let cached = taps[0]["args"].clone();
+
+        served
+            .ok(
+                Caller::Person,
+                RECOGNITION_WITHDRAW,
+                recognition_withdrawal("members-own-withdrawal", now - 5, None),
+            )
+            .await;
+        assert!(
+            served.member_withdrawal_taps().await.is_empty(),
+            "setup: the member's own withdrawal in that second closes the notice's tap"
+        );
+        let (status, body) = served
+            .post(Caller::Person, RECOGNITION_CONSENT, cached.clone())
+            .await;
+        assert!(
+            !status.is_success(),
+            "a cached tap must not restore consent past the member's own later withdrawal: \
+             {status} {body}"
+        );
+        let restore_id = cached["event_id"].as_str().expect("the restore's event id");
+        let at = cached["occurred_at"].as_u64().expect("the restore's date");
+        assert!(
+            served
+                .vault
+                .enroll_voice_print(&enrollment(member, restore_id, &axis_vector(1), at + 10))
+                .is_err(),
+            "no grant stands under the cached tap's id"
+        );
+    });
+}
+
+/// Two agent-logged withdrawals in one second leave the member a tap
+/// (REVIEW-10022 P1): another recorder's withdrawal in the same second is no
+/// later decision, so each notice offers the tap, and the grant one tap logs,
+/// a second later, is the member's latest decision and closes both. Red
+/// before: each withdrawal read the other as later, and neither notice
+/// offered a tap.
+#[test]
+fn two_agent_withdrawals_in_one_second_leave_the_member_a_tap() {
+    run_on_engine_stack("voices-recognition-withdraw-tied-agents", || async {
+        let served = served().await;
+        let now = served.vault.now_recorded_at();
+        let member = served.person.actor;
+        served.enroll_print(member, "member-grant", &axis_vector(1), now);
+        served.grant_agent(&[RECOGNITION_CONSENT]).await;
+        for event_id in ["first-agent-withdrawal", "second-agent-withdrawal"] {
+            served
+                .ok(
+                    Caller::Agent,
+                    RECOGNITION_WITHDRAW,
+                    recognition_withdrawal(event_id, now - 5, Some(member)),
+                )
+                .await;
+        }
+        assert_eq!(
+            served.member_withdrawal_notices().await.len(),
+            2,
+            "setup: one notice per agent-logged withdrawal"
+        );
+        let taps = served.member_withdrawal_taps().await;
+        assert_eq!(
+            taps.len(),
+            2,
+            "two agent withdrawals in one second must leave each notice its tap: {taps:?}"
+        );
+        let restored = served
+            .ok(Caller::Person, RECOGNITION_CONSENT, taps[0]["args"].clone())
+            .await;
+        assert_eq!(restored["replayed"], false, "{restored}");
+        assert!(
+            served.member_withdrawal_taps().await.is_empty(),
+            "one tap's grant is the member's latest decision and closes both notices"
+        );
+    });
+}
+
+/// The id a member's tap offers is no other request's (REVIEW-10022 P1): a
+/// withdrawal under a restore id is refused, so no request takes the id
+/// before the tap, which then restores, and a repeated tap replays it. Red
+/// before: the tap's id was an ordinary one, and an agent's withdrawal under
+/// it was logged.
+#[test]
+fn no_withdrawal_takes_the_id_a_members_tap_offers() {
+    run_on_engine_stack("voices-recognition-withdraw-restore-id", || async {
+        let served = served().await;
+        let now = served.vault.now_recorded_at();
+        let member = served.person.actor;
+        served.enroll_print(member, "member-grant", &axis_vector(1), now);
+        served.grant_agent(&[RECOGNITION_CONSENT]).await;
+        served
+            .ok(
+                Caller::Agent,
+                RECOGNITION_WITHDRAW,
+                recognition_withdrawal("agent-logged-withdrawal", now - 5, Some(member)),
+            )
+            .await;
+        let taps = served.member_withdrawal_taps().await;
+        assert_eq!(
+            taps.len(),
+            1,
+            "setup: one tap on the member's notice: {taps:?}"
+        );
+        let tap = taps[0]["args"].clone();
+        let restore_id = tap["event_id"].as_str().expect("the restore's event id");
+
+        let (status, body) = served
+            .post(
+                Caller::Agent,
+                RECOGNITION_WITHDRAW,
+                recognition_withdrawal(restore_id, now - 5, Some(member)),
+            )
+            .await;
+        assert!(
+            !status.is_success(),
+            "a withdrawal under the id the member's tap offers must be refused: {status} {body}"
+        );
+        let restored = served
+            .ok(Caller::Person, RECOGNITION_CONSENT, tap.clone())
+            .await;
+        assert_eq!(restored["replayed"], false, "{restored}");
+        let replayed = served.ok(Caller::Person, RECOGNITION_CONSENT, tap).await;
+        assert_eq!(
+            replayed["replayed"], true,
+            "a repeated tap replays: {replayed}"
+        );
+    });
+}
+
+/// The member's notice of an agent-logged withdrawal of their voice is read
+/// by its recipient alone (REVIEW-10022 P1): the member reads it by id, while
+/// neither the agent nor the owner, who holds a notice of their own, reads
+/// the member's copy. Red before: the generic read audience admitted any
+/// reader of the band, the owner's host root credential included.
+#[test]
+fn only_the_member_reads_their_withdrawal_notice_by_id() {
+    run_on_engine_stack("voices-recognition-withdraw-notice-audience", || async {
+        let served = served().await;
+        let now = served.vault.now_recorded_at();
+        let member = served.person.actor;
+        served.enroll_print(member, "member-grant", &axis_vector(1), now);
+        served.grant_agent(&[RECOGNITION_CONSENT]).await;
+        served
+            .ok(
+                Caller::Agent,
+                RECOGNITION_WITHDRAW,
+                recognition_withdrawal("agent-logged-withdrawal", now - 5, Some(member)),
+            )
+            .await;
+        let rows = served.member_withdrawal_rows().await;
+        assert_eq!(rows.len(), 1, "setup: the member's one notice: {rows:?}");
+        let notice = rows[0]["id"].as_str().expect("the notice's id").to_owned();
+        let member_text = "recorded that you asked to stop voice recognition";
+
+        let own = served
+            .ok(Caller::Person, "vault.get", json!({"entity_ref": notice}))
+            .await;
+        assert!(
+            own.to_string().contains(member_text),
+            "setup: the member reads their own notice by id: {own}"
+        );
+        for caller in [Caller::Owner, Caller::Agent] {
+            let (status, body) = served
+                .post(caller, "vault.get", json!({"entity_ref": notice}))
+                .await;
+            assert!(
+                !body.to_string().contains(member_text),
+                "{caller:?} must not read the member's withdrawal notice by id: {status} {body}"
+            );
+        }
+    });
+}
+
+/// A member whose credential cannot call the consent door is offered no tap
+/// (REVIEW-10022 P1): on a slip narrowed to `core:read` the notice still
+/// lists, without the "that wasn't me" the door would refuse for scope. Red
+/// before: the tap was offered on the human class alone.
+#[test]
+fn a_read_only_member_credential_gets_the_notice_without_the_tap() {
+    run_on_engine_stack("voices-recognition-withdraw-read-only-tap", || async {
+        let mut served = served().await;
+        let now = served.vault.now_recorded_at();
+        let member = served.person.actor;
+        served.enroll_print(member, "member-grant", &axis_vector(1), now);
+        served.grant_agent(&[RECOGNITION_CONSENT]).await;
+        served
+            .ok(
+                Caller::Agent,
+                RECOGNITION_WITHDRAW,
+                recognition_withdrawal("agent-logged-withdrawal", now - 5, Some(member)),
+            )
+            .await;
+        assert_eq!(
+            served.member_withdrawal_taps().await.len(),
+            1,
+            "setup: the member's read-write credential is offered the tap"
+        );
+
+        served.person = pair_with_verbs(
+            &served.vault,
+            &served.app,
+            &served.issuer,
+            member,
+            "human",
+            [0x53; 32],
+            &["core:read"],
+        )
+        .await;
+        assert_eq!(
+            served.member_withdrawal_notices().await.len(),
+            1,
+            "setup: the read-only credential lists the member's notice"
+        );
+        let taps = served.member_withdrawal_taps().await;
+        assert!(
+            taps.is_empty(),
+            "a read-only member credential must be offered no tap the consent door refuses: {taps:?}"
+        );
+    });
+}
+
+/// The member's tap restores only the purposes the withdrawal ended
+/// (REVIEW-10046 P1): an agent's withdrawal names both purposes, but a member
+/// who had granted meeting attribution alone is offered a tap for that
+/// purpose, and a restore asking for both is refused. Red before: the tap
+/// offered the withdrawal's two purposes and the restore granted live
+/// interlocutor, which the member never consented to.
+#[test]
+fn a_members_tap_restores_only_the_purposes_they_had_granted() {
+    run_on_engine_stack("voices-recognition-withdraw-tap-purposes", || async {
+        let served = served().await;
+        let now = served.vault.now_recorded_at();
+        let member = served.person.actor;
+        served
+            .ok(
+                Caller::Person,
+                RECOGNITION_CONSENT,
+                recognition_consent(
+                    "member-attribution-grant",
+                    now - 20,
+                    None,
+                    &["meeting_attribution"],
+                ),
+            )
+            .await;
+        served.grant_agent(&[RECOGNITION_CONSENT]).await;
+        served
+            .ok(
+                Caller::Agent,
+                RECOGNITION_WITHDRAW,
+                recognition_withdrawal("agent-logged-withdrawal", now - 5, Some(member)),
+            )
+            .await;
+
+        let taps = served.member_withdrawal_taps().await;
+        assert_eq!(
+            taps.len(),
+            1,
+            "setup: one tap on the member's notice: {taps:?}"
+        );
+        let args = taps[0]["args"].clone();
+        assert_eq!(
+            args["purposes"],
+            json!(["meeting_attribution"]),
+            "the tap restores only the purpose the member had granted: {args}"
+        );
+        let mut widened = args.clone();
+        widened["purposes"] = json!(["live_interlocutor", "meeting_attribution"]);
+        let (status, body) = served
+            .post(Caller::Person, RECOGNITION_CONSENT, widened)
+            .await;
+        assert!(
+            !status.is_success(),
+            "a restore of a purpose the member never granted is refused: {status} {body}"
+        );
+        let restored = served.ok(Caller::Person, RECOGNITION_CONSENT, args).await;
+        assert_eq!(restored["replayed"], false, "{restored}");
+        assert_eq!(
+            restored["purposes"],
+            json!(["meeting_attribution"]),
+            "{restored}"
+        );
+    });
+}
+
+/// A withdrawal recorded after the agent's but dated before it closes the
+/// member's tap (REVIEW-10046 P1): the member's own withdrawal, logged later
+/// on a slow clock a second before the agent's, ended their consent first, so
+/// the agent's withdrawal ended nothing a tap could restore, and the cached
+/// tap is refused. Red before: the tap read only the dates after the agent's
+/// withdrawal, stayed on offer, and restored consent past the member's own
+/// later word.
+#[test]
+fn a_later_recorded_earlier_dated_withdrawal_closes_the_members_tap() {
+    run_on_engine_stack("voices-recognition-withdraw-late-recorded", || async {
+        let served = served().await;
+        let now = served.vault.now_recorded_at();
+        let member = served.person.actor;
+        served.enroll_print(member, "member-grant", &axis_vector(1), now);
+        served.grant_agent(&[RECOGNITION_CONSENT]).await;
+        served
+            .ok(
+                Caller::Agent,
+                RECOGNITION_WITHDRAW,
+                recognition_withdrawal("agent-logged-withdrawal", now - 5, Some(member)),
+            )
+            .await;
+        let taps = served.member_withdrawal_taps().await;
+        assert_eq!(
+            taps.len(),
+            1,
+            "setup: one tap on the member's notice: {taps:?}"
+        );
+        let cached = taps[0]["args"].clone();
+
+        served
+            .ok(
+                Caller::Person,
+                RECOGNITION_WITHDRAW,
+                recognition_withdrawal("members-slow-clock-withdrawal", now - 6, None),
+            )
+            .await;
+        assert!(
+            served.member_withdrawal_taps().await.is_empty(),
+            "the member's own withdrawal, recorded later with an earlier date, closes the tap"
+        );
+        let (status, body) = served
+            .post(Caller::Person, RECOGNITION_CONSENT, cached.clone())
+            .await;
+        assert!(
+            !status.is_success(),
+            "a cached tap must not restore consent past the member's own later withdrawal: \
+             {status} {body}"
+        );
+        let restore_id = cached["event_id"].as_str().expect("the restore's event id");
+        let at = cached["occurred_at"].as_u64().expect("the restore's date");
+        assert!(
+            served
+                .vault
+                .enroll_voice_print(&enrollment(member, restore_id, &axis_vector(1), at + 10))
+                .is_err(),
+            "no grant stands under the cached tap's id"
         );
     });
 }
