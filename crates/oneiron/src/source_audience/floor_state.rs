@@ -38,8 +38,10 @@
 //! written from that it has not raised yet first, so a cycle of rows
 //! written from each other settles in one write; then it clears its marks.
 //! A vault whose backfill ended before it raised archived rows raises every
-//! row once more ([`Backfill::RaisingAgain`]). Until it first ends, a row it
-//! has not raised waits like a pending row when it names a birth input or a
+//! row once more ([`Backfill::RaisingAgain`]), and so does one whose pass a
+//! build before this one began or went on with, or began after rows were
+//! raised (#10265 Opus review P2-2). Until it first ends, a row it has not
+//! raised waits like a pending row when it names a birth input or a
 //! dependency source (lineage no read walks), a word source not held here,
 //! or lineage that does not resolve yet; and a write raises the not yet
 //! raised rows its row was written from first, so a fact born from an old
@@ -90,9 +92,10 @@ const RAISED: SideTable<EntityId, (), Named> =
 /// Whether the backfill has raised every row.
 const BACKFILL: SideTable<(), bool, Named> =
     SideTable::new(&side_table::SOURCE_AUDIENCE_FLOOR_BACKFILL);
-/// Whether the backfill raises archived rows too: set when a backfill
-/// begins, and when the run again of a vault whose backfill ended before it
-/// raised them ends (FLOOR-BACKFILL-SKIPS-ARCHIVED-ROWS).
+/// Whether the backfill has raised archived rows too: set when a pass ends
+/// that began in this build with no row raised before its first page, and
+/// when the run again ends in a vault whose pass did not begin so
+/// (FLOOR-BACKFILL-SKIPS-ARCHIVED-ROWS; #10265 Opus review P2-2).
 const ARCHIVED_RAISED: SideTable<(), bool, Named> =
     SideTable::new(&side_table::SOURCE_AUDIENCE_FLOOR_ARCHIVED_RAISED);
 
@@ -103,9 +106,11 @@ enum Backfill {
     /// waits ([`floor_waits_in`]), and its next raise is its first.
     Raising,
     /// It raises every row once more, in a vault whose backfill ended before
-    /// it raised archived rows (#10222 Opus review 3): a row it has not
-    /// raised again yet reads as it did, and only an archived row with no
-    /// stored floor, which that backfill never raised, has a first raise.
+    /// it raised archived rows, or whose pass did not run whole in a build
+    /// that raises them (#10222 Opus review 3; #10265 Opus review P2-2): a
+    /// row it has not raised again yet reads as it did, and only an archived
+    /// row with no stored floor, which that backfill never raised, has a
+    /// first raise.
     RaisingAgain,
     /// It has raised every row, archived rows too.
     Done,

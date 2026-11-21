@@ -24,6 +24,13 @@ const CLEAR_PAGE: usize = 1024;
 /// that follows it.
 const RAISING: u8 = 0;
 
+/// A backfill cursor's first byte: raising the rows after the entity key
+/// that follows it, in a pass that began in this build with no row raised
+/// before its first page, so its end marks archived rows raised (#10265
+/// Opus review P2-2). A build before this one reads it as [`RAISING`] and
+/// writes [`RAISING`] after its page, so a pass it goes on with runs again.
+const RAISING_WHOLE: u8 = 3;
+
 /// A backfill cursor's first byte: clearing the raised marks.
 const CLEARING: u8 = 1;
 
@@ -39,7 +46,9 @@ const SETTLING: u8 = 2;
 /// pages once `stop` says so. Once every row is raised it marks the
 /// backfill done, then clears the raised marks. A vault whose backfill
 /// ended before it raised archived rows raises every row once more, the
-/// same way ([`Backfill::RaisingAgain`]). Then, and in each
+/// same way ([`Backfill::RaisingAgain`]); so does a vault whose pass a
+/// build before this one began or went on with, or began after rows were
+/// raised (#10265 Opus review P2-2). Then, and in each
 /// later run, it raises every waiting row again, a page per write
 /// (#9289 review 3 P1-4, P1-6). In a vault where no row can have a floor yet
 /// it does nothing, and runs at the next pass again. The rows it raised, and
@@ -59,8 +68,9 @@ pub(crate) fn backfill_floors(
         let (page, next) = vault.with_write_txn(|txn| match cursor.split_first() {
             Some((&CLEARING, _)) => clear_page_in_txn(vault, txn),
             Some((&SETTLING, after)) => settle_page_in_txn(vault, txn, after),
-            Some((_, after)) => raise_page_in_txn(vault, txn, after),
-            None => raise_page_in_txn(vault, txn, &[]),
+            Some((&RAISING_WHOLE, after)) => raise_page_in_txn(vault, txn, after, true),
+            Some((_, after)) => raise_page_in_txn(vault, txn, after, false),
+            None => raise_page_in_txn(vault, txn, &[], false),
         })?;
         raised = raised.saturating_add(page);
         let Some(next) = next else {
@@ -74,11 +84,13 @@ pub(crate) fn backfill_floors(
 }
 
 /// One backfill write: raises the entity rows after the key `after`, live
-/// or archived.
+/// or archived, in a pass that began in this build with no row raised
+/// before its first page when `whole`.
 fn raise_page_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
     after: &[u8],
+    whole: bool,
 ) -> Result<(u64, Option<Vec<u8>>)> {
     let backfill = backfill_in(vault, txn)?;
     if backfill == Backfill::Done {
@@ -90,12 +102,17 @@ fn raise_page_in_txn(
     if !crate::source_audience::floor::floors_possible_in(vault, txn)? {
         return Ok((0, None));
     }
-    // A backfill that begins here raises archived rows from its first page,
-    // so it needs no run again. One that a build before it began goes on
-    // from its cursor, and runs again once it ends.
-    if backfill == Backfill::Raising && after.is_empty() {
-        ARCHIVED_RAISED.put(&vault.store, txn, &(), &true)?;
-    }
+    // A pass that begins here with no row raised yet raises archived rows
+    // from its first page, so it needs no run again: its cursor says so, and
+    // its end marks archived rows raised. A pass a build before this one
+    // began or went on with, or one that begins after rows were raised (a
+    // write of a build before this one raised them without the archived rows
+    // they were written from), runs again once it ends (#10265 Opus review
+    // P2-2).
+    let whole = whole
+        || (backfill == Backfill::Raising
+            && after.is_empty()
+            && RAISED.iter_from(&vault.store, txn, &[])?.next().is_none());
     let lower = if after.is_empty() {
         Bound::Unbounded
     } else {
@@ -132,13 +149,13 @@ fn raise_page_in_txn(
     }
     match last {
         Some(last) if scanned == BACKFILL_PAGE => {
-            let mut next = vec![RAISING];
+            let mut next = vec![if whole { RAISING_WHOLE } else { RAISING }];
             next.extend(last);
             Ok((raised, Some(next)))
         }
         _ => {
             BACKFILL.put(&vault.store, txn, &(), &true)?;
-            if backfill == Backfill::RaisingAgain {
+            if whole || backfill == Backfill::RaisingAgain {
                 ARCHIVED_RAISED.put(&vault.store, txn, &(), &true)?;
             }
             Ok((raised, Some(vec![CLEARING])))
