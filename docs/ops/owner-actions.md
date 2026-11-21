@@ -1219,7 +1219,8 @@ the settle applies at once (an agent waiting on the name acts on it at once) and
 member's own mailbox, is asked of that member instead, and you get a notice that names no one:
 "a member has a pending question about identity". When the member answers that it is someone new,
 nothing changes yet: you get an Ask carrying only the ids it is about (no name, no words), and its
-one tap accepts it as your own answer.
+one tap accepts that proposal, while it stands, as your own answer. If the question changes first
+(an option is erased, or the member answers again), the old tap accepts nothing.
 
 - `GET /v1/owner/dreamer/maintenance/applied` (optionally `?limit=<n>`): every applied write,
   reverted ones too, newest first, with its finding (or, for a name kept separate or settled, its

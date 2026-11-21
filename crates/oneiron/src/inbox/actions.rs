@@ -131,23 +131,24 @@ impl Memory<'_> {
 
     /// The producer names the identity ask in `source.result` and the ids the
     /// decision is about in `subject_refs`; the notice is a member's
-    /// someone-new proposal on it. Shown while that proposal stands on those
-    /// ids: one tap accepts it through [`IDENTITY_ANSWER_VERB`], which judges
-    /// the ask and the caller again.
+    /// someone-new proposal on it. Shown while the proposal it was sent for
+    /// stands, made when the notice was and on those ids: one tap accepts it
+    /// through [`IDENTITY_ANSWER_VERB`], naming it by its token, and the verb
+    /// judges the ask, the proposal and the caller again.
     fn identity_proposal_actions(&self, row: &NotificationRow) -> Vec<NotificationAction> {
         let Some(ask) = row.source.result.as_deref() else {
             return Vec::new();
         };
-        let Ok(Some(refs)) = self.vault().identity_someone_new_proposal_refs(ask) else {
+        let Ok(Some(proposal)) = self.vault().identity_someone_new_proposal(ask) else {
             return Vec::new();
         };
-        let refs: Vec<String> = refs.iter().map(EntityId::to_hex).collect();
-        if refs != row.subject_refs {
+        let refs: Vec<String> = proposal.refs.iter().map(EntityId::to_hex).collect();
+        if proposal.proposed_at != row.created_at || refs != row.subject_refs {
             return Vec::new();
         }
         vec![NotificationAction::new(
             IDENTITY_ANSWER_VERB,
-            serde_json::json!({ "ask": ask, "choice": SOMEONE_NEW }),
+            serde_json::json!({ "ask": ask, "choice": SOMEONE_NEW, "proposal": proposal.token }),
         )]
     }
 

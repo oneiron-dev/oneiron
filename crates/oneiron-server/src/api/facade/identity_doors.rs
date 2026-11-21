@@ -110,6 +110,11 @@ pub(crate) async fn self_identity_answer(
             "evidence refs back an owner's identity answer",
         ));
     }
+    if input.proposal.is_some() {
+        return refused(MemoryError::bad_request(
+            "a member's someone-new proposal is the owner's to accept",
+        ));
+    }
     let answer = IdentityAnswerRequest {
         ask: input.ask,
         choice: input.choice,

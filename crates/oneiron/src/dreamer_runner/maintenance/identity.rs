@@ -435,14 +435,15 @@ impl Memory<'_> {
     /// an ask raised from their own source, which some owner cannot read, by
     /// naming a candidate they read (OWNER-NOTICE-MEMBER-ASK-ROUTE Q1 = A),
     /// and only under their own lane. A member's "someone new" is a proposal
-    /// to the owners; an owner's "someone new" on an ask his lane does not
-    /// open accepts it (`proposal`). The topology
+    /// to the owners; an owner accepts it with the tap of its notice, which
+    /// names it ([`Self::identity_answer_with_evidence_as_owner`] with
+    /// `proposal`), even on an ask his lane does not open. The topology
     /// decision is his, bound to the ask, only when the request bound his own
     /// proof (`owner_authorship`); otherwise it is an engine seal under
     /// [`EngineCause::OwnerAnswerUnproven`]. The actor or its class alone
     /// never authenticates an owner.
     pub fn identity_answer(&self, input: &IdentityAnswerRequest) -> MemoryResult<IdentitySettled> {
-        self.identity_answer_guarded(input, self.owner_authorship(), &[], None)
+        self.identity_answer_guarded(input, None, self.owner_authorship(), &[], None)
     }
 
     /// `self.identity.answer` for a member: their tap on the choice card of
@@ -456,12 +457,16 @@ impl Memory<'_> {
         person: &AuthenticatedOwner,
         input: &IdentityAnswerRequest,
     ) -> MemoryResult<IdentitySettled> {
-        self.identity_answer_guarded(input, None, &[], Some(person))
+        self.identity_answer_guarded(input, None, None, &[], Some(person))
     }
 
+    /// `proposal_token`: the token of the member's someone-new proposal the
+    /// tap of its notice accepts; the answer stands only while that proposal
+    /// does.
     fn identity_answer_guarded(
         &self,
         input: &IdentityAnswerRequest,
+        proposal_token: Option<&str>,
         owner: Option<&AuthenticatedOwner>,
         owner_evidence: &[EntityId],
         member: Option<&AuthenticatedOwner>,
@@ -531,10 +536,20 @@ impl Memory<'_> {
                     &["Answer from your own session."],
                 ));
             }
+            // A tap on a proposal's notice answers only while the proposal
+            // it showed stands: the same time and the same ids. A tap kept
+            // from an earlier notice accepts no later proposal.
+            if let Some(token) = proposal_token
+                && !proposal::stands_in_txn(self.vault(), txn, &key, token)?
+            {
+                return Err(MemoryError::not_found(
+                    "no such someone-new proposal stands on the identity ask",
+                ));
+            }
             // An ask the caller's lane does not open is no such open ask,
-            // save one an owner accepts a member's someone-new proposal on:
-            // his own decision on the ids it carries, with no word of the
-            // ask (`proposal`).
+            // save one an owner accepts a member's someone-new proposal on,
+            // naming it: his own decision on the ids it carries, with no
+            // word of the ask (`proposal`).
             let seen = admission::open_ask_in_txn(self.vault(), &lane, txn, &key, false)?;
             let (held, answer, opened) = match seen {
                 Some(seen) => {
@@ -558,7 +573,13 @@ impl Memory<'_> {
                 }
                 None => {
                     let accepted = if by_owner {
-                        proposal::accepted_in_txn(self.vault(), txn, &key, &input.choice)?
+                        proposal::accepted_in_txn(
+                            self.vault(),
+                            txn,
+                            &key,
+                            &input.choice,
+                            proposal_token,
+                        )?
                     } else {
                         None
                     };
@@ -619,6 +640,8 @@ impl Memory<'_> {
     /// mention that names one entity, or that a hint settles, answers at
     /// once. An uncertain one opens an act-now ask the host decides first;
     /// once that reaches the person, the answer carries their choice card.
+    /// One the host cannot decide that some owner cannot open, such as one
+    /// raised from a member's own mailbox, reaches the person at once.
     pub fn identity_act_now(&self, input: &IdentityActNowRequest) -> MemoryResult<IdentityActNow> {
         let name = input.name.trim();
         if name.is_empty() {
@@ -689,6 +712,16 @@ impl Memory<'_> {
                     // which the ask's erase reads.
                     ASKS.put(&vault.store, txn, &key, &held)?;
                 }
+                if undecidable_member_ask_in_txn(vault, txn, &held)? {
+                    escalate_in_txn(vault, txn, &key, held, now)?;
+                    let options = options_in_txn(vault, txn, &seen.ask)?;
+                    let card = serde_json::to_value(card(&key, &seen.ask, &options, &copy)?)
+                        .map_err(|_| invalid("choice card encoding"))?;
+                    return Ok(IdentityActNow::NeedsPerson {
+                        ask: key_hex(&key),
+                        card,
+                    });
+                }
                 return Ok(IdentityActNow::Deciding { ask: key_hex(&key) });
             }
             let current = crate::tagging::readable_view_in_txn(&vault.store, txn, &hit.turn)?
@@ -750,7 +783,44 @@ impl Memory<'_> {
             measure_ask(vault, &ask);
             index::sync_ask_membership(&vault.store, txn, &key, None, Some(&ask))?;
             ASKS.put(&vault.store, txn, &key, &ask)?;
+            if undecidable_member_ask_in_txn(vault, txn, &ask)?
+                && let Some(seen) = admission::admitted_in_txn(vault, &admit, txn, ask.clone())?
+            {
+                escalate_in_txn(vault, txn, &key, ask, now)?;
+                let options = options_in_txn(vault, txn, &seen.ask)?;
+                let card = serde_json::to_value(card(&key, &seen.ask, &options, &copy)?)
+                    .map_err(|_| invalid("choice card encoding"))?;
+                return Ok(IdentityActNow::NeedsPerson {
+                    ask: key_hex(&key),
+                    card,
+                });
+            }
             Ok(IdentityActNow::Deciding { ask: key_hex(&key) })
         })
     }
+}
+
+/// Whether an act-now `ask` goes to the person at once, as an abstention
+/// sends it (RECIPIENT-NOTICE-READ-BY-ANY-READER): some live owner's lane
+/// does not open it, so it goes to the people who can (`route`), and the
+/// Dreamer's lane does not read it whole, so the host's ladder never takes
+/// it up ([`Vault::identity_asks_due`]). An ask every owner opens waits for
+/// the host, or for the owner's strip, as before.
+fn undecidable_member_ask_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    ask: &IdentityAsk,
+) -> Result<bool> {
+    if route::route_in_txn(vault, txn, ask)?
+        .closed_owners
+        .is_empty()
+    {
+        return Ok(false);
+    }
+    let dreamer = admission::dreamer_reader(vault)?;
+    let admit = admission::Admit::in_txn(&dreamer, txn)?;
+    Ok(
+        !admission::admitted_in_txn(vault, &admit, txn, ask.clone())?
+            .is_some_and(|seen| seen.whole()),
+    )
 }
