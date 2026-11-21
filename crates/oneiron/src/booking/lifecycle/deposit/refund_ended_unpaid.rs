@@ -106,7 +106,6 @@ pub(super) fn note_refund_ended_unpaid(
             part_refunded_by_hand,
             ..
         } => (*part_refunded_by_hand, false),
-        DepositProviderFailure::PartRefundedByHand { .. } => (true, true),
         _ => return Ok(()),
     };
     booking_writer(vault, |wtxn| {
