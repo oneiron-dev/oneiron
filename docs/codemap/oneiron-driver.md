@@ -82,3 +82,4 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/extraction_selection_parity.rs` | test | s | — | — | Native selection parity for extraction grouping and scoring |
 | `tests/extraction_verdict_observed.rs` | test | s | — | — | Checks crate-routed observed preferences against the engine's bound verdict rebuild |
 | `tests/extraction_verdict_observed/support.rs` | test | m | 5 crate-vis | — | Provides the minimal real-vault fixture for observed verdict checks |
+| `tests/restored_unjoined_deadlines.rs` | test | s | — | — | Row [RESTORED-UNJOINED-ROUND2-TESTS] (parent row RESTORED-UNJOINED-STARTS-NO-WORK): the round-2 timer fix… |
