@@ -31,6 +31,11 @@ crate::side_table::side_tables! {
         // Payload family: The source-audience policies, their events and the thread index stay
         // under the vault-wide seal until a per-owner compartment (row 17208).
         [restore: content] [family: unclassified] [tier: canonical];
+    /// Whether the floor backfill raises archived rows too (FLOOR-BACKFILL-SKIPS-ARCHIVED-ROWS):
+    /// set when a backfill begins, and when the run again of a vault whose backfill ended before
+    /// it raised them ends. A vault that lost it runs the backfill again. Key: ().
+    SOURCE_AUDIENCE_FLOOR_ARCHIVED_RAISED: VaultMeta b"source_audience:floor_archived_raised:v1:done" Named
+        [restore: not_imaged] [family: not_imaged] [tier: derived];
     /// What a row whose floor waits waits on (READ-LINEAGE L1): each row or binding it waits to
     /// land here, so the write that lands it raises the waiting row again. Key: id16(awaited) +
     /// id16(waiting row).

@@ -9,7 +9,7 @@ use std::ops::Bound;
 use heed::RwTxn;
 
 use super::marks::take_marks_of_in_txn;
-use super::{BACKFILL, PENDING, RAISED, archived_in, backfill_done_in};
+use super::{ARCHIVED_RAISED, BACKFILL, Backfill, PENDING, RAISED, backfill_in, raisable_in};
 use crate::error::Result;
 use crate::{EntityId, Vault};
 
@@ -33,10 +33,13 @@ const SETTLING: u8 = 2;
 
 /// One run of the floor backfill (#9289 review 2 P1-2), housekeeping's
 /// `SourceFloorBackfill` sweep: from `cursor`, where an unfinished run
-/// stopped, it raises the floor of each live entity row in key order, a page
-/// per write, each with the not yet raised rows it was written from, and
-/// stops between pages once `stop` says so. Once every row is raised it
-/// marks the backfill done, then clears the raised marks. Then, and in each
+/// stopped, it raises the floor of each entity row in key order, live or
+/// archived (FLOOR-BACKFILL-SKIPS-ARCHIVED-ROWS), a page per write, each
+/// with the not yet raised rows it was written from, and stops between
+/// pages once `stop` says so. Once every row is raised it marks the
+/// backfill done, then clears the raised marks. A vault whose backfill
+/// ended before it raised archived rows raises every row once more, the
+/// same way ([`Backfill::RaisingAgain`]). Then, and in each
 /// later run, it raises every waiting row again, a page per write
 /// (#9289 review 3 P1-4, P1-6). In a vault where no row can have a floor yet
 /// it does nothing, and runs at the next pass again. The rows it raised, and
@@ -70,13 +73,15 @@ pub(crate) fn backfill_floors(
     }
 }
 
-/// One backfill write: raises the live entity rows after the key `after`.
+/// One backfill write: raises the entity rows after the key `after`, live
+/// or archived.
 fn raise_page_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
     after: &[u8],
 ) -> Result<(u64, Option<Vec<u8>>)> {
-    if backfill_done_in(vault, txn)? {
+    let backfill = backfill_in(vault, txn)?;
+    if backfill == Backfill::Done {
         return Ok((0, Some(vec![CLEARING])));
     }
     // No row here can have a floor yet, and no write raises one: the
@@ -84,6 +89,12 @@ fn raise_page_in_txn(
     // written from it (a replica's first window).
     if !crate::source_audience::floor::floors_possible_in(vault, txn)? {
         return Ok((0, None));
+    }
+    // A backfill that begins here raises archived rows from its first page,
+    // so it needs no run again. One that a build before it began goes on
+    // from its cursor, and runs again once it ends.
+    if backfill == Backfill::Raising && after.is_empty() {
+        ARCHIVED_RAISED.put(&vault.store, txn, &(), &true)?;
     }
     let lower = if after.is_empty() {
         Bound::Unbounded
@@ -113,9 +124,7 @@ fn raise_page_in_txn(
     }
     let mut raised = 0_u64;
     for row in &rows {
-        if RAISED.contains(&vault.store, txn, row)?
-            || !crate::vault::live_entity_row_in_txn(&vault.store, txn, row)?.is_live()
-        {
+        if RAISED.contains(&vault.store, txn, row)? || !raisable_in(vault, txn, row)? {
             continue;
         }
         crate::source_audience::floor::raise_floors_in_txn(vault, txn, [*row])?;
@@ -129,6 +138,9 @@ fn raise_page_in_txn(
         }
         _ => {
             BACKFILL.put(&vault.store, txn, &(), &true)?;
+            if backfill == Backfill::RaisingAgain {
+                ARCHIVED_RAISED.put(&vault.store, txn, &(), &true)?;
+            }
             Ok((raised, Some(vec![CLEARING])))
         }
     }
@@ -178,9 +190,7 @@ fn settle_page_in_txn(
     }
     let mut live = BTreeSet::new();
     for row in &rows {
-        if crate::vault::live_entity_row_in_txn(&vault.store, txn, row)?.is_live()
-            || archived_in(&vault.store, txn, row)?
-        {
+        if raisable_in(vault, txn, row)? {
             live.insert(*row);
         } else {
             PENDING.delete(&vault.store, txn, row)?;
@@ -210,6 +220,7 @@ pub(crate) fn end_backfill_without_archived_rows_in_txn(
     txn: &mut RwTxn<'_>,
 ) -> Result<()> {
     BACKFILL.put(&vault.store, txn, &(), &true)?;
+    ARCHIVED_RAISED.delete_from(&vault.store, txn, &[])?;
     Ok(())
 }
 
@@ -222,5 +233,6 @@ pub(crate) fn forget_floor_state_in_txn(vault: &Vault, txn: &mut RwTxn<'_>) -> R
     super::marks::WAITS.delete_from(&vault.store, txn, &[])?;
     RAISED.delete_from(&vault.store, txn, &[])?;
     BACKFILL.delete_from(&vault.store, txn, &[])?;
+    ARCHIVED_RAISED.delete_from(&vault.store, txn, &[])?;
     Ok(())
 }

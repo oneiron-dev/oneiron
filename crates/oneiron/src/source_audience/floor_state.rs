@@ -19,29 +19,32 @@
 //! held; a soft tombstone replayed over a soft scrub already applied here is
 //! no new erase and runs it not (#10108 reviews). Until it runs, a row that
 //! reads erased (its delete published, a peer tombstone accepted but not
-//! applied yet, an archive, a released blob) keeps every row marked as
+//! applied yet, a released blob) keeps every row marked as
 //! waiting on it waiting: the seal, not a sweep that comes first, ends the
 //! wait. A row's marks are its wait set as its last raise found it: a raise
 //! takes every mark the row no longer waits on, so an erase of what it once
 //! waited on never seals a row that settled without it. An archived row is
-//! held as a waiter (it keeps its wait and its marks, and a landing or a
-//! seal reaches it) and gone as a source (a row marked as waiting on it
-//! keeps waiting, and its restore raises that row with it).
+//! held, as a waiter and as a source: it keeps its wait and its marks, a
+//! landing or a seal reaches it, the backfill raises it, a row written from
+//! it reads its floor, and a mark on it is followed (#10222 Opus review 3);
+//! its restore raises it again.
 //!
 //! A vault that held rows before floors were written holds them with none.
 //! The **backfill** (housekeeping's `SourceFloorBackfill` sweep: at each
-//! start, a page per write, from a cursor) raises every row once, each with
-//! the rows it was written from that it has not raised yet first, so a
-//! cycle of rows written from each other settles in one write; then it
-//! clears its marks. Until it ends, a row it has not raised waits like a
-//! pending row when it names a birth input or a dependency source (lineage
-//! no read walks), a word source not held here, or lineage that does not
-//! resolve yet; and a write raises the not yet raised rows its row was
-//! written from first, so a fact born from an old fact holds that fact's
-//! floor at once. A row whose birth input was erased before the backfill
-//! raised it waits for good (FLOOR-OLD-FACT-ERASED-INPUT = A, the lead 21
-//! Nov 08:3x): no write that raises it again, follows what waits, or lands
-//! a binding frees it.
+//! start, a page per write, from a cursor) raises every row once, archived
+//! rows too (FLOOR-BACKFILL-SKIPS-ARCHIVED-ROWS), each with the rows it was
+//! written from that it has not raised yet first, so a cycle of rows
+//! written from each other settles in one write; then it clears its marks.
+//! A vault whose backfill ended before it raised archived rows raises every
+//! row once more ([`Backfill::RaisingAgain`]). Until it first ends, a row it
+//! has not raised waits like a pending row when it names a birth input or a
+//! dependency source (lineage no read walks), a word source not held here,
+//! or lineage that does not resolve yet; and a write raises the not yet
+//! raised rows its row was written from first, so a fact born from an old
+//! fact holds that fact's floor at once. A row whose birth input was erased
+//! before the backfill raised it waits for good
+//! (FLOOR-OLD-FACT-ERASED-INPUT = A, the lead 21 Nov 08:3x): no write that
+//! raises it again, follows what waits, or lands a binding frees it.
 //!
 //! What a row waits on can resolve in a write that names no row waiting on
 //! it: an epoch's head lands, a source is erased, a dependency or a birth
@@ -84,6 +87,26 @@ const RAISED: SideTable<EntityId, (), Named> =
 /// Whether the backfill has raised every row.
 const BACKFILL: SideTable<(), bool, Named> =
     SideTable::new(&side_table::SOURCE_AUDIENCE_FLOOR_BACKFILL);
+/// Whether the backfill raises archived rows too: set when a backfill
+/// begins, and when the run again of a vault whose backfill ended before it
+/// raised them ends (FLOOR-BACKFILL-SKIPS-ARCHIVED-ROWS).
+const ARCHIVED_RAISED: SideTable<(), bool, Named> =
+    SideTable::new(&side_table::SOURCE_AUDIENCE_FLOOR_ARCHIVED_RAISED);
+
+/// How far the backfill has gone in a vault.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Backfill {
+    /// It raises every row for the first time: a row it has not raised yet
+    /// waits ([`floor_waits_in`]), and its next raise is its first.
+    Raising,
+    /// It raises every row once more, in a vault whose backfill ended before
+    /// it raised archived rows (#10222 Opus review 3): a row it has not
+    /// raised again yet reads as it did, and only an archived row with no
+    /// stored floor, which that backfill never raised, has a first raise.
+    RaisingAgain,
+    /// It has raised every row, archived rows too.
+    Done,
+}
 
 /// Rounds one write raises the rows waiting on what it settled, and then
 /// the rows waiting on those. Each round takes the marks it follows, so the
@@ -98,6 +121,19 @@ const SETTLE_ROUNDS: usize = 1024;
 /// Storage failures.
 pub(crate) fn backfill_done_in(vault: &Vault, txn: &RoTxn<'_>) -> Result<bool> {
     Ok(BACKFILL.get(&vault.store, txn, &())?.unwrap_or(false))
+}
+
+/// How far the backfill has gone in this vault.
+fn backfill_in(vault: &Vault, txn: &RoTxn<'_>) -> Result<Backfill> {
+    if !backfill_done_in(vault, txn)? {
+        return Ok(Backfill::Raising);
+    }
+    let archived_raised = ARCHIVED_RAISED.get(&vault.store, txn, &())?;
+    Ok(if archived_raised.unwrap_or(false) {
+        Backfill::Done
+    } else {
+        Backfill::RaisingAgain
+    })
 }
 
 /// Whether the floor of `row` is not known whole here: it waits on a row or
@@ -198,9 +234,9 @@ pub(crate) fn binding_landed_in_txn(
     row: &EntityId,
 ) -> Result<()> {
     // An erased row lands nothing: what waits on it waits for good
-    // (#9289 Opus review 3 P1-B). An archived one lands nothing until its
-    // restore raises what waits on it.
-    if gone_as_source_in(&vault.store, txn, row)? {
+    // (#9289 Opus review 3 P1-B). An archived one is held: its binding
+    // raises it, and what waits on it (#10222 Opus review 3 P2-1).
+    if erased_in(&vault.store, txn, row)? {
         return Ok(());
     }
     let awaited = AWAITED
@@ -227,7 +263,8 @@ pub(super) fn raise_and_settle_in_txn(
     txn: &mut RwTxn<'_>,
     rows: BTreeSet<EntityId>,
 ) -> Result<()> {
-    let backfilling = !backfill_done_in(vault, txn)?;
+    let backfill = backfill_in(vault, txn)?;
+    let backfilling = backfill != Backfill::Done;
     let mut queue = rows;
     for _ in 0..SETTLE_ROUNDS {
         // The rows waiting on a row raised here, and those waiting on them,
@@ -247,7 +284,7 @@ pub(super) fn raise_and_settle_in_txn(
                 break;
             }
         }
-        let settled = closure.settle_in_txn(vault, txn, backfilling)?;
+        let settled = closure.settle_in_txn(vault, txn, backfill)?;
         queue = take_waiters_in_txn(vault, txn, &settled)?;
     }
     if !queue.is_empty() {
@@ -270,7 +307,7 @@ enum Presence {
 }
 
 fn presence_in(vault: &Vault, txn: &RoTxn<'_>, row: &EntityId) -> Result<Presence> {
-    if gone_as_source_in(&vault.store, txn, row)? {
+    if erased_in(&vault.store, txn, row)? {
         return Ok(Presence::Erased);
     }
     Ok(match vault.get_raw_in(txn, row)? {
@@ -287,22 +324,45 @@ fn erased_in(store: &crate::store::Store, txn: &RoTxn<'_>, row: &EntityId) -> Re
     crate::ports::removed_in_txn(store, txn, row)
 }
 
-/// Whether `row`, read as a row a floor was written from, is gone here:
-/// erased ([`erased_in`]), or archived. The backfill never raised an
-/// archived row, so its floor may not be whole: a row marked as waiting on
-/// it keeps waiting, and a row's first raise waits on it, as before the
-/// archive fix; its restore raises it, and the rows waiting on it with it
-/// (#10222 Opus review P1-1).
-fn gone_as_source_in(store: &crate::store::Store, txn: &RoTxn<'_>, row: &EntityId) -> Result<bool> {
-    Ok(crate::ports::TombstoneStoreRead::port_deletion_state(store, txn, row)?.deleted)
-}
-
 /// Whether `row` is archived here and not erased ([`erased_in`]).
 fn archived_in(store: &crate::store::Store, txn: &RoTxn<'_>, row: &EntityId) -> Result<bool> {
     Ok(
         crate::ports::TombstoneStoreRead::port_deletion_state(store, txn, row)?.archived
             && !erased_in(store, txn, row)?,
     )
+}
+
+/// Whether the backfill raises `row`: it is live here, or archived and not
+/// erased (FLOOR-BACKFILL-SKIPS-ARCHIVED-ROWS): a row written from an
+/// archived row reads its floor, and a restore brings it back with it.
+fn raisable_in(vault: &Vault, txn: &RoTxn<'_>, row: &EntityId) -> Result<bool> {
+    Ok(
+        crate::vault::live_entity_row_in_txn(&vault.store, txn, row)?.is_live()
+            || archived_in(&vault.store, txn, row)?,
+    )
+}
+
+/// Whether this raise of `row` is its first (`first` of
+/// [`source_waits_in`]) while the backfill is where `backfill` says: the
+/// backfill has not raised it yet; in its run again, only an archived row
+/// with no stored floor, which the backfill that skipped archived rows
+/// never raised. A row raised once has no first raise again, so the erase
+/// of an input its floor already holds never holds it for good.
+fn first_raise_in(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    row: &EntityId,
+    backfill: Backfill,
+) -> Result<bool> {
+    Ok(match backfill {
+        Backfill::Done => false,
+        Backfill::Raising => !RAISED.contains(&vault.store, txn, row)?,
+        Backfill::RaisingAgain => {
+            !RAISED.contains(&vault.store, txn, row)?
+                && archived_in(&vault.store, txn, row)?
+                && !super::DERIVED.contains(&vault.store, txn, row)?
+        }
+    })
 }
 
 /// Seals, in the write that erases `erased`, the floor of each row that
@@ -391,8 +451,8 @@ struct Closure {
 
 impl Closure {
     /// `roots`, and while the backfill runs (`backfilling`) every row they
-    /// were written from, held and live here, that it has not raised yet,
-    /// and so on down: each before the rows written from it.
+    /// were written from, held here, live or archived, that it has not
+    /// raised yet, and so on down: each before the rows written from it.
     fn gather_in(
         vault: &Vault,
         txn: &RoTxn<'_>,
@@ -430,8 +490,7 @@ impl Closure {
                 for source in sources.written_from.iter().chain(&sources.attested_by) {
                     if !seen.contains(source)
                         && !RAISED.contains(&vault.store, txn, source)?
-                        && crate::vault::live_entity_row_in_txn(&vault.store, txn, source)?
-                            .is_live()
+                        && raisable_in(vault, txn, source)?
                     {
                         below.push(*source);
                     }
@@ -465,12 +524,13 @@ impl Closure {
     /// the mark of each row whose floor is whole; a row written from a row
     /// of this write whose floor waits waits on it too. A row a source
     /// landed never waits: its own binding decides its read. While the
-    /// backfill runs, marks every row raised. The rows whose floor is whole.
+    /// backfill runs (`backfill`), marks every row raised. The rows whose
+    /// floor is whole.
     fn settle_in_txn(
         &self,
         vault: &Vault,
         txn: &mut RwTxn<'_>,
-        backfilling: bool,
+        backfill: Backfill,
     ) -> Result<BTreeSet<EntityId>> {
         let mut awaited: BTreeMap<EntityId, BTreeSet<EntityId>> = BTreeMap::new();
         let mut bound: BTreeMap<EntityId, Vec<EntityId>> = BTreeMap::new();
@@ -478,7 +538,7 @@ impl Closure {
             if *landed {
                 continue;
             }
-            let first = backfilling && !RAISED.contains(&vault.store, txn, row)?;
+            let first = first_raise_in(vault, txn, row, backfill)?;
             let mut waits = BTreeSet::new();
             if sources.unresolved {
                 waits.insert(*row);
@@ -565,7 +625,7 @@ impl Closure {
                     mark_wait_in_txn(&vault.store, txn, awaited, row)?;
                 }
             }
-            if backfilling {
+            if backfill != Backfill::Done {
                 RAISED.put(&vault.store, txn, row, &())?;
             }
         }
@@ -576,10 +636,11 @@ impl Closure {
 /// The rows waiting on each of `settled`, and those waiting on them, and so
 /// on: each mark followed is taken, and a row still waiting once raised
 /// again marks what it waits on afresh. An erased row lands nothing, so the
-/// marks on it stay (a row waits on it for good), and so does an archived
-/// one until its restore; a mark that leads to an erased row is dropped,
-/// never followed (#9289 Opus review 3 P1-B), and one that leads to an
-/// archived row is followed, so the archived row keeps its wait.
+/// marks on it stay (a row waits on it for good); a mark that leads to an
+/// erased row is dropped, never followed (#9289 Opus review 3 P1-B). An
+/// archived row is held: the marks on it are followed, so a row waiting on
+/// it settles when its floor does, and a mark that leads to it is followed,
+/// so it keeps its wait (#10222 Opus review 3 P2-1).
 fn take_waiters_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
@@ -589,7 +650,7 @@ fn take_waiters_in_txn(
     let mut seen = settled.clone();
     let mut frontier: Vec<EntityId> = settled.iter().copied().collect();
     while let Some(awaited) = frontier.pop() {
-        if gone_as_source_in(&vault.store, txn, &awaited)? {
+        if erased_in(&vault.store, txn, &awaited)? {
             continue;
         }
         for (_, row) in AWAITED.scan_keys(&vault.store, txn, awaited.as_bytes())? {
