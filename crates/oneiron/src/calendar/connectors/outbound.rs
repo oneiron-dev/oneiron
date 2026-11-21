@@ -22,6 +22,7 @@ use super::remote::{
     CalendarRemoteTransport, RemoteCalendarObject, RemoteWriteReceipt, RemoteWriteRequest,
     ics_content_hash, local_uid, render_owner_vevent, shared_uid,
 };
+use super::replay_evidence::record_replay_cancel_evidence_in_txn;
 use super::seat::{CalendarConnectorError, CalendarConnectorSeatState};
 
 use crate::batch::secret_scan::{admitted_from_known, named_tree};
@@ -1030,8 +1031,11 @@ fn first_write_members(
 ///
 /// `unattributed` says the copy proved the write's own with no write marker
 /// ([`StoredCopy::Own`]): each member the write cancelled then records that
-/// on its booking's held deposit, in the same writer, so the owner's line
-/// asks for a refund by hand (BK-ECHO-UNMARKED-SAME-SHAPE-COPY = C).
+/// as a synced replay-evidence claim, in the same writer
+/// ([`record_replay_cancel_evidence_in_txn`]), so the owner's line on the
+/// node that holds its booking's live deposit asks for a refund by hand
+/// (BK-ECHO-UNMARKED-SAME-SHAPE-COPY = C), after a home move too
+/// (BK-REPLAY-NOTE-DELIVERY = A).
 ///
 /// The caller holds the vault's calendar admission turn, so no pull admits
 /// the copy between this publication and the outbox leaving flight.
@@ -1049,14 +1053,16 @@ fn write_replay_proof(
             publish_own_stored_copy_in_txn(vault, txn, operation, provider, row, members, now)
                 .map_err(CarrierWriteError::Failed)?;
             if unattributed {
-                for member in &row.cancelled_members {
-                    crate::booking::lifecycle::note_unattributed_cancel_in_txn(
+                for &member in &row.cancelled_members {
+                    record_replay_cancel_evidence_in_txn(
                         vault,
                         txn,
                         member,
+                        &row.outbox_id,
                         row.sequence,
                         now,
-                    )?;
+                    )
+                    .map_err(CarrierWriteError::Failed)?;
                 }
             }
         }

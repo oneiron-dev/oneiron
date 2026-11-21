@@ -296,7 +296,7 @@ pub(super) fn booking_label(start: u64, zone: Option<&str>) -> String {
 /// `amount_minor` of `currency` in its major unit, by the currency's ISO
 /// 4217 exponent (`4000` `usd` reads `40.00 USD`); a code with no listed
 /// exponent keeps the smallest unit and says so.
-fn money(amount_minor: u64, currency: &str) -> String {
+pub(super) fn money(amount_minor: u64, currency: &str) -> String {
     let code = currency.to_ascii_uppercase();
     match crate::connector_key::iso_4217_exponent(&code) {
         Some(0) => format!("{amount_minor} {code}"),

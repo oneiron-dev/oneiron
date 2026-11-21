@@ -20,7 +20,7 @@ use crate::error::Result;
 
 use super::policy::AgentWakeSignals;
 use super::projector::ProjectionPlan;
-use super::read_phase::{OnStale, ReadWrite, WakeStop, read_then_write};
+use super::read_phase::{OnStale, ReadWrite, WakeStop, read_then_write_at_grant_clock};
 
 use super::types::WakeTrigger;
 
@@ -566,7 +566,12 @@ impl Vault {
             ReadWrite::Stopped => return Ok(ReadWrite::Stopped),
             ReadWrite::Deferred => return Ok(ReadWrite::Deferred),
         };
-        let outcome = read_then_write(
+        // The read judges the Dreamer's grants on MESSAGE rows (the
+        // projector's, and the prefilter screen's at a threshold above
+        // zero), and what it skips is consumed: each read runs at a grant
+        // clock of its own, not at the sieve pass's, which is as old as
+        // that pass and its retries.
+        let outcome = read_then_write_at_grant_clock(
             self,
             "turn wake",
             on_stale,

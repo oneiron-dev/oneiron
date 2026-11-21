@@ -1775,6 +1775,7 @@ async fn an_ask_again_behind_a_short_hand_refund_answers_the_earlier_failed_refu
             },
             idempotency_key: &retry_key,
             earlier_retry_keys: &earlier_retry_keys,
+            find_only: false,
         })
     })
     .await
@@ -1795,6 +1796,189 @@ async fn an_ask_again_behind_a_short_hand_refund_answers_the_earlier_failed_refu
         refund_posts(&stripe),
         1,
         "no refund is made behind the hand refund"
+    );
+}
+
+// FIX [BK-DEPOSIT-FAILED-REFUND-MARK-PAID] (BK-DEPOSIT-MARK-PAID-STRIPE-HOLDS-REFUND
+// = A, Engine 21 Nov 12:13): once the owner marks the refund owed refunded
+// outside Stripe, the settle row asks Stripe only to find the refund and
+// never makes one. Each mark goes through its verb by name.
+
+/// The owner marks `payment_id`'s owed refund refunded outside Stripe, for
+/// `amount_minor`: the mark's receipt, and the owner's booking card reader.
+fn mark_refunded_outside<'a>(
+    fixture: &'a Fixture,
+    payment_id: &str,
+    amount_minor: u64,
+) -> (Value, impl Fn() -> Value + use<'a>) {
+    let event_ref = booking_deposit_for_payment(&fixture.server.vault, payment_id)
+        .expect("read")
+        .expect("the deposit exists")
+        .event_ref
+        .expect("the deposit's booking");
+    let owner = fixture
+        .server
+        .vault
+        .memory(fixture.owner_actor(), EdgeActorClass::Human);
+    let marked = oneiron::verbs::invoke(
+        &owner,
+        "vault.booking.deposit.mark_refunded_outside",
+        json!({ "event_ref": event_ref.to_hex(), "amount_minor": amount_minor }),
+    )
+    .expect("the owner marks the refund");
+    let card_row = format!("booking:{}", event_ref.to_hex());
+    let card = move || -> Value {
+        let owner = fixture
+            .server
+            .vault
+            .memory(fixture.owner_actor(), EdgeActorClass::Human);
+        oneiron::verbs::invoke(&owner, "self.inbox.get", json!({ "item_id": card_row }))
+            .expect("the owner opens the booking card")["booking"]
+            .clone()
+    };
+    (marked, card)
+}
+
+/// Stripe ends the settle row's refund failed, and the owner, who paid the
+/// visitor back outside Stripe, marks it so. The next pass asks Stripe only
+/// to find a refund, makes none, and settles the deposit refunded outside
+/// Stripe; the card says so.
+#[tokio::test]
+async fn a_refund_marked_refunded_outside_after_stripe_failed_it_makes_no_refund() {
+    let (fixture, stripe, payment_id) = half_refund_owed("marked-after-failed").await;
+    let now = now_secs().expect("clock");
+    stripe.lock().expect("fake stripe").refund_status = Some("failed".to_owned());
+    let drain = run_settle_pass(&fixture, now - 3_601).await;
+    assert_eq!(drain.refunded, 0, "guard: a failed refund is no refund");
+    assert_eq!(refund_posts(&stripe), 1, "guard: the row asked once");
+    stripe.lock().expect("fake stripe").refund_status = None;
+
+    let (marked, card) = mark_refunded_outside(&fixture, &payment_id, 2_500);
+    assert_eq!(marked["recorded"], true, "{marked}");
+    assert_eq!(marked["amount_minor"], 2_500, "{marked}");
+    let drain = run_settle_pass(&fixture, now + 60).await;
+    assert_eq!(drain.refunded, 1, "{drain:?}");
+    assert_eq!(refund_posts(&stripe), 1, "no refund is made after the mark");
+    assert_eq!(
+        deposit_state(&fixture, &payment_id),
+        DepositState::Refunded {
+            amount_minor: 2_500
+        }
+    );
+    let card = card();
+    let line = card["refund_marked_outside"]["line"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the mark's line: {card}"));
+    assert!(
+        line.starts_with("Refunded outside Stripe, as marked on ")
+            && line.ends_with(": 2500 JPY to the visitor."),
+        "{line}"
+    );
+    assert_eq!(card["refund_marked_outside"]["stripe_refunded"], false);
+}
+
+/// Stripe refused the settle row's refund (a key without the permission), so
+/// it holds none, and the owner marks the refund refunded outside Stripe.
+/// The next pass makes no refund, though the key could now make one: it
+/// asks Stripe only to find one, finds none, and settles the deposit
+/// refunded outside Stripe.
+#[tokio::test]
+async fn a_refund_marked_refunded_outside_that_stripe_never_made_is_not_made_after() {
+    let (fixture, stripe, payment_id) = half_refund_owed("marked-never-made").await;
+    let now = now_secs().expect("clock");
+    stripe.lock().expect("fake stripe").refuse_refunds = true;
+    let drain = run_settle_pass(&fixture, now - 3_601).await;
+    assert_eq!(drain.refunded, 0, "guard: Stripe refused the refund");
+    assert_eq!(refund_posts(&stripe), 1, "guard: the row asked once");
+    stripe.lock().expect("fake stripe").refuse_refunds = false;
+
+    let (marked, _card) = mark_refunded_outside(&fixture, &payment_id, 2_500);
+    assert_eq!(marked["recorded"], true, "{marked}");
+    let drain = run_settle_pass(&fixture, now + 60).await;
+    assert_eq!(drain.refunded, 1, "{drain:?}");
+    assert_eq!(refund_posts(&stripe), 1, "no refund is made after the mark");
+    assert!(
+        stripe
+            .lock()
+            .expect("fake stripe")
+            .refunds
+            .iter()
+            .all(|refund| refund.payment_intent != payment_id),
+        "Stripe holds no refund of the payment"
+    );
+    assert_eq!(
+        deposit_state(&fixture, &payment_id),
+        DepositState::Refunded {
+            amount_minor: 2_500
+        }
+    );
+}
+
+/// Stripe holds the settle row's refund pending when the owner marks it
+/// refunded outside Stripe. While Stripe holds it, the pass makes no refund
+/// and the deposit stays owed, the card showing the mark. Stripe then pays
+/// it: the deposit settles as Stripe's refund, and the card says Stripe
+/// refunded it as well, so the visitor may be paid twice.
+#[tokio::test]
+async fn a_refund_stripe_held_when_marked_and_then_paid_says_the_visitor_may_be_paid_twice() {
+    let (fixture, stripe, payment_id) = half_refund_owed("marked-while-pending").await;
+    let now = now_secs().expect("clock");
+    stripe.lock().expect("fake stripe").refund_status = Some("pending".to_owned());
+    let drain = run_settle_pass(&fixture, now - 3_601).await;
+    assert_eq!(drain.pending, 1, "guard: Stripe holds the refund pending");
+    assert_eq!(refund_posts(&stripe), 1, "guard: the row asked once");
+
+    let (marked, card) = mark_refunded_outside(&fixture, &payment_id, 2_500);
+    assert_eq!(marked["recorded"], true, "{marked}");
+    let drain = run_settle_pass(&fixture, now + 60).await;
+    assert_eq!(
+        drain.pending, 1,
+        "the mark's row finds the refund pending: {drain:?}"
+    );
+    assert_eq!(refund_posts(&stripe), 1, "no refund is made after the mark");
+    assert_eq!(
+        deposit_state(&fixture, &payment_id),
+        DepositState::RefundDue {
+            amount_minor: 2_500
+        }
+    );
+    let held = card();
+    assert_eq!(
+        held["refund_marked_outside"]["stripe_refunded"], false,
+        "{held}"
+    );
+
+    {
+        let mut stripe = stripe.lock().expect("fake stripe");
+        stripe.refund_status = None;
+        for refund in &mut stripe.refunds {
+            if refund.settle_key.is_some() {
+                refund.status = "succeeded".to_owned();
+            }
+        }
+    }
+    let drain = run_settle_pass(&fixture, now + 3_700).await;
+    assert_eq!(drain.refunded, 1, "{drain:?}");
+    assert_eq!(refund_posts(&stripe), 1, "no second refund is made");
+    assert_eq!(
+        deposit_state(&fixture, &payment_id),
+        DepositState::Refunded {
+            amount_minor: 2_500
+        }
+    );
+    let paid = card();
+    assert_eq!(
+        paid["refund_marked_outside"]["stripe_refunded"], true,
+        "{paid}"
+    );
+    let line = paid["refund_marked_outside"]["line"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the mark's line: {paid}"));
+    assert!(
+        line.contains(
+            "and Stripe refunded it as well: 2500 JPY to the visitor, who may be paid twice."
+        ),
+        "{line}"
     );
 }
 

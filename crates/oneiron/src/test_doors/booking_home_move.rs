@@ -6,12 +6,19 @@
 //! carrier runs it, the old home's writer once the new home acknowledged that
 //! move, and a read of whether a node-local booking row holds some bytes. A
 //! machine also holds none of the old home's outbound send ledger (FIX
-//! [BK-EMERGENCY-UNCERTAIN-SEND-NOT-SHOWN-TO-OWNER]).
+//! [BK-EMERGENCY-UNCERTAIN-SEND-NOT-SHOWN-TO-OWNER]), a read of the note a
+//! held deposit's row carries (FIX [BK-REPLAY-NOTE-NOT-CARRIED-TO-NEW-HOME]),
+//! the owner's emergency run stopped before its answer (review round 1 of
+//! #10166), the adoption a move's target records, so a former home that a
+//! later move carries the rows back to takes their writes again (FIX
+//! [BK-EMERGENCY-DEFERRED-SEND-STRANDED-ON-FORMER-HOME]), and the ledger rows
+//! a node holds for an emergency effect under each of its ledger generations
+//! (review round 1 of #10220).
 
 use crate::side_table::{self, SideTableDbs, SideTableDecl};
 use crate::sync::home_handoff::{
     acknowledge_home_move_for_doors, carry_section_for_doors, freeze_home_state_for_doors,
-    registers_section_for_doors,
+    record_home_adoption_for_doors, registers_section_for_doors,
 };
 use crate::{EntityId, Result, Vault};
 
@@ -121,6 +128,32 @@ pub fn move_booking_home(
     Ok(applied)
 }
 
+/// Records on `new_home` what a move's target writer records once the booking sections applied:
+/// the state it adopted is its own, so its home writes run again, even on a former home whose
+/// earlier move froze them, as a later move that carries the rows back leaves it (FIX
+/// [BK-EMERGENCY-DEFERRED-SEND-STRANDED-ON-FORMER-HOME]). [`move_booking_home`] records no
+/// adoption: a machine that never froze its state takes home writes without one.
+///
+/// # Errors
+///
+/// Store errors.
+pub fn record_booking_home_adoption(new_home: &Vault) -> Result<()> {
+    record_home_adoption_for_doors(new_home)
+}
+
+/// The ids of `vault`'s own outbound ledger rows for the `lane` effect
+/// (`"calendar"`, `"apology"` or `"pick"`) of every emergency checkpoint it
+/// holds, under each ledger generation the effect has had, the earliest
+/// first: a former home that adopted a checkpoint back over its own earlier
+/// send keeps that send's row beside its fresh attempt's.
+///
+/// # Errors
+///
+/// Store errors.
+pub fn emergency_effect_ledger_rows(vault: &Vault, lane: &str) -> Result<Vec<[u8; 32]>> {
+    crate::booking::emergency_reschedule::home_rows::effect_ledger_rows_for_doors(vault, lane)
+}
+
 /// Runs on `old_home` what its writer runs once the new home acknowledged the
 /// move `old_home` froze its rows for: every carried table's scrub of what
 /// must not outlast the move (the emergency checkpoints' raw action tokens).
@@ -149,4 +182,40 @@ pub fn booking_rows_hold(vault: &Vault, needle: &[u8]) -> Result<bool> {
         }
     }
     Ok(false)
+}
+
+/// The version the INBOX read state keeps for the booking row `item_id` in
+/// `vault` (`booking::lifecycle::booking_inbox_row_version_in_txn`): for a
+/// held deposit's row, `unattributed_cancel:<SEQUENCE>` once a cancel
+/// Oneiron cannot attribute is noted on its deposit there, else `None`.
+///
+/// # Errors
+///
+/// Store errors.
+pub fn booking_inbox_row_version(vault: &Vault, item_id: &str) -> Result<Option<String>> {
+    let txn = vault.store.env.read_txn()?;
+    crate::booking::lifecycle::booking_inbox_row_version_in_txn(vault, &txn, item_id)
+}
+
+/// The owner's emergency run over `plan` on `vault` up to its answer
+/// (`booking::execute_emergency_plan`): each owed effect delivered through
+/// `sink` and committed on the checkpoint, and no repeat answered, as a run
+/// that stopped after its apology's checkpoint write and before its answer
+/// leaves the checkpoint (review round 1 of #10166). The checkpoint as it
+/// then stands.
+///
+/// # Errors
+///
+/// The run's own refusals and delivery failures.
+pub fn deliver_emergency_without_answer(
+    vault: &Vault,
+    request: &crate::booking::EmergencyRescheduleRequest,
+    plan: &crate::booking::EmergencyPlan,
+    calendars: &[(EntityId, Vec<crate::calendar::query::CalendarSel>)],
+    input: &crate::booking::BookingLifecycleConsumerInput,
+    sink: &mut impl crate::outbound::OutboundExecutionSink,
+) -> std::result::Result<crate::booking::EmergencyItem, crate::booking::BookingError> {
+    crate::booking::emergency_reschedule::deliver_emergency_effects(
+        vault, request, plan, calendars, input, sink,
+    )
 }

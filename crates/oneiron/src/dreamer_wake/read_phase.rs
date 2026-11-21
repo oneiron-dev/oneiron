@@ -142,6 +142,40 @@ pub(crate) fn read_then_write<R, T>(
     read: impl Fn(&heed::RoTxn<'_>) -> Result<Option<R>>,
     write: impl Fn(&mut heed::RwTxn<'_>, R) -> Result<T>,
 ) -> Result<ReadWrite<T>> {
+    run_read_then_write(vault, pass, on_stale, false, read, write)
+}
+
+/// [`read_then_write`] for a pass whose `read` judges grants: every read
+/// runs at a grant clock persisted just before it, as the engine asks of a
+/// snapshot that judges ([`crate::store::Store::authorization_now`]). Each
+/// guarded try observes the clock before its snapshot opens, the tries after
+/// a stale one too, and the one writer persists its clock floor before it
+/// reads. So no read judges a grant at the time of an earlier pass's
+/// observation, and a grant that expired since lends this pass nothing.
+///
+/// # Errors
+///
+/// What [`read_then_write`] returns, or a vault a restore swap moved aside.
+pub(crate) fn read_then_write_at_grant_clock<R, T>(
+    vault: &Vault,
+    pass: &'static str,
+    on_stale: OnStale,
+    read: impl Fn(&heed::RoTxn<'_>) -> Result<Option<R>>,
+    write: impl Fn(&mut heed::RwTxn<'_>, R) -> Result<T>,
+) -> Result<ReadWrite<T>> {
+    run_read_then_write(vault, pass, on_stale, true, read, write)
+}
+
+/// [`read_then_write`], observing the grant clock before every read when
+/// `at_grant_clock` ([`read_then_write_at_grant_clock`]).
+fn run_read_then_write<R, T>(
+    vault: &Vault,
+    pass: &'static str,
+    on_stale: OnStale,
+    at_grant_clock: bool,
+    read: impl Fn(&heed::RoTxn<'_>) -> Result<Option<R>>,
+    write: impl Fn(&mut heed::RwTxn<'_>, R) -> Result<T>,
+) -> Result<ReadWrite<T>> {
     let mut read_time = Duration::ZERO;
     let mut stale = 0;
     let outcome = loop {
@@ -159,13 +193,23 @@ pub(crate) fn read_then_write<R, T>(
                 .read_phases
                 .one_writer_reads
                 .fetch_add(1, Ordering::Relaxed);
-            break vault.with_write_txn(|txn| match read(txn)? {
-                Some(reads) => write(txn, reads).map(ReadWrite::Written),
-                None => Ok(ReadWrite::Stopped),
+            break vault.with_write_txn(|txn| {
+                if at_grant_clock {
+                    crate::ports::observe_clock_floor_in_txn(&vault.store, txn)?;
+                }
+                match read(txn)? {
+                    Some(reads) => write(txn, reads).map(ReadWrite::Written),
+                    None => Ok(ReadWrite::Stopped),
+                }
             })?;
         }
         if stale > 0 {
             std::thread::sleep(backoff());
+        }
+        if at_grant_clock {
+            // Observed before the generation is pinned, so a lease renewal
+            // it commits in its own writer is no commit since the read.
+            vault.store.authorization_now()?;
         }
         let generation = vault.store.env.info().last_txn_id;
         let started = Instant::now();

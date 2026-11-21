@@ -219,8 +219,10 @@ impl<'g> TombstoneExport<'g> {
 /// ([`crate::settings::device_only_withholds`]) no longer sees where its words
 /// sat. A capture that does not read withholds while any world is flagged; a
 /// tombstone that names no request, one with no capture bound to it, or a
-/// capture older than the field leaves the live check's judgment.
-pub(super) fn device_only_by_capture(
+/// capture older than the field leaves the live check's judgment. The
+/// selector's last door asks it again of each tombstone its answer carries
+/// (`sync::window::selector_update_verdict_for_peer`).
+pub(in crate::sync) fn device_only_by_capture(
     vault: &Vault,
     txn: &RoTxn<'_>,
     flagged: &BTreeSet<EntityId>,

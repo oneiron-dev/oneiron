@@ -781,6 +781,7 @@ impl Vault {
         // Supersedes edge it carries are queued here for the live windows'
         // post-commit mirror, as the batch door queues a Put and an edge's
         // source (FIX CLAIM-LIFECYCLE-DOORS-QUEUE-NO-LIVE-WINDOW-ROWS).
+        #[cfg(feature = "sync")]
         crate::batch::queue_committed_rows(
             self,
             wtxn,
@@ -857,6 +858,7 @@ impl Vault {
         )?;
         // The two rows this wrote, for the live windows' post-commit mirror
         // (FIX CLAIM-LIFECYCLE-DOORS-QUEUE-NO-LIVE-WINDOW-ROWS).
+        #[cfg(feature = "sync")]
         crate::batch::queue_committed_rows(
             self,
             wtxn,
@@ -1129,6 +1131,7 @@ impl Vault {
         // post-commit owner drops the queue; the public retract door runs in
         // the write door, which owns one (FIX
         // CLAIM-LIFECYCLE-DOORS-QUEUE-NO-LIVE-WINDOW-ROWS).
+        #[cfg(feature = "sync")]
         crate::batch::queue_committed_rows(self, wtxn, std::collections::BTreeSet::from([*id]));
         // A retract parked for the holder has nothing left to close.
         self.drop_parked_retract_in_txn(wtxn, id)?;
@@ -1223,6 +1226,7 @@ impl Vault {
         // 9599): the reopened head and the replacement that lost its link
         // are queued here for the live windows' post-commit mirror, and the
         // window that held the link owes its removal.
+        #[cfg(feature = "sync")]
         crate::batch::queue_committed_rows(
             self,
             wtxn,

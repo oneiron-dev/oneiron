@@ -1,6 +1,7 @@
 //! Durable result TURNs and the bodies their records hold.
 
 use crate::agent_dispatch::AgentDispatcher;
+use crate::agent_dispatch::setting_keys::PLAN_RUN_RESULT_IN_SHARED_ROOM;
 use crate::attempt_queue::{
     AttemptId, AttemptQueue, AttemptRecord, AttemptResultRef, SetAttemptResult,
 };
@@ -238,9 +239,16 @@ impl AgentDispatcher<'_> {
     /// approving TURN in that TURN's room and leaving HEAD where it is. Only
     /// a run whose approval named a TURN has a sub-session, and only a room
     /// its owner alone reads takes the record, so a run that used the
-    /// owner's reach never posts its answer to another reader. The record
+    /// owner's reach never posts its answer to another reader, unless the
+    /// owner's key [`PLAN_RUN_RESULT_IN_SHARED_ROOM`] lets a shared room take
+    /// it too ([`shared_room_filer_in`]). The record
     /// holds no words, only the result's typed refs, so it is labelled
-    /// observed. The result commits first, in its own write: a filing that
+    /// observed. It links the run's trace and never copies it
+    /// (PLAN-RUN-FULL-TRACE-INTO-SUB-SESSION = C, lead 21 Nov 13:4x):
+    /// `trace_ref` is the run's own conversation, where its bubbles land, and
+    /// they stay there under that conversation's read gate, so a room reader
+    /// learns only the id. A run that never spoke has no such conversation,
+    /// and its record names none. The result commits first, in its own write: a filing that
     /// fails is logged and never fails the run's settlement, and a replayed
     /// completion files it.
     fn file_plan_run_result(
@@ -271,6 +279,13 @@ impl AgentDispatcher<'_> {
         };
         let session = EntityId::derive(PLAN_RUN_SESSION, &[task.as_bytes()])?;
         let record = EntityId::derive(PLAN_RUN_RESULT_RECORD, &[result.as_bytes()])?;
+        // The conversation the run's speech lands in: its host dispatcher's
+        // run ref for this attempt, and the executor run that settled. Its
+        // first bubble creates it, so a run that never spoke has none.
+        let trace = crate::code_run::canonical_speech_conversation_id_for_run(
+            &crate::code_run::agent_attempt_run_ref(attempt.id, attempt.run_id.clone()),
+            Some(run),
+        )?;
         let store = &self.vault.store;
         self.vault.with_write_txn_grouped(|txn| {
             let live = crate::vault::live_entity_row_in_txn(store, txn, &session)?.live_type();
@@ -301,18 +316,27 @@ impl AgentDispatcher<'_> {
                 return Ok(());
             }
             let room = crate::conversation_dag::conversation_of(store, txn, &turn)?;
-            let Some(owner) =
-                crate::workspace_roster::room_sole_owner_reader_in(self.vault, txn, room)?
-            else {
-                return Ok(());
+            let sole = crate::workspace_roster::room_sole_owner_reader_in(self.vault, txn, room)?;
+            let owner = match sole {
+                Some(owner) => owner,
+                None => match shared_room_filer_in(self.vault, txn, room, session)? {
+                    Some(approver) => approver,
+                    None => return Ok(()),
+                },
             };
             let field = |key: &str, value: Value| (Value::from(key), value);
-            let filed = Value::Map(vec![
+            let mut filed = vec![
                 field("kind", Value::from("plan.run_result")),
                 field("result_ref", Value::from(result.to_hex())),
                 field("run_ref", Value::from(run.to_hex())),
                 field("task_ref", Value::from(task.to_hex())),
-            ]);
+            ];
+            if crate::vault::live_entity_row_in_txn(store, txn, &trace)?.live_type()
+                == Some(crate::registry::ENTITY_TYPE_CONVERSATION)
+            {
+                filed.push(field("trace_ref", Value::from(trace.to_hex())));
+            }
+            let filed = Value::Map(filed);
             let mut body = Vec::new();
             rmpv::encode::write_value(&mut body, &filed)
                 .map_err(|error| Error::InvalidConfig(error.to_string()))?;
@@ -412,6 +436,42 @@ impl AgentDispatcher<'_> {
             .find(|output| output.complete && output.handle == handle && output.raw_len == length)
             .map(|output| (output.output_ref(), turn)))
     }
+}
+
+/// Who files a plan run's result into the shared room `room`, or `None`.
+/// With the owner's key [`PLAN_RUN_RESULT_IN_SHARED_ROOM`] on, it is the
+/// owner who approved the run, stamped on the run's derived SESSION
+/// `session`, while that owner is a live vault owner who stands in the room
+/// on a seat, a host role or a live Ready join. The filing's own admission
+/// would seat a person with no standing there; it is never asked to.
+fn shared_room_filer_in(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    session: EntityId,
+) -> Result<Option<EntityId>> {
+    if !PLAN_RUN_RESULT_IN_SHARED_ROOM
+        .read_in_txn(vault, txn, &[], None)?
+        .value
+    {
+        return Ok(None);
+    }
+    let crate::vault::LiveEntityRow::Live { body, .. } =
+        crate::vault::live_entity_row_in_txn(&vault.store, txn, &session)?
+    else {
+        return Ok(None);
+    };
+    let Some(approver) = crate::conversation::record_author(&body)? else {
+        return Ok(None);
+    };
+    let stands =
+        crate::workspace_roster::person_standing_in_txn(vault, txn, room, None, approver, None)?;
+    if stands != Some(true)
+        || !crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &approver)?
+    {
+        return Ok(None);
+    }
+    Ok(Some(approver))
 }
 
 /// One key of a result TURN's map.

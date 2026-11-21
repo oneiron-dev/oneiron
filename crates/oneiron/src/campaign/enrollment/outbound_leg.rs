@@ -369,6 +369,7 @@ pub(super) fn run_enrollment_outbound_leg<T: OutboundTransport>(
         admission_ceiling: None,
         co_actor: None,
         exclusive_route: None,
+        idempotency_attempt: None,
     };
     let result = execute_outbound_effect(
         vault,

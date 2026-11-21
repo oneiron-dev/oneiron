@@ -22,7 +22,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `fixtures/edit_path/repo/src/lib.rs` | src | s | 2 fn · 1 mod | — | — |
 | `fixtures/edit_path/repo/src/math.rs` | src | s | 2 fn | — | — |
 | `src/beam/ablations.rs` | src | s | 2 crate-vis | — | Two explicit cost controls: uncapped context and neutralized OF-095 decay |
-| `src/beam/action_bench/arms.rs` | src | m | 13 crate-vis | — | The memory arms (ARCH-0042 #action-bench): no memory, raw-history retrieval, derived only, raw plus derived… |
+| `src/beam/action_bench/arms.rs` | src | m | 17 crate-vis | — | The memory arms (ARCH-0042 #action-bench): no memory, raw-history retrieval, derived only, raw plus derived… |
+| `src/beam/action_bench/discovery.rs` | src | m | 5 crate-vis | — | The discovery arms (ARCH-0042 #action-bench): index-first against search-only discovery, with stored memory… |
 | `src/beam/action_bench/extraction.rs` | src | m | 18 crate-vis | — | The extraction arms (ARCH-0042 #action-bench: "online-only, background-only, combined; each probed right… |
 | `src/beam/action_bench/extraction/executor.rs` | src | s | 6 crate-vis | — | The extraction arms' model side: the shipped adapter on the reader's host, recording each call it makes, and… |
 | `src/beam/action_bench/mod.rs` | src | m | 3 crate-vis | — | The in-house action bench (ARCH-0042 #action-bench, owner ruling 2026-10-21): does memory change what a… |

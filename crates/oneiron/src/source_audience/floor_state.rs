@@ -23,7 +23,10 @@
 //! waiting on it waiting: the seal, not a sweep that comes first, ends the
 //! wait. A row's marks are its wait set as its last raise found it: a raise
 //! takes every mark the row no longer waits on, so an erase of what it once
-//! waited on never seals a row that settled without it.
+//! waited on never seals a row that settled without it. An archived row is
+//! held as a waiter (it keeps its wait and its marks, and a landing or a
+//! seal reaches it) and gone as a source (a row marked as waiting on it
+//! keeps waiting, and its restore raises that row with it).
 //!
 //! A vault that held rows before floors were written holds them with none.
 //! The **backfill** (housekeeping's `SourceFloorBackfill` sweep: at each
@@ -207,8 +210,9 @@ pub(crate) fn binding_landed_in_txn(
     row: &EntityId,
 ) -> Result<()> {
     // An erased row lands nothing: what waits on it waits for good
-    // (#9289 Opus review 3 P1-B).
-    if erased_in(&vault.store, txn, row)? {
+    // (#9289 Opus review 3 P1-B). An archived one lands nothing until its
+    // restore raises what waits on it.
+    if gone_as_source_in(&vault.store, txn, row)? {
         return Ok(());
     }
     let awaited = AWAITED
@@ -278,7 +282,7 @@ enum Presence {
 }
 
 fn presence_in(vault: &Vault, txn: &RoTxn<'_>, row: &EntityId) -> Result<Presence> {
-    if erased_in(&vault.store, txn, row)? {
+    if gone_as_source_in(&vault.store, txn, row)? {
         return Ok(Presence::Erased);
     }
     Ok(match vault.get_raw_in(txn, row)? {
@@ -287,9 +291,30 @@ fn presence_in(vault: &Vault, txn: &RoTxn<'_>, row: &EntityId) -> Result<Presenc
     })
 }
 
-/// Whether `row` is erased here: its deletion shell or record stands.
+/// Whether `row` is erased here: its own delete stands fenced or torn, or
+/// its tombstone is recorded. A cleanup archive is no erase: it tears
+/// nothing, and a restore brings the row back whole, so an archived row
+/// keeps its wait and its marks (#10117 Opus review P1-1).
 fn erased_in(store: &crate::store::Store, txn: &RoTxn<'_>, row: &EntityId) -> Result<bool> {
+    crate::ports::removed_in_txn(store, txn, row)
+}
+
+/// Whether `row`, read as a row a floor was written from, is gone here:
+/// erased ([`erased_in`]), or archived. The backfill never raised an
+/// archived row, so its floor may not be whole: a row marked as waiting on
+/// it keeps waiting, and a row's first raise waits on it, as before the
+/// archive fix; its restore raises it, and the rows waiting on it with it
+/// (#10222 Opus review P1-1).
+fn gone_as_source_in(store: &crate::store::Store, txn: &RoTxn<'_>, row: &EntityId) -> Result<bool> {
     Ok(crate::ports::TombstoneStoreRead::port_deletion_state(store, txn, row)?.deleted)
+}
+
+/// Whether `row` is archived here and not erased ([`erased_in`]).
+fn archived_in(store: &crate::store::Store, txn: &RoTxn<'_>, row: &EntityId) -> Result<bool> {
+    Ok(
+        crate::ports::TombstoneStoreRead::port_deletion_state(store, txn, row)?.archived
+            && !erased_in(store, txn, row)?,
+    )
 }
 
 /// Seals, in the write that erases `erased`, the floor of each row that
@@ -563,8 +588,10 @@ impl Closure {
 /// The rows waiting on each of `settled`, and those waiting on them, and so
 /// on: each mark followed is taken, and a row still waiting once raised
 /// again marks what it waits on afresh. An erased row lands nothing, so the
-/// marks on it stay (a row waits on it for good), and a mark that leads to
-/// an erased row is dropped, never followed (#9289 Opus review 3 P1-B).
+/// marks on it stay (a row waits on it for good), and so does an archived
+/// one until its restore; a mark that leads to an erased row is dropped,
+/// never followed (#9289 Opus review 3 P1-B), and one that leads to an
+/// archived row is followed, so the archived row keeps its wait.
 fn take_waiters_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
@@ -574,7 +601,7 @@ fn take_waiters_in_txn(
     let mut seen = settled.clone();
     let mut frontier: Vec<EntityId> = settled.iter().copied().collect();
     while let Some(awaited) = frontier.pop() {
-        if erased_in(&vault.store, txn, &awaited)? {
+        if gone_as_source_in(&vault.store, txn, &awaited)? {
             continue;
         }
         for (_, row) in AWAITED.scan_keys(&vault.store, txn, awaited.as_bytes())? {
@@ -719,7 +746,7 @@ fn clear_page_in_txn(vault: &Vault, txn: &mut RwTxn<'_>) -> Result<(u64, Option<
 /// row id `after`, so a row whose wait resolved in a write that named no row
 /// waiting on it (an epoch's head that landed, an erased source, a
 /// dependency or a birth taken off it) settles. A waiting row gone from
-/// this vault loses its marks.
+/// this vault loses its marks; an archived one keeps them, and is raised.
 fn settle_page_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
@@ -738,7 +765,9 @@ fn settle_page_in_txn(
     }
     let mut live = BTreeSet::new();
     for row in &rows {
-        if crate::vault::live_entity_row_in_txn(&vault.store, txn, row)?.is_live() {
+        if crate::vault::live_entity_row_in_txn(&vault.store, txn, row)?.is_live()
+            || archived_in(&vault.store, txn, row)?
+        {
             live.insert(*row);
         } else {
             PENDING.delete(&vault.store, txn, row)?;

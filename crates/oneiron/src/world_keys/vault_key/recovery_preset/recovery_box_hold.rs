@@ -36,14 +36,14 @@ pub trait RecoveryBoxHold {
     /// owner device's Cancel during the box wait, which the node checked
     /// ([`Vault::cancel_box_recovery_as`]). `cancelled_by` names who
     /// cancelled, for the box's receipt and the owner's notice. With
-    /// `release_receipt`, the box cancels only the pending release whose
-    /// recovery-started receipt it is, so a replayed Cancel never stops a
-    /// later recovery. `true` when the box cancelled a pending release,
-    /// `false` when none was pending (nothing changed).
+    /// `release`, the box cancels only the pending release it names
+    /// ([`RecoveryBoxRelease`]), so a replayed Cancel never stops a later
+    /// recovery. `true` when the box cancelled a pending release, `false`
+    /// when none was pending (nothing changed).
     fn cancel_pending_box_release(
         &self,
         cancelled_by: &RecoveryBoxCanceller,
-        release_receipt: Option<u64>,
+        release: Option<RecoveryBoxRelease>,
     ) -> Result<bool>;
 }
 
@@ -56,6 +56,23 @@ pub struct RecoveryBoxCanceller {
     pub owner: crate::EntityId,
     /// The Ed25519 public half of the owner key that signed the Cancel.
     pub key: [u8; 32],
+}
+
+/// The release pending at the recovery box that an owner's Cancel names, as
+/// the device read it from the recovery-started act: the act's receipt, and
+/// the act's `at` when the device read it. The box cancels only the pending
+/// release with that receipt, and, with `started_at_ms`, only when that
+/// release also started then: a control-plane snapshot restore gives
+/// receipts out again, so a receipt alone can name a later release
+/// ([RECOVERY-BOX-CANCEL-RELEASE-STARTED-AT]). A start never travels without
+/// its receipt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RecoveryBoxRelease {
+    /// The recovery-started act's receipt.
+    pub receipt: u64,
+    /// The recovery-started act's `at`, in unix milliseconds, when the
+    /// device read it.
+    pub started_at_ms: Option<u64>,
 }
 
 /// No recovery box: every hold and every report answers `Ok`, and a Cancel
@@ -75,7 +92,7 @@ impl RecoveryBoxHold for NoRecoveryBox {
     fn cancel_pending_box_release(
         &self,
         _cancelled_by: &RecoveryBoxCanceller,
-        _release_receipt: Option<u64>,
+        _release: Option<RecoveryBoxRelease>,
     ) -> Result<bool> {
         Ok(false)
     }

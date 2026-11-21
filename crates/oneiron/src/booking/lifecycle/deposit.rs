@@ -45,12 +45,12 @@ use crate::{EntityId, Vault};
 
 mod held;
 mod home_fence;
+mod mark_refunded_outside;
 mod refund;
 mod refund_ended_unpaid;
 mod settle;
 mod settle_row;
 
-pub(crate) use self::held::note_unattributed_cancel_in_txn;
 pub(super) use self::held::{
     EmergencyReturn, HeldDeposit, HeldDepositKind, emergency_return_in_txn, held_deposit_in_txn,
     refund_ended_unpaid_note_in_txn, unattributed_cancel_sequence_in_txn,
@@ -60,6 +60,8 @@ use self::home_fence::{
     CHECKOUT_MOVING, SettleStanding, admits_deposits_here, awaits_carried_deposits, put_deposit,
     settle_standing_in_txn,
 };
+pub(crate) use self::mark_refunded_outside::mark_booking_deposit_refunded_outside;
+pub(super) use self::mark_refunded_outside::{MarkedRefund, refund_marked_outside_in_txn};
 pub(super) use self::refund::{
     cap_refund_on_visitor_reschedule_in_writer, refund_on_host_cancel_in_writer,
     refund_on_visitor_cancel_in_writer,
@@ -173,7 +175,10 @@ pub(super) struct DepositRow {
     /// with no write marker as the owner's own while this deposit was held
     /// (BK-ECHO-UNMARKED-SAME-SHAPE-COPY = C): a host's cancel at its
     /// SEQUENCE would read the same, so the owner's line names it as a
-    /// cancel Oneiron cannot attribute. Unset on every other row.
+    /// cancel Oneiron cannot attribute. Unset on every other row, and set by
+    /// no writer since the replay records it as a synced claim on the EVENT
+    /// (FIX [BK-REPLAY-NOTE-NOT-CARRIED-TO-NEW-HOME]); a row noted before
+    /// keeps its note.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     unattributed_cancel: Option<UnattributedCancel>,
     /// The SEQUENCE of the owner's BK-09 emergency cancel that gave this
@@ -196,12 +201,18 @@ pub(super) struct DepositRow {
     /// the deposit settles.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     refund_ended_unpaid: Option<RefundEndedUnpaid>,
+    /// The owner's word that the refund owed was paid back outside the
+    /// provider (FIX [BK-DEPOSIT-FAILED-REFUND-MARK-PAID]). Unset on every
+    /// other row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    refund_marked_outside: Option<mark_refunded_outside::RefundMarkedOutside>,
     updated_at: u64,
 }
 
 /// The first replay that read an unmarked stored copy as the owner's
-/// cancelled write while a deposit was held
-/// ([`note_unattributed_cancel_in_txn`]).
+/// cancelled write while a deposit was held: a row noted before the replay's
+/// evidence became a synced claim, or the claim as the deposit's node reads
+/// it (`held::unattributed_cancel_in_txn`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct UnattributedCancel {
@@ -380,6 +391,7 @@ pub fn begin_deposit_checkout(
                 emergency_return_sequence: None,
                 refund_retry: 0,
                 refund_ended_unpaid: None,
+                refund_marked_outside: None,
                 updated_at: now_utc,
             },
         };

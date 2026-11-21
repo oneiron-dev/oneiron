@@ -136,6 +136,7 @@ fn wait_until_carried(vault: &Vault, window: &LoadedWindow, id: &EntityId, what:
         if carrier(&window.doc, id).as_deref() == Some(stored.as_slice()) {
             return;
         }
+        // testkit-lint: allow(sleep) the live mirror runs on its own thread (sync/manager/live_mirror.rs:213) with no change signal a test can wait on
         std::thread::sleep(POLL);
     }
     panic!("after {POLLS} looks the loaded window still carries {what} as it was before the close");
