@@ -84,10 +84,9 @@ fn source_with_a_settled_ask() -> Result<Source, Box<dyn std::error::Error>> {
     })
 }
 
-/// A fresh destination, opened at least one wall-clock second after its
-/// source, as `archive_task_authority_facts.rs` opens one.
-fn open_later_vault() -> Result<(tempfile::TempDir, Vault), Box<dyn std::error::Error>> {
-    std::thread::sleep(std::time::Duration::from_millis(1100));
+/// A fresh destination vault for an archive import. The import compares unchanged
+/// engine seeds apart from their seed times, so no wall-clock wait is needed.
+fn open_destination_vault() -> Result<(tempfile::TempDir, Vault), Box<dyn std::error::Error>> {
     let directory = tempfile::tempdir()?;
     let vault = Vault::open(directory.path(), VaultConfig::default())?;
     Ok((directory, vault))
@@ -138,7 +137,7 @@ fn an_owners_archive_with_a_settled_ask_restores_its_records() -> TestResult {
     }
     let archive = source.vault.export_whole_vault(true)?.bytes().to_vec();
 
-    let (_dest_directory, dest) = open_later_vault()?;
+    let (_dest_directory, dest) = open_destination_vault()?;
     let proof = owner_proof(&dest)?;
     if let Err(error) = dest.import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &proof)
     {
@@ -171,7 +170,7 @@ fn an_import_with_no_owner_refuses_the_ask_records() -> TestResult {
     let records = ask_records(&source.vault)?;
     let archive = source.vault.export_whole_vault(true)?.bytes().to_vec();
 
-    let (_dest_directory, dest) = open_later_vault()?;
+    let (_dest_directory, dest) = open_destination_vault()?;
     let refused = dest
         .import_whole_vault_archive(&archive)
         .expect_err("only the owner's restore lands an ask record");
