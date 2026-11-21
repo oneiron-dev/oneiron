@@ -106,6 +106,7 @@ impl ScopedRead<'_> {
             .reading(read.store_read())
             .authority_filter(candidates)
             .scoped_note_reader(read.actor_key.clone())
+            .statistics_read(read)
             .filter_candidates(&admitted)
             .search_text(query, limit)
             .fold_messages_into_turns(kinds.turn_fold())

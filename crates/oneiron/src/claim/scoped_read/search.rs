@@ -193,6 +193,7 @@ impl ScopedRead<'_> {
             .reading(self.store_read())
             .authority_filter(candidates.clone())
             .scoped_note_reader(self.actor_key.clone())
+            .statistics_read(self)
             .filter_candidates(&plan_row_decodes)
             .gate_candidates(&admitted)
             .search(query, vector, None, limit)
@@ -258,6 +259,7 @@ impl ScopedRead<'_> {
             .reading(self.store_read())
             .authority_filter(candidates.clone())
             .scoped_note_reader(self.actor_key.clone())
+            .statistics_read(self)
             .filter_candidates(&plan_row_decodes)
             .gate_candidates(&admitted);
         if let Some(memory) = media_memory {
@@ -842,6 +844,7 @@ impl ContextPackPlan<'_, '_> {
     ) -> crate::ContextPackBuilder<'b> {
         builder
             .scoped_note_reader(self.read.actor_key.clone())
+            .statistics_read(self.read)
             .authority_filter(self.plan.candidates.clone())
             .filter_candidates(&plan_row_decodes)
             .gate_candidates(self)
