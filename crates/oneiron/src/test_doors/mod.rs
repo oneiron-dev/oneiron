@@ -296,6 +296,7 @@ pub mod peer_author_redaction;
 #[cfg(feature = "sync")]
 pub mod pending_work_reports;
 pub mod pending_write_tray;
+pub mod policy_doors_between;
 #[cfg(feature = "sync")]
 pub mod predicted_residence;
 pub mod profiles_other_machine;
