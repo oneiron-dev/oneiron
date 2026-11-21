@@ -48,7 +48,8 @@ pub(crate) use self::model_channel::{
 pub(crate) use self::retained_copies::retained_copy_admits;
 pub use self::room_party::{RoomParty, RoomPartyEntry};
 pub(crate) use self::room_party::{
-    is_vault_owner, live_vault_owner_person_in_txn, room_party_entry_in, room_party_in,
+    deletion_recorded_in_txn, is_vault_owner, live_vault_owner_person_in_txn, room_party_entry_in,
+    room_party_in,
 };
 
 pub use self::scope_codec::{

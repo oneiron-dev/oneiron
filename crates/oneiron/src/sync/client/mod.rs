@@ -41,6 +41,7 @@
 //!   answer the VV exchange from the persisted state vector without
 //!   loading the window doc.
 
+mod admitted_rewrite;
 mod artifacts;
 mod ask_forward;
 mod base;
@@ -64,6 +65,8 @@ mod sync_frames;
 mod types;
 mod window_pads;
 
+#[cfg(oneiron_test_support)]
+pub(crate) use self::admitted_rewrite::admitted_rewrite;
 #[cfg(oneiron_test_support)]
 pub(crate) use self::base::ResidenceReceipt;
 pub use self::base::SyncClient;
