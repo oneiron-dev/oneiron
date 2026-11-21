@@ -56,7 +56,7 @@ const TIER: &str = "decision-role-binding";
 
 /// A clock these reads never reach.
 fn deadline() -> RetrievalDeadline {
-    RetrievalDeadline::hard(Instant::now(), Duration::from_secs(60))
+    RetrievalDeadline::after(Duration::from_secs(60))
 }
 
 fn question() -> DecisionQuestion {
