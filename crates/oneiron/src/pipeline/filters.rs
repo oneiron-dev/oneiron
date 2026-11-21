@@ -1040,6 +1040,15 @@ pub(super) fn candidate_matches_criticality_and_stale_worlds(
     if filters.stale_worlds.is_none() {
         return Ok(true);
     }
+    // A claim whose stored body does not decode is out of the scope: every
+    // other read's claim status gate drops it before the world filter, whose
+    // decode would fail the run on it.
+    if let Some(raw) = store.port_entity_record(rtxn, id)?
+        && raw.entity_type == ENTITY_TYPE_CLAIM
+        && crate::claim::decode_claim_body(&raw.body, true).is_err()
+    {
+        return Ok(false);
+    }
     pipeline_candidate_matches_world_filter(
         store,
         rtxn,
