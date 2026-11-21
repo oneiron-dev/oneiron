@@ -84,6 +84,35 @@ pub(crate) fn acknowledge_home_move_for_doors(source: &Vault) -> Result<()> {
     })
 }
 
+/// Records on `target` what a move's target writer records once every section applied
+/// (`super::transfer`'s adopt writer), with no handoff, receipt or ack: the head's floor is the
+/// target's, so this node holds its home state from then on and the fence
+/// (`super::guard_in_txn`) takes its writes again, as on a former home that a later move
+/// carried the state back to.
+///
+/// # Errors
+///
+/// Store errors.
+pub(crate) fn record_home_adoption_for_doors(target: &Vault) -> Result<()> {
+    target.with_write_txn(|txn| {
+        let head = store::head_in_txn(target, txn)?;
+        let serial = head.floor.map_or(0, |floor| floor.serial) + 1;
+        let head = HandoffHead {
+            floor: Some(HeadFloor {
+                serial,
+                handoff: [0xa5; 32],
+                role: HandoffRole::Target,
+            }),
+            request: None,
+            incomplete: None,
+            route: None,
+            staged: None,
+            ..head
+        };
+        store::put_head_in_txn(target, txn, &head)
+    })
+}
+
 /// Freezes `source`'s home state as a move's final writer does
 /// (`super::transfer::freeze_in_txn`), with no export, seal or sealed parts:
 /// its rows of every registered table are history from then on, and the

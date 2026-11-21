@@ -8,13 +8,15 @@
 //! machine also holds none of the old home's outbound send ledger (FIX
 //! [BK-EMERGENCY-UNCERTAIN-SEND-NOT-SHOWN-TO-OWNER]), a read of the note a
 //! held deposit's row carries (FIX [BK-REPLAY-NOTE-NOT-CARRIED-TO-NEW-HOME]),
-//! and the owner's emergency run stopped before its answer (review round 1
-//! of #10166).
+//! the owner's emergency run stopped before its answer (review round 1 of
+//! #10166), and the adoption a move's target records, so a former home that a
+//! later move carries the rows back to takes their writes again (FIX
+//! [BK-EMERGENCY-DEFERRED-SEND-STRANDED-ON-FORMER-HOME]).
 
 use crate::side_table::{self, SideTableDbs, SideTableDecl};
 use crate::sync::home_handoff::{
     acknowledge_home_move_for_doors, carry_section_for_doors, freeze_home_state_for_doors,
-    registers_section_for_doors,
+    record_home_adoption_for_doors, registers_section_for_doors,
 };
 use crate::{EntityId, Result, Vault};
 
@@ -122,6 +124,19 @@ pub fn move_booking_home(
         }
     }
     Ok(applied)
+}
+
+/// Records on `new_home` what a move's target writer records once the booking sections applied:
+/// the state it adopted is its own, so its home writes run again, even on a former home whose
+/// earlier move froze them, as a later move that carries the rows back leaves it (FIX
+/// [BK-EMERGENCY-DEFERRED-SEND-STRANDED-ON-FORMER-HOME]). [`move_booking_home`] records no
+/// adoption: a machine that never froze its state takes home writes without one.
+///
+/// # Errors
+///
+/// Store errors.
+pub fn record_booking_home_adoption(new_home: &Vault) -> Result<()> {
+    record_home_adoption_for_doors(new_home)
 }
 
 /// Runs on `old_home` what its writer runs once the new home acknowledged the

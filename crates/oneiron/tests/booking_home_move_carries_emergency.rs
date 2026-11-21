@@ -28,7 +28,13 @@
 //! - a mark travels with the next move, even once its send was delivered
 //!   again: a home whose run sent it and then stopped on a later effect
 //!   passes it on, and the next home's run answers it (review round 1 of
-//!   #10125).
+//!   #10125);
+//! - a send the provider took as a remote task on a home, which the move
+//!   carried away owed and a later move carried back there, goes again from
+//!   that former home under the idempotency key its first send carried (FIX
+//!   [BK-EMERGENCY-DEFERRED-SEND-STRANDED-ON-FORMER-HOME]): its own ledger's
+//!   deferred row, which its replay never sends again (FIX 7960), no longer
+//!   holds every resume there.
 //!
 //! The emergency fixture is `tests/booking_feed_move_held.rs`'s: an
 //! owner-logged RequestUpdate instruction over a booked slot, planned and
@@ -58,7 +64,12 @@
 //! answer's replay is red on #10166's head 91d09f814167: the first answer
 //! dropped its mark, so a run that stopped after that writer, before the
 //! owner read its answer, left the next run nothing to answer (review round
-//! 2 of #10166).
+//! 2 of #10166). The send carried back to its former home is red on #10166's
+//! head 6bf877252c85: the former home's resume replays its own deferred row
+//! under the same attempt, never calls the sink, and refuses ("emergency
+//! effect is not delivered; resume its existing intent"). The door
+//! `record_booking_home_adoption` records on that former home the adoption a
+//! move's target records, so it takes home writes again.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test booking_home_move_carries_emergency`.
 #![cfg(all(oneiron_test_support, feature = "sync"))]
@@ -88,6 +99,7 @@ use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON};
 use oneiron::test_doors::booking_home_move::{
     acknowledge_booking_home_move, booking_rows_hold, deliver_emergency_without_answer,
     drop_node_local_booking_rows, drop_node_local_outbound_rows, move_booking_home,
+    record_booking_home_adoption,
 };
 use oneiron::{
     CalendarSel, ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject,
@@ -477,6 +489,23 @@ impl OutboundExecutionSink for DeferringSink {
             poll_after_secs: None,
             poll: None,
         })
+    }
+}
+
+/// A sink that records the channel and the provider idempotency key of each send it is handed,
+/// then answers it as `inner` does.
+struct RecordingSink<S> {
+    inner: S,
+    sends: Vec<(String, Option<String>)>,
+}
+
+impl<S: OutboundExecutionSink> OutboundExecutionSink for RecordingSink<S> {
+    fn execute(&mut self, request: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
+        self.sends.push((
+            request.intent.channel.to_string(),
+            request.idempotency_key.map(str::to_owned),
+        ));
+        self.inner.execute(request)
     }
 }
 
@@ -928,5 +957,83 @@ fn a_repeat_delivered_before_the_bookers_pick_is_answered_by_the_owners_next_run
     assert_eq!(
         again.repeat_notices, run.repeat_notices,
         "an answer that never reached the owner is given again"
+    );
+}
+
+#[test]
+fn a_send_deferred_on_a_former_home_goes_again_when_a_move_carries_it_back() {
+    let seed = Machine::seed();
+    let mut deferring = RecordingSink {
+        inner: DeferringSink,
+        sends: Vec::new(),
+    };
+    let emergency = emergency(&seed, &mut deferring);
+    assert!(
+        emergency.item.is_err(),
+        "FIXTURE: the provider took the invite as a remote task, so the emergency stays owed"
+    );
+    let invite_key = match deferring.sends.as_slice() {
+        [(channel, Some(key)), ..] if channel == "calendar" => key.clone(),
+        other => panic!("FIXTURE: the seed's first send is the invite, with its key: {other:?}"),
+    };
+    let (former_home, second_home) = seed.into_old_and_new_home();
+    assert!(
+        move_booking_home(&former_home.vault, &second_home.vault, &[])
+            .expect("move the booking home"),
+        "every section applies"
+    );
+    assert!(
+        move_booking_home(&second_home.vault, &former_home.vault, &[])
+            .expect("move the booking home back before the second home resumed it"),
+        "every section applies on the former home"
+    );
+    record_booking_home_adoption(&former_home.vault)
+        .expect("FIXTURE: the former home holds the state it adopted");
+
+    let mut delivering = RecordingSink {
+        inner: DeliveringSink,
+        sends: Vec::new(),
+    };
+    let run = execute_emergency_plan(
+        &former_home.vault,
+        &emergency.request,
+        &emergency.plan,
+        &former_home.calendars(),
+        &former_home.consumer(NOW + 300),
+        &mut delivering,
+    )
+    .expect(
+        "the former home resumes the owed delivery (#10166's head 6bf877252c85 replays its own \
+         deferred invite under the same attempt and refuses every resume)",
+    );
+    assert!(
+        run.item.calendar_delivered && run.item.apology_delivered,
+        "the former home delivers what the second home carried back owed"
+    );
+    let invite = delivering
+        .sends
+        .iter()
+        .find(|(channel, _)| channel == "calendar")
+        .expect("the former home sends the invite again");
+    assert_eq!(
+        invite.1.as_deref(),
+        Some(invite_key.as_str()),
+        "the invite goes again under the idempotency key its first send carried, so the \
+         provider can drop a repeat"
+    );
+    assert!(
+        delivering
+            .sends
+            .iter()
+            .any(|(channel, _)| channel == "email"),
+        "the former home sends the apology"
+    );
+    assert_eq!(
+        run.repeat_notices,
+        vec![EmergencyRepeatNotice {
+            effect: "calendar",
+            message: EMERGENCY_REPEAT_NOTICE,
+        }],
+        "the invite the former home sent uncertain may reach the booker twice"
     );
 }
