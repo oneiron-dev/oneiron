@@ -147,7 +147,9 @@ const ADMISSION: SideTable<[u8; 32], TurnProgramAdmissionRecord, Named> =
 const ATTEMPT: SideTable<AttemptId, TurnProgramAttemptStamp, Named> =
     SideTable::new(&side_table::DREAMER_TURN_PROGRAM_ATTEMPT);
 /// One wake the elected home decided on another machine, keyed by the turn,
-/// then the registration it woke: the admission's identity (FIX 5266).
+/// then the registration it woke: the admission's identity (FIX 5266). It
+/// goes with its actor's erase where this machine learned the actor
+/// (`index`).
 const DECIDED: SideTable<(EntityId, EntityId), [u8; 32], Named> =
     SideTable::new(&side_table::DREAMER_TURN_PROGRAM_DECIDED);
 /// One disarm this machine knows, keyed by its actor, then its registration

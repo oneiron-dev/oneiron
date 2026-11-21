@@ -366,14 +366,15 @@ pub(crate) fn arming_row_actor(bytes: &[u8]) -> Option<EntityId> {
     decode_arming(bytes).ok().map(|row| row.actor())
 }
 
-/// The actor a carried `Owed`, `Retracted` or `Released` wake row names. An
-/// `Admitted` row answers none, whether or not it names its actor: its merge
-/// alone reads that actor (`decided`).
+/// The actor a carried wake row names: an `Owed`, `Retracted` or `Released`
+/// row's, and an `Admitted` row's where it names one (FIX
+/// TURNPROGRAM-ERASE-KEEPS-DECIDED). An `Admitted` row written before the
+/// row named its actor answers none, and leaves a window with no erase.
 pub(crate) fn wake_row_actor(bytes: &[u8]) -> Option<EntityId> {
     match decode_wake(bytes).ok()? {
         WakeRow::Owed(wake) => Some(wake.authority.actor()),
         WakeRow::Retracted { actor, .. } | WakeRow::Released { actor, .. } => Some(actor),
-        WakeRow::Admitted { .. } => None,
+        WakeRow::Admitted { actor, .. } => actor,
     }
 }
 
