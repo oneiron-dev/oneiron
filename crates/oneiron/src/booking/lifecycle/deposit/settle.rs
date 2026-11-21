@@ -546,7 +546,7 @@ fn settle_deposit_key<P: DepositSettlementPort>(
         movement,
         idempotency_key: &idempotency_key,
         earlier_retry_keys: &earlier_retry_keys,
-        find_only,
+        find_only: find_only && false,
     }) {
         Ok(moved) => Ok(
             match record_settled(
