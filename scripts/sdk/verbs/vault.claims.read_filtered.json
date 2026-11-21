@@ -1,6 +1,6 @@
 {
   "name": "vault.claims.read_filtered",
-  "description": "Reads one claim as retrieval would surface it under the caller retrieval filter met with the actor ceiling, with the read narrowing receipt.",
+  "description": "Reads one claim as retrieval would surface it, optionally within projects, under the caller retrieval filter met with the actor ceiling, with the read narrowing receipt.",
   "input": "crate::memory::ClaimFilteredReadRequest",
   "output": "crate::claim::ScopedReadResult<Option<crate::memory::ClaimView>>",
   "call": "memory.claim_read_filtered(&input)?",

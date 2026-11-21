@@ -17,9 +17,10 @@
 //! An imported diary or owner-only NOTE has no local author to read it, so
 //! every ordinary read, search and context pack holds it. The vault's
 //! current owner reads one only by asking for it by id through
-//! [`Vault::read_imported_note`], an explicit owner act.
-
-use serde::Serialize;
+//! [`Vault::read_imported_note`], an explicit owner act. The one exception
+//! is a restored agent's own diary: once the owner's review makes the
+//! restored agent stand, its imported diary entries are its own again
+//! ([`diary_author_in`]; RESTORED-AGENT-KEEPS-IMPORTED-DIARY).
 
 use super::{
     NoteActor, NoteBody, NoteKind, decode_note_body_using, decode_note_core_using, encode_note_core,
@@ -33,18 +34,8 @@ use crate::registry::ENTITY_TYPE_NOTE;
 use crate::store::note_body::encode_note_body;
 use crate::temporal::TimeRange;
 
-/// What the vault's current owner reads of an imported NOTE
-/// ([`Vault::read_imported_note`]).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct ImportedNoteRead {
-    /// The NOTE's kind, as its body stores it.
-    pub kind: String,
-    /// The author the source vault recorded, as a hex id: provenance, never
-    /// a local actor.
-    pub source_author: String,
-    /// Its current markdown.
-    pub markdown: String,
-}
+#[doc(hidden)]
+pub use oneiron_records::note::archive_import::ImportedNoteRead;
 
 /// One archived NOTE the archive put may stage: its core, the row it
 /// stores, and its markdown, the text its document is born from (FIX 7783).
@@ -88,6 +79,32 @@ pub(crate) fn archived_note_body(source: &[u8]) -> Result<Vec<u8>> {
     };
     body.author_ref = NoteActor::Imported(author);
     encode_note_body(&body)
+}
+
+/// The agent who wrote a diary NOTE whose stored author is `author`
+/// (RESTORED-AGENT-KEEPS-IMPORTED-DIARY): its local author, or the source
+/// author of an imported entry once that author is a restored agent the
+/// owner's review made stand
+/// ([`crate::agent_def::restored_diary::restored_agent_stands_in`]). An
+/// `AuthoredBy` edge is no evidence here. `None` for an erased author, and
+/// for an imported one no review has restored: such an entry stays the
+/// owner's evidence.
+///
+/// # Errors
+/// Storage faults.
+pub(crate) fn diary_author_in(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    author: NoteActor,
+) -> Result<Option<EntityId>> {
+    Ok(match author {
+        NoteActor::Actor(author) => Some(author),
+        NoteActor::Imported(author) => {
+            crate::agent_def::restored_diary::restored_agent_stands_in(store, txn, &author)?
+                .then_some(author)
+        }
+        NoteActor::Erased => None,
+    })
 }
 
 /// The archive NOTE put's capability for `body`: a NOTE body under the

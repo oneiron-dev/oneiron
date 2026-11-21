@@ -6,9 +6,9 @@ use sha2::{Digest, Sha256};
 use crate::Vault;
 use crate::batch::BatchOp;
 use crate::edit_distance::delta::{
-    AMENDMENT_UNCAPTURED_INBOX, AmendmentDelta, DeltaCaptureContext, EndpointRef, MeasuredEnd,
-    OUTCOME_APPROVED_AMENDED, attach_amendment_deltas, bump_amendment_uncaptured_in_txn,
-    capture_delta_best, live_revision_in_txn, put_amendment_delta_in_txn,
+    AMENDMENT_UNCAPTURED_INBOX, AmendmentDelta, OUTCOME_APPROVED_AMENDED,
+    approved_claim_body_bytes, attach_amendment_deltas, bump_amendment_uncaptured_in_txn,
+    live_revision_in_txn, measured_claim_amendment_in_txn, put_amendment_delta_in_txn,
 };
 use crate::edit_distance::miner::CompilationTargetValidation;
 use crate::edit_distance::miner::record_inbox_learning_in_txn;
@@ -18,17 +18,20 @@ use crate::inbox::compilation_target::CompilationTarget;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::gate_receipt::gate_decision_receipt;
-use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionRecord};
+use crate::store::{
+    GATE_DECISION_LEDGER_VERSION, GateDecisionRecord, GateEnginePart, GateReceipt, PolicyBasis,
+    ReceiptActor,
+};
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 use crate::write_envelope::claim_body::ClaimBody;
 use oneiron_contracts::claim::ClaimApprovalStatus;
 
 use super::model::{
-    INBOX_BUNDLE_ACTOR_CLASS, INBOX_BUNDLE_CONTENT_KIND, INBOX_BUNDLE_REF_PREFIX,
-    INBOX_GROUP_DOOR_PREFIX, INBOX_REASON_AMEND_ACCEPT, INBOX_REASON_AMEND_DELTA_UNCAPTURED,
-    INBOX_REASON_BUNDLE_ACCEPT, INBOX_REASON_BUNDLE_REJECT, InboxAmendedApproval, InboxBulkVerb,
-    InboxBundleResolution, InboxGroupReopen, InboxReviewDial,
+    INBOX_BUNDLE_CONTENT_KIND, INBOX_BUNDLE_REF_PREFIX, INBOX_GROUP_DOOR_PREFIX,
+    INBOX_REASON_AMEND_ACCEPT, INBOX_REASON_AMEND_DELTA_UNCAPTURED, INBOX_REASON_BUNDLE_ACCEPT,
+    INBOX_REASON_BUNDLE_REJECT, InboxAmendedApproval, InboxBulkVerb, InboxBundleResolution,
+    InboxGroupReopen, InboxReviewDial,
 };
 use super::projection::explicit_inbox_group;
 
@@ -159,8 +162,7 @@ impl Vault {
                         if let Some(record) = self.store.close_pending_gate_consent_in_txn(
                             wtxn,
                             &id,
-                            now,
-                            "rejected",
+                            crate::store::gate_reason::GateReceiptOutcome::Rejected,
                             vec![INBOX_REASON_BUNDLE_REJECT.to_owned()],
                             Some(bundle_ref.clone()),
                         )? {
@@ -206,7 +208,6 @@ impl Vault {
                 verb,
                 verb_class,
                 bundle_basis,
-                now,
             )?;
             Ok((bundle_record, item_records, vad_claim_ids))
         })?;
@@ -471,12 +472,12 @@ fn accept_member_with_amendment_in_txn(
     // Both sides are normalized to Approved before the Δ is measured, so it
     // reports the DECIDER's edit and not the approval flip this door performs
     // on every accept.
-    let approved = approved_body(amended.as_ref().unwrap_or(&reviewed))?;
+    let approved = approved_claim_body_bytes(amended.as_ref().unwrap_or(&reviewed))?;
     // Proposed end: the claim as reviewed (FIX 7819); a failed read fails only the capture.
     let reviewed_end = if amended_approval {
         Some((
             live_revision_in_txn(&vault.store, wtxn, *id),
-            approved_body(&reviewed)?,
+            approved_claim_body_bytes(&reviewed)?,
         ))
     } else {
         None
@@ -490,7 +491,7 @@ fn accept_member_with_amendment_in_txn(
         rebind_amended_consent(vault, wtxn, &pending, &approved)?;
     }
     if amended_approval || reviewed.approval != ClaimApprovalStatus::Approved {
-        let unamended = approved == approved_body(&reviewed)?;
+        let unamended = approved == approved_claim_body_bytes(&reviewed)?;
         let put = BatchOp::Put {
             id: *id,
             entity_type: ENTITY_TYPE_CLAIM,
@@ -544,7 +545,7 @@ fn accept_member_with_amendment_in_txn(
     // A Δ the door could not measure counts here (FIX 11542):
     // `captured_amendment_delta` is read-only, so the bump rides this write.
     if !delta_reasons.is_empty() {
-        bump_amendment_uncaptured_in_txn(vault, wtxn, AMENDMENT_UNCAPTURED_INBOX)?;
+        bump_amendment_uncaptured_in_txn(&vault.store, wtxn, AMENDMENT_UNCAPTURED_INBOX)?;
     }
     vault.complete_deferred_claim_in_txn(wtxn, id, None, now, learning.map(|(actor, _)| actor))?;
     crate::task_verb::settle_task_proposal_in_txn(
@@ -642,51 +643,16 @@ pub(super) fn captured_amendment_delta(
     reviewed_at: Result<Option<crate::vault::RevisionRef>>,
     proposed: &[u8],
 ) -> (Option<AmendmentDelta>, Vec<String>) {
-    match measured_amendment_in_txn(vault, txn, claim, reviewed_at, proposed) {
+    let measured = reviewed_at.and_then(|reviewed_at| match reviewed_at {
+        Some(reviewed_at) => {
+            measured_claim_amendment_in_txn(&vault.store, txn, claim, reviewed_at, proposed)
+        }
+        None => Ok(None),
+    });
+    match measured {
         Ok(Some(delta)) => (Some(delta), Vec::new()),
         Ok(None) | Err(_) => (None, vec![INBOX_REASON_AMEND_DELTA_UNCAPTURED.to_owned()]),
     }
-}
-
-/// Both ends by their refs, the landed body read back; `None` if either is gone.
-fn measured_amendment_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    claim: &EntityId,
-    reviewed_at: Result<Option<crate::vault::RevisionRef>>,
-    proposed: &[u8],
-) -> Result<Option<AmendmentDelta>> {
-    let (Some(reviewed_at), Some(landed_at)) = (
-        reviewed_at?,
-        live_revision_in_txn(&vault.store, txn, *claim)?,
-    ) else {
-        return Ok(None);
-    };
-    let Some(raw) = vault.store.port_entity_record(txn, claim)? else {
-        return Ok(None);
-    };
-    let landed = approved_body(&crate::write_envelope::claim_body::decode_claim_body(
-        &raw.body, true,
-    )?)?;
-    let context = DeltaCaptureContext::from_bodies(
-        MeasuredEnd {
-            at: EndpointRef::approved_claim(*claim, reviewed_at),
-            content: proposed,
-        },
-        MeasuredEnd {
-            at: EndpointRef::approved_claim(*claim, landed_at),
-            content: &landed,
-        },
-    );
-    Ok(capture_delta_best(context).ok())
-}
-
-/// The claim body as the door will persist it. Approval is the ENGINE's to
-/// set: a submitted body asserting its own approval decides nothing.
-fn approved_body(body: &ClaimBody) -> Result<Vec<u8>> {
-    let mut approved = body.clone();
-    approved.approval = ClaimApprovalStatus::Approved;
-    crate::write_envelope::claim_body::encode_claim_body(&approved)
 }
 
 /// Validates a decider's edit against the proposal it amends.
@@ -725,7 +691,6 @@ fn append_bundle_decision_in_txn(
     verb: InboxBulkVerb,
     verb_class: Option<&str>,
     basis: &[GateDecisionRecord],
-    now: u64,
 ) -> Result<GateDecisionRecord> {
     let mut hasher = Sha256::new();
     hasher.update(b"oneiron.inbox.bundle.v0");
@@ -743,32 +708,24 @@ fn append_bundle_decision_in_txn(
         reason_codes.push(format!("gate.consent.bundle.verb_class.{verb_class}"));
     }
 
-    let record = GateDecisionRecord {
-        version: GATE_DECISION_LEDGER_VERSION,
-        decision_id: crate::store::GateDecisionId::from_bytes(vault.store.clock.ulid()?),
-        created_at: now,
-        outcome: verb.bundle_outcome().to_owned(),
+    // The basis of the first member's row; an empty bundle read no policy.
+    let policy = basis.first().map_or_else(
+        || PolicyBasis::versioned([0; 32], "unversioned"),
+        PolicyBasis::of,
+    );
+    let mut receipt = GateReceipt::with_reasons(
+        verb.bundle_outcome(),
+        INBOX_BUNDLE_CONTENT_KIND,
         reason_codes,
-        receipt_reasons: Vec::new(),
-        system_notices: Vec::new(),
-        actor_class: INBOX_BUNDLE_ACTOR_CLASS.to_owned(),
-        actor_ref: None,
-        content_kind: INBOX_BUNDLE_CONTENT_KIND.to_owned(),
-        policy_manifest_version: basis.first().map_or_else(
-            || "unversioned".to_owned(),
-            |record| record.policy_manifest_version.clone(),
-        ),
-        claim_id: None,
-        grant_ref: Some(bundle_ref.to_owned()),
-        diff_handle: hasher.finalize().to_vec(),
-        read_frontier_hash: basis
-            .first()
-            .map_or([0; 32], |record| record.read_frontier_hash),
-        // FIX 7499, 7500: every member's read context and loop links; the
-        // claim refs below bind each member's claim.
-        context: crate::store::GateDecisionContext::answering_all(basis),
-        redacted_at: None,
-    };
+        ReceiptActor::Part(GateEnginePart::Owner, None),
+        hasher.finalize().to_vec(),
+        policy,
+    );
+    receipt.grant_ref = Some(bundle_ref.to_owned());
+    // FIX 7499, 7500: every member's read context and loop links; the
+    // claim refs below bind each member's claim.
+    receipt.context = crate::store::GateDecisionContext::answering_all(basis);
+    let record = vault.store.mint_gate_receipt_in_txn(wtxn, receipt)?;
     let claim_refs = basis
         .iter()
         .map(|member| {

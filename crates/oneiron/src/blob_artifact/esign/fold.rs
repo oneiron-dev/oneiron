@@ -36,6 +36,32 @@ impl EsignState {
             reminders: Default::default(),
             sent_at: None,
             reminder_at: Default::default(),
+            reviews: BTreeMap::new(),
+        })
+    }
+    /// The recipient's own field values as they stand, by field id: what a
+    /// review binds.
+    pub(super) fn recipient_values(&self, recipient: &str) -> BTreeMap<String, FieldValue> {
+        self.signatures
+            .iter()
+            .filter(|(_, row)| row.recipient == recipient)
+            .map(|(field, row)| (field.clone(), row.value.clone()))
+            .collect()
+    }
+    /// Whether the recipient's review still stands for a Complete made as
+    /// `completer`: it bound the frozen items and the values they hold now
+    /// (UETA section 10), and a person's Complete stands only on a person's
+    /// review, so the signer saw what they sign; an agent's takes either.
+    pub(super) fn review_stands(
+        &self,
+        recipient: &str,
+        completer: EsignAuthenticationMethod,
+    ) -> bool {
+        self.reviews.get(recipient).is_some_and(|review| {
+            review.items == self.document.items
+                && review.values == self.recipient_values(recipient)
+                && (completer == EsignAuthenticationMethod::Agent
+                    || review.authentication_method != EsignAuthenticationMethod::Agent)
         })
     }
     /// One deterministic terminal target at the first overdue unfinished
@@ -183,6 +209,33 @@ impl EsignState {
                 validate_value(field, &signature.value)?;
                 self.signatures
                     .insert(signature.field.clone(), signature.clone());
+                // A saved field voids the recipient's review (UETA section
+                // 10): they review again before they complete.
+                self.reviews.remove(&signature.recipient);
+            }
+            EsignEvent::Reviewed {
+                recipient,
+                items,
+                values,
+                authentication_method,
+            } => {
+                self.require_turn(recipient, now)?;
+                if self.recipients[recipient].access != AccessStatus::Verified {
+                    return Err(invalid("access authentication required"));
+                }
+                if *items != self.document.items || *values != self.recipient_values(recipient) {
+                    return Err(invalid(
+                        "a review binds the frozen items and the recipient's current values",
+                    ));
+                }
+                self.reviews.insert(
+                    recipient.clone(),
+                    EsignReview {
+                        items: items.clone(),
+                        values: values.clone(),
+                        authentication_method: *authentication_method,
+                    },
+                );
             }
             EsignEvent::Signed {
                 recipient, next, ..
@@ -246,6 +299,33 @@ impl EsignState {
                 }
                 self.reminders.insert((recipient.clone(), *rung));
                 self.reminder_at.insert(recipient.clone(), now);
+            }
+            EsignEvent::Extended { expires_at } => {
+                // RULING ESIGN-WINDOW-EXTEND-AUTHORITY = A: only a pending
+                // document whose windows are all still open moves, and only
+                // later; a document past a window is the expiry sweep's,
+                // and a terminal one never reopens.
+                if self.status != DocumentStatus::Pending
+                    || self.rejection.is_some()
+                    || self.expiry_target(now).is_some()
+                    || *expires_at <= self.document.expires_at
+                {
+                    return Err(invalid("signing window cannot be extended"));
+                }
+                self.document.expires_at = *expires_at;
+                for recipient in &mut self.document.recipients {
+                    let progress = self
+                        .recipients
+                        .get_mut(&recipient.id)
+                        .ok_or_else(|| invalid("unknown recipient"))?;
+                    if !matches!(
+                        progress.signing,
+                        SigningStatus::Completed | SigningStatus::Rejected
+                    ) {
+                        progress.expires_at = *expires_at;
+                        recipient.expires_at = *expires_at;
+                    }
+                }
             }
             EsignEvent::Sealed {
                 rejected,

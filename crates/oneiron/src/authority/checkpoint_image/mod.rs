@@ -42,66 +42,25 @@ use serde::{Deserialize, Serialize};
 
 use super::revoke_proof::RevokeFacts;
 use super::*;
-use crate::error::{Error, RecordError, Result};
+use crate::error::Result;
 use crate::{EntityId, HostingPrivacyPosture, Vault};
 
-/// The fold-state schema an image encodes. A decoder refuses any other. 5:
-/// each row summary marks whether its body is required (FIX 2988). 6: a
-/// machine revision carries its owner say-so's causal past (FIX 4610). 7:
-/// the fold keeps each machine's home candidacy (FIX 4898). 8: the owner
-/// work fold keeps the owner's cancels of root requests (FIX 4739). 9: the
-/// fold admits the owner's device key enrollments and an image carries
-/// their bodies, and the retired multi-device entry quorum is gone (FIX 4920).
-/// 10: an enrolled owner key starts its own custody line (FIX 5896). 11: a
-/// custody request names its authority, an install's or the pinned kit's,
-/// and the fold keeps the owner's kit push as a counted request (FIX 6053).
-/// 12: the fold admits frontier joins, and an image carries their bodies
-/// (FIX 7908). 13: an act-free custodial machine revision lands only as a
-/// bootstrap or its carry (FIX 7920), and a pact keeps each party's narrowing
-/// (FIX 7933). 14: an owner handover signs its grant ids and an image carries
-/// its body (FIX 5765). 15: an image keeps the fold state at each covered row
-/// off its frontier as replay evidence (FIX 3007), carries the bodies of home
-/// candidacies, federation lifecycle acts and residence rows (FIX 3004, 3005,
-/// 5412), and the fold keeps each valid residence directive (FIX 5412). 16:
-/// the fold keeps each setting's signed acts, the refused export acts and each agent-carried act's
-/// Grant, and an image carries the bodies of both ops (FIX 4624, FIX 5660). 17: the fold keeps each
-/// Grant a signed `SlipGrantRevoke` withdrew and its revoke proofs carry one (FIX 1978), a pact
-/// that ends keeps no plaintext scope, and one keyed digest over two scopes suspends the pact (FIX
-/// 7907). 18: a replay delta keeps a map field's changed entries alone (FIX 11262). 19: anchors
-/// sign joins (FIX 8498). 20: the owner work fold keeps the owner's export supplement import marks
-/// (FIX 12062). 21: the fold keeps each repository's owner origin cuts (FIX 15740). 22: the fold
-/// keeps each predecessor device key's owner-named successor (FIX 11135). 23: replay
-/// anchors use only the first parent and overflow keeps a whole-state suffix (FIX 11762).
-/// 24: residence compaction excludes the writing install's checkpoint metadata (FIX 18583).
-/// 25: a pact keeps the signed nonce and the consent epoch its scope commitment is keyed under
-/// (FIX 11730). 26: the fold counts a removal-archive consume's slip consumed (FIX 11862).
-/// 27: the fold admits carrier-signed membership execution records, an image carries their
-/// bodies, and its revoke facts carry their Grant withdrawals (FIX 12335).
-/// 28: a root request's basis carries its bound anchor and its anchor heads' parents (FIX 6556).
-/// 29: an owner's agent Grant mint an image carries may name verb classes (FIX 8735).
-/// 30: an owner's agent Grant mint an image carries may name a host wallet (FIX 7766).
-/// 31: the fold keeps each world an agent edited with all of its edits and their judged strengths,
-/// for a view that holds any of those edits' Grants refused (FIX 22381).
-/// 32: beside those worlds, an install's fold keeps the cap the fold with no vouch puts on
-/// them, so such a view reads them under the same cap (FIX 23218).
-/// 33: an owner's agent Grant mint an image carries may bind its repo bounds to one owner
-/// working view (row 6 WORKING-VIEW-EDIT).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 33;
-/// The domain every encoded image starts with.
-pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";
-/// The context of an image's id over its encoded bytes.
-pub const AUTHORITY_CHECKPOINT_V2_ID_CONTEXT: &str = "oneiron/authority/checkpoint-v2/id/v1";
-/// The encoded size past which a builder compacts its optional replay and
-/// residence evidence ([`AuthorityCheckpointV2::compact_optional_evidence`],
-/// FIX 11400): an optional-compaction trigger, not a total-image ceiling.
-/// Mandatory signed bodies may exceed this trigger.
-pub const AUTHORITY_CHECKPOINT_V2_COMPACTION_BYTES: usize = 64 * 1024 * 1024;
-/// The context of an archive's content id ([`authority_archive_id`]).
-pub const AUTHORITY_ARCHIVE_ID_CONTEXT: &str = "oneiron/authority/archive/id/v1";
+#[doc(hidden)]
+pub(super) use oneiron_records::authority::checkpoint_image::checkpoint_image_id;
+#[doc(hidden)]
+pub use oneiron_records::authority::checkpoint_image::{
+    AUTHORITY_ARCHIVE_ID_CONTEXT, AUTHORITY_CHECKPOINT_FOLD_SCHEMA,
+    AUTHORITY_CHECKPOINT_V2_COMPACTION_BYTES, AUTHORITY_CHECKPOINT_V2_DOMAIN,
+    AUTHORITY_CHECKPOINT_V2_ID_CONTEXT, AuthorityCheckpointUnresolved,
+};
+#[doc(hidden)]
+use oneiron_records::authority::checkpoint_image::{ascending, refused};
 
 mod archive;
 mod replay;
 mod row;
+#[cfg(oneiron_test_support)]
+mod test_support;
 
 use archive::archive_id_of;
 pub use archive::{
@@ -147,13 +106,20 @@ pub(super) struct CheckpointSafety {
     pub(super) frontier_ancestry: BTreeMap<AuthorityEntryHash, (u64, u64)>,
     /// Fork and slip: the restrictive facts proved on their own branches
     /// (actor revocations, slip withdrawals and burns, machine removals),
-    /// the retired keys, the closed handoffs, whether a handoff is
-    /// unsettled, the settlement's issues, the parents no folded row is, and
+    /// the retired keys and their handoff and appointment subset, the closed
+    /// handoffs, whether a handoff is unsettled, the settlement's issues,
+    /// the parents no folded row is, and
     /// the accepted roster marks before custody is judged: an owner-held
     /// signer or an admitted owner answer (`MarkProof`).
     pub(super) revoke_facts: RevokeFacts,
     pub(super) retired_keys: BTreeSet<AuthorityKey>,
+    pub(super) handoff_or_appointment_retired_keys: BTreeSet<AuthorityKey>,
     pub(super) closed_handoffs: BTreeSet<AuthorityEntryHash>,
+    /// The revocations whose fences closed in a conflict, as the projected
+    /// fold holds them. Absent when empty, as in every history where no two
+    /// removals cross.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub(super) crossed_revocations: BTreeSet<AuthorityEntryHash>,
     pub(super) unsettled: bool,
     pub(super) issues: Vec<AuthorityFoldIssue>,
     pub(super) missing_parents: BTreeSet<AuthorityEntryHash>,
@@ -169,24 +135,6 @@ pub(super) struct CheckpointSafety {
     pub(super) confirm_ids: BTreeSet<[u8; 32]>,
     pub(super) confirm_nonces: BTreeSet<[u8; 16]>,
     pub(super) nonce_provenance: BTreeMap<[u8; 16], BTreeSet<[u8; 32]>>,
-}
-
-/// What the image holds back, typed and never omitted. Each list ascends.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AuthorityCheckpointUnresolved {
-    /// Held rows outside `covered`: an ancestor of each is not held here.
-    pub held: Vec<AuthorityEntryHash>,
-    /// The parents held rows name that no held row is.
-    pub missing: Vec<AuthorityEntryHash>,
-    /// Covered handoffs in conflict: no successor stands until one settles.
-    pub unsettled_handoffs: Vec<AuthorityEntryHash>,
-    /// Covered machine revisions and world edits the building install held
-    /// back to restriction only.
-    pub held_back: Vec<AuthorityEntryHash>,
-    /// Covered approvals resting on a key revoked since: whether each has
-    /// expired turns on the reader's own first-seen clock, still pending.
-    pub stale_approvals: Vec<AuthorityEntryHash>,
 }
 
 /// A portable authority checkpoint image (OF-469, checkpoint v2).
@@ -239,20 +187,6 @@ pub struct AuthorityCheckpointV2 {
 #[derive(Deserialize)]
 struct CoveredOnly {
     covered: Vec<AuthorityEntryHash>,
-}
-
-fn refused(reason: &'static str) -> Error {
-    Error::Record(RecordError::InvalidAuthorityLogBody(reason))
-}
-
-fn ascending(hashes: &[AuthorityEntryHash]) -> bool {
-    hashes.windows(2).all(|pair| pair[0] < pair[1])
-}
-
-/// The id of an encoded image: what an attestation names. Signatures never
-/// enter it (SLH-DSA is randomized).
-pub(super) fn checkpoint_image_id(encoded: &[u8]) -> [u8; 32] {
-    blake3::derive_key(AUTHORITY_CHECKPOINT_V2_ID_CONTEXT, encoded)
 }
 
 /// The covered hashes an image's bytes name, read without the rest of the
@@ -376,6 +310,14 @@ impl AuthorityCheckpointV2 {
         {
             return Ok(self);
         }
+        self.drop_residence_bodies();
+        Ok(self)
+    }
+
+    /// What an image past [`AUTHORITY_CHECKPOINT_V2_COMPACTION_BYTES`] keeps
+    /// (FIX 11400): no residence directive's or result's body, each such row
+    /// requiring none, and the overflow marked.
+    pub(super) fn drop_residence_bodies(&mut self) {
         for row in self.rows.values_mut() {
             let is_residence = row.body.as_ref().is_some_and(|body| {
                 decode_authority_log_entry_body(body).is_ok_and(|entry| {
@@ -391,7 +333,6 @@ impl AuthorityCheckpointV2 {
             }
         }
         self.residence_overflow = AUTHORITY_RESIDENCE_BODY_OVERFLOW;
-        Ok(self)
     }
 
     fn shape(&self) -> Result<()> {
@@ -524,11 +465,25 @@ impl AuthorityCheckpointV2 {
         if !aggregate.fold.valid_entries.iter().all(covered)
             || !safety.uncounted.iter().all(covered)
             || !safety.closed_handoffs.iter().all(covered)
+            || !safety.crossed_revocations.iter().all(covered)
+            || safety.crossed_revocations != aggregate.fold.crossed_revocations
+            || safety.handoff_or_appointment_retired_keys
+                != aggregate.fold.handoff_or_appointment_retired_keys
+            || !safety
+                .handoff_or_appointment_retired_keys
+                .is_subset(&safety.retired_keys)
+            || !aggregate
+                .fold
+                .handoff_or_appointment_retired_keys
+                .is_subset(&aggregate.fold.retired_keys)
             || !safety
                 .frontier_ancestry
                 .keys()
                 .all(|hash| self.per_parent.contains_key(hash))
-            || safety.nonce_provenance != aggregate.merged.critical_write_confirm_nonce_provenance
+            || safety.nonce_provenance
+                != crate::authority::fold_state::to_btree_set_map(
+                    &aggregate.merged.critical_write_confirm_nonce_provenance,
+                )
         {
             return Err(refused("checkpoint image safety indexes"));
         }
@@ -694,19 +649,13 @@ impl Vault {
             .filter(|hash| !named.contains(*hash))
             .copied()
             .collect();
-        // A local floor is an anti-rollback receipt: an image never carries
-        // what one decided.
-        let observations = authority_local_observations_in_txn(store, txn, &entries)?;
-        if entries.iter().zip(&covered).any(|(entry, hash)| {
-            observations
-                .sequence_floors
-                .get(hash)
-                .is_some_and(|floor| entry.seq < *floor)
-        }) {
-            return Err(refused(
-                "a local sequence floor decides a covered authority row",
-            ));
-        }
+        // Each covered row's floor comes from the covered rows themselves
+        // (`rows_floor`), so the image carries a verdict every install
+        // reaches; no install's arrival order decides one (FIX
+        // [CHECKPOINT-RAW-FLOOR-CLEARED-ROW]). A later row that would move a
+        // covered row's floor sends an adopter to the whole history
+        // (`adopted_fold`).
+        let observations = authority_local_observations_in_txn(store, txn)?;
         let peers = crate::federation::admitted_peer_consent_roots_in_txn(self, txn)?;
         let pin = super::pinned_root::read_pinned_root_in_txn(store, txn)?;
         let capture = super::fold_resume::FoldCapture::for_checkpoint(frontier.clone());

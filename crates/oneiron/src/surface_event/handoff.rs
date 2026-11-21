@@ -1,18 +1,21 @@
 //! Durable admission txn, attempt payload codec, dispatch handoff, and status reads.
 
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::Vault;
 use crate::attempt_queue::{
-    AttemptId, AttemptQueue, AttemptRecord, AttemptState, ClaimAttempt, ClaimOutcome,
-    CompleteAttempt, CompleteOutcome, EnqueueAttempt, EnqueueOutcome, FailAttempt, FailOutcome,
-    RetryAttempt, RetryOutcome,
+    AttemptId, AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome, CompleteAttempt,
+    CompleteOutcome, EnqueueAttempt, EnqueueOutcome, FailAttempt, FailOutcome, RetryAttempt,
+    RetryOutcome,
 };
 use crate::batch::secret_scan::{
-    SidePart, admit_side_parts, admitted_from, from_named_tree, named_tree,
+    SidePart, admit_side_parts, admitted_from_known, from_named_tree, named_tree,
 };
 use crate::error::{Error, Result};
+use crate::store::known_value_index::KnownValues;
 
 use super::inbound::{route_inbound_surface_event, route_inbound_surface_event_admitting_in_txn};
 use super::validate_non_blank;
@@ -58,109 +61,12 @@ pub struct SurfaceEventAttemptPayload {
     pub thread_ref: Option<String>,
 }
 
-/// Public reference to the durable attempt backing one admitted event.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(transparent)]
-pub struct SurfaceEventAttemptRef(String);
-
-impl SurfaceEventAttemptRef {
-    pub(super) fn from_attempt_id(id: AttemptId) -> Self {
-        let bytes = id.as_bytes();
-        let mut hex = String::with_capacity(bytes.len() * 2);
-        for byte in bytes {
-            hex.push(HEX_DIGITS[usize::from(byte >> 4)] as char);
-            hex.push(HEX_DIGITS[usize::from(byte & 0x0f)] as char);
-        }
-        Self(hex)
-    }
-
-    /// Lowercase 32-hex attempt id.
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-/// Durable lifecycle of an admitted surface event, in public spelling.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SurfaceEventHandoffState {
-    Queued,
-    Leased,
-    Paused,
-    Completed,
-    Failed,
-    Cancelled,
-    /// The executor stopped carrying the handoff without delivering and
-    /// without anyone stopping it. Its own token rather than a fold onto
-    /// `Failed` (nothing reported a fault) or `Cancelled` (nobody asked): a
-    /// caller polling this surface is owed the true reason its event never
-    /// landed.
-    Abandoned,
-}
-
-impl SurfaceEventHandoffState {
-    pub(super) const fn from_attempt_state(state: AttemptState) -> Self {
-        match state {
-            AttemptState::Queued => Self::Queued,
-            // A landing attempt still holds its lease and its runtime, so the
-            // handoff surface reads it as leased: live work, not a handoff that
-            // completed or was cancelled.
-            AttemptState::Leased | AttemptState::Landing => Self::Leased,
-            // A deferred retry is not runnable-now, same as a pause.
-            AttemptState::Scheduled | AttemptState::Paused => Self::Paused,
-            AttemptState::Completed => Self::Completed,
-            AttemptState::Failed => Self::Failed,
-            AttemptState::Cancelled => Self::Cancelled,
-            AttemptState::Abandoned => Self::Abandoned,
-        }
-    }
-
-    /// Stable wire spelling, matching the serde representation.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Queued => "queued",
-            Self::Leased => "leased",
-            Self::Paused => "paused",
-            Self::Completed => "completed",
-            Self::Failed => "failed",
-            Self::Cancelled => "cancelled",
-            Self::Abandoned => "abandoned",
-        }
-    }
-}
-
-/// Ack returned the moment an inbound event is durably committed.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct SurfaceEventAck {
-    pub correlation_id: String,
-    pub attempt_ref: SurfaceEventAttemptRef,
-    pub state: SurfaceEventHandoffState,
-    /// `true` when this correlation id already had an attempt row.
-    pub replayed: bool,
-    /// When the attempt backing this correlation id was admitted. A replay
-    /// carries the original admission, matching the status snapshot's
-    /// `created_at`, never the replay's own clock.
-    pub accepted_at: u64,
-    pub status_path: String,
-    /// The identity the event addresses. The ack itself never names it; a
-    /// host that keeps the ack for a replay re-admits it.
-    #[serde(skip)]
-    pub receiving_identity_ref: String,
-}
-
-/// Durable snapshot of an admitted event's handoff.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct SurfaceEventHandoffStatus {
-    pub correlation_id: String,
-    pub attempt_ref: SurfaceEventAttemptRef,
-    pub state: SurfaceEventHandoffState,
-    pub attempt_count: u32,
-    pub last_error: Option<String>,
-    pub created_at: u64,
-    pub updated_at: u64,
-}
+#[doc(hidden)]
+use oneiron_records::surface_event::handoff::HEX_DIGITS;
+#[doc(hidden)]
+pub use oneiron_records::surface_event::handoff::{
+    SurfaceEventAck, SurfaceEventAttemptRef, SurfaceEventHandoffState, SurfaceEventHandoffStatus,
+};
 
 /// Admission outcome: a durable ack, or the typed route rejection that
 /// stopped the event before it reached the queue.
@@ -515,7 +421,11 @@ pub(super) fn admit_surface_event_once_in_txn(
                     crate::thread_passport::canonical_thread_ref_in_txn(vault, wtxn, thread)
                 })
                 .transpose()?;
-            if requested != prior || !held_event_matches(&held.event, event)? {
+            if requested != prior
+                || !held_event_matches(&held.event, event, || {
+                    KnownValues::shared_in_writer(&vault.store, wtxn)
+                })?
+            {
                 return Err(Error::InvalidConfig(
                     "CC correlation already belongs to another message or thread".to_owned(),
                 ));
@@ -622,12 +532,19 @@ pub(crate) fn lift_intake_payload_in_txn(
 }
 
 /// Whether a replayed event is the one a row already holds, as the side-row
-/// wall stored it: a field whose secret it lifted holds a handle there.
-fn held_event_matches(held: &SurfaceEvent, offered: &SurfaceEvent) -> Result<bool> {
+/// wall stored it: a field whose secret it lifted holds a handle there, and
+/// so does a field holding a value base custody holds, `known`, which the
+/// wall read in the writer that admitted the row (FIX
+/// REPLAY-COMPARE-KNOWN-OTHER-CALLERS).
+fn held_event_matches(
+    held: &SurfaceEvent,
+    offered: &SurfaceEvent,
+    known: impl FnOnce() -> Result<Option<Arc<KnownValues>>>,
+) -> Result<bool> {
     if held == offered {
         return Ok(true);
     }
-    admitted_from(&named_tree(held)?, &named_tree(offered)?)
+    admitted_from_known(&named_tree(held)?, &named_tree(offered)?, known)
 }
 
 /// Reads a run's attempt rows inside the caller's write transaction.
@@ -807,7 +724,5 @@ pub fn surface_event_run_id(correlation_id: &str) -> String {
     }
     run_id
 }
-
-const HEX_DIGITS: &[u8; 16] = b"0123456789abcdef";
 
 mod phone_line;

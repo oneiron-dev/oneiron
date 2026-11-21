@@ -46,6 +46,7 @@ pub(crate) mod custody;
 pub(crate) mod document_pins;
 pub mod documents;
 pub mod federation_burst;
+mod fetch_conditions;
 pub(crate) mod home_handoff;
 pub mod home_proof;
 mod ingest;
@@ -93,7 +94,7 @@ pub(crate) mod withdrawn_cutoffs;
 pub use asset_body::session::{
     ASSET_BODY_FRAMES_PER_POLL, AssetBodyLane, AssetBodyPeer, AssetBodySession,
 };
-pub use carrier::{SyncDial, SyncDialer, SyncIo, SyncPeerDialer, SyncStream};
+pub use carrier::{ForbiddenReason, SyncDial, SyncDialer, SyncIo, SyncPeerDialer, SyncStream};
 pub use client::{
     ConnectDelivery, ConnectExportRequest, ConnectRejoinStatus, ConnectRejoined,
     EphemeralChangeOrigin, OpenedItem, ResidenceHit, ResidenceHomeRoute, ResidenceIndexWindow,
@@ -102,13 +103,15 @@ pub use client::{
     SyncTransportCredential, ThinItem,
 };
 pub use connection::{
-    ConnectionConfig, DeviceResidence, HomeNodeTopology, HomeRoute, HomeSearch, LocalUpdate,
-    ResidenceModeChange, SyncConnection,
+    ConnectionConfig, DeviceResidence, FetchConditions, HomeNodeTopology, HomeRoute, HomeSearch,
+    LocalUpdate, ResidenceModeChange, SyncConnection,
 };
 pub(crate) use ingest::VerifiedOwnDeviceLane;
 pub(crate) use ingest::forget_stale_peer_origins;
 pub use ingest::with_own_device_push;
-pub(crate) use ingest::{forget_message_writer_in_txn, note_message_put_in_txn};
+pub(crate) use ingest::{
+    forget_dropped_carriers_in_txn, forget_message_writer_in_txn, note_message_put_in_txn,
+};
 pub use lease::{
     LEASE_DURATION_SECS, LEASE_KEY_PREFIX, LEASE_POP_DOMAIN, LEASE_RECORD_LEN,
     LEASE_RECORD_VERSION, LeaseRecord, LeaseStatus, ROOT_LEASES_MAP, client_id_hex,
@@ -141,11 +144,13 @@ pub use selector::GuestDocumentShareRequest;
 #[cfg(feature = "test-hooks")]
 pub use selector::put_selector_test_federation_grant;
 pub use selector::{
-    DEFAULT_FEDERATED_CONFIDENCE_SCALE, FederationAdmissionRole, PeerConfidence, RequestedAxis,
-    SYNC_SELECTOR_SCHEMA_VERSION, SelectorVvRequest, SyncSelector, SyncSelectorWorld,
+    CoreferenceDisclosure, DEFAULT_FEDERATED_CONFIDENCE_SCALE, FederationAdmissionRole,
+    PeerConfidence, RequestedAxis, SYNC_SELECTOR_SCHEMA_VERSION, SelectorAnswerDoc,
+    SelectorReaderReach, SelectorReleaseBasis, SelectorVvRequest, SyncSelector, SyncSelectorWorld,
     admit_federated_window_update, authorize_sync_selector, decode_selector_vv_request,
     decode_sync_selector, encode_selector_vv_request, encode_sync_selector, filtered_window_doc,
-    filtered_window_doc_for, filtered_window_doc_for_peer,
+    filtered_window_doc_for, filtered_window_doc_for_peer, recording_coreference_disclosure,
+    selector_answer_doc_for_peer,
 };
 pub use transport::{
     EphemeralWireState, LEGACY_FULL_WINDOW_PROTOCOL_VERSION, MAX_DECODED_PAYLOAD_BYTES,
@@ -156,3 +161,6 @@ pub use transport::{
     encode_legacy_full_window_protocol_hello, encode_protocol_hello, encode_window_sync,
 };
 pub use types::{MessagePresenceScope, ScopedPresenceFrame, SyncConfig, WindowKey};
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::ingest::{asset_digest_for_test, ingest_carried_entity_for_test};

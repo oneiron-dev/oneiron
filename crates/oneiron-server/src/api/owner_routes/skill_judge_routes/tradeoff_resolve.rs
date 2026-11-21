@@ -13,7 +13,7 @@ use oneiron::skill_optimize::{TradeoffChoice, resolve_skill_edit_tradeoff};
 use serde::Deserialize;
 
 use super::super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
-use super::{Settled, tradeoff_settled_schema, unix_seconds};
+use super::{Settled, tradeoff_settled_schema, unix_seconds_now};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerResult, entity_id};
@@ -74,7 +74,7 @@ async fn tradeoff_resolve(
             &owner,
             &request.evidence,
             request.choice,
-            unix_seconds(),
+            unix_seconds_now(),
         )?;
         Ok(Settled {
             proposal: request.proposal,

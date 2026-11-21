@@ -1,7 +1,7 @@
 {
   "name": "vault.notes.history_purge_receipts",
   "description": "The owner reads a NOTE's durable history-purge receipts, including each requested and retained causal frontier.",
-  "input": "crate::task_verb::sdk::NoteHistoryPurgeRequest",
+  "input": "crate::task_verb::sdk::NoteHistoryPurgeReceiptsRequest",
   "output": "Vec<crate::task_verb::sdk::NoteHistoryPurgeReceipt>",
   "call": "crate::task_verb::sdk::note_history_purge_receipts_as_owner(memory.vault(), &memory.embedded_owner(\"vault.notes.history_purge_receipts\")?, input)?",
   "host_door": true,

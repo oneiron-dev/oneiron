@@ -7,7 +7,7 @@ use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::outbound_intent_ledger::IntentLedgerError;
 
-use super::{ConnectorCallHost, ConnectorCallOutcome, PENDING_CALLS, PendingConnectorCall, now_ms};
+use super::{ConnectorCallHost, ConnectorCallOutcome, PENDING_CALLS, PendingConnectorCall};
 
 impl PendingConnectorCall {
     /// Lists `rows` among the rows the call's passes picked (FIX 5455),
@@ -64,7 +64,25 @@ impl Vault {
         if let Some(settled) = &pending.settled {
             return Ok((settled.outcome(), pending.source_rows));
         }
-        if let Some(expired) = self.expire_connector_call_if_due(call_ref, &pending, now_ms())? {
+        // A copy restored and not joined drives and expires no held call
+        // (row RESTORED-UNJOINED-STARTS-NO-WORK): the row waits for a resume
+        // after the join. The read-only answers above stand. Read before
+        // the expiry check, so a join that commits during this pass cannot
+        // drive a call whose deadline that check never read.
+        if self.restored_unjoined()? {
+            return Ok((
+                ConnectorCallOutcome::Held {
+                    call_ref: *call_ref,
+                    decision_ref: None,
+                    reasons: vec!["restored_not_joined".to_owned()],
+                    approval_digest: None,
+                },
+                pending.source_rows,
+            ));
+        }
+        if let Some(expired) =
+            self.expire_connector_call_if_due(call_ref, &pending, crate::unix_millis_now())?
+        {
             return Ok((expired, pending.source_rows));
         }
         // A sweep-minted row has no trusted presentation context yet:

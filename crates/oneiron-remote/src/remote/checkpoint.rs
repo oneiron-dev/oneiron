@@ -19,10 +19,6 @@ use crate::{Backend, OneironClient};
 /// Path prefix the kept checkpoint images hang off.
 const CHECKPOINTS_PREFIX: &str = "v1/core/authority/checkpoints";
 
-fn hex_id(id: &[u8; 32]) -> String {
-    id.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
 impl RemoteClient {
     /// `GET /v1/core/authority/checkpoints/{id}` under this handle's
     /// credential, on the export agent's long timeout.
@@ -32,7 +28,7 @@ impl RemoteClient {
     ) -> Result<AuthorityCheckpointBundle, MemoryError> {
         let url = self
             .base_url
-            .join(&format!("{CHECKPOINTS_PREFIX}/{}", hex_id(id)))
+            .join(&format!("{CHECKPOINTS_PREFIX}/{}", oneiron_hex::encode(id)))
             .map_err(|error| {
                 transport_error(format!("could not build the checkpoint URL: {error}"))
             })?;

@@ -219,11 +219,14 @@ impl<'s> SessionReadContext<'s> {
             .iter()
             .map(|(id, mode)| PointRead::id(*id).at(*mode))
             .collect();
-        let read = lane.read_projected(&reads, None, |txn, rows| {
+        let _bodies = lane.prepare_point_read::<MemoryError>()?;
+        let snapshot = memory.lane_snapshot()?;
+        let known = snapshot.known();
+        let read = lane.read_projected_in_txn(snapshot.txn(), &reads, None, |txn, rows| {
             let (Some((id, mode)), Some(row)) = (target, rows.into_iter().next().flatten()) else {
                 return Ok::<_, MemoryError>((None, None));
             };
-            let view = memory.entity_view_of_in_txn(&lane, txn, row, mode)?;
+            let view = memory.entity_view_of_in_txn(&lane, txn, known, row, mode)?;
             let live = crate::vault::entity_revision::revision_for_mode_in_txn(
                 &lane.store_read(),
                 txn,
@@ -577,17 +580,37 @@ pub(crate) fn scoped_session_text(
     limit: usize,
     admit: impl FnOnce(&heed::RoTxn<'_>) -> crate::Result<()>,
 ) -> crate::Result<(Vec<ScoredEntity>, (u64, Instant))> {
+    let plan = lane.recall_plan()?;
+    let scores = scoped_session_text_planned(vault, view, lane, &plan, query, limit, admit);
+    lane.end_recall_plan()?;
+    scores
+}
+
+/// [`scoped_session_text`] over `target` (the room's view, or base alone for
+/// a reader that reads base alone in the room) under `plan`, a recall plan
+/// its caller holds open on `lane` (a recall's seed lookup, whose plan its
+/// principal retrieval goes on to use): the scan neither opens nor ends one.
+/// Each posting is a candidate only as [`ScopedRead::scan_candidates_in`]
+/// admits it, and its words count in no statistic when the lane keeps it
+/// with no count ([`ScopedRead::withheld_row_test_in`]).
+///
+/// # Errors
+///
+/// `admit`'s refusal; the lane's authority errors; storage errors.
+pub(crate) fn scoped_session_text_planned(
+    vault: &Vault,
+    target: &impl crate::store::ManifestDbs,
+    lane: &ScopedRead<'_>,
+    plan: &crate::claim::SearchPlan,
+    query: &str,
+    limit: usize,
+    admit: impl FnOnce(&heed::RoTxn<'_>) -> crate::Result<()>,
+) -> crate::Result<(Vec<ScoredEntity>, (u64, Instant))> {
     let config = crate::config::Bm25RankProfile::default().to_bm25_config()?;
-    let crate::claim::SearchPlan {
-        filter,
-        candidates,
-        policy,
-    } = lane.recall_plan()?;
     let started = (vault.store.clock.now_recorded_at(), Instant::now());
     // A key that reads nothing by itself still searches the rows its own
     // live Grants read (FIX 7528).
-    if candidates.deny_all {
-        lane.end_recall_plan()?;
+    if plan.candidates.deny_all {
         return Ok((Vec::new(), started));
     }
     vault.measure_limit(
@@ -599,27 +622,26 @@ pub(crate) fn scoped_session_text(
     // rows either way.
     let _ = vault.measure_limit(EngineLimit::RequestedResultRows, limit as u64);
     lane.persist_grant_clock()?;
-    let scores = {
-        let txn = vault.store.env.read_txn()?;
-        admit(&txn)?;
-        let admit = lane.recall_candidates_in(&txn, &policy, &filter, None);
-        let mut admits = |id: &EntityId| admit(id);
-        vault.text_scoped_in_txn(
-            view,
-            &txn,
-            crate::ports::TextQuery {
-                query,
-                limit,
-                rank: &config,
-                filter_all: true,
-                matches_scope: &mut admits,
-                private_note_ids: None,
-                recency: None,
-            },
-        )
-    };
-    lane.end_recall_plan()?;
-    Ok((scores?, started))
+    let txn = vault.store.env.read_txn()?;
+    admit(&txn)?;
+    let admit = lane.scan_candidates_in(&txn, &plan.policy, &plan.filter);
+    let mut admits = |id: &EntityId| admit(id);
+    let mut withheld = lane.withheld_row_test_in(&txn)?;
+    let scores = vault.text_scoped_in_txn(
+        target,
+        &txn,
+        crate::ports::TextQuery {
+            query,
+            limit,
+            rank: &config,
+            filter_all: true,
+            matches_scope: &mut admits,
+            private_note_ids: None,
+            recency: None,
+            hidden_row: Some(&mut *withheld as &mut dyn FnMut(&EntityId) -> crate::Result<bool>),
+        },
+    )?;
+    Ok((scores, started))
 }
 
 /// The refusal of a room's hydrate that served an image in a resolved form

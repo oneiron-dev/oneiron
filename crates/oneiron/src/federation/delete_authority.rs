@@ -9,10 +9,12 @@
 //! `delete` class it names (ARCH-0043, owner 9 Nov); an Admin, a Steward or a Member
 //! deletes an item it provably owns (a TASK by its Owner fact, a NOTE by
 //! its author); the records the vault mints itself are no one's own. For a
-//! person delete is a role default, never a Grant it must hold; a Viewer, a
-//! Delegate or a guest has none. An agent deletes only
-//! under ONE live Grant that names the `delete` class and holds the record,
-//! given by a live Owner or by an Admin still holding it. A record that is
+//! member delete is a role default, never a Grant it must hold; a Viewer or a
+//! guest has none. A person who holds a Delegate grant, and an agent, delete
+//! only under ONE live Grant that names the `delete` class and holds the
+//! record, given by a live Owner or by an Admin still holding it (the act
+//! table's Delegate column, "if named: go"; the lead's ruling
+//! DELEGATE-PERSON-DELETE, 21 Nov). Erase stays the Owner's own act. A record that is
 //! authority rather than an item, whose removal widens someone's access or
 //! authority, is the live Owner's alone to delete, whatever role or Grant
 //! another caller holds ([`removal_widens`]). No second
@@ -112,6 +114,30 @@ impl DeleteTarget {
         *self.live.borrow_mut() = record.clone();
         Ok(record)
     }
+
+    /// The record's id.
+    pub(crate) const fn id(&self) -> EntityId {
+        self.id
+    }
+
+    /// Whether `person` provably owns the record, as [`Self::record_in`]
+    /// reads it: a TASK by its Owner fact, a NOTE by the author its put was
+    /// checked against. A person's own item never waits on a check-in
+    /// (ROLES-CHECKIN 2k5; Engine ruling STEWARD-DELETE-WAIT = B).
+    ///
+    /// # Errors
+    /// A store failure, or a NOTE body that does not decode.
+    pub(crate) fn owned_by_in(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        person: EntityId,
+    ) -> Result<bool> {
+        match self.record_in(vault, txn)? {
+            Some(record) => owned_by(vault, txn, person, &record),
+            None => Ok(false),
+        }
+    }
 }
 
 /// Why one record may not be deleted by this caller. Each refuses that
@@ -130,8 +156,9 @@ pub(crate) enum DeleteRefusal {
     /// An Admin role holds no live grant whose resource axes hold this
     /// record, and the caller does not own it.
     OutOfAdminScope,
-    /// The agent holds no one live Grant that names `delete`, holds this
-    /// record and was given by a live Owner or an Admin still holding it.
+    /// The agent, or the person holding a Delegate grant, holds no one live
+    /// Grant that names `delete`, holds this record and was given by a live
+    /// Owner or an Admin still holding it.
     NoDeleteGrant,
     /// The record is authority, not an item: removing it widens someone's
     /// access or authority, so only a live Owner deletes it, whatever role
@@ -175,7 +202,7 @@ impl DeleteRefusal {
                  own it"
                     .to_owned()
             }
-            Self::NoDeleteGrant => "the agent holds no live Grant that names delete and holds \
+            Self::NoDeleteGrant => "the caller holds no live Grant that names delete and holds \
                                     this record"
                 .to_owned(),
             Self::AuthorityRow => "this record restricts access or authority, and removing \
@@ -513,9 +540,11 @@ impl TargetRecord {
 /// An Admin's in-scope delete, a Steward's in-scope delete under the
 /// `delete` class its grant names, else an Admin's, a Steward's or a
 /// Member's own item, each under one live membership grant over this shared
-/// vault. A personal vault has no membership roles. The refusal names the
-/// role the person holds: none, an Admin role out of scope, or a role that
-/// deletes only its own items.
+/// vault, else a delete under one live Delegate grant the person holds
+/// ([`delegate_grant_deleting`]). A personal vault has no membership roles.
+/// The refusal names the role the person holds: none, an Admin role out of
+/// scope, a role that deletes only its own items, or a Delegate grant that
+/// does not delete this record.
 fn person_arms(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -530,8 +559,14 @@ fn person_arms(
     let mut own_grant = None;
     let mut holds_role = false;
     let mut holds_admin = false;
+    let mut holds_delegate = false;
     for (id, grant) in live_grants_in(vault, txn)? {
         if grant.member_ref != person || grant.scope != scope {
+            continue;
+        }
+        // A Delegate grant is no membership: its own arm judges it below.
+        if grant.role == FederationGrantRole::Delegate {
+            holds_delegate = true;
             continue;
         }
         let Some(MembershipStanding::Member { role, .. }) =
@@ -587,11 +622,21 @@ fn person_arms(
             }
         }
     }
+    if own_grant.is_none()
+        && let Some(position) = record.position.as_ref()
+        && let Some(grant) = delegate_grant_deleting(vault, txn, person, position)?
+    {
+        return Ok(Ok(DeleteAuthority {
+            role: ArchiveDeleteRole::Delegate,
+            grant: Some(grant),
+        }));
+    }
     Ok(match own_grant {
         Some(grant) => Ok(DeleteAuthority {
             role: ArchiveDeleteRole::Member,
             grant: Some(grant),
         }),
+        None if !holds_role && holds_delegate => Err(DeleteRefusal::NoDeleteGrant),
         None if !holds_role => Err(DeleteRefusal::NoStanding),
         None if holds_admin => Err(DeleteRefusal::OutOfAdminScope),
         None => Err(DeleteRefusal::NotOwnerOfItem),
@@ -619,12 +664,8 @@ fn owned_by(
     }
 }
 
-/// The first live Grant that alone names this agent, confers now, lists the
-/// `delete` class in its explicit verb set, holds the record, was given by
-/// a live owner (an owner's agent Grant) or by a person still holding an
-/// Admin grant that holds the record (a Delegate), and on a shared vault
-/// keeps its pact membership. Grants are never unioned. On an owner's agent
-/// Grant, a verb class it names that admits `delete` lists it (FIX 8735).
+/// An agent's delete under [`delegate_grant_deleting`]: a live agent
+/// principal's only.
 fn agent_arm(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -637,7 +678,28 @@ fn agent_arm(
     let Some(position) = record.position.as_ref() else {
         return Ok(None);
     };
-    let now = vault.instant_in_txn(txn)?.secs();
+    Ok(
+        delegate_grant_deleting(vault, txn, caller.actor, position)?.map(|grant| DeleteAuthority {
+            role: ArchiveDeleteRole::Agent,
+            grant: Some(grant),
+        }),
+    )
+}
+
+/// The first live Delegate grant that alone names `holder` (an agent, or a
+/// person), confers now, lists the `delete` class in its explicit verb set,
+/// holds `position`, was given by a live owner (an owner's agent Grant) or
+/// by a person still holding an Admin grant that holds the record, and on a
+/// shared vault keeps its pact membership. Grants are never unioned. On an
+/// owner's agent Grant, a verb class it names that admits `delete` lists it
+/// (FIX 8735).
+fn delegate_grant_deleting(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    holder: EntityId,
+    position: &Scope,
+) -> Result<Option<EntityId>> {
+    let now = vault.grant_judgement_secs_in_txn(txn)?;
     let owners = crate::policy_model::owners_in_txn(vault, txn)?;
     let shared = vault.shared_vault_creation_in_txn(txn)?.is_some();
     let grants = live_grants_in(vault, txn)?;
@@ -646,12 +708,12 @@ fn agent_arm(
         txn,
         grants
             .iter()
-            .filter(|(_, grant)| grant.member_ref == caller.actor)
+            .filter(|(_, grant)| grant.member_ref == holder)
             .map(|(_, grant)| grant),
     )?;
     for (id, grant) in grants {
         let scope = grant.scope_for_verb(DELETE_VERB, &classes);
-        if grant.member_ref != caller.actor
+        if grant.member_ref != holder
             || grant.role != FederationGrantRole::Delegate
             || !grant.confers_with_classes_at(now, &classes)
             || !names_delete(&scope)
@@ -671,10 +733,7 @@ fn agent_arm(
         if !issuer_stands || (shared && pact_lapsed(vault, txn, id, &grant)?) {
             continue;
         }
-        return Ok(Some(DeleteAuthority {
-            role: ArchiveDeleteRole::Agent,
-            grant: Some(id),
-        }));
+        return Ok(Some(id));
     }
     Ok(None)
 }

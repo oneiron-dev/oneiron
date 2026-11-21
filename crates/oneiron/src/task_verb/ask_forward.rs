@@ -29,7 +29,6 @@ use serde::{Deserialize, Serialize};
 use super::ask_record::{self, AskGroup};
 use super::{TaskAskAnswer, TaskAskHandle, TaskAskWord};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::entity_id::derived_domains::{TASK_ASK_FORWARD_INTENT, TASK_ASK_FORWARD_RESULT};
 use crate::error::{Error, RecordError, Result};
 use crate::memory::{
     MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult,
@@ -52,8 +51,8 @@ pub(super) const RESULT: &str = "tasks.ask_forward_result";
 
 /// Domain of the challenge a holder signs for one intent.
 const CHALLENGE_DOMAIN: &[u8] = b"oneiron/tasks.ask-forward/v1\0";
-/// The framing every capability slip token carries.
-const TOKEN_PREFIX: &str = "v2.slip.";
+#[doc(hidden)]
+use oneiron_records::task_verb::ask_forward::{TOKEN_PREFIX, intent_id, result_id};
 
 /// What a relayed intent asks the ask's admitting node to do (FIX 7494).
 /// The SDK rows take it as their input (FIX 20468).
@@ -307,19 +306,6 @@ pub enum AskForwardReceipt {
         intent_ref: EntityId,
         generation: u64,
     },
-}
-
-/// The intent `holder` relays under `intent_key` on the ask `group`.
-fn intent_id(group: EntityId, holder: EntityId, intent_key: &str) -> Result<EntityId> {
-    EntityId::derive(
-        TASK_ASK_FORWARD_INTENT,
-        &[group.as_bytes(), holder.as_bytes(), intent_key.as_bytes()],
-    )
-}
-
-/// The admitting node's result for the intent `intent`.
-fn result_id(intent: EntityId) -> Result<EntityId> {
-    EntityId::derive(TASK_ASK_FORWARD_RESULT, &[intent.as_bytes()])
 }
 
 /// The challenge a holder signs, through their slip's binding transcript

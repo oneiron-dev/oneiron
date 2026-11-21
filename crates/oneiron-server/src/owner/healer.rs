@@ -14,10 +14,7 @@ use super::{OwnerResult, entity_id};
 
 /// An attempt id in the lowercase hex its drill query takes back.
 pub(crate) fn attempt_hex(id: &AttemptId) -> String {
-    id.as_bytes()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    oneiron_hex::encode(id.as_bytes())
 }
 
 /// One stored oversight receipt and whether it verifies against this vault
@@ -161,7 +158,9 @@ fn residue_read(row: HealResidue) -> HealResidueRead {
             .into_iter()
             .map(|proposal| HealProposalRead {
                 claim: proposal.claim.to_hex(),
-                decision: proposal.decision.map(|decision| bytes_hex(&decision)),
+                decision: proposal
+                    .decision
+                    .map(|decision| oneiron_hex::encode(&decision)),
                 predicate: proposal.predicate,
                 proposed_at: proposal.proposed_at,
             })
@@ -210,11 +209,6 @@ fn residue_read(row: HealResidue) -> HealResidueRead {
             })
             .collect(),
     }
-}
-
-/// Bytes in lowercase hex.
-fn bytes_hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 /// One member of a group, named by the class it was listed under.

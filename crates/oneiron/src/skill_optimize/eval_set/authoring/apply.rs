@@ -36,15 +36,8 @@ pub struct CutDecision {
     pub reference: bool,
 }
 
-/// Whether one cohort retires, and why.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct EvalCohortDecision {
-    pub cohort: EntityId,
-    pub retire: bool,
-    #[serde(default)]
-    pub reason: String,
-}
+#[doc(hidden)]
+pub use oneiron_records::skill_optimize::eval_set::authoring::apply::EvalCohortDecision;
 
 /// The eval-authoring skill's answer for one inventory. The first decision
 /// for an id stands; a later one for the same id is ignored.
@@ -254,9 +247,10 @@ const BLOCKED_SOURCE_GROUP: &str =
     "blocked_source_group: its roots already belong to different eval families";
 
 /// The reason an eval-set door refused, or the error when it was no refusal.
-fn refusal(error: Error) -> Result<&'static str> {
+fn refusal(error: Error) -> Result<String> {
     match error {
-        Error::Artifact(ArtifactError::InvalidSkillBody(reason)) => Ok(reason),
+        Error::Artifact(ArtifactError::InvalidSkillBody(reason)) => Ok(reason.to_owned()),
+        Error::Artifact(ArtifactError::SkillVersionKept(reason)) => Ok(reason),
         error => Err(error),
     }
 }

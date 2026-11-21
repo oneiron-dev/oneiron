@@ -23,6 +23,15 @@ pub struct CalendarIcsPollCompletion {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum CalendarIcsPollResult {
-    Reenqueued { next_not_before: u64 },
-    PausedNeedsInput { inbox_exception_ref: String },
+    Reenqueued {
+        next_not_before: u64,
+    },
+    PausedNeedsInput {
+        inbox_exception_ref: String,
+    },
+    /// The feed's first completed poll: its imported claims wait on the
+    /// owner's one review, and the feed polls again once the owner approves.
+    AwaitingReview {
+        claims: u32,
+    },
 }

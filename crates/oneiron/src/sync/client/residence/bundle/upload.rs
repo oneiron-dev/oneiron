@@ -3,6 +3,7 @@
 
 use base64::Engine as _;
 
+use oneiron_contracts::fingerprint::ContentHash;
 use serde_json::json;
 
 use super::super::ResidenceRpc;
@@ -21,7 +22,7 @@ pub(super) async fn put_object(
     bytes: &[u8],
 ) -> Result<bool, TransportError> {
     let generation = sealed_generation_hex(generation);
-    let digest = sealed_digest_hex(blake3::hash(bytes).as_bytes());
+    let digest = sealed_digest_hex(ContentHash::of(bytes).as_bytes());
     let mut offset = 0;
     for part in bytes.chunks(SEALED_BUNDLE_PUT_PART_MAX) {
         let staged = rpc

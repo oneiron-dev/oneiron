@@ -19,7 +19,10 @@ use super::keys::{
 };
 use super::one_way::{clear_one_way_exceptions, rebuild_one_way_exception_index};
 use super::search::{beam_search_snapshot, score_dims_for};
-use super::storage::{detach_reverse_link_in_memory, prune_neighbors_for_node, write_neighbors};
+use super::storage::{
+    detach_reverse_link_in_memory, keep_sole_link_candidates, prune_neighbors_for_node,
+    write_neighbors,
+};
 use super::types::RebuiltHnswGraph;
 
 pub(crate) fn build_hnsw_graph_from_snapshot(
@@ -61,14 +64,14 @@ pub(crate) fn build_hnsw_graph_from_snapshot(
         let selected: Vec<EntityId> = nearest.into_iter().map(|entry| entry.id).collect();
         neighbors_by_id.insert(*id, selected.clone());
 
-        for neighbor_id in &selected {
+        for (position, neighbor_id) in selected.iter().enumerate() {
             let mut neighbor_neighbors = neighbors_by_id.remove(neighbor_id).unwrap_or_default();
             if !neighbor_neighbors.contains(id) {
                 neighbor_neighbors.push(*id);
             }
 
             if neighbor_neighbors.len() > config.hnsw.m_max_0 {
-                let pruned = prune_neighbors_for_node(
+                let mut pruned = prune_neighbors_for_node(
                     store,
                     rtxn,
                     neighbor_id,
@@ -79,6 +82,14 @@ pub(crate) fn build_hnsw_graph_from_snapshot(
                     &mut 0,
                 )?;
                 if discipline == LinkDiscipline::Symmetric {
+                    pruned = keep_sole_link_candidates(
+                        neighbor_id,
+                        pruned,
+                        &neighbor_neighbors,
+                        &selected[position + 1..],
+                        &neighbors_by_id,
+                        config.hnsw.m_max_0,
+                    );
                     for victim in neighbor_neighbors
                         .iter()
                         .filter(|candidate| !pruned.contains(candidate))

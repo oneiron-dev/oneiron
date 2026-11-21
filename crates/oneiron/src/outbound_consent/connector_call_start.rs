@@ -15,7 +15,7 @@ use crate::secret_lease::SecretGrantRef;
 
 use super::connector_call::{
     ConnectorCallHost, ConnectorCallInvocation, ConnectorCallOutcome, ConnectorCallRequest,
-    ConnectorResultAbsence, PENDING_CALLS, PendingConnectorCall, connector_call_ref, now_ms,
+    ConnectorResultAbsence, PENDING_CALLS, PendingConnectorCall, connector_call_ref,
 };
 
 /// The reason a call gets when its host identity already names a held call
@@ -172,7 +172,7 @@ impl Vault {
             call_seq: invocation.call_seq,
             principal_ref: memory.actor().to_hex(),
             remember_context: super::connector_remember::capture(memory),
-            held_at_ms: now_ms(),
+            held_at_ms: crate::unix_millis_now(),
             settled: None,
             held_reasons: Vec::new(),
             owner_ask_seq: None,
@@ -240,6 +240,7 @@ impl Vault {
                         result: None,
                         result_absence: Some(ConnectorResultAbsence::NotRetained),
                         budget_steering: Vec::new(),
+                        session_manifest: None,
                     }),
                 held.source_rows,
             )),
@@ -252,8 +253,17 @@ impl Vault {
                 if let Some(settled) = &held.settled {
                     return Ok((settled.outcome(), held.source_rows));
                 }
+                // A copy restored and not joined gives a held row the
+                // refusal its outbound chokepoint gives a new call (row
+                // RESTORED-UNJOINED-STARTS-NO-WORK), read before the expiry
+                // check, so a join that commits during this pass cannot
+                // drive a call whose deadline that check never read.
+                {
+                    let txn = self.store.env.read_txn().map_err(Error::from)?;
+                    self.refuse_work_while_restored_unjoined_in_txn(&txn)?;
+                }
                 if let Some(expired) =
-                    self.expire_connector_call_if_due(&call_ref, &held, now_ms())?
+                    self.expire_connector_call_if_due(&call_ref, &held, crate::unix_millis_now())?
                 {
                     return Ok((expired, held.source_rows));
                 }

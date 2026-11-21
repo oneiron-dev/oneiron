@@ -16,8 +16,6 @@
 
 use std::sync::{PoisonError, RwLockReadGuard, RwLockWriteGuard};
 
-use serde::{Deserialize, Serialize};
-
 use super::trusted_contact::{
     RELATIONS, TrustedContact, TrustedContactDial, TrustedContactTier, invalid,
     naming_answered_yes_in_txn,
@@ -33,7 +31,7 @@ use crate::memory::Memory;
 use crate::outbound::{
     OutboundDispatchActor, OutboundDispatchError, OutboundDispatchGate, OutboundDispatchRequest,
     OutboundDispatchResult, OutboundExecutionOutcome, OutboundExecutionRequest,
-    OutboundExecutionSink, OutboundIntent, OutboundIntentDraft,
+    OutboundExecutionSink, OutboundIntent, OutboundIntentDraft, kept_send_backoff_until,
 };
 use crate::receipt::{DispatchObservationKey, append_dispatch_observation_in_txn};
 use crate::side_table::{self, Named, SideTable};
@@ -85,23 +83,8 @@ fn send_guard(vault: &Vault) -> RwLockReadGuard<'_, ()> {
 #[doc(hidden)]
 pub use oneiron_verb_wire::counterparty_contact::trusted_contact_notice::TrustedContactNoticeAuthorization;
 
-/// Everything the host needs to send one notice, and what authorized it,
-/// and nothing from the turn or the verdict.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TrustedContactNotice {
-    /// The send's own ref: one per fire, so a later crisis is a new send and
-    /// never the replay of an old one.
-    pub fire: String,
-    pub person: String,
-    pub contact: String,
-    pub version: u64,
-    pub sender: String,
-    pub channel: String,
-    pub verb: String,
-    pub target: String,
-    pub authorization: TrustedContactNoticeAuthorization,
-}
+#[doc(hidden)]
+pub use oneiron_records::counterparty_contact::trusted_contact_notice::TrustedContactNotice;
 
 /// Stages one notice from `relation` in the transaction that fired it, under
 /// `authorization`, and answers the fire that will deliver it. While one
@@ -418,6 +401,14 @@ impl Vault {
         request: OutboundDispatchRequest,
         sink: &mut S,
     ) -> std::result::Result<OutboundDispatchResult, OutboundDispatchError> {
+        // A copy restored and not joined sends no notice, one whose lease its
+        // image kept included (row RESTORED-UNJOINED-STARTS-NO-WORK): refused
+        // before the lease check and the consent preflight, so its row stays
+        // as the image left it.
+        {
+            let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
+            self.refuse_work_while_restored_unjoined_in_txn(&txn)?;
+        }
         let attempt = self.leased_trusted_contact_notice(attempt)?;
         let attempt = &attempt;
         let notice = decode(attempt)?;
@@ -550,9 +541,7 @@ impl Vault {
                             lease_owner,
                             attempt_count: attempt.attempt_count,
                             // FIX 11660: never before the edge its receipt names.
-                            backoff_until: now
-                                .saturating_add(60)
-                                .max(result.retry_at().unwrap_or(0)),
+                            backoff_until: kept_send_backoff_until(now, result.retry_at()),
                             last_error: Some("notice_not_dispatched".into()),
                             now,
                         },
@@ -575,6 +564,12 @@ impl Vault {
         lease_owner: &str,
         now: u64,
     ) -> Result<Option<(AttemptRecord, TrustedContactNotice)>> {
+        // A copy restored and not joined takes no sender lease (row
+        // RESTORED-UNJOINED-STARTS-NO-WORK). Notices wait in the queue for
+        // the sender's first claim after the join.
+        if self.restored_unjoined()? {
+            return Ok(None);
+        }
         let sender = sender.to_hex();
         loop {
             let claimed = self.with_write_txn_grouped(|wtxn| {

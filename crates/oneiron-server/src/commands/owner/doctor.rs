@@ -122,6 +122,16 @@ pub(super) fn doctor_report(args: DoctorArgs) -> anyhow::Result<serde_json::Valu
         Ok(vault) => {
             let doctor = vault.doctor()?;
             let mut report = serde_json::to_value(&doctor)?;
+            // The sealed rows by their count alone, with the owner's act
+            // that writes their facts again (READ-LINEAGE-L3 = A; design
+            // pass 30, section 4.7).
+            if doctor.facts_hidden_source_unknown > 0 {
+                report["facts_hidden_source_unknown_notice"] = serde_json::Value::String(format!(
+                    "{} facts hidden: source unknown; `oneiron maintain --rederive-sealed` on the \
+                     stopped vault writes them again from the sources that resolve now",
+                    doctor.facts_hidden_source_unknown
+                ));
+            }
             // Which device and runtime computed the stored vectors, so one
             // device's can be found and embedded again (ARCH-0036).
             report["vector_provenance"] =
@@ -206,7 +216,9 @@ enum LayeredClock {
 /// the flags set no clock, and doctor reads no settings file. A config path
 /// whose existence cannot be checked, a config file that does not read as
 /// TOML, or one whose `[runtime] clock` is not `"system"` leaves the clock
-/// unknown.
+/// unknown. So does a config file its reader refuses
+/// ([`crate::config::merge::read_config_file`]): a file any user can write
+/// names no clock this report may trust.
 fn layered_store_clock(serve: &ServeArgs) -> LayeredClock {
     if let Ok(env) = EnvConfig::from_process()
         && let Ok(layered) = layer_serve_config(serve, env, default_config_path())
@@ -231,7 +243,7 @@ fn layered_store_clock(serve: &ServeArgs) -> LayeredClock {
         Ok(false) => return LayeredClock::Host,
         Err(_) => return LayeredClock::Unknown,
     }
-    let Ok(table) = std::fs::read_to_string(&path)
+    let Ok(table) = crate::config::merge::read_config_file(&path)
         .map_err(drop)
         .and_then(|raw| toml::from_str::<toml::Table>(&raw).map_err(drop))
     else {

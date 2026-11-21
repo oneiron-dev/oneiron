@@ -6,7 +6,6 @@ mod archive;
 mod assertions;
 mod base;
 mod codec;
-#[cfg(feature = "sync")]
 mod foreign_speech;
 mod linked;
 mod program;
@@ -38,20 +37,24 @@ pub use self::wake_outcome::{TurnProgramWakeOutcome, UnpersistedWakeReason};
 pub(crate) use self::wake_outcome::{erase_turn_wake_label_in_txn, turn_wake_outcome_in_txn};
 
 pub(crate) use self::archive::{
-    ArchivedMessage, ArchivedMessageAdmission, ArchivedMessageLink, archived_container_body,
-    archived_message_body,
+    ArchivedMessage, ArchivedMessageAdmission, ArchivedMessageLink, admitted_foreign,
+    archived_container_body, archived_inline_conversation_body, archived_inline_turn_body,
+    archived_message_body, archived_turn_speaks, import_provenance_foreign,
 };
 pub(crate) use self::codec::{
-    IMPORTED_SOURCE_KEY, guard_import_stamp, turn_admits_message_bodies, witness_message_body,
+    IMPORTED_SOURCE_KEY, guard_import_stamp, guard_phone_thread_mark, turn_admits_message_bodies,
+    witness_message_body,
 };
 #[cfg(feature = "sync")]
 pub(crate) use self::foreign_speech::{ForeignTurn, speak_as_counterparty};
 pub(crate) use self::program::ImportedTurnStamp;
 pub use self::program::{SessionWitnessBinding, SessionWitnessContext, SessionWitnessOutcome};
 pub(crate) use self::source_attribution::{
-    SourceAttribution, SourceSpeaker, imported_message_in_txn, source_speaker_in_txn,
+    SourceAttribution, SourceSpeaker, imported_message_in_txn, live_canonical_person_in_txn,
+    source_speaker_in_txn,
 };
 
+pub(crate) use self::validation::WITNESS_OCCURRENCE_SKEW_SECS;
 pub(super) use self::validation::validate_witness_occurrence;
 pub(crate) use self::validation::{
     next_witness_message_order, sole_edge_target, stored_witness_turn_author,

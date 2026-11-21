@@ -1,7 +1,5 @@
 //! Principal identity and validated-action outcome types.
 
-use serde::{Deserialize, Serialize};
-
 use crate::claim::ScopedReadActorKey;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
@@ -52,16 +50,14 @@ pub struct GeneratedUiAgentCallback {
     /// Read reach the acting principal selected, carried as context only. Populate it
     /// through [`LensRenderFrame::with_selected_context`](crate::lens::LensRenderFrame::with_selected_context), which re-proves every handle.
     pub selected_context: Vec<LensReadHandle>,
+    /// The card's `$state` when its action was pressed (GENUI-STATE-PERSIST): a pick
+    /// in a composed card is card state only, and it reaches the agent with the card's
+    /// action. A round trip carries no patch, so this is the state the event found.
+    pub state: GeneratedUiStateSnapshot,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum LensActingPrincipalKind {
-    HumanView,
-    AgentTask,
-    /// A system-class credential's own job: a host service acting as itself.
-    SystemJob,
-}
+#[doc(hidden)]
+pub use oneiron_records::lens::mediation::mediation_principal::LensActingPrincipalKind;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LensPrincipalBinding {

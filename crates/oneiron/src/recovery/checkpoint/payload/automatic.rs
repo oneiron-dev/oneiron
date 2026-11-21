@@ -123,12 +123,12 @@ impl Selection {
         if !out.owners.is_empty() {
             // Reuse the native head/NOTE marker/birth/fork associations and its
             // shared-owner verdict. A document slot is never an entity guess.
-            let documents = crate::entity_doc::checkpoint::capture(&vault.store, txn)?;
+            let documents = crate::entity_doc::checkpoint::ADAPTER.capture(&vault.store, txn)?;
             out.captured_rows(&documents, |_| true);
 
             // The native body getter binds each occurrence part to the
             // record that actually holds it, not to its shared digest.
-            let bodies = crate::provenance::body::checkpoint::capture(&vault.store, txn)?;
+            let bodies = crate::provenance::body::checkpoint::ADAPTER.capture(&vault.store, txn)?;
             for owner in bodies.owners() {
                 if !owner.rows.is_empty()
                     && owner.rows.iter().all(|part| {
@@ -167,6 +167,7 @@ impl Selection {
                         &crate::side_table::ENTITY_REVISION_DOC,
                         &crate::side_table::ENTITY_REVISION_FRONTIER,
                         &crate::side_table::ENTITY_REVISION_IDENTITY,
+                        &crate::side_table::ENTITY_REVISION_TIMELINE,
                         &crate::side_table::PROVENANCE_ROW_BIRTH,
                         &crate::side_table::PROVENANCE_BIRTH_BY_TRIGGER,
                     ]

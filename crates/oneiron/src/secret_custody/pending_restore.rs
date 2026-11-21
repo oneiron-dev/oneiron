@@ -93,36 +93,8 @@ struct PendingRestore {
     reason: PendingRestoreReason,
 }
 
-/// What a pending credential came to (FIX-LIST 10671).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PendingCredentialResult {
-    /// Its row landed as the image carried it, and its value opens under
-    /// its key here.
-    Readable,
-    /// Its row landed as the image carried it, but its key does not open it
-    /// here: re-enter or reissue it.
-    StillUnavailable,
-    /// An erase fenced it: it stays withheld, its value unavailable.
-    Erased,
-    /// A revoke, an erase, a rotation or a newer write replaced its row
-    /// since: the saved row went, unlanded.
-    Superseded,
-    /// Its fence or its row did not read: it stays pending.
-    Pending,
-}
-
-impl PendingCredentialResult {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Readable => "readable",
-            Self::StillUnavailable => "still_unavailable",
-            Self::Erased => "erased",
-            Self::Superseded => "superseded",
-            Self::Pending => "pending",
-        }
-    }
-}
+#[doc(hidden)]
+pub use oneiron_records::secret_custody::pending_restore::PendingCredentialResult;
 
 /// Byte strings as msgpack bin, not arrays of numbers.
 mod bin {

@@ -23,6 +23,7 @@
 
 use heed::{RoTxn, RwTxn};
 use loro::VersionVector;
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -30,12 +31,6 @@ use crate::error::{ArtifactError, Error, Result};
 use crate::origin::RepoProjectionHoldCause;
 use crate::origin::secret_projection::edit::RepoProjectionDiffResult;
 use crate::origin::secret_projection::index::RepoIndexMarks;
-
-/// The sole hash domain of the settlement review and approval tokens
-/// (FIX12419). Both the opaque revision and the exact-approval token derive
-/// from it; every variable-length component is length-framed (`u64` BE length
-/// then bytes) before hashing. No numeric policy constant is introduced.
-const SETTLEMENT_REVIEW_DOMAIN: &str = "oneiron.repo-sync-settlement.review.v1";
 
 /// The owner's review of one retained document-copy edit: the source it was
 /// read from, the ruled held cause, the lineage's retained submitted text,
@@ -79,24 +74,20 @@ impl RepoCopyEditReview {
     /// The opaque revision this review binds: source id and incarnation,
     /// source text and canonical source vector, copy stamp and blob, lineage
     /// vector, submitted text, and cause, hashed under
-    /// [`SETTLEMENT_REVIEW_DOMAIN`].
+    /// [`purposes::sync::SETTLEMENT_REVIEW`].
     #[must_use]
     pub fn revision(&self) -> &[u8; 32] {
         &self.revision
     }
 
     /// The exact-approval token for `replacement`: the revision plus the exact
-    /// canonical target, hashed under [`SETTLEMENT_REVIEW_DOMAIN`] with the
+    /// canonical target, hashed under [`purposes::sync::SETTLEMENT_REVIEW`] with the
     /// replacement length-framed. The setter recomputes the review in its own
     /// writer and compares this token before any write; a mismatch refuses
     /// stale. The token is NOT authority and proves no owner.
     #[must_use]
     pub fn approval_for(&self, replacement: &str) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_derive_key(SETTLEMENT_REVIEW_DOMAIN);
-        hasher.update(&self.revision);
-        hasher.update(&(replacement.len() as u64).to_be_bytes());
-        hasher.update(replacement.as_bytes());
-        *hasher.finalize().as_bytes()
+        approval_token(&self.revision, replacement)
     }
 }
 
@@ -262,7 +253,7 @@ fn current_in_txn(
 
 /// The opaque revision: source id and incarnation, source text and canonical
 /// source vector, copy stamp and blob, lineage vector, submitted text, and
-/// cause, hashed under [`SETTLEMENT_REVIEW_DOMAIN`] with every
+/// cause, hashed under [`purposes::sync::SETTLEMENT_REVIEW`] with every
 /// variable-length component length-framed.
 #[expect(
     clippy::too_many_arguments,
@@ -279,33 +270,76 @@ fn revision_hash(
     submitted: &str,
     cause: RepoProjectionHoldCause,
 ) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key(SETTLEMENT_REVIEW_DOMAIN);
-    hasher.update(source.as_bytes());
-    hasher.update(&(incarnation.len() as u64).to_be_bytes());
-    hasher.update(incarnation.as_bytes());
-    hasher.update(&(text.len() as u64).to_be_bytes());
-    hasher.update(text.as_bytes());
+    let mut hasher = LegacyDigest::new(purposes::sync::SETTLEMENT_REVIEW);
+    hasher.raw(source.as_bytes());
+    hasher.len_u64_be(incarnation.len());
+    hasher.raw(incarnation.as_bytes());
+    hasher.len_u64_be(text.len());
+    hasher.raw(text.as_bytes());
     canonical_vv(&mut hasher, source_vv);
-    hasher.update(stamp);
-    hasher.update(blob);
+    hasher.raw(stamp);
+    hasher.raw(blob);
     canonical_vv(&mut hasher, lineage_vv);
-    hasher.update(&(submitted.len() as u64).to_be_bytes());
-    hasher.update(submitted.as_bytes());
+    hasher.len_u64_be(submitted.len());
+    hasher.raw(submitted.as_bytes());
     let cause_str = cause.as_str();
-    hasher.update(&(cause_str.len() as u64).to_be_bytes());
-    hasher.update(cause_str.as_bytes());
-    *hasher.finalize().as_bytes()
+    hasher.len_u64_be(cause_str.len());
+    hasher.raw(cause_str.as_bytes());
+    hasher.finish()
 }
 
 /// The canonical hash of `vv`: its `(peer, counter)` pairs sorted, count then
 /// each pair (`u64` then `i32`, both BE). `VersionVector::encode` ordering is
 /// NOT assumed deterministic, so the pairs are sorted before hashing.
-fn canonical_vv(hasher: &mut blake3::Hasher, vv: &VersionVector) {
+fn canonical_vv(hasher: &mut LegacyDigest, vv: &VersionVector) {
     let mut pairs: Vec<(u64, i32)> = vv.iter().map(|(peer, counter)| (*peer, *counter)).collect();
     pairs.sort_unstable();
-    hasher.update(&(pairs.len() as u64).to_be_bytes());
+    hasher.len_u64_be(pairs.len());
     for (peer, counter) in pairs {
-        hasher.update(&peer.to_be_bytes());
-        hasher.update(&counter.to_be_bytes());
+        hasher.raw(&peer.to_be_bytes());
+        hasher.raw(&counter.to_be_bytes());
     }
+}
+
+/// The exact replacement token compared by the writer (K, PLAN-UC-04 stage 7).
+fn approval_token(revision: &[u8; 32], replacement: &str) -> [u8; 32] {
+    let mut hasher = LegacyDigest::new(purposes::sync::SETTLEMENT_REVIEW);
+    hasher.raw(revision);
+    hasher.len_u64_be(replacement.len());
+    hasher.raw(replacement.as_bytes());
+    hasher.finish()
+}
+
+#[cfg(oneiron_test_support)]
+pub(crate) fn approval_token_for_test(revision: &[u8; 32], replacement: &str) -> [u8; 32] {
+    approval_token(revision, replacement)
+}
+
+#[cfg(oneiron_test_support)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the revision binds nine components in one call"
+)]
+pub(crate) fn revision_hash_for_test(
+    source: &EntityId,
+    incarnation: &str,
+    text: &str,
+    source_vv: &VersionVector,
+    stamp: &[u8; 32],
+    blob: &[u8; 32],
+    lineage_vv: &VersionVector,
+    submitted: &str,
+    cause: RepoProjectionHoldCause,
+) -> [u8; 32] {
+    revision_hash(
+        source,
+        incarnation,
+        text,
+        source_vv,
+        stamp,
+        blob,
+        lineage_vv,
+        submitted,
+        cause,
+    )
 }

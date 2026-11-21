@@ -2,12 +2,16 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::compaction::folds::FoldMarkInput;
+use oneiron_contracts::register::Register;
 use serde::Deserialize;
 use serde::Serialize;
 
 /// The kind of content one fold by kind folds in each step of its span.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema, Register,
+)]
 #[serde(rename_all = "snake_case")]
+#[register("fold.kind")]
 pub enum FoldKind {
     /// A step's REPL cell output: the console its sandbox returned. The
     /// program text and its say() messages stay.
@@ -15,17 +19,6 @@ pub enum FoldKind {
     /// A step's program text. Its speech calls stay in the stub, with
     /// their text; its console stays.
     Program,
-}
-
-impl FoldKind {
-    /// The kind as the agent writes it.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::ReplOutput => "repl_output",
-            Self::Program => "program",
-        }
-    }
 }
 
 /// One step a fold by kind folded: what its stub keeps.

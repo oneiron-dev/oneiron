@@ -26,9 +26,17 @@ pub(super) struct ImportedPackSkillSource {
     pub(super) hash: SkillContentHash,
 }
 
-/// Each `skills/<folder>/` of a pack as its own skill package, by folder.
+/// Each `skills/<folder>/` of a pack as its own skill package, by folder,
+/// with the pack's `shared/` files under `shared/` in every package
+/// (0053-SKILLSET): the skillset is the pack, and one shared-file change
+/// re-pins every member in one install.
 pub(super) fn bundled_skill_packages(source: &PackSource) -> Result<Vec<(String, HubPackage)>> {
     let mut groups = BTreeMap::<String, Vec<HubFile>>::new();
+    let shared: Vec<&HubFile> = source
+        .files
+        .iter()
+        .filter(|file| file.path.starts_with(super::source::SHARED_PREFIX))
+        .collect();
     for file in &source.files {
         let Some(path) = file.path.strip_prefix("skills/") else {
             continue;
@@ -50,7 +58,9 @@ pub(super) fn bundled_skill_packages(source: &PackSource) -> Result<Vec<(String,
         .transpose()?;
     groups
         .into_iter()
-        .map(|(folder, files)| {
+        .map(|(folder, mut files)| {
+            // A travelling pack holds no `shared/` (`PackSource::from_files`
+            // refuses it): its skills arrive whole.
             if let Some(projection) = &travelling {
                 let skill = projection
                     .skills
@@ -59,6 +69,7 @@ pub(super) fn bundled_skill_packages(source: &PackSource) -> Result<Vec<(String,
                     .ok_or_else(|| invalid("travelling pack skill folder is not in skills.json"))?;
                 return Ok((folder, skill.package()?));
             }
+            files.extend(shared.iter().map(|file| (*file).clone()));
             Ok((folder, super::super::folder::package_from_files(files)?))
         })
         .collect()

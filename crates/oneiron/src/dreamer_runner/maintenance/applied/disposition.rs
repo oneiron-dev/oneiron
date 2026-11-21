@@ -40,11 +40,9 @@ pub(in crate::dreamer_runner::maintenance) fn record_disposition_in_txn(
         MaintenanceInverse::IdentitySettle(_) => IDENTITY_SETTLE_KIND,
         _ => IDENTITY_PROVISIONAL_KIND,
     };
-    let mut receipt = decision(actor, kind, APPLY_REASON, target, ask.to_vec(), now);
+    let mut receipt = decision(actor, kind, APPLY_REASON, target, ask.to_vec());
     receipt.context = decision_context::disposition(facet, held, settled);
-    vault
-        .store
-        .append_fresh_gate_decision_in_txn(txn, &mut receipt)?;
+    let receipt = vault.store.record_gate_receipt_in_txn(txn, receipt)?;
     APPLIED.put(
         &vault.store,
         txn,

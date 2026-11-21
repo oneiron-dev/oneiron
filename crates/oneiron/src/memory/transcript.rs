@@ -13,6 +13,8 @@
 //! select, through the same page reader
 //! ([`Memory::selected_transcript_turns`]).
 
+use std::collections::BTreeMap;
+
 use serde::Serialize;
 
 use super::read_lane::ReadTargetSlot;
@@ -24,8 +26,11 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::ports::{EdgeDirection, EdgeStoreRead};
-use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
+use crate::registry::{
+    ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN,
+};
 use crate::vault::ReadMode;
+use oneiron_contracts::cursor_text::{join_at_id, split_at_id};
 
 pub use crate::compaction::MAX_TRANSCRIPT_PAGE_TURNS;
 
@@ -94,25 +99,32 @@ pub struct TranscriptMessage {
     pub incomplete: bool,
     /// A stream is open on it now.
     pub generating: bool,
+    /// The call speaker this message is the words of, when its metadata names one: the name the
+    /// vault's owner bound that speaker to, else the label kept with the turn.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub speaker: Option<TranscriptSpeaker>,
+}
+
+/// The call speaker one transcript message is the words of.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct TranscriptSpeaker {
+    /// The bound PERSON's name, or the label kept with the turn.
+    pub label: String,
+    /// The bound PERSON's 32-hex id, only when the name came from that PERSON.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub person: Option<String>,
 }
 
 /// Where a transcript page starts: after the turn with this time and id.
 type TurnKey = (u64, EntityId);
 
-fn cursor(key: &TurnKey) -> String {
-    format!("{}:{}", key.0, key.1.to_hex())
-}
-
 fn parse_cursor(cursor: &str) -> MemoryResult<TurnKey> {
-    cursor
-        .split_once(':')
-        .and_then(|(at, id)| Some((at.parse().ok()?, EntityId::from_hex(id).ok()?)))
-        .ok_or_else(|| {
-            MemoryError::bad_request_with(
-                "invalid transcript cursor",
-                &["Pass back the `next` value of the previous page."],
-            )
-        })
+    split_at_id(cursor).ok_or_else(|| {
+        MemoryError::bad_request_with(
+            "invalid transcript cursor",
+            &["Pass back the `next` value of the previous page."],
+        )
+    })
 }
 
 fn sort_key(key: &TurnKey) -> (u64, [u8; 16]) {
@@ -186,8 +198,20 @@ fn transcript_message(
             result,
             incomplete: completion.incomplete,
             generating: completion.generating,
+            speaker: None,
         },
     )))
+}
+
+/// The (call, speaker, kept label) triple of one transcript message's voice metadata, when it
+/// carries all three as strings.
+fn message_voice_triple(message: &TranscriptMessage) -> Option<(&str, &str, &str)> {
+    let voice = message.metadata.as_ref()?.get("voice")?;
+    Some((
+        voice.get("call")?.as_str()?,
+        voice.get("speaker_key")?.as_str()?,
+        voice.get("speaker_label")?.as_str()?,
+    ))
 }
 
 impl Memory<'_> {
@@ -389,7 +413,7 @@ impl Memory<'_> {
                     continue;
                 }
                 if page.len() == limit {
-                    next = last.as_ref().map(cursor);
+                    next = last.map(|(at, id)| join_at_id(at, id));
                     break 'chunks;
                 }
                 messages.sort_by(|(left, a), (right, b)| left.cmp(right).then(a.id.cmp(&b.id)));
@@ -403,8 +427,93 @@ impl Memory<'_> {
                 last = Some(*key);
             }
         }
+        self.join_call_speakers(lane, &mut page, receipt)?;
         self.admit_results(&mut page)?;
         Ok(Some((page, next)))
+    }
+
+    /// Names each bound call speaker on `page`: every message whose metadata carries a
+    /// (call, speaker, speaker_label) triple reads the owner's bind of that speaker, and the
+    /// bound PERSON's name replaces the kept label. Unbound, unreadable, merged-away or erased
+    /// speakers keep the label they were kept with, and a message with no speaker triple is
+    /// untouched. The bound PERSON is read through this reader's own lane, so a reader who may
+    /// not read it sees the stored label. `receipt` takes the PERSON reads' narrowing.
+    fn join_call_speakers(
+        &self,
+        lane: &ScopedRead<'_>,
+        page: &mut [TranscriptTurn],
+        receipt: &mut ScopedReadReceipt,
+    ) -> MemoryResult<()> {
+        let mut pairs: BTreeMap<(String, String), ()> = BTreeMap::new();
+        for message in page.iter().flat_map(|turn| turn.messages.iter()) {
+            if let Some((call, speaker, _)) = message_voice_triple(message) {
+                pairs.insert((call.to_owned(), speaker.to_owned()), ());
+            }
+        }
+        if pairs.is_empty() {
+            return Ok(());
+        }
+        // Each pair's bound PERSON, resolved to its one live head; a pair with no head reads
+        // as unbound for display.
+        let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
+        let mut heads: BTreeMap<(String, String), EntityId> = BTreeMap::new();
+        for pair in pairs.keys() {
+            let bound = crate::disclosure::call_speaker_bind_in_txn(
+                &self.vault.store,
+                &txn,
+                &pair.0,
+                &pair.1,
+            )?;
+            let head = match bound {
+                Some(person) => super::live_canonical_person_in_txn(self.vault, &txn, &person)?,
+                None => None,
+            };
+            if let Some(head) = head {
+                heads.insert(pair.clone(), head);
+            }
+        }
+        // The distinct heads' names, read through this reader's own lane.
+        let mut distinct: Vec<EntityId> = heads.values().copied().collect();
+        distinct.sort();
+        distinct.dedup();
+        let reads: Vec<_> = distinct.iter().copied().map(PointRead::id).collect();
+        let ScopedReadResult {
+            value: rows,
+            receipt: read,
+        } = lane.read(&reads, None)?;
+        receipt.restrict_with(&read);
+        let mut names: BTreeMap<EntityId, String> = BTreeMap::new();
+        for (head, row) in distinct.iter().zip(rows) {
+            let name = row
+                .and_then(|row| {
+                    if row.entity_type != ENTITY_TYPE_PERSON {
+                        return None;
+                    }
+                    row.body
+                        .as_deref()
+                        .and_then(oneiron_records::context_board::people::person_name)
+                })
+                .map(|name| name.trim().to_owned())
+                .filter(|name| !name.is_empty());
+            if let Some(name) = name {
+                names.insert(*head, name);
+            }
+        }
+        for message in page.iter_mut().flat_map(|turn| turn.messages.iter_mut()) {
+            let Some((call, speaker, label)) = message_voice_triple(message) else {
+                continue;
+            };
+            let pair = (call.to_owned(), speaker.to_owned());
+            let (label, person) = match heads
+                .get(&pair)
+                .and_then(|head| names.get(head).map(|name| (head, name)))
+            {
+                Some((head, name)) => (name.clone(), Some(head.to_hex())),
+                None => (label.to_owned(), None),
+            };
+            message.speaker = Some(TranscriptSpeaker { label, person });
+        }
+        Ok(())
     }
 
     /// Each result `page`'s messages carry, as [`Self::shown_result`] shows
@@ -482,7 +591,5 @@ impl Memory<'_> {
     }
 }
 
-// FIX [LIBTEST-QUARANTINE-MEMORY-TRANSCRIPT-TESTS]: the lib test target's type check fails here (3 errors: E0063 x3); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;

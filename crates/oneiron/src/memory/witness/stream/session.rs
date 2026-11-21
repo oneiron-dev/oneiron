@@ -206,7 +206,7 @@ impl SessionMessageStream {
             state.text.push_str(delta);
         }
         state.sequence = next;
-        state.last_op_at_ms = now_ms();
+        state.last_op_at_ms = crate::unix_millis_now();
         Ok(())
     }
     /// Token's own projected partial. No idle clock refresh.
@@ -349,7 +349,7 @@ impl SessionWitnessBinding {
         let author = native_author(vault, agent, sitting);
         self.admit_stream(&author, turn)?;
         let policy = vault.message_stream_policy()?;
-        let at = now_ms();
+        let at = crate::unix_millis_now();
         let permit = vault.message_streams.line.enter(vault, agent.as_bytes())?;
         if let Err(error) = self.admit_stream(&author, turn) {
             drop(permit);

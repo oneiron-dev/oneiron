@@ -11,6 +11,7 @@ use crate::store::Store;
 use super::codec::invalid_body;
 use super::floor_keys;
 use super::types::{CustodyTier, SecretCustodyFloor};
+use oneiron_contracts::msgpack::Entries;
 
 /// MessagePack key-map helpers local to this module (the per-module idiom;
 /// gate.rs's own copies are private to it).
@@ -21,16 +22,11 @@ pub(crate) enum MapValue<'a> {
 }
 
 pub(crate) fn single_map_value<'a>(entries: &'a [(Value, Value)], needle: &str) -> MapValue<'a> {
-    let mut found = None;
-    for (key, value) in entries {
-        if key.as_str() == Some(needle) {
-            if found.is_some() {
-                return MapValue::Duplicate;
-            }
-            found = Some(value);
-        }
+    match Entries::new(entries).get(needle) {
+        Ok(Some(value)) => MapValue::Present(value),
+        Ok(None) => MapValue::Missing,
+        Err(_) => MapValue::Duplicate,
     }
-    found.map_or(MapValue::Missing, MapValue::Present)
 }
 
 pub(crate) fn required_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Option<&'a Value> {

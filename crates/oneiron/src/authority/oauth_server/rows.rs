@@ -3,7 +3,6 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::OAUTH_ACCESS_TTL_SECS;
 use super::clients::OAuthClientRecord;
 use crate::EntityId;
 use crate::authority::AgentTier;
@@ -65,8 +64,13 @@ pub(super) struct PendingAuthorization {
     pub(super) code_challenge: String,
     /// The client's own `state`, echoed on the redirect.
     pub(super) state: Option<String>,
-    /// The RFC 8707 resource: this vault's `/mcp`.
+    /// The first RFC 8707 resource the request named: this vault's `/mcp`, or its `/git`.
     pub(super) resource: String,
+    /// Every further resource it named (RFC 8707 §2: a request may name several;
+    /// CONTINUE-PUSH-NON-SLIP-SELECTION). Empty on a row that named one, and on every row
+    /// written before it, which reads as before.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) further_resources: Vec<String>,
     /// The tier the client asked for.
     pub(super) tier: AgentTier,
     /// The keyed hash of the page's poll secret (hex64).
@@ -94,6 +98,9 @@ pub(super) struct IssuedCode {
     pub(super) redirect_uri: String,
     pub(super) code_challenge: String,
     pub(super) resource: String,
+    /// The request's further resources ([`PendingAuthorization::further_resources`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) further_resources: Vec<String>,
     pub(super) grant: AuthorizedGrant,
     pub(super) expires_at: u64,
     /// The family its redemption minted; `None` until it is redeemed.
@@ -101,18 +108,19 @@ pub(super) struct IssuedCode {
 }
 
 impl IssuedCode {
+    /// Whether the code's request named `resource`, so a token request may name it.
+    pub(super) fn names_resource(&self, resource: &str) -> bool {
+        resource_named(&self.resource, &self.further_resources, resource)
+    }
+
     /// The grant of a code no exchange redeemed: no token stands on it.
     pub(super) fn unredeemed_grant(&self) -> Option<AuthorizedGrant> {
         self.redeemed_family.is_none().then_some(self.grant)
     }
 }
 
-/// Which kind of token a token row is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) enum TokenKind {
-    Access,
-    Refresh,
-}
+#[doc(hidden)]
+pub(super) use oneiron_records::authority::oauth_server::rows::{FamilyOpening, TokenKind};
 
 /// One access or refresh token. Not `Debug`: an access token's row holds its slip.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -136,6 +144,10 @@ pub(super) struct IssuedToken {
 pub(super) struct TokenFamily {
     pub(super) client_id: String,
     pub(super) resource: String,
+    /// Its code's further resources ([`PendingAuthorization::further_resources`]): every
+    /// access token of the family reaches each resource its sign-in named, and no other.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) further_resources: Vec<String>,
     pub(super) grant: AuthorizedGrant,
     /// When its newest refresh token lapses; past it, no token of the family stands.
     pub(super) expires_at: u64,
@@ -150,6 +162,11 @@ pub(super) struct TokenFamily {
 }
 
 impl TokenFamily {
+    /// Whether the family's sign-in named `resource`: its access tokens reach it.
+    pub(super) fn names_resource(&self, resource: &str) -> bool {
+        resource_named(&self.resource, &self.further_resources, resource)
+    }
+
     /// Whether the expiry sweep drops the family at `now`: past its newest refresh token's
     /// lifetime, with no sign-in end due ([`FamilyOpening::end_due_at`]). A family whose sign-in
     /// end failed stays until a pass ends it and takes its grant back.
@@ -158,37 +175,12 @@ impl TokenFamily {
     }
 }
 
-/// Whether a token family's first access slip stood (FIX 22193, 22226). Only a family whose first
-/// slip stood handed a token out, so only its grant outlives the family; the sign-in of one whose
-/// first slip never stood is ended, its grant taken back.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) enum FamilyOpening {
-    /// A code's exchange at `opened_at` opened the family, and its first access slip has not
-    /// stood: no token of it was handed out.
-    Pending { opened_at: u64 },
-    /// Its first access slip landed and its first pair was handed out. Only a revoke or a lapse
-    /// ends the family; its grant stays until the owner revokes it.
-    Stood,
-    /// Its first access slip did not stand and its sign-in was ended: the family is revoked, and
-    /// its grant was taken back unless another family that is not revoked names it.
-    Ended,
-}
-
-impl FamilyOpening {
-    /// Whether the expiry sweep ends the family's sign-in at `now` (FIX 22226): its first access
-    /// slip has not stood and the first access token, minted with the exchange, has lapsed, so
-    /// no token request still minting that slip is cut short. A slip that lands after the end
-    /// finds the family revoked and stands for nothing; one that landed first marked it
-    /// [`Self::Stood`], and the end, judged again in its writer, leaves it.
-    pub(super) fn end_due_at(self, now: u64) -> bool {
-        matches!(
-            self,
-            Self::Pending { opened_at } if now >= opened_at.saturating_add(OAUTH_ACCESS_TTL_SECS)
-        )
-    }
-}
-
 /// The [`CLIENTS`] key of a client ID.
 pub(super) fn client_key(client_id: &str) -> String {
     blake3::hash(client_id.as_bytes()).to_hex().to_string()
+}
+
+/// Whether `resource` is `first` or one of `further`: the resources one sign-in named.
+fn resource_named(first: &str, further: &[String], resource: &str) -> bool {
+    first == resource || further.iter().any(|named| named == resource)
 }

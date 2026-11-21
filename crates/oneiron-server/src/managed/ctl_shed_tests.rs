@@ -47,6 +47,9 @@ async fn ctl_shed_enters_during_real_outbound_dispatch_and_preserves_journal() -
         dir.path(),
         oneiron::VaultConfig::default(),
     )?);
+    // A host installs its keystore at open; the server below roots with the
+    // empty secret its default config names.
+    crate::test_credentials::install_fixture_keystore(&vault, b"");
     let actor_id = oneiron::EntityId::from_bytes([0xE1; 16])?;
     vault.put_entity(
         &actor_id,

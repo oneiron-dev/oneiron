@@ -5,7 +5,6 @@ use super::{EditOp, EditWarning, OfficeFormat};
 use crate::blob_artifact::CalcEngineStamp;
 use crate::error::Result;
 use oneiron_xlsx_formula::{DocumentLocation, RecalcClock};
-use serde::Serialize;
 use std::collections::BTreeSet;
 
 /// The office file passed across the [`EditSession`] seam: the raw bytes plus
@@ -148,35 +147,8 @@ pub trait EditSession {
     }
 }
 
-/// One corruption-gate check result. Serializes into receipts/viewer payloads;
-/// the `&'static str` check name means it does not round-trip back through
-/// `Deserialize`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct ValidationCheck {
-    pub name: &'static str,
-    pub passed: bool,
-    pub detail: String,
-}
-
-/// The corruption-gate report. `ok` is the conjunction of all checks.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct ValidationReport {
-    pub ok: bool,
-    pub checks: Vec<ValidationCheck>,
-}
-
-impl ValidationReport {
-    pub(super) fn single_failure(name: &'static str, detail: impl Into<String>) -> Self {
-        Self {
-            ok: false,
-            checks: vec![ValidationCheck {
-                name,
-                passed: false,
-                detail: detail.into(),
-            }],
-        }
-    }
-}
+#[doc(hidden)]
+pub use oneiron_records::edit_roundtrip::session_validate::{ValidationCheck, ValidationReport};
 
 /// Runs the corruption + passthrough gate over the parsed input/output
 /// packages. Never trusts the session's self-report: it re-derives the part

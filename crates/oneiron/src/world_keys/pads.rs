@@ -78,10 +78,6 @@ pub use crate::key_material::WorldKeyDestroyCause;
 
 pub use crate::key_material::WorldKeyDestruction;
 
-fn hex(bytes: &[u8; 16]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
 /// Whether `world` was soft-deleted here less than [`DELETED_WORLD_KEEP_SECS`]
 /// before `now`, and its keys were not destroyed since: a pin change still
 /// rewraps them, so the new kit restores the world from old bundles. An erased
@@ -555,10 +551,10 @@ pub(crate) fn destroy_world_keys_in_txn(
         cause,
         keys: rows
             .iter()
-            .map(|(_, key, _)| format!("{}:{}", key.generation, hex(&key.mint)))
+            .map(|(_, key, _)| format!("{}:{}", key.generation, oneiron_hex::encode(&key.mint)))
             .collect(),
         pad_rows: rows.iter().map(|(id, _, _)| id.to_hex()).collect(),
-        request_id: request_id.as_ref().map(hex),
+        request_id: request_id.as_ref().map(|bytes| oneiron_hex::encode(bytes)),
         at: crate::ports::recorded_at_in_txn(store, wtxn)?,
     };
     DESTROYED.put(store, wtxn, &fact, &receipt)?;

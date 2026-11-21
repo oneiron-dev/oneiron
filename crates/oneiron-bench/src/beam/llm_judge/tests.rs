@@ -94,6 +94,7 @@ fn config() -> JudgeConfig {
             )),
             vote_count: 3,
         },
+        replicate_instruction: None,
     }
 }
 fn prices() -> PriceTable {

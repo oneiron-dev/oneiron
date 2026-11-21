@@ -47,7 +47,7 @@ fn fence(memory: &Memory<'_>, checkout: &str, epoch: u64) -> MemoryResult<Checko
 }
 
 fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    oneiron_hex::encode(bytes)
 }
 
 fn class(value: CheckoutClass) -> CheckoutTaskClass {

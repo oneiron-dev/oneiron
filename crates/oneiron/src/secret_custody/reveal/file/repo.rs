@@ -26,12 +26,18 @@
 //! read leaves the writer before every Delivered row is durable. A delivery
 //! is no standing permission: each later read checks the live grant again
 //! and logs its own reason.
+//!
+//! A repo file whose stored bytes the write door sealed whole (ARCH-0069
+//! #binary-secrets) goes to the owner only, as the same bytes stored as a
+//! file do: it holds a hit no mark places, so its keys open no grant and its
+//! read stays masked, with no ask filed (REVIEW-7708 P1).
 
 #![allow(
     dead_code,
     reason = "FIX 7608 2b-ii-A: inert until 2b-ii-B wires the repo readers that take a why"
 )]
 
+use oneiron_contracts::register::Register;
 use serde::{Deserialize, Serialize};
 
 use super::{KeyRead, ReadGroup, SEALED_FILE_CLASS, admitted_keys_in_txn, class_groups};
@@ -44,12 +50,13 @@ use crate::secret_custody::reveal::{
     RevealAsker, checked_text, covering_grant, project_selector, reveal_class,
 };
 use crate::secret_custody::{CustodyClass, SecretSight};
+use crate::store::file_key_masks::masked_file_in_txn;
 use crate::vault::Vault;
 
 mod grants;
 
-/// Domain of a repo file read's identity digests and its fingerprint.
-const REPO_FILE_DOMAIN: &[u8] = b"oneiron.secret_reveal.repo_file.v1";
+#[doc(hidden)]
+use oneiron_records::secret_custody::reveal::file::repo::{REPO_FILE_DOMAIN, digest, hex};
 
 /// The handle a repo file's opaque residue is read as, in place of keys'.
 const REPO_SEALED_HANDLE: &str = "sealed repo file";
@@ -60,8 +67,11 @@ pub(crate) use crate::secret_record::RepoFileKeys;
 
 /// The reach of the owner's grant on a repo file read: the scope the
 /// owner's standing answer to one repo file reveal picks (FIX 9236).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Register,
+)]
 #[serde(rename_all = "snake_case")]
+#[register("repo.file.reveal.scope")]
 pub enum RepoFileRevealScope {
     /// This file, until revoked.
     File,
@@ -76,16 +86,6 @@ pub enum RepoFileRevealScope {
 impl RepoFileRevealScope {
     /// Every scope, the narrowest first: the order a read's bound is tried.
     pub(crate) const ALL: [Self; 4] = [Self::FileTask, Self::File, Self::RepoTask, Self::Repo];
-
-    /// The pinned scope word.
-    pub(crate) const fn as_str(self) -> &'static str {
-        match self {
-            Self::File => "file",
-            Self::FileTask => "file_task",
-            Self::Repo => "repo",
-            Self::RepoTask => "repo_task",
-        }
-    }
 
     const fn names_file(self) -> bool {
         matches!(self, Self::File | Self::FileTask)
@@ -363,6 +363,89 @@ pub(crate) enum RepoFileSight {
     Delivered(RepoFileRevealDelivery),
 }
 
+/// The groups a read of the marked repo file whose stored bytes' hash is
+/// `raw_blake3` asks in, in `txn`: its placed `keys` in one group per
+/// custody class, and its opaque residue as one sealed group read as
+/// `artifact`. `None` when a key no longer admits, the file has no key and
+/// no residue, or the write door sealed the stored bytes whole: by the keys'
+/// own word, or by their mask row in `txn`, the transaction a delivery's
+/// proof is minted in.
+///
+/// # Errors
+/// A store failure, or a key record that does not decode.
+fn repo_file_groups_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    raw_blake3: &[u8; 32],
+    artifact: &EntityId,
+    keys: &RepoFileKeys,
+) -> Result<Option<Vec<ReadGroup>>> {
+    // A file sealed whole goes to the owner only (ARCH-0069
+    // #binary-secrets): a granted read is served the stored bytes whole, the
+    // hit no mark places among them (REVIEW-7708 P1).
+    if keys.sealed
+        || masked_file_in_txn(&vault.store, txn, raw_blake3)?.is_some_and(|row| row.sealed)
+    {
+        return Ok(None);
+    }
+    let mut groups = Vec::new();
+    if !keys.custody.is_empty() {
+        let custody = keys.custody.iter().copied();
+        let Some(admitted) = admitted_keys_in_txn(vault, txn, custody)? else {
+            return Ok(None);
+        };
+        groups = class_groups(admitted)?;
+    }
+    if keys.opaque {
+        groups.push(ReadGroup {
+            class: SEALED_FILE_CLASS,
+            first: *artifact,
+            keys: Vec::new(),
+            handle: REPO_SEALED_HANDLE.to_owned(),
+        });
+    }
+    Ok((!groups.is_empty()).then_some(groups))
+}
+
+#[cfg(oneiron_test_support)]
+impl Vault {
+    /// The test door's view of [`repo_file_groups_in_txn`]: how many key
+    /// groups an agent's read of a marked repo file whose stored bytes'
+    /// hash is `raw_blake3` asks for, when the repo's marks name each key
+    /// the stored file's own mark places and no residue; `None` when no
+    /// grant reaches the file.
+    ///
+    /// # Errors
+    /// A store failure, or a key record that does not decode.
+    pub(crate) fn repo_file_key_groups_for_test(
+        &self,
+        raw_blake3: &[u8; 32],
+    ) -> Result<Option<usize>> {
+        let txn = self.store.env.read_txn()?;
+        let custody: Vec<EntityId> = masked_file_in_txn(&self.store, &txn, raw_blake3)?
+            .map(|row| {
+                row.keys
+                    .iter()
+                    .chain(row.members.iter().flat_map(|member| member.keys.iter()))
+                    .map(|key| key.custody)
+                    .collect()
+            })
+            .unwrap_or_default();
+        // The repo's marks name the keys only: the seal is read from the
+        // stored bytes' own row, as a delivery reads it.
+        let keys = RepoFileKeys {
+            custody,
+            opaque: false,
+            sealed: false,
+        };
+        let artifact = crate::store::code_snapshot::snapshot_asset_entity_id(raw_blake3)?;
+        Ok(
+            repo_file_groups_in_txn(self, &txn, raw_blake3, &artifact, &keys)?
+                .map(|groups| groups.len()),
+        )
+    }
+}
+
 impl Vault {
     /// How `asker` reads the marked repo file `target` names when it says
     /// `why`: judged by the one file check over `keys`, its placed keys in
@@ -388,25 +471,10 @@ impl Vault {
         )?;
         let artifact = crate::store::code_snapshot::snapshot_asset_entity_id(raw_blake3)?;
         let delivered = self.with_write_txn_grouped(|txn| {
-            let mut groups = Vec::new();
-            if !keys.custody.is_empty() {
-                let custody = keys.custody.iter().copied();
-                let Some(admitted) = admitted_keys_in_txn(self, txn, custody)? else {
-                    return Ok(None);
-                };
-                groups = class_groups(admitted)?;
-            }
-            if keys.opaque {
-                groups.push(ReadGroup {
-                    class: SEALED_FILE_CLASS,
-                    first: artifact,
-                    keys: Vec::new(),
-                    handle: REPO_SEALED_HANDLE.to_owned(),
-                });
-            }
-            if groups.is_empty() {
+            let Some(groups) = repo_file_groups_in_txn(self, txn, raw_blake3, &artifact, keys)?
+            else {
                 return Ok(None);
-            }
+            };
             let per_class = groups.len() > 1;
             let read = KeyRead {
                 asker,
@@ -431,19 +499,4 @@ impl Vault {
             _ => RepoFileSight::Masked,
         })
     }
-}
-
-/// The BLAKE3 of `fields` under [`REPO_FILE_DOMAIN`], each length-prefixed.
-fn digest(fields: &[&[u8]]) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(REPO_FILE_DOMAIN);
-    for field in fields {
-        hasher.update(&(field.len() as u64).to_be_bytes());
-        hasher.update(field);
-    }
-    *hasher.finalize().as_bytes()
-}
-
-fn hex(bytes: &[u8; 32]) -> String {
-    crate::entity_id::bytes_to_hex_lower(bytes)
 }

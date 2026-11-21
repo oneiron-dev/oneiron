@@ -76,7 +76,7 @@ fn populated_v2_analyzer_manifest_fails_closed_on_open() -> Result<()> {
         let mut manifest: AnalyzerManifest =
             serde_json::from_slice(&stored).expect("stored manifest must parse");
         assert_eq!(manifest.analyzer_version, ANALYZER_VERSION);
-        assert_eq!(manifest.analyzer_version, "v3");
+        assert_eq!(manifest.analyzer_version, "v4");
         manifest.analyzer_version = "v2".to_owned();
         let json = manifest.canonical_json().expect("canonical json");
         let hash = manifest.canonical_hash().expect("canonical hash");
@@ -315,7 +315,14 @@ fn replicated_overwrite_changed_body_drops_loser_text_postings_before_idle() -> 
     vault.with_write_txn(|wtxn| {
         vault
             .batch_in()
-            .put_replicated(&id, 1, test_time_range(2, 2), 2, b"payload-from-winner")
+            .put_replicated(
+                &id,
+                1,
+                test_time_range(2, 2),
+                2,
+                None,
+                b"payload-from-winner",
+            )
             .apply(wtxn)
     })?;
 
@@ -423,7 +430,7 @@ fn replicated_overwrite_same_body_bytes_keeps_text_postings() -> Result<()> {
     // forward_rematerialize replay door (`BatchBuilder::put_replicated`).
     vault
         .batch()
-        .put_replicated(&id, 1, test_time_range(5, 7), 9, b"stable-payload")
+        .put_replicated(&id, 1, test_time_range(5, 7), 9, None, b"stable-payload")
         .commit()?;
 
     assert_eq!(

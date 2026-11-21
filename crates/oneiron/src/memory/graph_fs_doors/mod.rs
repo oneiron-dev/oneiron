@@ -82,6 +82,7 @@ impl Memory<'_> {
             mount: descriptor(&tree, &input),
             root: "/".to_owned(),
             projection: GRAPH_FS_PROJECTION_VERSION.to_owned(),
+            frontier: tree.memory_frontier()?.map(|frontier| frontier.to_hex()),
         })
     }
 

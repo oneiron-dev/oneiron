@@ -16,7 +16,6 @@
 
 use std::future::Future;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore};
 
@@ -112,7 +111,7 @@ impl OwnerShedAttempt {
                 admitted_residue,
                 self.request.cause,
                 waited_secs,
-                unix_ms_now(),
+                crate::unix_millis_now(),
             )?,
         };
         Ok(Some(SlimDropReceipt::from(outcome).outcome))
@@ -174,14 +173,4 @@ impl Vault {
     pub(crate) fn wake_owner_shed(&self) {
         self.slim.owner_line.changed.notify_waiters();
     }
-}
-
-/// Wall-clock milliseconds for the residue's observability stamps, as a
-/// long-wait shed reads them.
-fn unix_ms_now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |elapsed| {
-            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
-        })
 }

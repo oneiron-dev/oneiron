@@ -134,12 +134,6 @@ impl Drop for TopologyWatcher {
     }
 }
 
-fn now_secs() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |duration| duration.as_secs())
-}
-
 /// Points residence reads at the elected home's endpoint when the snapshot
 /// names endpoints; otherwise the host's own route stands.
 fn route_home(
@@ -262,8 +256,8 @@ pub(super) fn watch_topology(
     let mut wakes = vault.subscribe_proactivity_changes();
     let mut snapshot = updates.borrow_and_update().clone();
     feed_routes(&vault, &snapshot, route.as_ref(), &server);
-    let mut routed =
-        DreamerRunnerStore::new(&vault).sync_topology_changed(&snapshot.candidates, now_secs())?;
+    let mut routed = DreamerRunnerStore::new(&vault)
+        .sync_topology_changed(&snapshot.candidates, crate::unix_seconds_now())?;
     route_home(route.as_ref(), &snapshot, routed.as_ref());
     publish_route(&vault, &routes, &snapshot, routed.as_ref());
     Ok(TopologyWatcher(tokio::spawn(async move {
@@ -277,7 +271,7 @@ pub(super) fn watch_topology(
                     snapshot = updates.borrow_and_update().clone();
                     feed_routes(&vault, &snapshot, route.as_ref(), &server);
                     let home = DreamerRunnerStore::new(&vault)
-                        .sync_topology_changed(&snapshot.candidates, now_secs());
+                        .sync_topology_changed(&snapshot.candidates, crate::unix_seconds_now());
                     (home, round)
                 }
                 Ok(()) = wakes.changed() => {

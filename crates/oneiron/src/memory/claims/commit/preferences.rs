@@ -9,8 +9,9 @@ use crate::claim::preference_answers_agree;
 impl Memory<'_> {
     /// Prior-claim match for auto-supersede: the standing head on `key`.
     /// Deterministic when multiple actives match: the newest id (UUIDv7
-    /// order) wins. A write held `beside_stated` (OF-023) never replaces a
-    /// `UserStated` head, so those are passed over. Set-cardinality predicates
+    /// order) wins. A write held `beside_stated` (an observed preference,
+    /// OF-023, or a generated claim) never replaces a `UserStated` head, so
+    /// those are passed over. Set-cardinality predicates
     /// replace only an agreeing answer; distinct answers remain standing.
     pub(super) fn find_prior_claim(
         &self,
@@ -20,7 +21,7 @@ impl Memory<'_> {
     ) -> MemoryResult<Option<EntityId>> {
         let ids = self.vault.claims_for_subject(&key.subject)?;
         let set_answer = (declared_cardinality(&key.input.predicate) == ClaimCardinality::Set)
-            .then(|| json_to_rmpv(&key.input.value));
+            .then(|| json_to_msgpack_value(&key.input.value));
         let mut best: Option<EntityId> = None;
         for id in ids {
             if id == *exclude {
@@ -55,7 +56,7 @@ impl Memory<'_> {
         beside_stated: bool,
     ) -> crate::Result<Option<EntityId>> {
         let set_answer = (declared_cardinality(&key.input.predicate) == ClaimCardinality::Set)
-            .then(|| json_to_rmpv(&key.input.value));
+            .then(|| json_to_msgpack_value(&key.input.value));
         let mut best: Option<EntityId> = None;
         for id in self.vault.claims_for_subject_in_txn(rtxn, &key.subject)? {
             if id == *exclude {
@@ -80,10 +81,11 @@ impl Memory<'_> {
         Ok(best)
     }
 
-    /// OF-023: the standing `UserStated` peers on `key` whose answer differs
-    /// from the observed `value`, read in the write transaction. Every peer
-    /// counts, not one advisory newest prior. An incoming id that already
-    /// names a stated claim is refused: holding the pair takes two ids.
+    /// The standing `UserStated` peers on `key` whose answer differs from the
+    /// `value` of a write held beside them (an observed preference, OF-023, or
+    /// a generated claim), read in the write transaction. Every peer counts,
+    /// not one advisory newest prior. An incoming id that already names a
+    /// stated claim is refused: holding the pair takes two ids.
     pub(super) fn stated_preference_conflicts_in_txn(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -97,7 +99,7 @@ impl Memory<'_> {
             .is_some_and(|existing| existing.source == Some(ClaimSource::UserStated))
         {
             return Err(Error::InvalidClaimBody(
-                "an observed preference cannot reuse a user-stated claim's id",
+                "a claim held beside a user-stated claim cannot reuse its id",
             ));
         }
         let mut conflicts = Vec::new();
@@ -115,8 +117,9 @@ impl Memory<'_> {
         Ok(conflicts)
     }
 
-    /// OF-023: one `core.conflict.open` marker per disagreeing stated peer,
-    /// naming `[observed, stated]` under the pair's deterministic id, so a
+    /// One `core.conflict.open` marker per disagreeing stated peer of a write
+    /// held beside it (OF-023; a generated claim's disagreement card), naming
+    /// `[observed, stated]` under the pair's deterministic id, so a
     /// replay finds its marker and writes nothing. Peers must currently be
     /// valid and share the landed observation's facet and project. The marker
     /// is signed on its own and lands through this actor's content transaction.

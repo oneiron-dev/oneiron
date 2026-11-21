@@ -89,6 +89,7 @@ use oneiron::attempt_queue::{
     CompleteAttempt, RequeueAttempt,
 };
 use oneiron::blob_artifact::esign::{EsignCapability, EsignDeliveryEndReason, EsignDeliveryMint};
+use oneiron_base::unix_seconds_now;
 use oneiron_vault_contract::esign_delivery::{
     ESIGN_DELIVERY_FILE_PREFIX as FILE_PREFIX, ESIGN_DELIVERY_KIND as DELIVERY_KIND,
     ESIGN_DELIVERY_LEASE_OWNER as LEASE_OWNER,
@@ -215,6 +216,13 @@ impl Outbox {
     /// the leases it holds first; after a failed write it claims no more
     /// until those are written.
     fn tick(&self, vault: &Vault, recover: bool) -> anyhow::Result<bool> {
+        // A copy restored and not joined exports no e-sign delivery (row
+        // RESTORED-UNJOINED-STARTS-NO-WORK): leased rows keep their leases, ready
+        // rows wait, and the first tick after the join publishes them. Writes
+        // nothing: no ack settlement, no reclaim, no envelope.
+        if vault.restored_unjoined()? {
+            return Ok(recover);
+        }
         let Some(_lock) = files::lock(&self.dir)? else {
             return Ok(recover);
         };
@@ -234,7 +242,7 @@ impl Outbox {
         let reclaimed = queue.cleanup_kind_leases(
             DELIVERY_KIND,
             CleanupAttemptLeases {
-                now: unix_now(),
+                now: unix_seconds_now(),
                 lease_timeout_secs: LEASE_SECS,
             },
         )?;
@@ -445,7 +453,7 @@ impl Outbox {
                 DELIVERY_KIND,
                 ClaimAttempt {
                     lease_owner: LEASE_OWNER.to_owned(),
-                    now: unix_now(),
+                    now: unix_seconds_now(),
                 },
             )?;
             let ClaimOutcome::Claimed(row) = claimed else {
@@ -672,7 +680,7 @@ fn binds(vault: &Vault, ack: &Ack, row: &AttemptRecord, stem: &str) -> oneiron::
 /// to the queue [`RETRY_DELAY_SECS`] later with its reason kept beside the
 /// earlier ones (FIX 5240): no new row per try, never a terminal failure.
 fn settle(queue: &AttemptQueue<'_>, row: &AttemptRecord, ack: &Ack) -> oneiron::Result<()> {
-    let now = unix_now();
+    let now = unix_seconds_now();
     match ack.status {
         AckStatus::Ok => {
             queue.complete(CompleteAttempt {
@@ -693,10 +701,4 @@ fn settle(queue: &AttemptQueue<'_>, row: &AttemptRecord, ack: &Ack) -> oneiron::
         }
     }
     Ok(())
-}
-
-fn unix_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs())
 }

@@ -2,7 +2,8 @@
 
 mod answer;
 pub(crate) mod tables;
-pub(crate) use answer::PhoneLineReadCeiling;
+pub use answer::PhoneLineConsent;
+pub(crate) use answer::{CallReach, PhoneLineReadCeiling};
 
 use crate::Vault;
 use crate::batch::EntityMetadataHeader;
@@ -16,6 +17,7 @@ use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_MACHINE};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use serde::{Deserialize, Serialize};
 
 const LINES: SideTable<EntityId, PhoneLineState, Named> =
@@ -23,57 +25,11 @@ const LINES: SideTable<EntityId, PhoneLineState, Named> =
 const ARRIVALS: SideTable<[u8; 32], StoredArrival, Named> =
     SideTable::new(&side_table::CHANNEL_IDENTITY_PHONE_ARRIVAL);
 
-/// The owner's explicit setting. A missing setting is off; enabling it grants no reads.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PhoneLineConfig {
-    pub enabled: bool,
-    pub share_scope: Scope,
-}
-
-/// The actual identity, receiving agent and channel actor the owner configured.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PhoneLineState {
-    pub identity_ref: EntityId,
-    pub agent_ref: EntityId,
-    pub bridge_actor: EntityId,
-    pub owner_actor: EntityId,
-    pub enabled: bool,
-    /// Consent data only, enforced beside an answering reader's actual credential.
-    pub share_scope: Scope,
-    pub updated_at: u64,
-}
-
-/// Untrusted provider metadata, never a recognized person or an instruction.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PhoneLineArrival {
-    pub call_id: String,
-    pub caller: Option<String>,
-}
-
-/// Quarantined arrival metadata behind an opaque reference in the existing inbox queue.
-/// There is no recording, transcript, answered-call or provider-identity claim here.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PhoneLineArrivalRecord {
-    pub identity_ref: EntityId,
-    pub agent_ref: EntityId,
-    pub bridge_actor: EntityId,
-    pub share_scope: Scope,
-    pub arrival: PhoneLineArrival,
-    pub received_at: u64,
-    pub payload_ref: String,
-    pub correlation_id: String,
-    pub attempt_ref: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub struct PhoneLineArrivalReceipt {
-    pub record: PhoneLineArrivalRecord,
-    pub replayed: bool,
-}
+#[doc(hidden)]
+pub use oneiron_records::phone_line::{
+    PhoneLineArrival, PhoneLineArrivalReceipt, PhoneLineArrivalRecord, PhoneLineConfig,
+    PhoneLineState,
+};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
@@ -165,7 +121,7 @@ impl Vault {
             bridge_actor,
             owner_actor,
             enabled: desired.enabled,
-            share_scope: desired.share_scope,
+            share_scope: Scope::default(),
             updated_at: now,
         };
         LINES.put(&self.store, &mut txn, &identity_ref, &state)?;
@@ -273,9 +229,13 @@ fn payload_key(payload_ref: &str) -> Result<[u8; 32]> {
         .map_err(|_| invalid())
 }
 
+/// The digest a replay of `arrival` is compared by. The live arrival row
+/// stores it, so it keeps its bytes (K, PLAN-UC-04 4.1).
 pub(crate) fn input_digest(arrival: &PhoneLineArrival) -> Result<[u8; 32]> {
     let bytes = serde_json::to_vec(arrival).map_err(|_| invalid())?;
-    Ok(*blake3::hash(&bytes).as_bytes())
+    Ok(LegacyDigest::new(purposes::phone_line::ARRIVAL_INPUT)
+        .raw(&bytes)
+        .finish())
 }
 
 pub(crate) fn replay_in_txn(

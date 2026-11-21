@@ -29,6 +29,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use oneiron::web_fetch::HostedEgressGuard;
+
 use oneiron::attempt_queue::{
     AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome, CleanupAttemptLeases, CompleteAttempt,
     FailAttempt, RequeueAttempt,
@@ -41,7 +43,6 @@ use oneiron::calendar::ingest::feed_door::{self, CalendarIcsFeedRequest};
 use oneiron::calendar::ingest::{
     CustodyDoorIcsFeedFetcher, ICS_POLL_ATTEMPT_KIND, ICS_PROPERTY_CONTINUATION_ATTEMPT_KIND,
     IcsFeedPollConfig, IcsFeedPollPayload, IcsPropertyContinuationPayload,
-    run_ics_property_continuation,
 };
 use oneiron::calendar::{
     CALDAV_SYNC_ATTEMPT_KIND, CalDavConnector, CalendarConnectorSeatConfig,
@@ -93,13 +94,21 @@ pub(crate) fn spawn_calendar_polls(
             let mut kept = clients.take();
             let pass = tokio::task::spawn_blocking(move || {
                 let _admission = admission;
+                // The managed node's egress guard, read once per pass: every
+                // feed of the pass goes out through it (ARCH-0046).
+                let egress = server.hosted_egress_guard();
                 let polled = if recover {
-                    recover_polls(server.vault()).and_then(|()| run_due_polls(server.vault()))
+                    recover_polls(server.vault())
+                        .and_then(|()| run_due_polls(server.vault(), egress.as_ref()))
                 } else {
-                    run_due_polls(server.vault())
+                    run_due_polls(server.vault(), egress.as_ref())
                 };
-                let sent =
-                    send_booking_revision_invites(server.vault(), line_push_allowance, &mut kept);
+                let sent = send_booking_revision_invites(
+                    server.vault(),
+                    egress.as_ref(),
+                    line_push_allowance,
+                    &mut kept,
+                );
                 (polled.and(sent), kept)
             })
             .await;
@@ -139,7 +148,10 @@ fn recover_polls(vault: &Vault) -> anyhow::Result<()> {
 
 /// Claims, polls and settles up to [`PASS_LIMIT`] due rows, then runs up to
 /// [`PASS_LIMIT`] due property continuations and queued CalDAV syncs each.
-fn run_due_polls(vault: &Arc<Vault>) -> anyhow::Result<()> {
+fn run_due_polls(
+    vault: &Arc<Vault>,
+    egress: Option<&Arc<HostedEgressGuard>>,
+) -> anyhow::Result<()> {
     let owner = match crate::owner::local_owner(vault) {
         Ok(owner) => owner,
         Err(error) => {
@@ -159,7 +171,7 @@ fn run_due_polls(vault: &Arc<Vault>) -> anyhow::Result<()> {
         let ClaimOutcome::Claimed(attempt) = claimed else {
             break;
         };
-        settle(&queue, vault, &owner, &attempt)?;
+        settle(&queue, vault, &owner, &attempt, egress)?;
     }
     for _ in 0..PASS_LIMIT {
         let claimed = queue.claim_kind(
@@ -185,7 +197,7 @@ fn run_due_polls(vault: &Arc<Vault>) -> anyhow::Result<()> {
         let ClaimOutcome::Claimed(attempt) = claimed else {
             break;
         };
-        settle_connector(&queue, vault, &owner, &attempt)?;
+        settle_connector(&queue, vault, &owner, &attempt, egress)?;
     }
     Ok(())
 }
@@ -196,12 +208,13 @@ fn run_due_polls(vault: &Arc<Vault>) -> anyhow::Result<()> {
 /// runtime, when the worker has none yet.
 fn send_booking_revision_invites(
     vault: &Vault,
+    egress: Option<&Arc<HostedEgressGuard>>,
     line_push_allowance: u32,
     clients: &mut Option<CalendarSendClients>,
 ) -> anyhow::Result<()> {
     let clients = match clients {
         Some(clients) => clients,
-        None => clients.insert(CalendarSendClients::new()?),
+        None => clients.insert(CalendarSendClients::new(egress.cloned())?),
     };
     let mut sink = CalendarChannelSink::new(vault, line_push_allowance, clients);
     let drain = run_booking_revision_invites(
@@ -249,11 +262,10 @@ fn settle_continuation(
         .map_err(anyhow::Error::from)
         .and_then(|actor| {
             let memory = vault.memory(actor, EdgeActorClass::Human);
-            let safeguard_enabled = feed_door::inbound_safeguard_enabled(&memory)?;
-            run_ics_property_continuation(
-                vault,
+            feed_door::run_installed_continuation(
+                &memory,
+                owner,
                 super::calendar_body_screener(),
-                safeguard_enabled,
                 &payload,
             )
             .map_err(anyhow::Error::from)
@@ -293,6 +305,7 @@ fn settle(
     vault: &Arc<Vault>,
     owner: &AuthenticatedOwner,
     attempt: &AttemptRecord,
+    egress: Option<&Arc<HostedEgressGuard>>,
 ) -> anyhow::Result<()> {
     let config = match serde_json::from_slice::<IcsFeedPollPayload>(&attempt.payload) {
         Ok(payload) => payload.config,
@@ -307,7 +320,7 @@ fn settle(
             return Ok(());
         }
     };
-    match poll_installed_feed(vault, owner, &config) {
+    match poll_installed_feed(vault, owner, &config, egress) {
         Ok(()) => {
             queue.complete(CompleteAttempt {
                 id: attempt.id,
@@ -342,6 +355,7 @@ fn poll_installed_feed(
     vault: &Arc<Vault>,
     owner: &AuthenticatedOwner,
     config: &IcsFeedPollConfig,
+    egress: Option<&Arc<HostedEgressGuard>>,
 ) -> anyhow::Result<()> {
     let memory = vault.memory(owner.actor_for_read(vault)?, EdgeActorClass::Human);
     let installed = feed_door::get(
@@ -358,8 +372,22 @@ fn poll_installed_feed(
         );
         return Ok(());
     }
-    let transport = super::HttpIcsFeed::new(Arc::clone(vault), owner.clone(), config.clone())
-        .map_err(anyhow::Error::msg)?;
+    // CAL-02: the feed's first poll's review is open, or the owner declined
+    // it. The owner's approval starts a new chain.
+    if feed_door::poll_waits_on_owner(vault, config)? {
+        tracing::info!(
+            system = %config.system,
+            "calendar feed poll waits on the owner's import review; completed unpolled"
+        );
+        return Ok(());
+    }
+    let transport = super::HttpIcsFeed::new(
+        Arc::clone(vault),
+        owner.clone(),
+        config.clone(),
+        egress.cloned(),
+    )
+    .map_err(anyhow::Error::msg)?;
     let fetcher = CustodyDoorIcsFeedFetcher::new(vault, EFFECTOR, transport);
     let completion = feed_door::run_installed_poll(
         &memory,
@@ -384,6 +412,7 @@ fn settle_connector(
     vault: &Arc<Vault>,
     owner: &AuthenticatedOwner,
     attempt: &AttemptRecord,
+    egress: Option<&Arc<HostedEgressGuard>>,
 ) -> anyhow::Result<()> {
     let payload = match serde_json::from_slice::<CalendarConnectorSyncPayload>(&attempt.payload) {
         Ok(payload) => payload,
@@ -408,7 +437,7 @@ fn settle_connector(
         })?;
         return Ok(());
     }
-    match poll_installed_seat(vault, owner, &payload.config) {
+    match poll_installed_seat(vault, owner, &payload.config, egress) {
         Ok(()) => {
             queue.complete(CompleteAttempt {
                 id: attempt.id,
@@ -459,6 +488,7 @@ fn poll_installed_seat(
     vault: &Arc<Vault>,
     owner: &AuthenticatedOwner,
     config: &CalendarConnectorSeatConfig,
+    egress: Option<&Arc<HostedEgressGuard>>,
 ) -> anyhow::Result<()> {
     let memory = vault.memory(owner.actor_for_read(vault)?, EdgeActorClass::Human);
     let request = CalendarConnectorRequest {
@@ -471,7 +501,12 @@ fn poll_installed_seat(
         tracing::info!(seat = %config.seat_ref, "calendar connector sync row outlived its seat");
         return Ok(());
     }
-    let wire = super::HttpCalDav::new(Arc::clone(vault), owner.clone(), row.clone())?;
+    let wire = super::HttpCalDav::new(
+        Arc::clone(vault),
+        owner.clone(),
+        row.clone(),
+        egress.cloned(),
+    )?;
     let operation = wire.operation().clone();
     let now = vault.now_recorded_at();
     let outcome = oneiron::calendar::run_calendar_connector_sync(

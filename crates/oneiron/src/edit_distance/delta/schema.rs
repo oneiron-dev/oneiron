@@ -6,30 +6,8 @@ use super::endpoint::EndpointRef;
 use crate::edit_distance::myers::MOVE_DISCOUNT;
 use crate::error::{Error, Result};
 
-/// How an [`AmendmentDelta`] was measured. Ordered by precedence, and the
-/// token is pinned: a receipt's Δ payload carries it on disk.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DeltaSource {
-    /// Replayed from ED-00's recorded op window.
-    RecordedOps,
-    /// Structured per-field diff of two canonical-MessagePack bodies.
-    FieldDiff,
-    /// Reconstructed after the fact by diffing the two endpoint texts.
-    Reconstructed,
-}
-
-impl DeltaSource {
-    /// The pinned on-disk token for this lane.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::RecordedOps => "recorded_ops",
-            Self::FieldDiff => "field_diff",
-            Self::Reconstructed => "reconstructed",
-        }
-    }
-}
+#[doc(hidden)]
+pub use oneiron_records::edit_distance::delta::schema::DeltaSource;
 
 /// The edit mass behind a Δ, in the unit its lane counts: CHARACTERS of the
 /// whitespace-normalized text for [`DeltaSource::RecordedOps`] and

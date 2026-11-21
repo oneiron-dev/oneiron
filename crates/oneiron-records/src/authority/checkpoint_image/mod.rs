@@ -1,0 +1,187 @@
+//! Moved from `crates/oneiron/src/authority/checkpoint_image/mod.rs` (lib split R1: record types below the lib).
+//! `oneiron` re-exports each item at its old path.
+
+pub use crate::authority::checkpoint_image::archive::AuthorityArchiveCustodian;
+pub use crate::authority::checkpoint_image::archive::AuthorityArchiveManifest;
+use crate::authority::*;
+use oneiron_base::error::Error;
+use oneiron_base::error::RecordError;
+use serde::Deserialize;
+use serde::Serialize;
+
+/// The fold-state schema an image encodes. A decoder refuses any other. 5:
+/// each row summary marks whether its body is required (FIX 2988). 6: a
+/// machine revision carries its owner say-so's causal past (FIX 4610). 7:
+/// the fold keeps each machine's home candidacy (FIX 4898). 8: the owner
+/// work fold keeps the owner's cancels of root requests (FIX 4739). 9: the
+/// fold admits the owner's device key enrollments and an image carries
+/// their bodies, and the retired multi-device entry quorum is gone (FIX 4920).
+/// 10: an enrolled owner key starts its own custody line (FIX 5896). 11: a
+/// custody request names its authority, an install's or the pinned kit's,
+/// and the fold keeps the owner's kit push as a counted request (FIX 6053).
+/// 12: the fold admits frontier joins, and an image carries their bodies
+/// (FIX 7908). 13: an act-free custodial machine revision lands only as a
+/// bootstrap or its carry (FIX 7920), and a pact keeps each party's narrowing
+/// (FIX 7933). 14: an owner handover signs its grant ids and an image carries
+/// its body (FIX 5765). 15: an image keeps the fold state at each covered row
+/// off its frontier as replay evidence (FIX 3007), carries the bodies of home
+/// candidacies, federation lifecycle acts and residence rows (FIX 3004, 3005,
+/// 5412), and the fold keeps each valid residence directive (FIX 5412). 16:
+/// the fold keeps each setting's signed acts, the refused export acts and each agent-carried act's
+/// Grant, and an image carries the bodies of both ops (FIX 4624, FIX 5660). 17: the fold keeps each
+/// Grant a signed `SlipGrantRevoke` withdrew and its revoke proofs carry one (FIX 1978), a pact
+/// that ends keeps no plaintext scope, and one keyed digest over two scopes suspends the pact (FIX
+/// 7907). 18: a replay delta keeps a map field's changed entries alone (FIX 11262). 19: anchors
+/// sign joins (FIX 8498). 20: the owner work fold keeps the owner's export supplement import marks
+/// (FIX 12062). 21: the fold keeps each repository's owner origin cuts (FIX 15740). 22: the fold
+/// keeps each predecessor device key's owner-named successor (FIX 11135). 23: replay
+/// anchors use only the first parent and overflow keeps a whole-state suffix (FIX 11762).
+/// 24: residence compaction excludes the writing install's checkpoint metadata (FIX 18583).
+/// 25: a pact keeps the signed nonce and the consent epoch its scope commitment is keyed under
+/// (FIX 11730). 26: the fold counts a removal-archive consume's slip consumed (FIX 11862).
+/// 27: the fold admits carrier-signed membership execution records, an image carries their
+/// bodies, and its revoke facts carry their Grant withdrawals (FIX 12335).
+/// 28: a root request's basis carries its bound anchor and its anchor heads' parents (FIX 6556).
+/// 29: an owner's agent Grant mint an image carries may name verb classes (FIX 8735).
+/// 30: an owner's agent Grant mint an image carries may name a host wallet (FIX 7766).
+/// 31: the fold keeps each world an agent edited with all of its edits and their judged strengths,
+/// for a view that holds any of those edits' Grants refused (FIX 22381).
+/// 32: beside those worlds, an install's fold keeps the cap the fold with no vouch puts on
+/// them, so such a view reads them under the same cap (FIX 23218).
+/// 33: an owner's agent Grant mint an image carries may bind its repo bounds to one owner
+/// working view (row 6 WORKING-VIEW-EDIT).
+/// 37: an image's revoke facts carry each device revocation proved on its own signed branch,
+/// so a key a dropped branch revoked stays revoked (FIX [CONFIRM-COLLISION-SUBTREE-ROLLBACK]).
+/// 34 to 36 are unused: they were left for PRs that were open when 37 landed, and each of
+/// those takes the next number at its own landing.
+/// 39: two concurrent federation confirmations that share an id or a nonce both stay valid as
+/// spent evidence, and settlement removes neither nor any row above it (FIX
+/// CONFIRM-COLLISION-SUBTREE-ROLLBACK). 38 is unused: it was an open PR's number when the
+/// train assigned this one.
+/// 40: a revocation retires its key on every branch, as a handoff retires its predecessors
+/// (REVOKED-OWNER-ROOT-SIBLING-ENROL).
+/// 41: a carried machine answer that needed an owner key's proof and carried none is held
+/// beside the chains, never in them, and an owner answer may carry that one proof cosign (row
+/// CARRIER-OWNER-PROOF).
+/// 42: a `RevokeDevice` of an owner key counts only with an owner key's proof, as its signer or a
+/// cosign; the custodial root alone never ends one, and every row above such a revoke is refused
+/// with it (row HOSTED-ROOT-REVOKES-OWNER-KEY).
+/// 43: each covered row's sequence floor comes from the covered rows, not from the order
+/// they arrived in, and a row that only takes away is never floored (FIX
+/// [SEQUENCE-FLOOR-DELIVERY-ORDER], [CHECKPOINT-RAW-FLOOR-CLEARED-ROW]); below its floor a
+/// row that grants counts in full, a world key record included, and the image records its fork
+/// as a `SequenceFork` issue (Engine RULINGs SEQ-FLOOR-SHAPE-S = B, SEQ-FLOOR-S-WORLD-KEY-FLOOR
+/// = A).
+/// 44: the fold keeps each enrolled passkey's assertion contexts, each key a passkey vouched
+/// for and each such key a second vouch confirmed (row WEB-PASSKEY-OWNER-KEY).
+/// 45: a counted root appointment folds its line as its own ancestry's fold did, and a
+/// rootless roster names itself (OWNER-ANCHOR-ROOT-RECOVERY).
+/// 46: on a hosted fold a `human` bind or rebind, and a bind or rebind of any class of a key whose
+/// binding, live or revoked, is `human` or of a live key a `human` binding could name (an owner
+/// or admin key, the custodial root's too), counts only with the proof of an owner key no cloud
+/// key holds and no passkey limit holds (rows OLD-PARENTS-OWNER-BINDING-REVOKE,
+/// OLD-PARENTS-OWNER-BINDING-CONFLICT).
+/// 47: an owner choice or a carried machine answer outside a proving owner-key enrolment's line
+/// waits for the owner's proof, and an enrolment of the owner's key (a rotation or a handoff that
+/// names it too) outside the line of the enrolment that made it the owner's is refused, and a
+/// device revocation proved through such an enrolment of its key ends nothing (row
+/// CARRIER-PROOF-OLD-PARENTS).
+/// 48: host custody comes from the cloud stamp alone (`ROLE_CLOUD` or `CloudCustodial` on the key
+/// or a key that admitted it); the host-root attestation marks no key, so a self-host root keeps
+/// proving for the owner when its log is folded as hosted (row
+/// HOSTED-REOPEN-REJUDGES-SELF-HOST-ROOT); a custodial carry takes an act-free owner's answer
+/// whose signer the roster no longer holds on as unanswered.
+/// 49: an enrolment of the owner's passkey (P-256), and of an Ed25519 owner key only a passkey
+/// vouched for, draws the line too: an enrolment of its key outside that line is refused, and a
+/// revocation proved through one ends nothing; only a proving enrolment's line makes a row wait
+/// for the owner's proof (row PASSKEY-OWNER-KEY-DRAWS-NO-LINE).
+/// 50: only the roster's chain admits or removes an owner act's carrier, never an anchor's
+/// (FIX FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES, site S1, and FIX
+/// FOREIGN-ANCHOR-ADMIT-SIDE); every other shared judge reads the roster's chain alone too (an
+/// owner key's enrolled machine, a residence result's signer, a one-machine pick, the
+/// names-the-key gates; Fable pass 29 K3), and a one-machine pick needs a live roster head in
+/// any role, not "yours". This install's own view still reads the removal of the anchor it pins:
+/// an act that removal did not see only narrows here (review #9496 P1).
+/// 51: the fold holds each act-free enrolment of a machine born of a restore until an entry
+/// signed by a joined machine descends from it, and refuses a revision that changes a
+/// machine's restore origin (row RESTORED-COPIES-ENROL-EACH-OTHER).
+/// 52: a `ReRoot` by a key without the host's stamp never counts while a live owner key with that
+/// stamp stands, and every row above such a move is refused with it (FIX HOSTED-REROOT-FOLD-RULE).
+/// 53: the image's fold and its safety index each hold the keys a closed handoff or appointment
+/// fence holds, the signers a door records handoff evidence for (FIX
+/// RETIRED-STANDING-REFUSAL-RECORDS-HANDOFF-ALARM-FOR-PLAIN-REVOKE).
+/// 54: a `RotateKey` that ends an owner key needs an owner key's proof, as a `RevokeDevice` of it
+/// does: the custodial root alone never rotates an owner key away (FIX
+/// ROTATEKEY-OLD-OWNER-KEY-UNPROVEN).
+/// 55: the image's fold and its safety index each name the revocations whose fences closed in a
+/// conflict, which the fold refused and whose keys ended all the same; absent when there is none
+/// (row OWNER-KEY-CHANGES-RING-CROSSING-UNLISTED).
+/// 56: on a hosted fold a `RevokeActor` that touches a person (a key whose binding is `human`, a
+/// live owner or admin key, or a key its parents do not hold) counts only with an owner key's
+/// proof, as a `human` bind does: the custodial root alone ends no person's binding (row
+/// HOSTED-OWNER-BIND-ROOT-REVOKE).
+/// 57: a passkey that a key in the host's custody enrolled signs its own first `human` binding to
+/// the owner that enrolment names, and the binding counts with no other key's proof; the image's
+/// fold names each such passkey's owners (row PASSKEY-SELF-BIND).
+/// 58: a setting copy or pack head (the owner's yes on a pack too) that a carrier not the
+/// owner's signs outside every owner key's line waits for an owner key's proof, as the owner's
+/// other choices do, so an image that put one in force is not adopted (FIX
+/// SETTING-COPY-OUTSIDE-OWNER-KEY-LINE).
+/// 59: the fold keeps every key ever enrolled as the recovery root's authority key, so a recovery
+/// hold's signer R and an answer's owner key judge apart (OPUS-WAYBACK, the box recovery's wait).
+/// 60: an owner act stands only while every roster revision outside its past that took its
+/// carrier's key away (a removal, a new key) saw it, whatever the raw roster head names, and
+/// removals of its carrier that cross alone never unmake it, nor an owner choice, world edit or
+/// grant travel choice it carried (FIX ACT-STANDS-RAW-HEAD-SKIPS-KEY-ROTATION, FIX
+/// MACHINE-CROSSING-REMOVALS-UNMAKE-CARRIED-OWNER-ACTS, FIX
+/// MACHINE-CROSSING-REMOVALS-UNMAKE-CARRIED-OWNER-CHOICES).
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 60;
+
+/// The domain every encoded image starts with.
+pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";
+
+/// The context of an image's id over its encoded bytes.
+pub const AUTHORITY_CHECKPOINT_V2_ID_CONTEXT: &str = "oneiron/authority/checkpoint-v2/id/v1";
+
+/// The encoded size past which a builder compacts its optional replay and
+/// residence evidence ([`AuthorityCheckpointV2::compact_optional_evidence`],
+/// FIX 11400): an optional-compaction trigger, not a total-image ceiling.
+/// Mandatory signed bodies may exceed this trigger.
+pub const AUTHORITY_CHECKPOINT_V2_COMPACTION_BYTES: usize = 64 * 1024 * 1024;
+
+/// The context of an archive's content id ([`authority_archive_id`]).
+pub const AUTHORITY_ARCHIVE_ID_CONTEXT: &str = "oneiron/authority/archive/id/v1";
+
+/// What the image holds back, typed and never omitted. Each list ascends.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuthorityCheckpointUnresolved {
+    /// Held rows outside `covered`: an ancestor of each is not held here.
+    pub held: Vec<AuthorityEntryHash>,
+    /// The parents held rows name that no held row is.
+    pub missing: Vec<AuthorityEntryHash>,
+    /// Covered handoffs in conflict: no successor stands until one settles.
+    pub unsettled_handoffs: Vec<AuthorityEntryHash>,
+    /// Covered machine revisions and world edits the building install held
+    /// back to restriction only.
+    pub held_back: Vec<AuthorityEntryHash>,
+    /// Covered approvals resting on a key revoked since: whether each has
+    /// expired turns on the reader's own first-seen clock, still pending.
+    pub stale_approvals: Vec<AuthorityEntryHash>,
+}
+
+pub fn refused(reason: &'static str) -> Error {
+    Error::Record(RecordError::InvalidAuthorityLogBody(reason))
+}
+
+pub fn ascending(hashes: &[AuthorityEntryHash]) -> bool {
+    hashes.windows(2).all(|pair| pair[0] < pair[1])
+}
+
+/// The id of an encoded image: what an attestation names. Signatures never
+/// enter it (SLH-DSA is randomized).
+pub fn checkpoint_image_id(encoded: &[u8]) -> [u8; 32] {
+    blake3::derive_key(AUTHORITY_CHECKPOINT_V2_ID_CONTEXT, encoded)
+}
+pub mod archive;
+pub mod replay;

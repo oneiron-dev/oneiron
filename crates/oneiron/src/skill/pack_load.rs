@@ -4,12 +4,15 @@ use super::{SkillLifecycle, SkillRecord, SkillRole};
 use crate::attempt_queue::{
     AttemptId, AttemptQueue, AttemptRecord, ManifestEntry, ManifestKind, ReadSetProducer,
 };
-use crate::claim::{ClaimApprovalStatus, ClaimBody, claim_surfaceable, encode_claim_body};
+use crate::claim::ClaimApprovalStatus;
 use crate::skill_optimize::exploration_trial;
 use crate::{EntityId, Error, Result, Vault};
 
 // A paired eval measurement's skill arm, by its pinned content (FIX 10677).
 mod measured;
+// One surfaceable actor claim read on an attempt, its content digest stamped
+// as the revision.
+mod actor_claim;
 
 pub use self::measured::MeasuredSkillPack;
 
@@ -285,6 +288,36 @@ impl Vault {
             at,
         )
         .map(|(loaded, _)| loaded)
+    }
+
+    /// A live run's own load through its host door (`vault.skills.pack.load`,
+    /// FIX [SKILL-HUB-PROMOTION-VERBS]): the shared load under the lease the
+    /// host sealed in `binding`, checked again in the load's transaction with
+    /// the loadable check, for the attempt's own agent (its resident-bound
+    /// fork, else shared skills). The first executor stamps the attempt, as
+    /// the callable door's does; the manifest entry lands with the load.
+    /// Beside the pack, the rows its instructions were read from.
+    pub(crate) fn load_bound_skill_pack(
+        &self,
+        binding: &crate::task_verb::HostBinding,
+        skill: &EntityId,
+        executor: &str,
+        at: u64,
+    ) -> Result<(LoadedSkillPack, Vec<EntityId>)> {
+        let stamped = AttemptQueue::new(self)
+            .get(binding.parent())?
+            .ok_or(Error::EntityNotFound)?
+            .executor_model
+            .is_some();
+        self.load_skill_pack_bound(
+            binding.parent(),
+            skill,
+            LoadResident::Attempt,
+            binding.lease_owner(),
+            binding.attempt_count(),
+            (!stamped).then_some(executor),
+            at,
+        )
     }
 
     /// Loads the exact revision a frozen plan names, in the caller's own
@@ -692,99 +725,5 @@ impl Vault {
             at,
         )?;
         Ok(Some((pack.entity, pack)))
-    }
-
-    /// Load one surfaceable actor claim; content digest is its revision, never a made-up counter.
-    pub fn load_attempt_actor_claim(
-        &self,
-        attempt: AttemptId,
-        claim: &EntityId,
-        at: u64,
-    ) -> Result<ClaimBody> {
-        self.load_actor_claim_bound(attempt, claim, None, at)
-    }
-
-    /// Loads one resident's self-model, never another actor's lesson or fit.
-    pub fn load_resident_actor_claim(
-        &self,
-        attempt: AttemptId,
-        resident: &EntityId,
-        claim: &EntityId,
-        at: u64,
-    ) -> Result<ClaimBody> {
-        self.load_actor_claim_bound(attempt, claim, Some(*resident), at)
-    }
-
-    fn load_actor_claim_bound(
-        &self,
-        attempt: AttemptId,
-        claim: &EntityId,
-        resident: Option<EntityId>,
-        at: u64,
-    ) -> Result<ClaimBody> {
-        self.with_write_txn_grouped(|txn| {
-            let body = self
-                .get_claim_in_txn(txn, claim)?
-                .ok_or(Error::EntityNotFound)?;
-            if body.predicate.starts_with("actor.") {
-                let allowed = match resident {
-                    Some(resident) => {
-                        // A resident's shells merged into it read as its own
-                        // (FIX 9073): the redirect authority names them.
-                        crate::skill_reliability::redirect_equivalent_subjects_in_txn(
-                            self, &*txn, &resident,
-                        )?
-                    }
-                    None => Vec::new(),
-                };
-                if !matches!(&body.subject,
-                    crate::claim::ClaimSubject::Entity(actor) if allowed.contains(actor))
-                {
-                    return Err(Error::InvalidClaimBody(
-                        "actor self-model belongs to a different resident",
-                    ));
-                }
-            }
-            // A claim whose every cited TURN is erased has no live support,
-            // however late it replicated (FIX 8643): it is not loaded.
-            if !body.predicate.starts_with("actor.")
-                || !claim_surfaceable(&body)
-                || !crate::gate::claim_critical_confirm_settled_in_txn(&self.store, txn, claim)?
-                || !crate::claim::has_live_support_in_txn(&self.store, txn, &body)?
-                || body.valid_from.is_some_and(|start| start > at)
-                || body.valid_to.is_some_and(|end| end <= at)
-            {
-                return Err(Error::InvalidClaimBody(
-                    "pack load requires a current actor claim",
-                ));
-            }
-            if let Some(resident) = resident {
-                super::resident::bind_receipt_in_txn(
-                    self,
-                    txn,
-                    &crate::receipt::attempt_pack_receipt_id(&attempt),
-                    &resident,
-                )?;
-            }
-            let revision = blake3::hash(&encode_claim_body(&body)?);
-            AttemptQueue::new(self).append_manifest_entry_in_txn(
-                txn,
-                attempt,
-                ManifestEntry::new(
-                    ManifestKind::ActorClaim,
-                    claim.to_hex(),
-                    revision.to_hex().as_str(),
-                    at,
-                ),
-            )?;
-            // Capture only (FIX 7017): the CLAIM this load read.
-            self.record_attempt_sources_best_effort_in_txn(
-                txn,
-                attempt,
-                ReadSetProducer::ACTOR_CLAIM,
-                Some(vec![*claim]),
-            );
-            Ok(body)
-        })
     }
 }

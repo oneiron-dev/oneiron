@@ -16,7 +16,7 @@ use oneiron::llm::run_admission::RunAdmission;
 use oneiron::{
     BudgetExhaustionPolicy, BudgetGuard, LlmBackend, LlmCapability, ModelId, ModelLocality,
 };
-use oneiron_llm_own_server::{OwnServerBackend, RemoteLlmClient};
+use oneiron_llm::oneiron_rpc::{OwnServerBackend, RemoteLlmClient};
 use oneiron_server::models::{ModelRuntime, RunBackend};
 
 use super::config::Models;
@@ -177,10 +177,10 @@ pub(super) fn native(
     let locality = entry.locality;
     let provider = &models.config.providers[&models.model.provider];
     let transport = rt.block_on(super::native::Transport::connect(socket, provider))?;
-    let config =
-        oneiron_llm_openai::OpenAiCompatConfig::from_catalog([entry]).with_solo_admission(true);
+    let config = oneiron_llm::openai_compat::OpenAiCompatConfig::from_catalog([entry])
+        .with_solo_admission(true);
     Ok(Arm {
-        backend: Box::new(oneiron_llm_openai::OpenAiCompatBackend::new(
+        backend: Box::new(oneiron_llm::openai_compat::OpenAiCompatBackend::new(
             config, transport,
         )),
         model: models.engine_id.clone(),

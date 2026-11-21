@@ -110,6 +110,15 @@ pub(crate) trait HomeTable: Send + Sync + 'static {
             .map(|(key, _)| key.clone())
             .collect())
     }
+
+    /// Drops what this node must not keep once the target of the move it froze its rows for
+    /// acknowledged that move: a secret the rows carried sealed, which the new home holds now
+    /// (lead ruling BK-EMERGENCY-RAW-TOKENS-SEALED = A: never a second live copy longer than
+    /// the move). Until the ack the move can still be cancelled and the rows come back live
+    /// here, so nothing goes sooner. By default nothing.
+    fn scrub_after_ack(_vault: &Vault, _txn: &mut RwTxn<'_>) -> Result<()> {
+        Ok(())
+    }
 }
 
 /// One table's export as the carrier seals it (FIX 8875): the encoded facts,
@@ -126,6 +135,7 @@ type AdoptFn =
     fn(&Vault, &mut RwTxn<'_>, &HomeFence, &[u8], Vec<Zeroizing<Vec<u8>>>) -> Result<TableAdopt>;
 type LiveKeysFn = fn(&Vault, &RoTxn<'_>) -> Result<Vec<Vec<u8>>>;
 type ManagesFn = fn(&Vault, &RoTxn<'_>, &ImageRows) -> Result<Vec<Vec<u8>>>;
+type ScrubFn = fn(&Vault, &mut RwTxn<'_>) -> Result<()>;
 
 /// One registered [`HomeTable`], its row type erased: what the carrier walks.
 #[derive(Clone, Copy)]
@@ -138,6 +148,7 @@ pub(crate) struct HomeTableRegistration {
     adopt: AdoptFn,
     live_keys: LiveKeysFn,
     manages: ManagesFn,
+    scrub_after_ack: ScrubFn,
 }
 
 impl HomeTableRegistration {
@@ -152,6 +163,7 @@ impl HomeTableRegistration {
             adopt: adopt_rows::<T>,
             live_keys: T::live_keys,
             manages: T::manages,
+            scrub_after_ack: T::scrub_after_ack,
         }
     }
 
@@ -206,6 +218,11 @@ impl HomeTableRegistration {
     /// Whether `rows` decode as this table's rows, before any writer.
     pub(super) fn check(&self, rows: &[u8]) -> Result<()> {
         (self.check)(rows)
+    }
+
+    /// The table's [`HomeTable::scrub_after_ack`].
+    pub(super) fn scrub_after_ack(&self, vault: &Vault, txn: &mut RwTxn<'_>) -> Result<()> {
+        (self.scrub_after_ack)(vault, txn)
     }
 
     /// Lands the encoded facts `rows` with `actors`, the content of each

@@ -17,12 +17,11 @@ use crate::code_run::{CacheBoundary, mark_cache_boundary};
 use crate::dreamer_wake::follower::{AskWork, Asked, Pin};
 use crate::dreamer_wake::{SpanBand, SpanKind, SpanOrigin};
 use crate::error::{Error, Result};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use oneiron_model::llm::{
     CallClass, CallEnvelope, CallPurpose, ContentPart, LlmMessage, LlmMessageRole, LlmRequest,
     ModelId, ModelLocality, ModelTierRef, ResponseFormat, Scope, ScopeResource, TierPrecedence,
 };
-
-const ROUTE_DOMAIN: &[u8] = b"oneiron:dreamer-follower:route:v1";
 
 /// One span as the question shows it: its ordinal in the suffix, where its
 /// words are, the words, its cheap reading and its candidates' labels.
@@ -107,13 +106,11 @@ pub(super) fn question(asked: &[Asked]) -> Result<String> {
 /// resends the prefix cold under a new epoch.
 pub(super) fn route_digest(model: &ModelId, locality: ModelLocality) -> [u8; 32] {
     let locality = format!("{locality:?}");
-    *blake3::Hasher::new()
-        .update(ROUTE_DOMAIN)
-        .update(&(model.as_str().len() as u64).to_be_bytes())
-        .update(model.as_str().as_bytes())
-        .update(locality.as_bytes())
-        .finalize()
-        .as_bytes()
+    LegacyDigest::new(purposes::dreamer_consolidation::FOLLOWER_ROUTE)
+        .len_u64_be(model.as_str().len())
+        .raw(model.as_str().as_bytes())
+        .raw(locality.as_bytes())
+        .finish()
 }
 
 /// A suffix's call: the retained prefix's last part (the instruction's,
@@ -247,4 +244,11 @@ fn request(
         provider_options: BTreeMap::new(),
         host_segments: None,
     }
+}
+
+/// [`route_digest`] for the K door
+/// (`test_doors::fingerprint_keep_dreamer_consolidation_digests`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn route_digest_for_test(model: &ModelId, locality: ModelLocality) -> [u8; 32] {
+    route_digest(model, locality)
 }

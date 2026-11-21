@@ -9,7 +9,6 @@ use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_PERSON, ENTITY_TYPE_
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Vault};
-use serde::{Deserialize, Serialize};
 
 /// Content-free topology pin of an erased DAG record, by record id.
 const PINS: SideTable<EntityId, RecordPin, Named> =
@@ -21,15 +20,8 @@ const SPAWNS: SideTable<EntityId, EntityId, Raw> =
 const CHILDREN: SideTable<(EntityId, EntityId), [u8; 1], Raw> =
     SideTable::new(&side_table::CONVERSATION_DAG_ERASED_CHILD);
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct RecordPin {
-    pub room: EntityId,
-    pub parent: Option<EntityId>,
-    pub session: Option<EntityId>,
-    pub thread: bool,
-    /// A PERSON byline needed for soft→hard escalation; dropped on hard purge.
-    pub author: Option<EntityId>,
-}
+#[doc(hidden)]
+pub(crate) use oneiron_records::conversation_dag::redacted::RecordPin;
 
 pub(crate) fn read(
     store: &impl crate::store::ManifestDbs,

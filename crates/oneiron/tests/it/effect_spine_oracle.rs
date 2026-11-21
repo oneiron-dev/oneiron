@@ -760,7 +760,13 @@ mod seam {
             .receipts(ReceiptQuery::new(100).with_kind(ReceiptKind::Gate))
             .expect("gate receipts")
             .iter()
-            .filter(|row| row.outcome == "kept_paused")
+            .filter(|row| {
+                row.outcome == "rejected"
+                    && row
+                        .policy_trace
+                        .iter()
+                        .any(|reason| reason == "gate.fanout.human_ruling.kept_paused")
+            })
             .count()
     }
 

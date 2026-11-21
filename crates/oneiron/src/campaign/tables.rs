@@ -20,9 +20,15 @@ crate::side_table::side_tables! {
     /// id16(campaign) + id16(member PERSON).
     CAMPAIGN_COPY_ARM: VaultMeta b"campaign:copy_arm:v1:" Named
         [restore: live] [family: unclassified] [tier: canonical];
+    /// Present while this node's last campaign copy review found a judge seated (ARCH-0059
+    /// #copy-review): the Gate releases a send on a passing review only then. Node-local; a
+    /// restore never takes it from an image. Key: (). Value: empty.
+    CAMPAIGN_COPY_REVIEW_JUDGE_SEAT: VaultMeta b"campaign:copy_review_judge_seat:v1" Raw
+        [restore: not_imaged] [family: not_imaged] [tier: runtime];
     /// One campaign body version's copy review (ARCH-0059 #copy-review): whether it follows
-    /// the voice guide, the judge's reason class, the guide and its text digest, and the
-    /// answering providers; no body text. Key: id16(campaign) + the body's 32-byte digest.
+    /// the voice guide, the judge's reason class, the guide, its text digest and its NOTE
+    /// overrides digest, and the answering providers; no body text. Key: id16(campaign) + the
+    /// body's 32-byte digest.
     CAMPAIGN_COPY_REVIEW_VERDICT: VaultMeta b"campaign:copy_review_verdict:v1:" Named
         [restore: live] [family: unclassified] [tier: canonical];
     /// One campaign enrollment outbound call's retained request and optional current hold:
@@ -43,6 +49,36 @@ crate::side_table::side_tables! {
     /// Campaign-local MACRO home-node election result. Key: ().
     CAMPAIGN_HOME_NODE_MACRO: VaultMeta b"campaign:home_node_macro:v1" LegacyJson
         [restore: content] [family: unclassified] [tier: canonical];
+    /// The vault's house voice guide NOTE (ARCH-0059 #copy-review), the guide a campaign's copy
+    /// review checks against when the campaign names none; seeded once, and its presence is the
+    /// seed's marker. Key: ().
+    CAMPAIGN_HOUSE_VOICE_GUIDE: VaultMeta b"campaign:house_voice_guide:v1" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
+    /// One `campaign.member` claim, any lifecycle, under the CAMPAIGN its value is scoped to
+    /// (ARCH-0044 H202): a prefilter the membership pages re-read. Key: id16(campaign) +
+    /// id16(claim).
+    CAMPAIGN_MEMBER_CAMPAIGN_INDEX: VaultMeta b"campaign:member_campaign_index:v1:" Raw
+        [restore: not_imaged] [family: not_imaged] [tier: derived];
+    /// The member index rows one claim holds, so a rewrite or a removal moves them. Key:
+    /// id16(claim).
+    CAMPAIGN_MEMBER_INDEX_REVERSE: VaultMeta b"campaign:member_index_reverse:v1:" Raw
+        [restore: not_imaged] [family: not_imaged] [tier: derived];
+    /// Completeness flag of the campaign member indexes (u64 version). Key: ().
+    CAMPAIGN_MEMBER_INDEX_STATE: VaultMeta b"campaign:member_index_state:v1" Raw
+        [restore: not_imaged] [family: not_imaged] [tier: derived];
+    /// One `campaign.member` claim, any lifecycle, under the SAVED_QUERY that derived it
+    /// (ARCH-0044 H202). Key: id16(query) + id16(claim).
+    CAMPAIGN_MEMBER_QUERY_INDEX: VaultMeta b"campaign:member_query_index:v1:" Raw
+        [restore: not_imaged] [family: not_imaged] [tier: derived];
+    /// A `campaign.member` claim whose value does not decode: while one is stored the membership
+    /// pages scan every CLAIM. Key: id16(claim).
+    CAMPAIGN_MEMBER_UNDECODABLE: VaultMeta b"campaign:member_undecodable:v1:" Raw
+        [restore: not_imaged] [family: not_imaged] [tier: derived];
+    /// The vault's key for the one-click unsubscribe links bulk campaign email carries (ARCH-0059
+    /// #opt-out): 32 raw bytes, made on the first origin install, never rotated and never sent.
+    /// Key: ().
+    CAMPAIGN_ONE_CLICK_UNSUBSCRIBE_KEY: VaultMeta b"campaign:one_click_unsubscribe_key:v1" Raw
+        [restore: live] [family: unclassified] [tier: canonical];
     /// Persisted binding from a campaign program to the campaign it belongs to. Key: id16.
     CAMPAIGN_PROGRAM: VaultMeta b"campaign:program:v1:" LegacyJson
         [restore: content] [family: unclassified] [tier: canonical];

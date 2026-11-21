@@ -10,7 +10,8 @@
 //! Three laws shape the whole file.
 //!
 //! 1. **`load_campaign_preset` is the only loader.** It parses caller-supplied
-//!    JSON, validates it, and returns owned data. It reads no path, writes no
+//!    JSON, validates it, gives its ladder the owner's consultancy preset keys
+//!    (setting_keys.rs), and returns owned data. It reads no path, writes no
 //!    storage, queues no work, sends nothing, registers no kind, and allocates
 //!    no entity byte. Beside it, `campaign_preset_defaults` reads the shipped
 //!    policy dials and `resolve_reply_snooze_policy` reads a campaign's own
@@ -46,6 +47,7 @@
 mod content;
 mod defaults;
 mod loader;
+pub(crate) mod setting_keys;
 mod shape;
 mod validate;
 

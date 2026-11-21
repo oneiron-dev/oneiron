@@ -290,6 +290,7 @@ impl ServeReplayJudge {
             &configured.rule,
             &configured.local,
             &configured.system_one,
+            &configured.precision,
             &configured.escalation,
             &configured.big,
         ]

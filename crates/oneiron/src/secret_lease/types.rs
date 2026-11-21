@@ -7,7 +7,6 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::secret_record::CustodyTier;
 use crate::vault::Vault;
-use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use zeroize::Zeroizing;
 // ---------------------------------------------------------------------------
@@ -100,6 +99,18 @@ impl Vault {
         // FIX 7660/7672: one copy of the clock reading, kept in first_seen_clock.rs.
         crate::authority::authority_instant_secs_for_store_in_txn(&self.store, txn)
             .map(VaultInstant)
+    }
+
+    /// The second a grant's owner-set end is judged at: the authority instant,
+    /// or the recording clock when later (DEC-0006; census L7-18).
+    ///
+    /// "A grant confers no earlier than the vault clock: a caller's event time
+    /// can bring an expiry forward, never put it back."
+    pub(crate) fn grant_judgement_secs_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<u64> {
+        Ok(self
+            .instant_in_txn(txn)?
+            .secs()
+            .max(crate::ports::job_recorded_at_in_txn(&self.store, txn)?))
     }
 
     /// [`Self::instant_in_txn`] for a write that stamps the reading into a
@@ -226,23 +237,8 @@ pub(crate) struct StoredLocalRegistration {
     pub(crate) removal_attempted_at: Option<u64>,
 }
 
-/// The T0 door-injection receipt — the ONLY thing the workspace receives
-/// from [`Vault::inject_secret_at_door`]. Carries no value bytes by
-/// construction; `Debug` and serde are safe (grep-guard tested).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DoorInjectionReceipt {
-    /// The secret name injected.
-    pub secret_ref: String,
-    /// The effector the binding was resolved for.
-    pub effector: String,
-    /// Unix seconds at injection (stamped at materialization, S3 —
-    /// environment reads are not interceptable).
-    pub injected_at: u64,
-    /// The record's rotation generation the value was read at.
-    pub value_generation: u32,
-    /// SECRET-04 attaches exhaust taint from this token.
-    pub taint_token: Vec<SecretTaintRef>,
-}
+#[doc(hidden)]
+pub use oneiron_records::secret_lease::types::DoorInjectionReceipt;
 
 /// The durable materialization receipt (`vault_meta` under
 /// [`SECRET_MATERIALIZATION_RECEIPT_PREFIX`]). Written BEFORE the value

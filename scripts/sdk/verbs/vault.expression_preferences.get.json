@@ -1,0 +1,14 @@
+{
+  "name": "vault.expression_preferences.get",
+  "description": "Reads the expression preferences in force for a subject at a time (now when omitted): one value per kind, with the claim ref a retraction takes.",
+  "input": "crate::memory::ExpressionPreferencesRequest",
+  "output": "crate::memory::ExpressionPreferenceView",
+  "call": "memory.expression_preferences(&input.subject_ref, input.at)?",
+  "scope": "Read",
+  "act_class": "read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

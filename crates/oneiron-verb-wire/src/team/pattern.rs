@@ -1,12 +1,16 @@
 //! Moved from `crates/oneiron/src/team/pattern.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+use oneiron_contracts::register::Register;
 use serde::Deserialize;
 use serde::Serialize;
 
 /// Who decides.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, Register,
+)]
 #[serde(rename_all = "snake_case")]
+#[register("team.pattern")]
 pub enum TeamPattern {
     /// The leader alone, after advice. The default.
     CeoDecides,
@@ -25,19 +29,6 @@ pub enum TeamPattern {
 }
 
 impl TeamPattern {
-    /// The pinned wire token.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::CeoDecides => "ceo_decides",
-            Self::Committee => "committee",
-            Self::Vote => "vote",
-            Self::Market => "market",
-            Self::Rotation => "rotation",
-            Self::Solo => "solo",
-        }
-    }
-
     /// The decider kind a receipt under this pattern must name.
     #[must_use]
     pub const fn decider_kind(self) -> &'static str {

@@ -36,11 +36,16 @@
 //!   `unavailable` when no route answers; and the task-held answer, in
 //!   memory only, dropped when its task ends or at `valid_until`.
 //!
-//! The verbs and the member host's route (PR 5) and the copy landing
-//! (PR 6) are later builds.
+//! * The copy landing (PR 6), on the company vault: with `inquiry_keep =
+//!   copy`, each answered statement lands as a CLAIM in the foreign WORLD of
+//!   the member's opened world, attributed by a federation delivery record,
+//!   and is not held with the task.
+//!
+//! The verbs and the member host's route (PR 5) are a later build.
 
 mod edge;
 mod holder;
+mod landing;
 mod log;
 mod member;
 mod policy;
@@ -54,7 +59,8 @@ mod terms;
 pub(crate) use edge::drop_inquiry_scope_links_in_txn;
 pub use edge::{
     INQUIRY_STATEMENT_PREDICATE, InquiryEdge, InquiryEdgeReciprocalGrant, InquiryEdgeRequest,
-    InquiryScopeItem, InquiryTermsChange, InquiryTermsChangeOutcome, InquiryTermsChanged,
+    InquiryJoinOffer, InquiryJoinPrepared, InquiryScopeItem, InquiryTermsChange,
+    InquiryTermsChangeOutcome, InquiryTermsChanged,
 };
 
 pub(crate) use holder::InquiryAnswerHolder;
@@ -62,6 +68,8 @@ pub(crate) use log::erase_inquiry_log_actor_in_txn;
 pub use log::{InquiryDecider, InquiryLogEntry};
 #[cfg_attr(not(oneiron_test_support), allow(unused_imports))]
 pub(crate) use log::{log_inquiry_in_txn, settle_inquiry_in_txn};
+#[cfg(oneiron_test_support)]
+pub(crate) use member::effect_digest_for_test;
 pub(crate) use member::erase_inquiry_pending_actor_in_txn;
 pub use member::{
     INQUIRY_ANSWER_VERB, InquiryJudgment, InquiryJudgmentOutcome, InquiryMemberAnswer,
@@ -69,12 +77,13 @@ pub use member::{
 };
 pub(crate) use policy::{INQUIRY_ROW_KEY, InquiryPolicyRead};
 pub use policy::{INQUIRY_ROW_VERSION, InquiryKeepSetting, InquiryKeepSource, InquiryPolicy};
-#[cfg_attr(not(oneiron_test_support), allow(unused_imports))]
-pub(crate) use receipt::write_inquiry_receipt_in_txn;
 pub(crate) use receipt::{erase_inquiry_receipt_actor_in_txn, inquiry_receipts};
+#[cfg_attr(not(oneiron_test_support), allow(unused_imports))]
+pub(crate) use receipt::{write_inquiry_receipt_in_txn, write_inquiry_terms_receipt_in_txn};
 pub use record::{
     Inquiry, InquiryAnswer, InquiryAsker, InquiryKeep, InquiryOutcome, InquiryStatement,
-    InquiryTask, StatementSource,
+    InquiryTask, MAX_INQUIRY_PURPOSE_BYTES, MAX_INQUIRY_QUESTION_BYTES, MAX_INQUIRY_ROLE_BYTES,
+    MAX_INQUIRY_WIRE_BYTES, StatementSource,
 };
 pub use route::{InquiryRoute, InquiryRouteRequest};
 pub(crate) use route::{end_inquiry_route_in_txn, erase_inquiry_route_actor_in_txn};

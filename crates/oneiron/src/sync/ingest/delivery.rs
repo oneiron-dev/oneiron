@@ -31,10 +31,12 @@ use crate::entity_id::{EntityId, ForeignWorldId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::federation::PactDelivery;
 use crate::federation::delivery_record::{
-    DeliveredRecord, DeliveryOrigin, decode_delivered_record, encode_delivered_record,
+    DeliveredRecord, DeliveryOrigin, decode_delivered_record, delivery_history_in_txn,
+    delivery_key, encode_delivered_record,
 };
 use crate::side_table::{self, Raw, SideTable};
-use crate::sync::loro_support::map_for_each_value_bytes;
+use crate::sync::loro_support::{map_for_each_tombstone_value, map_for_each_value_bytes};
+use crate::sync::selector::AdmittedUpdate;
 use crate::{Vault, ports};
 
 /// Each record one pact delivered at one consent epoch, with its native
@@ -61,24 +63,27 @@ thread_local! {
     static DELIVERY: RefCell<Option<Delivery>> = const { RefCell::new(None) };
 }
 
-/// One import's delivery: the pact and epoch its grant resolves to, and the
-/// digest of each row the peer's update brought.
+/// One import's delivery: the pact and epoch its grant resolves to, the
+/// digest of each row the peer's update brought, and of each record
+/// tombstone the live peer lane admitted.
 pub(in crate::sync) struct Delivery {
     vault: PathBuf,
     pact: [u8; 32],
     epoch: u64,
     origin: DeliveryOrigin,
     rows: BTreeMap<EntityId, [u8; 32]>,
+    tombstones: BTreeMap<EntityId, [u8; 32]>,
 }
 
 impl Delivery {
-    /// The delivery of admitted `rows` into `vault`, under the same checked
-    /// `grant` and pact binding that admitted the part.
+    /// The delivery of `part`'s admitted rows and record tombstones into
+    /// `vault`, under the same checked `grant` and pact binding that admitted
+    /// the part.
     pub(in crate::sync) fn new(
         vault: &Vault,
         grant: EntityId,
         delivery: PactDelivery,
-        rows: &BTreeMap<EntityId, [u8; 32]>,
+        part: &AdmittedUpdate,
     ) -> Self {
         Self {
             vault: vault.store.env.path().to_path_buf(),
@@ -88,7 +93,8 @@ impl Delivery {
                 grant_ref: grant,
                 source_vault: delivery.source_vault,
             },
-            rows: rows.clone(),
+            rows: part.delivered().clone(),
+            tombstones: part.tombstones().clone(),
         }
     }
 
@@ -136,6 +142,120 @@ pub(in crate::sync) fn delivered_rows(entities: &LoroMap) -> BTreeMap<EntityId, 
     rows
 }
 
+/// Every record tombstone a live peer lane admitted into a part's
+/// `tombstones` map, with the digest of its value
+/// (CROSS-VAULT-DELETE-NEVER-ADMITTED = A).
+pub(in crate::sync) fn delivered_tombstones(tombstones: &LoroMap) -> BTreeMap<EntityId, [u8; 32]> {
+    let mut sent = BTreeMap::new();
+    map_for_each_tombstone_value(tombstones, |key, value| {
+        if let Ok(id) = EntityId::from_hex(key) {
+            sent.insert(id, digest(value));
+        }
+    });
+    sent
+}
+
+/// The ledger rows of the live peer lane importing on this thread that name
+/// the image a soft delete the lane admitted is about to replace: the lane's
+/// pact and binding, and each such row's epoch and world.
+///
+/// A soft delete leaves a header-only shell whose digest no ledger row names,
+/// so the same lane's later hard delete of that row would be dropped and the
+/// shell kept. [`Self::note_shell_in_txn`] carries these rows to the shell,
+/// and the hard delete then matches it. A shell this vault's own delete or
+/// another lane left keeps no row of this lane.
+pub(in crate::sync) struct ShellDelivery {
+    id: EntityId,
+    pact: [u8; 32],
+    origin: DeliveryOrigin,
+    rows: Vec<(u64, Option<EntityId>)>,
+}
+
+impl ShellDelivery {
+    /// The lane rows the replay of `raw_value` at `id` carries to its shell,
+    /// read in `txn` before the replay: `None` unless `raw_value` is a soft
+    /// tombstone, the import on this thread is the live peer lane that
+    /// admitted that exact value, and a row of that lane's ledger names the
+    /// image `id` holds now.
+    pub(in crate::sync) fn before_replay_in_txn(
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        id: EntityId,
+        raw_value: &[u8],
+    ) -> Result<Option<Self>> {
+        if crate::deletion::decode_tombstone_value(raw_value).is_hard() {
+            return Ok(None);
+        }
+        let sent = digest(raw_value);
+        let lane = DELIVERY.with(|slot| {
+            slot.borrow()
+                .as_ref()
+                .filter(|lane| {
+                    lane.vault == vault.store.env.path() && lane.tombstones.get(&id) == Some(&sent)
+                })
+                .map(|lane| (lane.pact, lane.origin))
+        });
+        let Some((pact, origin)) = lane else {
+            return Ok(None);
+        };
+        let Some(held) = ports::EntityStoreRead::port_entity_raw_wiped(&vault.store, txn, &id)?
+        else {
+            return Ok(None);
+        };
+        let held = digest(&held);
+        let rows = delivery_history_in_txn(&vault.store, txn, &BTreeSet::from([id]))?
+            .into_values()
+            .flatten()
+            .filter(|row| {
+                row.delivering_pact == pact
+                    && row.grant_ref == origin.grant_ref
+                    && row.source_vault == origin.source_vault
+                    && row.delivered_row_hash == held
+            })
+            .map(|row| (row.consent_epoch, row.world))
+            .collect::<Vec<_>>();
+        if rows.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(Self {
+            id,
+            pact,
+            origin,
+            rows,
+        }))
+    }
+
+    /// After the replay wrote it in `wtxn`, each lane row names the shell the
+    /// soft delete left at the row's own key. With no row left there, nothing
+    /// changes.
+    pub(in crate::sync) fn note_shell_in_txn(
+        self,
+        vault: &Vault,
+        wtxn: &mut heed::RwTxn<'_>,
+    ) -> Result<()> {
+        let Some(shell) =
+            ports::EntityStoreRead::port_entity_raw_wiped(&vault.store, wtxn, &self.id)?
+        else {
+            return Ok(());
+        };
+        let row_hash = digest(&shell);
+        for (epoch, world) in self.rows {
+            let place = encode_delivered_record(&DeliveredRecord {
+                origin: self.origin,
+                row_hash,
+                world,
+            });
+            DELIVERED.put(
+                &vault.store,
+                wtxn,
+                &delivery_key(&self.pact, epoch, self.id),
+                &place,
+            )?;
+        }
+        Ok(())
+    }
+}
+
 /// Every row a peer's raw window update brings in its entities map, those
 /// its admission keeps out included: a retained batch holds every byte the
 /// peer sent (FIX 11184). An update that does not import names none.
@@ -173,14 +293,6 @@ pub(in crate::sync) fn with_delivery<T, E>(
     };
     let _restore = Restore(DELIVERY.with(|slot| slot.borrow_mut().replace(delivery)));
     import()
-}
-
-fn delivery_key(pact: &[u8; 32], epoch: u64, record: EntityId) -> String {
-    format!(
-        "{}:{epoch:016x}:{}",
-        bytes_to_hex_lower(pact),
-        record.to_hex()
-    )
 }
 
 fn intent_key(record: EntityId, pact: &[u8; 32]) -> String {

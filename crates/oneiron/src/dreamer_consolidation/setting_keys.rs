@@ -1,4 +1,7 @@
-//! The Dreamer's restriction Setting key: the owner's "Let the Dreamer lift a restriction on its
+//! The settings `dreamer_consolidation` keeps (DESIGN 15-setting-primitive, stage 1): each row is
+//! one catalogue key, and the crate's build script lists it in the setting catalogue.
+//!
+//! [`DREAMER_LIFTS_RESTRICTIONS`] is the owner's "Let the Dreamer lift a restriction on its
 //! own" (RULING DREAMER-SETTLE-KEY-SCOPE = B, Engine 16 Nov 01:18). It sits at the vault, and the
 //! owner sets it through `vault.settings.set`. A Dreamer act that would lift a restriction reads it
 //! in its own writer, and each lift under it writes a [`dreamer_lift_receipt`]. The conflict settle
@@ -7,6 +10,8 @@
 
 use rmpv::Value;
 
+use super::excluded_conversations::{DreamerExcludedConversations, forget_newly_excluded};
+use super::routing::{ConsolidationKeyRules, shipped_key_rules};
 use crate::setting::Kind;
 
 /// Off: the Dreamer asks the owner (today's behaviour).
@@ -20,6 +25,19 @@ fn asking_is_tighter(a: &bool, b: &bool) -> bool {
 }
 
 crate::setting::setting_keys! {
+    /// Which claim keys the consolidator may fold: per predicate, whether its text is normalised
+    /// and which field of a structured value is its question. Absent, the shipped
+    /// key_defaults.json decides.
+    pub(crate) CONSOLIDATION_KEY_RULES: ConsolidationKeyRules = "dreamer.consolidation.key_rules" {
+        kind: Kind::new(shipped_key_rules),
+    };
+    /// Conversations whose turns stay out of Dreamer consolidation. Words framed before a change
+    /// forget the newly excluded conversations in the change's own commit.
+    pub(crate) EXCLUDED_CONVERSATIONS: DreamerExcludedConversations =
+        "dreamer.excluded_conversations" {
+        kind: Kind::new(DreamerExcludedConversations::default),
+        on_change: Some(forget_newly_excluded),
+    };
     /// Let the Dreamer lift a restriction on its own. When off, the Dreamer asks you: the open
     /// conflict waits for your answer. When on, the Dreamer lifts the restriction itself, and every
     /// lift is receipted. Agents and derive batches never lift one.

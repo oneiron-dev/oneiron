@@ -104,7 +104,8 @@ impl Vault {
             for (sequence, pending) in page {
                 last_inspected = Some(sequence);
                 if let Ok(binding) = critical_write_confirm_binding(&pending)
-                    && (binding.expires_at > now || critical_confirm_has_no_deadline(&pending))
+                    && (!oneiron_store::expiry::is_expired(now, binding.expires_at)
+                        || critical_confirm_has_no_deadline(&pending))
                 {
                     // Preserve the established public ordering for each
                     // bounded result page; sequence only controls sweep progress.
@@ -218,7 +219,8 @@ impl Vault {
             .ok_or(Error::EntityNotFound)?;
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        let expired = binding.expires_at <= now && !critical_confirm_has_no_deadline(&pending);
+        let expired = oneiron_store::expiry::is_expired(now, binding.expires_at)
+            && !critical_confirm_has_no_deadline(&pending);
         let answered = pending.diff_handle.clone();
         let deferred = self.has_deferred_claim_in_txn(wtxn, &binding.claim_id)?;
         if expired && !deferred {
@@ -422,8 +424,7 @@ impl Vault {
                 self.store.close_pending_gate_consent_as_in_txn(
                     wtxn,
                     &binding.claim_id,
-                    now,
-                    "rejected",
+                    crate::store::gate_reason::GateReceiptOutcome::Rejected,
                     vec![GATE_REASON_CRITICAL_CONFIRM_DECLINED.to_owned()],
                     None,
                     removal,
@@ -509,7 +510,7 @@ impl Vault {
                 if critical_confirm_has_no_deadline(&row) {
                     continue;
                 }
-                if binding.expires_at > now
+                if !oneiron_store::expiry::is_expired(now, binding.expires_at)
                     || !self.confirm_demotion_retries.due(&binding.confirm_id, now)
                 {
                     continue;
@@ -643,8 +644,7 @@ pub(crate) fn reconcile_critical_write_confirm_on_replicated_overwrite(
     store.close_pending_gate_consent_as_in_txn(
         wtxn,
         claim_id,
-        pending.created_at,
-        "invalidated",
+        crate::store::gate_reason::GateReceiptOutcome::Invalidated,
         vec![GATE_REASON_CRITICAL_CONFIRM_REPLICATED_OVERWRITE.to_owned()],
         None,
         crate::store::TrayRemoval::Silent,
@@ -700,9 +700,32 @@ pub(super) fn critical_claim_can_land_auto_with_confirm(
     pending: &[GateReasonCode],
     predicate: &str,
 ) -> bool {
+    critical_claim_floor_pend_only(input, pending) && !predicate.starts_with("comm.")
+}
+
+/// Whether the vault owner's in-person proof may lift the criticality floor
+/// on an Approved claim write: the floor is its only pend, and the write is
+/// no `comm.*` projector output
+/// ([`critical_claim_can_land_auto_with_confirm`]). An exact close writes no
+/// projector output: it changes only its row's lifecycle, so the owner's
+/// retract or supersede of an Approved `comm.*` claim lands on the proof as
+/// any other does (review 10161 P1). A new `comm.*` write or approval keeps
+/// its floor.
+pub(super) fn owner_proof_lifts_criticality_floor(
+    input: &GateEvaluatorInput,
+    pending: &[GateReasonCode],
+    predicate: &str,
+    verified_close: bool,
+) -> bool {
+    critical_claim_floor_pend_only(input, pending)
+        && (verified_close || !predicate.starts_with("comm."))
+}
+
+/// Whether a critical claim write with no consent pends on the criticality
+/// floor alone.
+fn critical_claim_floor_pend_only(input: &GateEvaluatorInput, pending: &[GateReasonCode]) -> bool {
     input.content_kind == GateContentKind::Claim
         && input.criticality == PolicyCriticality::Critical
         && input.consent.is_none()
         && pending == [GateReasonCode::PendingCriticalityFloor]
-        && !predicate.starts_with("comm.")
 }

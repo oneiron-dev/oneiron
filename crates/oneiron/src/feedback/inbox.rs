@@ -21,21 +21,8 @@ use crate::{Error, Result, Vault};
 /// Every note, keyed by its arrival number.
 const NOTES: SideTable<u64, FeedbackInboxNote, Named> = SideTable::new(&side_table::FEEDBACK_INBOX);
 
-/// How a note reached the inbox.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FeedbackInboxVia {
-    /// A plain GET link carrying the text in its query.
-    Link,
-    /// A POST carrying the text as its body.
-    Post,
-    /// A POST carrying a v1 feedback bundle a vault sent.
-    Bundle,
-    /// A POST carrying a content-free issue signature a vault's Coach sent
-    /// (`oneiron.issue_signature.v1`), read back typed; its text is the exact
-    /// canonical body.
-    Signature,
-}
+#[doc(hidden)]
+pub use oneiron_records::feedback::inbox::FeedbackInboxVia;
 
 /// Whether `body` declares itself an issue signature: a JSON object whose
 /// `schema` is `oneiron.issue_signature.v1`. Such a body lands only through

@@ -9,7 +9,7 @@ use crate::consent::{
 };
 use crate::context_projection::{ChatProjection, ContextSpec, MemoryProjection};
 use crate::entity_id::EntityId;
-use crate::error::{ArtifactError, Error, Result};
+use crate::error::Result;
 use crate::side_table::{self, LegacyJson, Raw, SideTable};
 
 use super::workflow_record::WorkflowTaskBinding;
@@ -40,44 +40,12 @@ pub(crate) fn agent_dispatch_widen_intent_accepts_masked(bytes: &[u8]) -> bool {
     crate::side_table::decodes::<WidenRecord, LegacyJson>(bytes)
 }
 
-/// A parked dispatch. This is a proposal, never a read or dispatch grant.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ContextWidenProposal {
-    pub proposal_id: String,
-    pub parent_attempt: AttemptId,
-    /// Absent means the board cannot be proven; approval fails closed.
-    pub board_attempt: Option<AttemptId>,
-    pub parent_context: ContextSpec,
-    pub requested_context: ContextSpec,
-    pub widened_parent_context: ContextSpec,
-    pub consent: ConsentProposal,
-}
-
-/// Preserve the caller's target kind. A wrapper is never an AGENT_DEF actor.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "kind", content = "id", deny_unknown_fields)]
-pub(super) enum WidenTarget {
-    Agent(String),
-    Workflow(String),
-}
-
-/// Approval replay returns the original typed landing, not a guessed agent row.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-#[serde(tag = "kind", content = "attempt", deny_unknown_fields)]
-pub(super) enum WidenLanding {
-    Agent(AttemptId),
-    Workflow(AttemptId),
-}
-
-/// The board's refusal of a proposal (OF-568): who declined it, and when on
-/// the store's clock. A declined proposal never lands.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct WidenDecline {
-    /// The board owner's actor id, hex.
-    pub by: String,
-    pub at: u64,
-}
+#[doc(hidden)]
+pub use oneiron_records::agent_dispatch::widen_record::ContextWidenProposal;
+#[doc(hidden)]
+pub(super) use oneiron_records::agent_dispatch::widen_record::{
+    BoardProof, SliceOverride, WidenDecline, WidenLanding, WidenTarget,
+};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -366,31 +334,6 @@ pub(crate) fn unlanded_widens_by_parent_since(
         }
     }
     Ok(out)
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct SliceOverride {
-    pub proposal_id: String,
-    /// The immediate board above the widened parent; `None` for a root
-    /// Owner's act on a parent with no board above (FIX 9565).
-    pub board: Option<AttemptId>,
-    /// Who answered as the board: a PERSON for a root Owner, the board's
-    /// AGENT_DEF for its own leased agent.
-    pub actor: String,
-    /// What authorized the act, replayed live at every read of the slice.
-    pub proof: BoardProof,
-    pub spec: ContextSpec,
-}
-
-/// What authorized a landed board act (FIX 9565).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(super) enum BoardProof {
-    /// A revalidated root Owner of this vault.
-    RootOwner,
-    /// The board attempt's own agent, under its live host lease.
-    ParentAgent,
 }
 
 pub(super) fn validate_proposal_id(id: &str) -> Result<()> {

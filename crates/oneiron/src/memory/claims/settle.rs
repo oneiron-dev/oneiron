@@ -33,6 +33,7 @@ use super::*;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::consent::AuthenticatedOwner;
 use crate::consent::bundle_projection::GateConsentBundleAction;
+use crate::store::gate_reason::GateReceiptOutcome;
 
 mod authority;
 use authority::ClaimSettler;
@@ -40,6 +41,8 @@ mod conflict_head;
 pub(in crate::memory) use conflict_head::ConflictHeadIndex;
 use conflict_head::{ConflictHead, conflict_head_in_txn};
 mod restored_member;
+mod restriction_close;
+use restriction_close::{restriction_close_needs_a_person, settle_in_place_lifts_restriction_in};
 
 /// Key-derivation context of the review handle.
 const CLAIM_REVIEW_DOMAIN: &str = "oneiron.claim-settle.review.v1";
@@ -131,6 +134,9 @@ struct ReviewedProposal {
     /// The actors that opened it: its authenticated author and the actor its
     /// envelope names, unless the owner's whole-vault restore brought it back.
     openers: Vec<EntityId>,
+    /// The vault owner who opened it when it is his own composed task post,
+    /// which he settles though he opened it (RULING L8-07-OWNER-OPENER = A).
+    composed_post_owner: Option<EntityId>,
     /// Whether it is an active claim whose own author's retract waits for
     /// the holder's consent (ARCH-0040 `mcp:5`).
     parked_retract: bool,
@@ -241,6 +247,16 @@ impl ReviewedProposal {
         {
             openers.push(actor);
         }
+        let composed_post_owner = match crate::claim::session_claim_producer(&body) {
+            Some(producer)
+                if crate::task_verb::owner_settles_own_composed_post(
+                    vault, txn, &body, producer,
+                )? =>
+            {
+                Some(producer)
+            }
+            _ => None,
+        };
         Ok(Self {
             digest: *hasher.finalize().as_bytes(),
             frontier,
@@ -249,6 +265,7 @@ impl ReviewedProposal {
             prior,
             machine,
             openers,
+            composed_post_owner,
             parked_retract,
         })
     }
@@ -295,7 +312,7 @@ impl ReviewedProposal {
         if !self.review_id().eq_ignore_ascii_case(review_id) {
             return Err(stale_review());
         }
-        if self.openers.contains(&person) {
+        if self.openers.contains(&person) && self.composed_post_owner != Some(person) {
             return Err(MemoryError::new(
                 MEMORY_CODE_FORBIDDEN,
                 "the actor that opened a proposal never settles it",
@@ -329,23 +346,20 @@ impl ReviewedProposal {
         id: &EntityId,
         action: GateConsentBundleAction,
     ) -> crate::Result<bool> {
-        match action {
-            GateConsentBundleAction::Decline => Ok(!self.parked_retract
-                && crate::federation::claim_removal_widens_in(vault, txn, &self.body)?),
-            GateConsentBundleAction::Approve => {
-                if let Some(prior) = &self.prior
-                    && crate::federation::claim_removal_widens_in(vault, txn, &prior.body)?
-                {
-                    return Ok(true);
-                }
-                if crate::dreamer_runner::maintenance::curator_finding_lifts_restriction_in(
-                    vault, txn, &self.body,
-                )? {
-                    return Ok(true);
-                }
-                vault.deferred_close_lifts_restriction_in_txn(txn, id, &self.body)
-            }
+        if action == GateConsentBundleAction::Approve
+            && let Some(prior) = &self.prior
+            && crate::federation::claim_removal_widens_in(vault, txn, &prior.body)?
+        {
+            return Ok(true);
         }
+        settle_in_place_lifts_restriction_in(
+            vault,
+            txn,
+            id,
+            &self.body,
+            self.parked_retract,
+            action,
+        )
     }
 }
 
@@ -367,26 +381,6 @@ fn stale_review() -> MemoryError {
         MEMORY_CODE_INVALID_STATE,
         "the proposed claim, or the head its approval supersedes, changed since its review",
         &["Review the claim again with vault.claims.review and settle the review_id it returns."],
-    )
-}
-
-/// The refusal of a Grant holder that is no person, on a settlement that
-/// closes a claim restricting someone's access
-/// ([`ReviewedProposal::settle_lifts_restriction_in`]). The proposal stays
-/// open for a person who holds a covering Grant, or for the owner.
-fn restriction_close_needs_a_person(actor: WriteActor) -> MemoryError {
-    MemoryError::new(
-        MEMORY_CODE_FORBIDDEN,
-        format!(
-            "Grant holder {} ({}) may not settle a proposal whose settlement closes a claim \
-             that restricts someone's access: an agent's widening always asks a person",
-            actor.entity_ref().to_hex(),
-            actor.actor_class().gate_actor_class(),
-        ),
-        &[
-            "The proposal stays open: a person who holds a covering review Grant, or the vault \
-             owner, settles it.",
-        ],
     )
 }
 
@@ -608,9 +602,10 @@ impl Memory<'_> {
                 // widening"). A person who holds a covering Grant settles it
                 // as the owner's delegated act (DEC-0006 row 10); a person's
                 // slip handed on to an agent's key is no person's
-                // (`acts_as_own_person`).
-                if authorized.grant_ref.is_some()
-                    && !self.acts_as_own_person()
+                // (`acts_as_own_person`), on the owner's arm too: the owner's
+                // proof answers for the owner, not for the key that holds the
+                // slip (RULING HANDED-ON-SLIP-PERSON Q1 = A).
+                if !self.acts_as_own_person()
                     && reviewed.settle_lifts_restriction_in(self.vault, &*wtxn, &id, action)?
                 {
                     return Err(restriction_close_needs_a_person(actor));
@@ -662,12 +657,25 @@ impl Memory<'_> {
                                         &prior.body,
                                     ))
                                 });
-                        self.vault.supersede_claim_in_txn_as(
+                        // The owner's approval closes the head as the owner: the
+                        // owner's proof, revalidated here, confirms the close of an
+                        // Approved head in person where a declared critical class
+                        // asks for it (FIX
+                        // OWNER-CLOSE-DOORS-DECLARED-CRITICAL-APPROVED-CLOSE-PENDS).
+                        // A Grant holder's close carries none.
+                        let owner = match authority {
+                            ClaimSettler::Owner(owner) => {
+                                owner.owner_answer_in_txn(self.vault, &*wtxn)?
+                            }
+                            ClaimSettler::Grant(_) => None,
+                        };
+                        self.vault.supersede_claim_in_txn_as_owner(
                             wtxn,
                             &id,
                             &prior.id,
                             now,
                             Some(actor),
+                            owner,
                         )?;
                         read
                     }
@@ -677,20 +685,19 @@ impl Memory<'_> {
                 if action == GateConsentBundleAction::Approve && (settled.dreamer_run || vetting) {
                     self.vault.owe_settled_claim_vads_in_txn(wtxn, &[id])?;
                 }
-                let mut record = crate::memory::authorship::decision(
+                let mut receipt = crate::memory::authorship::decision(
                     actor,
                     CLAIM_SETTLEMENT_CONTENT_KIND,
                     match action {
-                        GateConsentBundleAction::Approve => "approved",
-                        GateConsentBundleAction::Decline => "rejected",
+                        GateConsentBundleAction::Approve => GateReceiptOutcome::Approved,
+                        GateConsentBundleAction::Decline => GateReceiptOutcome::Rejected,
                     },
                     reason.as_str(),
                     Some(id),
                     reviewed.digest.to_vec(),
-                    now,
                 );
-                record.read_frontier_hash = reviewed.frontier;
-                record.grant_ref = authorized.grant_ref;
+                receipt.basis = crate::store::PolicyBasis::frontier(reviewed.frontier);
+                receipt.grant_ref = authorized.grant_ref;
                 // FIX 7499, 7500: the reviewed candidate's read context, and
                 // the loop links of the pending decision it answers.
                 let pending = reviewed.pending.as_ref().and_then(|pending| {
@@ -700,7 +707,7 @@ impl Memory<'_> {
                         .ok()
                         .flatten()
                 });
-                record.context = crate::store::GateDecisionContext {
+                receipt.context = crate::store::GateDecisionContext {
                     read: crate::store::GateDecisionReadContext::claim(&id, &reviewed.body)
                         .map(|read| {
                             let anchors = crate::conversation::gate_claim_anchors_in(
@@ -719,9 +726,7 @@ impl Memory<'_> {
                         .map(crate::store::GateDecisionContext::answering)
                         .unwrap_or_default()
                 };
-                self.vault
-                    .store
-                    .append_gate_decision_in_txn(wtxn, &record)?;
+                let record = self.vault.store.record_gate_receipt_in_txn(wtxn, receipt)?;
                 Ok((settled, record, reviewed.parked_retract))
             });
         let (settled, record, parked_retract) = written?;

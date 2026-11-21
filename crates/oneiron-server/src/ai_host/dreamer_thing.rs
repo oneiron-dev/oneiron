@@ -11,6 +11,8 @@
 //! `reader_parent_for_wake`, `ReaderSeats::seat_with_parent`); nothing here
 //! makes a second clock, queue or store.
 
+#[cfg(oneiron_test_support)]
+pub(crate) mod child_route_door;
 mod compaction;
 mod generation;
 mod ports;
@@ -30,9 +32,9 @@ use oneiron::dreamer_consolidation::{
 };
 use oneiron::llm::{
     WorkClass, WorkContext,
-    run_admission::{WorkCancel, lookup_work_parent},
+    run_admission::{RunAdmission, WorkCancel, lookup_work_parent},
 };
-use oneiron::{ModelId, ModelLocality, Vault};
+use oneiron::{EntityId, ModelId, ModelLocality, Vault};
 
 use self::generation::GenerationCount;
 use self::ports::ThingChildPorts;
@@ -40,9 +42,9 @@ use self::profile::{CountedBackend, ThingSession};
 use super::dreamer::QuestionTimer;
 use super::scoped_child::{enqueue_scoped_child, reader_parent_for_wake};
 use crate::mcp::McpCodeModeProvider;
-use crate::models::{ModelRuntime, OfferLadder, RunBackend};
-use crate::runtime::wall_clock_ms as unix_millis_now;
+use crate::models::{ModelRuntime, OfferLadder, RunBackend, SourceFence};
 use crate::server::SyncServer;
+use oneiron_base::unix_millis_now;
 
 /// The run an agent's own generation is admitted under, on its parent's
 /// guard.
@@ -55,6 +57,22 @@ pub(super) struct ThingRoute {
     pub(super) model: ModelId,
     pub(super) locality: ModelLocality,
     pub(super) window: Option<u64>,
+}
+
+/// A thing child's generation: `ladder` on the child's `run`, fenced by the
+/// rows its lent slices were read from (`lent`) in `vault`. A code step's
+/// request may copy any lent transcript, through its console or its port
+/// answers, and its steps name no complete set of rows, so every call is
+/// fenced: once a lent row is withdrawn, the child sends nothing more, its
+/// resends and rate-wait resends included
+/// ([DREAMER-UNSOURCED-ROLE-CALLS-SEND-UNFENCED]).
+fn child_generation_backend(
+    ladder: Arc<OfferLadder>,
+    run: RunAdmission,
+    vault: Arc<Vault>,
+    lent: Vec<EntityId>,
+) -> RunBackend {
+    RunBackend::new(ladder, run).within_source_fence(SourceFence::new(vault, lent))
 }
 
 /// The host a Dreamer pass lends its thing branches.
@@ -127,6 +145,7 @@ impl ThingChildHost for ServedThingChildHost {
             ports,
             intent_key,
             ask,
+            sources,
         } = launch;
         let vault = ctx.vault;
         let Some(hosts) = provider
@@ -209,13 +228,21 @@ impl ThingChildHost for ServedThingChildHost {
                 parent_admission,
                 ..Default::default()
             });
+        // The child's compaction compacts what it saw: fenced by the rows
+        // its lent slices were read from, as its own calls are.
         let generation = Arc::new(compaction::Generation::new(
             Arc::clone(&count),
             stop.clone(),
             run.work_context(),
+            sources.clone(),
         ));
         let backend = CountedBackend::new(
-            RunBackend::new(Arc::clone(&self.route.ladder), run),
+            child_generation_backend(
+                Arc::clone(&self.route.ladder),
+                run,
+                Arc::clone(&self.vault),
+                sources,
+            ),
             Arc::clone(&count),
             stop.clone(),
         );

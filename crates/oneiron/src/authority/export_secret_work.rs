@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use crate::authority::{
     AuthorityEntryHash, AuthorityFold, ExportSecretWork, OwnerAct, OwnerWorkBody,
 };
-use crate::world_keys::{OwnerWorkReceipt, OwnerWorkStatus, OwnerWorkUnassigned};
+use crate::world_keys::{OwnerWorkReceipt, OwnerWorkUnassigned};
 use crate::{EntityId, Vault};
 
 pub(crate) use crate::batch::export::secret_supplement_record::HolderExportNeed;
@@ -118,36 +118,8 @@ impl HolderExportRequest {
     }
 }
 
-/// One export secret request as its owner reads it (FIX 4624(b)): where it
-/// stands and, once its holder sealed it and this install keeps the copy,
-/// the sealed copy itself. Ids, digests and ciphertext only.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct ExportSecretSupplement {
-    /// The request's signed authority-log entry, as hex.
-    pub request: String,
-    pub secret: EntityId,
-    pub generation: u32,
-    /// The export it supplements, as its audit row names it.
-    pub export: EntityId,
-    /// The install that holds the secret and seals it.
-    pub holder: EntityId,
-    /// The machine the copy is sealed to: only it opens the copy.
-    pub recipient: EntityId,
-    pub status: OwnerWorkStatus,
-    /// Whether an admitted import mark is present in the authority fold.
-    /// This is not the local custody import's outcome.
-    pub marked_imported: bool,
-    /// BLAKE3 of the sealed copy, lowercase hex, as its signed result names
-    /// it; `None` before the holder sealed it.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub digest: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub bytes: Option<u64>,
-    /// The sealed copy, standard base64, when this install keeps it; `None`
-    /// before it is sealed, or when only its holder keeps it.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub sealed: Option<String>,
-}
+#[doc(hidden)]
+pub use oneiron_records::authority::export_secret_work::ExportSecretSupplement;
 
 pub use crate::batch::export::secret_supplement_record::{
     OpenedSecretSupplement, SecretSupplementImport,
@@ -158,6 +130,10 @@ pub(crate) struct HolderExportBasis<'a> {
     /// The export's act, as its door authenticated it; `None` for a door
     /// that records none.
     pub(crate) act: Option<OwnerAct>,
+    /// The owner's own write, when the door's proof of him revalidated in
+    /// the audit write: each request carries the owner key's proof this
+    /// install holds.
+    pub(crate) owner_authored: Option<&'a crate::consent::OwnerAuthoredWrite>,
     /// The export's id, as its audit row names it.
     pub(crate) export: EntityId,
     /// BLAKE3 of the archive, where its door read it back.
@@ -226,7 +202,8 @@ impl Vault {
     /// export's audit write `txn`, each in a savepoint of its own, best
     /// effort: a fault is logged, leaves `txn` as it was and reads as
     /// unrecorded. Each carries the export's act exactly as its door made
-    /// it, its owner checked a live vault owner here first. Nothing here
+    /// it, its owner checked a live vault owner here first, and the owner
+    /// key's proof when the export is the owner's own write. Nothing here
     /// reaches the copy, which has left.
     pub(crate) fn record_holder_export_requests_in_txn(
         &self,
@@ -291,7 +268,7 @@ impl Vault {
                     export_act: basis.export_act,
                     recipient: permit,
                 });
-                match self.record_export_secret_in_savepoint(txn, act, work) {
+                match self.record_export_secret_in_savepoint(txn, act, basis.owner_authored, work) {
                     Ok(receipt) => HolderExportRequest::of_receipt(*need, &receipt),
                     Err(error) => {
                         tracing::warn!(
@@ -310,10 +287,12 @@ impl Vault {
         &self,
         txn: &mut heed::RwTxn<'_>,
         act: OwnerAct,
+        owner_authored: Option<&crate::consent::OwnerAuthoredWrite>,
         work: OwnerWorkBody,
     ) -> crate::Result<OwnerWorkReceipt> {
         let mut savepoint = self.store.env.nested_write_txn(txn)?;
-        let receipt = self.record_owner_work_with_act_in_txn(&mut savepoint, act, work)?;
+        let receipt =
+            self.record_owner_work_with_act_in_txn(&mut savepoint, act, owner_authored, work)?;
         savepoint.commit()?;
         Ok(receipt)
     }

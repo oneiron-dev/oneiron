@@ -4,7 +4,8 @@ use crate::claim::ClaimBody;
 use crate::consent::{ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, GrantBound};
 use crate::edge::EdgeActorClass;
 use crate::error::{ClaimError, Error, Result};
-use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
+use crate::store::gate_reason::GateReceiptOutcome;
+use crate::store::{GateReceipt, PolicyBasis, ReceiptActor};
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
 
@@ -318,12 +319,16 @@ pub(super) fn require_authorship_in_txn(
 /// below the owner: the row restricts someone's access or authority
 /// ([`crate::federation::claim_removal_widens_in`]: a paused, suppressed or
 /// exited `campaign.member`, a do-not-contact bar, an opt-out, an
-/// unreachable channel, a delivery window, ...), and `actor` is neither a
-/// live owner nor the engine's System writer. Lifting a restriction is a
-/// widening, a live owner's alone, whoever wrote the row (the lead's RULING
-/// WORLD-ACCESS-GRANT-DELETE = A, 15 Nov: "deleting a restriction IS a
-/// widening"; the Engine's RULING RESTRICTION-FIX-SCOPE = A, FIX
-/// [RESTRICTION-CLAIM-OVERWRITE-AND-SELF-RETRACT]).
+/// unreachable channel, a delivery window, ...), and `actor` is not a live
+/// owner. Lifting a restriction is a widening, a live owner's alone, whoever
+/// wrote the row (the lead's RULING WORLD-ACCESS-GRANT-DELETE = A, 15 Nov:
+/// "deleting a restriction IS a widening"; the Engine's RULING
+/// RESTRICTION-FIX-SCOPE = A, FIX [RESTRICTION-CLAIM-OVERWRITE-AND-SELF-RETRACT]).
+/// A System actor is no exception: at this door it acts under an owner's
+/// standing Grant ([`require_authorship_in_txn`]), and a standing Grant is no
+/// live owner's stamp on a widening (ARCH-0003: "widening writes are
+/// human-gated"; FIX [RESTRICTION-CLOSE-BY-SYSTEM-GRANT]). The engine's own
+/// writers (a projector, the Dreamer's runner) never reach this check.
 ///
 /// # Errors
 ///
@@ -334,9 +339,7 @@ pub(crate) fn lifts_restriction_below_owner_in(
     actor: WriteActor,
     body: &ClaimBody,
 ) -> Result<bool> {
-    if actor.actor_class() == EdgeActorClass::System
-        || !crate::federation::claim_removal_widens_in(vault, txn, body)?
-    {
+    if !crate::federation::claim_removal_widens_in(vault, txn, body)? {
         return Ok(false);
     }
     Ok(!(actor.actor_class() == EdgeActorClass::Human
@@ -423,52 +426,28 @@ impl super::Memory<'_> {
     }
 }
 
+/// A memory settlement's Gate receipt draft: `actor` decided `outcome` on
+/// `kind` for `reason`, about `target`. It reads no policy; a caller that
+/// judged against a frontier sets `basis`. The store mints the id and the
+/// time.
 pub(super) fn decision(
     actor: WriteActor,
-    kind: &str,
-    outcome: &str,
+    kind: &'static str,
+    outcome: GateReceiptOutcome,
     reason: &str,
     target: Option<EntityId>,
     digest: Vec<u8>,
-    now: u64,
-) -> GateDecisionRecord {
-    GateDecisionRecord {
-        version: GATE_DECISION_LEDGER_VERSION,
-        decision_id: GateDecisionId::now(),
-        created_at: now,
-        outcome: outcome.to_owned(),
-        reason_codes: vec![reason.to_owned()],
-        receipt_reasons: Vec::new(),
-        system_notices: Vec::new(),
-        actor_class: actor.actor_class().gate_actor_class().to_owned(),
-        actor_ref: Some(actor.entity_ref().to_hex()),
-        content_kind: kind.to_owned(),
-        policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
-        claim_id: target.map(|id| *id.as_bytes()),
-        grant_ref: None,
-        diff_handle: digest,
-        read_frontier_hash: [0; 32],
-        context: Default::default(),
-        redacted_at: None,
-    }
-}
-
-// EntityId deliberately has no global serde implementation.
-pub(super) mod entity_serde {
-    use crate::EntityId;
-    use serde::{Deserialize, Deserializer, Serializer};
-    pub(in crate::memory) fn serialize<S: Serializer>(
-        id: &EntityId,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(&id.to_hex())
-    }
-    pub(in crate::memory) fn deserialize<'de, D: Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<EntityId, D::Error> {
-        let text = String::deserialize(deserializer)?;
-        EntityId::from_hex(&text).map_err(serde::de::Error::custom)
-    }
+) -> GateReceipt {
+    let mut receipt = GateReceipt::new(
+        outcome,
+        kind,
+        reason,
+        ReceiptActor::Row(actor),
+        digest,
+        PolicyBasis::NOT_READ,
+    );
+    receipt.about = target;
+    receipt
 }
 
 /// Explicit owner replacement/withdrawal in a family-owned actor-facing door.
@@ -481,7 +460,6 @@ pub(crate) fn explicit_claim_override_in_txn(
     actor: WriteActor,
     target: EntityId,
     body: &ClaimBody,
-    now: u64,
 ) -> Result<()> {
     verify_live_actor(vault, txn, actor)?;
     let owns = claim_author(body) == Some(actor.entity_ref())
@@ -507,11 +485,11 @@ pub(crate) fn explicit_claim_override_in_txn(
     let receipt = decision(
         actor,
         "memory_claim_override",
-        "approved",
+        GateReceiptOutcome::Approved,
         "gate.memory.explicit_owner_override",
         Some(target),
         blake3::hash(&bytes).as_bytes().to_vec(),
-        now,
     );
-    vault.store.append_gate_decision_in_txn(txn, &receipt)
+    vault.store.record_gate_receipt_in_txn(txn, receipt)?;
+    Ok(())
 }

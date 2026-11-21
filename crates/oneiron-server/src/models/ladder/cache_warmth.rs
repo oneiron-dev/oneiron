@@ -16,11 +16,12 @@
 //! depends on where the agent runs.
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Mutex, PoisonError, Weak};
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use oneiron::code_run::{CacheBoundary, HOST_PROVIDER_OPTIONS, LiveForkRung, cache_boundaries};
+use oneiron::llm::ServedCacheHorizon;
 use oneiron::llm::SingleRouteBackend;
-use oneiron_llm_anthropic::{AnthropicCacheTier, AnthropicProviderOptions};
+use oneiron_llm::anthropic::{AnthropicCacheTier, AnthropicProviderOptions};
 
 use super::*;
 use crate::models::output_cap::LIMIT_KEYS;
@@ -266,9 +267,12 @@ struct Marked {
 /// What a rung's send may note once it answers, taken right before its
 /// bound request goes out, so its instant is no later than its dispatch:
 /// the one prefix it marked (FIX 6493), and each prefix noted warm then
-/// that its provider may read for it, with its note (FIX 6494).
+/// that its provider may read for it, with its note (FIX 6494). Its
+/// wall-clock instant goes on the answer's receipt with the prefix the
+/// provider confirmed (L2-37).
 pub(super) struct Sending {
     sent: Instant,
+    sent_unix_ms: u64,
     marked: Option<Marked>,
     held: Vec<(WarmKey, Observation)>,
 }
@@ -279,8 +283,14 @@ impl Sending {
     /// message block.
     pub(super) fn of(rests: &OfferCooldowns, rung: &LadderRung, bound: &LlmRequest) -> Self {
         let sent = Instant::now();
-        dispatched(rests, rung, bound, sent).unwrap_or_else(|| Self {
+        let sent_unix_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |since| {
+                u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
+            });
+        dispatched(rests, rung, bound, sent, sent_unix_ms).unwrap_or_else(|| Self {
             sent,
+            sent_unix_ms,
             marked: None,
             held: Vec::new(),
         })
@@ -299,8 +309,23 @@ impl Sending {
     /// provider's cache read is its extent and no other's. The provider
     /// read it, so keeps it for its own tier's lifetime from this send. A
     /// read that names no held prefix, or more than one, refreshes nothing.
-    pub(super) fn answered(self, rests: &OfferCooldowns, usage: &LlmUsage) {
+    ///
+    /// L2-37: returns the horizon of the longest prefix it noted, the marked
+    /// one written before a held one read, which the answer's receipt
+    /// carries; `None` when it noted none.
+    pub(super) fn answered(
+        self,
+        rests: &OfferCooldowns,
+        usage: &LlmUsage,
+    ) -> Option<ServedCacheHorizon> {
         let input = &usage.input;
+        let sent_unix_ms = self.sent_unix_ms;
+        let horizon = |seen: &Observation| ServedCacheHorizon {
+            sent_unix_ms,
+            lifetime_secs: u32::try_from(seen.lifetime.as_secs()).unwrap_or(u32::MAX),
+            tokens: seen.tokens,
+        };
+        let mut noted = None;
         if input.cache_write > 0
             && let Some(marked) = self.marked
         {
@@ -310,10 +335,11 @@ impl Sending {
                 lifetime: marked.lifetime,
                 tokens: input.cache_read.saturating_add(input.cache_write),
             };
+            noted = Some(horizon(&seen));
             rests.warmth.note(marked.key, seen);
         }
         if input.cache_read == 0 {
-            return;
+            return noted;
         }
         let mut read = self
             .held
@@ -324,8 +350,10 @@ impl Sending {
                 sent: self.sent,
                 ..seen
             };
+            noted = noted.or_else(|| Some(horizon(&seen)));
             rests.warmth.note(key, seen);
         }
+        noted
     }
 }
 
@@ -347,6 +375,7 @@ fn dispatched(
     rung: &LadderRung,
     bound: &LlmRequest,
     sent: Instant,
+    sent_unix_ms: u64,
 ) -> Option<Sending> {
     let profile = cache_profile(rung, bound)?;
     let boundaries: BTreeSet<CacheBoundary> = cache_boundaries(bound).ok()?.into_iter().collect();
@@ -390,7 +419,12 @@ fn dispatched(
     let held = rests
         .warmth
         .held(read.into_iter().map(|at| key(&prefixes[at])));
-    Some(Sending { sent, marked, held })
+    Some(Sending {
+        sent,
+        sent_unix_ms,
+        marked,
+        held,
+    })
 }
 
 /// Whether `request`'s own params or Anthropic options carry a
@@ -451,15 +485,18 @@ impl OfferLadder {
     /// the rung is admitted and again once it is; a rung that rests, has its
     /// probation request out or is held on the device; a refused admission;
     /// a gate that refused it unsent), its permit settled unstarted first,
-    /// for nothing: the flight's cheap writer then writes as the agent. Once
-    /// the rung went out, its failure is its own, never read as cold, and
-    /// the call goes on as [`Self::generate_exact_within`] would.
+    /// for nothing: the flight's cheap writer then writes as the agent.
+    /// `may_send` is asked with the warmth, before and after admission, and
+    /// a no stops it the same way. Once the rung went out, its failure is
+    /// its own, never read as cold, and the call goes on as
+    /// [`Self::generate_exact_within`] would, asking `may_send` there too.
     pub(crate) async fn generate_exact_while_warm(
         &self,
         run: &RunAdmission,
         request: LlmRequest,
         captured: &LiveForkRung,
         prefix: &LlmRequest,
+        may_send: &(dyn Fn() -> bool + Sync),
     ) -> LlmResult<Option<LlmResponse>> {
         let [rung] = self.rungs.as_slice() else {
             return Ok(None);
@@ -482,7 +519,7 @@ impl OfferLadder {
                 .rests
                 .probing(&rung.offer.binding, &rung.wire_model)
                 .is_none();
-        if !takes_now || !warm() {
+        if !takes_now || !warm() || !may_send() {
             return Ok(None);
         }
         // The run is live until this call ends: the host stays awake for it.
@@ -498,7 +535,10 @@ impl OfferLadder {
         // Admission can wait on the run's receipts: the prefix, the
         // world's order and the world are judged again right before the rung
         // is sent.
-        if !warm() || !self.route_admitted(&routes, 0) || self.kept_on_device(0, &request).is_some()
+        if !warm()
+            || !may_send()
+            || !self.route_admitted(&routes, 0)
+            || self.kept_on_device(0, &request).is_some()
         {
             settle_failed(permit);
             return Ok(None);
@@ -512,10 +552,10 @@ impl OfferLadder {
         let warmth = Sending::of(&self.rests, rung, &bound);
         match gate.generate(bound, permit.lease()).await {
             Ok(mut response) => {
-                warmth.answered(&self.rests, &response.usage);
+                let horizon = warmth.answered(&self.rests, &response.usage);
                 self.rests.succeeded(&rung.offer.binding, &rung.wire_model);
                 permit.settle(CallOutcome::Answered(&response.usage))?;
-                response.usage = self.answered(0, &walk, response.usage);
+                response.usage = self.answered(0, &walk, response.usage, horizon);
                 rung.note_answered(&request);
                 Ok(Some(response))
             }
@@ -527,7 +567,7 @@ impl OfferLadder {
                 drop(probe);
                 self.failed(0, error, true, &mut walk)?;
                 let budget = Duration::from_secs(self.rests.max_wait_secs());
-                self.generate_exact_within(run, request, None, &|| true, budget)
+                self.generate_exact_within(run, request, None, may_send, budget)
                     .await
                     .map(Some)
             }

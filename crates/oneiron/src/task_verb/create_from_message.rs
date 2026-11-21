@@ -39,7 +39,7 @@ impl Memory<'_> {
                 .task_work_memory()
                 .tasks_create_from_message(source_ref, spec);
         }
-        if spec.brief.is_some() || spec.intent_key.is_some() {
+        if spec.brief.is_some() || spec.intent_key.is_some() || spec.one_liner.is_some() {
             return Err(approval_routed());
         }
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
@@ -52,14 +52,10 @@ impl Memory<'_> {
         // the thread's audience there.
         {
             let lane = self.read_lane(ClaimReadStatus::Recorded)?;
-            let txn = self
-                .vault()
-                .store
-                .env
-                .read_txn()
-                .map_err(crate::Error::from)?;
+            let snapshot = self.lane_snapshot()?;
+            let txn = snapshot.txn();
             if self
-                .get_entity_in_txn(&lane, &txn, source_ref)?
+                .get_entity_in_txn(&lane, txn, snapshot.known(), source_ref)?
                 .value
                 .is_none()
             {

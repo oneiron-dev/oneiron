@@ -12,9 +12,10 @@ use super::{
     FailureScope, FailureScopePolicy, HandleAttemptFailure, HealerSlot, LEASE_OWNER, LlmError,
     OutputContextEntry, ParkDreamerAttempt, PayerFault, RUN_RETRY_BACKOFF_SECS, RetryableLlmError,
     SetAttemptResult, SpentKind, TypeRef, TypedFailureEvidence, TypedFailureVerdict, Vault,
-    WAITING_PARK_REASON, agent_dispatch_run_actor, browser_workflow, open_trap, outage_park_reason,
-    park_and_bind_wait_trap, park_for_payer, parks_on_outage, parse_confession, register_wait,
-    restore_output, run_continuation, trap_for_durable_wait, trap_park_owner, unix_now,
+    WAITING_PARK_REASON, agent_dispatch_run_actor, browser_workflow, open_trap, open_wait_trap,
+    outage_park_reason, park_and_bind_wait_trap, park_for_payer, parks_on_outage, parse_confession,
+    register_wait, restore_output, run_continuation, trap_for_durable_wait, trap_park_owner,
+    unix_seconds_now,
 };
 
 /// Settles the run's attempt: complete, parked on its wait or on a provider
@@ -37,7 +38,7 @@ pub(super) fn settle(
     healer_slot: HealerSlot,
 ) -> oneiron::Result<()> {
     let attempt = &claimed.status.attempt;
-    let now = unix_now();
+    let now = unix_seconds_now();
     // A media trap already parked the try; its wake's claim judges the run
     // TASK again.
     if !matches!(ran, Ok(BoundRun::Trapped))
@@ -227,7 +228,15 @@ fn settle_held(
         ),
     )?;
     // A retry shares the run's spend scope; only an end closes it.
-    if !matches!(ended, FailureLadderOutcome::Retried { .. }) {
+    if matches!(ended, FailureLadderOutcome::Retried { .. }) {
+        // The retried try's own tokens reach its read-shape stamp now, and its
+        // retry's stamp counts from here (census L9-37). A failed record logs
+        // and the retry stands.
+        if let Err(error) = AgentDispatcher::new(vault).record_retried_read_shape_units(&attempt.id)
+        {
+            tracing::warn!(%error, attempt = ?attempt.id, "a retried run's read-shape units were not recorded");
+        }
+    } else {
         AgentDispatcher::new(vault).settle_child(&attempt.id, now)?;
         // FIX 11532: the solo run's team receipt, after its own end; a
         // receipt failure logs and the end stands.
@@ -482,7 +491,10 @@ fn run_confession(
 /// trap opens and waits, then the attempt parks under the trap's owner and
 /// the trap is bound to the wait in one commit, so a wake always finds the
 /// park and no park is left unbound. The woken attempt is ready again, and
-/// the next pass enters the run, which goes on from the reply.
+/// the next pass enters the run, which goes on from the reply. A run that
+/// re-enters a wait whose trap still waits for it, as one a person's pause
+/// took off its park, parks again under that trap; a reply that consumes
+/// that trap before the park lands queues the run in the park's commit.
 fn park_on_wait(
     vault: &Vault,
     status: &AgentDispatchStatus,
@@ -496,24 +508,39 @@ fn park_on_wait(
             "a waiting run parked on no wait",
         ))?;
     let now_ms = now.saturating_mul(1000);
-    let trap = open_trap(
-        vault,
-        &DurableStepContext {
-            vault,
-            attempt_id: attempt.id,
-            run_id: attempt.run_id.clone(),
-            envelope_actor: agent_dispatch_run_actor(&status.input, attempt.id)?,
-            subject: parked.wait.wait_id,
-            deadline: None,
-            now_ms,
-            spend_scope: None,
-            wake_pass_bound: false,
-        },
-        trap_for_durable_wait(&parked.wait, parked.step_hash),
-        parked.step_hash,
-        "code-run wait",
-    )?;
-    let registered = register_wait(vault, &trap, now_ms)?;
+    let actor = agent_dispatch_run_actor(&status.input, attempt.id)?;
+    let kind = trap_for_durable_wait(&parked.wait, parked.step_hash);
+    // A run a person's pause took off this same wait parks again under the
+    // trap still bound to it (FIX PAUSE-BOUNDARY-PARKED-RUN). That trap
+    // registered its wait when the run first parked, and a reply may consume
+    // it before the park below commits: the park writer then queues the run,
+    // so no second registration runs here (one would refuse the spent trap).
+    let bound = open_wait_trap(vault, &parked.key, attempt.id)?
+        .filter(|trap| trap.kind == kind && trap.step_hash == parked.step_hash);
+    let (trap, registered) = match bound {
+        Some(trap) => (trap, oneiron::llm::DreamerTrapState::Waiting),
+        None => {
+            let trap = open_trap(
+                vault,
+                &DurableStepContext {
+                    vault,
+                    attempt_id: attempt.id,
+                    run_id: attempt.run_id.clone(),
+                    envelope_actor: actor,
+                    subject: parked.wait.wait_id,
+                    deadline: None,
+                    now_ms,
+                    spend_scope: None,
+                    wake_pass_bound: false,
+                },
+                kind,
+                parked.step_hash,
+                "code-run wait",
+            )?;
+            let registered = register_wait(vault, &trap, now_ms)?;
+            (trap, registered)
+        }
+    };
     // The park and its wake binding commit together: a stop between them
     // would leave a park no delivery wakes.
     park_and_bind_wait_trap(
@@ -530,6 +557,20 @@ fn park_on_wait(
         &trap,
         now_ms,
     )?;
+    // L2-37: the prompt prefix the run's last answer left cached gets its
+    // idle call, in its own write. A miss never fails the park: with no due
+    // row the prefix simply expires.
+    if let Some(prefix) = &outcome.cache_horizon
+        && let Err(error) = oneiron::idle_fold::record_cache_horizon(
+            vault,
+            &parked.key,
+            attempt.id,
+            actor.entity_ref(),
+            prefix,
+        )
+    {
+        tracing::warn!(%error, attempt = ?attempt.id, "a parked run's idle call was not recorded");
+    }
     // A signal that landed before register_wait leaves the trap Sent: the
     // delivering commit cannot wake that head again. Now that the park and
     // binding exist, the shared sweep consumes it and queues this same try.

@@ -1,25 +1,79 @@
 //! The catalogue keys the Setting primitive's tests set (DESIGN 15-setting-primitive, stage 0.1).
 //! They exist only under `--cfg oneiron_test_support`; no engine code reads them.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::cell::Cell;
+
+use oneiron_setting_contract::RowKey;
 
 use crate::check_in::ActClass;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::federation::EngineControlClass;
 use crate::setting::{
-    ItemDomain, Kind, ReadBy, ScopeKind, SetBy, SettingChange, SettingSync, higher_is_tighter,
-    lower_is_tighter,
+    Born, ItemDomain, Kind, ReadBy, ScopeKind, SetBy, SettingChange, SettingMode, SettingScope,
+    SettingSync, SettingValue,
 };
 
-/// How many changes `test.hooked` has seen.
-static HOOKED_CHANGES: AtomicU64 = AtomicU64::new(0);
+/// `test.bounds`'s value: a struct whose every part names its order.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+pub struct TestBounds {
+    /// The most handles open at once: lower is stricter.
+    pub max_open: u64,
+    /// The least wait between two reads, in seconds: higher is stricter.
+    pub floor_secs: u64,
+}
 
-/// How many times `test.after_commit`'s after-commit hook has run.
-static AFTER_COMMITS: AtomicU64 = AtomicU64::new(0);
+impl SettingValue for TestBounds {}
 
-/// The value of `test.after_commit` a fresh read saw when its hook last ran.
-static AFTER_COMMIT_SEEN: AtomicU64 = AtomicU64::new(u64::MAX);
+oneiron_setting_contract::each_order!(TestBounds {
+    max_open: lower,
+    floor_secs: higher,
+});
+
+fn default_bounds() -> TestBounds {
+    TestBounds {
+        max_open: 8,
+        floor_secs: 10,
+    }
+}
+
+fn strictest_bounds() -> TestBounds {
+    TestBounds {
+        max_open: 0,
+        floor_secs: u64::MAX,
+    }
+}
+
+fn every_permit() -> Vec<String> {
+    ["read", "send", "share"].map(str::to_owned).to_vec()
+}
+
+fn no_permit() -> Vec<String> {
+    Vec::new()
+}
+
+fn plain_label() -> String {
+    "plain".to_owned()
+}
+
+/// `test.custom_window`'s comparator: a window is no wider when it is no longer.
+fn window_no_wider(a: &u64, b: &u64) -> bool {
+    a <= b
+}
+
+// The hooks count per thread: a change's hook runs inside its write, and an after-commit hook
+// right after it, both on the thread that writes. A test reads the counts of its own writes and
+// never another test's.
+thread_local! {
+    /// How many changes `test.hooked` has seen on this thread.
+    static HOOKED_CHANGES: Cell<u64> = const { Cell::new(0) };
+    /// The time the last change `test.hooked`'s hook saw on this thread was stamped with.
+    static HOOKED_LAST_AT: Cell<u64> = const { Cell::new(0) };
+    /// How many times `test.after_commit`'s after-commit hook has run on this thread.
+    static AFTER_COMMITS: Cell<u64> = const { Cell::new(0) };
+    /// The value of `test.after_commit` a fresh read saw when its hook last ran on this thread.
+    static AFTER_COMMIT_SEEN: Cell<u64> = const { Cell::new(u64::MAX) };
+}
 
 fn seven() -> u64 {
     7
@@ -31,6 +85,10 @@ fn ten() -> u64 {
 
 fn zero() -> u64 {
     0
+}
+
+fn learned_rate_seed() -> f64 {
+    0.05
 }
 
 fn quiet_default() -> bool {
@@ -45,6 +103,13 @@ fn empty_banner() -> String {
     String::new()
 }
 
+fn daily() -> crate::schedule::Trigger {
+    crate::schedule::Trigger::Every {
+        secs: 24 * 60 * 60,
+        first_at: None,
+    }
+}
+
 fn no_mode() -> Option<u64> {
     None
 }
@@ -54,8 +119,8 @@ fn no_ids() -> Vec<String> {
 }
 
 /// `test.mentioned_ids`'s erase: the list without the erased entity's 32 hex, when it names it.
-#[allow(clippy::ptr_arg)] // the hook's type is `fn(&T, EntityId)` with `T = Vec<String>`
-fn drop_mention(ids: &Vec<String>, erased: EntityId) -> Option<Vec<String>> {
+/// The key's hook takes `&Vec<String>`; a closure passes the list here as a slice.
+fn drop_mention(ids: &[String], erased: EntityId) -> Option<Vec<String>> {
     let hex = erased.to_hex();
     ids.contains(&hex)
         .then(|| ids.iter().filter(|id| **id != hex).cloned().collect())
@@ -65,19 +130,134 @@ fn channel(item: &str) -> bool {
     matches!(item, "mail" | "chat")
 }
 
+/// `test.credential_named_members`'s value: members under names the side-row wall's field rule
+/// reads as credential names, each of a shape the value's type fixes (FIX
+/// SETTING-WALL-CREDENTIAL-NAMED-MEMBERS).
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+pub struct CredentialNamedMembers {
+    /// A count under a name that ends in `_token`.
+    pub bytes_per_token: Option<u32>,
+    /// Rules by names the owner picks; a name may read as a credential name.
+    pub rules: std::collections::BTreeMap<String, NamedRule>,
+    /// Text under a credential name.
+    pub api_token: Option<String>,
+}
+
+/// One owner-named rule of a [`CredentialNamedMembers`].
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+pub struct NamedRule {
+    /// A flag.
+    pub normalize_text: bool,
+    /// A count.
+    pub weight: u32,
+    /// Text under a credential name, inside the rule.
+    pub refresh_token: Option<String>,
+}
+
+impl crate::setting::SettingValue for CredentialNamedMembers {}
+
+fn no_credential_named_members() -> CredentialNamedMembers {
+    CredentialNamedMembers {
+        bytes_per_token: None,
+        rules: std::collections::BTreeMap::new(),
+        api_token: None,
+    }
+}
+
 fn count_change(
     _vault: &crate::Vault,
     _txn: &mut heed::RwTxn<'_>,
-    _change: &SettingChange,
+    change: &SettingChange,
 ) -> Result<()> {
-    HOOKED_CHANGES.fetch_add(1, Ordering::SeqCst);
+    HOOKED_LAST_AT.set(change.at);
+    HOOKED_CHANGES.set(HOOKED_CHANGES.get() + 1);
     Ok(())
 }
 
-/// How many changes `test.hooked`'s hook has run for.
+fn two() -> u64 {
+    2
+}
+
+fn three() -> u64 {
+    3
+}
+
+fn highest() -> u64 {
+    u64::MAX
+}
+
+/// Refuses a change to `test.pair_count` or `test.pair_floor` that leaves the floor above the
+/// count, as `booking.emergency`'s pair does: the changed row is already in `txn`, so the pair
+/// read here is the one the write would commit.
+fn refuse_floor_above_count(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    _change: &SettingChange,
+) -> Result<()> {
+    let count = TEST_PAIR_COUNT.read_in_txn(vault, txn, &[], None)?.value;
+    let floor = TEST_PAIR_FLOOR.read_in_txn(vault, txn, &[], None)?.value;
+    if floor > count {
+        return Err(crate::error::Error::InvalidConfig(format!(
+            "test.pair_floor ({floor}) must not exceed test.pair_count ({count})"
+        )));
+    }
+    Ok(())
+}
+
+/// The row `refuse_floor_above_count` judges a row of the pair against: the other key's vault
+/// value row.
+fn pair_peer(
+    _vault: &crate::Vault,
+    _txn: &heed::RoTxn<'_>,
+    slot: &RowKey,
+    _value: Option<&serde_json::Value>,
+) -> Result<Vec<RowKey>> {
+    let other = if slot.name == "test.pair_count" {
+        "test.pair_floor"
+    } else {
+        "test.pair_count"
+    };
+    Ok(vec![RowKey {
+        name: other.to_owned(),
+        item: None,
+        mode: SettingMode::Value,
+        scope: SettingScope::Vault,
+    }])
+}
+
+/// Refuses a value of `test.capped_number` above five: a hook that reads no other row.
+fn refuse_above_five(
+    _vault: &crate::Vault,
+    _txn: &mut heed::RwTxn<'_>,
+    change: &SettingChange,
+) -> Result<()> {
+    if let Some(value) = change
+        .value
+        .as_ref()
+        .and_then(|value| value.decode::<u64>())
+        && value > 5
+    {
+        return Err(crate::error::Error::InvalidConfig(format!(
+            "test.capped_number takes at most 5, not {value}"
+        )));
+    }
+    Ok(())
+}
+
+/// How many changes `test.hooked`'s hook has run for on this thread.
 #[must_use]
 pub fn hooked_changes() -> u64 {
-    HOOKED_CHANGES.load(Ordering::SeqCst)
+    HOOKED_CHANGES.get()
+}
+
+/// The time the last change `test.hooked`'s hook ran for on this thread was stamped with.
+#[must_use]
+pub fn hooked_last_at() -> u64 {
+    HOOKED_LAST_AT.get()
 }
 
 /// `test.after_commit`'s after-commit hook: it reads the key in a read of its own, which sees
@@ -90,20 +270,20 @@ fn note_after_commit(vault: &crate::Vault) {
         .ok()
         .and_then(|txn| TEST_AFTER_COMMIT.read_in_txn(vault, &txn, &[], None).ok())
         .map_or(u64::MAX, |resolved| resolved.value);
-    AFTER_COMMIT_SEEN.store(seen, Ordering::SeqCst);
-    AFTER_COMMITS.fetch_add(1, Ordering::SeqCst);
+    AFTER_COMMIT_SEEN.set(seen);
+    AFTER_COMMITS.set(AFTER_COMMITS.get() + 1);
 }
 
-/// How many times `test.after_commit`'s after-commit hook has run.
+/// How many times `test.after_commit`'s after-commit hook has run on this thread.
 #[must_use]
 pub fn after_commits() -> u64 {
-    AFTER_COMMITS.load(Ordering::SeqCst)
+    AFTER_COMMITS.get()
 }
 
-/// The value of `test.after_commit` its hook's own read saw on its last run.
+/// The value of `test.after_commit` its hook's own read saw on its last run on this thread.
 #[must_use]
 pub fn after_commit_seen() -> u64 {
-    AFTER_COMMIT_SEEN.load(Ordering::SeqCst)
+    AFTER_COMMIT_SEEN.get()
 }
 
 crate::setting::setting_keys! {
@@ -114,13 +294,13 @@ crate::setting::setting_keys! {
     };
     /// A work budget a holder of the work-budget class tunes inside the owner's cap.
     pub TEST_WORK_BUDGET: u64 = "test.work_budget" {
-        kind: Kind::new(ten).strictest(zero).tighter(lower_is_tighter::<u64>),
+        kind: Kind::new(ten).strictest(zero).lower(),
         scopes: &[ScopeKind::Vault, ScopeKind::Project],
         set_by: SetBy::Class(EngineControlClass::WorkBudget),
     };
     /// Whether an agent keeps quiet: the agent tightens its own row; loosening asks.
     pub TEST_AGENT_QUIET: bool = "test.agent_quiet" {
-        kind: Kind::new(quiet_default).strictest(quietest).tighter(higher_is_tighter::<bool>),
+        kind: Kind::new(quiet_default).strictest(quietest).higher(),
         scopes: &[ScopeKind::Vault, ScopeKind::Agent],
         set_by: SetBy::Subject,
     };
@@ -135,10 +315,19 @@ crate::setting::setting_keys! {
         read_by: ReadBy::Members,
         act: ActClass::ReversibleWork,
     };
+    /// A value whose members sit under credential names: a count, owner-named rules and a text.
+    pub TEST_CREDENTIAL_NAMED_MEMBERS: CredentialNamedMembers = "test.credential_named_members" {
+        kind: Kind::new(no_credential_named_members),
+    };
     /// A key whose hook counts its changes.
     pub TEST_HOOKED: u64 = "test.hooked" {
         kind: Kind::new(zero),
         on_change: Some(count_change),
+    };
+    /// The cadence of the test job `test.cadence` (DESIGN 15-setting-primitive, stage 5a-1).
+    pub TEST_JOB_CADENCE: crate::schedule::Trigger = "test.job_cadence" {
+        kind: Kind::new(daily),
+        on_change: Some(crate::schedule::rearm_on_change),
     };
     /// A mode that is off until the owner sets one: an optional value.
     pub TEST_OPTIONAL_MODE: Option<u64> = "test.optional_mode" {
@@ -152,7 +341,7 @@ crate::setting::setting_keys! {
     };
     /// Whether a person keeps quiet: the person tightens their own row.
     pub TEST_PERSON_QUIET: bool = "test.person_quiet" {
-        kind: Kind::new(quiet_default).strictest(quietest).tighter(higher_is_tighter::<bool>),
+        kind: Kind::new(quiet_default).strictest(quietest).higher(),
         scopes: &[ScopeKind::Vault, ScopeKind::Person],
         set_by: SetBy::Subject,
     };
@@ -169,6 +358,90 @@ crate::setting::setting_keys! {
     };
     /// A list of entities, 32 hex each: an erase takes the erased one out of the value.
     pub TEST_MENTIONED_IDS: Vec<String> = "test.mentioned_ids" {
-        kind: Kind::new(no_ids).erase_mentions(drop_mention),
+        kind: Kind::new(no_ids)
+            .erase_mentions(|ids: &Vec<String>, erased: EntityId| drop_mention(ids, erased)),
+    };
+    /// A learned rate in [0, 1]: a fit learns it under its seeds, at the goal, project, task
+    /// type and vault scopes.
+    pub TEST_LEARNED_RATE: f64 = "test.learned_rate" {
+        kind: Kind::new(learned_rate_seed).learned(0.0, 1.0),
+        scopes: &crate::setting::LEARNED_SCOPES,
+    };
+    /// A cap whose rows meet (stage 6.0): lower is stricter, at the vault, a world or a project;
+    /// a holder of the work-budget class moves it.
+    pub TEST_ORDERED_CAP: u64 = "test.ordered_cap" {
+        kind: Kind::new(ten).strictest(zero).lower(),
+        scopes: &[ScopeKind::Vault, ScopeKind::World, ScopeKind::Project],
+        set_by: SetBy::Class(EngineControlClass::WorkBudget),
+    };
+    /// A permit list whose rows meet to their intersection.
+    pub TEST_PERMIT_LIST: Vec<String> = "test.permit_list" {
+        kind: Kind::new(every_permit).strictest(no_permit).subset(),
+        scopes: &[ScopeKind::Vault, ScopeKind::Project],
+        set_by: SetBy::Class(EngineControlClass::WorkBudget),
+    };
+    /// Bounds whose rows meet part by part.
+    pub TEST_BOUNDS: TestBounds = "test.bounds" {
+        kind: Kind::new(default_bounds).strictest(strictest_bounds).each(),
+        scopes: &[ScopeKind::Vault, ScopeKind::Project],
+        set_by: SetBy::Class(EngineControlClass::WorkBudget),
+    };
+    /// A label that guards nothing: every move is neutral.
+    pub TEST_NEUTRAL_LABEL: String = "test.neutral_label" {
+        kind: Kind::new(plain_label).neutral(),
+        set_by: SetBy::Class(EngineControlClass::WorkBudget),
+    };
+    /// A number with no order that a holder of the work-budget class moves.
+    pub TEST_CLASS_NUMBER: u64 = "test.class_number" {
+        kind: Kind::new(seven),
+        set_by: SetBy::Class(EngineControlClass::WorkBudget),
+    };
+    /// A window judged by its own comparator: one slot, at the vault.
+    pub TEST_CUSTOM_WINDOW: u64 = "test.custom_window" {
+        kind: Kind::new(ten).custom(window_no_wider),
+        set_by: SetBy::Class(EngineControlClass::WorkBudget),
+    };
+    /// A cap the owner sets, whose rows meet, with a row at an agent's own scope: the agent is
+    /// that row's subject, not a holder.
+    pub TEST_AGENT_CAP: u64 = "test.agent_cap" {
+        kind: Kind::new(ten).strictest(zero).lower(),
+        scopes: &[ScopeKind::Vault, ScopeKind::Agent],
+    };
+    /// A cap per outbound channel whose rows meet: a family key, lower is stricter, default 10
+    /// (stage 7b-3: the empty slot of an item's vault value row).
+    pub TEST_CHANNEL_CAP: u64 = "test.channel_cap" {
+        kind: Kind::new(ten).strictest(zero).lower(),
+        item: Some(ItemDomain { name: "outbound channels", admits: channel }),
+    };
+    /// A depth whose rows meet, lower is stricter, at the vault (its cap, default 10) and a
+    /// project: each new project starts with a row copied from `test.born_depth_default`
+    /// (stage 7c-2, `born`), and a project with no row reads 0.
+    pub TEST_BORN_DEPTH: u64 = "test.born_depth" {
+        kind: Kind::new(ten).strictest(zero).lower(),
+        scopes: &[ScopeKind::Vault, ScopeKind::Project],
+        born: Some(Born { from: "test.born_depth_default" }),
+    };
+    /// The depth a new project starts from (stage 7c-2): `test.born_depth`'s source, at the vault,
+    /// lower is stricter, default 7.
+    pub TEST_BORN_DEPTH_DEFAULT: u64 = "test.born_depth_default" {
+        kind: Kind::new(seven).strictest(zero).lower(),
+    };
+    /// A count with no order, default 3, whose hook refuses a pair that leaves `test.pair_floor`
+    /// above it (row SETTING-PROJECTED-ROW-REFUSING-HOOKS): `booking.emergency`'s pair.
+    pub TEST_PAIR_COUNT: u64 = "test.pair_count" {
+        kind: Kind::new(three).strictest(three),
+        on_change: Some(refuse_floor_above_count),
+        refusal_peers: Some(pair_peer),
+    };
+    /// The fewest of `test.pair_count`, default 2, higher is stricter, at most the count.
+    pub TEST_PAIR_FLOOR: u64 = "test.pair_floor" {
+        kind: Kind::new(two).strictest(highest).higher(),
+        on_change: Some(refuse_floor_above_count),
+        refusal_peers: Some(pair_peer),
+    };
+    /// A number with no order whose hook refuses a value above five and reads no other row.
+    pub TEST_CAPPED_NUMBER: u64 = "test.capped_number" {
+        kind: Kind::new(zero),
+        on_change: Some(refuse_above_five),
     };
 }

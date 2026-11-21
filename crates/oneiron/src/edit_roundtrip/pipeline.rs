@@ -14,18 +14,11 @@ use super::{
 use crate::blob_artifact::{BlobVersionProvenance, CalcEngineStamp};
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
+use oneiron_contracts::fingerprint::ContentHash;
 use oneiron_docedit::retained_opc::Limits;
-use serde::{Deserialize, Serialize};
 
-/// Whether a recalc stage ran, and why not when it did not.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RecalcStatus {
-    NotNeeded,
-    Performed,
-    /// Edited bytes could not be reparsed before recalc; the gate will reject.
-    Skipped,
-}
+#[doc(hidden)]
+pub use oneiron_records::edit_roundtrip::pipeline::RecalcStatus;
 
 /// The retained-output proposal: the new bytes plus everything a settlement
 /// (ARTL-4) or viewer (ARTL-5) needs, committing nothing.
@@ -312,7 +305,7 @@ fn run_pipeline<S: EditSession>(
         // The raw round-trip has no artifact/version context; the base is the
         // input bytes it edited. `propose_blob_artifact_edit` fills base_version.
         base_version: None,
-        base_content_hash: *blake3::hash(input_bytes).as_bytes(),
+        base_content_hash: *ContentHash::of(input_bytes).as_bytes(),
         sheet_answers: None,
     })))
 }

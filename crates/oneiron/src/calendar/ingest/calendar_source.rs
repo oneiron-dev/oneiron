@@ -85,6 +85,7 @@ pub(crate) fn apply_calendar_source_feed(
         verdict_fold: VerdictFold::default(),
         continuations: None,
         owed_booking_moves: 0,
+        admitted_claims: Vec::new(),
     };
     admission.apply_feed(&feed)?;
     admission.sweep_absent_sources(&feed)?;

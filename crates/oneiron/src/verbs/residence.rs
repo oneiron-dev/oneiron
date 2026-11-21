@@ -1,5 +1,5 @@
 //! The owner's residence controls (OF-534, FIX 531): a machine's residence
-//! mode, opening one item there, its thin index and pruning its opened-item
+//! mode (opened, predicted or all), opening one item there, its thin index and pruning its opened-item
 //! caches, as owner-vault rows that name the machine they act on. The named
 //! machine's own `SyncConnection` applies each one; a host reaches it
 //! through the connection it registered for that machine id, and an
@@ -29,19 +29,9 @@ use crate::sync::{OpenedItem, ResidenceIndexWindow, ResidenceModeChange, SyncRes
 #[doc(hidden)]
 pub use oneiron_verb_wire::verbs::residence::{
     ResidenceActView, ResidenceDirectiveView, ResidenceDirectivesRequest, ResidenceMachineRequest,
-    ResidenceModeName, ResidenceModeRequest, ResidenceOpenRequest, ResidencePruneRequest,
-    ResidenceResultStatusName, ResidenceResultView,
+    ResidenceModeName, ResidenceModeRequest, ResidenceOpenRequest, ResidencePredictedBudget,
+    ResidencePruneRequest, ResidenceResultStatusName, ResidenceResultView,
 };
-
-#[cfg(feature = "sync")]
-impl From<ResidenceModeName> for SyncResidenceMode {
-    fn from(mode: ResidenceModeName) -> Self {
-        match mode {
-            ResidenceModeName::Opened => Self::Opened,
-            ResidenceModeName::All => Self::All,
-        }
-    }
-}
 
 #[cfg(feature = "sync")]
 impl From<SyncResidenceMode> for ResidenceModeName {

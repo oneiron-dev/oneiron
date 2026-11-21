@@ -13,11 +13,12 @@ use crate::dreamer_runner::{
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_TURN;
+use crate::store::gate_reason::GateReceiptOutcome;
 use crate::store::{
-    GATE_DECISION_LEDGER_VERSION, GateDecisionContext, GateDecisionId, GateDecisionReadContext,
-    GateDecisionRecord, GateLoopLink, GateLoopSource,
+    GateDecisionContext, GateDecisionReadContext, GateLoopLink, GateLoopSource, GateReceipt,
+    PolicyBasis, ReceiptActor,
 };
-use crate::{EntityId, Vault};
+use crate::{EntityId, Vault, WriteActor};
 
 use super::authority::Standing;
 use super::types::{
@@ -126,6 +127,24 @@ pub(super) fn admit_in_txn(
         }
         return Ok(WakeAdmission::Held);
     }
+    // A wake this machine released as the home is its recording machine's
+    // to admit, and nothing admits it here. A historical restore brings an
+    // owed row back as content while the release it kept stands: that copy
+    // goes, undecided (FIX TURNPROGRAM-LATE-WITHHOLD-DOUBLE-DECIDE).
+    #[cfg(feature = "sync")]
+    if super::retraction::released_here_in_txn(
+        vault,
+        &*txn,
+        wake.authority.actor(),
+        wake.key(),
+        admission,
+    )? {
+        if WAKE.contains(vault, &*txn, &wake.key())? {
+            WAKE.delete(vault, txn, &wake.key())?;
+            super::index::unindex_wake_in_txn(vault, txn, wake.authority.actor(), wake.key())?;
+        }
+        return Ok(WakeAdmission::Held);
+    }
     if !WAKE.contains(vault, &*txn, &wake.key())? {
         return Ok(WakeAdmission::Held);
     }
@@ -162,7 +181,7 @@ pub(super) fn admit_in_txn(
         WAKE.put(vault, txn, &wake.key(), &wake)?;
         return Ok(WakeAdmission::Held);
     }
-    let receipt_id = gate_decision_in_txn(vault, txn, &wake, &admission, refused, now)?;
+    let receipt_id = gate_decision_in_txn(vault, txn, &wake, &admission, refused)?;
     let mut record = TurnProgramAdmissionRecord {
         admission,
         wake: wake.clone(),
@@ -330,50 +349,46 @@ fn gate_decision_in_txn(
     wake: &TurnProgramWake,
     admission: &[u8; 32],
     refused: Option<&str>,
-    now: u64,
 ) -> Result<[u8; 16]> {
     let authority = &wake.authority;
-    let decision_id = GateDecisionId::from_bytes(*vault.new_entity_id()?.as_bytes());
     let (outcome, reason) = match refused {
-        Some(_) => ("deny", "gate.dreamer.turn_program_refused"),
-        None => ("allow", "gate.dreamer.turn_program_admitted"),
-    };
-    let decision = GateDecisionRecord {
-        version: GATE_DECISION_LEDGER_VERSION,
-        decision_id,
-        created_at: now,
-        outcome: outcome.into(),
-        reason_codes: vec![reason.into()],
-        receipt_reasons: Vec::new(),
-        system_notices: Vec::new(),
-        actor_class: authority.class()?.gate_actor_class().into(),
-        actor_ref: Some(authority.actor().to_hex()),
-        content_kind: "dreamer_turn_program".into(),
-        policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.into(),
-        claim_id: None,
-        grant_ref: authority.grant().as_ref().map(EntityId::to_hex),
-        diff_handle: admission.to_vec(),
-        read_frontier_hash: crate::gate::resolve_policy_manifest(&vault.store, &*txn)?
-            .read_frontier_hash()?,
-        // FIX 7500, 7499: its own admission, about the turn that woke it. A
-        // refused wake runs nothing, so it names no run; neither names an
-        // attempt, which is queued after this decision.
-        context: GateDecisionContext::linked(
-            GateLoopLink::admission(
-                GateLoopSource::TurnProgram,
-                refused.is_none().then(|| run_id(admission)),
-                None,
-            ),
-            // An occurrence (slice 6.8c) is about no entity the vault holds.
-            match wake.occurrence {
-                None => GateDecisionReadContext::about(Some(wake.turn.turn), vec![wake.turn.turn]),
-                Some(_) => GateDecisionReadContext::about(None, Vec::new()),
-            },
+        Some(_) => (
+            GateReceiptOutcome::Deny,
+            "gate.dreamer.turn_program_refused",
         ),
-        redacted_at: None,
+        None => (
+            GateReceiptOutcome::Allow,
+            "gate.dreamer.turn_program_admitted",
+        ),
     };
-    vault.store.append_gate_decision_in_txn(txn, &decision)?;
-    Ok(decision_id.as_bytes())
+    let mut decision = GateReceipt::new(
+        outcome,
+        "dreamer_turn_program",
+        reason,
+        ReceiptActor::Row(WriteActor::new(authority.actor(), authority.class()?)),
+        admission.to_vec(),
+        PolicyBasis::frontier(
+            crate::gate::resolve_policy_manifest(&vault.store, &*txn)?.read_frontier_hash()?,
+        ),
+    );
+    decision.grant_ref = authority.grant().as_ref().map(EntityId::to_hex);
+    // FIX 7500, 7499: its own admission, about the turn that woke it. A
+    // refused wake runs nothing, so it names no run; neither names an
+    // attempt, which is queued after this decision.
+    decision.context = GateDecisionContext::linked(
+        GateLoopLink::admission(
+            GateLoopSource::TurnProgram,
+            refused.is_none().then(|| run_id(admission)),
+            None,
+        ),
+        // An occurrence (slice 6.8c) is about no entity the vault holds.
+        match wake.occurrence {
+            None => GateDecisionReadContext::about(Some(wake.turn.turn), vec![wake.turn.turn]),
+            Some(_) => GateDecisionReadContext::about(None, Vec::new()),
+        },
+    );
+    let decision = vault.store.record_gate_receipt_in_txn(txn, decision)?;
+    Ok(decision.decision_id.as_bytes())
 }
 
 /// Queues the admitted program as one Dreamer attempt with no parent: the

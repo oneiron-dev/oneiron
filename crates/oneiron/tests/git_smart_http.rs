@@ -732,10 +732,11 @@ fn git_smart_http_binary_diff_push_streams_whole_through_landed_scan() {
         refusals.is_empty(),
         "binary bytes are scanned, never refused: {refusals:?}"
     );
-    // The mark in a binary blob names the generic env class
-    // (`gate.secret_scan.sensitive_env`), not the provider code a text blob
-    // gets: assert the secret-scan class, the path and the blob.
-    assert_admitted_marked(&origin, "logo.png", "gate.secret_scan.", &blob);
+    // The mark in a binary blob names the provider code a text blob gets
+    // (FIX REPO-MARK-BINARY-DETECTOR-CLASS): the assigned value's span runs
+    // over the NUL and DEL after the token, and that longer span once took
+    // the generic env class (`gate.secret_scan.sensitive_env`).
+    assert_admitted_marked(&origin, "logo.png", "gate.secret_scan.github_token", &blob);
 }
 
 /// Added lines that begin with `++` and `+++ b/...` are content, not headers.

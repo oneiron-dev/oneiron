@@ -16,6 +16,14 @@
 //! nothing for one whose grant no longer stands. Clients never hold a slip or a key
 //! (ARCH-0028:91).
 //!
+//! A sign-in may name several resources (RFC 8707 §2): the vault's `/mcp`, and its `/git`, the
+//! smart-HTTP and LFS door a push goes through (lead ruling CONTINUE-PUSH-NON-SLIP-SELECTION =
+//! B, Sat 21 Nov 04:3x). Its family keeps each, and its access tokens resolve on each and on no
+//! other. A stock connector and `oneiron hosted login` name `/mcp` alone, so their tokens reach
+//! nothing else; the step-up of `oneiron continue --cloud` names `/mcp` and `/git` at `full`
+//! (CONTINUE-PUSH-GIT-TIER = C, 05:4x; CONTINUE-STEP-UP-MCP-WRITE = A, 06:1x), and only that
+//! command reads it.
+//!
 //! Codes, tokens and the authorize page's poll secret are 32 random bytes. No row, log or
 //! receipt holds one: each table keys them by a BLAKE3 hash keyed from the host issuer's secret,
 //! as pairing codes are (`slip_pairing::pairing_row_key`). A row past its expiry is dropped when
@@ -63,14 +71,12 @@ pub const OAUTH_REQUEST_TTL_SECS: u64 = 600;
 /// How long an authorization code may be redeemed after the page collects it (CALLS, FIX 4902:
 /// an engine call).
 pub const OAUTH_CODE_TTL_SECS: u64 = 600;
-/// How long an access token stands (CALLS, FIX 4902: an engine call).
-pub const OAUTH_ACCESS_TTL_SECS: u64 = 3_600;
+#[doc(hidden)]
+pub use oneiron_records::authority::oauth_server::{OAUTH_ACCESS_TTL_SECS, OAUTH_CIMD_TTL_SECS};
+
 /// How long a refresh token may be spent; each refresh mints the next one with a fresh lifetime
 /// (CALLS, FIX 4902: an engine call).
 pub const OAUTH_REFRESH_TTL_SECS: u64 = 30 * 86_400;
-/// How long a fetched client ID metadata document stands before the next authorize fetches it
-/// again (CALLS, FIX 4902: an engine call).
-pub const OAUTH_CIMD_TTL_SECS: u64 = 3_600;
 /// The most authorization requests that may wait on the owner at once, so no stranger fills his
 /// inbox; one past it is refused `temporarily_unavailable` (CALLS, FIX 4902: an engine call).
 pub const OAUTH_PENDING_REQUESTS_MAX: usize = 16;
@@ -103,6 +109,15 @@ pub const OAUTH_REDIRECT_URIS_MAX: usize = 16;
 /// The longest redirect URI or metadata-document `client_id` this vault reads, in bytes (CALLS,
 /// FIX 4902: an engine call).
 pub const OAUTH_URI_MAX_BYTES: usize = 2_048;
+/// Redirect URIs this vault admits by their exact string although no general rule admits them
+/// (L1-02, ARCH-0028 #default-route; RESEARCH-1396 #grok, its source [G6], the Cursor forum
+/// thread "grok-bot-custom-mcp-oauth-fails-before-sign-in-redirect-uri-not-allowed").
+/// Grok Bot registers by DCR and lists `cursor://anysphere.cursor-mcp/oauth/callback`, a
+/// private-use scheme with no `.` in it, which [`oauth_redirect_uri_admitted`] refuses as a
+/// scheme. Canon says to qualify that callback in a test and not to relax callback checks
+/// globally, so each entry is admitted only as this exact string.
+pub const OAUTH_NAMED_CLIENT_REDIRECT_URIS: &[&str] =
+    &["cursor://anysphere.cursor-mcp/oauth/callback"];
 /// The longest `state` an authorize request may carry, in bytes (CALLS, FIX 4902: an engine
 /// call).
 pub const OAUTH_STATE_MAX_BYTES: usize = 1_024;

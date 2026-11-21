@@ -1,7 +1,7 @@
 //! Code-emission admission and the deterministic admission record the free lane cites.
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use rmpv::Value;
-use sha2::{Digest, Sha256};
 
 use crate::TimeRange;
 use crate::code_run::consent;
@@ -15,11 +15,6 @@ use crate::vault::LiveEntityRow;
 
 use super::HostSelfDispatcher;
 use crate::error::CodeError;
-
-/// Domain of the code-emission admission record's id, kept separate from the
-/// emission's own identity so a record handle can never collide with — or be
-/// mistaken for — the claim, edge or gate ids of the write it witnesses.
-const CODE_EMISSION_RECORD_ID_DOMAIN: &[u8] = b"oneiron:self-code-emission-record:v1";
 
 /// Body keys of the code-emission admission record: what the host DECIDED
 /// (lane inputs) and which run it decided for.
@@ -182,7 +177,10 @@ impl HostSelfDispatcher<'_> {
 /// Deterministic so the record is minted at most once per admission, and
 /// length-prefixed so two different identities can never hash to the same
 /// material. A digest that lands on a reserved sentinel is re-salted rather
-/// than truncated into one.
+/// than truncated into one. Its domain
+/// (`purposes::code_run::EMISSION_RECORD`) is kept separate from the
+/// emission's own identity so a record handle can never collide with — or be
+/// mistaken for — the claim, edge or gate ids of the write it witnesses.
 fn code_emission_record_id(
     tier: SandboxGuestTier,
     source_trust: CodeSourceTrust,
@@ -190,21 +188,17 @@ fn code_emission_record_id(
     run_ref: &str,
 ) -> Result<EntityId> {
     for salt in 0..=u8::MAX {
-        let mut hasher = Sha256::new();
-        hasher.update(CODE_EMISSION_RECORD_ID_DOMAIN);
-        hasher.update([salt]);
+        let mut hasher = LegacyDigest::new(purposes::code_run::EMISSION_RECORD);
+        hasher.raw(&[salt]);
         for part in [
             tier.as_str().as_bytes(),
             source_trust.as_str().as_bytes(),
             dreamer_run_id.as_bytes(),
             run_ref.as_bytes(),
         ] {
-            let len = u64::try_from(part.len())
-                .map_err(|_| Error::ArithmeticOverflow("code emission record id material"))?;
-            hasher.update(len.to_le_bytes());
-            hasher.update(part);
+            hasher.len_u64_le(part.len()).raw(part);
         }
-        let digest = hasher.finalize();
+        let digest = hasher.finish();
         let mut bytes = [0_u8; 16];
         bytes.copy_from_slice(&digest[..16]);
         if let Ok(id) = EntityId::from_bytes(bytes) {
@@ -214,6 +208,18 @@ fn code_emission_record_id(
     Err(Error::InvariantViolation(
         "code emission record id derivation failed",
     ))
+}
+
+/// [`code_emission_record_id`] for the K door
+/// (`test_doors::fingerprint_keep_code_run_digests`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn code_emission_record_id_for_test(
+    tier: SandboxGuestTier,
+    source_trust: CodeSourceTrust,
+    dreamer_run_id: &str,
+    run_ref: &str,
+) -> Result<EntityId> {
+    code_emission_record_id(tier, source_trust, dreamer_run_id, run_ref)
 }
 
 /// The record body: exactly the admission identity its id is derived from, so

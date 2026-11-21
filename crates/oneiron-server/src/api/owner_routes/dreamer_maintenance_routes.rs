@@ -26,9 +26,9 @@ use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
-use crate::owner::stamp::now_unix_ms;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
+use oneiron_base::unix_millis_now;
 
 /// The most applied writes one list returns unless the caller asks for fewer.
 const DEFAULT_LIMIT: usize = 100;
@@ -303,7 +303,7 @@ async fn revert(
                 ));
             }
         };
-        let now = now_unix_ms() / 1_000;
+        let now = unix_millis_now() / 1_000;
         let reverted = server
             .vault()
             .revert_dreamer_maintenance(&owner, target, now)?;
@@ -333,7 +333,7 @@ async fn apply_action_mode(
             agent: entity_id("agent", &request.agent)?,
             ceiling: request.ceiling,
         };
-        let now = now_unix_ms() / 1_000;
+        let now = unix_millis_now() / 1_000;
         let applied = server
             .vault()
             .apply_action_mode(&owner, finding, &approved, now)?;

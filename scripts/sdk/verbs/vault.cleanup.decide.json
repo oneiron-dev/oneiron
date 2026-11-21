@@ -1,9 +1,9 @@
 {
   "name": "vault.cleanup.decide",
-  "description": "The owner decides one open cleanup proposal per item in one complete verdict, an accept or a reject for every slot; accepted slots archive as a whole accept does, rejected ones stay and are recorded as rejected.",
+  "description": "The owner, or an agent whose Grant names this verb once the owner allows it, decides one open cleanup proposal per item in one complete verdict; accepted slots archive as a whole accept does, rejected ones stay recorded.",
   "input": "crate::vault_cleanup::CleanupDecideRequest",
   "output": "crate::vault_cleanup::CleanupDecideView",
-  "call": "memory.vault().decide_cleanup_proposal_as(&memory.embedded_owner(\"vault.cleanup.decide\")?, &input)?",
+  "call": "crate::vault_cleanup::decide_cleanup_proposal_wire(memory, &input)?",
   "host_door": true,
   "host_door_lists": true,
   "scope": "Write",
@@ -13,5 +13,5 @@
   },
   "section": false,
   "openapi": true,
-  "host_door_proof": "owner"
+  "host_door_proof": "cleanup_decider"
 }

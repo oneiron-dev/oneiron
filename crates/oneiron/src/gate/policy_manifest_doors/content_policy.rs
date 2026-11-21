@@ -3,6 +3,7 @@
 use super::{body_in_txn, decode_fields, encode_fields, hex, invalid, record};
 use crate::consent::AuthenticatedOwner;
 use crate::gate::{self, resolve_policy_manifest};
+use crate::store::gate_reason::GateReceiptOutcome;
 use crate::{EdgeActorClass, Error, Result, Vault, WriteActor};
 
 const FIELDS: &[&str] = &[
@@ -109,7 +110,7 @@ pub fn configure_owner_policy(
             id,
             &body,
             (
-                "allow",
+                GateReceiptOutcome::Allow,
                 vec!["gate.allow.owner_content_policy_configuration".to_owned()],
             ),
         )?;

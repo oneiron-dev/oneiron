@@ -20,6 +20,8 @@ mod agent_pack_export;
 mod copy;
 mod guest_window;
 mod pack_notice;
+#[cfg(feature = "sync")]
+mod peer_release;
 mod reader_prompts;
 pub(crate) mod tables;
 
@@ -36,6 +38,10 @@ pub use self::pack_notice::{
     WorldRecipientNotice,
 };
 pub(crate) use self::pack_notice::{screen_owner_notice_fields, world_label_in_txn};
+#[cfg(feature = "sync")]
+pub use self::peer_release::PeerRelease;
+#[cfg(feature = "sync")]
+pub(crate) use self::peer_release::peer_release_recorded_in;
 
 /// The share receipt field listing the born-with fields that travelled.
 pub const FIELD_TRAVELLED: &str = "travelled";
@@ -44,15 +50,8 @@ pub const FIELD_TRAVELLED: &str = "travelled";
 // travel choice carries one (FIX 2998); every `share_travel::` path is unchanged.
 pub use oneiron_authority::share_travel::{BornWith, BornWithField, TravelChoice, TravelKind};
 
-/// The born-with text one federation grant's windows carry to another vault,
-/// with when the owner set it: the effective choice the grant travel door
-/// reads (`Vault::federation_grant_travel`, FIX 2998).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct GrantTravel {
-    pub travel: TravelChoice,
-    pub set_at: u64,
-}
+#[doc(hidden)]
+pub use oneiron_records::share_travel::GrantTravel;
 
 /// A receipt's `travelled` value: the field names in order, comma-joined.
 #[must_use]
@@ -285,6 +284,34 @@ pub(crate) fn export_travel_source_rows(
         }
         _ => Vec::new(),
     }))
+}
+
+/// The local rows each prepared guest-window export under `grant` listed (a
+/// Connect delivery or a guest document), read in `txn`. A prepared receipt
+/// claims no delivery: it says this vault released the row to that grant's
+/// peer, which bounds what a delete may tell the peer
+/// (CROSS-VAULT-DELETE-NEVER-ADMITTED). A receipt whose write failed and
+/// waits in memory for its retry is not here.
+#[cfg(feature = "sync")]
+pub(crate) fn guest_window_rows_prepared_for_grant(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    grant: &EntityId,
+) -> Result<BTreeSet<EntityId>> {
+    let grant = grant.to_hex();
+    let mut rows = BTreeSet::new();
+    for row in EXPORT_TRAVEL.iter_from(&vault.store, txn, &[])? {
+        if let ExportTarget::GuestWindow {
+            grant_ref,
+            source_rows,
+            ..
+        } = row?.1.target
+            && grant_ref == grant
+        {
+            rows.extend(source_rows);
+        }
+    }
+    Ok(rows)
 }
 
 /// The born-with text `choice` lets travel with `entity`, read in the door's

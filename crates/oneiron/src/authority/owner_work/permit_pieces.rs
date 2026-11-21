@@ -37,9 +37,8 @@ use crate::{TimeRange, Vault};
 const PIECE_NOT_FOLDED: &str =
     "a custody request's permit piece did not fold here; nothing was written";
 
-/// The key a kept piece is found under: its signer, its commitment and its
-/// place.
-pub(super) type PermitPieceKey = ([u8; 32], CustodyPermitPieces, u32);
+#[doc(hidden)]
+pub(super) use oneiron_records::authority::owner_work::permit_pieces::PermitPieceKey;
 
 /// The signer of a piece of the owner's kit push: an Ed25519 key whose
 /// sequence moves on, as the kit request's own (`kit_custody`); the request
@@ -101,12 +100,12 @@ pub(super) fn apply_permit_piece(
 /// Keeps `piece` under `key`, or the lesser of it and the piece kept there.
 /// True when the piece kept under `key` changed.
 pub(super) fn keep_piece(
-    pieces: &mut BTreeMap<PermitPieceKey, Arc<CustodyPermitPiece>>,
+    pieces: &mut PersistentMap<PermitPieceKey, Arc<CustodyPermitPiece>>,
     key: PermitPieceKey,
     piece: &Arc<CustodyPermitPiece>,
 ) -> bool {
     match pieces.entry(key) {
-        std::collections::btree_map::Entry::Occupied(mut held) => {
+        oneiron_persistent_collections::Entry::Occupied(mut held) => {
             if **piece < **held.get() {
                 held.insert(Arc::clone(piece));
                 true
@@ -114,7 +113,7 @@ pub(super) fn keep_piece(
                 false
             }
         }
-        std::collections::btree_map::Entry::Vacant(slot) => {
+        oneiron_persistent_collections::Entry::Vacant(slot) => {
             slot.insert(Arc::clone(piece));
             true
         }
@@ -357,7 +356,11 @@ impl Vault {
     /// commitment in place of its permits, and the fold read back is
     /// returned, for the request's sequence and parents. `None` when the
     /// permits ride inline, or when `fold`'s heads are more than one entry
-    /// names: today's path and bytes, nothing written.
+    /// names: today's path and bytes, nothing written. `proof` is the owner
+    /// key's proof the enclosing request carries, when it is the owner's own
+    /// write ([`Vault::owner_act_proof_signer`]): each piece carries it too,
+    /// so a piece never waits at another install's owner reserve while its
+    /// request lands. A kit push passes `None`.
     ///
     /// # Errors
     /// [`crate::error::RecordError::AuthorityRefused`] when a piece did not
@@ -368,6 +371,7 @@ impl Vault {
         txn: &mut heed::RwTxn<'_>,
         fold: &AuthorityFold,
         (carrier, signing): (Option<EntityId>, &SigningKey),
+        proof: Option<&crate::authority::OwnerProofSigner<'_>>,
         work: &mut OwnerWorkBody,
     ) -> Result<Option<AuthorityView>> {
         let OwnerWorkBody::Custody {
@@ -416,7 +420,8 @@ impl Vault {
                 permits: CustodyRecipientPermits::from(run),
             };
             let op = AuthorityOp::CustodyPermitPiece(piece);
-            let entry = sign_side_entry(fold, signing, seq, parents, op, now)?;
+            let entry =
+                sign_side_entry_with_owner_proof(fold, signing, seq, parents, op, now, proof)?;
             let hash = authority_entry_hash(&entry)?;
             seq = seq.checked_add(1).ok_or_else(invalid_authority)?;
             first = first.checked_add(carried).ok_or_else(invalid_authority)?;

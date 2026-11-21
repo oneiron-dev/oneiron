@@ -3,6 +3,7 @@
 //! The code_mode_verbs root defines `LadderDecider`; `oneiron::llm::decision` owns the rungs.
 
 use super::*;
+use oneiron::llm::decision::Reversibility;
 
 /// A strict run's step no rung answered, with no model asked (CUA E2
 /// strict denial, CALLS row): it goes up at zero tokens, its decision a
@@ -125,7 +126,7 @@ impl RoutineDecider for LadderDecider {
             // No model: the ladder stops at its rule rung.
             ceiling: ask.no_model.then_some(DecisionRung::Rule),
             // A step acts on a live page: at a cut it abstains and goes up.
-            reversibility: AiVerdictReversibility::OutboundEffect,
+            reversibility: Reversibility::OutboundEffect,
             deadline_ms: None,
             routine: true,
             image: ask.image.map(|(image, _)| image.to_owned()),

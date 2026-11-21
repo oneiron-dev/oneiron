@@ -9,13 +9,23 @@
 //! admitted as the `/v1/llm/decision_read` probe's are: a
 //! `limits.decision_reads` turn, then a run of its own with its receipts. The
 //! System One seat fills its rung when `[models.decisions.system_one]` binds
-//! it, and the big model fills the Big rung when `[models.decisions.big]`
-//! names its seat
+//! it, and the precision band's seat, on the same wire, fills the Precision
+//! rung when `[models.decisions.precision]` binds it: a unit the head leaves
+//! in the band moves there. The big model fills the Big rung when
+//! `[models.decisions.big]` names its seat
 //! ([`crate::big_rung`]). The Local-vision seat fills the Local rung when
 //! `[models.roles.local_vision]` binds one: it answers Box, Point and image
 //! questions and abstains, unspent, on a call with no image. The last rung is
 //! the vault owner's ask queue ([`DecisionAsks`]): durable, answered at
 //! `/v1/owner/decisions`.
+//!
+//! The head, precision and escalation rungs are the `decision_head`,
+//! `decision_band` and `decision_escalation` roles of the vault's model
+//! manifest ([`ManifestBoundRung`]). A manifest that binds one of them to a
+//! model other than its rung's, or to a route narrower than its rung's calls
+//! take (a remote seat under an on-device pin), holds that rung: it is sent
+//! nothing, it abstains unspent, and the ladder steps on. A role the manifest
+//! leaves unbound keeps its rung.
 //!
 //! Every model rung blocks on the server's runtime: run a ladder call on a
 //! blocking thread.
@@ -35,17 +45,18 @@ use oneiron::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionAsks, DecisionBand, DecisionBandPolicy, DecisionCall,
     DecisionDial, DecisionLadder, DecisionPack, DecisionProvider, DecisionQuestion,
     DecisionReadGate, DecisionReadProvider, DecisionRung, GatedRead, HeldLadder, HostRuleProvider,
-    ModelDecisionProvider, PersonThreshold, ProviderCapability, ProviderDecision, ProviderPin,
-    RemoteDecisionSeat, SeatPhase, SeatRequest, ThinkThreshold,
+    ManifestBoundRung, ModelDecisionProvider, PersonThreshold, ProviderCapability,
+    ProviderDecision, ProviderPin, RemoteDecisionSeat, SeatPhase, SeatRequest, ThinkThreshold,
 };
+use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::{
     CallOutcome, HostAccount, KeyCustody, LeaseUnit, OfferRoute, PaidConnector, Payer,
     RunReceiptSink,
 };
 use oneiron::llm::seat::{SeatCandidate, SeatDecisions, SeatNotes, SeatTask};
 use oneiron::llm::{
-    AutoCheckCandidate, AutoCheckDecisions, AutoCheckNotes, BoundedAutoChecker, LabelReadModel,
-    ModelId, ReasoningEffort,
+    AutoCheckCandidate, AutoCheckDecisions, AutoCheckNotes, AutoCheckWorldHold, BoundedAutoChecker,
+    LabelReadModel, ModelId, ReasoningEffort,
 };
 use oneiron::memory::ImagePick;
 use oneiron::policy_model::PolicyDecisions;
@@ -76,12 +87,19 @@ mod claim_merge;
 mod doors;
 mod native_capture;
 mod notes;
+#[cfg(oneiron_test_support)]
+mod question_head_door;
 mod refresh;
+#[cfg(oneiron_test_support)]
+mod system_one_door;
 
 pub(crate) use adapters::description_notes;
 pub use big_binding::BigRung;
 pub(crate) use notes::ReviewStateNotes;
 pub(crate) use refresh::{spawn_person_threshold, spawn_person_threshold_admitted};
+#[cfg(oneiron_test_support)]
+#[doc(hidden)]
+pub use system_one_door::{SystemOneRungForTest, system_one_rung_for_test};
 
 /// The rule table's identity on this host: the vault's host rule rows, which the owner's
 /// reasons write ([`oneiron::llm::decision::HostRule`]).
@@ -202,7 +220,9 @@ pub struct DecisionHost {
     /// row's), so an older read never lands last.
     person_refresh: Arc<std::sync::Mutex<()>>,
     auto_checker: Option<BoundedAutoChecker>,
-    auto_check: Option<(String, EntityId)>,
+    /// The auto check's wording, its principal, and the judge of each
+    /// candidate's world: the vault's world settings.
+    auto_check: Option<(String, EntityId, Arc<dyn AutoCheckWorldHold>)>,
     image_pick: Option<ImagePickSettings>,
     booking_parse: Option<BookingParseSettings>,
     connector_slate: Option<ConnectorSlateSettings>,
@@ -210,7 +230,8 @@ pub struct DecisionHost {
     /// `[models.decisions].wire_health`: the wire health question's wording.
     wire_health: Option<String>,
     /// The owner's explicit opt-in to send unit text off the host,
-    /// `[models.decisions.system_one].remote_opt_in`.
+    /// `remote_opt_in` of `[models.decisions.system_one]` or
+    /// `[models.decisions.precision]`, which config load holds equal.
     remote_opt_in: bool,
     /// The big model on the Big rung, kept so one named model can be asked
     /// as it asks ([`Self::ladder_for_model`]).
@@ -244,6 +265,7 @@ impl DecisionHost {
                 rule,
                 local: None,
                 system_one: None,
+                precision: None,
                 escalation: None,
                 big: None,
                 human: asks.clone(),
@@ -253,7 +275,7 @@ impl DecisionHost {
                 presence: None,
             },
             asks,
-            bands: DecisionBandPolicy::default(),
+            bands: learned_bands(vault),
             person_start: None,
             think_start: None,
             person_refresh: Arc::default(),
@@ -293,7 +315,9 @@ impl DecisionHost {
         self.ladder.paired = None;
         self.ladder.person = None;
         self.ladder.presence = None;
-        self.bands = DecisionBandPolicy::default();
+        // The rebuilt bands start from the vault's learned rows (promise-dura-10), with no
+        // threshold row until the recipe names one.
+        self.bands = learned_bands(vault);
         self.person_start = None;
         self.think_start = None;
         let Some((door, meter)) = read else {
@@ -318,7 +342,8 @@ impl DecisionHost {
                 None
             }
         };
-        let mut bands = DecisionBandPolicy::default();
+        // The learned rows loaded above, which the threshold rows join.
+        let mut bands = std::mem::take(&mut self.bands);
         // Q2's threshold home: a paired reading at the row climbs a rung. An
         // accepted Coach row replaces this start value with a higher version
         // ([`Self::refresh_think_threshold`], FIX 2437).
@@ -374,7 +399,10 @@ impl DecisionHost {
             door.connector().locality == ModelLocality::ThirdParty,
             vault,
         ) {
-            Ok(read) => self.ladder.escalation = Some(Arc::new(read)),
+            Ok(read) => {
+                self.ladder.escalation =
+                    role_bound(vault, ModelRole::DecisionEscalation, Arc::new(read));
+            }
             Err(error) => {
                 tracing::warn!(%error, "the house model's decision read cannot fill the escalation rung");
             }
@@ -464,6 +492,7 @@ impl DecisionHost {
             return self;
         };
         match SystemOneRung::bind(
+            DecisionRung::SystemOne,
             settings,
             Arc::clone(models),
             default_units,
@@ -472,8 +501,45 @@ impl DecisionHost {
             self.broker.as_ref(),
             vault,
         ) {
-            Ok(rung) => self.ladder.system_one = Some(Arc::new(rung)),
+            Ok(rung) => {
+                self.ladder.system_one = role_bound(vault, ModelRole::DecisionHead, Arc::new(rung));
+            }
             Err(error) => tracing::warn!(%error, "the System One seat cannot fill its rung"),
+        }
+        self
+    }
+
+    /// The precision band's seat on its rung, on the System One wire, its
+    /// measurements sent on `runtime`. Its `remote_opt_in` joins the host's,
+    /// which config load holds equal to the System One seat's.
+    fn with_precision(
+        mut self,
+        settings: Option<&SystemOneSettings>,
+        models: &Arc<crate::models::ModelRuntime>,
+        default_units: u64,
+        posture: HostingPrivacyPosture,
+        runtime: tokio::runtime::Handle,
+        vault: &Arc<Vault>,
+    ) -> Self {
+        self.ladder.precision = None;
+        let Some(settings) = settings else {
+            return self;
+        };
+        self.remote_opt_in |= settings.remote_opt_in;
+        match SystemOneRung::bind(
+            DecisionRung::Precision,
+            settings,
+            Arc::clone(models),
+            default_units,
+            posture,
+            runtime,
+            self.broker.as_ref(),
+            vault,
+        ) {
+            Ok(rung) => {
+                self.ladder.precision = role_bound(vault, ModelRole::DecisionBand, Arc::new(rung));
+            }
+            Err(error) => tracing::warn!(%error, "the precision seat cannot fill its rung"),
         }
         self
     }
@@ -559,10 +625,7 @@ impl DecisionHost {
     /// routed to that role's seat. Every other slot is empty and no person
     /// is asked: run it with [`MODEL_DIAL`]. Fails when `[models.decisions.big]`
     /// fills no Big rung, or no rung serves the role's seat.
-    pub fn ladder_for_role(
-        &self,
-        role: oneiron::llm::manifest::ModelRole,
-    ) -> anyhow::Result<HeldLadder> {
+    pub fn ladder_for_role(&self, role: ModelRole) -> anyhow::Result<HeldLadder> {
         let big = self
             .big_model
             .as_ref()
@@ -577,26 +640,41 @@ impl DecisionHost {
     }
 
     /// The write gate's auto check through this ladder, worded `wording`,
-    /// for `principal`.
-    fn with_auto_check(mut self, wording: Option<&str>, principal: Option<EntityId>) -> Self {
-        self.auto_check = wording
-            .zip(principal)
-            .map(|(wording, principal)| (wording.to_owned(), principal));
+    /// for `principal`. A candidate whose world `vault`'s world settings keep
+    /// on this device is asked only of the rungs that run on this device
+    /// (DEC-0005 fix 6); with none, the write fails closed.
+    fn with_auto_check(
+        mut self,
+        wording: Option<&str>,
+        principal: Option<EntityId>,
+        vault: &Arc<Vault>,
+    ) -> Self {
+        self.auto_check = wording.zip(principal).map(|(wording, principal)| {
+            (
+                wording.to_owned(),
+                principal,
+                Arc::clone(vault) as Arc<dyn AutoCheckWorldHold>,
+            )
+        });
         self.rebuild_auto_check()
     }
 
     fn rebuild_auto_check(mut self) -> Self {
-        self.auto_checker = self.auto_check.as_ref().map(|(wording, principal)| {
-            BoundedAutoChecker::new(AutoCheckDecisions {
-                ladder: self.ladder.clone(),
-                principal: *principal,
-                dial: self.dial(DecisionRung::Big),
-                bands: self.bands.clone(),
-                wording: wording.clone(),
-                notes: Arc::new(self.notes.clone()),
-                calibrated: None,
-            })
-        });
+        self.auto_checker = self
+            .auto_check
+            .as_ref()
+            .map(|(wording, principal, world_hold)| {
+                BoundedAutoChecker::new(AutoCheckDecisions {
+                    ladder: self.ladder.clone(),
+                    principal: *principal,
+                    dial: self.dial(DecisionRung::Big),
+                    bands: self.bands.clone(),
+                    wording: wording.clone(),
+                    notes: Arc::new(self.notes.clone()),
+                    calibrated: None,
+                    world_hold: Some(Arc::clone(world_hold)),
+                })
+            });
         self
     }
 
@@ -660,12 +738,43 @@ impl DecisionHost {
     }
 }
 
+/// `rung` held to the vault manifest's binding for `role`, the decision role
+/// it fills ([`ManifestBoundRung`]).
+fn role_bound(
+    vault: &Arc<Vault>,
+    role: ModelRole,
+    rung: Arc<dyn DecisionProvider>,
+) -> Option<Arc<dyn DecisionProvider>> {
+    match ManifestBoundRung::new(Arc::clone(vault), role, rung) {
+        Ok(bound) => Some(Arc::new(bound)),
+        Err(error) => {
+            tracing::warn!(%error, ?role, "the decision role's rung cannot be held to the vault's manifest");
+            None
+        }
+    }
+}
+
 fn pin(rung: DecisionRung, model: &str, version: &str) -> ProviderPin {
     ProviderPin {
         rung,
         model: model.to_owned(),
         version: version.to_owned(),
     }
+}
+
+/// A band policy holding every learned band `vault` keeps (ARCH-0076 promise-dura-10: a
+/// learned band's mode and version stay in effect after a restart), and no threshold row.
+/// Rows that do not read leave it empty, as a vault with none, and the log says so.
+fn learned_bands(vault: &Vault) -> DecisionBandPolicy {
+    let bands = DecisionBandPolicy::default();
+    match vault.learned_decision_bands() {
+        Ok(rows) => bands.replace_learned_bands(rows),
+        Err(error) => tracing::error!(
+            %error,
+            "the learned decision bands did not load; every band reads its seed in shadow"
+        ),
+    }
+    bands
 }
 
 /// What admits each house read on the ladder as the `/v1/llm/decision_read`
@@ -743,8 +852,10 @@ impl HouseRead {
 /// `key_secret` seat reads its key at the vault's custody door for each
 /// call, through the credential broker.
 struct SystemOneRung {
+    /// What its refusals call it: the System One seat or the precision seat.
+    label: &'static str,
     vault: Arc<Vault>,
-    seat: Arc<oneiron_llm_systemone::SystemOneSeat>,
+    seat: Arc<oneiron_llm::systemone::SystemOneSeat>,
     guard: BudgetGuard,
     /// The host account and receipt sink for calls without a caller's run (FIX 3795).
     models: Arc<crate::models::ModelRuntime>,
@@ -757,7 +868,14 @@ struct SystemOneRung {
 }
 
 impl SystemOneRung {
+    /// The seat `settings` names, pinned on `rung`: `SystemOne` for the head,
+    /// `Precision` for the band. Each keeps its own meter and connector.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the rung joins the seat's settings and the host's runtime"
+    )]
     fn bind(
+        rung: DecisionRung,
         settings: &SystemOneSettings,
         models: Arc<crate::models::ModelRuntime>,
         default_units: u64,
@@ -771,7 +889,7 @@ impl SystemOneRung {
         let seat = match (&settings.key_env, &settings.key_secret) {
             (Some(env), _) => {
                 let bearer = std::env::var(env).map_err(|_| anyhow::anyhow!("{env} is not set"))?;
-                oneiron_llm_systemone::SystemOneSeat::new(endpoint, bearer, model, version)
+                oneiron_llm::systemone::SystemOneSeat::new(endpoint, bearer, model, version)
             }
             (None, Some(secret)) => {
                 let broker = broker.ok_or_else(|| {
@@ -779,7 +897,7 @@ impl SystemOneRung {
                         "its key_secret needs the vault's credential broker, and none was opened"
                     )
                 })?;
-                oneiron_llm_systemone::SystemOneSeat::with_transport(
+                oneiron_llm::systemone::SystemOneSeat::with_transport(
                     endpoint,
                     model,
                     version,
@@ -788,7 +906,14 @@ impl SystemOneRung {
             }
             (None, None) => anyhow::bail!("it names no key_env or key_secret"),
         }
-        .map_err(|error| anyhow::anyhow!("invalid System One seat: {error}"))?;
+        .and_then(|seat| seat.at_rung(rung))
+        .map_err(|error| anyhow::anyhow!("invalid System One seat: {error}"))?
+        .with_native_budget(settings.native_budget);
+        let (label, meter) = if rung == DecisionRung::Precision {
+            ("precision", "precision")
+        } else {
+            ("system one", "system-one")
+        };
         // A bearer held from bind sits in this process's memory; a broker key stays
         // behind the vault's custody door.
         let custody = if settings.key_env.is_some() {
@@ -797,8 +922,8 @@ impl SystemOneRung {
             KeyCustody::T0
         };
         let connector = PaidConnector {
-            connector: "system-one".to_owned(),
-            route: OfferRoute::new("system-one", "system-one")?,
+            connector: meter.to_owned(),
+            route: OfferRoute::new(meter, meter)?,
             locality: ModelLocality::ThirdParty,
             payer: Payer::CustomerKey,
             credential_binding: None,
@@ -809,10 +934,11 @@ impl SystemOneRung {
             rates: Vec::new(),
         };
         Ok(Self {
+            label,
             vault: Arc::clone(vault),
             seat: Arc::new(seat),
             guard: BudgetGuard::new(
-                "system-one",
+                meter,
                 settings.budget_units.unwrap_or(default_units),
                 BudgetExhaustionPolicy::Suspend,
             ),
