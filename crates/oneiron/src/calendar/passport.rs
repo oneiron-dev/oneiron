@@ -294,23 +294,6 @@ pub fn live_passport_for(
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
         live_passports_for_event_in_txn(vault, &txn, event_ref)?
     };
-    live_passport_keyed(vault, event_ref, passports, system, uid)
-}
-
-/// The passport of `passports`, the live ones of `event_ref`, keyed exactly
-/// `(system, uid)` as the vault reads it now ([`passport_keyed`]), for a
-/// scan that read them already.
-///
-/// # Errors
-///
-/// As [`live_passport_for`].
-pub(in crate::calendar) fn live_passport_keyed(
-    vault: &Vault,
-    event_ref: &EntityId,
-    passports: Vec<(EntityId, CalendarPassportValue)>,
-    system: &str,
-    uid: &str,
-) -> Result<Option<(EntityId, CalendarPassportValue)>, CalendarError> {
     let base_known = || vault.known_values_now();
     let known = CompareKnown::new(Some(&base_known));
     passport_keyed(
@@ -322,6 +305,35 @@ pub(in crate::calendar) fn live_passport_keyed(
             MaskedKey::read_in_txn(vault, &txn, event_ref, system, uid)
         },
         &known,
+    )
+}
+
+/// The passport of `passports`, the live ones of `event_ref`, keyed exactly
+/// `(system, uid)` as the vault reads it now ([`passport_keyed`]), for a
+/// scan over many EVENTs that read their passports, the calendar systems
+/// (`systems`) and the values custody holds (`known`) once.
+///
+/// # Errors
+///
+/// As [`live_passport_for`].
+pub(in crate::calendar) fn live_passport_keyed(
+    vault: &Vault,
+    event_ref: &EntityId,
+    passports: Vec<(EntityId, CalendarPassportValue)>,
+    system: &str,
+    uid: &str,
+    systems: &CalendarSystems,
+    known: &CompareKnown<'_>,
+) -> Result<Option<(EntityId, CalendarPassportValue)>, CalendarError> {
+    passport_keyed(
+        passports,
+        system,
+        uid,
+        || {
+            let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+            MaskedKey::read_pins_in_txn(vault, &txn, event_ref, system, uid, systems)
+        },
+        known,
     )
 }
 

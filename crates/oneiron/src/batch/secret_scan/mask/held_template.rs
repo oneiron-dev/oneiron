@@ -62,9 +62,7 @@ pub(crate) fn held_row_meets(
     if held == offered {
         return Ok(true);
     }
-    let mut records = BTreeSet::new();
-    named_records(held, &mut records);
-    records.retain(|handle| known.holds_handle(handle));
+    let records = known_records(held, known);
     if records.is_empty() {
         return Ok(false);
     }
@@ -75,6 +73,22 @@ pub(crate) fn held_row_meets(
         reads: MAX_SLOT_READS,
     }
     .meets(held, offered, None)
+}
+
+/// Whether `held`, a live row the side-row wall stored, holds a handle that
+/// names a record custody knows (`known`): a row that holds none meets an
+/// offer only as written ([`held_row_meets`]).
+pub(crate) fn names_known_record(held: &Value, known: &KnownValues) -> bool {
+    !known_records(held, known).is_empty()
+}
+
+/// Each record a handle in `held` names that custody knows (`known`), by its
+/// bare handle.
+fn known_records(held: &Value, known: &KnownValues) -> BTreeSet<String> {
+    let mut records = BTreeSet::new();
+    named_records(held, &mut records);
+    records.retain(|handle| known.holds_handle(handle));
+    records
 }
 
 /// One compare of a held row with an offer.

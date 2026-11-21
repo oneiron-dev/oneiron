@@ -21,8 +21,8 @@ use crate::calendar::claims::{
 };
 use crate::calendar::ics::ParsedVEvent;
 use crate::calendar::passport::{
-    CalendarSystems, PassportDecision, all_live_inbound_passports_absent, classify_passport,
-    index_passport_uid, live_passports_for_event, supersede_calendar_passport,
+    PassportDecision, all_live_inbound_passports_absent, classify_passport, index_passport_uid,
+    live_passports_for_event, supersede_calendar_passport,
 };
 use crate::calendar::safeguard::{CalendarBodyScreener, CalendarInboundBody, screen_then_claim};
 use crate::claim::ClaimLifecycleStatus;
@@ -193,17 +193,7 @@ impl PollAdmission<'_> {
         absence_basis: CalendarStatusBasis,
     ) -> Result<(), CalendarError> {
         let vault = self.vault;
-        let source = absence_sweep::SweepSource {
-            vault,
-            system: self.system,
-            systems: CalendarSystems::read(vault)?,
-            only_uids,
-            present: feed
-                .events
-                .iter()
-                .map(|event| (event.uid.as_str(), event.properties.recurrence_id_utc))
-                .collect(),
-        };
+        let source = absence_sweep::SweepSource::read(vault, self.system, only_uids, feed)?;
         let base_known = || vault.known_values_now();
         let known = CompareKnown::new(Some(&base_known));
         for event_ref in list_event_ids(vault)? {

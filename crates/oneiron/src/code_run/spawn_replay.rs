@@ -30,7 +30,7 @@ use super::support::{
 };
 use super::types::{SelfAgentSpawnResult, SelfDispatchOutcome, SelfEffect};
 use crate::attempt_queue::AttemptId;
-use crate::batch::secret_scan::{admitted_from_known, admitted_from_plan};
+use crate::batch::secret_scan::{admitted_from_known, admitted_from_plan, names_known_record};
 use crate::store::known_value_index::KnownValues;
 use crate::team::SpawnErasure;
 use crate::{EntityId, Result};
@@ -120,6 +120,25 @@ impl<'a> CompareKnown<'a> {
             Some(_) => admitted_from_known(held, offered, || self.get()),
             None => admitted_from_plan(held, offered),
         }
+    }
+
+    /// Whether [`Self::admits`] reads `held` as written only, so that it
+    /// meets no offer but itself: with a read in reach, when custody knows
+    /// no value or `held` holds no handle that names a record custody knows
+    /// ([`names_known_record`]). With no read in reach the plan reads each
+    /// handle as its one stand-in, so the answer is `false` there: a caller
+    /// then compares each offer.
+    ///
+    /// # Errors
+    ///
+    /// The read's own.
+    pub(crate) fn reads_as_written_only(&self, held: &Value) -> Result<bool> {
+        if self.read.is_none() {
+            return Ok(false);
+        }
+        Ok(self
+            .get()?
+            .is_none_or(|known| !names_known_record(held, &known)))
     }
 }
 

@@ -7,6 +7,9 @@
 //! absence sweep and its written-only tombstone check
 //! (CAL-MASKED-SYSTEM-LITERAL-COMPARES-OUTSIDE-KEYED-LOOKUP).
 
+use std::borrow::Cow;
+use std::collections::BTreeSet;
+
 use super::{
     CalendarError, CalendarPassportValue, exception_head_counts_for_ingest, passport_uid_is,
     passport_uid_pinned_is, uid_pinned_to_in_txn,
@@ -27,7 +30,7 @@ use crate::vault::Vault;
 pub(super) struct MaskedKey<'k> {
     system: &'k str,
     uid: &'k str,
-    systems: CalendarSystems,
+    systems: Cow<'k, CalendarSystems>,
     /// Whether `uid` is pinned to the EVENT whose passports are read.
     uid_pinned: bool,
 }
@@ -44,26 +47,49 @@ impl<'k> MaskedKey<'k> {
         Ok(Self {
             system,
             uid,
-            systems: CalendarSystems::read_in_txn(vault, txn)?,
+            systems: Cow::Owned(CalendarSystems::read_in_txn(vault, txn)?),
             uid_pinned: uid_pinned_to_event_in_txn(vault, txn, event_ref, uid)?,
         })
     }
 
-    /// Whether `value`, a passport on the EVENT, carries the key: its system
-    /// and its UID each as written or, where pinned, as custody reads it.
+    /// [`Self::read_in_txn`] for a scan over many EVENTs that read the
+    /// calendar systems once (`systems`).
+    pub(super) fn read_pins_in_txn(
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        event_ref: &EntityId,
+        system: &'k str,
+        uid: &'k str,
+        systems: &'k CalendarSystems,
+    ) -> Result<Self, CalendarError> {
+        Ok(Self {
+            system,
+            uid,
+            systems: Cow::Borrowed(systems),
+            uid_pinned: uid_pinned_to_event_in_txn(vault, txn, event_ref, uid)?,
+        })
+    }
+
+    /// Whether `value`, a passport on the EVENT, carries the key: its UID
+    /// and its system each as written or, where pinned, as custody reads it.
+    /// The UID is read first: unpinned, it is a compare as written that
+    /// needs no custody read.
     pub(super) fn carried_by(
         &self,
         value: &CalendarPassportValue,
         known: &CompareKnown<'_>,
     ) -> Result<bool, CalendarError> {
-        Ok(self.systems.carries(&value.system, self.system, known)?
-            && passport_uid_pinned_is(&value.uid, self.uid, self.uid_pinned, known)?)
+        Ok(
+            passport_uid_pinned_is(&value.uid, self.uid, self.uid_pinned, known)?
+                && self.systems.carries(&value.system, self.system, known)?,
+        )
     }
 }
 
 /// The vault's calendar systems ([`calendar_systems_in_txn`]), read once,
 /// which a system name a passport stored is read against
 /// ([`Self::carries`]).
+#[derive(Clone)]
 pub(in crate::calendar) struct CalendarSystems(Vec<String>);
 
 impl CalendarSystems {
@@ -109,7 +135,9 @@ impl CalendarSystems {
 /// `uids`: as written, or as custody reads it where `event_ref` pins that
 /// UID ([`uid_pinned_to_event_in_txn`]), as the vault reads it now. A handle
 /// meets every value its custody record ever held, so only the pin makes one
-/// of `uids` the passport's own.
+/// of `uids` the passport's own. A stored UID that holds no handle custody
+/// knows meets only itself ([`CompareKnown::reads_as_written_only`]), so a
+/// sweep compares each of `uids` with a masked passport's UID alone.
 ///
 /// # Errors
 ///
@@ -119,11 +147,14 @@ pub(in crate::calendar) fn passport_uid_among(
     vault: &Vault,
     event_ref: &EntityId,
     held: &str,
-    uids: &[&str],
+    uids: &BTreeSet<&str>,
     known: &CompareKnown<'_>,
 ) -> Result<bool, CalendarError> {
-    if uids.contains(&held) {
+    if uids.contains(held) {
         return Ok(true);
+    }
+    if uids.is_empty() || known.reads_as_written_only(&rmpv::Value::from(held))? {
+        return Ok(false);
     }
     let mut carried = Vec::new();
     for uid in uids {
