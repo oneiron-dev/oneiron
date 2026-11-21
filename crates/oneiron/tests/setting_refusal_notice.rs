@@ -1851,7 +1851,7 @@ fn seat_setup_of_one_calendar(seat_ref: &str, system: &str) -> Value {
 fn a_pick_from_one_calendars_notice_names_no_row_of_another_calendar() {
     let fx = Fixture::rooted();
     let (work, home) = (item_slot(SEAT, "work"), item_slot(SEAT, "home"));
-    let frontier = setting_frontier_of(&fx.vault, &[work, home]).expect("frontier");
+    let frontier = setting_frontier_of(&fx.vault, &[work.clone(), home.clone()]).expect("frontier");
     fx.owner_sets_item(FEED, "work-cal", feed_config("work-cal"));
     fx.owner_sets_item(FEED, "home-cal", feed_config("home-cal"));
 
