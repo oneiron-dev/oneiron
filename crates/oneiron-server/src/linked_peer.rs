@@ -38,7 +38,7 @@
 //! the slip and the machine they name for the next unlink.
 
 use std::net::{IpAddr, Ipv4Addr};
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::{MutexGuard, PoisonError};
 
 use oneiron::authority::{
     ActSurface, FoldedMachine, LinkedPeer, LinkedPeerIssued, MachineRole,
@@ -61,13 +61,14 @@ pub(crate) const PEER_ERASURE: &str = "The control plane erases the hosted peer'
 /// none of its slips.
 const KEEP_NO_SLIP: [u8; 32] = [0; 32];
 
-/// One link act at a time in this process: a link's control-plane request
+/// One link act at a time on this server: a link's control-plane request
 /// and an unlink never interleave, so neither acts on a row the other made
 /// or took half way (a late answer to a link an unlink already took, say).
-static LINK_ACTS: Mutex<()> = Mutex::new(());
-
-fn link_acts() -> MutexGuard<'static, ()> {
-    LINK_ACTS.lock().unwrap_or_else(PoisonError::into_inner)
+fn link_acts(server: &SyncServer) -> MutexGuard<'_, ()> {
+    server
+        .link_acts
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
 }
 
 /// The vault's linked-peer row as the owner reads it.
@@ -258,7 +259,7 @@ pub(crate) fn link(
     control: Result<&dyn PeerControl, String>,
     mesh_listener: bool,
 ) -> oneiron::Result<Result<LinkedPeerView, LinkRefusal>> {
-    let _acts = link_acts();
+    let _acts = link_acts(server);
     let vault = server.vault();
     if vault.linked_peer_as_owner(owner)?.is_some() {
         return Ok(Err(LinkRefusal::AlreadyLinked));
@@ -393,7 +394,7 @@ pub(crate) fn unlink(
     surface: ActSurface,
     control: Result<&dyn PeerControl, String>,
 ) -> oneiron::Result<Option<UnlinkReceipt>> {
-    let _acts = link_acts();
+    let _acts = link_acts(server);
     let vault = server.vault();
     let Some(peer) = vault.unlink_linked_peer_as_owner(owner)? else {
         return Ok(None);

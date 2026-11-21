@@ -398,6 +398,7 @@ impl SyncServer {
             broadcast_sessions: Default::default(),
             next_conn_id: AtomicU32::new(1),
             lease_registrar: Mutex::new(()),
+            link_acts: std::sync::Mutex::new(()),
             reassert_manager,
             _reactive_tee: reactive_tee,
             lifecycle_session_id: NEXT_LIFECYCLE_SESSION_ID.fetch_add(1, Ordering::Relaxed),
