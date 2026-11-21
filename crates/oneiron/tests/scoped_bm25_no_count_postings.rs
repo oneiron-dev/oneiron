@@ -1,5 +1,3 @@
-#![cfg(oneiron_test_support)]
-
 //! [SCOPED-BM25-DF-COUNTS-NON-WORLD-REFUSED-POSTINGS]: rows a scoped text
 //! search refuses without a count contribute no BM25 document frequency.
 //! Records and credential-facet refusals are opaque; a cross-axis Grant
@@ -8,6 +6,7 @@
 //!
 //! Run with `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p
 //! oneiron --all-features --test scoped_bm25_no_count_postings`.
+#![cfg(oneiron_test_support)]
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -73,7 +72,12 @@ fn fixture() -> Fixture {
 fn second_facet(fixture: &Fixture) -> EntityId {
     fixture
         .vault
-        .create_facet(&fixture.owner_proof, fixture.owner, "Other facet", OCCURRED_AT)
+        .create_facet(
+            &fixture.owner_proof,
+            fixture.owner,
+            "Other facet",
+            OCCURRED_AT,
+        )
         .expect("owner creates F2")
 }
 
@@ -175,7 +179,10 @@ fn put_text_claim(fixture: &Fixture, facet: EntityId, text: &str) -> EntityId {
         ),
         "FIXTURE: every claim lands surfaceable, never Proposed"
     );
-    assert_eq!(landed.scope_facet, facet, "FIXTURE: the claim's stored facet");
+    assert_eq!(
+        landed.scope_facet, facet,
+        "FIXTURE: the claim's stored facet"
+    );
     assert_eq!(
         vault
             .targets(&id, EdgeKind::FacetOf, None)
@@ -222,7 +229,10 @@ fn assert_indexed(fixture: &Fixture, rare: EntityId, refused: &BTreeSet<EntityId
     let mut expected = refused.clone();
     expected.insert(rare);
     assert_eq!(
-        owner_found.iter().map(|hit| hit.id).collect::<BTreeSet<_>>(),
+        owner_found
+            .iter()
+            .map(|hit| hit.id)
+            .collect::<BTreeSet<_>>(),
         expected,
         "FIXTURE: the refused rows themselves reached the text index"
     );
