@@ -1,23 +1,24 @@
 // Integration-test helpers (non-#[test] fns) are not covered by allow-unwrap-in-tests.
 #![allow(clippy::unwrap_used)]
 #![cfg(feature = "test-support")]
-//! Campaign copy review (ARCH-0059 #copy-review, Top-15 item 13).
+//! Campaign copy review (ARCH-0059 #copy-review, Top-15 item 13; lead ruling
+//! COPY-REVIEW-JUDGE-BY-DEFAULT = B, 21 Nov).
 //!
-//! A campaign that names a voice guide (a NOTE) or pins human review has its
-//! copy reviewed before it sends. The host asks a judge model once per body
-//! version and stores the verdict; the Gate holds the campaign leg whose copy
-//! failed, or has no passing verdict, with `gate.pending.campaign_copy_review`.
+//! Every campaign's copy is reviewed before it sends: against the voice guide
+//! NOTE the campaign names, else the vault's house voice guide; a campaign
+//! that pins human review holds every send for the owner. The host asks a
+//! judge model once per body version and stores the verdict; the Gate holds
+//! the campaign leg whose copy failed, or has no passing verdict, with
+//! `gate.pending.campaign_copy_review`. Only the owner's per-campaign
+//! `campaign.copy_review.skip` takes a campaign out of copy review.
 //!
 //! Every test drives one real campaign leg through the public door
 //! (`Vault::drive_enrollment_outbound_leg`) on an unseeded vault with no
-//! policy manifest. There the Gate already holds every send for external-effect
-//! authority, so the leg answers `AwaitingApproval` in every case; what each
-//! test reads is WHY it holds: the reason codes and receipt reasons the held
-//! send's owner ask states.
-//!
-//! The campaign is created through the JSON door (`self.campaign.create`),
-//! so the tests outside `mod judged` build on a main that has no copy review:
-//! there the door ignores the new keys and the send holds for authority only.
+//! policy manifest, whose first campaign seeds the vault's house voice guide.
+//! There the Gate already holds every send for external-effect authority, so the leg
+//! answers `AwaitingApproval` in every case; what each test reads is WHY it
+//! holds: the reason codes and receipt reasons the held send's owner ask
+//! states.
 
 use std::future::Future;
 use std::sync::Arc;
@@ -499,10 +500,10 @@ fn a_human_review_campaign_holds_its_send_for_the_owner() {
 
 /// Copy review governs every campaign (lead ruling
 /// COPY-REVIEW-JUDGE-BY-DEFAULT = B): a campaign that names no voice guide is
-/// checked against the vault's house voice guide. This unseeded vault has
-/// none, so no review can cover the copy and the send holds for copy review.
-/// On the base such a campaign is not governed, and its send holds only for
-/// external-effect authority.
+/// checked against the vault's house voice guide, which the campaign's
+/// creation seeded. No review covers the copy yet, so the send holds for copy
+/// review. On the base such a campaign is not governed, and its send holds
+/// only for external-effect authority.
 #[test]
 fn a_campaign_without_a_voice_guide_is_held_for_copy_review() {
     let leg = leg(|_, _| json!({}));

@@ -2,9 +2,10 @@
 #![allow(clippy::unwrap_used)]
 #![cfg(feature = "test-support")]
 //! The house voice guide seed (ARCH-0059 #copy-review; lead ruling
-//! COPY-REVIEW-JUDGE-BY-DEFAULT = B, 21 Nov): every seeded vault gets one
-//! house voice guide NOTE, written by its owner, once. A new vault gets it at
-//! creation; a vault from before the seed gets it at its next seeded open.
+//! COPY-REVIEW-JUDGE-BY-DEFAULT = B, 21 Nov): a vault's first campaign seeds
+//! one house voice guide NOTE, written by the vault's owner, once. A vault
+//! from before the seed that already holds a campaign gets it at its next
+//! seeded open. A vault that runs no campaign gets none.
 //!
 //! On the base the seed does not exist, so this file does not compile there.
 //!
@@ -14,22 +15,59 @@ use std::path::Path;
 use std::sync::Arc;
 
 use oneiron::campaign::house_voice_guide::HOUSE_VOICE_GUIDE_MARKDOWN;
+use oneiron::campaign::register_crm_pack;
+use oneiron::campaign::surface::{CAMPAIGN_SCHEMA_VERSION, CreateCampaignRequest, create_campaign};
 use oneiron::note::NoteReadRequest;
+use oneiron::registry::TypeByteFamily;
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
+
+fn install_keystore(vault: &Vault) {
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+}
 
 fn open_seeded(path: &Path) -> Vault {
     let vault = Vault::open(path, VaultConfig::device()).expect("the seeded open");
-    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    install_keystore(&vault);
     vault
+}
+
+/// An unseeded vault with the CRM pack, so campaigns can be created, and no
+/// owner PERSON yet.
+fn open_crm_vault(path: &Path) -> Vault {
+    let vault = Vault::open_unseeded_for_test(path, VaultConfig::device()).unwrap();
+    install_keystore(&vault);
+    register_crm_pack(&vault, 107, 108, TypeByteFamily::Productivity).unwrap();
+    vault
+}
+
+fn owner(vault: &Vault) -> EntityId {
+    vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner")
+}
+
+/// A campaign named `name`, created by `principal` through the create door.
+fn create(vault: &Vault, principal: EntityId, name: &str) {
+    create_campaign(
+        vault,
+        principal,
+        &CreateCampaignRequest {
+            schema_version: CAMPAIGN_SCHEMA_VERSION,
+            name: name.to_owned(),
+            reply_snooze_policy: None,
+            voice_guide_ref: None,
+            copy_review: None,
+            send_mode: None,
+        },
+        vault.now_recorded_at(),
+    )
+    .expect("the campaign");
 }
 
 /// The guide's text as the vault's owner reads it.
 fn owner_reads(vault: &Vault, guide: EntityId) -> String {
-    let owner = vault
-        .ensure_embedded_owner_actor()
-        .expect("the vault's owner");
     vault
-        .memory(owner, EdgeActorClass::Human)
+        .memory(owner(vault), EdgeActorClass::Human)
         .read_note(&NoteReadRequest {
             note_ref: guide.to_hex(),
             reason: Some("house voice guide seed test".to_owned()),
@@ -42,30 +80,45 @@ fn owner_reads(vault: &Vault, guide: EntityId) -> String {
         .markdown
 }
 
-/// A new vault is created with its house voice guide, which its owner reads.
+/// The vault's first campaign seeds its house voice guide, which its owner
+/// reads; a second campaign keeps that one guide.
 #[test]
-fn a_new_vault_is_seeded_with_its_house_voice_guide() {
+fn a_vaults_first_campaign_seeds_its_house_voice_guide() {
     let dir = tempfile::tempdir().unwrap();
-    let vault = open_seeded(dir.path());
+    let vault = open_crm_vault(dir.path());
+    let owner = owner(&vault);
+    assert_eq!(
+        vault.house_voice_guide().unwrap(),
+        None,
+        "no campaign, no house voice guide"
+    );
+    create(&vault, owner, "first campaign");
     let guide = vault
         .house_voice_guide()
         .unwrap()
-        .expect("the new vault's house voice guide");
+        .expect("the first campaign seeds the house voice guide");
     assert_eq!(owner_reads(&vault, guide), HOUSE_VOICE_GUIDE_MARKDOWN);
+    create(&vault, owner, "second campaign");
+    assert_eq!(
+        vault.house_voice_guide().unwrap(),
+        Some(guide),
+        "the seed runs once"
+    );
 }
 
-/// A vault from before the seed (here: created unseeded) gets its house voice
-/// guide at its next seeded open, and keeps that one guide at every later
-/// open.
+/// A campaign stored while the guide cannot be seeded (here: no owner PERSON
+/// yet, as in a vault from before the seed) still lands, and the vault's next
+/// seeded open seeds one guide; a later open keeps it.
 #[test]
-fn a_vault_from_before_the_seed_gets_one_house_voice_guide_at_its_next_open() {
+fn a_vault_whose_campaign_predates_the_seed_gets_one_guide_at_its_next_open() {
     let dir = tempfile::tempdir().unwrap();
     {
-        let vault = Vault::open_unseeded_for_test(dir.path(), VaultConfig::device()).unwrap();
+        let vault = open_crm_vault(dir.path());
+        create(&vault, EntityId::now(), "campaign from before the seed");
         assert_eq!(
             vault.house_voice_guide().unwrap(),
             None,
-            "the unseeded vault has no house voice guide yet"
+            "no owner PERSON yet, so no guide was seeded"
         );
     }
     let first = {
@@ -83,9 +136,47 @@ fn a_vault_from_before_the_seed_gets_one_house_voice_guide_at_its_next_open() {
         Some(first),
         "a later open keeps the one guide"
     );
+}
+
+/// A guide the owner deletes is not seeded again, neither by a later
+/// campaign nor by an open: a campaign with no guide of its own then holds
+/// its sends until the owner names a guide or skips its copy review.
+#[test]
+fn a_deleted_house_voice_guide_is_not_seeded_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let guide = {
+        let vault = open_crm_vault(dir.path());
+        let owner = owner(&vault);
+        create(&vault, owner, "first campaign");
+        let guide = vault
+            .house_voice_guide()
+            .unwrap()
+            .expect("the house voice guide");
+        vault
+            .delete_entity(&guide)
+            .expect("the owner deletes the guide");
+        create(&vault, owner, "campaign after the delete");
+        assert_eq!(
+            vault.house_voice_guide().unwrap(),
+            Some(guide),
+            "a later campaign seeds no new guide"
+        );
+        guide
+    };
+    let vault = open_seeded(dir.path());
     assert_eq!(
-        vault.ensure_house_voice_guide().unwrap(),
-        Some(first),
-        "the seed runs once"
+        vault.house_voice_guide().unwrap(),
+        Some(guide),
+        "nor does the next open"
     );
+}
+
+/// A vault that runs no campaign gets no house voice guide, at creation or
+/// at a later open, so its text never reaches that vault's reads.
+#[test]
+fn a_vault_with_no_campaign_gets_no_house_voice_guide() {
+    let dir = tempfile::tempdir().unwrap();
+    drop(open_seeded(dir.path()));
+    let vault = open_seeded(dir.path());
+    assert_eq!(vault.house_voice_guide().unwrap(), None);
 }
