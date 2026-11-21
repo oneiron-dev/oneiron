@@ -158,7 +158,9 @@ fn states_same_fact(other: &ClaimBody, sealed: &ClaimBody) -> bool {
 }
 
 /// A refusal of one row's re-derive by a guard of the door it runs through:
-/// that row is kept, and the act goes on with the next.
+/// that row is kept, and the act goes on with the next. The source-trust
+/// guard refuses a generated CLAIM superseding user-stated code-revision
+/// truth as an artifact error (#10127 review P1).
 fn refused(error: &Error) -> bool {
     matches!(
         error,
@@ -168,6 +170,7 @@ fn refused(error: &Error) -> bool {
             | Error::Refused(_)
             | Error::LegalHold(_)
             | Error::EntityNotFound
+            | Error::Artifact(crate::error::ArtifactError::InvalidCodeArtifactBody(_))
     )
 }
 
