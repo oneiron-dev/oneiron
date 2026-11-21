@@ -63,10 +63,12 @@ pub struct OAuthAuthorizationStart<'a> {
     /// Every further resource it named, each another of this vault's, none twice (RFC 8707
     /// §2). Its tokens reach each, and no other.
     pub further_resources: &'a [String],
-    /// What the sign-in asks to do, when a resource it names says: `oneiron continue --cloud`'s
-    /// step-up, which names `/git`, shows "continue this session in your hosted vault: land its
-    /// log, push its code and start it there" (CONTINUE-STEP-UP-MCP-WRITE = A). The owner's ask
-    /// shows it beside the tier.
+    /// What the sign-in asks to do, in the vault's own words, when the request or a resource it
+    /// names says: `oneiron continue --cloud`'s step-up, which names `/git`, shows "continue
+    /// this session in your hosted vault: land its log, push its code and start it there"
+    /// (CONTINUE-STEP-UP-MCP-WRITE = A), and the hooks' hand-over sign-in "land this machine's
+    /// coding sessions in your hosted vault as each ends" (HOOK-HOSTED-HAND-OVER-OAUTH-READ-TIER
+    /// = B). The owner's ask shows it beside the tier.
     pub purpose: Option<&'a str>,
     pub tier: AgentTier,
 }

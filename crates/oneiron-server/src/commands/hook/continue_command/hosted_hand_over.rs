@@ -21,8 +21,19 @@
 //! must sit below its host's folder, every folder on the way and the log
 //! opened through no link ([`transcript::read_one_below`]), so nothing
 //! outside the host's own logs is sent.
+//!
+//! An OAuth selection lands logs on its hand-over sign-in alone, `full` at
+//! the vault's `/mcp` ([`StepUp::HandOver`]): its recall sign-in is `read`,
+//! and the import writes. With none standing, or when a send does not land
+//! the log whole, the log waits in the vault's hand-over queue
+//! ([`hand_over_queue`]), and the first to wait says so on stderr. Every
+//! hand-over that lands a log whole lands the waiting logs of the same host
+//! after it, each read through the same checks and sent only while its
+//! session is bound to that vault alone (row
+//! HOOK-HOSTED-HAND-OVER-OAUTH-READ-TIER; lead ruling B, Sat 21 Nov 07:0x).
 
 use std::ffi::OsStr;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Instant;
@@ -33,9 +44,13 @@ use oneiron::ingest::history::{
 };
 
 use super::transcript::SessionLogs;
-use super::{Hosted, transcript};
+use super::{CallUnconfirmed, Hosted, ToolRefused, transcript};
 use crate::cli::HookHost;
-use crate::commands::hook::hosted_selection::HostedVault;
+use crate::commands::hook::hand_over_queue;
+use crate::commands::hook::hosted_selection::{HostedAuthMode, HostedVault};
+use crate::commands::hook::hosted_sign_in::StepUp;
+use crate::commands::hook::recall::RpcRefusal;
+use crate::commands::hook::session_binding::{self, SessionBinding};
 
 /// The hooks' hand-over to the selected hosted vault: `host`'s session log
 /// at `log` (Claude Code's with its subagents' logs), landed through
@@ -50,6 +65,13 @@ use crate::commands::hook::hosted_selection::HostedVault;
 /// than one call goes in parts ([`land`]). A log too long even for that is
 /// refused before any bridge starts, so no hand-over sends a call that could
 /// never land.
+///
+/// An OAuth selection goes on its hand-over sign-in; with none standing,
+/// the log is queued for the vault and nothing is sent. A log that does not
+/// land whole (its send failed, or turns wait behind another import) is
+/// queued too, for a later session end. Once a log lands whole, the logs of
+/// the same host waiting for the vault go over the same bridge, oldest
+/// first ([`land_waiting`]).
 pub(in crate::commands::hook) fn hand_over_hosted(
     oneiron: &Path,
     vault: &HostedVault,
@@ -59,20 +81,182 @@ pub(in crate::commands::hook) fn hand_over_hosted(
     policy_ref: String,
     deadline: Instant,
 ) -> anyhow::Result<()> {
-    let logs = host_log(host, log, session)?;
-    let carried = transcript::carried_bytes(vault.auth_mode);
-    let calls =
-        transcript::calls_within(&logs, carried, transcript::staged_bytes(vault.auth_mode))?;
-    let mut remote = Hosted::open(oneiron, vault, policy_ref, Stdio::null(), deadline)?;
-    let mut landed = Ok(());
-    for call in &calls {
-        landed = land(&mut remote, call, carried);
-        if landed.is_err() {
-            break;
+    let carried = Carried::of(vault.auth_mode);
+    let calls = carried.calls(&host_log(host, log, session)?)?;
+    let oauth = vault.auth_mode == HostedAuthMode::OAuth;
+    let on = if oauth {
+        let Some(file) = StepUp::HandOver.held(vault) else {
+            if hand_over_queue::enqueue(vault, host, session, log)? {
+                note(&hand_over_queue::waiting_note(&vault.origin));
+            }
+            return Ok(());
+        };
+        HostedVault {
+            credential_file: file,
+            ..vault.clone()
+        }
+    } else {
+        vault.clone()
+    };
+    // An entry an earlier hand-over of this session left: this one's
+    // landing makes it needless, unless a later one queues it again.
+    let seen = hand_over_queue::generation_of(&on, host, session);
+    let waiting = hand_over_queue::queued(&on);
+    let landed =
+        Hosted::open(oneiron, &on, policy_ref, Stdio::null(), deadline).and_then(|mut remote| {
+            let landed = land_log(&mut remote, &calls, carried);
+            if matches!(landed, Ok(Landing::Whole)) {
+                if let Some(seen) = &seen {
+                    hand_over_queue::leave(&on, host, session, seen);
+                }
+                let others = waiting
+                    .iter()
+                    .filter(|queued| queued.host == host && queued.session != session);
+                land_waiting(&mut remote, others, carried);
+            }
+            remote.bridge.close();
+            landed
+        });
+    let why = match &landed {
+        Ok(Landing::Whole) => None,
+        Ok(Landing::Pending) => Some("some of its turns wait behind another import".to_owned()),
+        Err(error) => Some(format!("{error:#}")),
+    };
+    if oauth
+        && let Some(why) = why
+        && hand_over_queue::enqueue(vault, host, session, log).unwrap_or(false)
+    {
+        note(&hand_over_queue::unlanded_note(&on.origin, &why));
+    }
+    landed.map(drop)
+}
+
+/// Says `text` on the hook's stderr, best effort.
+fn note(text: &str) {
+    let _ = writeln!(std::io::stderr().lock(), "{text}");
+}
+
+/// How a log's calls landed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Landing {
+    /// Every turn: nothing of it waits.
+    Whole,
+    /// With turns still pending behind another import: sending it again
+    /// lands them.
+    Pending,
+}
+
+/// What one call of a selection carries ([`transcript::carried_bytes`]), and
+/// how long a request may grow in parts ([`transcript::staged_bytes`]).
+#[derive(Clone, Copy)]
+struct Carried {
+    call: usize,
+    staged: Option<usize>,
+}
+
+impl Carried {
+    fn of(mode: HostedAuthMode) -> Self {
+        Self {
+            call: transcript::carried_bytes(mode),
+            staged: transcript::staged_bytes(mode),
         }
     }
-    remote.bridge.close();
-    landed
+
+    /// The calls `logs` go in ([`transcript::calls_within`]).
+    fn calls(self, logs: &SessionLogs) -> anyhow::Result<Vec<HookTranscriptImportRequest>> {
+        transcript::calls_within(logs, self.call, self.staged)
+    }
+}
+
+/// Lands one session's log through `remote` in `calls`, in order
+/// ([`land`]); the first refused call stops the rest. Answers whether any
+/// conversation of it still has turns pending.
+fn land_log(
+    remote: &mut Hosted<'_>,
+    calls: &[HookTranscriptImportRequest],
+    carried: Carried,
+) -> anyhow::Result<Landing> {
+    let mut landing = Landing::Whole;
+    for call in calls {
+        let view = land(remote, call, carried.call)?;
+        if view
+            .conversations
+            .iter()
+            .any(|conversation| conversation.pending > 0)
+        {
+            landing = Landing::Pending;
+        }
+    }
+    Ok(landing)
+}
+
+/// Lands each log of `waiting` through `remote`, oldest first. Each is read
+/// first, through [`host_log`], and only then is its session's binding
+/// checked, so turns a later start appends for another vault are never in
+/// what goes. A log that lands whole, whose log is gone or refused here,
+/// whose session no hosted vault may take (mixed, local or not recorded),
+/// or that the vault refuses (the session's own log just landed on the same
+/// sign-in, so a refusal is this log's own) leaves the queue. One bound to
+/// another vault alone, or with turns still pending, waits on; the first
+/// whose send failed any other way (no answer, the deadline, the bridge)
+/// stops the rest, which wait on.
+fn land_waiting<'q>(
+    remote: &mut Hosted<'_>,
+    waiting: impl Iterator<Item = &'q hand_over_queue::Queued>,
+    carried: Carried,
+) {
+    for queued in waiting {
+        let vault = remote.vault;
+        let leave = || {
+            hand_over_queue::leave(vault, queued.host, &queued.session, queued.generation());
+        };
+        let unsent = |why: &str| {
+            note(&format!(
+                "{} session {}'s log waited for {} and leaves the queue unsent: {why}",
+                queued.host.product_name(),
+                queued.session,
+                vault.origin
+            ));
+        };
+        let calls = match host_log(queued.host, &queued.log, &queued.session)
+            .and_then(|logs| carried.calls(&logs))
+        {
+            Ok(calls) => calls,
+            Err(error) => {
+                unsent(&format!("{error:#}"));
+                leave();
+                continue;
+            }
+        };
+        match session_binding::bound(queued.host, &queued.session) {
+            Some(SessionBinding::Hosted(bound)) if bound.names(vault) => {}
+            Some(SessionBinding::Hosted(_)) => continue,
+            Some(SessionBinding::Mixed | SessionBinding::Local) | None => {
+                unsent("its session is not bound to this vault alone");
+                leave();
+                continue;
+            }
+        }
+        match land_log(remote, &calls, carried) {
+            Ok(Landing::Whole) => leave(),
+            Ok(Landing::Pending) => {}
+            Err(error) if refused_by_vault(&error) => {
+                unsent(&format!("{error:#}"));
+                leave();
+            }
+            Err(_) => break,
+        }
+    }
+}
+
+/// Whether the vault answered `error`'s call with a refusal of it: a
+/// JSON-RPC error that is not one of the unanswered kinds, or a tool
+/// result that is an error. A call that got no answer, timed out or never
+/// reached the bridge is not one.
+fn refused_by_vault(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<CallUnconfirmed>().is_none()
+        && (error.downcast_ref::<RpcRefusal>().is_some()
+            || error.downcast_ref::<ToolRefused>().is_some())
 }
 
 /// Why a hand-over's calls are made, as their consent names it.
@@ -81,16 +265,14 @@ const PURPOSE: &str = "land this session's log in the selected vault";
 /// Lands `request` over `remote`: in one `vault.imports.hook_transcript`
 /// call when its spec fits `carried` bytes, else in
 /// `vault.imports.hook_transcript_part` calls ([`transcript::parts`]), the
-/// last of which lands it.
+/// last of which lands it. Answers what the import landed.
 fn land(
     remote: &mut Hosted<'_>,
     request: &HookTranscriptImportRequest,
     carried: usize,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<HookTranscriptImportView> {
     if serde_json::to_vec(request)?.len() <= carried {
-        return remote
-            .call::<HookTranscriptImportView>("vault.imports.hook_transcript", request, PURPOSE)
-            .map(drop);
+        return remote.call("vault.imports.hook_transcript", request, PURPOSE);
     }
     let mut imported = None;
     for part in transcript::parts(request, carried)? {
@@ -98,8 +280,15 @@ fn land(
             remote.call("vault.imports.hook_transcript_part", &part, PURPOSE)?;
         imported = view.imported;
     }
-    imported.map(drop).ok_or_else(|| {
+    let imported = imported.ok_or_else(|| {
         anyhow::anyhow!("the hosted vault took the session's log in parts but did not land it")
+    })?;
+    // Read as one call's answer is read: an answer this command cannot read
+    // is no refusal, so the log waits on.
+    serde_json::from_value(imported).map_err(|error| {
+        anyhow::anyhow!(
+            "the hosted vault landed the log in parts, in an unreadable answer: {error}"
+        )
     })
 }
 
