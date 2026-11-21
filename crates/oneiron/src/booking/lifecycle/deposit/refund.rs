@@ -142,7 +142,7 @@ pub(crate) fn refund_deposit_on_host_cancel(
         if booking.status == BookingStatus::Cancelled || seen_at >= booking.slot.start {
             return Ok(());
         }
-        refund_on_host_cancel_in_writer(vault, wtxn, event_ref, now_utc)
+        refund_on_host_cancel_in_writer(vault, wtxn, event_ref, None, now_utc)
     })
 }
 
@@ -153,10 +153,18 @@ pub(crate) fn refund_deposit_on_host_cancel(
 /// whole (`RefundDue`), and its settle row is queued "host-cancel". A booking
 /// with no deposit, or one already voided, refunded or owing a refund, is
 /// untouched. The caller decides whether the booking was still live.
+///
+/// An emergency cancel passes its cancel revision's SEQUENCE as
+/// `emergency_sequence`, and a deposit it moves is marked with it: the
+/// booking the visitor picks again from the emergency's proposals carries
+/// no deposit, and its owner's card says where the return of the deposit
+/// from before the emergency cancel stands (RULING
+/// DEPOSIT-PICK-AFTER-EMERGENCY-CANCEL = A).
 pub(in crate::booking::lifecycle) fn refund_on_host_cancel_in_writer(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     event_ref: &EntityId,
+    emergency_sequence: Option<u32>,
     now_utc: u64,
 ) -> Result<(), BookingError> {
     let Some(link) = DEPOSIT_BOOKING
@@ -175,6 +183,9 @@ pub(in crate::booking::lifecycle) fn refund_on_host_cancel_in_writer(
         return Ok(());
     };
     row.state = next;
+    if let Some(sequence) = emergency_sequence {
+        row.emergency_return_sequence = Some(sequence);
+    }
     row.updated_at = now_utc;
     put_deposit(vault, wtxn, &link.deposit_key, &row)?;
     enqueue_settle(vault, wtxn, &link.deposit_key, "host-cancel", now_utc)
