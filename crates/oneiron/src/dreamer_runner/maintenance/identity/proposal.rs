@@ -11,7 +11,8 @@
 //! decision without his lane reading the ask.
 //!
 //! The proposal stands on the ask itself, so whatever closes or opens the
-//! ask afresh (an answer, an erase, a changed candidate set) drops it. From
+//! ask afresh, or changes its options (an answer, an erase, a changed
+//! candidate set), drops it. From
 //! the proposal on, the ask waits on a person: the ladder no longer decides
 //! it.
 
@@ -26,9 +27,9 @@ pub const IDENTITY_SOMEONE_NEW_PROPOSAL_PRODUCER: &str = "dreamer.identity.someo
 /// The notice's words, the only words it carries.
 const SOMEONE_NEW_PROPOSAL_DETAIL: &str =
     "a member answered a pending question about identity: someone new";
-/// The domain of a notice's event id: a digest of the ask, the owner and the
-/// proposal's time, so a proposal made again after the ask opened afresh
-/// gets a notice of its own.
+/// The domain of a notice's event id: a digest of the ask, the owner, the
+/// proposal's time and the ids it carries, so a proposal made again after
+/// the ask changed gets a notice of its own.
 const SOMEONE_NEW_PROPOSAL_EVENT_DOMAIN: &[u8] = b"oneiron/identity-ask/someone-new-proposal/v1";
 
 /// The ids a proposal on `ask` puts to the owner: the mention's own
@@ -68,10 +69,10 @@ pub(super) fn propose_in_txn(
     let refs = proposal_refs(&held);
     let at = now.to_be_bytes();
     for owner in crate::policy_model::owners_in_txn(vault, txn)? {
-        let event = EntityId::derive(
-            SOMEONE_NEW_PROPOSAL_EVENT_DOMAIN,
-            &[key.as_slice(), owner.as_bytes().as_slice(), at.as_slice()],
-        )?;
+        let mut parts: Vec<&[u8]> =
+            vec![key.as_slice(), owner.as_bytes().as_slice(), at.as_slice()];
+        parts.extend(refs.iter().map(|id| id.as_bytes().as_slice()));
+        let event = EntityId::derive(SOMEONE_NEW_PROPOSAL_EVENT_DOMAIN, &parts)?;
         vault.record_notification_in_txn(
             txn,
             &NotificationEvent {

@@ -535,8 +535,8 @@ impl Memory<'_> {
             // save one an owner accepts a member's someone-new proposal on:
             // his own decision on the ids it carries, with no word of the
             // ask (`proposal`).
-            let opened = admission::open_ask_in_txn(self.vault(), &lane, txn, &key, false)?;
-            let (held, answer, opened) = match opened {
+            let seen = admission::open_ask_in_txn(self.vault(), &lane, txn, &key, false)?;
+            let (held, answer, opened) = match seen {
                 Some(seen) => {
                     if !by_owner
                         && route::route_in_txn(self.vault(), txn, &seen.stored)?
