@@ -65,7 +65,7 @@ use oneiron::federation::Scope;
 use oneiron::registry::ENTITY_TYPE_ORG;
 use oneiron::store::GateDecisionId;
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
-use oneiron_keystore::MemoryKeystore;
+use oneiron_keystore::{DeviceKeystore, MemoryKeystore};
 use oneiron_server::test_doors::linked_peer::{self, ScriptedControlPlane};
 use oneiron_server::{build_app, config::SyncServerConfig, server::SyncServer};
 use serde_json::{Value, json};
@@ -88,11 +88,14 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 /// The person's own machine, serving the vault: rooted from its install's
-/// keystore, its install profiled as a serving start leaves it (or not yet,
-/// so it carries no owner act), with one row of its own.
+/// keystore, its install profiled as a serving start leaves it, with one row
+/// of its own.
 struct Host {
     _dir: tempfile::TempDir,
     vault: Arc<Vault>,
+    /// This install's keystore: installing it again drops the signing keys
+    /// the handle loaded ([`Host::drop_install_signer`]).
+    keystore: Arc<MemoryKeystore>,
     server: Arc<SyncServer>,
     /// The server's routes, served in process.
     app: Router,
@@ -104,14 +107,14 @@ struct Host {
     row: EntityId,
 }
 
+/// The serving host. `SyncServer::new` roots the vault and profiles this
+/// install at its start (FIX 4648), so the install carries the owner's acts
+/// from the first request.
 fn host() -> Host {
-    serving_host(true)
-}
-
-fn serving_host(install_profiled: bool) -> Host {
     let dir = tempfile::tempdir().expect("temporary vault directory");
     let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).expect("open vault"));
-    vault.install_device_keystore(Arc::new(MemoryKeystore::new()));
+    let keystore = Arc::new(MemoryKeystore::new());
+    vault.install_device_keystore(Arc::clone(&keystore) as Arc<dyn DeviceKeystore>);
     let server = Arc::new(
         SyncServer::new(
             Arc::clone(&vault),
@@ -126,11 +129,9 @@ fn serving_host(install_profiled: bool) -> Host {
     vault
         .ensure_host_root_slip(&issuer)
         .expect("FIXTURE: the owner's root slip");
-    if install_profiled {
-        vault
-            .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
-            .expect("FIXTURE: this install's live machine profile");
-    }
+    vault
+        .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+        .expect("FIXTURE: this install's live machine profile");
     let person = vault
         .ensure_embedded_owner_actor()
         .expect("FIXTURE: the embedded owner");
@@ -151,6 +152,7 @@ fn serving_host(install_profiled: bool) -> Host {
     Host {
         _dir: dir,
         vault,
+        keystore,
         server,
         app,
         issuer,
@@ -161,6 +163,20 @@ fn serving_host(install_profiled: bool) -> Host {
 }
 
 impl Host {
+    /// This install's signing keys are not loaded: its keystore is installed
+    /// again, as a reopen installs it, and nothing loaded them since. No
+    /// owner act has a carrier here until [`Host::load_install_signer`].
+    fn drop_install_signer(&self) {
+        drop_install_signer(&self.vault, &self.keystore);
+    }
+
+    /// Loads this install's signing keys again, as a start does.
+    fn load_install_signer(&self) {
+        self.vault
+            .prepare_install_signing()
+            .expect("FIXTURE: this install's signing keys load");
+    }
+
     fn link(&self, control: &ScriptedControlPlane) -> Result<Value, String> {
         linked_peer::link(&self.server, &self.owner, ORIGIN, control)
     }
@@ -336,6 +352,12 @@ impl Peer {
             .mesh_binding_identity_as_owner(&owner)
             .expect("FIXTURE: the peer's mesh identity")
     }
+}
+
+/// Installs `keystore` on `vault` again, which drops the signing keys the
+/// handle loaded from it ([`Vault::install_device_keystore`]).
+fn drop_install_signer(vault: &Vault, keystore: &Arc<MemoryKeystore>) {
+    vault.install_device_keystore(Arc::clone(keystore) as Arc<dyn DeviceKeystore>);
 }
 
 /// The peer redeems `line` with `request`, under a throwaway pairing key.
@@ -605,20 +627,21 @@ fn a_vault_holds_one_hosted_peer_at_a_time() {
 #[test]
 fn a_machine_removal_this_install_cannot_sign_still_asks_the_control_plane_and_stays_owed() {
     run_on_engine_stack("unlink-removal-unsigned", || async {
-        // No serving start profiled this install: the peer's redeem takes the
-        // bootstrap arm, but the owner's removal has no carrier here.
-        let host = serving_host(false);
+        // The peer redeems while this install carries; then its signing keys
+        // are not loaded, so the owner's removal has no carrier here.
+        let host = host();
         let control = ScriptedControlPlane::default();
         host.link(&control).expect("the owner links a hosted peer");
         let (peer, request) = Peer::new(&host);
         let slip = redeem(&host, &handed_link(&control), &request).expect("the peer redeems");
+        host.drop_install_signer();
 
         let receipt = host.unlink(&control);
         assert_eq!(receipt["machine_removal"]["state"], "refused", "{receipt}");
         let reason = receipt["machine_removal"]["reason"]
             .as_str()
             .expect("the refusal says why");
-        assert!(reason.contains("no live machine profile"), "{reason}");
+        assert!(reason.contains("signing keys are not loaded"), "{reason}");
         assert_eq!(
             receipt["removal"]["state"], "accepted",
             "the control plane is asked all the same: {receipt}"
@@ -631,9 +654,7 @@ fn a_machine_removal_this_install_cannot_sign_still_asks_the_control_plane_and_s
         assert_eq!(status["state"], "unlink_owed", "{status}");
         assert_eq!(status["machine"]["removed"], false, "{status}");
 
-        host.vault
-            .ensure_serving_install_profile(&host.issuer, MachineRole::Unanswered)
-            .expect("FIXTURE: this install's live machine profile");
+        host.load_install_signer();
         let receipt = host.unlink(&control);
         assert_eq!(receipt["machine_removal"]["state"], "removed", "{receipt}");
         assert_eq!(
@@ -735,18 +756,21 @@ fn a_peer_that_redeemed_before_its_create_was_refused_is_revoked() {
 #[test]
 fn a_refused_link_whose_cleanup_stays_owed_says_to_unlink() {
     run_on_engine_stack("link-refused-owed", || async {
-        // No serving start profiled this install: the early peer's machine
-        // removal has no carrier here, so the refused link's cleanup is owed.
-        let host = serving_host(false);
+        // The early peer redeems while this install carries; then its signing
+        // keys are not loaded, so its machine removal has no carrier here and
+        // the refused link's cleanup is owed.
+        let host = host();
         let control = ScriptedControlPlane::default();
         let (peer, request) = Peer::new(&host);
         {
             let vault = Arc::clone(&host.vault);
+            let keystore = Arc::clone(&host.keystore);
             *control.on_create.lock().expect("scripted hook") =
                 Some(Box::new(move |line: &str| {
                     let issuer = vault.load_host_slip_issuer().expect("host slip issuer");
                     let _slip = redeem_at(&vault, &issuer, line, &request)
                         .expect("the peer redeems before the control plane answers");
+                    drop_install_signer(&vault, &keystore);
                 }));
         }
         control.refuse_create.store(true, Ordering::SeqCst);
@@ -760,9 +784,7 @@ fn a_refused_link_whose_cleanup_stays_owed_says_to_unlink() {
             "a new link waits for the unlink"
         );
 
-        host.vault
-            .ensure_serving_install_profile(&host.issuer, MachineRole::Unanswered)
-            .expect("FIXTURE: this install's live machine profile");
+        host.load_install_signer();
         let receipt = host.unlink(&control);
         assert_eq!(receipt["machine_removal"]["state"], "removed", "{receipt}");
         assert_eq!(
