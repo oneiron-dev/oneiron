@@ -19,6 +19,17 @@ pub(crate) struct EvidenceFixture {
     /// A timestamp authority of the same shape that no anchor reaches.
     pub(crate) untrusted_tsa_key: ByteBuf,
     pub(crate) untrusted_tsa_certificate: ByteBuf,
+    /// A second trusted timestamp authority, configured after the first
+    /// when its certificate is not empty.
+    pub(crate) second_tsa_key: ByteBuf,
+    pub(crate) second_tsa_certificate: ByteBuf,
+    /// For the n-th timestamp request of a call (from 0, to either
+    /// authority), how many seconds after the call's time its token's
+    /// genTime is: an authority's clock running ahead. Past the end, none.
+    pub(crate) token_delays_secs: Vec<u64>,
+    /// The timestamp requests, numbered the same way, that the first
+    /// authority does not answer, so the engine fails over to the second.
+    pub(crate) first_authority_unavailable: Vec<usize>,
     /// The fetcher's answer to every CRL request: the anchor's own CRL.
     pub(crate) crl: ByteBuf,
     /// What a mode that appends its own DSS revision writes in it.

@@ -75,7 +75,9 @@ impl Vault {
     /// nothing. A published app's backend mints nothing, and a link that
     /// names verbs for one no Grant row names is refused
     /// ([`crate::error::RecordError::AppBackendGrantRequired`],
-    /// APP-BACKEND-LINK-GRANT = A).
+    /// APP-BACKEND-LINK-GRANT = A). The answer carries the Grant it minted,
+    /// if any, so a caller that fails after the link takes it back beside
+    /// the slip.
     pub fn issue_owner_pairing_link_from_surface(
         &self,
         issuer: &HostSlipIssuer,
@@ -300,14 +302,18 @@ impl Vault {
             let pin_ref = pin.as_ref().map(PairingPinRef::of).transpose()?;
             let comm = effective_slip_comm(principal.comm);
             // The owner's link for a named agent mints its default read Grant
-            // in this writer, so a failed mint refuses the link (Q4).
+            // in this writer, so a failed mint refuses the link (Q4). The
+            // answer carries the Grant it minted, so a caller that fails
+            // after the link takes it back beside the slip.
+            let mut default_grant_ref = None;
             if let (Some(surface), Some(link_owner)) = (default_grant_surface, link_owner)
                 && let Some(holder) = principal
                     .holder_ref
                     .as_deref()
                     .and_then(|holder| crate::EntityId::from_hex(holder).ok())
             {
-                self.mint_default_agent_grant_in_txn(txn, link_owner, surface, holder, &scope)?;
+                default_grant_ref =
+                    self.mint_default_agent_grant_in_txn(txn, link_owner, surface, holder, &scope)?;
             }
             let pending = PairingPending {
                 expires_at,
@@ -327,6 +333,7 @@ impl Vault {
                 expires_at,
                 pin: pin_ref,
                 comm,
+                default_grant_ref,
             })
         })
     }
@@ -404,6 +411,7 @@ impl Vault {
             expires_at,
             pin: None,
             comm: effective_slip_comm(None),
+            default_grant_ref: None,
         })
     }
 }

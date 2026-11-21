@@ -11,7 +11,9 @@
 //! not descend from X. Y arrives after the install already holds X and the
 //! revocation. K must stay revoked, and X and the revocation must stay
 //! valid: a fork of a key never takes back what an install already counted,
-//! and never undoes the owner's revocation of that key.
+//! and never undoes the owner's revocation of that key. Since the revocation
+//! fence (REVOKED-OWNER-ROOT-SIBLING-ENROL) the door refuses Y outright, so Y
+//! never reaches the fold.
 //!
 //! Expected (estimate, not run yet): green on main, where X's arrival floor
 //! was set before Y arrived; red at 69a0283b, where Y's higher sequence
@@ -39,8 +41,10 @@ use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 
 const AT: TimeRange = TimeRange { start: 1, end: 1 };
 
-/// A rooted vault as a host starts one: the owner bound under the host root
-/// and this install profiled, so it carries the owner's answers.
+/// A rooted vault as a host starts one: the owner bound under the host root,
+/// this install profiled, so it carries the owner's answers, and the handle
+/// holding the host's root as a serving host does, so those answers are
+/// proven (row CARRIER-OWNER-PROOF).
 struct Rooted {
     _dir: tempfile::TempDir,
     vault: Vault,
@@ -59,6 +63,11 @@ fn rooted() -> Rooted {
         .expect("this install's live machine profile");
     let owner = vault.ensure_embedded_owner_actor().expect("the owner");
     oneiron::test_support::bind_host_owner(&vault, &issuer, owner).expect("the owner's binding");
+    // The host root cosigns the owner's machine answers, so the machine the
+    // owner admits as theirs stands instead of being held for an owner
+    // device. `test_host_issuer` is the same root `issuer` is, which the test
+    // keeps for the owner key enrollments.
+    vault.hold_checkpoint_root_signer(Arc::new(oneiron::test_support::test_host_issuer()));
     let proof = vault
         .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
         .expect("an owner proof");
@@ -101,6 +110,7 @@ fn admit_machine(rooted: &Rooted) -> EntityId {
         device_class: MachineDeviceClass::Computer,
         encryption_key,
         machine_proof,
+        restored_from: None,
     };
     let folded = rooted
         .vault
@@ -271,11 +281,13 @@ fn a_revoked_keys_later_fork_never_undoes_its_revocation() {
          fork; the fork's put {arrival}, issues {:?}",
         fold.issues
     );
-    // The fork reached the fold: a revoked key keeps its standing at the
-    // door, so the assertions above are not met by a refused put.
+    // The door refuses the fork: a revocation closes a fence over its key, and
+    // no new row a retired key signs is stored (REVOKED-OWNER-ROOT-SIBLING-ENROL,
+    // retired_signers.rs). The fork never reaches the fold, so it cannot make
+    // K live again there either.
     assert_eq!(
-        arrival, "stored",
-        "the fork is stored; issues {:?}",
+        arrival, "refused: InvalidAuthorityLogBody",
+        "the door refuses a row the revoked key signs; issues {:?}",
         fold.issues
     );
 }

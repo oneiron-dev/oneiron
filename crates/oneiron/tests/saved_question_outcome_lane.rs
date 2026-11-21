@@ -50,6 +50,13 @@
 //! that closed unknown reads as it closed, even after a fact recorded later
 //! labels its answer.
 //!
+//! QUESTION-OUTCOMES-REPLY-SPANS-SNAPSHOTS (blind review P1 on #9864): the
+//! owner's own live lane reads its question's closed windows as its
+//! principal's own in the one snapshot the reply is read in, so it judges no
+//! row of them. Its window that closed unknown reads as it closed even once
+//! the owner deleted the unit the window rests on, a row that a judgment of
+//! the window's rows refuses.
+//!
 //! PERSON-CHANGED-PAIRS-SKIP-DEVICE-LOCAL-WORLDS and
 //! PERSON-PAIRS-IN-LANE-JUDGE-ASK-ID: a person-changed pair is judged on the
 //! rows its ask was put over. Read through a base-world lane, the owner's
@@ -71,9 +78,10 @@ use oneiron::llm::decision::questions::{
     AnswerRecord, CalibrationPair, GraphAnswerer, GraphPrediction, GraphUnitContext,
     OutcomeBinding, OutcomeLabel, OutcomeSource, OutcomeWindowClose, QuestionActivation,
     QuestionDefinitionInput, RefreshPolicy, SILENCE_OUTCOME, WindowOutcome, calibration_pairs,
-    calibration_pairs_in_lane, close_due_outcome_windows, closed_outcome_windows, create_question,
-    create_question_with_lane, edit_question_with_lane, outcome_labels, person_changed_pairs,
-    project_bound_outcomes, read_question, refresh_standing_question_with,
+    calibration_pairs_in_lane, close_due_outcome_windows, closed_outcome_windows,
+    closed_outcome_windows_in_lane, create_question, create_question_with_lane,
+    edit_question_with_lane, outcome_labels, person_changed_pairs, project_bound_outcomes,
+    read_question, refresh_standing_question_with,
 };
 use oneiron::llm::decision::{
     AnswerContract, AskTo, DecisionAnswer, DecisionBand, DecisionClass, DecisionDial,
@@ -1019,6 +1027,55 @@ fn an_agents_silence_window_reads_no_more_once_the_owner_revokes_its_read_grant(
         windows.is_empty(),
         "actor=agent's question saved under its own lane; expected its window that closed in \
          silence over unit {unit:?} to read no more once the owner revoked its read grant; seen \
+         {windows:?}"
+    );
+}
+
+#[test]
+fn the_owners_own_lane_reads_its_unknown_window_over_a_deleted_unit_as_it_closed() {
+    let fixture = fixture();
+    let closed = close_due_outcome_windows(&fixture.vault, fixture.close_at())
+        .expect("close the lapsed windows");
+    assert_eq!(closed, 2, "precondition: both answers' windows close");
+    let owner_lane = fixture.vault.scoped_read(fixture.owner_key.clone());
+    assert!(
+        owner_lane
+            .freeze()
+            .expect("precondition: the owner's own lane freezes")
+            .is_principal(),
+        "precondition: the owner's own live lane freezes as its principal's own"
+    );
+    assert!(
+        fixture
+            .vault
+            .delete_entity(&fixture.unit)
+            .expect("the owner deletes the unit"),
+        "precondition: the unit {:?} existed",
+        fixture.unit
+    );
+    let judged = owner_lane.refs_readable_each(&[vec![fixture.unit]]);
+    assert!(
+        !matches!(&judged, Ok(each) if each.as_slice() == [true]),
+        "precondition: a judgment of the window's rows no longer admits the deleted unit {:?}; \
+         seen {judged:?}",
+        fixture.unit
+    );
+    let windows = closed_outcome_windows(&fixture.vault, fixture.owner, fixture.control)
+        .expect("the owner's own question's windows");
+    assert!(
+        windows.len() == 1 && matches!(windows[0].outcome, WindowOutcome::Unknown),
+        "precondition: the owner's own question's window still reads as it closed, unknown; seen \
+         {windows:?}"
+    );
+    let windows =
+        closed_outcome_windows_in_lane(&fixture.vault, &owner_lane, fixture.owner, fixture.control);
+    assert!(
+        matches!(
+            &windows,
+            Ok(windows) if windows.len() == 1 && matches!(windows[0].outcome, WindowOutcome::Unknown)
+        ),
+        "actor=owner's own live lane; expected its question's window that closed unknown to read \
+         as it closed, the lane reading as its principal's own in the reply's snapshot; seen \
          {windows:?}"
     );
 }

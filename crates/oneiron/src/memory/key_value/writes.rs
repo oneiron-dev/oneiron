@@ -88,7 +88,7 @@ impl Memory<'_> {
             super::super::caps::check_payload_bytes("keyed claim", serde_json::to_vec(&input.value)
                 .map_err(|_| MemoryError::bad_request("invalid JSON value"))?.len())?;
             let candidate = ClaimCandidate::new(PREDICATE.to_owned(), ClaimSubject::Entity(self.actor),
-                json_to_rmpv(&value), 1.0).with_scope(self.key_value_scope(&address));
+                json_to_msgpack_value(&value), 1.0).with_scope(self.key_value_scope(&address));
             let mut envelope = self.claim_envelope(source, "vault.kv.put", ClaimApprovalStatus::Auto)?;
             self.sign_machine_claim_in_txn(content.read(), id, &candidate, &mut envelope)?;
             content.apply_claim_ops(

@@ -28,8 +28,26 @@
 //!   turns are still consumed by the round and still advance the cursor, so a
 //!   skip costs the turn its extraction, not its place in the log — the
 //!   [`reopen_prefilter_rescan`] door re-sweeps them on demand.
-//! * **Not an LLM caller.** The scorer is pure arithmetic over the turn body.
-//!   This module imports no model surface, by design and by test.
+//! * **Not an LLM caller.** The scorer is pure arithmetic over the turn's
+//!   words. This module imports no model surface, by design and by test.
+//!
+//! # Which words it scores
+//!
+//! The words extraction would read for the turn, and no others. A TURN that
+//! carries its own words (a transcript import) is scored on them. A witnessed
+//! or imported chat TURN stores none: its words are its MESSAGE rows, and the
+//! screen reads them by the projection a consolidation branch reads, as the
+//! Dreamer and under the same gates (lead ruling, 21 Nov 2026). The screen
+//! runs inside the engine, sends nothing to a model, and stores a score and
+//! its axes for a skipped turn, never the words or a hash of them. A turn
+//! whose words that projection refuses passes unscored.
+//!
+//! A turn's novelty is measured against the turns the round scored before
+//! it, and MESSAGE rows are read as the Dreamer, so the receipts of a round
+//! whose screen asked for MESSAGE words stand on rows they do not name.
+//! `vault.receipts` serves them to the vault owner on this device alone,
+//! and no hook's receipt tail holds one
+//! ([`prefilter_receipt_read_message_rows`]).
 //!
 //! # The shipped default is a no-op
 //!
@@ -38,8 +56,10 @@
 //! the default screens, scores, and drops NOTHING: planning is byte-identical
 //! and no receipt is written. Turning a lossy filter on is an explicit
 //! owner act (the setting `dreamer.prefilter`, through `vault.settings.set`), never a side effect of
-//! upgrading. The scores are still computed under the default so an operator
-//! can watch the distribution before choosing a cut.
+//! upgrading. Under the default a TURN that carries its own words is still
+//! scored, and a chat TURN's MESSAGE rows are not read: no score can fall
+//! under a zero threshold, so the default reads nothing it did not read
+//! before. A threshold above zero screens chat as well.
 //!
 //! [`dreamer_extraction_role_admissible`]: crate::dreamer_runner::dreamer_extraction_role_admissible
 

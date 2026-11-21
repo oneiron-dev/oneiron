@@ -10,7 +10,7 @@
         "revision": "R17-host-1"
       },
       "licence": "Apache-2.0",
-      "sha256": "6b0edb9a9058166df591d861559fe4b267be3654dd13a6346aac15994a74e792",
+      "sha256": "df9704d10a96b609367e0199f041359f637b5b1140d46215c05ae0edcd0a563b",
       "expectedFacts": {
         "explanation": "Authored original HOOKS-06 input or expected behavior; never engine output."
       },
@@ -214,7 +214,7 @@
         "revision": "R17-host-1"
       },
       "licence": "Apache-2.0",
-      "sha256": "3b9cb06e10dcc13ecd2b6ab862c4fe2edb22fec5fef4c12a8a4c9ef31480d46b",
+      "sha256": "4bde96d222a7a0599bdb9d0eeb712352dd96f3ad2dd2485cbf19a12a1e0880fa",
       "expectedFacts": {
         "explanation": "Authored original HOOKS-06 input or expected behavior; never engine output."
       },

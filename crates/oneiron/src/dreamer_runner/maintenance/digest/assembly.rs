@@ -12,7 +12,13 @@ use super::{
     load_presentation, load_state, pending_proposals, private_sources, unseen_cleanup,
     unseen_note_tombstones, unseen_offers, view,
 };
+use crate::provenance::birth::RowBirth;
+use crate::provenance::made_by::MadeByClass;
 use crate::{EntityId, Result, Vault};
+
+/// The door that assembles a digest, named in the birth of each reader's
+/// notice.
+const DIGEST_ASSEMBLY_DOOR: &str = "dreamer.digest.assemble";
 
 impl Vault {
     pub(super) fn assemble_proactivity_digest(
@@ -20,7 +26,8 @@ impl Vault {
         audience: DigestAudience<'_>,
         now: u64,
     ) -> Result<Option<ProactivityDigest>> {
-        let authority = self.dreamer_authority()?.entity_ref();
+        let writer = self.dreamer_authority()?;
+        let authority = writer.entity_ref();
         let pending_offers = crate::skill_optimize::pending_training_offers(self)?;
         self.with_write_txn_grouped(|txn| {
             // A witnessed answer whose intent or owner moved delivers nothing.
@@ -175,6 +182,7 @@ impl Vault {
                     presentation,
                     recipient,
                     witness,
+                    writer,
                     due,
                     breakthrough,
                     now,
@@ -205,6 +213,7 @@ impl Vault {
             presentation,
             recipient,
             witness,
+            writer,
             due,
             breakthrough,
             now,
@@ -286,25 +295,47 @@ impl Vault {
             // FIX 6411: each reader is told of the digest as they read
             // it, and one whose view carries nothing is not told: a
             // shared timer digest is no shared authorization.
-            if view::digest_view_for_in(self, txn, &digest, reader).is_empty() {
+            let view = view::digest_view_for_in(self, txn, &digest, reader);
+            if view.is_empty() {
                 continue;
             }
-            self.record_notification_in_txn(
-                txn,
-                &crate::inbox::NotificationEvent {
-                    kind: crate::inbox::NotificationKind::Digest,
-                    source: crate::inbox::NotificationSource {
-                        producer: DIGEST_NOTIFICATION_PRODUCER.to_owned(),
-                        event: format!("{id}:{}", reader.to_hex()),
-                        result: Some(id.clone()),
-                        ..crate::inbox::NotificationSource::default()
-                    },
-                    subject_refs: Vec::new(),
-                    recipient: Some(reader),
-                    created_at: now,
-                    origin_conversation: None,
+            let event = crate::inbox::NotificationEvent {
+                kind: crate::inbox::NotificationKind::Digest,
+                source: crate::inbox::NotificationSource {
+                    producer: DIGEST_NOTIFICATION_PRODUCER.to_owned(),
+                    event: format!("{id}:{}", reader.to_hex()),
+                    result: Some(id.clone()),
+                    ..crate::inbox::NotificationSource::default()
                 },
-            )?;
+                subject_refs: Vec::new(),
+                recipient: Some(reader),
+                created_at: now,
+                origin_conversation: None,
+            };
+            // The notice is born from the records the words of its
+            // reader's kept proposals are drawn from, so it reads to a
+            // reader of each one, as the view does, and to no other owner
+            // (RECIPIENT-NOTICE-READ-BY-ANY-READER, owner half). A view of
+            // lines, asks and offers alone names no row: its notice stays
+            // plain.
+            let mut records = Vec::new();
+            for proposal in view.groups.values().flatten() {
+                records.extend(private_sources::digest_item_records_in(
+                    self, txn, proposal,
+                )?);
+            }
+            if let Some(birth) = RowBirth::written(
+                writer,
+                MadeByClass::Concluded,
+                DIGEST_ASSEMBLY_DOOR,
+                &records,
+                &[],
+                now,
+            ) {
+                self.record_derived_notification_in_txn(txn, &event, &birth)?;
+            } else {
+                self.record_notification_in_txn(txn, &event)?;
+            }
         }
         // The vault state and board pointer follow the shared news, health
         // cards included; an asks-only digest is the recipient's and
@@ -346,6 +377,8 @@ struct DigestParts {
     presentation: ProactivityPresentation,
     recipient: Option<EntityId>,
     witness: Option<crate::attempt_queue::AttemptId>,
+    /// The Dreamer, which writes each reader's notice.
+    writer: crate::WriteActor,
     due: bool,
     breakthrough: bool,
     now: u64,

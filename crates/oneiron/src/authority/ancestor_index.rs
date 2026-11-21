@@ -210,6 +210,49 @@ impl AncestorIndex {
         let node = self.nodes.binary_search(hash).ok()?;
         Some(self.id_of_node[node])
     }
+
+    /// The nodes `marked` holds for, so a reader asks of many rows whether
+    /// one is in their ancestry (`AncestorMarks::in_ancestry`) in one pass
+    /// over the nodes, not a walk of each row's ancestry (row
+    /// [ROSTER-KEY-LOG-FLOOD], PR 3). `marked` is asked once of every node:
+    /// each row and each claimed parent the log lacks.
+    pub(in crate::authority) fn marks(
+        &self,
+        marked: impl Fn(&AuthorityEntryHash) -> bool,
+    ) -> AncestorMarks<'_> {
+        let mut marked_below = Vec::with_capacity(self.node_of_id.len() + 1);
+        marked_below.push(0_u32);
+        let mut count = 0_u32;
+        for node in &self.node_of_id {
+            count += u32::from(marked(&self.nodes[*node as usize]));
+            marked_below.push(count);
+        }
+        AncestorMarks {
+            index: self,
+            marked_below,
+        }
+    }
+}
+
+/// The marked nodes of an [`AncestorIndex`] ([`AncestorIndex::marks`]).
+pub(in crate::authority) struct AncestorMarks<'a> {
+    index: &'a AncestorIndex,
+    /// The marked nodes among the ids below each id.
+    marked_below: Vec<u32>,
+}
+
+impl AncestorMarks<'_> {
+    /// Whether a marked node is in `hash`'s ancestry ([`AncestorIndex::get`]);
+    /// false for a hash that is no row. Each run is a range of ids, so it
+    /// holds a marked node exactly when the marked count below its end
+    /// passes the count below its start.
+    pub(in crate::authority) fn in_ancestry(&self, hash: &AuthorityEntryHash) -> bool {
+        self.index.get(hash).is_some_and(|past| {
+            past.runs.iter().any(|&(start, end)| {
+                self.marked_below[end as usize] > self.marked_below[start as usize]
+            })
+        })
+    }
 }
 
 impl<'a> Ancestors<'a> {

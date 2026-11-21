@@ -74,6 +74,7 @@ fn claim_body_at(value: &str, approval: ClaimApprovalStatus) -> Vec<u8> {
 fn a_binding_reranker_is_handed_the_claim_its_pin_holds() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let id = entity_id(0x6A);
+    put_subject(&vault)?;
     put_twice(
         &vault,
         id,
@@ -742,6 +743,7 @@ fn a_stale_claim_the_filter_admits_is_handed_to_no_reranker() -> Result<()> {
         deny_all: false,
         caller_excludes_stale: false,
         credential: None,
+        work_talk_room: None,
     };
     let reranker = ClaimKeepingReranker::default();
 

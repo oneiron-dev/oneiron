@@ -4,9 +4,7 @@ use std::ops::ControlFlow;
 
 use super::app_tier::require_bound_app_auth;
 use super::conn_state::{ConnState, WindowSyncMode};
-use super::window_sync::{
-    decode_and_authorize_selector_request, map_selector_filter_err, selector_grant_scope,
-};
+use super::window_sync::{decode_and_authorize_selector_request, map_selector_filter_err};
 use crate::auth::CoreScope;
 use crate::protocol::{self, ProtocolError, window_sub_tags};
 use crate::server::SyncServer;
@@ -14,7 +12,7 @@ use loro::ExportMode;
 use oneiron::sync::federation_burst::{
     FederationBurstDecision, prepare_selector_fetch, replay_selector_fetch,
 };
-use oneiron::sync::{WindowKey, filtered_window_doc_for_peer};
+use oneiron::sync::{SelectorAnswerDoc, WindowKey, selector_answer_doc_for_peer};
 
 /// `Break` when `session_gone` finds the socket's caller gone once the window
 /// has loaded (FIX 6313): nothing is sent or completed for it, and the
@@ -41,10 +39,13 @@ pub(super) async fn handle_selector_fetch(
     // live app-tier credential must name the actual granted principal.
     let auth = require_bound_app_auth(server, state)?;
     // The window is the selector grant's, not the credential's lane, so a
-    // credential limited to facets is refused (owner ruling FACET-READ).
+    // credential limited to facets is refused (owner ruling FACET-READ); a
+    // member lane's whole-grant credential holds those rows (MEMBER-SYNC review F2).
     auth.require(CoreScope::Read)
-        .and_then(|()| auth.require_unnarrowed_facets())
         .map_err(|_| ProtocolError::RpcNoPrincipal)?;
+    if !state.selector_lane.admits_export_facets(auth) {
+        return Err(ProtocolError::RpcNoPrincipal);
+    }
     let principal = oneiron::EntityId::from_hex(
         auth.require_registered_principal()
             .map_err(|_| ProtocolError::RpcNoPrincipal)?,
@@ -68,26 +69,19 @@ pub(super) async fn handle_selector_fetch(
     }
     // No queue row, observation, or doc exists before both decoding and
     // authorization.
-    let decoded = decode_and_authorize_selector_request(server, request)?;
+    let decoded = decode_and_authorize_selector_request(server, &state.selector_lane, request)?;
     if decoded.selector.member_ref != principal {
         return Err(ProtocolError::InvalidPayload("selector principal mismatch"));
     }
+    let scope = state
+        .selector_lane
+        .scope_for(&decoded.selector)
+        .map_err(map_selector_filter_err)?;
     let prepared = match retry {
-        Some(id) => replay_selector_fetch(
-            server.vault.as_ref(),
-            principal,
-            selector_grant_scope(),
-            key,
-            &id,
-            request,
-        ),
-        None => prepare_selector_fetch(
-            server.vault.as_ref(),
-            principal,
-            selector_grant_scope(),
-            key,
-            request,
-        ),
+        Some(id) => {
+            replay_selector_fetch(server.vault.as_ref(), principal, scope, key, &id, request)
+        }
+        None => prepare_selector_fetch(server.vault.as_ref(), principal, scope, key, request),
     }
     .map_err(map_selector_filter_err)?;
     if let FederationBurstDecision::Defer { request_id, .. } = prepared.decision {
@@ -111,19 +105,48 @@ pub(super) async fn handle_selector_fetch(
         return Ok(ControlFlow::Break(()));
     }
     let doc = window.doc.clone();
-    let filtered = filtered_window_doc_for_peer(
+    // The answer leaves only while the grant and the authority it is made
+    // under stand (SELECTOR-RELEASE-POINT = B): read before the filter.
+    let basis = crate::selector_release::SelectorReleaseBasis::take(
         server.vault.as_ref(),
-        &doc,
-        key,
-        selector_grant_scope(),
-        &prepared.selector,
-        state.peer_machine(server.vault()),
-    )
-    .map_err(map_selector_filter_err)?;
+        prepared.selector.grant_id,
+    );
+    let answer_scope = state
+        .selector_lane
+        .scope_for(&prepared.selector)
+        .map_err(map_selector_filter_err)?;
+    // It also leaves only while each coreference link the filter lets it
+    // carry is still shared into its pact. To another vault's machine it
+    // carries the owner's delete of each row this vault released to the
+    // grant's peer, and goes with the rows it releases, which its last door
+    // records before its bytes leave (CROSS-VAULT-DELETE-SELECTOR-ANSWER-RELEASE).
+    let (answer, disclosure) = oneiron::sync::recording_coreference_disclosure(|| {
+        selector_answer_doc_for_peer(
+            server.vault.as_ref(),
+            &doc,
+            key,
+            answer_scope,
+            &prepared.selector,
+            state.peer_machine(server.vault()),
+        )
+    });
+    let SelectorAnswerDoc {
+        doc: filtered,
+        release,
+    } = answer.map_err(map_selector_filter_err)?;
     let delta = filtered
         .export(ExportMode::all_updates())
         .map_err(|e| ProtocolError::ExportFailed(e.to_string()))?;
-    send(direct_tx, key, window_sub_tags::UPDATE, &delta)?;
+    let update = window_sync_frame(key, window_sub_tags::UPDATE, &delta)?;
+    for frame in
+        state
+            .selector_answers
+            .queue_releasing(basis.disclosing(disclosure), release, vec![update])
+    {
+        direct_tx
+            .send(frame)
+            .map_err(|_| ProtocolError::Persistence("selector response channel closed".into()))?;
+    }
     // The rows it admitted are the ones whose by-reference bodies this socket
     // is served, while its selector stands (FIX 12118).
     state
@@ -141,11 +164,14 @@ fn send(
     tag: u8,
     payload: &[u8],
 ) -> Result<(), ProtocolError> {
-    let frame = protocol::encode_window_sync(key.as_str(), tag, payload)
-        .into_result()
-        .map_err(|e| ProtocolError::InvalidPayload(protocol::transport_err_msg(e)))?;
-    tx.send(frame)
+    tx.send(window_sync_frame(key, tag, payload)?)
         .map_err(|_| ProtocolError::Persistence("selector response channel closed".into()))
+}
+
+fn window_sync_frame(key: &WindowKey, tag: u8, payload: &[u8]) -> Result<Vec<u8>, ProtocolError> {
+    protocol::encode_window_sync(key.as_str(), tag, payload)
+        .into_result()
+        .map_err(|e| ProtocolError::InvalidPayload(protocol::transport_err_msg(e)))
 }
 
 /// Selector bytes are a standalone closed subgraph. Recheck only that

@@ -2,6 +2,8 @@
 
 use std::collections::BTreeMap;
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use super::codec::{RECORD, corrupt};
 use super::keys::{
     FIELD_ANCHOR_DRIFTS, FIELD_ANCHOR_MOVES, FIELD_ARTIFACT_REF, FIELD_BEFORE_VERSION,
@@ -267,7 +269,7 @@ pub(super) fn settled_anchors_from_summary(summary: &ReanchorSummary) -> Vec<Set
 }
 
 pub(super) fn manifest_ref(manifest: &EditManifest) -> Result<[u8; 32]> {
-    Ok(*blake3::hash(&manifest.to_msgpack()?).as_bytes())
+    Ok(*ContentHash::of(&manifest.to_msgpack()?).as_bytes())
 }
 
 pub(super) fn already_settled(existing: &SettlementRecord) -> Error {

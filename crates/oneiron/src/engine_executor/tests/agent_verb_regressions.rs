@@ -47,6 +47,7 @@ impl TaskCreateDoor {
         if self.closed.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(AgentVerbRefusal {
                 code: "mcp_auth_required".to_owned(),
+                hook_notice: None,
             });
         }
         Ok(())
@@ -62,6 +63,7 @@ impl TaskCreateDoor {
         self.admits()?;
         let refused = || AgentVerbRefusal {
             code: "engine_error".to_owned(),
+            hook_notice: None,
         };
         let input: TaskCreateRequest =
             serde_json::from_value(call.input.clone()).map_err(|_| refused())?;
@@ -77,6 +79,10 @@ impl TaskCreateDoor {
         Ok(AgentVerbAnswer {
             output: answer,
             rows: Some(Vec::new()),
+            hook_notice: None,
+            observations: Vec::new(),
+            hooks: Vec::new(),
+            stored_output: None,
         })
     }
 }
@@ -109,6 +115,7 @@ impl AgentVerbDoor for TaskCreateDoor {
                 .load(std::sync::atomic::Ordering::SeqCst);
             return Err(AgentVerbRefusal {
                 code: if as_a_gate { "deny" } else { "read_refused" }.to_owned(),
+                hook_notice: None,
             });
         }
         self.admits().map(|()| None)
@@ -360,7 +367,7 @@ fn a_run_stopped_before_its_first_checkpoint_keeps_its_clock_and_config() {
         .get_code_run_replay_record(&run.config.run_id)
         .expect("read the run's record")
         .expect("the run's record outlives the stop");
-    assert_eq!(record.determinism, run.config.determinism);
+    assert_eq!(record.determinism, Some(run.config.determinism));
 
     let other_task = EngineExecutorConfig {
         task: "forget the project status".to_owned(),
@@ -496,6 +503,7 @@ fn a_closed_door_refuses_a_resumed_write_its_kept_answer() {
             effect: SelfEffect::AgentVerb,
             outcome: "mcp_auth_required".to_owned(),
             reason_codes: Vec::new(),
+            hook_notice: None,
         })
     );
 
@@ -543,6 +551,7 @@ fn a_retry_past_a_refused_kept_answer_writes_nothing() {
         effect: SelfEffect::AgentVerb,
         outcome: "read_refused".to_owned(),
         reason_codes: Vec::new(),
+        hook_notice: None,
     });
     assert_eq!(retried.answers, vec![refused.clone(), refused]);
 }
@@ -587,6 +596,7 @@ fn a_bubble_past_a_refused_kept_answer_speaks_nothing() {
             effect: SelfEffect::Speak,
             outcome: "read_refused".to_owned(),
             reason_codes: Vec::new(),
+            hook_notice: None,
         })
     );
 }
@@ -597,6 +607,7 @@ fn refused_as(effect: SelfEffect, code: &str) -> SelfDispatchOutcome {
         effect,
         outcome: code.to_owned(),
         reason_codes: Vec::new(),
+        hook_notice: None,
     })
 }
 
@@ -705,6 +716,8 @@ fn a_kept_answer_refused_in_a_gate_word_halts_the_next_attempt() {
             SelfDispatchOutcome::Failed(crate::code_run::SelfFailedResult {
                 effect: SelfEffect::AgentVerb,
                 error: "host_bridge_halted".to_owned(),
+                code: None,
+                disk_floor: None,
             }),
         ]
     );
@@ -746,6 +759,7 @@ impl AgentVerbDoor for ClosingDoor {
     ) -> crate::Result<std::result::Result<AgentVerbAnswer, AgentVerbRefusal>> {
         Ok(Err(AgentVerbRefusal {
             code: crate::code_run::AGENT_VERB_DOOR_UNBOUND.to_owned(),
+            hook_notice: None,
         }))
     }
 
@@ -756,6 +770,7 @@ impl AgentVerbDoor for ClosingDoor {
         if self.closed.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(AgentVerbRefusal {
                 code: "door_closed".to_owned(),
+                hook_notice: None,
             });
         }
         Ok(None)
@@ -804,13 +819,7 @@ fn a_closed_door_ends_a_runs_reads_of_its_recorded_output() {
     let door = ClosingDoor::new(false);
     let gated =
         gated_actor_write(&vault, "run-recorded-output-door").with_agent_verb_door(door.clone());
-    let config = executor_config(
-        entity(0xE8),
-        EngineExecutorLimits {
-            soft_steps: 4,
-            hard_steps: 8,
-        },
-    );
+    let config = executor_config(entity(0xE8), EngineExecutorLimits { soft_steps: 4 });
     let backend = FixtureBackend::new(["const first = 1;", "const second = 2;"]);
     let lease = BudgetLease::for_test("executor-lease");
     let mut runtime = ReadsBackItsOutput {
@@ -887,13 +896,7 @@ fn a_bad_recorded_output_reference_is_refused_without_loading_the_source() {
     let (_dir, vault) = open_test_vault();
     let gated = gated_actor_write(&vault, "run-bad-output-reference")
         .with_agent_verb_door(ClosingDoor::new(false));
-    let config = executor_config(
-        entity(0xE9),
-        EngineExecutorLimits {
-            soft_steps: 4,
-            hard_steps: 8,
-        },
-    );
+    let config = executor_config(entity(0xE9), EngineExecutorLimits { soft_steps: 4 });
     let backend = FixtureBackend::new(["const first = 1;", "const second = 2;"]);
     let lease = BudgetLease::for_test("executor-lease");
     let mut runtime = ReadsBadReferences {
@@ -984,6 +987,7 @@ impl AgentVerbDoor for GateWordDoor {
     ) -> crate::Result<std::result::Result<AgentVerbAnswer, AgentVerbRefusal>> {
         Ok(Err(AgentVerbRefusal {
             code: crate::code_run::AGENT_VERB_DOOR_UNBOUND.to_owned(),
+            hook_notice: None,
         }))
     }
 
@@ -994,6 +998,7 @@ impl AgentVerbDoor for GateWordDoor {
         if call == RunCall::Bridge(SelfEffect::MemorySearch) {
             return Err(AgentVerbRefusal {
                 code: "deny".to_owned(),
+                hook_notice: None,
             });
         }
         Ok(None)
@@ -1299,6 +1304,8 @@ fn a_recorded_read_of_a_gate_word_refusal_halts_the_bridge() {
         SelfDispatchOutcome::Failed(crate::code_run::SelfFailedResult {
             effect,
             error: "host_bridge_halted".to_owned(),
+            code: None,
+            disk_floor: None,
         })
     };
     assert!(
@@ -1515,9 +1522,10 @@ fn a_removed_agents_run_hears_not_in_room_past_its_halted_bridge() {
             .join_member(room, member, by, at, HistoryChoice::Share)
             .expect("join the room");
     }
+    let proof = crate::test_util::embedded_owner_proof(&vault);
     let session = vault
         .off_record_session_vault()
-        .enter_in_room("halted-room", OffRecordBackendClass::Local, room, owner)
+        .enter_in_room_as("halted-room", OffRecordBackendClass::Local, room, &proof)
         .expect("start off record");
     let gated = GatedActorWrite::for_off_record_session(
         &session,
