@@ -154,9 +154,6 @@ impl FreeTimePolicyInput {
         let Some(standing) = standing else {
             return Direction::Widens;
         };
-        if self.schedule != standing.schedule || standing.holder_not_before.is_some() {
-            return Direction::Widens;
-        }
         if self.total_units > standing.total_units {
             return Direction::Widens;
         }
