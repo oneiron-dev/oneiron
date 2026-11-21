@@ -252,12 +252,14 @@ fn update_rows(update: &[u8]) -> UpdateRows {
     UpdateRows::Read(rows)
 }
 
-/// The row a source-audience carrier binds: a record or a derived row's
-/// policies. A withholding marker binds nothing, so the send that carries
-/// one is never withheld for the row it names.
+/// The row a source-audience carrier binds: a record, a derived row's
+/// policies or a row's open entries. A withholding marker binds nothing, so
+/// the send that carries one is never withheld for the row it names.
 fn bound_row(map_key: &str) -> Option<EntityId> {
     match parse_key(map_key)? {
-        CarrierKey::Record(row) | CarrierKey::Derived(row, _) => Some(row),
+        CarrierKey::Record(row) | CarrierKey::Derived(row, _) | CarrierKey::Open(row, _) => {
+            Some(row)
+        }
         CarrierKey::Withheld(_) | CarrierKey::Policy(..) | CarrierKey::Event(..) => None,
     }
 }

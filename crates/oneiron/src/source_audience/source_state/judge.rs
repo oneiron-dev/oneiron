@@ -437,16 +437,23 @@ pub(super) fn fold_entry_in_txn(
         free_attestations_in_txn(store, txn, row)?;
         return Ok(true);
     }
-    match crate::ports::EntityStoreRead::port_entity_raw(store, txn, row)? {
-        Some(raw) => {
-            take_floor_in_store_txn(store, txn, row, &raw, floor)?;
-        }
-        None => {
-            crate::source_audience::add_derived_policies_in_store_txn(store, txn, row, floor)?;
-        }
-    }
+    take_input_floor_in_store_txn(store, txn, row, floor)?;
     close_entry_in_txn(store, txn, row, input)?;
     Ok(true)
+}
+
+/// Adds `floor`, a bound input's, to the stored floor of `row`, held here or
+/// not yet: whether it grew.
+pub(super) fn take_input_floor_in_store_txn(
+    store: &crate::store::Store,
+    txn: &mut RwTxn<'_>,
+    row: &EntityId,
+    floor: &BTreeSet<EntityId>,
+) -> Result<bool> {
+    match crate::ports::EntityStoreRead::port_entity_raw(store, txn, row)? {
+        Some(raw) => take_floor_in_store_txn(store, txn, row, &raw, floor),
+        None => crate::source_audience::add_derived_policies_in_store_txn(store, txn, row, floor),
+    }
 }
 
 /// Heals, in `txn`, a row an older build raised (section 5, M2): every

@@ -82,11 +82,13 @@ pub(crate) use replica::{
 #[cfg(any(test, feature = "test-support", oneiron_test_support))]
 pub(crate) use source_state::forget_floor_state_in_txn;
 pub(crate) use source_state::{
-    DeleteLevel, FloorRead, Fresh, LinksBefore, StateReader, Verdict, before_erase_in_store_txn,
-    before_erase_in_txn, floor_read_in, fold_waiters_in_txn, judge_rows_in_txn,
-    note_shell_erased_in_txn, seal_waiters_in_txn, sweep_floors, verdict_in,
+    DeleteLevel, FloorRead, Fresh, LinksBefore, StateReader, Verdict, any_open_in,
+    before_erase_in_store_txn, before_erase_in_txn, floor_read_in, fold_waiters_in_txn,
+    judge_rows_in_txn, note_shell_erased_in_txn, seal_waiters_in_txn, sweep_floors, verdict_in,
     waiting_floor_readable_in,
 };
+#[cfg(feature = "sync")]
+pub(crate) use source_state::{OpenFlags, merge_carried_in_txn, open_entries_in};
 #[cfg(feature = "sync")]
 pub(crate) use wake::{
     PolicyWake, advance_policy_wake, forget_policy_window, note_policy_windows, policy_wakes,

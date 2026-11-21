@@ -415,6 +415,10 @@ impl WindowManager {
             let floors =
                 crate::sync::source_audiences::history_derived_floors(&mirror, &from, snapshot)?;
             crate::sync::source_audiences::stage_derived_floors(vault, &floors)?;
+            // And every open entry its rows' carriers hold now joins its row's
+            // open set (pass 31, step L-S4).
+            let open = crate::sync::source_audiences::latest_open_entries(&mirror);
+            crate::sync::source_audiences::stage_open_entries(vault, &open)?;
         }
         if materialize {
             self.land_mirror(world, window, &mirror, gained, &read)?;

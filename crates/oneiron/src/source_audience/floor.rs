@@ -310,20 +310,24 @@ pub(crate) fn row_sources_in(
 }
 
 /// Whether a write here can give any row a floor: the vault holds a policy
-/// or a stored floor, or a row a source landed (a mail row or a phone
-/// thread's) was written here. A vault with none gives no row a floor, so
-/// its writes read no lineage.
+/// or a stored floor, a row a source landed (a mail row or a phone
+/// thread's) was written here, or a row holds an open entry, one a
+/// full-window carrier brought included (step L-S4). A vault with none gives
+/// no row a floor, so its writes read no lineage.
 ///
 /// # Errors
 ///
 /// Storage failures.
 pub(crate) fn floors_possible_in(vault: &Vault, txn: &RoTxn<'_>) -> Result<bool> {
-    Ok(super::any_policy_in(vault, txn)? || super::any_landed_in(vault, txn)?)
+    Ok(super::any_policy_in(vault, txn)?
+        || super::any_landed_in(vault, txn)?
+        || super::any_open_in(&vault.store, txn)?)
 }
 
 /// [`floors_possible_in`] for a write that holds only the store.
 pub(super) fn floors_possible_of_in(store: &crate::store::Store, txn: &RoTxn<'_>) -> Result<bool> {
     Ok(super::POLICIES.iter_from(store, txn, &[])?.next().is_some()
         || super::DERIVED.iter_from(store, txn, &[])?.next().is_some()
-        || super::LANDED.get(store, txn, &())?.unwrap_or(false))
+        || super::LANDED.get(store, txn, &())?.unwrap_or(false)
+        || super::any_open_in(store, txn)?)
 }

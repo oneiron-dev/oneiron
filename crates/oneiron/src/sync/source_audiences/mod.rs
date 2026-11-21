@@ -20,7 +20,15 @@
 //!   who shared a thread and lets its sharer withdraw the share there too. A
 //!   receipt changes only by losing an actor to an erase; two copies that
 //!   tell different changes are refused
-//!   ([`crate::source_audience::merge_event_in_txn`]).
+//!   ([`crate::source_audience::merge_event_in_txn`]);
+//! - `derived/<row>/<machine>`: the policies a row written from bound rows
+//!   reads under, as that machine found its lineage (fix list row 17207);
+//! - `open/<row>/<machine>`: the inputs whose floor the row has not taken
+//!   yet on that machine, with each entry's flags (pass 31, step L-S4). Each
+//!   machine writes its own key, its whole open set of the row, and removes
+//!   it once the set is empty; a holder adds each entry that first arrives
+//!   to the row's open set before the update lands ([`stage_open_entries`]),
+//!   and a removed key closes no entry here.
 //!
 //! Each revision a window holds stays beside the others, so the highest
 //! wins however Loro orders them, and two unequal copies of one revision
@@ -48,11 +56,11 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::source_audience::carried::{
     Carrier, CarrierKey, carrier, derived_key, derived_prefix, encode_binding, encode_derived,
-    encode_event, encode_policy, encode_withheld, event_key, named, parse_key, policy_key,
-    record_key, withheld_key,
+    encode_event, encode_open, encode_policy, encode_withheld, event_key, named, open_key,
+    open_prefix, parse_key, policy_key, record_key, withheld_key,
 };
 use crate::source_audience::{
-    self, HeldBack, ReplicaMerge, SourceAudienceKind, SourceAudiencePolicy,
+    self, HeldBack, OpenFlags, ReplicaMerge, SourceAudienceKind, SourceAudiencePolicy,
 };
 use crate::store::source_audience_obligation::SourceAudienceObligation;
 
@@ -174,6 +182,10 @@ pub(crate) struct AdmissionRows {
     /// The policies every derived carrier met in the range names, by row,
     /// the sets written over included (fix list row 17207).
     derived: BTreeMap<EntityId, BTreeSet<EntityId>>,
+    /// The key of every open carrier met in the range (step L-S4): its
+    /// value as the update leaves it is read once the range is admitted
+    /// ([`AdmissionRows::open_arrivals`]).
+    open_keys: BTreeSet<String>,
     /// The rows a binding the window's held map carries names: each states
     /// the source-audience obligation (fix list row 16256).
     held_bound: BTreeSet<EntityId>,
@@ -231,6 +243,46 @@ impl AdmissionRows {
         self.derived
     }
 
+    /// The open entries each open carrier of the admitted range brings that
+    /// `held`, the window as this vault holds it, did not hold under the same
+    /// key: read from `candidate`, the window as the update leaves it (step
+    /// L-S4). A machine's key holds its open set now, so an entry it took
+    /// and dropped before the update ends does not arrive, and a carried
+    /// entry arrives once: a later copy of a key this vault already merged
+    /// opens no wait this vault has folded since.
+    pub(crate) fn open_arrivals(&self, held: &LoroDoc, candidate: &LoroDoc) -> OpenArrivals {
+        let mut arrivals = OpenArrivals::new();
+        if self.open_keys.is_empty() {
+            return arrivals;
+        }
+        let now = candidate.get_map(SOURCE_AUDIENCES_MAP);
+        let before = holds_map(held).then(|| held.get_map(SOURCE_AUDIENCES_MAP));
+        for map_key in &self.open_keys {
+            let Some(Carrier::Open { row, entries, .. }) = open_carrier(&now, map_key) else {
+                continue;
+            };
+            let held_entries = before
+                .as_ref()
+                .and_then(|map| open_carrier(map, map_key))
+                .and_then(|carried| match carried {
+                    Carrier::Open { entries, .. } => Some(entries),
+                    _ => None,
+                })
+                .unwrap_or_default();
+            let row_arrivals = arrivals.entry(row).or_default();
+            for (input, flags) in entries {
+                if held_entries.get(&input) != Some(&flags) {
+                    let joined = row_arrivals
+                        .get(&input)
+                        .map_or(flags, |other: &OpenFlags| other.merge(flags));
+                    row_arrivals.insert(input, joined);
+                }
+            }
+        }
+        arrivals.retain(|_, entries| !entries.is_empty());
+        arrivals
+    }
+
     /// Notes what `doc`'s own map holds, admitted already.
     pub(crate) fn note_held(&mut self, doc: &LoroDoc) {
         if !holds_map(doc) {
@@ -263,7 +315,8 @@ impl AdmissionRows {
                         self.events.insert((policy, revision), joined);
                     }
                 }
-                Ok(Carrier::Withheld { .. } | Carrier::Derived { .. }) | Err(_) => {}
+                Ok(Carrier::Withheld { .. } | Carrier::Derived { .. } | Carrier::Open { .. })
+                | Err(_) => {}
             }
         }
     }
@@ -418,8 +471,68 @@ pub(crate) fn admit_carrier(
         Carrier::Derived { row, policies, .. } => {
             seen.derived.entry(row).or_default().extend(policies);
         }
+        // A row's open entries only keep it waiting, or seal it where an
+        // input is erased: none contradicts another (step L-S4). What the key
+        // holds once the range lands is what arrives.
+        Carrier::Open { .. } => {
+            seen.open_keys.insert(map_key.to_owned());
+        }
     }
     Ok(())
+}
+
+/// The open entries carriers bring, by row, then by input (step L-S4).
+pub(crate) type OpenArrivals = BTreeMap<EntityId, BTreeMap<EntityId, OpenFlags>>;
+
+/// The open carrier `map` holds under `map_key`, when it decodes.
+fn open_carrier(map: &LoroMap, map_key: &str) -> Option<Carrier> {
+    let bytes = map_get_bytes(map, map_key)?;
+    carrier(map_key, &bytes)
+        .ok()
+        .filter(|carried| matches!(carried, Carrier::Open { .. }))
+}
+
+/// Adds each open entry `arrivals` names to its row's open set, before the
+/// update that carries it lands (pass 31 section 1.5, write 3; step L-S4),
+/// in one writer: the row waits here as it waits on the machine that wrote
+/// the key, and an input erased here seals it
+/// ([`source_audience::merge_carried_in_txn`]).
+///
+/// # Errors
+///
+/// Storage failures.
+pub(crate) fn stage_open_entries(vault: &Vault, arrivals: &OpenArrivals) -> Result<()> {
+    if arrivals.is_empty() {
+        return Ok(());
+    }
+    vault.with_write_txn_grouped(|txn| {
+        for (row, entries) in arrivals {
+            source_audience::merge_carried_in_txn(vault, txn, row, entries)?;
+        }
+        Ok(())
+    })
+}
+
+/// The open entries every open carrier of `doc`'s map holds now, by row
+/// (step L-S4): what a sealed mirror that took a merge stages
+/// ([`stage_open_entries`]).
+pub(crate) fn latest_open_entries(doc: &LoroDoc) -> OpenArrivals {
+    let mut arrivals = OpenArrivals::new();
+    if !holds_map(doc) {
+        return arrivals;
+    }
+    for (_, carried) in carriers(&doc.get_map(SOURCE_AUDIENCES_MAP)) {
+        if let Carrier::Open { row, entries, .. } = carried {
+            let row_arrivals = arrivals.entry(row).or_default();
+            for (input, flags) in entries {
+                let joined = row_arrivals
+                    .get(&input)
+                    .map_or(flags, |other: &OpenFlags| other.merge(flags));
+                row_arrivals.insert(input, joined);
+            }
+        }
+    }
+    arrivals
 }
 
 /// Binds each row `floors` names under the policies named for it, before the
@@ -561,9 +674,10 @@ pub(crate) fn refuse_foreign_map(doc: &LoroDoc) -> Result<()> {
 /// row; a policy key and a receipt key name no row.
 pub(crate) fn record_owner(map_key: &str) -> Option<EntityId> {
     match parse_key(map_key)? {
-        CarrierKey::Record(row) | CarrierKey::Withheld(row) | CarrierKey::Derived(row, _) => {
-            Some(row)
-        }
+        CarrierKey::Record(row)
+        | CarrierKey::Withheld(row)
+        | CarrierKey::Derived(row, _)
+        | CarrierKey::Open(row, _) => Some(row),
         CarrierKey::Policy(..) | CarrierKey::Event(..) => None,
     }
 }
@@ -616,7 +730,8 @@ pub(crate) fn marked_elsewhere(vault: &Vault, doc: &LoroDoc) -> Result<BTreeSet<
             | Carrier::Policy { .. }
             | Carrier::Withheld { .. }
             | Carrier::Event { .. }
-            | Carrier::Derived { .. } => None,
+            | Carrier::Derived { .. }
+            | Carrier::Open { .. } => None,
         })
         .collect())
 }
@@ -651,11 +766,13 @@ pub(crate) fn carries_record(doc: &LoroDoc, row: &EntityId) -> bool {
         return true;
     }
     // A derived row's carried policies bind it as a binding does (fix list
-    // row 17207).
-    let prefix = derived_prefix(row);
-    let mut derived = false;
-    map.for_each(|map_key, _| derived |= map_key.starts_with(&prefix));
-    derived
+    // row 17207), and so do a row's carried open entries (step L-S4).
+    let prefixes = [derived_prefix(row), open_prefix(row)];
+    let mut bound = false;
+    map.for_each(|map_key, _| {
+        bound |= prefixes.iter().any(|prefix| map_key.starts_with(prefix));
+    });
+    bound
 }
 
 // ---------------------------------------------------------------------------
@@ -823,6 +940,59 @@ fn derived_carried(map: &LoroMap, row: &EntityId) -> Vec<BTreeSet<EntityId>> {
         .collect()
 }
 
+/// The open set of each of `rows` that holds an entry, read in one
+/// snapshot (step L-S4).
+fn open_sets_of(
+    vault: &Vault,
+    rows: &BTreeSet<EntityId>,
+) -> Result<Vec<(EntityId, BTreeMap<EntityId, OpenFlags>)>> {
+    let rtxn = vault.store.env.read_txn()?;
+    if !source_audience::any_open_in(&vault.store, &rtxn)? {
+        return Ok(Vec::new());
+    }
+    let mut sets = Vec::new();
+    for row in rows {
+        let entries = source_audience::open_entries_in(&vault.store, &rtxn, row)?;
+        if !entries.is_empty() {
+            sets.push((*row, entries));
+        }
+    }
+    Ok(sets)
+}
+
+/// Writes into `map` this machine's (`me`) open key of each of `rows`: the
+/// row's open set as `open` holds it, the key removed for a row whose set
+/// is empty now (step L-S4). Only this machine writes its key.
+fn write_open(
+    map: &LoroMap,
+    me: Option<&EntityId>,
+    rows: &BTreeSet<EntityId>,
+    open: &[(EntityId, BTreeMap<EntityId, OpenFlags>)],
+) -> Result<bool> {
+    let mut wrote = false;
+    let sets: BTreeMap<&EntityId, &BTreeMap<EntityId, OpenFlags>> =
+        open.iter().map(|(row, entries)| (row, entries)).collect();
+    for row in rows {
+        let map_key = open_key(row, me);
+        let held = map_get_bytes(map, &map_key);
+        match sets.get(row) {
+            Some(entries) => {
+                let value = encode_open(entries)?;
+                if held.as_deref() != Some(value.as_slice()) {
+                    map_insert_bytes(map, &map_key, &value)?;
+                    wrote = true;
+                }
+            }
+            None if held.is_some() => {
+                map_delete(map, &map_key)?;
+                wrote = true;
+            }
+            None => {}
+        }
+    }
+    Ok(wrote)
+}
+
 /// Writes into `map` each binding and policy revision `published` names.
 fn write_published(map: &LoroMap, published: &[Published]) -> Result<bool> {
     let mut wrote = false;
@@ -850,12 +1020,17 @@ pub(crate) fn mirror_record(vault: &Vault, doc: &LoroDoc, id: &EntityId) -> Resu
     let published = published_of(vault, &rows)?;
     // A derived row rides with its lineage's policies (fix list row 17207).
     let (me, derived) = derived_of(vault, &rows)?;
-    if published.is_empty() && derived.is_empty() {
+    // A row rides with its open entries (step L-S4). A key whose set went
+    // empty goes at the window's next export or persist
+    // ([`refresh_and_scrub`]): this per-row path reads no whole document.
+    let open = open_sets_of(vault, &rows)?;
+    if published.is_empty() && derived.is_empty() && open.is_empty() {
         return Ok(false);
     }
     let map = doc.get_map(SOURCE_AUDIENCES_MAP);
     let mut wrote = write_published(&map, &published)?;
     wrote |= write_derived(&map, me.as_ref(), &derived)?;
+    wrote |= write_open(&map, me.as_ref(), &rows, &open)?;
     let policies: BTreeSet<EntityId> = published
         .iter()
         .flat_map(|(_, _, closure)| closure.iter().map(|(policy, _)| *policy))
@@ -963,7 +1138,11 @@ fn unreferenced_policies(map: &LoroMap, removed: &BTreeSet<EntityId>) -> Vec<Str
             Carrier::Record { policy, .. } => vec![*policy],
             // A derived row's policies are its bindings (fix list row 17207).
             Carrier::Derived { policies, .. } => policies.iter().copied().collect(),
-            Carrier::Policy { .. } | Carrier::Withheld { .. } | Carrier::Event { .. } => Vec::new(),
+            // A row's open entries name inputs, not policies (step L-S4).
+            Carrier::Policy { .. }
+            | Carrier::Withheld { .. }
+            | Carrier::Event { .. }
+            | Carrier::Open { .. } => Vec::new(),
         })
         .collect();
     let mut reached = bound.clone();
@@ -1007,8 +1186,8 @@ fn unreferenced_policies(map: &LoroMap, removed: &BTreeSet<EntityId>) -> Vec<Str
 }
 
 /// Removes the binding of the row `id` from `doc`, and every machine's
-/// derived carrier of it (fix list row 17207); the canonical binding and
-/// floor stand. Each policy no binding reaches any longer goes in the
+/// derived carrier (fix list row 17207) and open carrier (step L-S4) of it;
+/// the canonical binding, floor and open set stand. Each policy no binding reaches any longer goes in the
 /// removal's own commit, once for the whole batch: its commit owner calls
 /// [`prune_unreached_policies`] (fix list row 17211), and the window's next
 /// export or persist ([`refresh_and_scrub`]) is the backstop. Whether the
@@ -1020,10 +1199,10 @@ fn unreferenced_policies(map: &LoroMap, removed: &BTreeSet<EntityId>) -> Vec<Str
 pub(crate) fn remove_record(doc: &LoroDoc, id: &EntityId) -> Result<bool> {
     let map = doc.get_map(SOURCE_AUDIENCES_MAP);
     let key = record_key(id);
-    let prefix = derived_prefix(id);
+    let prefixes = [derived_prefix(id), open_prefix(id)];
     let mut keys = Vec::new();
     map.for_each(|map_key, _| {
-        if map_key == key || map_key.starts_with(&prefix) {
+        if map_key == key || prefixes.iter().any(|prefix| map_key.starts_with(prefix)) {
             keys.push(map_key.to_owned());
         }
     });
@@ -1115,7 +1294,9 @@ pub(crate) fn refresh_and_scrub(
     let published = published_of(vault, &rows)?;
     // A derived row rides with its lineage's policies (fix list row 17207).
     let (me, derived) = derived_of(vault, &rows)?;
-    if published.is_empty() && derived.is_empty() && !holds_map(doc) {
+    // A row rides with its open entries (step L-S4).
+    let open = open_sets_of(vault, &rows)?;
+    if published.is_empty() && derived.is_empty() && open.is_empty() && !holds_map(doc) {
         return Ok(false);
     }
     let map = doc.get_map(SOURCE_AUDIENCES_MAP);
@@ -1126,7 +1307,9 @@ pub(crate) fn refresh_and_scrub(
         let me = crate::identity::read_machine_id_in_txn(vault, &rtxn)?;
         for (map_key, carried) in carriers(&map) {
             match carried {
-                Carrier::Record { row, .. } | Carrier::Derived { row, .. }
+                Carrier::Record { row, .. }
+                | Carrier::Derived { row, .. }
+                | Carrier::Open { row, .. }
                     if !rows.contains(&row) =>
                 {
                     gone.push(map_key);
@@ -1161,12 +1344,14 @@ pub(crate) fn refresh_and_scrub(
                 | Carrier::Policy { .. }
                 | Carrier::Withheld { .. }
                 | Carrier::Event { .. }
-                | Carrier::Derived { .. } => {}
+                | Carrier::Derived { .. }
+                | Carrier::Open { .. } => {}
             }
         }
     }
     let mut changed = write_published(&map, &published)?;
     changed |= write_derived(&map, me.as_ref(), &derived)?;
+    changed |= write_open(&map, me.as_ref(), &rows, &open)?;
     changed |= write_current_heads(vault, &map)?;
     for map_key in &lifted {
         map_delete(&map, map_key)?;
@@ -1383,7 +1568,8 @@ pub(crate) fn apply_map(vault: &Vault, doc: &LoroDoc) -> Result<Vec<EntityId>> {
             Carrier::Policy { .. }
             | Carrier::Withheld { .. }
             | Carrier::Event { .. }
-            | Carrier::Derived { .. } => None,
+            | Carrier::Derived { .. }
+            | Carrier::Open { .. } => None,
         })
         .collect();
     let mut markers: Vec<(EntityId, Option<EntityId>)> = Vec::new();
@@ -1398,7 +1584,10 @@ pub(crate) fn apply_map(vault: &Vault, doc: &LoroDoc) -> Result<Vec<EntityId>> {
                 event,
             } => receipts.push((policy, revision, event)),
             Carrier::Derived { row, policies, .. } => derived.push((row, policies)),
-            Carrier::Record { .. } | Carrier::Policy { .. } => {}
+            // A row's open entries were staged as they arrived, before the
+            // update landed ([`stage_open_entries`]): the map as it stands
+            // brings none again, so no wait this vault folded opens again.
+            Carrier::Record { .. } | Carrier::Policy { .. } | Carrier::Open { .. } => {}
         }
     }
     if heads.is_empty()

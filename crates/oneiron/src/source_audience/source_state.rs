@@ -31,6 +31,11 @@
 //! judged is judged one level at each read, and an input erased before
 //! floors leaves an old fact waiting for good (FLOOR-OLD-FACT-ERASED-INPUT =
 //! A), owner-readable, until a later owner erase of that input seals it.
+//!
+//! A row's open entries ride the owner's full window with the row
+//! ([`merge_carried_in_txn`]; step L-S4): a holder adds each entry that first
+//! arrives, so a row that waits on the machine that wrote it waits here too,
+//! and an input erased here seals it.
 
 use std::collections::BTreeSet;
 
@@ -46,6 +51,8 @@ use crate::{EntityId, Vault};
 mod erase;
 mod judge;
 mod reader;
+#[cfg(feature = "sync")]
+mod travel;
 
 pub(crate) use erase::{
     before_erase_in_store_txn, before_erase_in_txn, erase_open_entries_in_txn,
@@ -56,6 +63,8 @@ pub(crate) use judge::forget_floor_state_in_txn;
 pub(crate) use judge::{LinksBefore, fold_waiters_in_txn, judge_rows_in_txn};
 pub(super) use judge::{heal_row_in_txn, id_of, judge_row_in_txn};
 pub(super) use reader::mark_entry_in;
+#[cfg(feature = "sync")]
+pub(crate) use travel::{merge_carried_in_txn, open_entries_in};
 
 /// Each input whose floor a row has not taken yet: the row, then the input;
 /// the value is the entry's [`OpenFlags`].
@@ -170,6 +179,17 @@ impl OpenFlags {
 
     pub(crate) const fn from_byte(byte: u8) -> Self {
         Self(byte & (Self::BEFORE_MASK | Self::ATTESTATION))
+    }
+
+    /// The flags a carried entry's byte spells, when it spells one: no bit
+    /// past the attestation bit and no third delete level (step L-S4).
+    pub(crate) const fn from_carried_byte(byte: u8) -> Option<Self> {
+        if byte & !(Self::BEFORE_MASK | Self::ATTESTATION) != 0
+            || byte & Self::BEFORE_MASK == Self::BEFORE_MASK
+        {
+            return None;
+        }
+        Some(Self(byte))
     }
 }
 
@@ -368,6 +388,17 @@ pub(super) fn open_of_in(
     OPEN.iter_from(store, txn, row.as_bytes())?
         .map(|entry| entry.map(|((_, input), flags)| (input, OpenFlags::from_byte(flags))))
         .collect()
+}
+
+/// Whether any row here has an open entry: a vault that holds only the
+/// entries a full-window carrier brought reads lineage as one that holds a
+/// policy does ([`super::floor::floors_possible_in`]; step L-S4).
+///
+/// # Errors
+///
+/// Storage failures.
+pub(crate) fn any_open_in(store: &crate::store::Store, txn: &RoTxn<'_>) -> Result<bool> {
+    Ok(OPEN.iter_from(store, txn, &[])?.next().is_some())
 }
 
 /// Whether `row` has an open entry.

@@ -16,10 +16,17 @@
 //!   reads under, as the machine that wrote the key found its lineage (fix
 //!   list row 17207), `founder` for a vault's founding install. Each machine
 //!   writes only its own key and only adds to it; a holder reads the row
-//!   under every policy any key names.
+//!   under every policy any key names;
+//! - `open/<row>/<machine>`: the inputs whose floor the row has not taken
+//!   yet on the machine that wrote the key, each with its entry's flag byte
+//!   (pass 31, step L-S4), `founder` for a vault's founding install. Each
+//!   machine writes only its own key, its whole open set of the row, and
+//!   removes it once the set is empty; a holder adds each entry that first
+//!   arrives to the row's open set here.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
+use super::source_state::OpenFlags;
 use super::{SourceAudienceEvent, SourceAudienceKind, SourceAudiencePolicy};
 use crate::EntityId;
 use crate::error::{Error, Result};
@@ -34,7 +41,9 @@ const WITHHELD: &str = "withheld/";
 const EVENT: &str = "event/";
 /// The policies a derived row reads under: `derived/<row>/<machine>`.
 const DERIVED: &str = "derived/";
-/// The machine part of a derived key a founding install writes.
+/// The inputs a row waits on: `open/<row>/<machine>`.
+const OPEN_ENTRIES: &str = "open/";
+/// The machine part of a derived or open key a founding install writes.
 const FOUNDER: &str = "founder";
 /// The hex digits a revision is spelled in.
 const REVISION_DIGITS: usize = 16;
@@ -53,6 +62,9 @@ pub(crate) enum CarrierKey {
     /// A derived row and the machine that wrote its key (`None` for a
     /// founding install).
     Derived(EntityId, Option<EntityId>),
+    /// A row with open entries and the machine that wrote its key (`None`
+    /// for a founding install).
+    Open(EntityId, Option<EntityId>),
 }
 
 /// `hex` as an id, when it is the id's canonical spelling.
@@ -73,16 +85,27 @@ pub(crate) fn parse_key(map_key: &str) -> Option<CarrierKey> {
         return Some(CarrierKey::Event(policy, revision));
     }
     if let Some(rest) = map_key.strip_prefix(DERIVED) {
-        let (row, by) = rest.split_once('/')?;
-        let by = if by == FOUNDER {
-            None
-        } else {
-            Some(named(by)?)
-        };
-        return Some(CarrierKey::Derived(named(row)?, by));
+        let (row, by) = row_and_machine(rest)?;
+        return Some(CarrierKey::Derived(row, by));
+    }
+    if let Some(rest) = map_key.strip_prefix(OPEN_ENTRIES) {
+        let (row, by) = row_and_machine(rest)?;
+        return Some(CarrierKey::Open(row, by));
     }
     let (policy, revision) = revision_of(map_key.strip_prefix(POLICY)?)?;
     Some(CarrierKey::Policy(policy, revision))
+}
+
+/// The row and the machine `rest` spells, `<row>/<machine>` or
+/// `<row>/founder`, when both are in their canonical spelling.
+fn row_and_machine(rest: &str) -> Option<(EntityId, Option<EntityId>)> {
+    let (row, by) = rest.split_once('/')?;
+    let by = if by == FOUNDER {
+        None
+    } else {
+        Some(named(by)?)
+    };
+    Some((named(row)?, by))
 }
 
 /// The policy and the revision `rest` spells, `<policy>/<revision>`, when
@@ -138,6 +161,31 @@ pub(crate) fn derived_key(row: &EntityId, by: Option<&EntityId>) -> String {
 #[cfg(feature = "sync")]
 pub(crate) fn derived_prefix(row: &EntityId) -> String {
     format!("{DERIVED}{}/", row.to_hex())
+}
+
+/// The key of the open entries `by` holds for the row `row`.
+#[cfg(feature = "sync")]
+pub(crate) fn open_key(row: &EntityId, by: Option<&EntityId>) -> String {
+    match by {
+        Some(by) => format!("{OPEN_ENTRIES}{}/{}", row.to_hex(), by.to_hex()),
+        None => format!("{OPEN_ENTRIES}{}/{FOUNDER}", row.to_hex()),
+    }
+}
+
+/// The prefix of every open key of `row`.
+#[cfg(feature = "sync")]
+pub(crate) fn open_prefix(row: &EntityId) -> String {
+    format!("{OPEN_ENTRIES}{}/", row.to_hex())
+}
+
+/// A row's carried open entries: each input, in order, with its entry's
+/// flag byte.
+pub(crate) fn encode_open(entries: &BTreeMap<EntityId, OpenFlags>) -> Result<Vec<u8>> {
+    let bytes: BTreeMap<&EntityId, u8> = entries
+        .iter()
+        .map(|(input, flags)| (input, flags.to_byte()))
+        .collect();
+    rmp_serde::to_vec_named(&bytes).map_err(|_| refused("a row's open entries do not encode"))
 }
 
 /// A derived row's carried bytes: its policies, in order.
@@ -197,6 +245,15 @@ pub(crate) enum Carrier {
         row: EntityId,
         by: Option<EntityId>,
         policies: BTreeSet<EntityId>,
+    },
+    /// The inputs whose floor the row `row` has not taken yet on `by`, the
+    /// machine that wrote the key, with each entry's flags (pass 31, step
+    /// L-S4): a holder adds each entry that first arrives to the row's open
+    /// set, so the row waits here as it waits there.
+    Open {
+        row: EntityId,
+        by: Option<EntityId>,
+        entries: BTreeMap<EntityId, OpenFlags>,
     },
 }
 
@@ -259,6 +316,23 @@ pub(crate) fn carrier(map_key: &str, bytes: &[u8]) -> Result<Carrier> {
                 ));
             }
             Ok(Carrier::Derived { row, by, policies })
+        }
+        CarrierKey::Open(row, by) => {
+            let bytes_of: BTreeMap<EntityId, u8> = rmp_serde::from_slice(bytes)
+                .map_err(|_| refused("a row's open entries do not decode"))?;
+            if bytes_of.is_empty() {
+                return Err(refused("a row with no open entry"));
+            }
+            let mut entries = BTreeMap::new();
+            for (input, byte) in bytes_of {
+                let flags = OpenFlags::from_carried_byte(byte)
+                    .ok_or_else(|| refused("an open entry with a flag byte it does not spell"))?;
+                entries.insert(input, flags);
+            }
+            if encode_open(&entries)? != bytes {
+                return Err(refused("a row's open entries not in their canonical form"));
+            }
+            Ok(Carrier::Open { row, by, entries })
         }
     }
 }

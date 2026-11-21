@@ -150,6 +150,9 @@ fn validate_window_update(
     // update binds the row before the update lands (fix list row 17207).
     if let Some(vault) = vault {
         crate::sync::source_audiences::stage_derived_floors(vault, &admitted.derived_floors)?;
+        // And each open entry a row's carriers bring that this window did not
+        // hold yet joins the row's open set (pass 31, step L-S4).
+        crate::sync::source_audiences::stage_open_entries(vault, &admitted.open_arrivals)?;
     }
     Ok(super::UpdateInserts::of_ids(admitted.inserted))
 }
@@ -164,6 +167,9 @@ struct AdmittedWrites {
     /// The policies a derived row's carriers name, by row (fix list row
     /// 17207).
     derived_floors: BTreeMap<EntityId, BTreeSet<EntityId>>,
+    /// The open entries a row's carriers bring that the held window did not
+    /// hold under the same key (pass 31, step L-S4).
+    open_arrivals: crate::sync::source_audiences::OpenArrivals,
     /// Every entity id the update's history inserts, and a snapshot's root
     /// winners (census L6-05, [`super::UpdateInserts`]), with both ends of
     /// each edge among them (HELD-ENTITY-DOCUMENT-DEFERRED).
@@ -771,6 +777,7 @@ fn check_window_update(
     Ok(AdmittedWrites {
         cutoffs,
         history_free: audiences.names_erased(),
+        open_arrivals: audiences.open_arrivals(doc, &candidate),
         derived_floors: audiences.into_derived_floors(),
         inserted,
     })

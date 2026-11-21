@@ -171,8 +171,10 @@ pub(super) fn capture(
                 // carries; the hold it set lives in the vault, not here. A
                 // change receipt rides beside its policy from this vault's
                 // own receipts at the window's next export, not in the
-                // artifact.
-                Carrier::Withheld { .. } | Carrier::Event { .. } => {}
+                // artifact. So does a row's open set (step L-S4): every
+                // entry a carrier brought joined it as it arrived, and the
+                // set is canonical and imaged here.
+                Carrier::Withheld { .. } | Carrier::Event { .. } | Carrier::Open { .. } => {}
             }
         }
         for (id, revisions) in families {
@@ -386,9 +388,9 @@ impl CanonicalSnapshot {
                         .extend(policies);
                     rows.insert(row.key, row.value);
                 }
-                // Capture keeps no marker and no receipt; one in an artifact
-                // restores none.
-                Carrier::Withheld { .. } | Carrier::Event { .. } => {}
+                // Capture keeps no marker, no receipt and no open carrier;
+                // one in an artifact restores none.
+                Carrier::Withheld { .. } | Carrier::Event { .. } | Carrier::Open { .. } => {}
             }
         }
         for (id, current) in held {

@@ -311,9 +311,10 @@ enum PassSnapshot<'a, 't> {
 }
 
 /// Whether a row here can be held by its lineage at all: a policy is
-/// stored, or a source landed a row.
+/// stored, a source landed a row, or a row holds an open entry
+/// ([`super::floor::floors_possible_in`]).
 fn needs_lineage_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
-    Ok(super::any_policy_in(vault, txn)? || super::any_landed_in(vault, txn)?)
+    super::floor::floors_possible_in(vault, txn)
 }
 
 impl<'a, 't> LineagePass<'a, 't> {
@@ -610,10 +611,7 @@ pub(crate) fn readable_with_read_in(
     raw: &[u8],
     viewers: &[EntityId],
 ) -> Result<bool> {
-    if !super::any_policy_in(vault, txn)?
-        && !super::any_held_in(vault, txn)?
-        && !super::any_landed_in(vault, txn)?
-    {
+    if !super::floor::floors_possible_in(vault, txn)? && !super::any_held_in(vault, txn)? {
         // No row here came from a landed one: only the row's own stamp can
         // deny it.
         return Ok(!source_marked(raw));
