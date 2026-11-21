@@ -318,7 +318,10 @@ impl PipelineBuilder<'_> {
                 if self.deadline_reached() {
                     break;
                 }
-                let retry_scoped_text_limit = self.text_channel_limit(retry_channel_limit(*limit));
+                // A subquery asks the retry's bound, as the main query's
+                // read does, and a strict scope's cut keeps it (REVIEW-10311).
+                let retry_requested = retry_channel_limit(*limit);
+                let retry_scoped_text_limit = self.text_channel_limit(retry_requested);
                 let retry_text_channel_limit = if inputs.recency.is_some() {
                     self.text_channel_limit(
                         retry_scoped_text_limit.max(limit.saturating_mul(PER_SCAN_CAP_FACTOR)),
@@ -329,6 +332,7 @@ impl PipelineBuilder<'_> {
                 let filter_all = inputs.filters_every_posting(self);
                 let mut retry_prefix_probe_claim_gate =
                     claim_gate.fresh(inputs.authority_filter.include_stale);
+                let retry_withheld_gate = claim_gate.fresh(inputs.authority_filter.include_stale);
                 let mut scan_metadata = EntityMetadataCache::default();
                 let retry_metadata = inputs.scan_metadata(self, metadata_cache, &mut scan_metadata);
                 let retry_filters = self.bounded_result_filters(inputs.filter_config);
@@ -366,7 +370,10 @@ impl PipelineBuilder<'_> {
                                 .as_deref_mut()
                                 .map(|hidden| hidden as &mut dyn FnMut(&EntityId) -> Result<bool>),
                         },
-                        (inputs.filter_config.disclosure, &mut acc.clamped_at_fetch),
+                        (
+                            (inputs.filter_config, &retry_withheld_gate),
+                            &mut acc.clamped_at_fetch,
+                        ),
                     )?
                 } else {
                     self.vault.text_scoped_in_txn(
@@ -390,11 +397,11 @@ impl PipelineBuilder<'_> {
                         },
                     )?
                 };
-                if retry_text_channel_limit > *limit && inputs.text_scope_widening_active {
+                if retry_text_channel_limit > retry_requested && inputs.text_scope_widening_active {
                     let scoped_result_limit = if inputs.recency.is_some() {
-                        limit.saturating_mul(PER_SCAN_CAP_FACTOR)
+                        retry_requested.max(limit.saturating_mul(PER_SCAN_CAP_FACTOR))
                     } else {
-                        *limit
+                        retry_requested
                     };
                     self.truncate_widened_text_results(
                         &mut results,
@@ -644,12 +651,13 @@ impl PipelineBuilder<'_> {
     /// asks a clamp first. A clamped pack's read asks the clamp's own-row
     /// test too, so a row the audience could not read whatever its status
     /// takes no place in the read's `limit`, and hands such rows back in
-    /// `withheld` while they rank inside the places a read without the clamp
-    /// gives the lane's rows. Through the whole scope, those are the rows the
-    /// scope admits, so a hidden row counts there only when it meets every
-    /// other check of the call ([`Self::clamp_withheld_row_counts`], judged
-    /// in caches of its own, as `gate` is): a narrowed scan counts the rows
-    /// the unnarrowed one did (REVIEW-10311 round 1).
+    /// `withheld` while they fall inside the read's first `limit` places, as
+    /// the clamped read ranks them (the comment at the read says how).
+    /// Through the whole scope, a place is a row the scope admits, so a
+    /// hidden row takes one, and counts, only when it meets every other
+    /// check of the call ([`Self::clamp_withheld_row_counts`], judged in
+    /// caches of its own, as `gate` is): a narrowed scan counts the hidden
+    /// rows in scope, as the unnarrowed one did (REVIEW-10311 round 1).
     fn search_text_candidates<F>(
         &self,
         rtxn: &RoTxn<'_>,
@@ -710,7 +718,8 @@ impl PipelineBuilder<'_> {
             // hidden row's own words weigh more there than they did without
             // the clamp. With a port walk pending the read judges every
             // posting in index order, so there the owner-side count takes
-            // the first `limit` hidden lane rows it meets. Each
+            // the hidden rows among the first `limit` places it judges, by
+            // that order, not by rank. Each
             // judged row under a clamp is a deadline checkpoint, as at the
             // scope's admission: a read past many hidden rows stops there.
             let mut clamp_metadata = EntityMetadataCache::default();
