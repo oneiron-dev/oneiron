@@ -4222,6 +4222,197 @@ fn a_short_hand_refund_before_the_hosts_ask_runs_keeps_the_stuck_refund_on_the_c
     );
 }
 
+// FIX [BK-DEPOSIT-SHORT-HAND-REFUND-NO-OWNER-LINE]: refunds made by hand in
+// the Stripe dashboard cover only a part of the refund owed before the
+// settle row asks, so the provider makes none and holds none under the row's
+// keys.
+
+/// A provider whose payment holds, while `short` is set, refunds made by
+/// hand short of every refund asked and none under a settle key: it makes no
+/// refund and answers so, as Stripe's answer reads a short dashboard refund.
+/// Once the owner refunds the rest by hand (`short` unset), it answers the
+/// owed amount, as [`KeyedRefundProvider`] does.
+#[derive(Default)]
+struct PartRefundedByHandProvider {
+    short: bool,
+    /// The key of every refund asked, in order.
+    asked: Vec<String>,
+    keyed: KeyedRefundProvider,
+}
+
+impl DepositSettlementPort for PartRefundedByHandProvider {
+    fn settle(
+        &mut self,
+        request: &DepositSettleRequest<'_>,
+    ) -> Result<u64, DepositProviderFailure> {
+        if let DepositSettleMove::Refund { amount_minor } = request.movement {
+            self.asked.push(request.idempotency_key.to_owned());
+            if self.short {
+                return Err(DepositProviderFailure::PartRefundedByHand {
+                    reason: format!("refunds made by hand cover part of the {amount_minor} owed"),
+                });
+            }
+        }
+        self.keyed.settle(request)
+    }
+}
+
+/// A late visitor cancel under a 50% rule owes half the capture back, and
+/// refunds made by hand cover only a part of it before any refund is asked.
+/// The host's booking card says so and asks for a hand refund of the rest,
+/// with no Return deposit, as a held-deposit INBOX row of its own dated by
+/// the first answer, though a visitor cancelled
+/// (BK-DEPOSIT-FAILED-REFUND-INBOX = A); a press changes nothing. Once the
+/// rest is refunded by hand, the hourly ask settles the refund and the row
+/// goes.
+#[test]
+fn a_part_refunded_by_hand_with_no_refund_asked_lists_on_the_card_and_the_inbox() {
+    let clock = ManualClock::new(NOW);
+    let fixture = Fixture::open_owned_with_terms(&clock, late_refund_terms(50));
+    let booked = captured_booking(&fixture, "pi_part_by_hand", 9);
+    cancel(&fixture, &booked, NOW + 120);
+    let mut provider = PartRefundedByHandProvider {
+        short: true,
+        ..PartRefundedByHandProvider::default()
+    };
+    drain_settle_rows(&fixture, &mut provider, NOW + 180);
+    assert_eq!(provider.asked.len(), 1, "guard: the row asked once");
+
+    let card_row = format!("booking:{}", booked.calendar.event_ref.to_hex());
+    let host = fixture.vault.memory(fixture.host, EdgeActorClass::Human);
+    fixture.set_clock(NOW + 240);
+    let card = open_booking_row(&host, &card_row);
+    assert_eq!(
+        card["deposit"],
+        serde_json::json!({
+            "held": "part_refunded_by_hand",
+            "amount_minor": 2_000,
+            "currency": "usd",
+            "reason": "cancelled",
+            "line": "Booking at 2026-03-02 09:00 (UTC) was cancelled. Refunds made by hand in the \
+                     Stripe dashboard cover only part of the refund of 20.00 USD owed to the \
+                     visitor. Refund the rest by hand in the Stripe dashboard.",
+            "return_offered": false,
+        }),
+        "{card}"
+    );
+    let row = format!("{HELD_DEPOSIT_ROW}{}", booked.calendar.event_ref.to_hex());
+    let listed: Vec<(String, u64)> = fixture
+        .vault
+        .agent_inbox_slice(fixture.host, 500, None)
+        .expect("the host's inbox slice")
+        .into_iter()
+        .filter(|item| item.item_id.starts_with(HELD_DEPOSIT_ROW))
+        .map(|item| (item.item_id, item.occurred_at))
+        .collect();
+    assert_eq!(
+        listed,
+        vec![(row, NOW + 180)],
+        "the stuck refund lists on the INBOX, dated by the first answer"
+    );
+
+    fixture.set_clock(NOW + 300);
+    let again = refund_deposit(&host, &booked).expect("the host's press answers");
+    assert_eq!(
+        again["queued"], false,
+        "Return deposit asks nothing: {again}"
+    );
+
+    // The owner refunds the rest by hand; the next hourly ask finds it.
+    provider.short = false;
+    drain_settle_rows(&fixture, &mut provider, NOW + 3_800);
+    assert_eq!(
+        fixture.state_of("pi_part_by_hand"),
+        DepositState::Refunded {
+            amount_minor: 2_000
+        }
+    );
+    fixture.set_clock(NOW + 3_900);
+    let card = open_booking_row(&host, &card_row);
+    assert_eq!(card["deposit"]["held"], "balance_after_refund", "{card}");
+    assert!(
+        held_deposit_board(&fixture, NOW + 3_900).is_empty(),
+        "the refund made ends the row"
+    );
+    assert_eq!(
+        provider.asked.len(),
+        2,
+        "only the hourly ask under the row's key: {:?}",
+        provider.asked
+    );
+}
+
+/// The owner's emergency cancel owes the captured deposit back whole, the
+/// visitor picks a later slot from its proposals, and refunds made by hand
+/// cover only a part of that refund before any is asked. Before the slot
+/// picked again starts, the card of that booking says so, with no Return
+/// deposit, and the emergency line says the hand refunds cover only part of
+/// the refund, not that it is pending; a press changes nothing.
+#[test]
+fn a_part_refunded_by_hand_after_an_emergency_cancel_shows_on_the_booking_picked_again() {
+    let clock = ManualClock::new(NOW);
+    let fixture = Fixture::open_owned(&clock, None);
+    let booked = captured_booking(&fixture, "pi_repick_part_by_hand", 9);
+    let picked = emergency_cancel_then_repick(&fixture, &booked, 9, NOW + 90, NOW + 120);
+    let mut provider = PartRefundedByHandProvider {
+        short: true,
+        ..PartRefundedByHandProvider::default()
+    };
+    drain_settle_rows(&fixture, &mut provider, NOW + 180);
+    assert_eq!(provider.asked.len(), 1, "guard: the row asked once");
+
+    let host = fixture.vault.memory(fixture.host, EdgeActorClass::Human);
+    let card_row = format!("booking:{}", booked.calendar.event_ref.to_hex());
+    let label = booking_label_utc(picked.start);
+    assert!(
+        picked.start > NOW + 240,
+        "guard: the slot picked again has not started"
+    );
+    fixture.set_clock(NOW + 240);
+    let card = open_booking_row(&host, &card_row);
+    assert_eq!(card["status"], "confirmed", "{card}");
+    assert_eq!(
+        card["deposit"],
+        serde_json::json!({
+            "held": "part_refunded_by_hand",
+            "amount_minor": 4_000,
+            "currency": "usd",
+            "reason": "picked_again_after_emergency_cancel",
+            "line": format!(
+                "{label} was picked again after an emergency cancel. Refunds made by hand in the \
+                 Stripe dashboard cover only part of the refund of 40.00 USD owed to the \
+                 visitor. Refund the rest by hand in the Stripe dashboard."
+            ),
+            "return_offered": false,
+        }),
+        "{card}"
+    );
+    assert_eq!(
+        card["emergency_return"],
+        serde_json::json!({
+            "returned": "part_refunded_by_hand",
+            "line": format!(
+                "{label}: no new deposit held; refunds made by hand in the Stripe dashboard \
+                 cover only part of the refund of the deposit from before the emergency cancel."
+            ),
+        }),
+        "{card}"
+    );
+
+    fixture.set_clock(NOW + 300);
+    let again = refund_deposit(&host, &booked).expect("the host's press answers");
+    assert_eq!(
+        again["queued"], false,
+        "Return deposit asks nothing: {again}"
+    );
+    assert_eq!(
+        fixture.state_of("pi_repick_part_by_hand"),
+        DepositState::RefundDue {
+            amount_minor: 4_000
+        }
+    );
+}
+
 // FIX [BK-DEPOSIT-FAILED-REFUND-MARK-PAID] (BK-DEPOSIT-FAILED-REFUND-MARK-PAID
 // = B, the lead, Engine 21 Nov 10:55; BK-DEPOSIT-MARK-PAID-STRIPE-HOLDS-REFUND
 // = A and BK-DEPOSIT-MARK-PAID-CARD-WORDING = A, Engine 21 Nov 12:13): a host

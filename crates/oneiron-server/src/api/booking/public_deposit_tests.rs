@@ -1723,6 +1723,92 @@ async fn an_ask_again_behind_a_short_hand_refund_answers_the_earlier_failed_refu
     );
 }
 
+/// FIX [BK-DEPOSIT-SHORT-HAND-REFUND-NO-OWNER-LINE]: the owner refunds 1000
+/// of the 2500 owed by hand in the dashboard before the settle row asks.
+/// Stripe holds no refund under the row's keys, and the row makes none, so
+/// nothing ends there: the owner's booking card still says the hand refunds
+/// cover only part of the refund owed and asks for a hand refund of the
+/// rest. A hand refund of the rest settles the refund, and the line goes.
+#[tokio::test]
+async fn a_short_hand_refund_before_the_row_asks_shows_on_the_owners_card() {
+    let (fixture, stripe, payment_id) = half_refund_owed("short-hand-before-ask").await;
+    let event_ref = booking_deposit_for_payment(&fixture.server.vault, &payment_id)
+        .expect("read")
+        .expect("the deposit exists")
+        .event_ref
+        .expect("the deposit's booking");
+    let card_row = format!("booking:{}", event_ref.to_hex());
+    let owner = fixture
+        .server
+        .vault
+        .memory(fixture.owner_actor(), EdgeActorClass::Human);
+    let deposit_line = || -> Value {
+        oneiron::verbs::invoke(&owner, "self.inbox.get", json!({ "item_id": card_row }))
+            .expect("the owner opens the booking card")["booking"]["deposit"]
+            .clone()
+    };
+
+    let now = now_secs().expect("clock");
+    stripe
+        .lock()
+        .expect("fake stripe")
+        .refunds
+        .push(refund_by_hand(
+            "re_short_before_ask",
+            &payment_id,
+            1_000,
+            "succeeded",
+        ));
+    let drain = run_settle_pass(&fixture, now - 3_601).await;
+    assert_eq!(
+        drain.refunded, 0,
+        "the owed half is not refunded: {drain:?}"
+    );
+    assert_eq!(refund_posts(&stripe), 0, "no refund is made here");
+    let stuck = deposit_line();
+    assert_eq!(stuck["held"], "part_refunded_by_hand", "{stuck}");
+    assert_eq!(stuck["amount_minor"], 2_500, "{stuck}");
+    assert_eq!(stuck["return_offered"], false, "{stuck}");
+    let line = stuck["line"].as_str().expect("the deposit line");
+    assert!(
+        line.contains(
+            "Refunds made by hand in the Stripe dashboard cover only part of the refund of 2500 \
+             JPY owed to the visitor. Refund the rest by hand in the Stripe dashboard."
+        ),
+        "{line}"
+    );
+
+    // The owner refunds the missing 1500 by hand.
+    stripe
+        .lock()
+        .expect("fake stripe")
+        .refunds
+        .push(refund_by_hand(
+            "re_rest_by_hand",
+            &payment_id,
+            1_500,
+            "succeeded",
+        ));
+    let drain = run_settle_pass(&fixture, now).await;
+    assert_eq!(
+        drain.refunded, 1,
+        "the hand refunds stand as the deposit's refund: {drain:?}"
+    );
+    assert_eq!(
+        deposit_state(&fixture, &payment_id),
+        DepositState::Refunded {
+            amount_minor: 2_500
+        }
+    );
+    let kept = deposit_line();
+    assert_eq!(kept["held"], "balance_after_refund", "{kept}");
+    assert_eq!(
+        refund_posts(&stripe),
+        0,
+        "the settle row never asked Stripe for a refund"
+    );
+}
+
 // FIX [BK-DEPOSIT-FAILED-REFUND-MARK-PAID] (BK-DEPOSIT-MARK-PAID-STRIPE-HOLDS-REFUND
 // = A, Engine 21 Nov 12:13): once the owner marks the refund owed refunded
 // outside Stripe, the settle row asks Stripe only to find the refund and
