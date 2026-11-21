@@ -100,6 +100,10 @@ impl Vault {
         // A surface names an act. The read checks it and drops before the
         // door asks. With no surface the door goes straight to its write.
         let ground = if surface.is_some() {
+            let witness = self.owner_presence(
+                OwnerActImportance::Important,
+                owner_presence_reasons::ROOM_THREAD_ADMIN,
+            )?;
             let importance = {
                 let txn = self.store.env.read_txn()?;
                 self.room_thread_admin_settings_checks_in_txn(
@@ -110,8 +114,7 @@ impl Vault {
                 )?
                 .importance
             };
-            let witness =
-                self.owner_presence(importance, owner_presence_reasons::ROOM_THREAD_ADMIN)?;
+            let _ = importance;
             Some(OwnerProofGround::witnessed(&witness))
         } else {
             None

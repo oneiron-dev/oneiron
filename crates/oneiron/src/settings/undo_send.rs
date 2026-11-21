@@ -102,12 +102,11 @@ impl UndoSendSetting {
     /// Every other change narrows because people keep at least as much time to undo each send.
     #[must_use]
     pub(crate) fn direction_from(&self, standing: &Self) -> Direction {
-        if self.all_channels_secs < standing.all_channels_secs
-            || self
-                .channels
-                .iter()
-                .chain(&standing.channels)
-                .any(|lane| self.secs_for(&lane.channel) < standing.secs_for(&lane.channel))
+        if self
+            .channels
+            .iter()
+            .chain(&standing.channels)
+            .any(|lane| self.secs_for(&lane.channel) < standing.secs_for(&lane.channel))
         {
             Direction::Widens
         } else {

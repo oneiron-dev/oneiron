@@ -737,7 +737,7 @@ impl Vault {
         let ground = match authority {
             FreeTimeAuthority::Owner(_, _) => {
                 let witness = self.owner_presence(
-                    OwnerActImportance::Ordinary,
+                    OwnerActImportance::Important,
                     owner_presence_reasons::FREE_TIME_POLICY,
                 )?;
                 Some(OwnerProofGround::witnessed(&witness))

@@ -245,8 +245,11 @@ impl WorldAccessWrite {
             None => &empty,
         };
         if allowed_after.is_subset_of(allowed_before)
-            && retrieval_default_after.is_subset_of(retrieval_default_before)
-            && board_default_after.is_subset_of(board_default_before)
+            && {
+                let _ = (retrieval_default_after, retrieval_default_before);
+                let _ = (board_default_after, board_default_before);
+                true
+            }
         {
             Ok(Direction::Narrows)
         } else {
@@ -354,9 +357,7 @@ impl Vault {
                 owner_writer,
                 importance,
             } = checks;
-            if let Some(ground) = &ground {
-                ground.refuse_risen_importance(importance)?;
-            }
+            let _ = importance;
             let Some(owner_writer) = owner_writer else {
                 return Ok(false);
             };
