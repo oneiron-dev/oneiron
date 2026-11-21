@@ -65,3 +65,35 @@ pub(in crate::sync) use self::tombstone::{
 
 #[cfg(oneiron_test_support)]
 pub(crate) use self::peer_import::asset_digest_for_test;
+
+/// Lands the carried entities-map value `blob` of the row `id`, in the window `window_key`,
+/// through the one entity ladder in a write of its own, as a window's sync carries it. An error
+/// where the ladder does not materialize the row.
+///
+/// # Errors
+///
+/// The ladder's refusal or skip of the row; storage errors.
+#[cfg(oneiron_test_support)]
+pub(crate) fn ingest_carried_entity_for_test(
+    vault: &crate::Vault,
+    window_key: &str,
+    id: &crate::entity_id::EntityId,
+    blob: &[u8],
+) -> crate::error::Result<()> {
+    let doc = loro::LoroDoc::new();
+    let tombstones = crate::sync::loro_support::TombstoneIndex::build(&doc.get_map("tombstones"));
+    let ctx = IngestCtx::new(
+        vault,
+        window_key,
+        crate::sync::lease::DEFAULT_LEASE_VAULT_ID,
+        &tombstones,
+    );
+    vault.with_write_txn(|wtxn| {
+        match entity::ingest_entity_in_savepoint(&ctx, wtxn, &id.to_hex(), Some(blob))? {
+            EntityStep::Materialized(_) => Ok(()),
+            _ => Err(crate::error::Error::InvariantViolation(
+                "the carried row did not materialize",
+            )),
+        }
+    })
+}

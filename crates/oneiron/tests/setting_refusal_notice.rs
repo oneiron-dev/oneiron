@@ -15,6 +15,15 @@
 //! - the installed ICS feed's configuration set again is a no-op of its hook, so a keep-value tap
 //!   of it can sign (REVIEW-10294 P1-4).
 //!
+//! Review round 2 (REVIEW-10294, P1=5):
+//! - the booking pair's refusal names the other row's act too, so both machines raise one notice;
+//! - a refusal of the value that differing heads keep names the act that value came from;
+//! - the installed CalDAV seat's setup set again is a no-op of its hook;
+//! - a seat refused here offers no tap that leaves the seat with no value, which the machine that
+//!   holds it in service refuses;
+//! - another machine's copy of the same notice, which holds no marks, keeps the owner's
+//!   acknowledgement here.
+//!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test setting_refusal_notice`.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
@@ -29,6 +38,8 @@ use oneiron::setting::{
 };
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::invoke;
+#[cfg(feature = "sync")]
+use oneiron::test_doors::setting::land_notification_copy_without_receipts;
 use oneiron::test_doors::setting::{
     EnrolledMachine, SettingFrontier, SlotName, enroll_machine_with_key,
     forget_projected_setting_rows, forget_setting_projection_records, land_setting_act_from,
@@ -44,6 +55,10 @@ use serde_json::{Value, json};
 const COUNT: &str = "test.pair_count";
 const FLOOR: &str = "test.pair_floor";
 const CAPPED: &str = "test.capped_number";
+const MAX_PROPOSALS: &str = "booking.emergency.max_proposals";
+const MIN_PROPOSALS: &str = "booking.emergency.min_proposals";
+const SEAT: &str = "calendar.connector_seat";
+const FEED: &str = "calendar.ics_feed";
 const PRODUCER: &str = "setting.projection";
 const T0: u64 = 1_790_000_000;
 
@@ -186,6 +201,49 @@ fn entry_of(hash: AuthorityEntryHash) -> String {
     authority_log_entity_id_from_hash(&hash)
         .expect("the entry id")
         .to_hex()
+}
+
+/// The notice's `subject_refs`, sorted.
+fn named_refs(notice: &Value) -> Vec<String> {
+    let mut refs: Vec<String> = notice["subject_refs"]
+        .as_array()
+        .expect("subject refs")
+        .iter()
+        .map(|id| id.as_str().expect("an id").to_owned())
+        .collect();
+    refs.sort();
+    refs
+}
+
+/// The owner's words of `notice`.
+fn words_of(notice: &Value) -> String {
+    notice["source"]["detail"]
+        .as_str()
+        .expect("the owner's words")
+        .to_owned()
+}
+
+/// A CalDAV seat's setup at `seat_ref`, importing under `system`.
+fn seat_setup(seat_ref: &str, system: &str) -> Value {
+    json!({
+        "config": {
+            "seat_ref": seat_ref,
+            "secret_ref": format!("caldav:{seat_ref}"),
+            "system": system,
+            "calendar_ref": "personal",
+            "cadence_jitter_min_seconds": 300,
+            "cadence_jitter_max_seconds": 900,
+        },
+        "endpoint": "https://dav.example.test/",
+    })
+}
+
+/// The change of the row of `key` for the item `item` to `value`.
+fn item_row(key: &str, item: &str, value: Value) -> SetSetting {
+    SetSetting {
+        item: Some(item.to_owned()),
+        ..SetSetting::vault_value(key, value)
+    }
 }
 
 /// The refused pair: the owner sets the count to 3 on this install, the other machine reads it
@@ -442,4 +500,188 @@ fn the_installed_feeds_configuration_set_again_is_a_no_op_of_its_hook() {
         .set_setting(SettingCaller::Owner(&fx.owner_proof), row(other))
         .expect_err("a change to the installed feed is still refused");
     assert!(refused.to_string().contains("immutable"), "{refused}");
+}
+
+#[test]
+fn the_booking_pairs_refusal_names_the_other_rows_act_too() {
+    let fx = Fixture::rooted();
+    fx.owner_sets(MAX_PROPOSALS, json!(3));
+    let frontier = setting_frontier_of(&fx.vault, &[vault_row(MAX_PROPOSALS)]).expect("frontier");
+    fx.owner_sets(MIN_PROPOSALS, json!(3));
+    let [floor_act] =
+        setting_slot_heads(&fx.vault, vault_row(MIN_PROPOSALS)).expect("the floor's heads")[..]
+    else {
+        panic!("one act heads the floor");
+    };
+    // The other machine lowers the count to 2 while this install raised the floor to 3: this
+    // install's hook refuses its count, and the other machine's refuses the floor.
+    fx.desktop_sets(&frontier, MAX_PROPOSALS, json!(2));
+    let [count_act] =
+        setting_slot_heads(&fx.vault, vault_row(MAX_PROPOSALS)).expect("the count's heads")[..]
+    else {
+        panic!("the other machine's act heads the count");
+    };
+
+    let notice = fx.the_notice();
+    let mut named = vec![entry_of(count_act), entry_of(floor_act)];
+    named.sort();
+    assert_eq!(
+        named_refs(&notice),
+        named,
+        "the notice names both acts of the pair, as the other machine's does"
+    );
+    let words = words_of(&notice);
+    assert!(
+        words.contains("It meets your `booking.emergency.min_proposals`"),
+        "{words:?}"
+    );
+}
+
+#[test]
+fn a_refusal_of_the_value_differing_heads_keep_names_the_act_it_came_from() {
+    let fx = Fixture::rooted();
+    fx.owner_sets(COUNT, json!(2));
+    let [agreed] = setting_slot_heads(&fx.vault, vault_row(COUNT)).expect("the count's heads")[..]
+    else {
+        panic!("one act heads the count");
+    };
+    let frontier = setting_frontier_of(&fx.vault, &[vault_row(COUNT)]).expect("frontier");
+    fx.owner_sets(COUNT, json!(4));
+    fx.owner_sets(FLOOR, json!(3));
+    // The other machine sets the count to 5 over the count of 2, while this install set it to 4:
+    // the heads differ, the count has no order, so the row takes the value both come from, 2,
+    // which this install's hook refuses below the floor of 3.
+    fx.desktop_sets(&frontier, COUNT, json!(5));
+    assert_eq!(
+        setting_slot_heads(&fx.vault, vault_row(COUNT))
+            .expect("the count's heads")
+            .len(),
+        2,
+        "the count's heads differ"
+    );
+    assert_eq!(fx.reads(COUNT), json!(4), "the refused row stays as it was");
+
+    let notice = fx.the_notice();
+    assert_eq!(
+        notice["source"]["result"],
+        json!(entry_of(agreed)),
+        "the refused act is the one the refused value came from"
+    );
+    assert!(
+        named_refs(&notice).contains(&entry_of(agreed)),
+        "the notice names it: {notice:#?}"
+    );
+    let words = words_of(&notice);
+    assert!(
+        words.contains("Laptop did not apply your `test.pair_count` = 2, set on Laptop"),
+        "{words:?}"
+    );
+    assert_eq!(
+        notice["actions"][0]["args"]["key"], COUNT,
+        "the tap still sets the count over its live heads"
+    );
+}
+
+#[test]
+fn the_installed_seats_setup_set_again_is_a_no_op_of_its_hook() {
+    let fx = Fixture::rooted();
+    let setup = seat_setup("work", "work-dav");
+    set_setting_as_engine(&fx.vault, None, item_row(SEAT, "work", setup.clone()))
+        .expect("the engine installs the seat");
+
+    // The owner's equal value over the engine's row writes (the row becomes his), so the hook
+    // runs with the installed setup on both sides.
+    let outcome = fx
+        .vault
+        .set_setting(
+            SettingCaller::Owner(&fx.owner_proof),
+            item_row(SEAT, "work", setup.clone()),
+        )
+        .expect("the same setup again is no change to the installed seat");
+    assert!(
+        matches!(
+            outcome,
+            SetSettingOutcome::Applied {
+                sequence: Some(_),
+                ..
+            }
+        ),
+        "the owner's row is written: {outcome:?}"
+    );
+
+    let mut other = setup;
+    other["config"]["cadence_jitter_max_seconds"] = json!(1800);
+    let refused = fx
+        .vault
+        .set_setting(
+            SettingCaller::Owner(&fx.owner_proof),
+            item_row(SEAT, "work", other),
+        )
+        .expect_err("a change to the installed seat is still refused");
+    assert!(refused.to_string().contains("immutable"), "{refused}");
+}
+
+#[test]
+fn a_seat_refused_here_offers_no_tap_that_leaves_it_with_no_value() {
+    let fx = Fixture::rooted();
+    fx.vault
+        .set_setting(
+            SettingCaller::Owner(&fx.owner_proof),
+            item_row(SEAT, "work", seat_setup("work", "work-cal")),
+        )
+        .expect("the owner installs the seat");
+
+    // This install as another machine: it holds the log, no seat row, and an ICS feed on the
+    // seat's system. Its hook refuses the seat, and the machine that installed it holds it in
+    // service, so a change of the seat to no value would be refused there.
+    forget_projected_setting_rows(&fx.vault).expect("the rows forgotten");
+    set_setting_as_engine(
+        &fx.vault,
+        None,
+        item_row(
+            FEED,
+            "work-cal",
+            json!({
+                "secret_ref": "ics-feed:work-cal",
+                "system": "work-cal",
+                "cadence_min_seconds": 600,
+                "cadence_max_seconds": 1200,
+            }),
+        ),
+    )
+    .expect("the feed on the seat's system");
+    fx.vault.project_settings().expect("the pass");
+
+    let notice = fx.the_notice();
+    assert_eq!(
+        notice["actions"],
+        Value::Null,
+        "no tap leaves the seat with no value: {notice:#?}"
+    );
+}
+
+#[cfg(feature = "sync")]
+#[test]
+fn another_machines_copy_of_the_notice_keeps_the_owners_acknowledgement() {
+    let fx = Fixture::rooted();
+    refused_pair(&fx);
+    let notice = fx.the_notice();
+    invoke(
+        &fx.as_owner(),
+        "self.inbox.mark",
+        json!({ "notification_ref": notice["id"], "mark": "acked" }),
+    )
+    .expect("the owner acknowledges the notice");
+    assert_eq!(fx.the_notice()["acked"], true);
+
+    // The other machine raised the same notice alone and never read this install's: its copy
+    // holds no marks, and its window carries it here.
+    let id = EntityId::from_hex(notice["id"].as_str().expect("the notice id")).expect("an id");
+    land_notification_copy_without_receipts(&fx.vault, id).expect("the copy lands");
+    let after = fx.the_notice();
+    assert_eq!(
+        after["acked"], true,
+        "the acknowledgement stays: {after:#?}"
+    );
+    assert_eq!(after["seen"], true);
 }
