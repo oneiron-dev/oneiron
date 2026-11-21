@@ -711,22 +711,27 @@ fn an_archived_old_fact_a_delete_judges_for_one_link_stays_an_old_fact() {
     );
 }
 
-/// #10265 Opus review 3 P2-1: `turn` is a peer's TURN whose phone mark
-/// names no thread, landed before floors, so it reads to no one; the
-/// cleanup archived it. The backfill raises the archived `turn` and stores
-/// its seal, and so does the owner's restore, which raises it while its
-/// archive marker stands: doctor counts it hidden, and the mailbox's
-/// reader does not read it. Before the fix each raise read the archived
-/// row as an erased shell and left the seal out of its stored floor:
-/// doctor missed it, and the phone read, which reads the stored floor,
-/// admitted it.
+/// #10265 Opus review 3 P2-1, under pass 31 (oracle case 69): `turn` is a
+/// peer's TURN whose phone mark names no thread, landed in a vault that held
+/// no policy yet, so it reads to no one; the cleanup archived it while no
+/// row could have a floor, so the archive judged nothing. `late` lands,
+/// bound to a member's mailbox. The migration judges the archived `turn`, a
+/// row with no link, and stores its seal, and the owner's restore keeps it:
+/// doctor counts it hidden, and the mailbox's reader does not read it.
+/// Before the fix a row no link gave a floor stored no seal, so doctor,
+/// which reads the stored floors, missed it (main's backfill and restore,
+/// before #10265's last push, read the archived row as an erased shell and
+/// left the seal out the same way).
 #[test]
 fn an_archived_turn_whose_phone_mark_names_no_thread_keeps_its_seal_through_its_restore() {
-    let mailbox = owners_mailbox();
+    let late = EntityId::now();
+    let mut mailbox = mailbox_with_no_policy_yet(late);
     let turn = EntityId::now();
     land_peer_turn_marked_with_no_thread(&mailbox.vault, turn)
         .expect("FIXTURE: a peer's TURN, landed before floors");
     archive(&mailbox, turn);
+    mailbox.policy = bound_row_read_by(&mailbox.vault, late, &[mailbox.reader])
+        .expect("late lands, bound to a member's mailbox");
     forget_floor_state(&mailbox.vault).expect("FIXTURE: a vault written before floors");
     assert_eq!(
         hidden_source_unknown(&mailbox),
@@ -737,7 +742,7 @@ fn an_archived_turn_whose_phone_mark_names_no_thread_keeps_its_seal_through_its_
     assert_eq!(
         hidden_source_unknown(&mailbox),
         1,
-        "the backfill's raise of the archived TURN left its seal out of its stored floor",
+        "the migration's judgement of the archived TURN left its seal out of its stored floor",
     );
     restore(&mailbox, turn);
     assert_eq!(
