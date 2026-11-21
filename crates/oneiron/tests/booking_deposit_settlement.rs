@@ -2937,10 +2937,10 @@ fn a_host_cancel_below_a_refused_replay_whose_proof_is_owed_refunds_by_its_first
     // Review round 1 of #10020: as above, but the refused replay's
     // reconciliation read fails, so its row owes the proof of the stored
     // copy. The host's cancellation sits below the SEQUENCE the write staged,
-    // so it is never the write's own copy and no pull proves anything from
-    // it: it must not wait for that proof. The next pull reads it as the
-    // host's cancel, dated by its first sighting, before the start, and it
-    // refunds whole.
+    // so it is never the write's own copy: it must not wait for that proof.
+    // The next pull, read after the refusal, proves the copy another
+    // writer's and reads the cancellation as the host's, dated by its first
+    // sighting, before the start, and it refunds whole.
     let fixture = Fixture::open(Some(two_hour_terms()));
     fixture.enable_host_feed();
     let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
