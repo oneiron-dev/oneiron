@@ -3,6 +3,9 @@
 //! return). The owner's return ([`super::refund_booking_deposit_as_owner`])
 //! and the owner's line on the booking card read it from the one rule here
 //! ([`held_of`]), so the line shows exactly when the return moves money.
+//! Beside it, what an owner's emergency cancel gave back
+//! ([`emergency_return_in_txn`]), for the card of the booking the visitor
+//! picks again (PR 3).
 
 use super::{DEPOSIT, DEPOSIT_BOOKING, DepositRow, DepositState, UnattributedCancel, booking_key};
 use crate::error::Result;
@@ -93,6 +96,52 @@ pub(in crate::booking::lifecycle) fn held_deposit_in_txn(
         currency: row.terms.currency.clone(),
         unattributed_cancel_at: row.unattributed_cancel.map(|noted| noted.noted_at),
     }))
+}
+
+/// Where the whole return an owner's BK-09 emergency cancel gave a deposit
+/// stands ([`super::refund_on_host_cancel_in_writer`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::booking::lifecycle) enum EmergencyReturn {
+    /// The captured deposit is owed back; the provider has not refunded it
+    /// yet.
+    RefundDue,
+    /// The provider refunded it.
+    Refunded,
+    /// The capture still due is to be released; the provider has not voided
+    /// it yet.
+    VoidDue,
+    /// The provider voided it: nothing was captured.
+    Voided,
+}
+
+/// What an owner's BK-09 emergency cancel gave back of the deposit of the
+/// booking `event_ref`, read in `rtxn`; `None` for a booking this node holds
+/// no deposit for, and for one whose deposit no emergency cancel moved.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(in crate::booking::lifecycle) fn emergency_return_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    event_ref: &EntityId,
+) -> Result<Option<EmergencyReturn>> {
+    let Some(link) = DEPOSIT_BOOKING.get(&vault.store, rtxn, &booking_key(event_ref))? else {
+        return Ok(None);
+    };
+    let Some(row) = DEPOSIT.get(&vault.store, rtxn, &link.deposit_key)? else {
+        return Ok(None);
+    };
+    if row.emergency_return_sequence.is_none() {
+        return Ok(None);
+    }
+    Ok(match row.state {
+        DepositState::RefundDue { .. } => Some(EmergencyReturn::RefundDue),
+        DepositState::Refunded { .. } => Some(EmergencyReturn::Refunded),
+        DepositState::VoidDue => Some(EmergencyReturn::VoidDue),
+        DepositState::Voided => Some(EmergencyReturn::Voided),
+        _ => None,
+    })
 }
 
 /// The SEQUENCE of the replay proof that noted a cancel Oneiron cannot

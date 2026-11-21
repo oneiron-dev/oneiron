@@ -54,11 +54,12 @@ use super::{
     catalogue, spec_named,
 };
 use crate::Vault;
-use crate::authority::{ChoiceCount, SettingSlotFold};
+use crate::authority::{ChoiceCount, OwnerProofGround, SettingSlotFold};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
 use crate::side_table::{self, Named, SideTable, SideTableDbs};
+use crate::world_keys::{OwnerActImportance, owner_presence_reasons};
 
 /// The pack whose layer is this build's catalogue: every key.
 pub const ENGINE_PACK: &str = "engine";
@@ -1018,8 +1019,12 @@ impl Vault {
     /// (stage 7c-3c), appended in the same write, or the yes is refused. Answers the keys whose
     /// default landed.
     ///
+    /// The yes can carry an owner key's proof, and a pack's held defaults are the ones it may
+    /// not move by itself, so the door asks for the person at this device before its write.
+    ///
     /// # Errors
     ///
+    /// The presence check's refusal ([`Vault::owner_presence`]), before anything is read;
     /// `InvalidConfig` for a pack with no head, a proposal that is not the pack's waiting one, a
     /// row that moved since, or a key this build does not know; an owner proof that no longer
     /// holds; on a rooted vault, the append's typed refusal, and `OwnerKeyRequired` for a yes
@@ -1030,8 +1035,15 @@ impl Vault {
         pack: &str,
         proposal: &str,
     ) -> Result<Vec<String>> {
+        // The confirm is for an owner proof, so it stands before the write
+        // opens, while the door holds nothing: the prompt can block.
+        let witness = self.owner_presence(
+            OwnerActImportance::Important,
+            owner_presence_reasons::ACCEPT_PACK_DEFAULTS,
+        )?;
+        let ground = OwnerProofGround::witnessed(&witness);
         self.with_write_txn_grouped_after_commit(
-            |txn| accept_pack_defaults_in_txn(self, txn, owner, pack, proposal),
+            |txn| accept_pack_defaults_in_txn(self, txn, &ground, owner, pack, proposal),
             |keys| {
                 run_layer_after_commit(self, &keys);
                 Ok(keys)
@@ -1043,6 +1055,7 @@ impl Vault {
 fn accept_pack_defaults_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
+    ground: &OwnerProofGround,
     owner: &AuthenticatedOwner,
     pack: &str,
     proposal: &str,
@@ -1120,7 +1133,8 @@ fn accept_pack_defaults_in_txn(
     // The yes that travels is the act its change rows name, and what keeps its rows here: a pass
     // puts them back once no yes that counts in full names their keys (stage 7c-3c review).
     if rooted_in_txn(vault, txn)?
-        && let Some(signed) = append_yes_in_txn(vault, txn, (pack, &head), (by, keys.clone()))?
+        && let Some(signed) =
+            append_yes_in_txn(vault, txn, ground, (pack, &head), (by, keys.clone()))?
     {
         for change in &changes {
             record_signed_entry_in_txn(&vault.store, txn, change, signed)?;
@@ -1142,7 +1156,7 @@ fn accept_pack_defaults_in_txn(
 /// that counts in full here accepts (stage 7c-3c review): it replaces those yeses, so the keys
 /// the owner accepted there stay accepted; a yes that counts only as a safe move is not carried,
 /// so a new yes never makes it count in full. Answers the appended act; `None` where the yes
-/// stays on this install.
+/// stays on this install. The act signs on `ground`, the door's.
 ///
 /// # Errors
 ///
@@ -1151,6 +1165,7 @@ fn accept_pack_defaults_in_txn(
 fn append_yes_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
+    ground: &OwnerProofGround,
     (pack, head): (&str, &PackHead),
     (owner, mut accepted): (EntityId, Vec<String>),
 ) -> Result<Option<AuthorityEntryHash>> {
@@ -1185,6 +1200,7 @@ fn append_yes_in_txn(
     accepted.dedup();
     let signed = vault.append_setting_pack_accept_in_txn(
         txn,
+        ground,
         (pack, &head.version, digest, held.into_iter().collect()),
         (owner, ActSurface::ThisInstall),
         accepted,

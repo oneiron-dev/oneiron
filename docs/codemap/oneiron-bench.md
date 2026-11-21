@@ -219,8 +219,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/scorecard/params.rs` | src | s | 4 crate-vis | — | The `oneiron.retrieval_eval_params.v1` eval params file: blend weights for one run |
 | `src/scorecard/profile.rs` | src | s | 6 crate-vis | — | The `oneiron.bm25_rank_profile.v1` rank profile file: BM25F weights for one keyword run |
 | `src/scorecard/record.rs` | src | s | 2 crate-vis | — | `scorecard proposals` and `scorecard stamp`: list proposals, record the owner's stamp |
-| `src/scorecard/run.rs` | src | L | 6 crate-vis | — | `scorecard run`: replay one pack slice through fresh throwaway vaults, grade the run |
+| `src/scorecard/run.rs` | src | L | 7 crate-vis | — | `scorecard run`: replay one pack slice through fresh throwaway vaults, grade the run |
 | `src/scorecard/tune.rs` | src | m | 1 crate-vis | — | `scorecard tune-bm25f`: coordinate ascent over the BM25F rank profile on the search slice |
+| `src/scorecard/world_scoped/fixture.rs` | src | m | 6 crate-vis | — | The world-scoped arm's pack vault: a rooted vault with a second world, a corpus's records written as the… |
+| `src/scorecard/world_scoped/mod.rs` | src | s | 2 crate-vis | — | `scorecard run --arm world-scoped`: the retrieval ruler as a world-scoped reader… |
+| `src/scorecard/world_scoped/partition.rs` | src | s | 3 crate-vis | — | The world-scoped arm's partition: which records the agent's Grant leaves out, and the grading view of the… |
 | `src/swarm.rs` | src | m | 1 crate-vis | — | Seeded single-vault, in-process agent-swarm baseline |
 | `src/teacher_probe.rs` | src | s | 1 crate-vis | — | Offline extraction-teacher admission over the fixed CoNLL BIO probe |
 | `src/teacher_probe_tests.rs` | test | s | — | — | — |
@@ -238,4 +241,5 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/retrieval_matrix_cli.rs` | test | m | — | — | The retrieval matrix CLI end to end: the mini pack converts, the keyword arm grades it to hand-counted… |
 | `tests/scorecard_cli.rs` | test | L | — | — | Drive the shipped `scorecard` CLI end to end: fixtures in, JSON out |
 | `tests/scorecard_compare.rs` | test | L | — | — | Drive `scorecard compare`, `proposals` and `stamp` end to end: fixtures in, JSON out |
+| `tests/scorecard_world_scoped.rs` | test | m | — | — | [SCORECARD-WORLD-SCOPED-ARM]: `scorecard run --arm world-scoped` replays a slice as an agent whose one Grant… |
 | `tests/teacher_probe_cli.rs` | test | s | — | — | Run the shipped binary, not only its Rust scoring function, against CI fixtures |

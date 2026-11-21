@@ -39,6 +39,7 @@ use oneiron_store::diagnostic_record::untrusted_text::is_forbidden_text_scalar;
 use rmpv::Value;
 
 use crate::error::{Error, RecordError, Result};
+use crate::world_keys::{OwnerActImportance, owner_presence_reasons};
 use crate::{EntityId, Vault};
 
 use super::owner_key_enrollment_door::{KEY_ON_ROSTER, OWNER_ONLY, not_valid};
@@ -441,6 +442,11 @@ impl Vault {
                 .ok_or(Error::Record(RecordError::OwnerKeyRequired))?
         };
         between();
+        let witness = self.owner_presence(
+            OwnerActImportance::Important,
+            owner_presence_reasons::ENROL_VOUCHED_OWNER_SIGNING_KEY,
+        )?;
+        let ground = OwnerProofGround::witnessed(&witness);
         // The caller's owner proof was revalidated in the read above; that
         // read's fold picked the key and signs nothing. The key signs inside
         // the enrollment's writer, through its own check, on the fold each
@@ -458,7 +464,9 @@ impl Vault {
             signer.root.clone(),
             |entry_fold, transcript| {
                 require_holding_machine(entry_fold, request)?;
-                signer.signer.sign_owner_proof(self, entry_fold, transcript)
+                signer
+                    .signer
+                    .sign_owner_proof(self, entry_fold, &ground, transcript)
             },
         ) {
             // Another answer to the same request enrolled the key after this

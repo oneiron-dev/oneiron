@@ -606,7 +606,8 @@ impl OffRecordSession<'_> {
             prepare(&txn, key, initiator)?.turns
         };
         #[cfg(unix)]
-        let bodies = floor.import_result_bodies(self.vault, self.session_ref(), &preview_turns)?;
+        let mut bodies =
+            floor.import_result_bodies(self.vault, self.session_ref(), &preview_turns)?;
         let saved = self.vault.with_write_txn_grouped(|txn| {
             let (key, initiator) = authority(txn)?;
             let prepared = prepare(txn, key, initiator)?;
@@ -617,7 +618,11 @@ impl OffRecordSession<'_> {
             Ok((landed, Hearing::in_txn(self.vault, txn, room)))
         });
         #[cfg(unix)]
-        self.vault.discard_unnamed_promoted_bodies(bodies);
+        {
+            // With each carried copy of a room's body (ROOM-CUSTODY-REPLY-BODIES).
+            bodies.extend(floor.carried_body_pins());
+            self.vault.discard_unnamed_promoted_bodies(bodies);
+        }
         let (saved, hearing) = saved?;
         // No retirement or room-visible success before the durable commit.
         for plan in &saved.turns {

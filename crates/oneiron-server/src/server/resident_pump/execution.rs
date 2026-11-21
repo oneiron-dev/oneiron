@@ -609,6 +609,16 @@ fn enter_run(
         config.run_id,
         media_scope,
     ));
+    // RUN-BRIEF-ROUTE-AWARE-ROSTER: what this entry's code-mode calls are
+    // bound to, as its executor routes them: the seat's model where it runs,
+    // else a pinned planned child's pick where its settled config runs it.
+    // Its brief's PEOPLE are read for as far as those calls may go.
+    door.bind_code_mode_route(Some(crate::ai_host::CodeModeRoute {
+        seat: model_seat.map(|seat| (seat.model().clone(), seat.locality())),
+        pinned: planned
+            .filter(|planned| planned.exact)
+            .map(|_| (config.model.clone(), config.model_locality)),
+    }));
     // FIX 17594 D3: the run's self brief, resolved from what this entry
     // bound and installed under the run's connection, and the port its
     // requests carry it through. The live run keeps the installation across
@@ -647,6 +657,7 @@ fn enter_run(
     door.bind_lease(None);
     door.bind_run_ceiling(None);
     door.bind_attempt(None);
+    door.bind_code_mode_route(None);
     entered
 }
 

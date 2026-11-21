@@ -43,8 +43,9 @@ use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{
     AUTHORITY_LOG_SCHEMA_VERSION, ActAuthority, ActSurface, ActorBindingStatus, AuthorityKey,
     AuthorityLogEntry, AuthorityOp, AuthoritySignature, AuthoritySignatureSuite, HostSlipIssuer,
-    MachineRole, OwnerKeyBindingReceipt, OwnerKeyEnrollment, PreparedOwnerKeyBinding,
-    authority_entry_hash, authority_log_entity_id_from_hash, authority_transcript,
+    MachineRole, OwnerKeyBindingReceipt, OwnerKeyChangeKind, OwnerKeyEnrollment,
+    PreparedOwnerKeyBinding, authority_entry_hash, authority_log_entity_id_from_hash,
+    authority_transcript,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::error::RecordError;
@@ -550,5 +551,28 @@ fn a_rebinding_takes_an_epoch_above_the_keys_revocation() {
     assert!(
         served.passes_owner_verbs(served.owner),
         "the bound Owner's owner verbs pass"
+    );
+}
+
+#[test]
+fn a_device_keys_binding_lists_as_bound_by_device_key() {
+    let served = hosted();
+    let key = served.enrol_and_bind(served.owner, OWNER_SEED);
+    let bound = AuthorityKey::Ed25519(public(&key));
+    let changes = served
+        .vault
+        .owner_key_changes(&proof(&served.vault, served.owner))
+        .expect("the owner key changes list");
+    let listed = changes
+        .iter()
+        .find(|change| change.change == OwnerKeyChangeKind::BoundByDeviceKey)
+        .expect("the list names the device key's binding");
+    assert_eq!(
+        listed.public_key, bound,
+        "the list names the bound device key"
+    );
+    assert_eq!(
+        listed.signed_by, bound,
+        "the list names the device key as its signer"
     );
 }
