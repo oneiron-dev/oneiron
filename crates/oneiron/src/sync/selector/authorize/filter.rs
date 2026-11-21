@@ -147,6 +147,9 @@ pub(in crate::sync::selector) fn filter_window_doc(
     // machines take every row as stored.
     let other_vault = matches!(reach, BirthReach::OtherVault(_));
     let mut rewritten = std::collections::BTreeMap::<EntityId, Vec<u8>>::new();
+    // One phone-lineage pass for the window: each stored row's lineage is
+    // read once.
+    let mut phone_lineage = crate::voice_call::PhoneLineagePass::default();
     // Each candidate coreference claim's `same_as` link: written out, the
     // claim carries it (SELECTOR-RELEASE-COREFERENCE-CONSENT = A).
     let mut coreference_claims =
@@ -197,6 +200,48 @@ pub(in crate::sync::selector) fn filter_window_doc(
             Err(error) => {
                 scope_error = Some(error);
                 return;
+            }
+        }
+        // VOICE-PHONE-AGENT-REACH: a phone thread's row, or a row whose words
+        // came from one, never rides a restricted selector, whoever the
+        // member (Engine 02:02: a generic read reaches phone rows only by the
+        // owner's reach choice). Judged by the carried bytes, as
+        // `row_obligation` is above, so a row with no canonical copy here is
+        // withheld whole and a mark in any shape counts, and by the row stored
+        // at its id with every row its words came from, as the binding is
+        // above (R1 review C-F1, C-F2): an unmarked carrier the stored phone
+        // row rejected does not stand in for it.
+        match phone_lineage.phone_words(vault, &rtxn, &id, Some(blob)) {
+            Ok(false) => {}
+            Ok(true) => return,
+            Err(error) => {
+                scope_error = Some(error);
+                return;
+            }
+        }
+        // REACH-ERASED-SOURCE-EGRESS = A (Engine 07:53; R1 review 3 F1): a
+        // row that may not serve here (withdrawn, stale, or a source it is
+        // recorded as derived from withdrawn) never rides a restricted
+        // selector, as no read here serves it: a CLAIM drawn from an erased
+        // phone MESSAGE keeps the caller's words in its body. Judged by the
+        // row stored at its id, or the carried bytes when none is. A tombstone
+        // still propagates its delete; its live bytes never leave (below).
+        if !is_tombstoned {
+            let readable = vault.get_raw_in(&rtxn, &id).and_then(|stored| {
+                crate::ports::raw_readable_in_txn(
+                    &vault.store,
+                    &rtxn,
+                    &id,
+                    stored.as_deref().unwrap_or(blob),
+                )
+            });
+            match readable {
+                Ok(true) => {}
+                Ok(false) => return,
+                Err(error) => {
+                    scope_error = Some(error);
+                    return;
+                }
             }
         }
         match crate::authority::row_causal_admitted_cached(&history, &rtxn, &id, blob) {

@@ -31,6 +31,12 @@
 //! receipt names as unfiled; the compaction itself still answers. A base
 //! filing whose call read a live room row refuses as a tainted base write,
 //! as the base epoch mint does (FIX 6184), before any base liveness check.
+//!
+//! A filed step reads only while its sources read, as the summary does
+//! (COMPACTION-STEP-CLAIM-READS-WITHOUT-SOURCES): its claim and response
+//! artifact carry the compactor's words about every record the call read,
+//! so a reader takes either only while it takes each of those records
+//! ([`is_compaction_step_row`]).
 
 use rmpv::Value;
 
@@ -56,7 +62,7 @@ use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, OffRecordError, Result};
 use crate::off_record::{OffRecordSession, PreparedSessionRows};
 use crate::ports::EntityStoreRead as _;
-use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
+use crate::registry::{ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CLAIM};
 use crate::session_overlay::{JournalEntry, RouteTarget, SessionWriteRoute};
 use crate::store::{ManifestDbs, Store};
 use crate::temporal::TimeRange;
@@ -182,6 +188,82 @@ impl FiledCall {
             claim,
             step_hash: bytes_to_hex_lower(&self.step_hash),
         }
+    }
+}
+
+/// Whether `body`, the stored body of a row of `entity_type`, is a filed
+/// compaction step's: a `dreamer.step` claim stamped with the compaction
+/// surface, or the artifact holding a response above the inline bound. Its
+/// words came from its `DerivedFrom` targets, the summary's own lineage
+/// (FIX 5977), so a reader takes it only while it takes each of them. A
+/// claim body that does not decode is an error; an artifact body that does
+/// not decode is no step's, as [`crate::blob_artifact`]'s byte gate reads it.
+pub(crate) fn is_compaction_step_row(entity_type: u8, body: &[u8]) -> Result<bool> {
+    let names = |needle: &[u8]| body.windows(needle.len()).any(|window| window == needle);
+    match entity_type {
+        ENTITY_TYPE_CLAIM if names(DREAMER_STEP_PREDICATE.as_bytes()) => {
+            let claim = crate::write_envelope::claim_body::decode_claim_body(body, true)?;
+            Ok(claim.predicate == DREAMER_STEP_PREDICATE
+                && super::step_index::stamped_compaction_step(&claim))
+        }
+        ENTITY_TYPE_BLOB_ARTIFACT if names(COMPACTION_STEP_RESPONSE_NAME.as_bytes()) => {
+            Ok(crate::blob_artifact::decode_blob_artifact_body(body)
+                .is_ok_and(|artifact| artifact.name == COMPACTION_STEP_RESPONSE_NAME))
+        }
+        _ => Ok(false),
+    }
+}
+
+/// The filed compaction steps' response artifacts holding the bytes the
+/// stored row `raw` at `id` carries, when it is a content-addressed version
+/// ASSET: the response's bytes carry the compactor's words as each such
+/// artifact does, so a reader takes the ASSET only beside every one of them
+/// (COMPACTION-STEP-CLAIM-READS-WITHOUT-SOURCES). Any other holder is left
+/// out: a `blob.version` claim names a holder by hash alone, so another
+/// holder never widens who reads these bytes, and one more response holder
+/// only narrows it. Empty for every other row, and for an ASSET no response
+/// artifact holds.
+pub(crate) fn compaction_response_holders_in(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    raw: &[u8],
+) -> Result<Vec<EntityId>> {
+    let Some(hash) = crate::blob_artifact::carrier_content_hash(store, txn, id, raw)? else {
+        return Ok(Vec::new());
+    };
+    let mut responses = Vec::new();
+    for holder in crate::blob_artifact::content_holders_in_txn(store, txn, &hash)? {
+        let Some(record) = store.port_entity_record(txn, &holder)? else {
+            continue;
+        };
+        if record.entity_type == ENTITY_TYPE_BLOB_ARTIFACT
+            && is_compaction_step_row(record.entity_type, &record.body)?
+        {
+            responses.push(holder);
+        }
+    }
+    Ok(responses)
+}
+
+impl Vault {
+    /// Whether `artifact_id` is a filed compaction step's response artifact
+    /// (COMPACTION-STEP-CLAIM-READS-WITHOUT-SOURCES): its version bytes carry
+    /// the compactor's words about every record the step's call read, so a
+    /// door that serves them judges them through the reader's own lane first,
+    /// as it judges reminder wording (FIX 4997). An artifact that is gone
+    /// reads as no step's, as its bytes read absent.
+    ///
+    /// # Errors
+    ///
+    /// The store failed.
+    pub fn is_compaction_step_response_artifact(&self, artifact_id: &EntityId) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        let Some(record) = self.store.port_entity_record(&txn, artifact_id)? else {
+            return Ok(false);
+        };
+        Ok(record.entity_type == ENTITY_TYPE_BLOB_ARTIFACT
+            && is_compaction_step_row(record.entity_type, &record.body)?)
     }
 }
 
