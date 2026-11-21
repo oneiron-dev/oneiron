@@ -8447,6 +8447,7 @@ version = "0.1.0"
 dependencies = [
  "oneiron",
  "oneiron-dreamer",
+ "oneiron-keystore",
  "oneiron-llm",
  "oneiron-remote",
  "oneiron-testkit",
