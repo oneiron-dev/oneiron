@@ -633,6 +633,18 @@ impl Vault {
         }
         profile.seen_world_edits =
             super::act_standing::acknowledged_by_in_txn(&self.store, txn, fold, profile.machine)?;
+        // A removal names, beside those, each TASK fact the machine carried that this install
+        // counts: past the removal its signature proves no other (lead ruling
+        // REMOVED-CARRIER-NEW-FACTS = A).
+        if profile.role == MachineRole::Removed {
+            profile
+                .seen_world_edits
+                .extend(crate::task_authority::carried_fact_acts_in_txn(
+                    self,
+                    txn,
+                    profile.machine,
+                )?);
+        }
         profile.carrier = Some(carrier);
         profile.act = Some(OwnerAct {
             owner: answer.owner,

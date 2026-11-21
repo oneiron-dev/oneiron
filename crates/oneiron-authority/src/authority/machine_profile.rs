@@ -232,7 +232,10 @@ pub struct MachineProfile {
     /// The world edits, grant travel choices and machine answers this
     /// machine carried that the revision's author had seen. When the
     /// revision removes the machine, those keep their effect; one it never
-    /// saw raced it and counts only stricter.
+    /// saw raced it and counts only stricter. A removal also names here each
+    /// TASK fact the machine carried that its author counted, by the BLAKE3
+    /// digest of the fact's carrier transcript: past the removal the
+    /// machine's signature proves only a fact every removal saw.
     pub seen_world_edits: BTreeSet<AuthorityEntryHash>,
     /// The machine whose install key signed the revision as the carrier of
     /// the owner's act (C1). `None` only on the explicit bootstrap and anchor
