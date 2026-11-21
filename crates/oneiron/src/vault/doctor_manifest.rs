@@ -716,7 +716,7 @@ impl Vault {
         )?;
         let floor_counts =
             crate::source_audience::floor_counts_in(self, &rtxn).unwrap_or_else(|_| {
-                unreadable_fields.push("source_audience.derived".to_owned());
+                unreadable_fields.push("source_audience.floor_counts".to_owned());
                 crate::source_audience::FloorCounts::default()
             });
         drop(rtxn);

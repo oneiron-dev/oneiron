@@ -135,15 +135,21 @@ fn current_kind_in(
     ))
 }
 
-/// How `row` reads when it is held, live, current and not whole here.
-fn not_whole_in(vault: &Vault, txn: &RoTxn<'_>, row: &EntityId) -> Result<Option<NotWhole>> {
+/// How `row` reads when it is held, live, current and not whole here, as
+/// `reader` judges it.
+fn not_whole_in(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    reader: &mut StateReader<'_, '_>,
+    row: &EntityId,
+) -> Result<Option<NotWhole>> {
     let Some(raw) = vault.get_raw_in(txn, row)? else {
         return Ok(None);
     };
     if crate::ports::erased_in_txn(&vault.store, txn, row)? {
         return Ok(None);
     }
-    let read = match StateReader::reader(vault, txn)?.verdict(row, Some(&raw))? {
+    let read = match reader.verdict(row, Some(&raw))? {
         Verdict::Whole(_) => return Ok(None),
         Verdict::Sealed => None,
         Verdict::Waiting(wait) => Some(wait),
@@ -160,38 +166,57 @@ fn not_whole_in(vault: &Vault, txn: &RoTxn<'_>, row: &EntityId) -> Result<Option
 /// The held, live rows this vault does not read as whole, and that are
 /// still current, each judged by its verdict: sealed rows read to no one,
 /// the vault owner included; waiting rows only to an owner who reads every
-/// source here. It judges each row that stores what can make it read
-/// otherwise: a stored floor, an open entry, a binding (whose policy may no
-/// longer resolve), or an old build's wait the migration has not converted.
-/// Two kinds of row store none of these and are not counted, so no row
-/// scan runs at each doctor: a row the migration has not judged yet (it is
-/// judged one level at each read, and counted once the migration stores its
-/// entry or its seal), and a phone row stamped with a thread that does not
-/// resolve here (it reads to no one).
+/// source here. A row reads otherwise than whole by what it stores: an open
+/// entry or an old build's wait the migration has not converted (each such
+/// row is judged), or a stored floor or a binding that names a source
+/// unknown here (`DERIVED`, `RECORDS`: such a row is judged; one whose
+/// floor and binding resolve and that holds neither reads whole). No row
+/// scan runs at each doctor, which runs at each managed-vault unlock, so
+/// two kinds of row are not counted: a row the migration has not judged
+/// yet (it is judged one level at each read, and counted once the migration
+/// stores its entry or its seal), and a phone row that stores no floor and
+/// whose own thread does not resolve here or whose mark names no thread
+/// (it reads to no one; oracle case 69).
 fn current_not_whole_rows_in(
     vault: &Vault,
     txn: &RoTxn<'_>,
 ) -> Result<BTreeMap<EntityId, NotWhole>> {
+    let store = &vault.store;
+    let mut judged = super::source_state::rows_with_open_entries_in(store, txn)?;
+    judged.extend(super::floor_migration::rows_with_old_marks_in(store, txn)?);
+    // Each source is looked up once: the rows of one mailbox share its
+    // policy.
+    let mut unknown_sources = BTreeMap::new();
+    let mut unknown = |source: &EntityId| -> Result<bool> {
+        if let Some(unknown) = unknown_sources.get(source) {
+            return Ok(*unknown);
+        }
+        let unknown = super::floor::floor_source_of_in(store, txn, source)?
+            == super::floor::FloorSource::Unknown;
+        unknown_sources.insert(*source, unknown);
+        Ok(unknown)
+    };
+    for entry in super::DERIVED.iter_from(store, txn, &[])? {
+        let (row, floor) = entry?;
+        for source in &floor {
+            if unknown(source)? {
+                judged.insert(row);
+                break;
+            }
+        }
+    }
+    for entry in super::RECORDS.iter_from(store, txn, &[])? {
+        let (row, policy) = entry?;
+        if unknown(&policy)? {
+            judged.insert(row);
+        }
+    }
+    let mut reader = StateReader::reader(vault, txn)?;
     let mut rows = BTreeMap::new();
-    let mut judge = |row: EntityId| -> Result<()> {
-        if !rows.contains_key(&row)
-            && let Some(read) = not_whole_in(vault, txn, &row)?
-        {
+    for row in judged {
+        if let Some(read) = not_whole_in(vault, txn, &mut reader, &row)? {
             rows.insert(row, read);
         }
-        Ok(())
-    };
-    for entry in super::DERIVED.iter_from(&vault.store, txn, &[])? {
-        judge(entry?.0)?;
-    }
-    for entry in super::RECORDS.iter_from(&vault.store, txn, &[])? {
-        judge(entry?.0)?;
-    }
-    for row in super::source_state::rows_with_open_entries_in(&vault.store, txn)? {
-        judge(row)?;
-    }
-    for row in super::floor_migration::rows_with_old_marks_in(&vault.store, txn)? {
-        judge(row)?;
     }
     Ok(rows)
 }
@@ -358,8 +383,10 @@ impl Vault {
     }
 
     /// A current CLAIM other than `sealed` that states the fact of `body`
-    /// and whose verdict is not sealed: its floor names only sources that
-    /// resolve, and no input it waits on reads erased.
+    /// and whose verdict is not sealed (its floor names only sources that
+    /// resolve, and no input it waits on reads erased): a whole one first,
+    /// which reads now; else one that waits for a source to arrive before
+    /// one that waits for good.
     fn readable_twin_in(
         &self,
         txn: &RoTxn<'_>,
@@ -379,14 +406,20 @@ impl Vault {
             }
             None::<()>
         })?;
+        let mut reader = StateReader::reader(self, txn)?;
+        let mut waiting: Option<(Wait, EntityId)> = None;
         for twin in same {
             let Some(raw) = self.get_raw_in(txn, &twin)? else {
                 continue;
             };
-            if StateReader::reader(self, txn)?.verdict(&twin, Some(&raw))? != Verdict::Sealed {
-                return Ok(Some(twin));
+            match reader.verdict(&twin, Some(&raw))? {
+                Verdict::Whole(_) => return Ok(Some(twin)),
+                Verdict::Waiting(wait) if waiting.is_none_or(|(held, _)| wait < held) => {
+                    waiting = Some((wait, twin));
+                }
+                Verdict::Waiting(_) | Verdict::Sealed => {}
             }
         }
-        Ok(None)
+        Ok(waiting.map(|(_, twin)| twin))
     }
 }

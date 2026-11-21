@@ -120,7 +120,7 @@ pub(crate) fn names_unknown_source_in(
 }
 
 /// [`floor_source_in`] for a read that holds only the store.
-fn floor_source_of_in(
+pub(super) fn floor_source_of_in(
     store: &crate::store::Store,
     txn: &RoTxn<'_>,
     source: &EntityId,
