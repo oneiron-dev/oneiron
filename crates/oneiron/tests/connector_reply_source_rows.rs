@@ -48,6 +48,7 @@ fn said(id: String, role: &str, text: &str) -> TranscriptMessage {
         result: None,
         incomplete: false,
         generating: false,
+        speaker: None,
     }
 }
 

@@ -25,7 +25,7 @@ mod fake_llm;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use ed25519_dalek::{Signer, SigningKey};
 use engine_stack::on_engine_stack;
@@ -500,10 +500,17 @@ async fn say_enough_turns(call: &mut PhoneCall) -> TestResult<u64> {
 /// The thread's log once its epoch stands, or the raw log after the flight's
 /// patience. The flight runs off the call's path.
 async fn poll_epoch(fixture: &Fixture, thread: EntityId) -> TestResult<ChatLog> {
-    let deadline = Instant::now() + FLIGHT_PATIENCE;
+    match tokio::time::timeout(FLIGHT_PATIENCE, epoch_log(fixture, thread)).await {
+        Ok(read) => read,
+        Err(_patience_spent) => fixture.log(thread),
+    }
+}
+
+/// The thread's log once a Summary stands in it, read every 100 ms.
+async fn epoch_log(fixture: &Fixture, thread: EntityId) -> TestResult<ChatLog> {
     loop {
         let log = fixture.log(thread)?;
-        if !summaries(&log).is_empty() || Instant::now() > deadline {
+        if !summaries(&log).is_empty() {
             return Ok(log);
         }
         tokio::time::sleep(Duration::from_millis(100)).await;

@@ -129,7 +129,13 @@ use serde::Serialize;
 /// SETTING-COPY-OUTSIDE-OWNER-KEY-LINE).
 /// 59: the fold keeps every key ever enrolled as the recovery root's authority key, so a recovery
 /// hold's signer R and an answer's owner key judge apart (OPUS-WAYBACK, the box recovery's wait).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 59;
+/// 60: an owner act stands only while every roster revision outside its past that took its
+/// carrier's key away (a removal, a new key) saw it, whatever the raw roster head names, and
+/// removals of its carrier that cross alone never unmake it, nor an owner choice, world edit or
+/// grant travel choice it carried (FIX ACT-STANDS-RAW-HEAD-SKIPS-KEY-ROTATION, FIX
+/// MACHINE-CROSSING-REMOVALS-UNMAKE-CARRIED-OWNER-ACTS, FIX
+/// MACHINE-CROSSING-REMOVALS-UNMAKE-CARRIED-OWNER-CHOICES).
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 60;
 
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";

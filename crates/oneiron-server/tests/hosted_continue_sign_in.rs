@@ -240,23 +240,23 @@ impl Scratch {
     /// when `run` ended before it opened one.
     async fn opened_url(&self, run: &Run) -> Option<reqwest::Url> {
         let file = self.path("opened.txt");
-        let deadline = tokio::time::Instant::now() + STEP_TIMEOUT;
-        loop {
-            if let Ok(text) = std::fs::read_to_string(&file)
-                && let Some(line) = text.lines().next()
-            {
-                return Some(reqwest::Url::parse(line).expect("the opened URL parses"));
+        let poll = async {
+            loop {
+                if let Ok(text) = std::fs::read_to_string(&file)
+                    && let Some(line) = text.lines().next()
+                {
+                    return Some(reqwest::Url::parse(line).expect("the opened URL parses"));
+                }
+                if run.is_finished() {
+                    return None;
+                }
+                // testkit-lint: allow(sleep) polls a file the child process writes; no event marks it.
+                tokio::time::sleep(Duration::from_millis(100)).await;
             }
-            if run.is_finished() {
-                return None;
-            }
-            assert!(
-                tokio::time::Instant::now() < deadline,
-                "the binary opened no URL in a browser"
-            );
-            // testkit-lint: allow(sleep) polls a file the child process writes; no event marks it.
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
+        };
+        tokio::time::timeout(STEP_TIMEOUT, poll)
+            .await
+            .expect("the binary opened no URL in a browser")
     }
 
     /// Runs `args`, which open a sign-in, and plays the browser and the

@@ -370,7 +370,9 @@ impl ConsolidationExecutor<'_> {
                 return Ok(Some(charges.checkpoint()));
             }
             Err(error) => {
-                return Ok(Some(charges.end_on_step_error(&error.to_string(), &error)));
+                return Ok(Some(
+                    charges.end_on_step_error_with_spend(&error.to_string(), &error),
+                ));
             }
         };
         if ctx.deadline.expired() {

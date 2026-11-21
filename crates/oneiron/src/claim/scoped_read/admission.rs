@@ -30,6 +30,7 @@ impl crate::vault::Vault {
             read_filter: None,
             receipts_include_live_grants: false,
             cited_support: crate::claim::evidence_support::CitedSupport::Served,
+            source_floor_waived: false,
         }
     }
 
@@ -65,6 +66,7 @@ impl crate::vault::Vault {
             read_filter: None,
             receipts_include_live_grants: false,
             cited_support: crate::claim::evidence_support::CitedSupport::Served,
+            source_floor_waived: false,
         }
     }
 

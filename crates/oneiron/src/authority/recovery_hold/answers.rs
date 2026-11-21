@@ -7,8 +7,9 @@ use crate::world_keys::{OwnerActImportance, owner_presence_reasons};
 impl Vault {
     /// Answers the live recovery hold `hold` with `answer`, signed by this
     /// install's held live owner key. Either answer is an important owner
-    /// act: the door asks for the person at the device
-    /// ([`Vault::owner_presence`]) before its write, and the owner proof is
+    /// act: once the act's proof is this vault's live owner, the door asks
+    /// for the person at the device ([`Vault::owner_presence`]) before its
+    /// write (a proof of another vault raises no prompt), and the owner proof is
     /// signed on that confirm; the surface stays audit-only. The key is any
     /// key this install holds that may answer ([`answers_recovery_holds`]: a live
     /// owner device key, never an admin's or a host's), is the acting
@@ -28,7 +29,9 @@ impl Vault {
     /// [`crate::error::RecordError::AuthorityRefused`] for an agent's act, a
     /// hold that is not live, another owner's `ItIsMe`, a held key that is
     /// the successor or the root's key, and this install holding no live
-    /// owner key of the actor's; an answer the fold does not count; the
+    /// owner key of the actor's; an answer the fold does not count;
+    /// [`crate::error::GateError::ConsentOwnerNotAuthenticated`] for a proof
+    /// that is not this vault's live owner's, before any prompt; the
     /// presence check's refusal (a declined prompt; a device PIN whose
     /// window is closed); the store's, the clock's and the keystore's.
     pub fn answer_recovery_hold_as(
@@ -45,6 +48,9 @@ impl Vault {
             RecoveryHoldAnswerKind::ItIsMe => owner_presence_reasons::CONFIRM_RECOVERY_HOLD,
             RecoveryHoldAnswerKind::Cancel => owner_presence_reasons::CANCEL_RECOVERY_HOLD,
         };
+        // The proof is this vault's live owner before the door asks; the
+        // writer revalidates it in its transaction (REVIEW-10128 P1 2).
+        self.owner_key_act_owner(authority)?;
         let witness = self.owner_presence(OwnerActImportance::Important, reason)?;
         let ground = OwnerProofGround::witnessed(&witness);
         let machine = self.prepare_install_signing()?;

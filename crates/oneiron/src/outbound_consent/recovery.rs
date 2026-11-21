@@ -148,7 +148,7 @@ pub fn recover_authorized_outbound_intents<S: OutboundResultSender>(
                     vault,
                     authority,
                     crate::outbound_chokepoint::OutboundEffectCommand::Resume(record.id),
-                    now_ms,
+                    now_ms / 1_000,
                     &mut transport,
                 )?;
                 let sent = transport.effectful_sends > sends_before;

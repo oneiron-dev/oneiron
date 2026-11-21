@@ -343,7 +343,7 @@ impl Vault {
                 current.surfaced_turn = Some(newest);
                 ASKS.put(&self.store, txn, &key, &current)?;
                 index::sync_ask_membership(&self.store, txn, &key, Some(&old), Some(&current))?;
-                notify_in_txn(self, txn, &key, &newest, now)?;
+                notify_in_txn(self, txn, &key, &current, &newest, now)?;
                 Ok(true)
             })?;
             sent += usize::from(moved);

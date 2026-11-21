@@ -215,6 +215,14 @@ impl Vault {
                 }
                 (record, anchor, supersedes)
             };
+            // A seal that adds a parent moves the project under it, so it
+            // takes the live put's fenced-parent refusal.
+            super::proof::reject_fenced_new_parents(
+                &self.store,
+                txn,
+                &record.parents,
+                &authority.parents,
+            )?;
             let mut next = record;
             next.parents = authority.parents.clone();
             next.parent_heads = authority.parent_heads.clone();

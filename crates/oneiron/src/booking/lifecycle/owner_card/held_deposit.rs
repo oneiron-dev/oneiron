@@ -21,7 +21,9 @@
 //! provider ended unpaid reads as held again: the line says so, Return
 //! deposit asks the provider again, and the line is an INBOX row of its own
 //! whatever cancelled the booking (FIX [BK-DEPOSIT-FAILED-REFUND-SURFACE];
-//! BK-DEPOSIT-FAILED-REFUND-INBOX = A, Engine 21 Nov 10:22).
+//! BK-DEPOSIT-FAILED-REFUND-INBOX = A, Engine 21 Nov 10:22). So does a refund
+//! owed that refunds made by hand cover only a part of, with no refund asked
+//! of the provider (FIX [BK-DEPOSIT-SHORT-HAND-REFUND-NO-OWNER-LINE]).
 
 use serde::{Deserialize, Serialize};
 
@@ -49,7 +51,8 @@ pub struct BookingOwnerCardDeposit {
     /// (`vault.booking.deposit.refund`, body `{event_ref}`): only a host
     /// selected when the booking was confirmed may, and not where only a
     /// hand refund in the Stripe dashboard pays the rest, since the act then
-    /// moves nothing (review round 2 of #10149).
+    /// moves nothing (review round 2 of #10149;
+    /// FIX [BK-DEPOSIT-SHORT-HAND-REFUND-NO-OWNER-LINE]).
     pub return_offered: bool,
 }
 
@@ -57,15 +60,17 @@ impl BookingOwnerCardDeposit {
     /// Whether the line is an INBOX row of its own as well as a note on the
     /// booking card: where the reason lists it
     /// ([`BookingDepositHeldReason::lists_on_inbox`]), and wherever a refund
-    /// owed to the visitor ended unpaid, whatever cancelled the booking: money
-    /// nothing moves on stays owed until the owner acts
-    /// (BK-DEPOSIT-FAILED-REFUND-INBOX = A, Engine 21 Nov 10:22).
+    /// owed to the visitor ended unpaid, or refunds made by hand cover only a
+    /// part of it, whatever cancelled the booking: money nothing moves on
+    /// stays owed until the owner acts (BK-DEPOSIT-FAILED-REFUND-INBOX = A,
+    /// Engine 21 Nov 10:22).
     pub(super) const fn lists_on_inbox(&self) -> bool {
         self.reason.lists_on_inbox()
             || matches!(
                 self.held,
                 BookingDepositHeld::RefundEndedUnpaid
                     | BookingDepositHeld::RefundEndedUnpaidPartRefundedByHand
+                    | BookingDepositHeld::PartRefundedByHand
             )
     }
 }
@@ -95,6 +100,11 @@ pub enum BookingDepositHeld {
     /// dashboard cover: only a hand refund there pays the rest, and Return
     /// deposit asks Stripe nothing (review round 1 of #10149).
     RefundEndedUnpaidPartRefundedByHand,
+    /// A refund owed to the visitor that refunds made by hand in the Stripe
+    /// dashboard cover only a part of, while Stripe holds no refund asked
+    /// for it: only a hand refund there pays the rest, and Return deposit
+    /// asks Stripe nothing (FIX [BK-DEPOSIT-SHORT-HAND-REFUND-NO-OWNER-LINE]).
+    PartRefundedByHand,
 }
 
 /// Why a booking's deposit is still held.
@@ -142,10 +152,11 @@ impl BookingDepositHeldReason {
 
 /// The deposit note of the booking `facts` describe at `now`, for `reader`:
 /// what `held` still holds, once the booking is effectively cancelled or
-/// has started (the owner's return's own condition), and a refund the
-/// provider ended unpaid at any time; `None` before then, or with nothing
-/// held. `cancel_reported` says a calendar's report of the
-/// booking cancelled or removed stands on one of its passports: with an
+/// has started (the owner's return's own condition), and a refund nothing
+/// moves on by itself ([`HeldDepositKind::refund_stuck`]) at any time;
+/// `None` before then, or with nothing held. `cancel_reported` says a
+/// calendar's report of the booking cancelled or removed stands on one of
+/// its passports: with an
 /// omission concluding the cancel, that calendar cancelled it, though
 /// another calendar's omission came last. Times read in the owner's `zone`
 /// (UTC when it does not resolve).
@@ -159,8 +170,7 @@ pub(super) fn deposit_note(
 ) -> Option<BookingOwnerCardDeposit> {
     let held = held?;
     let cancelled = facts.effective_status() == BookingStatus::Cancelled;
-    let ended_refund = matches!(held.kind, HeldDepositKind::RefundEndedUnpaid { .. });
-    if !cancelled && now < facts.slot.start && !ended_refund {
+    if !cancelled && now < facts.slot.start && !held.kind.refund_stuck() {
         return None;
     }
     // The booking's own cancel (the visitor's) decides its deposit by the
@@ -188,14 +198,18 @@ pub(super) fn deposit_note(
         HeldDepositKind::RefundEndedUnpaid {
             part_refunded_by_hand: true,
         } => BookingDepositHeld::RefundEndedUnpaidPartRefundedByHand,
+        HeldDepositKind::PartRefundedByHand => BookingDepositHeld::PartRefundedByHand,
     };
-    let return_offered = held_part != BookingDepositHeld::RefundEndedUnpaidPartRefundedByHand
-        && reader.is_some_and(|reader| {
-            facts
-                .context
-                .as_ref()
-                .is_some_and(|context| context.owner_refs.contains(&reader.to_hex()))
-        });
+    let return_offered = !matches!(
+        held_part,
+        BookingDepositHeld::RefundEndedUnpaidPartRefundedByHand
+            | BookingDepositHeld::PartRefundedByHand
+    ) && reader.is_some_and(|reader| {
+        facts
+            .context
+            .as_ref()
+            .is_some_and(|context| context.owner_refs.contains(&reader.to_hex()))
+    });
     let line = owner_line(
         &booking_label(facts.slot.start, zone),
         reason,
@@ -256,11 +270,17 @@ fn owner_line(
             "The refund of {money} to the visitor did not go through at Stripe, and refunds made \
              by hand in the Stripe dashboard cover only part of it."
         ),
+        BookingDepositHeld::PartRefundedByHand => format!(
+            "Refunds made by hand in the Stripe dashboard cover only part of the refund of \
+             {money} owed to the visitor."
+        ),
     };
     let act = match (return_offered, held) {
-        (_, BookingDepositHeld::RefundEndedUnpaidPartRefundedByHand) => {
-            "Refund the rest by hand in the Stripe dashboard."
-        }
+        (
+            _,
+            BookingDepositHeld::RefundEndedUnpaidPartRefundedByHand
+            | BookingDepositHeld::PartRefundedByHand,
+        ) => "Refund the rest by hand in the Stripe dashboard.",
         (false, _) => "A host selected when it was confirmed can return it.",
         (true, BookingDepositHeld::CaptureDue) => "Choose Return deposit to release it.",
         (true, BookingDepositHeld::Captured) => "Choose Return deposit to refund it in full.",

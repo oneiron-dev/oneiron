@@ -610,7 +610,7 @@ impl Vault {
 
     pub(crate) fn plan_session_end_wake_in_txn(
         &self,
-        txn: &RwTxn<'_>,
+        txn: &mut RwTxn<'_>,
         session: &EntityId,
     ) -> Result<SessionEndWake> {
         let scope = DreamerConsolidationScope::Meso;

@@ -106,6 +106,8 @@ pub(crate) enum ArchivedSideGroup {
     RetrievalPins,
     /// Drafter policy and serving binding repair.
     Drafter,
+    /// Owner read-shape pins, read live at each pick.
+    ReadShapePins,
     /// Owner grant act history.
     AccessGrant,
     /// Owner setting act history.
@@ -205,6 +207,7 @@ pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGrou
         name if name == side_table::LEARNING_SETTING.name => Some(Group::LearningSetting),
         name if name == side_table::RETRIEVAL_POLICY_PINS.name => Some(Group::RetrievalPins),
         name if name == side_table::DRAFTER_POLICY.name => Some(Group::Drafter),
+        name if name == side_table::READ_SHAPE_PINS.name => Some(Group::ReadShapePins),
         name if name == side_table::ACCESS_GRANT_OWNER_ACT.name => Some(Group::AccessGrant),
         name if name == side_table::POLICY_SETTING_ACT.name => Some(Group::PolicySetting),
         name if name == side_table::OWNER_POLICY_CHANGE_EVENT.name => Some(Group::PolicyModel),
@@ -354,6 +357,9 @@ pub(crate) fn land_archived_side_group_in_txn(
         }
         ArchivedSideGroup::Drafter => {
             crate::Vault::land_archived_drafter_rows_in_txn(vault, txn, permit, rows)
+        }
+        ArchivedSideGroup::ReadShapePins => {
+            crate::store::Store::land_archived_read_shape_pins_rows_in_txn(vault, txn, permit, rows)
         }
         ArchivedSideGroup::AccessGrant => {
             crate::Vault::land_archived_access_grant_rows_in_txn(vault, txn, permit, rows)
