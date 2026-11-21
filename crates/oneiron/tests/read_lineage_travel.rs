@@ -19,7 +19,8 @@
 //!   seals it, and one written after that erase is sealed at once.
 //!
 //! The two case-50 tests run red at the stack top 506d5eadafc, whose hub writes no open carrier:
-//! the device reads `row` to a stranger. The case-37 tests pin what the base already does
+//! the device reads `row` to a stranger. Each asserts what the device reads first, and that the
+//! hub's window carries the open entry last. The case-37 tests pin what the base already does
 //! (L-S1's judge in the dependency put).
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test read_lineage_travel`.
@@ -224,10 +225,6 @@ fn a_row_its_sender_waited_on_is_sealed_where_the_input_was_erased_first() {
         .expect("the hub's tombstone of the input replays on the device");
     deliver(&hub, &mut device);
     assert!(
-        carries_open_entries(&hub, &row),
-        "the hub's window carries no open entry of a row that waits on an input",
-    );
-    assert!(
         device
             .vault
             .get_raw(&row)
@@ -236,6 +233,10 @@ fn a_row_its_sender_waited_on_is_sealed_where_the_input_was_erased_first() {
         "FIXTURE: the device lands the row",
     );
     assert_sealed(&device, device_owner, row, "the tombstone came first");
+    assert!(
+        carries_open_entries(&hub, &row),
+        "the hub's window carries no open entry of a row that waits on an input",
+    );
 }
 
 #[test]
@@ -248,10 +249,6 @@ fn a_row_its_sender_waited_on_waits_here_until_the_inputs_tombstone_seals_it() {
         input,
     } = sender_waited_then_erased();
     deliver(&hub, &mut device);
-    assert!(
-        carries_open_entries(&hub, &row),
-        "the hub's window carries no open entry of a row that waits on an input",
-    );
     assert!(
         device
             .vault
@@ -271,6 +268,10 @@ fn a_row_its_sender_waited_on_waits_here_until_the_inputs_tombstone_seals_it() {
     apply_replayed_tombstone(&device.vault, &input, TombstoneReason::UserDelete, T0)
         .expect("the hub's tombstone of the input replays on the device");
     assert_sealed(&device, device_owner, row, "the row came first");
+    assert!(
+        carries_open_entries(&hub, &row),
+        "the hub's window carries no open entry of a row that waits on an input",
+    );
 }
 
 /// A vault with a mailbox row bound to a policy its owner reads, so its writes judge their
