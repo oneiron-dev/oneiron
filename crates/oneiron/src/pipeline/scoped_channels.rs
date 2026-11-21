@@ -13,8 +13,9 @@ use super::channels::{
     truncate_widened_channel_results_to_scope,
 };
 use super::filters::{
-    claim_status_gate_allows, clamp_hides_row, import_claim_gate_decisions_for_scores,
-    made_by_admits, pipeline_candidate_matches_filters_and_gate,
+    claim_status_gate_allows, clamp_hides_row, clamp_hides_row_or_word_sources,
+    import_claim_gate_decisions_for_scores, made_by_admits,
+    pipeline_candidate_matches_filters_and_gate,
 };
 use super::temporal_bound::{
     ReadableRows, execute_temporal_for_reader, scoped_temporal_channel_limit,
@@ -435,17 +436,25 @@ impl PipelineBuilder<'_> {
         ));
         let sliced = self.made_by != crate::provenance::made_by::MadeByPredicate::All;
         // A clamped pack's audience joins the reader too: a row it could not
-        // read whatever its status counts toward no stop and takes no place
-        // under a scan's cap or in the bound, so hidden rows nearer the
-        // anchor cannot cut a row it may read out of the run before the
-        // clamp drops them (REVIEW-9980 round 1).
+        // read whatever its status, or one whose words come from a row it may
+        // not read, counts toward no stop and takes no place under a scan's
+        // cap or in the bound, so hidden rows nearer the anchor cannot cut a
+        // row it may read out of the run before the clamp drops them
+        // (REVIEW-9980 round 1; PACK-PRESELECT-CLAMP-ROW-ONLY-DISPLACES-READABLE-HIT).
         let clamp = filters.disclosure;
         let clamp_metadata = RefCell::new(EntityMetadataCache::default());
         let hides = |store: &crate::store::StoreRead<'_>,
                      txn: &RoTxn<'_>,
                      id: &crate::EntityId|
          -> Result<bool> {
-            clamp_hides_row(store, txn, id, clamp, &mut clamp_metadata.borrow_mut())
+            clamp_hides_row_or_word_sources(
+                self.vault,
+                store,
+                txn,
+                id,
+                clamp,
+                &mut clamp_metadata.borrow_mut(),
+            )
         };
         // The call's scope, asked before the clamp, and its slice, after: a
         // call without the clamp reads through these two alone.
@@ -627,13 +636,17 @@ impl PipelineBuilder<'_> {
     /// the fetch. A slice counts as a strict scope
     /// ([`Self::has_strict_text_scope_filter`]), so these channels widen their
     /// window and cut it to the slice. The run's shared config keeps every
-    /// slice for the reads that judge rows other than results.
+    /// slice for the reads that judge rows other than results. Under a
+    /// clamp, these channels' admission also asks the sources of a row's
+    /// words (`disclosure_word_sources`), as the pack's preselection does;
+    /// the shared config judges the row alone.
     pub(super) fn bounded_result_filters<'f>(
-        &self,
+        &'f self,
         filters: PipelineFilterConfig<'f>,
     ) -> PipelineFilterConfig<'f> {
         PipelineFilterConfig {
             made_by: self.made_by,
+            disclosure_word_sources: Some(self.vault),
             ..filters
         }
     }

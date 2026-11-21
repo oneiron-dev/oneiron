@@ -28,10 +28,14 @@ pub(crate) fn clamp_admits(
     ctx.admits_in_from(vault, store, rtxn, id, entity_type, claim_body)
 }
 
-/// [`clamp_admits`] for a bounded channel's pre-filter, which holds only the
-/// store: the row's own test, without the sources of a summary's words
-/// (`DisclosureContext::admits_from`), on the content the pack reads. Every
-/// row it keeps meets [`clamp_admits`] in the pack's candidate sweep.
+/// [`clamp_admits`] for a pre-filter that holds only the store: the row's
+/// own test, without the sources of a summary's words
+/// (`DisclosureContext::admits_from`), on the content the pack reads. A
+/// run's shared filter config asks it for reads that judge rows that are
+/// not results, and the phonetic code rung's hits before the blend; a
+/// bounded result channel's admission asks [`clamp_admits`]
+/// (PACK-PRESELECT-CLAMP-ROW-ONLY-DISPLACES-READABLE-HIT). The pack's
+/// candidate sweep still asks [`clamp_admits`] of every row it keeps.
 pub(crate) fn clamp_prefilter_admits(
     ctx: &DisclosureContext,
     store: &StoreRead<'_>,

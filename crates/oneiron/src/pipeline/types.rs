@@ -201,6 +201,16 @@ pub(super) struct PipelineFilterConfig<'a> {
     /// audience may not read takes no channel slot. `None` with the owner
     /// alone or outside a pack.
     pub(super) disclosure: Option<&'a crate::disclosure::DisclosureContext>,
+    /// The vault a bounded result channel's admission walks under
+    /// `disclosure` for the sources of a row's words
+    /// (`retained_copies::clamp_admits`), so a row whose words come from a
+    /// row the audience may not read takes no place in a vector, text,
+    /// temporal or typed media fetch
+    /// (PACK-PRESELECT-CLAMP-ROW-ONLY-DISPLACES-READABLE-HIT). Set by
+    /// `PipelineBuilder::bounded_result_filters`. `None` in the run's shared
+    /// config, whose reads judge rows that are not results with the row's
+    /// own test (`retained_copies::clamp_prefilter_admits`).
+    pub(super) disclosure_word_sources: Option<&'a crate::Vault>,
     /// The call's `made_by` slice (Rule A, OF-466) at a bounded result
     /// channel's admission, so a row the call drops takes no place in a
     /// vector, text, temporal or typed media fetch
