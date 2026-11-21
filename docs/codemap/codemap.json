@@ -6008,7 +6008,7 @@
      "path": "src/authority/owner_key_enrollment_door/owner_authority_closure.rs",
      "purpose": "The owner authority a person's removal ends (row OWNER-REVOKE-BY-NAMED-ATTRIBUTION; ruled…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
      }
     },
     {
@@ -17095,7 +17095,7 @@
      "purpose": "A door's own check-in for a person's act (ARCH-0082 #composing; ROLES-CHECKIN P2.4b, piece 2i; Engine ruling…",
      "surface": {
       "const": 1,
-      "crate-vis": 11,
+      "crate-vis": 13,
       "fn": 17,
       "re-export": 1
      }
@@ -44280,15 +44280,25 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [],
      "path": "src/federation/shared_act/membership.rs",
      "purpose": "Membership effects: Owner additions and handovers, and the ordinary member changes an Admin's named power…",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 21,
       "fn": 8,
       "re-export": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/federation/shared_act/membership/departure_importance.rs",
+     "purpose": "What a member's removal or leave asks the person at the device",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -98501,6 +98511,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/member_departure_between.rs",
+     "purpose": "Doors for ending a member's standing between the door's check and write",
+     "surface": {
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/membership.rs",
      "purpose": "A shared vault's member grants, for integration tests (primitive A, slice 6.4f: the Steward arm of the run…",
      "surface": {
@@ -98589,7 +98609,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 389,
+      "mod": 390,
       "re-export": 3
      }
     },
@@ -115901,6 +115921,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/owner_presence_member_departure_doors.rs",
+     "purpose": "The removal and leave doors read before they ask (row OWNER-CONFIRM-SHEET, PR 4b-3d1)",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -120994,9 +121022,9 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 110,
+     "files": 111,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "Federation grant record substrate"
     },
@@ -121890,7 +121918,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 401,
+     "files": 402,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -122081,8 +122109,8 @@
    },
    "over_bar": 271,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8516,
-   "test_files": 2237
+   "source_files": 8518,
+   "test_files": 2238
   },
   "oneiron-agent-runtime": {
    "files": [
