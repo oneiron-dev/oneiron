@@ -214,8 +214,10 @@ impl WorldAccessWrite {
         let resolves_before = governed && !fails_closed;
         let allowed_before = if resolves_before {
             &prior.allowed_set
-        } else {
+        } else if governed {
             &empty
+        } else {
+            &base
         };
         let allowed_after = self.grant.as_ref().unwrap_or(&prior.allowed_set);
         let retrieval_default_before = if resolves_before && default_row_before {

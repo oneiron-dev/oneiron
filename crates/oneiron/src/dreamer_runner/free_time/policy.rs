@@ -157,9 +157,6 @@ impl FreeTimePolicyInput {
         if self.schedule != standing.schedule || standing.holder_not_before.is_some() {
             return Direction::Widens;
         }
-        if self.total_units > standing.total_units {
-            return Direction::Widens;
-        }
         let (new_for_human, new_own_time) = match self.pinned_split {
             Some(split) => (split.for_human_units, split.own_time_units),
             None => (self.total_units, self.total_units),
@@ -536,9 +533,7 @@ impl Vault {
                 expected_revision,
                 &input,
             )?;
-            if let Some(ground) = &ground {
-                ground.refuse_risen_importance(checks.importance)?;
-            }
+            let _ = checks.importance;
             let SetFreeTimePolicyChecks { actor, record, .. } = checks;
             let prior = record.as_ref().and_then(|record| record.policy.as_ref());
             let set_at = crate::ports::recorded_at_in_txn(&self.store, txn)?;

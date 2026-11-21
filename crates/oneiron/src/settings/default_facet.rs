@@ -116,12 +116,16 @@ impl Vault {
         // A surface names an act. The read checks it and drops before the
         // door asks. With no surface the door goes straight to its write.
         let ground = if surface.is_some() {
+            let witness = self.owner_presence(
+                OwnerActImportance::Important,
+                owner_presence_reasons::DEFAULT_FACET,
+            )?;
             let importance = {
                 let txn = self.store.env.read_txn()?;
                 self.default_facet_checks_in_txn(&txn, owner, setting)?
                     .importance
             };
-            let witness = self.owner_presence(importance, owner_presence_reasons::DEFAULT_FACET)?;
+            let _ = importance;
             Some(OwnerProofGround::witnessed(&witness))
         } else {
             None
