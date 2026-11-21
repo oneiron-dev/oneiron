@@ -74,6 +74,12 @@
 //!   round 2 P1-4), and its system stays its own;
 //! - a seat refused here offers no tap that clears it alone.
 //!
+//! Review round 1 of PR 4 (REVIEW-10357, P1=3):
+//! - a pick from one calendar's notice names no row of another calendar, though one act set both
+//!   calendars' seats;
+//! - the pick of the feed clears every seat that holds its system;
+//! - the owner's pick of another calendar's seat takes the seat installed here out of service.
+//!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test setting_refusal_notice`.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
@@ -1804,4 +1810,144 @@ fn the_booking_pairs_tap_edits_the_floor_pin_read_as_a_value_row() {
         "the tap edits the pin: {notice:#?}"
     );
     assert_eq!(further["value"], json!(3), "{notice:#?}");
+}
+
+/// Each row `tap` changes, by its key and item, to the value it sets (`null` clears).
+fn row_items_of(tap: &Value) -> std::collections::BTreeMap<(String, String), Value> {
+    let further = tap["further"].as_array().cloned().unwrap_or_default();
+    std::iter::once(tap.clone())
+        .chain(further)
+        .map(|row| {
+            let key = row["key"].as_str().expect("a key").to_owned();
+            let item = row["item"].as_str().unwrap_or_default().to_owned();
+            ((key, item), row["value"].clone())
+        })
+        .collect()
+}
+
+/// The tap of `notice` that keeps the row of `key` for `item` and clears every other row it
+/// names.
+fn tap_keeping_item(notice: &Value, (key, item): (&str, &str)) -> Value {
+    taps_of(notice)
+        .into_iter()
+        .find(|tap| {
+            row_items_of(tap)
+                .iter()
+                .all(|((row, at), value)| (row == key && at == item) != value.is_null())
+        })
+        .unwrap_or_else(|| panic!("a tap keeps `{key}` for `{item}`: {notice:#?}"))
+}
+
+/// A CalDAV seat's setup at `seat_ref` of the one calendar of the credential `caldav:work`,
+/// importing under `system`: every seat of that calendar names one endpoint, one credential and
+/// one collection, so two of them may hold one system.
+fn seat_setup_of_one_calendar(seat_ref: &str, system: &str) -> Value {
+    let mut setup = seat_setup(seat_ref, system);
+    setup["config"]["secret_ref"] = json!("caldav:work");
+    setup
+}
+
+#[test]
+fn a_pick_from_one_calendars_notice_names_no_row_of_another_calendar() {
+    let fx = Fixture::rooted();
+    let (work, home) = (item_slot(SEAT, "work"), item_slot(SEAT, "home"));
+    let frontier = setting_frontier_of(&fx.vault, &[work, home]).expect("frontier");
+    fx.owner_sets_item(FEED, "work-cal", feed_config("work-cal"));
+    fx.owner_sets_item(FEED, "home-cal", feed_config("home-cal"));
+
+    // The other machine installs a seat on each feed's system in one act: this install refuses
+    // each against its own feed and raises a notice each, whose picks name only its calendar's
+    // rows (REVIEW-10357 P1-1).
+    land_setting_batch_from(
+        &fx.vault,
+        &fx.desktop,
+        fx.owner,
+        &frontier,
+        &[
+            (work, Some(seat_setup("work", "work-cal"))),
+            (home, Some(seat_setup("home", "home-cal"))),
+        ],
+        T0,
+    )
+    .expect("the act lands");
+
+    let notices = fx.refusal_notices();
+    assert_eq!(notices.len(), 2, "a notice for each seat: {notices:#?}");
+    for notice in &notices {
+        let other = if words_of(notice).contains("'work-cal' calendar") {
+            ["home", "home-cal"]
+        } else {
+            ["work", "work-cal"]
+        };
+        let taps = taps_of(notice);
+        assert_eq!(taps.len(), 2, "a tap for each of its sources: {notice:#?}");
+        for tap in &taps {
+            for (_, item) in row_items_of(tap).keys() {
+                assert!(!other.contains(&item.as_str()), "{item} in {tap:#?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn the_pick_of_the_feed_clears_every_seat_that_holds_its_system() {
+    let fx = Fixture::rooted();
+    let frontier = setting_frontier_of(
+        &fx.vault,
+        &[item_slot(SEAT, "work"), item_slot(SEAT, "work2")],
+    )
+    .expect("frontier");
+    fx.owner_sets_item(FEED, "work-cal", feed_config("work-cal"));
+
+    // The other machine installs two seats of one calendar on the feed's system, in two acts:
+    // this install quarantines both, and the pick of the feed clears both (REVIEW-10357 P1-2).
+    for seat in ["work", "work2"] {
+        fx.desktop_sets_item(
+            &frontier,
+            (SEAT, seat),
+            Some(seat_setup_of_one_calendar(seat, "work-cal")),
+        );
+    }
+
+    let notices = fx.refusal_notices();
+    assert!(!notices.is_empty(), "a notice of the refused seats");
+    for notice in &notices {
+        let rows = row_items_of(&tap_keeping_item(notice, (FEED, "work-cal")));
+        for seat in ["work", "work2"] {
+            assert_eq!(
+                rows.get(&(SEAT.to_owned(), seat.to_owned())),
+                Some(&Value::Null),
+                "the pick of the feed clears the seat `{seat}`: {notice:#?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_owners_pick_of_another_calendars_seat_takes_the_seat_here_out_of_service() {
+    let fx = Fixture::rooted();
+    let frontier = setting_frontier_of(&fx.vault, &[item_slot(SEAT, "team")]).expect("frontier");
+    fx.owner_sets_item(SEAT, "work", seat_setup("work", "work-cal"));
+
+    // The other machine installs a seat of another calendar on the same system: this install
+    // quarantines it, and the owner keeps it, in one act that clears the seat installed here
+    // (REVIEW-10357 P1-3).
+    let mut team = seat_setup("team", "work-cal");
+    team["config"]["calendar_ref"] = json!("team");
+    fx.desktop_sets_item(&frontier, (SEAT, "team"), Some(team));
+    assert_eq!(fx.reads_item(SEAT, "team"), Value::Null, "quarantined here");
+
+    let tap = tap_keeping_item(&fx.the_notice(), (SEAT, "team"));
+    invoke(&fx.as_owner(), "vault.settings.set", tap).expect("the owner's pick");
+    fx.vault.project_settings().expect("the pass");
+
+    assert!(
+        !fx.reads_item(SEAT, "team").is_null(),
+        "the seat the owner kept is installed here"
+    );
+    assert_eq!(
+        fx.reads_item(SEAT, "work"),
+        Value::Null,
+        "the other is out of service"
+    );
 }
