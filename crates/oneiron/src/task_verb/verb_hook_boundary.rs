@@ -438,6 +438,13 @@ pub fn row_call(memory: &Memory<'_>, verbs: &dyn VerbTable, verb: &str) -> Memor
 /// reads the answer with the secret's handle where the value was, and the
 /// caller's view gets the value back where the chain left the handle.
 ///
+/// Nor does a task-kept `vault.inquire` answer's statements: they are held
+/// with the task and bound to the asking actor (federation.md
+/// #inquiry-keep; INQUIRE-SHAPE Q6 = A), so the chain, and the run record
+/// each hook keeps, reads the answer in its kept form
+/// ([`crate::verbs::kept_inquiry_answer`]), and the caller's view gets the
+/// statements back where the chain left that form.
+///
 /// # Errors
 ///
 /// A hook's stop, as the refusal the caller reads; a read row's storage
@@ -454,6 +461,13 @@ pub fn row_post(vault: &Vault, pre: VerbHookPre, result: Value) -> MemoryResult<
     {
         let view = chain_post(vault, pre, masked.clone(), session.as_ref())?;
         return Ok(revealed_hook_view(view, &masked, &result));
+    }
+    if crate::verbs::is_inquire_row(&pre.call().verb) {
+        let kept = crate::verbs::kept_inquiry_answer(&result);
+        if kept != result {
+            let view = chain_post(vault, pre, kept.clone(), session.as_ref())?;
+            return Ok(inquiry_hook_view(view, &kept, &result));
+        }
     }
     chain_post(vault, pre, result, session.as_ref())
 }
@@ -618,6 +632,39 @@ pub fn revealed_hook_view(
 
 /// The fields of a `reveal.wait` answer that carry the value.
 const REVEALED_FIELDS: [&str; 2] = ["value", "value_base64"];
+
+/// The fields of a `vault.inquire` answer's kept form that stand in for the
+/// member's statements ([`crate::verbs::kept_inquiry_answer`]).
+const WITHHELD_FIELDS: [&str; 2] = ["statements", "statements_withheld"];
+
+/// The caller's view of a task-kept `vault.inquire` `reply` once its hooks
+/// read its `kept` form: while the view still holds its `keep` and both
+/// stand-ins the kept form left (the empty list and `statements_withheld`),
+/// the statements go back and the mark goes. A view whose hook changed any
+/// of them stays as the hook left it, withheld: the statements go back only
+/// into an answer that still says it is kept `task`, so a hook that redacted
+/// `keep` never hands the statements to a writer that keeps every answer
+/// not kept `task` whole (review of #9318).
+fn inquiry_hook_view(mut view: Value, kept: &Value, reply: &Value) -> Value {
+    if let (Some(fields), Some(kept), Some(reply)) =
+        (view.as_object_mut(), kept.as_object(), reply.as_object())
+        && std::iter::once("keep")
+            .chain(WITHHELD_FIELDS)
+            .all(|key| fields.get(key).is_some() && fields.get(key) == kept.get(key))
+    {
+        for key in WITHHELD_FIELDS {
+            match reply.get(key) {
+                Some(value) => {
+                    fields.insert(key.to_owned(), value.clone());
+                }
+                None => {
+                    fields.remove(key);
+                }
+            }
+        }
+    }
+    view
+}
 
 /// Each value field in `value`, at any depth, replaced by the handle its
 /// answer's receipt names, or by null when none does. A JSON text an

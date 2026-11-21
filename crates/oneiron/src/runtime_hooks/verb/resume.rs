@@ -185,6 +185,10 @@ impl Vault {
             return Ok(false);
         }
         let mut receipt = None;
+        // A task-kept inquiry answer is saved in its kept form: its task holds
+        // the statements (federation.md #inquiry-keep), and the caller's
+        // retry reads them back from it.
+        let withholds_statements = crate::verbs::is_inquire_row(&verb);
         // A credential call's door may list the rows its answer was derived
         // from: they are saved with it (FIX 1435), beside the chain's notice
         // metadata (FIX 12517).
@@ -213,8 +217,16 @@ impl Vault {
         let failed = ran.is_err();
         let (outcome, transient) = match ran {
             // Save the full returned value for the caller's retry.
-            Ok(value) => (
+            Ok(value) if !withholds_statements => (
                 ask::SavedOutcome::result(&value, producers, hook_notice)?,
+                false,
+            ),
+            Ok(value) => (
+                ask::SavedOutcome::result(
+                    &crate::verbs::kept_inquiry_answer(&value),
+                    producers,
+                    hook_notice,
+                )?,
                 false,
             ),
             Err(error) => match error.hook.as_deref() {
