@@ -590,12 +590,11 @@ impl Vault {
     ) -> Result<MaintenanceRevert> {
         let asks = {
             let txn = self.store.env.read_txn()?;
-            let (_, row) = self.read_maintenance_revert_in_txn(&txn, owner, target)?;
-            row.reverted.is_none()
-                && matches!(row.inverse, MaintenanceInverse::ProactivityPolicy(_))
+            APPLIED.get(&self.store, &txn, &target)?.is_none_or(|row| {
+                row.reverted.is_none()
+                    && matches!(row.inverse, MaintenanceInverse::ProactivityPolicy(_))
+            })
         };
-        // The read drops before the confirm for the owner proof. The write
-        // has not opened, so the door holds nothing while the prompt can block.
         let ground = if asks {
             let witness = self.owner_presence(
                 crate::world_keys::OwnerActImportance::Important,
@@ -605,6 +604,10 @@ impl Vault {
         } else {
             None
         };
+        {
+            let txn = self.store.env.read_txn()?;
+            let _ = self.read_maintenance_revert_in_txn(&txn, owner, target)?;
+        }
         let reverted = self.with_write_txn_grouped(|txn| {
             let (actor, mut row) = self.read_maintenance_revert_in_txn(txn, owner, target)?;
             if let Some(done) = &row.reverted {
