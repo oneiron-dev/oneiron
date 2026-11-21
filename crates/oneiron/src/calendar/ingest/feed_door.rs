@@ -8,7 +8,7 @@ use super::{
     IcsFeedCursorSnapshot, IcsFeedFetcher, IcsFeedPollConfig, IcsPollRunState,
     IcsPropertyContinuationPayload, consent, enqueue_ics_feed_poll, ics_feed_cursor_snapshot,
 };
-use crate::calendar::connectors::door::seat_of_system_in_txn;
+use crate::calendar::connectors::door::{release_seat_to_feed_in_txn, seats_holding_system_in_txn};
 use crate::calendar::safeguard::{CALENDAR_SAFEGUARD_CONFIG_KEY, CalendarBodyScreener};
 use crate::calendar::setting_keys::ICS_FEED;
 use crate::consent::AuthenticatedOwner;
@@ -116,7 +116,9 @@ pub(crate) fn registration_in_txn(
 /// was declined (CAL-02), starts no chain: the owner's approval starts it. Clearing an installed
 /// feed uninstalls it in the same write ([`uninstall_in_txn`]), which runs under the calendar
 /// admission turn ([`super::ADMISSION_WRITE_TURN`]), so it never lands inside a poll's admission.
-/// The configuration installed already, set again, is a no-op.
+/// The configuration installed already, set again, is a no-op. A feed whose act clears the seat out
+/// of service that holds its system is the owner's pick of the feed over that seat
+/// (SETTING-PROJECTED-CALENDAR-SYSTEM-CLAIM = A): the seat gives its system up to the feed.
 ///
 /// # Errors
 ///
@@ -170,7 +172,12 @@ pub(crate) fn ics_feed_changed_in_txn(
             "this system named an earlier feed; use a new system".into(),
         ));
     }
-    if let Some(seat_ref) = seat_of_system_in_txn(vault, txn, &config.system)? {
+    // Every seat that holds the system, each given up to this feed by its own act or refusing it
+    // (REVIEW-10357 round 2 P1-2).
+    for seat_ref in seats_holding_system_in_txn(vault, txn, &config.system)? {
+        if release_seat_to_feed_in_txn(vault, txn, change, &seat_ref)? {
+            continue;
+        }
         return Err(crate::Error::InvalidConfig(format!(
             "the CalDAV seat `{seat_ref}` imports under this system, and the feed's complete polls \
              would cancel its events; use another system"
@@ -181,6 +188,48 @@ pub(crate) fn ics_feed_changed_in_txn(
         enqueue_ics_feed_poll_in_txn(vault, txn, &config, change.at)?;
     }
     Ok(())
+}
+
+/// Records a completed poll of `system` in `txn`, as a poll of an earlier feed there leaves it
+/// (`test_doors::calendar_feed_poll`).
+///
+/// # Errors
+///
+/// Storage errors.
+#[cfg(all(oneiron_test_support, feature = "test-support"))]
+pub(crate) fn plant_poll_completion_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    system: &str,
+) -> crate::Result<()> {
+    let completion = CalendarIcsPollCompletion {
+        poll_ref: "planted".to_owned(),
+        completed_at: 0,
+        result: CalendarIcsPollResult::Reenqueued { next_not_before: 0 },
+        cursor: None,
+    };
+    POLLS.put(&vault.store, txn, &system.to_owned(), &completion)?;
+    Ok(())
+}
+
+/// Why a feed of `system` cannot install here, a seat that holds the system aside: an earlier feed
+/// polled under it, or it is a pack calendar source's. `None` where it can (the owner's pick of a
+/// feed over a seat, `connectors::door::seat_setup_changed_in_txn`).
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn feed_refusal_of_system_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    system: &str,
+) -> crate::Result<Option<String>> {
+    if POLLS.contains(&vault.store, txn, &system.to_owned())? {
+        return Ok(Some("this system named an earlier feed".to_owned()));
+    }
+    Ok(crate::mail_pack::refuse_calendar_source_system(system)
+        .err()
+        .map(|error| error.to_string()))
 }
 
 /// Uninstalls the feed `installed` in the write that clears its `calendar.ics_feed` row
