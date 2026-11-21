@@ -4,11 +4,14 @@
 //!
 //! The Ask names the draft (its result) and the revision (its event), and
 //! carries none of the reply's words: the drafts door shows them to a reader
-//! of the thread. Only its person reads it. It clears, seen and acked, when
-//! that revision is approved, discarded or drafted again. While the revision
-//! still waits, its taps approve it or discard it; each door judges the
-//! draft again when called, and the approve door takes the mailbox person's
-//! own proof, owner of the vault or not.
+//! of the thread. Only its person reads it, and only while they read the
+//! thread and the message it answers: its birth names both, so its floor is
+//! theirs, and the vault's owner reads it only when he reads them
+//! (RECIPIENT-NOTICE-READ-BY-ANY-READER, owner half). It clears, seen and
+//! acked, when that revision is approved, discarded or drafted again. While
+//! the revision still waits, its taps approve it or discard it; each door
+//! judges the draft again when called, and the approve door takes the
+//! mailbox person's own proof, owner of the vault or not.
 
 use super::reply::reply_awaits_in;
 use crate::entity_id::EntityId;
@@ -18,6 +21,8 @@ use crate::inbox::{
     decode_notification_body, notification_id,
 };
 use crate::memory::Memory;
+use crate::provenance::birth::RowBirth;
+use crate::provenance::made_by::MadeByClass;
 use crate::registry::ENTITY_TYPE_NOTIFICATION;
 use crate::vault::{LiveEntityRow, Vault, live_entity_row_in_txn};
 
@@ -27,6 +32,8 @@ pub(crate) const MAIL_REPLY_ASK_PRODUCER: &str = "mail.reply";
 const MAIL_REPLY_APPROVE_VERB: &str = "vault.mail.reply.approve";
 /// The tap that discards the draft.
 const MAIL_REPLY_DISCARD_VERB: &str = "vault.mail.reply.discard";
+/// The door whose drafts raise the Ask, named in the Ask's birth.
+const MAIL_REPLY_DRAFT_DOOR: &str = "vault.mail.reply.draft";
 
 /// The Ask's source for revision `revision` of the draft `draft`: the event
 /// `<draft>:<revision>` keys one Ask per revision, and the result names the
@@ -42,8 +49,10 @@ fn ask_source(draft: &EntityId, revision: u64) -> NotificationSource {
 }
 
 /// Raises the Ask of revision `revision` of the draft `draft` to `person`,
-/// the mailbox's own person, in `txn`. Raising it again finds its row. The
-/// caller signals notification readers after its commit.
+/// the mailbox's own person, in `txn`; `drafter` drafted it from
+/// `answered`, the thread and the message the reply answers, which the Ask's
+/// birth names. Raising it again finds its row. The caller signals
+/// notification readers after its commit.
 ///
 /// # Errors
 ///
@@ -54,19 +63,30 @@ pub(super) fn raise_reply_ask_in_txn(
     draft: &EntityId,
     revision: u64,
     person: EntityId,
+    drafter: crate::WriteActor,
+    answered: &[EntityId],
 ) -> Result<()> {
     let created_at = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
-    vault.record_notification_in_txn(
-        txn,
-        &NotificationEvent {
-            kind: NotificationKind::Ask,
-            source: ask_source(draft, revision),
-            subject_refs: Vec::new(),
-            recipient: Some(person),
-            created_at,
-            origin_conversation: None,
-        },
-    )?;
+    let event = NotificationEvent {
+        kind: NotificationKind::Ask,
+        source: ask_source(draft, revision),
+        subject_refs: Vec::new(),
+        recipient: Some(person),
+        created_at,
+        origin_conversation: None,
+    };
+    if let Some(birth) = RowBirth::written(
+        drafter,
+        MadeByClass::Concluded,
+        MAIL_REPLY_DRAFT_DOOR,
+        answered,
+        &[],
+        created_at,
+    ) {
+        vault.record_derived_notification_in_txn(txn, &event, &birth)?;
+    } else {
+        vault.record_notification_in_txn(txn, &event)?;
+    }
     Ok(())
 }
 
