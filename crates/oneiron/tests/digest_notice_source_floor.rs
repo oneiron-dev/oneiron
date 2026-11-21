@@ -228,8 +228,10 @@ fn a_weave_period_notice_reads_only_to_the_readers_of_the_rows_its_period_reads(
                 reader,
                 cadence: WeaveDigestCadence::Daily,
                 next_due_at: 1,
+                // An Owner recipe takes only the sections the owner's weave
+                // policy row lists; Exceptions projects predicate claims.
                 recipe: vec![WeaveSectionSpec {
-                    kind: WeaveSectionKind::Digest,
+                    kind: WeaveSectionKind::Exceptions,
                     predicates: vec![WEAVE_PREDICATE.to_owned()],
                     edge_kinds: Vec::new(),
                 }],
