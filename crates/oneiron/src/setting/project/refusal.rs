@@ -31,9 +31,9 @@
 //! `conflict` reads the rows as conflicting, so a change of the other row that ends the conflict
 //! ends it too. A later act whose value such a row holds already runs no hook, so the pass reads
 //! the key's `conflict` for it instead, and refuses it while the rows conflict
-//! ([`write_row_in_txn`]). The pass lands every such row before it raises any notice: the words
-//! read the rows as it leaves them, and a landed row whose rows no longer conflict then raises
-//! none.
+//! ([`equal_row_refusal_in_txn`]). The pass lands every such row before it raises any notice
+//! ([`land_refused_rows_in_txn`]): the words read the rows as it leaves them, and a landed row
+//! whose rows no longer conflict then raises none.
 //!
 //! Its tap is read when the row is read ([`setting_refusal_tap_in_txn`]): one `vault.settings.set`
 //! of every row this install still refuses an act of and of every row its key's hook judges such
@@ -69,6 +69,59 @@ pub(super) fn hook_waived(spec: &SettingSpec) -> bool {
         && matches!(spec.refused_projection, RefusedProjection::Land { .. })
 }
 
+/// The words that refuse an equal row of `spec` at `slot`, whose write runs no hook: on a key
+/// whose reader holds the line ([`RefusedProjection::Land`]), its `conflict` while the rows
+/// conflict, so a later act whose value the row holds already is refused here as the act it
+/// replaces was, and its refusal and the notice's tap stand (REVIEW-10343 P1-1). `None` on any
+/// other key, and while the pass lands a refused row ([`hook_waived`]).
+///
+/// # Errors
+///
+/// Storage errors.
+pub(super) fn equal_row_refusal_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    spec: &SettingSpec,
+    slot: &RowKey,
+) -> Result<Option<String>> {
+    match spec.refused_projection {
+        RefusedProjection::Land { conflict } if !hook_waived(spec) => conflict(vault, txn, slot),
+        _ => Ok(None),
+    }
+}
+
+/// Lands, in the pass's write `txn` at `now`, each row of `refused` (its target, its hook's
+/// reason, the act the refused value came from) whose key lands such a row all the same
+/// ([`land_refused_row_in_txn`]), every one before the pass raises any notice, so two rows each
+/// refused against the other's last value both land, and each notice reads the pair the pass
+/// leaves (REVIEW-10343 P1-2). Adds the keys whose rows changed to `changed`, and logs each row
+/// left for the next pass. Whether each row landed, in `refused`'s order.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(super) fn land_refused_rows_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    refused: &[(EntityId, String, Option<AuthorityEntryHash>)],
+    now: u64,
+    changed: &mut Vec<&'static SettingSpec>,
+) -> Result<Vec<bool>> {
+    let mut landings = Vec::with_capacity(refused.len());
+    for (target, reason, _) in refused {
+        let landed = land_refused_row_in_txn(vault, txn, *target, now)?;
+        if landed.is_none() {
+            tracing::warn!(
+                reason = %reason,
+                "the next pass reads again a setting row its key refused here"
+            );
+        }
+        landings.push(landed.is_some());
+        changed.extend(landed.into_iter().flatten());
+    }
+    Ok(landings)
+}
+
 /// Lands the row of `target` that its key's hook refused in this pass, without the hook, in a
 /// savepoint of the pass's write `txn`, at `now`, where the key lands such a row all the same
 /// ([`RefusedProjection::Land`]): the keys whose rows changed. `None` for a key that leaves the
@@ -78,7 +131,7 @@ pub(super) fn hook_waived(spec: &SettingSpec) -> bool {
 /// # Errors
 ///
 /// Storage errors.
-pub(super) fn land_refused_row_in_txn(
+fn land_refused_row_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     target: EntityId,

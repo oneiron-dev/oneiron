@@ -2,8 +2,6 @@
 
 use super::*;
 
-use super::super::RefusedProjection;
-
 /// Whether an owner's change of a row of `spec` travels as its signed act (stage 7a-2): a
 /// `sync: vault` key that is not learned, whose seed weight does not travel yet. Its value rides
 /// inside the act where the key's value type is closed and its JSON fits, else beside it (stage
@@ -351,8 +349,6 @@ fn pending_as_last_in_txn(
 /// is the thing's start, as the creation door writes it (stage 7c-3b): the row alone, change 0,
 /// with no change row and no hook. Whether it wrote. A carried row, and a row a copy decided, is
 /// the engine's, with its `local` bound (stage 7a-4); every other row is the deciding owner's.
-/// An equal row runs no hook; on a key whose reader holds the line
-/// ([`RefusedProjection::Land`]), its rows' conflict refuses it as the hook would.
 pub(super) fn write_row_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -387,14 +383,9 @@ pub(super) fn write_row_in_txn(
         _ => false,
     };
     if same {
-        // A new act whose value the row holds already runs no hook. On a key whose reader holds
-        // the line, the pass reads the key's conflict instead: while the rows conflict, the act is
-        // refused here as the act it replaces was, so its refusal, and the notice's tap, stand
-        // (REVIEW-10343 P1-1). A row the pass lands all the same reads none.
-        if let RefusedProjection::Land { conflict } = spec.refused_projection
-            && !hook_waived(spec)
-            && let Some(words) = conflict(vault, txn, slot)?
-        {
+        // An equal row runs no hook; a key whose reader holds the line refuses it while its rows
+        // conflict (`refusal::equal_row_refusal_in_txn`).
+        if let Some(words) = equal_row_refusal_in_txn(vault, txn, spec, slot)? {
             REFUSED_DECIDING_ACT.with(|refused| refused.set(Some(deciding.act)));
             return Err(Error::InvalidConfig(words));
         }
@@ -706,26 +697,9 @@ impl Vault {
                 }
                 round = refused.drain(..).map(|(target, _, _)| target).collect();
             }
-            // A key whose reader holds the line lands the row all the same (`refusal`): every
-            // such row lands before any notice is raised, so two rows each refused against the
-            // other's last value both land, and the words of each read the pair the pass leaves
-            // (REVIEW-10343 P1-2).
-            let mut landings = Vec::with_capacity(refused.len());
-            for (target, reason, _) in &refused {
-                landings.push(match land_refused_row_in_txn(self, txn, *target, now)? {
-                    Some(landed) => {
-                        changed.extend(landed);
-                        true
-                    }
-                    None => {
-                        tracing::warn!(
-                            reason = %reason,
-                            "the next pass reads again a setting row its key refused here"
-                        );
-                        false
-                    }
-                });
-            }
+            // Every row a key lands all the same lands before any notice is raised, so each
+            // notice reads the rows as the pass leaves them (`refusal`).
+            let landings = land_refused_rows_in_txn(self, txn, &refused, now, &mut changed)?;
             for ((target, reason, deciding), landed) in refused.iter().zip(landings) {
                 record_refusal_in_txn(self, txn, *target)?;
                 // The owner's notice of it (`refusal`), in a savepoint of its own: a fault there
