@@ -9,11 +9,9 @@ pub use job_specs::{
     TEST_LAPSE, TEST_ONCE, TEST_OPEN, TEST_PAGED, TEST_REARM, TEST_REARM_AFTER_SECS,
 };
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -25,27 +23,32 @@ use crate::schedule::{
 };
 use crate::store::housekeeping_schedule::{HousekeepingBudget, HousekeepingSweep};
 
-/// Every test run, by job code and subject.
-static RUNS: Mutex<BTreeMap<(&'static str, Option<EntityId>), u64>> = Mutex::new(BTreeMap::new());
-
-fn count(armed: &Armed) -> u64 {
-    let mut runs = RUNS
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let entry = runs.entry((armed.job, armed.subject)).or_default();
-    *entry += 1;
-    *entry
+thread_local! {
+    /// Every test run, by job code and subject. Thread-local: every run and read runs on the
+    /// test's own thread.
+    static RUNS: RefCell<BTreeMap<(&'static str, Option<EntityId>), u64>> =
+        const { RefCell::new(BTreeMap::new()) };
 }
 
-/// How many times `job` about `subject` has run.
+fn count(armed: &Armed) -> u64 {
+    RUNS.with(|runs| {
+        let mut runs = runs.borrow_mut();
+        let entry = runs.entry((armed.job, armed.subject)).or_default();
+        *entry += 1;
+        *entry
+    })
+}
+
+/// How many times `job` about `subject` has run on this thread.
 #[must_use]
 pub fn runs(job: &str, subject: Option<EntityId>) -> u64 {
-    RUNS.lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .iter()
-        .filter(|((code, about), _)| *code == job && *about == subject)
-        .map(|(_, runs)| *runs)
-        .sum()
+    RUNS.with(|runs| {
+        runs.borrow()
+            .iter()
+            .filter(|((code, about), _)| *code == job && *about == subject)
+            .map(|(_, runs)| *runs)
+            .sum()
+    })
 }
 
 fn run_count(_vault: &Vault, armed: &Armed, _pass: &JobPass<'_>) -> Result<JobResult> {
@@ -379,18 +382,21 @@ pub static TEST_FAIL_ONCE: JobSpec = JobSpec {
     run: run_fail_once,
 };
 
-/// Whether [`TEST_WITHDRAWN`] is out of the job registry now.
-static WITHDRAWN: AtomicBool = AtomicBool::new(false);
-
-/// Takes [`TEST_WITHDRAWN`] out of the job registry (`true`), as a build that does not know the
-/// job reads its rows, or puts it back (`false`).
-pub fn withdraw_test_job(withdrawn: bool) {
-    WITHDRAWN.store(withdrawn, Ordering::SeqCst);
+thread_local! {
+    /// Whether [`TEST_WITHDRAWN`] is out of the job registry now. Thread-local: the test that
+    /// withdraws it runs its runner passes on its own thread, and no other test sees the change.
+    static WITHDRAWN: Cell<bool> = const { Cell::new(false) };
 }
 
-/// Whether the registry leaves the job `code` out for now ([`withdraw_test_job`]).
+/// Takes [`TEST_WITHDRAWN`] out of the job registry (`true`) on this thread, as a build that does
+/// not know the job reads its rows, or puts it back (`false`).
+pub fn withdraw_test_job(withdrawn: bool) {
+    WITHDRAWN.set(withdrawn);
+}
+
+/// Whether the registry leaves the job `code` out for now on this thread ([`withdraw_test_job`]).
 pub(crate) fn withdrawn(code: &str) -> bool {
-    code == TEST_WITHDRAWN.code && WITHDRAWN.load(Ordering::SeqCst)
+    code == TEST_WITHDRAWN.code && WITHDRAWN.get()
 }
 
 /// A job the engine arms that always fails, and that a test takes out of the job registry and
