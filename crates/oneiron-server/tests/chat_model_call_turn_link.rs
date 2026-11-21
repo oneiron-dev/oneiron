@@ -12,6 +12,9 @@
 //! capture in `api/llm.rs` sets `thread_id: None` and keeps no reply ref), so
 //! the door reads no link.
 //!
+//! A thread whose model changed lists each turn's answering model through
+//! `vault.conversations.turns.models` (FIX [THREAD-PROVENANCE-READ]).
+//!
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron-server --all-features --test chat_model_call_turn_link`.
 
@@ -49,6 +52,10 @@ const MODEL: &str = "test-model";
 /// That model's engine id, as the answering rung records it: provider, the
 /// configured name and the default revision.
 const ENGINE_MODEL: &str = "local/test-model@live";
+/// The model the thread changes to, as the second config names it.
+const OTHER_MODEL: &str = "other-model";
+/// That model's engine id.
+const OTHER_ENGINE_MODEL: &str = "local/other-model@live";
 
 /// One served vault with a scripted local model: the owner on the host root
 /// of a profiled install.
@@ -75,8 +82,13 @@ fn hex(bytes: &[u8]) -> String {
 /// The models config of a server whose every role is the local model at
 /// `base_url`, with no background model work.
 fn models(base_url: &str) -> ModelsConfig {
+    models_running(base_url, MODEL)
+}
+
+/// [`models`] with every role on the local model `model`.
+fn models_running(base_url: &str, model: &str) -> ModelsConfig {
     let toml = format!(
-        "default = \"local:{MODEL}\"\n\
+        "default = \"local:{model}\"\n\
          [dreamer]\nenabled = false\n[workflows]\nenabled = false\n\
          [providers.local]\nkind = \"local-openai-compat\"\nbase_url = \"{base_url}\"\n"
     );
@@ -171,6 +183,75 @@ impl Host {
             turn: id("turn_id"),
             message: id("message_id"),
         }
+    }
+
+    /// This host serving the same vault again with every role on `model`:
+    /// the AI host stops, and a new server and AI host start on the vault,
+    /// so the thread's next turn runs the other model.
+    async fn serve_model(self, fake: &FakeLlm, model: &str) -> Self {
+        let Self {
+            _dir,
+            vault,
+            app,
+            issuer,
+            owner_slip,
+            owner_token,
+            ai,
+        } = self;
+        ai.shutdown().await;
+        drop(app);
+        let server = SyncServer::new(
+            Arc::clone(&vault),
+            SyncServerConfig {
+                auth_secret: Some("chat-model-call-turn-link".into()),
+                ..Default::default()
+            },
+        )
+        .expect("create the second server");
+        let (server, ai) =
+            AiHost::attach(server, Some(&models_running(&fake.base_url, model))).await;
+        Self {
+            _dir,
+            vault,
+            app: build_app(Arc::new(server)),
+            issuer,
+            owner_slip,
+            owner_token,
+            ai,
+        }
+    }
+
+    /// The owner's facade call of `verb` with `input`: its status and body.
+    async fn facade(&self, verb: &str, input: &Value) -> (StatusCode, Value) {
+        let timestamp = self.vault.now_recorded_at();
+        let nonce = EntityId::now().to_hex();
+        let challenge = holder_proof_challenge(timestamp, &nonce);
+        let signature = hex(&self
+            .issuer
+            .binding_proof(&self.owner_slip, &challenge)
+            .expect("owner holder proof"));
+        let binding =
+            json!({"timestamp": timestamp, "nonce": nonce, "signature": signature}).to_string();
+        let request = Request::post(format!("/v1/core/facade/{verb}"))
+            .header("authorization", format!("Bearer {}", self.owner_token))
+            .header("x-oneiron-binding", binding)
+            .header("content-type", "application/json")
+            .body(Body::from(input.to_string()))
+            .expect("facade request");
+        let response = self
+            .app
+            .clone()
+            .oneshot(request)
+            .await
+            .expect("the app's response");
+        let status = response.status();
+        let bytes = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("the response body");
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
     }
 
     /// The call records the saved MESSAGE `reply` is linked to.
@@ -279,6 +360,78 @@ fn two_replies_in_two_conversations_each_name_only_their_own_call() {
             second_call.key(),
             "each reply names its own call, never the other conversation's"
         );
+        host.ai.shutdown().await;
+    });
+}
+
+/// FIX [THREAD-PROVENANCE-READ] (RULED THREAD-PROVENANCE-READER = C): a
+/// thread whose model changed between two turns lists, for its turns in the
+/// order asked, each turn's answering model id and provider, so a reader can
+/// mark the change; a TURN the caller reads no such turn of is withheld while
+/// the rest answer. Red on PR 1's head dc76605393: no verb reads a turn's
+/// models.
+#[test]
+fn two_models_in_one_thread_list_in_turn_order() {
+    run_on_engine_stack("two-models-in-one-thread", || async {
+        let fake = FakeLlm::start(
+            Vec::new(),
+            Some(ModelReply::Text {
+                text: "noted".into(),
+                model: MODEL.into(),
+            }),
+        )
+        .await;
+        let host = Host::start(&fake).await;
+        let conversation = EntityId::now();
+
+        let first = host.chat(conversation, "the first model's turn").await;
+        let host = host.serve_model(&fake, OTHER_MODEL).await;
+        let second = host.chat(conversation, "the second model's turn").await;
+        let seen = fake.seen();
+        assert_eq!(seen.len(), 2, "two turns made two model calls");
+        assert_eq!(
+            seen[1].body["model"].as_str(),
+            Some(OTHER_MODEL),
+            "the second turn ran the other model"
+        );
+
+        let withheld = EntityId::now();
+        let (status, body) = host
+            .facade(
+                "vault.conversations.turns.models",
+                &json!({"turn_refs": [
+                    first.turn.to_hex(),
+                    second.turn.to_hex(),
+                    withheld.to_hex(),
+                ]}),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "the read answered {body}");
+        let turns = body["value"]["turns"]
+            .as_array()
+            .unwrap_or_else(|| panic!("the read lists turns: {body}"));
+        assert_eq!(turns.len(), 3, "one entry per asked turn, in order: {body}");
+        for (turn, (reply, model)) in turns
+            .iter()
+            .zip([(&first, ENGINE_MODEL), (&second, OTHER_ENGINE_MODEL)])
+        {
+            assert_eq!(
+                turn["turn_ref"].as_str(),
+                Some(reply.turn.to_hex().as_str())
+            );
+            assert_eq!(turn["state"].as_str(), Some("answered"), "{turn}");
+            assert_eq!(
+                turn["calls"],
+                json!([{
+                    "message_ref": reply.message.to_hex(),
+                    "model": model,
+                    "provider": "local",
+                }]),
+                "the turn names the one call that answered it, and no route, login or seat"
+            );
+        }
+        assert_eq!(turns[2]["state"].as_str(), Some("withheld"), "{body}");
+        assert_eq!(turns[2]["calls"], json!([]), "{body}");
         host.ai.shutdown().await;
     });
 }
