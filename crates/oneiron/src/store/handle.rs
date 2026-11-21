@@ -294,6 +294,11 @@ pub struct StoreCore {
     /// What the authority store doors read of one committed generation.
     pub(crate) authority_door_view:
         Mutex<Option<(u64, std::sync::Arc<crate::authority::AuthorityDoorView>)>>,
+    /// What the authority store doors last read of a write's staged rows,
+    /// which a later read of the same write extends while it still holds
+    /// those rows (FIX [AUTHORITY-DOOR-VIEW-MID-BATCH-REBUILD]).
+    pub(crate) authority_door_view_staged:
+        Mutex<Option<std::sync::Arc<crate::authority::AuthorityDoorView>>>,
     /// The row the authority door last held at the owner's reserve, for the
     /// reserve's typed check (Astra owner-reserve r2 F4). Never persisted.
     pub(crate) authority_owner_reserve_hold: Mutex<Option<crate::authority::OwnerReserveHold>>,
@@ -784,6 +789,7 @@ macro_rules! manifest_dbs {
             fn gate_custody_archived(&self) -> bool { self.base.core.gate_custody_archived() }
             fn is_union(&self) -> bool { self.room.is_some() }
             fn room_base(&self) -> Option<&Store> { self.room.is_some().then_some(self.base) }
+            fn owning_store(&self) -> Option<&Store> { Some(self.base) }
             fn room_overlay(&self) -> Option<&crate::session_overlay::SessionOverlay> { self.room }
             fn manifest_memo(&self) -> &crate::gate::ManifestDecodeMemo {
                 &self.base.core.manifest_memo
@@ -838,6 +844,14 @@ macro_rules! manifest_dbs {
             fn room_base(&self) -> Option<&Store> {
                 None
             }
+            /// The store these databases are, or the base a room's view
+            /// composes over: the store whose authority log a reader below
+            /// the vault folds (stage 7c-4, a setting read on an install born
+            /// of a restore). `None` for a core's canonical accessors, which
+            /// no store holds yet.
+            fn owning_store(&self) -> Option<&Store> {
+                self.room_base()
+            }
             /// The overlay of the room whose view this is, `None` for a
             /// target that is no room's view: the room keeps a fresh secret
             /// a row of its own holds in that overlay's custody, in memory
@@ -860,6 +874,7 @@ macro_rules! manifest_dbs {
             fn key_custody(&self) -> &crate::store::key_custody::KeyCustody { &self.core.key_custody }
             fn gate_custody_archived(&self) -> bool { self.core.gate_custody_archived() }
             fn is_union(&self) -> bool { false }
+            fn owning_store(&self) -> Option<&Store> { Some(self) }
             fn manifest_memo(&self) -> &crate::gate::ManifestDecodeMemo {
                 &self.core.manifest_memo
             }

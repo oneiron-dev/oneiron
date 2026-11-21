@@ -158,9 +158,7 @@ fn open_fixture() -> TestResult<Fixture> {
     let room = EntityId::from_hex(&project.home_room)?;
     let mut authority_scope = Scope::top();
     authority_scope.verbs = ScopeAxis::Some(BTreeSet::from(["read".to_owned()]));
-    let created_at = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)?
-        .as_secs();
+    let created_at = vault.now_recorded_at();
     for principal in [owen, scribe, cleo] {
         vault.create_access_grant(
             &EntityId::now(),

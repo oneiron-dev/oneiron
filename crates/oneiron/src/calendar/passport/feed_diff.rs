@@ -301,28 +301,27 @@ pub(in crate::calendar) fn revise_passport_in_txn(
             }
             let value = decode_passport_value(&body.value)
                 .map_err(|_| ingest("stored passport claim did not decode"))?;
-            if value.system == system {
-                keyed.push((claim_id, body, value.uid));
-            }
+            keyed.push((claim_id, body, value));
         }
-        // The key as written first; only when no claim carries it so is a
-        // UID custody holds read through its handle, where the UID is
-        // pinned to this EVENT ([`passport_uid_pinned_is`]): a masked
-        // passport the head of the scoped lookup reads is the one revised
-        // (blind review round 2 of #10090).
-        if !keyed.iter().any(|(_, _, held)| held == uid) {
+        // The key as written first; only when no claim carries it so are a
+        // stored system and UID read as custody reads them, each where it is
+        // pinned ([`MaskedKey`]): a masked passport the head of the scoped
+        // lookup reads is the one revised (blind review round 2 of #10090,
+        // CAL-PASSPORT-SYSTEM-UID-LOOKUP-MISSES-MASKED-PASSPORT).
+        let exact = |value: &CalendarPassportValue| value.system == system && value.uid == uid;
+        if keyed.iter().any(|(_, _, value)| exact(value)) {
+            keyed.retain(|(_, _, value)| exact(value));
+        } else if !keyed.is_empty() {
             let base_known = || KnownValues::shared_in_writer(&vault.store, reader);
             let known = CompareKnown::new(Some(&base_known));
-            let pinned = uid_pinned_to_in_txn(vault, reader, event_ref, uid)?;
-            let mut masked = Vec::new();
+            let masked = MaskedKey::read_in_txn(vault, reader, event_ref, system, uid)?;
+            let mut carried = Vec::new();
             for entry in keyed {
-                if passport_uid_pinned_is(&entry.2, uid, pinned, &known)? {
-                    masked.push(entry);
+                if masked.carried_by(&entry.2, &known)? {
+                    carried.push(entry);
                 }
             }
-            keyed = masked;
-        } else {
-            keyed.retain(|(_, _, held)| held == uid);
+            keyed = carried;
         }
         let mut head = None;
         let mut waiting = Vec::new();

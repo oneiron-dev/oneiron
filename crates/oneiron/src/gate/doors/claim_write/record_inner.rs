@@ -288,16 +288,16 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
             }
             None => body.approval == ClaimApprovalStatus::Approved,
         });
-        // The owner's own approval is the same in-person confirmation: a
-        // human ruling on their own vault lands, whatever the manifest's
-        // criticality class (ARCH-0057 §2; ARCH-0003 §Criticality names this
-        // attestation rule). Without the owner's proof an Approved body keeps
-        // its floor: no writer stamps its own approval past it.
+        // The owner's own approval is the same in-person confirmation: a human ruling on their own
+        // vault lands, whatever the manifest's criticality class (ARCH-0057 §2; ARCH-0003
+        // §Criticality names this attestation rule). Without the owner's proof an Approved body
+        // keeps its floor: no writer stamps its own approval past it.
         let owner_approved = body.approval == ClaimApprovalStatus::Approved
-            && critical_claim_can_land_auto_with_confirm(
+            && owner_proof_lifts_criticality_floor(
                 &input,
                 decision.reason_codes(),
                 &body.predicate,
+                verified_close,
             );
         let owner_authored = (critical_floor_only || owner_approved) && owner_write.is_some();
         // An exact close answers nothing: its proof lifts the floor above and reaches no row below.

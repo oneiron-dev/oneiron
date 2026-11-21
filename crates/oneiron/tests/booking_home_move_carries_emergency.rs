@@ -17,7 +17,17 @@
 //!   BK-EMERGENCY-RAW-TOKENS-SEALED = A);
 //! - an emergency whose delivery failed on the old home travels owed, and the
 //!   new home delivers it (ASK BK-EMERGENCY-PENDING-ITEM-MOVE); the old home
-//!   can no longer resume it.
+//!   can no longer resume it;
+//! - a send that ended uncertain on the old home (the provider took it as a
+//!   remote task) travels marked, and the owner's resume on the new home that
+//!   sends it again answers, once, "this send ended uncertain on the old home
+//!   and may repeat" (FIX [BK-EMERGENCY-UNCERTAIN-SEND-NOT-SHOWN-TO-OWNER];
+//!   Engine ANSWER BK-EMERGENCY-UNCERTAIN-SEND-RECEIPT = A, 21 Nov 09:14); a
+//!   send that failed definitely there answers nothing;
+//! - a mark the owner was not answered for travels with the next move, even
+//!   once its send was delivered again: a home whose run sent it and then
+//!   stopped on a later effect passes it on, and the next home's run answers
+//!   it (review round 1 of #10125).
 //!
 //! The emergency fixture is `tests/booking_feed_move_held.rs`'s: an
 //! owner-logged RequestUpdate instruction over a booked slot, planned and
@@ -25,14 +35,23 @@
 //! emergency, then closes, and the two machines are copies of its directory,
 //! as `tests/booking_home_move_carries_deposit.rs` makes them. The door
 //! `drop_node_local_booking_rows` empties the new home's node-local booking
-//! and emergency rows, which no sync carries, and `move_booking_home` freezes
-//! the old home and carries each section the build registers.
+//! and emergency rows, which no sync carries, `drop_node_local_outbound_rows`
+//! its outbound send ledger (each node's names only the sends it made), and
+//! `move_booking_home` freezes the old home and carries each section the build
+//! registers.
 //!
 //! Red on main (the base #10060 head with these doors and the carrier's
 //! scrub hook, and no emergency section registered): the new home refuses
 //! the pick ("emergency action has no durable checkpoint") and the resume
 //! ("owner instruction has not been logged"), holds no instruction, and the
 //! old home keeps its raw tokens after the ack.
+//!
+//! The repeat answer is red on its base (#10109's head 02f5b7401a4e): the
+//! resume answers the checkpoint alone, so this file does not compile there
+//! (no `EmergencyRepeatNotice`, no `repeat_notices`). The mark carried past
+//! a second move is red on #10125's first head 57571ff1ad64: the second home
+//! drops the mark of an invite it delivered, so the third home's run answers
+//! nothing.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test booking_home_move_carries_emergency`.
 #![cfg(all(oneiron_test_support, feature = "sync"))]
@@ -43,13 +62,13 @@ use oneiron::booking::{
     BOOKING_EVENT_TYPE_PREDICATE, BOOKING_EVENT_TYPE_SCHEMA_VERSION, BookingError,
     BookingEventTypeClaimValue, BookingLifecycleConsumerInput, BookingLifecycleTurn, BookingSolver,
     BookingVerbReceipt, BookingVerbRequest, ConfirmReceipt, ConfirmSpec,
-    DEFAULT_INTRO_DURATION_MIN, EmergencyActionPolicy, EmergencyItem, EmergencyPlan,
-    EmergencyRescheduleRequest, EventTypeConfig, EventTypeKey, HoldLeaseSpec, HoldReceipt,
-    HoldSpec, HostAvailabilityConfig, PublishBookingPageGrantRequest, RoutingMode, SessionKey,
-    SlotOracle, SolveRequest, SolveResult, VaultActiveHoldSource, WeeklyWallWindow,
-    counterparty_pick, encode_event_type_claim_value, enqueue_booking_verb, execute_emergency_plan,
-    mint_publish_page_invite_grant, plan_emergency_reschedule, run_booking_lifecycle_once,
-    verify_logged_owner_instruction,
+    DEFAULT_INTRO_DURATION_MIN, EMERGENCY_REPEAT_NOTICE, EmergencyActionPolicy, EmergencyItem,
+    EmergencyPlan, EmergencyRepeatNotice, EmergencyRescheduleRequest, EventTypeConfig,
+    EventTypeKey, HoldLeaseSpec, HoldReceipt, HoldSpec, HostAvailabilityConfig,
+    PublishBookingPageGrantRequest, RoutingMode, SessionKey, SlotOracle, SolveRequest, SolveResult,
+    VaultActiveHoldSource, WeeklyWallWindow, counterparty_pick, encode_event_type_claim_value,
+    enqueue_booking_verb, execute_emergency_plan, mint_publish_page_invite_grant,
+    plan_emergency_reschedule, run_booking_lifecycle_once, verify_logged_owner_instruction,
 };
 use oneiron::calendar::query::CalendarRangeDto;
 use oneiron::channel_identity::{ChannelIdentityBinding, ChannelIdentityState, SelfHeldShape};
@@ -57,10 +76,11 @@ use oneiron::memory::EmergencyInstructionInput;
 use oneiron::outbound::{
     OutboundExecutionOutcome, OutboundExecutionRequest, OutboundExecutionSink,
 };
+use oneiron::outbound_intent_ledger::RemoteTaskHandle;
 use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON};
 use oneiron::test_doors::booking_home_move::{
     acknowledge_booking_home_move, booking_rows_hold, drop_node_local_booking_rows,
-    move_booking_home,
+    drop_node_local_outbound_rows, move_booking_home,
 };
 use oneiron::{
     CalendarSel, ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject,
@@ -311,6 +331,8 @@ impl Machine {
         };
         let (old_home, new_home) = (open(), open());
         drop_node_local_booking_rows(&new_home.vault).expect("FIXTURE: the new home's own rows");
+        drop_node_local_outbound_rows(&new_home.vault)
+            .expect("FIXTURE: the new home's own outbound ledger");
         (old_home, new_home)
     }
 
@@ -437,6 +459,34 @@ impl OutboundExecutionSink for FailingSink {
     }
 }
 
+/// A sink whose provider takes every send as a remote task: whether it
+/// reached the booker is not known.
+struct DeferringSink;
+
+impl OutboundExecutionSink for DeferringSink {
+    fn execute(&mut self, _request: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
+        OutboundExecutionOutcome::deferred(RemoteTaskHandle {
+            id: "provider:task:fixture".to_owned(),
+            poll_after_secs: None,
+            poll: None,
+        })
+    }
+}
+
+/// A sink that delivers the calendar invite and fails every other send
+/// definitely: the owner's run sends the invite, then stops on the apology.
+struct InviteOnlySink;
+
+impl OutboundExecutionSink for InviteOnlySink {
+    fn execute(&mut self, request: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
+        if request.intent.channel == "calendar" {
+            OutboundExecutionOutcome::delivered_to_channel("provider:message:fixture")
+        } else {
+            OutboundExecutionOutcome::failed("definite fixture non-delivery")
+        }
+    }
+}
+
 fn book(machine: &Machine, session_key: SessionKey, slot: TimeRange) -> ConfirmReceipt {
     let hold: HoldReceipt = match machine
         .run(
@@ -520,7 +570,8 @@ fn emergency(seed: &Machine, sink: &mut impl OutboundExecutionSink) -> Emergency
         &seed.calendars(),
         &seed.consumer(NOW + 90),
         sink,
-    );
+    )
+    .map(|run| run.item);
     Emergency {
         booked,
         request,
@@ -675,14 +726,125 @@ fn an_emergency_whose_delivery_failed_on_the_old_home_is_delivered_by_the_new_ho
         resume(&old_home).is_err(),
         "the old home holds history: it resumes nothing"
     );
-    let item = resume(&new_home)
+    let run = resume(&new_home)
         .expect("the new home resumes the owed delivery (main: the instruction is not there)");
     assert!(
-        item.calendar_delivered && item.apology_delivered,
+        run.item.calendar_delivered && run.item.apology_delivered,
         "the new home delivers what the old home owed"
     );
     assert!(
-        !item.actions.is_empty(),
+        !run.item.actions.is_empty(),
         "its pick actions travelled with it"
+    );
+    assert!(
+        run.repeat_notices.is_empty(),
+        "a send that failed definitely on the old home never reached the booker: no repeat"
+    );
+}
+
+#[test]
+fn the_new_homes_resume_of_a_send_that_ended_uncertain_on_the_old_home_says_it_may_repeat() {
+    let seed = Machine::seed();
+    let emergency = emergency(&seed, &mut DeferringSink);
+    assert!(
+        emergency.item.is_err(),
+        "FIXTURE: the provider took the invite as a remote task, so the emergency stays owed"
+    );
+    let (old_home, new_home) = seed.into_old_and_new_home();
+    assert!(
+        move_booking_home(&old_home.vault, &new_home.vault, &[]).expect("move the booking home"),
+        "every section applies"
+    );
+
+    let resume = || {
+        execute_emergency_plan(
+            &new_home.vault,
+            &emergency.request,
+            &emergency.plan,
+            &new_home.calendars(),
+            &new_home.consumer(NOW + 200),
+            &mut DeliveringSink,
+        )
+        .expect("the new home resumes the owed delivery")
+    };
+    let run = resume();
+    assert!(
+        run.item.calendar_delivered && run.item.apology_delivered,
+        "the new home delivers what the old home owed"
+    );
+    assert_eq!(
+        run.repeat_notices,
+        vec![EmergencyRepeatNotice {
+            effect: "calendar",
+            message: EMERGENCY_REPEAT_NOTICE,
+        }],
+        "the invite the old home sent uncertain may reach the booker twice; the old home never \
+         sent the apology"
+    );
+    assert_eq!(
+        EMERGENCY_REPEAT_NOTICE,
+        "this send ended uncertain on the old home and may repeat"
+    );
+    assert!(
+        resume().repeat_notices.is_empty(),
+        "the resume answers each repeat once"
+    );
+}
+
+#[test]
+fn a_repeat_the_owner_was_not_answered_for_travels_with_the_next_move() {
+    let seed = Machine::seed();
+    let emergency = emergency(&seed, &mut DeferringSink);
+    assert!(
+        emergency.item.is_err(),
+        "FIXTURE: the provider took the invite as a remote task, so the emergency stays owed"
+    );
+    let (old_home, second_home) = seed.into_old_and_new_home();
+    assert!(
+        move_booking_home(&old_home.vault, &second_home.vault, &[]).expect("move the booking home"),
+        "every section applies"
+    );
+    let stopped = execute_emergency_plan(
+        &second_home.vault,
+        &emergency.request,
+        &emergency.plan,
+        &second_home.calendars(),
+        &second_home.consumer(NOW + 200),
+        &mut InviteOnlySink,
+    );
+    assert!(
+        stopped.is_err(),
+        "FIXTURE: the second home sends the invite again, then its apology fails, so its run \
+         answers the owner nothing"
+    );
+
+    let (second_home, third_home) = second_home.into_old_and_new_home();
+    assert!(
+        move_booking_home(&second_home.vault, &third_home.vault, &[])
+            .expect("move the booking home again"),
+        "every section applies"
+    );
+    let run = execute_emergency_plan(
+        &third_home.vault,
+        &emergency.request,
+        &emergency.plan,
+        &third_home.calendars(),
+        &third_home.consumer(NOW + 300),
+        &mut DeliveringSink,
+    )
+    .expect("the third home resumes the owed apology");
+    assert!(
+        run.item.calendar_delivered && run.item.apology_delivered,
+        "the third home delivers what the second home owed"
+    );
+    assert_eq!(
+        run.repeat_notices,
+        vec![EmergencyRepeatNotice {
+            effect: "calendar",
+            message: EMERGENCY_REPEAT_NOTICE,
+        }],
+        "the second home sent the uncertain invite again and never answered the owner, so the \
+         third home's run does (#10125's first head: the delivered invite's mark went at the \
+         second move)"
     );
 }

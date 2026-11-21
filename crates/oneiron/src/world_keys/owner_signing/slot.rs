@@ -4,9 +4,12 @@
 //! (FIX APPOINTMENT-DROPS-SLOT-SEED-BEFORE-ITS-VERDICT). The new key is made
 //! in memory, and the slot takes its seed only once the door's writer has
 //! judged and stored the rows that name it, as the last step before the
-//! commit. A door refused before that leaves the slot's seed as it was.
+//! commit. A door refused before that leaves the slot's seed as it was. It
+//! also reads the key a slot already holds, minting none
+//! ([`Vault::existing_device_owner_signing_key`]).
 //!
 //! [`Vault::device_owner_signing_slot`]: crate::Vault::device_owner_signing_slot
+//! [`Vault::existing_device_owner_signing_key`]: crate::Vault::existing_device_owner_signing_key
 
 use std::sync::Arc;
 
@@ -157,4 +160,34 @@ fn log_not_put_back(error: KeystoreError) {
         kind = ?keystore_error(error).kind(),
         "this install's owner signing slot did not take back its old seed after a refused renewal"
     );
+}
+
+impl crate::Vault {
+    /// This install's owner signing key when its slot already holds a
+    /// seed: `None` when it holds none. It never creates a seed, so a read
+    /// answers what this install holds, and a door that needs the key (a
+    /// recovery hold's answer) refuses instead of minting one. A seed in the
+    /// slot is no key there while a device PIN is set on the keystore or was
+    /// forgotten there: `None` then too, as the slot's own reader refuses
+    /// it. The key it answers is read from its slot, so it signs only while
+    /// the slot still holds its seed and no PIN came since.
+    ///
+    /// # Errors
+    /// `KeystoreUnavailable` while the host installed no keystore; the
+    /// keystore's own refusal.
+    pub(crate) fn existing_device_owner_signing_key(&self) -> Result<Option<OwnerRootSigner>> {
+        let keystore = self.device_keystore()?;
+        let machine = self.prepare_install_signing()?;
+        if super::slot_seed_bar(keystore.as_ref())
+            .map_err(keystore_error)?
+            .is_some()
+        {
+            return Ok(None);
+        }
+        let slot = self.owner_signing_slot(machine);
+        Ok(keystore
+            .get(&slot)
+            .map_err(keystore_error)?
+            .map(|seed| OwnerRootSigner::from_slot(&seed, &keystore, &slot)))
+    }
 }
