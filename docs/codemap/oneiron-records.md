@@ -192,7 +192,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_sandbox/egress/receipt.rs` | src | s | 1 struct | EgressReceipt | Moved from `crates/oneiron/src/code_sandbox/egress/receipt.rs` (lib split R1: record types below the lib) |
 | `src/code_sandbox/mod.rs` | src | s | 1 mod · 21 re-export | — | — |
 | `src/compaction/check_material.rs` | src | s | 1 struct · 1 fn | CompactionCheckMaterialRef | Moved from `crates/oneiron/src/compaction/check_material.rs` (lib split R2: record types below the lib) |
-| `src/compaction/conversation.rs` | src | s | 2 struct · 1 fn | ConversationEvidence, ConversationTurnSpan | Moved from `crates/oneiron/src/compaction/conversation.rs` (lib split R2: record types below the lib) |
+| `src/compaction/conversation.rs` | src | s | 3 struct · 1 enum · 1 fn | ConversationEvidence, ConversationTurnPiece, ConversationTurnReading, ConversationTurnSpan | Moved from `crates/oneiron/src/compaction/conversation.rs` (lib split R2: record types below the lib) |
 | `src/compaction/folds.rs` | src | s | 5 struct · 1 enum · 4 fn · 1 const · 10 re-export | FoldCompactAsk, FoldCompactAsked, FoldMark, FoldMarked, FoldUnfolded, SelfFoldCall | Moved from `crates/oneiron/src/compaction/folds.rs` (lib split R2: record types below the lib) |
 | `src/compaction/mod.rs` | src | s | 5 mod · 41 re-export | — | — |
 | `src/compaction/output.rs` | src | s | 2 struct · 2 enum · 4 fn · 1 const | OutputAffordance, OutputContextView, OutputRef, OutputTier | Moved from `crates/oneiron/src/compaction/output.rs` (lib split R2: record types below the lib) |
