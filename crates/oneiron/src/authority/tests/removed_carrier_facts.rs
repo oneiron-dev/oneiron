@@ -15,6 +15,7 @@
 //! --lib authority::tests::removed_carrier_facts::`.
 
 use super::machine_identity::{Host, host};
+use super::support::RosterHead;
 use super::world_floor::{answer_on, next_seq};
 use super::world_privacy::{land, other_machine};
 use super::*;
