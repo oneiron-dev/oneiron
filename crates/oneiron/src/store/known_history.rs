@@ -188,9 +188,8 @@ impl Drop for KnownEntry {
 pub(crate) struct KnownHistory {
     pub(crate) master: Zeroizing<[u8; 32]>,
     /// Each holder with live entries, in id order, each entry with the
-    /// record generation it was written at, in write order (FIX
-    /// ERASED-IDENTITY-ROTATION-GENERATION).
-    pub(crate) holders: Vec<(EntityId, Vec<(u32, KnownEntry)>)>,
+    /// custody slot it is held at (FIX ERASED-IDENTITY-ROTATION-GENERATION).
+    pub(crate) holders: Vec<(EntityId, Vec<(u64, KnownEntry)>)>,
 }
 
 fn index_subject(binding: &CustodyBinding) -> Result<CustodySubject> {
@@ -211,16 +210,20 @@ fn copy_master(secret: &CustodySecret) -> Result<Zeroizing<[u8; 32]>> {
     Ok(key)
 }
 
-/// `holder`'s live entries at `slots` in `custody`. One retired is skipped
-/// (erased, or being); one missing or damaged is custody lost and fails.
-/// The caller holds the LMDB writer or the custody read guard.
+/// `holder`'s live entries at `slots` in `custody`, each with its slot.
+/// One retired is skipped (erased, or being); one missing or damaged is
+/// custody lost and fails. The caller holds the LMDB writer or the custody
+/// read guard.
 fn read_entries(
     custody: LocalCustody<'_>,
     holder: &EntityId,
     slots: impl Iterator<Item = u64>,
-) -> Result<Vec<KnownEntry>> {
-    let tagged = read_entries_tagged(custody, holder, slots.map(|slot| (0, slot)))?;
-    Ok(tagged.into_iter().map(|(_, entry)| entry).collect())
+) -> Result<Vec<(u64, KnownEntry)>> {
+    let read = read_entries_referenced(custody, holder, slots.map(|slot| (0, slot)))?;
+    Ok(read
+        .into_iter()
+        .map(|(_, slot, entry)| (slot, entry))
+        .collect())
 }
 
 /// `holder`'s live entries at the `(generation, slot)` references in
@@ -232,6 +235,20 @@ fn read_entries_tagged(
     holder: &EntityId,
     refs: impl Iterator<Item = (u32, u64)>,
 ) -> Result<Vec<(u32, KnownEntry)>> {
+    let read = read_entries_referenced(custody, holder, refs)?;
+    Ok(read
+        .into_iter()
+        .map(|(generation, _, entry)| (generation, entry))
+        .collect())
+}
+
+/// [`read_entries_tagged`], each entry with its slot too (FIX
+/// ERASED-IDENTITY-ROTATION-GENERATION).
+fn read_entries_referenced(
+    custody: LocalCustody<'_>,
+    holder: &EntityId,
+    refs: impl Iterator<Item = (u32, u64)>,
+) -> Result<Vec<(u32, u64, KnownEntry)>> {
     let subject = holder_subject(custody.binding(), holder)?;
     let mut entries = Vec::new();
     for (generation, slot) in refs {
@@ -244,7 +261,7 @@ fn read_entries_tagged(
         let secret = custody.read(&id)?;
         let entry = KnownEntry::from_secret(&secret)
             .ok_or_else(|| CustodyKind::KnownValueEntry.corrupt())?;
-        entries.push((generation, entry));
+        entries.push((generation, slot, entry));
     }
     Ok(entries)
 }
@@ -377,7 +394,7 @@ impl Store {
         let master = copy_master(&custody.read(&index_subject(custody.binding())?.at(at))?)?;
         let mut holders = Vec::new();
         for (holder, refs) in HISTORY.scan(self, wtxn)? {
-            let entries = read_entries_tagged(custody, &holder, refs.tagged())?;
+            let entries = read_entries(custody, &holder, refs.slots())?;
             if !entries.is_empty() {
                 holders.push((holder, entries));
             }
@@ -401,6 +418,29 @@ impl Store {
         wtxn: &RwTxn<'_>,
         holder: &EntityId,
     ) -> Result<Option<(Zeroizing<[u8; 32]>, Vec<(u32, KnownEntry)>)>> {
+        let Some((master, entries)) = self.known_slot_entries_for_in_writer(wtxn, holder)? else {
+            return Ok(None);
+        };
+        let entries = entries
+            .into_iter()
+            .map(|(generation, _, entry)| (generation, entry))
+            .collect();
+        Ok(Some((master, entries)))
+    }
+
+    /// [`Self::known_entries_for_in_writer`], each entry with the custody
+    /// slot it is held at too: what a matcher over that holder's named
+    /// generations keeps beside each value (FIX
+    /// ERASED-IDENTITY-ROTATION-GENERATION).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::known_entries_for_in_writer`]'s.
+    pub(crate) fn known_slot_entries_for_in_writer(
+        &self,
+        wtxn: &RwTxn<'_>,
+        holder: &EntityId,
+    ) -> Result<Option<(Zeroizing<[u8; 32]>, Vec<(u32, u64, KnownEntry)>)>> {
         let Some(at) = INDEX.get(self, wtxn, &())? else {
             return Ok(None);
         };
@@ -409,7 +449,7 @@ impl Store {
         };
         let custody = self.core.key_custody.bind_in_txn(self, wtxn)?;
         let master = copy_master(&custody.read(&index_subject(custody.binding())?.at(at))?)?;
-        let entries = read_entries_tagged(custody, holder, refs.tagged())?;
+        let entries = read_entries_referenced(custody, holder, refs.tagged())?;
         Ok(Some((master, entries)))
     }
 
@@ -511,7 +551,7 @@ impl Store {
         let holders = HISTORY
             .scan(self, txn)?
             .into_iter()
-            .map(|(holder, refs)| (holder, refs.tagged().collect()))
+            .map(|(holder, refs)| (holder, refs.slots().collect()))
             .collect();
         Ok(Some(KnownHistoryIds {
             core: Arc::downgrade(&self.core),
@@ -687,8 +727,7 @@ pub(crate) struct KnownHistoryIds {
     core: Weak<StoreCore>,
     binding: CustodyBinding,
     index: u64,
-    /// Each holder's committed references: record generation and slot.
-    holders: Vec<(EntityId, Vec<(u32, u64)>)>,
+    holders: Vec<(EntityId, Vec<u64>)>,
 }
 
 impl KnownHistoryIds {
@@ -701,12 +740,12 @@ impl KnownHistoryIds {
         let custody = LocalCustody::at(&self.binding);
         let master = copy_master(&custody.read(&index_subject(&self.binding)?.at(self.index))?)?;
         let mut holders = Vec::new();
-        for (holder, refs) in &self.holders {
+        for (holder, slots) in &self.holders {
             let subject = holder_subject(&self.binding, holder)?;
             if retirement_in_txn(vault_meta, txn, &subject)?.is_some() {
                 continue;
             }
-            let entries = read_entries_tagged(custody, holder, refs.iter().copied())?;
+            let entries = read_entries(custody, holder, slots.iter().copied())?;
             if !entries.is_empty() {
                 holders.push((*holder, entries));
             }

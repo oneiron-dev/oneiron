@@ -550,11 +550,11 @@ struct Masker {
     /// read: a custody identity read as its erase read it before a record
     /// it names took a longer value (blind review round 2 of #9528).
     records_longest: Option<usize>,
-    /// With `records`, each record's values written at most at the record
-    /// generation this names for it: a custody identity read as its erase
-    /// read it, before a record it names took another value (FIX
-    /// ERASED-IDENTITY-ROTATION-GENERATION). `None` reads every generation.
-    records_through: Option<BTreeMap<String, u32>>,
+    /// With `records`, each record's values held at most at the custody
+    /// slot this names for it: a custody identity read as its erase read
+    /// it, before a record it names took another value (FIX
+    /// ERASED-IDENTITY-ROTATION-GENERATION). `None` reads every slot.
+    records_through: Option<BTreeMap<String, u64>>,
     /// The door's scan read each text this pass reads now by the same text
     /// rules and found no shape: none is sought again (speed).
     shapes_read: bool,

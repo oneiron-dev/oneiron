@@ -25,23 +25,22 @@ impl KnownValues {
     /// RECEIPT-RECORDS-CALL-HELD-INPUT): a compare reads a held row and its
     /// offer for the values of the records the row names alone, so a longer
     /// value another record took since never hides the one a handle names.
-    /// `holds` reads each value's record handle and the record generation
-    /// its entry was written at, so a read can stop at the generation each
-    /// record had (FIX ERASED-IDENTITY-ROTATION-GENERATION). With
-    /// `longest`, only those values at most that many bytes long are read.
-    /// A base64 run is read as far as those values reach alone, so a record
-    /// named nowhere never changes what is read (blind review round 2 of
-    /// #9528).
+    /// `holds` reads each value's record handle and the custody slot its
+    /// entry is held at, so a read can stop at the slot each record had
+    /// (FIX ERASED-IDENTITY-ROTATION-GENERATION). With `longest`, only
+    /// those values at most that many bytes long are read. A base64 run is
+    /// read as far as those values reach alone, so a record named nowhere
+    /// never changes what is read (blind review round 2 of #9528).
     pub(crate) fn spans_held_by(
         &self,
         data: &[u8],
         keep: impl Fn(&[u8]) -> bool,
-        holds: impl Fn(&str, u32) -> bool,
+        holds: impl Fn(&str, u64) -> bool,
         longest: Option<usize>,
     ) -> Vec<KnownSpan<'_>> {
         let admits = |known: &Known| {
             matches!(known.origin, ValueOrigin::Custody(_))
-                && holds(known.handle.as_str(), known.generation)
+                && holds(known.handle.as_str(), known.slot)
                 && longest.is_none_or(|longest| known.len <= longest)
         };
         let reach = self
@@ -87,15 +86,16 @@ impl KnownValues {
         lengths.into_iter().collect()
     }
 
-    /// The newest record generation a value the custody record `handle`
-    /// holds was written at, as this index reads it, or `None` when it
-    /// knows no value of that record: what an erase pins each record it
-    /// names at (FIX ERASED-IDENTITY-ROTATION-GENERATION).
-    pub(crate) fn held_generation(&self, handle: &str) -> Option<u32> {
+    /// The newest custody slot an entry of the custody record `handle`
+    /// that this index read is held at, or `None` when it knows no value
+    /// of that record: what an erase pins each record it names at (FIX
+    /// ERASED-IDENTITY-ROTATION-GENERATION). A value the record takes later,
+    /// at a new generation or its current one, is held past it.
+    pub(crate) fn held_slot(&self, handle: &str) -> Option<u64> {
         self.admitted(&|known: &Known| {
             matches!(known.origin, ValueOrigin::Custody(_)) && known.handle == handle
         })
-        .map(|known| known.generation)
+        .map(|known| known.newest_slot)
         .max()
     }
 
@@ -110,18 +110,18 @@ impl KnownValues {
             .filter(move |known| admits(known))
     }
 
-    /// The matcher over `values`, each an entry, the record generation it
-    /// was written at, its origin and its handle, or `None` when it holds
-    /// no value.
+    /// The matcher over `values`, each an entry, the custody slot it is
+    /// held at, its origin and its handle, or `None` when it holds no
+    /// value.
     pub(super) fn of_entries<'a>(
         master: &'a [u8; 32],
-        values: impl IntoIterator<Item = (&'a KnownEntry, u32, ValueOrigin, String)>,
+        values: impl IntoIterator<Item = (&'a KnownEntry, u64, ValueOrigin, String)>,
     ) -> Result<Option<Self>> {
         let mut buckets: Vec<Bucket> = Vec::new();
         let mut rolling = RollingSets::default();
         let mut lengths = Vec::new();
         let mut longest = 0;
-        for (entry, generation, origin, handle) in values {
+        for (entry, slot, origin, handle) in values {
             let len = usize::try_from(entry.len)
                 .map_err(|_| Error::ArithmeticOverflow("known value length"))?;
             if len == 0 {
@@ -145,11 +145,12 @@ impl KnownValues {
             // Each holder of the same bytes keeps its own entry (FIX 8966):
             // the first still wins a place, and a holder enumeration sees
             // every record a release of those bytes shows. One holder's
-            // bytes keep the first generation it held them at.
+            // bytes match at their lowest slot and pin at their highest.
             if let Some(known) = bucket.known.iter_mut().find(|known| {
                 known.len == len && known.fingerprint == entry.fingerprint && known.origin == origin
             }) {
-                known.generation = known.generation.min(generation);
+                known.slot = known.slot.min(slot);
+                known.newest_slot = known.newest_slot.max(slot);
                 continue;
             }
             longest = longest.max(len);
@@ -159,7 +160,8 @@ impl KnownValues {
                 fingerprint: entry.fingerprint,
                 origin,
                 handle,
-                generation,
+                slot,
+                newest_slot: slot,
             });
         }
         if buckets.is_empty() {

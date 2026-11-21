@@ -121,13 +121,8 @@ fn with_room_values(
     let values = base
         .iter()
         .flat_map(|(custody, entries, handle)| {
-            entries.iter().map(move |(generation, entry)| {
-                (
-                    entry,
-                    *generation,
-                    ValueOrigin::Custody(*custody),
-                    handle.clone(),
-                )
+            entries.iter().map(move |(slot, entry)| {
+                (entry, *slot, ValueOrigin::Custody(*custody), handle.clone())
             })
         })
         .chain(room_entries.iter().map(|(entry, record, handle)| {

@@ -177,13 +177,13 @@ impl Masker {
 /// round 2 of #9503): a known value spelled `[secret sc99]` takes its own
 /// record's handle and is never kept as written. With `records`, only those
 /// records' values are read, as far as `longest` and up to each record's
-/// generation in `through` ([`known_spans`]), and `names` takes only their
-/// handles.
+/// custody slot in `through` ([`known_spans`]), and `names` takes only
+/// their handles.
 fn known_outside_handles(
     known: &KnownValues,
     records: Option<&BTreeSet<String>>,
     longest: Option<usize>,
-    through: Option<&BTreeMap<String, u32>>,
+    through: Option<&BTreeMap<String, u64>>,
     text: &str,
     keep: impl Fn(&[u8]) -> bool,
     names: impl Fn(&str) -> bool,
@@ -218,25 +218,25 @@ fn known_outside_handles(
 /// every other value out before the longest at a place is chosen (FIX
 /// RECEIPT-RECORDS-CALL-HELD-INPUT), and with `longest` too, only those at
 /// most that many bytes long. With `through` too, only the values each
-/// record held by the generation it names for that record (FIX
-/// ERASED-IDENTITY-ROTATION-GENERATION): a record it names no generation
-/// for has none.
+/// record held by the custody slot it names for that record (FIX
+/// ERASED-IDENTITY-ROTATION-GENERATION): a record it names no slot for has
+/// none.
 pub(super) fn known_spans<'k>(
     known: &'k KnownValues,
     records: Option<&BTreeSet<String>>,
     longest: Option<usize>,
-    through: Option<&BTreeMap<String, u32>>,
+    through: Option<&BTreeMap<String, u64>>,
     data: &[u8],
     keep: impl Fn(&[u8]) -> bool,
 ) -> Vec<KnownSpan<'k>> {
-    let held = |handle: &str, generation: u32| {
-        through.is_none_or(|through| through.get(handle).is_some_and(|pin| generation <= *pin))
+    let held = |handle: &str, slot: u64| {
+        through.is_none_or(|through| through.get(handle).is_some_and(|pin| slot <= *pin))
     };
     match records {
         Some(records) => known.spans_held_by(
             data,
             keep,
-            |handle, generation| records.contains(handle) && held(handle, generation),
+            |handle, slot| records.contains(handle) && held(handle, slot),
             longest,
         ),
         None => known.spans_except(data, keep),

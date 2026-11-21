@@ -83,8 +83,8 @@ fn body_records(bytes: &[u8], records: &mut BTreeSet<String>) {
 /// every other byte as written. A value another record holds is read as any
 /// other text is. A body a member carries as bytes is read as a body. With
 /// `longest`, only their values at most that many bytes long are read; with
-/// `through`, only the values each record held by the record generation it
-/// names for it (FIX ERASED-IDENTITY-ROTATION-GENERATION).
+/// `through`, only the values each record held by the custody slot it names
+/// for it (FIX ERASED-IDENTITY-ROTATION-GENERATION).
 ///
 /// # Errors
 ///
@@ -94,7 +94,7 @@ pub(crate) fn custody_record_form(
     known: &Arc<KnownValues>,
     records: &BTreeSet<String>,
     longest: Option<usize>,
-    through: Option<&BTreeMap<String, u32>>,
+    through: Option<&BTreeMap<String, u64>>,
 ) -> Result<Value> {
     let mut read = records_read(value, known, Some(records.clone()), longest, through)?;
     Ok(std::mem::replace(&mut read.0, Value::Nil))
@@ -109,7 +109,7 @@ fn records_read(
     known: &Arc<KnownValues>,
     records: Option<BTreeSet<String>>,
     longest: Option<usize>,
-    through: Option<&BTreeMap<String, u32>>,
+    through: Option<&BTreeMap<String, u64>>,
 ) -> Result<PlanTree> {
     let mut read = PlanTree(value.clone());
     let mut plan = Masker {
