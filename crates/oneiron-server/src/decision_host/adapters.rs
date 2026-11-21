@@ -654,6 +654,10 @@ impl DecisionProvider for ClaimBodyRead<'_> {
         self.inner.cost_per_thousand()
     }
 
+    fn held(&self) -> oneiron::Result<bool> {
+        self.inner.held()
+    }
+
     fn decide(&self, call: &DecisionCall<'_>) -> oneiron::Result<ProviderDecision> {
         match claim_replay_filled_state(self.vault, call.evidence, call.state)? {
             Some(state) => self.inner.decide(&DecisionCall {
