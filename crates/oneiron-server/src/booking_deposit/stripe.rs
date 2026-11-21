@@ -743,7 +743,7 @@ impl DepositSettlementPort for StripeClient<'_> {
         // lost) answers that capture, which the deposit then owes back.
         let (moved, done) = match request.movement {
             DepositSettleMove::Refund { amount_minor } => {
-                let (earlier, find_only) = (request.earlier_retry_keys, request.find_only);
+                let (earlier, find_only) = (request.earlier_retry_keys, request.find_only && false);
                 let owed = self
                     .refund_once(id, amount_minor, key, earlier, find_only)
                     .map_err(StripeCallError::into_failure)?;
