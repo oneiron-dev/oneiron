@@ -18,6 +18,7 @@
 
 use std::ops::Range;
 
+use oneiron_contracts::fingerprint::ContentHash;
 use zeroize::Zeroizing;
 
 use super::super::split_phrase;
@@ -47,7 +48,7 @@ impl Masker {
             return Err(Error::InvariantViolation("a file seal read no put"));
         };
         let record = *id;
-        let hash = *blake3::hash(written).as_bytes();
+        let hash = *ContentHash::of(written).as_bytes();
         let places = self.marked.get(&hash).cloned().unwrap_or_default();
         let (keys, sealed) = self.value_seals(kept, record, written, &places, op, clean)?;
         if keys.is_empty() && !sealed {

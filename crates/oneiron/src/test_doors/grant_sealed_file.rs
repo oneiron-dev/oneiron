@@ -3,6 +3,8 @@
 //! no grant reaches a file the write door sealed whole. The groups are
 //! crate-private, and a public read only shows the sight they end in.
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use crate::Vault;
 use crate::error::Result;
 
@@ -14,7 +16,7 @@ use crate::error::Result;
 /// # Errors
 /// A store failure, or a mark that does not decode.
 pub fn marked_key_groups(vault: &Vault, bytes: &[u8]) -> Result<Option<usize>> {
-    vault.marked_file_key_groups_for_test(blake3::hash(bytes).as_bytes())
+    vault.marked_file_key_groups_for_test(ContentHash::of(bytes).as_bytes())
 }
 
 /// How many key groups an agent's real-byte read of a marked repo file whose
@@ -25,5 +27,5 @@ pub fn marked_key_groups(vault: &Vault, bytes: &[u8]) -> Result<Option<usize>> {
 /// # Errors
 /// A store failure, or a key record that does not decode.
 pub fn repo_file_key_groups(vault: &Vault, bytes: &[u8]) -> Result<Option<usize>> {
-    vault.repo_file_key_groups_for_test(blake3::hash(bytes).as_bytes())
+    vault.repo_file_key_groups_for_test(ContentHash::of(bytes).as_bytes())
 }
