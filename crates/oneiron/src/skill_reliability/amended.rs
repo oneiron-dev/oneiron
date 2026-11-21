@@ -221,7 +221,8 @@ type Desired = BTreeMap<Vec<u8>, (Arm, OutcomeRef, AmendedRow)>;
 /// and is not reprojected: it has no prior left to fold onto.
 ///
 /// The pass is idempotent: an arm whose rows already say exactly this is neither written nor
-/// reprojected.
+/// reprojected. An arm whose attempt carries no executor stamp has its rows written and is not
+/// reprojected: no reliability cell exists without an executor revision.
 ///
 /// # Errors
 ///
@@ -242,11 +243,18 @@ pub(crate) fn reconcile_amended_outcomes_in_txn(
 
     let mut projected = Vec::new();
     for ((skill, executor), at) in moved {
+        // An arm with no executor stamp has no learning cell to reproject: every reliability
+        // cell names the executor revision it measured, and the attempt lane records no outcome
+        // without one. Its rows above still count in the skill's attributed tally. Reprojecting
+        // it fails, and with it the whole pass and every other arm's write (REVIEW-10104 P1).
+        let Some(executor) = executor else {
+            continue;
+        };
         if vault.get_skill_record_in_txn(wtxn, &skill)?.is_none() {
             continue;
         }
         let prior = skill_reliability_prior_in_txn(vault, wtxn, &skill)?;
-        project_in_txn(vault, wtxn, &skill, executor.as_deref(), prior, at)?;
+        project_in_txn(vault, wtxn, &skill, Some(&executor), prior, at)?;
         if !projected.contains(&skill) {
             projected.push(skill);
         }
