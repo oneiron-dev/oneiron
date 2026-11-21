@@ -159,7 +159,7 @@ pub(super) fn owner_body_admission_for(
             &withhold.worlds_in(vault, txn)?,
             &id,
         )?
-        || crate::store::legal_hold::use_limit_in_txn(&vault.store, txn, &id)?.is_some()
+        || crate::scope_summary::row_or_word_source_use_limited_in(vault, txn, &id)?
     {
         return Err(denied());
     }

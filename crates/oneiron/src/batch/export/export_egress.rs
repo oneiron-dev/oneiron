@@ -41,8 +41,12 @@ use super::export_manifest::{
 /// [`Vault::whole_vault_export_rows`] calls this for every entity row.
 /// There is no fences-present fast path or scrub. The second conjunct is a
 /// use-limit (FIX 1496 S5): a use-limited row exports nowhere, same as an
-/// off-record row, and names nothing. Every caller holds the txn; no nested
-/// txn is opened here.
+/// off-record row, and names nothing. So does a row whose words came from
+/// one (a SUMMARY or PSYCH_PROFILE of a use-limited CLAIM), as the owner's
+/// own read withholds it (FIX 1496 S8; FIX
+/// EGRESS-CARRIES-ROWS-DERIVED-FROM-USE-LIMITED-RECORDS:
+/// `scope_summary::row_or_word_source_use_limited_in`). Every caller holds
+/// the txn; no nested txn is opened here.
 ///
 /// The third conjunct is the source-audience hold (FIX
 /// WHOLE-VAULT-EXPORT-CARRIES-HELD-BACK-ROWS): a row this vault holds back
@@ -84,14 +88,14 @@ pub fn whole_vault_export_excludes_entity_in_txn(
 }
 
 /// The door's question about `id` itself: a member of a live session
-/// overlay, a record a customer hold use-limits, or a row held back here or
-/// whose words came from one.
+/// overlay, a record a use limit keeps for storage only or a row whose words
+/// came from one, or a row held back here or whose words came from one.
 fn egress_keeps_id_out_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
     let store = &vault.store;
     if store.off_record_sessions.contains_entity(id)? {
         return Ok(true);
     }
-    if crate::store::legal_hold::use_limit_in_txn(store, txn, id)?.is_some() {
+    if crate::scope_summary::row_or_word_source_use_limited_in(vault, txn, id)? {
         return Ok(true);
     }
     crate::source_audience::lineage_held_in(vault, txn, id)

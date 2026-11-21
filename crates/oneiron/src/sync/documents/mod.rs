@@ -659,9 +659,11 @@ impl EntityDocument {
                 {
                     crate::note::validate_note_export(&self.vault, txn, self.id, scope, &selector)?;
                 }
-                if crate::store::legal_hold::use_limit_in_txn(&self.vault.store, txn, &self.id)?
-                    .is_some()
-                {
+                if crate::scope_summary::row_or_word_source_use_limited_in(
+                    &self.vault,
+                    txn,
+                    &self.id,
+                )? {
                     return Err(Error::sync_protocol(
                         SyncProtocolValidation::DocumentAdmissionDenied,
                     ));

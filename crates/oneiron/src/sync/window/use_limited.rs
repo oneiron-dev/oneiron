@@ -1,8 +1,11 @@
 //! Egress withholding of a row a record use limit keeps for storage only on
 //! this vault ([`crate::store::legal_hold::use_limit_in_txn`]): a privacy
 //! erase a standing customer hold refused (C6), or a cooperative review
-//! restriction. The owner's devices lose such a row as they lose an erased
-//! one, and it packs again once the limit goes inert (Engine ANSWER
+//! restriction; and of a row whose words came from one, as the owner's own
+//! read withholds it (FIX EGRESS-CARRIES-ROWS-DERIVED-FROM-USE-LIMITED-RECORDS:
+//! [`crate::scope_summary::row_or_word_source_use_limited_in`]). The owner's
+//! devices lose such a row as they lose an erased one, and it packs again
+//! once the limit goes inert (Engine ANSWER
 //! SERVING-DOORS-OWNER-WINDOW-USE-LIMIT = B, 20 Nov 21:19; LEGAL-HOLD-USE = B).
 //!
 //! Packing skips it (`egress::window_packing_excludes_entity_with`). A window
@@ -67,7 +70,7 @@ pub(crate) fn withhold_use_limited_carriers(
             return Ok(false);
         }
         let limited = |id: &EntityId| -> Result<bool> {
-            Ok(crate::store::legal_hold::use_limit_in_txn(&vault.store, &rtxn, id)?.is_some())
+            crate::scope_summary::row_or_word_source_use_limited_in(vault, &rtxn, id)
         };
         let mut in_entities = BTreeSet::new();
         map_for_each_value_bytes(&doc.get_map("entities"), |key, _| {
@@ -192,7 +195,7 @@ fn any_use_limit(vault: &Vault) -> Result<bool> {
 fn use_limited_among(vault: &Vault, rows: BTreeSet<EntityId>) -> Result<UpdateVerdict> {
     let rtxn = vault.store.env.read_txn()?;
     for id in rows {
-        if crate::store::legal_hold::use_limit_in_txn(&vault.store, &rtxn, &id)?.is_some() {
+        if crate::scope_summary::row_or_word_source_use_limited_in(vault, &rtxn, &id)? {
             return Ok(UpdateVerdict::Withheld);
         }
     }

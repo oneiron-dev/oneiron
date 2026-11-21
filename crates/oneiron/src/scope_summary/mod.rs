@@ -42,6 +42,7 @@ pub(crate) use derivation::{
 };
 pub use purpose::SummaryPurpose;
 pub use status::{ArcPendingStatus, ScopeSummaryResult, ScopeSummaryStatus, SummaryStale};
+mod source_use_limit;
 mod word_sources;
 
 pub(crate) use codec::scope_summary_actor;
@@ -63,6 +64,9 @@ pub use request::{ScopeSummaryQueued, ScopeSummaryRequest, ScopeSummaryTarget};
 pub(crate) use scrub::scrub_withdrawn_copy_in_txn;
 pub(crate) use self_model::SelfModelRead;
 pub(crate) use session::{enqueue_session_summary_in_txn, session_summary_excluded};
+pub(crate) use source_use_limit::{
+    SourceRowRead, row_or_word_source_use_limited_in, word_sources_use_limited_in,
+};
 pub(crate) use word_sources::{
     WordSources, carried_summary, word_sources_in, word_sources_through_in,
 };
