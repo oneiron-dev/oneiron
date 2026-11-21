@@ -299,30 +299,3 @@ pub(super) fn floors_possible_of_in(store: &crate::store::Store, txn: &RoTxn<'_>
         || super::DERIVED.iter_from(store, txn, &[])?.next().is_some()
         || super::LANDED.get(store, txn, &())?.unwrap_or(false))
 }
-
-/// The threads on the stored floor of `row` that a read must hold, or
-/// `None` when an id on it names no source, so the row reads to no one
-/// (READ-LINEAGE-L3 = A). Its policies are the source-audience walk's to
-/// judge ([`super::readable_with_read_in`]).
-///
-/// # Errors
-///
-/// Storage failures.
-pub(crate) fn floor_threads_in(
-    vault: &Vault,
-    txn: &RoTxn<'_>,
-    row: &EntityId,
-) -> Result<Option<Vec<EntityId>>> {
-    let Some(floor) = super::DERIVED.get(&vault.store, txn, row)? else {
-        return Ok(Some(Vec::new()));
-    };
-    let mut threads = Vec::new();
-    for source in floor {
-        match floor_source_in(vault, txn, &source)? {
-            FloorSource::Policy => {}
-            FloorSource::Thread => threads.push(source),
-            FloorSource::Unknown => return Ok(None),
-        }
-    }
-    Ok(Some(threads))
-}

@@ -44,9 +44,10 @@ impl ScopedRead<'_> {
     }
 
     /// Whether the phone-thread gate admits the revision `raw` of `id` in
-    /// `txn`: its own threads (the row's own stamp) and the threads on its
-    /// stored floor (READ-LINEAGE L1: a row written from a thread's rows,
-    /// such as a CLAIM whose birth names a kept TURN as evidence). The vault
+    /// `txn`: its own threads (the row's own stamp) and the threads among
+    /// its verdict's sources (READ-LINEAGE L1; Fable design pass 31: a row
+    /// written from a thread's rows, such as a CLAIM whose birth names a kept
+    /// TURN as evidence, those its inputs handed over included). The vault
     /// owner reads every thread; any other reader is admitted as
     /// [`crate::source_audience::SOURCE_READERS`] says: under the strictest
     /// reading, a live `ConversationMessages` grant over EACH thread, whose
@@ -64,23 +65,29 @@ impl ScopedRead<'_> {
         raw: &[u8],
         authority: &super::access_gate::HeldAuthority,
     ) -> Result<bool> {
-        let Some(mut threads) = crate::source_audience::floor_threads_in(self.vault, txn, id)?
-        else {
-            return Ok(false);
+        // The row's verdict (Fable design pass 31): a sealed row reads to
+        // no one, the owner included (READ-LINEAGE-L3 = A); a waiting one
+        // reads to no one else (#9289 review 2 P1-1, P1-2), and the
+        // source-audience walk judges the owner's read of it. A whole row's
+        // threads are each phone thread among its verdict's sources, those
+        // its inputs handed over included (O2-9289 P2-1).
+        let sources = match crate::source_audience::verdict_in(self.vault, txn, id)? {
+            crate::source_audience::Verdict::Sealed => return Ok(false),
+            crate::source_audience::Verdict::Waiting => {
+                return Ok(self.actor_key.reads_as_vault_owner());
+            }
+            crate::source_audience::Verdict::Whole(sources) => sources,
         };
-        // A row whose verdict is sealed reads to no one, the owner included
-        // (READ-LINEAGE-L3 = A); one whose verdict waits reads to no one
-        // else (#9289 review 2 P1-1, P1-2), and the source-audience walk
-        // judges the owner's read of it.
-        let floor = crate::source_audience::floor_read_in(self.vault, txn, id)?;
-        if floor == crate::source_audience::FloorRead::Sealed {
-            return Ok(false);
-        }
         if self.actor_key.reads_as_vault_owner() {
             return Ok(true);
         }
-        if floor == crate::source_audience::FloorRead::Waiting {
-            return Ok(false);
+        let mut threads = Vec::new();
+        for source in sources {
+            if crate::source_audience::floor_source_in(self.vault, txn, &source)?
+                == crate::source_audience::FloorSource::Thread
+            {
+                threads.push(source);
+            }
         }
         let header = crate::batch::EntityMetadataHeader::parse(raw)
             .ok_or(Error::CorruptedIndex("entity header"))?;

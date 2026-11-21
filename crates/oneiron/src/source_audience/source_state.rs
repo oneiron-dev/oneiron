@@ -37,7 +37,7 @@ use std::collections::BTreeSet;
 use heed::{RoTxn, RwTxn};
 
 use self::judge::sweep_page_in_txn;
-use self::reader::StateReader;
+pub(crate) use self::reader::StateReader;
 use super::floor_migration;
 use crate::error::Result;
 use crate::side_table::{self, Named, SideTable};
