@@ -1,0 +1,131 @@
+//! #10117 Opus review P1-1: a cleanup archive tears nothing, and a restore
+//! brings the row back whole, so the floor reads an archived row as held,
+//! not erased. A waiting row archived keeps its wait and its marks: the
+//! landing of what it waits on raises it, the erase of what it waits on
+//! seals it, and the sweep leaves it waiting. Its restore raises it. Before
+//! the fix each of these let the restored row read open to a stranger.
+
+use oneiron::EntityId;
+use oneiron::test_doors::cleanup_archive::archive_as_cleanup;
+use oneiron::test_doors::read_lineage_floor::{floor_of, floor_waits};
+use oneiron::test_doors::source_audience_binding::{bound_row_read_by, reads};
+
+use super::erased_sources::{
+    assert_no_stranger_or_reader_reads, erase, hidden_source_unknown, housekeeping_pass,
+};
+use super::{Mailbox, claim_born_from, owners_mailbox};
+
+/// The cleanup archives `row`.
+fn archive(mailbox: &Mailbox, row: EntityId) {
+    archive_as_cleanup(&mailbox.vault, &row).expect("the cleanup archives the row");
+}
+
+/// The owner restores `row` from the archive.
+fn restore(mailbox: &Mailbox, row: EntityId) {
+    mailbox
+        .vault
+        .restore_archived(&row)
+        .expect("the owner restores the row");
+}
+
+/// `row` holds `policy` on its floor, reads to the mailbox's reader, and
+/// not to a stranger (`when` names the moment).
+fn assert_reads_as_its_landed_source(
+    mailbox: &Mailbox,
+    row: EntityId,
+    policy: EntityId,
+    when: &str,
+) {
+    assert!(
+        !reads(&mailbox.vault, row, &[mailbox.stranger]).expect("the stranger's read"),
+        "LEAK: a stranger reads the row {when}",
+    );
+    assert!(
+        floor_of(&mailbox.vault, row)
+            .expect("the floor")
+            .contains(&policy),
+        "the row's floor misses the policy of the source that landed {when}",
+    );
+    assert!(
+        reads(&mailbox.vault, row, &[mailbox.reader]).expect("the reader's read"),
+        "the mailbox's reader does not read the row {when}",
+    );
+}
+
+/// Scenario A: `fact` waits on `late`, a row not here yet. The cleanup
+/// archives `fact`; then `late` lands, bound to the mailbox, and a
+/// housekeeping pass runs. Its landing raises the archived `fact`, so the
+/// owner's restore brings it back holding `late`'s policy. Before the fix
+/// the landing skipped `fact` as erased, the pass dropped its wait, and the
+/// restored `fact` read to a stranger.
+#[test]
+fn an_archived_fact_takes_the_floor_of_a_source_that_lands_while_it_is_archived() {
+    let mailbox = owners_mailbox();
+    let late = EntityId::now();
+    let fact = claim_born_from(&mailbox, &[late], "learnt from a row on its way");
+    archive(&mailbox, fact);
+    let policy = bound_row_read_by(&mailbox.vault, late, &[mailbox.owner, mailbox.reader])
+        .expect("late lands, bound to its mailbox");
+    housekeeping_pass(&mailbox);
+    restore(&mailbox, fact);
+    assert_reads_as_its_landed_source(&mailbox, fact, policy, "once restored");
+    housekeeping_pass(&mailbox);
+    assert_reads_as_its_landed_source(&mailbox, fact, policy, "after a later pass");
+}
+
+/// Scenario B: `fact` waits on `middle`, a row whose own source is not here
+/// yet. The cleanup archives `fact`; the owner erases `middle`, and a
+/// housekeeping pass runs while `fact` is archived; then the owner restores
+/// `fact`. The erase sealed it: it reads to no one, the owner included,
+/// before and after a later pass, and doctor counts it. Before the fix the
+/// erase skipped `fact` as erased, the pass dropped its wait, and the
+/// restored `fact` read open.
+#[test]
+fn an_archived_fact_is_sealed_by_the_erase_of_the_row_it_waits_on() {
+    let mailbox = owners_mailbox();
+    let middle = claim_born_from(&mailbox, &[EntityId::now()], "learnt from a row on its way");
+    let fact = claim_born_from(&mailbox, &[middle], "learnt from middle");
+    archive(&mailbox, fact);
+    erase(&mailbox, middle);
+    housekeeping_pass(&mailbox);
+    restore(&mailbox, fact);
+    assert_no_stranger_or_reader_reads(&mailbox, fact, "once restored");
+    housekeeping_pass(&mailbox);
+    assert_no_stranger_or_reader_reads(&mailbox, fact, "after a pass once restored");
+    assert!(
+        !reads(&mailbox.vault, fact, &[mailbox.owner]).expect("the owner's read"),
+        "the owner reads a fact sealed by the erase of the row it waited on",
+    );
+    assert_eq!(
+        hidden_source_unknown(&mailbox),
+        1,
+        "doctor counts the fact the erase sealed",
+    );
+}
+
+/// Scenario C: `fact` waits on `late`. The cleanup archives it, a
+/// housekeeping pass runs, and the owner restores it: it still waits, so no
+/// stranger reads it. Then `late` lands, and `fact` reads to the mailbox's
+/// reader. Before the fix the pass dropped the archived row's wait for
+/// good: the restored `fact` read to a stranger at once, and the landing of
+/// `late` never raised it.
+#[test]
+fn an_archived_fact_keeps_waiting_through_a_pass_and_settles_when_its_source_lands() {
+    let mailbox = owners_mailbox();
+    let late = EntityId::now();
+    let fact = claim_born_from(&mailbox, &[late], "learnt from a row on its way");
+    archive(&mailbox, fact);
+    housekeeping_pass(&mailbox);
+    restore(&mailbox, fact);
+    assert!(
+        !reads(&mailbox.vault, fact, &[mailbox.stranger]).expect("the stranger's read"),
+        "LEAK: a stranger reads a restored fact whose source has not landed",
+    );
+    assert!(
+        floor_waits(&mailbox.vault, fact).expect("the floor's state"),
+        "a restored fact whose source has not landed no longer waits for it",
+    );
+    let policy = bound_row_read_by(&mailbox.vault, late, &[mailbox.owner, mailbox.reader])
+        .expect("late lands, bound to its mailbox");
+    assert_reads_as_its_landed_source(&mailbox, fact, policy, "once its source landed");
+}

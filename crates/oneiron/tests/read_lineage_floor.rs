@@ -26,6 +26,8 @@ use oneiron::{
     EdgeActorClass, EdgeKind, EntityId, TimeRange, Vault, VaultConfig,
 };
 
+#[path = "read_lineage_floor/archived_rows.rs"]
+mod archived_rows;
 #[path = "read_lineage_floor/erased_sources.rs"]
 mod erased_sources;
 
