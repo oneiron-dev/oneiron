@@ -12960,10 +12960,20 @@
      "path": "src/booking/publication.rs",
      "purpose": "Owner-controlled public booking publication on the ordinary claim store",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 7,
       "re-export": 3,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/booking/publication/home_rows.rs",
+     "purpose": "FIX [BK-HOME-MOVE-PUBLIC-PAGE-INDEX-NOT-CARRIED] (lead ruling BK-HOME-MOVE-CARRIES-BOOKINGS = A, 21 Nov…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -13003,7 +13013,7 @@
      "path": "src/booking/publication/write_index.rs",
      "purpose": "Local owner write authorization and bounded public-address lookup",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 7,
       "fn": 2
      }
     },
@@ -17929,7 +17939,7 @@
      "path": "src/claim/scope_stamp.rs",
      "purpose": "Required record-position Scope stamps and the versioned CLAIM wire upgrade",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 3,
       "re-export": 1,
       "trait": 1
@@ -35176,7 +35186,7 @@
      "purpose": "The owner's free-time policy for one agent (FIX 4453): the total budget one cycle may spend, the cycle's…",
      "surface": {
       "const": 1,
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 1,
       "fn": 4,
       "re-export": 2,
@@ -36620,7 +36630,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "IdentityCardCopy",
@@ -36634,7 +36644,7 @@
       "crate-vis": 17,
       "enum": 1,
       "fn": 3,
-      "re-export": 5,
+      "re-export": 6,
       "struct": 2
      }
     },
@@ -36709,6 +36719,17 @@
      "purpose": "How an ask is shown: candidate labels, options, its view and its card",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/identity/proposal.rs",
+     "purpose": "A member's \"someone new\" (RECIPIENT-NOTICE-READ-BY-ANY-READER, owner half PR 3b; the lead 21 Nov 13:2x…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 5
      }
     },
     {
@@ -55919,7 +55940,7 @@
      "path": "src/memory/booking_publication.rs",
      "purpose": "Owner checks for the ordinary booking publication claim write/read seam",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 1
      }
     },
@@ -78054,6 +78075,7 @@
      "path": "src/settings/agent_world_access.rs",
      "purpose": "The owner's writer of one agent's world access (ARCH-0067 #tiers; census L2-56; rulings L2-56-VERB-SHAPE = A…",
      "surface": {
+      "crate-vis": 1,
       "fn": 4,
       "struct": 5
      }
@@ -78106,6 +78128,7 @@
      "path": "src/settings/default_facet.rs",
      "purpose": "The owner's doors over the vault default facet (ARCH-0022 #facets: \"Every vault has one default facet…",
      "surface": {
+      "crate-vis": 2,
       "fn": 5,
       "struct": 1
      }
@@ -78179,7 +78202,7 @@
      "path": "src/settings/room_threads.rs",
      "purpose": "The owner's two switches over Admins and private room threads (owner ruling 2026-10-20, FIX 6382): whether…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 2,
       "re-export": 1
      }
@@ -78239,7 +78262,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "UndoSendChannelLength",
@@ -78250,7 +78273,7 @@
      "purpose": "The owner's undo-send window (DEC-0006 #undo-send; owner ruling REV-8 = B, 2026-10-09): how long a send…",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 4,
       "fn": 6,
       "struct": 3
      }
@@ -98302,7 +98325,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 379,
+      "mod": 380,
       "re-export": 3
      }
     },
@@ -98723,6 +98746,16 @@
      "purpose": "Door for `tests/mcp_page_continuation_unknown_rows.rs` in oneiron-server (FIX-LIST L23762): park a claim in…",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/policy_doors_between.rs",
+     "purpose": "Doors for changing the policy in force between the owner's check and write",
+     "surface": {
+      "fn": 5
      }
     },
     {
@@ -109530,6 +109563,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/booking_home_move_carries_public_page.rs",
+     "purpose": "A home move carries the booking pages' publications (FIX [BK-HOME-MOVE-PUBLIC-PAGE-INDEX-NOT-CARRIED]; lead…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -113244,11 +113285,11 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/identity_member_ask_route.rs",
-     "purpose": "FIX [RECIPIENT-NOTICE-READ-BY-ANY-READER], owner half PR 3: an identity ask raised from a member's own…",
+     "purpose": "FIX [RECIPIENT-NOTICE-READ-BY-ANY-READER], owner half PR 3 and 3b: an identity ask raised from a member's…",
      "surface": {}
     },
     {
@@ -115439,6 +115480,14 @@
      "notable": [],
      "path": "tests/owner_presence_enrolment_doors.rs",
      "purpose": "Every owner key enrolment door asks for the person first (row OWNER-CONFIRM-SHEET, PR 4b-2): a declined…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/owner_presence_policy_doors.rs",
+     "purpose": "Five owner policy doors read the value in force before they ask (row OWNER-CONFIRM-SHEET, PR 4b-3c1)",
      "surface": {}
     },
     {
@@ -119852,7 +119901,7 @@
      "purpose": "—"
     },
     "booking": {
-     "files": 106,
+     "files": 107,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -120286,7 +120335,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 253,
+     "files": 254,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -121287,7 +121336,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 390,
+     "files": 391,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -121476,10 +121525,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 272,
+   "over_bar": 273,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8481,
-   "test_files": 2208
+   "source_files": 8484,
+   "test_files": 2210
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -152323,6 +152372,7 @@
      "path": "src/settings/room_threads.rs",
      "purpose": "Moved from `crates/oneiron/src/settings/room_threads.rs` (lib split R1: record types below the lib)",
      "surface": {
+      "fn": 1,
       "struct": 1
      }
     },
