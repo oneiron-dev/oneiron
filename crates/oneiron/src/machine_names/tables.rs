@@ -6,7 +6,8 @@ crate::side_table::side_tables! {
     /// side-row wall, with the Gate receipt of the set that wrote it. Display only: outside the
     /// signed machine profile, and no authority, policy or routing code reads it. Key: id16 (the
     /// MACHINE row).
-    MACHINE_OWNER_NAME: VaultMeta b"machine_name:owner:v1:" Named Authored [accepts: crate::machine_names::accepts_masked]
+    MACHINE_OWNER_NAME: VaultMeta b"machine_name:owner:v1:" Named Authored
+        [refs: crate::machine_names::OWNER_NAME_REFS] [accepts: crate::machine_names::accepts_masked]
         [restore: live] [family: unclassified] [tier: canonical];
 
     /// The name and model each of the owner's machines reports for itself, as that machine dated

@@ -76,6 +76,14 @@ pub(crate) struct MachineOwnerName {
     pub(crate) source: MachineOwnerNameSource,
 }
 
+/// The structural reference an owner-name row keeps (FIX 6634): `source`,
+/// the tag of the owner act that wrote the name. The side-row wall reads it
+/// with no known-value sweep, so a value custody holds that equals or sits
+/// inside `owner_set` never masks the tag into a row that no longer decodes
+/// (review round 1 of #9439). The name stays under the sweep.
+pub(crate) const OWNER_NAME_REFS: &[crate::side_table::RefPath] =
+    &[&[crate::side_table::RefStep::Field("source")]];
+
 /// Whether a masked copy of an owner-name row still reads as one, for the
 /// historical lift sweep's acceptance check.
 pub(crate) fn accepts_masked(bytes: &[u8]) -> bool {
