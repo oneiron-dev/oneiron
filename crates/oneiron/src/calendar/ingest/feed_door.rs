@@ -199,6 +199,28 @@ pub(crate) fn ics_feed_changed_in_txn(
     Ok(())
 }
 
+/// Records a completed poll of `system` in `txn`, as a poll of an earlier feed there leaves it
+/// (`test_doors::calendar_feed_poll`).
+///
+/// # Errors
+///
+/// Storage errors.
+#[cfg(all(oneiron_test_support, feature = "test-support"))]
+pub(crate) fn plant_poll_completion_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    system: &str,
+) -> crate::Result<()> {
+    let completion = CalendarIcsPollCompletion {
+        poll_ref: "planted".to_owned(),
+        completed_at: 0,
+        result: CalendarIcsPollResult::Reenqueued { next_not_before: 0 },
+        cursor: None,
+    };
+    POLLS.put(&vault.store, txn, &system.to_owned(), &completion)?;
+    Ok(())
+}
+
 /// Uninstalls the feed `installed` in the write that clears its `calendar.ics_feed` row
 /// (ICS-FEED-UNINSTALL-SHAPE = B, Engine 16 Nov 18:27): its standing consent ends
 /// (CAL-02-FEED-CONSENT = A), its cursor goes and its pending polls are cancelled. Its poll row

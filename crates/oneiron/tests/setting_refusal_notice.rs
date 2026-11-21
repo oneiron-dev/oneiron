@@ -71,7 +71,7 @@
 //! - the owner's pick of the seat settles it where the feed ran;
 //! - a quarantined seat is read again once the feed it met is cleared;
 //! - a clear of a seat in service signed elsewhere takes it out of service here (REVIEW-10294
-//!   round 2 P1-4), and its system stays its own;
+//!   round 2 P1-4), and its system stays its own (review round 2 of PR 4: it runs on here);
 //! - a seat refused here offers no tap that clears it alone.
 //!
 //! Review round 1 of PR 4 (REVIEW-10357, P1=3):
@@ -79,6 +79,11 @@
 //!   calendars' seats;
 //! - the pick of the feed clears every seat that holds its system;
 //! - the owner's pick of another calendar's seat takes the seat installed here out of service.
+//!
+//! Review round 2 of PR 4 (REVIEW-10357 round 2, P1=4; P1-1 to P1-3 are round 1's):
+//! - a clear of a seat in service signed elsewhere leaves it in service here: the quarantine keeps
+//!   the source this install installed first;
+//! - the pick of a feed that cannot install here keeps the seat running here.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test setting_refusal_notice`.
 
@@ -95,6 +100,7 @@ use oneiron::setting::{
 };
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::invoke;
+use oneiron::test_doors::calendar_feed_poll::plant_ics_feed_poll;
 #[cfg(feature = "sync")]
 use oneiron::test_doors::setting::land_notification_copy_without_receipts;
 use oneiron::test_doors::setting::{
@@ -1677,35 +1683,32 @@ fn a_quarantined_seat_is_read_again_once_the_feed_it_met_is_cleared() {
 }
 
 #[test]
-fn a_clear_of_a_seat_in_service_signed_elsewhere_takes_it_out_of_service_here() {
+fn a_clear_of_a_seat_in_service_signed_elsewhere_leaves_it_in_service_here() {
     let fx = Fixture::rooted();
     fx.owner_sets_item(SEAT, "work", seat_setup("work", "work-cal"));
     let frontier = setting_frontier_of(&fx.vault, &[item_slot(SEAT, "work")]).expect("frontier");
 
-    // The other machine clears the seat. This install's hook refuses a change of the seat in
-    // service; the quarantine takes it out of service, as the act asks, so no notice is raised.
+    // The other machine clears the seat, alone. This install's hook refuses a change of the seat
+    // in service, and the quarantine keeps the source this install installed first
+    // (SETTING-PROJECTED-CALENDAR-SYSTEM-CLAIM = A; REVIEW-10357 round 2 P1-4): the seat runs on,
+    // and no later pass reads the clear again.
     fx.desktop_sets_item(&frontier, (SEAT, "work"), None);
 
-    assert_eq!(fx.reads_item(SEAT, "work"), Value::Null, "the seat is out");
+    assert!(
+        !fx.reads_item(SEAT, "work").is_null(),
+        "the seat runs on here"
+    );
+    let again = fx.vault.project_settings().expect("a later pass");
     assert_eq!(
-        fx.last_change(SEAT).standing,
-        Some(ChangeStanding::Quarantined)
+        again.moved, 0,
+        "no later pass reads the refused clear again"
     );
+    let words = words_of(&fx.the_notice());
     assert!(
-        fx.refusal_notices().is_empty(),
-        "the row reads as the act asks"
-    );
-    // A seat out of service keeps its system: a plain feed there is refused as before.
-    let refused = fx
-        .vault
-        .set_setting(
-            SettingCaller::Owner(&fx.owner_proof),
-            item_row(FEED, "work-cal", feed_config("work-cal")),
-        )
-        .expect_err("the seat's system stays its own");
-    assert!(
-        refused.to_string().contains("imports under this system"),
-        "{refused}"
+        words.contains(
+            "did not apply your clear of `calendar.connector_seat` for `work`, set on Desktop"
+        ),
+        "{words:?}"
     );
 }
 
@@ -1949,5 +1952,51 @@ fn the_owners_pick_of_another_calendars_seat_takes_the_seat_here_out_of_service(
         fx.reads_item(SEAT, "work"),
         Value::Null,
         "the other is out of service"
+    );
+}
+
+#[test]
+fn the_pick_of_a_feed_that_cannot_install_here_keeps_the_seat_running() {
+    let fx = Fixture::rooted();
+    // An earlier feed polled under `work-cal` on this install and was uninstalled; the owner then
+    // installed a CalDAV seat there, which a seat may.
+    plant_ics_feed_poll(&fx.vault, "work-cal").expect("the earlier feed's poll");
+    fx.owner_sets_item(SEAT, "work", seat_setup("work", "work-cal"));
+    let frontier = setting_frontier_of(
+        &fx.vault,
+        &[item_slot(FEED, "work-cal"), item_slot(SEAT, "work")],
+    )
+    .expect("frontier");
+
+    // The other machine, which never polled it, installs a new feed there, and its owner then
+    // picks that feed over the seat in one act. The feed cannot install here, so the seat runs
+    // on, and the clear is refused with the feed (REVIEW-10357 round 2 P1-4).
+    fx.desktop_sets_item(&frontier, (FEED, "work-cal"), Some(feed_config("work-cal")));
+    let frontier = setting_frontier_of(
+        &fx.vault,
+        &[item_slot(FEED, "work-cal"), item_slot(SEAT, "work")],
+    )
+    .expect("frontier");
+    land_setting_batch_from(
+        &fx.vault,
+        &fx.desktop,
+        fx.owner,
+        &frontier,
+        &[
+            (item_slot(FEED, "work-cal"), Some(feed_config("work-cal"))),
+            (item_slot(SEAT, "work"), None),
+        ],
+        T0,
+    )
+    .expect("the act lands");
+
+    assert!(
+        !fx.reads_item(SEAT, "work").is_null(),
+        "the seat runs on here"
+    );
+    assert_eq!(
+        fx.reads_item(FEED, "work-cal"),
+        Value::Null,
+        "the feed is not installed here"
     );
 }
