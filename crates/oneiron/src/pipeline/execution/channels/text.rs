@@ -648,18 +648,16 @@ impl PipelineBuilder<'_> {
 
     /// The memory lane's text read: every posting through the lane's kinds
     /// and, when `filter_all`, through the run's whole scope as well, which
-    /// asks a clamp first. A clamped pack's read asks the clamp's own-row
-    /// test too, so a row the audience could not read whatever its status
-    /// takes no place in the read's `limit`, and hands such rows back in
-    /// `withheld` while they fall inside the read's first `limit` places, as
-    /// the clamped read ranks them (the comment at the read says how).
-    /// Through the whole scope, a place is a row the scope admits, so a
-    /// hidden row takes one, and counts, only when it meets every other
-    /// check of the call ([`Self::clamp_withheld_row_counts`], judged in
-    /// caches of its own, as `gate` is). The lane-only read gives every lane
-    /// row a place, so a readable lane row outside the scope takes one there
-    /// and none here: the two reads can count different hidden rows, and a
-    /// narrowed read still counts hidden rows (REVIEW-10311 rounds 1 and 2).
+    /// asks a clamp first. Under a clamp, a row the audience could not read
+    /// whatever its status takes no place in the read's `limit`; such rows
+    /// come back in `withheld` while they fall inside the read's first
+    /// `limit` places, as the clamped read ranks them (see the read). Through
+    /// the whole scope a place is a row the scope admits, so a hidden row
+    /// takes one, and counts, only when it meets every other check of the
+    /// call ([`Self::clamp_withheld_row_counts`], in caches of its own, as
+    /// `gate` is). The lane-only read gives every lane row a place, so the
+    /// two reads can count different hidden rows, and a narrowed read still
+    /// counts them (REVIEW-10311 rounds 1 and 2).
     fn search_text_candidates<F>(
         &self,
         rtxn: &RoTxn<'_>,
