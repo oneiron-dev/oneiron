@@ -357,13 +357,17 @@ pub fn due_at(vault: &Vault, job: &str, subject: Option<EntityId>) -> Result<Opt
     crate::schedule::due_at_in_txn(&vault.store, &txn, job, subject)
 }
 
-/// Fails its first run about a subject; every later run is done.
-fn run_fail_once(_vault: &Vault, armed: &Armed, _pass: &JobPass<'_>) -> Result<JobResult> {
-    Ok(JobResult::of(if count(armed) == 1 {
-        Ran::Failed
-    } else {
-        Ran::Done
-    }))
+/// Fails its first run about a subject on a vault; every later run is done. The vault keeps the
+/// subjects that failed, so a retry on another thread (a server housekeeping pass) is done too.
+fn run_fail_once(vault: &Vault, armed: &Armed, _pass: &JobPass<'_>) -> Result<JobResult> {
+    count(armed);
+    let first = vault
+        .test_door_state
+        .fail_once_failed
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert(armed.subject);
+    Ok(JobResult::of(if first { Ran::Failed } else { Ran::Done }))
 }
 
 /// A job whose first run about a subject fails, and whose retry is done.
