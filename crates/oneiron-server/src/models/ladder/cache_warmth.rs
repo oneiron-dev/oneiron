@@ -67,7 +67,7 @@ fn cache_profile(rung: &LadderRung, request: &LlmRequest) -> Option<CacheProfile
         return None;
     }
     let route = &binding.route;
-    if (route.adapter(), route.origin()) != ANTHROPIC_ROUTE {
+    if !anthropic_profiled(route.adapter(), route.origin()) {
         return None;
     }
     let lifetime = match AnthropicProviderOptions::from_request(request)
@@ -81,6 +81,17 @@ fn cache_profile(rung: &LadderRung, request: &LlmRequest) -> Option<CacheProfile
         lifetime,
         lookback: ANTHROPIC_LOOKBACK_BLOCKS,
     })
+}
+
+/// Whether a route at `adapter` and `origin` takes the Anthropic route's
+/// lifetimes: the Anthropic API's own route, and under the test cfg only
+/// an anthropic-compat route on loopback, where the integration tests'
+/// fake provider speaks the Anthropic protocol (L2-37 PR-3).
+fn anthropic_profiled(adapter: &str, origin: &str) -> bool {
+    (adapter, origin) == ANTHROPIC_ROUTE
+        || (cfg!(oneiron_test_support)
+            && adapter == ANTHROPIC_ROUTE.0
+            && origin.starts_with("http://127.0.0.1:"))
 }
 
 /// One reusable prefix of a request as its rung sends it: the content block

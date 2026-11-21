@@ -79,6 +79,19 @@ fn is_compaction_call(body: &Value) -> bool {
         .is_some_and(|system| message_text(system).contains("You compact"))
 }
 
+/// Whether `body` is a live fork's call on the Anthropic wire, whose system
+/// prompt travels outside `messages`: the chat's own request with the house
+/// compaction prompt in its last message (`fork_request`), never the cheap
+/// writer's call.
+#[cfg(oneiron_test_support)]
+fn is_live_fork_call(body: &Value) -> bool {
+    !is_compaction_call(body)
+        && body["messages"]
+            .as_array()
+            .and_then(|messages| messages.last())
+            .is_some_and(|last| message_text(last).contains("You compact"))
+}
+
 /// The fake model's reply: a compaction call's summary over the span it
 /// names, with every pin, or else a long chat answer that fills the window.
 pub(super) fn reply(body: &Value) -> String {
@@ -98,6 +111,11 @@ pub(super) fn reply(body: &Value) -> String {
         return json!({"from": input["from"], "through": input["through"], "summary": summary})
             .to_string();
     }
+    chat_answer()
+}
+
+/// A long chat answer that fills the window.
+fn chat_answer() -> String {
     (0..60)
         .map(|reading| {
             format!(
@@ -122,14 +140,37 @@ pub(super) async fn self_row_server(
     Arc<SyncServer>,
     AiHost,
 ) {
+    self_row_server_with(
+        "default = \"local:test-model\"\n",
+        &format!(
+            "[providers.local]\nkind = \"local-openai-compat\"\nbase_url = \"{base_url}\"\n\
+             context_tokens = 32768\n"
+        ),
+        source,
+    )
+    .await
+}
+
+/// [`self_row_server`] with its models given: `selection`, the top-level
+/// `[models]` keys that pick them, and `providers`, their provider tables.
+/// The cheap writer stays `local/test-model@live`, so `providers` serves it.
+async fn self_row_server_with(
+    selection: &str,
+    providers: &str,
+    source: oneiron::llm::SelfCompactionSource,
+) -> (
+    tempfile::TempDir,
+    tempfile::TempDir,
+    Arc<SyncServer>,
+    AiHost,
+) {
     let prompts = prompt_package_with_frame();
     let models = models_toml(&format!(
-        "default = \"local:test-model\"\nextraction_egress = true\n\
+        "{selection}extraction_egress = true\n\
          [dreamer]\nenabled = false\n[workflows]\nenabled = false\n\
          [code_mode]\nprompt_package = {:?}\n\
          [code_mode.compaction]\nwindow_tokens = 1500\nhot_steps = 1\n\
-         [providers.local]\nkind = \"local-openai-compat\"\nbase_url = \"{base_url}\"\n\
-         context_tokens = 32768\n",
+         {providers}",
         prompts.path().display().to_string(),
     ));
     let (dir, vault) = rooted_vault();
@@ -446,6 +487,41 @@ async fn retained_turns_row_chat_compacts_on_the_cheap_writer_as_the_agent() {
     );
 }
 
+/// The receipt of the first summary that lands in `conversation`, as its
+/// owner reads the chat log: which source ran the flight, and who wrote it.
+#[cfg(oneiron_test_support)]
+async fn landed_execution(
+    server: &Arc<SyncServer>,
+    fake: &FakeLlm,
+    owner: oneiron::EntityId,
+    conversation: &str,
+) -> oneiron::compaction::CompactionExecution {
+    let id = oneiron::EntityId::from_hex(conversation).unwrap();
+    let reader = server.vault().memory(owner, oneiron::EdgeActorClass::Human);
+    let history_lines = server.ai.chat_settings().history_turns;
+    let mut summary = None;
+    let landed = eventually(Duration::from_secs(20), || {
+        summary = oneiron::compaction::read_chat_log(&reader, id, 1, history_lines)
+            .ok()
+            .and_then(|log| log.summaries.first().copied());
+        summary.is_some()
+    })
+    .await;
+    assert!(
+        landed,
+        "no summary landed; requests: {:?}; compaction calls: {:?}; owner's read: {}",
+        seen_report(fake),
+        compaction_calls_report(fake),
+        log_report(server, owner, conversation),
+    );
+    oneiron::test_doors::compaction_request::conversation_landing_execution(
+        server.vault(),
+        &summary.unwrap(),
+    )
+    .unwrap()
+    .expect("the landed summary keeps its receipt")
+}
+
 /// FIX-LIST SELF-COMPACTION-AUTO-FALLBACK-UNTESTED (1): under a row on
 /// `auto`, the shipped default, a chat whose live prefix is cold binds no
 /// live fork at its breakpoint (FIX 6029), and the cheap writer writes the
@@ -480,30 +556,7 @@ async fn auto_row_chat_with_a_cold_prefix_compacts_on_the_retained_turns_as_the_
 
     // The summary lands, and its receipt names the retained turns and the
     // agent as its writer.
-    let id = oneiron::EntityId::from_hex(&conversation).unwrap();
-    let reader = server.vault().memory(owner, oneiron::EdgeActorClass::Human);
-    let history_lines = server.ai.chat_settings().history_turns;
-    let mut summary = None;
-    let landed = eventually(Duration::from_secs(20), || {
-        summary = oneiron::compaction::read_chat_log(&reader, id, 1, history_lines)
-            .ok()
-            .and_then(|log| log.summaries.first().copied());
-        summary.is_some()
-    })
-    .await;
-    assert!(
-        landed,
-        "no summary landed; compaction calls: {:?}; owner's read: {}",
-        compaction_calls_report(&fake),
-        log_report(&server, owner, &conversation),
-    );
-    let summary = summary.unwrap();
-    let execution = oneiron::test_doors::compaction_request::conversation_landing_execution(
-        server.vault(),
-        &summary,
-    )
-    .unwrap()
-    .expect("the landed summary keeps its receipt");
+    let execution = landed_execution(&server, &fake, owner, &conversation).await;
     assert_eq!(
         execution.source,
         oneiron::llm::SelfCompactionSource::RetainedTurns,
@@ -516,5 +569,131 @@ async fn auto_row_chat_with_a_cold_prefix_compacts_on_the_retained_turns_as_the_
     assert!(
         execution.prefix_sources.is_empty(),
         "no live prefix was read: {execution:?}"
+    );
+}
+
+/// [`self_row_server_with`] for a row on `auto` whose chat answers on a
+/// keyless Anthropic-compatible route at the fake at `chat_url`, which the
+/// test-support build reads as the route the warmth table knows
+/// (cache_warmth.rs `anthropic_profiled`, L2-37 PR-3), and whose cheap
+/// writer `local/test-model@live` answers at `writer_url`, served as the
+/// local reasoner.
+#[cfg(oneiron_test_support)]
+async fn warm_auto_row_server(
+    chat_url: &str,
+    writer_url: &str,
+) -> (
+    tempfile::TempDir,
+    tempfile::TempDir,
+    Arc<SyncServer>,
+    AiHost,
+) {
+    self_row_server_with(
+        "default = \"claude:test-model\"\n",
+        &format!(
+            "[roles.local_reasoner]\nmodel = \"local:test-model\"\n\
+             [providers.claude]\nkind = \"anthropic-compat\"\nbase_url = \"{chat_url}\"\n\
+             context_tokens = 32768\n\
+             [providers.local]\nkind = \"local-openai-compat\"\nbase_url = \"{writer_url}\"\n\
+             context_tokens = 32768\n"
+        ),
+        oneiron::llm::SelfCompactionSource::Auto,
+    )
+    .await
+}
+
+/// An owner policy row that caps the house compaction purpose, which a live
+/// fork's call takes (`fork_request`), at one unit: below any call's
+/// reservation, so its run admission refuses it before anything is sent.
+/// The cheap writer's keyless local call is free work, leased before any
+/// policy row is read (FIX 9482), and the chat's answers take another
+/// purpose, so neither is refused.
+#[cfg(oneiron_test_support)]
+fn cap_the_live_fork_purpose(server: &SyncServer) {
+    let owner = server
+        .vault()
+        .ensure_embedded_owner_actor()
+        .expect("embedded owner");
+    oneiron::conversation_dag::test_support::put_test_policy_manifest(
+        server.vault(),
+        oneiron::WriteActor::new(owner, oneiron::EdgeActorClass::Human),
+        oneiron::EntityId::now(),
+        &json!({
+            "schema_version": "1.2", "pack_id": "live-fork-cap", "pack_version": "1",
+            "min_engine_version": "0.0.0", "defaults": {}, "rules": [], "actor_ceilings": [],
+            "budget_policy": [{
+                "purpose": oneiron::engine_executor::ENGINE_EXECUTOR_COMPACTION_PURPOSE_NAME,
+                "cap": 1,
+            }],
+        }),
+    )
+    .unwrap();
+}
+
+/// FIX-LIST SELF-COMPACTION-AUTO-FALLBACK-UNTESTED (2): under a row on
+/// `auto`, the chat answers on a route whose every answer reports a cache
+/// write, so its breakpoint binds a live fork while the prefix is warm. An
+/// owner policy row caps the house compaction purpose below any call's
+/// reservation, so that fork's first call is refused at run admission
+/// before anything is sent (`generate_exact_while_warm` answers
+/// `Ok(None)`). `serve_flight` then pins the flight to the retained turns,
+/// and the cheap writer writes it as the agent. Only a warm bind reaches
+/// that `Ok(None)`: a cold prefix binds no fork at all.
+#[cfg(oneiron_test_support)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn auto_row_chat_whose_live_admission_is_refused_compacts_on_the_retained_turns_as_the_agent()
+{
+    let chat = FakeLlm::start(
+        Vec::new(),
+        Some(Reply::CachedText {
+            text: chat_answer(),
+            model: "fake-model".to_owned(),
+            cache_write: 1024,
+            cache_read: 0,
+        }),
+    )
+    .await;
+    let writer = FakeLlm::start(Vec::new(), Some(Reply::Computed(Arc::new(reply)))).await;
+    let (_dir, _prompts, server, _host) =
+        warm_auto_row_server(&chat.base_url, &writer.base_url).await;
+    cap_the_live_fork_purpose(&server);
+    let (agent, _) = server
+        .vault()
+        .get_seeded_agent_definition_by_logical_id("sys.default")
+        .unwrap()
+        .expect("seeded default agent");
+    let conversation = oneiron::EntityId::now().to_hex();
+    let (owner, _) = turns_until_compaction(&server, &writer, &conversation).await;
+
+    // The call is the house compaction prompt worn by the agent's frame.
+    let call = writer
+        .seen()
+        .into_iter()
+        .find(|seen| is_compaction_call(&seen.body))
+        .unwrap();
+    let system = message_text(&call.body["messages"][0]);
+    assert!(
+        system.contains(SELF_WRITER_FRAME),
+        "the cheap writer writes as the agent: {system}"
+    );
+
+    let execution = landed_execution(&server, &writer, owner, &conversation).await;
+    assert_eq!(
+        execution.source,
+        oneiron::llm::SelfCompactionSource::RetainedTurns,
+        "a refused live admission under auto runs on the retained turns: {execution:?}"
+    );
+    assert_eq!(
+        execution.writer, agent,
+        "the agent writes its own summary: {execution:?}"
+    );
+    assert!(
+        execution.prefix_sources.is_empty(),
+        "no live prefix was read: {execution:?}"
+    );
+    assert!(
+        !chat.seen().iter().any(|seen| is_live_fork_call(&seen.body)),
+        "the refused fork sent nothing; chat requests: {:?}",
+        seen_report(&chat),
     );
 }
