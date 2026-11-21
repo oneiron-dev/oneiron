@@ -100,10 +100,24 @@ pub fn recover_authorized_outbound_intents<S: OutboundResultSender>(
     if lease_duration_ms == 0 {
         return Err(AuthorizedRecoveryError::InvalidLeaseDuration);
     }
-    let token = AttemptId::from_bytes(&vault.store.clock.ulid()?)?;
     let lease_until_ms = now_ms
         .checked_add(lease_duration_ms)
         .ok_or(AuthorizedRecoveryError::InvalidLeaseDuration)?;
+    // A copy restored and not joined takes no sweep lease (row
+    // RESTORED-UNJOINED-STARTS-NO-WORK). Pending intents wait for the first
+    // recovery sweep after the join.
+    if vault.restored_unjoined()? {
+        return Ok(AuthorizedRecoveryReport {
+            ledger: IntentRecoveryReport::default(),
+            stale_manifest_refusals: Vec::new(),
+            slate_asks: Vec::new(),
+            effectful_sends: 0,
+            authorization_rejections: 0,
+            scrubbable_result_fields: 0,
+            scrubbed_result_fields: 0,
+        });
+    }
+    let token = AttemptId::from_bytes(&vault.store.clock.ulid()?)?;
     if !acquire_authorized_recovery_lease(vault, token, now_ms, lease_until_ms)? {
         return Err(AuthorizedRecoveryError::LeaseHeld);
     }
