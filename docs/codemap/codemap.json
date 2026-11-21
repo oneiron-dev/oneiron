@@ -6634,7 +6634,7 @@
      "path": "src/authority/root_recovery_door.rs",
      "purpose": "The recovery root's one door (pass 27 section 4.3, row R4; Engine RULINGs WAYBACK-E2 = A and…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 3,
       "fn": 1
      }
@@ -9752,7 +9752,7 @@
      "path": "src/batch/secret_scan.rs",
      "purpose": "Secret detection and custody filtering at batch and release boundaries",
      "surface": {
-      "crate-vis": 59,
+      "crate-vis": 60,
       "re-export": 2
      }
     },
@@ -10015,7 +10015,7 @@
      "path": "src/batch/secret_scan/mask/body.rs",
      "purpose": "A body as the door reads it (OF-560): JSON, a whole MessagePack value, or text",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 7
      }
     },
     {
@@ -10035,7 +10035,7 @@
      "path": "src/batch/secret_scan/mask/changed_scan.rs",
      "purpose": "Core half of `batch::secret_scan::mask::changed_scan`: its store-layer items live in…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 1
      }
     },
     {
@@ -10152,10 +10152,30 @@
      "bucket": "L",
      "kind": "src",
      "notable": [],
+     "path": "src/batch/secret_scan/mask/seal_whole.rs",
+     "purpose": "Seal on write (ARCH-0038 #secret-scan-target, ARCH-0040 #content-check; owner, 2026-10-07 and 2026-10-17)…",
+     "surface": {
+      "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/secret_scan/mask/seal_whole/seal_file.rs",
+     "purpose": "A file's seal (ARCH-0069 #binary-secrets, owner ruling G04 binary = C2; ARCH-0038 #secret-scan-target): a…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [],
      "path": "src/batch/secret_scan/mask/side_row.rs",
      "purpose": "The side-row wall (OF-067; ARCH-0069 #mask-on-write and #handles-in-fields, owner ruling G04 = A)",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 26
      }
     },
     {
@@ -10165,7 +10185,7 @@
      "path": "src/batch/secret_scan/mask/split_phrase.rs",
      "purpose": "A recovery phrase split over a file's parts (LABEL-04; ARCH-0038 #promise-label-04): one word per…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 19
      }
     },
     {
@@ -13607,7 +13627,7 @@
      "path": "src/calendar/connectors/door.rs",
      "purpose": "Owner-installed calendar seats, and the host read of the iMIP submission transport, with custody names only",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 9,
       "fn": 9,
       "re-export": 1,
       "struct": 2
@@ -14138,7 +14158,7 @@
      "path": "src/calendar/ingest/feed_door.rs",
      "purpose": "Owner-installed ICS feeds and public observations of completed polls",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 9,
       "re-export": 2,
@@ -14451,19 +14471,19 @@
      "path": "src/calendar/passport/feed_diff.rs",
      "purpose": "Feed-diff machinery: UID-to-EVENT resolvers, feed-row classifiers, revision filing, and UID-index writes",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 3
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/calendar/passport/masked_key.rs",
      "purpose": "The custody reads of a keyed passport lookup that found no passport carrying its `(system, uid)` as written…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 6
      }
     },
     {
@@ -33554,7 +33574,7 @@
      "path": "src/dreamer_consolidation/reviewed.rs",
      "purpose": "Claims the owner's review already holds or decided, which a later pass meets again: this attempt's own…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -63101,7 +63121,7 @@
      "path": "src/office_body/pptx/preview/drawn_parts.rs",
      "purpose": "The parts of a deck's retained package a preview's asked slides draw, and the keys their marks name (OF-510…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -76068,13 +76088,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/secret_custody/reveal/file.rs",
      "purpose": "An agent's sight of a file stored with keys in it (OF-560; owner ruling G04 binary = C2): \"Agent with a…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "re-export": 1
      }
     },
@@ -76097,7 +76117,7 @@
      "path": "src/secret_custody/reveal/file/repo.rs",
      "purpose": "An agent's real-byte read of one marked repo file (FIX 7608 slice 2b-ii-A, GAP-B / FIX 8960; ARCH-0069…",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "enum": 1
      }
     },
@@ -77987,6 +78007,7 @@
       "Born",
       "ItemDomain",
       "Kind",
+      "RefusedProjection",
       "SetBy",
       "Setting",
       "SettingKey",
@@ -77999,12 +78020,12 @@
      "surface": {
       "const": 1,
       "crate-vis": 27,
-      "enum": 1,
+      "enum": 2,
       "fn": 25,
       "re-export": 13,
       "struct": 6,
       "trait": 2,
-      "type": 4
+      "type": 5
      }
     },
     {
@@ -78098,7 +78119,7 @@
      "path": "src/setting/project/refusal.rs",
      "purpose": "The owner's notice of a row a key's hook refused at projection (row SETTING-PROJECTED-ROW-REFUSING-HOOKS…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 8
      }
     },
     {
@@ -97903,6 +97924,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/grant_sealed_file.rs",
+     "purpose": "Doors for `tests/grant_sealed_file.rs` (REVIEW-7708 P1): how many key groups an agent's read of a stored…",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/graph_ask_centre.rs",
      "purpose": "Doors for the question read regressions: exact graph-neighbourhood controls for the standing graph owner…",
      "surface": {
@@ -98527,7 +98558,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 385,
+      "mod": 388,
       "re-export": 3
      }
     },
@@ -99088,6 +99119,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/recovery_preset_between.rs",
+     "purpose": "Door for changing the recovery preset between the owner's check and write",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "RemovalImportPass"
      ],
@@ -99195,6 +99236,16 @@
      "purpose": "Doors for `tests/agent_wake_hold.rs` (AGM-4 wake hold), `tests/agent_message_classes.rs` and…",
      "surface": {
       "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/restored_code_consent_waits.rs",
+     "purpose": "Cfg-only setup for `tests/restored_unjoined_code_consent_waits.rs`: bind the host's call site, seal its…",
+     "surface": {
+      "fn": 3
      }
     },
     {
@@ -99509,7 +99560,7 @@
      "path": "src/test_doors/setting.rs",
      "purpose": "Doors for the Setting primitive's tests (DESIGN 15-setting-primitive, stage 0.1)",
      "surface": {
-      "fn": 38,
+      "fn": 39,
       "re-export": 2,
       "struct": 1
      }
@@ -99525,7 +99576,7 @@
      "path": "src/test_doors/setting/peer_acts.rs",
      "purpose": "Peer-signed setting acts for the Setting primitive's tests: enrolled peer machines, frontiers, and the…",
      "surface": {
-      "fn": 26,
+      "fn": 27,
       "struct": 3,
       "type": 2
      }
@@ -100073,7 +100124,6 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "ClaimGateDecision",
       "DreamerLandingRow",
       "RevokeAnswer",
       "SideDoorTurnText"
@@ -100082,8 +100132,8 @@
      "purpose": "Doors for the untangle regression tests (`tests/untangle_regressions.rs`; lead 19:05 9 Nov, TESTS-MUST-RUN)…",
      "surface": {
       "enum": 1,
-      "fn": 26,
-      "struct": 3
+      "fn": 22,
+      "struct": 2
      }
     },
     {
@@ -108533,7 +108583,7 @@
      "path": "src/world_keys/vault_key/kit.rs",
      "purpose": "The data-key kit (FIX 4532): the owner's 2-of-3 copy of the vault data key this handle holds, issued on his…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 5,
       "struct": 1
      }
@@ -108574,7 +108624,7 @@
      "path": "src/world_keys/vault_key/recovery_preset/kit_only_fact.rs",
      "purpose": "The kit-only switch as a fact every machine of the vault folds (WAYBACK-BOX-HOLD-FROM-DEVICE-SWITCH = A…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 1,
       "struct": 1
      }
@@ -108586,7 +108636,7 @@
      "path": "src/world_keys/vault_key/recovery_preset/kit_only_switch.rs",
      "purpose": "The switch to Nobody but me with the kit present: the kit's doors, and the rotation of the root's authority…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 3
      }
     },
@@ -108607,6 +108657,16 @@
       "fn": 3,
       "struct": 4,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/world_keys/vault_key/recovery_preset/sheet_switch_checks.rs",
+     "purpose": "What a sheet door's switch checks around its ask: the refusals the door gives of its own, made before the…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -113162,6 +113222,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/grant_sealed_file.rs",
+     "purpose": "REVIEW-7708 P1 (ARCH-0069 #binary-secrets): a file the write door sealed whole goes to the owner only",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -115813,6 +115881,14 @@
      "bucket": "L",
      "kind": "test",
      "notable": [],
+     "path": "tests/owner_presence_recovery_preset_doors.rs",
+     "purpose": "Recovery preset doors check owner presence before drawing or readying signing keys, and after every refusal…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
      "path": "tests/owner_presence_removal_doors.rs",
      "purpose": "The two removal doors read before they ask (row OWNER-CONFIRM-SHEET, PR 4b-3b)",
      "surface": {}
@@ -117112,6 +117188,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/restored_unjoined_code_consent_waits.rs",
+     "purpose": "RESTORED-UNJOINED-CODE-RESUME-HOLD-TEST: an approval kept in an image does not let the restored copy drive…",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -118109,6 +118193,30 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/secret_scan_seal_file.rs",
+     "purpose": "L6-03 R1 (ARCH-0069 #binary-secrets: \"The file is stored, not refused\"; ARCH-0038 #secret-scan-target: \"The…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/secret_scan_seal_side_rows.rs",
+     "purpose": "L7-30, the side-row half (ARCH-0038 #secret-scan-target, ARCH-0040 #content-check; owner, 2026-10-07 and…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/secret_scan_seal_whole.rs",
+     "purpose": "L7-30 (ARCH-0038 #secret-scan-target, ARCH-0040 #content-check; owner, 2026-10-07 and 2026-10-17: \"why does…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/selector_band_tombstone_after_hard_delete.rs",
      "purpose": "A selector narrowed to some bands carries the hard delete of a row in them…",
      "surface": {}
@@ -118522,7 +118630,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "tests/setting_refusal_notice.rs",
@@ -120288,7 +120396,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 213,
+     "files": 215,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -121751,7 +121859,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 397,
+     "files": 400,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -121933,17 +122041,17 @@
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)"
     },
     "world_keys": {
-     "files": 92,
+     "files": 93,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 269,
+   "over_bar": 271,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8507,
-   "test_files": 2231
+   "source_files": 8513,
+   "test_files": 2237
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -136686,7 +136794,7 @@
      "path": "tests/extraction_decisions/support.rs",
      "purpose": "Lent scripted verdict fixtures for bound extraction decision tests",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 24
      }
     },
     {
@@ -160708,7 +160816,7 @@
      "path": "src/ai_host/test_support.rs",
      "purpose": "Shared fixtures for the AI host's tests: a rooted, granted vault and `[models]` pointed at the local fake…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -168668,7 +168776,7 @@
      "path": "src/api/tests/ai_chat_self_compaction.rs",
      "purpose": "L10-33 (RULING L10-33-SCOPE = B): under a self row on the retained turns, a self agent's chat compacts as…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 10
      }
     },
     {
