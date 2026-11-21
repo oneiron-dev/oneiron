@@ -582,8 +582,25 @@ impl Vault {
         now: u64,
         actor: Option<crate::WriteActor>,
     ) -> Result<()> {
+        self.supersede_claim_in_txn_as_owner(wtxn, new_id, old_id, now, actor, None)
+    }
+
+    /// [`Vault::supersede_claim_in_txn_as`] for the vault owner's own close:
+    /// `owner` is the owner's in-person proof, revalidated in `wtxn` by the
+    /// owner's door, and rides the close of an Approved `old_id` alone, as
+    /// on the owner's supersede door (FIX
+    /// OWNER-CLOSE-DOORS-DECLARED-CRITICAL-APPROVED-CLOSE-PENDS).
+    pub(crate) fn supersede_claim_in_txn_as_owner(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        new_id: &EntityId,
+        old_id: &EntityId,
+        now: u64,
+        actor: Option<crate::WriteActor>,
+        owner: Option<crate::consent::OwnerAuthoredWrite>,
+    ) -> Result<()> {
         let close = SupersedeClose::Direct(actor);
-        self.supersede_claim_with_closure_grant_in_txn(wtxn, new_id, old_id, now, close, None)
+        self.supersede_claim_with_closure_grant_in_txn(wtxn, new_id, old_id, now, close, owner)
             .map(|_| ())
     }
 
@@ -848,13 +865,20 @@ impl Vault {
         // The owner's act closes as the owner: the revalidated owner is the
         // close's closer, so the Gate judges the owner's retraction and not
         // the claim's own author, as `Memory::claim_retract` as the owner
-        // does (FIX OWNER-RETRACT-ROUTE-NAMES-NO-CLOSER).
-        let closer = match owner {
-            Some(owner) => Some(crate::WriteActor::new(
-                owner.revalidate_in_txn(self, &wtxn)?,
-                crate::edge::EdgeActorClass::Human,
-            )),
-            None => None,
+        // does (FIX OWNER-RETRACT-ROUTE-NAMES-NO-CLOSER). The owner's proof,
+        // revalidated here as well, confirms that close in person where a
+        // declared critical class asks for it (FIX
+        // OWNER-CLOSE-DOORS-DECLARED-CRITICAL-APPROVED-CLOSE-PENDS); a
+        // narrowed or delegated credential carries none.
+        let (closer, owner_write) = match owner {
+            Some(owner) => (
+                Some(crate::WriteActor::new(
+                    owner.revalidate_in_txn(self, &wtxn)?,
+                    crate::edge::EdgeActorClass::Human,
+                )),
+                owner.owner_answer_in_txn(self, &wtxn)?,
+            ),
+            None => (None, None),
         };
         let rekeys = crate::channel_identity::AssignmentRekeys::begin(&self.store);
         // The typed door does not merely AUTHORIZE an expression-preference
@@ -869,7 +893,7 @@ impl Vault {
                 "expression preference lifecycle is owned by retract_expression_preference",
             ));
         }
-        self.retract_claim_in_txn_as(&mut wtxn, id, now, closer)?;
+        self.retract_claim_in_txn_as_owner(&mut wtxn, id, now, closer, owner_write)?;
         rekeys.finish(&self.store, &mut wtxn)?;
         wtxn.commit()?;
         self.store.notify_proactivity_changes();
@@ -904,6 +928,24 @@ impl Vault {
         self.retract_claim_in_txn_with(wtxn, id, now, actor, RetractRun::Gated)
     }
 
+    /// [`Vault::retract_claim_in_txn_as`] for the vault owner's own close:
+    /// `owner` is the owner's in-person proof, revalidated in `wtxn` by the
+    /// owner's door. It rides the close of an Approved claim alone: a stored
+    /// Approved is history on its exact close, and the proof is the
+    /// in-person confirmation a declared critical class asks of it, as of
+    /// the owner's approval (FIX
+    /// OWNER-CLOSE-DOORS-DECLARED-CRITICAL-APPROVED-CLOSE-PENDS).
+    pub(crate) fn retract_claim_in_txn_as_owner(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        now: u64,
+        actor: Option<crate::WriteActor>,
+        owner: Option<crate::consent::OwnerAuthoredWrite>,
+    ) -> Result<Option<GateDecisionRecord>> {
+        self.retract_claim_in_txn_owned(wtxn, id, now, actor, RetractRun::Gated, owner)
+    }
+
     /// [`Vault::retract_claim_in_txn_as`], run as `run` says. A retract the
     /// holder consented to closes no tray row and asks no gate: its door
     /// checked the parked binding, as a closed tray row is the consent of
@@ -916,6 +958,21 @@ impl Vault {
         actor: Option<crate::WriteActor>,
         run: RetractRun,
     ) -> Result<Option<GateDecisionRecord>> {
+        self.retract_claim_in_txn_owned(wtxn, id, now, actor, run, None)
+    }
+
+    /// [`Vault::retract_claim_in_txn_with`] with the vault owner's proof
+    /// `owner` for the close of an Approved claim
+    /// ([`Vault::retract_claim_in_txn_as_owner`]).
+    fn retract_claim_in_txn_owned(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        now: u64,
+        actor: Option<crate::WriteActor>,
+        run: RetractRun,
+        owner: Option<crate::consent::OwnerAuthoredWrite>,
+    ) -> Result<Option<GateDecisionRecord>> {
         // A retracted head moves what the host's timers read; the mark fires
         // only if this transaction commits.
         crate::batch::queue_proactivity_change(self, wtxn);
@@ -923,6 +980,7 @@ impl Vault {
         // gate receipt below: a stale retract must leave the consent row and
         // every receipt exactly as it found them.
         let (mut body, header) = self.guarded_claim_target_parts_in(&*wtxn, id)?;
+        let owner = owner.filter(|_| body.approval == ClaimApprovalStatus::Approved);
         let closed_end = lifecycle_close_end_in(&self.store, &*wtxn, &body, &header, now)?;
         // The retraction closes the claim, so its owner is shown no item for
         // the open revision; an open obligation stays open.
@@ -995,7 +1053,7 @@ impl Vault {
                     auto_checker: None,
                     defer_metrics_until_commit: false,
                     transition: Some(&transition),
-                    owner_authored: None,
+                    owner_authored: owner.as_ref(),
                     pending_prompt: None,
                 },
                 &policy,
@@ -1013,7 +1071,8 @@ impl Vault {
         if run == RetractRun::GateAnswerOnly {
             return Ok(None);
         }
-        self.apply_lifecycle_materialization(wtxn, ops, binding, transition, false, None)?;
+        let owner = owner.map(|proof| (*id, proof));
+        self.apply_lifecycle_materialization(wtxn, ops, binding, transition, false, owner)?;
         // The lifecycle applies past the batch door, which is what tells a
         // write's owner of the rows it wrote: the closed claim is queued
         // here for the live windows' post-commit mirror. A write with no
