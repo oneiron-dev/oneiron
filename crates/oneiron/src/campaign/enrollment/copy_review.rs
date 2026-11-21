@@ -130,7 +130,7 @@ pub enum CopyReviewOutcome {
     Abstained,
     /// The campaign's owner cannot read the voice guide through the scoped
     /// NOTE read (its grants, the diary gate, an erased or missing NOTE), or
-    /// the campaign names none and the vault has no house voice guide: no
+    /// the campaign names none and no house voice guide could be seeded: no
     /// judge is asked, nothing is stored, and the send holds.
     GuideUnreadable,
 }
@@ -247,8 +247,22 @@ impl Vault {
         let guide = match rule {
             CopyReviewRule::NotGoverned => return Ok(CopyReviewOutcome::NotGoverned),
             CopyReviewRule::Human => return Ok(CopyReviewOutcome::HumanReview),
-            CopyReviewRule::Judge(None) => return Ok(CopyReviewOutcome::GuideUnreadable),
             CopyReviewRule::Judge(Some(guide)) => guide,
+            // A campaign that reached this vault without its create door (by
+            // sync, or an archive import) can find no house guide yet: seed
+            // it now. A vault that had one keeps its marker, so a guide the
+            // owner deleted stays deleted.
+            CopyReviewRule::Judge(None) => match self.ensure_house_voice_guide() {
+                Ok(Some(guide)) => guide,
+                Ok(None) => return Ok(CopyReviewOutcome::GuideUnreadable),
+                Err(error) => {
+                    tracing::warn!(
+                        kind = ?error.kind(),
+                        "the house voice guide could not be seeded for a copy review; the send holds"
+                    );
+                    return Ok(CopyReviewOutcome::GuideUnreadable);
+                }
+            },
         };
         let Some(guide_view) = read_voice_guide(self, definition.owner_actor, guide)? else {
             return Ok(CopyReviewOutcome::GuideUnreadable);

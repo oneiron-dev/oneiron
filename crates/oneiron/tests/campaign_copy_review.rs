@@ -850,6 +850,47 @@ mod judged {
         );
     }
 
+    /// A campaign that reached the vault without its create door (by sync, or
+    /// an archive import) can find no house guide: the host's review seeds
+    /// one and judges the copy against it, and a passing verdict clears copy
+    /// review. The door drops the marker the campaign's create wrote.
+    #[cfg(oneiron_test_support)]
+    #[test]
+    fn a_review_that_finds_no_house_guide_seeds_one_and_judges_against_it() {
+        let leg = leg(|_, _| json!({}));
+        let created = leg
+            .vault
+            .house_voice_guide()
+            .unwrap()
+            .expect("the campaign's create seeded a guide");
+        oneiron::test_doors::campaign_house_voice_guide::forget_house_voice_guide(&leg.vault)
+            .unwrap();
+        let judge = CopyJudge {
+            follows: true,
+            reason: "on_voice",
+        };
+        let outcome = leg
+            .vault
+            .review_enrollment_copy(&leg.attempt, &decisions(&judge))
+            .unwrap();
+        let CopyReviewOutcome::Reviewed(verdict) = outcome else {
+            panic!("the review seeds a guide and judges against it: {outcome:?}");
+        };
+        let seeded = leg
+            .vault
+            .house_voice_guide()
+            .unwrap()
+            .expect("the review seeded a house voice guide");
+        assert_ne!(seeded, created, "a new guide, since the marker was gone");
+        assert_eq!(verdict.voice_guide_ref, seeded);
+        drive_held(&leg.vault, &leg.attempt);
+        let state = held_ask_state(&leg.vault);
+        assert!(
+            !strings(&state, "gate_reason_codes").contains(&PENDING_COPY_REVIEW.to_owned()),
+            "a passing review against the seeded guide clears copy review: {state}"
+        );
+    }
+
     /// On a host with no judge seat the judge abstains: nothing is stored,
     /// and the unguided campaign's send holds for the owner's press, with the
     /// copy-review hold and owner ask a human-review campaign gets.

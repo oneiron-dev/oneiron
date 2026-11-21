@@ -47,7 +47,7 @@ fn owner(vault: &Vault) -> EntityId {
 }
 
 /// A campaign named `name`, created by `principal` through the create door.
-fn create(vault: &Vault, principal: EntityId, name: &str) {
+fn create(vault: &Vault, principal: EntityId, name: &str) -> EntityId {
     create_campaign(
         vault,
         principal,
@@ -61,7 +61,8 @@ fn create(vault: &Vault, principal: EntityId, name: &str) {
         },
         vault.now_recorded_at(),
     )
-    .expect("the campaign");
+    .expect("the campaign")
+    .campaign_ref
 }
 
 /// The guide's text as the vault's owner reads it.
@@ -179,4 +180,26 @@ fn a_vault_with_no_campaign_gets_no_house_voice_guide() {
     drop(open_seeded(dir.path()));
     let vault = open_seeded(dir.path());
     assert_eq!(vault.house_voice_guide().unwrap(), None);
+}
+
+/// A deleted campaign keeps its typed shell, which is no live campaign: a
+/// vault from before the seed whose only campaign is deleted gets no guide at
+/// its next open.
+#[test]
+fn a_vault_whose_only_campaign_is_deleted_gets_no_guide_at_open() {
+    let dir = tempfile::tempdir().unwrap();
+    {
+        let vault = open_crm_vault(dir.path());
+        let campaign = create(&vault, EntityId::now(), "campaign from before the seed");
+        vault
+            .delete_entity(&campaign)
+            .expect("the campaign is deleted");
+        assert_eq!(vault.house_voice_guide().unwrap(), None);
+    }
+    let vault = open_seeded(dir.path());
+    assert_eq!(
+        vault.house_voice_guide().unwrap(),
+        None,
+        "a deleted campaign seeds no guide"
+    );
 }

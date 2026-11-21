@@ -6,9 +6,12 @@
 //!
 //! A vault gets its guide with its first campaign: the campaign create door
 //! seeds it once the campaign is stored. A vault from before this build that
-//! already holds a campaign gets it at its next seeded writable open. A vault
-//! that never runs a campaign gets none, so the guide's text never reaches
-//! its reads and context. Its row in `CAMPAIGN_HOUSE_VOICE_GUIDE` names the
+//! already holds a live campaign gets it at its next seeded writable open. A
+//! campaign that arrived without the create door (by sync, or an archive
+//! import, while the vault was open) gets it at its first copy review: the
+//! host's review seeds it when a governed campaign finds none. A vault that
+//! never runs a campaign gets none, so the guide's text never reaches its
+//! reads and context. Its row in `CAMPAIGN_HOUSE_VOICE_GUIDE` names the
 //! NOTE and is the seed's marker: written in the NOTE's birth commit, it makes
 //! the seed run once. Each replica seeds its own, as the root project is
 //! seeded. A guide the owner deletes is not seeded again: a campaign with no
@@ -57,9 +60,9 @@ pub(crate) fn house_voice_guide_in_txn(
     GUIDE.get(store, txn, &())
 }
 
-/// The open's seed: a vault that holds a campaign and has no house voice
-/// guide yet (one from before this build) gets one. A vault with no campaign,
-/// or with the marker, writes nothing.
+/// The open's seed: a vault that holds a live campaign and has no house
+/// voice guide yet (one from before this build) gets one. A vault with no
+/// live campaign, or with the marker, writes nothing.
 ///
 /// # Errors
 ///
@@ -71,10 +74,46 @@ pub(crate) fn seed_house_voice_guide_at_open(vault: &Vault) -> Result<()> {
     let Ok(kind) = crate::campaign::surface::campaign_type_byte(vault) else {
         return Ok(());
     };
-    if vault.entities_by_type_page(kind, None, 1)?.is_empty() {
+    if !holds_live_campaign(vault, kind)? {
         return Ok(());
     }
     vault.ensure_house_voice_guide().map(|_| ())
+}
+
+/// Whether the vault holds a campaign that is not deleted. A deleted or
+/// erased campaign keeps its typed shell in the type index, so the index
+/// alone proves nothing; the pages stop at the first live one.
+fn holds_live_campaign(vault: &Vault, kind: u8) -> Result<bool> {
+    const PAGE: usize = 64;
+    let txn = vault.store.env.read_txn()?;
+    let mut after = None;
+    loop {
+        let page = vault.entities_by_type_page_in_txn(&txn, kind, after.as_ref(), PAGE)?;
+        for campaign in &page {
+            let state = crate::ports::TombstoneStoreRead::port_deletion_state(
+                &vault.store,
+                &txn,
+                campaign,
+            )?;
+            if !state.deleted && !state.stale {
+                return Ok(true);
+            }
+        }
+        if page.len() < PAGE {
+            return Ok(false);
+        }
+        after = page.last().copied();
+    }
+}
+
+/// Test door: drops the marker, so the vault holds no house voice guide, as a
+/// vault does whose campaign arrived without the create door.
+#[cfg(oneiron_test_support)]
+pub(crate) fn forget_house_voice_guide(vault: &Vault) -> Result<()> {
+    vault.with_write_txn_grouped(|txn| {
+        GUIDE.delete(&vault.store, txn, &())?;
+        Ok(())
+    })
 }
 
 impl Vault {
@@ -93,8 +132,9 @@ impl Vault {
     /// [`HOUSE_VOICE_GUIDE_NOTE_KIND`] with [`HOUSE_VOICE_GUIDE_MARKDOWN`],
     /// written by the vault's owner, and its marker row, in one commit. A
     /// vault that already has its marker keeps it, whatever became of the
-    /// NOTE. The campaign create door runs it, and a seeded open for a vault
-    /// that holds a campaign. Returns the guide, or `None` when the owner is
+    /// NOTE. The campaign create door runs it, a seeded open for a vault that
+    /// holds a live campaign, and the host's copy review for a governed
+    /// campaign that finds no guide. Returns the guide, or `None` when the owner is
     /// erased: no one is left to author it.
     ///
     /// # Errors
