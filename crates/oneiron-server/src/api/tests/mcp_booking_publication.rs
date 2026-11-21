@@ -176,6 +176,11 @@ async fn a_propose_only_slip_cannot_take_a_public_booking_page_offline() {
             .expect("entity");
     }
     crate::test_credentials::bind_owner(&server.vault, "secret", owner);
+    // The owner publishes on the booking home alone (FIX
+    // [BK-PUBLICATION-CLAIM-REFUSED-AT-SYNC-INGRESS]): the server is its vault's one node.
+    oneiron::DreamerRunnerStore::new(&server.vault)
+        .elect_home_node(&[oneiron::DreamerHomeNodeCandidate::always_on_local(9)], 1)
+        .expect("home node");
     let config = config(host);
     let mut config_claim = ClaimBody::new(
         BOOKING_EVENT_TYPE_PREDICATE,
