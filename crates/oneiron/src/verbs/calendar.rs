@@ -108,7 +108,8 @@ pub(crate) struct CalendarHoldReleaseView {
 }
 
 /// The booking EVENT `input` names and its calendar holds as the sheet shows them, read under
-/// `owner`'s proof as a vault-owner write would take it. A booking with no hold is refused.
+/// `owner`'s proof as a vault-owner write would take it. A booking with no hold, or whose every
+/// hold only reconnecting its seat lifts (a first write's), is refused.
 pub(crate) fn calendar_hold_release_view(
     vault: &crate::Vault,
     owner: &crate::consent::AuthenticatedOwner,
@@ -123,6 +124,14 @@ pub(crate) fn calendar_hold_release_view(
     if holds.is_empty() {
         return Err(crate::memory::MemoryError::not_found(
             "no calendar change of this booking is on hold",
+        ));
+    }
+    if !holds.iter().any(|hold| hold.releasable) {
+        return Err(crate::memory::MemoryError::new(
+            crate::memory::MEMORY_CODE_INVALID_STATE,
+            "this hold holds the event's first write, whose copy would import a second event: \
+             only reconnecting its connection lifts it",
+            &["Reconnect it: vault.settings.set of calendar.connector_seat, same config."],
         ));
     }
     Ok((
@@ -172,6 +181,10 @@ pub fn release_calendar_hold_as(
     }
     Ok(CalendarConnectorReleaseHoldReceipt {
         event_ref: view.event_ref,
-        released: view.holds,
+        released: view
+            .holds
+            .into_iter()
+            .filter(|hold| hold.releasable)
+            .collect(),
     })
 }

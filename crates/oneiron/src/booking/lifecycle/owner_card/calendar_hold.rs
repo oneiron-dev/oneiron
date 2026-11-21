@@ -29,8 +29,10 @@ pub struct BookingOwnerCardCalendarHold {
     /// The verb of "Reconnect it" ([`CALENDAR_HOLD_RECONNECT_VERB`]).
     pub reconnect_verb: String,
     /// The verb of "Release the hold", previewed through `vault.owner_confirm.preview`, input
-    /// `{event_ref}` ([`CALENDAR_HOLD_RELEASE_VERB`]).
-    pub release_verb: String,
+    /// `{event_ref}` ([`CALENDAR_HOLD_RELEASE_VERB`]); absent when no hold is releasable (each
+    /// holds a first write, which only "Reconnect it" lifts).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release_verb: Option<String>,
 }
 
 /// The calendar hold of the booking `event_ref`, read in `rtxn`; `None` when nothing holds.
@@ -53,11 +55,15 @@ pub(super) fn calendar_hold_in_txn(
          out of service",
         calendars.join(", ")
     );
+    let release_verb = holds
+        .iter()
+        .any(|hold| hold.releasable)
+        .then(|| CALENDAR_HOLD_RELEASE_VERB.to_owned());
     Ok(Some(BookingOwnerCardCalendarHold {
         line,
         holds,
         reconnect_verb: CALENDAR_HOLD_RECONNECT_VERB.to_owned(),
-        release_verb: CALENDAR_HOLD_RELEASE_VERB.to_owned(),
+        release_verb,
     }))
 }
 

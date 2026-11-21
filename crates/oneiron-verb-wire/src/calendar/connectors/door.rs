@@ -56,8 +56,9 @@ pub enum CalendarHoldSeat {
 }
 
 /// One write-outbox row that holds the pulls of a booking's EVENT while the seat that wrote it
-/// is out of service: the calendar it names, why its seat is out, the SEQUENCE it staged, and
-/// the row as it stands (its key, carrier instance and last move, each a release binds).
+/// is out of service: the calendar it names, why its seat is out, the SEQUENCE it staged, the
+/// row as it stands (its key, carrier instance, last move and revision; a release binds the
+/// revision), and whether the owner may release it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CalendarHoldRow {
@@ -75,6 +76,13 @@ pub struct CalendarHoldRow {
     pub instance: String,
     /// When the row last moved, on the vault's recording clock.
     pub updated_at: u64,
+    /// The row's revision, 64 lowercase hex: a digest of the row as stored, which every move
+    /// changes. A release binds it, so a row that moves after its release holds again.
+    pub revision: String,
+    /// Whether "Release the hold" lifts this row. `false` for a first write of the EVENT: its
+    /// copy names a UID no passport binds yet and would import a second EVENT, so only
+    /// reconnecting the seat lifts it.
+    pub releasable: bool,
 }
 
 /// `calendar.connector.release_hold`'s answer: the booking EVENT and each row whose hold the
