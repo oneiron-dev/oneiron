@@ -58,6 +58,12 @@ use crate::store::source_audience_obligation::SourceAudienceObligation;
 use crate::{EntityId, Vault};
 
 pub(crate) use floor::{FloorSource, SOURCE_READERS, SourceReaders, floor_source_in};
+pub(crate) use floor_migration::visit_row_in_txn;
+#[cfg(any(test, feature = "test-support", oneiron_test_support))]
+pub(crate) use floor_migration::{
+    end_backfill_without_archived_rows_in_txn, mark_backfill_done_in_txn, mark_raised_in_txn,
+    mark_waiting_in_txn, sweep_floors_from_raising_cursor,
+};
 pub(crate) use obligation::{
     SourceAudienceBirth, admit_obligation_in_txn, admit_session_obligation_in_txn,
     binding_stands_on, body_names_obligation, keeps_row_obligation, mark_birth_in_txn,
@@ -72,11 +78,6 @@ pub(crate) use replica::{
     event_names_erased_actor_in, event_without_erased_actors, merge_event_in_txn,
     merge_policy_in_txn, names_erased_actor_in, policy_closure_in, policy_conflicts_in, policy_in,
     publishable_in, published_closure_in, redacted_successor_in, thread_source_in,
-};
-#[cfg(any(test, feature = "test-support", oneiron_test_support))]
-pub(crate) use floor_migration::{
-    end_backfill_without_archived_rows_in_txn, mark_backfill_done_in_txn, mark_raised_in_txn,
-    mark_waiting_in_txn, sweep_floors_from_raising_cursor,
 };
 #[cfg(any(test, feature = "test-support", oneiron_test_support))]
 pub(crate) use source_state::forget_floor_state_in_txn;

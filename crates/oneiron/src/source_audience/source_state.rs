@@ -289,6 +289,25 @@ pub(super) fn mark_migrated_in_txn(store: &crate::store::Store, txn: &mut RwTxn<
     MIGRATED.put(store, txn, &(), &true)
 }
 
+/// Whether the migration has judged every row here: it has ended, or it
+/// empties the old tables now.
+///
+/// # Errors
+///
+/// Storage failures.
+pub(super) fn judged_all_in(store: &crate::store::Store, txn: &RoTxn<'_>) -> Result<bool> {
+    Ok(MIGRATED.get(store, txn, &())?.is_some())
+}
+
+/// Marks that the migration has judged every row, before it empties the
+/// old tables.
+pub(super) fn mark_judged_all_in_txn(
+    store: &crate::store::Store,
+    txn: &mut RwTxn<'_>,
+) -> Result<()> {
+    MIGRATED.put(store, txn, &(), &false)
+}
+
 /// Whether a later owner erase reached `input`, an input deleted before
 /// floors: its permanent `dt:` marker stands, or an owner's erase of its
 /// head scrubbed it as a redirect shell.
@@ -335,7 +354,11 @@ pub(super) fn open_of_in(
 }
 
 /// Whether `row` has an open entry.
-fn has_open_in(store: &crate::store::Store, txn: &RoTxn<'_>, row: &EntityId) -> Result<bool> {
+pub(super) fn has_open_in(
+    store: &crate::store::Store,
+    txn: &RoTxn<'_>,
+    row: &EntityId,
+) -> Result<bool> {
     Ok(OPEN.iter_from(store, txn, row.as_bytes())?.next().is_some())
 }
 
