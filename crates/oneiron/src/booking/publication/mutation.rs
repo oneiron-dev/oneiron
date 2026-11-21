@@ -72,6 +72,25 @@ impl PublicBookingAuthority {
         Ok(())
     }
 
+    /// [`Self::recheck_in_txn`] in one read of its own: the page's live
+    /// publication and, through a personal link, that link, both from the
+    /// same snapshot (BK-PERSONAL-LINKS). A slot read's final check runs
+    /// this, so a link ended while its slots were read or solved answers
+    /// none.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::recheck_in_txn`], and [`BookingError::Surface`] when the
+    /// read does not open.
+    pub fn recheck(&self, vault: &Vault, now: u64) -> std::result::Result<(), BookingError> {
+        let txn = vault
+            .store
+            .env
+            .read_txn()
+            .map_err(|error| BookingError::Surface(crate::Error::from(error).to_string()))?;
+        self.recheck_in_txn(vault, &txn, now)
+    }
+
     pub(crate) fn check_in_txn(
         &self,
         vault: &Vault,

@@ -20,8 +20,7 @@ use super::host_doors::support::{
 };
 use crate::api::booking::{
     booking_page_token, credential_transport_context, execute_booking_operation_listing,
-    resolve_booking_page_listing, resolve_public_booking_page_listing,
-    run_public_constraint_turn_listing,
+    public_attempt_authority, resolve_booking_page_listing, run_public_constraint_turn_listing,
 };
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
@@ -142,14 +141,12 @@ pub(crate) async fn vault_booking_constraint_turn(
     let answer: MemoryResult<(BookingConstraintTurnResponse, Vec<EntityId>)> = async {
         let transport = credential_transport_context(server, auth)
             .map_err(|error| FacadeApiError::from(error).into_memory_error())?;
-        let (page_ref, publication, mut rows) =
-            resolve_public_booking_page_listing(server, &input.page_token, &auth.destination())
+        // The same snapshot as the public front's: through a personal link
+        // it carries that link, so the turn's final check also needs it live
+        // (BK-PERSONAL-LINKS, review round 2 of #8571).
+        let (authority, mut rows, _) =
+            public_attempt_authority(server, &input.page_token, &auth.destination())
                 .map_err(|error| FacadeApiError::from(error).into_memory_error())?;
-        let authority = oneiron::booking::publication::PublicBookingAuthority {
-            page_ref,
-            publication,
-            personal_link_ref: None,
-        };
         let (response, solved) =
             run_public_constraint_turn_listing(server, authority, input.turn, &transport)
                 .await

@@ -63,7 +63,7 @@ async fn public_booking_not_found_response() -> ApiError {
 /// Configuration locates the internal subject; only the durable owner claim
 /// grants public access. Every miss has the same response and no token echo,
 /// a page kept from `destination` included
-/// ([`resolve_public_booking_page_listing`]).
+/// ([`resolve_public_booking_capability_listing`]).
 pub(crate) fn resolve_public_booking_page(
     server: &SyncServer,
     page_token: &str,
@@ -71,21 +71,6 @@ pub(crate) fn resolve_public_booking_page(
 ) -> Result<(EntityId, BookingPagePublication), ApiError> {
     resolve_public_booking_capability(server, page_token, destination)
         .map(|(page_ref, publication, _)| (page_ref, publication))
-}
-
-/// [`resolve_public_booking_page`], beside the rows the publication was read
-/// from (FIX 4777): the page, its publication claim and each event-type
-/// claim it validated, from that one read. Those rows configure every slot
-/// the page offers, so a page one of whose rows a world withheld from
-/// `destination` keeps is no page there (DEC-0005, census L5-29): the same
-/// miss, naming no world and no reason.
-pub(crate) fn resolve_public_booking_page_listing(
-    server: &SyncServer,
-    page_token: &str,
-    destination: &ReadDestination,
-) -> Result<(EntityId, BookingPagePublication, Vec<EntityId>), ApiError> {
-    resolve_public_booking_capability_listing(server, page_token, destination)
-        .map(|(page_ref, publication, rows, _)| (page_ref, publication, rows))
 }
 
 /// [`resolve_public_booking_page`], beside the personal link the token is,
@@ -106,7 +91,12 @@ pub(crate) fn resolve_public_booking_capability(
         .map(|(page_ref, publication, _, link)| (page_ref, publication, link))
 }
 
-/// [`resolve_public_booking_page_listing`], beside the personal link the
+/// [`resolve_public_booking_page`], beside the rows the publication was read
+/// from (FIX 4777): the page, its publication claim and each event-type
+/// claim it validated, from that one read. Those rows configure every slot
+/// the page offers, so a page one of whose rows a world withheld from
+/// `destination` keeps is no page there (DEC-0005, census L5-29): the same
+/// miss, naming no world and no reason. Beside them, the personal link the
 /// token is, when it is one. The link is a side-table row, so it lists none.
 /// A personal link opens the page's own rows, so the same judge runs on both
 /// token kinds: a page kept from `destination` is no page there, through a
@@ -180,8 +170,10 @@ pub(super) fn check_personal_link_recipient(
 /// The snapshot a public attempt carries to its writers: the page, its live
 /// publication and, through a personal link, that link, which every writer
 /// then rechecks beside the publication (BK-PERSONAL-LINKS). Beside it, the
-/// rows the publication was read from, and the link itself.
-pub(super) fn public_attempt_authority(
+/// rows the publication was read from, and the link itself. The facade's
+/// constraint turn takes its snapshot here too, so a turn through a personal
+/// link carries that link to its final check.
+pub(crate) fn public_attempt_authority(
     server: &SyncServer,
     page_token: &str,
     destination: &ReadDestination,
