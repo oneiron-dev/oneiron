@@ -242,6 +242,17 @@ pub(crate) fn trap_waits_for_attempt_in_txn(
         && binding.park_owner == super::trap::trap_park_owner(&trap.trap_claim_id))
 }
 
+/// Whether `trap` is consumed (FIX PAUSE-BOUNDARY-PARKED-RUN): a wake
+/// reached it already, so no later wake reaches a park under it.
+pub(crate) fn trap_consumed_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    trap: &super::types::TrapRef,
+) -> Result<bool> {
+    let (_, head) = super::trap::trap_head_in_txn(vault, rtxn, &trap.trap_claim_id)?;
+    Ok(head.state == super::types::DreamerTrapState::Consumed)
+}
+
 pub(super) fn trap_binding_delete_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,

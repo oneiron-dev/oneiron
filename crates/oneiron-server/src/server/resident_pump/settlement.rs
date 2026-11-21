@@ -485,7 +485,8 @@ fn run_confession(
 /// park and no park is left unbound. The woken attempt is ready again, and
 /// the next pass enters the run, which goes on from the reply. A run that
 /// re-enters a wait whose trap still waits for it, as one a person's pause
-/// took off its park, parks again under that trap.
+/// took off its park, parks again under that trap; a reply that consumes
+/// that trap before the park lands queues the run in the park's commit.
 fn park_on_wait(
     vault: &Vault,
     status: &AgentDispatchStatus,
@@ -502,30 +503,36 @@ fn park_on_wait(
     let actor = agent_dispatch_run_actor(&status.input, attempt.id)?;
     let kind = trap_for_durable_wait(&parked.wait, parked.step_hash);
     // A run a person's pause took off this same wait parks again under the
-    // trap still bound to it (FIX PAUSE-BOUNDARY-PARKED-RUN).
+    // trap still bound to it (FIX PAUSE-BOUNDARY-PARKED-RUN). That trap
+    // registered its wait when the run first parked, and a reply may consume
+    // it before the park below commits: the park writer then queues the run,
+    // so no second registration runs here (one would refuse the spent trap).
     let bound = open_wait_trap(vault, &parked.key, attempt.id)?
         .filter(|trap| trap.kind == kind && trap.step_hash == parked.step_hash);
-    let trap = match bound {
-        Some(trap) => trap,
-        None => open_trap(
-            vault,
-            &DurableStepContext {
+    let (trap, registered) = match bound {
+        Some(trap) => (trap, oneiron::llm::DreamerTrapState::Waiting),
+        None => {
+            let trap = open_trap(
                 vault,
-                attempt_id: attempt.id,
-                run_id: attempt.run_id.clone(),
-                envelope_actor: actor,
-                subject: parked.wait.wait_id,
-                deadline: None,
-                now_ms,
-                spend_scope: None,
-                wake_pass_bound: false,
-            },
-            kind,
-            parked.step_hash,
-            "code-run wait",
-        )?,
+                &DurableStepContext {
+                    vault,
+                    attempt_id: attempt.id,
+                    run_id: attempt.run_id.clone(),
+                    envelope_actor: actor,
+                    subject: parked.wait.wait_id,
+                    deadline: None,
+                    now_ms,
+                    spend_scope: None,
+                    wake_pass_bound: false,
+                },
+                kind,
+                parked.step_hash,
+                "code-run wait",
+            )?;
+            let registered = register_wait(vault, &trap, now_ms)?;
+            (trap, registered)
+        }
     };
-    let registered = register_wait(vault, &trap, now_ms)?;
     // The park and its wake binding commit together: a stop between them
     // would leave a park no delivery wakes.
     park_and_bind_wait_trap(

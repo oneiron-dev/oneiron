@@ -260,6 +260,13 @@ pub fn open_wait_trap(
 /// reply already delivered consumes the trap as one that lands while the
 /// run is paused does, wakes no park, and is kept for the resumed run:
 /// `false` then, since no run woke.
+///
+/// The host reads the trap still bound to a wait before this writer parks
+/// the resumed run under it, and a reply that lands between the two
+/// consumes it with no park to wake. This writer finds the trap consumed
+/// and queues the attempt in the park's own commit, as the trap's wake
+/// would have, so no park is left under a trap no wake reaches again; the
+/// next lease goes on from the reply (`true`).
 pub fn park_and_bind_wait_trap(
     vault: &Vault,
     park: crate::dreamer_runner::ParkDreamerAttempt,
@@ -269,23 +276,31 @@ pub fn park_and_bind_wait_trap(
 ) -> Result<bool> {
     let (woke, paused) = vault.with_write_txn_grouped(|txn| {
         let attempt = park.attempt_id;
-        crate::DreamerRunnerStore::new(vault).park_attempt_with_wait_in_txn(
-            txn,
-            park,
-            answer_wait(trap.kind, *key),
-        )?;
+        let owner = park.park_owner.clone();
+        let consumed = crate::llm::trap_consumed_in_txn(vault, txn, trap)?;
+        let store = crate::DreamerRunnerStore::new(vault);
+        store.park_attempt_with_wait_in_txn(txn, park, answer_wait(trap.kind, *key))?;
         TRAPS.put(&vault.store, txn, &key.row(), trap)?;
         crate::idle_fold::record_parked_in_txn(vault, txn, key, trap.kind, attempt, now_ms)?;
         let paused =
             crate::run_tree::RunTreeAdapter::new(vault).pause_parked_in_txn(txn, attempt)?;
-        if !DELIVERIES.contains(&vault.store, txn, &key.row())? {
+        let delivered = DELIVERIES.contains(&vault.store, txn, &key.row())?;
+        if delivered {
+            crate::idle_fold::record_returned_in_txn(vault, txn, key, now_ms)?;
+        }
+        if consumed {
+            if !paused {
+                store.resume_parked_in_txn(txn, attempt, &owner, now_ms)?;
+            }
+            return Ok((!paused, paused));
+        }
+        if !delivered {
             return Ok((false, paused));
         }
-        crate::idle_fold::record_returned_in_txn(vault, txn, key, now_ms)?;
         wake_bound_trap_in_txn(vault, txn, key, trap, now_ms)?;
         Ok((!paused, paused))
     })?;
-    if paused {
+    if woke || paused {
         vault.store.notify_attempt_observers();
     }
     Ok(woke)
