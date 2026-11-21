@@ -401,6 +401,8 @@ fn load_public_booking_page_listed_in_txn(
 
 mod mutation;
 pub use mutation::PublicBookingAuthority;
+#[cfg(feature = "sync")]
+pub(crate) mod home_rows;
 mod write_index;
 use write_index::indexed_publication;
 pub use write_index::{booking_config_hash, resolve_public_booking_token};
