@@ -442,21 +442,29 @@ impl ConsolidationExecutor<'_> {
         resolution: &str,
         identity: Option<EntityId>,
         conflict: &ConflictSet,
-        members: &[&PromotionCandidate],
+        members: &[&super::super::evidence::VerifiedCandidate],
         prior_heads: &[super::super::PriorHead],
         scope: &oneiron_model::llm::Scope,
         charges: &mut StepChargeTally,
     ) -> DurableStepResult<Option<MergeResolution>> {
         let call = self.role(DREAMER_VERDICT_ROLE);
-        let mut request = Self::value_request(
+        let proposals: Vec<&PromotionCandidate> =
+            members.iter().map(|member| &member.proposal).collect();
+        let (mut request, labels) = Self::value_request(
             &call,
             resolution,
             identity,
             &conflict.identity,
-            members,
+            &proposals,
             prior_heads,
             scope,
         )?;
+        // The call sends under the rows its text was read from, as a conflict
+        // read does (FIX 11526): each member's extraction rows and each stored
+        // prior head; unknown when a member's rows are
+        // ([DREAMER-UNSOURCED-ROLE-CALLS-SEND-UNFENCED]).
+        let heads: Vec<EntityId> = prior_heads.iter().map(|prior| prior.claim_id).collect();
+        let backend = call.call_backend(conflict_sources(members, &heads, &labels));
         if let Some(rules) = failure_rules::load(step_ctx.vault)? {
             rules.bind(Stage::Conflict, &mut request);
         }
@@ -465,7 +473,7 @@ impl ConsolidationExecutor<'_> {
             .authorize_model_role(DREAMER_VERDICT_ROLE, request, &call.inference)?
             .into_request();
         super::super::roles::bind_reasoning(step_ctx.vault, call.backend, &mut request)?;
-        let outcome = call_as_step(step_ctx, call.backend, self.guard, request).await;
+        let outcome = call_as_step(step_ctx, backend.get(), self.guard, request).await;
         let (response, binding) = match outcome? {
             StepOutcome::Finished {
                 response, binding, ..
@@ -493,7 +501,8 @@ impl ConsolidationExecutor<'_> {
     }
 
     /// The resolved-value request: each claim by its call-local label
-    /// (FIX 7506), the map bound into the request's identity.
+    /// (FIX 7506), the map bound into the request's identity. Returns the
+    /// request and that map.
     fn value_request(
         call: &RoleCall<'_>,
         resolution: &str,
@@ -502,7 +511,7 @@ impl ConsolidationExecutor<'_> {
         members: &[&PromotionCandidate],
         prior_heads: &[super::super::PriorHead],
         scope: &oneiron_model::llm::Scope,
-    ) -> Result<LlmRequest> {
+    ) -> Result<(LlmRequest, CallLabelMap)> {
         let mut labels = CallLabelMap::default();
         let mut lines = format!("resolution {resolution}\n");
         if let Some(kept) = kept {
@@ -583,7 +592,7 @@ impl ConsolidationExecutor<'_> {
             host_segments: None,
         };
         labels.bind_request(&mut request, None);
-        Ok(request)
+        Ok((request, labels))
     }
 }
 

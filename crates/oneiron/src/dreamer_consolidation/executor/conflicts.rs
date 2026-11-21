@@ -174,7 +174,7 @@ impl ConsolidationExecutor<'_> {
                             label,
                             answers.identity,
                             conflict,
-                            &member_data,
+                            &members,
                             &prior_heads,
                             resources.scope(),
                             charges,
