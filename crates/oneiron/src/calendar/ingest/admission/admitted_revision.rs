@@ -138,8 +138,9 @@ pub(super) fn event_occurrence(event: &ParsedVEvent) -> TimeRange {
 /// The revision's VEVENT is read again from the archived version it was
 /// filed from: the passport's own source, else the version its evidence
 /// cites. The EVENT's name and occurrence move here, as an import's rewrite
-/// moves them, unless the master EVENT carries a live booking, which moved
-/// through its booking at import. Its property claims and its status follow
+/// moves them, unless the import's booking move kept the master EVENT: a
+/// live booking moved through its booking, and a booking's EVENT keeps its
+/// booked slot through a cancellation. Its property claims and its status follow
 /// through a queued property continuation in revision mode, under the
 /// screen and gate an import crosses; an installed feed's consent settles
 /// them as it settles a continuation's. An outbound-only or absent passport,
@@ -198,14 +199,17 @@ pub(crate) fn apply_admitted_passport_revision_in_txn(
     if vault.get_entity_type_in_txn(txn, &event_ref)? != Some(ENTITY_TYPE_EVENT) {
         return Ok(());
     }
-    // As the import moves it: a master EVENT with a live booking moved
-    // through its booking, and a cancellation is never a booking move.
-    let booking_moved = event.properties.recurrence_id_utc.is_none()
-        && !event.cancelled
-        && crate::booking::lifecycle::carries_live_booking_in(vault, txn, &event_ref).map_err(
-            |error| crate::Error::Refused(format!("calendar booking read failed: {error}")),
-        )?;
-    if !booking_moved {
+    // As the import's booking move reads it: a booking's master EVENT keeps
+    // its booked slot through a cancellation, and one with a live booking
+    // moved through its booking.
+    let booking_keeps_event = event.properties.recurrence_id_utc.is_none()
+        && if event.cancelled {
+            crate::booking::lifecycle::is_booking_event_in(vault, txn, &event_ref)
+        } else {
+            crate::booking::lifecycle::carries_live_booking_in(vault, txn, &event_ref)
+        }
+        .map_err(|error| crate::Error::Refused(format!("calendar booking read failed: {error}")))?;
+    if !booking_keeps_event {
         rewrite_event_in_txn(
             vault,
             txn,
