@@ -450,7 +450,8 @@ pub(crate) fn first_write_unsettled(
 /// This seat's outbox row of a replayed upsert of `uid` whose precondition
 /// refusal's read proved its stored copy neither its own nor another
 /// writer's, so the seat's next pull of the resource proves it
-/// (BK-ECHO-RECONCILE-FAILURE-RELEASES-UNMARKED-COPY). Its sealed values are
+/// (BK-ECHO-RECONCILE-FAILURE-RELEASES-UNMARKED-COPY), with the row's
+/// revision as stored ([`super::release::revision`]). Its sealed values are
 /// not opened.
 ///
 /// # Errors
@@ -460,7 +461,7 @@ pub(super) fn unproven_replay(
     vault: &Vault,
     operation: &CalendarConnectorOperation,
     uid: &str,
-) -> Result<Option<super::CalendarWriteOutboxRow>, CalendarConnectorError> {
+) -> Result<Option<(super::CalendarWriteOutboxRow, [u8; 32])>, CalendarConnectorError> {
     let seat = &operation.registration().seat;
     let scope = operation.literal_scope()?;
     let outbox_id = derive_outbox_id(
@@ -475,31 +476,33 @@ pub(super) fn unproven_replay(
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
         OUTBOX.get(&vault.store, &txn, &OutboxKey(outbox_id))?
     };
-    stored
-        .filter(|row| {
-            row.state == CalendarWriteOutboxState::ReconcileRequired && row.stored_copy_unproven
-        })
-        .map(super::StoredOutboxRow::into_row)
-        .transpose()
+    let Some(stored) = stored.filter(|row| {
+        row.state == CalendarWriteOutboxState::ReconcileRequired && row.stored_copy_unproven
+    }) else {
+        return Ok(None);
+    };
+    let revision = super::release::revision(&stored)?;
+    Ok(Some((stored.into_row()?, revision)))
 }
 
 /// This seat's outbox rows that owed the proof of a refused write's stored
 /// copy ([`unproven_replay`]) when a pull began, read before the pull's
-/// provider read: each row's key, carrier instance and last move. Opaque:
-/// only [`unproven_replays_before_read`] makes one, and only the proof of a
-/// pulled copy compares a row with it.
+/// provider read: each row's key and revision as stored
+/// ([`super::release::revision`]). Opaque: only
+/// [`unproven_replays_before_read`] makes one, and only the proof of a pulled
+/// copy compares a row with it.
 #[derive(Debug, Clone, Default)]
-pub(crate) struct UnprovenReplaysBeforeRead(Vec<([u8; 32], [u8; 16], u64)>);
+pub(crate) struct UnprovenReplaysBeforeRead(Vec<([u8; 32], [u8; 32])>);
 
 impl UnprovenReplaysBeforeRead {
-    /// Whether `row` owed its proof before the pull's read began and has not
-    /// moved since: its refusal, and the failed read that refusal made, came
-    /// before that read.
-    pub(super) fn holds(&self, row: &super::CalendarWriteOutboxRow) -> bool {
-        row.carrier.as_ref().is_some_and(|carrier| {
-            self.0
-                .contains(&(row.outbox_id, carrier.instance, row.updated_at))
-        })
+    /// Whether the row `outbox_id` owed its proof before the pull's read
+    /// began and has not moved since: it stands at the `revision` read then,
+    /// so its refusal, and the failed read that refusal made, came before
+    /// that read. A row's carrier instance and time can repeat across its
+    /// moves on one clock reading; its revision cannot (blind review round 1
+    /// of #10130).
+    pub(super) fn holds(&self, outbox_id: &[u8; 32], revision: &[u8; 32]) -> bool {
+        self.0.contains(&(*outbox_id, *revision))
     }
 }
 
@@ -521,16 +524,16 @@ pub(crate) fn unproven_replays_before_read(
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
         OUTBOX.scan_from(&vault.store, &txn, OUTBOX_ROW_TAG)?
     };
-    Ok(UnprovenReplaysBeforeRead(
-        rows.into_iter()
-            .filter(|(_, row)| {
-                row.carrier.seat == scope
-                    && row.state == CalendarWriteOutboxState::ReconcileRequired
-                    && row.stored_copy_unproven
-            })
-            .map(|(_, row)| (row.outbox_id, row.carrier.instance, row.updated_at))
-            .collect(),
-    ))
+    let mut owed = Vec::new();
+    for (_, row) in rows {
+        if row.carrier.seat == scope
+            && row.state == CalendarWriteOutboxState::ReconcileRequired
+            && row.stored_copy_unproven
+        {
+            owed.push((row.outbox_id, super::release::revision(&row)?));
+        }
+    }
+    Ok(UnprovenReplaysBeforeRead(owed))
 }
 
 /// This seat's outbox row of an upsert of `uid` while it is prepared or

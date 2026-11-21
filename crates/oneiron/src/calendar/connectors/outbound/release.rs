@@ -14,7 +14,9 @@
 //!
 //! A first write's row is not released: its copy names a UID no passport binds yet, and would
 //! import a second EVENT ([`super::first_write_unsettled`] holds it whatever the owner
-//! released), so only reconnecting its seat lifts that hold.
+//! released), so only reconnecting its seat lifts that hold. A later write of the EVENT keeps
+//! the UID the first one minted; once a passport carries that UID, its row is released like any
+//! other.
 //!
 //! After a release the held pulls land, and a host cancel of the booking records the owner's
 //! line "a cancel we can't attribute: refund by hand?" in place of the host-cancel refund
@@ -29,7 +31,9 @@ use super::{
     CalendarWriteAction, CalendarWriteOutboxState, OUTBOX, OUTBOX_ROW_TAG, StoredOutboxRow,
     derive_outbox_id, local_uid,
 };
+use crate::calendar::claims::{PREDICATE_CALENDAR_PASSPORT, decode_passport_value};
 use crate::calendar::connectors::door::{CalendarHoldRow, CalendarHoldSeat};
+use crate::claim::{ClaimLifecycleStatus, ClaimSubject};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::memory::{MemoryError, MemoryResult};
@@ -50,8 +54,9 @@ struct ReleasedOutboxRow {
 
 /// The revision of `row`: the digest of the whole row as stored. Any move of the row changes a
 /// field of it (its state, receipt, proof flag, SEQUENCE or time), whatever clock reading the
-/// move carries, so a release of one revision never covers the row after it moves.
-fn revision(row: &StoredOutboxRow) -> crate::Result<[u8; 32]> {
+/// move carries, and every write seals its carrier again, so a release of one revision never
+/// covers the row after it moves.
+pub(super) fn revision(row: &StoredOutboxRow) -> crate::Result<[u8; 32]> {
     super::super::literal::digest(row)
 }
 
@@ -125,18 +130,28 @@ fn writes_event(row: &StoredOutboxRow, event: &EntityId) -> bool {
         || row.cancelled_members.contains(event)
 }
 
-/// Whether `row` stages the first write of its EVENT: under the UID the write minted for it
-/// ([`local_uid`]), by its readable UID or by its key under its own names (a side-table write
-/// may hold the UID as a custody handle; the key derives from the literal). No passport binds
-/// that UID until the write settles or its seat proves the copy, so a pulled copy of it would
-/// import a second EVENT, and [`super::first_write_unsettled`] holds it whatever the owner
-/// released. Such a row is not released.
-fn stages_first_write(row: &StoredOutboxRow) -> bool {
+/// Whether `row` stages the first write of its EVENT, read in `txn`: under the UID the write
+/// minted for it ([`local_uid`]), by its readable UID or by its key under its own names (a
+/// side-table write may hold the UID as a custody handle; the key derives from the literal),
+/// while no live passport on the EVENT carries that UID. No passport binds that UID until the
+/// write settles or its seat proves the copy, so a pulled copy of it would import a second
+/// EVENT, and [`super::first_write_unsettled`] holds it whatever the owner released. Such a row
+/// is not released. A later write of the EVENT stages under the same UID, which a passport
+/// then carries, so its row is released like any other (blind review round 1 of #10130).
+///
+/// # Errors
+///
+/// Store failures, and a passport claim that does not decode.
+fn stages_first_write(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    row: &StoredOutboxRow,
+) -> crate::Result<bool> {
     let Ok(event) = EntityId::from_bytes(row.event_ref) else {
-        return false;
+        return Ok(false);
     };
     let uid = local_uid(&event);
-    row.action == CalendarWriteAction::Upsert
+    let minted = row.action == CalendarWriteAction::Upsert
         && (row.uid == uid
             || row.outbox_id
                 == derive_outbox_id(
@@ -145,7 +160,36 @@ fn stages_first_write(row: &StoredOutboxRow) -> bool {
                     &row.calendar_ref,
                     &uid,
                     CalendarWriteAction::Upsert,
-                ))
+                ));
+    Ok(minted && !uid_carried_in_txn(vault, txn, &event, &uid)?)
+}
+
+/// Whether a lifecycle-active passport on `event`, pending or not, carries `uid` as written,
+/// read in `txn`: the passport a settled write, or its seat's proof of the copy, files under
+/// the UID the write minted.
+///
+/// # Errors
+///
+/// Store failures, and a passport claim that does not decode.
+fn uid_carried_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    event: &EntityId,
+    uid: &str,
+) -> crate::Result<bool> {
+    for id in vault.claims_for_subject_in_txn(txn, event)? {
+        let Some(body) = vault.get_claim_in_txn(txn, &id)? else {
+            continue;
+        };
+        if body.predicate == PREDICATE_CALENDAR_PASSPORT
+            && body.subject == ClaimSubject::Entity(*event)
+            && body.lifecycle == ClaimLifecycleStatus::Active
+            && decode_passport_value(&body.value)?.uid == uid
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// One held row: the view the owner sees, and its key and revision.
@@ -204,7 +248,7 @@ fn held_rows_in_txn(
                 instance: bytes_to_hex_lower(&row.carrier.instance),
                 updated_at: row.updated_at,
                 revision: bytes_to_hex_lower(&revision),
-                releasable: !stages_first_write(&row),
+                releasable: !stages_first_write(vault, txn, &row)?,
             },
         });
     }
