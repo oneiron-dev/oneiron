@@ -473,6 +473,20 @@ fn read_json(path: &Path) -> Value {
     serde_json::from_slice(&std::fs::read(path).expect("read")).expect("JSON")
 }
 
+/// Writes `value` over the sign-in file at `path`, which keeps its
+/// owner-only mode.
+fn write_json(path: &Path, value: &Value) {
+    std::fs::write(path, serde_json::to_vec_pretty(value).expect("JSON")).expect("write");
+}
+
+/// A loopback URL nothing answers at: a port bound and let go again.
+fn unanswered_url(path: &str) -> String {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind a loopback port");
+    let port = listener.local_addr().expect("its address").port();
+    drop(listener);
+    format!("http://127.0.0.1:{port}{path}")
+}
+
 /// Stock git in `dir`, never asking for a credential and reading no user or
 /// system config.
 fn git(dir: &Path, args: &[&str]) -> Output {
@@ -708,6 +722,72 @@ fn a_new_recall_login_signs_out_the_old_continue_sign_in() {
             !continue_file.exists(),
             "the old client's continue sign-in is gone"
         );
+        let (status, body) = refresh_at_vault(&served, &held).await;
+        assert_eq!(status, 400, "it is revoked at the vault: {body}");
+        assert_eq!(body["error"], "invalid_grant", "{body}");
+    });
+}
+
+/// A new `hosted login` signs out the step-ups of the client it replaced
+/// alone. Two logins can end out of order: the one that replaced client A
+/// may sign out after a later one made client B, and B's continue sign-in.
+/// Here the recall file is set back to A's sign-in before the next login,
+/// so that login replaces A while the continue sign-in is B's: it stays,
+/// untouched.
+#[test]
+fn a_relogin_keeps_the_continue_sign_in_of_a_client_it_did_not_replace() {
+    run_on_engine_stack("hosted-continue-relogin-other-client", || async {
+        let served = Served::start().await;
+        let scratch = Scratch::new();
+        scratch.login(&served).await;
+        let replaced = read_json(&scratch.recall_file());
+        scratch.login(&served).await;
+        scratch.login_push(&served).await;
+        let continue_file = scratch.continue_file();
+        let held = read_json(&continue_file);
+        assert_ne!(
+            held["client_id"], replaced["client_id"],
+            "FIXTURE: the continue sign-in is client B's"
+        );
+
+        write_json(&scratch.recall_file(), &replaced);
+        scratch.login(&served).await;
+        assert!(continue_file.exists(), "B's continue sign-in stays");
+        assert_eq!(
+            read_json(&continue_file),
+            held,
+            "B's continue sign-in is unchanged"
+        );
+    });
+}
+
+/// A new `hosted login` whose sign-out of the old client's continue
+/// sign-in the vault does not confirm (the revocation never reaches it)
+/// keeps that sign-in's file, so a later `hosted logout` still revokes it
+/// once the vault answers.
+#[test]
+fn an_unconfirmed_relogin_sign_out_keeps_the_continue_sign_in_for_logout() {
+    run_on_engine_stack("hosted-continue-relogin-unconfirmed", || async {
+        let served = Served::start().await;
+        let scratch = Scratch::new();
+        scratch.login(&served).await;
+        scratch.login_push(&served).await;
+        let continue_file = scratch.continue_file();
+        let held = read_json(&continue_file);
+        let mut unanswered = held.clone();
+        unanswered["revocation_endpoint"] = Value::String(unanswered_url("/oauth/revoke"));
+        write_json(&continue_file, &unanswered);
+
+        scratch.login(&served).await;
+        assert!(
+            continue_file.exists(),
+            "the sign-in the vault did not confirm revoked stays on disk"
+        );
+
+        write_json(&continue_file, &held);
+        let output = finished(scratch.spawn(&["hosted", "logout"])).await;
+        assert!(output.status.success(), "{}", stderr(&output));
+        assert!(!continue_file.exists(), "the logout signs it out");
         let (status, body) = refresh_at_vault(&served, &held).await;
         assert_eq!(status, 400, "it is revoked at the vault: {body}");
         assert_eq!(body["error"], "invalid_grant", "{body}");
