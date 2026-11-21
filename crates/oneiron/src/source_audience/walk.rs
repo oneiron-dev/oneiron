@@ -190,25 +190,6 @@ fn profile_sources(body: &[u8]) -> Vec<EntityId> {
     sources
 }
 
-impl Vault {
-    /// What the words of the row `id` (bytes `bytes`) came from, as this
-    /// walk reads them ([`word_sources`]): the rows each of which must read,
-    /// then a CLAIM's supports. The row's floor reads the same rows
-    /// (`floor::row_sources_in`).
-    ///
-    /// # Errors
-    ///
-    /// Storage failures, and bytes with no readable header.
-    pub(crate) fn lineage_word_sources_in(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        id: EntityId,
-        bytes: &[u8],
-    ) -> Result<(Vec<EntityId>, Vec<EntityId>)> {
-        word_sources(self, &self.store.read(), txn, id, bytes)
-    }
-}
-
 /// The lane a row would leave this vault on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ReplicationScope {
@@ -690,7 +671,12 @@ pub(crate) fn read_audience_in(
     let mut pending: Vec<EntityId> = seen.iter().copied().collect();
     while let Some(row) = pending.pop() {
         if let Some(carried) = super::derived_policies_in(vault, txn, &row)? {
-            policies.extend(carried);
+            // A phone thread on a floor is no policy a read meets here.
+            for source in carried {
+                if super::floor_source_in(vault, txn, &source)? != super::FloorSource::Thread {
+                    policies.insert(source);
+                }
+            }
         }
         if let Some(policy) = super::binding_in(vault, txn, &row)? {
             policies.insert(policy);
@@ -985,7 +971,8 @@ impl Judge<'_, '_, '_> {
         // list row 17207), and the floor its own write raised (READ-LINEAGE
         // L1): every policy on it reads, whatever the row's own lineage here
         // says, before anything else; an id that names no source reads to no
-        // one. A replication walk ships such a row only with
+        // one. A phone thread on it is the scoped read's floor conjunct's to
+        // judge, by its grant. A replication walk ships such a row only with
         // its carried policies, as its own sets them (`travel_closure_in`).
         if let Some(policies) = super::derived_policies_in(self.vault, self.txn, &id)? {
             match self.ask {
@@ -997,7 +984,10 @@ impl Judge<'_, '_, '_> {
                                 self.policy_readable(policy, viewers)?
                             }
                         };
-                        if !admitted {
+                        if !admitted
+                            && super::floor_source_in(self.vault, self.txn, &policy)?
+                                != super::FloorSource::Thread
+                        {
                             return Ok(Opened::Decided(false));
                         }
                     }

@@ -252,11 +252,17 @@ pub(crate) fn row_phone_marked(raw: &[u8]) -> bool {
     let Some(header) = crate::batch::EntityMetadataHeader::parse(raw) else {
         return false;
     };
-    phone_marked_kind(header.entity_type)
-        && body_names_phone_mark(
-            raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
-                .unwrap_or_default(),
-        )
+    body_phone_marked(
+        header.entity_type,
+        raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+            .unwrap_or_default(),
+    )
+}
+
+/// Whether a body of `entity_type` carries a phone mark in any shape, as
+/// [`row_phone_marked`] reads a row's own bytes.
+pub(crate) fn body_phone_marked(entity_type: u8, body: &[u8]) -> bool {
+    phone_marked_kind(entity_type) && body_names_phone_mark(body)
 }
 
 /// Whether the words of the row `id` came, in whole or in part, from a phone
