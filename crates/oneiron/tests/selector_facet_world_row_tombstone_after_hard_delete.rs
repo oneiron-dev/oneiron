@@ -28,7 +28,6 @@
 use std::sync::Arc;
 
 use loro::{ExportMode, LoroDoc};
-use oneiron::batch::EntityMetadataHeader;
 use oneiron::entity_id::LocalWorldId;
 use oneiron::federation::{
     FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope,
@@ -45,6 +44,7 @@ use oneiron::temporal::TimeRange;
 use oneiron::test_doors::label_writers::open_member_vault;
 use oneiron::{DeleteReason, EntityId, Vault, VaultConfig};
 use oneiron_authority::federation::scope_codec::read_preset;
+use oneiron_contracts::record_layout::EntityMetadataHeader;
 
 const SHARED_SCOPE: FederationGrantScope = FederationGrantScope::vault(7);
 

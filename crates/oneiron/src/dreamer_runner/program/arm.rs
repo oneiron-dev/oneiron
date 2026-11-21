@@ -94,6 +94,7 @@ pub(crate) fn arm_turn_program_in_txn(
             ProgramTrigger::Timer { first_at, .. } => Some(first_at),
             _ => None,
         },
+        paused_at: None,
     };
     ARM.put(vault, txn, &(actor, arming.registration), &arming)?;
     super::trigger::index_trigger_in_txn(vault, txn, &arming)?;

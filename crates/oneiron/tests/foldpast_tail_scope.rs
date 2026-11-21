@@ -1013,6 +1013,46 @@ fn successor_image_past_a_device_revocation_keeps_the_whole_history_revoke_facts
 }
 
 #[test]
+fn successor_image_past_a_rejected_confirm_keeps_the_whole_history_confirms() {
+    let fixture = fixture();
+    // A fresh confirm the host signs folds to a state; one the agent signs
+    // after its key's revocation is admitted past the image and then folds
+    // rejected on both vaults (`device_revocation_past_an_adopted_image_folds`).
+    let folded = fresh_confirm(0xEA);
+    sign_and_share(&fixture, AuthorityOp::FederationConfirm(folded.clone()));
+    revoke_agent(&fixture);
+    let rejected = fresh_confirm(0xE9);
+    let later = sign_next_op_as(
+        &fixture.home,
+        &agent_signing(),
+        AuthorityOp::FederationConfirm(rejected.clone()),
+    )
+    .expect("sign as the agent");
+    put_signed_entries(&fixture.home, std::slice::from_ref(&later)).expect("store later on home");
+    put_signed_entries(&fixture.adopting, std::slice::from_ref(&later))
+        .expect("store later on adopting");
+    // Home's image over its whole history, and the image the adopting vault
+    // builds past its adopted one, over the same rows.
+    let (home_ids, home_nonces) = oneiron::test_doors::foldpast::image_confirm_keys(
+        &written_image(&fixture.home, &fixture.issuer),
+    );
+    assert!(
+        home_ids.contains(&folded.confirm_id) && home_nonces.contains(&folded.nonce),
+        "home's image keeps the confirm its fold accepts"
+    );
+    assert!(
+        !home_ids.contains(&rejected.confirm_id) && !home_nonces.contains(&rejected.nonce),
+        "home's image keeps no confirm its fold rejects"
+    );
+    let successor = written_image(&fixture.adopting, &fixture.issuer);
+    assert_eq!(
+        oneiron::test_doors::foldpast::image_confirm_keys(&successor),
+        (home_ids, home_nonces),
+        "the successor image keeps home's confirms"
+    );
+}
+
+#[test]
 fn row_its_revoked_key_cosigns_beside_a_device_revocation_still_needs_history() {
     let fixture = fixture();
     // Both on the image's frontier: the host's enrollment of a fresh agent,

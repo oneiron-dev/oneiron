@@ -13,7 +13,10 @@
 //! nowhere (review round 2). A Codex, Cursor or GitHub Copilot session goes
 //! the same way, its one log read below the folder its host keeps its logs
 //! in, by the source the import reads it as (FIX
-//! HOOK-HOSTED-HAND-OVER-OTHER-HOSTS).
+//! HOOK-HOSTED-HAND-OVER-OTHER-HOSTS). An OAuth selection's hand-over goes
+//! as its hand-over sign-in, the file `hosted login --hand-over` keeps
+//! beside the recall one (HOOK-HOSTED-HAND-OVER-OAUTH-READ-TIER; how it
+//! waits while none stands is `hosted_hand_over_sign_in.rs`'s).
 //!
 //! The shipped binary runs the hook. The `oneiron` it runs for the bridge
 //! and the import is a stand-in that records its arguments and, as `oneiron
@@ -388,6 +391,26 @@ fn answering_vault() -> String {
     url
 }
 
+/// A hand-over sign-in for `origin` at the `full` tier, kept where `hosted
+/// login --hand-over` keeps it, beside `hosted.json` in `user_dir`: its
+/// path. Its tokens are stand-ins the stand-in bridge never reads.
+fn hand_over_sign_in(user_dir: &Path, origin: &str) -> PathBuf {
+    let digest = oneiron_contracts::fingerprint::ContentHash::of(origin.as_bytes()).to_hex();
+    let file = user_dir.join(format!("hosted-oauth-hand-over-{}.json", &digest[..16]));
+    let sign_in = json!({
+        "token_endpoint": format!("{origin}/oauth/token"),
+        "revocation_endpoint": format!("{origin}/oauth/revoke"),
+        "client_id": "hand-over-stand-in-client",
+        "resource": format!("{origin}/mcp"),
+        "access_token": "v2.oauth-access.stand-in",
+        "refresh_token": "v2.oauth-refresh.stand-in",
+        "expires_at_ms": 4_000_000_000_000_u64,
+        "scope": "full",
+    });
+    owner_only_file(&file, &sign_in.to_string());
+    file
+}
+
 /// `body` at `path`, owner-only, in an owner-only folder.
 fn owner_only_file(path: &Path, body: &str) {
     std::fs::DirBuilder::new()
@@ -535,8 +558,15 @@ fn a_claude_code_hand_over_sends_its_log_to_the_selected_hosted_vault_in_its_own
         let bench = Bench::new();
         let origin = answering_vault();
         let credential = bench.path(&format!("{mode}-credential"));
-        let credential_arg = credential.to_str().expect("UTF-8 path");
         bench.select_hosted(&origin, VAULT_ID, mode, &credential);
+        // An OAuth selection sends as its hand-over sign-in, never as the
+        // recall one it names.
+        let sent_as = if mode == "oauth" {
+            hand_over_sign_in(&bench.user_dir(), &origin)
+        } else {
+            credential.clone()
+        };
+        let credential_arg = sent_as.to_str().expect("UTF-8 path");
         let log = bench.session_log();
         let said = bench.session_start(&[], &log);
         assert!(

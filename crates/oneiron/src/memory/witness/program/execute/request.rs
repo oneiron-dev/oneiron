@@ -27,17 +27,25 @@ pub(super) fn resolve_witness_landing<'a, 'v>(
     let mut room_speech = None;
     let mut terminal = None;
     let landing = match target {
-        WitnessTarget::Base { route } => Landing::Base {
+        WitnessTarget::Base {
+            route,
+            mint_conversation_body,
+            phone_birth,
+        } => Landing::Base {
             route,
             continuation: None,
             imported: None,
             held: None,
+            mint_conversation_body,
+            phone_birth,
         },
         WitnessTarget::Held { held } => Landing::Base {
             route: None,
             continuation: None,
             imported: None,
             held: Some(held),
+            mint_conversation_body: None,
+            phone_birth: None,
         },
         WitnessTarget::Imported { stamp } => {
             if turn
@@ -68,6 +76,8 @@ pub(super) fn resolve_witness_landing<'a, 'v>(
                 continuation: None,
                 imported: Some(stamp),
                 held: None,
+                mint_conversation_body: None,
+                phone_birth: None,
             }
         }
         WitnessTarget::Session {
@@ -111,6 +121,8 @@ pub(super) fn resolve_witness_landing<'a, 'v>(
                     continuation: Some(session.on_record_continuation_shell()?),
                     imported: None,
                     held: None,
+                    mint_conversation_body: None,
+                    phone_birth: None,
                 }
             } else {
                 room_speech = rostered.map(|room| (session, room));

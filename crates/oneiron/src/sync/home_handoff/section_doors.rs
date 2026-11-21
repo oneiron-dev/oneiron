@@ -68,6 +68,22 @@ pub(crate) fn registers_section_for_doors(table_id: &str) -> bool {
         .any(|table| table.table_id() == table_id)
 }
 
+/// Runs on `source` what its writer runs once the target acknowledged the move `source` froze
+/// its state for ([`super::transfer::scrub_acknowledged_in_txn`], from `ack_in_txn`): every
+/// registered table's scrub of what must not outlast the move. No ack is verified or recorded.
+///
+/// # Errors
+///
+/// Store errors; a table's own scrub errors.
+pub(crate) fn acknowledge_home_move_for_doors(source: &Vault) -> Result<()> {
+    source.with_write_txn(|txn| {
+        let Some(floor) = store::head_in_txn(source, txn)?.floor else {
+            return Ok(());
+        };
+        super::transfer::scrub_acknowledged_in_txn(source, txn, &floor.handoff)
+    })
+}
+
 /// Freezes `source`'s home state as a move's final writer does
 /// (`super::transfer::freeze_in_txn`), with no export, seal or sealed parts:
 /// its rows of every registered table are history from then on, and the
