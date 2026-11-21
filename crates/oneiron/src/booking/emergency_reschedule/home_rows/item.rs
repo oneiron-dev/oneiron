@@ -78,7 +78,11 @@ const ITEM_DECLS: [&SideTableDecl; 3] = [
 /// client timeout (20 s, with a 5 s connect, `crate::outbound::served_sink`), rounded up to a
 /// minute. A send the old home's ledger holds admitted with no outcome for longer than this
 /// ended without one (a crash, a lost call): it ended uncertain, and the move waits no longer.
-const MID_CALL_BOUND_MS: u64 = 60_000;
+///
+/// In seconds, the clock an emergency send's ledger row is written on: `dispatch_item_effect`
+/// passes its `now_utc` seconds as the dispatch's `occurred_at`, which the outbound ledger
+/// keeps as the row's `updated_ms` (review round 2 of #10109).
+const MID_CALL_BOUND_SECS: u64 = 60;
 
 /// The effects `item` still owes, each as its lane and the content hash its intent is keyed by
 /// (`super::super::lookup`'s `index_item_in` spells the same three).
@@ -119,28 +123,33 @@ fn ledger_record(
     }
 }
 
-/// Whether `record` is a send whose transport call may still be running at `now_ms`: admitted,
-/// no outcome recorded, and last written within [`MID_CALL_BOUND_MS`].
-fn mid_call(record: &IntentLedgerRecord, now_ms: u64) -> bool {
+/// Whether `record` is a send whose transport call may still be running at `now`, in this
+/// vault clock's seconds: admitted, no outcome recorded, and last written within
+/// [`MID_CALL_BOUND_SECS`] before `now`. A row dated after `now` is on no clock this reads, and
+/// never holds the move.
+fn mid_call(record: &IntentLedgerRecord, now: u64) -> bool {
     record.state == IntentState::Pending
         && record.recorded_outcome.is_none()
-        && now_ms.saturating_sub(record.updated_ms) < MID_CALL_BOUND_MS
+        && record.updated_ms <= now
+        && now - record.updated_ms < MID_CALL_BOUND_SECS
 }
 
 /// The owed effects of `item` whose send ended uncertain in this node's outbound ledger: no
-/// longer mid-call, and neither delivered nor known undelivered.
+/// longer mid-call, and neither delivered nor known undelivered. A send the provider accepted
+/// as a remote task (`IntentResolution::Deferred`, never sent again here) is one: its delivery
+/// is not known, and the new home's send may repeat it (review round 2 of #10109).
 fn uncertain_lanes(
     vault: &Vault,
     txn: &RoTxn<'_>,
     item: &EmergencyItem,
-    now_ms: u64,
+    now: u64,
 ) -> Result<Vec<String>> {
     let mut uncertain = Vec::new();
     for (lane, hash) in owed_effects(item) {
         let Some(record) = ledger_record(vault, txn, item, lane, hash)? else {
             continue;
         };
-        if !mid_call(&record, now_ms)
+        if !mid_call(&record, now)
             && matches!(
                 IntentResolution::from_record(&record),
                 Ok(IntentResolution::Pending {
@@ -149,7 +158,7 @@ fn uncertain_lanes(
                 } | IntentResolution::Stopped {
                     delivery: UnconfirmedDelivery::Unresolved,
                     ..
-                })
+                } | IntentResolution::Deferred)
             )
         {
             uncertain.push(lane.to_owned());
@@ -202,14 +211,14 @@ impl HomeTable for EmergencyItemRows {
     /// the transport's call timeout (Engine ANSWER BK-EMERGENCY-PENDING-ITEM-MOVE = A, 21 Nov
     /// 08:52), so only a send that ended uncertain can reach the booker twice.
     fn quiescent(vault: &Vault, txn: &RoTxn<'_>, _movement: &HomeMove) -> Result<bool> {
-        let now_ms = vault.store.clock.now_recorded_at().saturating_mul(1_000);
+        let now = vault.store.clock.now_recorded_at();
         for key in ITEM.scan_keys(&vault.store, txn, &[])? {
             let Some(item) = ITEM.get_lenient(&vault.store, txn, &key)? else {
                 continue;
             };
             for (lane, hash) in owed_effects(&item) {
                 if ledger_record(vault, txn, &item, lane, hash)?
-                    .is_some_and(|record| mid_call(&record, now_ms))
+                    .is_some_and(|record| mid_call(&record, now))
                 {
                     return Ok(false);
                 }
@@ -223,12 +232,12 @@ impl HomeTable for EmergencyItemRows {
         txn: &RoTxn<'_>,
         _fence: &HomeFence,
     ) -> Result<Partitioned<Self, EmergencyRowContent>> {
-        let now_ms = vault.store.clock.now_recorded_at().saturating_mul(1_000);
+        let now = vault.store.clock.now_recorded_at();
         let mut items = Vec::new();
         let mut actors = Vec::new();
         for (key, item) in ITEM.scan(&vault.store, txn)? {
             let item = with_ledger_deliveries(vault, txn, item)?;
-            let uncertain = uncertain_lanes(vault, txn, &item, now_ms)?;
+            let uncertain = uncertain_lanes(vault, txn, &item, now)?;
             let pending_pointer = PENDING_EVENT
                 .get(&vault.store, txn, &item.calendar.event_ref)?
                 .is_some_and(|target| target == full_key(EMERGENCY_ITEM_META_PREFIX, &key));
