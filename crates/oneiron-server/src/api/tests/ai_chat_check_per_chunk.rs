@@ -34,6 +34,17 @@
 //!   judge reads the first piece: no later piece goes out (red: every piece
 //!   went out from the text read before the delete).
 //!
+//! Review round 2 of #10272 adds two cases, red at ff1d09069dc (#10272's
+//! head then) with this file alone; in each the owner deletes the turn's
+//! MESSAGE while the judge reads the first piece:
+//! - the judge finds that piece supported, its reason quoting the owner's
+//!   words: the check stops on its next read, and its finding keeps none of
+//!   what the judge said of the deleted text (red: the finding's `pieces`
+//!   kept the quoting reason);
+//! - with the host's decisions lent, the typed support read would send the
+//!   piece's text again after its diagnostic: it does not go out (red: it
+//!   went out from the text read before the delete).
+//!
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p
 //! oneiron-server --all-features --lib -- api::tests::ai_chat_check_per_chunk`.
 
@@ -52,12 +63,13 @@ use oneiron::{
 };
 use serde_json::{Value, json};
 
-use super::ai_chat_check_judge_room::{finding, now_seconds, run_check};
+use super::ai_chat_check_judge_room::{finding, now_seconds, run_check, run_check_lent};
 use super::ai_chat_self_compaction::{
     chat_text, compaction_calls_report, log_report, open_owner_sitting, reply, self_row_server_on,
 };
 use crate::ai_host::AiHost;
 use crate::ai_host::test_support::{eventually, route_extraction};
+use crate::decision_host::DecisionHost;
 use crate::fake_llm::{FakeLlm, Reply};
 use crate::server::SyncServer;
 
@@ -94,12 +106,20 @@ fn long_turn() -> String {
         .join(" ")
 }
 
+/// The judge's reason for a part it finds supported, unless the test names
+/// another.
+const SUPPORTED_REASON: &str = "the text carries every assertion";
+/// A supported reason that quotes the owner's first reading word for word.
+const QUOTING_REASON: &str =
+    "the owner wrote: Reading 0 at the south jetty gauge stood at 120 centimetres.";
+
 /// The judge: it records every request it is sent and answers each
-/// `supported`, except a piece whose bytes start at `mismatch_at`, which it
-/// answers `mismatch`, citing the span's one turn. `on_first` runs once, as
-/// the first request comes in.
+/// `supported` for `reason`, except a piece whose bytes start at
+/// `mismatch_at`, which it answers `mismatch`, citing the span's one turn.
+/// `on_first` runs once, as the first request comes in.
 struct PartJudge {
     mismatch_at: Option<u64>,
+    reason: &'static str,
     requests: Mutex<Vec<LlmRequest>>,
     on_first: Option<Box<dyn Fn() + Send + Sync>>,
 }
@@ -108,9 +128,15 @@ impl PartJudge {
     fn new(mismatch_at: Option<u64>) -> Self {
         Self {
             mismatch_at,
+            reason: SUPPORTED_REASON,
             requests: Mutex::new(Vec::new()),
             on_first: None,
         }
+    }
+
+    /// The same judge, giving `reason` for each part it finds supported.
+    fn reasoning(self, reason: &'static str) -> Self {
+        Self { reason, ..self }
     }
 
     /// A judge that answers each part `supported` and runs `on_first` as the
@@ -203,7 +229,7 @@ impl LlmBackend for PartJudge {
             json!({
                 "verdict": "supported",
                 "conflicts": [],
-                "reason": "the text carries every assertion",
+                "reason": self.reason,
             })
         };
         let response = judge_reply(&answer);
@@ -692,5 +718,79 @@ async fn a_source_deleted_while_a_piece_is_judged_sends_no_later_piece() {
             DreamerAttemptExecution::Completed { step_bindings, .. } if step_bindings.len() == 1
         ),
         "the check completes with the one judge step booked: {execution:?}"
+    );
+}
+
+/// A judge that deletes the owner's MESSAGE, the span's one source, as the
+/// first request comes in, and finds each part supported for `reason`.
+fn deleting_judge(landed: &PiecedLanding, reason: &'static str) -> PartJudge {
+    let message = declared_message(&landed.check);
+    let (server, owner) = (Arc::clone(&landed.server), landed.owner);
+    PartJudge::on_first(move || {
+        server
+            .vault()
+            .memory(owner, EdgeActorClass::Human)
+            .safe_delete(&message.to_hex(), SafeDeleteReason::UserDelete)
+            .expect("the owner deletes the turn's message");
+    })
+    .reasoning(reason)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_judgment_of_a_source_deleted_mid_check_is_not_kept_in_its_finding() {
+    let landed = pieced_landing().await;
+    let judge = deleting_judge(&landed, QUOTING_REASON);
+    let execution = run_check(&landed.server, &landed.check, &judge, landed.judge_window).await;
+
+    let inputs = judge.inputs();
+    let finding = finding(&landed.server, &landed.agent).expect("the check records its finding");
+    assert_eq!(
+        inputs.len(),
+        1,
+        "the first piece goes out before the delete, and no part after it: {execution:?}; the \
+         judge read {:?}; finding {finding}",
+        spans(&inputs),
+    );
+    assert_ne!(
+        finding["verdict"], "supported",
+        "a check whose source went away mid-judgment is not supported: {finding}"
+    );
+    assert!(
+        finding.get("pieces").is_none() && !finding.to_string().contains(QUOTING_REASON),
+        "a finding its last read stopped keeps no judgment of the deleted text: {finding}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_source_deleted_while_a_piece_is_diagnosed_sends_no_typed_read_of_it() {
+    let landed = pieced_landing().await;
+    let decisions = DecisionHost::new(landed.server.vault());
+    let judge = deleting_judge(&landed, SUPPORTED_REASON);
+    let execution = run_check_lent(
+        &landed.server,
+        &landed.check,
+        &judge,
+        None,
+        Some(&decisions),
+    )
+    .await;
+
+    let inputs = judge.inputs();
+    let finding = finding(&landed.server, &landed.agent).expect("the check records its finding");
+    assert_eq!(
+        inputs.len(),
+        1,
+        "the first piece's diagnostic goes out before the delete, and neither its typed read nor \
+         a later part goes out: {execution:?}; the judge read {:?}; finding {finding}",
+        spans(&inputs),
+    );
+    assert!(
+        reads_exactly(&inputs[0], &landed.window, landed.pieces[0]),
+        "{:?}",
+        spans(&inputs),
+    );
+    assert_ne!(
+        finding["verdict"], "supported",
+        "a check whose source went away mid-judgment is not supported: {finding}"
     );
 }

@@ -297,7 +297,7 @@ pub(super) async fn run_check(
 /// [`run_check`] on the window `window_tokens`, if any, with the typed
 /// support verdict on `decisions`' ladder as the server's host lends it:
 /// up to its Big rung, so no person is asked.
-async fn run_check_lent(
+pub(super) async fn run_check_lent(
     server: &SyncServer,
     check: &DreamerAdmittedAttempt,
     judge: &dyn LlmBackend,
