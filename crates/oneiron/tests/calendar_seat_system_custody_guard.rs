@@ -14,7 +14,8 @@
 //!   differed).
 //! - A system the owner typed as handle text is refused the same way
 //!   (CAL-SOURCE-SYSTEM-NAME-ADMITS-ENGINE-AND-HANDLE-TEXT, point 2, for seats
-//!   and feeds).
+//!   and feeds), a bare one (`sc12`) too: a held passport's compare reads a
+//!   whole bare handle as its record's value (own review of this row, C1a).
 //! - Control: a seat installs beside a custody value its system does not
 //!   hold, keeps its system in clear, and holds uploads off it.
 //!
@@ -245,6 +246,39 @@ fn a_seat_or_feed_install_under_a_system_spelled_as_a_custody_handle_is_refused(
         fx.install_feed(HANDLE_TEXT),
         CUSTODY,
         "a feed install whose system the owner typed as a custody handle",
+    );
+}
+
+#[test]
+fn a_seat_or_feed_install_under_a_system_that_is_a_bare_custody_handle_is_refused() {
+    const BARE_HANDLE: &str = "sc99";
+
+    let fx = Fixture::open();
+    refused(
+        fx.install_seat("bare", BARE_HANDLE),
+        CUSTODY,
+        "a seat install whose whole system is a bare custody handle",
+    );
+    refused(
+        fx.install_feed(BARE_HANDLE),
+        CUSTODY,
+        "a feed install whose whole system is a bare custody handle",
+    );
+
+    // Control: a system that opens like a handle but is not one installs,
+    // keeps its system in clear, and holds uploads off it.
+    let stored = applied(
+        fx.install_seat("bare", "sc99-calendar"),
+        "FIXTURE: the same seat ref under a system that is no handle",
+    );
+    assert_eq!(
+        stored["config"]["system"], "sc99-calendar",
+        "FIXTURE: the seat stores its system in clear: {stored}"
+    );
+    refused(
+        fx.upload("sc99-calendar"),
+        HELD,
+        "FIXTURE: an upload on the seat's system",
     );
 }
 
