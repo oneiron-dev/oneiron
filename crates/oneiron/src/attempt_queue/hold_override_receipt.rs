@@ -4,14 +4,18 @@
 //! `RunHoldOverride` receipt. It names the hold, the run, the actor and the
 //! time, and the receipt family reads it. The vault owner's override through
 //! run control and the engine's internal resumes alike write one, each under
-//! its own actor: it is the record the owner reviews, not a gate.
+//! its own actor: it is the record the owner reviews, not a gate. An override
+//! of a budget hold whose run had nothing left also names the shortfall
+//! (RESUME-SPEND-CAP-OWNER-DOORS = A): the override still goes through.
 
 use std::collections::BTreeMap;
 use std::ops::Bound;
 
 use crate::Vault;
+use crate::agent_dispatch::SpendScopeId;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::llm::run_admission::LeaseUnit;
 use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord, retain_newest_receipt};
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::store::Store;
@@ -36,16 +40,40 @@ const FIELD_LAUNCH_REF: &str = "launch_ref";
 /// The annotation hold's artifact and comment thread.
 const FIELD_ARTIFACT_REF: &str = "artifact_ref";
 const FIELD_THREAD_REF: &str = "thread_ref";
+/// A budget hold's shortfall: the scope whose cap binds the held run.
+const FIELD_SHORTFALL_SCOPE: &str = "shortfall_scope";
+/// That scope's cap, in whole units, with nothing left under it.
+const FIELD_SHORTFALL_CAP_UNITS: &str = "shortfall_cap_units";
+/// The unit of that cap.
+const FIELD_SHORTFALL_UNIT: &str = "shortfall_unit";
 
-/// Writes the receipt of an override that released `pause` from `attempt`
-/// (the row as it stood before the Resume) under `actor` at `now`, in the
-/// override's transaction. `sequence` is the Resume event's sequence, which
-/// keeps two overrides of one row apart. A person's pause is no engine hold
-/// and writes none.
+/// What a budget hold's override left its run short of
+/// (RESUME-SPEND-CAP-OWNER-DOORS = A): nothing was left under the cap of
+/// `scope`, the scope that binds the held run, at `cap_units` of `unit`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct BudgetShortfall {
+    pub(crate) scope: SpendScopeId,
+    pub(crate) cap_units: u64,
+    pub(crate) unit: LeaseUnit,
+}
+
+/// The engine hold an override released, as its receipt names it: the
+/// pause, and for a budget hold the shortfall the override's transaction
+/// read before the hold followed it.
+pub(super) struct ReleasedHold {
+    pub(super) pause: AttemptPause,
+    pub(super) shortfall: Option<BudgetShortfall>,
+}
+
+/// Writes the receipt of an override that released `released` from
+/// `attempt` (the row as it stood before the Resume) under `actor` at `now`,
+/// in the override's transaction. `sequence` is the Resume event's sequence,
+/// which keeps two overrides of one row apart. A person's pause is no engine
+/// hold and writes none.
 pub(super) fn record_hold_override_receipt_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
-    pause: AttemptPause,
+    released: ReleasedHold,
     attempt: &AttemptRecord,
     actor: &str,
     sequence: u64,
@@ -53,9 +81,25 @@ pub(super) fn record_hold_override_receipt_in_txn(
 ) -> Result<()> {
     let attempt_hex = crate::receipt::hex_lower(attempt.id.as_bytes());
     let mut fields = BTreeMap::new();
-    let hold = match pause {
+    let hold = match released.pause {
         AttemptPause::Person => return Ok(()),
-        AttemptPause::Budget => "budget",
+        AttemptPause::Budget => {
+            if let Some(shortfall) = released.shortfall {
+                fields.insert(
+                    FIELD_SHORTFALL_SCOPE.to_owned(),
+                    shortfall.scope.as_str().to_owned(),
+                );
+                fields.insert(
+                    FIELD_SHORTFALL_CAP_UNITS.to_owned(),
+                    shortfall.cap_units.to_string(),
+                );
+                fields.insert(
+                    FIELD_SHORTFALL_UNIT.to_owned(),
+                    shortfall.unit.as_str().to_owned(),
+                );
+            }
+            "budget"
+        }
         AttemptPause::Hook { .. } => "hook",
         AttemptPause::Fanout { launch_ref } => {
             fields.insert(FIELD_LAUNCH_REF.to_owned(), launch_ref.to_hex());

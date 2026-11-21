@@ -142,6 +142,10 @@ async fn hold(
 /// `POST /v1/owner/runs/hold/resume` `{run}`: resumes the held run as the
 /// owner. Each attempt it still parks is queued again and resumes from its
 /// checkpoint; one someone else paused or settled since is left as it is.
+/// While the run's spend scope has nothing left it refuses, as
+/// `vault.budgets.hold.resume` does, until the owner tops the scope up; his
+/// generic `vault.runs.resume` override stays open
+/// (RESUME-SPEND-CAP-OWNER-DOORS = A).
 async fn resume(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,

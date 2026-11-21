@@ -23,6 +23,9 @@
 //!   owner; strangers are refused and write nothing);
 //! - a depleted run holds `Paused`, never DONE, and resumes `Queued` once
 //!   its lease is topped up (a suspension is a hold);
+//! - the owner's HTTP hold door (`POST /v1/owner/runs/hold/resume`) answers
+//!   as the verb door does: it refuses a held run whose lease has nothing
+//!   left until the top-up (RESUME-SPEND-CAP-OWNER-DOORS = A);
 //! - width has no count cap: any number of reservations hold under one
 //!   root without a count refusal;
 //! - a second settle moves nothing and reports `already_settled`, and the
@@ -88,6 +91,8 @@ const SELF_BUDGET_LAND: &str = "self.budget.land";
 const BILLING_FILE: &str = "self.billing.account.file";
 const RUNS_JOB: &str = "vault.runs.job";
 const RUNS_BRANCHES: &str = "vault.runs.branches.get";
+/// The owner's HTTP door that resumes a held run.
+const HOLD_RESUME_ROUTE: &str = "/v1/owner/runs/hold/resume";
 
 /// A distinct slip id for each credential a test mints.
 fn next_slip_id() -> [u8; 32] {
@@ -677,6 +682,115 @@ fn depleted_run_holds_paused_never_done_then_resumes() {
         assert!(resumed["resumed_at"].is_u64(), "{resumed}");
         assert!(resumed["resumed_by"].is_string(), "{resumed}");
 
+        let job = served
+            .ok(
+                Caller::Owner,
+                RUNS_JOB,
+                json!({"job": served.attempt_hex.clone()}),
+            )
+            .await;
+        assert_eq!(job["job"]["state"], "Queued", "{job}");
+    });
+}
+
+/// RESUME-SPEND-CAP-OWNER-DOORS = A: the owner's two hold doors give one
+/// answer. While the held run's lease has nothing left, `POST
+/// /v1/owner/runs/hold/resume` refuses with the verb door's words and the
+/// run stays `Paused`; once the owner tops the lease up, the same route
+/// resumes it and the run reads `Queued`.
+#[test]
+fn the_owner_route_refuses_a_spent_run_until_the_top_up_as_the_verb_does() {
+    run_on_engine_stack("budgets-hold-route-resume", || async {
+        let served = served();
+        let launch = "hold-route-refuses";
+        served
+            .ok(
+                Caller::Owner,
+                LEASE_OPEN,
+                json!({
+                    "launch": launch,
+                    "cap_units": 200,
+                    "unit": "tokens",
+                    "shown_at_ms": now_ms(),
+                }),
+            )
+            .await;
+        let root = SpendScopeId::launch(launch).expect("the launch id");
+        reserve(
+            &served.vault,
+            &root,
+            &served.attempt,
+            ChildSpend::Carve { cap_units: 100 },
+        );
+        let child = SpendScopeId::for_attempt(&served.attempt);
+        AgentDispatcher::new(&served.vault)
+            .charge(&child, 100)
+            .expect("spend to the cap");
+        let claimed = claim_attempt(&served.vault, served.attempt);
+        let landed = served
+            .ok(
+                Caller::RunAgent,
+                SELF_BUDGET_LAND,
+                json!({
+                    "attempt": served.attempt_hex.clone(),
+                    "run": served.attempt_hex.clone(),
+                    "lease_owner": "budget-doors",
+                    "attempt_count": claimed.attempt_count,
+                    "marker": "route-checkpoint",
+                    "reason": "the lease is spent",
+                }),
+            )
+            .await;
+        assert_eq!(landed["state"], "held", "{landed}");
+        assert_eq!(landed["resume_ready"], false, "{landed}");
+
+        let run = json!({"run": served.attempt_hex.clone()});
+        let (status, body) = served
+            .send(
+                Caller::Owner,
+                Method::POST,
+                HOLD_RESUME_ROUTE,
+                Some(run.clone()),
+            )
+            .await;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "the route resumes no run with nothing left: {body}"
+        );
+        assert_eq!(error_code(&body), Some("BAD_REQUEST"), "{body}");
+        assert_eq!(
+            body["error"]["message"],
+            "invalid config: top up the held run's binding lease before resuming",
+            "the verb door's words: {body}"
+        );
+        let job = served
+            .ok(
+                Caller::Owner,
+                RUNS_JOB,
+                json!({"job": served.attempt_hex.clone()}),
+            )
+            .await;
+        assert_eq!(job["job"]["state"], "Paused", "still held: {job}");
+
+        served
+            .ok(
+                Caller::Owner,
+                LEASE_TOP_UP,
+                json!({
+                    "scope": served.attempt_hex.clone(),
+                    "expected_cap_units": 100,
+                    "cap_units": 200,
+                    "unit": "tokens",
+                    "shown_at_ms": now_ms(),
+                }),
+            )
+            .await;
+        let (status, resumed) = served
+            .send(Caller::Owner, Method::POST, HOLD_RESUME_ROUTE, Some(run))
+            .await;
+        assert_eq!(status, StatusCode::OK, "after the top-up: {resumed}");
+        assert_eq!(resumed["state"], "resumed", "{resumed}");
         let job = served
             .ok(
                 Caller::Owner,
