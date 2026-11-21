@@ -29,10 +29,13 @@
 //! input this vault erased is born under [`sealed_source`]
 //! ([`seal_births_from_erased_inputs_in_txn`]), which admits no one, the
 //! vault owner included (READ-LINEAGE-L3 = A); doctor counts such rows
-//! ([`facts_hidden_source_unknown_in`]). Only proof of erasure seals (#9289
-//! review 2 P1-1): a row it was written from that has not landed here yet,
-//! or lineage that does not resolve yet, leaves its floor pending, and the
-//! write that lands what it waits on raises it again ([`super::floor_state`]).
+//! ([`super::facts_hidden_source_unknown_in`]), and the owner's re-derive
+//! writes their facts again from the sources that resolve now
+//! ([`crate::Vault::rederive_sealed_rows`]). Only proof of erasure seals
+//! (#9289 review 2 P1-1): a row it was written from that has not landed here
+//! yet, or lineage that does not resolve yet, leaves its floor pending, and
+//! the write that lands what it waits on raises it again
+//! ([`super::floor_state`]).
 
 use std::collections::BTreeSet;
 
@@ -353,27 +356,4 @@ pub(crate) fn seal_births_from_erased_inputs_in_txn(
         }
     }
     Ok(())
-}
-
-/// How many rows this vault reads to no one because an id on their stored
-/// floor names no source: doctor's "N facts hidden: source unknown"
-/// (READ-LINEAGE-L3 = A; design pass 30 section 4.7). One scan of the
-/// stored floors; only the count leaves, never a row, its text or its
-/// sources.
-///
-/// # Errors
-///
-/// Storage failures.
-pub(crate) fn facts_hidden_source_unknown_in(vault: &Vault, txn: &RoTxn<'_>) -> Result<u64> {
-    let mut hidden = 0_u64;
-    for entry in super::DERIVED.iter_from(&vault.store, txn, &[])? {
-        let (_, floor) = entry?;
-        for source in &floor {
-            if floor_source_in(vault, txn, source)? == FloorSource::Unknown {
-                hidden += 1;
-                break;
-            }
-        }
-    }
-    Ok(hidden)
 }
