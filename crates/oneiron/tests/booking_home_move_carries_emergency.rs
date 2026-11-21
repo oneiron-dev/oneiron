@@ -29,12 +29,12 @@
 //!   again: a home whose run sent it and then stopped on a later effect
 //!   passes it on, and the next home's run answers it (review round 1 of
 //!   #10125);
-//! - a send the provider took as a remote task on a home, which the move
+//! - an apology the provider took as a remote task on a home, which the move
 //!   carried away owed and a later move carried back there, goes again from
-//!   that former home under the idempotency key its first send carried (FIX
-//!   [BK-EMERGENCY-DEFERRED-SEND-STRANDED-ON-FORMER-HOME]): its own ledger's
-//!   deferred row, which its replay never sends again (FIX 7960), no longer
-//!   holds every resume there.
+//!   that former home under the key its first send reached the provider
+//!   under (FIX [BK-EMERGENCY-DEFERRED-SEND-STRANDED-ON-FORMER-HOME]): its
+//!   own ledger's deferred row, which its replay never sends again (FIX
+//!   7960), no longer holds every resume there.
 //!
 //! The emergency fixture is `tests/booking_feed_move_held.rs`'s: an
 //! owner-logged RequestUpdate instruction over a booked slot, planned and
@@ -492,20 +492,57 @@ impl OutboundExecutionSink for DeferringSink {
     }
 }
 
-/// A sink that records the channel and the provider idempotency key of each send it is handed,
-/// then answers it as `inner` does.
+/// A sink that records the channel of each send it is handed and the key that send reaches its
+/// provider under, then answers it as `inner` does. The key is the one the served email sink
+/// drafts a send under (`email_send_key`, with no engine send id here): the transport's
+/// provider-native key, else the intent's own.
 struct RecordingSink<S> {
     inner: S,
-    sends: Vec<(String, Option<String>)>,
+    sends: Vec<(String, String)>,
+}
+
+impl<S> RecordingSink<S> {
+    fn new(inner: S) -> Self {
+        Self {
+            inner,
+            sends: Vec::new(),
+        }
+    }
+
+    /// The provider keys of the sends on `channel` this sink was handed, in order.
+    fn keys(&self, channel: &str) -> Vec<&str> {
+        self.sends
+            .iter()
+            .filter(|(sent, _)| sent == channel)
+            .map(|(_, key)| key.as_str())
+            .collect()
+    }
 }
 
 impl<S: OutboundExecutionSink> OutboundExecutionSink for RecordingSink<S> {
     fn execute(&mut self, request: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
-        self.sends.push((
-            request.intent.channel.to_string(),
-            request.idempotency_key.map(str::to_owned),
-        ));
+        let key = request
+            .idempotency_key
+            .or(request.intent.idempotency_key.as_deref())
+            .unwrap_or(request.intent_ref);
+        self.sends
+            .push((request.intent.channel.to_string(), key.to_owned()));
         self.inner.execute(request)
+    }
+}
+
+/// A sink that delivers the calendar invite and whose provider takes every other send as a
+/// remote task: the owner's run sends the invite, and whether the apology reached the booker is
+/// not known.
+struct ApologyDeferringSink;
+
+impl OutboundExecutionSink for ApologyDeferringSink {
+    fn execute(&mut self, request: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
+        if request.intent.channel == "calendar" {
+            OutboundExecutionOutcome::delivered_to_channel("provider:message:fixture")
+        } else {
+            DeferringSink.execute(request)
+        }
     }
 }
 
@@ -960,22 +997,14 @@ fn a_repeat_delivered_before_the_bookers_pick_is_answered_by_the_owners_next_run
     );
 }
 
-#[test]
-fn a_send_deferred_on_a_former_home_goes_again_when_a_move_carries_it_back() {
+/// The emergency on a seed through `sink`, its home moved to a second machine and back to the
+/// seed before the second machine resumed it, with the adoption recorded there: the former home,
+/// the second machine and the emergency.
+fn carried_back_to_former_home(
+    sink: &mut impl OutboundExecutionSink,
+) -> (Machine, Machine, Emergency) {
     let seed = Machine::seed();
-    let mut deferring = RecordingSink {
-        inner: DeferringSink,
-        sends: Vec::new(),
-    };
-    let emergency = emergency(&seed, &mut deferring);
-    assert!(
-        emergency.item.is_err(),
-        "FIXTURE: the provider took the invite as a remote task, so the emergency stays owed"
-    );
-    let invite_key = match deferring.sends.as_slice() {
-        [(channel, Some(key)), ..] if channel == "calendar" => key.clone(),
-        other => panic!("FIXTURE: the seed's first send is the invite, with its key: {other:?}"),
-    };
+    let emergency = emergency(&seed, sink);
     let (former_home, second_home) = seed.into_old_and_new_home();
     assert!(
         move_booking_home(&former_home.vault, &second_home.vault, &[])
@@ -989,51 +1018,68 @@ fn a_send_deferred_on_a_former_home_goes_again_when_a_move_carries_it_back() {
     );
     record_booking_home_adoption(&former_home.vault)
         .expect("FIXTURE: the former home holds the state it adopted");
+    (former_home, second_home, emergency)
+}
 
-    let mut delivering = RecordingSink {
-        inner: DeliveringSink,
-        sends: Vec::new(),
-    };
-    let run = execute_emergency_plan(
-        &former_home.vault,
+/// The owner's resume of `emergency` on `machine` through `sink`: its checkpoint, and whether
+/// each repeat was answered.
+fn resume(
+    machine: &Machine,
+    emergency: &Emergency,
+    sink: &mut impl OutboundExecutionSink,
+) -> Result<(EmergencyItem, Vec<EmergencyRepeatNotice>), BookingError> {
+    execute_emergency_plan(
+        &machine.vault,
         &emergency.request,
         &emergency.plan,
-        &former_home.calendars(),
-        &former_home.consumer(NOW + 300),
-        &mut delivering,
+        &machine.calendars(),
+        &machine.consumer(NOW + 300),
+        sink,
     )
-    .expect(
-        "the former home resumes the owed delivery (#10166's head 6bf877252c85 replays its own \
-         deferred invite under the same attempt and refuses every resume)",
+    .map(|run| (run.item, run.repeat_notices))
+}
+
+#[test]
+fn an_apology_deferred_on_a_former_home_goes_again_when_a_move_carries_it_back() {
+    let mut seeding = RecordingSink::new(ApologyDeferringSink);
+    let (former_home, _second_home, emergency) = carried_back_to_former_home(&mut seeding);
+    assert!(
+        emergency.item.is_err(),
+        "FIXTURE: the provider took the apology as a remote task, so the emergency stays owed"
+    );
+    let apology_key = match seeding.keys("email")[..] {
+        [key] => key.to_owned(),
+        _ => panic!(
+            "FIXTURE: the seed sends the apology once: {:?}",
+            seeding.sends
+        ),
+    };
+
+    let mut delivering = RecordingSink::new(DeliveringSink);
+    let (item, repeat_notices) = resume(&former_home, &emergency, &mut delivering).expect(
+        "the former home resumes the owed apology (#10166's head 6bf877252c85 replays its own \
+         deferred apology under the same attempt and refuses every resume)",
     );
     assert!(
-        run.item.calendar_delivered && run.item.apology_delivered,
-        "the former home delivers what the second home carried back owed"
-    );
-    let invite = delivering
-        .sends
-        .iter()
-        .find(|(channel, _)| channel == "calendar")
-        .expect("the former home sends the invite again");
-    assert_eq!(
-        invite.1.as_deref(),
-        Some(invite_key.as_str()),
-        "the invite goes again under the idempotency key its first send carried, so the \
-         provider can drop a repeat"
+        item.calendar_delivered && item.apology_delivered,
+        "the former home delivers the apology the second home carried back owed"
     );
     assert!(
-        delivering
-            .sends
-            .iter()
-            .any(|(channel, _)| channel == "email"),
-        "the former home sends the apology"
+        delivering.keys("calendar").is_empty(),
+        "the invite the seed delivered is not sent again"
     );
     assert_eq!(
-        run.repeat_notices,
+        delivering.keys("email"),
+        vec![apology_key.as_str()],
+        "the apology goes again once, under the key its first send reached the provider under, \
+         so a provider that drops a repeated key can drop it"
+    );
+    assert_eq!(
+        repeat_notices,
         vec![EmergencyRepeatNotice {
-            effect: "calendar",
+            effect: "apology",
             message: EMERGENCY_REPEAT_NOTICE,
         }],
-        "the invite the former home sent uncertain may reach the booker twice"
+        "the apology the former home sent uncertain may reach the booker twice"
     );
 }
