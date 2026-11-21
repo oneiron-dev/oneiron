@@ -247,7 +247,8 @@ fn step_up_login(args: &HostedLoginArgs, step_up: StepUp, flag: &str) -> anyhow:
 /// the origin admits that credential and answers for the vault `id` names
 /// (or, signed in by OAuth with no id named, for the vault it answers), and
 /// selects it. A new OAuth sign-in waits at `staged`: the origin admits it
-/// there, and only then does it take `file`'s place.
+/// there, and only then does it take `file`'s place; the step-ups of the
+/// client it replaced are then signed out.
 fn record(
     args: &HostedLoginArgs,
     selection: &mut Selection,
@@ -343,6 +344,18 @@ fn record(
         })
         .collect();
     sign_out(&orphaned);
+    // A new OAuth sign-in is another client's: the continue and hand-over
+    // sign-ins the client it replaced made are never read again, so they are
+    // signed out now, not left live at the vault until a logout.
+    if staged.is_some()
+        && let Some(recorded) = selection.vaults.last()
+    {
+        for step_up in [StepUp::Continue, StepUp::HandOver] {
+            if let Err(error) = step_up.sign_out_other_client(recorded) {
+                let _ = writeln!(std::io::stderr().lock(), "{error}");
+            }
+        }
+    }
     Ok(())
 }
 

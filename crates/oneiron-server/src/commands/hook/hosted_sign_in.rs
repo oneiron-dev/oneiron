@@ -450,6 +450,21 @@ impl StepUp {
             _ => Ok(()),
         }
     }
+
+    /// Signs out its sign-in kept for `vault`'s origin, as
+    /// [`StepUp::sign_out`] does, unless it is of the client of `vault`'s
+    /// recall sign-in: one made by a client that a new `hosted login`
+    /// replaced is never [`StepUp::held`] again, so it is not left live at
+    /// the vault.
+    pub(super) fn sign_out_other_client(self, vault: &HostedVault) -> anyhow::Result<()> {
+        let recall = OAuthSignIn::read(&vault.credential_file)?;
+        match self.file(&vault.origin) {
+            Some(file) if file.parent().is_some_and(Path::is_dir) => {
+                OAuthSignIn::remove_unless(&file, |held| held.client_id == recall.client_id, revoke)
+            }
+            _ => Ok(()),
+        }
+    }
 }
 
 /// The recall sign-in `vault` is recorded with now: its record in the
