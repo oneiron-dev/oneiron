@@ -1,5 +1,7 @@
 //! Claim lifecycle primitives: precedence, close/retract, stamps, and loading shapes.
 
+use std::collections::BTreeSet;
+
 use super::{
     EdgeProvenanceClaimBody, EdgeRef, PREDICATE_EDGE_PROVENANCE, decode_edge_provenance_body,
     encode_edge_provenance_value, resolve_persisted_actor_class,
@@ -93,14 +95,25 @@ pub(super) use crate::write_envelope::provenance::edge_lifecycle::{
 ///
 /// `pub(crate)` by design — the only public door to provenance flags is the
 /// `edge.provenance` Claim lifecycle ([`crate::Vault::put_edge_provenance`]);
-/// a flag without its truth-Claim would be unauditable.
+/// a flag without its truth-Claim would be unauditable. On success it queues
+/// the subject edge's endpoints for the live-window mirror.
 pub(crate) fn restamp_edge_flags(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     subject: &EdgeRef,
     flags: EdgeProvenanceFlags,
 ) -> Result<()> {
-    crate::ports::EdgeStoreMaintenance::port_edge_stamp_provenance(store, wtxn, subject, flags)
+    let result = crate::ports::EdgeStoreMaintenance::port_edge_stamp_provenance(
+        store, &mut *wtxn, subject, flags,
+    );
+    if result.is_ok() {
+        crate::batch::queue_committed_rows_in_txn(
+            store,
+            wtxn,
+            BTreeSet::from([subject.source, subject.target]),
+        );
+    }
+    result
 }
 
 /// The D16 downgrade primitive: when deleting / SoftErasing an
