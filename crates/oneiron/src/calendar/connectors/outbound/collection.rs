@@ -485,10 +485,11 @@ pub(super) fn unproven_replay(
     Ok(Some((stored.into_row()?, revision)))
 }
 
-/// The outbox row, on any seat of this seat's calendar, of a refused
-/// upsert of `uid` whose proof is no longer owed (its refusal's read, or a
-/// later pull, read another writer's copy: [`unproven_replay`] no longer
-/// finds it) while the pulled copy `ics` carries that write's own marker.
+/// The outbox row, on any seat that writes `uid` under this seat's system
+/// ([`upsert_row_of`]), of a refused upsert whose proof is no longer owed
+/// (its refusal's read, or a later pull, read another writer's copy:
+/// [`unproven_replay`] no longer finds it) while the pulled copy `ics`
+/// carries that write's own marker.
 /// The marker is fresh for each staged write, so the copy is that write
 /// stored by a call sent before the refusal, whose answer was lost, after
 /// the read that proved the row: an overlapping replay holds the row's
@@ -496,8 +497,8 @@ pub(super) fn unproven_replay(
 /// (CAL-REFUSED-WRITE-LATE-SEND-LANDS-UNFENCED). A released row is not read
 /// ([`OutboxReleases`]). With the row's revision as stored
 /// ([`super::release::revision`]) and its names set to this seat's literal
-/// ones, which its key or readable strings show it stands for
-/// ([`upsert_row_of`]). Its sealed values are not opened.
+/// ones, which its key or readable strings show it stands for. Its sealed
+/// values are not opened.
 ///
 /// # Errors
 ///

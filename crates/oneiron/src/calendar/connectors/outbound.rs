@@ -1261,9 +1261,9 @@ pub(super) fn prove_unproven_replay(
 /// sent before the refusal with the same precondition, landed after the
 /// read that proved the row another writer's, once the provider's ETag
 /// recurred: the copy carries the write's own marker
-/// ([`self::collection::proven_refused_write_of_copy`]) and each staged
-/// member exactly as staged, its SEQUENCE and content hash
-/// ([`stored_copy_of`], with no unmarked reading). The pull then reads the
+/// ([`self::collection::proven_refused_write_of_copy`]), the write's own
+/// shape ([`stored_copy_of`], with no unmarked reading) and each member at
+/// exactly the staged SEQUENCE. The pull then reads the
 /// owner's cancel as the owner's echo, never as a host cancel that refunds
 /// the deposit (CAL-REFUSED-WRITE-LATE-SEND-LANDS-UNFENCED). The row stays
 /// as it is: no receipt is made, no carrier sealed.
@@ -1287,16 +1287,15 @@ pub(super) fn publish_late_refused_write_copy(
     let StoredCopy::Own { members, .. } = stored_copy_of(vault, &row, object, false)? else {
         return Ok(());
     };
-    // The late call's bytes exactly: a host who restored the booking after
-    // the read and cancels it again may keep the write's marker, and that
-    // cancel still moves money (BK-ECHO-MARK-OVER-NEWER-LIVE-RESTORE).
-    let exact = members.iter().all(|stored| {
-        stored.sequence == row.sequence
-            && row
-                .component_hashes
-                .contains(&(stored.member, stored.content_hash))
-    });
-    if !exact {
+    // The staged SEQUENCE exactly. A provider that rewrites the copy it
+    // stores keeps it, whatever else it changes
+    // (BK-DEPOSIT-REWRITTEN-ECHO-OF-OWNER-WRITE-REFUNDS). A host who restored
+    // the booking and cancels it again under the write's marker raises it,
+    // and that cancel still moves money (BK-ECHO-MARK-OVER-NEWER-LIVE-RESTORE);
+    // a restore pulled at the staged SEQUENCE stays the newer head
+    // ([`publish_own_stored_copy_in_txn`]). A rewrite that raises the
+    // SEQUENCE reads as the host's, as before.
+    if members.is_empty() || members.iter().any(|stored| stored.sequence != row.sequence) {
         return Ok(());
     }
     vault.try_with_write_txn_grouped(|txn| -> Result<(), CalendarConnectorError> {
