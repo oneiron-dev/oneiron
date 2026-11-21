@@ -544,7 +544,8 @@ fn settle_deposit_key<P: DepositSettlementPort>(
                     refunded_before,
                     retry: refund_retry,
                 };
-                note_refund_ended_unpaid(vault, key, asked, now_utc)?;
+                // Scratch red pin: the settle step notes nothing.
+                let _ = asked;
             }
             Ok(DepositSettleStep::Failed(failure))
         }
