@@ -13,10 +13,20 @@
 //! owner's approve-once press, as a compliance hold is. A campaign pinned to
 //! human review holds every send for that press.
 //!
-//! Only a campaign that names a voice guide or pins human review is governed;
-//! every other campaign sends as before. The owner can turn copy review off
-//! for one campaign (`campaign.copy_review.skip`, lead ruling
-//! COPY-REVIEW-JUDGE-BY-DEFAULT = B): its sends then go out unreviewed.
+//! Copy review governs every campaign (lead ruling
+//! COPY-REVIEW-JUDGE-BY-DEFAULT = B, 21 Nov): a campaign that names no voice
+//! guide is checked against the vault's house voice guide
+//! ([`crate::campaign::house_voice_guide`]), and one whose vault has none holds
+//! its sends. On a host with no judge seat the judge abstains, nothing is
+//! stored, and each send holds for the owner's press: each review records
+//! whether this node seats a judge, whatever rule the campaign is under, and
+//! the Gate releases no send on a pass while none is seated. The review also
+//! drops a pass stored for the body before, as it does once the campaign's
+//! owner cannot read the guide. A verdict covers a send only under the
+//! guide's NOTE overrides it was judged under, since an override moves who
+//! reads the guide without a new version of it. The owner can turn copy
+//! review off for one campaign (`campaign.copy_review.skip`): its sends then
+//! go out unreviewed.
 
 use std::time::{Duration, Instant};
 
@@ -33,12 +43,12 @@ use crate::gate::{ApprovalTarget, ExternalEffectGateInput};
 use crate::llm::decision::DecisionLadder;
 use crate::model_decision::catalogue::CAMPAIGN_COPY_REVIEW;
 use crate::model_decision::{
-    AnswerContract, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionDial, DecisionRung,
-    ProviderPin, Reversibility,
+    AnswerContract, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionDial,
+    DecisionQuestion, DecisionRung, ProviderPin, Reversibility,
 };
 use crate::note::{NoteReadRequest, NoteReadView, NoteVersion};
 use crate::retrieval_depth::RetrievalDeadline;
-use crate::side_table::{self, Named, SideTable};
+use crate::side_table::{self, Named, Raw, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Vault};
 
@@ -103,6 +113,13 @@ pub struct CopyReviewVerdict {
     /// only while the guide's live version is this one, so an edited guide
     /// asks again and holds the send until it does.
     pub voice_guide_version: NoteVersion,
+    /// A digest of that guide's NOTE overrides when it was checked, `None`
+    /// when it had none. An override moves who reads the guide (its context)
+    /// without a new version of it, so the verdict covers a send only while
+    /// the guide's overrides are these; a verdict stored before this field
+    /// reads as judged under none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub voice_guide_overrides_digest: Option<[u8; 32]>,
     /// The providers that answered whether the body follows the guide.
     pub judge: Vec<ProviderPin>,
     /// When the review was stored, engine seconds.
@@ -113,8 +130,7 @@ pub struct CopyReviewVerdict {
 #[derive(Debug, Clone, PartialEq)]
 pub enum CopyReviewOutcome {
     /// Copy review does not govern this send: not a campaign leg with an
-    /// outward call, the owner turned copy review off for the campaign, or
-    /// the campaign names no voice guide and pins no human review.
+    /// outward call, or the owner turned copy review off for the campaign.
     NotGoverned,
     /// The campaign pins human review: no judge runs, and the send holds
     /// for the owner's press.
@@ -123,11 +139,16 @@ pub enum CopyReviewOutcome {
     Cached(CopyReviewVerdict),
     /// The judge reviewed the body now, and its verdict is stored.
     Reviewed(CopyReviewVerdict),
-    /// The judge gave no answer; nothing is stored and the send holds.
+    /// The judge gave no answer, or the host seats no judge; nothing is
+    /// stored and the send holds. With no judge seat, a verdict stored for
+    /// the body before is dropped, a pass among them, and the Gate releases
+    /// no send on a pass until a review finds a judge seated again.
     Abstained,
     /// The campaign's owner cannot read the voice guide through the scoped
-    /// NOTE read (its grants, the diary gate, an erased or missing NOTE): no
-    /// judge is asked, nothing is stored, and the send holds.
+    /// NOTE read (its grants, the diary gate, an erased or missing NOTE), or
+    /// the campaign names none and no house voice guide could be seeded: no
+    /// judge is asked, nothing is stored, a verdict stored for the body while
+    /// the owner read the guide is dropped, and the send holds.
     GuideUnreadable,
 }
 
@@ -138,7 +159,10 @@ pub(crate) enum CopyReviewHold {
     Failed,
     /// No passing verdict covers the body: none was stored (no judge seat,
     /// the judge abstained, or the owner cannot read the guide), the guide
-    /// changed or does not read since, or the campaign pins human review.
+    /// or its NOTE overrides changed or it does not read since, this node's
+    /// last review found no judge seated, there is no guide (the campaign
+    /// names none and the vault has no house voice guide), or the campaign
+    /// pins human review.
     Missing,
 }
 
@@ -152,18 +176,19 @@ impl CopyReviewHold {
     }
 }
 
-/// Who reviews one campaign's copy, as the store holds the campaign and the
-/// owner's skip setting now.
+/// Who reviews one campaign's copy, as the store holds the campaign, the
+/// owner's skip setting and the house voice guide now.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CopyReviewRule {
     /// Copy review does not govern the campaign: the owner turned it off
-    /// (`campaign.copy_review.skip`), or the campaign names no voice guide and
-    /// pins no human review.
+    /// (`campaign.copy_review.skip`).
     NotGoverned,
     /// The campaign pins human review: every send holds for the owner.
     Human,
-    /// The judge checks each body against this voice guide NOTE.
-    Judge(EntityId),
+    /// The judge checks each body against this voice guide NOTE: the
+    /// campaign's own, else the house voice guide. `None` when the campaign
+    /// names none and the vault has no house voice guide: each send holds.
+    Judge(Option<EntityId>),
 }
 
 /// The rule for `campaign_ref`'s copy under `definition`, in `txn`. The
@@ -180,10 +205,10 @@ fn copy_review_rule_in_txn(
     if definition.copy_review == CopyReviewMode::Human {
         return Ok(CopyReviewRule::Human);
     }
-    Ok(match definition.voice_guide_ref {
-        Some(guide) => CopyReviewRule::Judge(guide),
-        None => CopyReviewRule::NotGoverned,
-    })
+    Ok(CopyReviewRule::Judge(match definition.voice_guide_ref {
+        Some(guide) => Some(guide),
+        None => crate::campaign::house_voice_guide::house_voice_guide_in_txn(store, txn)?,
+    }))
 }
 
 /// The verdict key: the campaign, then the body digest the retained request
@@ -199,14 +224,22 @@ const VOICE_GUIDE_READ_REASON: &str = "campaign copy review against its voice gu
 const VERDICTS: SideTable<VerdictKey, CopyReviewVerdict, Named> =
     SideTable::new(&side_table::CAMPAIGN_COPY_REVIEW_VERDICT);
 
+/// () → present while this node's last copy review found a judge seated.
+const JUDGE_SEAT: SideTable<(), (), Raw> =
+    SideTable::new(&side_table::CAMPAIGN_COPY_REVIEW_JUDGE_SEAT);
+
 impl Vault {
     /// Reviews the body the claimed enrollment `attempt` would send, once
     /// per body version, before the host drives its outward leg. The voice
     /// guide is read as the campaign's owner reads it (the scoped NOTE read:
     /// grants and the diary gate); a guide the owner cannot read asks no
     /// judge. A verdict stored for this body at the guide's current version
-    /// is reused; otherwise the judge is asked and its verdict stored. The
-    /// Gate's copy-review stage reads that verdict when the leg runs.
+    /// is reused; otherwise the judge is asked and its verdict stored, with
+    /// the guide's NOTE overrides as they stood before the read. The Gate's
+    /// copy-review stage reads that verdict when the leg runs. Each review
+    /// records whether this node seats a judge, before anything else. A host
+    /// with no judge seat, or an owner who cannot read the guide, drops the
+    /// body's stored verdict, so the Gate holds the send for the owner.
     ///
     /// # Errors
     ///
@@ -227,6 +260,21 @@ impl Vault {
         let Some(outbound) = step.outbound.as_ref() else {
             return Ok(CopyReviewOutcome::NotGoverned);
         };
+        let key = (
+            event.campaign_ref,
+            super::approval::outbound_payload_digest(outbound),
+        );
+        // A host with no judge seat reviews no copy: each send holds for the
+        // owner's press, one whose body a judge passed before among them. The
+        // seat is recorded first, whatever rule the campaign is under now, so
+        // a rule that changes between this review and the Gate (the owner's
+        // skip turned off, a human-review pin lifted) still finds no seat to
+        // release the send on, and the stored pass goes.
+        let seated = judge_seated(decisions)?;
+        record_judge_seat(self, seated)?;
+        if !seated {
+            drop_verdict(self, &key)?;
+        }
         let Some(record) =
             crate::campaign::surface::load_registered_campaign(self, event.campaign_ref)?
         else {
@@ -240,15 +288,42 @@ impl Vault {
         let guide = match rule {
             CopyReviewRule::NotGoverned => return Ok(CopyReviewOutcome::NotGoverned),
             CopyReviewRule::Human => return Ok(CopyReviewOutcome::HumanReview),
-            CopyReviewRule::Judge(guide) => guide,
+            CopyReviewRule::Judge(Some(guide)) => guide,
+            // A campaign that reached this vault without its create door (by
+            // sync, or an archive import) can find no house guide yet: seed
+            // it now. A vault that had one keeps its marker, so a guide the
+            // owner deleted stays deleted.
+            CopyReviewRule::Judge(None) => match self.ensure_house_voice_guide() {
+                Ok(Some(guide)) => guide,
+                Ok(None) => return Ok(CopyReviewOutcome::GuideUnreadable),
+                Err(error) => {
+                    tracing::warn!(
+                        kind = ?error.kind(),
+                        "the house voice guide could not be seeded for a copy review; the send holds"
+                    );
+                    return Ok(CopyReviewOutcome::GuideUnreadable);
+                }
+            },
         };
+        // No scoped read of the guide runs on a host with no judge seat.
+        if !seated {
+            return Ok(CopyReviewOutcome::Abstained);
+        }
+        // The guide's overrides are read before the scoped read: an override
+        // set after it (one that narrows who reads the guide, with no new
+        // version) leaves the verdict on a digest the Gate no longer finds,
+        // and the send holds.
+        let overrides = {
+            let txn = self.store.env.read_txn()?;
+            crate::note::note_overrides_digest_in_txn(&self.store, &txn, &guide)?
+        };
+        // A pass stored while the owner read the guide covers no send once
+        // the owner cannot read it: the send holds, as one whose guide
+        // changed does.
         let Some(guide_view) = read_voice_guide(self, definition.owner_actor, guide)? else {
+            drop_verdict(self, &key)?;
             return Ok(CopyReviewOutcome::GuideUnreadable);
         };
-        let key = (
-            event.campaign_ref,
-            super::approval::outbound_payload_digest(outbound),
-        );
         let stored = {
             let txn = self.store.env.read_txn()?;
             VERDICTS.get(&self.store, &txn, &key)?
@@ -257,12 +332,23 @@ impl Vault {
             && verdict.voice_guide_ref == guide
             && verdict.voice_guide_version == guide_view.version
         {
+            if verdict.voice_guide_overrides_digest == overrides {
+                return Ok(CopyReviewOutcome::Cached(verdict));
+            }
+            // The owner read this version of the guide under its overrides
+            // now: the judgement of its text stands under them.
+            let verdict = CopyReviewVerdict {
+                voice_guide_overrides_digest: overrides,
+                ..verdict
+            };
+            self.with_write_txn_grouped(|wtxn| VERDICTS.put(self, wtxn, &key, &verdict))?;
             return Ok(CopyReviewOutcome::Cached(verdict));
         }
         let Some(verdict) = judge_copy(
             decisions,
             definition,
             guide,
+            overrides,
             guide_view,
             outbound,
             self.store.clock.now_recorded_at(),
@@ -299,6 +385,94 @@ impl Vault {
     }
 }
 
+/// Test door: stores a passing verdict for the body `step` sends for
+/// `campaign_ref`, judged against the voice guide NOTE `guide` at its live
+/// version and overrides, as a judge stores one while the campaign's owner
+/// reads the guide.
+#[cfg(oneiron_test_support)]
+pub(crate) fn store_passing_copy_review_verdict(
+    vault: &Vault,
+    campaign_ref: EntityId,
+    step: &CampaignProgramStep,
+    guide: EntityId,
+) -> Result<()> {
+    let outbound = step.outbound.as_ref().ok_or(Error::EntityNotFound)?;
+    let key = (
+        campaign_ref,
+        super::approval::outbound_payload_digest(outbound),
+    );
+    let (version, overrides) = {
+        let txn = vault.store.env.read_txn()?;
+        (
+            crate::note::documents::live_version_in_store_txn(&vault.store, &txn, guide)?,
+            crate::note::note_overrides_digest_in_txn(&vault.store, &txn, &guide)?,
+        )
+    };
+    let verdict = CopyReviewVerdict {
+        passed: true,
+        probability: Some(0.9),
+        reason: COPY_REVIEW_REASONS[0].to_owned(),
+        voice_guide_ref: guide,
+        voice_guide_version: version,
+        voice_guide_overrides_digest: overrides,
+        judge: Vec::new(),
+        reviewed_at: vault.store.clock.now_recorded_at(),
+    };
+    vault.with_write_txn_grouped(|wtxn| VERDICTS.put(vault, wtxn, &key, &verdict))
+}
+
+/// Whether the host seats a judge for copy review: a rung of the review's
+/// dial, short of the person, whose provider takes its first question.
+fn judge_seated(decisions: &CampaignCopyReviewDecisions<'_>) -> Result<bool> {
+    Ok(decisions
+        .ladder
+        .first_taking(&follows_voice_question(decisions)?, decisions.dial, &[])
+        .is_some())
+}
+
+/// Records whether this node seats a judge for copy review, as its review
+/// just found; written only when that changed. The Gate releases no send on
+/// a pass while no judge is seated.
+fn record_judge_seat(vault: &Vault, seated: bool) -> Result<()> {
+    let recorded = {
+        let txn = vault.store.env.read_txn()?;
+        JUDGE_SEAT.contains(&vault.store, &txn, &())?
+    };
+    if recorded == seated {
+        return Ok(());
+    }
+    vault.with_write_txn_grouped(|wtxn| {
+        if seated {
+            JUDGE_SEAT.put(&vault.store, wtxn, &(), &())
+        } else {
+            JUDGE_SEAT.delete(&vault.store, wtxn, &()).map(|_| ())
+        }
+    })
+}
+
+/// The review's first question: does the body follow the voice guide?
+fn follows_voice_question(decisions: &CampaignCopyReviewDecisions<'_>) -> Result<DecisionQuestion> {
+    CAMPAIGN_COPY_REVIEW.question(
+        &[b"follows_voice"],
+        decisions.wording.follows_voice.clone(),
+        AnswerContract::Noul,
+    )
+}
+
+/// Drops the verdict stored under `key`, if one is, so the Gate finds no
+/// review covering that body and holds its send.
+fn drop_verdict(vault: &Vault, key: &VerdictKey) -> Result<()> {
+    let stored = {
+        let txn = vault.store.env.read_txn()?;
+        VERDICTS.contains(&vault.store, &txn, key)?
+    };
+    if stored {
+        vault
+            .with_write_txn_grouped(|wtxn| VERDICTS.delete(&vault.store, wtxn, key).map(|_| ()))?;
+    }
+    Ok(())
+}
+
 /// The voice guide `guide` as the campaign's `owner` reads it: the scoped
 /// NOTE read, with the NOTE's kind policy, the owner's current grants and the
 /// diary gate a private or diary NOTE needs. `None` when that read does not
@@ -333,20 +507,19 @@ fn read_voice_guide(
 }
 
 /// Asks the judge whether `outbound`'s body follows the voice guide, and why,
-/// as one pack. `None` when the judge abstains on the first question.
+/// as one pack. `None` when the judge abstains on the first question. The
+/// verdict records `overrides`, the guide's NOTE overrides digest read before
+/// `guide_view`.
 fn judge_copy(
     decisions: &CampaignCopyReviewDecisions<'_>,
     definition: &CampaignDefinition,
     guide: EntityId,
+    overrides: Option<[u8; 32]>,
     guide_view: NoteReadView,
     outbound: &CampaignProgramOutbound,
     reviewed_at: u64,
 ) -> Result<Option<CopyReviewVerdict>> {
-    let follows_question = CAMPAIGN_COPY_REVIEW.question(
-        &[b"follows_voice"],
-        decisions.wording.follows_voice.clone(),
-        AnswerContract::Noul,
-    )?;
+    let follows_question = follows_voice_question(decisions)?;
     let reason_question = CAMPAIGN_COPY_REVIEW.question(
         &[b"reason"],
         decisions.wording.reason.clone(),
@@ -392,6 +565,7 @@ fn judge_copy(
         reason,
         voice_guide_ref: guide,
         voice_guide_version: guide_view.version,
+        voice_guide_overrides_digest: overrides,
         judge: follows.receipt.providers.clone(),
         reviewed_at,
     }))
@@ -399,10 +573,12 @@ fn judge_copy(
 
 /// The stored verdict that covers the body `payload_digest` names for
 /// `campaign_ref` under the voice guide `guide` as `store` holds it now: one
-/// judged against that guide at its live version. `None` when none covers it:
-/// none was stored, the guide changed, was replaced or was deleted since, or
-/// its document does not read (an unreadable guide holds the send, as a
-/// changed one does).
+/// judged against that guide at its live version, under its NOTE overrides
+/// now. `None` when none covers it: none was stored, the guide changed, was
+/// replaced or was deleted since, its overrides changed since (an override
+/// can take the guide out of its owner's read with no new version), or its
+/// document does not read (an unreadable guide holds the send, as a changed
+/// one does).
 fn covering_verdict_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -420,6 +596,11 @@ fn covering_verdict_in_txn(
     if state.deleted || state.stale {
         return Ok(None);
     }
+    if verdict.voice_guide_overrides_digest
+        != crate::note::note_overrides_digest_in_txn(store, txn, &guide)?
+    {
+        return Ok(None);
+    }
     let Ok(live) = crate::note::documents::live_version_in_store_txn(store, txn, guide) else {
         return Ok(None);
     };
@@ -432,7 +613,10 @@ fn covering_verdict_in_txn(
 /// campaign body to review. It reads the verdict for the prepared send's own
 /// body digest (the frozen envelope's, which the target pins), never the live
 /// step's, so a step edited after the send was prepared cannot lend it
-/// another body's verdict. `None` when the stage does not hold the send.
+/// another body's verdict. A pass releases the send only while this node's
+/// last review found a judge seated: a host with no judge seat holds each
+/// send for the owner's press, whatever rule the campaign was under when it
+/// was reviewed. `None` when the stage does not hold the send.
 pub(crate) fn campaign_copy_review_gate(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -446,13 +630,21 @@ pub(crate) fn campaign_copy_review_gate(
     };
     let guide = match copy_review_rule_in_txn(store, txn, facts.campaign_ref, &record.definition)? {
         CopyReviewRule::NotGoverned => return Ok(None),
-        CopyReviewRule::Human => return Ok(Some(CopyReviewHold::Missing)),
-        CopyReviewRule::Judge(guide) => guide,
+        CopyReviewRule::Human | CopyReviewRule::Judge(None) => {
+            return Ok(Some(CopyReviewHold::Missing));
+        }
+        CopyReviewRule::Judge(Some(guide)) => guide,
     };
     Ok(
         match covering_verdict_in_txn(store, txn, facts.campaign_ref, facts.payload_digest, guide)?
         {
-            Some(verdict) if verdict.passed => None,
+            Some(verdict) if verdict.passed => {
+                if JUDGE_SEAT.contains(store, txn, &())? {
+                    None
+                } else {
+                    Some(CopyReviewHold::Missing)
+                }
+            }
             Some(_) => Some(CopyReviewHold::Failed),
             None => Some(CopyReviewHold::Missing),
         },
@@ -475,8 +667,8 @@ pub(super) fn copy_review_ask_state_in_txn(
     };
     let verdict = match copy_review_rule_in_txn(store, txn, campaign_ref, &record.definition)? {
         CopyReviewRule::NotGoverned => return Ok(None),
-        CopyReviewRule::Human => None,
-        CopyReviewRule::Judge(guide) => {
+        CopyReviewRule::Human | CopyReviewRule::Judge(None) => None,
+        CopyReviewRule::Judge(Some(guide)) => {
             covering_verdict_in_txn(store, txn, campaign_ref, payload_digest, guide)?
         }
     };

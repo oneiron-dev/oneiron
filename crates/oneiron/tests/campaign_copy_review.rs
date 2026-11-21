@@ -1,23 +1,24 @@
 // Integration-test helpers (non-#[test] fns) are not covered by allow-unwrap-in-tests.
 #![allow(clippy::unwrap_used)]
 #![cfg(feature = "test-support")]
-//! Campaign copy review (ARCH-0059 #copy-review, Top-15 item 13).
+//! Campaign copy review (ARCH-0059 #copy-review, Top-15 item 13; lead ruling
+//! COPY-REVIEW-JUDGE-BY-DEFAULT = B, 21 Nov).
 //!
-//! A campaign that names a voice guide (a NOTE) or pins human review has its
-//! copy reviewed before it sends. The host asks a judge model once per body
-//! version and stores the verdict; the Gate holds the campaign leg whose copy
-//! failed, or has no passing verdict, with `gate.pending.campaign_copy_review`.
+//! Every campaign's copy is reviewed before it sends: against the voice guide
+//! NOTE the campaign names, else the vault's house voice guide; a campaign
+//! that pins human review holds every send for the owner. The host asks a
+//! judge model once per body version and stores the verdict; the Gate holds
+//! the campaign leg whose copy failed, or has no passing verdict, with
+//! `gate.pending.campaign_copy_review`. Only the owner's per-campaign
+//! `campaign.copy_review.skip` takes a campaign out of copy review.
 //!
 //! Every test drives one real campaign leg through the public door
 //! (`Vault::drive_enrollment_outbound_leg`) on an unseeded vault with no
-//! policy manifest. There the Gate already holds every send for external-effect
-//! authority, so the leg answers `AwaitingApproval` in every case; what each
-//! test reads is WHY it holds: the reason codes and receipt reasons the held
-//! send's owner ask states.
-//!
-//! The campaign is created through the JSON door (`self.campaign.create`),
-//! so the tests outside `mod judged` build on a main that has no copy review:
-//! there the door ignores the new keys and the send holds for authority only.
+//! policy manifest, whose first campaign seeds the vault's house voice guide.
+//! There the Gate already holds every send for external-effect authority, so the leg
+//! answers `AwaitingApproval` in every case; what each test reads is WHY it
+//! holds: the reason codes and receipt reasons the held send's owner ask
+//! states.
 
 use std::future::Future;
 use std::sync::Arc;
@@ -497,16 +498,28 @@ fn a_human_review_campaign_holds_its_send_for_the_owner() {
     );
 }
 
-/// A campaign with no voice guide and no human pin is not governed: its send
-/// holds only for what held it before copy review existed.
+/// Copy review governs every campaign (lead ruling
+/// COPY-REVIEW-JUDGE-BY-DEFAULT = B): a campaign that names no voice guide is
+/// checked against the vault's house voice guide, which the campaign's
+/// creation seeded. No review covers the copy yet, so the send holds for copy
+/// review. On the base such a campaign is not governed, and its send holds
+/// only for external-effect authority.
 #[test]
-fn a_campaign_without_a_voice_guide_is_not_held_for_copy_review() {
+fn a_campaign_without_a_voice_guide_is_held_for_copy_review() {
     let leg = leg(|_, _| json!({}));
     drive_held(&leg.vault, &leg.attempt);
     let state = held_ask_state(&leg.vault);
     assert!(
-        !strings(&state, "gate_reason_codes").contains(&PENDING_COPY_REVIEW.to_owned()),
-        "an ungoverned campaign is not held for copy review: {state}"
+        strings(&state, "gate_reason_codes").contains(&PENDING_COPY_REVIEW.to_owned()),
+        "an unguided campaign is held for copy review: {state}"
+    );
+    assert!(
+        strings(&state, "gate_receipt_reasons").contains(&COPY_REVIEW_MISSING.to_owned()),
+        "no review covers its copy: {state}"
+    );
+    assert_eq!(
+        state["copy_review"]["mode"], "judge",
+        "the owner ask names the judge's review: {state}"
     );
 }
 
@@ -567,13 +580,23 @@ mod owner_skip {
 
     /// The owner turns copy review off for `campaign`.
     fn owner_skips(vault: &Vault, campaign: EntityId) {
+        owner_sets_skip(vault, campaign, true);
+    }
+
+    /// The owner turns copy review for `campaign` off (`skipped`) or back
+    /// on.
+    pub(super) fn owner_sets_skip(vault: &Vault, campaign: EntityId, skipped: bool) {
         let proof = owner_proof(vault);
+        let change = SetSetting {
+            item: Some(campaign.to_hex()),
+            ..SetSetting::vault_value(SKIP_KEY, json!(skipped))
+        };
         let outcome = vault
-            .set_setting(SettingCaller::Owner(&proof), skip(campaign))
-            .expect("the owner's skip of copy review");
+            .set_setting(SettingCaller::Owner(&proof), change)
+            .expect("the owner's copy-review skip setting");
         assert!(
             matches!(outcome, SetSettingOutcome::Applied { .. }),
-            "the owner's skip applies at once: {outcome:?}"
+            "the owner's skip setting applies at once: {outcome:?}"
         );
     }
 
@@ -704,7 +727,9 @@ mod judged {
         DecisionProvider, DecisionRung, HumanDecisionQueue, HumanDecisionRequest, ProviderDecision,
         ProviderPin,
     };
-    use oneiron::note::{NoteProgramEdit, NoteProgramEditOutcome, NoteReadRequest};
+    use oneiron::note::{
+        ContextDefault, NoteOverrides, NoteProgramEdit, NoteProgramEditOutcome, NoteReadRequest,
+    };
     use oneiron::registry::ENTITY_TYPE_PERSON;
     use std::cell::Cell;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -759,10 +784,19 @@ mod judged {
     /// The copy review's decision path with `judge` as its only model rung.
     /// The default bands are unlearned, so the first rung's answer stands.
     fn decisions(judge: &dyn DecisionProvider) -> CampaignCopyReviewDecisions<'_> {
+        decisions_with(Some(judge))
+    }
+
+    /// A host with no judge seat: no model rung at all.
+    fn unstaffed_decisions() -> CampaignCopyReviewDecisions<'static> {
+        decisions_with(None)
+    }
+
+    fn decisions_with(local: Option<&dyn DecisionProvider>) -> CampaignCopyReviewDecisions<'_> {
         CampaignCopyReviewDecisions {
             ladder: DecisionLadder {
                 rule: None,
-                local: Some(judge),
+                local,
                 system_one: None,
                 precision: None,
                 escalation: None,
@@ -791,6 +825,235 @@ mod judged {
 
     fn voice_guided_leg() -> Leg {
         leg(|vault, owner| json!({ "voice_guide_ref": voice_guide(vault, owner).to_hex() }))
+    }
+
+    /// A campaign that names no voice guide is judged against the vault's
+    /// house voice guide: the verdict names that guide, and a passing one
+    /// lets the send through copy review.
+    #[test]
+    fn a_campaign_without_a_voice_guide_is_judged_against_the_house_guide() {
+        let leg = leg(|_, _| json!({}));
+        let house = leg
+            .vault
+            .ensure_house_voice_guide()
+            .unwrap()
+            .expect("the house voice guide");
+        let judge = CopyJudge {
+            follows: true,
+            reason: "on_voice",
+        };
+        let outcome = leg
+            .vault
+            .review_enrollment_copy(&leg.attempt, &decisions(&judge))
+            .unwrap();
+        let CopyReviewOutcome::Reviewed(verdict) = outcome else {
+            panic!("the judge reviews the unguided campaign's body: {outcome:?}");
+        };
+        assert!(verdict.passed, "the judge passed the copy: {verdict:?}");
+        assert_eq!(
+            verdict.voice_guide_ref, house,
+            "the body was checked against the house voice guide"
+        );
+        drive_held(&leg.vault, &leg.attempt);
+        let state = held_ask_state(&leg.vault);
+        assert!(
+            !strings(&state, "gate_reason_codes").contains(&PENDING_COPY_REVIEW.to_owned()),
+            "a passing review against the house guide clears copy review: {state}"
+        );
+    }
+
+    /// A campaign that reached the vault without its create door (by sync, or
+    /// an archive import) can find no house guide: the host's review seeds
+    /// one and judges the copy against it, and a passing verdict clears copy
+    /// review. The door drops the marker the campaign's create wrote.
+    #[cfg(oneiron_test_support)]
+    #[test]
+    fn a_review_that_finds_no_house_guide_seeds_one_and_judges_against_it() {
+        let leg = leg(|_, _| json!({}));
+        let created = leg
+            .vault
+            .house_voice_guide()
+            .unwrap()
+            .expect("the campaign's create seeded a guide");
+        oneiron::test_doors::campaign_copy_review::forget_house_voice_guide(&leg.vault).unwrap();
+        let judge = CopyJudge {
+            follows: true,
+            reason: "on_voice",
+        };
+        let outcome = leg
+            .vault
+            .review_enrollment_copy(&leg.attempt, &decisions(&judge))
+            .unwrap();
+        let CopyReviewOutcome::Reviewed(verdict) = outcome else {
+            panic!("the review seeds a guide and judges against it: {outcome:?}");
+        };
+        let seeded = leg
+            .vault
+            .house_voice_guide()
+            .unwrap()
+            .expect("the review seeded a house voice guide");
+        assert_ne!(seeded, created, "a new guide, since the marker was gone");
+        assert_eq!(verdict.voice_guide_ref, seeded);
+        drive_held(&leg.vault, &leg.attempt);
+        let state = held_ask_state(&leg.vault);
+        assert!(
+            !strings(&state, "gate_reason_codes").contains(&PENDING_COPY_REVIEW.to_owned()),
+            "a passing review against the seeded guide clears copy review: {state}"
+        );
+    }
+
+    /// On a host with no judge seat the judge abstains: nothing is stored,
+    /// and the unguided campaign's send holds for the owner's press, with the
+    /// copy-review hold and owner ask a human-review campaign gets.
+    #[test]
+    fn a_host_with_no_judge_holds_an_unguided_send_for_the_owner() {
+        let leg = leg(|_, _| json!({}));
+        leg.vault
+            .ensure_house_voice_guide()
+            .unwrap()
+            .expect("the house voice guide");
+        let outcome = leg
+            .vault
+            .review_enrollment_copy(&leg.attempt, &unstaffed_decisions())
+            .unwrap();
+        assert_eq!(
+            outcome,
+            CopyReviewOutcome::Abstained,
+            "no judge answers on this host"
+        );
+        drive_held(&leg.vault, &leg.attempt);
+        let state = held_ask_state(&leg.vault);
+        assert!(
+            strings(&state, "gate_reason_codes").contains(&PENDING_COPY_REVIEW.to_owned()),
+            "the send holds for the owner's press: {state}"
+        );
+        assert!(
+            strings(&state, "gate_receipt_reasons").contains(&COPY_REVIEW_MISSING.to_owned()),
+            "no review covers its copy: {state}"
+        );
+    }
+
+    /// On a host with no judge seat each send holds for the owner's press,
+    /// a body a judge passed before among them: the review drops the stored
+    /// pass, and the Gate finds no review covering the copy.
+    #[test]
+    fn a_stored_pass_holds_the_send_on_a_host_with_no_judge() {
+        let leg = leg(|_, _| json!({}));
+        let judge = CopyJudge {
+            follows: true,
+            reason: "on_voice",
+        };
+        let first = leg
+            .vault
+            .review_enrollment_copy(&leg.attempt, &decisions(&judge))
+            .unwrap();
+        assert!(
+            matches!(&first, CopyReviewOutcome::Reviewed(verdict) if verdict.passed),
+            "a judge passes the copy on a host that seats one: {first:?}"
+        );
+        let outcome = leg
+            .vault
+            .review_enrollment_copy(&leg.attempt, &unstaffed_decisions())
+            .unwrap();
+        drive_held(&leg.vault, &leg.attempt);
+        let state = held_ask_state(&leg.vault);
+        assert!(
+            strings(&state, "gate_reason_codes").contains(&PENDING_COPY_REVIEW.to_owned()),
+            "the send holds for the owner's press on a host with no judge: {state}"
+        );
+        assert!(
+            strings(&state, "gate_receipt_reasons").contains(&COPY_REVIEW_MISSING.to_owned()),
+            "no review covers its copy: {state}"
+        );
+        assert_eq!(
+            outcome,
+            CopyReviewOutcome::Abstained,
+            "no judge answers on this host"
+        );
+    }
+
+    /// A pass releases a send only while this node seats a judge, whatever
+    /// rule the campaign was under when it was reviewed. A judge passes the
+    /// copy; the owner skips copy review; a host with no judge reviews the
+    /// send then; the owner turns copy review back on before the send
+    /// reaches the Gate. The pass stored before does not release the send:
+    /// it holds for the owner's press.
+    #[test]
+    fn a_stored_pass_holds_the_send_once_copy_review_returns_on_a_host_with_no_judge() {
+        let leg = leg(|_, _| json!({}));
+        let judge = CopyJudge {
+            follows: true,
+            reason: "on_voice",
+        };
+        let first = leg
+            .vault
+            .review_enrollment_copy(&leg.attempt, &decisions(&judge))
+            .unwrap();
+        assert!(
+            matches!(&first, CopyReviewOutcome::Reviewed(verdict) if verdict.passed),
+            "a judge passes the copy on a host that seats one: {first:?}"
+        );
+        super::owner_skip::owner_sets_skip(&leg.vault, leg.campaign, true);
+        leg.vault
+            .review_enrollment_copy(&leg.attempt, &unstaffed_decisions())
+            .unwrap();
+        super::owner_skip::owner_sets_skip(&leg.vault, leg.campaign, false);
+        drive_held(&leg.vault, &leg.attempt);
+        let state = held_ask_state(&leg.vault);
+        assert!(
+            strings(&state, "gate_reason_codes").contains(&PENDING_COPY_REVIEW.to_owned()),
+            "the send holds for the owner's press on a host with no judge: {state}"
+        );
+        assert!(
+            strings(&state, "gate_receipt_reasons").contains(&COPY_REVIEW_MISSING.to_owned()),
+            "no pass releases its copy on this host: {state}"
+        );
+    }
+
+    /// A pass covers a send only under the guide's NOTE overrides it was
+    /// judged under. A judge passes the copy against the house guide; the
+    /// owner then makes the guide owner-only, which moves who reads it with
+    /// no new version of it, before the send reaches the Gate. The send holds
+    /// for copy review until a review reads the guide again.
+    #[test]
+    fn a_pass_holds_the_send_once_the_guides_overrides_change() {
+        let leg = leg(|_, _| json!({}));
+        let judge = CopyJudge {
+            follows: true,
+            reason: "on_voice",
+        };
+        let outcome = leg
+            .vault
+            .review_enrollment_copy(&leg.attempt, &decisions(&judge))
+            .unwrap();
+        let guide = match &outcome {
+            CopyReviewOutcome::Reviewed(verdict) if verdict.passed => verdict.voice_guide_ref,
+            other => panic!("a judge passes the copy: {other:?}"),
+        };
+        let owner = leg
+            .vault
+            .ensure_embedded_owner_actor()
+            .expect("the vault's owner");
+        leg.vault
+            .set_note_overrides(
+                guide,
+                &NoteOverrides {
+                    context: Some(ContextDefault::OwnerOnly),
+                    ..NoteOverrides::default()
+                },
+                WriteActor::new(owner, EdgeActorClass::Human),
+            )
+            .expect("the owner sets the guide's overrides");
+        drive_held(&leg.vault, &leg.attempt);
+        let state = held_ask_state(&leg.vault);
+        assert!(
+            strings(&state, "gate_reason_codes").contains(&PENDING_COPY_REVIEW.to_owned()),
+            "a pass judged under other overrides does not release the send: {state}"
+        );
+        assert!(
+            strings(&state, "gate_receipt_reasons").contains(&COPY_REVIEW_MISSING.to_owned()),
+            "no review covers the copy under the guide's overrides now: {state}"
+        );
     }
 
     /// The census case: an off-voice draft is held, with its reason, and
@@ -987,31 +1250,88 @@ mod judged {
 
     const DIARY_ENTRY: &str = "A private diary entry of an agent, shared with no one.";
 
+    /// An agent's diary entry, which no Grant opens to the vault's owner.
+    fn agents_diary_entry(vault: &Vault, _owner: EntityId) -> EntityId {
+        let agent = EntityId::now();
+        vault
+            .put_entity(
+                &agent,
+                ENTITY_TYPE_PERSON,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"agent",
+            )
+            .expect("the agent PERSON");
+        vault
+            .create_note(
+                "diary",
+                DIARY_ENTRY,
+                WriteActor::new(agent, EdgeActorClass::Agent),
+            )
+            .expect("the agent's diary entry")
+    }
+
+    /// A pass stored while the campaign's owner could read its voice guide
+    /// covers no send once the owner cannot (an agent's campaign whose guide
+    /// leaves the agent's read): the review asks no judge and drops the pass,
+    /// and the send holds for copy review. The door stores the pass a judge
+    /// gave against the guide at its live version; the guide is one the
+    /// owner cannot read.
+    #[cfg(oneiron_test_support)]
+    #[test]
+    fn a_stored_pass_holds_the_send_once_its_owner_cannot_read_the_guide() {
+        let (leg, guide) = leg_with_guide(agents_diary_entry);
+        let step = campaign_program_step(&leg.vault, leg.program, leg.step)
+            .unwrap()
+            .expect("the step");
+        oneiron::test_doors::campaign_copy_review::store_passing_copy_review_verdict(
+            &leg.vault,
+            leg.campaign,
+            &step,
+            guide,
+        )
+        .unwrap();
+        let judge = CountingJudge::passing();
+        let outcome = leg
+            .vault
+            .review_enrollment_copy(&leg.attempt, &decisions(&judge))
+            .unwrap();
+        drive_held(&leg.vault, &leg.attempt);
+        let state = held_ask_state(&leg.vault);
+        assert!(
+            strings(&state, "gate_reason_codes").contains(&PENDING_COPY_REVIEW.to_owned()),
+            "a pass on a guide the owner cannot read does not release the send: {state}"
+        );
+        assert!(
+            strings(&state, "gate_receipt_reasons").contains(&COPY_REVIEW_MISSING.to_owned()),
+            "no review covers the copy: {state}"
+        );
+        assert_eq!(
+            outcome,
+            CopyReviewOutcome::GuideUnreadable,
+            "the owner cannot read the guide"
+        );
+        assert_eq!(
+            judge.calls(),
+            0,
+            "no judge is asked about a guide the owner cannot read"
+        );
+        assert_eq!(
+            leg.vault
+                .campaign_copy_review_verdict(leg.campaign, &step)
+                .unwrap(),
+            None,
+            "the stored pass is dropped"
+        );
+    }
+
     /// The judge reads the voice guide only as the campaign's owner reads
     /// it. A campaign names an agent's diary entry, which no Grant opens to
     /// the owner, as its guide: no judge is asked (a provider never sees the
     /// entry), and the send is held for copy review.
     #[test]
     fn a_voice_guide_its_owner_cannot_read_asks_no_judge() {
-        let (leg, guide) = leg_with_guide(|vault, _owner| {
-            let agent = EntityId::now();
-            vault
-                .put_entity(
-                    &agent,
-                    ENTITY_TYPE_PERSON,
-                    TimeRange { start: 1, end: 1 },
-                    1,
-                    b"agent",
-                )
-                .expect("the agent PERSON");
-            vault
-                .create_note(
-                    "diary",
-                    DIARY_ENTRY,
-                    WriteActor::new(agent, EdgeActorClass::Agent),
-                )
-                .expect("the agent's diary entry")
-        });
+        let (leg, guide) = leg_with_guide(agents_diary_entry);
         let owner = leg.vault.ensure_embedded_owner_actor().unwrap();
         // The fixture's premise, on main as well: the entry's text is stored,
         // and the owner's scoped NOTE read does not admit it.
