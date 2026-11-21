@@ -12,8 +12,10 @@ use super::continuation::enqueue_property_continuation_in_txn;
 use super::*;
 use crate::calendar::claims::decode_passport_value;
 use crate::calendar::ics::parse_ics_feed;
-use crate::calendar::passport::admitted_passport_keyed;
+use crate::calendar::passport::{admitted_passport_keyed, passport_uid_is};
 use crate::claim::{ClaimBody, ClaimSubject};
+use crate::code_run::CompareKnown;
+use crate::store::known_value_index::KnownValues;
 
 impl PollAdmission<'_> {
     /// Files an update verdict's passport revision first when an admitted
@@ -165,7 +167,7 @@ pub(crate) fn apply_admitted_passport_revision_in_txn(
     {
         return Ok(());
     }
-    let Some(cited) = cited_blob_ref(body, &passport.uid) else {
+    let Some(cited) = cited_blob_ref(body) else {
         return Ok(());
     };
     let source_version = passport
@@ -185,11 +187,26 @@ pub(crate) fn apply_admitted_passport_revision_in_txn(
         );
         return Ok(());
     };
-    let Some(event) = feed
-        .events
-        .iter()
-        .find(|event| event.uid == passport.uid && event.content_hash == passport.content_hash)
-    else {
+    // The revision's own VEVENT: its content hash, and its UID as written or
+    // as custody reads a UID the claim door stored masked.
+    let found = {
+        let reader: &heed::RwTxn<'_> = txn;
+        let base_known = || KnownValues::shared_in_writer(&vault.store, reader);
+        let known = CompareKnown::new(Some(&base_known));
+        let mut found = None;
+        for (at, event) in feed.events.iter().enumerate() {
+            if event.content_hash == passport.content_hash
+                && passport_uid_is(&passport.uid, &event.uid, &known).map_err(|error| {
+                    crate::Error::Refused(format!("calendar passport UID read failed: {error}"))
+                })?
+            {
+                found = Some(at);
+                break;
+            }
+        }
+        found
+    };
+    let Some(event) = found.map(|at| &feed.events[at]) else {
         tracing::warn!(
             claim = %id.to_hex(),
             "an approved passport revision's source version holds no VEVENT with its content; its EVENT stays as it was"
@@ -214,7 +231,7 @@ pub(crate) fn apply_admitted_passport_revision_in_txn(
             vault,
             txn,
             &passport.system,
-            format!("{cited}:{}", passport.uid),
+            format!("{cited}:{}", event.uid),
             event_ref,
             event,
             now,
@@ -225,7 +242,7 @@ pub(crate) fn apply_admitted_passport_revision_in_txn(
         blob_ref: cited.to_owned(),
         source_version,
         event_ref: event_ref.to_hex(),
-        uid: passport.uid.clone(),
+        uid: event.uid.clone(),
         recurrence_id_utc: event.properties.recurrence_id_utc,
         admitted_revision: true,
     };
@@ -233,8 +250,9 @@ pub(crate) fn apply_admitted_passport_revision_in_txn(
 }
 
 /// The archived source a passport claim cites: its evidence's
-/// `source_record_id` (`blob#vN:uid`) without the `:uid`.
-fn cited_blob_ref<'a>(body: &'a ClaimBody, uid: &str) -> Option<&'a str> {
+/// `source_record_id` (`blob#vN:uid`) without the `:uid`. The blob reference
+/// holds no `:`, and the UID after it may be stored masked.
+fn cited_blob_ref(body: &ClaimBody) -> Option<&str> {
     let evidence = body.evidence.as_ref()?;
     map_field(
         evidence,
@@ -242,7 +260,8 @@ fn cited_blob_ref<'a>(body: &'a ClaimBody, uid: &str) -> Option<&'a str> {
     )
     .and_then(|candidate| map_field(candidate, "source_record_id"))
     .and_then(rmpv::Value::as_str)
-    .and_then(|record| record.strip_suffix(uid)?.strip_suffix(':'))
+    .and_then(|record| record.split_once(':'))
+    .map(|(blob_ref, _)| blob_ref)
 }
 
 fn map_field<'a>(value: &'a rmpv::Value, name: &str) -> Option<&'a rmpv::Value> {
