@@ -280,8 +280,8 @@ crate::side_table::side_tables! {
         Named Engine
         [restore: content] [family: structure] [tier: canonical];
     /// FIX TURNPROGRAM-ERASE-KEEPS-DECIDED: each decision DREAMER_TURN_PROGRAM_DECIDED_ACTOR names
-    /// an actor for, by that actor, written and deleted with that row.
-    /// Key: id16(actor) + id16(turn) + id16(registration).
+    /// an actor for, by that actor, written and deleted with that row; the ARM entry's scrub
+    /// clears it. Key: id16(actor) + id16(turn) + id16(registration).
     DREAMER_TURN_PROGRAM_ACTOR_DECIDED: VaultMeta b"dreamer:turn_program:actor_decided:v1:"
         Named Engine
         // Restore class: the index stands as the decisions it names do (DECIDED).
@@ -318,7 +318,8 @@ crate::side_table::side_tables! {
     /// FIX TURNPROGRAM-ERASE-KEEPS-DECIDED: the actor of a decision this machine keeps in
     /// DREAMER_TURN_PROGRAM_DECIDED, where the row that carried the decision named its actor or the
     /// wake it consumed here proved it; a decision kept from a row that named none has no row.
-    /// Written in the writer that keeps the decision. Key: id16(turn) + id16(registration).
+    /// Written in the writer that keeps the decision; the ARM entry's scrub clears it, and none
+    /// is written for an actor erased here. Key: id16(turn) + id16(registration).
     DREAMER_TURN_PROGRAM_DECIDED_ACTOR: VaultMeta b"dreamer:turn_program:decided_actor:v1:"
         Named Engine
         // Restore class: the actor stands as the decision it names does (DECIDED).

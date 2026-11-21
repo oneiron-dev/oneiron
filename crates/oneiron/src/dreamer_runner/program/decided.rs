@@ -32,7 +32,10 @@ use oneiron_records::dreamer_runner::program::replica::encode;
 /// `named`, the actor the row itself names. A row that names none and
 /// consumes no wake here keeps none, as every row did before the row named
 /// its actor. A decision kept before gains its actor from a later row of the
-/// same admission; an actor a wake proved is replaced by no row's word.
+/// same admission; an actor a wake proved is replaced by no row's word. An
+/// actor erased here is kept beside no decision: its erase dropped what was
+/// kept (`erase_turn_program_actor_in_txn`), and a row that arrives after it
+/// adds none.
 pub(super) fn consume_decided_wake_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -65,6 +68,10 @@ pub(super) fn consume_decided_wake_in_txn(
             // earlier decision under the key left.
             (RowMerge::Written, None) => named,
             (_, None) => super::index::decided_actor_in_txn(vault, &*txn, key)?.or(named),
+        };
+        let actor = match actor {
+            Some(actor) if vault.carrier_actor_erased_in_txn(&*txn, &actor)? => None,
+            actor => actor,
         };
         super::index::index_decided_in_txn(vault, txn, key, actor)?;
     }

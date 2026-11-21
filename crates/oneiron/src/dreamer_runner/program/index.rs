@@ -10,12 +10,15 @@
 //! registration and names no actor, so its actor is kept beside it, by the
 //! decision's key and by the actor (FIX TURNPROGRAM-ERASE-KEEPS-DECIDED).
 //! These two hold only the decisions whose actor this machine learned: a
-//! decision kept from a row that named none has neither row.
+//! decision kept from a row that named none has neither row. Both rows go
+//! with their actor's erase, and none is written for an actor erased here.
 
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+#[cfg(feature = "sync")]
+use crate::side_table::SideKey;
 use crate::side_table::{self, Named, SideTable};
 
 use super::types::TurnProgramWake;
@@ -174,4 +177,38 @@ pub(super) fn index_decided_in_txn(
         }
         None => DECIDED_ACTOR.delete(vault, txn, &key).map(drop),
     }
+}
+
+/// Drops, in the erase's writer, the actor kept for each decision of one of
+/// `actor`'s wakes, under both keys: no row names an erased actor. The
+/// decisions themselves stay as they were. An index row whose key does not
+/// decode goes with the rest under the actor's prefix, and a kept actor that
+/// does not decode goes by its decision's key (FIX 5736); a row that names
+/// another actor stays.
+#[cfg(feature = "sync")]
+pub(super) fn unindex_actor_decided_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    let mut keys = Vec::new();
+    for row in ACTOR_DECIDED.iter_raw_from(vault, &*txn, actor.as_bytes())? {
+        let (key, _) = row?;
+        if let Some((_, turn, registration)) =
+            <(EntityId, EntityId, EntityId) as SideKey>::decode_key(&key)
+        {
+            keys.push((turn, registration));
+        }
+    }
+    for key in keys {
+        if DECIDED_ACTOR
+            .get_lenient(vault, &*txn, &key)?
+            .is_none_or(|kept| kept == *actor)
+        {
+            DECIDED_ACTOR.delete(vault, txn, &key)?;
+        }
+    }
+    ACTOR_DECIDED
+        .delete_from(vault, txn, actor.as_bytes())
+        .map(drop)
 }

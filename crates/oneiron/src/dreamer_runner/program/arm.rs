@@ -156,6 +156,11 @@ pub(crate) fn erase_turn_program_actor_in_txn(
     // an owed wake here.
     #[cfg(feature = "sync")]
     super::retraction::erase_actor_in_txn(vault, txn, actor)?;
+    // And the actor kept beside each decision another machine made of one of
+    // its wakes: no row names the actor past its erase. The decision itself
+    // stays (FIX TURNPROGRAM-ERASE-KEEPS-DECIDED).
+    #[cfg(feature = "sync")]
+    super::index::unindex_actor_decided_in_txn(vault, txn, actor)?;
     scrub_actor_admission_instruments_in_txn(vault, txn, actor)?;
     scrub_actor_step_bodies_in_txn(vault, txn, actor).map(drop)
 }
