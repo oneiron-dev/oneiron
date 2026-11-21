@@ -16,8 +16,12 @@ use super::loro_support::map_for_each_value_bytes;
 /// E-sign events have no authenticated replay format. Every receiving batch
 /// refuses them, so no sync door may ship them. The world-access tiers are
 /// local authority ([`world_access_claim`]), so no sync door ships them
-/// either. Undecodable CLAIM carriers also fail closed: their predicate
-/// cannot be proved exportable.
+/// either. Nor a booking page publication (FIX
+/// [BK-PUBLICATION-CLAIM-REFUSED-AT-SYNC-INGRESS], BK-PUBLICATION-OFF-HOME-WRITE
+/// = B, lead 21 Nov 17:3x): only the booking home's owner write lands one, every
+/// peer refuses it at its put (`guard_publication_put`), and a home move
+/// carries the home's own in its handoff section. Undecodable CLAIM carriers
+/// also fail closed: their predicate cannot be proved exportable.
 pub(super) fn claim_sync_allowed(raw: &[u8]) -> bool {
     if raw.first().copied() != Some(ENTITY_TYPE_CLAIM) {
         return true;
@@ -26,6 +30,7 @@ pub(super) fn claim_sync_allowed(raw: &[u8]) -> bool {
         && decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true).is_ok_and(|body| {
             !body.predicate.starts_with("esign.")
                 && !is_world_access_tier_predicate(&body.predicate)
+                && body.predicate != crate::booking::BOOKING_PUBLIC_PAGE_PREDICATE
         })
 }
 
