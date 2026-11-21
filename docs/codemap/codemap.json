@@ -29187,13 +29187,13 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/conversation/visibility.rs",
      "purpose": "The audience predicate shared by all ScopedRead paths",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 11,
       "fn": 1
      }
     },
@@ -29225,6 +29225,16 @@
      "purpose": "The private-thread walk every audience read meets (FIX 2951), split from its parent, which re-exports it",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation/visibility/room_ancestry.rs",
+     "purpose": "The room a record sits in, up the edges and claim subjects of its ancestors (rule 5), and every room a…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -120909,9 +120919,9 @@
      "purpose": "Persisted, deterministic Rust/JavaScript API, schema and command-output contracts"
     },
     "conversation": {
-     "files": 36,
+     "files": 37,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Room bodies, membership windows, session presence and audience visibility"
     },
@@ -122225,9 +122235,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 272,
+   "over_bar": 271,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8523,
+   "source_files": 8524,
    "test_files": 2245
   },
   "oneiron-agent-runtime": {
