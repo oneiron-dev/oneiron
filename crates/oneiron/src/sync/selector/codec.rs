@@ -19,7 +19,9 @@ use crate::federation::{
 use crate::sync::types::WindowKey;
 use crate::sync::window::Withhold;
 
-use super::authorize::{authorize_selector_export, filter_window_doc, strip_guest_share_metadata};
+use super::authorize::{
+    GuestTombstones, authorize_selector_export, filter_window_doc, strip_guest_share_metadata,
+};
 use super::born_with::{carry_born_with, row_born_with_fields};
 use crate::provenance::birth::WithheldKey;
 use crate::sync::row_birth::BirthReach;
@@ -321,6 +323,7 @@ pub fn filtered_window_doc_for_peer(
         &position,
         Withhold::Peer(peer),
         reach,
+        GuestTombstones::Omitted,
     )?;
     // Beside the masked births goes the text the grant's owner lets travel,
     // and each TASK's and SUMMARY's birth placement (FIX 3656).
@@ -363,6 +366,7 @@ pub fn filtered_window_doc_for(
         &position,
         withhold,
         BirthReach::OwnMachines,
+        GuestTombstones::Omitted,
     )
 }
 
@@ -389,6 +393,7 @@ pub(in crate::sync) fn granted_window_doc(
         &position,
         Withhold::Nothing,
         BirthReach::OwnMachines,
+        GuestTombstones::Omitted,
     )
 }
 
@@ -420,8 +425,15 @@ pub fn guest_share_envelope_body(
     grant_scope: FederationGrantScope,
     selector: &SyncSelector,
 ) -> Result<GuestShareEnvelopeBody> {
-    guest_share_envelope_body_listing(vault, source, key, grant_scope, selector)
-        .map(|(body, _, _)| body)
+    guest_share_envelope_body_listing(
+        vault,
+        source,
+        key,
+        grant_scope,
+        selector,
+        GuestTombstones::Omitted,
+    )
+    .map(|(body, _, _)| body)
 }
 
 /// The stripped body, its listed rows, and born-with field names keyed by
@@ -432,6 +444,7 @@ pub(crate) fn guest_share_envelope_body_listing(
     key: &WindowKey,
     grant_scope: FederationGrantScope,
     selector: &SyncSelector,
+    tombstones: GuestTombstones,
 ) -> Result<(
     GuestShareEnvelopeBody,
     Vec<EntityId>,
@@ -449,8 +462,9 @@ pub(crate) fn guest_share_envelope_body_listing(
         &position,
         Withhold::Unknown,
         BirthReach::OtherVault(&withheld),
+        tombstones,
     )?;
-    let stripped = strip_guest_share_metadata(&filtered, key, &withheld)?;
+    let stripped = strip_guest_share_metadata(&filtered, key, &withheld, tombstones)?;
     carry_born_with(
         vault,
         &stripped,

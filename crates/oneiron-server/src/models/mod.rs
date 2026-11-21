@@ -85,6 +85,7 @@ mod raw;
 mod realtime_voice;
 mod receipts;
 mod rerank;
+mod reranker_backend;
 mod responses_socket;
 mod role_route;
 mod router;
@@ -146,10 +147,11 @@ pub use receipts::{LoggedReceipts, RUN_RECEIPT_TARGET};
 pub(crate) use rerank::{
     RerankLine, RerankOutcome, RerankStop, on_line, rerank_outcome, rerank_request,
 };
+use reranker_backend::build_reranker;
 pub(crate) use responses_socket::ResponsesContext;
 pub use role_route::{RoleCall, RoleRefusal, RoleRoute};
 pub use router::ModelRouter;
-pub use run_backend::RunBackend;
+pub use run_backend::{RunBackend, SourceFence};
 pub(crate) use seat_model::{SeatKeyDoor, SeatModelAnswer, SeatModelRefusal, send_seat_model};
 pub(crate) use seat_model_admission::{SeatModelCall, SeatModelMeter};
 pub(crate) use source_admission::{SourceAdmission, SourceOffer};
@@ -164,7 +166,8 @@ pub use token_ratio::TokenRatios;
 pub(crate) use worker_host::socket_launch_door;
 pub(crate) use worker_host::start_worker_controller;
 pub(crate) use worker_host::{
-    install_snapshot_runtime, permit_worker_launch, session_allocations_for_vault,
+    bind_licence_vault, install_snapshot_runtime, permit_worker_launch,
+    session_allocations_for_vault,
 };
 // FIX 14976: each served vault's drafter bindings, served on this process's
 // own managed EXL3 worker.
@@ -499,55 +502,6 @@ fn build_provider(
         }
     };
     Ok(Some(backend))
-}
-
-/// The rerank client for provider `name`'s reranker `models`: over the
-/// provider's own HTTP client; for a `key_secret` key, over the credential
-/// broker at `site` with the key read at `keys` (L9-12), as the offer's T0
-/// custody says; or, for a provider its `listen = "unix"` worker rows serve
-/// (L9-15), on those workers' sockets alone. Beside it, that last client's
-/// on-device alternative, when this process launches those workers: the
-/// same client, whose every call stays on this device.
-fn build_reranker(
-    name: &str,
-    provider: &ProviderConfig,
-    models: &[ModelRef],
-    workers: &[WorkerConfig],
-    site: Option<&Result<broker::BrokerSite, String>>,
-    keys: Option<&Arc<dyn KeyDoor>>,
-) -> anyhow::Result<(Arc<dyn SingleRouteBackend>, Option<NativeLocal>)> {
-    anyhow::ensure!(
-        provider.siwc.is_none(),
-        "SIWC credentials serve Responses, not reranking"
-    );
-    let socket_served = workers
-        .iter()
-        .any(|row| row.binding.provider == name && row.listens_on_socket());
-    let mut socket_workers = BTreeMap::new();
-    let transport = if socket_served {
-        let socket = rerank::SocketRerank::new(
-            worker_host::socket_routes(name, provider, workers),
-            http::SocketHeaders::new(provider)?,
-            Duration::from_secs(provider.timeout_secs),
-        );
-        socket_workers = socket.workers();
-        rerank::RerankTransport::Socket(socket)
-    } else if provider.key_secret.is_some() {
-        rerank::RerankTransport::Broker(broker_rerank::BrokerRerank::new(provider, site, keys)?)
-    } else {
-        rerank::RerankTransport::Direct(http::ProviderHttp::new(provider, http::KeyStyle::Bearer)?)
-    };
-    let wire_models = models
-        .iter()
-        .map(|model| Ok((engine_model_id(model, provider)?, model.model.clone())))
-        .collect::<anyhow::Result<_>>()?;
-    let backend: Arc<dyn SingleRouteBackend> =
-        Arc::new(rerank::RerankBackend::new(transport, wire_models));
-    let on_device = (!socket_workers.is_empty()).then(|| NativeLocal {
-        backend: Arc::clone(&backend),
-        workers: socket_workers,
-    });
-    Ok((backend, on_device))
 }
 
 /// The output ceiling a provider's wire carries.

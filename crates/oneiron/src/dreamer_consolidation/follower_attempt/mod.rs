@@ -19,7 +19,7 @@ use super::roles::{DREAMER_EXTRACTION_ROLE, RoleCall, bind_reasoning};
 use super::step_charge::{StepChargeTally, reply_text, retry_fallback};
 use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerParkCause};
 use crate::dreamer_wake::follower::{
-    self, AskWork, CallEvidence, FoldWork, FollowerCall, KeyframeCommit, Next, Pin, Publication,
+    self, AskWork, CallEvidence, FoldWork, FollowerCall, KeyframeCommit, Next, Publication,
     Receipt, Sizing, Writer,
 };
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext, WakeRecipePolicy};
@@ -292,9 +292,13 @@ impl ConsolidationExecutor<'_> {
             output::decode(response, &check_labels, &check_candidates).map(|_| ())
         };
         let before = (charges.units, charges.step_bindings.len());
+        // Sent on the rows its parts were read from: each rung, wait and
+        // resend of the step asks them first
+        // ([DREAMER-STEP-RESENDS-ERASED-SOURCE-WORDS]).
+        let call_backend = leg.call.call_backend(Some(work.sources.clone()));
         let (response, memoized) = match call_as_step_checked(
             &step,
-            leg.call.backend,
+            call_backend.get(),
             self.guard,
             request,
             &check,
@@ -416,10 +420,7 @@ impl ConsolidationExecutor<'_> {
                     if leg.ctx.deadline.expired() {
                         return Ok(Some(charges.checkpoint()));
                     }
-                    if let Some(stop) = self
-                        .fold_call(leg, &work.pins, group, charges, &mut run)
-                        .await?
-                    {
+                    if let Some(stop) = self.fold_call(leg, work, group, charges, &mut run).await? {
                         return Ok(Some(stop));
                     }
                 }
@@ -449,11 +450,12 @@ impl ConsolidationExecutor<'_> {
         }
     }
 
-    /// One fold call over `group`; its text joins `run`. `Some` parks.
+    /// One fold call of `work` over `group`; its text joins `run`. `Some`
+    /// parks.
     async fn fold_call(
         &self,
         leg: &Leg<'_>,
-        pins: &[Pin],
+        work: &FoldWork,
         group: &[String],
         charges: &mut StepChargeTally,
         run: &mut FoldRun,
@@ -467,7 +469,7 @@ impl ConsolidationExecutor<'_> {
             leg.paid,
             &leg.policy.follower_keyframe_instruction,
             group,
-            pins,
+            &work.pins,
         );
         let (request, step_hash) = match admit(leg, request) {
             Ok(admitted) => admitted,
@@ -486,7 +488,10 @@ impl ConsolidationExecutor<'_> {
             }
             Ok(())
         };
-        match call_as_step_checked(&step, leg.call.backend, self.guard, request, &check).await {
+        // A group of a later level folds earlier folds of the same parts:
+        // every call of the fold sends on all of its rows.
+        let call_backend = leg.call.call_backend(Some(work.sources.clone()));
+        match call_as_step_checked(&step, call_backend.get(), self.guard, request, &check).await {
             Ok(StepOutcome::Finished {
                 response,
                 memoized,

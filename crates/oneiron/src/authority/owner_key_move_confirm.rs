@@ -10,14 +10,16 @@
 //!   it stands on, the member's live owner keys, and each owner key the
 //!   executor enrolled with its next sequence;
 //! - the device checks the plan against its own copy of the vault and signs
-//!   a chain of `RevokeDevice` rows itself, its owner key the primary signer
-//!   of each, its own key last when the move ends it
+//!   a chain of rows itself, its owner key the primary signer of each: a
+//!   `RevokeActor` for each `human` binding the move ends on a key it does
+//!   not revoke (row HOSTED-MOVE-REVOKE-ACTOR-MIGRATED-BINDING: a managed
+//!   host's root ends no person's binding), then a `RevokeDevice` for each
+//!   owner key, its own key last when the move ends it
 //!   ([`sign_owner_key_move`]): one round trip, since it knows every hash in
 //!   its own chain;
 //! - the server lands those rows in the act's one writer, after judging them
-//!   again at its own heads, and the move then runs with no owner key left
-//!   to revoke. Its `RevokeActor` rows and its execution record stay
-//!   host-signed.
+//!   again at its own heads, and the move then runs with no owner key and no
+//!   such binding left to revoke. Its execution record stays host-signed.
 //!
 //! Nothing is stored between the steps. A plan gone stale (the signer's
 //! sequence moved, the member's keys changed, or a row the revokes would
@@ -28,6 +30,7 @@ use std::collections::BTreeSet;
 use super::*;
 use crate::error::{Error, RecordError, Result};
 use crate::temporal::TimeRange;
+use crate::world_keys::{OwnerActImportance, owner_presence_reasons};
 use crate::{EntityId, Vault};
 
 /// A device's rows that are not the confirm its plan names.
@@ -35,14 +38,15 @@ pub const OWNER_KEY_MOVE_NOT_PLANNED: &str =
     "these rows are not the owner-key revokes this move's plan names";
 
 /// A confirm whose plan went stale before it landed.
-pub const OWNER_KEY_MOVE_PLAN_STALE: &str = "since this move was planned, its signer's sequence, the member's owner keys or the rows they stand on changed: plan it again and confirm the new plan";
+pub const OWNER_KEY_MOVE_PLAN_STALE: &str = "since this move was planned, its signer's sequence, the member's owner keys or bindings, or the rows they stand on changed: plan it again and confirm the new plan";
 
 /// A confirm signed by a key that is not the executing Owner's own.
 pub const OWNER_KEY_MOVE_SIGNER_NOT_EXECUTORS: &str =
     "only an owner key the executing Owner enrolled on a device of theirs confirms this move";
 
-/// A device whose copy of the vault does not show the plan's keys.
-pub const OWNER_KEY_MOVE_NOT_SYNCED: &str = "this device's copy of the vault does not show the member's owner keys as the plan names them: sync, then confirm again";
+/// A device whose copy of the vault does not show the plan's keys and
+/// bindings.
+pub const OWNER_KEY_MOVE_NOT_SYNCED: &str = "this device's copy of the vault does not show the member's owner keys and bindings as the plan names them: sync, then confirm again";
 
 /// A device that holds none of the executor's owner keys the plan names.
 pub const OWNER_KEY_MOVE_NO_HELD_KEY: &str =
@@ -61,9 +65,20 @@ pub struct OwnerKeyMoveSigner {
     pub seq: u64,
 }
 
+/// One `human` binding a move ends with a `RevokeActor`, on a key it does
+/// not revoke: the binding's key and its live epoch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OwnerKeyMoveBinding {
+    /// The roster key the binding is on.
+    pub authority_key: AuthorityKey,
+    /// The binding's live epoch, which the revoke names.
+    pub epoch: u64,
+}
+
 /// What a device needs to confirm a pending move that ends `member`'s owner
-/// keys: the rows it signs stand on `parents`, revoke each of `revoked`,
-/// and are signed by one of `signers` at its `seq` and on.
+/// keys: the rows it signs stand on `parents`, end each of
+/// `revoked_bindings` and revoke each of `revoked`, and are signed by one of
+/// `signers` at its `seq` and on.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OwnerKeyMovePlan {
     /// The pending shared act the move runs for.
@@ -77,6 +92,10 @@ pub struct OwnerKeyMovePlan {
     /// The member's live owner keys, each of which one revoke ends: their
     /// device keys and their passkeys (row WEB-PASSKEY-OWNER-KEY).
     pub revoked: Vec<AuthorityKey>,
+    /// The live `human` bindings the move ends on keys outside `revoked`,
+    /// each with one `RevokeActor`: each that names the member and each a
+    /// key of theirs signed (row HOSTED-MOVE-REVOKE-ACTOR-MIGRATED-BINDING).
+    pub revoked_bindings: Vec<OwnerKeyMoveBinding>,
     /// The executor's keys that may sign.
     pub signers: Vec<OwnerKeyMoveSigner>,
     /// When it was planned, advisory unix seconds: each revoke's time.
@@ -87,16 +106,31 @@ fn not_valid(reason: &'static str) -> Error {
     Error::Record(RecordError::InvalidAuthorityLogBody(reason))
 }
 
-/// The `RevokeDevice` rows that confirm `plan`, signed by `signer`, one of
-/// the plan's signers, through `sign` (an owner key's signature over an
-/// authority transcript): one row per revoked key, `signer`'s own last when
-/// the plan revokes it, each at the next sequence; the first on the plan's
-/// parents, each next on the one before.
+/// The distinct parents a move plan's rows name; refused
+/// ([`OWNER_KEY_MOVE_NOT_PLANNED`]) for a plan that ends no key and no
+/// binding, names no parent, or names more than one entry carries.
+fn planned_parents(plan: &OwnerKeyMovePlan) -> Result<BTreeSet<AuthorityEntryHash>> {
+    let parents: BTreeSet<AuthorityEntryHash> = plan.parents.iter().copied().collect();
+    if (plan.revoked.is_empty() && plan.revoked_bindings.is_empty())
+        || parents.is_empty()
+        || parents.len() > MAX_PARENTS
+    {
+        return Err(not_valid(OWNER_KEY_MOVE_NOT_PLANNED));
+    }
+    Ok(parents)
+}
+
+/// The rows that confirm `plan`, signed by `signer`, one of the plan's
+/// signers, through `sign` (an owner key's signature over an authority
+/// transcript): a `RevokeActor` per binding the plan ends, in its order,
+/// while `signer` still stands, then a `RevokeDevice` per revoked key,
+/// `signer`'s own last when the plan revokes it; each at the next sequence,
+/// the first on the plan's parents, each next on the one before.
 ///
 /// # Errors
 /// [`RecordError::InvalidAuthorityLogBody`] for a `signer` the plan does not
-/// name, a plan with no key to revoke, or parents a row cannot name; `sign`'s
-/// error.
+/// name, a plan with no key and no binding to end, or parents a row cannot
+/// name; `sign`'s error.
 pub fn sign_owner_key_move<S>(
     plan: &OwnerKeyMovePlan,
     signer: [u8; 32],
@@ -111,23 +145,32 @@ where
         .find(|candidate| candidate.public_key == signer)
         .map(|candidate| candidate.seq)
         .ok_or_else(|| not_valid(OWNER_KEY_MOVE_NOT_PLANNED))?;
-    let mut parents: BTreeSet<AuthorityEntryHash> = plan.parents.iter().copied().collect();
-    if plan.revoked.is_empty() || parents.is_empty() || parents.len() > MAX_PARENTS {
-        return Err(not_valid(OWNER_KEY_MOVE_NOT_PLANNED));
-    }
+    let mut parents = planned_parents(plan)?;
     let signer_key = AuthorityKey::Ed25519(signer);
     let mut keys = plan.revoked.clone();
     // A key that proves the others ends last, after it proved them (as the
     // one-writer move orders its proof key).
     keys.sort_by_key(|key| *key == signer_key);
-    let mut rows = Vec::with_capacity(keys.len());
-    for key in keys {
+    let ops: Vec<AuthorityOp> = plan
+        .revoked_bindings
+        .iter()
+        .map(|binding| AuthorityOp::RevokeActor {
+            authority_key: binding.authority_key.clone(),
+            epoch: binding.epoch,
+        })
+        .chain(
+            keys.into_iter()
+                .map(|key| AuthorityOp::RevokeDevice { revoked_key: key }),
+        )
+        .collect();
+    let mut rows = Vec::with_capacity(ops.len());
+    for op in ops {
         let mut row = AuthorityLogEntry {
             schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
             vault_id: Some(plan.vault_id),
             seq,
             parent_hashes: parents.into_iter().collect(),
-            op: AuthorityOp::RevokeDevice { revoked_key: key },
+            op,
             signer: AuthoritySignature {
                 suite: signer_key.suite(),
                 public_key: signer_key.clone(),
@@ -169,6 +212,18 @@ fn owner_key_move_signers(
                 public_key: key.public_key,
                 seq: next_sequence(fold, &AuthorityKey::Ed25519(key.public_key))?,
             })
+        })
+        .collect()
+}
+
+/// The bindings a move ends ([`Vault::owner_move_bindings_in_txn`]) as a
+/// plan names them.
+fn move_bindings(bindings: Vec<(AuthorityKey, u64)>) -> Vec<OwnerKeyMoveBinding> {
+    bindings
+        .into_iter()
+        .map(|(authority_key, epoch)| OwnerKeyMoveBinding {
+            authority_key,
+            epoch,
         })
         .collect()
 }
@@ -236,15 +291,19 @@ impl Vault {
         }
         let keys = self.enrolled_owner_keys_in_txn(txn)?;
         let root = issuer.map(HostSlipIssuer::public_key);
+        let revoked = member_owner_keys(
+            self.live_owner_keys_enrolled_for_in_txn(txn, member)?,
+            root.as_ref(),
+        );
+        let revoked_bindings =
+            move_bindings(self.owner_move_bindings_in_txn(txn, member, &revoked)?);
         Ok(OwnerKeyMovePlan {
             act_id: act_id.to_owned(),
             vault_id,
             member,
             parents: fold.append_heads.iter().copied().collect(),
-            revoked: member_owner_keys(
-                self.live_owner_keys_enrolled_for_in_txn(txn, member)?,
-                root.as_ref(),
-            ),
+            revoked,
+            revoked_bindings,
             signers: owner_key_move_signers(&fold, &keys, executor, hosted(self))?,
             at: self.instant_in_txn(txn)?.secs(),
         })
@@ -254,9 +313,10 @@ impl Vault {
     /// owner `authority` proves checks the plan against this install's copy
     /// of the vault (the same vault; the plan's member is `member`, the one
     /// the Owner confirmed on this device; each key it revokes a live owner
-    /// key enrolled to that member, and no other of theirs; the key this
-    /// install holds enrolled to `authority`'s owner and named among the
-    /// plan's signers), then signs the plan's revokes with that key
+    /// key enrolled to that member, and no other of theirs; each binding it
+    /// ends one the move ends, and no other; the key this install holds
+    /// enrolled to `authority`'s owner and named among the plan's signers),
+    /// then signs the plan's revokes with that key
     /// ([`sign_owner_key_move`]). It writes nothing; the answer is each row's
     /// encoded body, in order, for the server's land.
     ///
@@ -272,7 +332,8 @@ impl Vault {
     /// is not this vault's owner; [`RecordError::InvalidAuthorityLogBody`]
     /// for a plan of another member than `member`
     /// ([`OWNER_KEY_MOVE_MEMBER_NOT_CONFIRMED`]), a plan of another vault,
-    /// keys this copy does not show as the plan names them (sync first), or
+    /// keys or bindings this copy does not show as the plan names them (sync
+    /// first), or
     /// when this install holds none of the owner's keys the plan names (a
     /// key that rests under a device PIN counts only inside the window a
     /// right PIN opened); the signer's refusal, for a key that stopped after
@@ -303,13 +364,16 @@ impl Vault {
         .into_iter()
         .collect();
         let planned: BTreeSet<AuthorityKey> = plan.revoked.iter().cloned().collect();
-        if shown != planned {
+        if shown != planned
+            || move_bindings(self.owner_move_bindings_in_txn(&txn, plan.member, &plan.revoked)?)
+                != plan.revoked_bindings
+        {
             return Err(not_valid(OWNER_KEY_MOVE_NOT_SYNCED));
         }
         let signer = self
-            .owner_proof_signer(&fold)
+            .proving_root_signer(&fold)
             .ok_or_else(|| not_valid(OWNER_KEY_MOVE_NO_HELD_KEY))?;
-        let AuthorityKey::Ed25519(held) = signer.key() else {
+        let AuthorityKey::Ed25519(held) = signer.root else {
             return Err(not_valid(OWNER_KEY_MOVE_NO_HELD_KEY));
         };
         let own = keys
@@ -318,24 +382,39 @@ impl Vault {
         if !own || !plan.signers.iter().any(|named| named.public_key == held) {
             return Err(not_valid(OWNER_KEY_MOVE_NO_HELD_KEY));
         }
+        // The plan's shape is judged before the confirm, as every check
+        // above is, so a plan the signing refuses never prompts.
+        planned_parents(plan)?;
         drop(txn);
-        sign_owner_key_move(plan, held, |transcript| signer.sign(&fold, transcript))?
-            .iter()
-            .map(encode_authority_log_entry_body)
-            .collect()
+        let witness = self.owner_presence(
+            OwnerActImportance::Important,
+            owner_presence_reasons::SIGN_OWNER_KEY_MOVE,
+        )?;
+        let ground = OwnerProofGround::witnessed(&witness);
+        sign_owner_key_move(plan, held, |transcript| {
+            signer
+                .signer
+                .sign_owner_proof(self, &fold, &ground, transcript)
+        })?
+        .iter()
+        .map(encode_authority_log_entry_body)
+        .collect()
     }
 
     /// Lands a device's confirm of a move that ends `member`'s owner keys,
     /// which `executor` runs, in the act's writer `txn` (row
     /// HOSTED-OWNER-MOVE-TWO-PHASE): `rows`, as [`sign_owner_key_move`]
     /// signed them, judged again at the heads read here. Each must be a
-    /// `RevokeDevice` signed alone by one key, an owner key enrolled to
-    /// `executor` that may sign ([`OwnerKeyMovePlan::signers`]), at its
-    /// next sequence and on, the first on rows this log holds and each next
-    /// on the one before; together they revoke exactly the member's live
-    /// owner keys, but `root`, the signer's own last. Every row must count,
-    /// no row this log counted may fall, and no owner key of the member may
-    /// stay live. No rows is no confirm, and writes nothing.
+    /// `RevokeActor` or, after the last of those, a `RevokeDevice`, signed
+    /// alone by one key, an owner key enrolled to `executor` that may sign
+    /// ([`OwnerKeyMovePlan::signers`]), at its next sequence and on, the
+    /// first on rows this log holds and each next on the one before;
+    /// together they end exactly the `human` bindings the move ends on keys
+    /// it does not revoke, at their live epochs (row
+    /// HOSTED-MOVE-REVOKE-ACTOR-MIGRATED-BINDING), and revoke exactly the
+    /// member's live owner keys, but `root`, the signer's own last. Every row
+    /// must count, no row this log counted may fall, and no owner key of the
+    /// member may stay live. No rows is no confirm, and writes nothing.
     ///
     /// # Errors
     /// [`RecordError::AuthorityRefused`] for a signer that is not the
@@ -392,13 +471,22 @@ impl Vault {
         {
             return Err(not_valid(OWNER_KEY_MOVE_PLAN_STALE));
         }
+        let mut ended = Vec::new();
         let mut revoked = Vec::with_capacity(entries.len());
         let mut previous: Option<AuthorityEntryHash> = None;
         let mut hashes = Vec::with_capacity(entries.len());
         for (offset, entry) in entries.iter().enumerate() {
-            let AuthorityOp::RevokeDevice { revoked_key } = &entry.op else {
-                return Err(not_valid(OWNER_KEY_MOVE_NOT_PLANNED));
-            };
+            match &entry.op {
+                AuthorityOp::RevokeActor {
+                    authority_key,
+                    epoch,
+                } if revoked.is_empty() => ended.push(OwnerKeyMoveBinding {
+                    authority_key: authority_key.clone(),
+                    epoch: *epoch,
+                }),
+                AuthorityOp::RevokeDevice { revoked_key } => revoked.push(revoked_key.clone()),
+                _ => return Err(not_valid(OWNER_KEY_MOVE_NOT_PLANNED)),
+            }
             let seq = u64::try_from(offset)
                 .ok()
                 .and_then(|offset| signer.seq.checked_add(offset))
@@ -415,20 +503,22 @@ impl Vault {
             {
                 return Err(not_valid(OWNER_KEY_MOVE_NOT_PLANNED));
             }
-            revoked.push(revoked_key.clone());
             let hash = authority_entry_hash(entry)?;
             previous = Some(hash);
             hashes.push(hash);
         }
         let named: BTreeSet<AuthorityKey> = revoked.iter().cloned().collect();
-        if named.len() != revoked.len() {
+        let named_bindings: BTreeSet<&AuthorityKey> =
+            ended.iter().map(|binding| &binding.authority_key).collect();
+        if named.len() != revoked.len() || named_bindings.len() != ended.len() {
             return Err(not_valid(OWNER_KEY_MOVE_NOT_PLANNED));
         }
-        let live: BTreeSet<AuthorityKey> =
-            member_owner_keys(self.live_owner_keys_enrolled_for_in_txn(txn, member)?, root)
-                .into_iter()
-                .collect();
-        if named != live {
+        let live_keys =
+            member_owner_keys(self.live_owner_keys_enrolled_for_in_txn(txn, member)?, root);
+        let live_bindings =
+            move_bindings(self.owner_move_bindings_in_txn(txn, member, &live_keys)?);
+        let live: BTreeSet<AuthorityKey> = live_keys.into_iter().collect();
+        if named != live || ended != live_bindings {
             return Err(not_valid(OWNER_KEY_MOVE_PLAN_STALE));
         }
         if live.contains(&signer_key) && revoked.last() != Some(&signer_key) {

@@ -59,7 +59,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::vault::Vault;
 use crate::world_keys::owner_signing::{OwnerRootSigner, held_logged};
-use crate::world_keys::{keystore_error, os_fill, refused};
+use crate::world_keys::{OwnerPresenceWitness, keystore_error, os_fill, refused};
 
 const OWNER_ONLY: &str = "the device PIN is the owner's to set, change and forget; no Grant \
                           action names it";
@@ -422,6 +422,10 @@ impl Vault {
     /// # Errors
     /// [`crate::error::DevicePinRefusal::Required`] outside a window; the enrollment's own
     /// refusals.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the PIN step and handle, authority, host issuer, machine, slot and presence witness"
+    )]
     pub(in crate::world_keys) fn enrol_pin_bound_owner_signing_key(
         &self,
         step: &DevicePinStep<'_>,
@@ -430,6 +434,7 @@ impl Vault {
         issuer: &HostSlipIssuer,
         machine: EntityId,
         slot: KeystoreSlot,
+        asked: &OwnerPresenceWitness,
     ) -> Result<OwnerKeyEnrollmentReceipt> {
         pin.require_window()?;
         let keystore = self.device_keystore()?;
@@ -479,7 +484,8 @@ impl Vault {
             public_key,
             proof: signer.sign_possession(&challenge),
         };
-        let receipt = self.enrol_owner_signing_key_as_host(authority, input, issuer)?;
+        let receipt =
+            self.enrol_owner_signing_key_as_host_witnessed(authority, asked, input, issuer)?;
         self.hold_opened_pin_bound_owner_key(pin, slot, public_key);
         Ok(receipt)
     }

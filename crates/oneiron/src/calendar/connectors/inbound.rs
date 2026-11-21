@@ -245,21 +245,45 @@ fn apply_remote_change(
             // other seat of the collection, and the next pull after the
             // write binds the UID reads it on the written EVENT
             // (CAL-FIRST-WRITE-COPY-PULLED-UNSETTLED-IMPORTS-DUPLICATE-EVENT).
-            if first_write_unsettled(vault, &primary.uid)? {
+            if first_write_unsettled(vault, operation, &primary.uid)? {
                 counters.owed_first_write_copies += 1;
                 return Ok(());
             }
             // A cancelled version of a member a write of this UID still in
-            // flight writes cancelled may be that write coming back before
-            // its settlement marks the member's passport, and would read as a
+            // flight (or refused with its stored copy's proof owed) writes
+            // cancelled may be that write coming back before its settlement
+            // or proof marks the member's passport, and would read as a
             // host cancel that refunds the deposit. The resource stays owed
             // and unread, as an omission a write in flight holds back does,
             // and each cancelled member's passport keeps this first sighting,
             // which dates the cancellation if the write proves not to be the
             // stored copy (BK-DEPOSIT-REWRITTEN-ECHO-OF-OWNER-WRITE-REFUNDS).
             // A VEVENT is the staged member its UID and staged RECURRENCE-ID
-            // name, whatever exception claims the member holds now.
-            let in_flight = cancelled_members_in_flight(vault, operation, &primary.uid)?;
+            // name, whatever exception claims the member holds now. The write
+            // may be in flight on another seat of the calendar, which shares
+            // its passports
+            // (CAL-SECOND-SEAT-CANCELLED-VERSION-MISSES-OTHER-SEAT-WRITE);
+            // such a row, which this seat never settles, holds only a copy
+            // that may be its write's own (its SEQUENCE and write marker).
+            // Only a copy that carries a cancelled VEVENT asks: no other copy
+            // is held back here.
+            let in_flight = if feed.events.iter().any(|parsed| parsed.cancelled) {
+                let lowest_sequence = feed
+                    .events
+                    .iter()
+                    .map(|parsed| parsed.sequence)
+                    .min()
+                    .unwrap_or(primary.sequence);
+                cancelled_members_in_flight(
+                    vault,
+                    operation,
+                    &primary.uid,
+                    &object.ics,
+                    lowest_sequence,
+                )?
+            } else {
+                Vec::new()
+            };
             if !in_flight.is_empty() {
                 let mut cancelled = Vec::new();
                 for parsed in feed.events.iter().filter(|parsed| parsed.cancelled) {
@@ -434,7 +458,7 @@ fn apply_remote_change(
             //   inbound source carries: a sync delta can report a resource
             //   the host moved gone, on a page before the one carrying its
             //   new href.
-            let writes = unsettled_writes_of(vault, system, uid)?;
+            let writes = unsettled_writes_of(vault, operation, uid)?;
             if writes.cancelled_in_flight
                 || writes.copy_unproven
                 || crate::calendar::ingest::tombstone_cancels_written_only_event(
@@ -479,7 +503,7 @@ fn apply_remote_change(
             // in flight holds the omission back too, since it may be that
             // write coming back gone
             // (CAL-SEAT-DELETE-OF-WRITTEN-ONLY-EVENT-CANCELS-NOTHING).
-            let writes = unsettled_writes_of(vault, system, uid)?;
+            let writes = unsettled_writes_of(vault, operation, uid)?;
             if !omission_observed(vault, operation, uid, *observation)?
                 || writes.cancelled_in_flight
             {

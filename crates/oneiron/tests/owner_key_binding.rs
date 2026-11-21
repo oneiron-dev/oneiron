@@ -43,8 +43,9 @@ use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{
     AUTHORITY_LOG_SCHEMA_VERSION, ActAuthority, ActSurface, ActorBindingStatus, AuthorityKey,
     AuthorityLogEntry, AuthorityOp, AuthoritySignature, AuthoritySignatureSuite, HostSlipIssuer,
-    MachineRole, OwnerKeyBindingReceipt, OwnerKeyEnrollment, PreparedOwnerKeyBinding,
-    authority_entry_hash, authority_log_entity_id_from_hash, authority_transcript,
+    MachineRole, OwnerKeyBindingReceipt, OwnerKeyChangeKind, OwnerKeyEnrollment,
+    PreparedOwnerKeyBinding, authority_entry_hash, authority_log_entity_id_from_hash,
+    authority_transcript,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::error::RecordError;
@@ -54,6 +55,7 @@ use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::temporal::TimeRange;
 use oneiron::{EdgeActorClass, EntityId, HostingPrivacyPosture, Vault, VaultConfig};
+use oneiron_authority::authority::{decode_entry_value, encode_value, entry_value};
 
 const SHARED: u64 = 47;
 /// The seed of the owner's own owner key, on a device of theirs.
@@ -439,6 +441,44 @@ fn a_signature_by_another_key_binds_no_one() {
     );
 }
 
+/// The unsigned entry `bytes` encode, as prepare answered it.
+fn entry_of(bytes: &[u8]) -> AuthorityLogEntry {
+    let value = rmpv::decode::read_value(&mut &bytes[..]).expect("one MessagePack value");
+    decode_entry_value(&value).expect("the prepared entry decodes")
+}
+
+/// `prepared`'s entry at `seq` in its one encoding, with its transcript.
+fn at_sequence(prepared: &PreparedOwnerKeyBinding, seq: u64) -> PreparedOwnerKeyBinding {
+    let mut entry = entry_of(&prepared.entry);
+    entry.seq = seq;
+    PreparedOwnerKeyBinding {
+        entry: encode_value(&entry_value(&entry, true)).expect("the entry encodes"),
+        transcript: authority_transcript(&entry).expect("its transcript"),
+    }
+}
+
+/// Blind review #10043 P1 (the passkey's binding door; this door is its
+/// sibling): prepare names the key's next sequence, and a binding the key
+/// signs above it is none prepare built. Landed, it would move the key's
+/// next sequence to its own; at `u64::MAX` the key would have no sequence
+/// left to sign at.
+#[test]
+fn a_binding_signed_above_the_prepared_sequence_binds_no_one() {
+    let served = hosted();
+    let key = served.enrol_device_key(served.owner, OWNER_SEED);
+    let prepared = served
+        .prepare(served.owner, &key)
+        .expect("the binding is prepared");
+    let prepared_seq = entry_of(&prepared.entry).seq;
+    for seq in [prepared_seq + 1, u64::MAX] {
+        assert_not_valid(served.land(served.owner, &at_sequence(&prepared, seq), &key));
+    }
+    assert_eq!(served.bound_to(&key), None, "nothing was bound");
+    served
+        .land(served.owner, &prepared, &key)
+        .expect("the prepared binding still lands at its own sequence");
+}
+
 #[test]
 fn an_owner_binds_no_key_enrolled_for_another_owner() {
     let served = hosted();
@@ -511,5 +551,28 @@ fn a_rebinding_takes_an_epoch_above_the_keys_revocation() {
     assert!(
         served.passes_owner_verbs(served.owner),
         "the bound Owner's owner verbs pass"
+    );
+}
+
+#[test]
+fn a_device_keys_binding_lists_as_bound_by_device_key() {
+    let served = hosted();
+    let key = served.enrol_and_bind(served.owner, OWNER_SEED);
+    let bound = AuthorityKey::Ed25519(public(&key));
+    let changes = served
+        .vault
+        .owner_key_changes(&proof(&served.vault, served.owner))
+        .expect("the owner key changes list");
+    let listed = changes
+        .iter()
+        .find(|change| change.change == OwnerKeyChangeKind::BoundByDeviceKey)
+        .expect("the list names the device key's binding");
+    assert_eq!(
+        listed.public_key, bound,
+        "the list names the bound device key"
+    );
+    assert_eq!(
+        listed.signed_by, bound,
+        "the list names the device key as its signer"
     );
 }

@@ -6,6 +6,8 @@ import {
   OwnerRouteRefusal,
   base64UrlDecode,
   base64UrlEncode,
+  bindWithOwnerPasskey,
+  enrollAndBindOwnerPasskey,
   enrollOwnerPasskey,
   fetchOwnerRouteTransport,
   listOwnerPasskeys,
@@ -328,6 +330,268 @@ describe('vouching for a new device key with an enrolled passkey', () => {
     assert.deepEqual(
       calls.map((call) => call.path),
       ['/v1/owner/owner-passkeys/vouch/prepare'],
+    )
+  })
+})
+
+describe('binding the owner with their own passkey', () => {
+  const BIND_ENTRY = base64UrlEncode(bytes(5, 4, 3, 2, 1))
+  const BIND_RECEIPT = {
+    entry: '12'.repeat(32),
+    owner: '34'.repeat(16),
+    public_key: '02' + '56'.repeat(32),
+    epoch: 1,
+  }
+  const BIND_PREPARE = '/v1/owner/owner-passkeys/bind/prepare'
+  const BIND_LAND = '/v1/owner/owner-passkeys/bind/land'
+
+  function refusingPrepare(refusal: OwnerRouteRefusal) {
+    const replies: Record<string, unknown> = {}
+    Object.defineProperty(replies, BIND_PREPARE, {
+      enumerable: true,
+      get() {
+        throw refusal
+      },
+    })
+    return recordingTransport(replies)
+  }
+
+  it('prepares, asserts the challenge and lands the binding', async () => {
+    const { calls, transport } = recordingTransport({
+      [BIND_PREPARE]: { entry: BIND_ENTRY, challenge: base64UrlEncode(CHALLENGE) },
+      [BIND_LAND]: BIND_RECEIPT,
+    })
+    const { requested, credentials } = fakeCredentials({})
+
+    const outcome = await bindWithOwnerPasskey(
+      { transport, credentials },
+      base64UrlEncode(RAW_ID),
+    )
+
+    assert.deepEqual(calls, [
+      {
+        method: 'POST',
+        path: BIND_PREPARE,
+        body: { credential_id: base64UrlEncode(RAW_ID) },
+      },
+      {
+        method: 'POST',
+        path: BIND_LAND,
+        body: {
+          entry: BIND_ENTRY,
+          authenticator_data: base64UrlEncode(AUTHENTICATOR_DATA),
+          client_data_json: base64UrlEncode(CLIENT_DATA_JSON),
+          signature: base64UrlEncode(SIGNATURE),
+        },
+      },
+    ])
+    assert.equal(requested.length, 1)
+    const request = requested[0].publicKey
+    assert.ok(request)
+    assert.deepEqual(asBytes(request.challenge), CHALLENGE)
+    assert.equal(request.userVerification, 'required')
+    assert.equal(request.allowCredentials?.length, 1)
+    assert.equal(request.allowCredentials?.[0].type, 'public-key')
+    assert.deepEqual(asBytes(request.allowCredentials?.[0].id), RAW_ID)
+    assert.deepEqual(outcome, {
+      state: 'bound',
+      receipt: {
+        entry: BIND_RECEIPT.entry,
+        owner: BIND_RECEIPT.owner,
+        publicKey: BIND_RECEIPT.public_key,
+        epoch: 1,
+      },
+    })
+  })
+
+  it('answers already-bound when a live binding names the owner, asking for no assertion', async () => {
+    const refusal = new OwnerRouteRefusal(
+      409,
+      BIND_PREPARE,
+      'a live human binding already names this owner; there is nothing to bind',
+    )
+    const { calls, transport } = refusingPrepare(refusal)
+    const { requested, credentials } = fakeCredentials({})
+
+    const outcome = await bindWithOwnerPasskey(
+      { transport, credentials },
+      base64UrlEncode(RAW_ID),
+    )
+
+    assert.deepEqual(outcome, { state: 'already-bound' })
+    assert.equal(requested.length, 0)
+    assert.deepEqual(calls, [
+      {
+        method: 'POST',
+        path: BIND_PREPARE,
+        body: { credential_id: base64UrlEncode(RAW_ID) },
+      },
+    ])
+  })
+
+  it('answers already-bound when a binding landed between prepare and land', async () => {
+    const refusal = new OwnerRouteRefusal(
+      409,
+      BIND_LAND,
+      'a live human binding already names this owner; there is nothing to bind',
+    )
+    const replies: Record<string, unknown> = {
+      [BIND_PREPARE]: { entry: BIND_ENTRY, challenge: base64UrlEncode(CHALLENGE) },
+    }
+    Object.defineProperty(replies, BIND_LAND, {
+      enumerable: true,
+      get() {
+        throw refusal
+      },
+    })
+    const { calls, transport } = recordingTransport(replies)
+    const { requested, credentials } = fakeCredentials({})
+
+    const outcome = await bindWithOwnerPasskey(
+      { transport, credentials },
+      base64UrlEncode(RAW_ID),
+    )
+
+    assert.deepEqual(outcome, { state: 'already-bound' })
+    assert.equal(requested.length, 1)
+    assert.deepEqual(
+      calls.map((call) => call.path),
+      [BIND_PREPARE, BIND_LAND],
+    )
+  })
+
+  it('rejects with any other prepare refusal', async () => {
+    const refusal = new OwnerRouteRefusal(400, BIND_PREPARE, 'no live passkey')
+    const { transport } = refusingPrepare(refusal)
+    const { requested, credentials } = fakeCredentials({})
+
+    await assert.rejects(
+      bindWithOwnerPasskey({ transport, credentials }, base64UrlEncode(RAW_ID)),
+      (error: unknown) => error === refusal,
+    )
+    assert.equal(requested.length, 0)
+  })
+
+  it('refuses a land reply without a numeric epoch', async () => {
+    const { transport } = recordingTransport({
+      [BIND_PREPARE]: { entry: BIND_ENTRY, challenge: base64UrlEncode(CHALLENGE) },
+      [BIND_LAND]: {
+        entry: BIND_RECEIPT.entry,
+        owner: BIND_RECEIPT.owner,
+        public_key: BIND_RECEIPT.public_key,
+        epoch: '1',
+      },
+    })
+    const { requested, credentials } = fakeCredentials({})
+    await assert.rejects(
+      bindWithOwnerPasskey({ transport, credentials }, base64UrlEncode(RAW_ID)),
+      (error: unknown) =>
+        error instanceof OwnerPasskeyCeremonyError && error.reason === 'malformed-reply',
+    )
+    assert.equal(requested.length, 1)
+  })
+
+  it('enrols then binds, with an assertion for each', async () => {
+    const challenge = base64UrlEncode(CHALLENGE)
+    const { calls, transport } = recordingTransport({
+      '/v1/owner/owner-passkeys/challenge': { challenge },
+      '/v1/owner/owner-passkeys/enroll': ENROLL_RECEIPT,
+      [BIND_PREPARE]: { entry: BIND_ENTRY, challenge },
+      [BIND_LAND]: BIND_RECEIPT,
+    })
+    const { created, requested, credentials } = fakeCredentials({})
+
+    const outcome = await enrollAndBindOwnerPasskey({ transport, credentials }, enrollment)
+
+    assert.equal(created.length, 1)
+    assert.equal(requested.length, 2)
+    for (const call of requested) {
+      assert.ok(call.publicKey)
+      assert.deepEqual(asBytes(call.publicKey.challenge), CHALLENGE)
+    }
+    assert.deepEqual(calls, [
+      {
+        method: 'POST',
+        path: '/v1/owner/owner-passkeys/challenge',
+        body: { public_key: base64UrlEncode(SPKI) },
+      },
+      {
+        method: 'POST',
+        path: '/v1/owner/owner-passkeys/enroll',
+        body: {
+          credential_id: base64UrlEncode(RAW_ID),
+          public_key: base64UrlEncode(SPKI),
+          authenticator_data: base64UrlEncode(AUTHENTICATOR_DATA),
+          client_data_json: base64UrlEncode(CLIENT_DATA_JSON),
+          signature: base64UrlEncode(SIGNATURE),
+        },
+      },
+      {
+        method: 'POST',
+        path: BIND_PREPARE,
+        body: { credential_id: ENROLL_RECEIPT.credential_id },
+      },
+      {
+        method: 'POST',
+        path: BIND_LAND,
+        body: {
+          entry: BIND_ENTRY,
+          authenticator_data: base64UrlEncode(AUTHENTICATOR_DATA),
+          client_data_json: base64UrlEncode(CLIENT_DATA_JSON),
+          signature: base64UrlEncode(SIGNATURE),
+        },
+      },
+    ])
+    assert.deepEqual(outcome.enrollment, {
+      entry: ENROLL_RECEIPT.entry,
+      machine: ENROLL_RECEIPT.machine,
+      publicKey: ENROLL_RECEIPT.public_key,
+      credentialId: ENROLL_RECEIPT.credential_id,
+    })
+    assert.deepEqual(outcome.binding, {
+      state: 'bound',
+      receipt: {
+        entry: BIND_RECEIPT.entry,
+        owner: BIND_RECEIPT.owner,
+        publicKey: BIND_RECEIPT.public_key,
+        epoch: 1,
+      },
+    })
+  })
+
+  it('keeps the enrollment when the binding prepare refuses', async () => {
+    const refusal = new OwnerRouteRefusal(500, BIND_PREPARE, 'the binding did not prepare')
+    const replies: Record<string, unknown> = {
+      '/v1/owner/owner-passkeys/challenge': { challenge: base64UrlEncode(CHALLENGE) },
+      '/v1/owner/owner-passkeys/enroll': ENROLL_RECEIPT,
+    }
+    Object.defineProperty(replies, BIND_PREPARE, {
+      enumerable: true,
+      get() {
+        throw refusal
+      },
+    })
+    const { calls, transport } = recordingTransport(replies)
+    const { requested, credentials } = fakeCredentials({})
+
+    const outcome = await enrollAndBindOwnerPasskey({ transport, credentials }, enrollment)
+
+    assert.deepEqual(outcome.enrollment, {
+      entry: ENROLL_RECEIPT.entry,
+      machine: ENROLL_RECEIPT.machine,
+      publicKey: ENROLL_RECEIPT.public_key,
+      credentialId: ENROLL_RECEIPT.credential_id,
+    })
+    assert.equal(outcome.binding.state, 'failed')
+    assert.equal((outcome.binding as unknown as { error: unknown }).error, refusal)
+    assert.equal(requested.length, 1)
+    assert.deepEqual(
+      calls.map((call) => call.path),
+      [
+        '/v1/owner/owner-passkeys/challenge',
+        '/v1/owner/owner-passkeys/enroll',
+        BIND_PREPARE,
+      ],
     )
   })
 })

@@ -51,8 +51,9 @@ pub struct RetainedAlternative {
     /// retracted (FIX 5752): a Keep after them lands it at a fresh id.
     pub(super) landings: Vec<EntityId>,
     /// The Keeps of it staged in their import's review that the owner
-    /// declined there (FIX 7072): a Keep after them stages it at a fresh id,
-    /// and the Dreamer's own ruling never offers it again.
+    /// declined there (FIX 7072) or that were retracted: a Keep after them
+    /// stages it at a fresh id, and the Dreamer's own ruling never offers it
+    /// again.
     pub(crate) declined: Vec<EntityId>,
     /// The whole retained entry, read in full only when it is kept.
     entry: Value,

@@ -35,12 +35,14 @@ use oneiron_authority::authority::{
     AuthorityConfirmAction, AuthorityConfirmKind, CheckpointPolicySet, CheckpointRootChoice,
     ConversationTrainingSet, ConversationTrainingVaultSet, DeviceSuccession, HomeNodePick,
     OWNER_KEY_ENROLLMENT_SEEN, OWNER_KEY_POSSESSION_KIND, OWNER_PASSKEY_POSSESSION_KIND, OriginCut,
-    OwnerKeyEnroll, PolicySetting, PolicySettingSet, checkpoint_policy_target,
+    OwnerKeyEnroll, PolicySetting, PolicySettingSet, SettingCopy, SettingCopyName, SettingCopyRow,
+    SettingPackAccept, SettingPackHead, checkpoint_policy_target,
     conversation_training_vault_target, device_succession_target, home_pick_target,
     machine_answer_revision, origin_cut_target, owner_key_enrollment_challenge,
     owner_key_enrollment_target, owner_passkey_possession_evidence, roster_has_live_owner,
-    webauthn_assertion_envelope, webauthn_challenge,
+    setting_pack_accept_target, webauthn_assertion_envelope, webauthn_challenge,
 };
+use oneiron_setting_contract::{RowKey, SettingMode, SettingScope};
 
 const ROOT_SEED: u8 = 61;
 const NODE_SEED: u8 = 62;
@@ -1970,6 +1972,216 @@ fn a_rotation_of_an_owner_key_it_cosigns_still_ends_it() {
     assert!(
         !live_owner(&fold, &key),
         "the cosigned rotation ends the owner key: {key:?} {:?}",
+        fold.issues
+    );
+}
+
+/// The catalogue key the setting copy and pack tests name (FIX
+/// SETTING-COPY-OUTSIDE-OWNER-KEY-LINE). The fold reads its shape only, never
+/// the catalogue.
+const COPIED_KEY: &str = "test.ordered_cap";
+
+/// The pack the head tests name, its version and its table's digest.
+const PACK: &str = "engine";
+const PACK_VERSION: &str = "1";
+const PACK_DIGEST: [u8; 32] = [0x5a; 32];
+
+/// The project whose carried row a copy names, and the line it left.
+fn moved_project() -> EntityId {
+    EntityId::from_bytes([0x76; 16]).expect("an id")
+}
+
+fn left_line() -> EntityId {
+    EntityId::from_bytes([0x77; 16]).expect("an id")
+}
+
+/// M's copy of `COPIED_KEY`'s carried row on the moved project (stage 7a-4),
+/// naming `named` as the act on the line it left, having seen no live act
+/// there: an engine statement, signed by its carrier alone.
+fn setting_copy_op(machine: EntityId, named: AuthorityEntryHash) -> AuthorityOp {
+    AuthorityOp::SettingCopy(SettingCopy {
+        machine,
+        rows: vec![SettingCopyRow {
+            slot: RowKey {
+                name: COPIED_KEY.to_owned(),
+                item: None,
+                mode: SettingMode::Carried,
+                scope: SettingScope::Project(moved_project()),
+            },
+            seen: [0; 32],
+            names: vec![SettingCopyName {
+                slot: RowKey {
+                    name: COPIED_KEY.to_owned(),
+                    item: None,
+                    mode: SettingMode::Value,
+                    scope: SettingScope::Project(left_line()),
+                },
+                act: named,
+            }],
+        }],
+    })
+}
+
+/// M's head of `PACK` (stage 7c-3a), having seen no live head: a pack door's
+/// engine statement. With `yes`, the owner's yes to `COPIED_KEY`'s default
+/// of the head's table (stage 7c-3c), on the yes's own target.
+fn pack_head_op(machine: EntityId, yes: bool) -> AuthorityOp {
+    let accept = yes.then(|| SettingPackAccept {
+        act: act(
+            owner(),
+            OwnerActKind::PolicySetting,
+            setting_pack_accept_target(PACK, &PACK_DIGEST).expect("the yes's target"),
+        ),
+        accepted: vec![COPIED_KEY.to_owned()],
+    });
+    AuthorityOp::SettingPackHead(SettingPackHead {
+        machine,
+        pack: PACK.to_owned(),
+        version: PACK_VERSION.to_owned(),
+        digest: PACK_DIGEST,
+        held: Vec::new(),
+        seen: [0; 32],
+        accept,
+    })
+}
+
+/// Whether the carried copy is in force: a probe of its row naming the zero
+/// revision over it is stale exactly then.
+fn in_force_setting_copy(vault: &OldParents, carried: AuthorityEntryHash) -> bool {
+    let probe = setting_copy_op(vault.machine, hash(&vault.rows[1]));
+    !probe_valid(vault, carried, probe)
+}
+
+/// Whether the carried head (or yes, with `yes`) is in force: a probe of
+/// the same target naming the zero revision is stale exactly then.
+fn in_force_pack_head(vault: &OldParents, carried: AuthorityEntryHash, yes: bool) -> bool {
+    let probe = pack_head_op(vault.machine, yes);
+    !probe_valid(vault, carried, probe)
+}
+
+/// Test 27 of the row, for FIX SETTING-COPY-OUTSIDE-OWNER-KEY-LINE: M's
+/// unproven setting copy on the row before the enrolment waits, as on
+/// parents that hold K (row CARRIER-OWNER-PROOF). Main: the copy lands.
+#[test]
+fn an_old_parents_setting_copy_waits() {
+    let mut vault = OldParents::new();
+    let machine = vault.machine;
+    let named = hash(&vault.rows[1]);
+    let op = setting_copy_op(machine, named);
+    let (fold, enrolment, key, carried) = old_parents_carried(&mut vault, op);
+    assert_enrolment_counted(&fold, &enrolment, &key);
+    assert!(
+        !in_force_setting_copy(&vault, carried),
+        "copy not in force: {:?}",
+        fold.issues
+    );
+    assert!(
+        waits(&fold, &carried),
+        "old-parents copy waits: {:?}",
+        fold.issues
+    );
+}
+
+/// Test 28 of the row, for the same FIX: M's unproven pack head on the row
+/// before the enrolment waits. Main: the head lands.
+#[test]
+fn an_old_parents_pack_head_waits() {
+    let mut vault = OldParents::new();
+    let machine = vault.machine;
+    let op = pack_head_op(machine, false);
+    let (fold, enrolment, key, carried) = old_parents_carried(&mut vault, op);
+    assert_enrolment_counted(&fold, &enrolment, &key);
+    assert!(
+        !in_force_pack_head(&vault, carried, false),
+        "head not in force: {:?}",
+        fold.issues
+    );
+    assert!(
+        waits(&fold, &carried),
+        "old-parents head waits: {:?}",
+        fold.issues
+    );
+}
+
+/// Test 29 of the row, for the same FIX: the owner's unproven yes to a
+/// pack's table, which M carries on the row before the enrolment, waits.
+/// Main: the yes lands.
+#[test]
+fn an_old_parents_owners_pack_yes_waits() {
+    let mut vault = OldParents::new();
+    let machine = vault.machine;
+    let op = pack_head_op(machine, true);
+    let (fold, enrolment, key, carried) = old_parents_carried(&mut vault, op);
+    assert_enrolment_counted(&fold, &enrolment, &key);
+    assert!(
+        !in_force_pack_head(&vault, carried, true),
+        "yes not in force: {:?}",
+        fold.issues
+    );
+    assert!(
+        waits(&fold, &carried),
+        "old-parents yes waits: {:?}",
+        fold.issues
+    );
+}
+
+/// Test 30 of the row, for the same FIX: test 18's scaffold with M's
+/// setting copy as T. A world edit's refold brings a copy back past a row
+/// the fold did not keep, as it does an owner choice, so once E falls its
+/// line holds only its ancestry, and T waits where it folds again past D
+/// and E, on the merge of P's state and the revoke's. Main: T waits in the
+/// first fold and lands in the second.
+#[test]
+fn a_copy_on_an_enrolment_its_own_line_lets_a_row_prune_waits() {
+    let mut vault = OldParents::new();
+    let p = hash(&vault.rows[1]);
+    let machine = vault.machine;
+    let k1_signing = signing(OWNER_KEY_SEED);
+    let k2_signing = signing(OWNER_KEY_SEED_2);
+    let (k1, k2) = (key_of(&k1_signing), key_of(&k2_signing));
+    let d = vault.root_enrols_agent_key(p, k2.clone());
+    let e = vault.enrol_owner_key_on(d, &k1_signing, machine);
+    let j1 = vault.push_root_row(
+        vec![p],
+        confirm_op(FRESH_CONFIRM_ID_1, FRESH_CONFIRM_NONCE_1),
+    );
+    let j2 = vault.push_root_row(
+        vec![j1],
+        confirm_op(FRESH_CONFIRM_ID_2, FRESH_CONFIRM_NONCE_2),
+    );
+    let e2 = vault.enrol_owner_key_on(j2, &k2_signing, machine);
+    let s2 = vault.push_root_row_cosigned(
+        vec![e2],
+        AuthorityOp::RevokeDevice {
+            revoked_key: k2.clone(),
+        },
+        &k2_signing,
+    );
+    let t = vault.carry(vec![e, s2], setting_copy_op(machine, p));
+    let fold = vault.fold();
+    assert!(
+        fold.valid_entries.contains(&e2) && fold.valid_entries.contains(&s2),
+        "E2 stands and the revoke of K2 counts: {:?}",
+        fold.issues
+    );
+    assert!(
+        !fold.valid_entries.contains(&d) && !fold.valid_entries.contains(&e),
+        "E2's line refuses D, and E falls with it: {:?}",
+        fold.issues
+    );
+    assert!(
+        !live_owner(&fold, &k1) && !live_owner(&fold, &k2),
+        "no live owner key: K1 gone with E, K2 revoked: {:?}",
+        fold.issues
+    );
+    assert!(
+        waits(&fold, &t),
+        "T waits where it folds again past E: {:?}",
+        fold.issues
+    );
+    assert!(
+        !in_force_setting_copy(&vault, t),
+        "no copy is in force: {:?}",
         fold.issues
     );
 }

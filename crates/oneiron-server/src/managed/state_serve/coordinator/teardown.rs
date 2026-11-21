@@ -38,6 +38,7 @@ pub(super) struct StartingHandles {
     pub(super) tagging: Option<JoinHandle<()>>,
     pub(super) ladder_workers: Vec<JoinHandle<()>>,
     pub(super) ledger_report: Option<JoinHandle<()>>,
+    pub(super) owner_key_change_report: Option<JoinHandle<()>>,
     pub(super) ctl_owned_path: Option<PathBuf>,
     pub(super) http_owned_path: Option<PathBuf>,
     pub(super) artifacts_owned_path: Option<PathBuf>,
@@ -171,9 +172,13 @@ pub(super) async fn stop(mut handles: StartingHandles) -> (anyhow::Result<()>, a
     if let Some(path) = handles.artifacts_owned_path {
         unlink(path, "artifact socket unlink failed");
     }
-    // Stop the report task before the final push re-reads current facts. A
+    // Stop the report tasks before the final push re-reads current facts. A
     // loaded ledger also reports a failed start before ManagedState exists.
     if let Some(report) = handles.ledger_report {
+        report.abort();
+        let _ = report.await;
+    }
+    if let Some(report) = handles.owner_key_change_report {
         report.abort();
         let _ = report.await;
     }

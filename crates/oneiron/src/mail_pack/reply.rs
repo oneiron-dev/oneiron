@@ -1170,7 +1170,15 @@ impl Memory<'_> {
                 clear_reply_ask_in_txn(vault, txn, &id, prior.revision)?;
             }
             if let Some(person) = asked {
-                raise_reply_ask_in_txn(vault, txn, &id, row.revision, person)?;
+                raise_reply_ask_in_txn(
+                    vault,
+                    txn,
+                    &id,
+                    row.revision,
+                    person,
+                    self.write_actor(),
+                    &[conversation, parent_turn],
+                )?;
             }
             Ok(())
         })?;

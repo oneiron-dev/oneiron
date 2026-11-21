@@ -53,6 +53,7 @@ mod storage_admission;
 mod stored;
 mod types;
 mod vault;
+mod withdrawal_requested_at;
 
 pub use self::enrollment_law::{
     VoiceEnrollmentLegalContext, VoiceJurisdiction, VoicePrintLegalEvidence, WrittenReleaseRef,
@@ -72,7 +73,13 @@ pub use self::types::{
 };
 
 #[cfg(test)]
-pub(crate) use self::vault::{put_raw_voice_roster_for_test, put_voice_roster_for_test};
+pub(crate) use self::vault::put_raw_voice_roster_for_test;
+#[cfg(any(test, oneiron_test_support))]
+pub(crate) use self::vault::put_voice_roster_for_test;
+pub(crate) use self::vault::{
+    HumanCredentialReach, VOICE_CONSENT_RESTORE_EVENT_PREFIX,
+    VOICE_RECOGNITION_NOTIFICATION_PRODUCER,
+};
 
 pub(crate) mod tables;
 #[cfg(test)]

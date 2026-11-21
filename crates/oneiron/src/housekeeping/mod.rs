@@ -97,10 +97,11 @@ impl Vault {
     /// communication projector pass, then prunes the hook feeds once (FIX
     /// 22180), whose failures are logged and never fail a sweep, and drops the
     /// task-held inquiry answers whose task has ended. The pending check-ins
-    /// due by now advance, and the due watcher ticks and timer turn programs
-    /// release on the node that releases ticks, as armed jobs of the runner
-    /// (ROLES-CHECKIN P2.3; stage 5b); after the runner, unless asked to stop,
-    /// it releases the feed turn programs and admits every owed wake once. The
+    /// due by now advance, the due watcher ticks release on the node that
+    /// releases ticks and the due timer turn programs on the machine that
+    /// holds their armings, as armed jobs of the runner (ROLES-CHECKIN P2.3;
+    /// stage 5b); after the runner, unless asked to stop, it releases the
+    /// feed turn programs this machine holds and admits every owed wake once. The
     /// model pack retirement sweep runs against no model access: a host that
     /// binds model offers calls [`Self::housekeeping_with_access`].
     pub fn housekeeping(&self, budget: HousekeepingBudget) -> Result<HousekeepingReport> {
@@ -200,10 +201,11 @@ impl Vault {
     /// no notice recorded or a retirement-day move (FIX 22059), and the
     /// first due armed job that wakes its host and runs on this node. Among those jobs is each
     /// open pending check-in, due at its next transition (ROLES-CHECKIN P2.3), each waiting
-    /// watcher tick and each actor's next timer turn program, due then on the node that releases
-    /// ticks (FIX 22180; stage 5b-3), each held send's release (stage 5c-2), the paced verb
-    /// line's next window or deadline (FIX 8753), due then on the process whose host runs its
-    /// turns (stage 5c-2), and each deadline a door noted for a secret
+    /// watcher tick, due then on the node that releases ticks (FIX 22180; stage 5b-3), each
+    /// actor's next timer turn program, due then on the machine that holds its arming (FIX
+    /// TURNPROGRAM-NON-TURN-ARMING-STAYS-ON-ITS-MACHINE), each held send's release (stage
+    /// 5c-2), the paced verb line's next window or deadline (FIX 8753), due then on the
+    /// process whose host runs its turns (stage 5c-2), and each deadline a door noted for a secret
     /// lease, a voice print, a critical confirm or a shared act's window (DESIGN
     /// 15-setting-primitive, stage 5b): due at the deadline, and after a pass
     /// that found the sweep backing off or its walk begun before the deadline,

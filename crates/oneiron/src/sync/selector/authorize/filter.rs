@@ -9,6 +9,11 @@ use crate::workspace_roster::project::extra_room_redaction;
 /// export door withholds; promotion authority asks only what the grant
 /// covers. `reach` says where the shipped rows' births may go.
 /// Live rows and their text sources honor current use limits; tombstones still propagate.
+/// `tombstones` says whether a copy to another vault carries the record
+/// deletes released to its grant's peer (a Connect delivery) or none (a
+/// selector answer, a guest document, an endpoint read); a copy to the
+/// owner's own machines judges its tombstones by the selection alone.
+#[expect(clippy::too_many_arguments)]
 pub(in crate::sync::selector) fn filter_window_doc(
     vault: &Vault,
     source: &LoroDoc,
@@ -17,6 +22,7 @@ pub(in crate::sync::selector) fn filter_window_doc(
     position: &Position,
     withhold: Withhold<'_>,
     reach: BirthReach<'_>,
+    tombstones: GuestTombstones,
 ) -> Result<LoroDoc> {
     let scope_position = position.as_scope();
     // A selector must not trigger Observer A with unselected NOTE sidecars.
@@ -147,6 +153,9 @@ pub(in crate::sync::selector) fn filter_window_doc(
     // machines take every row as stored.
     let other_vault = matches!(reach, BirthReach::OtherVault(_));
     let mut rewritten = std::collections::BTreeMap::<EntityId, Vec<u8>>::new();
+    // One phone-lineage pass for the window: each stored row's lineage is
+    // read once.
+    let mut phone_lineage = crate::voice_call::PhoneLineagePass::default();
     // Each candidate coreference claim's `same_as` link: written out, the
     // claim carries it (SELECTOR-RELEASE-COREFERENCE-CONSENT = A).
     let mut coreference_claims =
@@ -197,6 +206,48 @@ pub(in crate::sync::selector) fn filter_window_doc(
             Err(error) => {
                 scope_error = Some(error);
                 return;
+            }
+        }
+        // VOICE-PHONE-AGENT-REACH: a phone thread's row, or a row whose words
+        // came from one, never rides a restricted selector, whoever the
+        // member (Engine 02:02: a generic read reaches phone rows only by the
+        // owner's reach choice). Judged by the carried bytes, as
+        // `row_obligation` is above, so a row with no canonical copy here is
+        // withheld whole and a mark in any shape counts, and by the row stored
+        // at its id with every row its words came from, as the binding is
+        // above (R1 review C-F1, C-F2): an unmarked carrier the stored phone
+        // row rejected does not stand in for it.
+        match phone_lineage.phone_words(vault, &rtxn, &id, Some(blob)) {
+            Ok(false) => {}
+            Ok(true) => return,
+            Err(error) => {
+                scope_error = Some(error);
+                return;
+            }
+        }
+        // REACH-ERASED-SOURCE-EGRESS = A (Engine 07:53; R1 review 3 F1): a
+        // row that may not serve here (withdrawn, stale, or a source it is
+        // recorded as derived from withdrawn) never rides a restricted
+        // selector, as no read here serves it: a CLAIM drawn from an erased
+        // phone MESSAGE keeps the caller's words in its body. Judged by the
+        // row stored at its id, or the carried bytes when none is. A tombstone
+        // still propagates its delete; its live bytes never leave (below).
+        if !is_tombstoned {
+            let readable = vault.get_raw_in(&rtxn, &id).and_then(|stored| {
+                crate::ports::raw_readable_in_txn(
+                    &vault.store,
+                    &rtxn,
+                    &id,
+                    stored.as_deref().unwrap_or(blob),
+                )
+            });
+            match readable {
+                Ok(true) => {}
+                Ok(false) => return,
+                Err(error) => {
+                    scope_error = Some(error);
+                    return;
+                }
             }
         }
         match crate::authority::row_causal_admitted_cached(&history, &rtxn, &id, blob) {
@@ -624,7 +675,7 @@ pub(in crate::sync::selector) fn filter_window_doc(
         facets,
         band_filter(scope_position),
         worlds,
-        note_world::selector_world_axis(selector.world),
+        selector.world,
     );
     let ttxn = vault.store.env.read_txn()?;
     // The window's bodies of each tombstoned row, under every hex casing of
@@ -641,13 +692,16 @@ pub(in crate::sync::selector) fn filter_window_doc(
             }
         });
     }
+    // A copy to another vault carries a record's delete only on a Connect
+    // delivery, and only of a row this vault released to the grant's peer
+    // (CROSS-VAULT-DELETE-NEVER-ADMITTED = A): that release, not this export's
+    // selection, decides it, so a delete reaches every copy the peer was sent.
+    // The peer's admission lands it only where its own delivery ledger proves
+    // the copy. Every other copy to another vault carries none.
+    let mut peer_release = (other_vault && tombstones == GuestTombstones::Released)
+        .then(|| super::peer_tombstone_release::PeerTombstoneRelease::new(&selector.grant_id));
     map_for_each_tombstone_value(&source_tombstones, |raw_key, value| {
-        // A copy to another vault carries no tombstone: that vault's
-        // admission refuses every one, so one would fail the whole answer
-        // (`admission::reject_federated_tombstones`), and the guest codec
-        // drops them all (REVIEW-10024). A delete reaches the owner's own
-        // machines alone.
-        if other_vault {
+        if other_vault && peer_release.is_none() {
             return;
         }
         let Ok(id) = EntityId::from_hex(raw_key) else {
@@ -656,7 +710,11 @@ pub(in crate::sync::selector) fn filter_window_doc(
         if claims_withheld.contains(&id) {
             return;
         }
-        if !kept.contains(&id) && !export.admits(vault, &ttxn, &id, value) {
+        let selected = match peer_release.as_mut() {
+            Some(release) => release.releases(vault, &ttxn, raw_key, &id, value),
+            None => kept.contains(&id) || export.admits(vault, &ttxn, &id, value),
+        };
+        if !selected {
             return;
         }
         // FIX SELECTOR-TOMBSTONE-LABEL (OPUS-LEAKS): a tombstone names the

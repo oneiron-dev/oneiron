@@ -857,6 +857,12 @@ impl DecisionLadder<'_> {
                 .map(|_| Read::NotStarted)
                 .collect());
         }
+        // A rung its vault's model manifest holds is sent nothing: each question reads as its
+        // abstention, the rung's pin stays on the receipt, and no image is pinned to it.
+        if provider.held()? {
+            let held: Vec<_> = (0..pack.questions.len()).map(|_| abstained()).collect();
+            return take(&pin, pack, Ok(held), readings);
+        }
         // A choice wider than the provider's option bound is read in chunks (FIX 11235).
         let reads = if pack
             .questions

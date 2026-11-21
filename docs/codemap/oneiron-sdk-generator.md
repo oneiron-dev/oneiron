@@ -36,7 +36,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/generate/emit_py.rs` | src | m | 1 crate-vis | — | The Python emitters: the facade verbs as the mixin `_FacadeVerbs` that `Oneiron` derives from, at… |
 | `src/generate/emit_remote.rs` | src | s | 3 crate-vis | — | The remote client: `crates/oneiron-remote/src/generated/agent_verbs.rs`, the `remote` segment of `outputs()`… |
 | `src/generate/emit_server.rs` | src | L | 12 crate-vis | — | The server's facade outputs: `agent_verbs.rs` and `dispatch.rs` (`facade_dispatch`), `host_door_rows.rs`… |
-| `src/generate/emit_ts.rs` | src | L | 17 crate-vis | — | The TypeScript emitters: the verb tree every package emitter walks, the facade verbs module… |
+| `src/generate/emit_ts.rs` | src | m | 17 crate-vis | — | The TypeScript emitters: the verb tree every package emitter walks, the facade verbs module… |
+| `src/generate/emit_ts/facade_verb.rs` | src | m | 5 crate-vis | — | One facade verb as a TypeScript member ([`ts_verb`]): a typed binding's verb (its native call, or the… |
 | `src/generate/emit_ts/tests.rs` | test | s | — | — | — |
 | `src/generate/mod.rs` | src | s | 22 crate-vis | — | The `Generator` state and the module-level constants |
 | `src/generate/outputs.rs` | src | m | 1 struct · 4 fn · 17 crate-vis | Outputs | `BUILD_TIME_OUTPUTS`, `PACKAGE_OUTPUTS`, `PACKAGE_PATHS` and `outputs()`, which runs the emitters in a fixed… |

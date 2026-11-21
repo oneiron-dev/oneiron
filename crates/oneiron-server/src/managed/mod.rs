@@ -48,6 +48,8 @@ pub mod key_sync;
 mod ledger;
 mod listener;
 pub mod org_routing;
+/// One owner key change of this hosted vault, reported to its supervisor.
+pub mod owner_key_change_report;
 mod owner_recovery;
 mod owner_stage;
 mod owner_storage;
@@ -122,6 +124,7 @@ pub use self::ledger::{FrozenReport, LEDGER_REV_KEY, LedgerSnapshot, WakeLedger}
 pub use self::listener::{
     BoundServeListener, HYPNOS_LISTEN_FD, ManagedCtl, ServeListener, adopt_listen_fd, signal_ready,
 };
+pub use self::owner_key_change_report::OWNER_KEY_CHANGE_REPORTED_KEY;
 pub use self::state_serve::{
     ManagedShutdown, ManagedState, ObservedAlarm, ShutdownSignal, WRITES_FROZEN_TAG,
     build_managed_app, final_ledger_push, serve_managed, spawn_sigterm_shutdown,

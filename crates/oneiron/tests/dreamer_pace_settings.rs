@@ -384,6 +384,7 @@ fn fail_one_decision(
             rule: None,
             local: None,
             system_one: Some(&rung),
+            precision: None,
             escalation: None,
             big: None,
             human: &queue,

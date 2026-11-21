@@ -120,7 +120,16 @@ use serde::Serialize;
 /// live owner or admin key, or a key its parents do not hold) counts only with an owner key's
 /// proof, as a `human` bind does: the custodial root alone ends no person's binding (row
 /// HOSTED-OWNER-BIND-ROOT-REVOKE).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 56;
+/// 57: a passkey that a key in the host's custody enrolled signs its own first `human` binding to
+/// the owner that enrolment names, and the binding counts with no other key's proof; the image's
+/// fold names each such passkey's owners (row PASSKEY-SELF-BIND).
+/// 58: a setting copy or pack head (the owner's yes on a pack too) that a carrier not the
+/// owner's signs outside every owner key's line waits for an owner key's proof, as the owner's
+/// other choices do, so an image that put one in force is not adopted (FIX
+/// SETTING-COPY-OUTSIDE-OWNER-KEY-LINE).
+/// 59: the fold keeps every key ever enrolled as the recovery root's authority key, so a recovery
+/// hold's signer R and an answer's owner key judge apart (OPUS-WAYBACK, the box recovery's wait).
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 59;
 
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";
