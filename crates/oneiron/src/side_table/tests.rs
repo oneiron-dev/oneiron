@@ -434,6 +434,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "EMBEDDING_DEVICE",
         "EMERGENCY_ITEM",
         "EMERGENCY_PLAN",
+        "EMERGENCY_UNCERTAIN_SEND",
         "ENTITY_DOC_CITATION_FLOOR",
         "ENTITY_REVISION_PENDING_PHONETIC",
         "ENTITY_REVISION_TIMELINE",
