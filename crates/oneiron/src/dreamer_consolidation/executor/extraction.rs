@@ -53,6 +53,22 @@ pub const EXTRACTION_MAX_TOKENS: u64 = DEFAULT_BUDGET_TOKENS + EXTRACTION_ANSWER
 /// The output limit param every adapter folds into its provider's own field.
 const MAX_TOKENS_PARAM: &str = "max_tokens";
 
+/// The own-server body field that carries a TURN extraction answer's JSON
+/// Schema (HOUSE-SCHEMA). The house EXL3 server holds the answer, never the
+/// thought, to it; a server that does not read it ignores it, and a hosted
+/// rung is sent none. It is not `response_format`, so a provider set to
+/// `response_format = "none"` (the house deploy) still sends it, and no rung
+/// needs `JsonResponse` for it.
+const ANSWER_SCHEMA_PARAM: &str = "answer_schema";
+
+/// The TURN extraction answer's JSON Schema, the shipped
+/// `extraction_answer_schema.json`, read as [`ExtractionPrompt::shipped`]
+/// reads its prompt.
+fn extraction_answer_schema() -> Result<JsonValue> {
+    serde_json::from_str(include_str!("extraction_answer_schema.json"))
+        .map_err(|_| invalid_consolidation("shipped extraction answer schema is not readable"))
+}
+
 /// The output limit and sampling a claim extraction call sends to an own
 /// server or an on-device model. `max_tokens` is the default level's thinking
 /// budget plus [`EXTRACTION_ANSWER_TOKENS`], so a thought that spends its
@@ -68,8 +84,12 @@ const MAX_TOKENS_PARAM: &str = "max_tokens";
 /// refuses some of these sampling fields. The call carries them whatever its
 /// seat's widest route is: a seat whose own server comes before a hosted rung
 /// is ThirdParty, yet its own server answers first, and the wire of the rung
-/// that answers keeps or drops them.
-fn extraction_params() -> BTreeMap<String, JsonValue> {
+/// that answers keeps or drops them. When `answer_schema` holds (a TURN
+/// extraction call), it also carries the answer schema as the own-server-only
+/// [`ANSWER_SCHEMA_PARAM`].
+pub(in crate::dreamer_consolidation) fn extraction_request_params(
+    answer_schema: bool,
+) -> Result<BTreeMap<String, JsonValue>> {
     let mut params = BTreeMap::from([
         (MAX_TOKENS_PARAM.to_owned(), json!(EXTRACTION_MAX_TOKENS)),
         ("temperature".to_owned(), json!(0.7)),
@@ -80,12 +100,15 @@ fn extraction_params() -> BTreeMap<String, JsonValue> {
         ("frequency_penalty".to_owned(), json!(0.0)),
         ("repetition_penalty".to_owned(), json!(1.0)),
     ]);
+    if answer_schema {
+        params.insert(ANSWER_SCHEMA_PARAM.to_owned(), extraction_answer_schema()?);
+    }
     let own_server_only: Vec<JsonValue> = params.keys().map(|key| json!(key)).collect();
     params.insert(
         OWN_SERVER_ONLY_PARAM.to_owned(),
         JsonValue::Array(own_server_only),
     );
-    params
+    Ok(params)
 }
 
 impl ConsolidationExecutor<'_> {
@@ -131,7 +154,8 @@ impl ConsolidationExecutor<'_> {
 
     /// The extraction request over `source` in `prompt`'s words, `source_rule`
     /// before it: a NOTE review's rule is `note_classification`'s (OF-073).
-    /// It carries [`extraction_params`].
+    /// It carries [`extraction_request_params`]: a TURN extraction call
+    /// (`source_rule` none) with the answer schema, a NOTE review without.
     pub(in crate::dreamer_consolidation) fn request_over(
         call: &RoleCall<'_>,
         prompt: &ExtractionPrompt,
@@ -151,6 +175,7 @@ impl ConsolidationExecutor<'_> {
                 signature: None,
             }],
         };
+        let answer_schema = source_rule.is_none();
         let mut messages = vec![text(LlmMessageRole::System, prompt.system.clone())];
         for example in &prompt.examples {
             messages.push(text(LlmMessageRole::User, example.user.clone()));
@@ -178,8 +203,8 @@ impl ConsolidationExecutor<'_> {
                     &CallPurpose::Extraction,
                     ModelTierRef("consolidation".into()),
                 ),
-                // No schema on any wire: a grammar built from one can strip
-                // the claim fields. The reply meets the contract here instead.
+                // Text: the TURN answer schema rides as an own-server body
+                // field (`ANSWER_SCHEMA_PARAM`), never as a wire schema.
                 response_format: ResponseFormat::Text,
                 locality,
                 host_keyless: keyless,
@@ -187,7 +212,7 @@ impl ConsolidationExecutor<'_> {
             }.with_purpose_defaults(),
             messages,
             tools: Vec::new(),
-            params: extraction_params(),
+            params: extraction_request_params(answer_schema)?,
             provider_options: BTreeMap::new(),
             host_segments: None,
         })
@@ -707,4 +732,37 @@ fn prior_topic(scope: Option<&Value>) -> Option<Value> {
     fields
         .iter()
         .find_map(|(key, value)| (key.as_str() == Some("topic_key")).then(|| value.clone()))
+}
+
+/// The shipped answer schema, parsed, for `test_doors::dreamer_extraction_schema`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn extraction_answer_schema_for_test() -> Result<JsonValue> {
+    extraction_answer_schema()
+}
+
+/// [`extraction_request_params`] for `test_doors::dreamer_extraction_schema`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn extraction_request_params_for_test(
+    answer_schema: bool,
+) -> Result<BTreeMap<String, JsonValue>> {
+    extraction_request_params(answer_schema)
+}
+
+/// [`check_extraction_reply`] over `text` with finish Stop, for the schema door.
+#[cfg(oneiron_test_support)]
+pub(crate) fn check_extraction_reply_for_test(text: &str) -> std::result::Result<(), String> {
+    let response = oneiron_model::llm::LlmResponse {
+        message: oneiron_model::llm::LlmMessage {
+            role: oneiron_model::llm::LlmMessageRole::Assistant,
+            content: vec![oneiron_model::llm::ContentPart::Text {
+                text: text.to_owned(),
+                signature: None,
+            }],
+        },
+        usage: oneiron_model::llm::LlmUsage::zero(),
+        finish_reason: oneiron_model::llm::FinishReason::Stop,
+        reply_assertions: Default::default(),
+        token_scores: None,
+    };
+    check_extraction_reply(&response)
 }
