@@ -1,13 +1,15 @@
 //! [SCAN-CANDIDATES-UNDECODABLE-CLAIM-TEST]: a live CLAIM whose stored body
 //! does not decode is no candidate of a scoped text scan, and it does not end
 //! the scan (`ScopedRead::scan_candidates_in`, #10111 round-1 fix 4). An
-//! agent's credential key, which reads under the delegated relationship
-//! gate, runs `vault.search` twice: filtered on the vault
+//! agent's key under the relationship gate, with no Grant, runs
+//! `vault.search` twice: filtered on the vault
 //! (`Vault::search_text_scoped_observed`) and in a room
 //! (`memory::scoped_session_text`). Each meets one such row, holding the
 //! query's final token, beside a readable match for the other term, and
 //! each serves the readable match. Before the fix, the row gate decoded the
-//! damaged body for the relationship gate and the search failed.
+//! damaged body for the relationship gate and the search failed. A key with
+//! an agent Grant would not show that: the Grant check reads the row's
+//! position first and refuses a body that does not decode, with no error.
 //!
 //! Run with `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p
 //! oneiron --all-features --test scan_candidates_undecodable_claim`.
@@ -16,14 +18,12 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use ed25519_dalek::{Signer, SigningKey};
-use oneiron::authority::{ActSurface, HostSlipIssuer, MachineRole, PairingPrincipal, VerifiedSlip};
+use oneiron::authority::MachineRole;
 use oneiron::claim::{ScopedReadActorKey, base_world_id, default_project_id};
 use oneiron::code_run::{
     HostSelfDispatcher, SelfCall, SelfDispatchOutcome, SelfDispatcher, SelfMemorySearchCall,
 };
 use oneiron::consent::AuthenticatedOwner;
-use oneiron::federation::{Scope, ScopeAxis, ScopeId};
 use oneiron::memory::{
     AllRelationships, ClaimRelationships, ClaimScope, ReadFilterInput, ScopedClaimInput,
 };
@@ -31,10 +31,7 @@ use oneiron::off_record::OffRecordBackendClass;
 use oneiron::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
 use oneiron::test_doors::claim_body_damage::damage_stored_claim_body;
 use oneiron::test_doors::label_writers::embedded_owner;
-use oneiron::verbs::{
-    AgentDefinitionCreateRequest, AgentGrantMintRequest, create_agent_definition_as,
-    mint_agent_grant_as,
-};
+use oneiron::verbs::{AgentDefinitionCreateRequest, create_agent_definition_as};
 use oneiron::{
     ClaimApprovalStatus, EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor,
 };
@@ -47,12 +44,10 @@ const QUERY: &str = "kestrel lantern";
 const SEARCH_LIMIT: usize = 10;
 const PUBLIC_BAND: u8 = 0;
 const OCCURRED_AT: u64 = 1_769_947_200;
-const REQUEST_CHALLENGE: &[u8] = b"oneiron-request:scan-candidates-undecodable-claim";
 
 struct Fixture {
     vault: Vault,
     _dir: tempfile::TempDir,
-    issuer: HostSlipIssuer,
     owner: EntityId,
     owner_proof: AuthenticatedOwner,
     facet: EntityId,
@@ -72,7 +67,6 @@ fn fixture() -> Fixture {
     Fixture {
         vault,
         _dir: dir,
-        issuer,
         owner,
         owner_proof,
         facet,
@@ -161,38 +155,16 @@ fn damage(fixture: &Fixture, claim: EntityId) {
     );
 }
 
-/// An enabled agent with one read Grant over the base world and the owner's
-/// default facet, and the credential key its paired slip resolves to.
+/// An enabled agent, and its key under the relationship gate
+/// (`require_access_grants`) with no Grant: no agent Grant holder and no kept
+/// Grant alternative, so the row gate's first read of a CLAIM body is the
+/// relationship gate's own. A public CLAIM with no relationship passes that
+/// gate with no Grant, so the key reads both claims before the damage.
 fn reader(fixture: &Fixture) -> (EntityId, ScopedReadActorKey) {
     let agent = create_enabled_agent(&fixture.vault, &fixture.owner_proof);
-    let mut scope = Scope::top();
-    scope.worlds = ScopeAxis::Some(BTreeSet::from([ScopeId(base_world_id())]));
-    scope.verbs = ScopeAxis::Some(BTreeSet::from(["read".to_owned()]));
-    scope.facets = ScopeAxis::Some(BTreeSet::from([ScopeId(fixture.facet)]));
-    // The Grant is minted before pairing, so pairing adds no all-covering
-    // default Grant.
-    let minted = mint_agent_grant_as(
-        &fixture.vault,
-        &fixture.owner_proof,
-        ActSurface::ThisInstall,
-        AgentGrantMintRequest {
-            agent,
-            authority_scope: scope,
-            expires_at: None,
-            repo_bounds: None,
-            verb_classes: BTreeSet::new(),
-            wallet_ref: None,
-            working_view_bounds: None,
-        },
-    )
-    .expect("owner mints the agent's read Grant");
-    assert!(minted.grant.confers, "FIXTURE: the agent's Grant confers");
-    let proof = paired_agent_slip(fixture, agent);
-    let key = fixture
-        .vault
-        .credential_read_key(&proof)
-        .expect("agent credential read key")
-        .expect("agent credential grants read");
+    let key = ScopedReadActorKey::with_actor_class(agent.to_hex(), "agent")
+        .expect("FIXTURE: the agent's read key")
+        .require_access_grants(Some(agent));
     (agent, key)
 }
 
@@ -215,59 +187,6 @@ fn create_enabled_agent(vault: &Vault, owner_proof: &AuthenticatedOwner) -> Enti
     )
     .expect("owner creates an enabled, active agent definition");
     agent
-}
-
-// The template's possession-verified pairing, with no caveat.
-fn paired_agent_slip(fixture: &Fixture, agent: EntityId) -> VerifiedSlip {
-    let vault = &fixture.vault;
-    let issuer = &fixture.issuer;
-    let mut scope = Scope::top();
-    scope.verbs = ScopeAxis::Some(BTreeSet::from([
-        "core:read".to_owned(),
-        "core:write".to_owned(),
-    ]));
-    let holder = agent.to_hex();
-    let link = vault
-        .issue_owner_pairing_link(
-            issuer,
-            &fixture.owner_proof,
-            scope,
-            3_600,
-            PairingPrincipal {
-                holder_ref: Some(holder.clone()),
-                actor_class: Some("agent".to_owned()),
-                ..PairingPrincipal::default()
-            },
-        )
-        .expect("owner issues the agent's pairing link");
-    let signing_key = SigningKey::from_bytes(&[0x6b; 32]);
-    let binding_key = signing_key.verifying_key().to_bytes();
-    let transcript = oneiron::authority::pairing_binding_transcript_pinned(
-        &link.code,
-        &binding_key,
-        &holder,
-        link.pin.as_ref(),
-    )
-    .expect("agent pairing transcript");
-    let slip = vault
-        .redeem_pairing_link(
-            issuer,
-            &link.code,
-            &holder,
-            binding_key,
-            &signing_key.sign(&transcript).to_bytes(),
-        )
-        .expect("agent redeems its pairing link");
-    let signature = signing_key
-        .sign(
-            &slip
-                .binding_transcript(REQUEST_CHALLENGE)
-                .expect("agent request transcript"),
-        )
-        .to_bytes();
-    vault
-        .verify_capability_slip(&issuer.public_key(), &slip, REQUEST_CHALLENGE, &signature)
-        .expect("paired agent proves possession of its credential")
 }
 
 /// The ids the run's `vault.search` for [`QUERY`] serves through
