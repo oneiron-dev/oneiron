@@ -288,6 +288,10 @@ enum OwedRefund {
     /// the row asked for no refund, and only a hand refund pays the rest
     /// (review rounds 1 and 2 of #10149).
     EndedUnpaidPartRefundedByHand(RefundView),
+    /// A find made nothing: the payment holds no refund under the row's own
+    /// key and none made under no settle key
+    /// (FIX [BK-DEPOSIT-FAILED-REFUND-MARK-PAID]).
+    NotMade,
 }
 
 impl OwedRefund {
@@ -301,6 +305,7 @@ impl OwedRefund {
     fn settled_amount(&self, owed: u64) -> Result<u64, DepositProviderFailure> {
         match self {
             Self::Keyed(refund) => refund.settled_amount(),
+            Self::NotMade => Ok(0),
             Self::EndedUnpaidPartRefundedByHand(refund) => {
                 Err(DepositProviderFailure::RefundEndedUnpaid {
                     reason: format!(
@@ -328,6 +333,23 @@ impl OwedRefund {
                     )))
                 }
             }
+        }
+    }
+
+    /// What a find of a refund the owner marked refunded outside Stripe
+    /// answers for the `owed` refund (BK-DEPOSIT-MARK-PAID-STRIPE-HOLDS-REFUND
+    /// = A): a refund Stripe paid or still holds answers as for a refund;
+    /// one that ended with nothing paid back, refunds made by hand short of
+    /// what is owed, and none at all answer 0, so the deposit settles
+    /// refunded outside Stripe.
+    fn found_amount(&self, owed: u64) -> Result<u64, DepositProviderFailure> {
+        match self {
+            Self::Keyed(refund) if refund.ended_unpaid() => Ok(0),
+            Self::EndedUnpaidPartRefundedByHand(_) | Self::NotMade => Ok(0),
+            Self::MadeElsewhere { succeeded, held } if succeeded.saturating_add(*held) < owed => {
+                Ok(0)
+            }
+            _ => self.settled_amount(owed),
         }
     }
 }
@@ -532,6 +554,10 @@ impl<'v> StripeClient<'v> {
     /// the row ran stops the new refund, and the card still says the refund
     /// did not go through (review round 2 of #10149).
     ///
+    /// A find (`find_only`: the owner marked the refund refunded outside
+    /// Stripe) reads the same and makes no refund: with nothing found it
+    /// answers [`OwedRefund::NotMade`].
+    ///
     /// The payment's refunds are read page by page
     /// ([`Self::each_payment_refund`]) until the row's own refund turns up:
     /// one past the first page is still its own
@@ -543,6 +569,7 @@ impl<'v> StripeClient<'v> {
         amount_minor: u64,
         key: &str,
         earlier_retry_keys: &[String],
+        find_only: bool,
     ) -> Result<OwedRefund, StripeCallError> {
         let mut succeeded = 0_u64;
         let mut held = 0_u64;
@@ -585,6 +612,9 @@ impl<'v> StripeClient<'v> {
         }
         if let Some(refund) = keyed_unpaid {
             return Ok(OwedRefund::Keyed(refund));
+        }
+        if find_only {
+            return Ok(OwedRefund::NotMade);
         }
         let body = self.call(
             "/v1/refunds",
@@ -713,10 +743,15 @@ impl DepositSettlementPort for StripeClient<'_> {
         // lost) answers that capture, which the deposit then owes back.
         let (moved, done) = match request.movement {
             DepositSettleMove::Refund { amount_minor } => {
-                return self
-                    .refund_once(id, amount_minor, key, request.earlier_retry_keys)
-                    .map_err(StripeCallError::into_failure)?
-                    .settled_amount(amount_minor);
+                let (earlier, find_only) = (request.earlier_retry_keys, request.find_only);
+                let owed = self
+                    .refund_once(id, amount_minor, key, earlier, find_only)
+                    .map_err(StripeCallError::into_failure)?;
+                return if find_only {
+                    owed.found_amount(amount_minor)
+                } else {
+                    owed.settled_amount(amount_minor)
+                };
             }
             DepositSettleMove::Capture { amount_minor } => {
                 (self.capture(id, amount_minor, key), CAPTURE_DONE)

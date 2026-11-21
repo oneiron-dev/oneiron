@@ -62,7 +62,8 @@ pub(super) const fn is_zero(retry: &u32) -> bool {
 /// the refund `asked` with nothing paid back; any other failure or move
 /// notes nothing. Only while the deposit still owes exactly that refund,
 /// after the same earlier refunds and under the same retry count, so an
-/// answer that a later refund or a retry overtook notes nothing. A note
+/// answer that a later refund or a retry overtook notes nothing, nor does
+/// one on a refund the owner marked refunded outside the provider. A note
 /// already standing at that retry count stays dated by its first finding, so
 /// the hourly ask writes nothing, unless the answer changes whether refunds
 /// made by hand cover a part of it. A node that froze its booking rows for a
@@ -102,7 +103,8 @@ pub(super) fn note_refund_ended_unpaid(
         };
         let owes_it = row.state == (DepositState::RefundDue { amount_minor })
             && row.refunded_minor == asked.refunded_before
-            && row.refund_retry == asked.retry;
+            && row.refund_retry == asked.retry
+            && !row.marks_owed_refund();
         let noted_at = match row.refund_ended_unpaid {
             _ if !owes_it => return Ok(()),
             Some(ended) if ended.retry == asked.retry => {

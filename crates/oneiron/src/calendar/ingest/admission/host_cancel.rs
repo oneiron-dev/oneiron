@@ -297,29 +297,25 @@ impl PollAdmission<'_> {
 
     /// The deposit step of a host cancel of the EVENT in a calendar it was
     /// written to: its refund ([`Self::refund_host_cancelled_deposit`]), or,
-    /// while the owner's release of a calendar hold of the booking stands
-    /// (`released_hold_sequence`), the owner's line "a cancel we can't
-    /// attribute: refund by hand?" in its place, which moves no money: a
-    /// released row's write may be what came back, and no refund is paid on
-    /// a fault path (CAL-OUTBOX-ROW-OF-REMOVED-SEAT-HOLDS-PULLS = C, the lead
-    /// 21 Nov 09:15). The note is marked once and names the SEQUENCE the
-    /// released row staged.
+    /// while the owner's release of a calendar hold of the booking stands,
+    /// the owner's line "a cancel we can't attribute: refund by hand?" in its
+    /// place, which moves no money: a released row's write may be what came
+    /// back, and no refund is paid on a fault path
+    /// (CAL-OUTBOX-ROW-OF-REMOVED-SEAT-HOLDS-PULLS = C, the lead 21 Nov
+    /// 09:15). The line is recorded once, as the released row's
+    /// replay-evidence claim on the EVENT naming the SEQUENCE it staged
+    /// (`record_released_hold_cancel`).
     fn settle_host_cancelled_deposit(
         &self,
         event_ref: EntityId,
         seen_at: u64,
     ) -> Result<(), CalendarError> {
-        let Some(sequence) =
-            crate::calendar::connectors::released_hold_sequence(self.vault, &event_ref)?
-        else {
-            return self.refund_host_cancelled_deposit(event_ref, seen_at);
-        };
-        self.vault.with_write_txn_grouped(|wtxn| {
-            crate::booking::lifecycle::note_unattributed_cancel_in_txn(
-                self.vault, wtxn, &event_ref, sequence, self.now,
-            )
-        })?;
-        Ok(())
+        if crate::calendar::connectors::record_released_hold_cancel(
+            self.vault, &event_ref, self.now,
+        )? {
+            return Ok(());
+        }
+        self.refund_host_cancelled_deposit(event_ref, seen_at)
     }
 
     /// The host cancelled the EVENT explicitly, in a calendar it was written

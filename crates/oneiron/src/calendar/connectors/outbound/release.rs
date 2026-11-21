@@ -20,17 +20,20 @@
 //!
 //! After a release the held pulls land, and a host cancel of the booking records the owner's
 //! line "a cancel we can't attribute: refund by hand?" in place of the host-cancel refund
-//! ([`released_hold_sequence`]). No release refunds by itself.
+//! ([`record_released_hold_cancel`]). No release refunds by itself.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
 use super::super::door::{InstalledSeatScope, installed_seat_scopes_in_txn};
+use super::super::replay_evidence::record_replay_cancel_evidence_in_txn;
+use super::super::seat::CalendarConnectorError;
 use super::{
     CalendarWriteAction, CalendarWriteOutboxState, OUTBOX, OUTBOX_ROW_TAG, StoredOutboxRow,
     derive_outbox_id, local_uid,
 };
+use crate::calendar::CalendarError;
 use crate::calendar::claims::{PREDICATE_CALENDAR_PASSPORT, decode_passport_value};
 use crate::calendar::connectors::door::{CalendarHoldRow, CalendarHoldSeat};
 use crate::claim::{ClaimLifecycleStatus, ClaimSubject};
@@ -320,24 +323,44 @@ pub(crate) fn release_calendar_holds_as_owner(
     Ok(released)
 }
 
-/// The SEQUENCE a released hold of `event` staged, when the owner released one that still
-/// stands as released: a host cancel of the booking then cannot be told from that write coming
-/// back, so it records the owner's line "a cancel we can't attribute: refund by hand?" and
-/// moves no money (CAL-OUTBOX-ROW-OF-REMOVED-SEAT-HOLDS-PULLS = C). `None` when none does.
+/// Records a host cancel of `event`, seen at `now`, as a cancel Oneiron cannot attribute when
+/// the owner released a hold of `event` that still stands as released: the cancel cannot be
+/// told from that row's write coming back, so the owner's line asks "a cancel we can't
+/// attribute: refund by hand?" and no money moves (CAL-OUTBOX-ROW-OF-REMOVED-SEAT-HOLDS-PULLS
+/// = C). The line travels as the replay-evidence claim of the released row, naming the
+/// SEQUENCE it staged ([`record_replay_cancel_evidence_in_txn`]), so the node that holds the
+/// booking's live deposit reads it, after a home move too (BK-REPLAY-NOTE-DELIVERY = A). The
+/// release is read in the same writer. Returns whether a released hold stands; on `false` the
+/// caller refunds.
 ///
 /// # Errors
 ///
-/// Storage failures.
-pub(crate) fn released_hold_sequence(
+/// Storage failures; a claim the calendar import door refuses.
+pub(crate) fn record_released_hold_cancel(
     vault: &Vault,
     event: &EntityId,
-) -> crate::Result<Option<u32>> {
-    let txn = vault.store.env.read_txn()?;
-    let releases = OutboxReleases::read_in_txn(vault, &txn)?;
-    for (_, row) in OUTBOX.scan_from(&vault.store, &txn, OUTBOX_ROW_TAG)? {
-        if holds_pulls(&row) && writes_event(&row, event) && releases.released(&row)? {
-            return Ok(Some(row.sequence));
-        }
-    }
-    Ok(None)
+    now: u64,
+) -> Result<bool, CalendarError> {
+    vault
+        .try_with_write_txn_grouped(|wtxn| -> Result<bool, CalendarConnectorError> {
+            let releases = OutboxReleases::read_in_txn(vault, &*wtxn)?;
+            let mut released = None;
+            for (_, row) in OUTBOX.scan_from(&vault.store, &*wtxn, OUTBOX_ROW_TAG)? {
+                if holds_pulls(&row) && writes_event(&row, event) && releases.released(&row)? {
+                    released = Some((row.outbox_id, row.sequence));
+                    break;
+                }
+            }
+            let Some((outbox_id, sequence)) = released else {
+                return Ok(false);
+            };
+            record_replay_cancel_evidence_in_txn(vault, wtxn, *event, &outbox_id, sequence, now)?;
+            Ok(true)
+        })
+        .map_err(|error| match error {
+            CalendarConnectorError::Calendar(error) => error,
+            other => CalendarError::IcsIngest {
+                reason: other.to_string(),
+            },
+        })
 }
