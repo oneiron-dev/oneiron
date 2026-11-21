@@ -227,12 +227,21 @@ fn an_owner_change_of_a_key_with_no_order_asks_unless_it_leaves_the_row_as_it_is
     }
 }
 
-/// A neutral key's changed labels both land without a prompt.
+/// A neutral key's label asks while the scan is on, because the wall reads its text in the write;
+/// with the scan off its changed labels land without a prompt.
 #[test]
-fn an_owner_change_of_a_neutral_key_asks_nothing() {
+fn an_owner_change_of_a_neutral_key_asks_only_while_the_wall_reads_its_text() {
     let served = ServedVault::hosted();
-    let presence = scripted_gate(&served.vault, []);
-    for label in ["morning", "evening"] {
+    let presence = scripted_gate(&served.vault, [Ok(())]);
+    for (label, scan, prompts) in [
+        ("morning", SecretScanMode::On, 1),
+        ("evening", SecretScanMode::Off, 1),
+        ("morning", SecretScanMode::Off, 1),
+    ] {
+        served
+            .vault
+            .set_secret_scan_mode(&served.owner, scan, T0)
+            .expect("set the scan switch");
         let outcome = served
             .set(request(NEUTRAL_LABEL, json!(label)))
             .expect("set the label");
@@ -244,7 +253,7 @@ fn an_owner_change_of_a_neutral_key_asks_nothing() {
             }
         ));
         assert_eq!(served.read(NEUTRAL_LABEL).value, json!(label));
-        assert_eq!(presence.prompts(), 0);
+        assert_eq!(presence.prompts(), prompts);
     }
 }
 
@@ -287,7 +296,7 @@ fn a_setting_change_refused_on_its_read_never_raises_the_prompt() {
     let before = served.read(CAP);
     let changes = setting_changes(&served.vault).expect("change stream before the refusals");
     for change in [
-        request(CAP, json!("not a number")),
+        request(CAP, json!(true)),
         SetSetting {
             expected_revision: Some(before.revision + 1),
             ..request(CAP, json!(20))
@@ -386,6 +395,103 @@ fn a_setting_change_that_widens_since_the_door_asked_is_a_conflict() {
     assert_eq!(stored.revision, revision);
     assert_eq!(
         setting_changes(&served.vault).expect("stream after the conflict"),
+        changes
+    );
+}
+
+/// With the scan on the wall reads a text value in the write before its type does, so the door
+/// asks first and the write refuses its shape; with the scan off the read refuses it and asks
+/// nothing.
+#[test]
+fn a_text_value_the_wall_reads_is_asked_before_its_shape_is_refused() {
+    let served = ServedVault::hosted();
+    let presence = scripted_gate(&served.vault, [Ok(())]);
+    let before = served.read(CAP);
+    let changes = setting_changes(&served.vault).expect("change stream before the refusals");
+    for (scan, prompts) in [(SecretScanMode::On, 1), (SecretScanMode::Off, 1)] {
+        served
+            .vault
+            .set_secret_scan_mode(&served.owner, scan, T0)
+            .expect("set the scan switch");
+        let refused = served.set(request(CAP, json!("not a number")));
+        assert!(
+            matches!(refused, Err(Error::InvalidConfig(_))),
+            "{refused:?}"
+        );
+        assert_eq!(presence.prompts(), prompts);
+        assert_eq!(served.read(CAP), before);
+        assert_eq!(
+            setting_changes(&served.vault).expect("change stream after the refusal"),
+            changes
+        );
+    }
+}
+
+/// A closed PIN window answers a text value before anything reads its shape or custody, and still
+/// lets the read refuse a value with no text for its shape.
+#[test]
+fn a_text_value_on_a_device_whose_pin_window_ended_answers_pin_required_before_its_shape() {
+    let device = PinDevice::with_pin_set();
+    device.pin.end_window();
+    let served = &device.served;
+    let before = served.read(CAP);
+    let refused = served.set(request(CAP, json!("not a number")));
+    assert!(
+        matches!(
+            refused,
+            Err(Error::Secret(SecretError::DevicePin(
+                DevicePinRefusal::Required
+            )))
+        ),
+        "{refused:?}"
+    );
+    let refused = served.set(request(CAP, json!(true)));
+    assert!(
+        matches!(refused, Err(Error::InvalidConfig(_))),
+        "{refused:?}"
+    );
+    assert_eq!(served.read(CAP), before);
+}
+
+/// A value the read judged with the scan off, which the wall reads once the scan is on, is a
+/// conflict: the write refuses it before the wall, under the ordinary witness of a change that
+/// left the row as it is.
+#[test]
+fn a_value_the_wall_reads_since_the_door_asked_is_a_conflict() {
+    let served = ServedVault::hosted();
+    served
+        .vault
+        .set_secret_scan_mode(&served.owner, SecretScanMode::Off, T0)
+        .expect("turn the scan off");
+    let stored = json!({ "bytes_per_token": null, "rules": {}, "api_token": null });
+    served
+        .set(request(CREDENTIAL_MEMBERS, stored.clone()))
+        .expect("set with the scan off");
+    let presence = scripted_gate(&served.vault, []);
+    let before = served.read(CREDENTIAL_MEMBERS);
+    let changes = setting_changes(&served.vault).expect("change stream before the conflict");
+    // The stored row again, with a member under a credential name that its type does not read.
+    let mut offered = stored;
+    offered["api_key"] = Value::String(["tk-", "Hb3sL8", "qW5nC2", "vX0dJ7"].concat());
+    let refused = set_setting_between(
+        &served.vault,
+        SettingCaller::Owner(&served.owner),
+        request(CREDENTIAL_MEMBERS, offered),
+        || {
+            served
+                .vault
+                .set_secret_scan_mode(&served.owner, SecretScanMode::On, T0)
+                .expect("turn the scan on in between");
+        },
+    );
+    assert!(
+        matches!(refused, Err(Error::ConcurrentWrite(_))),
+        "{refused:?}"
+    );
+    assert_eq!(presence.prompts(), 0);
+    assert_eq!(served.read(CREDENTIAL_MEMBERS), before);
+    assert_eq!(
+        setting_changes(&served.vault).expect("change stream after the conflict"),
         changes
     );
 }

@@ -69,7 +69,7 @@ pub(crate) use self::mask::{
 };
 pub(crate) use self::mask::{
     file_mints_in_txn, move_mask_origin_in_txn, rebind_mask_origin_in_txn, side_row::NestedBodies,
-    side_row::admission_form, side_row::known_nested_form, side_row::wall_plan_places,
+    side_row::admission_form, side_row::known_nested_form,
 };
 pub(crate) use self::message_parts::seal_message_parts_in_txn;
 use self::provider_tokens::{classify_token, provider_token_spans};

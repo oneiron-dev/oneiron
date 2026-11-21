@@ -851,20 +851,6 @@ pub(crate) fn admission_form(
     Ok(std::mem::replace(&mut planned.0, Value::Nil))
 }
 
-/// Whether the wall's plan places anything in `value`: a secret its rules
-/// place, and with `known`, a value custody holds, inside a body of its own
-/// too. A handle `value` already holds is no placement. [`admission_form`]
-/// cannot say this: it spells every handle as the plan's one stand-in, so a
-/// value custody holds whose own text spells that stand-in reads there as
-/// it was offered. Nothing is minted, and the plan's copy is wiped.
-///
-/// # Errors
-///
-/// A value the plan cannot read.
-pub(crate) fn wall_plan_places(value: &Value, known: Option<Arc<KnownValues>>) -> Result<bool> {
-    Ok(masked_plan(value, known, NestedBodies::Read)?.0 != *value)
-}
-
 /// `value` with each value `known` holds inside a member that carries a
 /// body of its own ([`mask_nested`]) as its record's handle, as the wall
 /// places it there at a write. Nothing is minted and nothing else changes

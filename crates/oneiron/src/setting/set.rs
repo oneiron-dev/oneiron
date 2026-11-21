@@ -218,13 +218,16 @@ impl Vault {
     /// An owner's change that can sign an act is checked and judged on a read before the door
     /// asks. A widening or a move the rule cannot call a narrowing is asked as an important act;
     /// a narrowing, a neutral move or a change that leaves the row as it is is ordinary. A value
-    /// the side-row wall could change is asked as important, because its direction is known only
-    /// after the wall; for such a value the read checks the owner's proof and nothing else, so
-    /// every other refusal of it still comes from the write, after the ask. A change of a
-    /// travelling row in a rooted vault is also asked as important when no owner key of this
-    /// install proves on the read and the act could wait for proof. The write judges again and
-    /// answers [`Error::ConcurrentWrite`] when the change became more important since the person
-    /// was asked.
+    /// the side-row wall reads is asked as important: with the owner's scan switch on, every
+    /// value but a bare number, a flag or null, because what the wall stores of it, or that it
+    /// refuses it, is known only in the write. For such a value the read checks the owner's
+    /// proof and nothing else, so every other refusal of it still comes from the write, after
+    /// the ask, the wall's first. The read looks at no custody, so nothing the door answers
+    /// before it asks says what custody holds. A change of a travelling row in a rooted vault is
+    /// also asked as important when no owner key of this install proves on the read and the act
+    /// could wait for proof. The write judges again and answers [`Error::ConcurrentWrite`] when
+    /// the change became more important since the person was asked: its direction rose, or the
+    /// wall reads a value now that it did not read then.
     ///
     /// # Errors
     ///
@@ -294,8 +297,8 @@ impl Vault {
     /// its write on it. The caller runs [`run_after_commit`] over its changes once its write has
     /// committed. `ground` is the act's ground where the change signs one, `None` where no
     /// owner proof is signed. A ground witnessed as ordinary refuses a change the write judges
-    /// important ([`Error::ConcurrentWrite`]); a caller that asks states the importance its own
-    /// read derived.
+    /// important, and a value the wall reads, before the wall ([`Error::ConcurrentWrite`]); a
+    /// caller that asks states the importance its own read derived.
     ///
     /// # Errors
     ///
@@ -310,6 +313,15 @@ impl Vault {
         let (spec, key) = checked_slot(request)?;
         let value = match request.value.clone() {
             Some(mut json) => {
+                // An ordinary witness never covers a value the wall reads: the door's read asks
+                // for one as an important act. The wall reads this one under an ordinary witness
+                // only when the scan switch turned on since that read, and the change is then
+                // refused before the wall, which so reads no custody and mints nothing for it.
+                if let Some(ground) = ground
+                    && judged_change::wall_reads_in_txn(self, txn, &json)?
+                {
+                    ground.refuse_risen_importance(OwnerActImportance::Important)?;
+                }
                 // The side-row wall reads the value before it is encoded (SETTING-ROWS-SIDE-ROW-
                 // WALL = A): a secret goes to custody and the value keeps its handle. The key's
                 // type fixes each member's shape, so the field rule lifts only text under a

@@ -11,10 +11,7 @@ use super::{
     table_of, travels,
 };
 use crate::Vault;
-use crate::batch::secret_scan::{
-    NestedBodies, SecretScanMode, admission_form, named_tree, secret_scan_mode_in_txn,
-    wall_plan_places,
-};
+use crate::batch::secret_scan::{SecretScanMode, secret_scan_mode_in_txn};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -182,25 +179,25 @@ pub(super) fn judge_change_in_txn(
     })
 }
 
-/// The write's wall may put a handle where the request holds a secret or a value custody holds.
-/// This reads the request as the wall's plan would place it, minting nothing and writing nothing.
-/// If it answers `true`, the value the write types can differ from the request, so a direction
-/// derived from the request is no ground for an ordinary act. It errs toward `true`: it reads a
-/// value under a credential name whole whatever its shape and reads an existing handle as changed.
-/// A placement answers `true` by itself, because the plan's one form spells every handle as its
-/// stand-in and so cannot show a placement in a text that already spells that stand-in.
-fn wall_may_change(vault: &Vault, json: &serde_json::Value) -> Result<bool> {
-    let mode = {
-        let txn = vault.store.env.read_txn()?;
-        secret_scan_mode_in_txn(&vault.store, &txn)?
-    };
-    if mode == SecretScanMode::Off {
+/// Whether the write's wall reads `json`: the owner's scan switch is on in `txn` and the value is
+/// anything but a bare number, a flag or null. The wall places a handle only in text, and refuses
+/// only what text spells, so it stores a bare number, a flag or null as offered. Any other value
+/// it may store as another one, or refuse, and only the write knows which: a direction derived
+/// from the request is then no ground for an ordinary act. This reads the switch and the value's
+/// shape and nothing else. What custody holds is no part of it, so no answer the door gives
+/// before it asks, and none its write gives under an ordinary witness, says what custody holds.
+pub(super) fn wall_reads_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    json: &serde_json::Value,
+) -> Result<bool> {
+    if matches!(
+        json,
+        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_)
+    ) {
         return Ok(false);
     }
-    let tree = named_tree(json)?;
-    let known = vault.known_values_now()?;
-    Ok(wall_plan_places(&tree, known.clone())?
-        || admission_form(&tree, known, NestedBodies::Read)? != tree)
+    Ok(secret_scan_mode_in_txn(vault, txn)? != SecretScanMode::Off)
 }
 
 /// The importance of the owner's change as it stands before the door asks.
@@ -210,12 +207,12 @@ pub(super) fn owner_change_importance(
     request: &SetSetting,
 ) -> Result<OwnerActImportance> {
     let (spec, key) = checked_slot(request)?;
-    let wall_may_change = match &request.value {
-        Some(json) => wall_may_change(vault, json)?,
-        None => false,
-    };
     let txn = vault.store.env.read_txn()?;
-    if wall_may_change {
+    // A value the wall reads is not typed here: the write gives the wall's answer first and the
+    // type's after it, as it did before the door read first.
+    if let Some(json) = &request.value
+        && wall_reads_in_txn(vault, &txn, json)?
+    {
         owner.revalidate_in_txn(vault, &txn)?;
         return Ok(OwnerActImportance::Important);
     }
