@@ -131,6 +131,10 @@ pub struct DepositSettleRequest<'a> {
     /// refunds made by hand cover a part of what is owed, it still answers
     /// that the refund ended unpaid (review round 2 of #10149).
     pub earlier_retry_keys: &'a [String],
+    /// What the deposit recorded the provider refunded before this refund,
+    /// under its settle keys or by hand; hand refunds up to it are those
+    /// earlier refunds' (review round 1 of #10267). 0 for any other move.
+    pub refunded_by_provider_before: u64,
     /// The owner marked the refund owed refunded outside the provider (FIX
     /// [BK-DEPOSIT-FAILED-REFUND-MARK-PAID]): the provider makes no refund,
     /// and answers only what it refunded under these keys or by hand, as
@@ -175,6 +179,11 @@ pub enum DepositProviderFailure {
     /// row asks again later, as on [`Self::Permanent`]
     /// (FIX [BK-DEPOSIT-SHORT-HAND-REFUND-NO-OWNER-LINE]).
     PartRefundedByHand { reason: String },
+    /// The provider holds a refund, under the row's key or made by hand, that
+    /// pays back what is owed and has not paid yet: asked again as on
+    /// [`Self::Pending`], and a note asking for a hand refund goes (review
+    /// round 1 of #10267; FIX [BK-DEPOSIT-STUCK-REFUND-NOTE-WHILE-HAND-REFUND-PENDING]).
+    RefundHeld { reason: String },
 }
 
 impl DepositProviderFailure {
@@ -184,7 +193,8 @@ impl DepositProviderFailure {
             | Self::Pending(reason)
             | Self::Permanent(reason)
             | Self::RefundEndedUnpaid { reason, .. }
-            | Self::PartRefundedByHand { reason } => reason,
+            | Self::PartRefundedByHand { reason }
+            | Self::RefundHeld { reason } => reason,
         }
     }
 }
@@ -207,7 +217,8 @@ pub trait DepositSettlementPort {
     /// # Errors
     ///
     /// [`DepositProviderFailure`] when the provider did not do it, or
-    /// [`DepositProviderFailure::Pending`] while it has not finished it.
+    /// [`DepositProviderFailure::Pending`] while it has not finished it
+    /// ([`DepositProviderFailure::RefundHeld`] for a refund it holds).
     fn settle(&mut self, request: &DepositSettleRequest<'_>)
     -> Result<u64, DepositProviderFailure>;
 }
@@ -231,27 +242,28 @@ pub enum DepositSettleStep {
     Failed(DepositProviderFailure),
 }
 
+/// The move a settle row asks the provider for.
+struct PlannedMove {
+    payment_id: String,
+    movement: DepositSettleMove,
+    /// What the provider refunded before this refund; 0 for any other
+    /// move.
+    refunded_before: u64,
+    /// [`DepositSettleRequest::refunded_by_provider_before`].
+    refunded_by_provider_before: u64,
+    /// How many times the owner asked again for this refund after the
+    /// provider ended it unpaid; 0 for any other move.
+    refund_retry: u32,
+    /// The refund stands marked refunded outside the provider: ask only
+    /// to find it.
+    find_only: bool,
+}
+
 enum SettlePlan {
     Nothing,
-    Wait {
-        due_at: u64,
-    },
-    HomeMoving {
-        due_at: u64,
-    },
-    Move {
-        payment_id: String,
-        movement: DepositSettleMove,
-        /// What the provider refunded before this refund; 0 for any other
-        /// move.
-        refunded_before: u64,
-        /// How many times the owner asked again for this refund after the
-        /// provider ended it unpaid; 0 for any other move.
-        refund_retry: u32,
-        /// The refund stands marked refunded outside the provider: ask only
-        /// to find it.
-        find_only: bool,
-    },
+    Wait { due_at: u64 },
+    HomeMoving { due_at: u64 },
+    Move(PlannedMove),
 }
 
 /// What [`record_settled`] did with a provider's answer.
@@ -320,14 +332,17 @@ fn plan_settle(
         }) {
             return Ok(SettlePlan::Nothing);
         }
-        let (mut refunded_before, mut refund_retry) = (0, 0);
+        let (mut refunded_before, mut refunded_by_provider_before, mut refund_retry) = (0, 0, 0);
         let movement = match row.state {
             DepositState::CaptureDue { amount_minor } => {
                 DepositSettleMove::Capture { amount_minor }
             }
             DepositState::VoidDue => DepositSettleMove::Void,
             DepositState::RefundDue { amount_minor } => {
-                (refunded_before, refund_retry) = (row.refunded_minor, row.refund_retry);
+                refunded_before = row.refunded_minor;
+                refunded_by_provider_before =
+                    row.refunded_minor.saturating_sub(row.refunded_outside());
+                refund_retry = row.refund_retry;
                 DepositSettleMove::Refund { amount_minor }
             }
             state if state.is_open() => {
@@ -343,13 +358,14 @@ fn plan_settle(
             }
             _ => return Ok(SettlePlan::Nothing),
         };
-        Ok(SettlePlan::Move {
+        Ok(SettlePlan::Move(PlannedMove {
             payment_id: row.payment_id,
             movement,
             refunded_before,
+            refunded_by_provider_before,
             refund_retry,
             find_only,
-        })
+        }))
     })
 }
 
@@ -523,27 +539,21 @@ fn settle_deposit_key<P: DepositSettlementPort>(
     port: &mut P,
     now_utc: u64,
 ) -> Result<DepositSettleStep, BookingError> {
-    let (payment_id, movement, refunded_before, refund_retry, find_only) =
-        match plan_settle(vault, key, queued, now_utc)? {
-            SettlePlan::Nothing => return Ok(DepositSettleStep::Nothing),
-            SettlePlan::Wait { due_at } => return Ok(DepositSettleStep::Wait { due_at }),
-            SettlePlan::HomeMoving { due_at } => {
-                return Ok(DepositSettleStep::HomeMoving { due_at });
-            }
-            SettlePlan::Move {
-                payment_id,
-                movement,
-                refunded_before,
-                refund_retry,
-                find_only,
-            } => (
-                payment_id,
-                movement,
-                refunded_before,
-                refund_retry,
-                find_only,
-            ),
-        };
+    let PlannedMove {
+        payment_id,
+        movement,
+        refunded_before,
+        refunded_by_provider_before,
+        refund_retry,
+        find_only,
+    } = match plan_settle(vault, key, queued, now_utc)? {
+        SettlePlan::Nothing => return Ok(DepositSettleStep::Nothing),
+        SettlePlan::Wait { due_at } => return Ok(DepositSettleStep::Wait { due_at }),
+        SettlePlan::HomeMoving { due_at } => {
+            return Ok(DepositSettleStep::HomeMoving { due_at });
+        }
+        SettlePlan::Move(planned) => planned,
+    };
     let key_hex = hex_lower(key);
     let digest = &key_hex[..32];
     let idempotency_key = settle_idempotency_key(movement, refunded_before, refund_retry, digest);
@@ -555,6 +565,7 @@ fn settle_deposit_key<P: DepositSettlementPort>(
         movement,
         idempotency_key: &idempotency_key,
         earlier_retry_keys: &earlier_retry_keys,
+        refunded_by_provider_before,
         find_only,
     }) {
         Ok(moved) => Ok(
@@ -715,7 +726,10 @@ pub fn run_booking_deposit_settlement<P: DepositSettlementPort>(
                     DepositSettleMove::Refund { .. } => drain.refunded += 1,
                 }
             }
-            Ok(DepositSettleStep::Failed(DepositProviderFailure::Pending(reason))) => {
+            Ok(DepositSettleStep::Failed(
+                DepositProviderFailure::Pending(reason)
+                | DepositProviderFailure::RefundHeld { reason },
+            )) => {
                 tracing::debug!(%reason, "booking deposit move is pending at the provider");
                 settle.requeue(
                     &requeue_reason(&reason),

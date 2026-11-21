@@ -410,7 +410,11 @@ impl<'v> StripeClient<'v> {
     /// row lives while its refund is owed, so it would pay the visitor a
     /// second time once an outage or a refusal ends. The answer is then what
     /// those refunds amount to
-    /// (FIX [BK-DEPOSIT-REFUND-AFTER-HAND-REFUND-PAID-TWICE]).
+    /// (FIX [BK-DEPOSIT-REFUND-AFTER-HAND-REFUND-PAID-TWICE]). Refunds made by
+    /// hand that the deposit recorded for its earlier refunds are those
+    /// refunds' and count for neither: what it recorded refunded through
+    /// Stripe before (`refunded_by_provider_before`) less what Stripe
+    /// refunded under its other settle keys (review round 1 of #10267).
     ///
     /// The row's own refund that Stripe ended failed or cancelled paid
     /// nothing back, so it hides no refund made elsewhere: those are added up
@@ -440,10 +444,12 @@ impl<'v> StripeClient<'v> {
         amount_minor: u64,
         key: &str,
         earlier_retry_keys: &[String],
+        refunded_by_provider_before: u64,
         find_only: bool,
     ) -> Result<OwedRefund, StripeCallError> {
         let mut succeeded = 0_u64;
         let mut held = 0_u64;
+        let mut keyed_before = 0_u64;
         let mut keyed_unpaid = None;
         let mut earlier_unpaid = None;
         let listed = self.each_payment_refund(payment_id, |refund| {
@@ -455,11 +461,12 @@ impl<'v> StripeClient<'v> {
                     if keyed_unpaid.is_none() {
                         keyed_unpaid = Some(refund);
                     }
-                } else if earlier_unpaid.is_none()
-                    && refund.ended_unpaid()
-                    && earlier_retry_keys.contains(settle_key)
-                {
-                    earlier_unpaid = Some(refund);
+                } else if earlier_retry_keys.contains(settle_key) {
+                    if earlier_unpaid.is_none() && refund.ended_unpaid() {
+                        earlier_unpaid = Some(refund);
+                    }
+                } else if refund.status == "succeeded" {
+                    keyed_before = keyed_before.saturating_add(refund.amount);
                 }
                 return ControlFlow::Continue(());
             }
@@ -473,6 +480,9 @@ impl<'v> StripeClient<'v> {
         if let ControlFlow::Break(refund) = listed {
             return Ok(OwedRefund::Keyed(refund));
         }
+        let credited = refunded_by_provider_before.saturating_sub(keyed_before);
+        let held = held.saturating_sub(credited.saturating_sub(succeeded));
+        let succeeded = succeeded.saturating_sub(credited);
         if succeeded > 0 || held > 0 {
             return Ok(match keyed_unpaid.or(earlier_unpaid) {
                 Some(refund) if succeeded.saturating_add(held) < amount_minor => {
@@ -615,8 +625,9 @@ impl DepositSettlementPort for StripeClient<'_> {
         let (moved, done) = match request.movement {
             DepositSettleMove::Refund { amount_minor } => {
                 let (earlier, find_only) = (request.earlier_retry_keys, request.find_only);
+                let before = request.refunded_by_provider_before;
                 let owed = self
-                    .refund_once(id, amount_minor, key, earlier, find_only)
+                    .refund_once(id, amount_minor, key, earlier, before, find_only)
                     .map_err(StripeCallError::into_failure)?;
                 return if find_only {
                     owed.found_amount(amount_minor)

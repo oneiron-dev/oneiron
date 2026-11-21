@@ -94,6 +94,7 @@ pub fn mark_booking_deposit_refunded_outside_as(
         owner,
         &event_ref,
         input.amount_minor,
+        &input.idempotency_key,
     )
     .map_err(crate::memory::booking_error)
 }

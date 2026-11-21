@@ -77,7 +77,10 @@ const fn is_false(flag: &bool) -> bool {
 /// Notes, in its own booking writer, that the provider's `failure` ended
 /// the refund `asked` with nothing paid back, or that refunds made by hand
 /// cover only a part of it while the provider holds none under the row's
-/// keys; any other failure or move notes nothing. Only while the deposit still owes exactly that refund,
+/// keys. An answer that the provider holds a refund paying back what is owed
+/// removes a note standing at the same retry count, since the refund is on
+/// its way (review round 1 of #10267). Any other failure or move notes
+/// nothing. Only while the deposit still owes exactly that refund,
 /// after the same earlier refunds and under the same retry count, so an
 /// answer that a later refund or a retry overtook notes nothing, nor does
 /// one on a refund the owner marked refunded outside the provider. A note
@@ -101,12 +104,13 @@ pub(super) fn note_refund_ended_unpaid(
     let DepositSettleMove::Refund { amount_minor } = asked.movement else {
         return Ok(());
     };
-    let (part_refunded_by_hand, no_keyed_refund) = match failure {
+    let noted = match failure {
         DepositProviderFailure::RefundEndedUnpaid {
             part_refunded_by_hand,
             ..
-        } => (*part_refunded_by_hand, false),
-        DepositProviderFailure::PartRefundedByHand { .. } => (true, true),
+        } => Some((*part_refunded_by_hand, false)),
+        DepositProviderFailure::PartRefundedByHand { .. } => Some((true, true)),
+        DepositProviderFailure::RefundHeld { .. } => None,
         _ => return Ok(()),
     };
     booking_writer(vault, |wtxn| {
@@ -123,24 +127,28 @@ pub(super) fn note_refund_ended_unpaid(
             && row.refunded_minor == asked.refunded_before
             && row.refund_retry == asked.retry
             && !row.marks_owed_refund();
-        let noted_at = match row.refund_ended_unpaid {
-            _ if !owes_it => return Ok(()),
-            Some(ended) if ended.retry == asked.retry => {
+        if !owes_it {
+            return Ok(());
+        }
+        let standing = row
+            .refund_ended_unpaid
+            .filter(|ended| ended.retry == asked.retry);
+        row.refund_ended_unpaid = match (noted, standing) {
+            (None, None) => return Ok(()),
+            (None, Some(_)) => None,
+            (Some((part_refunded_by_hand, no_keyed_refund)), Some(ended))
                 if ended.part_refunded_by_hand == part_refunded_by_hand
-                    && ended.no_keyed_refund == no_keyed_refund
-                {
-                    return Ok(());
-                }
-                ended.noted_at
+                    && ended.no_keyed_refund == no_keyed_refund =>
+            {
+                return Ok(());
             }
-            _ => now_utc,
+            (Some((part_refunded_by_hand, no_keyed_refund)), standing) => Some(RefundEndedUnpaid {
+                retry: asked.retry,
+                noted_at: standing.map_or(now_utc, |ended| ended.noted_at),
+                part_refunded_by_hand,
+                no_keyed_refund,
+            }),
         };
-        row.refund_ended_unpaid = Some(RefundEndedUnpaid {
-            retry: asked.retry,
-            noted_at,
-            part_refunded_by_hand,
-            no_keyed_refund,
-        });
         row.updated_at = now_utc;
         put_deposit(vault, wtxn, key, &row)
     })

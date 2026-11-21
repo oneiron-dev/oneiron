@@ -30,9 +30,12 @@ use crate::memory::{MEMORY_CODE_FORBIDDEN, MemoryError};
 use crate::verbs::BookingDepositMarkRefundedOutsideReceipt;
 use crate::{EntityId, Vault};
 
+/// The longest idempotency key a mark takes, in bytes.
+const MARK_IDEMPOTENCY_KEY_MAX_BYTES: usize = 200;
+
 /// The owner's word that the refund a deposit owed was paid back outside
 /// the provider.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct RefundMarkedOutside {
     /// When the owner marked it.
@@ -42,6 +45,11 @@ pub(super) struct RefundMarkedOutside {
     /// How the marked refund settled; unset while its settle row runs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     settled: Option<MarkedRefundSettled>,
+    /// The caller's idempotency key for the mark: a repeat of the call under
+    /// it answers this mark, whatever the deposit owes since (review round 1
+    /// of #10267). Empty on a mark stored before the key.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    idempotency_key: String,
 }
 
 /// How a refund the owner marked refunded outside the provider settled.
@@ -56,12 +64,23 @@ enum MarkedRefundSettled {
 }
 
 impl DepositRow {
+    /// What the deposit recorded refunded outside the provider: the refund
+    /// its latest mark settled as the mark's. A mark of the refund owed now
+    /// has not settled, so it counts only refunds before that one.
+    pub(super) fn refunded_outside(&self) -> u64 {
+        self.refund_marked_outside
+            .as_ref()
+            .filter(|mark| mark.settled == Some(MarkedRefundSettled::Outside))
+            .map_or(0, |mark| mark.amount_minor)
+    }
+
     /// Whether the refund the deposit owes now stands marked refunded
     /// outside the provider: its settle row then only finds it.
     pub(super) fn marks_owed_refund(&self) -> bool {
         matches!(self.state, DepositState::RefundDue { .. })
             && self
                 .refund_marked_outside
+                .as_ref()
                 .is_some_and(|mark| mark.settled.is_none())
     }
 }
@@ -132,18 +151,24 @@ pub(in crate::booking::lifecycle) fn refund_marked_outside_in_txn(
 /// ([`super::refund_booking_deposit_as_owner`]): the vault owner's own
 /// proof, revalidated in this writer, of a host selected at the booking's
 /// confirmation; an agent may ask the owner, and never marks. It takes only
-/// `amount_minor` equal to the refund owed now. In one booking writer it
+/// `amount_minor` equal to the refund owed now, and the caller's
+/// `idempotency_key` for the mark. In one booking writer it
 /// records the mark, dated, drops the note that the provider ended the
 /// refund unpaid, so the owner's stuck-refund line and its INBOX row go, and
 /// queues the deposit's settle row, which from then on only finds the
-/// refund. A mark of a refund that stands marked, for its amount, records
-/// nothing, also once it settled. The receipt shows the amount marked.
+/// refund. A repeat of a mark under its idempotency key records nothing and
+/// answers that mark, also once it settled and another refund is owed: a
+/// retried call never marks a refund it was not made for (review round 1 of
+/// #10267). A mark of a refund that stands marked records nothing either.
+/// The receipt shows the amount marked.
 ///
 /// # Errors
 ///
 /// [`BookingError::Boundary`] for a proof that no longer holds or a caller
 /// who was not a selected host; [`BookingError::InvalidConstraint`] for an
-/// EVENT that is no booking, and for an amount other than the refund owed;
+/// EVENT that is no booking, for an amount other than the refund owed, and
+/// for an idempotency key that is empty or longer than
+/// [`MARK_IDEMPOTENCY_KEY_MAX_BYTES`];
 /// [`BookingError::InvalidConfig`] for a deposit that owes the visitor no
 /// refund (held, released, or refunded by the provider), or a booking this
 /// node holds no deposit for; [`BookingError::SlotOracle`] on a store
@@ -153,7 +178,13 @@ pub(crate) fn mark_booking_deposit_refunded_outside(
     owner: &AuthenticatedOwner,
     event_ref: &EntityId,
     amount_minor: u64,
+    idempotency_key: &str,
 ) -> Result<BookingDepositMarkRefundedOutsideReceipt, BookingError> {
+    if idempotency_key.is_empty() || idempotency_key.len() > MARK_IDEMPOTENCY_KEY_MAX_BYTES {
+        return Err(refused(format!(
+            "idempotency_key names the mark: 1 to {MARK_IDEMPOTENCY_KEY_MAX_BYTES} bytes"
+        )));
+    }
     booking_writer(vault, |wtxn| {
         let actor = owner
             .owner_authored_write_in_txn(vault, &*wtxn)
@@ -181,11 +212,11 @@ pub(crate) fn mark_booking_deposit_refunded_outside(
             .get(&vault.store, &*wtxn, &link.deposit_key)
             .map_err(|error| engine_failure("meta read", error))?
             .ok_or_else(no_deposit)?;
-        let marked_before = row.refund_marked_outside.filter(|mark| {
-            mark.amount_minor == amount_minor
-                && (row.marks_owed_refund() || matches!(row.state, DepositState::Refunded { .. }))
-        });
-        if let Some(mark) = marked_before {
+        let repeated = row
+            .refund_marked_outside
+            .as_ref()
+            .filter(|mark| mark.idempotency_key == idempotency_key);
+        if let Some(mark) = repeated {
             return Ok(receipt(event_ref, &row, mark, false));
         }
         let DepositState::RefundDue { amount_minor: owed } = row.state else {
@@ -198,12 +229,21 @@ pub(crate) fn mark_booking_deposit_refunded_outside(
                 "the refund owed now is {owed} in the currency's smallest unit: mark that amount"
             )));
         }
+        if let Some(mark) = row
+            .refund_marked_outside
+            .as_ref()
+            .filter(|_| row.marks_owed_refund())
+        {
+            return Ok(receipt(event_ref, &row, mark, false));
+        }
         let now_utc = vault.now_recorded_at();
         let mark = RefundMarkedOutside {
             marked_at: now_utc,
             amount_minor,
             settled: None,
+            idempotency_key: idempotency_key.to_owned(),
         };
+        let marked = receipt(event_ref, &row, &mark, true);
         row.refund_marked_outside = Some(mark);
         row.refund_ended_unpaid = None;
         row.updated_at = now_utc;
@@ -212,7 +252,7 @@ pub(crate) fn mark_booking_deposit_refunded_outside(
         // follows more refunded.
         let cause = format!("owner-marked-outside-{}", row.refunded_minor);
         enqueue_settle(vault, wtxn, &link.deposit_key, &cause, now_utc)?;
-        Ok(receipt(event_ref, &row, mark, true))
+        Ok(marked)
     })
 }
 
@@ -220,7 +260,7 @@ pub(crate) fn mark_booking_deposit_refunded_outside(
 fn receipt(
     event_ref: &EntityId,
     row: &DepositRow,
-    mark: RefundMarkedOutside,
+    mark: &RefundMarkedOutside,
     recorded: bool,
 ) -> BookingDepositMarkRefundedOutsideReceipt {
     BookingDepositMarkRefundedOutsideReceipt {

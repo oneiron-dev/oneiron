@@ -37,10 +37,9 @@ impl RefundView {
     fn settled_amount(&self) -> Result<u64, DepositProviderFailure> {
         match self.status.as_str() {
             "succeeded" => Ok(self.amount),
-            "pending" | "requires_action" => Err(DepositProviderFailure::Pending(format!(
-                "Stripe holds refund {} {}",
-                self.id, self.status
-            ))),
+            "pending" | "requires_action" => Err(DepositProviderFailure::RefundHeld {
+                reason: format!("Stripe holds refund {} {}", self.id, self.status),
+            }),
             _ if self.ended_unpaid() => Err(DepositProviderFailure::RefundEndedUnpaid {
                 reason: format!("Stripe's refund {} is {}", self.id, self.status),
                 part_refunded_by_hand: false,
@@ -84,7 +83,7 @@ impl OwedRefund {
     /// row's key answers for itself. Refunds made elsewhere stand as the
     /// deposit's refund once they have paid back at least what is owed, and
     /// the deposit records what was owed. While Stripe still holds a part of
-    /// that, the answer is pending. Short of it the row adds nothing: the
+    /// that, the answer is that Stripe holds the refund. Short of it the row adds nothing: the
     /// refund stays owed, on the owner's card with what is missing, until the
     /// owner refunds the rest by hand.
     pub(super) fn settled_amount(&self, owed: u64) -> Result<u64, DepositProviderFailure> {
@@ -105,10 +104,12 @@ impl OwedRefund {
             Self::MadeElsewhere { succeeded, held } => {
                 let paid_or_held = succeeded.saturating_add(*held);
                 if paid_or_held >= owed {
-                    Err(DepositProviderFailure::Pending(format!(
-                        "Stripe holds a refund made outside the deposit: {succeeded} of the \
-                         {owed} owed is refunded and {held} is pending"
-                    )))
+                    Err(DepositProviderFailure::RefundHeld {
+                        reason: format!(
+                            "Stripe holds a refund made outside the deposit: {succeeded} of the \
+                             {owed} owed is refunded and {held} is pending"
+                        ),
+                    })
                 } else {
                     Err(DepositProviderFailure::PartRefundedByHand {
                         reason: format!(
