@@ -14,6 +14,45 @@ use crate::error::Result;
 #[doc(hidden)]
 use oneiron_records::dreamer_runner::program::replica::encode;
 
+/// `actor`, unless it is erased here: no row this machine writes, and no row
+/// it keeps beside a decision, names an erased actor.
+fn unerased_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: Option<EntityId>,
+) -> Result<Option<EntityId>> {
+    match actor {
+        Some(actor) if vault.carrier_actor_erased_in_txn(txn, &actor)? => Ok(None),
+        actor => Ok(actor),
+    }
+}
+
+/// The actor of the decision this machine holds for the wake keyed `key`
+/// under `admission`, from its own rows alone: its admission record's actor,
+/// else the actor kept beside the decision it imported. Never the actor a
+/// carried `Retracted` or `Released` row asserts, which no digest proves, and
+/// never an actor erased here: such a decision is written with no actor, as
+/// every decision was before the row named one.
+pub(super) fn decision_actor_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    key: (EntityId, EntityId),
+    admission: [u8; 32],
+) -> Result<Option<EntityId>> {
+    let own = ADMISSION
+        .get(vault, txn, &admission)?
+        .filter(|record| record.wake.key() == key)
+        .map(|record| record.wake.authority.actor());
+    let actor = match own {
+        Some(actor) => Some(actor),
+        None if DECIDED.get(vault, txn, &key)? == Some(admission) => {
+            super::index::decided_actor_in_txn(vault, txn, key)?
+        }
+        None => None,
+    };
+    unerased_in_txn(vault, txn, actor)
+}
+
 /// Consumes, in the caller's writer, the wake an `Admitted` row decided: the
 /// machine that admitted it (the home, or the recording machine) wrote that
 /// terminal row, or a machine that imported the decision wrote it again, so
@@ -69,10 +108,7 @@ pub(super) fn consume_decided_wake_in_txn(
             (RowMerge::Written, None) => named,
             (_, None) => super::index::decided_actor_in_txn(vault, &*txn, key)?.or(named),
         };
-        let actor = match actor {
-            Some(actor) if vault.carrier_actor_erased_in_txn(&*txn, &actor)? => None,
-            actor => actor,
-        };
+        let actor = unerased_in_txn(vault, &*txn, actor)?;
         super::index::index_decided_in_txn(vault, txn, key, actor)?;
     }
     let Some(wake) = decided else {
@@ -91,8 +127,9 @@ pub(super) fn consume_decided_wake_in_txn(
 /// turns' wakes, which no `Owed` row ever carried), and each decision it
 /// imported. A machine elected home later then holds every decision, and no
 /// landing of the turn there wakes the program again. Each row names its
-/// wake's actor where this machine knows it: its own admission's always, an
-/// imported decision's where its actor was kept with it.
+/// wake's actor where this machine knows it: its own admission's, an
+/// imported decision's where its actor was kept with it. An actor erased
+/// here is named by neither: its decision is written with no actor.
 pub(crate) fn turn_decided_rows_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -113,7 +150,7 @@ pub(crate) fn turn_decided_rows_in_txn(
             encode(&WakeRow::Admitted {
                 turn,
                 registration,
-                actor: Some(record.wake.authority.actor()),
+                actor: unerased_in_txn(vault, txn, Some(record.wake.authority.actor()))?,
                 admission,
             })?,
         ));
@@ -125,7 +162,11 @@ pub(crate) fn turn_decided_rows_in_txn(
             encode(&WakeRow::Admitted {
                 turn,
                 registration,
-                actor: super::index::decided_actor_in_txn(vault, txn, (turn, registration))?,
+                actor: unerased_in_txn(
+                    vault,
+                    txn,
+                    super::index::decided_actor_in_txn(vault, txn, (turn, registration))?,
+                )?,
                 admission,
             })?,
         ));
@@ -140,7 +181,9 @@ pub(crate) fn wake_row_decided(bytes: &[u8]) -> bool {
 }
 
 /// The `Admitted` row that replaces the carried `Owed` row `bytes` once this
-/// machine holds its admission; `None` for any other row.
+/// machine holds its admission; `None` for any other row. It names the
+/// carried wake's actor, which the admission it is matched by is a digest
+/// over, unless that actor is erased here.
 pub(crate) fn admitted_row_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -162,7 +205,7 @@ pub(crate) fn admitted_row_in_txn(
     Ok(Some(encode(&WakeRow::Admitted {
         turn,
         registration,
-        actor: Some(wake.authority.actor()),
+        actor: unerased_in_txn(vault, txn, Some(wake.authority.actor()))?,
         admission,
     })?))
 }

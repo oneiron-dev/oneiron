@@ -470,7 +470,8 @@ pub(super) fn merge_released_in_txn(
 
 /// The row this machine knows that comes later in its key's order than the
 /// carried row `bytes`, filed under `map_key`: `Admitted` for a decision held
-/// here, `Released` for a release kept or taken here, `Retracted` for a wake
+/// here (with the actor this machine's own rows hold for that decision, if
+/// any), `Released` for a release kept or taken here, `Retracted` for a wake
 /// retracted here. `None` when the carried row is the latest this machine
 /// knows, or names an occurrence's wake, which no carried row decides.
 pub(crate) fn outranking_wake_row_in_txn(
@@ -505,10 +506,12 @@ pub(crate) fn outranking_wake_row_in_txn(
         .filter(|carried| carried.admission == admission)
         .map(|carried| carried.state);
     let known = if decided_in_txn(vault, txn, key, admission)? {
+        // The decision's actor is the one this machine's own rows hold for
+        // it, never the one the carried row asserts.
         WakeRow::Admitted {
             turn,
             registration,
-            actor: Some(actor),
+            actor: super::decided::decision_actor_in_txn(vault, txn, key, admission)?,
             admission,
         }
     } else if state == Some(CarriedState::Released)
