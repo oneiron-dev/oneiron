@@ -82,6 +82,20 @@ pub fn forget_floor_state(vault: &Vault) -> Result<()> {
     Ok(())
 }
 
+/// Puts `row` in the state an archive left a waiting row in before an
+/// archive stopped counting as an erase for the floor (#10117 Opus review
+/// P1): its wait and its marks dropped, and the floor repair not run yet.
+///
+/// # Errors
+///
+/// Storage failures.
+pub fn forget_floor_wait_before_repair(vault: &Vault, row: EntityId) -> Result<()> {
+    let mut txn = vault.store.env.write_txn()?;
+    crate::source_audience::forget_floor_wait_before_repair_in_txn(vault, &mut txn, &row)?;
+    txn.commit()?;
+    Ok(())
+}
+
 /// Lands the binding of `row` here as a replicated binding does once its
 /// policy resolves (`bind_replicated_in_txn`): the rows waiting on `row` are
 /// raised again (#9289 Opus review 3 P1-B).

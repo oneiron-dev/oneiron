@@ -313,17 +313,21 @@ pub(crate) fn raise_floors_in_txn(
     super::floor_state::raise_and_settle_in_txn(vault, txn, rows)
 }
 
-/// Seals each row of `born`, in the write that stamps its birth, when that
-/// birth names an input this vault erased: its deletion shell or record
-/// stands (#9289 review r1 P1). An erase takes the input's binding and its
+/// Seals each row of `born`, in the write that stamps its birth, when it
+/// names a source no read walks that this vault erased
+/// ([`names_erased_source_in`]): an erase takes the source's binding and its
 /// stored floor with its row (`erase_derived_policies_in_txn`), so nothing
-/// here says any more whose words the input held: a prompt that read a
-/// mailbox's MESSAGE, erased before the CLAIM it wrote landed, left that
-/// CLAIM no source to inherit.
+/// here says any more whose words it held (#9289 review r1 P1): a prompt
+/// that read a mailbox's MESSAGE, erased before the CLAIM it wrote landed,
+/// left that CLAIM no source to inherit.
 /// The row is born under [`sealed_source`] (C5, READ-LINEAGE-L3 = A). Only
-/// the birth's own write seals: a row born while its inputs stood already
-/// holds their floor, and a later erase takes no source off it. A vault
-/// where no row can have a floor seals nothing ([`floors_possible_in`]).
+/// the birth's own write seals: a row born while its sources stood already
+/// holds their floor, and a later erase takes no source off it; a row born
+/// while one had not landed is sealed by its erase
+/// (`seal_floors_awaiting_in_txn`), so the order of the two leaves no
+/// stranger reading it (#10117 Opus review P2-3). A
+/// vault where no row can have a floor seals nothing
+/// ([`floors_possible_in`]).
 ///
 /// # Errors
 ///
@@ -338,21 +342,32 @@ pub(crate) fn seal_births_from_erased_inputs_in_txn(
     }
     let sealed = BTreeSet::from([sealed_source()]);
     for row in born {
-        for input in crate::store::birth_record::input_rows_in_txn(&vault.store, txn, row)? {
-            if input != *row
-                && crate::ports::TombstoneStoreRead::port_deletion_state(
-                    &vault.store,
-                    &**txn,
-                    &input,
-                )?
-                .deleted
-            {
-                super::add_derived_policies_in_txn(vault, txn, row, &sealed)?;
-                break;
-            }
+        if names_erased_source_in(vault, txn, row)? {
+            super::add_derived_policies_in_txn(vault, txn, row, &sealed)?;
         }
     }
     Ok(())
+}
+
+/// Whether `row` names a source no read walks that this vault erased
+/// (`floor_state::erased_in`; an archive is none): a birth input, a
+/// dependency source, or a word source its words name.
+fn names_erased_source_in(vault: &Vault, txn: &RoTxn<'_>, row: &EntityId) -> Result<bool> {
+    let mut sources = crate::store::birth_record::input_rows_in_txn(&vault.store, txn, row)?;
+    sources.extend(crate::ports::dependency_sources_in(&vault.store, txn, row)?);
+    if let Some(raw) = vault.get_raw_in(txn, row)? {
+        match crate::scope_summary::word_sources_in(vault, txn, row, &raw) {
+            Ok(crate::scope_summary::WordSources::From(named)) => sources.extend(named),
+            Ok(_) | Err(Error::InvalidClaimBody(_) | Error::Record(_)) => {}
+            Err(error) => return Err(error),
+        }
+    }
+    for source in &sources {
+        if source != row && super::floor_state::erased_in(&vault.store, txn, source)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// How many rows this vault reads to no one because an id on their stored

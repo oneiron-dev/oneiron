@@ -27,7 +27,7 @@ use oneiron::{EdgeActorClass, EdgeKind, EntityId};
 use super::{Mailbox, claim_born_before_floors, claim_born_from, owners_mailbox};
 
 /// The owner deletes `row`.
-fn erase(mailbox: &Mailbox, row: EntityId) {
+pub(super) fn erase(mailbox: &Mailbox, row: EntityId) {
     mailbox
         .vault
         .memory(mailbox.owner, EdgeActorClass::Human)
@@ -43,7 +43,7 @@ fn replay(mailbox: &Mailbox, row: EntityId, reason: TombstoneReason) {
 }
 
 /// A housekeeping pass, which runs the floor sweep.
-fn housekeeping_pass(mailbox: &Mailbox) {
+pub(super) fn housekeeping_pass(mailbox: &Mailbox) {
     mailbox
         .vault
         .housekeeping_all(HousekeepingBudget::unbounded())
@@ -51,7 +51,7 @@ fn housekeeping_pass(mailbox: &Mailbox) {
 }
 
 /// How many facts doctor counts as hidden by a source it cannot name.
-fn hidden_source_unknown(mailbox: &Mailbox) -> u64 {
+pub(super) fn hidden_source_unknown(mailbox: &Mailbox) -> u64 {
     mailbox
         .vault
         .doctor()
@@ -61,7 +61,7 @@ fn hidden_source_unknown(mailbox: &Mailbox) -> u64 {
 
 /// `row` reads to neither a stranger nor the mailbox's reader (`when`
 /// names the moment).
-fn assert_no_stranger_or_reader_reads(mailbox: &Mailbox, row: EntityId, when: &str) {
+pub(super) fn assert_no_stranger_or_reader_reads(mailbox: &Mailbox, row: EntityId, when: &str) {
     assert!(
         !reads(&mailbox.vault, row, &[mailbox.stranger]).expect("the stranger's read"),
         "LEAK: a stranger reads the row {when}",
@@ -512,5 +512,76 @@ fn a_fact_from_a_row_waiting_on_a_published_delete_stays_closed_until_the_purge_
         hidden_source_unknown(&mailbox),
         2,
         "doctor counts both rows the purge sealed",
+    );
+}
+
+/// #10117 Opus P2-1 (FLOOR-OLD-FACT-ERASED-INPUT = A): a fact held before
+/// floors whose birth input was hard-deleted here before the backfill raised
+/// it waits for good, and the owner reads it. A peer's soft tombstone of that
+/// input then replays (a soft value can win the map over a local hard
+/// delete, and replay never downgrades): no new erase, so the owner still
+/// reads the fact. Before the fix the soft replay sealed it.
+#[test]
+fn a_soft_tombstone_replayed_over_a_hard_delete_here_leaves_a_fact_waiting_for_good() {
+    let mailbox = owners_mailbox();
+    let input = claim_born_before_floors(&mailbox, &[mailbox.row], "fact.erased_input");
+    let fact = claim_born_before_floors(&mailbox, &[input], "fact.held_from_input");
+    replay(&mailbox, input, TombstoneReason::UserHardDelete);
+    forget_floor_state(&mailbox.vault).expect("FIXTURE: a vault written before floors");
+    housekeeping_pass(&mailbox);
+    assert!(
+        reads(&mailbox.vault, fact, &[mailbox.owner]).expect("the owner's read"),
+        "precondition: the owner reads a fact that waits for good (ruling A)",
+    );
+    replay(&mailbox, input, TombstoneReason::UserDelete);
+    assert!(
+        reads(&mailbox.vault, fact, &[mailbox.owner]).expect("the owner's read"),
+        "SEALED: a soft tombstone replayed over a hard delete here sealed a fact waiting for good",
+    );
+    assert!(
+        floor_waits(&mailbox.vault, fact).expect("the floor's state"),
+        "FREED: a soft tombstone replayed over a hard delete settled a fact waiting for good",
+    );
+    assert_no_stranger_or_reader_reads(&mailbox, fact, "once the soft tombstone replayed");
+    assert_eq!(
+        hidden_source_unknown(&mailbox),
+        0,
+        "doctor counts no sealed fact",
+    );
+}
+
+/// #10117 Opus P2-4: `derived` is written from `middle` (`DerivedFrom`, a
+/// source the read walks), whose own source is not here yet. The owner's
+/// hard delete of `middle` is published, and the floor state is lost inside
+/// that window, as a checkpoint restore of an image from it loses it. The
+/// backfill raises `derived` first, finds `middle`'s delete fenced but not
+/// purged, and marks `derived` as waiting on it; the purge then seals
+/// `derived`, and no one reads it. Before the fix the backfill settled
+/// `derived` open, the purge sealed nothing, and a stranger read it.
+#[test]
+fn a_row_raised_while_its_sources_delete_is_unpurged_is_sealed_by_the_purge() {
+    let mailbox = owners_mailbox();
+    let middle = claim_born_from(&mailbox, &[EntityId::now()], "learnt from a row on its way");
+    let derived = super::claim_of_predicate_born_with(
+        &mailbox,
+        &[],
+        MadeByInputRole::Input,
+        "fact.derived_from_middle",
+        "derived from middle",
+    );
+    mailbox
+        .vault
+        .put_edge(&derived, EdgeKind::DerivedFrom, &middle, 1.0)
+        .expect("FIXTURE: the derived row names middle");
+    fence_row_for_hard_delete(&mailbox.vault, middle).expect("middle's hard delete is published");
+    forget_floor_state(&mailbox.vault).expect("FIXTURE: the floor state lost inside the window");
+    housekeeping_pass(&mailbox);
+    assert_no_stranger_or_reader_reads(&mailbox, derived, "after the backfill before the purge");
+    replay(&mailbox, middle, TombstoneReason::UserHardDelete);
+    housekeeping_pass(&mailbox);
+    assert_no_stranger_or_reader_reads(&mailbox, derived, "once the purge landed");
+    assert!(
+        !reads(&mailbox.vault, derived, &[mailbox.owner]).expect("the owner's read"),
+        "the owner reads a row the purge of its source sealed",
     );
 }

@@ -246,8 +246,13 @@ impl Vault {
             // The scrub of a held row recorded its soft delete and sealed the
             // floors waiting on it. For an id with no row here, the first
             // application seals them, as the erase of a held row does
-            // (#10108 review P1-1).
-            if !IDENTITY_SOFT_DELETE_MARKER.contains(&self.store, &*wtxn, &HexId(*id))? {
+            // (#10108 review P1-1). A soft value replayed over a hard delete
+            // applied here is no new erase (replay never downgrades): the
+            // hard delete's own door decided what it seals (#10117 Opus
+            // review P2-1).
+            if !IDENTITY_SOFT_DELETE_MARKER.contains(&self.store, &*wtxn, &HexId(*id))?
+                && !HARD_DELETE_MARKER.contains(&self.store, &*wtxn, &HexId(*id))?
+            {
                 crate::source_audience::seal_floors_awaiting_in_txn(&self.store, wtxn, id)?;
             }
             IDENTITY_SOFT_DELETE_MARKER.put(&self.store, wtxn, &HexId(*id), &Vec::new())?;

@@ -19,9 +19,11 @@
 //! held; a soft tombstone replayed over a soft scrub already applied here is
 //! no new erase and runs it not (#10108 reviews). Until it runs, a row that
 //! reads erased (its delete published, a peer tombstone accepted but not
-//! applied yet, an archive, a released blob) keeps every row marked as
-//! waiting on it waiting: the seal, not a sweep that comes first, ends the
-//! wait. A row's marks are its wait set as its last raise found it: a raise
+//! applied yet) keeps every row marked as waiting on it waiting: the seal,
+//! not a sweep that comes first, ends the wait. An archive and a blob's
+//! release fence erase nothing for the floor (#10117 Opus review P1): they
+//! tear nothing and lift again, so an archived row keeps its wait and its
+//! marks, is raised and sealed as a live one is, and its restore raises it. A row's marks are its wait set as its last raise found it: a raise
 //! takes every mark the row no longer waits on, so an erase of what it once
 //! waited on never seals a row that settled without it.
 //!
@@ -54,7 +56,6 @@
 //! carries no audience (#9289 review 3 P1-3).
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::ops::Bound;
 
 use heed::{RoTxn, RwTxn};
 
@@ -64,7 +65,10 @@ use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault};
 
+mod backfill;
 mod marks;
+
+pub(crate) use backfill::backfill_floors;
 
 /// Each row whose floor waits.
 const PENDING: SideTable<EntityId, (), Named> =
@@ -75,30 +79,16 @@ const RAISED: SideTable<EntityId, (), Named> =
 /// Whether the backfill has raised every row.
 const BACKFILL: SideTable<(), bool, Named> =
     SideTable::new(&side_table::SOURCE_AUDIENCE_FLOOR_BACKFILL);
+/// Whether the floor repair has raised again every held row whose lineage
+/// no read walks (#10117 Opus review P1).
+const REPAIR: SideTable<(), bool, Named> =
+    SideTable::new(&side_table::SOURCE_AUDIENCE_FLOOR_REPAIR);
 
 /// Rounds one write raises the rows waiting on what it settled, and then
 /// the rows waiting on those. Each round takes the marks it follows, so the
 /// rounds end by themselves; past this bound the rows left keep waiting
 /// (they read to no one but an owner who reads every source).
 const SETTLE_ROUNDS: usize = 1024;
-
-/// Entity rows one backfill write reads; each is raised with the not yet
-/// raised rows it was written from.
-const BACKFILL_PAGE: usize = 64;
-
-/// Raised marks one write clears once the backfill has raised every row.
-const CLEAR_PAGE: usize = 1024;
-
-/// A backfill cursor's first byte: raising the rows after the entity key
-/// that follows it.
-const RAISING: u8 = 0;
-
-/// A backfill cursor's first byte: clearing the raised marks.
-const CLEARING: u8 = 1;
-
-/// A backfill cursor's first byte: raising again the waiting rows after the
-/// row id that follows it.
-const SETTLING: u8 = 2;
 
 /// Whether the backfill has raised every row this vault holds.
 ///
@@ -287,9 +277,50 @@ fn presence_in(vault: &Vault, txn: &RoTxn<'_>, row: &EntityId) -> Result<Presenc
     })
 }
 
-/// Whether `row` is erased here: its deletion shell or record stands.
-fn erased_in(store: &crate::store::Store, txn: &RoTxn<'_>, row: &EntityId) -> Result<bool> {
-    Ok(crate::ports::TombstoneStoreRead::port_deletion_state(store, txn, row)?.deleted)
+/// Whether `row` is erased here for the floor: its delete fence or marker,
+/// a tombstone or a pending local delete stands (`ports::removed_in_txn`).
+/// A cleanup archive is no erase: it tears nothing, and a restore brings the
+/// row back whole (#10117 Opus review P1). Nor is a blob's release fence,
+/// which lifts when the same bytes come back.
+pub(super) fn erased_in(
+    store: &crate::store::Store,
+    txn: &RoTxn<'_>,
+    row: &EntityId,
+) -> Result<bool> {
+    if !crate::ports::removed_in_txn(store, txn, row)? {
+        return Ok(false);
+    }
+    #[cfg(feature = "sync")]
+    if crate::blob_artifact::release_fenced_only(store, txn, row)? {
+        return Ok(false);
+    }
+    Ok(true)
+}
+
+/// Whether `row` is held here and not erased ([`erased_in`]): a live row, or
+/// an archived one, whose floor a write raises.
+fn floor_holds_in(vault: &Vault, txn: &RoTxn<'_>, row: &EntityId) -> Result<bool> {
+    Ok(vault.get_raw_in(txn, row)?.is_some() && !erased_in(&vault.store, txn, row)?)
+}
+
+/// Whether the delete of `row` stands fenced here but has not torn it yet:
+/// its `df:` fence stands, no `dt:` marker, and its body is not scrubbed (a
+/// published delete before its purge, or a peer tombstone that failed to
+/// apply and waits for its retry). The purge or the scrub that ends it seals
+/// what waits on `row`.
+fn delete_unpurged_in(
+    store: &crate::store::Store,
+    txn: &RoTxn<'_>,
+    row: &EntityId,
+) -> Result<bool> {
+    use crate::ports::{DeletionMarker, EntityStoreRead, TombstoneStoreRead};
+    Ok(
+        store.port_deletion_marked(txn, DeletionMarker::RowFence, row)?
+            && !store.port_deletion_marked(txn, DeletionMarker::HardDelete, row)?
+            && store
+                .port_entity_raw(txn, row)?
+                .is_some_and(|raw| raw.len() > crate::batch::ENTITY_METADATA_HEADER_LEN),
+    )
 }
 
 /// Seals, in the write that erases `erased`, the floor of each row that
@@ -339,9 +370,13 @@ pub(super) fn seal_rows_awaiting_in_txn(
 /// ([`seal_rows_awaiting_in_txn`]; #10108 Opus review P1-1): a sweep that
 /// comes before the purge must not settle it. A row the backfill raises for
 /// the first time (`first`), whose floor never held an erased unwalked
-/// source, waits on it, and for good: it still waits when raised again.
-/// Otherwise a read walks the source live, and one gone from the vault
-/// carries no words to it.
+/// source, waits on it, and for good: it still waits when raised again. It
+/// also waits on a source whose delete stands fenced but not purged
+/// ([`delete_unpurged_in`]), so a floor state lost inside that window (a
+/// checkpoint restore) is marked again and the purge seals it (#10117 Opus
+/// review P2-4); a later raise of a row that settled holding that source's
+/// floor does not wait on it. Otherwise a read walks the source live, and
+/// one gone from the vault carries no words to it.
 fn source_waits_in(
     vault: &Vault,
     txn: &RoTxn<'_>,
@@ -352,9 +387,8 @@ fn source_waits_in(
 ) -> Result<bool> {
     match presence_in(vault, txn, source)? {
         Presence::Absent => Ok(unwalked),
-        Presence::Erased => {
-            Ok(AWAITED.contains(&vault.store, txn, &(*source, *row))? || (unwalked && first))
-        }
+        Presence::Erased => Ok(AWAITED.contains(&vault.store, txn, &(*source, *row))?
+            || (first && (unwalked || delete_unpurged_in(&vault.store, txn, source)?))),
         Presence::Held(raw) => Ok(PENDING.contains(&vault.store, txn, source)?
             || super::floor::own_source_in(vault, txn, source, &raw)? == OwnSource::Unbound),
     }
@@ -404,7 +438,8 @@ impl Closure {
             }
             // An erased row's shell carries no words and takes no floor; a
             // row written from it reads its erasure as a source
-            // (`source_waits_in`; #9289 Opus review 3 P1-B).
+            // (`source_waits_in`; #9289 Opus review 3 P1-B). An archived row
+            // is raised as a live one is.
             if erased_in(&vault.store, txn, &row)? {
                 continue;
             }
@@ -417,8 +452,7 @@ impl Closure {
                 for source in sources.written_from.iter().chain(&sources.attested_by) {
                     if !seen.contains(source)
                         && !RAISED.contains(&vault.store, txn, source)?
-                        && crate::vault::live_entity_row_in_txn(&vault.store, txn, source)?
-                            .is_live()
+                        && floor_holds_in(vault, txn, source)?
                     {
                         below.push(*source);
                     }
@@ -564,7 +598,8 @@ impl Closure {
 /// on: each mark followed is taken, and a row still waiting once raised
 /// again marks what it waits on afresh. An erased row lands nothing, so the
 /// marks on it stay (a row waits on it for good), and a mark that leads to
-/// an erased row is dropped, never followed (#9289 Opus review 3 P1-B).
+/// an erased row is dropped, never followed (#9289 Opus review 3 P1-B). An
+/// archived row is no erased one: it is raised (#10117 Opus review P1).
 fn take_waiters_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
@@ -591,173 +626,20 @@ fn take_waiters_in_txn(
     Ok(waiters)
 }
 
-/// One run of the floor backfill (#9289 review 2 P1-2), housekeeping's
-/// `SourceFloorBackfill` sweep: from `cursor`, where an unfinished run
-/// stopped, it raises the floor of each live entity row in key order, a page
-/// per write, each with the not yet raised rows it was written from, and
-/// stops between pages once `stop` says so. Once every row is raised it
-/// marks the backfill done, then clears the raised marks. Then, and in each
-/// later run, it raises every waiting row again, a page per write
-/// (#9289 review 3 P1-4, P1-6). In a vault where no row can have a floor yet
-/// it does nothing, and runs at the next pass again. The rows it raised, and
-/// where an unfinished run goes on (`None` once this run has ended).
-///
-/// # Errors
-///
-/// Storage failures.
-pub(crate) fn backfill_floors(
-    vault: &Vault,
-    cursor: Option<&[u8]>,
-    stop: impl Fn() -> bool,
-) -> Result<(u64, Option<Vec<u8>>)> {
-    let mut cursor = cursor.map_or_else(|| vec![RAISING], <[u8]>::to_vec);
-    let mut raised = 0_u64;
-    loop {
-        let (page, next) = vault.with_write_txn(|txn| match cursor.split_first() {
-            Some((&CLEARING, _)) => clear_page_in_txn(vault, txn),
-            Some((&SETTLING, after)) => settle_page_in_txn(vault, txn, after),
-            Some((_, after)) => raise_page_in_txn(vault, txn, after),
-            None => raise_page_in_txn(vault, txn, &[]),
-        })?;
-        raised = raised.saturating_add(page);
-        let Some(next) = next else {
-            return Ok((raised, None));
-        };
-        cursor = next;
-        if stop() {
-            return Ok((raised, Some(cursor)));
-        }
-    }
-}
-
-/// One backfill write: raises the live entity rows after the key `after`.
-fn raise_page_in_txn(
+/// Puts `row`, in `txn`, in the state an archive left a waiting row in
+/// before an archive stopped counting as an erase for the floor (#10117 Opus
+/// review P1): its wait and its marks dropped, as the sweep dropped them,
+/// and the floor repair not run yet.
+#[cfg(any(test, feature = "test-support", oneiron_test_support))]
+pub(crate) fn forget_floor_wait_before_repair_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
-    after: &[u8],
-) -> Result<(u64, Option<Vec<u8>>)> {
-    if backfill_done_in(vault, txn)? {
-        return Ok((0, Some(vec![CLEARING])));
-    }
-    // No row here can have a floor yet, and no write raises one: the
-    // backfill waits for the first source, which may come after rows
-    // written from it (a replica's first window).
-    if !super::floor::floors_possible_in(vault, txn)? {
-        return Ok((0, None));
-    }
-    let lower = if after.is_empty() {
-        Bound::Unbounded
-    } else {
-        Bound::Excluded(after)
-    };
-    let mut rows = Vec::new();
-    let mut last = None;
-    let mut scanned = 0_usize;
-    for entry in vault
-        .store
-        .entities
-        .range(txn, &(lower, Bound::<&[u8]>::Unbounded))?
-    {
-        let (key, _) = entry?;
-        scanned += 1;
-        last = Some(key.to_vec());
-        // A sentinel key that is no entity id names no row.
-        if let Ok(bytes) = <[u8; 16]>::try_from(key.as_ref())
-            && let Ok(id) = EntityId::from_bytes(bytes)
-        {
-            rows.push(id);
-        }
-        if scanned == BACKFILL_PAGE {
-            break;
-        }
-    }
-    let mut raised = 0_u64;
-    for row in &rows {
-        if RAISED.contains(&vault.store, txn, row)?
-            || !crate::vault::live_entity_row_in_txn(&vault.store, txn, row)?.is_live()
-        {
-            continue;
-        }
-        super::floor::raise_floors_in_txn(vault, txn, [*row])?;
-        raised = raised.saturating_add(1);
-    }
-    match last {
-        Some(last) if scanned == BACKFILL_PAGE => {
-            let mut next = vec![RAISING];
-            next.extend(last);
-            Ok((raised, Some(next)))
-        }
-        _ => {
-            BACKFILL.put(&vault.store, txn, &(), &true)?;
-            Ok((raised, Some(vec![CLEARING])))
-        }
-    }
-}
-
-/// One backfill write once every row is raised: clears raised marks; once
-/// none is left, the run goes on raising the waiting rows again.
-fn clear_page_in_txn(vault: &Vault, txn: &mut RwTxn<'_>) -> Result<(u64, Option<Vec<u8>>)> {
-    let keys = RAISED
-        .iter_from(&vault.store, txn, &[])?
-        .take(CLEAR_PAGE)
-        .map(|entry| entry.map(|(row, ())| row))
-        .collect::<Result<Vec<_>>>()?;
-    for row in &keys {
-        RAISED.delete(&vault.store, txn, row)?;
-    }
-    Ok((
-        0,
-        Some(if keys.len() == CLEAR_PAGE {
-            vec![CLEARING]
-        } else {
-            vec![SETTLING]
-        }),
-    ))
-}
-
-/// One write of a run's last part: raises again the waiting rows after the
-/// row id `after`, so a row whose wait resolved in a write that named no row
-/// waiting on it (an epoch's head that landed, an erased source, a
-/// dependency or a birth taken off it) settles. A waiting row gone from
-/// this vault loses its marks.
-fn settle_page_in_txn(
-    vault: &Vault,
-    txn: &mut RwTxn<'_>,
-    after: &[u8],
-) -> Result<(u64, Option<Vec<u8>>)> {
-    let mut rows = Vec::new();
-    for entry in PENDING.iter_from(&vault.store, txn, &[])? {
-        let (row, ()) = entry?;
-        if row.as_bytes().as_slice() <= after {
-            continue;
-        }
-        rows.push(row);
-        if rows.len() == BACKFILL_PAGE {
-            break;
-        }
-    }
-    let mut live = BTreeSet::new();
-    for row in &rows {
-        if crate::vault::live_entity_row_in_txn(&vault.store, txn, row)?.is_live() {
-            live.insert(*row);
-        } else {
-            PENDING.delete(&vault.store, txn, row)?;
-            take_marks_of_in_txn(&vault.store, txn, row, &BTreeSet::new())?;
-        }
-    }
-    let raised = u64::try_from(live.len()).unwrap_or(u64::MAX);
-    super::floor::raise_floors_in_txn(vault, txn, live)?;
-    Ok((
-        raised,
-        match rows.last() {
-            Some(last) if rows.len() == BACKFILL_PAGE => {
-                let mut next = vec![SETTLING];
-                next.extend_from_slice(last.as_bytes());
-                Some(next)
-            }
-            _ => None,
-        },
-    ))
+    row: &EntityId,
+) -> Result<()> {
+    PENDING.delete(&vault.store, txn, row)?;
+    take_marks_of_in_txn(&vault.store, txn, row, &BTreeSet::new())?;
+    REPAIR.delete(&vault.store, txn, &())?;
+    Ok(())
 }
 
 /// Forgets, in `txn`, every floor's state and the backfill's: the vault
@@ -769,5 +651,6 @@ pub(crate) fn forget_floor_state_in_txn(vault: &Vault, txn: &mut RwTxn<'_>) -> R
     WAITS.delete_from(&vault.store, txn, &[])?;
     RAISED.delete_from(&vault.store, txn, &[])?;
     BACKFILL.delete_from(&vault.store, txn, &[])?;
+    REPAIR.delete_from(&vault.store, txn, &[])?;
     Ok(())
 }

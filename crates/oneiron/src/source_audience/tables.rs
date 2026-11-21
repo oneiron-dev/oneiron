@@ -49,6 +49,12 @@ crate::side_table::side_tables! {
     /// backfill clears them once it has raised every row. Key: id16(row).
     SOURCE_AUDIENCE_FLOOR_RAISED: VaultMeta b"source_audience:floor_raised:v1:" Named
         [restore: not_imaged] [family: not_imaged] [tier: derived];
+    /// Whether the floor repair has raised again every row this vault holds whose lineage no
+    /// read walks (READ-LINEAGE L1; #10117 Opus review P1): an archived row lost its wait
+    /// marks until an archive stopped counting as an erase for the floor. A vault that lost it
+    /// runs the backfill again, which sets it. Key: ().
+    SOURCE_AUDIENCE_FLOOR_REPAIR: VaultMeta b"source_audience:floor_repair:v1:done" Named
+        [restore: not_imaged] [family: not_imaged] [tier: derived];
     /// What a row whose floor waits waits on, by row (READ-LINEAGE L1; #10108 reviews): the
     /// marks of SOURCE_AUDIENCE_FLOOR_AWAITED, so a raise takes every mark the row no longer
     /// waits on. Key: id16(waiting row) + id16(awaited).

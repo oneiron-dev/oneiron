@@ -61,6 +61,8 @@ pub(crate) use floor::{
 };
 #[cfg(any(test, feature = "test-support", oneiron_test_support))]
 pub(crate) use floor_state::forget_floor_state_in_txn;
+#[cfg(any(test, feature = "test-support", oneiron_test_support))]
+pub(crate) use floor_state::forget_floor_wait_before_repair_in_txn;
 pub(crate) use floor_state::{
     backfill_floors, binding_landed_in_txn, floor_waits_in, waiting_floor_readable_in,
 };

@@ -306,6 +306,13 @@ impl Vault {
         self.store
             .delete_guards
             .refuse_revision_delete(&self.store, wtxn, id)?;
+        // A soft tombstone replayed over a soft scrub already applied here:
+        // the stored row is the scrubbed header under the identity marker.
+        // Read before anything below writes a fence (#10117 Opus review P2-2).
+        let scrubbed = !erase
+            && IDENTITY_SOFT_DELETE_MARKER.contains(&self.store, &*wtxn, &HexId(*id))?
+            && crate::ports::EntityStoreRead::port_entity_raw(&self.store, &*wtxn, id)?
+                .is_some_and(|raw| raw.len() == ENTITY_METADATA_HEADER_LEN);
         // Its scope outlives the body (see the purge); its tombstone's capture binds it.
         crate::deletion::tombstone_scope::capture_deleted_scope_in_txn(self, wtxn, id, None);
         // A deleted or erased pack source halts the catalog routes bound to
@@ -511,14 +518,12 @@ impl Vault {
         )?;
         // The floors waiting on the row are sealed before its lineage goes
         // (#9289 Opus review 3 P1-A). A soft tombstone replayed over a soft
-        // scrub already applied here is no new erase, and seals nothing: a
-        // fact that waits for good on the row stays readable to the owner
-        // (FLOOR-OLD-FACT-ERASED-INPUT = A; #10108 review P1-3). An erase
-        // seals it, as the ruling says.
-        if erase
-            || !(IDENTITY_SOFT_DELETE_MARKER.contains(&self.store, &*wtxn, &HexId(*id))?
-                && ROW_DELETION_FENCE.contains(&self.store, &*wtxn, &HexId(*id))?)
-        {
+        // scrub already applied here (`scrubbed`) is no new erase, and seals
+        // nothing: a fact that waits for good on the row stays readable to
+        // the owner (FLOOR-OLD-FACT-ERASED-INPUT = A; #10108 review P1-3). An
+        // erase seals it, as the ruling says, and so does a new soft delete
+        // of a row recreated since its old one (#10117 Opus review P2-2).
+        if !scrubbed {
             crate::source_audience::seal_floors_awaiting_in_txn(&self.store, wtxn, id)?;
         }
         crate::deletion::tear_derived_rows_in_txn(&write, wtxn, id, false)?;
