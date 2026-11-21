@@ -28,11 +28,13 @@
 //! writer whose replies share its context leaves a piece more room than the
 //! entry (#10050 review, round 2).
 //!
-//! The entry's receipt names how its turn was read: each piece's byte range
-//! and its summary's length in the entry, or the head it fell back to. The
-//! Dreamer's check reads the piece summaries back out of the entry the
-//! writer was sent and judges each against exactly its bytes (FIX-LIST
-//! COMPACTION-CHECK-JUDGES-PER-CHUNK).
+//! The entry's receipt names how its turn was read: each piece's byte range,
+//! or the head it fell back to. The Dreamer's check reads the piece summaries
+//! back out of the entry the writer was sent, each from its marker to the
+//! next, and judges each against exactly its bytes (FIX-LIST
+//! COMPACTION-CHECK-JUDGES-PER-CHUNK). The markers hold no model words, so
+//! the side-row wall's handles in a summary of the kept entry leave them as
+//! written (#10272 review, round 1).
 
 use std::ops::Range;
 
@@ -299,10 +301,9 @@ pub(super) fn entry_request(
         Some(entry) => {
             let pieces = summaries
                 .iter()
-                .map(|(range, summary)| ConversationTurnPiece {
+                .map(|(range, _)| ConversationTurnPiece {
                     start: range.start as u64,
                     end: range.end as u64,
-                    summary_len: summary.len() as u64,
                 })
                 .collect();
             (entry, worn, ConversationTurnReading::Pieces { pieces })
@@ -334,28 +335,48 @@ pub(super) fn entry_request(
 }
 
 /// The piece summaries `entry`, a turn's entry over a window text of
-/// `total` bytes, carries under `pieces`, in order. `None` unless the pieces
-/// cover `0..total` in order and `entry` is exactly the entry they write.
+/// `total` bytes, carries under `pieces`, in order: each from its piece's
+/// marker to the next marker, the last to the entry's end. A summary's
+/// length is never read, so a handle the side-row wall put in a summary of
+/// the kept entry leaves every boundary as written (#10272 review, round 1).
+/// `None` unless the pieces cover `0..total` in order, `entry` opens with
+/// their header, and each marker stands in `entry` exactly once, in order: a
+/// summary that spells out a marker reads unreadable, never cut elsewhere.
 pub(crate) fn entry_piece_summaries<'a>(
     entry: &'a str,
     total: usize,
     pieces: &[ConversationTurnPiece],
 ) -> Option<Vec<&'a str>> {
-    let mut rest = entry.strip_prefix(entry_header(total, pieces.len()).as_str())?;
     let mut covered = 0;
-    let mut summaries = Vec::with_capacity(pieces.len());
+    let mut markers = Vec::with_capacity(pieces.len());
     for piece in pieces {
         let range = usize::try_from(piece.start).ok()?..usize::try_from(piece.end).ok()?;
         if range.start != covered || range.end <= range.start {
             return None;
         }
-        rest = rest.strip_prefix(piece_marker(&range, total).as_str())?;
-        let len = usize::try_from(piece.summary_len).ok()?;
-        summaries.push(rest.get(..len)?);
-        rest = rest.get(len..)?;
         covered = range.end;
+        markers.push(piece_marker(&range, total));
     }
-    (covered == total && rest.is_empty()).then_some(summaries)
+    if covered != total
+        || markers
+            .iter()
+            .any(|marker| entry.matches(marker.as_str()).count() != 1)
+    {
+        return None;
+    }
+    let mut rest = entry.strip_prefix(entry_header(total, pieces.len()).as_str())?;
+    let mut summaries = Vec::with_capacity(markers.len());
+    for (at, marker) in markers.iter().enumerate() {
+        rest = rest.strip_prefix(marker.as_str())?;
+        let end = match markers.get(at + 1) {
+            Some(next) => rest.find(next.as_str())?,
+            None => rest.len(),
+        };
+        let (summary, after) = rest.split_at(end);
+        summaries.push(summary);
+        rest = after;
+    }
+    Some(summaries)
 }
 
 /// `message`'s text cut in order into byte ranges that each fit

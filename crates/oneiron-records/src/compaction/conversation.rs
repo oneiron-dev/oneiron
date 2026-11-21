@@ -66,10 +66,10 @@ pub enum ConversationTurnReading {
 }
 
 /// One piece of a turn read in pieces: the byte range `start..end` of the
-/// turn's window text, and the byte length of its summary in the entry.
+/// turn's window text. Its summary in the entry runs from its marker to the
+/// next piece's, so no length of model words is kept here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConversationTurnPiece {
     pub start: u64,
     pub end: u64,
-    pub summary_len: u64,
 }

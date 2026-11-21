@@ -19,9 +19,10 @@
 //! `supported`. A judge input past the window the host lends the judge's
 //! model is `unreadable_evidence`, `span_past_judge_room`, and no call goes
 //! out ([`super::judge_room`]). Only then is the verdict reached as a run's is
-//! ([`super::support`]). The span and the material are read again after the
-//! judgment, so drift during the judgment is stale too. A mismatch reaches
-//! the agent's inbox; nothing here rewrites its words or its byline.
+//! ([`super::support`]). The span and the material are read again before
+//! each later call and after the judgment, so drift during the judgment is
+//! stale too, and no call sends text the span no longer holds. A mismatch
+//! reaches the agent's inbox; nothing here rewrites its words or its byline.
 //!
 //! A span whose one turn its writer read in pieces is judged per piece
 //! (FIX-LIST COMPACTION-CHECK-JUDGES-PER-CHUNK; Engine answer 21 Nov 07:39):
@@ -29,7 +30,10 @@
 //! the receipt names, against exactly those bytes of the turn as the Dreamer
 //! reads it now, and then the landed summary against that entry, the text
 //! its writer was given. A turn whose entry fell back to its head is judged
-//! against that head. Every part is sized against the judge's window before
+//! against that head. The writer was also given the request's verbatim pins
+//! and had to copy each, so the landed summary's evidence carries each pin
+//! the turn as read now holds word for word, whether or not a piece summary
+//! or the head kept it. Every part is sized against the judge's window before
 //! any call, so `span_past_judge_room` stays only for a part that does not
 //! fit. The first part the judge does not find supported decides the check,
 //! and the finding lists each piece judged with its bytes.
@@ -201,6 +205,7 @@ pub(crate) fn declare_conversation_check_in_txn(
 
 /// One judgment the check asks: a summary and exactly the text it was
 /// written from.
+#[derive(PartialEq)]
 struct Part {
     /// For a piece summary, the bytes of the turn's window text it covers
     /// and that text's length; `None` for the landed summary.
@@ -299,7 +304,22 @@ pub(super) async fn run_conversation_check(
     let mut spend = support::Spend::default();
     let mut pieces = Vec::new();
     let mut decided = None;
-    for (part, input, request) in asks {
+    let mut stopped = None;
+    for (at, (part, input, request)) in asks.into_iter().enumerate() {
+        // Each later call goes out only while the span and the material read
+        // as they did: a turn erased or moved since the last call stops the
+        // check, and the cached text is never sent (#10272 review, round 1).
+        if at > 0 {
+            let reread = read(ctx.vault, &declaration).map_err(|error| {
+                spend.note_before_error(ctx);
+                error
+            })?;
+            let reread = same_parts(reread, &parts, &declaration);
+            if !matches!(reread, Reading::Ready(_)) {
+                stopped = Some(reread);
+                break;
+            }
+        }
         let asked = ask_judge(attempt, ctx, &model, request, declaration.writer, &spend).await;
         let judging = match asked.map_err(|error| {
             spend.note_before_error(ctx);
@@ -358,10 +378,17 @@ pub(super) async fn run_conversation_check(
             "a conversation check judges no part",
         ));
     };
-    let mut settled = match read(ctx.vault, &declaration).map_err(|error| {
-        spend.note_before_error(ctx);
-        error
-    })? {
+    let reread = match stopped {
+        Some(reread) => reread,
+        None => {
+            let reread = read(ctx.vault, &declaration).map_err(|error| {
+                spend.note_before_error(ctx);
+                error
+            })?;
+            same_parts(reread, &parts, &declaration)
+        }
+    };
+    let mut settled = match reread {
         Reading::Ready(_) => Settled {
             verdict: decided.verdict,
             reason: decided.reason,
@@ -383,6 +410,27 @@ pub(super) async fn run_conversation_check(
         return Err(error);
     }
     Ok(spend.completed())
+}
+
+/// `reread`, a read taken after a judge call, with its parts other than
+/// `parts`, the ones the check sized and judges, read as stale.
+fn same_parts(
+    reread: Reading,
+    parts: &[Part],
+    declaration: &ConversationCheckDeclaration,
+) -> Reading {
+    match reread {
+        Reading::Ready(reread) if reread != parts => {
+            let mut stale = Settled::new(
+                CompactionCheckVerdict::StaleEvidence,
+                "evidence_revision_moved",
+            );
+            stale.evidence_now = Some(declaration.pins_digest());
+            stale.words_live = true;
+            Reading::Settled(stale)
+        }
+        reread => reread,
+    }
 }
 
 /// Reads the landing's receipt, the check material, the summary's words
@@ -501,8 +549,11 @@ fn gate_again(
 /// pieces, first each piece summary, read back out of the kept entry,
 /// against exactly its bytes of the turn's window text, then the landed
 /// summary against that entry, as its writer read it. For a turn whose
-/// entry fell back to its head, the landed summary against that head.
-/// `None` when the span or the kept entry does not bear `reading` out.
+/// entry fell back to its head, the landed summary against that head. In
+/// both, the landed summary's evidence ends with the kept request's
+/// verbatim pins that the turn's window text holds word for word: its writer
+/// was given them beside the entry or the head, and its gate made it copy
+/// each. `None` when the span or the kept entry does not bear `reading` out.
 fn parts(
     declaration: &ConversationCheckDeclaration,
     material: &CompactionCheckMaterial,
@@ -524,12 +575,15 @@ fn parts(
     // The turn's window text, as its writer's pieces cut it.
     let window = format!("{}: {text}", span.role);
     let total = window.len();
+    let sealed = material.sealed_request();
+    let pins = pins_evidence(&sealed.pins, &window);
     match reading {
         ConversationTurnReading::Head { end } => {
             let end = usize::try_from(*end).ok()?;
             let head = window.get(..end)?;
-            let evidence =
-                format!("[0] {head}\n[cut: only bytes 0..{end} of this turn's {total} were given]");
+            let evidence = format!(
+                "[0] {head}\n[cut: only bytes 0..{end} of this turn's {total} were given]{pins}"
+            );
             Some(vec![Part {
                 piece: None,
                 summary: words,
@@ -537,7 +591,6 @@ fn parts(
             }])
         }
         ConversationTurnReading::Pieces { pieces } => {
-            let sealed = material.sealed_request();
             let [entry] = sealed.window.as_slice() else {
                 return None;
             };
@@ -557,7 +610,7 @@ fn parts(
                     evidence,
                 });
             }
-            let evidence = format!("[0] {}: {}", span.role, entry.content);
+            let evidence = format!("[0] {}: {}{pins}", span.role, entry.content);
             parts.push(Part {
                 piece: None,
                 summary: words,
@@ -566,6 +619,26 @@ fn parts(
             Some(parts)
         }
     }
+}
+
+/// The verbatim pins a writer given `pins` beside a turn's entry or head
+/// had to copy, as its summary's evidence carries them: each pin `window`,
+/// the turn's window text as the Dreamer reads it now, holds word for word,
+/// under a line naming them; empty when it holds none. A pin the turn does
+/// not hold is no evidence of it.
+fn pins_evidence(pins: &[String], window: &str) -> String {
+    let held: Vec<&str> = pins
+        .iter()
+        .map(String::as_str)
+        .filter(|pin| !pin.trim().is_empty() && window.contains(pin))
+        .collect();
+    if held.is_empty() {
+        return String::new();
+    }
+    format!(
+        "\n[verbatim pins its writer was given and copied, each word for word in this turn]\n{}",
+        held.join("\n")
+    )
 }
 
 /// The span as the judge reads it: each turn by its place in the span, who
