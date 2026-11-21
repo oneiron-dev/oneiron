@@ -182,6 +182,19 @@ impl PartitionRun {
         }
     }
 
+    /// [`Self::refused_by`] once the paid usage `error` carries (a spent
+    /// correction's, a window refusal's after a paid reply among them) has
+    /// joined `charges`, so the run's end settles it (FIX 11554).
+    pub(super) fn refused_with_spend(
+        error: DurableStepError,
+        charges: &mut StepChargeTally,
+    ) -> Self {
+        if let Some(usage) = error.spent_usage() {
+            charges.record_usage(usage);
+        }
+        Self::refused_by(error)
+    }
+
     /// This run with work that waits on a role's answer: what it took is kept,
     /// and the attempt comes back to read the ask again.
     pub(super) fn waiting_on_ask(self, now_ms: u64) -> Self {

@@ -543,7 +543,7 @@ impl ConsolidationExecutor<'_> {
                     reason: format!("correction read refused: {}", errors.join("; ")),
                 })
             }
-            Err(error) => PortServed::End(PartitionRun::refused_by(error)),
+            Err(error) => PortServed::End(PartitionRun::refused_with_spend(error, charges)),
         })
     }
 }

@@ -497,7 +497,7 @@ impl ConsolidationExecutor<'_> {
                     reason: format!("correction read refused: {}", errors.join("; ")),
                 });
             }
-            Err(error) => return Ok(PartitionRun::refused_by(error)),
+            Err(error) => return Ok(PartitionRun::refused_with_spend(error, charges)),
         };
         if ctx.deadline.expired() || ctx.cancel_requested() {
             return Ok(PartitionRun::Checkpoint);
