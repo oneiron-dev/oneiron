@@ -287,9 +287,20 @@ fn presence_in(vault: &Vault, txn: &RoTxn<'_>, row: &EntityId) -> Result<Presenc
     })
 }
 
-/// Whether `row` is erased here: its deletion shell or record stands.
+/// Whether `row` is erased here: its own delete stands fenced or torn, or
+/// its tombstone is recorded. A cleanup archive is no erase: it tears
+/// nothing, and a restore brings the row back whole, so an archived row
+/// keeps its wait and its marks (#10117 Opus review P1-1).
 fn erased_in(store: &crate::store::Store, txn: &RoTxn<'_>, row: &EntityId) -> Result<bool> {
-    Ok(crate::ports::TombstoneStoreRead::port_deletion_state(store, txn, row)?.deleted)
+    crate::ports::removed_in_txn(store, txn, row)
+}
+
+/// Whether `row` is archived here and not erased ([`erased_in`]).
+fn archived_in(store: &crate::store::Store, txn: &RoTxn<'_>, row: &EntityId) -> Result<bool> {
+    Ok(
+        crate::ports::TombstoneStoreRead::port_deletion_state(store, txn, row)?.archived
+            && !erased_in(store, txn, row)?,
+    )
 }
 
 /// Seals, in the write that erases `erased`, the floor of each row that
@@ -719,7 +730,7 @@ fn clear_page_in_txn(vault: &Vault, txn: &mut RwTxn<'_>) -> Result<(u64, Option<
 /// row id `after`, so a row whose wait resolved in a write that named no row
 /// waiting on it (an epoch's head that landed, an erased source, a
 /// dependency or a birth taken off it) settles. A waiting row gone from
-/// this vault loses its marks.
+/// this vault loses its marks; an archived one keeps them, and is raised.
 fn settle_page_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
@@ -738,7 +749,9 @@ fn settle_page_in_txn(
     }
     let mut live = BTreeSet::new();
     for row in &rows {
-        if crate::vault::live_entity_row_in_txn(&vault.store, txn, row)?.is_live() {
+        if crate::vault::live_entity_row_in_txn(&vault.store, txn, row)?.is_live()
+            || archived_in(&vault.store, txn, row)?
+        {
             live.insert(*row);
         } else {
             PENDING.delete(&vault.store, txn, row)?;
