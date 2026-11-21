@@ -49,7 +49,7 @@ impl PipelineBuilder<'_> {
         }
         let filters = self.bounded_result_filters(filters);
         let narrowed = self.has_codebase_scope_filter()
-            || self.has_strict_text_scope_filter()
+            || self.has_strict_scope_filter(filters)
             || filters.corpus_scope != &CorpusScope::All
             || filters.candidate_filter.is_some()
             || filters.device_local.is_some()
@@ -431,7 +431,7 @@ impl PipelineBuilder<'_> {
             rtxn,
             config.limit,
             self.has_codebase_scope_filter()
-                || self.has_strict_text_scope_filter()
+                || self.has_strict_scope_filter(filters)
                 || filters.corpus_scope != &CorpusScope::All
                 || filters.candidate_filter.is_some()
                 || self.memory_category,
@@ -511,7 +511,7 @@ impl PipelineBuilder<'_> {
                 rtxn,
                 config.limit,
                 filters,
-                self.has_strict_text_scope_filter(),
+                self.has_strict_scope_filter(filters),
                 (metadata_cache, claim_gate),
             )?;
             return Ok((scores, Vec::new()));
@@ -566,7 +566,7 @@ impl PipelineBuilder<'_> {
                 rtxn,
                 config.limit,
                 filters,
-                self.has_strict_text_scope_filter(),
+                self.has_strict_scope_filter(filters),
                 (metadata_cache, claim_gate),
             )?;
             return Ok((readable, withheld));
@@ -611,7 +611,7 @@ impl PipelineBuilder<'_> {
             rtxn,
             config.limit,
             filters,
-            self.has_strict_text_scope_filter(),
+            self.has_strict_scope_filter(filters),
             (metadata_cache, claim_gate),
         )?;
         Ok((scores, withheld))
@@ -647,7 +647,7 @@ impl PipelineBuilder<'_> {
     /// (vector and HyDE vector, text, temporal, typed media): the call's
     /// `made_by` slice joins the scope, so a row it drops takes no place in
     /// the fetch. A slice counts as a strict scope
-    /// ([`Self::has_strict_text_scope_filter`]), so these channels widen their
+    /// ([`Self::has_strict_scope_filter`]), so these channels widen their
     /// window and cut it to the slice. The run's shared config keeps every
     /// slice for the reads that judge rows other than results. Under a
     /// clamp, these channels' admission also asks the sources of a row's
@@ -734,15 +734,28 @@ impl PipelineBuilder<'_> {
         self.repo_ref_filter.is_some() || self.project_id_filter.is_some()
     }
 
-    pub(super) fn has_strict_text_scope_filter(&self) -> bool {
+    /// Whether the call's scope narrows what a bounded result channel may
+    /// fetch: the vector walk then asks it inside its window, the text scan
+    /// scores only the postings it admits, and the temporal window widens
+    /// and is cut to it. That holds for every check the post-blend filters
+    /// make of each row, the manifest's criticality tier and the stale
+    /// federated worlds the run read under [`WorldScope::All`]
+    /// (`filters.stale_worlds`) among them: a row either keeps out takes no
+    /// rank in the first blend and counts as no candidate in scope
+    /// (BOUNDED-CHANNEL-NARROWING-OMITS-CRITICALITY-STALE-DISCLOSURE). A
+    /// pack's disclosure clamp is asked apart, at each fetch and by
+    /// [`Self::retain_rows_the_clamp_admits`].
+    pub(super) fn has_strict_scope_filter(&self, filters: PipelineFilterConfig<'_>) -> bool {
         self.authority_filter.is_some()
             || self.type_filter.is_some()
+            || filters.criticality.is_some()
             || self.since_filter.is_some()
             || self.occurred_range.is_some()
             || self.learned_range.is_some()
             || matches!(self.facet_filter, Some((_, FacetMode::Strict)))
             || matches!(self.relationship_filter, Some((_, RelMode::Filter)))
             || self.world_scope != WorldScope::All
+            || filters.stale_worlds.is_some()
             || self.corpus_scope != CorpusScope::All
             || self.made_by != crate::provenance::made_by::MadeByPredicate::All
     }
