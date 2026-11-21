@@ -13,8 +13,9 @@ use super::channels::{
     truncate_widened_channel_results_to_scope,
 };
 use super::filters::{
-    claim_status_gate_allows, clamp_hides_row, import_claim_gate_decisions_for_scores,
-    made_by_admits, pipeline_candidate_matches_filters_and_gate,
+    claim_status_gate_allows, clamp_hides_row, clamp_hides_row_or_word_sources,
+    import_claim_gate_decisions_for_scores, made_by_admits,
+    pipeline_candidate_matches_filters_and_gate,
 };
 use super::temporal_bound::{
     ReadableRows, execute_temporal_for_reader, scoped_temporal_channel_limit,
@@ -122,9 +123,13 @@ impl PipelineBuilder<'_> {
     /// admits `id` to them: the call's filters and gate, its memory lane,
     /// and its made_by predicate, which the post-blend filter applies after
     /// the cut. A row it refuses sets no nearest distance and takes no place
-    /// under the cap (review #8107, both rounds). An unborn claim's class is
-    /// its admitted body's source; under a candidate filter the gate judged
-    /// the row in a cache of its own, so the body is read into `gate` here.
+    /// under the cap (review #8107, both rounds). Under a clamp it asks the
+    /// sources of the row's words too, as a bounded result channel's
+    /// admission does (`disclosure_word_sources`;
+    /// PACK-PRESELECT-CLAMP-ROW-ONLY-DISPLACES-READABLE-HIT). An unborn
+    /// claim's class is its admitted body's source; under a candidate filter
+    /// the gate judged the row in a cache of its own, so the body is read
+    /// into `gate` here.
     pub(super) fn phonetic_candidate_admits(
         &self,
         rtxn: &RoTxn<'_>,
@@ -133,6 +138,10 @@ impl PipelineBuilder<'_> {
         metadata: &mut EntityMetadataCache,
         gate: &mut ClaimStatusGateCache,
     ) -> Result<bool> {
+        let filters = PipelineFilterConfig {
+            disclosure_word_sources: Some(self.vault),
+            ..filters
+        };
         let scoped = pipeline_candidate_matches_filters_and_gate(
             &self.read, rtxn, id, filters, metadata, gate,
         )? && (!self.memory_category
@@ -228,8 +237,12 @@ impl PipelineBuilder<'_> {
     /// channel's fetch; one that meets every other check of the scope, the
     /// gate included, is returned, and the pack counts it among the rows its
     /// clamp withheld (`PipelineOutput::disclosure_clamped`), as main's
-    /// preselection counted it. The clamp's test here reads the row alone;
-    /// the preselection before the cuts asks a summary's sources too.
+    /// preselection counted it. The clamp's test here asks the sources of
+    /// the row's words too, as the pack's sweep does: the code list is
+    /// z-scored as a list of its hits and non-hits, so hits whose words come
+    /// from a row the audience may not read would set its scale and push a
+    /// readable hit below rows it outranks, in the blend and in the
+    /// expansion's implicit seeds (REVIEW-10215 round 2).
     pub(super) fn retain_phonetic_hits_in_scope(
         &self,
         rtxn: &RoTxn<'_>,
@@ -284,8 +297,9 @@ impl PipelineBuilder<'_> {
             )? {
                 continue;
             }
-            if crate::context_pack::retained_copies::clamp_prefilter_admits(
+            if crate::context_pack::retained_copies::clamp_admits(
                 clamp,
+                self.vault,
                 &self.read,
                 rtxn,
                 &scored.id,
@@ -435,17 +449,25 @@ impl PipelineBuilder<'_> {
         ));
         let sliced = self.made_by != crate::provenance::made_by::MadeByPredicate::All;
         // A clamped pack's audience joins the reader too: a row it could not
-        // read whatever its status counts toward no stop and takes no place
-        // under a scan's cap or in the bound, so hidden rows nearer the
-        // anchor cannot cut a row it may read out of the run before the
-        // clamp drops them (REVIEW-9980 round 1).
+        // read whatever its status, or one whose words come from a row it may
+        // not read, counts toward no stop and takes no place under a scan's
+        // cap or in the bound, so hidden rows nearer the anchor cannot cut a
+        // row it may read out of the run before the clamp drops them
+        // (REVIEW-9980 round 1; PACK-PRESELECT-CLAMP-ROW-ONLY-DISPLACES-READABLE-HIT).
         let clamp = filters.disclosure;
         let clamp_metadata = RefCell::new(EntityMetadataCache::default());
         let hides = |store: &crate::store::StoreRead<'_>,
                      txn: &RoTxn<'_>,
                      id: &crate::EntityId|
          -> Result<bool> {
-            clamp_hides_row(store, txn, id, clamp, &mut clamp_metadata.borrow_mut())
+            clamp_hides_row_or_word_sources(
+                self.vault,
+                store,
+                txn,
+                id,
+                clamp,
+                &mut clamp_metadata.borrow_mut(),
+            )
         };
         // The call's scope, asked before the clamp, and its slice, after: a
         // call without the clamp reads through these two alone.
@@ -627,13 +649,17 @@ impl PipelineBuilder<'_> {
     /// the fetch. A slice counts as a strict scope
     /// ([`Self::has_strict_text_scope_filter`]), so these channels widen their
     /// window and cut it to the slice. The run's shared config keeps every
-    /// slice for the reads that judge rows other than results.
+    /// slice for the reads that judge rows other than results. Under a
+    /// clamp, these channels' admission also asks the sources of a row's
+    /// words (`disclosure_word_sources`), as the pack's preselection does;
+    /// the shared config judges the row alone.
     pub(super) fn bounded_result_filters<'f>(
-        &self,
+        &'f self,
         filters: PipelineFilterConfig<'f>,
     ) -> PipelineFilterConfig<'f> {
         PipelineFilterConfig {
             made_by: self.made_by,
+            disclosure_word_sources: Some(self.vault),
             ..filters
         }
     }

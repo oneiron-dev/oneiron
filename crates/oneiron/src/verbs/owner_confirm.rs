@@ -17,9 +17,11 @@ use super::note_history::{self, NoteHistoryPurgeExecuteRequest, NoteHistoryPurge
 use super::outbound_call_erase::OutboundCallRequestEraseRequest;
 use super::record_erase::{RecordEraseConfirmRequest, record_erase_view};
 use super::shared::SharedDeleteProposeRequest;
+use super::turn_program_resume::turn_programs_resume_view;
 use crate::calendar::connectors::door::CalendarConnectorReleaseHoldRequest;
 use crate::check_in::{UndoClass, VerbActClass, verb_act_class};
 use crate::consent::AuthenticatedOwner;
+use crate::dreamer_runner::ResumePausedTurnProgramsRequest;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::memory::{MEMORY_CODE_OWNER_CONFIRM_REQUIRED, Memory, MemoryError, MemoryResult};
 use crate::side_table::{self, Named, SideTable};
@@ -67,10 +69,12 @@ pub struct OwnerConfirmRow {
 }
 
 /// Every verb the shared confirm gates, in verb-name order. Every one-way
-/// verb is here; so is the owner's release of a calendar hold, which is no
-/// one-way act but goes through the sheet by ruling
-/// (PLAN-CALENDAR-CONNECTOR-RELEASE-HOLD = A, the lead 21 Nov 09:40).
-pub static OWNER_CONFIRM_ROWS: [OwnerConfirmRow; 7] = [
+/// verb is here; so are two owner acts that are not one-way but go through
+/// the sheet by ruling: the release of a calendar hold
+/// (PLAN-CALENDAR-CONNECTOR-RELEASE-HOLD = A, the lead 21 Nov 09:40) and the
+/// resume of paused turn programs (ASK TURNPROGRAM-PAUSED-ARMINGS-OWNER-VERBS
+/// = A, the lead 21 Nov 10:01).
+pub static OWNER_CONFIRM_ROWS: [OwnerConfirmRow; 8] = [
     OwnerConfirmRow {
         verb: "calendar.connector.release_hold",
         proof: OwnerConfirmProof::Owner,
@@ -104,6 +108,11 @@ pub static OWNER_CONFIRM_ROWS: [OwnerConfirmRow; 7] = [
     OwnerConfirmRow {
         verb: "vault.shared.propose_delete",
         proof: OwnerConfirmProof::SharedPerson,
+        keep: PreviewKeep::Ttl,
+    },
+    OwnerConfirmRow {
+        verb: "vault.turn_programs.resume",
+        proof: OwnerConfirmProof::Owner,
         keep: PreviewKeep::Ttl,
     },
 ];
@@ -461,6 +470,14 @@ pub fn preview_owner_confirm(
         "vault.shared.propose_delete" => {
             let (_, bare) = confirm_free_input::<SharedDeleteProposeRequest>(request.input)?;
             (bare, Value::Null, false)
+        }
+        "vault.turn_programs.resume" => {
+            let (typed, bare) =
+                confirm_free_input::<ResumePausedTurnProgramsRequest>(request.input)?;
+            let view = turn_programs_resume_view(memory, caller, &typed, vault.now_recorded_at())?;
+            let shown = serde_json::to_value(&view)
+                .map_err(|_| MemoryError::bad_request("the resume preview does not encode"))?;
+            (bare, shown, true)
         }
         _ => {
             return Err(MemoryError::bad_request(format!(

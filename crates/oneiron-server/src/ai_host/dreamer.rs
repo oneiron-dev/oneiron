@@ -52,6 +52,8 @@ mod free_time;
 mod pause;
 mod request_sources;
 mod run_log;
+#[cfg(oneiron_test_support)]
+pub(crate) mod sourced_route_door;
 mod task_lend;
 mod urgent_digest;
 #[cfg(test)]
@@ -703,7 +705,11 @@ impl ObservedFactory {
             runs.insert(*role, (Arc::clone(ladder), run.clone()));
             // Each call the engine knows the rows of sends under them, on
             // this same run (FIX 6998).
-            let backend = Arc::new(SourcedRunBackend::new(Arc::clone(ladder), run));
+            let backend = Arc::new(SourcedRunBackend::new(
+                Arc::clone(ladder),
+                run,
+                Arc::clone(&self.vault),
+            ));
             roles = roles.with(
                 *role,
                 RoleBackend {
@@ -877,6 +883,7 @@ impl PassExecutorFactory for ObservedFactory {
                 role: *role,
                 route,
                 sends,
+                vault: &self.vault,
                 guard,
                 egress: self.egress,
                 actor: self.actor,
@@ -957,6 +964,7 @@ impl PassExecutorFactory for ObservedFactory {
                 role: *role,
                 route,
                 sends,
+                vault: &self.vault,
                 guard,
                 egress: self.egress,
                 actor: self.actor,
@@ -1203,7 +1211,7 @@ pub(super) type OwnModel = (
 /// own, else the weaver's narrative route and window. The diary stays its own.
 #[derive(Clone, Copy)]
 struct ResidentLend<'p> {
-    vault: &'p Vault,
+    vault: &'p Arc<Vault>,
     runtime: &'p ModelRuntime,
     weaver: &'p RoleBackend,
     /// The ladder `weaver` sends on, for a free-time item's own run.
@@ -1266,7 +1274,7 @@ impl ResidentLend<'_> {
                     cancel: ctx.device_cancel.clone().unwrap_or_default(),
                     ..Default::default()
                 });
-            let backend = SourcedRunBackend::new(ladder, run);
+            let backend = SourcedRunBackend::new(ladder, run, Arc::clone(self.vault));
             let egress = self
                 .egress
                 .then(|| extraction_egress(BTreeSet::from([model.clone()])));
@@ -1324,8 +1332,11 @@ impl ResidentLend<'_> {
                         .checked_add(Duration::from_millis(ctx.deadline.remaining_ms()));
                     let mut context = run.work_context();
                     context.deadline = deadline;
-                    lent =
-                        SourcedRunBackend::new(Arc::clone(ladder), run.with_work_context(context));
+                    lent = SourcedRunBackend::new(
+                        Arc::clone(ladder),
+                        run.with_work_context(context),
+                        Arc::clone(self.vault),
+                    );
                     (&lent, Some(&lent))
                 }
                 _ => (self.weaver.backend.as_ref(), self.weaver.sourced.as_deref()),

@@ -957,9 +957,10 @@ fn the_queued_logs_land_at_the_next_session_end_once_the_hand_over_sign_in_stand
 }
 
 /// A new plain `hosted login` registers another client, and the hand-over
-/// sign-in of the old one is no longer used: the next session end lands
-/// nothing on it and its log waits, so no session lands as an agent the
-/// recall sign-in no longer is.
+/// sign-in of the old one is signed out: its file goes and its refresh
+/// token no longer refreshes. The next session end lands nothing and its
+/// log waits, so no session lands as an agent the recall sign-in no longer
+/// is.
 #[test]
 fn a_new_recall_login_stops_the_old_hand_over_sign_in() {
     run_on_engine_stack("hosted-hand-over-relogin", || async {
@@ -972,9 +973,18 @@ fn a_new_recall_login_stops_the_old_hand_over_sign_in() {
         scratch.session_start(&served, FIRST_SESSION, &first).await;
         scratch.session_end(FIRST_SESSION, &first).await;
         assert_eq!(served.landed(), kept(FIRST_SESSION), "FIXTURE: it lands");
+        let hand_over_file = scratch.hand_over_file();
+        let held = read_json(&hand_over_file);
 
         let again = scratch.login(&served, &[]).await;
         assert_ne!(again.agent, recall.agent, "FIXTURE: another client");
+        assert!(
+            !hand_over_file.exists(),
+            "the old client's hand-over sign-in is gone"
+        );
+        let (status, body) = refresh_at_vault(&served, &held).await;
+        assert_eq!(status, 400, "it is revoked at the vault: {body}");
+        assert_eq!(body["error"], "invalid_grant", "{body}");
         let next = scratch.session_log(NEXT_SESSION);
         scratch.session_start(&served, NEXT_SESSION, &next).await;
         scratch.session_end(NEXT_SESSION, &next).await;
