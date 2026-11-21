@@ -146,6 +146,7 @@ pub(crate) const RETAINED_SUBJECT_RULES: &[(&str, RetainedSubjectRule)] = &[
     ("PROJECT_HISTORY_POLICY", NoRecord),
     // The actor, a colon, then its big-endian submission count.
     ("PROPOSAL_RECEIPT_HISTORY", RawIds { len: 25, ids: &[0] }),
+    ("READ_SHAPE_PINS", NoRecord),
     ("RETRIEVAL_POLICY_PINS", NoRecord),
     ("ROOM_THREADS_ADMIN_DELETE", NoRecord),
     ("ROOM_THREADS_ADMIN_WALK_IN", NoRecord),
