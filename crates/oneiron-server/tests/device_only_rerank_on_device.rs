@@ -15,6 +15,14 @@
 //! - A seat whose socket rung has an HTTP rung behind it is no on-device
 //!   route: the view drops a rung of the seat, so the socket stub is sent the
 //!   kept claim empty too (control, main and head).
+//! - Review round 1: a manifest's on-device pin of the socket reranker's
+//!   model reaches it by its own id and is sent the kept claim's words; a
+//!   view as long as its seat but holding a rung the seat's `leave_device`
+//!   refused is no on-device route; a kept world whose model order leaves no
+//!   rung of the on-device route has its block built as for a host off the
+//!   device, scored on the ordinary route with the kept claim empty. Red at
+//!   the round-1 head cda7e17a5b30: the pin is refused, the view is taken,
+//!   the call is refused.
 //!
 //! Each case recalls at high through `POST /v1/core/facade/vault.recall` as
 //! the owner, from this device, in the kept claim's WORLD with base reality,
@@ -28,6 +36,7 @@
 #[path = "support/engine_stack.rs"]
 mod engine_stack;
 
+use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -42,12 +51,15 @@ use axum::{
 };
 use ed25519_dalek::{Signer, SigningKey};
 use engine_stack::run_on_engine_stack;
-use oneiron::authority::{HostSlipIssuer, holder_proof_challenge};
+use oneiron::authority::{
+    ActSurface, HostSlipIssuer, ModelOrder, ReadLocation, WorldPrivacy, holder_proof_challenge,
+};
 use oneiron::federation::Scope;
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_WORLD};
+use oneiron::store::GateDecisionId;
 use oneiron::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EntityId, TimeRange, Vault,
-    VaultConfig,
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EntityId, ModelId,
+    ModelLocality, ModelTierRef, TimeRange, Vault, VaultConfig,
 };
 use oneiron_keystore::MemoryKeystore;
 use oneiron_server::ai_host::AiHost;
@@ -82,12 +94,17 @@ fn document(text: &str) -> String {
     format!("profile.note: {text}")
 }
 
-/// `[models]` whose reranker is `rungs`, beside the `house-rerank` provider
-/// served by a managed llama.cpp worker on its own socket for the reranker
-/// alone, and `extra` providers. Nothing is installed: the row's artifacts
-/// are paths under `dir` that do not exist, so its supervisor never
-/// launches, and the test door records the stub as its launch instead.
-fn socket_models(dir: &Path, rungs: &str, extra: &str) -> ModelsConfig {
+/// The socket rung's engine model id, which a manifest pins.
+const STUB_MODEL: &str = "house-rerank/stub-reranker@v1";
+/// The socket rung's ordinary offer (its provider's origin), not its
+/// on-device one.
+// testkit-lint: allow(fixed-port) a route name in a world's model order: nothing binds or calls it
+const STUB_ORDINARY_OFFER: &str = "house-rerank/stub-reranker@v1@127.0.0.1:18433";
+
+/// `[models]` whose `[roles.reranker]` table is `role`, beside the
+/// `house-rerank` provider served by a managed llama.cpp worker on its own
+/// socket for the reranker alone, and `extra` providers and rows.
+fn socket_models(dir: &Path, role: &str, extra: &str) -> ModelsConfig {
     let toml = format!(
         r#"
 [providers.house-rerank]
@@ -97,28 +114,31 @@ revision = "v1"
 timeout_secs = 20
 {extra}
 [roles.reranker]
-rungs = [{rungs}]
-
-[workers.{WORKER}]
-model = "house-rerank:stub-reranker"
-kind = "llama_cpp"
-mode = "managed"
-listen = "unix"
-weights_manifest = "{weights}"
-server = "{server}"
-server_sha256 = "{sha}"
-runtime_root = "{runtime}"
-
+{role}
+{row}
 [dreamer]
 enabled = false
 "#,
-        weights = dir.join("absent-weights.json").display(),
-        server = dir.join("absent-server-binary").display(),
-        sha = "0".repeat(64),
-        runtime = dir.join("rt").display(),
+        row = socket_row(dir, WORKER, "house-rerank:stub-reranker"),
     );
     ModelsConfig::from_toml(&toml, None)
         .unwrap_or_else(|error| panic!("FIXTURE: a listen = \"unix\" reranker row: {error:#}"))
+}
+
+/// A managed llama.cpp worker row `id` serving `model` on a Unix socket of
+/// its own. Nothing is installed: its artifacts are paths under `dir` that
+/// do not exist, so its supervisor never launches, and the test door records
+/// the stub as its launch instead.
+fn socket_row(dir: &Path, id: &str, model: &str) -> String {
+    format!(
+        "\n[workers.{id}]\nmodel = \"{model}\"\nkind = \"llama_cpp\"\nmode = \"managed\"\n\
+         listen = \"unix\"\nweights_manifest = \"{}\"\nserver = \"{}\"\nserver_sha256 = \"{}\"\n\
+         runtime_root = \"{}\"\n",
+        dir.join("absent-weights.json").display(),
+        dir.join("absent-server-binary").display(),
+        "0".repeat(64),
+        dir.join("rt").display(),
+    )
 }
 
 /// `[models]` whose reranker is reached over loopback HTTP at `base_url`.
@@ -382,10 +402,15 @@ impl Recalled {
 }
 
 /// A fresh vault served on `models`, its kept and portable claims seeded,
-/// recalled once at high as its owner, from this device. With `socket`, the
-/// stub on `<socket dir>/stub.sock` (logging to `<socket dir>/stub.log`) is
-/// recorded as the `listen = "unix"` row's launch first.
-async fn recall_kept(models: &ModelsConfig, socket: Option<&Path>) -> Recalled {
+/// `policy` set on it and the kept world, recalled once at high as its
+/// owner, from this device. With `socket`, the stub on
+/// `<socket dir>/stub.sock` (logging to `<socket dir>/stub.log`) is recorded
+/// as the `listen = "unix"` row's launch first.
+async fn recall_kept(
+    models: &ModelsConfig,
+    socket: Option<&Path>,
+    policy: fn(&Vault, EntityId),
+) -> Recalled {
     // This process launches managed workers, as plain serve does, before it
     // builds its models: the socket reranker's routes are captured then.
     permit_worker_launch();
@@ -418,6 +443,7 @@ async fn recall_kept(models: &ModelsConfig, socket: Option<&Path>) -> Recalled {
         .load_host_slip_issuer()
         .expect("device-only rerank host issuer");
     let world = seed(&vault, &issuer);
+    policy(&vault, world);
     let auth = owner_auth(&vault, &issuer);
     let mut request = Request::builder()
         .method("POST")
@@ -457,6 +483,104 @@ async fn recall_kept(models: &ModelsConfig, socket: Option<&Path>) -> Recalled {
     Recalled { status, body }
 }
 
+/// The vault's model policy as the seed leaves it: no manifest, every
+/// world's model order inherited.
+fn seeded_policy(_vault: &Vault, _world: EntityId) {}
+
+/// The owner, authenticated on this install.
+fn owner(vault: &Vault) -> oneiron::consent::AuthenticatedOwner {
+    let person = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    vault
+        .authenticate_owner(person, &person.to_hex(), true, GateDecisionId::now())
+        .expect("FIXTURE: the authenticated owner")
+}
+
+/// A model manifest pinning every role to [`STUB_MODEL`] on the LLM slot
+/// routed on this device (the extraction encoder to its encoder id on the
+/// Oneironer slot), its teacher probe-approved, as an owner pins one.
+fn pin_stub_on_device(vault: &Vault, _world: EntityId) {
+    use oneiron::llm::manifest::{
+        MODEL_ROLES, ModelBinding, ModelManifest, ModelRole, ModelSlot, TeacherProbeApproval,
+    };
+    let model = ModelId::new(STUB_MODEL).expect("model id");
+    let encoder = ModelId::new("house-rerank/stub-reranker-encoder@v1").expect("encoder id");
+    let binding = |model: &ModelId, slot| ModelBinding {
+        model: model.clone(),
+        slot,
+        tier: ModelTierRef("pinned".into()),
+        route_models: BTreeMap::new(),
+        disposition: None,
+        reads_audio: false,
+    };
+    let manifest = ModelManifest {
+        version: 2,
+        roles: MODEL_ROLES
+            .into_iter()
+            .map(|role| match role {
+                ModelRole::ExtractionEncoder => (role, binding(&encoder, ModelSlot::Oneironer)),
+                _ => (role, binding(&model, ModelSlot::Llm)),
+            })
+            .collect(),
+        routes: [ModelSlot::Llm, ModelSlot::Embedder, ModelSlot::Oneironer]
+            .into_iter()
+            .map(|slot| (slot, ModelLocality::OnDevice))
+            .collect(),
+        verdict: None,
+        seat_policy: None,
+    };
+    let policy = vault
+        .teacher_probe_policy(None)
+        .expect("teacher probe policy");
+    let approval = TeacherProbeApproval::for_scored_checkpoint(&manifest, &policy, 1_000_000)
+        .expect("teacher probe approval");
+    vault
+        .set_model_manifest_with_teacher_approval(&manifest, &approval)
+        .expect("FIXTURE: the owner's on-device model manifest");
+}
+
+/// The kept world, still kept on this machine, with a model order naming
+/// only the socket rung's ordinary offer ([`STUB_ORDINARY_OFFER`]).
+fn order_kept_world(vault: &Vault, world: EntityId) {
+    let machine = vault
+        .local_machine()
+        .expect("local machine")
+        .expect("FIXTURE: keeping the world enrolled this install")
+        .id;
+    let privacy = WorldPrivacy {
+        read: ReadLocation::OneMachine(machine),
+        models: ModelOrder::Ordered(vec![STUB_ORDINARY_OFFER.to_owned()]),
+        ..WorldPrivacy::default()
+    };
+    vault
+        .set_world_privacy_as(&owner(vault), ActSurface::ThisInstall, world, privacy, None)
+        .expect("FIXTURE: the owner orders the kept world's models");
+}
+
+/// The one rerank request the socket stub of `dir` was sent, read as the
+/// block of a host off the device: the kept claim empty, the portable claim
+/// with its words.
+fn assert_kept_row_sent_empty(dir: &Path) {
+    let posts = stub_rerank_bodies(&dir.join("stub.log"));
+    assert_eq!(
+        posts.len(),
+        1,
+        "one rerank call went on the socket: {posts:?}"
+    );
+    let sent = documents(&posts[0]);
+    assert!(
+        !sent.contains(&document(KEPT)),
+        "the kept claim's words are not sent: {sent:?}"
+    );
+    assert!(
+        sent.iter().any(String::is_empty),
+        "the kept claim goes empty: {sent:?}"
+    );
+    assert!(
+        sent.contains(&document(PORTABLE)),
+        "FIXTURE: the portable claim is in the block: {sent:?}"
+    );
+}
+
 /// Head: the reranker's one rung is the socket worker, so its on-device view
 /// serves every rung of the seat. The recall sends the kept claim's words on
 /// the socket, the stub scores it by the query's words, and it ranks first.
@@ -466,42 +590,43 @@ fn kept_rows_are_reranked_with_their_words_on_a_socket_reranker() {
     let _turn = HOST_TURN.lock().unwrap_or_else(PoisonError::into_inner);
     run_on_engine_stack("device-only-rerank-socket", || async {
         let dir = tempfile::tempdir().expect("models dir");
-        let models = socket_models(
-            dir.path(),
-            r#"{ model = "house-rerank:stub-reranker" }"#,
-            "",
-        );
-        let recalled = recall_kept(&models, Some(dir.path())).await;
+        let models = socket_models(dir.path(), ONE_SOCKET_RUNG, "");
+        let recalled = recall_kept(&models, Some(dir.path()), seeded_policy).await;
         assert_eq!(recalled.status, StatusCode::OK, "{}", recalled.body);
-
-        let posts = stub_rerank_bodies(&dir.path().join("stub.log"));
-        assert_eq!(
-            posts.len(),
-            1,
-            "one rerank call went on the socket: {posts:?}"
-        );
-        let sent = documents(&posts[0]);
-        assert!(
-            sent.contains(&document(KEPT)),
-            "the kept claim's words reach the reranker on this device: {sent:?}"
-        );
-        assert!(
-            sent.contains(&document(PORTABLE)),
-            "FIXTURE: the portable claim is in the block: {sent:?}"
-        );
-        assert_eq!(
-            recalled.rerank_status(),
-            "applied",
-            "the block is in the reranker's order: {}",
-            recalled.body
-        );
-        let texts = recalled.item_texts();
-        assert_eq!(
-            texts.first().map(String::as_str),
-            Some(KEPT),
-            "the kept claim holds every word of the query and ranks first: {texts:?}"
-        );
+        assert_kept_row_reranked_first(dir.path(), &recalled);
     });
+}
+
+/// The socket stub of `dir` was sent the kept claim's words in one call, and
+/// the recall ranks the kept claim first, in the stub's order.
+fn assert_kept_row_reranked_first(dir: &Path, recalled: &Recalled) {
+    let posts = stub_rerank_bodies(&dir.join("stub.log"));
+    assert_eq!(
+        posts.len(),
+        1,
+        "one rerank call went on the socket: {posts:?}"
+    );
+    let sent = documents(&posts[0]);
+    assert!(
+        sent.contains(&document(KEPT)),
+        "the kept claim's words reach the reranker on this device: {sent:?}"
+    );
+    assert!(
+        sent.contains(&document(PORTABLE)),
+        "FIXTURE: the portable claim is in the block: {sent:?}"
+    );
+    assert_eq!(
+        recalled.rerank_status(),
+        "applied",
+        "the block is in the reranker's order: {}",
+        recalled.body
+    );
+    let texts = recalled.item_texts();
+    assert_eq!(
+        texts.first().map(String::as_str),
+        Some(KEPT),
+        "the kept claim holds every word of the query and ranks first: {texts:?}"
+    );
 }
 
 /// Control (main and head): a reranker over loopback HTTP does not run on
@@ -512,7 +637,7 @@ fn a_loopback_http_reranker_is_sent_a_kept_row_empty() {
     let _turn = HOST_TURN.lock().unwrap_or_else(PoisonError::into_inner);
     run_on_engine_stack("device-only-rerank-http", || async {
         let fake = FakeReranker::start().await;
-        let recalled = recall_kept(&http_models(&fake.base_url), None).await;
+        let recalled = recall_kept(&http_models(&fake.base_url), None, seeded_policy).await;
         assert_eq!(recalled.status, StatusCode::OK, "{}", recalled.body);
         let seen = fake.seen();
         assert_eq!(seen.len(), 1, "one rerank call went over HTTP: {seen:?}");
@@ -544,34 +669,98 @@ fn a_seat_with_an_http_rung_behind_its_socket_rung_sends_a_kept_row_empty() {
         let dir = tempfile::tempdir().expect("models dir");
         let models = socket_models(
             dir.path(),
-            r#"{ model = "house-rerank:stub-reranker" }, { model = "loopback:fake-reranker" }"#,
-            &format!(
-                "\n[providers.loopback]\nkind = \"local-openai-compat\"\nbase_url = \"{}\"\nrevision = \"v1\"\n",
-                fake.base_url
-            ),
+            r#"rungs = [{ model = "house-rerank:stub-reranker" }, { model = "loopback:fake-reranker" }]"#,
+            &loopback_provider(&fake.base_url),
         );
-        let recalled = recall_kept(&models, Some(dir.path())).await;
+        let recalled = recall_kept(&models, Some(dir.path()), seeded_policy).await;
         assert_eq!(recalled.status, StatusCode::OK, "{}", recalled.body);
-
-        let posts = stub_rerank_bodies(&dir.path().join("stub.log"));
-        assert_eq!(
-            posts.len(),
-            1,
-            "the socket rung answers the one rerank call: {posts:?}"
-        );
+        assert_kept_row_sent_empty(dir.path());
         assert_eq!(fake.calls(), 0, "the HTTP rung behind it is not called");
-        let sent = documents(&posts[0]);
-        assert!(
-            !sent.contains(&document(KEPT)),
-            "a seat that can fall back off the device is sent no kept words: {sent:?}"
+    });
+}
+
+/// The reranker's one rung: the socket worker.
+const ONE_SOCKET_RUNG: &str = r#"rungs = [{ model = "house-rerank:stub-reranker" }]"#;
+
+/// The `loopback` provider, reached over HTTP at `base_url`.
+fn loopback_provider(base_url: &str) -> String {
+    format!(
+        "\n[providers.loopback]\nkind = \"local-openai-compat\"\nbase_url = \"{base_url}\"\nrevision = \"v1\"\n"
+    )
+}
+
+/// Review round 1, P1 1: a manifest pins the socket rung's model by its own
+/// id at the on-device route. Its route is that model's on-device offer, the
+/// socket alone, so the recall sends the kept claim's words on it. Red at
+/// cda7e17a5b30: no on-device offer is known by that id, the pin is refused
+/// and nothing is sent.
+#[test]
+fn a_manifest_pin_on_device_of_the_socket_model_is_sent_kept_words() {
+    let _turn = HOST_TURN.lock().unwrap_or_else(PoisonError::into_inner);
+    run_on_engine_stack("device-only-rerank-manifest", || async {
+        let dir = tempfile::tempdir().expect("models dir");
+        let models = socket_models(dir.path(), ONE_SOCKET_RUNG, "");
+        let recalled = recall_kept(&models, Some(dir.path()), pin_stub_on_device).await;
+        assert_eq!(recalled.status, StatusCode::OK, "{}", recalled.body);
+        assert_kept_row_reranked_first(dir.path(), &recalled);
+    });
+}
+
+/// Review round 1, P1 2: under `leave_device = "never"` the seat drops a
+/// socket rung whose provider is third-party, while its on-device view keeps
+/// it and has no rung for the HTTP rung: seat [socket, HTTP], view [socket,
+/// third-party socket], as many rungs each. The view is not the seat, so the
+/// socket stub is sent the kept claim empty and the HTTP rung is not called.
+/// Red at cda7e17a5b30: equal counts took the view.
+#[test]
+fn a_view_holding_a_rung_the_seat_refused_sends_a_kept_row_empty() {
+    let _turn = HOST_TURN.lock().unwrap_or_else(PoisonError::into_inner);
+    run_on_engine_stack("device-only-rerank-refused-rung", || async {
+        let fake = FakeReranker::start().await;
+        let dir = tempfile::tempdir().expect("models dir");
+        let paid = format!(
+            r#"
+[providers.paid-rerank]
+kind = "local-openai-compat"
+base_url = "http://127.0.0.1:18434" # testkit-lint: allow(fixed-port) config text: nothing binds or calls a provider its socket rows serve
+revision = "v1"
+locality = "third_party"
+{row}{loopback}"#,
+            row = socket_row(
+                &dir.path().join("paid"),
+                "paid-socket",
+                "paid-rerank:stub-reranker"
+            ),
+            loopback = loopback_provider(&fake.base_url),
         );
-        assert!(
-            sent.iter().any(String::is_empty),
-            "the kept claim goes empty: {sent:?}"
+        let models = socket_models(
+            dir.path(),
+            r#"rungs = [{ model = "house-rerank:stub-reranker" }, { model = "paid-rerank:stub-reranker" }, { model = "loopback:fake-reranker" }]
+leave_device = "never""#,
+            &paid,
         );
-        assert!(
-            sent.contains(&document(PORTABLE)),
-            "FIXTURE: the portable claim is in the block: {sent:?}"
-        );
+        let recalled = recall_kept(&models, Some(dir.path()), seeded_policy).await;
+        assert_eq!(recalled.status, StatusCode::OK, "{}", recalled.body);
+        assert_kept_row_sent_empty(dir.path());
+        assert_eq!(fake.calls(), 0, "the HTTP rung behind it is not called");
+    });
+}
+
+/// Review round 1, P1 3: the kept world's model order names only the socket
+/// rung's ordinary offer, so the on-device route has no rung for a block
+/// that carries the kept claim's words. The block is built as for a host off
+/// the device: the kept claim goes empty, and the call takes the ordinary
+/// route, which the order of the rows sent with words (base reality alone)
+/// leaves. Red at cda7e17a5b30: the on-device call is refused, nothing is
+/// sent and the recall fails.
+#[test]
+fn a_kept_world_ordering_no_on_device_rung_sends_its_row_empty() {
+    let _turn = HOST_TURN.lock().unwrap_or_else(PoisonError::into_inner);
+    run_on_engine_stack("device-only-rerank-world-order", || async {
+        let dir = tempfile::tempdir().expect("models dir");
+        let models = socket_models(dir.path(), ONE_SOCKET_RUNG, "");
+        let recalled = recall_kept(&models, Some(dir.path()), order_kept_world).await;
+        assert_eq!(recalled.status, StatusCode::OK, "{}", recalled.body);
+        assert_kept_row_sent_empty(dir.path());
     });
 }
