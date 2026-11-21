@@ -189,10 +189,16 @@ impl PipelineBuilder<'_> {
     /// world the run's scoped reader may not read
     /// ([`crate::claim::ScopedReadActorKey::world_withheld_rows_in`]: its
     /// verified credential's worlds and its holder's standing agent Grants).
+    /// A run scored for a scoped read ([`Self::statistics_read`]) asks that
+    /// read instead, which also hides every other row it refuses and counts
+    /// nowhere ([`crate::claim::ScopedRead::withheld_row_test_in`]; FIX
+    /// SCOPED-BM25-DF-COUNTS-NON-WORLD-REFUSED-POSTINGS).
     /// What the run only selects still counts: its types, corpus or
     /// category, a named world or world set, the worlds a turn chose inside
-    /// its ALLOWED-SET, the worlds a read asked for. `None` when nothing
-    /// keeps a row from the reader.
+    /// its ALLOWED-SET, the worlds a read asked for (save, under a scoped
+    /// read, a row with no count whatever its worlds, such as a NOTE, that
+    /// those worlds leave out). `None` when nothing keeps a row from the
+    /// reader.
     ///
     /// Each row it judges is a deadline checkpoint, as at the scope's
     /// admission: a term's document frequency asks it of every posting. It
@@ -211,14 +217,19 @@ impl PipelineBuilder<'_> {
         let device_local = filter_config
             .device_local
             .filter(|flagged| !flagged.is_empty());
-        let reader = match self.statistics_reader_key() {
-            Some(key) => key.world_withheld_rows_in(self.vault, rtxn)?,
+        let mut scoped = match self.statistics_read {
+            Some(read) => Some(read.withheld_row_test_in(rtxn)?),
             None => None,
+        };
+        let reader = match (&scoped, self.statistics_reader_key()) {
+            (None, Some(key)) => key.world_withheld_rows_in(self.vault, rtxn)?,
+            _ => None,
         };
         if clamp.is_none()
             && device_local.is_none()
             && world_allowed_set.is_none()
             && reader.is_none()
+            && scoped.is_none()
         {
             return Ok(None);
         }
@@ -243,6 +254,10 @@ impl PipelineBuilder<'_> {
                 }
                 || match &reader {
                     Some(withheld) => withheld.withholds_in(&self.read, rtxn, id)?,
+                    None => false,
+                }
+                || match scoped.as_mut() {
+                    Some(withheld) => withheld(id)?,
                     None => false,
                 };
             answers.insert(*id, hidden);

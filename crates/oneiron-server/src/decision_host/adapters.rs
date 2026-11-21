@@ -232,7 +232,7 @@ impl DecisionProvider for SystemOneRung {
     }
 
     fn decide(&self, call: &DecisionCall<'_>) -> oneiron::Result<ProviderDecision> {
-        let failed = |what: &str| oneiron::Error::InvalidConfig(format!("system one: {what}"));
+        let failed = |what: &str| oneiron::Error::InvalidConfig(format!("{}: {what}", self.label));
         let abstain = ProviderDecision {
             answer: DecisionAnswer::Abstain,
             probability: None,
@@ -308,7 +308,7 @@ impl DecisionProvider for SystemOneRung {
                     request,
                     permit.lease(),
                     call.deadline.decision_time_left(),
-                ) => result.map_err(|error| seat_failure(&error)),
+                ) => result.map_err(|error| seat_failure(self.label, &error)),
             }
         });
         let answer = match asked {
@@ -338,7 +338,7 @@ impl DecisionProvider for SystemOneRung {
     }
 
     fn decide_pack(&self, pack: &DecisionPack<'_>) -> oneiron::Result<Vec<ProviderDecision>> {
-        let failed = |what: &str| oneiron::Error::InvalidConfig(format!("system one: {what}"));
+        let failed = |what: &str| oneiron::Error::InvalidConfig(format!("{}: {what}", self.label));
         let abstain = || ProviderDecision {
             answer: DecisionAnswer::Abstain,
             probability: None,
@@ -447,7 +447,7 @@ impl DecisionProvider for SystemOneRung {
                 () = cancel.cancelled() => Err(failed("the seat call was cancelled")),
                 answer = self.seat.ask_pack(
                     request, permit.lease(), pack.deadline.decision_time_left(),
-                ) => answer.map_err(|error| seat_failure(&error)),
+                ) => answer.map_err(|error| seat_failure(self.label, &error)),
             }
         });
         let settled = match &asked {
@@ -480,7 +480,7 @@ impl DecisionProvider for SystemOneRung {
 /// A seat read whose server stopped at its token cap is the cap, as the house
 /// read's is: the ladder records the rung and steps up past it (Engine ruling
 /// L2-31-ROUTE). Any other seat failure fails the call.
-fn seat_failure(error: &oneiron::LlmError) -> oneiron::Error {
+fn seat_failure(label: &str, error: &oneiron::LlmError) -> oneiron::Error {
     if matches!(
         error,
         oneiron::LlmError::Fatal(oneiron::FatalLlmError::LabelRead(
@@ -489,7 +489,7 @@ fn seat_failure(error: &oneiron::LlmError) -> oneiron::Error {
     ) {
         return oneiron::Error::DecisionReadTokenCap;
     }
-    oneiron::Error::InvalidConfig(format!("system one: the seat failed: {error}"))
+    oneiron::Error::InvalidConfig(format!("{label}: the seat failed: {error}"))
 }
 
 impl SystemOneRung {
@@ -503,7 +503,7 @@ impl SystemOneRung {
         request: SeatRequest,
         run: &RunAdmission,
     ) -> oneiron::Result<ProviderDecision> {
-        let failed = |what: &str| oneiron::Error::InvalidConfig(format!("system one: {what}"));
+        let failed = |what: &str| oneiron::Error::InvalidConfig(format!("{}: {what}", self.label));
         // An off-record caller's run names no rows (census L5-25).
         let run = run_for_caller(&self.vault, run.sourced(Some(call.evidence.to_vec())));
         let permit = run
@@ -555,7 +555,7 @@ impl SystemOneRung {
         settled.map_err(|_| failed("settlement refused"))?;
         let answer = match asked.result {
             Ok(answer) => answer,
-            Err(error) => return Err(seat_failure(&error)),
+            Err(error) => return Err(seat_failure(self.label, &error)),
         };
         let abstained = answer.answer == DecisionAnswer::Abstain;
         Ok(ProviderDecision {
@@ -652,6 +652,10 @@ impl DecisionProvider for ClaimBodyRead<'_> {
 
     fn cost_per_thousand(&self) -> Option<f64> {
         self.inner.cost_per_thousand()
+    }
+
+    fn held(&self) -> oneiron::Result<bool> {
+        self.inner.held()
     }
 
     fn decide(&self, call: &DecisionCall<'_>) -> oneiron::Result<ProviderDecision> {

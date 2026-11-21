@@ -54,6 +54,28 @@ pub(crate) fn stamp_birth_with_floor_in_txn(
     crate::source_audience::raise_floors_in_txn(vault, txn, [*row])
 }
 
+/// Seals the row `row`, which arrived with its birth (sync, an archive), when
+/// the write that stamped that birth here names an input this vault erased,
+/// as a local birth is sealed; then raises its floor, as
+/// [`stamp_birth_with_floor_in_txn`] does. `before` is the row's birth as it
+/// stood before the stamp: a birth already here is not stamped again, and
+/// seals nothing (#9289 Opus review 3 P2-4).
+///
+/// # Errors
+///
+/// Storage failures.
+pub(crate) fn raise_landed_birth_floor_in_txn(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    row: &crate::EntityId,
+    before: Option<&RowBirth>,
+) -> crate::Result<()> {
+    if row_birth_in_txn(&vault.store, txn, row)?.as_ref() != before {
+        crate::source_audience::seal_births_from_erased_inputs_in_txn(vault, txn, &[*row])?;
+    }
+    crate::source_audience::raise_floors_in_txn(vault, txn, [*row])
+}
+
 /// [`stamp_birth_if_absent_in_txn`], then the row's floor, as
 /// [`stamp_birth_with_floor_in_txn`] raises it.
 ///

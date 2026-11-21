@@ -333,16 +333,23 @@ pub(in crate::sync) fn stamp_carried_birth_in_txn(
     stamp_birth_or_warn(vault, wtxn, id, &birth)
 }
 
-pub(in crate::sync) fn stamp_birth_or_warn(
+pub(crate) fn stamp_birth_or_warn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     id: &EntityId,
     birth: &RowBirth,
 ) -> Result<()> {
+    let before = crate::provenance::birth::row_birth_in_txn(&vault.store, wtxn, id)?;
     match stamp_replicated_row_birth_in_txn(&vault.store, wtxn, id, birth) {
         // READ-LINEAGE L1 hook 1: a row that arrived with its birth reads
-        // under the inputs this vault holds, beside the floor it carried.
-        Ok(()) => crate::source_audience::raise_floors_in_txn(vault, wtxn, [*id]),
+        // under the inputs this vault holds, beside the floor it carried;
+        // a birth naming an input this vault erased seals it.
+        Ok(()) => crate::provenance::birth::raise_landed_birth_floor_in_txn(
+            vault,
+            wtxn,
+            id,
+            before.as_ref(),
+        ),
         Err(err @ (Error::InvalidConfig(_) | Error::InvariantViolation(_))) => {
             tracing::warn!(entity = %id.to_hex(), error = %err, "carried row birth refused");
             Ok(())

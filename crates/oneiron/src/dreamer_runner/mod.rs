@@ -87,9 +87,10 @@ pub(crate) use self::program::{
     TurnProgramEntered, arm_turn_program_in_txn, bind_program_write_in_txn,
     disarm_turn_program_in_txn, drain_turn_program_wakes, erase_turn_program_actor_in_txn,
     is_withdrawal_refusal, join_program_checkpoint_in_txn, note_program_write_uncertain,
-    program_actor_for_attempt_in_txn, program_milestone_envelope, record_turn_program_wakes_in_txn,
-    release_idle_programs, release_program_wakes, settle_program_outbound_in_txn,
-    settle_program_write_in_txn, turn_program_erase_details, turn_programs_armed_in_txn,
+    pause_occurrence_armings_in_txn, program_actor_for_attempt_in_txn, program_milestone_envelope,
+    record_turn_program_wakes_in_txn, release_idle_programs, release_program_wakes,
+    settle_program_outbound_in_txn, settle_program_write_in_txn, turn_program_erase_details,
+    turn_programs_armed_in_txn,
 };
 // FIX 5266: a turn program's rows on the window plane, for the sync carriers.
 #[cfg(feature = "sync")]
@@ -113,6 +114,10 @@ pub use self::program::{
     ProgramTryView, SettledProgramStepRequest, SettledProgramStepView, TurnProgramAdmissionItem,
     TurnProgramAdmissionRequest, TurnProgramAdmissionView, TurnProgramOwedWakeItem,
     program_checkpoint, program_run, settled_program_step, turn_program_admission,
+};
+// FIX TURNPROGRAM-OCCURRENCE-ARMINGS-LIVE-ON-A-VAULT-COPY: the paused programs of a vault copy.
+pub use self::program::{
+    PausedTurnProgramItem, PausedTurnProgramsRequest, PausedTurnProgramsView, paused_turn_programs,
 };
 // FIX 5880: the owner's release of a held turn program.
 pub use self::program::{

@@ -36,6 +36,15 @@
 //! (blind review round 1 of #9528): each record is a bare handle, which the
 //! wall reads as the handle of a record custody knows and leaves as it is.
 //!
+//! Such an erase also pins, beside each record, the newest custody slot
+//! custody held a value of it at (FIX ERASED-IDENTITY-ROTATION-GENERATION):
+//! a call made again is first read for those records' values up to those
+//! slots alone, the read the erase took. A record's slots only grow, and a
+//! value it takes later, by a rotation or at its current generation, is
+//! held past its pin, so it never changes how the identical call reads
+//! (blind review round 1 of #10138). Each record is then a pair of its bare
+//! handle and that slot, a number; a row erased before keeps bare handles.
+//!
 //! Such an erase reads its stand-in identity with custody too (FIX
 //! FENCE-ERASE-STAND-IN-DIGESTS-RAW-VALUE): each value base custody holds
 //! reads as the stand-in, as the handle the wall places for it does. A put
@@ -45,7 +54,7 @@
 //! written is kept, which a guess could be tested against.
 
 use std::borrow::Cow;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use rmpv::Value;
@@ -95,11 +104,22 @@ pub(in crate::code_run) struct ErasedRequest<'a> {
 
 /// The custody records an erased request named, by their bare handles in
 /// ascending order, and the digest of the request read for their values
-/// (FIX ERASED-IDENTITY-ONE-STAND-IN).
+/// (FIX ERASED-IDENTITY-ONE-STAND-IN). An erase since FIX
+/// ERASED-IDENTITY-ROTATION-GENERATION keeps each record as a pair of its
+/// handle and the custody slot it pinned it at.
 #[derive(Debug, Clone, Copy)]
 struct CustodyIdentity<'a> {
     identity: [u8; 32],
     records: &'a [Value],
+}
+
+/// The records a custody identity names, as its read takes them: their
+/// handles, and, for a row whose erase pinned them, each one's pinned
+/// custody slot.
+struct CustodyRecords {
+    known: Arc<KnownValues>,
+    handles: BTreeSet<String>,
+    through: Option<BTreeMap<String, u64>>,
 }
 
 impl<'a> ErasedRequest<'a> {
@@ -198,9 +218,9 @@ impl<'a> ErasedRequest<'a> {
     ) -> Result<ReplayRequestMatch> {
         let identity_meets = |request: &Value| -> Result<bool> {
             if let Some(custody) = self.custody
-                && let Some((custody_known, records)) = custody.known_records(known)?
+                && let Some(records) = custody.known_records(known)?
             {
-                return custody.meets(request, &custody_known, &records);
+                return custody.meets(request, &records);
             }
             for bodies in [NestedBodies::Read, NestedBodies::AsWritten] {
                 if canonical_digest(request, None, bodies)? == self.identity {
@@ -232,17 +252,20 @@ impl<'a> ErasedRequest<'a> {
 impl<'a> CustodyIdentity<'a> {
     /// `identity` and `records`, the parts of an erased request's identity
     /// past its stand-in identity, read as a custody identity, in its one
-    /// spelling: its digest, then at least one record, each a text, in
-    /// ascending order.
+    /// spelling: its digest, then at least one record in ascending order of
+    /// handle, each a text, or each a pair of a text and a custody slot.
     fn of(identity: &'a Value, records: &'a [Value]) -> Option<Self> {
         let Value::Binary(identity) = identity else {
             return None;
         };
         let names = records
             .iter()
-            .map(Value::as_str)
-            .collect::<Option<Vec<&str>>>()?;
-        if names.is_empty() || !names.windows(2).all(|pair| pair[0] < pair[1]) {
+            .map(pinned_record)
+            .collect::<Option<Vec<(&str, Option<u64>)>>>()?;
+        let one_spelling = names.iter().all(|(_, pin)| pin.is_some())
+            || names.iter().all(|(_, pin)| pin.is_none());
+        if names.is_empty() || !one_spelling || !names.windows(2).all(|pair| pair[0].0 < pair[1].0)
+        {
             return None;
         }
         Some(Self {
@@ -251,26 +274,36 @@ impl<'a> CustodyIdentity<'a> {
         })
     }
 
-    /// Whether `request`, read for the values of `records` through
-    /// `custody_known`, digests as this identity: read with every value
-    /// those records hold, then, past a miss, with only those at most each
-    /// shorter length they hold, longest first. A record that took a longer
-    /// value since the erase, one spanning the erased value and the words
-    /// beside it, so reads the request as the erase read it. Each read
-    /// takes only those records' values as their handles, so a value
-    /// another record holds meets no read.
-    fn meets(
-        &self,
-        request: &Value,
-        custody_known: &Arc<KnownValues>,
-        records: &BTreeSet<String>,
-    ) -> Result<bool> {
-        if custody_digest(request, custody_known, records, None)? == self.identity {
+    /// Whether `request`, read for the values of `records`, digests as
+    /// this identity. A row whose erase pinned its records is first read
+    /// for their values up to each pinned custody slot alone: the read its
+    /// erase took, whatever values they took since (FIX
+    /// ERASED-IDENTITY-ROTATION-GENERATION). Past a miss, and for a row
+    /// erased before that fix, read with every value those records hold,
+    /// then with only those at most each shorter length they hold, longest
+    /// first: a record that took a longer value since the erase, one
+    /// spanning the erased value and the words beside it, so reads the
+    /// request as the erase read it, and a call made again with a value a
+    /// record took since still names that record. Each read takes only
+    /// those records' values as their handles, so a value another record
+    /// holds meets no read.
+    fn meets(&self, request: &Value, records: &CustodyRecords) -> Result<bool> {
+        let CustodyRecords {
+            known,
+            handles,
+            through,
+        } = records;
+        if let Some(through) = through
+            && custody_digest(request, known, handles, None, Some(through))? == self.identity
+        {
             return Ok(true);
         }
-        let lengths = custody_known.held_lengths(|handle| records.contains(handle));
+        if custody_digest(request, known, handles, None, None)? == self.identity {
+            return Ok(true);
+        }
+        let lengths = known.held_lengths(|handle| handles.contains(handle));
         for longest in lengths.into_iter().rev().skip(1) {
-            if custody_digest(request, custody_known, records, Some(longest))? == self.identity {
+            if custody_digest(request, known, handles, Some(longest), None)? == self.identity {
                 return Ok(true);
             }
         }
@@ -278,26 +311,33 @@ impl<'a> CustodyIdentity<'a> {
     }
 
     /// The values base custody holds, read through `known`, and the records
-    /// this identity names, while custody knows each of them; `None` once
-    /// it knows one no more (its holder's erase dropped its entries), or
-    /// when no custody read is in reach.
-    fn known_records(
-        &self,
-        known: &CompareKnown<'_>,
-    ) -> Result<Option<(Arc<KnownValues>, BTreeSet<String>)>> {
+    /// this identity names, with their pinned slots, while custody knows
+    /// each of them; `None` once it knows one no more (its holder's erase
+    /// dropped its entries), or when no custody read is in reach.
+    fn known_records(&self, known: &CompareKnown<'_>) -> Result<Option<CustodyRecords>> {
         let Some(custody_known) = known.get()? else {
             return Ok(None);
         };
-        let records: BTreeSet<String> = self
-            .records
+        let pinned: Vec<(&str, Option<u64>)> =
+            self.records.iter().filter_map(pinned_record).collect();
+        if !pinned
             .iter()
-            .filter_map(Value::as_str)
-            .map(str::to_owned)
-            .collect();
-        Ok(records
+            .all(|(handle, _)| custody_known.holds_handle(handle))
+        {
+            return Ok(None);
+        }
+        let through = pinned
             .iter()
-            .all(|handle| custody_known.holds_handle(handle))
-            .then_some((custody_known, records)))
+            .map(|&(handle, pin)| Some((handle.to_owned(), pin?)))
+            .collect::<Option<BTreeMap<String, u64>>>();
+        Ok(Some(CustodyRecords {
+            known: custody_known,
+            handles: pinned
+                .iter()
+                .map(|(handle, _)| (*handle).to_owned())
+                .collect(),
+            through,
+        }))
     }
 }
 
@@ -488,6 +528,20 @@ impl CodeRunBridgeCall {
     }
 }
 
+/// One record a custody identity names: its bare handle, and the custody
+/// slot its erase pinned it at when it pinned one (FIX
+/// ERASED-IDENTITY-ROTATION-GENERATION). `None` for any other value.
+fn pinned_record(record: &Value) -> Option<(&str, Option<u64>)> {
+    match record {
+        Value::String(_) => Some((record.as_str()?, None)),
+        Value::Array(pair) => match pair.as_slice() {
+            [handle, Value::Integer(slot)] => Some((handle.as_str()?, Some(slot.as_u64()?))),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 /// The value of `entry` when its key is `name`.
 fn keyed<'a>(entry: &'a (Value, Value), name: &str) -> Option<&'a Value> {
     (entry.0.as_str() == Some(name)).then_some(&entry.1)
@@ -623,8 +677,12 @@ fn custody_stand_in_digest(
 /// `effect` made keeps (FIX ERASED-IDENTITY-ONE-STAND-IN): the digest of its
 /// [`identity_part`] read for the values of the records that part names
 /// once read with the values base custody holds, through `custody`, then
-/// those records, by their bare handles. `None` with no custody read in
-/// reach, or when it names no record custody knows.
+/// those records, each a pair of its bare handle and the newest custody
+/// slot custody holds a value of it at (FIX
+/// ERASED-IDENTITY-ROTATION-GENERATION). The digest reads each record's
+/// values up to that slot, as a call made again is first read: every value
+/// custody holds of it now. `None` with no custody read in reach, or when
+/// it names no record custody knows.
 fn custody_identity(
     effect: SelfEffect,
     request: &Value,
@@ -635,13 +693,21 @@ fn custody_identity(
     };
     let part = identity_part(effect, request);
     let records = custody_records_named(&part, &known)?;
-    if records.is_empty() {
+    let through = records
+        .iter()
+        .map(|handle| Some((handle.clone(), known.held_slot(handle)?)))
+        .collect::<Option<BTreeMap<String, u64>>>();
+    let Some(through) = through.filter(|through| !through.is_empty()) else {
         return Ok(None);
-    }
-    let identity = custody_digest(&part, &known, &records, None)?;
+    };
+    let identity = custody_digest(&part, &known, &records, None, Some(&through))?;
     Ok(Some(
         std::iter::once(Value::Binary(identity.to_vec()))
-            .chain(records.into_iter().map(Value::from))
+            .chain(
+                through.into_iter().map(|(handle, slot)| {
+                    Value::Array(vec![Value::from(handle), Value::from(slot)])
+                }),
+            )
             .collect(),
     ))
 }
@@ -663,17 +729,19 @@ fn canonical_digest(
 
 /// The BLAKE3 digest of `request`'s canonical MessagePack, read for the
 /// values of `records` alone, through `known`, each as its record's handle
-/// ([`custody_record_form`]), only those at most `longest` bytes long when
-/// given: a custody identity.
+/// ([`custody_record_form`]), only those at most `longest` bytes long, and
+/// only those each record held by the custody slot `through` names for it,
+/// when given: a custody identity.
 fn custody_digest(
     request: &Value,
     known: &Arc<KnownValues>,
     records: &BTreeSet<String>,
     longest: Option<usize>,
+    through: Option<&BTreeMap<String, u64>>,
 ) -> Result<[u8; 32]> {
     digest(
         CUSTODY_IDENTITY_DOMAIN,
-        &custody_record_form(request, known, records, longest)?,
+        &custody_record_form(request, known, records, longest, through)?,
     )
 }
 

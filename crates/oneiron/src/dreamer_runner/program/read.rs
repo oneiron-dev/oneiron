@@ -17,6 +17,7 @@
 mod answer;
 mod checkpoint;
 mod owed;
+mod paused;
 mod views;
 
 use std::collections::BTreeSet;
@@ -58,6 +59,10 @@ pub use self::views::{
     ProgramTryView, SettledProgramStepRequest, SettledProgramStepView, TurnProgramAdmissionItem,
     TurnProgramAdmissionRequest, TurnProgramAdmissionView, TurnProgramOwedWakeItem,
 };
+
+// FIX TURNPROGRAM-OCCURRENCE-ARMINGS-LIVE-ON-A-VAULT-COPY: the paused programs of a vault copy.
+pub use self::paused::paused_turn_programs;
+pub use self::views::{PausedTurnProgramItem, PausedTurnProgramsRequest, PausedTurnProgramsView};
 
 /// Items a page carries when the request names no limit, and the most one
 /// carries.

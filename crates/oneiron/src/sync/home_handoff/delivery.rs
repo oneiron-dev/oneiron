@@ -191,7 +191,7 @@ fn move_to(
     generation: HomeGeneration,
 ) -> Result<Option<HomeMove>> {
     let fold = vault.authority_view_readonly_in_txn(txn)?;
-    let (Some(vault_id), Some(machine)) = (fold.vault_id, target_machine(&fold, to)) else {
+    let (Some(vault_id), Some(machine)) = (fold.vault_id, candidate_machine(&fold, to)) else {
         return Ok(None);
     };
     let target = HomeIdentity {
@@ -210,7 +210,7 @@ fn move_to(
 /// The one machine whose home candidacy names sync node `node` and that
 /// stands here as one of the owner's machines; `None` when none or more than
 /// one does. The candidacy's node id is the machine's own signed word.
-fn target_machine(fold: &AuthorityFold, node: u64) -> Option<EntityId> {
+pub(super) fn candidate_machine(fold: &AuthorityFold, node: u64) -> Option<EntityId> {
     let mut named = fold
         .home_candidacy
         .iter()

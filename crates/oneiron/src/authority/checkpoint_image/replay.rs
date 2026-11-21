@@ -270,6 +270,7 @@ fold_state_fields!(
     root_anchors,
     anchor_entries,
     host_custody_keys,
+    recovery_authority_keys,
     worlds,
     refused_world_edits,
     grant_travel,

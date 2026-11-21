@@ -768,6 +768,7 @@ mod execution {
                 },
                 &mut Delivered,
             )
+            .map(|run| run.item)
         }
     }
 

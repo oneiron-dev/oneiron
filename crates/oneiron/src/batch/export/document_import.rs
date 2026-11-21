@@ -726,6 +726,7 @@ impl Vault {
                 &mut wtxn,
                 &archive,
                 permit.as_ref(),
+                projects.as_ref(),
                 &mut side_refresh,
             )?;
         if let Some(receipt_ref) = receipt_ref.as_deref() {
@@ -954,6 +955,7 @@ impl Vault {
                 &mut wtxn,
                 &archive,
                 permit.as_ref(),
+                projects.as_ref(),
                 restore_receipt_hex,
                 &grants_landed_first,
                 &mut side_refresh,
@@ -1534,6 +1536,7 @@ pub(super) fn stamp_archived_birth<R: Read + Seek>(
     let birth = row
         .birth
         .renamed_refs(|row| renamed.get(&row).copied().unwrap_or(row));
+    let before = crate::provenance::birth::row_birth_in_txn(&vault.store, wtxn, id)?;
     match crate::provenance::birth::stamp_replicated_row_birth_in_txn(
         &vault.store,
         wtxn,
@@ -1542,8 +1545,14 @@ pub(super) fn stamp_archived_birth<R: Read + Seek>(
     ) {
         // READ-LINEAGE L1, as on sync (`stamp_birth_or_warn`): a row that
         // arrived with its birth reads under the inputs this vault holds
-        // (#9289 review 2 P2-4).
-        Ok(()) => crate::source_audience::raise_floors_in_txn(vault, wtxn, [*id]),
+        // (#9289 review 2 P2-4), and is sealed when its birth names an
+        // input this vault erased (#9289 Opus review 3 P2-4).
+        Ok(()) => crate::provenance::birth::raise_landed_birth_floor_in_txn(
+            vault,
+            wtxn,
+            id,
+            before.as_ref(),
+        ),
         Err(error @ (Error::InvalidConfig(_) | Error::InvariantViolation(_))) => {
             tracing::warn!(
                 entity = %id.to_hex(),
@@ -1557,11 +1566,21 @@ pub(super) fn stamp_archived_birth<R: Read + Seek>(
 }
 
 /// The source root this vault maps onto its own root project (see
-/// [`map_project_root`]): the project type, and both roots' ids.
-struct ProjectRootMap {
+/// [`map_project_root`]): the project type, and both roots' ids. A project row's parent moves
+/// with it ([`imported_row`]), and so does a retained setting row's scope
+/// (`setting::archive_restore`).
+pub(crate) struct ProjectRootMap {
     kind: u8,
-    source: String,
-    target: String,
+    source: EntityId,
+    target: EntityId,
+}
+
+impl ProjectRootMap {
+    /// `id` as this vault holds it: the source root is this vault's root, and every other id
+    /// is itself.
+    pub(crate) fn local_id(&self, id: EntityId) -> EntityId {
+        if id == self.source { self.target } else { id }
+    }
 }
 
 /// The row `at` as the import writes it: a project row's parent moves from
@@ -1595,9 +1614,10 @@ fn imported_row<R: Read + Seek>(
             rmp_serde::from_slice(&row.body.to_bytes()?)
                 .map_err(|_| invalid("project row body"))?;
         // Only the tree position moves; the claims scope id stays a label.
+        let (source, target) = (projects.source.to_hex(), projects.target.to_hex());
         for parent in &mut body.parents {
-            if *parent == projects.source {
-                parent.clone_from(&projects.target);
+            if *parent == source {
+                parent.clone_from(&target);
             }
         }
         let bytes = rmp_serde::to_vec_named(&body).map_err(|_| invalid("project row body"))?;
@@ -1943,8 +1963,8 @@ fn map_project_root<R: Read + Seek>(
     }
     Ok(Some(ProjectRootMap {
         kind,
-        source: source.to_hex(),
-        target: target.to_hex(),
+        source,
+        target,
     }))
 }
 

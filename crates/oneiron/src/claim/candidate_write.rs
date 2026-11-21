@@ -179,72 +179,84 @@ impl Vault {
         G: FnOnce(&mut heed::RwTxn<'_>, EntityId, &ClaimCandidate) -> Result<LandingGateAnswer>,
     {
         crate::batch::reject_family_owned_candidate(&candidate)?;
-        let mut txn = self.store.env.write_txn()?;
-        let rekeys = crate::channel_identity::AssignmentRekeys::begin(&self.store);
-        landing(&txn)?;
-        self.validate_code_run_claim_target_in_txn(&txn, id, Some(candidate.predicate()))?;
-        crate::memory::guard_existing_claim_in_txn(self, &txn, envelope.actor(), *id)?;
-        // The successor is found before the gate, so the gate judges the row
-        // the landing stores. Its test compares semantics, never approval, so
-        // the envelope a checker hold puts in place finds the same successor.
-        let successor = self.candidate_semantic_successor_in_txn(&txn, id, &candidate, envelope)?;
-        let (actual, candidate) = match successor {
-            Some((prior, next)) => {
-                Self::require_source_trust_supersession_rights(&next, &prior)?;
-                let fresh = EntityId::now();
-                if self.store.port_entity_present(&txn, &fresh)? {
-                    return Err(Error::InvariantViolation("claim successor id is occupied"));
+        let outcome: Result<EntityId> = self.with_write_txn(|wtxn| {
+            landing(&*wtxn)?;
+            self.validate_code_run_claim_target_in_txn(&*wtxn, id, Some(candidate.predicate()))?;
+            crate::memory::guard_existing_claim_in_txn(self, &*wtxn, envelope.actor(), *id)?;
+            // The successor is found before the gate, so the gate judges the row
+            // the landing stores. Its test compares semantics, never approval, so
+            // the envelope a checker hold puts in place finds the same successor.
+            let successor =
+                self.candidate_semantic_successor_in_txn(&*wtxn, id, &candidate, envelope)?;
+            let (actual, candidate) = match successor {
+                Some((prior, next)) => {
+                    Self::require_source_trust_supersession_rights(&next, &prior)?;
+                    let fresh = EntityId::now();
+                    if self.store.port_entity_present(&*wtxn, &fresh)? {
+                        return Err(Error::InvariantViolation("claim successor id is occupied"));
+                    }
+                    self.validate_code_run_claim_target_in_txn(
+                        &*wtxn,
+                        &fresh,
+                        Some(candidate.predicate()),
+                    )?;
+                    crate::memory::guard_existing_claim_in_txn(
+                        self,
+                        &*wtxn,
+                        envelope.actor(),
+                        fresh,
+                    )?;
+                    // Scope stamps are data, not authority. The ordinary native
+                    // candidate gate still judges the complete resulting body.
+                    (
+                        fresh,
+                        candidate.with_scope_stamps(next.scope_facet, next.scope_project),
+                    )
                 }
-                self.validate_code_run_claim_target_in_txn(
-                    &txn,
-                    &fresh,
-                    Some(candidate.predicate()),
-                )?;
-                crate::memory::guard_existing_claim_in_txn(self, &txn, envelope.actor(), fresh)?;
-                // Scope stamps are data, not authority. The ordinary native
-                // candidate gate still judges the complete resulting body.
-                (
-                    fresh,
-                    candidate.with_scope_stamps(next.scope_facet, next.scope_project),
-                )
-            }
-            None => (*id, candidate),
-        };
-        let mut held_envelope = None;
-        let gate_decision = match gate(&mut txn, actual, &candidate)? {
-            LandingGateAnswer::Admitted(decision) => decision,
-            LandingGateAnswer::CheckerHold { decision, envelope } => {
-                held_envelope = Some(envelope);
-                Some(decision)
-            }
-            LandingGateAnswer::Refused(refusal) => {
-                txn.commit()?;
-                return Err(refusal);
-            }
-        };
-        let envelope = held_envelope.as_ref().unwrap_or(envelope);
-        self.apply_candidate_with_gate_decision_in_txn(
-            &mut txn,
-            actual,
-            candidate,
-            envelope,
-            occurred,
-            learned_at,
-            gate_decision,
-        )?;
-        if actual != *id {
-            self.supersede_claim_in_txn_as(
-                &mut txn,
-                &actual,
-                id,
+                None => (*id, candidate),
+            };
+            let mut held_envelope = None;
+            let gate_decision = match gate(wtxn, actual, &candidate)? {
+                LandingGateAnswer::Admitted(decision) => decision,
+                LandingGateAnswer::CheckerHold { decision, envelope } => {
+                    held_envelope = Some(envelope);
+                    Some(decision)
+                }
+                LandingGateAnswer::Refused(refusal) => {
+                    return Ok(Err(refusal)); // commits the receipt, then refuses
+                }
+            };
+            let envelope = held_envelope.as_ref().unwrap_or(envelope);
+            self.apply_candidate_with_gate_decision_in_txn(
+                wtxn,
+                actual,
+                candidate,
+                envelope,
+                occurred,
                 learned_at,
-                Some(envelope.actor()),
+                gate_decision,
             )?;
-        }
-        rekeys.finish(&self.store, &mut txn)?;
-        txn.commit()?;
-        self.store.notify_proactivity_changes();
-        Ok(actual)
+            if actual != *id {
+                self.supersede_claim_in_txn_as(
+                    wtxn,
+                    &actual,
+                    id,
+                    learned_at,
+                    Some(envelope.actor()),
+                )?;
+            }
+            crate::batch::queue_proactivity_change(self, wtxn);
+            // The candidate row, for the live mirror (FIX
+            // CLAIM-RAW-TXN-DOORS-DROP-LIVE-WINDOW-ROWS).
+            #[cfg(feature = "sync")]
+            crate::batch::queue_committed_rows(
+                self,
+                wtxn,
+                std::collections::BTreeSet::from([actual]),
+            );
+            Ok(Ok(actual))
+        })?;
+        outcome
     }
 
     fn candidate_semantic_successor_in_txn(

@@ -3,7 +3,7 @@
 use ed25519_dalek::SigningKey;
 
 use crate::error::{Error, Result};
-use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable, SideTableDbs};
 use crate::vault::Vault;
 
 /// This device's stable client id. Key: `()` (singleton).
@@ -31,8 +31,18 @@ pub(crate) fn read_restored_from_image_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
 ) -> Result<Option<[u8; 32]>> {
+    restored_from_image_in_dbs_txn(&vault.store, txn)
+}
+
+/// [`read_restored_from_image_in_txn`] over any holder of this install's
+/// side databases: a store, a vault, a room's view (stage 7c-4: a setting
+/// read below the vault).
+pub(crate) fn restored_from_image_in_dbs_txn(
+    dbs: &impl SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Option<[u8; 32]>> {
     RESTORED_FROM
-        .get(&vault.store, txn, &())?
+        .get(dbs, txn, &())?
         .map(|raw| {
             <[u8; 32]>::try_from(raw.as_slice())
                 .map_err(|_| Error::CorruptedIndex("restored-from image row"))
@@ -270,8 +280,17 @@ pub(crate) fn read_machine_id_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
 ) -> Result<Option<crate::EntityId>> {
+    machine_id_in_dbs_txn(&vault.store, txn)
+}
+
+/// [`read_machine_id_in_txn`] over any holder of this install's side
+/// databases (stage 7c-4: a setting read below the vault).
+pub(crate) fn machine_id_in_dbs_txn(
+    dbs: &impl SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Option<crate::EntityId>> {
     MACHINE_ID
-        .get(&vault.store, txn, &())?
+        .get(dbs, txn, &())?
         .map(|raw| {
             <[u8; 16]>::try_from(raw.as_slice())
                 .ok()
