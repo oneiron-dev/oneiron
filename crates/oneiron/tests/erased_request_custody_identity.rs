@@ -16,13 +16,14 @@
 //! era); a value custody takes after the erase changes nothing. With no
 //! custody read in reach the row reads by its stand-in identity, as before.
 //!
-//! The erase also pins each record at the newest generation custody held a
-//! value of it at (FIX ERASED-IDENTITY-ROTATION-GENERATION). The call made
-//! again is first read for those records' values up to those generations,
-//! the read the erase took, so a value a record takes by a later rotation
-//! never changes how the identical call reads. Past a miss, the read with
-//! every value the records hold still meets a call holding a value one of
-//! them took since: it names the same record.
+//! The erase also pins each record at the newest custody slot custody held
+//! a value of it at (FIX ERASED-IDENTITY-ROTATION-GENERATION). The call
+//! made again is first read for those records' values up to those slots,
+//! the read the erase took, so a value a record takes later, by a rotation
+//! or at the generation it holds, never changes how the identical call
+//! reads. Past a miss, the read with every value the records hold still
+//! meets a call holding a value one of them took since: it names the same
+//! record.
 //!
 //! Each case stores one call in an agent's replay record through the wall,
 //! erases it with the agent's replies by the agent's delete, and reads it
@@ -44,6 +45,7 @@ use oneiron::store::GateDecisionId;
 use oneiron::test_doors::erased_request_identity::{
     custody_handle, room_stored_call_erased, room_stored_call_is, store_note_body, store_note_call,
     store_note_call_in_room, stored_body_call_is, stored_call_erased, stored_call_is,
+    write_custody_value_at_its_generation,
 };
 use oneiron::{EntityId, Vault, VaultConfig};
 
@@ -77,6 +79,9 @@ const UNRELATED_VALUE: &str = "violet ledger";
 const WORDS_BEFORE_THE_PASSPHRASE: &str = "the archive";
 const PASSPHRASE_WITH_WORDS: &str = "archive with winter orchard notebook lantern";
 const ROTATED_PASSPHRASE: &str = "summer river garden kettle";
+/// Words as long as the held passphrase, which its record takes as a value
+/// at the generation it holds.
+const WORDS_AS_LONG_AS_THE_PASSPHRASE: &str = "then open the brass garden gate";
 
 fn vault() -> TestResult<(tempfile::TempDir, Vault)> {
     vault_holding(&[
@@ -508,7 +513,7 @@ fn an_erased_call_meets_its_call_after_an_unrelated_record_takes_a_longer_value(
 /// Custody holds a passphrase, and an erased row held it after other words.
 /// The owner then rotates its record to a shorter value: words the row
 /// holds before the passphrase. The call made again still meets its row:
-/// it is read for the record's values up to the generation the erase
+/// it is read for the record's values up to the custody slot the erase
 /// pinned (FIX ERASED-IDENTITY-ROTATION-GENERATION). Red on main
 /// a1dc3dd3c27: every read there takes `the archive` as the record's
 /// handle, the read with all its values and the reread at the shorter
@@ -569,5 +574,44 @@ fn an_erased_call_made_again_with_its_records_rotated_passphrase_meets_its_row()
         true
     )?);
     assert!(stored_call_is(&vault, call, &words(HELD_PASSPHRASE), true)?);
+    Ok(())
+}
+
+/// Custody holds a passphrase, and an erased row held it before words as
+/// long as it. The record then takes those words as a value at the
+/// generation it holds, as the owner's re-entry of a found key's kept value
+/// writes one: custody keeps both values, the new one at a new slot. The
+/// call made again still meets its row: it is read for the record's values
+/// up to the slot the erase pinned. Red on main a1dc3dd3c27: every read
+/// there takes both values as the record's handle, no shorter reread parts
+/// two values of one length, and the call drifted. The first fix
+/// (4abac561f36) pinned the record's generation, which both values share
+/// (blind review round 1 of #10138).
+#[test]
+fn an_erased_call_meets_its_call_after_its_record_takes_words_it_holds_at_its_generation()
+-> TestResult {
+    let (_directory, vault) = vault_holding(&[("meadow passphrase", OTHER_HELD_PASSPHRASE)])?;
+    let record = vault.register_test_secret(
+        "orchard passphrase",
+        HELD_PASSPHRASE.as_bytes(),
+        Vec::new(),
+        1,
+    )?;
+    let held = format!("{HELD_PASSPHRASE} {WORDS_AS_LONG_AS_THE_PASSPHRASE}");
+    let call = erased_call(&vault, &words(&held), |_| Ok(()))?;
+    write_custody_value_at_its_generation(
+        &vault,
+        record,
+        WORDS_AS_LONG_AS_THE_PASSPHRASE.as_bytes(),
+    )?;
+    assert!(
+        stored_call_is(&vault, call, &words(&held), true)?,
+        "FAILBEFORE ERASED-IDENTITY-ROTATION-GENERATION: a value at its generation"
+    );
+    let other = format!("{OTHER_HELD_PASSPHRASE} {WORDS_AS_LONG_AS_THE_PASSPHRASE}");
+    assert!(
+        !stored_call_is(&vault, call, &words(&other), true)?,
+        "another passphrase custody holds is another call"
+    );
     Ok(())
 }
