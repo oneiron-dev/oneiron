@@ -1,11 +1,8 @@
 //! The edge provenance writer's claim puts (`crate::provenance::writes`).
 
-use std::collections::BTreeSet;
-
 use super::{
     ApplyOpsGateMode, BatchOp, ClaimMaterialization, apply_owner_bound_claim_puts_in_mode,
 };
-use crate::EntityId;
 use crate::Vault;
 use crate::batch::export::OwnerArchiveRestorePermit;
 use crate::error::Result;
@@ -25,29 +22,27 @@ pub(crate) fn apply_provenance_claim_puts(
     bindings: Vec<ClaimMaterialization>,
     restore_permit: Option<&OwnerArchiveRestorePermit>,
 ) -> Result<()> {
-    let rows: BTreeSet<EntityId> = ops
+    // The live windows exist only with sync; a featureless build applies alone.
+    #[cfg(feature = "sync")]
+    let rows: std::collections::BTreeSet<crate::EntityId> = ops
         .iter()
         .filter_map(|op| match op {
             BatchOp::Put { id, .. } => Some(*id),
             _ => None,
         })
         .collect();
-    let Some(permit) = restore_permit else {
-        let result = super::apply_owner_bound_claim_puts(vault, &mut *txn, ops, bindings, true);
-        if result.is_ok() {
-            crate::batch::queue_committed_rows(vault, txn, rows);
-        }
-        return result;
-    };
-    let annotators = bindings
-        .iter()
-        .map(|binding| binding.envelope.actor().entity_ref())
-        .collect();
-    let gate_mode = ApplyOpsGateMode::new(false, true)
-        .with_owner_archive_restore_for_annotators(permit, annotators);
-    let result = apply_owner_bound_claim_puts_in_mode(vault, &mut *txn, ops, bindings, gate_mode);
-    if result.is_ok() {
-        crate::batch::queue_committed_rows(vault, txn, rows);
+    if let Some(permit) = restore_permit {
+        let annotators = bindings
+            .iter()
+            .map(|binding| binding.envelope.actor().entity_ref())
+            .collect();
+        let gate_mode = ApplyOpsGateMode::new(false, true)
+            .with_owner_archive_restore_for_annotators(permit, annotators);
+        apply_owner_bound_claim_puts_in_mode(vault, txn, ops, bindings, gate_mode)?;
+    } else {
+        super::apply_owner_bound_claim_puts(vault, txn, ops, bindings, true)?;
     }
-    result
+    #[cfg(feature = "sync")]
+    crate::batch::queue_committed_rows(vault, txn, rows);
+    Ok(())
 }
