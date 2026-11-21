@@ -23,14 +23,14 @@ use crate::store::known_value_index::KnownValues;
 
 /// The batch door with mask on write. `masks` is false for a replayed batch,
 /// which keeps the plain door: a hit refuses it, save in a file marked
-/// before. A hit no span places in a batch that masks is sealed whole; one
-/// no seal can take refuses the batch. `at` stamps each custody record the
-/// batch mints. When it mints, it also returns each claim candidate op and
-/// each local CLAIM put op in op order, with its pre-mask body when the
-/// minted pass or a seal rewrote it, so the candidate apply can renew a
-/// MACHINE proof over what is stored (FIX 11356) and each apply can read its
-/// preflight receipt against the body that receipt judged; a replayed batch
-/// reports none.
+/// before. A hit no span places in a batch that masks is sealed whole (a
+/// file's by its mark); one no seal can take refuses the batch. `at` stamps
+/// each custody record the batch mints. When it mints, it also returns each
+/// claim candidate op and each local CLAIM put op in op order, with its
+/// pre-mask body when the minted pass or a seal rewrote it, so the candidate
+/// apply can renew a MACHINE proof over what is stored (FIX 11356) and each
+/// apply can read its preflight receipt against the body that receipt
+/// judged; a replayed batch reports none.
 #[expect(
     clippy::too_many_arguments,
     reason = "the batch's own apply parts, its origin and its time"
@@ -106,20 +106,24 @@ pub(in crate::batch) fn mask_batch_ops(
     // restoration lands instead of rolling back on its own value
     // (REVIEW-4461 P1).
     let only_changed = refusal.is_none() && plan.kept.is_empty();
+    // The kept values leave the plan here: a file's seal marks the plan while
+    // the door reads with them (`seal_file`).
+    let kept = std::mem::take(&mut plan.kept);
     let seals = seal_whole::plan_seals(
         store,
         wtxn,
-        &plan.kept,
+        &kept,
+        &mut plan,
         &mut planned,
         ops,
         only_changed,
-        masks,
     )?;
+    // A file the seals marked is placed as well.
+    let placed = placed || !plan.file_ids.is_empty();
     if !placed && seals.is_empty() {
         return Ok((MaskedFiles::default(), MaskedClaimBodies::default()));
     }
     drop(planned);
-    let kept = std::mem::take(&mut plan.kept);
     let files = std::mem::take(&mut plan.files);
     let text_log = std::mem::take(&mut plan.text_log).replayed();
     let masked = MaskedFiles(std::mem::take(&mut plan.file_ids));
