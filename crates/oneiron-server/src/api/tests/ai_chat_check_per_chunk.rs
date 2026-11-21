@@ -21,19 +21,34 @@
 //! call. The guard, a span of whole turns judged whole in one call, is
 //! `ai_chat_check_judge_room::a_span_within_the_judges_window_is_judged`.
 //!
+//! Review round 1 of #10272 adds three cases, red at c57da6b6054 (#10272's
+//! head then) with this file alone:
+//! - a piece summary holding a GitHub token, which the check material's
+//!   side-row wall keeps as its handle, so the kept entry is shorter than the
+//!   one sent: the check must still find each piece summary (red: it settled
+//!   `turn_reading_unreadable` with no judge call);
+//! - a verbatim pin of the agent's profile that the long turn holds and no
+//!   piece summary keeps: its writer was given it beside the entry and had to
+//!   copy it, so the landed summary's evidence carries it (red: absent);
+//! - the owner deletes the turn's MESSAGE, a source of the span, while the
+//!   judge reads the first piece: no later piece goes out (red: every piece
+//!   went out from the text read before the delete).
+//!
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p
 //! oneiron-server --all-features --lib -- api::tests::ai_chat_check_per_chunk`.
 
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
+use oneiron::agent_def::{CompactionOwnership, MemoryProfile};
 use oneiron::dreamer_runner::maintenance::compaction_check::COMPACTION_CHECK_FACET;
 use oneiron::dreamer_runner::{AdmitDreamerAttempt, DreamerAdmissionOutcome};
 use oneiron::{
     BudgetLease, ContentPart, DreamerAdmittedAttempt, DreamerAttemptExecution, DreamerRunnerStore,
-    EntityId, FatalLlmError, FinishReason, LlmBackend, LlmCapability, LlmError, LlmGenerateFuture,
-    LlmInputUsage, LlmMessage, LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse,
-    LlmStreamResult, LlmUsage, UnsupportedCapability,
+    EdgeActorClass, EntityId, FatalLlmError, FinishReason, LlmBackend, LlmCapability, LlmError,
+    LlmGenerateFuture, LlmInputUsage, LlmMessage, LlmMessageRole, LlmOutputUsage, LlmRequest,
+    LlmResponse, LlmStreamResult, LlmUsage, ModelTierRef, SafeDeleteReason, TimeRange,
+    UnsupportedCapability,
 };
 use serde_json::{Value, json};
 
@@ -53,6 +68,18 @@ const WRITER_CONTEXT_TOKENS: u64 = 6_000;
 const LONG_TURN_READINGS: u64 = 700;
 /// The marker the writer's piece calls end their byte range with.
 const PIECE_MARKER_END: &str = " of this turn's text; summarise only these bytes]";
+/// The key the check's declaration rides under in its attempt's input.
+const CONVERSATION_DECLARATION_KEY: &str = "conversation_declaration";
+/// A verbatim pin of the self agent's profile, said once at the end of the
+/// owner's long turn.
+const DEADLINE_PIN: &str = "the jetty survey deadline is Friday";
+
+/// A GitHub personal token the write door's provider rule places (`ghp_`
+/// and 36 token characters), spelled in parts so no scanner of this source
+/// reads a token.
+fn provider_token() -> String {
+    ["gh", "p_", "0123456789abcdefghijklmnopqrstuvwxyz"].concat()
+}
 
 /// The owner's long turn, as the owner says it.
 fn long_turn() -> String {
@@ -69,10 +96,12 @@ fn long_turn() -> String {
 
 /// The judge: it records every request it is sent and answers each
 /// `supported`, except a piece whose bytes start at `mismatch_at`, which it
-/// answers `mismatch`, citing the span's one turn.
+/// answers `mismatch`, citing the span's one turn. `on_first` runs once, as
+/// the first request comes in.
 struct PartJudge {
     mismatch_at: Option<u64>,
     requests: Mutex<Vec<LlmRequest>>,
+    on_first: Option<Box<dyn Fn() + Send + Sync>>,
 }
 
 impl PartJudge {
@@ -80,6 +109,16 @@ impl PartJudge {
         Self {
             mismatch_at,
             requests: Mutex::new(Vec::new()),
+            on_first: None,
+        }
+    }
+
+    /// A judge that answers each part `supported` and runs `on_first` as the
+    /// first request comes in.
+    fn on_first(on_first: impl Fn() + Send + Sync + 'static) -> Self {
+        Self {
+            on_first: Some(Box::new(on_first)),
+            ..Self::new(None)
         }
     }
 
@@ -146,10 +185,14 @@ impl LlmBackend for PartJudge {
         _lease: &'a BudgetLease,
     ) -> LlmGenerateFuture<'a> {
         let start = input_of(&request)["span"]["bytes"][0].as_u64();
-        self.requests
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push(request);
+        let first = {
+            let mut requests = self.requests.lock().unwrap_or_else(PoisonError::into_inner);
+            requests.push(request);
+            requests.len() == 1
+        };
+        if let (true, Some(on_first)) = (first, &self.on_first) {
+            on_first();
+        }
         let answer = if start.is_some() && start == self.mismatch_at {
             json!({
                 "verdict": "mismatch",
@@ -207,11 +250,39 @@ fn writer_pieces(fake: &FakeLlm) -> (Vec<(u64, u64)>, Option<u64>) {
     (pieces, total)
 }
 
+/// The fake writer's reply, with `token` added to the summary of the piece
+/// whose bytes start at 0.
+fn reply_with_token_in_first_piece(token: String) -> impl Fn(&Value) -> String {
+    move |body| {
+        let answer = reply(body);
+        let sent = body.to_string();
+        if !(sent.contains("[bytes 0..") && sent.contains(PIECE_MARKER_END)) {
+            return answer;
+        }
+        let Ok(mut answer) = serde_json::from_str::<Value>(&answer) else {
+            return answer;
+        };
+        let summary = answer["summary"].as_str().unwrap_or_default().to_owned();
+        answer["summary"] = Value::from(format!("{summary} The gauge's deploy key is {token}."));
+        answer.to_string()
+    }
+}
+
+/// What a pieced landing sets up beyond the owner's long turn.
+#[derive(Default)]
+struct Setup {
+    /// The fake writer adds a GitHub token to the first piece's summary.
+    token_in_first_piece: bool,
+    /// The self agent's profile pins [`DEADLINE_PIN`], and the owner's long
+    /// turn ends with it.
+    deadline_pin: bool,
+}
+
 /// What [`pieced_landing`] leaves: the served vault whose self agent's chat
 /// landed its own summary of the owner's long turn, read in pieces; the
-/// agent; the landing's admitted check; the turn's window text as the
-/// pieces cut it; the pieces; and a judge window that holds each part but
-/// not the turn whole.
+/// agent; the owner; the landing's admitted check; the turn's window text
+/// as the pieces cut it; the pieces; and a judge window that holds each part
+/// but not the turn whole.
 struct PiecedLanding {
     _dir: tempfile::TempDir,
     _prompts: tempfile::TempDir,
@@ -219,6 +290,7 @@ struct PiecedLanding {
     _host: AiHost,
     _fake: FakeLlm,
     agent: EntityId,
+    owner: EntityId,
     check: DreamerAdmittedAttempt,
     window: String,
     pieces: Vec<(u64, u64)>,
@@ -228,22 +300,52 @@ struct PiecedLanding {
 /// The owner's long first turn lands its summary in pieces, and the check
 /// its landing declared is admitted.
 async fn pieced_landing() -> PiecedLanding {
-    let fake = FakeLlm::start(Vec::new(), Some(Reply::Computed(Arc::new(reply)))).await;
+    pieced_landing_with(Setup::default()).await
+}
+
+/// [`pieced_landing`] with what `setup` adds.
+async fn pieced_landing_with(setup: Setup) -> PiecedLanding {
+    let compute: Arc<dyn Fn(&Value) -> String + Send + Sync> = if setup.token_in_first_piece {
+        Arc::new(reply_with_token_in_first_piece(provider_token()))
+    } else {
+        Arc::new(reply)
+    };
+    let fake = FakeLlm::start(Vec::new(), Some(Reply::Computed(compute))).await;
     let (dir, prompts, server, host) = self_row_server_on(
         &fake.base_url,
         oneiron::llm::SelfCompactionSource::RetainedTurns,
         WRITER_CONTEXT_TOKENS,
     )
     .await;
-    let (agent, _) = server
+    let (agent, mut definition) = server
         .vault()
         .get_seeded_agent_definition_by_logical_id("sys.default")
         .unwrap()
         .expect("seeded default agent");
+    if setup.deadline_pin {
+        // The host's own profile made the agent's, as a definition with no
+        // profile compacts by, with the one pin added.
+        definition.version = format!("{}-deadline-pin", definition.version);
+        definition.memory_profile = Some(
+            MemoryProfile::new(
+                1_500,
+                ModelTierRef("self".to_owned()),
+                CompactionOwnership::Engine,
+            )
+            .with_verbatim_pins(vec![DEADLINE_PIN.to_owned()]),
+        );
+        server
+            .vault()
+            .update_agent_definition(&agent, &definition, TimeRange { start: 1, end: 1 }, 1)
+            .expect("the self agent's profile pins the deadline");
+    }
     let conversation = EntityId::now().to_hex();
     let id = EntityId::from_hex(&conversation).unwrap();
     let (owner, _) = open_owner_sitting(&server);
-    let words = long_turn();
+    let mut words = long_turn();
+    if setup.deadline_pin {
+        words.push_str(&format!(" Note that {DEADLINE_PIN}."));
+    }
     chat_text(&server, &conversation, &words).await;
     let reader = server.vault().memory(owner, oneiron::EdgeActorClass::Human);
     let history_lines = server.ai.chat_settings().history_turns;
@@ -317,11 +419,34 @@ async fn pieced_landing() -> PiecedLanding {
         _host: host,
         _fake: fake,
         agent,
+        owner,
         check,
         window,
         pieces,
         judge_window,
     }
+}
+
+/// The span's one turn's MESSAGE, as the admitted check's declaration names
+/// it.
+fn declared_message(check: &DreamerAdmittedAttempt) -> EntityId {
+    let declaration = check
+        .status
+        .payload
+        .input
+        .as_map()
+        .and_then(|entries| {
+            entries
+                .iter()
+                .find(|(key, _)| key.as_str() == Some(CONVERSATION_DECLARATION_KEY))
+        })
+        .and_then(|(_, value)| value.as_str())
+        .expect("the check carries its declaration");
+    let declaration: Value = serde_json::from_str(declaration).unwrap();
+    let message = declaration["turns"][0]["messages"][0]
+        .as_str()
+        .unwrap_or_else(|| panic!("the declared turn names its message: {declaration}"));
+    EntityId::from_hex(message).unwrap()
 }
 
 /// Each judge input's span and the start of its evidence, for a failure's
@@ -454,5 +579,118 @@ async fn a_piece_its_bytes_do_not_support_decides_the_check_naming_its_bytes() {
         verdicts,
         vec![json!("supported"), json!("mismatch")],
         "{finding}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_handle_the_wall_puts_in_a_piece_summary_leaves_each_piece_judged() {
+    let landed = pieced_landing_with(Setup {
+        token_in_first_piece: true,
+        ..Setup::default()
+    })
+    .await;
+    let judge = PartJudge::new(None);
+    let execution = run_check(&landed.server, &landed.check, &judge, landed.judge_window).await;
+
+    let inputs = judge.inputs();
+    let finding = finding(&landed.server, &landed.agent).expect("the check records its finding");
+    assert_eq!(
+        inputs.len(),
+        landed.pieces.len() + 1,
+        "each piece, then the landed summary, is judged although the kept entry holds a handle \
+         where the first piece summary held the token: {execution:?}; the judge read {:?}; \
+         finding {finding}",
+        spans(&inputs),
+    );
+    let first = inputs[0]["summary"].as_str().unwrap_or_default();
+    assert!(
+        first.contains("[secret ") && !first.contains(&provider_token()),
+        "the first piece summary is read back out of the kept entry, with the wall's handle in \
+         place of the token: {first:?}"
+    );
+    for (input, piece) in inputs.iter().zip(&landed.pieces) {
+        assert!(
+            reads_exactly(input, &landed.window, *piece),
+            "the judge reads piece {piece:?} and nothing else: {:?}",
+            spans(std::slice::from_ref(input)),
+        );
+    }
+    assert_eq!(finding["verdict"], "supported", "{finding}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_pin_its_writer_copied_is_evidence_for_the_landed_summary() {
+    let landed = pieced_landing_with(Setup {
+        deadline_pin: true,
+        ..Setup::default()
+    })
+    .await;
+    let judge = PartJudge::new(None);
+    let execution = run_check(&landed.server, &landed.check, &judge, landed.judge_window).await;
+
+    let inputs = judge.inputs();
+    assert_eq!(
+        inputs.len(),
+        landed.pieces.len() + 1,
+        "{execution:?}; the judge read {:?}",
+        spans(&inputs),
+    );
+    let entry = &inputs[landed.pieces.len()];
+    assert!(
+        entry["summary"]
+            .as_str()
+            .is_some_and(|summary| summary.contains(DEADLINE_PIN)),
+        "the landed summary copies the pin its writer was given: {entry}"
+    );
+    assert!(
+        entry["evidence"].as_str().is_some_and(|evidence| {
+            evidence.contains(&format!("read in {} pieces", landed.pieces.len()))
+                && evidence.contains(DEADLINE_PIN)
+        }),
+        "the landed summary is judged against the entry and the pin its writer was given, \
+         which the turn holds word for word: {entry}"
+    );
+    let finding = finding(&landed.server, &landed.agent).expect("the check records its finding");
+    assert_eq!(finding["verdict"], "supported", "{finding}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_source_deleted_while_a_piece_is_judged_sends_no_later_piece() {
+    let landed = pieced_landing().await;
+    let message = declared_message(&landed.check);
+    let (server, owner) = (Arc::clone(&landed.server), landed.owner);
+    let judge = PartJudge::on_first(move || {
+        server
+            .vault()
+            .memory(owner, EdgeActorClass::Human)
+            .safe_delete(&message.to_hex(), SafeDeleteReason::UserDelete)
+            .expect("the owner deletes the turn's message");
+    });
+    let execution = run_check(&landed.server, &landed.check, &judge, landed.judge_window).await;
+
+    let inputs = judge.inputs();
+    let finding = finding(&landed.server, &landed.agent).expect("the check records its finding");
+    assert_eq!(
+        inputs.len(),
+        1,
+        "the first piece goes out before the delete, and no part after it: {execution:?}; the \
+         judge read {:?}; finding {finding}",
+        spans(&inputs),
+    );
+    assert!(
+        reads_exactly(&inputs[0], &landed.window, landed.pieces[0]),
+        "{:?}",
+        spans(&inputs),
+    );
+    assert_ne!(
+        finding["verdict"], "supported",
+        "a check whose source went away mid-judgment is not supported: {finding}"
+    );
+    assert!(
+        matches!(
+            &execution,
+            DreamerAttemptExecution::Completed { step_bindings, .. } if step_bindings.len() == 1
+        ),
+        "the check completes with the one judge step booked: {execution:?}"
     );
 }
