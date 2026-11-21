@@ -107,7 +107,7 @@ impl Fixture {
         let dir = tempfile::tempdir().expect("dir");
         let member = EntityId::now();
         let vault = Arc::new(
-            open_member_vault(dir.path(), tagging_config(), &[member.to_hex().as_str()])
+            open_member_vault(dir.path(), tagging_config(), &[member.to_hex()])
                 .expect("fixture vault"),
         );
         let (owner, _proof) = embedded_owner(&vault).expect("the owner");
