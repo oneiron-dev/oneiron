@@ -161,23 +161,26 @@ fn parked(vault: &Vault, id: AttemptId) -> TestResult<bool> {
     Ok(park.is_some())
 }
 
-/// The run parks on its wait; the owner's pause takes it off its park and
-/// the resume queues it. The next lease finds the same trap still open for
-/// the wait, parks under it again with no second trap, and the reply wakes
-/// the run once.
-#[test]
-fn a_resumed_run_parks_again_under_its_open_wait_trap() -> TestResult {
-    let (_dir, vault, owner, agent, leased) = fixture()?;
-    let (key, step) = wait_of(&leased)?;
+/// Parks `leased` on its wait under a fresh trap, as the pump does; the
+/// owner's pause takes it off its park and the resume queues it, and the
+/// next lease takes it. The wait's key, the trap still bound to the wait,
+/// and the run's new lease.
+fn paused_and_resumed(
+    vault: &Vault,
+    owner: EntityId,
+    agent: EntityId,
+    leased: &AttemptRecord,
+) -> TestResult<(WaitKey, TrapRef, AttemptRecord)> {
+    let (key, step) = wait_of(leased)?;
     assert!(
-        !WaitDeliveries::canonical(&vault).park(&key)?,
+        !WaitDeliveries::canonical(vault).park(&key)?,
         "the run waits with no reply"
     );
     let now_ms = vault.now_recorded_at().saturating_mul(1_000);
     let trap = llm::open_trap(
-        &vault,
+        vault,
         &llm::DurableStepContext {
-            vault: &vault,
+            vault,
             attempt_id: leased.id,
             run_id: leased.run_id.clone(),
             envelope_actor: WriteActor::new(agent, EdgeActorClass::Agent),
@@ -192,28 +195,46 @@ fn a_resumed_run_parks_again_under_its_open_wait_trap() -> TestResult {
         "code-run wait",
     )?;
     assert_eq!(
-        llm::register_wait(&vault, &trap, now_ms)?,
+        llm::register_wait(vault, &trap, now_ms)?,
         llm::DreamerTrapState::Waiting
     );
-    park(&vault, &leased, &key, &trap)?;
-    assert_eq!(open_wait_trap(&vault, &key, leased.id)?, Some(trap));
+    park(vault, leased, &key, &trap)?;
+    assert_eq!(open_wait_trap(vault, &key, leased.id)?, Some(trap));
 
     let paused = as_owner(
-        &vault,
+        vault,
         owner,
         "vault.agents.pause_tree",
         json!({"agent_def_ref": agent}),
     )?;
     assert_eq!(paused["pausing_at_next_step"], json!([]), "{paused}");
-    assert!(!parked(&vault, leased.id)?, "the pause clears the park");
+    assert!(!parked(vault, leased.id)?, "the pause clears the park");
     as_owner(
-        &vault,
+        vault,
         owner,
         "vault.agents.resume_tree",
         json!({"pause_ref": paused["pause_ref"].clone()}),
     )?;
-    let released = claim(&vault, leased.id)?;
+    let released = claim(vault, leased.id)?;
     assert!(released.attempt_count > leased.attempt_count, "a new lease");
+    Ok((key, trap, released))
+}
+
+fn state(vault: &Vault, id: AttemptId) -> TestResult<AttemptState> {
+    Ok(AttemptQueue::new(vault)
+        .get(id)?
+        .ok_or("the run's row reads back")?
+        .state)
+}
+
+/// The run parks on its wait; the owner's pause takes it off its park and
+/// the resume queues it. The next lease finds the same trap still open for
+/// the wait, parks under it again with no second trap, and the reply wakes
+/// the run once.
+#[test]
+fn a_resumed_run_parks_again_under_its_open_wait_trap() -> TestResult {
+    let (_dir, vault, owner, agent, leased) = fixture()?;
+    let (key, trap, released) = paused_and_resumed(&vault, owner, agent, &leased)?;
 
     assert_eq!(
         open_wait_trap(&vault, &key, released.id)?,
@@ -238,15 +259,83 @@ fn a_resumed_run_parks_again_under_its_open_wait_trap() -> TestResult {
         vault.now_recorded_at().saturating_mul(1_000),
     )?;
     assert_eq!(delivered, 1);
-    let woken = AttemptQueue::new(&vault)
-        .get(leased.id)?
-        .ok_or("the run's row reads back")?;
-    assert_eq!(woken.state, AttemptState::Queued, "the reply wakes the run");
+    assert_eq!(
+        state(&vault, leased.id)?,
+        AttemptState::Queued,
+        "the reply wakes the run"
+    );
     assert!(!parked(&vault, leased.id)?);
     assert_eq!(
         open_wait_trap(&vault, &key, leased.id)?,
         None,
         "a woken trap is not open"
+    );
+    Ok(())
+}
+
+/// The resumed run re-enters its wait before the reply, and the pump reads
+/// the trap still bound to it; the reply lands before the pump parks the
+/// run again, and consumes the trap with no park to wake. The park writer
+/// finds the trap spent and queues the run in the park's own commit, so no
+/// park is left under a trap no reply wakes again, and the next lease goes
+/// on from the reply.
+#[test]
+fn a_reply_before_the_repark_queues_the_run_whose_trap_it_consumed() -> TestResult {
+    let (_dir, vault, owner, agent, leased) = fixture()?;
+    let (key, trap, released) = paused_and_resumed(&vault, owner, agent, &leased)?;
+    assert_eq!(
+        open_wait_trap(&vault, &key, released.id)?,
+        Some(trap),
+        "the pump reads the trap still bound to the wait"
+    );
+
+    let delivered = WaitDeliveries::canonical(&vault).deliver(
+        key.wait_id,
+        &json!({"sent": true}),
+        vault.now_recorded_at().saturating_mul(1_000),
+    )?;
+    assert_eq!(delivered, 1);
+    assert_eq!(
+        open_wait_trap(&vault, &key, released.id)?,
+        None,
+        "the reply consumed the trap"
+    );
+    assert_eq!(
+        state(&vault, leased.id)?,
+        AttemptState::Leased,
+        "no park was there for the reply to wake"
+    );
+
+    let now_ms = vault.now_recorded_at().saturating_mul(1_000);
+    let woke = park_and_bind_wait_trap(
+        &vault,
+        ParkDreamerAttempt {
+            attempt_id: released.id,
+            reason: "agent_run_waiting".to_owned(),
+            cause: DreamerParkCause::Signal,
+            park_owner: llm::trap_park_owner(&trap.trap_claim_id),
+            carried_spend: None,
+            now: now_ms / 1_000,
+        },
+        &key,
+        &trap,
+        now_ms,
+    )?;
+    assert!(woke, "the park answers that the run goes on");
+    assert!(
+        !parked(&vault, leased.id)?,
+        "no park is left under the spent trap"
+    );
+    assert_eq!(
+        state(&vault, leased.id)?,
+        AttemptState::Queued,
+        "the run is queued to go on from its reply"
+    );
+    let next = claim(&vault, leased.id)?;
+    assert!(next.attempt_count > released.attempt_count, "a new lease");
+    assert!(
+        WaitDeliveries::canonical(&vault).delivery(&key)?.is_some(),
+        "the reply is kept for the run"
     );
     Ok(())
 }
