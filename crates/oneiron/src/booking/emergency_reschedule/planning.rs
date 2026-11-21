@@ -104,11 +104,12 @@ pub struct EmergencyItem {
     pub(crate) picked: Option<EmergencyPick>,
     /// The ledger generation of each owed effect whose local outbound ledger identity is not its
     /// idempotency key, by lane (`state::effect_ledger_ref`). A home that adopted this checkpoint
-    /// found its own ledger holding that effect's earlier send under the current identity,
-    /// deferred or stopped, which its replay never sends again (FIX 7960); the next generation
-    /// lets the owner's resume send it under the same idempotency key, as any other new home
-    /// would (FIX [BK-EMERGENCY-DEFERRED-SEND-STRANDED-ON-FORMER-HOME]). Empty, and not
-    /// written, for every checkpoint no such home adopted: a row stored before reads as before.
+    /// found its own ledger holding that effect's earlier send under the current identity as one
+    /// its replay never sends again, where a fresh send reaches the provider as any other new
+    /// home's would (`home_rows::item`'s `takes_fresh_attempt`); the next generation lets the
+    /// owner's resume send it (FIX [BK-EMERGENCY-DEFERRED-SEND-STRANDED-ON-FORMER-HOME]). Empty,
+    /// and not written, for every checkpoint no such home adopted: a row stored before reads as
+    /// before.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub(crate) ledger_generations: std::collections::BTreeMap<String, u32>,
 }

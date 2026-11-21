@@ -158,8 +158,13 @@ pub(super) fn dispatch_item_effect(
     };
     let intent_ref = state::effect_ref(item, lane, hash)?;
     // The attempt this send is admitted by: a later ledger generation than the one its
-    // idempotency key names only once a home adopted the checkpoint back over its own deferred
-    // or stopped send (FIX [BK-EMERGENCY-DEFERRED-SEND-STRANDED-ON-FORMER-HOME]).
+    // idempotency key names only once a home adopted the checkpoint back over its own earlier
+    // send that never goes again (FIX [BK-EMERGENCY-DEFERRED-SEND-STRANDED-ON-FORMER-HOME]).
+    // A send that earlier generation delivered since is delivered: the fresh attempt never goes
+    // (review round 1 of #10220).
+    if state::earlier_generation_delivered(vault, item, lane, hash)? {
+        return Ok(());
+    }
     let ledger_ref = state::effect_ledger_ref(item, lane, hash)?;
     let (verb, channel) = if payload.is_some() {
         (crate::calendar::CALENDAR_INVITE_VERB, "calendar")

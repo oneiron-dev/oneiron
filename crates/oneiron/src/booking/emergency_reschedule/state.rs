@@ -202,6 +202,46 @@ pub(super) fn effect_ledger_ref(
     effect_generation_ref(item, lane, hash, ledger_generation(item, lane))
 }
 
+/// Whether this node's outbound ledger holds `item`'s effect on `lane` delivered under a ledger
+/// generation before its current one: a send this home's earlier generation made, whose remote
+/// task completed after the home took a fresh attempt (review round 1 of #10220). Such an effect
+/// is delivered, and its fresh attempt is never sent.
+pub(super) fn earlier_generation_delivered(
+    vault: &Vault,
+    item: &EmergencyItem,
+    lane: &str,
+    hash: [u8; 32],
+) -> Result<bool, BookingError> {
+    use crate::outbound_intent_ledger::{
+        IntentLedgerError, IntentResolution, read_intent_for_attempt_in_txn,
+    };
+    let current = ledger_generation(item, lane);
+    if current == 0 {
+        return Ok(false);
+    }
+    let txn = vault.store.custody_snapshot().map_err(storage_failure)?;
+    for generation in 0..current {
+        let reference = effect_generation_ref(item, lane, hash, generation)?;
+        let attempt =
+            crate::outbound::outbound_dispatch_attempt_id(&reference).map_err(storage_failure)?;
+        let record = match read_intent_for_attempt_in_txn(vault, &txn, attempt, 0) {
+            Ok(record) => record,
+            Err(IntentLedgerError::Engine(error)) => return Err(storage_failure(error)),
+            // A row that does not read as a ledger row is no delivery, as the move's reads hold.
+            Err(_) => None,
+        };
+        if record.is_some_and(|record| {
+            matches!(
+                IntentResolution::from_record(&record),
+                Ok(IntentResolution::Delivered)
+            )
+        }) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 pub(super) fn effect_ref(
     item: &EmergencyItem,
     lane: &str,

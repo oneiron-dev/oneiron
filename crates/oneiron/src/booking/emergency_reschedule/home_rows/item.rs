@@ -21,8 +21,8 @@ use crate::booking::emergency_reschedule::{EmergencyLocalBasis, EmergencyPick, s
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::outbound_intent_ledger::{
-    IntentLedgerError, IntentLedgerRecord, IntentResolution, IntentState, UnconfirmedDelivery,
-    read_intent_for_attempt_in_txn,
+    IntentLedgerError, IntentLedgerRecord, IntentResolution, IntentState, RetryDisposition,
+    UnconfirmedDelivery, read_intent_for_attempt_in_txn,
 };
 use crate::side_table::{self, SideTableDecl};
 use crate::sync::home_handoff::{
@@ -137,26 +137,6 @@ fn ledger_records(
     Ok(records)
 }
 
-/// This node's outbound ledger row of `item`'s effect on `lane` under the effect's current
-/// ledger identity (`state::effect_ledger_ref`), if any. A row that does not read as a ledger
-/// row is none: only a store failure is an error.
-fn ledger_record(
-    vault: &Vault,
-    txn: &RoTxn<'_>,
-    item: &EmergencyItem,
-    lane: &str,
-    hash: [u8; 32],
-) -> Result<Option<IntentLedgerRecord>> {
-    let reference = state::effect_ledger_ref(item, lane, hash).map_err(booking_failure)?;
-    let attempt = crate::outbound::outbound_dispatch_attempt_id(&reference)
-        .map_err(|_| invalid("an emergency effect has no outbound attempt id"))?;
-    match read_intent_for_attempt_in_txn(vault, txn, attempt, 0) {
-        Ok(record) => Ok(record),
-        Err(IntentLedgerError::Engine(error)) => Err(error),
-        Err(_) => Ok(None),
-    }
-}
-
 /// Whether `record` is a send whose transport call may still be running at `now`, in this
 /// vault clock's seconds: admitted, no outcome recorded, and last written within
 /// [`MID_CALL_BOUND_SECS`] before `now`. A row dated after `now` is on no clock this reads, and
@@ -168,10 +148,26 @@ fn mid_call(record: &IntentLedgerRecord, now: u64) -> bool {
         && now - record.updated_ms < MID_CALL_BOUND_SECS
 }
 
-/// The owed effects of `item` whose send ended uncertain in this node's outbound ledger: no
-/// longer mid-call, and neither delivered nor known undelivered. A send the provider accepted
-/// as a remote task (`IntentResolution::Deferred`, never sent again here) is one: its delivery
-/// is not known, and the new home's send may repeat it (review round 2 of #10109).
+/// Whether `record`'s send ended uncertain by `now`: no longer mid-call, and neither delivered
+/// nor known undelivered. A send the provider accepted as a remote task
+/// (`IntentResolution::Deferred`, never sent again here) is one: its delivery is not known, and
+/// the new home's send may repeat it (review round 2 of #10109).
+fn ended_uncertain(record: &IntentLedgerRecord, now: u64) -> bool {
+    !mid_call(record, now)
+        && matches!(
+            IntentResolution::from_record(record),
+            Ok(IntentResolution::Pending {
+                delivery: UnconfirmedDelivery::Unresolved,
+                ..
+            } | IntentResolution::Stopped {
+                delivery: UnconfirmedDelivery::Unresolved,
+                ..
+            } | IntentResolution::Deferred)
+        )
+}
+
+/// The owed effects of `item` whose send ended uncertain in this node's outbound ledger under
+/// any of the effect's ledger generations ([`ended_uncertain`]).
 fn uncertain_lanes(
     vault: &Vault,
     txn: &RoTxn<'_>,
@@ -180,20 +176,9 @@ fn uncertain_lanes(
 ) -> Result<BTreeSet<String>> {
     let mut uncertain = BTreeSet::new();
     for (lane, hash) in owed_effects(item) {
-        let Some(record) = ledger_record(vault, txn, item, lane, hash)? else {
-            continue;
-        };
-        if !mid_call(&record, now)
-            && matches!(
-                IntentResolution::from_record(&record),
-                Ok(IntentResolution::Pending {
-                    delivery: UnconfirmedDelivery::Unresolved,
-                    ..
-                } | IntentResolution::Stopped {
-                    delivery: UnconfirmedDelivery::Unresolved,
-                    ..
-                } | IntentResolution::Deferred)
-            )
+        if ledger_records(vault, txn, item, lane, hash)?
+            .iter()
+            .any(|record| ended_uncertain(record, now))
         {
             uncertain.insert(lane.to_owned());
         }
@@ -201,25 +186,67 @@ fn uncertain_lanes(
     Ok(uncertain)
 }
 
+/// Whether a home that adopted a checkpoint back takes a fresh ledger attempt for an owed effect
+/// whose send its own ledger holds as `record` under the effect's current identity, at `now`
+/// (review round 1 of #10220). It does where that send's replay never sends it again, while any
+/// other new home sends it (Engine ANSWER BK-EMERGENCY-PENDING-ITEM-MOVE = A), and a fresh send
+/// reaches the provider as that home's would:
+/// - a send with no provider-native key reaches its provider under the intent's own key at every
+///   generation (`state::effect_generation_ref`). Deferred (FIX 7960), stopped, or admitted with
+///   no outcome and no longer mid-call (its replay reads it back or abandons it unasked, FIX
+///   9379), it takes one;
+/// - a send with a provider-native key carries its own row's key, which a fresh row changes. It
+///   takes one only once stopped with no delivery possible. Deferred, its remote task under the
+///   key the provider holds settles it, as on a home that never moved; stopped with its delivery
+///   unknown, a fresh key would keep a provider that drops a repeated key from dropping a repeat;
+///   pending, its replay sends it again under the same key.
+///
+/// A delivered send never takes one.
+fn takes_fresh_attempt(record: &IntentLedgerRecord, now: u64) -> bool {
+    let intent_keyed = !record.idempotency_supported;
+    match IntentResolution::from_record(record) {
+        Ok(IntentResolution::Stopped {
+            delivery: UnconfirmedDelivery::DefiniteNonDelivery,
+            ..
+        }) => true,
+        Ok(
+            IntentResolution::Deferred
+            | IntentResolution::Stopped {
+                delivery: UnconfirmedDelivery::Unresolved,
+                ..
+            },
+        ) => intent_keyed,
+        // Only a send with no provider-native key, admitted with no outcome, has no retry.
+        Ok(IntentResolution::Pending {
+            retry: RetryDisposition::NoAutomaticRetry,
+            ..
+        }) => !mid_call(record, now),
+        Ok(IntentResolution::Pending { .. } | IntentResolution::Delivered) | Err(_) => false,
+    }
+}
+
 /// Raises the ledger generation of each effect `item` owes while this node's outbound ledger
-/// holds its send deferred or stopped under the effect's current identity: such a row's replay
-/// never sends again (`outbound_chokepoint::replay`, FIX 7960), so every owner's resume here
-/// would refuse, where any other new home sends it under the same idempotency key (Engine
-/// ANSWER BK-EMERGENCY-PENDING-ITEM-MOVE = A; FIX
-/// [BK-EMERGENCY-DEFERRED-SEND-STRANDED-ON-FORMER-HOME]). A send this ledger holds delivered
-/// or still pending keeps its identity: its replay completes it or sends it again.
+/// holds its send under the effect's current identity as one that takes a fresh attempt
+/// ([`takes_fresh_attempt`]; FIX [BK-EMERGENCY-DEFERRED-SEND-STRANDED-ON-FORMER-HOME]). Every
+/// other send keeps its identity: its replay completes it or sends it again, or its remote task
+/// settles it.
 fn raise_stranded_generations(
     vault: &Vault,
     txn: &RoTxn<'_>,
     item: &mut EmergencyItem,
 ) -> Result<()> {
+    let now = vault.store.clock.now_recorded_at();
     for (lane, hash) in owed_effects(item) {
-        while ledger_record(vault, txn, item, lane, hash)?.is_some_and(|record| {
-            matches!(
-                IntentResolution::from_record(&record),
-                Ok(IntentResolution::Deferred | IntentResolution::Stopped { .. })
-            )
-        }) {
+        while ledger_record_at(
+            vault,
+            txn,
+            item,
+            lane,
+            hash,
+            state::ledger_generation(item, lane),
+        )?
+        .is_some_and(|record| takes_fresh_attempt(&record, now))
+        {
             let generation = item.ledger_generations.entry(lane.to_owned()).or_default();
             *generation = generation
                 .checked_add(1)
@@ -229,21 +256,25 @@ fn raise_stranded_generations(
     Ok(())
 }
 
-/// `item` with each owed effect this node's outbound ledger resolves as delivered marked
-/// delivered: the send went, and only its checkpoint write did not (an election that moved the
-/// home between the two refuses that write here), so the new home must not send it again.
+/// `item` with each owed effect this node's outbound ledger resolves as delivered, under any of
+/// the effect's ledger generations, marked delivered: the send went, and only its checkpoint
+/// write did not (an election that moved the home between the two refuses that write here), or
+/// an earlier generation's remote task completed after this home took a fresh attempt (review
+/// round 1 of #10220). The new home must not send it again.
 fn with_ledger_deliveries(
     vault: &Vault,
     txn: &RoTxn<'_>,
     mut item: EmergencyItem,
 ) -> Result<EmergencyItem> {
     for (lane, hash) in owed_effects(&item) {
-        let delivered = ledger_record(vault, txn, &item, lane, hash)?.is_some_and(|record| {
-            matches!(
-                IntentResolution::from_record(&record),
-                Ok(IntentResolution::Delivered)
-            )
-        });
+        let delivered = ledger_records(vault, txn, &item, lane, hash)?
+            .iter()
+            .any(|record| {
+                matches!(
+                    IntentResolution::from_record(record),
+                    Ok(IntentResolution::Delivered)
+                )
+            });
         if !delivered {
             continue;
         }
@@ -302,8 +333,9 @@ impl HomeTable for EmergencyItemRows {
                 continue;
             };
             for (lane, hash) in owed_effects(&item) {
-                if ledger_record(vault, txn, &item, lane, hash)?
-                    .is_some_and(|record| mid_call(&record, now))
+                if ledger_records(vault, txn, &item, lane, hash)?
+                    .iter()
+                    .any(|record| mid_call(record, now))
                 {
                     return Ok(false);
                 }
@@ -388,12 +420,12 @@ impl HomeTable for EmergencyItemRows {
     }
 
     /// Lands each whole item as the module doc says and indexes its pending event and its
-    /// effects, each owed effect this node's own ledger holds deferred or stopped under its next
-    /// ledger generation ([`raise_stranded_generations`]). On a node whose rows are history both
-    /// lookups are rebuilt from the landed items alone. Each EVENT's pending lookup names one
-    /// landed item that still owes a delivery: the one the old home's names, else the one owed
-    /// at the highest revision. Landing order never decides it, so an older owed item cannot
-    /// take the fence from a later one (review round 1 of #10109).
+    /// effects, each owed effect whose send this node's own ledger holds as one that takes a fresh
+    /// attempt under its next ledger generation ([`raise_stranded_generations`]). On a node whose
+    /// rows are history both lookups are rebuilt from the landed items alone. Each EVENT's
+    /// pending lookup names one landed item that still owes a delivery: the one the old home's
+    /// names, else the one owed at the highest revision. Landing order never decides it, so an
+    /// older owed item cannot take the fence from a later one (review round 1 of #10109).
     fn adopt(
         vault: &Vault,
         txn: &mut RwTxn<'_>,
