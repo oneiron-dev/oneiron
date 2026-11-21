@@ -27,7 +27,7 @@ use oneiron::{EdgeActorClass, EdgeKind, EntityId};
 use super::{Mailbox, claim_born_before_floors, claim_born_from, owners_mailbox};
 
 /// The owner deletes `row`.
-fn erase(mailbox: &Mailbox, row: EntityId) {
+pub(super) fn erase(mailbox: &Mailbox, row: EntityId) {
     mailbox
         .vault
         .memory(mailbox.owner, EdgeActorClass::Human)
@@ -43,7 +43,7 @@ fn replay(mailbox: &Mailbox, row: EntityId, reason: TombstoneReason) {
 }
 
 /// A housekeeping pass, which runs the floor sweep.
-fn housekeeping_pass(mailbox: &Mailbox) {
+pub(super) fn housekeeping_pass(mailbox: &Mailbox) {
     mailbox
         .vault
         .housekeeping_all(HousekeepingBudget::unbounded())
@@ -51,7 +51,7 @@ fn housekeeping_pass(mailbox: &Mailbox) {
 }
 
 /// How many facts doctor counts as hidden by a source it cannot name.
-fn hidden_source_unknown(mailbox: &Mailbox) -> u64 {
+pub(super) fn hidden_source_unknown(mailbox: &Mailbox) -> u64 {
     mailbox
         .vault
         .doctor()
@@ -61,7 +61,7 @@ fn hidden_source_unknown(mailbox: &Mailbox) -> u64 {
 
 /// `row` reads to neither a stranger nor the mailbox's reader (`when`
 /// names the moment).
-fn assert_no_stranger_or_reader_reads(mailbox: &Mailbox, row: EntityId, when: &str) {
+pub(super) fn assert_no_stranger_or_reader_reads(mailbox: &Mailbox, row: EntityId, when: &str) {
     assert!(
         !reads(&mailbox.vault, row, &[mailbox.stranger]).expect("the stranger's read"),
         "LEAK: a stranger reads the row {when}",

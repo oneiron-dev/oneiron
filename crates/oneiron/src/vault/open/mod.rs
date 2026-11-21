@@ -660,6 +660,7 @@ impl Vault {
             world_keys: Default::default(),
             voice_ref_guard: Default::default(),
             trusted_contact_send_order: Default::default(),
+            import_second_order: Default::default(),
             pending_owner_export_receipts: Default::default(),
             spent_nonces,
             housekeeping: Default::default(),
@@ -698,6 +699,8 @@ impl Vault {
             origin_git_transport: Default::default(),
             #[cfg(any(test, feature = "test-hooks"))]
             slow_retrieval_stage: Default::default(),
+            #[cfg(oneiron_test_support)]
+            test_door_state: Default::default(),
         };
         // A sealed vault (maximum tier) admits the wrap its seal was unlocked with,
         // holds its data key and mirrors its wraps before any caller holds it.
@@ -816,6 +819,19 @@ impl Vault {
                     .record_hooks
                     .seed_claim_class_descriptors(&vault)?;
                 vault.store.project_writes.seed_root_project(&vault)?;
+                // A vault from before the house voice guide that already
+                // holds a campaign gets its guide here; a new vault gets it
+                // with its first campaign. A failed seed never blocks the
+                // open: unguided campaigns hold their sends, and the next
+                // open tries again.
+                if let Err(error) =
+                    crate::campaign::house_voice_guide::seed_house_voice_guide_at_open(&vault)
+                {
+                    tracing::warn!(
+                        kind = ?error.kind(),
+                        "the house voice guide was not seeded; the next open tries again"
+                    );
+                }
             }
         }
         vault.lfs_chunk_parameters()?;

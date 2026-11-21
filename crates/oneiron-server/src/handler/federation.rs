@@ -12,7 +12,7 @@ use loro::ExportMode;
 use oneiron::sync::federation_burst::{
     FederationBurstDecision, prepare_selector_fetch, replay_selector_fetch,
 };
-use oneiron::sync::{WindowKey, filtered_window_doc_for_peer};
+use oneiron::sync::{SelectorAnswerDoc, WindowKey, selector_answer_doc_for_peer};
 
 /// `Break` when `session_gone` finds the socket's caller gone once the window
 /// has loaded (FIX 6313): nothing is sent or completed for it, and the
@@ -116,9 +116,12 @@ pub(super) async fn handle_selector_fetch(
         .scope_for(&prepared.selector)
         .map_err(map_selector_filter_err)?;
     // It also leaves only while each coreference link the filter lets it
-    // carry is still shared into its pact.
-    let (filtered, disclosure) = oneiron::sync::recording_coreference_disclosure(|| {
-        filtered_window_doc_for_peer(
+    // carry is still shared into its pact. To another vault's machine it
+    // carries the owner's delete of each row this vault released to the
+    // grant's peer, and goes with the rows it releases, which its last door
+    // records before its bytes leave (CROSS-VAULT-DELETE-SELECTOR-ANSWER-RELEASE).
+    let (answer, disclosure) = oneiron::sync::recording_coreference_disclosure(|| {
+        selector_answer_doc_for_peer(
             server.vault.as_ref(),
             &doc,
             key,
@@ -127,14 +130,18 @@ pub(super) async fn handle_selector_fetch(
             state.peer_machine(server.vault()),
         )
     });
-    let filtered = filtered.map_err(map_selector_filter_err)?;
+    let SelectorAnswerDoc {
+        doc: filtered,
+        release,
+    } = answer.map_err(map_selector_filter_err)?;
     let delta = filtered
         .export(ExportMode::all_updates())
         .map_err(|e| ProtocolError::ExportFailed(e.to_string()))?;
     let update = window_sync_frame(key, window_sub_tags::UPDATE, &delta)?;
-    for frame in state
-        .selector_answers
-        .queue(basis.disclosing(disclosure), vec![update])
+    for frame in
+        state
+            .selector_answers
+            .queue_releasing(basis.disclosing(disclosure), release, vec![update])
     {
         direct_tx
             .send(frame)

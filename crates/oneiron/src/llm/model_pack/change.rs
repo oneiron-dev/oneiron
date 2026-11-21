@@ -26,7 +26,7 @@ use crate::authority::OwnerProofGround;
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
 use crate::inbox::{NotificationEvent, NotificationKind, NotificationSource};
-use crate::setting::SettingCaller;
+use crate::setting::{SetSetting, SettingCaller};
 use crate::settings::model_pack::ModelPackPreference;
 use crate::skill_hub::pack_catalog::InstalledModelPack;
 
@@ -128,6 +128,15 @@ enum RevertTarget {
     /// The version a same-name update replaced, kept at those bytes and
     /// admitted again (FIX 20192): the revert installs it again and pins it.
     Replaced(InstalledModelPack),
+}
+
+/// What a revert has read before its first write: the pack it restores, the
+/// pack in effect before it, and the preference change where no write comes
+/// before that change is built (a pack still installed).
+struct PreparedRevert {
+    target: RevertTarget,
+    before: Option<ModelPackReceipt>,
+    change: Option<SetSetting>,
 }
 
 impl RevertTarget {
@@ -317,16 +326,18 @@ impl Vault {
     /// with no pack before it, or whose pack before it is neither installed
     /// nor kept at its bytes, fails an install's checks (a frozen hub ref
     /// that pins other bytes named apart) or is not served, answers why it
-    /// cannot run now and changes nothing. The preference is a row that
+    /// cannot run now and changes nothing. It is answered from the read
+    /// transaction and never asked for. The preference is a row that
     /// travels (stage 7c-1), so in a rooted vault the revert appends the
-    /// owner's act, which can carry an owner key's proof: the door asks for
-    /// the person at this device before its write, and the change signs on
-    /// that ground.
+    /// owner's act, which can carry an owner key's proof: the door makes
+    /// its pre-write refusals on a read transaction, drops it, and asks for
+    /// the person at this device while holding nothing. The write makes the
+    /// checks again and the change signs on that ground.
     ///
     /// # Errors
     /// The owner proof; [`crate::Error::InvalidConfig`] for a blank change
-    /// id; the presence check's refusal ([`Vault::owner_presence`]), before
-    /// anything is read.
+    /// id; the presence check's refusal ([`Vault::owner_presence`]) after
+    /// a read finds a revert that can run.
     pub fn revert_model_pack_change_as_owner(
         &self,
         owner: &AuthenticatedOwner,
@@ -335,8 +346,14 @@ impl Vault {
         if request.change_ref.trim().is_empty() {
             return Err(invalid("a revert names a change"));
         }
-        // The confirm is for an owner proof, so it stands before the write
-        // opens, while the door holds nothing: the prompt can block.
+        {
+            let txn = self.store.env.read_txn()?;
+            if let Err(revert) = self.read_model_pack_revert_in_txn(&txn, owner, request)? {
+                return Ok(revert);
+            }
+        }
+        // The read drops before the confirm for the owner proof. The write
+        // has not opened, so the door holds nothing while the prompt can block.
         let witness = self.owner_presence(
             crate::world_keys::OwnerActImportance::Important,
             crate::world_keys::owner_presence_reasons::MODEL_PACK_REVERT,
@@ -344,22 +361,24 @@ impl Vault {
         let ground = OwnerProofGround::witnessed(&witness);
         self.with_write_txn_grouped_after_commit(
             |txn| {
-                owner.revalidate_as_vault_owner_in_txn(self, txn)?;
-                let (blocked, applied) = match self
-                    .model_pack_revert_target_in_txn(txn, &request.change_ref)?
+                let (revert, applied) = match self
+                    .read_model_pack_revert_in_txn(txn, owner, request)?
                 {
-                    Ok(target) => {
-                        let before = self.model_pack_in_effect_in_txn(txn)?;
+                    Ok(PreparedRevert {
+                        target,
+                        before,
+                        change,
+                    }) => {
                         if let RevertTarget::Replaced(replaced) = &target {
                             self.restore_replaced_model_pack_in_txn(
                                 txn,
                                 &replaced.receipt.pack_name,
                             )?;
                         }
-                        let change = model_pack_preference_change(
-                            model_pack_revert_preference(target.pack()),
-                            format!("{MODEL_PACK_REVERT_VERB} of change {}", request.change_ref),
-                        )?;
+                        let change = match change {
+                            Some(change) => change,
+                            None => model_pack_revert_setting_change(&target, &request.change_ref)?,
+                        };
                         // The key's hook records a change of the row, from the pack in effect
                         // before the revert installed anything again.
                         let outcome = {
@@ -380,13 +399,13 @@ impl Vault {
                                 ModelPackChangeCause::Revert,
                             )?;
                         }
-                        (None, Some((change, outcome)))
+                        let revert = ModelPackRevert {
+                            blocked: None,
+                            setting: self.model_pack_setting_in_txn(txn)?,
+                        };
+                        (revert, Some((change, outcome)))
                     }
-                    Err(block) => (Some(block), None),
-                };
-                let revert = ModelPackRevert {
-                    blocked,
-                    setting: self.model_pack_setting_in_txn(txn)?,
+                    Err(revert) => (revert, None),
                 };
                 Ok((revert, applied))
             },
@@ -398,4 +417,44 @@ impl Vault {
             },
         )
     }
+
+    /// The checks a revert of `request`'s change makes before its first
+    /// write, on `txn`: the owner's proof, the pack the revert restores, the
+    /// pack in effect and, for a pack still installed, the preference change.
+    /// The door runs them on a read before it asks and again in its write. A
+    /// revert that cannot run now is the inner `Err`: the door's answer, with
+    /// the preference as `txn` reads it.
+    fn read_model_pack_revert_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        owner: &AuthenticatedOwner,
+        request: &ModelPackRevertRequest,
+    ) -> Result<std::result::Result<PreparedRevert, ModelPackRevert>> {
+        owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+        match self.model_pack_revert_target_in_txn(txn, &request.change_ref)? {
+            Ok(target) => {
+                let before = self.model_pack_in_effect_in_txn(txn)?;
+                let change = matches!(&target, RevertTarget::Installed(_))
+                    .then(|| model_pack_revert_setting_change(&target, &request.change_ref))
+                    .transpose()?;
+                Ok(Ok(PreparedRevert {
+                    target,
+                    before,
+                    change,
+                }))
+            }
+            Err(block) => Ok(Err(ModelPackRevert {
+                blocked: Some(block),
+                setting: self.model_pack_setting_in_txn(txn)?,
+            })),
+        }
+    }
+}
+
+/// The preference change a revert of `change_ref` to `target`'s pack sets.
+fn model_pack_revert_setting_change(target: &RevertTarget, change_ref: &str) -> Result<SetSetting> {
+    model_pack_preference_change(
+        model_pack_revert_preference(target.pack()),
+        format!("{MODEL_PACK_REVERT_VERB} of change {change_ref}"),
+    )
 }

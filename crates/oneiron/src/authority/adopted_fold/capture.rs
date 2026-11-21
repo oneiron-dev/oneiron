@@ -57,16 +57,16 @@ pub(in crate::authority) fn capture_adopted_checkpoint_tail(
     if !gaps.is_empty() {
         return Ok(whole(AuthorityHistoryReason::UnheldRows));
     }
-    let confirms = if image_stands_here(image, log) {
+    let floors = if image_stands_here(image, log) {
         tail_folds_past(image, &tail, log)
     } else {
         Err(AuthorityHistoryReason::ImageContextMoved)
     };
-    let (confirms, floors) = match confirms {
-        Ok(past) => past,
+    let floors = match floors {
+        Ok(floors) => floors,
         Err(reason) => return Ok(whole(reason)),
     };
-    let settled = match settle_tail(image, &tail, log, confirms, floors)? {
+    let settled = match settle_tail(image, &tail, log, floors)? {
         Ok(settled) => settled,
         Err(reason) => return Ok(whole(reason)),
     };
@@ -83,7 +83,6 @@ pub(in crate::authority) fn capture_adopted_checkpoint_tail(
         pairs,
         counted_pairs,
         ancestry,
-        confirms,
         issues,
         projected,
         fold,
@@ -153,6 +152,24 @@ pub(in crate::authority) fn capture_adopted_checkpoint_tail(
             super::fold_resume::add_bound_keys(&mut bound_keys, state);
         }
     }
+    // The confirms a whole build keeps (`fold_resume::ImageFold`): the
+    // image's, and each tail confirm that folds to a state. The admission
+    // join of `tail_folds_past` also holds a confirm the fold then rejects
+    // (its signer revoked or out of its ancestry), which spends no id or
+    // nonce in the whole fold (row ADOPTED-TAIL-INVALID-CONFIRM-JOINS-SUCCESSOR).
+    let mut confirm_ids = image.safety.confirm_ids.clone();
+    let mut confirm_nonces = image.safety.confirm_nonces.clone();
+    let folded_confirms = judged
+        .iter()
+        .filter(|(hash, _)| states.contains_key(*hash))
+        .filter_map(|(_, entry)| match &entry.op {
+            AuthorityOp::FederationConfirm(action) => Some(action),
+            _ => None,
+        });
+    for action in folded_confirms {
+        confirm_ids.insert(action.confirm_id);
+        confirm_nonces.insert(action.nonce);
+    }
     // The approvals a covered revocation could expire on a reader's own
     // clock: the stale-roster window reads only rows carried whole.
     let read_whole: Vec<&AuthorityLogEntry> = projected
@@ -185,8 +202,8 @@ pub(in crate::authority) fn capture_adopted_checkpoint_tail(
         ),
         writers,
         bound_keys,
-        confirm_ids: confirms.0,
-        confirm_nonces: confirms.1,
+        confirm_ids,
+        confirm_nonces,
         nonce_provenance: crate::authority::fold_state::to_btree_set_map(
             &merged.critical_write_confirm_nonce_provenance,
         ),

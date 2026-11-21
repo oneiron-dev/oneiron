@@ -7,10 +7,8 @@
 //! ([`emergency_return_in_txn`]), for the card of the booking the visitor
 //! picks again (PR 3).
 
-use super::{
-    DEPOSIT, DEPOSIT_BOOKING, DepositRow, DepositState, UnattributedCancel, booking_key,
-    put_deposit,
-};
+use super::home_fence::settles_deposits_here;
+use super::{DEPOSIT, DEPOSIT_BOOKING, DepositRow, DepositState, UnattributedCancel, booking_key};
 use crate::error::{Error, Result};
 use crate::{EntityId, Vault};
 
@@ -27,6 +25,31 @@ pub(in crate::booking::lifecycle) enum HeldDepositKind {
     /// Captured, and a smaller refund settled for `refunded_minor`: the
     /// owner's return owes the balance at once.
     BalanceAfterRefund { refunded_minor: u64 },
+    /// A refund is owed, and the provider ended the one asked for it with
+    /// nothing paid back: the owner's return asks the provider for the same
+    /// refund again, under a new key, and for nothing more
+    /// (FIX [BK-DEPOSIT-FAILED-REFUND-SURFACE]). Where refunds made by hand
+    /// in the provider's dashboard cover a part of it
+    /// (`part_refunded_by_hand`), only a hand refund pays the rest, and the
+    /// owner's return asks nothing.
+    RefundEndedUnpaid { part_refunded_by_hand: bool },
+    /// A refund is owed, refunds made by hand in the provider's dashboard
+    /// cover a part of it, and the provider holds no refund under the row's
+    /// keys: only a hand refund pays the rest, and the owner's return asks
+    /// nothing (FIX [BK-DEPOSIT-SHORT-HAND-REFUND-NO-OWNER-LINE]).
+    PartRefundedByHand,
+}
+
+impl HeldDepositKind {
+    /// Whether the refund held is owed to the visitor and nothing moves it
+    /// on by itself: the provider ended it unpaid, or refunds made by hand
+    /// cover only a part of it.
+    pub(in crate::booking::lifecycle) const fn refund_stuck(self) -> bool {
+        matches!(
+            self,
+            Self::RefundEndedUnpaid { .. } | Self::PartRefundedByHand
+        )
+    }
 }
 
 /// A booking's deposit as its owner's line reads it.
@@ -38,16 +61,41 @@ pub(in crate::booking::lifecycle) struct HeldDeposit {
     /// The terms' currency, ISO 4217 lowercase.
     pub(in crate::booking::lifecycle) currency: String,
     /// When a cancel Oneiron cannot attribute was first noted on it
-    /// ([`note_unattributed_cancel_in_txn`]); `None` while none was.
+    /// ([`unattributed_cancel_in_txn`]); `None` while none was.
     pub(in crate::booking::lifecycle) unattributed_cancel_at: Option<u64>,
+    /// When a settle row found the refund it holds ended unpaid at the
+    /// provider, or covered only in part by hand
+    /// ([`HeldDepositKind::refund_stuck`]); `None` for any other kind.
+    pub(in crate::booking::lifecycle) refund_ended_unpaid_at: Option<u64>,
+    /// The deposit carries an owner's BK-09 emergency cancel's mark: what it
+    /// holds is that cancel's whole return, and a booking that stands live
+    /// again is the visitor's pick of one of its proposals.
+    pub(in crate::booking::lifecycle) emergency_cancelled: bool,
 }
 
 /// What `row` still holds that the owner's return gives back, and how much;
 /// `None` when the return would move nothing: a deposit never confirmed, or
 /// one that owes or has made its whole return. A row refunded before its
-/// capture was recorded holds no balance.
+/// capture was recorded holds no balance. A refund owed whose ask the
+/// provider ended unpaid holds that refund, until the owner asks again;
+/// from then until that refund settles or ends unpaid again, the return
+/// moves nothing, so a second Return deposit changes nothing. So does one
+/// that refunds made by hand cover only a part of.
 pub(super) fn held_of(row: &DepositRow) -> Option<(HeldDepositKind, u64)> {
     match row.state {
+        DepositState::RefundDue { amount_minor } if row.refund_ended_unpaid.is_some() => row
+            .refund_ended_unpaid
+            .filter(|ended| ended.retry == row.refund_retry)
+            .map(|ended| {
+                let kind = if ended.no_keyed_refund {
+                    HeldDepositKind::PartRefundedByHand
+                } else {
+                    HeldDepositKind::RefundEndedUnpaid {
+                        part_refunded_by_hand: ended.part_refunded_by_hand,
+                    }
+                };
+                (kind, amount_minor)
+            }),
         DepositState::CaptureDue { amount_minor } => {
             Some((HeldDepositKind::CaptureDue, amount_minor))
         }
@@ -93,11 +141,20 @@ pub(in crate::booking::lifecycle) fn held_deposit_in_txn(
     let Some(row) = DEPOSIT.get(&vault.store, rtxn, &link.deposit_key)? else {
         return Ok(None);
     };
-    Ok(held_of(&row).map(|(kind, amount_minor)| HeldDeposit {
+    let Some((kind, amount_minor)) = held_of(&row) else {
+        return Ok(None);
+    };
+    Ok(Some(HeldDeposit {
         kind,
         amount_minor,
         currency: row.terms.currency.clone(),
-        unattributed_cancel_at: row.unattributed_cancel.map(|noted| noted.noted_at),
+        unattributed_cancel_at: unattributed_cancel_in_txn(vault, rtxn, event_ref, &row)?
+            .map(|noted| noted.noted_at),
+        refund_ended_unpaid_at: row
+            .refund_ended_unpaid
+            .filter(|_| kind.refund_stuck())
+            .map(|ended| ended.noted_at),
+        emergency_cancelled: row.emergency_return_sequence.is_some(),
     }))
 }
 
@@ -108,13 +165,21 @@ pub(in crate::booking::lifecycle) enum EmergencyReturn {
     /// The captured deposit is owed back; the provider has not refunded it
     /// yet.
     RefundDue,
-    /// The provider refunded it.
+    /// The provider refunded it, or the owner marked its refund refunded
+    /// outside the provider.
     Refunded,
     /// The capture still due is to be released; the provider has not voided
     /// it yet.
     VoidDue,
     /// The provider voided it: nothing was captured.
     Voided,
+    /// The refund owed back ended unpaid at the provider, and the owner has
+    /// not asked for it again ([`HeldDepositKind::RefundEndedUnpaid`]).
+    RefundEndedUnpaid,
+    /// Refunds made by hand in the provider's dashboard cover only a part of
+    /// the refund owed back, and the provider holds none under the row's keys
+    /// ([`HeldDepositKind::PartRefundedByHand`]).
+    PartRefundedByHand,
 }
 
 /// What an owner's BK-09 emergency cancel gave back of the deposit of the
@@ -139,7 +204,16 @@ pub(in crate::booking::lifecycle) fn emergency_return_in_txn(
         return Ok(None);
     }
     Ok(match row.state {
-        DepositState::RefundDue { .. } => Some(EmergencyReturn::RefundDue),
+        DepositState::RefundDue { .. } if row.marks_owed_refund() => {
+            Some(EmergencyReturn::Refunded)
+        }
+        DepositState::RefundDue { .. } => Some(match held_of(&row) {
+            Some((HeldDepositKind::RefundEndedUnpaid { .. }, _)) => {
+                EmergencyReturn::RefundEndedUnpaid
+            }
+            Some((HeldDepositKind::PartRefundedByHand, _)) => EmergencyReturn::PartRefundedByHand,
+            _ => EmergencyReturn::RefundDue,
+        }),
         DepositState::Refunded { .. } => Some(EmergencyReturn::Refunded),
         DepositState::VoidDue => Some(EmergencyReturn::VoidDue),
         DepositState::Voided => Some(EmergencyReturn::Voided),
@@ -149,8 +223,8 @@ pub(in crate::booking::lifecycle) fn emergency_return_in_txn(
 
 /// The SEQUENCE of the replay proof that noted a cancel Oneiron cannot
 /// attribute on the deposit of the booking `event_ref`
-/// ([`note_unattributed_cancel_in_txn`]), read in `rtxn`; `None` for a
-/// booking this node holds no deposit for, or one with no such note.
+/// ([`unattributed_cancel_in_txn`]), read in `rtxn`; `None` for a booking
+/// this node holds no deposit for, or one with no such note.
 ///
 /// # Errors
 ///
@@ -163,59 +237,74 @@ pub(in crate::booking::lifecycle) fn unattributed_cancel_sequence_in_txn(
     let Some(link) = DEPOSIT_BOOKING.get(&vault.store, rtxn, &booking_key(event_ref))? else {
         return Ok(None);
     };
-    Ok(DEPOSIT
-        .get(&vault.store, rtxn, &link.deposit_key)?
-        .and_then(|row| row.unattributed_cancel)
-        .map(|noted| noted.sequence))
+    let Some(row) = DEPOSIT.get(&vault.store, rtxn, &link.deposit_key)? else {
+        return Ok(None);
+    };
+    Ok(unattributed_cancel_in_txn(vault, rtxn, event_ref, &row)?.map(|noted| noted.sequence))
 }
 
-/// Records, in the calendar writer `wtxn`, that a seat's replay of the
-/// owner's cancelled write of the booking `event_ref` at `sequence` read a
-/// stored copy with no write marker as the owner's own
-/// (BK-ECHO-UNMARKED-SAME-SHAPE-COPY = C, lead 21 Nov 04:3x): the deposit
-/// stays as that write decides, and a host's cancel at that SEQUENCE reads
-/// the same, so the owner's line asks the owner to refund by hand, dated
-/// `now`. Only a deposit a host cancel would move (a capture still due, or
-/// captured) is marked, and only once; an EVENT with no deposit is left
-/// alone.
-///
-/// The row is written through the deposits' one writer, so the home-move
-/// fence holds here too (review round 2 of #10058, FIX
-/// [BK-LIFECYCLE-ROWS-NOT-CARRIED-BY-HOME-MOVE]): a node that froze its
-/// booking rows for a move writes no note on their history. It refuses, the
-/// replay's proof writer drops whole, and the outbox keeps the proof owed, so
-/// a later write or pull of the seat proves it again; it lands here once a
-/// cancelled move gives the rows back.
+/// The retry count and the time of the note that a settle row found the
+/// refund the deposit of the booking `event_ref` owes ended unpaid at the
+/// provider, or covered only in part by hand, read in `rtxn`; `None` for a
+/// booking this node holds no deposit for, or one with no such note
+/// (FIX [BK-DEPOSIT-FAILED-REFUND-SURFACE]).
 ///
 /// # Errors
 ///
-/// Storage errors; a refusal on a node that froze its booking rows.
-pub(crate) fn note_unattributed_cancel_in_txn(
+/// Storage errors.
+pub(in crate::booking::lifecycle) fn refund_ended_unpaid_note_in_txn(
     vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
+    rtxn: &heed::RoTxn<'_>,
     event_ref: &EntityId,
-    sequence: u32,
-    now: u64,
-) -> Result<()> {
-    let Some(link) = DEPOSIT_BOOKING.get(&vault.store, &*wtxn, &booking_key(event_ref))? else {
-        return Ok(());
+) -> Result<Option<(u32, u64)>> {
+    let Some(link) = DEPOSIT_BOOKING.get(&vault.store, rtxn, &booking_key(event_ref))? else {
+        return Ok(None);
     };
-    let Some(mut row) = DEPOSIT.get(&vault.store, &*wtxn, &link.deposit_key)? else {
-        return Ok(());
-    };
-    if row.unattributed_cancel.is_some()
-        || !matches!(
-            row.state,
-            DepositState::CaptureDue { .. } | DepositState::Captured { .. }
-        )
-    {
-        return Ok(());
+    Ok(DEPOSIT
+        .get(&vault.store, rtxn, &link.deposit_key)?
+        .and_then(|row| row.refund_ended_unpaid)
+        .map(|ended| (ended.retry, ended.noted_at)))
+}
+
+/// The first replay of the owner's cancelled write of the booking
+/// `event_ref` that read a stored copy with no write marker as the owner's
+/// own while `row`, its deposit, was held (BK-ECHO-UNMARKED-SAME-SHAPE-COPY
+/// = C): the deposit stays as that write decides, and a host's cancel at
+/// that SEQUENCE reads the same, so the owner's line asks the owner to refund
+/// by hand, dated by the proof.
+///
+/// A row noted before the replay's evidence became a claim keeps its own
+/// note (stored change: keep). Otherwise the seat's replay proof recorded it
+/// as a synced claim on the EVENT (FIX [BK-REPLAY-NOTE-NOT-CARRIED-TO-NEW-HOME],
+/// BK-REPLAY-NOTE-DELIVERY = A), read only where this node holds the live
+/// deposit, so the note reaches the new home after a booking home move, and
+/// only while a host cancel would move the deposit: a capture still due, or
+/// captured. The booking names its deposit from its confirm on, in the
+/// commit where its capture falls due, and a deposit's state only moves on
+/// from there, so a deposit that stands so now stood so at the proof.
+fn unattributed_cancel_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    event_ref: &EntityId,
+    row: &DepositRow,
+) -> Result<Option<UnattributedCancel>> {
+    if row.unattributed_cancel.is_some() {
+        return Ok(row.unattributed_cancel);
     }
-    row.unattributed_cancel = Some(UnattributedCancel {
-        sequence,
-        noted_at: now,
-    });
-    row.updated_at = now;
-    put_deposit(vault, wtxn, &link.deposit_key, &row)
-        .map_err(|error| Error::InvalidConfig(error.to_string()))
+    if !matches!(
+        row.state,
+        DepositState::CaptureDue { .. } | DepositState::Captured { .. }
+    ) || !settles_deposits_here(vault, rtxn)
+        .map_err(|error| Error::InvalidConfig(error.to_string()))?
+    {
+        return Ok(None);
+    }
+    Ok(
+        crate::calendar::connectors::replay_cancel_evidence_in_txn(vault, rtxn, event_ref)?.map(
+            |evidence| UnattributedCancel {
+                sequence: evidence.sequence,
+                noted_at: evidence.proved_at,
+            },
+        ),
+    )
 }

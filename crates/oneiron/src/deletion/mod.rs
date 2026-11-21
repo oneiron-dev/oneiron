@@ -37,6 +37,9 @@ pub(crate) mod setting_keys;
 mod sweep_queue;
 mod timeline;
 mod tombstone;
+// The Kani model check of the tombstone decoder; only `cargo kani` sets `--cfg kani`.
+#[cfg(kani)]
+mod tombstone_kani;
 #[cfg(feature = "sync")]
 mod tombstone_publications_in_flight;
 #[cfg(feature = "sync")]

@@ -33,12 +33,20 @@
 //!   ([`SelectorAnswers::queue_under`]): a body's Data frames that do not
 //!   stand are not sent, and its End still goes, so the peer's attempt lands
 //!   nothing and is asked for again under the grant as it is then.
+//! - A fetch answer to another vault's machine goes with the rows it releases
+//!   ([`SelectorAnswers::queue_releasing`]). The socket's last door records
+//!   them once the answer passed its verdict and before its bytes leave
+//!   ([`ReleasedAnswer::take_peer_release`]), so the owner's later delete of
+//!   each follows them (CROSS-VAULT-DELETE-SELECTOR-ANSWER-RELEASE). An
+//!   answer that does not stand, or that the last door withholds, records
+//!   none.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use base64::Engine;
 use oneiron::Vault;
+use oneiron::share_travel::PeerRelease;
 pub(crate) use oneiron::sync::SelectorReleaseBasis;
 
 /// First byte of a queued selector answer on a socket's own direct queue: no
@@ -77,7 +85,8 @@ pub(crate) struct SelectorAnswers {
 
 enum Judged {
     /// What the answer was made under: it stands while every basis does.
-    Waiting(Vec<SelectorReleaseBasis>),
+    /// Beside it, the rows it releases to another vault, if any.
+    Waiting(Vec<SelectorReleaseBasis>, Option<PeerRelease>),
     /// The basis of an answer that stood at its first frame, which each of
     /// its later frames is sent under.
     Stood(Arc<[SelectorReleaseBasis]>),
@@ -89,12 +98,21 @@ enum Judged {
 pub(crate) struct ReleasedAnswer {
     vault: Arc<Vault>,
     bases: Arc<[SelectorReleaseBasis]>,
+    /// What the answer's first frame releases to another vault, until its
+    /// last door takes it.
+    peer_release: Option<PeerRelease>,
 }
 
 impl ReleasedAnswer {
     /// Whether every basis the answer was made under stands now.
     pub(crate) fn stands(&self) -> bool {
         self.bases.iter().all(|basis| basis.stands(&self.vault))
+    }
+
+    /// The rows this frame releases to another vault, taken once, for the
+    /// record its last door writes before the frame's bytes leave.
+    pub(crate) fn take_peer_release(&mut self) -> Option<PeerRelease> {
+        self.peer_release.take()
     }
 }
 
@@ -116,12 +134,32 @@ impl SelectorAnswers {
         self.queue_under(vec![basis], frames)
     }
 
+    /// [`Self::queue`] for an answer that releases `release`'s rows to
+    /// another vault: its first frame's last door records them.
+    pub(crate) fn queue_releasing(
+        &mut self,
+        basis: SelectorReleaseBasis,
+        release: Option<PeerRelease>,
+        frames: Vec<Vec<u8>>,
+    ) -> Vec<Vec<u8>> {
+        self.queue_answer(vec![basis], release, frames)
+    }
+
     /// The frames of one answer made under every basis in `bases`, tagged
     /// for the release: it stands only while each of them does, and an
     /// answer made under none never stands.
     pub(crate) fn queue_under(
         &mut self,
         bases: Vec<SelectorReleaseBasis>,
+        frames: Vec<Vec<u8>>,
+    ) -> Vec<Vec<u8>> {
+        self.queue_answer(bases, None, frames)
+    }
+
+    fn queue_answer(
+        &mut self,
+        bases: Vec<SelectorReleaseBasis>,
+        release: Option<PeerRelease>,
         frames: Vec<Vec<u8>>,
     ) -> Vec<Vec<u8>> {
         if frames.is_empty() {
@@ -133,9 +171,9 @@ impl SelectorAnswers {
         // queue and its release.
         #[cfg(oneiron_test_support)]
         for basis in &bases {
-            crate::test_doors::selector_release::run(basis.grant_id());
+            crate::test_doors::selector_release::run(basis);
         }
-        self.queued.insert(token, Judged::Waiting(bases));
+        self.queued.insert(token, Judged::Waiting(bases, release));
         let count = frames.len();
         frames
             .into_iter()
@@ -152,15 +190,16 @@ impl SelectorAnswers {
         vault: &Arc<Vault>,
         frame: &QueuedAnswerFrame<'_>,
     ) -> Option<ReleasedAnswer> {
-        let bases: Arc<[SelectorReleaseBasis]> = match self.queued.remove(&frame.token)? {
-            Judged::Stood(bases) => bases,
-            Judged::Waiting(bases)
-                if !bases.is_empty() && bases.iter().all(|basis| basis.stands(vault)) =>
-            {
-                bases.into()
-            }
-            Judged::Waiting(_) => return None,
-        };
+        let (bases, peer_release): (Arc<[SelectorReleaseBasis]>, _) =
+            match self.queued.remove(&frame.token)? {
+                Judged::Stood(bases) => (bases, None),
+                Judged::Waiting(bases, release)
+                    if !bases.is_empty() && bases.iter().all(|basis| basis.stands(vault)) =>
+                {
+                    (bases.into(), release)
+                }
+                Judged::Waiting(..) => return None,
+            };
         if !frame.last {
             self.queued
                 .insert(frame.token, Judged::Stood(Arc::clone(&bases)));
@@ -168,6 +207,7 @@ impl SelectorAnswers {
         Some(ReleasedAnswer {
             vault: Arc::clone(vault),
             bases,
+            peer_release,
         })
     }
 }

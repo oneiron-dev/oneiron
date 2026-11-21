@@ -2,6 +2,7 @@
 
 mod archived;
 mod collection;
+mod release;
 
 pub(crate) use self::archived::{plan_archived_calendar_rows, read_back_archived_calendar_rows};
 pub use self::collection::{
@@ -9,7 +10,11 @@ pub use self::collection::{
     calendar_collection_members_for_operation,
 };
 pub(super) use self::collection::{
-    cancelled_members_in_flight, first_write_unsettled, omission_observed, unsettled_writes_of,
+    UnprovenReplaysBeforeRead, cancelled_members_in_flight, first_write_unsettled,
+    omission_observed, unproven_replays_before_read, unsettled_writes_of,
+};
+pub(crate) use self::release::{
+    calendar_holds_in_txn, record_released_hold_cancel, release_calendar_holds_as_owner,
 };
 
 use serde::{Deserialize, Serialize};
@@ -22,6 +27,7 @@ use super::remote::{
     CalendarRemoteTransport, RemoteCalendarObject, RemoteWriteReceipt, RemoteWriteRequest,
     ics_content_hash, local_uid, render_owner_vevent, shared_uid,
 };
+use super::replay_evidence::record_replay_cancel_evidence_in_txn;
 use super::seat::{CalendarConnectorError, CalendarConnectorSeatState};
 
 use crate::batch::secret_scan::{admitted_from_known, named_tree};
@@ -242,6 +248,13 @@ pub fn write_calendar_event(
         return Err(CalendarConnectorError::KillSwitchEngaged);
     }
     operation.revalidate(vault)?;
+    // An install born of a restore that has not joined writes nothing out,
+    // new or resumed, whoever asks (row RESTORED-UNJOINED-STARTS-NO-WORK):
+    // refused before the outbox row is staged or the provider is called.
+    {
+        let rtxn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        vault.refuse_work_while_restored_unjoined_in_txn(&rtxn)?;
+    }
     if vault.get_entity_type(&event_ref)? != Some(ENTITY_TYPE_EVENT) {
         return Err(ingest_error("write target is not an EVENT"));
     }
@@ -859,8 +872,9 @@ enum StoredCopy {
     Foreign,
     /// A version with a member below the staged SEQUENCE, which a provider
     /// storing the write keeps or raises: never the write's own copy. Read
-    /// after the refusal it is another writer's; a pull may have read it
-    /// before the write landed, so there it proves nothing.
+    /// after the refusal it is another writer's; a pull whose read began
+    /// before the refusal may have read it before the write landed, so there
+    /// it proves nothing.
     Older,
     /// Nothing usable: the read failed, found no copy, or did not parse.
     Unread,
@@ -1030,8 +1044,11 @@ fn first_write_members(
 ///
 /// `unattributed` says the copy proved the write's own with no write marker
 /// ([`StoredCopy::Own`]): each member the write cancelled then records that
-/// on its booking's held deposit, in the same writer, so the owner's line
-/// asks for a refund by hand (BK-ECHO-UNMARKED-SAME-SHAPE-COPY = C).
+/// as a synced replay-evidence claim, in the same writer
+/// ([`record_replay_cancel_evidence_in_txn`]), so the owner's line on the
+/// node that holds its booking's live deposit asks for a refund by hand
+/// (BK-ECHO-UNMARKED-SAME-SHAPE-COPY = C), after a home move too
+/// (BK-REPLAY-NOTE-DELIVERY = A).
 ///
 /// The caller holds the vault's calendar admission turn, so no pull admits
 /// the copy between this publication and the outbox leaving flight.
@@ -1049,14 +1066,16 @@ fn write_replay_proof(
             publish_own_stored_copy_in_txn(vault, txn, operation, provider, row, members, now)
                 .map_err(CarrierWriteError::Failed)?;
             if unattributed {
-                for member in &row.cancelled_members {
-                    crate::booking::lifecycle::note_unattributed_cancel_in_txn(
+                for &member in &row.cancelled_members {
+                    record_replay_cancel_evidence_in_txn(
                         vault,
                         txn,
                         member,
+                        &row.outbox_id,
                         row.sequence,
                         now,
-                    )?;
+                    )
+                    .map_err(CarrierWriteError::Failed)?;
                 }
             }
         }
@@ -1164,11 +1183,20 @@ fn publish_own_stored_copy_in_txn(
 /// lands on its EVENT. Either way the proof is owed no longer
 /// (BK-ECHO-RECONCILE-FAILURE-RELEASES-UNMARKED-COPY).
 ///
-/// A version below the staged SEQUENCE proves nothing: the pull may have
-/// read it before the write landed, so the proof stays owed for a later
-/// pull, and the version is admitted as any pulled version is. A first
-/// write's is the exception: under the UID the write minted, no version
-/// predates the write.
+/// A version below the staged SEQUENCE is another writer's when the pull's
+/// read began after the refusal: `before_read` holds the row as it stands
+/// now, at its revision ([`UnprovenReplaysBeforeRead`]), so the refusal, and the copy the
+/// provider held then, came before that read, and a refused write is never
+/// sent again. It proves the copy another writer's, as the refusal's own
+/// read would have (CAL-OUTBOX-ROW-OF-REMOVED-SEAT-HOLDS-PULLS): without
+/// that, a provider that keeps such a version leaves the proof owed for
+/// good, and every seat of the calendar holds back each pulled copy that
+/// may be the write's. A version read by a pull that began before the
+/// refusal proves nothing: that pull may have read it before the write
+/// landed, so the proof stays owed for a later pull, and the version is
+/// admitted as any pulled version is. A first write's is the exception
+/// either way: under the UID the write minted, no version predates the
+/// write.
 ///
 /// The caller holds the vault's calendar admission turn.
 pub(super) fn prove_unproven_replay(
@@ -1177,11 +1205,14 @@ pub(super) fn prove_unproven_replay(
     provider: &str,
     object: &RemoteCalendarObject,
     uid: &str,
+    before_read: &UnprovenReplaysBeforeRead,
     now: u64,
 ) -> Result<(), CalendarConnectorError> {
-    let Some(mut row) = self::collection::unproven_replay(vault, operation, uid)? else {
+    let Some((mut row, revision)) = self::collection::unproven_replay(vault, operation, uid)?
+    else {
         return Ok(());
     };
+    let read_after_refusal = before_read.holds(&row.outbox_id, &revision);
     open_outbox(vault, operation, provider, uid, &mut row)?;
     // A row owes this proof only after a replay's refusal or a first
     // write's, so an unmarked copy reads as the write's where the replay's
@@ -1192,11 +1223,11 @@ pub(super) fn prove_unproven_replay(
                 members,
                 marker_proved,
             } => (Some(members), !marker_proved),
-            StoredCopy::Foreign => (first_write_members(vault, &row)?, false),
-            StoredCopy::Older => match first_write_members(vault, &row)? {
+            StoredCopy::Older if !read_after_refusal => match first_write_members(vault, &row)? {
                 Some(members) => (Some(members), false),
                 None => return Ok(()),
             },
+            StoredCopy::Foreign | StoredCopy::Older => (first_write_members(vault, &row)?, false),
             StoredCopy::Unread => return Ok(()),
         };
     row.stored_copy_unproven = false;

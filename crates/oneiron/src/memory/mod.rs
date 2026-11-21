@@ -382,6 +382,7 @@ pub use search_vector::{
 };
 pub(crate) use session_reads::{
     SessionAnswer, SessionRead, SessionReadContext, room_short_ref, scoped_session_text,
+    scoped_session_text_planned,
 };
 pub use shape_card_doors::{
     ShapeGroupResolveRequest, ShapeItemReceipt, ShapeItemReceiptRequest, ShapePlanCardView,
@@ -403,9 +404,10 @@ pub use support::{
 };
 pub(crate) use transcript::TRANSCRIPT_READ_ATTEMPTS;
 pub use transcript::{
-    MAX_TRANSCRIPT_PAGE_TURNS, TranscriptMessage, TranscriptPage, TranscriptTurn,
+    MAX_TRANSCRIPT_PAGE_TURNS, TranscriptMessage, TranscriptPage, TranscriptSpeaker, TranscriptTurn,
 };
 pub(crate) use witness::WITNESS_OCCURRENCE_SKEW_SECS;
+pub(crate) use witness::live_canonical_person_in_txn;
 pub use witness::{
     AppendToStreamRequest, BeginMessageStreamRequest, CancelStreamRequest, CommitMessageRequest,
     MessageBirth, MessageCancelKind, MessageCancelReason, MessageCommitOptions,

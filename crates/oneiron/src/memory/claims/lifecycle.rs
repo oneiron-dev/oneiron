@@ -363,9 +363,30 @@ impl Memory<'_> {
                 self.vault
                     .retract_own_claim_or_park_in_txn(wtxn, &id, now, self.write_actor())?
             } else {
+                // The owner's own retract of an Approved claim carries the
+                // owner's proof, revalidated here, to the Gate: it confirms
+                // the close in person where a declared critical class asks for
+                // it (FIX OWNER-CLOSE-DOORS-DECLARED-CRITICAL-APPROVED-CLOSE-PENDS).
+                // A narrowed or delegated credential, or a surface that writes
+                // for someone else, carries none.
+                let owner = match self.owner_authorship() {
+                    Some(owner)
+                        if self.actor_class == EdgeActorClass::Human
+                            && body.approval == crate::claim::ClaimApprovalStatus::Approved =>
+                    {
+                        owner.owner_answer_in_txn(self.vault, &*wtxn)?
+                    }
+                    _ => None,
+                };
                 crate::claim::OwnClaimRetract::Landed(
                     self.vault
-                        .retract_claim_in_txn_as(wtxn, &id, now, Some(self.write_actor()))?
+                        .retract_claim_in_txn_as_owner(
+                            wtxn,
+                            &id,
+                            now,
+                            Some(self.write_actor()),
+                            owner,
+                        )?
                         .map(|record| record.decision_id),
                 )
             };

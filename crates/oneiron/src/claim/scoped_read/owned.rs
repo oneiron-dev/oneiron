@@ -51,6 +51,7 @@ impl ScopedRead<'_> {
             read_filter,
             receipts_include_live_grants,
             cited_support,
+            source_floor_waived: _,
         } = self;
         Ok(OwnedScopedRead {
             actor_key,
@@ -114,6 +115,7 @@ impl OwnedScopedRead {
             read_filter,
             receipts_include_live_grants,
             cited_support,
+            source_floor_waived: false,
         };
         let result = operation(&read);
         let ScopedRead {
@@ -135,6 +137,7 @@ impl OwnedScopedRead {
             read_filter,
             receipts_include_live_grants,
             cited_support,
+            source_floor_waived: _,
         } = read;
         (
             Self {
@@ -229,6 +232,7 @@ impl OwnedScopedRead {
             read_filter,
             receipts_include_live_grants,
             cited_support,
+            source_floor_waived: false,
         })
     }
 }

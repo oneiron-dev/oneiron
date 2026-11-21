@@ -14,7 +14,7 @@
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use oneiron::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionCall, DecisionClass,
@@ -38,7 +38,7 @@ const BAND_REVISION: &str = "2f3de3d";
 
 /// A clock these reads never reach.
 fn deadline() -> RetrievalDeadline {
-    RetrievalDeadline::hard(Instant::now(), Duration::from_secs(60))
+    RetrievalDeadline::after(Duration::from_secs(60))
 }
 
 fn question() -> DecisionQuestion {
