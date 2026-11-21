@@ -596,10 +596,10 @@ pub(crate) fn scrub_turn_programs(
 /// Where a row of either map goes in a checkpoint (KS7-3a): an arming or
 /// owed wake in its actor's compartment, held while the turn or
 /// conversation it names is, so the actor's erase retires it; a decided
-/// wake is ids alone under its turn. A row that does not decode is
-/// undecodable; one filed under a key other than its own is a key mismatch
-/// (FIX SYNC-DISCARD-KEEPS-UNBOUND-WHOLE-ROW). Neither is placed under an
-/// owner.
+/// wake that names its actor likewise, and one that names none is ids alone
+/// under its turn. A row that does not decode is undecodable; one filed
+/// under a key other than its own is a key mismatch (FIX
+/// SYNC-DISCARD-KEEPS-UNBOUND-WHOLE-ROW). Neither is placed under an owner.
 pub(in crate::sync) fn checkpoint_entry(root: &str, key: &str, value: &[u8]) -> Placement {
     let placement = if root == TURN_PROGRAM_ARMS_MAP {
         replica::arming_row_placement(key, value)
