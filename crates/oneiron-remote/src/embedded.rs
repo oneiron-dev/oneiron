@@ -583,7 +583,10 @@ impl EmbeddedClient {
     /// handle and an agent's or system actor's refuse here. Each word of a
     /// person who is no live owner of the vault refuses `consent owner not
     /// authenticated`, as each word refuses `owner_key_required` where this
-    /// install holds no owner key.
+    /// install holds no owner key. A word that approves an act asks for the
+    /// person at this device before the key signs
+    /// ([`oneiron::Vault::owner_presence`]), so that call can wait on the
+    /// device's prompt; a word that denies asks nobody.
     pub(crate) fn as_owner_device(&self) -> Result<Self, MemoryError> {
         self.ensure_dispatch_pid()?;
         if self.actor_class != EdgeActorClass::Human || self.room_turn.is_some() {

@@ -449,11 +449,24 @@ impl Memory<'_> {
             return answer;
         }
         // The owner proof the host bound for a direct request, or on an
-        // owner-device surface the one this install's owner key mints for
-        // this word. An attendee ask admits a word, and cuts on it, only
-        // under that proof; every other ask ignores it.
-        let owner = self.word_owner_proof()?;
-        let owner = owner.as_deref();
+        // owner-device surface the one this install's owner key signs for
+        // this word after its read and its presence check
+        // (`ask_word_presence`). An ask that asks one party admits a word,
+        // and cuts on it, only under that party's proof.
+        let proof = self.word_owner_proof(handle, word)?;
+        self.answer_under(handle, word, &proof)
+    }
+
+    /// The write of [`Self::tasks_answer`] under the word's `proof`, and
+    /// what follows its commit. A proof an owner key signed here is held to
+    /// the importance its ground was checked at, after the admission.
+    pub(super) fn answer_under(
+        &self,
+        handle: &super::TaskAskHandle,
+        word: &super::TaskAskWord,
+        proof: &super::ask_word_presence::WordProof<'_>,
+    ) -> MemoryResult<super::TaskAskAnswer> {
+        let owner = proof.owner();
         let answer = self.with_verified_actor_write_txn(|txn| {
             let group = self
                 .ask_group_named_in(txn, handle.group_ref)?
@@ -469,6 +482,7 @@ impl Memory<'_> {
                 owner,
                 now,
             )?;
+            proof.refuse_risen_importance_in(self.vault(), txn, handle.group_ref, &group, word)?;
             if word.inform_for.is_none() && word.companion_for.is_none() {
                 complete_ask_member_in_txn(self.vault(), txn, &answer, word, now)?;
             }
@@ -546,10 +560,10 @@ impl Memory<'_> {
     }
 
     /// The checks [`Self::tasks_answer`] meets before it records `word`, in
-    /// one read transaction: nothing is recorded, no member completes and no
-    /// ask settles. `Ok(false)` for an ask a verb hook's session holds, which
-    /// that session answers rather than the vault, so `can({verb})` leaves
-    /// it unchecked (FIX [UI-GATE-PREVIEW]).
+    /// one read transaction: nothing is recorded or signed, nobody is asked,
+    /// no member completes and no ask settles. `Ok(false)` for an ask a verb
+    /// hook's session holds, which that session answers rather than the
+    /// vault, so `can({verb})` leaves it unchecked (FIX [UI-GATE-PREVIEW]).
     pub(crate) fn tasks_answer_admission(
         &self,
         handle: &super::TaskAskHandle,
@@ -564,7 +578,11 @@ impl Memory<'_> {
         {
             return Ok(false);
         }
-        let owner = self.word_owner_proof()?;
+        if self.owner_device_key_proves_words() {
+            self.owner_device_word_admission(handle, word)?;
+            return Ok(true);
+        }
+        let owner = self.answer_owner_proof();
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
         self.verify_actor_write_in_txn(&txn)?;
         let group = self
@@ -577,7 +595,7 @@ impl Memory<'_> {
             &group,
             self.write_actor(),
             word,
-            owner.as_deref(),
+            owner,
             self.vault().store.clock.now_recorded_at(),
         )?;
         Ok(true)
@@ -585,7 +603,7 @@ impl Memory<'_> {
 
     /// A person's word is theirs to give: a human connector running
     /// generated code does not make that code's answer the person's.
-    fn require_answers_in_own_name(&self) -> MemoryResult<()> {
+    pub(super) fn require_answers_in_own_name(&self) -> MemoryResult<()> {
         if self.writes_generated() && self.actor_class() == crate::EdgeActorClass::Human {
             return Err(MemoryError::new(
                 MEMORY_CODE_FORBIDDEN,

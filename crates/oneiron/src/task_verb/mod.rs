@@ -23,6 +23,7 @@ pub(crate) use ask_soft_confirm::validate_dispatch as validate_ask_soft_confirm_
 mod ask_soft_confirm_delivery;
 mod ask_soft_confirm_types;
 mod ask_types;
+mod ask_word_presence;
 mod ask_world_hold;
 mod attendee_answer;
 mod board_task;

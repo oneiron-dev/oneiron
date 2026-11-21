@@ -2354,7 +2354,7 @@ fn a_signer_read_from_the_slot_proves_nothing_once_a_pin_is_set_or_its_key_is_re
             "a checkpoint statement is never signed as a proof"
         );
         let proof = signer
-            .sign_ask_word_proof(&device.vault, &fold, &ask_word)
+            .sign_ask_word_proof(&device.vault, &fold, &ground, &ask_word)
             .expect("guard: with no PIN the key proves an ask word from its slot");
         assert!(verifies_over(key, &ask_word, &proof));
     }
@@ -2374,7 +2374,7 @@ fn a_signer_read_from_the_slot_proves_nothing_once_a_pin_is_set_or_its_key_is_re
             "and it signs no proof, inside the window too"
         );
         assert_eq!(
-            pin_refusal(signer.sign_ask_word_proof(&device.vault, &fold, &ask_word)),
+            pin_refusal(signer.sign_ask_word_proof(&device.vault, &fold, &ground, &ask_word)),
             DevicePinRefusal::Required,
             "nor an ask word's proof"
         );
@@ -2405,7 +2405,7 @@ fn a_signer_read_from_the_slot_proves_nothing_once_a_pin_is_set_or_its_key_is_re
     );
     assert!(
         taken
-            .sign_ask_word_proof(&unbound.vault, &fold, &ask_word)
+            .sign_ask_word_proof(&unbound.vault, &fold, &ground, &ask_word)
             .is_err(),
         "nor an ask word's proof"
     );
@@ -2432,12 +2432,12 @@ fn the_key_under_the_pin_proves_an_ask_word_only_inside_a_window_and_in_its_own_
     let ground = proof_ground(&device.vault);
 
     let proof = taken
-        .sign_ask_word_proof(&device.vault, &fold, &ask_word)
+        .sign_ask_word_proof(&device.vault, &fold, &ground, &ask_word)
         .expect("inside the window the key proves an ask word");
     assert!(verifies_over(key, &ask_word, &proof));
     assert!(
         taken
-            .sign_ask_word_proof(&device.vault, &fold, &owner_act_transcript())
+            .sign_ask_word_proof(&device.vault, &fold, &ground, &owner_act_transcript())
             .is_err(),
         "an authority transcript is never signed as an ask word's proof"
     );
@@ -2450,7 +2450,7 @@ fn the_key_under_the_pin_proves_an_ask_word_only_inside_a_window_and_in_its_own_
 
     device.pass_the_window();
     assert_eq!(
-        pin_refusal(taken.sign_ask_word_proof(&device.vault, &fold, &ask_word)),
+        pin_refusal(taken.sign_ask_word_proof(&device.vault, &fold, &ground, &ask_word)),
         DevicePinRefusal::Required,
         "a signer taken inside the window proves no ask word once it is over"
     );
@@ -2474,16 +2474,17 @@ fn the_owner_device_door_proves_an_ask_word_with_the_key_under_the_pin_only_insi
         .proof
         .actor_for_read(&device.vault)
         .expect("the embedded owner's actor");
+    let ground = proof_ground(&device.vault);
 
     device
         .vault
-        .authenticate_owner_device(owner, GateDecisionId::now())
+        .authenticate_owner_device(owner, GateDecisionId::now(), &ground)
         .expect("inside the window the owner's device proves the ask word");
 
     device.pass_the_window();
     let refused = device
         .vault
-        .authenticate_owner_device(owner, GateDecisionId::now())
+        .authenticate_owner_device(owner, GateDecisionId::now(), &ground)
         .map(drop);
     assert!(
         matches!(refused, Err(Error::Record(RecordError::OwnerKeyRequired))),
@@ -2496,6 +2497,6 @@ fn the_owner_device_door_proves_an_ask_word_with_the_key_under_the_pin_only_insi
         .expect("the right PIN confirms");
     device
         .vault
-        .authenticate_owner_device(owner, GateDecisionId::now())
+        .authenticate_owner_device(owner, GateDecisionId::now(), &ground)
         .expect("a right PIN lets the owner's device prove an ask word again");
 }

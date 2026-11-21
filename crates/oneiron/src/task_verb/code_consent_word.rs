@@ -147,6 +147,13 @@ pub(super) fn reserved_ask_in(
         && ask_spec(&row)? == *input)
 }
 
+/// Whether `option` approves what a code consent ask asks for: it lets the
+/// held effect go to its own gate, once or from now on. The denial stops it
+/// ([`super::ask_guard`]).
+pub(super) fn approves(option: &TaskAskOptionId) -> bool {
+    CodeConsentChoice::from_option(option.as_str()).is_some_and(CodeConsentChoice::approves)
+}
+
 /// Who a code consent ask asks: the wait's asked owners and its frozen
 /// holders, while the wait names this ask; `None` for every other ask
 /// ([`super::ask_guard`]).

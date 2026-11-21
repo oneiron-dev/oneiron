@@ -27,6 +27,7 @@ pub mod archive_side_catalogue;
 pub mod artifact_publication_pump;
 pub mod ask_answer_proof;
 pub mod ask_intent_pins;
+pub mod ask_word_presence;
 pub mod authority_adopted_fold;
 pub mod authority_ancestor_index;
 pub mod authority_door_view;

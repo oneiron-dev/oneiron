@@ -621,6 +621,19 @@ fn routed_in(
     Ok(Some(route))
 }
 
+/// Whether `option` approves what a training offer ask asks for: the switch
+/// to the offered model or the training of the custom one. Keep, decline
+/// and postpone leave today's setup ([`super::ask_guard`]).
+pub(super) fn approves(option: &TaskAskOptionId) -> bool {
+    OPTIONS.iter().any(|(id, answer, _)| {
+        *id == option.as_str()
+            && matches!(
+                answer,
+                OfferAnswer::ApproveSwitch | OfferAnswer::ApproveTrain
+            )
+    })
+}
+
 /// Who a training offer ask asks: the owner its reservation names; `None`
 /// for every other ask ([`super::ask_guard`]).
 pub(super) fn asked_in(

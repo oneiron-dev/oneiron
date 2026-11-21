@@ -16,8 +16,8 @@
 use super::ask_guard::AskedParty;
 use super::ask_record::{self, AskGroup};
 use super::ask_types::{
-    TaskAskDecision, TaskAskEvidenceReason, TaskAskResult, TaskAskSettlementReason, TaskAskSource,
-    TaskAskWord,
+    TaskAskDecision, TaskAskEvidenceReason, TaskAskOptionId, TaskAskResult,
+    TaskAskSettlementReason, TaskAskSource, TaskAskWord,
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::ClaimLifecycleStatus;
@@ -111,6 +111,16 @@ pub(super) fn asked_in(
     group: &AskGroup,
 ) -> Result<Option<AskedParty>> {
     Ok(attendee_intent(group).map(|_| AskedParty::VaultOwner))
+}
+
+/// Whether `option` approves what an attendee ask asks for: it names a
+/// contact as the speaker, an identity act. "None of these" names nobody
+/// ([`super::ask_guard`]).
+pub(super) fn approves(option: &TaskAskOptionId) -> bool {
+    matches!(
+        AttendeeIdentityChoice::from_option(option),
+        Some(AttendeeIdentityChoice::Contact(_))
+    )
 }
 
 /// [`asked_in`], once `word` names one option the ask CLAIM froze, in its
@@ -213,22 +223,5 @@ impl Memory<'_> {
             return None;
         }
         self.owner_authorship()
-    }
-
-    /// The proof a word [`Self::tasks_answer`] gives carries: the one the
-    /// host bound ([`Self::answer_owner_proof`]), else, on a surface that
-    /// answers as this install's owner device, the one its owner key mints
-    /// for this word (UC-05 PR 2b). Generated code and a room turn carry
-    /// none either way.
-    pub(super) fn word_owner_proof(
-        &self,
-    ) -> crate::memory::MemoryResult<Option<std::borrow::Cow<'_, AuthenticatedOwner>>> {
-        if let Some(owner) = self.answer_owner_proof() {
-            return Ok(Some(std::borrow::Cow::Borrowed(owner)));
-        }
-        if self.writes_generated() || self.room_turn().is_some() {
-            return Ok(None);
-        }
-        Ok(self.owner_device_word_proof()?.map(std::borrow::Cow::Owned))
     }
 }

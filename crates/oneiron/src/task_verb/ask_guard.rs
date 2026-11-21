@@ -12,13 +12,21 @@
 //! such an ask on a person's word only under the same proof in the cutting
 //! transaction; its deadline or staleness closes it with no proof. Every
 //! other ask passes untouched.
+//!
+//! Each kind also declares which of its options approve the act the ask
+//! asks for, and the line a device's prompt shows for it
+//! ([`approved_act_in`]): a person's word is as important as the act it
+//! approves (row OWNER-CONFIRM-SHEET), and a denial approves none.
 
 use std::collections::BTreeSet;
 
 use super::ask_record::{self, AskGroup};
-use super::ask_types::{TaskAskDecision, TaskAskSettlementReason, TaskAskSource, TaskAskWord};
+use super::ask_types::{
+    TaskAskDecision, TaskAskOptionId, TaskAskSettlementReason, TaskAskSource, TaskAskWord,
+};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, GateError, Result};
+use crate::world_keys::owner_presence_reasons;
 use crate::{EntityId, Vault};
 
 /// Who an ask kind asks, as its router reads it in the transaction.
@@ -97,12 +105,26 @@ type AskedIn = fn(&Vault, &heed::RoTxn<'_>, EntityId, &AskGroup) -> Result<Optio
 type OfferedIn =
     fn(&Vault, &heed::RoTxn<'_>, EntityId, &AskGroup, &TaskAskWord) -> Result<Option<AskedParty>>;
 
+/// How one ask kind's approving word is told from its other words, and
+/// what the device's prompt shows for it.
+struct AskApproval {
+    /// Whether an option the ask offers approves the act the ask asks for.
+    /// Every other option of the kind denies or abstains.
+    approves: fn(&TaskAskOptionId) -> bool,
+    /// The one line the device's prompt shows for an approving word
+    /// ([`owner_presence_reasons`]).
+    reason: &'static str,
+}
+
 /// An ask kind whose word is its asked party's own act.
 struct AskKind {
     /// Who it asks, for the settlement's cut.
     asked_in: AskedIn,
     /// Who it asks, for word admission, after its option check.
     offered_in: OfferedIn,
+    /// Its approving options; `None` for a kind whose options approve no
+    /// act (a contribution pair's five options judge two answers).
+    approval: Option<AskApproval>,
     reasons: AskKindReasons,
 }
 
@@ -113,6 +135,10 @@ const ASK_KINDS: [AskKind; 7] = [
     AskKind {
         asked_in: super::attendee_answer::asked_in,
         offered_in: super::attendee_answer::offered_in,
+        approval: Some(AskApproval {
+            approves: super::attendee_answer::approves,
+            reason: owner_presence_reasons::ANSWER_ATTENDEE_ASK,
+        }),
         reasons: AskKindReasons {
             elsewhere: "an attendee answer is given on the node that admitted the ask",
             unproven: "an attendee answer needs the owner's own authenticated word",
@@ -122,6 +148,10 @@ const ASK_KINDS: [AskKind; 7] = [
     AskKind {
         asked_in: super::training_offer_ask::asked_in,
         offered_in: super::training_offer_ask::offered_in,
+        approval: Some(AskApproval {
+            approves: super::training_offer_ask::approves,
+            reason: owner_presence_reasons::ANSWER_TRAINING_OFFER_ASK,
+        }),
         reasons: AskKindReasons {
             elsewhere: "a training offer answer is given on the node that admitted the ask",
             unproven: "a training offer answer needs the owner's own authenticated word",
@@ -131,6 +161,10 @@ const ASK_KINDS: [AskKind; 7] = [
     AskKind {
         asked_in: super::training_swap_ask::asked_in,
         offered_in: super::training_swap_ask::offered_in,
+        approval: Some(AskApproval {
+            approves: super::training_swap_ask::approves,
+            reason: owner_presence_reasons::ANSWER_TRAINING_SWAP_ASK,
+        }),
         reasons: AskKindReasons {
             elsewhere: "a training swap answer is given on the node that admitted the ask",
             unproven: "a training swap answer needs the owner's own authenticated word",
@@ -140,6 +174,7 @@ const ASK_KINDS: [AskKind; 7] = [
     AskKind {
         asked_in: super::contribution_pair::asked_in,
         offered_in: super::contribution_pair::offered_in,
+        approval: None,
         reasons: AskKindReasons {
             elsewhere: "a contribution pair answer is given on the node that admitted the ask",
             unproven: "a contribution pair answer needs the owner's own authenticated word",
@@ -149,6 +184,10 @@ const ASK_KINDS: [AskKind; 7] = [
     AskKind {
         asked_in: live_edit_asked_in,
         offered_in: live_edit_offered_in,
+        approval: Some(AskApproval {
+            approves: crate::office_body::live_edit_option_grants,
+            reason: owner_presence_reasons::ANSWER_LIVE_EDIT_ASK,
+        }),
         reasons: AskKindReasons {
             elsewhere: "a live-edit answer is given on the node that admitted the ask",
             unproven: "a live-edit answer needs the owner's own authenticated word",
@@ -158,6 +197,10 @@ const ASK_KINDS: [AskKind; 7] = [
     AskKind {
         asked_in: super::comm_widen::asked_in,
         offered_in: super::comm_widen::offered_in,
+        approval: Some(AskApproval {
+            approves: super::comm_widen::approves,
+            reason: owner_presence_reasons::ANSWER_COMM_WIDEN_ASK,
+        }),
         reasons: AskKindReasons {
             elsewhere: "a comm widen answer is given on the node that admitted the ask",
             unproven: "a comm widen answer needs the owner's own authenticated word",
@@ -167,6 +210,10 @@ const ASK_KINDS: [AskKind; 7] = [
     AskKind {
         asked_in: super::code_consent_word::asked_in,
         offered_in: super::code_consent_word::offered_in,
+        approval: Some(AskApproval {
+            approves: super::code_consent_word::approves,
+            reason: owner_presence_reasons::ANSWER_CODE_CONSENT_ASK,
+        }),
         reasons: AskKindReasons {
             elsewhere: "a code consent answer is given on the node that admitted the ask",
             unproven: "a code consent answer needs the asked person's own authenticated word",
@@ -261,6 +308,45 @@ pub(super) fn admit_word_in(
         }
     }
     Ok(())
+}
+
+/// The line a device's prompt shows for the act a person's `word` on the
+/// ask `id` approves (row OWNER-CONFIRM-SHEET): an approving option of an
+/// ask of a kind in [`ASK_KINDS`] that asks a person. `None` for a word
+/// that approves no act: an option that denies or abstains, a contribution
+/// pair's judgment, a word on an ask that asks an agent, and a word on an
+/// ask of any other kind, whose answer evaluates no effect authority. A word
+/// the kind does not offer is refused, as [`admit_word_in`] refuses it.
+///
+/// The answer door reads this before it asks for the person at the device
+/// and again in its write (`super::ask_word_presence`). The kind of an ask
+/// is its intent key's, and an option's meaning is its kind's, so the
+/// answer for one word on one ask does not change while the ask offers it.
+///
+/// # Errors
+///
+/// Storage errors, and a word the ask's kind does not offer.
+pub(super) fn approved_act_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    group: &AskGroup,
+    word: &TaskAskWord,
+) -> Result<Option<&'static str>> {
+    for kind in &ASK_KINDS {
+        let Some(asked) = (kind.offered_in)(vault, txn, id, group, word)? else {
+            continue;
+        };
+        let Some(approval) = &kind.approval else {
+            continue;
+        };
+        if !matches!(asked, AskedParty::Agent(_))
+            && word.option.as_ref().is_some_and(approval.approves)
+        {
+            return Ok(Some(approval.reason));
+        }
+    }
+    Ok(None)
 }
 
 /// Whether settlement may cut the ask `id` for `reason` with `decision`

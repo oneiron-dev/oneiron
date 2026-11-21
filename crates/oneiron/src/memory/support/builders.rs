@@ -144,6 +144,11 @@ impl Memory<'_> {
     /// it only on a handle its owner opted into; where this install holds no
     /// key the authority fold trusts as the owner's, each such word refuses
     /// `owner_key_required`. It proves nothing else this surface does.
+    /// A word that approves an act asks for the person at this device
+    /// before the key signs ([`crate::Vault::owner_presence`], row
+    /// OWNER-CONFIRM-SHEET): the answer can wait on the device's prompt and
+    /// refuse with the prompt's or the device PIN's refusal. A word that
+    /// denies asks nobody.
     #[must_use]
     pub fn answering_as_owner_device(mut self) -> Self {
         self.answers_as_owner_device = true;

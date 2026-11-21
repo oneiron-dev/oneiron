@@ -6,6 +6,12 @@
 
 pub(crate) const ACCEPT_PACK_DEFAULTS: &str = "accept new default settings";
 pub(crate) const AGENT_WORLD_ACCESS: &str = "change which worlds an agent can access";
+pub(crate) const ANSWER_ATTENDEE_ASK: &str = "confirm who a speaker is";
+pub(crate) const ANSWER_CODE_CONSENT_ASK: &str = "approve an action an agent is waiting to take";
+pub(crate) const ANSWER_COMM_WIDEN_ASK: &str = "let an agent message more recipients";
+pub(crate) const ANSWER_LIVE_EDIT_ASK: &str = "let someone edit a document as you";
+pub(crate) const ANSWER_TRAINING_OFFER_ASK: &str = "approve an offered AI model change";
+pub(crate) const ANSWER_TRAINING_SWAP_ASK: &str = "switch to a newly trained AI model";
 pub(crate) const BOARD_LAYOUT: &str = "change the board layout";
 pub(crate) const CANCEL_RECOVERY_HOLD: &str = "cancel a waiting recovery of this vault";
 pub(crate) const CHANGE_SHARED_MEMBER_ROLE: &str = "change a member's role in the shared vault";

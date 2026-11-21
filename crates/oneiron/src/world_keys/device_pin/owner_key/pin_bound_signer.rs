@@ -115,6 +115,7 @@ impl CheckpointRootSigner for PinBoundOwnerSigner {
         &self,
         vault: &Vault,
         fold: &AuthorityFold,
+        _ground: &OwnerProofGround,
         transcript: &[u8],
     ) -> Result<Vec<u8>> {
         self.sign(vault, Some(fold), |key| key.sign_ask_word(transcript))
