@@ -23,6 +23,7 @@ use oneiron_persistent_collections::{PersistentMap, PersistentSet};
 use crate::entity_id::EntityId;
 
 use super::machine_claims::{ClaimIndex, floor_hold, no_hold};
+use super::machine_profile::removals_cross_only;
 use super::*;
 
 /// One revision of a machine in one admitter's chain, as its entry carried it.
@@ -412,7 +413,10 @@ impl<'s> Standing<'s> {
     /// signed it. Otherwise each chain the view reads that admitted it at the
     /// act's parents (`marks`, [`Self::marks_read`]) and no longer does is a
     /// reason, and there must be one: its
-    /// head must be neither conflicted, held, stale nor unsettled, and every
+    /// head must be neither conflicted, held, stale nor unsettled (removals
+    /// that cross alone leave it conflicted for no act while its key carries
+    /// no P1 poison: [`removals_cross_only`]; FIX
+    /// MACHINE-CROSSING-REMOVALS-UNMAKE-CARRIED-OWNER-CHOICES), and every
     /// revision of the chain outside its mark's past that no longer names
     /// the key live (a removal, a new key) must have seen the act and,
     /// judged as this install reads it, landed in full. A chain that
@@ -448,28 +452,37 @@ impl<'s> Standing<'s> {
                 continue;
             }
             reasons = true;
-            let saw = self
+            let chain = self
                 .state
                 .machines
                 .get(&id)
-                .and_then(|chains| chains.get(admitter))
-                .is_some_and(|chain| {
-                    let mut takers = chain
-                        .revisions
-                        .iter()
-                        .filter(|(hash, revision)| {
-                            !mark.prior.contains(*hash)
-                                && (revision.profile.role == MachineRole::Removed
-                                    || revision.profile.machine_key != *key)
-                        })
-                        .peekable();
-                    takers.peek().is_some()
-                        && takers.all(|(_, revision)| {
-                            (kind == Kind::Roster || !revision.past_floor)
-                                && revision.profile.seen_world_edits.contains(choice)
-                        })
-                });
-            let lifts = !head.conflicted
+                .and_then(|chains| chains.get(admitter));
+            let saw = chain.is_some_and(|chain| {
+                let mut takers = chain
+                    .revisions
+                    .iter()
+                    .filter(|(hash, revision)| {
+                        !mark.prior.contains(*hash)
+                            && (revision.profile.role == MachineRole::Removed
+                                || revision.profile.machine_key != *key)
+                    })
+                    .peekable();
+                takers.peek().is_some()
+                    && takers.all(|(_, revision)| {
+                        (kind == Kind::Roster || !revision.past_floor)
+                            && revision.profile.seen_world_edits.contains(choice)
+                    })
+            });
+            // Removals that cross leave the head conflicted, and the machine
+            // removed whichever wins: that conflict alone takes nothing away,
+            // as in `act_stands`. P1's poison on the head's key still does.
+            let crossing_only = || {
+                chain.is_some_and(removals_cross_only)
+                    && !self
+                        .claims
+                        .head_poisoned(id, admitter, &head.profile.machine_key)
+            };
+            let lifts = (!head.conflicted || crossing_only())
                 && !head.floor_held
                 && !head.stale
                 && !head.admitter_unsettled
