@@ -437,7 +437,7 @@ fn a_vault_with_no_root_appends_no_birth() {
     assert_eq!(read["source"], source("seeded", made), "{read}");
     assert_eq!(
         setting_slot_heads(&fx.vault, born_row(made)).expect("heads"),
-        Vec::new()
+        Vec::<AuthorityEntryHash>::new()
     );
     assert_eq!(
         setting_pack_heads(&fx.vault, ENGINE_PACK).expect("heads"),
@@ -493,7 +493,7 @@ fn a_birth_whose_source_a_pack_with_no_head_act_holds_stays_on_this_install() {
     assert_eq!(read["source"], source("seeded", made), "{read}");
     assert_eq!(
         setting_slot_heads(&fx.vault, born_row(made)).expect("heads"),
-        Vec::new(),
+        Vec::<AuthorityEntryHash>::new(),
         "a birth naming the engine pack alone would read 7"
     );
 }
