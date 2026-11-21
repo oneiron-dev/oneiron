@@ -34,6 +34,23 @@ use std::collections::BTreeMap;
 
 use super::*;
 
+/// Refuses a revoke of owner authority the person at the device was not
+/// asked for: `ground` is the witness of an ordinary act, and the move ends a
+/// key or a binding (`revokes`). The door asked on an earlier read of the
+/// closure, and the fold's clock can end an approval between two reads, so
+/// [`Vault::revoke_owner_authority_in_txn`] calls this on the keys and on
+/// the bindings its revokes are signed from, below its older refusals. An
+/// important ground and a standing one refuse nothing.
+///
+/// # Errors
+/// [`Error::ConcurrentWrite`]: the caller reads again and asks again.
+pub(super) fn refuse_unasked_revokes(ground: &OwnerProofGround, revokes: bool) -> Result<()> {
+    if revokes {
+        ground.refuse_risen_importance(OwnerActImportance::Important)?;
+    }
+    Ok(())
+}
+
 /// What [`Vault::owner_authority_closure_in_txn`] finds for one person.
 pub(super) struct OwnerAuthorityClosure {
     /// The live owner keys the removal ends, ascending: a device key or a
@@ -251,5 +268,32 @@ impl Vault {
             keys,
             signed_bindings,
         })
+    }
+
+    /// Whether `person` holds owner authority on this vault's log that a move
+    /// ending their standing must end: a live owner key whose enrolment names
+    /// them, a live owner key a key of theirs signed in, a live `human`
+    /// binding that names them, or a live `human` binding a key of theirs
+    /// signed. [`crate::Vault::refuse_unrevoked_owner_authority_in_txn`]
+    /// refuses a move no issuer signs while this holds, and a member's
+    /// removal or leave asks as important while it holds
+    /// (`member_departure_importance_in_txn`).
+    ///
+    /// # Errors
+    /// The store's, reading the rows.
+    pub(crate) fn person_holds_owner_authority_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        person: EntityId,
+    ) -> Result<bool> {
+        let closure = self.owner_authority_closure_in_txn(txn, person)?;
+        let holds_key = !closure.keys.is_empty();
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        let holds_binding = fold.actor_bindings.iter().any(|(key, binding)| {
+            binding.status == ActorBindingStatus::Active
+                && (binding.actor_ref == person || closure.signed_bindings.contains(key))
+                && binding.actor_class == ACTOR_CLASS_HUMAN
+        });
+        Ok(holds_key || holds_binding)
     }
 }

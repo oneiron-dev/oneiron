@@ -80,6 +80,57 @@ pub(crate) enum DoorCheckIn {
     Wait(EntityId),
 }
 
+/// How check-in judges a person's act from its class and their role, before
+/// anything is opened or spent ([`judge_person_door_act`]).
+pub(crate) enum DoorActJudgment {
+    /// The act goes at once; its family receipt records this decision.
+    GoesAtOnce(CheckInDecision),
+    /// The act always asks: it waits on a pending check-in, in this mode.
+    Waits(CheckInMode),
+}
+
+/// Judges `act` from its class and the person's role alone: the part of
+/// [`person_door_check_in_in_txn`] that reads and writes nothing. The
+/// door's writer makes it first, and a door that asks for the person at the
+/// device makes it on its read before it asks, so a `check_in_ref` named
+/// for an act that goes at once raises no prompt (review of #10358).
+///
+/// # Errors
+///
+/// A role that does not hold the power; a `check_in_ref` for an act that
+/// goes at once ([`named_check_in_at_once`]).
+pub(crate) fn judge_person_door_act(
+    act: &DoorAct<'_>,
+    check_in_ref: Option<&EntityId>,
+) -> Result<DoorActJudgment> {
+    let request = CheckInRequest {
+        act: act.act,
+        role: act.role,
+        holds_power: true,
+        explicit_mode: None,
+        standing_row: None,
+    };
+    match resolve_mode(&request) {
+        ResolvedMode::OwnProof => go_at_once(act, check_in_ref, None, "own_proof"),
+        ResolvedMode::Propose | ResolvedMode::Absent => Err(refuse(
+            "the person's role does not hold the power for this act",
+        )),
+        ResolvedMode::Mode {
+            mode: mode @ CheckInMode::NeverAsk,
+            ..
+        } => go_at_once(act, check_in_ref, Some(mode), "never_ask"),
+        // The person's own act is their judgment: they are sure.
+        ResolvedMode::Mode {
+            mode: mode @ CheckInMode::AskWhenUnsure,
+            ..
+        } => go_at_once(act, check_in_ref, Some(mode), "sure"),
+        ResolvedMode::Mode {
+            mode: mode @ CheckInMode::AlwaysAsk,
+            ..
+        } => Ok(DoorActJudgment::Waits(mode)),
+    }
+}
+
 /// Judges `act` in the door's writer `txn` at `now`; with `check_in_ref`,
 /// spends that settled ask when the act waits.
 ///
@@ -96,33 +147,9 @@ pub(crate) fn person_door_check_in_in_txn(
     check_in_ref: Option<&EntityId>,
     now: u64,
 ) -> Result<DoorCheckIn> {
-    let request = CheckInRequest {
-        act: act.act,
-        role: act.role,
-        holds_power: true,
-        explicit_mode: None,
-        standing_row: None,
-    };
-    let mode = match resolve_mode(&request) {
-        ResolvedMode::OwnProof => return go_at_once(act, check_in_ref, None, "own_proof"),
-        ResolvedMode::Propose | ResolvedMode::Absent => {
-            return Err(refuse(
-                "the person's role does not hold the power for this act",
-            ));
-        }
-        ResolvedMode::Mode {
-            mode: mode @ CheckInMode::NeverAsk,
-            ..
-        } => return go_at_once(act, check_in_ref, Some(mode), "never_ask"),
-        // The person's own act is their judgment: they are sure.
-        ResolvedMode::Mode {
-            mode: mode @ CheckInMode::AskWhenUnsure,
-            ..
-        } => return go_at_once(act, check_in_ref, Some(mode), "sure"),
-        ResolvedMode::Mode {
-            mode: mode @ CheckInMode::AlwaysAsk,
-            ..
-        } => mode,
+    let mode = match judge_person_door_act(act, check_in_ref)? {
+        DoorActJudgment::GoesAtOnce(decision) => return Ok(DoorCheckIn::Go(decision)),
+        DoorActJudgment::Waits(mode) => mode,
     };
     match check_in_ref {
         Some(id) => spend_in_txn(vault, txn, act, mode, id, now),
@@ -160,11 +187,13 @@ fn go_at_once(
     check_in_ref: Option<&EntityId>,
     mode: Option<CheckInMode>,
     basis: &str,
-) -> Result<DoorCheckIn> {
+) -> Result<DoorActJudgment> {
     if check_in_ref.is_some() {
         return Err(named_check_in_at_once());
     }
-    Ok(DoorCheckIn::Go(decision(act, mode, basis, None)))
+    Ok(DoorActJudgment::GoesAtOnce(decision(
+        act, mode, basis, None,
+    )))
 }
 
 /// The refusal (`BAD_REQUEST`) of a `check_in_ref` named for a person's act

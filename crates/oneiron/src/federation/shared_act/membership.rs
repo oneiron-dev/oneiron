@@ -13,6 +13,7 @@
 //! goes, a Deputy's add and a Member's raise to Admin go on the person's own
 //! judgment, and a Deputy's other moves and removes wait for an Owner's
 //! answer. The receipt records the decision.
+mod departure_importance;
 mod invitation;
 mod owner_recovery;
 mod pending_execution;
@@ -285,6 +286,30 @@ impl Vault {
         effect: &MemberEffect,
         now: u64,
     ) -> Result<DoorCheckIn> {
+        let door_act = self.member_door_act_in_txn(txn, vault_id, actor, effect)?;
+        crate::check_in::person_door_check_in_in_txn(
+            self,
+            txn,
+            &door_act,
+            effect.check_in_ref.as_ref(),
+            now,
+        )
+    }
+    /// The act `effect` is for `actor`, as check-in judges it: the first
+    /// part of [`Self::member_effect_check_in_in_txn`], on a read of the
+    /// store. The removal door also makes it on its read before it asks
+    /// ([`Self::member_removal_importance_in_txn`]).
+    ///
+    /// # Errors
+    /// A change the door could never apply; an `actor` who holds no
+    /// membership Grant on the vault.
+    fn member_door_act_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        vault_id: u64,
+        actor: EntityId,
+        effect: &MemberEffect,
+    ) -> Result<DoorAct<'static>> {
         let (verb, act, member, from, to) = match effect.change {
             MemberChange::Add { member, role } => {
                 let preset = self
@@ -324,13 +349,7 @@ impl Vault {
                 (MEMBERS_CHANGE_VERB, act, member, Some(from), Some(to))
             }
             MemberChange::Remove { member } => {
-                refuse_house_mind_move_in_txn(self, txn, &member)?;
-                let from = self
-                    .member_role_in_txn(txn, vault_id, member)?
-                    .ok_or_else(invalid)?;
-                if from == Role::Owner {
-                    return Err(invalid());
-                }
+                let from = self.removable_member_role_in_txn(txn, vault_id, member)?;
                 let act = ActClass::MemberRemove;
                 (MEMBERS_REMOVE_VERB, act, member, Some(from), None)
             }
@@ -338,7 +357,7 @@ impl Vault {
         let (grant, role) = self
             .member_grant_in_txn(txn, vault_id, actor)?
             .ok_or_else(invalid)?;
-        let door_act = DoorAct {
+        Ok(DoorAct {
             person: actor,
             role: RolePreset::of_grant_role(role),
             grant,
@@ -346,14 +365,7 @@ impl Vault {
             act,
             scope: CheckInScope::default(),
             effect_digest: member_effect_digest(vault_id, actor, verb, member, from, to),
-        };
-        crate::check_in::person_door_check_in_in_txn(
-            self,
-            txn,
-            &door_act,
-            effect.check_in_ref.as_ref(),
-            now,
-        )
+        })
     }
     /// Every member of shared vault `vault_id` at their role, delegates and
     /// guests aside: the roster a vault shape reads (ARCH-0070).
@@ -506,7 +518,9 @@ impl Vault {
     /// Owner standing ends or it leaves, the owner keys and `human` bindings
     /// that name it (OWNER-ENROL); without `slips` such a move is refused
     /// while any of those is live (REVIEW-7931). A move that ends owner keys
-    /// signs their revocation on `ground`.
+    /// signs their revocation on `ground`, and a `ground` that witnessed an
+    /// ordinary act is refused where those revocations are signed
+    /// ([`Vault::revoke_owner_authority_in_txn`]).
     #[allow(clippy::too_many_arguments)]
     fn move_member_in_txn(
         &self,
@@ -792,8 +806,8 @@ impl Vault {
         }
         let now = crate::ports::recorded_at_in_txn(&self.store, &mut txn)?;
         let holders = self.live_act_holders(&txn, vault_id, now)?;
-        // An ask stands while its Steward does: judged in this writer,
-        // before the change.
+        // An ask stands while it is open and its Steward does: judged in
+        // this writer, before the check-in judge and the change.
         if let Some(ask) = ask {
             self.member_ask_steward_stands_in_txn(&txn, ask, vault_id, &holders)?;
         }
@@ -1070,7 +1084,16 @@ impl Vault {
             },
         )
     }
-    /// Remove `member`, who is not an Owner, from the vault at once.
+    /// Remove `member`, who is not an Owner, from the vault at once. The door
+    /// makes its checks on a read before it asks, so a refusal raises no
+    /// prompt. It asks as important only where the member holds owner
+    /// authority on this vault's log, which the removal ends; every other
+    /// removal is a narrowing and ordinary. The write refuses a revoke of
+    /// owner authority the person was not asked for.
+    ///
+    /// # Errors
+    /// [`Error::ConcurrentWrite`] when the member came to hold owner authority after the person
+    /// was asked.
     pub fn remove_shared_member(
         &self,
         admin: &AuthenticatedOwner,
@@ -1105,11 +1128,43 @@ impl Vault {
         ask: Option<&str>,
         check_in_ref: Option<EntityId>,
     ) -> Result<SharedActExecutionReceipt> {
-        let witness = self.owner_presence(
-            OwnerActImportance::Important,
-            owner_presence_reasons::REMOVE_SHARED_MEMBER,
-        )?;
+        self.remove_shared_member_for_ask_between(
+            admin,
+            vault_id,
+            member,
+            slips,
+            ask,
+            check_in_ref,
+            || {},
+        )
+    }
+    /// [`Self::remove_shared_member_for_ask`], with `between` run after the door asked and
+    /// before its write opens: the gap in which another writer can commit first (the test
+    /// door `test_doors::member_departure_between`). A Deputy's removal that waits for a
+    /// check-in files that wait in the write, whatever the door asked: the wait signs
+    /// nothing, and the call that spends it reads and asks again.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one removal: the applier's proof, the vault, the member, the slip issuer, the Steward's ask, the check-in it spends and the gap between the ask and the write"
+    )]
+    pub(crate) fn remove_shared_member_for_ask_between(
+        &self,
+        admin: &AuthenticatedOwner,
+        vault_id: u64,
+        member: EntityId,
+        slips: Option<&HostSlipIssuer>,
+        ask: Option<&str>,
+        check_in_ref: Option<EntityId>,
+        between: impl FnOnce(),
+    ) -> Result<SharedActExecutionReceipt> {
+        let importance = {
+            let txn = self.store.env.read_txn()?;
+            self.member_removal_importance_in_txn(&txn, admin, vault_id, member, ask, check_in_ref)?
+        };
+        let witness =
+            self.owner_presence(importance, owner_presence_reasons::REMOVE_SHARED_MEMBER)?;
         let ground = OwnerProofGround::witnessed(&witness);
+        between();
         let own_issuer = self.membership_issuer(slips);
         self.move_shared_member_for_ask(
             admin,
@@ -1263,18 +1318,42 @@ impl Vault {
 
     /// Leave the vault. Leave covers access only: the personal vault goes
     /// with the person and company-scoped claims stay. An Owner leaves
-    /// through the `remove_owner` act, naming a successor when last.
+    /// through the `remove_owner` act, naming a successor when last. The door
+    /// makes its checks on a read before it asks, so a refusal raises no
+    /// prompt. It asks as important only where the member holds owner
+    /// authority on this vault's log, which the leave ends; every other leave
+    /// is a narrowing and ordinary. The write refuses a revoke of owner
+    /// authority the person was not asked for.
+    ///
+    /// # Errors
+    /// [`Error::ConcurrentWrite`] when the member came to hold owner authority after the person
+    /// was asked.
     pub fn leave_shared_vault(
         &self,
         member: &AuthenticatedOwner,
         vault_id: u64,
         slips: Option<&HostSlipIssuer>,
     ) -> Result<SharedActExecutionReceipt> {
-        let witness = self.owner_presence(
-            OwnerActImportance::Important,
-            owner_presence_reasons::LEAVE_SHARED_VAULT,
-        )?;
+        self.leave_shared_vault_between(member, vault_id, slips, || {})
+    }
+    /// [`Self::leave_shared_vault`], with `between` run after the door asked and before its
+    /// write opens: the gap in which another writer can commit first (the test door
+    /// `test_doors::member_departure_between`).
+    pub(crate) fn leave_shared_vault_between(
+        &self,
+        member: &AuthenticatedOwner,
+        vault_id: u64,
+        slips: Option<&HostSlipIssuer>,
+        between: impl FnOnce(),
+    ) -> Result<SharedActExecutionReceipt> {
+        let importance = {
+            let txn = self.store.env.read_txn()?;
+            self.member_leave_importance_in_txn(&txn, member, vault_id)?
+        };
+        let witness =
+            self.owner_presence(importance, owner_presence_reasons::LEAVE_SHARED_VAULT)?;
         let ground = OwnerProofGround::witnessed(&witness);
+        between();
         let own_issuer = self.membership_issuer(slips);
         self.move_shared_member(member, vault_id, None, |txn, actor, now, receipt| {
             let from = self
