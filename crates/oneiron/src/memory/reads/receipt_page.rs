@@ -236,19 +236,21 @@ impl Memory<'_> {
         receipts_of_kinds_for(self, limit, kinds)
     }
 
-    /// The family receipts a verb hook chain's receipt tail holds for this
-    /// handle's actor (`runtime_hooks::verb::chain::tail`):
-    /// [`Self::receipts_of_kinds`] less every receipt the vault owner alone
-    /// reads ([`owner_kept_receipts`]), on the owner's own call too, with
-    /// the same refill past them. A hook is not that reader: its grant may
-    /// read as someone else, and the receipt its body writes names no row of
-    /// such a receipt, so no row screen could judge a copy of it.
+    /// The family receipts of `kinds` a verb hook chain's receipt tail holds
+    /// for this handle's actor (`runtime_hooks::verb::chain::tail`): the
+    /// newest `limit` this handle reads, less every receipt the vault owner
+    /// alone reads ([`owner_kept_receipts`]), on the owner's own call too. A
+    /// hook is not that reader: its grant may read as someone else, and the
+    /// receipt its body writes names no row of such a receipt, so no row
+    /// screen could judge a copy of it. The read walks past the receipts it
+    /// leaves out ([`hook_tail_receipts_for`]), so no number of them empties
+    /// a tail that older receipts could fill.
     pub(crate) fn hook_tail_receipts(
         &self,
         limit: usize,
         kinds: &[String],
     ) -> MemoryResult<Vec<MemoryReceipt>> {
-        family_receipts_for(self, limit, kinds, true)
+        hook_tail_receipts_for(self, limit, kinds)
     }
 
     /// `vault.receipts` a page at a time: [`Self::receipts_of_kinds`]'s
@@ -283,18 +285,6 @@ pub(crate) fn receipts_of_kinds_for(
     limit: usize,
     kinds: &[String],
 ) -> MemoryResult<Vec<MemoryReceipt>> {
-    family_receipts_for(reader, limit, kinds, false)
-}
-
-/// [`receipts_of_kinds_for`]. With `hook_tail`, every receipt the vault
-/// owner alone reads leaves before any takes a place, whoever `reader` is
-/// ([`Memory::hook_tail_receipts`]).
-fn family_receipts_for(
-    reader: &impl ReceiptReader,
-    limit: usize,
-    kinds: &[String],
-    hook_tail: bool,
-) -> MemoryResult<Vec<MemoryReceipt>> {
     if kinds.is_empty() {
         return Ok(gate_records_before(reader, None, limit)?
             .into_iter()
@@ -304,25 +294,62 @@ fn family_receipts_for(
     let vault = reader.receipt_vault();
     let content = reader.receipt_content();
     // A credential cut refills past withheld receipts like the off-device
-    // one (FIX 9955), and so do the owner's and a hook tail's: an unbound
-    // handle that every receipt reaches keeps its single fetch.
+    // one (FIX 9955), and so does the owner's: an unbound handle that every
+    // receipt reaches keeps its single fetch.
     let mut fetch = limit;
     let mut kept = loop {
         let query = family_query(fetch, kinds)?;
-        let mut receipts =
-            vault.receipts_for_caller(query, reader.receipt_destination(), content)?;
+        let receipts = vault.receipts_for_caller(query, reader.receipt_destination(), content)?;
         let exhausted = receipts.len() < fetch;
-        if hook_tail {
-            receipts.retain(|receipt| {
-                !crate::dreamer_prefilter::prefilter_receipt_read_message_rows(receipt)
-            });
-        }
         let filtered = reader_kept_receipts(reader, receipts)?;
         if filtered.len() >= limit || exhausted || fetch >= MAX_RECEIPT_QUERY_SCAN {
             break filtered;
         }
         fetch = fetch.max(1).saturating_mul(2).min(MAX_RECEIPT_QUERY_SCAN);
     };
+    kept.truncate(limit);
+    // A world's name on the owner's own share receipt is his (FIX 5493).
+    crate::share_travel::screen_owner_notice_fields(|| reader.reads_owner_notices(), &mut kept);
+    Ok(kept.into_iter().map(family_receipt).collect())
+}
+
+/// [`Memory::hook_tail_receipts`] for `reader`: the newest `limit` family
+/// receipts of `kinds` it reads, less every receipt the vault owner alone
+/// reads, whoever `reader` is. It walks the family in raw source windows, as
+/// a page does ([`family_page`]): each window starts after the last raw
+/// receipt the one before walked, kept or left out, so the walk passes any
+/// number of receipts it leaves out and ends only on a full tail or the end
+/// of the family; no scan cap cuts it short of receipts that would fill it.
+/// A window that did not fill the tail is followed by one twice as long, up
+/// to the family's window cap ([`MAX_RECEIPT_QUERY_SCAN`]).
+fn hook_tail_receipts_for(
+    reader: &impl ReceiptReader,
+    limit: usize,
+    kinds: &[String],
+) -> MemoryResult<Vec<MemoryReceipt>> {
+    let vault = reader.receipt_vault();
+    let content = reader.receipt_content();
+    let mut query = family_query(limit, kinds)?;
+    let mut kept = Vec::new();
+    let mut fetch = limit;
+    while kept.len() < limit {
+        let pass = ReceiptQuery {
+            limit: fetch,
+            ..query.clone()
+        };
+        let (mut read, walked, exhausted) =
+            vault.receipts_window_for_caller(pass, reader.receipt_destination(), content)?;
+        read.retain(|receipt| {
+            !crate::dreamer_prefilter::prefilter_receipt_read_message_rows(receipt)
+        });
+        kept.extend(reader_kept_receipts(reader, read)?);
+        if exhausted {
+            break;
+        }
+        // The full raw window advances even when every screen kept none.
+        query.after = walked;
+        fetch = fetch.saturating_mul(2).min(MAX_RECEIPT_QUERY_SCAN);
+    }
     kept.truncate(limit);
     // A world's name on the owner's own share receipt is his (FIX 5493).
     crate::share_travel::screen_owner_notice_fields(|| reader.reads_owner_notices(), &mut kept);
