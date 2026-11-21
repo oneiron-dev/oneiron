@@ -811,9 +811,17 @@ impl Vault {
         now: u64,
     ) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
-        if let Some(owner) = owner {
-            owner.revalidate_in_txn(self, &wtxn)?;
-        }
+        // The owner's act closes as the owner: the revalidated owner is the
+        // close's closer, so the Gate judges the owner's retraction and not
+        // the claim's own author, as `Memory::claim_retract` as the owner
+        // does (FIX OWNER-RETRACT-ROUTE-NAMES-NO-CLOSER).
+        let closer = match owner {
+            Some(owner) => Some(crate::WriteActor::new(
+                owner.revalidate_in_txn(self, &wtxn)?,
+                crate::edge::EdgeActorClass::Human,
+            )),
+            None => None,
+        };
         let rekeys = crate::channel_identity::AssignmentRekeys::begin(&self.store);
         // The typed door does not merely AUTHORIZE an expression-preference
         // retraction; it restores the direct predecessor as part of closing the
@@ -827,7 +835,7 @@ impl Vault {
                 "expression preference lifecycle is owned by retract_expression_preference",
             ));
         }
-        self.retract_claim_in_txn(&mut wtxn, id, now)?;
+        self.retract_claim_in_txn_as(&mut wtxn, id, now, closer)?;
         rekeys.finish(&self.store, &mut wtxn)?;
         wtxn.commit()?;
         self.store.notify_proactivity_changes();
@@ -884,15 +892,17 @@ impl Vault {
         let closed_end = lifecycle_close_end_in(&self.store, &*wtxn, &body, &header, now)?;
         // The retraction closes the claim, so its owner is shown no item for
         // the open revision; an open obligation stays open.
+        // A tray row's close is receipted as the door's verified closer.
         let consent_receipt = match run {
             RetractRun::Gated | RetractRun::GateAnswerOnly => {
-                self.store.close_pending_gate_consent_as_in_txn(
+                self.store.close_pending_gate_consent_closed_by_in_txn(
                     wtxn,
                     id,
                     crate::store::gate_reason::GateReceiptOutcome::Retracted,
                     vec!["gate.pending.claim_retracted".to_owned()],
                     None,
                     crate::store::TrayRemoval::Silent,
+                    actor,
                 )?
             }
             RetractRun::ParkedConsent => None,
