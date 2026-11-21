@@ -24,9 +24,11 @@ use crate::world_keys::{OwnerRootSigner, RecoveryAuthoritySigner, keystore_error
 use crate::{EntityId, Result, TimeRange, Vault};
 
 mod answers;
+mod box_cancel;
 mod hold_view;
 mod landing;
 
+pub use box_cancel::RecoveryBoxCancelProof;
 pub use hold_view::{RecoveryHoldState, RecoveryHoldView};
 
 /// The hold's signer and successor, judged at the parents' state: the

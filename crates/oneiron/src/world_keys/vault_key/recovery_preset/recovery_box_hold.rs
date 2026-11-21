@@ -31,10 +31,36 @@ pub trait RecoveryBoxHold {
     /// `wait` before it releases the root's authority key, read when a
     /// release opens. Until the vault reports, the box waits 24 hours.
     fn report_recovery_wait(&self, wait: std::time::Duration) -> Result<()>;
+
+    /// Cancels the release the box holds pending while its wait runs: an
+    /// owner device's Cancel during the box wait, which the node checked
+    /// ([`Vault::cancel_box_recovery_as`]). `cancelled_by` names who
+    /// cancelled, for the box's receipt and the owner's notice. With
+    /// `release_receipt`, the box cancels only the pending release whose
+    /// recovery-started receipt it is, so a replayed Cancel never stops a
+    /// later recovery. `true` when the box cancelled a pending release,
+    /// `false` when none was pending (nothing changed).
+    fn cancel_pending_box_release(
+        &self,
+        cancelled_by: &RecoveryBoxCanceller,
+        release_receipt: Option<u64>,
+    ) -> Result<bool>;
 }
 
-/// No recovery box: every hold and every report answers `Ok`. The preset
-/// doors' callers pass it until OPUS-WAYBACK-BOX wires the HTTP hold.
+/// Who cancelled a release pending at the recovery box: an owner of the vault
+/// and the live owner key of theirs that signed the Cancel
+/// (WAYBACK-COOWNER-CANCEL-OTHER-OWNERS-RECOVERY = B: any owner may cancel).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RecoveryBoxCanceller {
+    /// The owner who cancelled.
+    pub owner: crate::EntityId,
+    /// The Ed25519 public half of the owner key that signed the Cancel.
+    pub key: [u8; 32],
+}
+
+/// No recovery box: every hold and every report answers `Ok`, and a Cancel
+/// finds nothing pending. The preset doors' callers pass it until
+/// OPUS-WAYBACK-BOX wires the HTTP hold.
 pub struct NoRecoveryBox;
 
 impl RecoveryBoxHold for NoRecoveryBox {
@@ -44,6 +70,14 @@ impl RecoveryBoxHold for NoRecoveryBox {
 
     fn report_recovery_wait(&self, _wait: std::time::Duration) -> Result<()> {
         Ok(())
+    }
+
+    fn cancel_pending_box_release(
+        &self,
+        _cancelled_by: &RecoveryBoxCanceller,
+        _release_receipt: Option<u64>,
+    ) -> Result<bool> {
+        Ok(false)
     }
 }
 
