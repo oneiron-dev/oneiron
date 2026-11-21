@@ -79,6 +79,10 @@ impl std::fmt::Debug for FactHookRunner {
 pub struct HookPassReport {
     /// `hooks.enabled` is off; the pass released due ticks and read nothing.
     pub disabled: bool,
+    /// The install is a copy restored and not joined (row RESTORED-UNJOINED-STARTS-NO-WORK): the
+    /// pass ran no hook, drained no settled verb ask and applied no pending intent. The join's
+    /// proactivity notice wakes the next pass, which runs them.
+    pub unjoined: bool,
     pub entries_read: usize,
     pub runs: usize,
     pub memo_hits: usize,
@@ -97,6 +101,7 @@ pub struct HookPassReport {
 impl HookPassReport {
     fn append(&mut self, next: Self) {
         self.disabled |= next.disabled;
+        self.unjoined |= next.unjoined;
         self.entries_read += next.entries_read;
         self.runs += next.runs;
         self.memo_hits += next.memo_hits;
@@ -227,6 +232,13 @@ impl FactHookRunner {
         if !vault.hooks_enabled()? {
             report.disabled = true;
             return hook_feeds::prune_hook_feeds(vault, max_entries).map(|()| report);
+        }
+        // A copy restored and not joined starts none of the image's hooks or
+        // held verb calls (row RESTORED-UNJOINED-STARTS-NO-WORK): its cursors
+        // stay where they are, and the join wakes the next pass.
+        if vault.restored_unjoined()? {
+            report.unjoined = true;
+            return Ok(report);
         }
         // Calls a settled verb hook ask made ready run here, the first pass
         // at start included: outside any write, at hook depth 0. A failed
