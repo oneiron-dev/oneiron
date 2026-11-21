@@ -244,12 +244,12 @@ impl Vault {
         confirmation: LastDeviceKeyConfirmation,
         between: impl FnOnce(),
     ) -> Result<OwnerKeyRemoval> {
+        let witness = self.owner_presence(OwnerActImportance::Important, REMOVE_OWNER_KEY)?;
         if let RemovalCheck::LastDeviceKey(remaining) = self.read_removal_checks(|txn| {
             self.key_removal_checks_in_txn(txn, owner, key, confirmation)
         })? {
             return Ok(OwnerKeyRemoval::LastDeviceKey(remaining));
         }
-        let witness = self.owner_presence(OwnerActImportance::Important, REMOVE_OWNER_KEY)?;
         let ground = OwnerProofGround::witnessed(&witness);
         between();
         let mut txn = self.store.env.write_txn()?;
@@ -394,7 +394,7 @@ impl Vault {
             }
             RemovalCheck::Ready(_, plan) => Some(ending_public_keys(&plan.ending)),
         };
-        let witness = self.owner_presence(OwnerActImportance::Important, REMOVE_MACHINE)?;
+        let witness = self.owner_presence(OwnerActImportance::Ordinary, REMOVE_MACHINE)?;
         let ground = OwnerProofGround::witnessed(&witness);
         between();
         let mut txn = self.store.env.write_txn()?;
