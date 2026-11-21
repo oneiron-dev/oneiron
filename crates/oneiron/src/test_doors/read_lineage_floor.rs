@@ -81,3 +81,41 @@ pub fn forget_floor_state(vault: &Vault) -> Result<()> {
     txn.commit()?;
     Ok(())
 }
+
+/// Lands the binding of `row` here as a replicated binding does once its
+/// policy resolves (`bind_replicated_in_txn`): the rows waiting on `row` are
+/// raised again (#9289 Opus review 3 P1-B).
+///
+/// # Errors
+///
+/// Storage failures.
+pub fn binding_lands(vault: &Vault, row: EntityId) -> Result<()> {
+    let mut txn = vault.store.env.write_txn()?;
+    crate::source_audience::binding_landed_in_txn(vault, &mut txn, &row)?;
+    txn.commit()?;
+    Ok(())
+}
+
+/// Lands `made_by` as the stated birth of the live row `id` the way sync
+/// lands a replicated row's birth (`stamp_birth_or_warn`): the birth, then
+/// the row's floor (#9289 Opus review 3 P2-4).
+///
+/// # Errors
+///
+/// Storage failures.
+#[cfg(feature = "sync")]
+pub fn replicated_birth_lands(
+    vault: &Vault,
+    id: EntityId,
+    made_by: crate::provenance::made_by::MadeBy,
+) -> Result<()> {
+    let mut txn = vault.store.env.write_txn()?;
+    crate::sync::row_birth::stamp_birth_or_warn(
+        vault,
+        &mut txn,
+        &id,
+        &crate::store::row_birth::RowBirth::stated(made_by),
+    )?;
+    txn.commit()?;
+    Ok(())
+}

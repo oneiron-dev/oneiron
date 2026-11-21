@@ -575,3 +575,53 @@ impl Vault {
         })
     }
 }
+
+/// Where a SUMMARY stands for the owner's re-derive of sealed rows
+/// (READ-LINEAGE L1-B; design pass 30, section 4.7).
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum SummaryGeneration {
+    /// No saved declaration writes it again: not a scope summary, or one
+    /// whose declaration no longer reads here.
+    Undeclared,
+    /// The generation its projection names current, or one no projection
+    /// names, with the requester its declaration stands under.
+    Current(WriteActor),
+    /// A generation a later one replaced in its projection: history.
+    Replaced,
+}
+
+/// [`SummaryGeneration`] of the SUMMARY `summary` as `txn` holds it.
+///
+/// # Errors
+///
+/// Storage failures.
+pub(crate) fn summary_generation_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    summary: &EntityId,
+) -> Result<SummaryGeneration> {
+    let declared =
+        crate::entity_doc::summary_meta_in_txn(vault, txn, summary).and_then(|metadata| {
+            let original = decode(&metadata.derivation.request)?;
+            let request = decode_request(vault, txn, &original)?;
+            let key = projection_key(&request, &metadata.purpose.id)?;
+            Ok((request.requester, key))
+        });
+    let (requester, key) = match declared {
+        Ok(declared) => declared,
+        Err(
+            Error::EntityNotFound
+            | Error::CorruptedIndex(_)
+            | Error::InvalidClaimBody(_)
+            | Error::Record(_),
+        ) => return Ok(SummaryGeneration::Undeclared),
+        Err(error) => return Err(error),
+    };
+    let current = PROJECTION
+        .get(&vault.store, txn, &key)?
+        .and_then(|projection| projection.current);
+    Ok(match current {
+        Some(current) if current != summary.to_hex() => SummaryGeneration::Replaced,
+        _ => SummaryGeneration::Current(requester),
+    })
+}

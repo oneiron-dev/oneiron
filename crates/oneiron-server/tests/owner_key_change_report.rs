@@ -26,7 +26,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Sender, channel};
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use base64::Engine as _;
 use oneiron::authority::{
@@ -480,7 +480,7 @@ fn a_full_supervisor_backlog_fails_the_report_at_once() {
     let returned = std::thread::scope(|scope| {
         scope.spawn(|| {
             sweep_once(&hosted.vault, &client);
-            done.send(()).ok();
+            let _ = done.send(());
         });
         let returned = finished.recv_timeout(BOUND).is_ok();
         // a sweep still waiting in its connect is woken, refused, before the
@@ -537,25 +537,19 @@ fn a_stop_ends_the_wait_for_an_ack_within_one_slice() {
     // a bound far past the slice: only the stop can end the wait in time
     let client = report_client(&socket, VAULT, &token(), Duration::from_secs(60));
     let stop = AtomicBool::new(false);
-    let waited = std::thread::scope(|scope| {
-        let sweep = scope.spawn(|| {
+    let (done, finished) = channel();
+    let ended = std::thread::scope(|scope| {
+        scope.spawn(|| {
             sweep_once_until(&hosted.vault, &client, &stop);
-            Instant::now()
+            let _ = done.send(());
         });
         line_read
             .recv_timeout(BOUND)
             .expect("the supervisor read the line");
-        let stopped_at = Instant::now();
         stop.store(true, Ordering::Relaxed);
-        sweep
-            .join()
-            .expect("sweep")
-            .saturating_duration_since(stopped_at)
+        finished.recv_timeout(Duration::from_secs(3)).is_ok()
     });
-    assert!(
-        waited < Duration::from_secs(3),
-        "the sweep ended {waited:?} after the stop"
-    );
+    assert!(ended, "the sweep ended within 3 s of the stop");
     assert_eq!(
         supervisor.join().expect("supervisor"),
         expected_line(&second.entry, listed_at(&hosted, &second.entry)),

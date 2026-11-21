@@ -26,11 +26,12 @@ use std::time::Instant;
 use oneiron::authority::VerifiedSlip;
 use oneiron::pipeline::{BlendWeightsSource, RetrievalEvalSpec};
 use oneiron::{EntityId, Vault};
+use oneiron_contracts::fingerprint::Fingerprinter;
+use oneiron_contracts::fingerprint::purposes::bench_scorecard::WORLD_SCOPED_PARAMS;
 use oneiron_ruler::pack::{LoadedPack, Query};
 use oneiron_ruler::scorecard::{
     Hit, QueryRun, RepeatRun, RunHeader, build_keyword_scorecard, write_scorecard,
 };
-use sha2::Digest;
 
 use crate::scorecard::ScorecardFailure;
 use crate::scorecard::run::{flag_u32, pack_time};
@@ -39,9 +40,6 @@ use fixture::{AgentVault, Placed};
 
 /// The retriever the card names in place of an embedding model.
 const RETRIEVER: &str = "world-scoped-text";
-
-/// The domain of the arm's params digest.
-const PARAMS_DOMAIN: &str = "oneiron-bench.scorecard.world-scoped.v1";
 
 /// The default hidden share, per mille: half the records.
 const DEFAULT_HIDDEN_SHARE: u32 = 500;
@@ -83,15 +81,15 @@ impl Settings {
         })
     }
 
-    /// The card's params digest: sha256 (hex) over the arm, its retriever and
-    /// its partition.
+    /// The card's params digest: the fingerprint [`WORLD_SCOPED_PARAMS`] (hex)
+    /// of the arm's retriever and its partition.
     fn digest(&self) -> String {
-        let (share, seed) = (self.hidden_share, self.partition_seed);
-        let text = format!(
-            "{PARAMS_DOMAIN}\nretriever={RETRIEVER}\n\
-             hidden_share_permille={share}\npartition_seed={seed}\n"
-        );
-        oneiron_hex::encode(&sha2::Sha256::digest(text.as_bytes()))
+        Fingerprinter::new(WORLD_SCOPED_PARAMS)
+            .part(RETRIEVER.as_bytes())
+            .u64(u64::from(self.hidden_share))
+            .u64(u64::from(self.partition_seed))
+            .finish()
+            .to_hex()
     }
 }
 

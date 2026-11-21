@@ -32,8 +32,8 @@ use super::owner_key_enrollment_door::EntrySigner;
 use super::*;
 use crate::consent::AuthenticatedOwner;
 use crate::world_keys::{
-    DevicePin, KitConfirmation, OwnerRootSigner, OwnerSigningSlot, RecoveryAuthoritySigner,
-    RecoveryRootSeed,
+    DevicePin, KitConfirmation, OwnerActImportance, OwnerRootSigner, OwnerSigningSlot,
+    RecoveryAuthoritySigner, RecoveryRootSeed, owner_presence_reasons,
 };
 use crate::{EntityId, Result, Vault};
 
@@ -139,7 +139,14 @@ impl Vault {
     /// possession. Each arm checks its own condition again in its writer
     /// transaction, and writes everything or nothing.
     ///
+    /// The door asks for the person at this device before its write (an
+    /// important act, [`Vault::owner_presence`]), in the chosen arm after its checks
+    /// and before taking the PIN step or slot lock.
+    ///
     /// # Errors
+    /// A refused confirm answers [`crate::error::RecordError::OwnerPresenceRequired`];
+    /// on a device with a PIN set, [`crate::error::SecretError::DevicePin`]
+    /// answers `Required` outside the PIN's window.
     /// [`crate::error::RecordError::AuthorityRefused`] when neither arm
     /// serves, for a lost key the root's key may not revoke, or for an entry
     /// the fold does not count; each arm's own refusals
@@ -269,6 +276,19 @@ impl Vault {
     /// the roster reads its slot's key revoked there, and is held as a
     /// checkpoint root signer once the transaction commits, as at the device
     /// door.
+    ///
+    /// The door asks for the person at this device before its write (an
+    /// important act, [`Vault::owner_presence`]), after it revalidated the
+    /// owner's proof on a read, before it readies this install's signing keys
+    /// and before taking the PIN step or slot lock. Readying those keys
+    /// writes ([`Vault::prepare_install_signing`]), so a refused confirm
+    /// leaves this install's machine as it was, and a proof that is not this
+    /// vault's owner raises no prompt.
+    ///
+    /// # Errors
+    /// A refused confirm answers [`crate::error::RecordError::OwnerPresenceRequired`];
+    /// on a device with a PIN set, [`crate::error::SecretError::DevicePin`]
+    /// answers `Required` outside the PIN's window.
     fn vouch_with_root_key(
         &self,
         (owner, authority): (&AuthenticatedOwner, &ActAuthority),
@@ -286,6 +306,19 @@ impl Vault {
         {
             return Err(authority_refused(PROVING_KEY_NAMED_LOST));
         }
+        // The proof is this vault's live owner before the door asks; the
+        // writer revalidates it in its transaction (REVIEW-10128 P1 2).
+        self.owner_key_act_owner(authority)?;
+        // The keystore is read before the door asks, and this install's
+        // signing keys are readied after it: readying them writes
+        // (REVIEW-10128 P1 1).
+        if matches!(successor, RootSuccessor::ThisInstall) {
+            self.device_keystore()?;
+        }
+        let _asked = self.owner_presence(
+            OwnerActImportance::Important,
+            owner_presence_reasons::RECOVER_OWNER_ROOT,
+        )?;
         // Preparing this install's signing keys writes, so its slot is made
         // ready before the writer opens.
         let install = match successor {
@@ -392,6 +425,13 @@ impl Vault {
     /// with its record.
     /// A second call while this install's hold for the same successor
     /// waits answers the same held attempt, and writes no second hold.
+    ///
+    /// The door asks for the person at this device as the vouch arm does
+    /// (an important act, [`Vault::owner_presence`]): after it revalidated
+    /// the owner's proof on a read, before it readies this install's signing
+    /// keys and before the PIN step or slot lock, so a refused confirm writes
+    /// nothing and leaves this install's machine as it was. A second call
+    /// that answers a waiting hold asks again: each call is the person's act.
     fn hold_with_root_key(
         &self,
         (owner, authority): (&AuthenticatedOwner, &ActAuthority),
@@ -408,6 +448,16 @@ impl Vault {
         {
             return Err(authority_refused(PROVING_KEY_NAMED_LOST));
         }
+        // The proof, the keystore and the confirm come before anything is
+        // readied, in the vouch arm's order (REVIEW-10128 P1 1 and 2).
+        self.owner_key_act_owner(authority)?;
+        if matches!(successor, RootSuccessor::ThisInstall) {
+            self.device_keystore()?;
+        }
+        let _asked = self.owner_presence(
+            OwnerActImportance::Important,
+            owner_presence_reasons::RECOVER_OWNER_ROOT,
+        )?;
         // Preparing this install's signing keys writes, so its slot is made
         // ready before any transaction opens, as at the vouch arm.
         let machine = self.prepare_install_signing()?;
@@ -611,64 +661,6 @@ impl Vault {
         txn.commit()?;
         self.note_committed_authority_rows(rows);
         Ok((RootRecovery::Held { hold, lands_at }, held))
-    }
-
-    /// Marks the rows `txn` counted since `before` for the live mirror, as
-    /// the vouch writer does: the caller commits, then announces them with
-    /// [`Self::note_committed_authority_rows`], so other owner devices see
-    /// a hold, an answer or a landing at the next mirror pass.
-    ///
-    /// # Errors
-    /// The log's and the mirror marks'.
-    pub(super) fn mark_authority_rows_counted_since_in_txn(
-        &self,
-        txn: &mut heed::RwTxn<'_>,
-        before: &AuthorityFold,
-    ) -> Result<BTreeSet<EntityId>> {
-        let after = self.authority_view_readonly_in_txn(txn)?;
-        let rows = authority_rows_counted_since(before, &after)?;
-        self.mark_authority_rows_in_txn(txn, &rows)?;
-        Ok(rows)
-    }
-
-    /// The kit's live root key R cancels every live hold R signed, in the
-    /// caller's write transaction, before its rows (W3): a kit recovery lands
-    /// over any hold, so an attacker's hold never lands after the owner's
-    /// kit. Another root's holds are skipped (the kit holds no other root's
-    /// key; such a hold voids when its key is revoked), and with no live R
-    /// from the kit it cancels nothing. The anchor arm of this door needs
-    /// none: with no live root key no hold is live, since a live hold's
-    /// signer R is one.
-    pub(super) fn cancel_live_holds_for_kit_in_txn(
-        &self,
-        txn: &mut heed::RwTxn<'_>,
-        seed: &RecoveryRootSeed,
-    ) -> Result<()> {
-        let vault_id = self
-            .authority_view_readonly_in_txn(txn)?
-            .vault_id
-            .ok_or_else(invalid_authority)?;
-        let Some((_, r)) = self
-            .recovery_authority_generations_in_txn(txn, seed, &vault_id)?
-            .live
-        else {
-            return Ok(());
-        };
-        let r_key = r.authority_key();
-        let live: Vec<AuthorityEntryHash> = self
-            .recovery_holds_in_txn(txn)?
-            .into_iter()
-            .filter(|view| {
-                view.root_key == r_key
-                    && matches!(
-                        view.state,
-                        RecoveryHoldState::Waiting | RecoveryHoldState::Due
-                    )
-            })
-            .map(|view| view.hold)
-            .collect();
-        self.append_root_key_cancels_in_txn(txn, &r, &live)?;
-        Ok(())
     }
 
     /// The keys `lost` names, once each: every one a live owner key that
