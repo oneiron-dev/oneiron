@@ -54,11 +54,49 @@ pub struct BookingConstraintHoldContext {
     pub session_ref: String,
 }
 
-// The owner's deposit refund (`vault.booking.deposit.refund`).
+// The owner's deposit refund (`vault.booking.deposit.refund`) and its mark
+// of a refund paid outside Stripe (`vault.booking.deposit.mark_refunded_outside`).
 #[doc(hidden)]
 pub use oneiron_verb_wire::verbs::calendar::{
+    BookingDepositMarkRefundedOutsideReceipt, BookingDepositMarkRefundedOutsideRequest,
     BookingDepositRefundReceipt, BookingDepositRefundRequest, BookingDepositRefundState,
 };
+
+/// The owner's mark of a deposit refund paid outside Stripe: its public
+/// spelling.
+const DEPOSIT_MARK_REFUNDED_OUTSIDE_VERB: &str = "vault.booking.deposit.mark_refunded_outside";
+
+/// `vault.booking.deposit.mark_refunded_outside` on an embedded handle, as
+/// the vault's embedded owner.
+pub fn mark_booking_deposit_refunded_outside(
+    memory: &crate::memory::Memory<'_>,
+    input: &BookingDepositMarkRefundedOutsideRequest,
+) -> crate::memory::MemoryResult<BookingDepositMarkRefundedOutsideReceipt> {
+    let owner = memory.embedded_owner(DEPOSIT_MARK_REFUNDED_OUTSIDE_VERB)?;
+    mark_booking_deposit_refunded_outside_as(memory.vault(), &owner, input)
+}
+
+/// `vault.booking.deposit.mark_refunded_outside` under the owner's proof,
+/// which the mark's write revalidates (BK-DEPOSIT-FAILED-REFUND-MARK-PAID =
+/// B): a host selected at the booking's confirmation says the refund its
+/// deposit owes now was paid back outside Stripe, and the deposit's settle
+/// row then makes no refund. No agent grant and no visitor token reach it.
+pub fn mark_booking_deposit_refunded_outside_as(
+    vault: &crate::Vault,
+    owner: &crate::consent::AuthenticatedOwner,
+    input: &BookingDepositMarkRefundedOutsideRequest,
+) -> crate::memory::MemoryResult<BookingDepositMarkRefundedOutsideReceipt> {
+    let event_ref = crate::EntityId::from_hex(input.event_ref.trim()).map_err(|_| {
+        crate::memory::MemoryError::bad_request("event_ref is an entity id in lowercase hex")
+    })?;
+    crate::booking::lifecycle::mark_booking_deposit_refunded_outside(
+        vault,
+        owner,
+        &event_ref,
+        input.amount_minor,
+    )
+    .map_err(crate::memory::booking_error)
+}
 
 /// The owner's deposit refund verb's public spelling.
 const DEPOSIT_REFUND_VERB: &str = "vault.booking.deposit.refund";

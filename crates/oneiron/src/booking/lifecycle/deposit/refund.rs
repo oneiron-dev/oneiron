@@ -287,9 +287,10 @@ fn owner_return(row: &mut DepositRow) -> OwnerReturn {
 /// is asked again under a new key, for the same amount (FIX
 /// [BK-DEPOSIT-FAILED-REFUND-SURFACE]), unless refunds made by hand in the
 /// Stripe dashboard cover a part of it. A deposit that already owes or has
-/// settled its whole return, whose ended refund is asked again already, or
-/// whose rest only a hand refund pays, is left as it stands, so a retry
-/// queues nothing. The receipt's amount is
+/// settled its whole return, whose ended refund is asked again already,
+/// whose rest only a hand refund pays, or whose refund owed the owner marked
+/// refunded outside the provider (on a live booking too), is left as it
+/// stands, so a retry queues nothing. The receipt's amount is
 /// the whole return: what was refunded before and what is owed now.
 ///
 /// # Errors
@@ -333,10 +334,12 @@ pub(crate) fn refund_booking_deposit_as_owner(
             None => None,
         };
         // A refund owed that the provider ended unpaid, whether the owner
-        // may ask for it again or has asked and it runs: the noted end goes
-        // once a refund settles.
+        // may ask for it again or has asked and it runs (the noted end goes
+        // once a refund settles), or that the owner marked refunded outside
+        // the provider: a press then changes nothing.
         let ended_refund_owed = row.as_ref().is_some_and(|row| {
-            matches!(row.state, DepositState::RefundDue { .. }) && row.refund_ended_unpaid.is_some()
+            matches!(row.state, DepositState::RefundDue { .. })
+                && (row.refund_ended_unpaid.is_some() || row.marks_owed_refund())
         });
         if booking.effective_status() != BookingStatus::Cancelled
             && now_utc < booking.slot.start

@@ -34,7 +34,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/home_pick.rs` | src | s | 1 struct · 3 fn · 2 const · 2 crate-vis | HomeNodePick | The owner's pick of his vault's home node (DOOR-101 PR2a; ARCH-0026: "The owner picks the home node in… |
 | `src/authority/leave_notice_delegation.rs` | src | s | 1 struct · 1 enum · 8 fn · 4 const | LeaveNoticeDelegation, LeaveNoticeDelegationPurpose | A root's purpose-limited delegation of leave-notice verification to its successor (FIX 7932, Engine 19:59 =… |
 | `src/authority/log_entry_op.rs` | src | m | 1 struct · 1 enum · 12 fn · 1 crate-vis | AuthorityLogEntry, AuthorityOp | The authority op vocabulary and the signed log-entry envelope |
-| `src/authority/machine_profile.rs` | src | m | 2 struct · 3 enum · 11 fn · 4 const · 5 crate-vis | MachineDeviceClass, MachineEncryptionKey, MachineOwnership, MachineProfile, MachineRole | The physical machine profile: the owner's signed answer when a machine joins the vault, and its wire codec |
+| `src/authority/machine_profile.rs` | src | m | 2 struct · 3 enum · 12 fn · 4 const · 5 crate-vis | MachineDeviceClass, MachineEncryptionKey, MachineOwnership, MachineProfile, MachineRole | The physical machine profile: the owner's signed answer when a machine joins the vault, and its wire codec |
 | `src/authority/membership_execution.rs` | src | m | 2 struct · 1 enum · 5 fn · 1 const · 2 crate-vis | MembershipExecution, MembershipExecutionCause, MembershipHandover | A shared-vault membership change as a carrier-signed AUTHORITY_LOG record (FIX 12335, Engine 13:13 call A)… |
 | `src/authority/mod.rs` | src | s | 48 re-export | — | The AUTHORITY_LOG wire layer: pinned constants, key material and signature transcripts, the op vocabulary… |
 | `src/authority/origin_cut.rs` | src | s | 1 struct · 3 fn · 2 const · 2 crate-vis | OriginCut | The owner's cut of a repository's origin authority (FIX 15740, Engine 11-06 02:54; ARCH-0068: "Refs are… |
@@ -92,6 +92,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/authority_channel_register_names.rs` | test | m | — | — | The names of 7 name lists in `oneiron-authority`, one line per row, generated from… |
 | `tests/authority_register_names.rs` | test | s | — | — | The names of 5 name lists in `oneiron-authority`, one line per row, generated from… |
 | `tests/carrier_signature.rs` | test | s | — | — | The carrier signature of a row act (`oneiron_authority::authority::CarrierSignature`, Fable pass 28 DESIGN… |
+| `tests/machine_role_direction.rs` | test | s | — | — | The direction table for every role answer and role in force |
 | `tests/passkey_owner_signature.rs` | test | m | — | — | A browser passkey signs as an owner root (row WEB-PASSKEY-OWNER-KEY; lead ruling CARRIER-HOSTED-WEB-ACTS =… |
 | `tests/policy_setting_batch.rs` | test | s | — | — | A batch is one act (stage 7a-3, DESIGN 1.6 "What travels"): - a batch lists its further rows under `more`… |
 | `tests/policy_setting_name.rs` | test | s | — | — | The setting an owner act names is its wire text (stage 7a-1, RULING SETTING-7A-SIGNED-ACT-BASE = A): any… |

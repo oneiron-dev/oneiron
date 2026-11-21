@@ -28,7 +28,8 @@
 //! ([`booking_owner_card_row_of_handle`]). The card of a booking the visitor
 //! picked again from the owner's emergency cancel's proposals says where
 //! the return of the deposit from before that cancel stands
-//! ([`emergency_return`]).
+//! ([`emergency_return`]), and the card of one whose refund the owner
+//! marked refunded outside Stripe says so ([`refund_marked_outside`]).
 
 use std::collections::BTreeSet;
 
@@ -39,7 +40,7 @@ use super::authorship::counts_in_txn;
 use super::claim::read_booking_facts;
 use super::deposit::{
     emergency_return_in_txn, held_deposit_in_txn, refund_ended_unpaid_note_in_txn,
-    unattributed_cancel_sequence_in_txn,
+    refund_marked_outside_in_txn, unattributed_cancel_sequence_in_txn,
 };
 use super::occurrence::inclusive_occurrence;
 use super::storage::decode_claim_value;
@@ -62,12 +63,14 @@ use crate::{EntityId, Vault};
 mod calendar_hold;
 mod emergency_return;
 mod held_deposit;
+mod refund_marked_outside;
 
 pub use self::calendar_hold::{BookingOwnerCardCalendarHold, CALENDAR_HOLD_RECONNECT_VERB};
 pub use self::emergency_return::{BookingDepositReturned, BookingOwnerCardEmergencyReturn};
 pub use self::held_deposit::{
     BookingDepositHeld, BookingDepositHeldReason, BookingOwnerCardDeposit,
 };
+pub use self::refund_marked_outside::BookingOwnerCardRefundMarkedOutside;
 
 /// The prefix of a booking card's INBOX item id; the booking's EVENT hex
 /// follows it. The EVENT keeps its id through every move, so the row does.
@@ -123,6 +126,11 @@ pub struct BookingOwnerCard {
     /// booking with no deposit, or one that holds nothing now.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deposit: Option<BookingOwnerCardDeposit>,
+    /// The latest refund of the booking's deposit that an owner marked
+    /// refunded outside Stripe, on any card of the booking; `None` while no
+    /// owner marked one (FIX [BK-DEPOSIT-FAILED-REFUND-MARK-PAID]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refund_marked_outside: Option<BookingOwnerCardRefundMarkedOutside>,
     /// On a booking the visitor picked again from the owner's emergency
     /// cancel's proposals: no deposit is held, and the return of the deposit
     /// from before that cancel stands pending or made (RULING
@@ -558,6 +566,8 @@ fn card_in_txn(
     } else {
         None
     };
+    let refund_marked_outside = refund_marked_outside_in_txn(vault, rtxn, event_ref)?
+        .map(|marked| refund_marked_outside::refund_marked_outside_note(marked, zone.as_deref()));
     let selected_hosts = facts
         .context
         .as_ref()
@@ -575,6 +585,7 @@ fn card_in_txn(
         recorded_at,
         offers,
         deposit,
+        refund_marked_outside,
         emergency_return,
         calendar_hold,
     };
