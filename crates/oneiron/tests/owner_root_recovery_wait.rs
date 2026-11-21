@@ -54,6 +54,11 @@
 //! that drops the box's release second and the report (the red branch
 //! `opus-wayback/recovery-box-one-wait-on-main-red`).
 //!
+//! The enrolment preflight pin (row RECOVERY-HOLD-ENROLMENT-PREFLIGHT):
+//! `a_hold_whose_enrolment_never_lands_is_refused_before_its_wait`. It fails
+//! on main `54f7ce11c55b`, where the door held a successor whose holding
+//! machine the vault never held, and that hold never landed.
+//!
 //! Red on the kit-only rotation head `5adc0295753f`: the file does not
 //! compile there (no `RecoveryHold` ops, no hold view, no answer doors, no
 //! landing, no `RootRecovery::Held`, no `recover_owner_root_waiting`).
@@ -3316,4 +3321,70 @@ fn a_declined_confirm_holds_nothing_and_a_given_one_holds() {
         fixture.slot_present(&new_key.verifying_key().to_bytes()),
         "this install keeps R's seed for the hold"
     );
+}
+
+/// Row RECOVERY-HOLD-ENROLMENT-PREFLIGHT: a box recovery whose held
+/// enrolment the fold would never count is refused at the hold, with the
+/// landing's own refusal, and writes nothing. Before the fix the door held
+/// it, and every landing pass after its wait failed. Here the successor's
+/// holding machine is one this vault never held: a live holding machine is
+/// the enrolment's rule, not the hold judge's. The same owner's hold for a
+/// successor on this install's machine then holds and lands as before.
+#[test]
+fn a_hold_whose_enrolment_never_lands_is_refused_before_its_wait() {
+    let fixture = fixture();
+    let lost = fixture.enrol_device_key(LOST_KEY_SEED);
+    let lost_key = key_of(&lost);
+    let new_key = SigningKey::from_bytes(&[NEW_KEY_SEED; 32]);
+    let new = key_of(&new_key);
+    let public_key = new_key.verifying_key().to_bytes();
+    let stranger = EntityId::from_bytes([0x7C; 16]).expect("a machine id this vault never held");
+    let challenge = fixture
+        .vault
+        .owner_key_enrollment_challenge_as(&fixture.authority(), stranger, &public_key)
+        .expect("the challenge");
+    let on_stranger = OwnerKeyEnrollment {
+        machine: stranger,
+        public_key,
+        proof: new_key.sign(&challenge).to_bytes().to_vec(),
+    };
+    let rows = fixture.history().len();
+
+    let refused = fixture
+        .recover_wait(
+            WAIT,
+            fixture.released_material(0),
+            RootSuccessor::Device(on_stranger),
+            std::slice::from_ref(&lost_key),
+        )
+        .expect_err("a hold whose enrolment the fold refuses is never written");
+    assert_refused(&refused, "the holding machine is not live");
+    assert_eq!(fixture.history().len(), rows, "the refusal writes no row");
+    assert!(fixture.holds().is_empty(), "no hold was written");
+    assert!(
+        !fixture.slot_present(&public_key),
+        "no seed of R stays in a slot"
+    );
+    assert!(fixture.live(&lost_key), "the lost key is still live");
+    assert!(!fixture.live(&new), "the successor is not enrolled");
+    assert!(fixture.land().is_empty(), "nothing waits to land");
+
+    let (hold, lands_at) = held(
+        fixture
+            .recover_wait(
+                WAIT,
+                fixture.released_material(0),
+                RootSuccessor::Device(fixture.enrollment(&new_key)),
+                std::slice::from_ref(&lost_key),
+            )
+            .expect("a successor on this install's machine holds"),
+    );
+    assert_eq!(fixture.history().len(), rows + 1, "one hold row");
+    fixture.at(lands_at + 60);
+    let landings = fixture.land();
+    assert_eq!(landings.len(), 1, "the due hold lands");
+    assert_eq!(landings[0].hold, hold);
+    assert_eq!(landings[0].state, RecoveryHoldState::Landed);
+    assert!(fixture.live(&new), "the successor is enrolled");
+    assert!(!fixture.live(&lost_key), "the lost key is revoked");
 }
