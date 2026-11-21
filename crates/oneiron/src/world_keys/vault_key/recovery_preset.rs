@@ -548,13 +548,6 @@ impl Vault {
             if state.recovery == preset {
                 return Ok((change, None));
             }
-            // An entry whose read drew no sheet raced another switch: said
-            // before the write looks at the kit or rotates the key.
-            let entry = if preset == RecoveryPreset::NobodyButMe {
-                Some(issue.as_ref().ok_or_else(|| refused(PRESET_RACED))?)
-            } else {
-                None
-            };
             // Rotation happens iff Standard goes to kit-only and a generation
             // is live. Kit-only to kit-only and the switch back change no
             // roster.
@@ -566,6 +559,13 @@ impl Vault {
                     ground.as_ref(),
                 )?;
             }
+            // An entry whose read drew no sheet raced another switch: said
+            // before the write looks at the kit or rotates the key.
+            let entry = if preset == RecoveryPreset::NobodyButMe {
+                Some(issue.as_ref().ok_or_else(|| refused(PRESET_RACED))?)
+            } else {
+                None
+            };
             if let Some((_, commitment, envelope)) = entry {
                 if state.commitment != *commitment {
                     return Err(refused("this handle holds another vault key"));

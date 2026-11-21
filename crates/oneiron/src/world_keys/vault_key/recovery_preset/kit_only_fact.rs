@@ -118,14 +118,14 @@ impl Vault {
         &self,
         owner: &crate::consent::AuthenticatedOwner,
         kit_only: bool,
-        rotates: bool,
+        _rotates: bool,
     ) -> Result<Option<OwnerProofGround>> {
         let before = {
             let txn = self.store.env.read_txn()?;
             owner.revalidate_in_txn(self, &txn)?;
             self.recovery_box_kit_only_fact_in_txn(&txn)?
         };
-        if !rotates && before.is_some_and(|fact| fact.kit_only == kit_only) {
+        if before.is_some_and(|fact| fact.kit_only == kit_only) {
             return Ok(None);
         }
         let witness = self.owner_presence(
