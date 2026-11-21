@@ -3,7 +3,7 @@
 
 use super::*;
 
-impl<'a, B, E> ByoaDispatcher<'a, B, E>
+impl<B, E> ByoaDispatcher<'_, B, E>
 where
     B: ByoEndpointBackendFactory,
     E: ByoaEgressPort,
