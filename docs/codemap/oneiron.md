@@ -743,7 +743,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/claim_materialization/demotion.rs` | src | s | 2 crate-vis | — | The permitted body delta of a demotion materialization |
 | `src/batch/claim_materialization/lifecycle.rs` | src | s | 3 crate-vis | — | The lifecycle close materialization: the exact close of the current active row, its proof, and the closer a… |
 | `src/batch/claim_materialization/provenance_puts.rs` | src | s | 1 crate-vis | — | The edge provenance writer's claim puts (`crate::provenance::writes`) |
-| `src/batch/claim_materialization/succession.rs` | src | m | 7 crate-vis | — | Claim succession: a weakening or a facet fork births a new claim from its predecessor's exact body, never… |
+| `src/batch/claim_materialization/succession.rs` | src | m | 8 crate-vis | — | Claim succession: a weakening or a facet fork births a new claim from its predecessor's exact body, never… |
 | `src/batch/claim_materialization/tests.rs` | test | s | — | — | — |
 | `src/batch/claim_materialization/tests/freshness.rs` | test | m | — | — | Binding freshness after authorized replacements and unbound writes |
 | `src/batch/claim_materialization/tests/lifecycle_actor_regressions.rs` | test | m | — | — | Actor lifecycle counterexamples and controls |
@@ -816,7 +816,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/gate_staging/tests.rs` | test | s | — | — | — |
 | `src/batch/lexical_hint_index.rs` | src | s | 4 crate-vis | — | The lexical query hint CLAIMs by target (FIX-LIST row 24676) |
 | `src/batch/lexical_query_hints.rs` | src | m | 21 crate-vis | — | — |
-| `src/batch/mod.rs` | src | s | 1 mod · 3 re-export · 47 crate-vis | — | — |
+| `src/batch/mod.rs` | src | s | 1 mod · 3 re-export · 48 crate-vis | — | — |
 | `src/batch/ops_derived_copies.rs` | src | s | 1 crate-vis | — | The raw ops door with the derived-text step (FIX 10886): a door that holds the vault and applies ops without… |
 | `src/batch/ops_pipeline.rs` | src | L | 17 crate-vis | — | — |
 | `src/batch/person_substrate.rs` | src | m | 10 crate-vis | — | Atomic deterministic PERSON substrate masks, including replay and open-time repair |
@@ -920,7 +920,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/tests/vectors_embeddings.rs` | test | s | — | — | Pending-embedding markers, vector fill and vector row codec |
 | `src/batch/thread_claim_index.rs` | src | s | 1 crate-vis | — | Thread claims reuse the existing ClaimOf index at every storage door |
 | `src/batch/types.rs` | src | s | 5 crate-vis | — | Core half of `batch::types`: its store-layer items live in `oneiron_store::batch::types` and are re-exported… |
-| `src/batch/vad_postcommit.rs` | src | m | 25 crate-vis | — | Transaction-owner handoff for Dreamer VAD approvals and digest invalidation |
+| `src/batch/vad_postcommit.rs` | src | m | 26 crate-vis | — | Transaction-owner handoff for Dreamer VAD approvals and digest invalidation |
 | `src/batch/vector_apply.rs` | src | s | 3 crate-vis | — | — |
 | `src/batch/verified_claim_transition.rs` | src | m | 20 crate-vis | — | Sealed operation proof: minted only after the owning consent, curation or lifecycle validator checks the… |
 | `src/bin/deck-gate-engine.rs` | src | s | — | — | `deck-gate-engine`: the OF-510 deck gate's engine half with the engine's own Loro body |
@@ -2811,7 +2811,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/resources/write.rs` | src | m | 1 struct · 2 fn · 20 crate-vis | ScopedConsolidationWrite | Sealed resource handoff |
 | `src/dreamer_consolidation/retained_conflict.rs` | src | m | 1 struct · 4 crate-vis | RetainedAlternative | The candidates an escalated consolidation round dropped, retained on its `conflict.open` marker (OF-023, FIX… |
 | `src/dreamer_consolidation/retained_keep.rs` | src | m | 1 struct · 1 enum · 8 crate-vis | ConflictSettleOutcome, StagedKeep | Keeping a conflict's retained alternative (OF-023, FIX 496): where the Keep lands it, and what a Keep of… |
-| `src/dreamer_consolidation/revert.rs` | src | m | 4 struct · 1 enum · 1 fn · 4 crate-vis | DreamerChange, DreamerChangeKind, DreamerChanges, DreamerRevertReceipt, RevertedDreamerChange | The owner's revert of any one Dreamer change (OF-023, owner ruling 10-18: "autoapply + revert rather than… |
+| `src/dreamer_consolidation/revert.rs` | src | m | 4 struct · 1 enum · 1 fn · 5 crate-vis | DreamerChange, DreamerChangeKind, DreamerChanges, DreamerRevertReceipt, RevertedDreamerChange | The owner's revert of any one Dreamer change (OF-023, owner ruling 10-18: "autoapply + revert rather than… |
 | `src/dreamer_consolidation/reviewed.rs` | src | s | 4 crate-vis | — | Claims the owner's review already holds or decided, which a later pass meets again: this attempt's own… |
 | `src/dreamer_consolidation/roles.rs` | src | s | 3 struct · 7 fn · 4 const · 6 crate-vis | RoleBackend, RoleBackends, RoleCall | The Dreamer's model roles, and the backend each one calls out on |
 | `src/dreamer_consolidation/root_evidence.rs` | src | m | 10 crate-vis | — | Root-owned reference pins |
@@ -2847,6 +2847,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/settle/decision_pages.rs` | src | s | 6 crate-vis | — | The engine's single bound settlement ask and shared page splitting |
 | `src/dreamer_consolidation/settle/decision_projection.rs` | src | s | 5 crate-vis | — | The engine's projection of one bound settlement ask (FIX 7506 P2) |
 | `src/dreamer_consolidation/settle/keep_approval.rs` | src | s | 10 crate-vis | — | A Keep the Gate holds (FIX 5753): the responder's approval of the exact retained alternative its Keep… |
+| `src/dreamer_consolidation/settle/member_copy.rs` | src | m | 2 crate-vis | — | How a member a reverted write superseded stands again: reopened in place, or, where it does not reopen, as a… |
 | `src/dreamer_consolidation/settle/preference_pair.rs` | src | s | 1 crate-vis | — | OF-023 (FIX 3079): the observed-versus-stated preference markers of the Memory door and of the derive Claim… |
 | `src/dreamer_consolidation/sieve_attempt.rs` | src | m | 1 crate-vis | — | The sieve's owed novelty/typing rungs and its sampled expensive-path audit |
 | `src/dreamer_consolidation/sieve_attempt/audit.rs` | src | m | 1 crate-vis | — | The sieve audit of an unflagged window (OF-498f, FIX 486): the expensive path reads a source range the cheap… |
@@ -9526,6 +9527,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/derive_observed_preference.rs` | test | m | — | — | Engine-stamped observed preferences from cited user TURNs |
 | `tests/derive_person.rs` | test | m | — | — | The person item of a derivation batch (untangle 6.9h, S69-C-KINDS = A): an agent names a PERSON it found in… |
 | `tests/derive_revert.rs` | test | m | — | — | Reverting a derivation batch (untangle 6.7c, decision C-2): the committing actor reverts its own batch and… |
+| `tests/derive_revert_replaced_claim.rs` | test | m | — | — | A reverted derivation batch stands the claim its `supersede` item had replaced again, also when that claim… |
 | `tests/derive_settlement.rs` | test | L | — | — | Supersession and settlement items of a derivation batch (untangle 6.7a): a claim an agent derived replaces… |
 | `tests/derive_sources.rs` | test | s | — | — | The derivation commit's source recheck (untangle 6.7a, from 6.4a's primitive A): every stored source an item… |
 | `tests/derive_topology_branches.rs` | test | s | — | — | The topology-judgment branches `derive_links` leaves unrun (FIX-LIST 23228): an applied judgment, an unread… |
