@@ -15,7 +15,9 @@
 //! count).
 //!
 //! A world one of its Grants reaches hides nothing: the claims there are
-//! served and counted.
+//! served and counted. Nor does a world the key's own floor reads in: with
+//! a policy row that opens the agent's Public claims, a Sensitive claim of
+//! the second world is a row its floor refuses by band, and still counts.
 //!
 //! The agent fixture is `tests/world_scope_bm25_hidden_postings.rs`'s, with
 //! no credential, through its test doors: run the file with
@@ -29,9 +31,13 @@ use std::sync::Arc;
 use oneiron::authority::{ActSurface, MachineRole};
 use oneiron::claim::{ScopedReadActorKey, base_world_id, default_project_id};
 use oneiron::consent::AuthenticatedOwner;
-use oneiron::federation::{Scope, ScopeAxis, ScopeId};
+use oneiron::federation::{Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling};
 use oneiron::memory::{
     AllRelationships, ClaimRelationships, ClaimScope, Effort, RecallScope, ScopedClaimInput,
+};
+use oneiron::policy_manifest_doors::{
+    PolicyManifestPut, PolicyManifestRead, PolicyScopedGrantRow, policy_manifests_as_owner,
+    put_policy_manifest_as_owner,
 };
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::test_doors::label_writers::embedded_owner;
@@ -59,6 +65,8 @@ const OCCURRED_AT: u64 = 1_769_947_200;
 /// Sensitivity band 0, Public: the world axis alone keeps the second
 /// world's claims from the agent's Grant.
 const PUBLIC_BAND: u8 = 0;
+/// Sensitivity band 2, Sensitive: above a Public-only policy read row.
+const SENSITIVE_BAND: u8 = 2;
 
 /// Which worlds the agent's one Grant reads.
 #[derive(Clone, Copy)]
@@ -332,30 +340,29 @@ fn an_agent_identity_receipt_counts_no_claim_of_a_world_its_grant_leaves_out() {
     );
 }
 
-/// Guard: a world the agent's Grant reaches keeps nothing from it. Its
-/// identity lane's recall serves the second world's claims and counts them,
-/// so with them [`RARE`] is the commoner word and a [`COMMON`] claim leads.
-/// Passes before and after the fix.
+/// Guard: a world the agent's Grant reaches keeps nothing from it. Its pack
+/// under its identity key (which asks for no world) serves the second
+/// world's claims and counts them, so with them [`RARE`] is the commoner
+/// word and a [`COMMON`] claim leads. Passes before and after the fix.
 #[test]
-fn an_agent_identity_recall_counts_the_claims_of_a_world_its_grant_reaches() {
+fn an_agent_identity_pack_counts_the_claims_of_a_world_its_grant_reaches() {
     let fixture = fixture(GrantWorlds::BaseAndSecond);
     let (rare, readable) = put_readable_claims(&fixture);
-    let without = agent_recall_order(&fixture, &readable);
+    let without = agent_pack_order(&fixture);
     assert_eq!(
         (
             without.first(),
             without.iter().copied().collect::<BTreeSet<_>>()
         ),
         (Some(&rare), readable.clone()),
-        "FIXTURE: the agent's recall serves every base claim through its Grant, the rarer word's \
+        "FIXTURE: the agent's pack serves every base claim through its Grant, the rarer word's \
          first"
     );
     let hidden = put_hidden_claims(&fixture);
-    let every: BTreeSet<EntityId> = readable.union(&hidden).copied().collect();
-    let with = agent_recall_order(&fixture, &every);
+    let with = agent_pack_order(&fixture);
     assert!(
         hidden.iter().any(|claim| with.contains(claim)),
-        "FIXTURE: the agent's recall serves the claims of the second world its Grant reads"
+        "FIXTURE: the agent's pack serves the claims of the second world its Grant reads"
     );
     assert!(
         with.first()
@@ -365,9 +372,90 @@ fn an_agent_identity_recall_counts_the_claims_of_a_world_its_grant_reaches() {
     );
 }
 
+/// Guard: a world the key's own floor reads in is no hidden world, whatever
+/// the agent's Grants reach. With a policy row that opens the agent's Public
+/// claims (B), a Sensitive claim of the second world is a row B refuses by
+/// its band and the Grant by its world: the receipt counts it, as before.
+/// Passes before and after the fix.
+#[test]
+fn an_agent_identity_receipt_counts_a_claim_its_own_floor_refuses_in_a_world_it_reads() {
+    let fixture = fixture(GrantWorlds::BaseOnly);
+    open_public_policy_read(&fixture);
+    let public = put_banded_claim(&fixture, Some(fixture.second_world), RARE, PUBLIC_BAND);
+    let sensitive = put_banded_claim(&fixture, Some(fixture.second_world), RARE, SENSITIVE_BAND);
+    let read = fixture.vault.scoped_read(agent_identity_key(&fixture));
+    let readable = read
+        .edges_out(&public)
+        .expect("the agent's edges of a Public second-world claim");
+    assert!(
+        readable.value.is_some(),
+        "FIXTURE: the agent's own floor reads a Public claim of the second world"
+    );
+    let withheld = read
+        .edges_out(&sensitive)
+        .expect("the agent's edges of a Sensitive second-world claim");
+    assert!(
+        withheld.value.is_none(),
+        "FIXTURE: the agent reads no Sensitive claim of the second world"
+    );
+    assert_eq!(
+        withheld.receipt.suppressed_count, 1,
+        "a claim the agent's own floor refuses by its band, in a world that floor reads, counts \
+         in its receipt"
+    );
+}
+
+/// The owner's policy row that opens the agent's own Public claims in every
+/// world (a `core:read` scoped grant, as `tests/can_verb_gate.rs` writes one).
+fn open_public_policy_read(fixture: &Fixture) {
+    let vault = &fixture.vault;
+    let view = policy_manifests_as_owner(
+        vault,
+        &fixture.owner_proof,
+        &PolicyManifestRead { manifest_ref: None },
+    )
+    .expect("FIXTURE: the owner reads the policy manifests");
+    let default = view
+        .manifests
+        .iter()
+        .find(|entry| entry.manifest_ref == view.default_manifest_ref)
+        .expect("FIXTURE: the default policy manifest");
+    let mut manifest = default.manifest.clone();
+    let mut rows = manifest.scoped_grants.clone().unwrap_or_default();
+    rows.push(PolicyScopedGrantRow {
+        actor_class: None,
+        actor_ref: Some(fixture.agent.to_hex()),
+        effector: "core:read".into(),
+        scope: Scope {
+            sensitivity: SensitivityCeiling::AtMost(Sensitivity::Public),
+            ..Scope::top()
+        },
+        selectors: None,
+        budget: None,
+        receipt_required: false,
+    });
+    manifest.scoped_grants = Some(rows);
+    put_policy_manifest_as_owner(
+        vault,
+        &fixture.owner_proof,
+        PolicyManifestPut {
+            manifest_ref: Some(default.manifest_ref.clone()),
+            expected_body_hash: Some(default.body_hash.clone()),
+            manifest,
+        },
+    )
+    .expect("FIXTURE: the owner opens the agent's Public claims");
+}
+
 /// The owner's Public claim in `world` (`None` is base reality), its text
 /// `text` alone.
 fn put_text_claim(fixture: &Fixture, world: Option<EntityId>, text: &str) -> EntityId {
+    put_banded_claim(fixture, world, text, PUBLIC_BAND)
+}
+
+/// The owner's claim in `world` (`None` is base reality) at sensitivity
+/// `band`, its text `text` alone.
+fn put_banded_claim(fixture: &Fixture, world: Option<EntityId>, text: &str, band: u8) -> EntityId {
     let vault = &fixture.vault;
     let subject = EntityId::now();
     let at = TimeRange {
@@ -401,7 +489,7 @@ fn put_text_claim(fixture: &Fixture, world: Option<EntityId>, text: &str) -> Ent
                 scope_project_id: default_project_id().to_hex(),
             }
             .into(),
-            sensitivity: Some(PUBLIC_BAND),
+            sensitivity: Some(band),
             evidence_turn_refs: Vec::new(),
             valid_from: None,
             valid_to: None,
