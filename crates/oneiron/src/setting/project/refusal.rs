@@ -29,7 +29,11 @@
 //! an act that arrived since, which no pass has read yet, is not refused here. A row its key
 //! landed all the same is projected at those acts: its refusal stands while the key's
 //! `conflict` reads the rows as conflicting, so a change of the other row that ends the conflict
-//! ends it too.
+//! ends it too. A later act whose value such a row holds already runs no hook, so the pass reads
+//! the key's `conflict` for it instead, and refuses it while the rows conflict
+//! ([`write_row_in_txn`]). The pass lands every such row before it raises any notice: the words
+//! read the rows as it leaves them, and a landed row whose rows no longer conflict then raises
+//! none.
 //!
 //! Its tap is read when the row is read ([`setting_refusal_tap_in_txn`]): one `vault.settings.set`
 //! of every row this install still refuses an act of and of every row its key's hook judges such
@@ -138,8 +142,9 @@ struct Peer {
 /// key's hook's `reason`, in the pass's write `txn` once the row's own savepoint rolled back, at
 /// `now`: one row per owner of the vault (module doc). `deciding` is the act the refused value
 /// came from, where the pass knows it; `landed`, whether the pass landed the row all the same
-/// ([`land_refused_row_in_txn`]). A target with no setting act among its heads, or on a key this
-/// build does not know, raises none.
+/// ([`land_refused_row_in_txn`]), once it landed every such row. A target with no setting act
+/// among its heads, on a key this build does not know, or landed with rows that no longer
+/// conflict, raises none.
 ///
 /// # Errors
 ///
@@ -174,6 +179,14 @@ pub(super) fn raise_refusal_notice_in_txn(
     let Ok(spec) = spec_named(&refused.slot.name) else {
         return Ok(());
     };
+    let conflict = match spec.refused_projection {
+        RefusedProjection::Land { conflict } => conflict(vault, txn, &refused.slot)?,
+        RefusedProjection::Retry => None,
+    };
+    // A landed row stands refused only while its rows conflict ([`refused_slot_in_txn`]).
+    if landed && conflict.is_none() {
+        return Ok(());
+    }
     let mut targets = vec![target];
     let mut peers = Vec::new();
     if let Some(peers_of) = spec.refusal_peers {
@@ -217,10 +230,6 @@ pub(super) fn raise_refusal_notice_in_txn(
         .map(authority_log_entity_id_from_hash)
         .collect::<std::result::Result<Vec<_>, _>>()?;
     let result = authority_log_entity_id_from_hash(&refused.act)?.to_hex();
-    let conflict = match spec.refused_projection {
-        RefusedProjection::Land { conflict } => conflict(vault, txn, &refused.slot)?,
-        RefusedProjection::Retry => None,
-    };
     let detail = refusal_words_in_txn(
         vault,
         txn,
@@ -342,9 +351,10 @@ fn value_here_in_txn(
 }
 
 /// The owner's words of a refusal: the key's words of the conflict its reader refuses, where it
-/// gives them (`conflict`), which machine did not apply which act, or applied it all the same
-/// (`landed`) (the heads of the row, or the act whose value differing `heads` keep, `kept`), the
-/// hook's reason, the acts it meets, and the fix.
+/// gives them (`conflict`), which machine did not apply which act, with the hook's reason, or
+/// applied it all the same (`landed`) (the heads of the row, or the act whose value differing
+/// `heads` keep, `kept`), the acts it meets, and the fix. A landed row's words give no reason:
+/// the hook read the rows before the pass landed them, and `conflict` reads them as it left them.
 fn refusal_words_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -373,7 +383,7 @@ fn refusal_words_in_txn(
         .map(|words| format!("{words} "))
         .unwrap_or_default();
     if landed {
-        words.push_str(&format!("{here} applied {refused}, though {reason}."));
+        words.push_str(&format!("{here} applied {refused}, as every machine does."));
     } else {
         words.push_str(&format!("{here} did not apply {refused}: {reason}."));
     }

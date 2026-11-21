@@ -230,7 +230,8 @@ pub enum RefusedProjection {
     /// The row takes the act's value all the same, without the hook, as on every machine that
     /// folds the act (SETTING-PROJECTED-EMERGENCY-PAIR = A), and the key's reader holds the line:
     /// for a hook that judges its row against other rows and writes nothing. The refusal stands
-    /// while `conflict` says the rows conflict.
+    /// while `conflict` says the rows conflict, and a later act whose value the row holds already,
+    /// which runs no hook, is refused here while they do.
     Land {
         /// The owner's words of what the key's reader refuses while the rows stand as they do,
         /// read for the refused row; `None` once they no longer conflict. The notice leads with
