@@ -428,6 +428,20 @@ impl Vault {
         if let Some(outcome) = pending.input_outcome(*call_ref) {
             return Ok((outcome, pending.source_rows));
         }
+        // A copy restored and not joined keeps code-owned calls held (row
+        // RESTORED-UNJOINED-STARTS-NO-WORK). Calls and their waits stay as
+        // they are until a resume after the join can drive or settle them.
+        if self.restored_unjoined()? {
+            return Ok((
+                ConnectorCallOutcome::Held {
+                    call_ref: *call_ref,
+                    decision_ref: None,
+                    reasons: vec!["restored_not_joined".to_owned()],
+                    approval_digest: None,
+                },
+                pending.source_rows,
+            ));
+        }
         let Some(wait_id) = pending.code_consent_wait else {
             return self.drive_connector_call(Some(*call_ref), None, pending, host);
         };
