@@ -532,7 +532,7 @@ impl Memory<'_> {
             PreviewCandidates::ChildOf(turns) => {
                 let readable = self.admitted(lane, &turns, bound, receipt)?;
                 drop(turns);
-                let readable = self.in_readable_sessions(lane, readable, receipt)?;
+                let readable = self.in_readable_sessions(lane, conversation, readable, receipt)?;
                 match self.vault.readable_childof_order(conversation, readable)? {
                     Some(order) => order,
                     None => return Ok(None),
@@ -631,10 +631,14 @@ impl Memory<'_> {
     /// The `turns` whose session, where they sit in one, the lane admits. A
     /// session's body and edges decide whether its turns may be previewed,
     /// so a turn whose session a reader other than the owner may not read is
-    /// left out rather than judged by what it may not read.
+    /// left out rather than judged by what it may not read. A connector
+    /// thread's own SESSION is read as `conversation` is (OWN-VOICE-EPOCHS =
+    /// C; UNBUILT-02-SITTING = A): it is no one's sitting, so a turn of it the
+    /// lane admitted, by the conversation's read grant, keeps its place.
     fn in_readable_sessions(
         &self,
         lane: &ScopedRead<'_>,
+        conversation: &EntityId,
         turns: Vec<(u64, EntityId)>,
         receipt: &mut Option<ScopedReadReceipt>,
     ) -> MemoryResult<Vec<(u64, EntityId)>> {
@@ -653,7 +657,13 @@ impl Memory<'_> {
                 })
                 .collect::<crate::error::Result<Vec<_>>>()?
         };
-        let mut asked: Vec<EntityId> = sessions.iter().flatten().copied().collect();
+        let thread = crate::session_lifecycle::thread_session_id(*conversation)?;
+        let mut asked: Vec<EntityId> = sessions
+            .iter()
+            .flatten()
+            .copied()
+            .filter(|session| *session != thread)
+            .collect();
         asked.sort_unstable();
         asked.dedup();
         let readable: Vec<EntityId> = self
@@ -665,7 +675,9 @@ impl Memory<'_> {
             .into_iter()
             .zip(sessions)
             .filter(|(_, session)| {
-                session.is_none_or(|session| readable.binary_search(&session).is_ok())
+                session.is_none_or(|session| {
+                    session == thread || readable.binary_search(&session).is_ok()
+                })
             })
             .map(|(turn, _)| turn)
             .collect())

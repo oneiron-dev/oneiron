@@ -22,8 +22,11 @@ use oneiron::verbs::{
     mint_agent_grant_as,
 };
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
+use oneiron_contracts::fingerprint::purposes::bench_scorecard::{
+    WORLD_SCOPED_CLAIM_ID, WORLD_SCOPED_SUBJECT_ID,
+};
+use oneiron_contracts::fingerprint::{Fingerprint, Purpose};
 use oneiron_ruler::pack::{Corpus, LoadedPack};
-use sha2::Digest;
 
 use crate::scorecard::ScorecardFailure;
 use crate::scorecard::run::MAP_SIZE;
@@ -38,10 +41,6 @@ const PUBLIC_BAND: u8 = 0;
 
 /// Claims committed per atomic batch.
 const CLAIM_BATCH: usize = 256;
-
-/// The id domains of a record's claim and of its PERSON subject.
-const CLAIM_DOMAIN: &[u8] = b"oneiron-bench.scorecard.world-scoped.claim\0";
-const SUBJECT_DOMAIN: &[u8] = b"oneiron-bench.scorecard.world-scoped.subject\0";
 
 /// The agent's request challenge and its pairing binding key seed.
 const REQUEST_CHALLENGE: &[u8] = b"oneiron-request:scorecard-world-scoped";
@@ -83,14 +82,10 @@ fn failed<E: std::fmt::Display>(step: &'static str) -> impl FnOnce(E) -> Scoreca
     move |error| ScorecardFailure::Run(format!("{step} failed: {error}"))
 }
 
-/// A record's id in `domain`: the first 16 bytes of sha256(domain || record id).
-fn derived_id(domain: &[u8], record_id: &str) -> Result<EntityId, ScorecardFailure> {
-    let mut hasher = sha2::Sha256::new();
-    hasher.update(domain);
-    hasher.update(record_id.as_bytes());
-    let digest = hasher.finalize();
-    let mut raw = [0u8; 16];
-    raw.copy_from_slice(&digest[..16]);
+/// A record's id under `purpose` (its claim's or its PERSON subject's): the
+/// first 16 bytes of the fingerprint of the record id.
+fn derived_id(purpose: Purpose, record_id: &str) -> Result<EntityId, ScorecardFailure> {
+    let raw = Fingerprint::of_parts(purpose, &[record_id.as_bytes()]).prefix::<16>();
     EntityId::from_bytes(raw)
         .map_err(|error| ScorecardFailure::Run(format!("record {record_id} id failed: {error}")))
 }
@@ -247,7 +242,7 @@ impl AgentVault {
                         "corpus {corpus_id} names a record outside the pack: {record_id}"
                     )));
                 };
-                let id = derived_id(CLAIM_DOMAIN, record_id)?;
+                let id = derived_id(WORLD_SCOPED_CLAIM_ID, record_id)?;
                 if let Some(first) = placed.get(&id) {
                     if first.record_id != *record_id {
                         let first = &first.record_id;
@@ -265,7 +260,7 @@ impl AgentVault {
                         hidden: in_second_world,
                     },
                 );
-                let subject = derived_id(SUBJECT_DOMAIN, record_id)?;
+                let subject = derived_id(WORLD_SCOPED_SUBJECT_ID, record_id)?;
                 let at = TimeRange {
                     start: stamped_at,
                     end: stamped_at,

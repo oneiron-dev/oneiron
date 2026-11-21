@@ -38,8 +38,6 @@ pub(super) struct SettledTail {
     /// The ancestors and counted ancestors of each image frontier row and
     /// each judged tail row.
     pub(super) ancestry: BTreeMap<AuthorityEntryHash, (u64, u64)>,
-    /// The confirms in the log once the tail joined them.
-    pub(super) confirms: ConfirmKeys,
     /// The issues before the projection.
     pub(super) issues: Vec<AuthorityFoldIssue>,
     /// The covered rows a fold past the image reads whole, from their
@@ -227,15 +225,14 @@ pub(super) fn folds_rejected_op(image: &AuthorityCheckpointV2, entry: &Authority
 }
 
 /// The tail's fold on the image's frontier states, merged into the image's
-/// fold and projected, with `confirms` the confirms once the tail joined
-/// them and `floors` the covered rows it floors ([`tail_folds_past`]).
+/// fold and projected, with `floors` the covered rows the tail floors
+/// ([`tail_folds_past`]).
 /// Wherever only the whole history folds the tail, why: the first guard
 /// below that refuses it. A carried body that does not decode is corruption.
 pub(super) fn settle_tail(
     image: &AuthorityCheckpointV2,
     tail: &BTreeMap<AuthorityEntryHash, &AuthorityLogEntry>,
     log: AdoptedTail<'_>,
-    confirms: ConfirmKeys,
     mut floors: CoveredFloors,
 ) -> Result<std::result::Result<SettledTail, AuthorityHistoryReason>> {
     let mut issues = image.safety.issues.clone();
@@ -565,7 +562,6 @@ pub(super) fn settle_tail(
         pairs,
         counted_pairs,
         ancestry,
-        confirms,
         issues,
         projected,
         fold,

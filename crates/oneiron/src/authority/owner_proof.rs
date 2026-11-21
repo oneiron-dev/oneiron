@@ -38,7 +38,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::entity_id::EntityId;
-use crate::world_keys::OwnerPresenceWitness;
+use crate::error::{Error, Result};
+use crate::world_keys::{OwnerActImportance, OwnerPresenceWitness};
 
 use super::machine_profile::in_host_custody;
 use super::*;
@@ -512,58 +513,76 @@ impl AuthorityFold {
     }
 }
 
+const IMPORTANCE_ROSE: &str = "this act would change more than it did when the person at this device was asked; nothing was written";
+
 /// Why an owner proof may be signed. A caller must have a ground to sign.
 /// A person at the device gets a ground from the presence check before the
 /// door's write. A path without a person rests on standing authority. The
-/// constructors below are the whole list of grounds.
+/// constructors below are the whole list of grounds. A witnessed ground
+/// holds the importance checked at the door; a standing ground holds none.
 #[derive(Debug, Clone, Copy)]
 pub struct OwnerProofGround {
-    _private: (),
+    witnessed: Option<OwnerActImportance>,
 }
 
 impl OwnerProofGround {
     /// The act rests on the person at this device, checked by
     /// [`crate::Vault::owner_presence`] before the door signs.
-    pub fn witnessed(_witness: &OwnerPresenceWitness) -> Self {
-        Self { _private: () }
+    pub fn witnessed(witness: &OwnerPresenceWitness) -> Self {
+        Self {
+            witnessed: Some(witness.importance()),
+        }
+    }
+
+    /// A door that derived importance on a read before asking derives it
+    /// again in its write and refuses an increase here. A standing ground
+    /// refuses nothing because no one was asked to confirm that importance.
+    /// After a refusal, the caller reads again and asks again.
+    pub(crate) fn refuse_risen_importance(&self, derived: OwnerActImportance) -> Result<()> {
+        if self.witnessed == Some(OwnerActImportance::Ordinary)
+            && derived == OwnerActImportance::Important
+        {
+            return Err(Error::ConcurrentWrite(IMPORTANCE_ROSE));
+        }
+        Ok(())
     }
 
     /// A result for a request or residence directive that is the owner's own
     /// signed word. Only `result_proof_signer_in_txn` makes this ground.
     fn owners_signed_work() -> Self {
-        Self { _private: () }
+        Self { witnessed: None }
     }
 
     /// A carried act that is the owner's own write, revalidated in its
     /// writing transaction. Its proof buys log room and nothing in any fold.
     /// Only `owner_act_proof_signer` makes this ground.
     fn owner_authored_write() -> Self {
-        Self { _private: () }
+        Self { witnessed: None }
     }
 
     /// The owner's redeemed pairing slip enrols the machine it names.
     /// Only `redeem_machine_answer_in_txn` makes this ground.
     pub(crate) fn pairing_slip() -> Self {
-        Self { _private: () }
+        Self { witnessed: None }
     }
 
     /// Upkeep publishes rows of the owner's own Setting changes stored on this
     /// install. Only `publish_owner_rows_in_txn` makes this ground.
     pub(crate) fn stored_owner_rows() -> Self {
-        Self { _private: () }
+        Self { witnessed: None }
     }
 
     /// The operator authorizes recovery of a shared vault's owner.
     /// Only `recover_shared_owner_authorized` makes this ground.
     pub(crate) fn operator_recovery() -> Self {
-        Self { _private: () }
+        Self { witnessed: None }
     }
 
     /// An agent's setting act rests on the Grant the owner gave it, which
     /// the door checks again in its write; no owner is there. Only the
     /// free-time `record_act_in_txn` makes this ground.
     pub(crate) fn delegated_setting_act() -> Self {
-        Self { _private: () }
+        Self { witnessed: None }
     }
 
     /// Test doors supply the standing word for their fixture acts:
@@ -571,7 +590,7 @@ impl OwnerProofGround {
     /// `set_settings_in_one_write`.
     #[cfg(any(test, oneiron_test_support))]
     pub(crate) fn test_door() -> Self {
-        Self { _private: () }
+        Self { witnessed: None }
     }
 }
 

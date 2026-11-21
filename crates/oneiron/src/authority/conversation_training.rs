@@ -83,6 +83,17 @@ impl FoldedConversationTraining {
         })
     }
 
+    /// Which way `person`'s choice moves when it becomes `leave_out`:
+    /// letting their messages back in while they are left out widens their
+    /// own row, and every other choice narrows it or moves nothing.
+    pub(crate) fn direction_of(&self, person: EntityId, leave_out: bool) -> Direction {
+        if !leave_out && self.leaves_out(person) {
+            Direction::Widens
+        } else {
+            Direction::Narrows
+        }
+    }
+
     /// Whether `person`'s live choices conflict.
     pub(crate) fn conflicted(&self, person: EntityId) -> bool {
         self.persons

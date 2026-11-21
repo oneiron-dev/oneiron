@@ -624,6 +624,11 @@ impl Vault {
                     let mut fork: NoteFork = NOTE_FORK
                         .get(&self.store, txn, id)?
                         .ok_or_else(|| invalid("missing proposal record"))?;
+                    // A NOTE kept from use takes no named change (OF-470 C6):
+                    // no fork of it is assigned, landed or left waiting.
+                    if let Some(refusal) = self.store.use_restricted_in_txn(txn, &fork.note)? {
+                        return Err(refusal.into());
+                    }
                     if fork.proposal.is_some() || fork.decided || !fork.actor.is(actor.entity_ref())
                     {
                         return Err(
@@ -795,6 +800,11 @@ pub(super) fn land(
     verdict: NoteVerdict,
     actor: WriteActor,
 ) -> Result<Option<NoteLandingReceipt>> {
+    // A NOTE kept from use takes no named change (OF-470 C6), whichever
+    // verdict would decide its fork.
+    if let Some(refusal) = vault.store.use_restricted_in_txn(txn, &fork.note)? {
+        return Err(refusal);
+    }
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
     if fork.decided {
         return Err(invalid("fork already decided"));
