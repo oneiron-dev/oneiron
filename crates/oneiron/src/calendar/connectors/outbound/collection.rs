@@ -466,6 +466,56 @@ pub(super) fn unproven_replay(
         .transpose()
 }
 
+/// This seat's outbox rows that owed the proof of a refused write's stored
+/// copy ([`unproven_replay`]) when a pull began, read before the pull's
+/// provider read: each row's key, carrier instance and last move. Opaque:
+/// only [`unproven_replays_before_read`] makes one, and only the proof of a
+/// pulled copy compares a row with it.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct UnprovenReplaysBeforeRead(Vec<([u8; 32], [u8; 16], u64)>);
+
+impl UnprovenReplaysBeforeRead {
+    /// Whether `row` owed its proof before the pull's read began and has not
+    /// moved since: its refusal, and the failed read that refusal made, came
+    /// before that read.
+    pub(super) fn holds(&self, row: &super::CalendarWriteOutboxRow) -> bool {
+        row.carrier.as_ref().is_some_and(|carrier| {
+            self.0
+                .contains(&(row.outbox_id, carrier.instance, row.updated_at))
+        })
+    }
+}
+
+/// Every outbox row of this seat's literal scope that owes the proof of its
+/// stored copy, as [`UnprovenReplaysBeforeRead`]. Its sealed values are not
+/// opened. A pull reads it before its provider read, outside the admission
+/// turn; the proof reads its row again under the turn and counts this read
+/// only for the row it read here (CAL-OUTBOX-ROW-OF-REMOVED-SEAT-HOLDS-PULLS).
+///
+/// # Errors
+///
+/// Scope and storage failures.
+pub(crate) fn unproven_replays_before_read(
+    vault: &Vault,
+    operation: &CalendarConnectorOperation,
+) -> Result<UnprovenReplaysBeforeRead, CalendarConnectorError> {
+    let scope = operation.literal_scope()?;
+    let rows = {
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        OUTBOX.scan_from(&vault.store, &txn, OUTBOX_ROW_TAG)?
+    };
+    Ok(UnprovenReplaysBeforeRead(
+        rows.into_iter()
+            .filter(|(_, row)| {
+                row.carrier.seat == scope
+                    && row.state == CalendarWriteOutboxState::ReconcileRequired
+                    && row.stored_copy_unproven
+            })
+            .map(|(_, row)| (row.outbox_id, row.carrier.instance, row.updated_at))
+            .collect(),
+    ))
+}
+
 /// This seat's outbox row of an upsert of `uid` while it is prepared or
 /// remotely applied: staged, and its passports not yet settled.
 fn upsert_in_flight(
