@@ -3272,7 +3272,8 @@ fn emergency_cancel_then_repick(
         &fixture.consumer(now),
         &mut DeliveringSink,
     )
-    .expect("the owner's emergency cancel commits");
+    .expect("the owner's emergency cancel commits")
+    .item;
     assert!(item.calendar_delivered && item.apology_delivered);
     let card = open_booking_row(
         &fixture.vault.memory(fixture.host, EdgeActorClass::Human),
