@@ -5,12 +5,17 @@
 //! COPY-REVIEW-JUDGE-BY-DEFAULT = B, 21 Nov): a vault's first campaign seeds
 //! one house voice guide NOTE, written by the vault's owner, once. A vault
 //! from before the seed that already holds a campaign gets it at its next
-//! seeded open. A vault that runs no campaign gets none.
+//! seeded open. A vault that runs no campaign gets none. The owner's
+//! whole-vault restore keeps the guide the archive's vault had, or its
+//! absence once the owner deleted it.
 //!
 //! On the base the seed does not exist, so this file does not compile there.
+//! On the seed's head before the archive carried the marker, the two restore
+//! tests fail at their first assert: the restored vault holds no marker.
 //!
 //! Run: `cargo test --locked -p oneiron --all-features --test campaign_house_voice_guide`
 
+use std::io::Cursor;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -19,6 +24,7 @@ use oneiron::campaign::register_crm_pack;
 use oneiron::campaign::surface::{CAMPAIGN_SCHEMA_VERSION, CreateCampaignRequest, create_campaign};
 use oneiron::note::NoteReadRequest;
 use oneiron::registry::TypeByteFamily;
+use oneiron::store::GateDecisionId;
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 
 fn install_keystore(vault: &Vault) {
@@ -201,5 +207,89 @@ fn a_vault_whose_only_campaign_is_deleted_gets_no_guide_at_open() {
         vault.house_voice_guide().unwrap(),
         None,
         "a deleted campaign seeds no guide"
+    );
+}
+
+/// A source vault opened as its owner's, for a whole-vault archive.
+fn open_owned_vault() -> (tempfile::TempDir, Vault) {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open_owned(dir.path(), VaultConfig::default()).expect("the source vault");
+    (dir, vault)
+}
+
+/// Restores `archive` into a fresh vault through its owner's restore door.
+/// The vault opens a wall-clock second after the source, so the engine
+/// seeds' times differ, as an owner's restore meets them.
+fn restored_vault(archive: &[u8]) -> (tempfile::TempDir, Vault) {
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), VaultConfig::default()).expect("the destination vault");
+    let owner = owner(&vault);
+    let proof = vault
+        .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
+        .expect("the owner's proof");
+    vault
+        .import_whole_vault_archive_from_as_owner(Cursor::new(archive), &proof)
+        .expect("the owner's whole-vault restore");
+    (dir, vault)
+}
+
+/// The owner's whole-vault restore keeps the house voice guide the archive's
+/// vault had: the restored vault reviews against that guide, as its owner
+/// left it, and seeds no second one beside it.
+#[test]
+fn a_whole_vault_restore_keeps_the_house_voice_guide() {
+    let (_source_dir, source) = open_owned_vault();
+    let guide = source
+        .ensure_house_voice_guide()
+        .unwrap()
+        .expect("the house voice guide");
+    let archive = source
+        .export_whole_vault(true)
+        .expect("the whole-vault archive")
+        .bytes()
+        .to_vec();
+    let (_dir, restored) = restored_vault(&archive);
+    assert_eq!(
+        restored.house_voice_guide().unwrap(),
+        Some(guide),
+        "the restore keeps the archive's house voice guide"
+    );
+    assert_eq!(
+        restored.ensure_house_voice_guide().unwrap(),
+        Some(guide),
+        "the restored vault seeds no second guide"
+    );
+}
+
+/// A house voice guide the owner deleted stays deleted through the owner's
+/// whole-vault restore: the marker comes back without its NOTE, so no
+/// default guide is seeded in its place, and a campaign with no guide of its
+/// own holds its sends there as it did in the archive's vault.
+#[test]
+fn a_whole_vault_restore_keeps_a_deleted_house_voice_guide_deleted() {
+    let (_source_dir, source) = open_owned_vault();
+    let guide = source
+        .ensure_house_voice_guide()
+        .unwrap()
+        .expect("the house voice guide");
+    source
+        .delete_entity(&guide)
+        .expect("the owner deletes the guide");
+    let archive = source
+        .export_whole_vault(true)
+        .expect("the whole-vault archive")
+        .bytes()
+        .to_vec();
+    let (_dir, restored) = restored_vault(&archive);
+    assert_eq!(
+        restored.house_voice_guide().unwrap(),
+        Some(guide),
+        "the restore keeps the marker of the deleted guide"
+    );
+    assert_eq!(
+        restored.ensure_house_voice_guide().unwrap(),
+        Some(guide),
+        "no default guide is seeded in the deleted one's place"
     );
 }
