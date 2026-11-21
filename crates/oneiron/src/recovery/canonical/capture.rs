@@ -569,7 +569,7 @@ impl CanonicalCapture {
         for entity in &snapshot.entity_blobs {
             if crate::batch::EntityMetadataHeader::parse(&entity.blob)
                 .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_TASK)
-                && crate::task_authority::fact_suppressed_in(&vault.store, txn, &id(entity.id)?)?
+                && vault.task_fact_suppressed_in(txn, id(entity.id)?)?
             {
                 snapshot.suppressed_tasks.push(entity.id);
             }

@@ -94,6 +94,7 @@ fn put_task_state_fact_in_txn(
             assigned_generation: None,
             answered_heads,
             occurred_at: now,
+            maker: None,
         },
     )
     .map(|_fact_ref| ())

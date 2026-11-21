@@ -158,7 +158,7 @@ impl Memory<'_> {
     pub(super) fn land_settled_post_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
-        task_ref: EntityId,
+        maker: TaskMaker,
         post: &TaskPost,
         provenance: &Value,
         origin: Option<&TaskCreateOrigin>,
@@ -191,9 +191,9 @@ impl Memory<'_> {
             post.brief
                 .validate_in(self.vault(), &*wtxn, Some(post.assignee))?;
         }
-        self.mint_task_with_brief_at_in_txn(
+        let task_ref = self.mint_task_with_brief_at_in_txn(
             wtxn,
-            (task_ref, self.actor()),
+            (maker, self.actor()),
             &validated,
             post.label.clone(),
             provenance,

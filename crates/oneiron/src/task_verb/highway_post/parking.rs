@@ -41,16 +41,24 @@ impl Memory<'_> {
             lifecycle
                 .fields
                 .insert("replayed".to_owned(), "true".to_owned());
-            let landed = EntityId::derive(TASK_SETTLE_ID_DOMAIN, &[held.proposal_ref.as_bytes()])?;
-            let landed_exists = held.approval == ClaimApprovalStatus::Approved && {
+            // The TASK the approval landed, found from its proposal.
+            let landed = if held.approval == ClaimApprovalStatus::Approved {
                 let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
-                task_verb_body_in(self.vault(), &txn, landed)?.is_some()
+                match self.vault().get_claim_in_txn(&txn, &held.proposal_ref)? {
+                    Some(claim) => {
+                        let landed = proposal_create::settled_task_ref(held.proposal_ref, &claim)?;
+                        task_verb_body_in(self.vault(), &txn, landed)?.map(|_| landed)
+                    }
+                    None => None,
+                }
+            } else {
+                None
             };
-            let (related, outcome) = match held.approval {
-                ClaimApprovalStatus::Rejected => {
+            let (related, outcome) = match (held.approval, landed) {
+                (ClaimApprovalStatus::Rejected, _) => {
                     (Vec::new(), TaskOutcome::Rejected { decision_ref: None })
                 }
-                ClaimApprovalStatus::Approved if landed_exists => (
+                (ClaimApprovalStatus::Approved, Some(landed)) => (
                     vec![TaskHandle::Task { task_ref: landed }],
                     TaskOutcome::Created { route: None },
                 ),

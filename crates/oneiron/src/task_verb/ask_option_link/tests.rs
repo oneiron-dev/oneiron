@@ -337,9 +337,15 @@ fn settlement_replay_without_issuer_proof_is_refused_for_unissued_and_voided_lin
         &[ask.group_ref.as_bytes(), b"receipt"],
     )?;
     let electorate: BTreeSet<_> = friends.into();
+    // A member's TASK is the asker's, made under its member id.
+    let asker = super::super::ask_record::entity(&group.owner)?;
     for friend in [friends[1], friends[2]] {
         let answer = TaskAskAnswer::new(
-            super::super::ask_record::member_id(ask.group_ref, friend)?,
+            crate::task_authority::task_ref_of_maker(
+                asker,
+                asker,
+                super::super::ask_record::member_id(ask.group_ref, friend)?,
+            )?,
             friend,
             friend,
             EntityId::from_bytes([0x65; 16])?,

@@ -28,6 +28,7 @@ fn cancellation(task: EntityId, owner: EntityId) -> Vec<u8> {
         assigned_generation: None,
         answered_heads: None,
         occurred_at: LEARNED_AT,
+        maker: None,
     })
 }
 
