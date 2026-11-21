@@ -47,7 +47,9 @@ pub struct BookingOwnerCardDeposit {
     pub line: String,
     /// Whether the reader may give the deposit back with Return deposit
     /// (`vault.booking.deposit.refund`, body `{event_ref}`): only a host
-    /// selected when the booking was confirmed may.
+    /// selected when the booking was confirmed may, and not where only a
+    /// hand refund in the Stripe dashboard pays the rest, since the act then
+    /// moves nothing (review round 2 of #10149).
     pub return_offered: bool,
 }
 
@@ -187,12 +189,13 @@ pub(super) fn deposit_note(
             part_refunded_by_hand: true,
         } => BookingDepositHeld::RefundEndedUnpaidPartRefundedByHand,
     };
-    let return_offered = reader.is_some_and(|reader| {
-        facts
-            .context
-            .as_ref()
-            .is_some_and(|context| context.owner_refs.contains(&reader.to_hex()))
-    });
+    let return_offered = held_part != BookingDepositHeld::RefundEndedUnpaidPartRefundedByHand
+        && reader.is_some_and(|reader| {
+            facts
+                .context
+                .as_ref()
+                .is_some_and(|context| context.owner_refs.contains(&reader.to_hex()))
+        });
     let line = owner_line(
         &booking_label(facts.slot.start, zone),
         reason,
@@ -255,6 +258,9 @@ fn owner_line(
         ),
     };
     let act = match (return_offered, held) {
+        (_, BookingDepositHeld::RefundEndedUnpaidPartRefundedByHand) => {
+            "Refund the rest by hand in the Stripe dashboard."
+        }
         (false, _) => "A host selected when it was confirmed can return it.",
         (true, BookingDepositHeld::CaptureDue) => "Choose Return deposit to release it.",
         (true, BookingDepositHeld::Captured) => "Choose Return deposit to refund it in full.",
@@ -266,9 +272,6 @@ fn owner_line(
         }
         (true, BookingDepositHeld::RefundEndedUnpaid) => {
             "Choose Return deposit to ask Stripe again, or refund it by hand in the Stripe dashboard."
-        }
-        (true, BookingDepositHeld::RefundEndedUnpaidPartRefundedByHand) => {
-            "Refund the rest by hand in the Stripe dashboard."
         }
     };
     format!("{what} {holds} {act}")

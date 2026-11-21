@@ -48,6 +48,7 @@ mod home_fence;
 mod refund;
 mod refund_ended_unpaid;
 mod settle;
+mod settle_row;
 
 pub(crate) use self::held::note_unattributed_cancel_in_txn;
 pub(super) use self::held::{
@@ -65,7 +66,6 @@ pub(super) use self::refund::{
 };
 pub(crate) use self::refund::{refund_booking_deposit_as_owner, refund_deposit_on_host_cancel};
 use self::refund_ended_unpaid::RefundEndedUnpaid;
-use self::settle::enqueue_settle;
 #[cfg(feature = "sync")]
 pub(super) use self::settle::queue_carried_settle_in_txn;
 pub use self::settle::{
@@ -73,6 +73,7 @@ pub use self::settle::{
     DepositSettleMove, DepositSettleRequest, DepositSettleStep, DepositSettlementPort,
     run_booking_deposit_settlement, settle_booking_deposit,
 };
+use self::settle_row::enqueue_settle;
 
 /// The checkout window a deposit's lease opens: the hold lives this long
 /// while the visitor pays ("~15min", ARCH-0062:225). A checkout started

@@ -272,7 +272,9 @@ fn owner_return(row: &mut DepositRow) -> OwnerReturn {
 /// once the booking is effectively cancelled (its own cancel or a calendar's)
 /// or has started, or, for a refund the provider ended unpaid, at any time:
 /// the visitor may have picked an emergency-cancelled booking again, which
-/// owes that cancel's return (review round 1 of #10149). It runs on the node
+/// owes that cancel's return (review round 1 of #10149). It may also while
+/// that refund is asked again, and a second press then changes nothing, as
+/// on a cancelled booking (review round 2 of #10149). It runs on the node
 /// that holds the deposit: the one whose
 /// booking writer confirmed it, which keeps it, with its settle rows, after a
 /// MACRO home move (a move carries no deposit row). A
@@ -295,8 +297,8 @@ fn owner_return(row: &mut DepositRow) -> OwnerReturn {
 /// [`BookingError::Boundary`] for a proof that no longer holds or a caller
 /// who was not a selected host; [`BookingError::InvalidConstraint`] for an
 /// EVENT that is no booking; [`BookingError::InvalidConfig`] for a live
-/// booking that has not started and holds no refund ended unpaid, or one
-/// this node holds no deposit for;
+/// booking that has not started and owes no refund the provider ended
+/// unpaid, or one this node holds no deposit for;
 /// [`BookingError::SlotOracle`] on a store failure.
 pub(crate) fn refund_booking_deposit_as_owner(
     vault: &Vault,
@@ -330,13 +332,15 @@ pub(crate) fn refund_booking_deposit_as_owner(
                 .map_err(|error| engine_failure("meta read", error))?,
             None => None,
         };
-        let ended_refund_held = row
-            .as_ref()
-            .and_then(held_of)
-            .is_some_and(|(kind, _)| matches!(kind, HeldDepositKind::RefundEndedUnpaid { .. }));
+        // A refund owed that the provider ended unpaid, whether the owner
+        // may ask for it again or has asked and it runs: the noted end goes
+        // once a refund settles.
+        let ended_refund_owed = row.as_ref().is_some_and(|row| {
+            matches!(row.state, DepositState::RefundDue { .. }) && row.refund_ended_unpaid.is_some()
+        });
         if booking.effective_status() != BookingStatus::Cancelled
             && now_utc < booking.slot.start
-            && !ended_refund_held
+            && !ended_refund_owed
         {
             return Err(BookingError::InvalidConfig(
                 "a live booking that has not started keeps its deposit: cancel it to refund"

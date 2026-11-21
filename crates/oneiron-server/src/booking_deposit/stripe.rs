@@ -282,10 +282,11 @@ enum OwedRefund {
     /// pay: what of them succeeded, and what Stripe still holds. The row
     /// asked for no refund in this pass.
     MadeElsewhere { succeeded: u64, held: u64 },
-    /// The refund under the row's own key ended unpaid, and refunds made
-    /// under no settle key cover only a part of what is owed: the row asked
-    /// for no refund, and only a hand refund pays the rest (review round 1
-    /// of #10149).
+    /// The refund under the row's own key, or under a key the same refund
+    /// was asked under before the owner asked again, ended unpaid, and
+    /// refunds made under no settle key cover only a part of what is owed:
+    /// the row asked for no refund, and only a hand refund pays the rest
+    /// (review rounds 1 and 2 of #10149).
     EndedUnpaidPartRefundedByHand(RefundView),
 }
 
@@ -525,7 +526,11 @@ impl<'v> StripeClient<'v> {
     /// second one is made under the key. With refunds made elsewhere that
     /// cover only a part of what is owed, it answers as ended still, so the
     /// owner's card says so, and says that only a hand refund pays the rest
-    /// (review round 1 of #10149).
+    /// (review round 1 of #10149). So does a refund under one of
+    /// `earlier_retry_keys`, the keys the same refund was asked under before
+    /// the owner asked again: a hand refund made after that ask and before
+    /// the row ran stops the new refund, and the card still says the refund
+    /// did not go through (review round 2 of #10149).
     ///
     /// The payment's refunds are read page by page
     /// ([`Self::each_payment_refund`]) until the row's own refund turns up:
@@ -537,21 +542,27 @@ impl<'v> StripeClient<'v> {
         payment_id: &str,
         amount_minor: u64,
         key: &str,
+        earlier_retry_keys: &[String],
     ) -> Result<OwedRefund, StripeCallError> {
         let mut succeeded = 0_u64;
         let mut held = 0_u64;
         let mut keyed_unpaid = None;
+        let mut earlier_unpaid = None;
         let listed = self.each_payment_refund(payment_id, |refund| {
-            if refund.metadata.get(SETTLE_KEY_METADATA).map(String::as_str) == Some(key) {
-                if !refund.ended_unpaid() {
-                    return ControlFlow::Break(refund);
+            if let Some(settle_key) = refund.metadata.get(SETTLE_KEY_METADATA) {
+                if settle_key == key {
+                    if !refund.ended_unpaid() {
+                        return ControlFlow::Break(refund);
+                    }
+                    if keyed_unpaid.is_none() {
+                        keyed_unpaid = Some(refund);
+                    }
+                } else if earlier_unpaid.is_none()
+                    && refund.ended_unpaid()
+                    && earlier_retry_keys.contains(settle_key)
+                {
+                    earlier_unpaid = Some(refund);
                 }
-                if keyed_unpaid.is_none() {
-                    keyed_unpaid = Some(refund);
-                }
-                return ControlFlow::Continue(());
-            }
-            if refund.metadata.contains_key(SETTLE_KEY_METADATA) {
                 return ControlFlow::Continue(());
             }
             match refund.status.as_str() {
@@ -565,7 +576,7 @@ impl<'v> StripeClient<'v> {
             return Ok(OwedRefund::Keyed(refund));
         }
         if succeeded > 0 || held > 0 {
-            return Ok(match keyed_unpaid {
+            return Ok(match keyed_unpaid.or(earlier_unpaid) {
                 Some(refund) if succeeded.saturating_add(held) < amount_minor => {
                     OwedRefund::EndedUnpaidPartRefundedByHand(refund)
                 }
@@ -703,7 +714,7 @@ impl DepositSettlementPort for StripeClient<'_> {
         let (moved, done) = match request.movement {
             DepositSettleMove::Refund { amount_minor } => {
                 return self
-                    .refund_once(id, amount_minor, key)
+                    .refund_once(id, amount_minor, key, request.earlier_retry_keys)
                     .map_err(StripeCallError::into_failure)?
                     .settled_amount(amount_minor);
             }

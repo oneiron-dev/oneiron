@@ -303,10 +303,10 @@ fn booking_card_row(card: BookingOwnerCard, owners: &[EntityId]) -> Option<Agent
 /// settle row found that (BK-DEPOSIT-FAILED-REFUND-INBOX = A, Engine 21 Nov
 /// 10:22; review round 1 of #10149).
 fn held_deposit_row(read: &CardRead, reader: EntityId) -> Option<AgentInboxLensItem> {
-    let deposit = read.card.deposit.as_ref()?;
-    if !deposit.lists_on_inbox() || !read.selected_hosts.contains(&reader.to_hex()) {
+    if !lists_held_deposit_row(read, reader) {
         return None;
     }
+    let deposit = read.card.deposit.as_ref()?;
     let card = &read.card;
     let occurred_at = if card.status == BookingStatus::Cancelled {
         card.recorded_at.min(card.start_utc)
@@ -368,14 +368,23 @@ pub(crate) fn booking_owner_card_of_item(
     };
     let now = vault.now_recorded_at();
     let rtxn = vault.store.env.read_txn()?;
-    let card = card_in_txn(vault, &rtxn, &event_ref, now, Some(reader))?.map(|read| read.card);
-    Ok(card.filter(|card| {
-        !held_row
-            || card
-                .deposit
-                .as_ref()
-                .is_some_and(|deposit| deposit.lists_on_inbox() && deposit.return_offered)
-    }))
+    let read = card_in_txn(vault, &rtxn, &event_ref, now, Some(reader))?;
+    Ok(read
+        .filter(|read| !held_row || lists_held_deposit_row(read, reader))
+        .map(|read| read.card))
+}
+
+/// Whether the booking `read` describes lists a held-deposit row for
+/// `reader`: its deposit line lists on the INBOX, and `reader` is one of its
+/// selected hosts. The row's opener asks the same, and not whether Return
+/// deposit is offered: a refund only a hand refund pays offers none, and
+/// its row still opens (review round 2 of #10149).
+fn lists_held_deposit_row(read: &CardRead, reader: EntityId) -> bool {
+    read.card
+        .deposit
+        .as_ref()
+        .is_some_and(BookingOwnerCardDeposit::lists_on_inbox)
+        && read.selected_hosts.contains(&reader.to_hex())
 }
 
 /// One booking's card as one snapshot reads it, with what its rows need
