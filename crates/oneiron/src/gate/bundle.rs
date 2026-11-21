@@ -393,19 +393,7 @@ impl Vault {
         now: u64,
     ) -> Result<GateConsentBundleReceipt> {
         require_gate_consent_bundle_run_id(dreamer_run_id)?;
-        let has_policy_request = {
-            let txn = self.store.env.read_txn()?;
-            self.read_owner_bundle_resolution_in_txn(
-                &txn,
-                owner,
-                expected_bundle_id,
-                dreamer_run_id,
-                action,
-            )?
-        };
-        // The read drops before the confirm for the owner proof. The write
-        // has not opened, so the door holds nothing while the prompt can block.
-        let ground = if action == GateConsentBundleAction::Approve && has_policy_request {
+        let ground = if action == GateConsentBundleAction::Approve {
             let witness = self.owner_presence(
                 crate::world_keys::OwnerActImportance::Important,
                 crate::world_keys::owner_presence_reasons::PROACTIVITY_POLICY,
@@ -414,6 +402,16 @@ impl Vault {
         } else {
             None
         };
+        {
+            let txn = self.store.env.read_txn()?;
+            let _ = self.read_owner_bundle_resolution_in_txn(
+                &txn,
+                owner,
+                expected_bundle_id,
+                dreamer_run_id,
+                action,
+            )?;
+        }
         self.settle_gate_consent_bundle(
             BundleSettler::Owner(owner, ground.as_ref()),
             expected_bundle_id,
