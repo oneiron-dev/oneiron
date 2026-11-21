@@ -1762,6 +1762,63 @@ impl Vault {
         Ok(keys.into_values().collect())
     }
 
+    /// The key of `owner`'s live passkey with `credential_id`, the smallest
+    /// such key: the passkey an owner route asks the owner's browser for by
+    /// its credential id. Every counted enrollment of a key counts, not only
+    /// the one [`Self::enrolled_owner_passkeys`] lists (REVIEW-10307 P1).
+    /// `None` when no counted enrollment names `owner` for such a live
+    /// passkey.
+    ///
+    /// # Errors
+    /// The store's read error.
+    pub fn live_owner_passkey_key(
+        &self,
+        owner: EntityId,
+        credential_id: &[u8],
+    ) -> Result<Option<AuthorityKey>> {
+        let txn = self.store.env.read_txn()?;
+        Ok(self
+            .live_owner_passkeys_in_txn(&txn, owner)?
+            .into_iter()
+            .find(|(_, credential_ids)| credential_ids.contains(credential_id))
+            .map(|(key, _)| AuthorityKey::P256(key)))
+    }
+
+    /// The live passkeys that a counted enrollment names `owner` for,
+    /// ascending by key, each with the credential ids those enrollments
+    /// carry. Every counted enrollment of a key counts, not only the one
+    /// [`Self::enrolled_owner_passkeys`] lists: another owner may enrol the
+    /// same passkey on a sibling branch, and the list's row of it is then
+    /// the smaller entry's (REVIEW-10307 P1). A credential id names no key
+    /// across owners: an enrollment takes the one the browser posts.
+    pub(super) fn live_owner_passkeys_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        owner: EntityId,
+    ) -> Result<BTreeMap<Vec<u8>, BTreeSet<Vec<u8>>>> {
+        let mut keys: BTreeMap<Vec<u8>, BTreeSet<Vec<u8>>> = BTreeMap::new();
+        self.visit_authority_entries_in_txn(txn, |fold, hash, entry| {
+            let AuthorityOp::OwnerKeyEnroll(enroll) = &entry.op else {
+                return;
+            };
+            let Some(credential_id) = enroll.passkey_credential_id() else {
+                return;
+            };
+            if enroll.act.owner == owner
+                && fold.valid_entries.contains(&hash)
+                && fold
+                    .roster
+                    .get(&enroll.device.key)
+                    .is_some_and(|device| !device.revoked)
+            {
+                keys.entry(enroll.key_bytes().to_vec())
+                    .or_default()
+                    .insert(credential_id.to_vec());
+            }
+        })?;
+        Ok(keys)
+    }
+
     /// Calls `visit` with the fold in `txn` and each authority entry this
     /// vault keeps there: every stored row, then each body an adopted
     /// checkpoint image carries past them.

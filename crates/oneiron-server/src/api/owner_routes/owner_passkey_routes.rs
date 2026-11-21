@@ -38,7 +38,7 @@ use axum::response::Json;
 use axum::routing::{get, post};
 use base64::Engine as _;
 use oneiron::authority::{
-    ActAuthority, AuthorityKey, EnrolledOwnerPasskey, OwnerKeyEnrollment, OwnerPasskeyEnrollment,
+    ActAuthority, EnrolledOwnerPasskey, OwnerKeyEnrollment, OwnerPasskeyEnrollment,
     webauthn_assertion_envelope, webauthn_es256_public_key,
 };
 use serde::{Deserialize, Serialize};
@@ -420,17 +420,14 @@ async fn vouch_prepare(
         let credential_id = b64url("credential_id", &body.credential_id)?;
         // A credential id names no key across owners: enrolment takes the
         // one the browser posts, so another owner's live passkey may carry
-        // the same id. The acting owner's own is the one that signs (as the
-        // binding door picks it); the door revalidates the owner when it
-        // acts.
+        // the same id, and another owner may enrol the same passkey on a
+        // sibling branch. The acting owner's own is the one that signs, by
+        // every counted enrolment of it; the door revalidates the owner
+        // when it acts.
         let actor = owner.actor_for_read(server.vault())?;
         let passkey = server
             .vault()
-            .enrolled_owner_passkeys()?
-            .into_iter()
-            .find(|passkey| {
-                passkey.live && passkey.owner == actor && passkey.credential_id == credential_id
-            })
+            .live_owner_passkey_key(actor, &credential_id)?
             .ok_or_else(|| {
                 OwnerError::Refused(
                     "no live passkey of the acting owner has that credential id".to_owned(),
@@ -439,11 +436,7 @@ async fn vouch_prepare(
         let authority = ActAuthority::Owner(owner, surface);
         let prepared = server
             .vault()
-            .prepare_owner_key_enrollment_as(
-                &authority,
-                input,
-                AuthorityKey::P256(passkey.public_key),
-            )
+            .prepare_owner_key_enrollment_as(&authority, input, passkey)
             .map_err(refusal)?;
         Ok(VouchPrepareReply {
             entry: to_b64url(&prepared.entry),
