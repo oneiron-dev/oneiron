@@ -94,12 +94,17 @@ impl LaunchedChild {
     }
 }
 
-/// What the parent served of its child so far: each extracted slice, the
-/// first refused reply's reason, whether the pack was decided, and every
-/// draft staged.
+/// What the parent served of its child so far: each extracted slice, each
+/// slice whose parse retry was refused too, the first refused reply's
+/// reason, whether the pack was decided, and every draft staged.
 #[derive(Default)]
 struct SliceTable {
     extracted: BTreeMap<usize, ExtractedSlice>,
+    /// The slices whose reply failed the JSON parse and whose one retry with
+    /// prompt lookup off was refused too: asked again before the child
+    /// settles, each answers refused with no third call (#10269 review,
+    /// round 2).
+    spent: BTreeSet<usize>,
     refused: Option<String>,
     decided: bool,
     issued: Issued,
@@ -308,6 +313,9 @@ impl ConsolidationExecutor<'_> {
         if let Some(done) = table.extracted.get(&index) {
             return Ok(PortServed::Answer(done.answer.clone()));
         }
+        if table.spent.contains(&index) {
+            return Ok(PortServed::Refused(THING_SLICE_REFUSED));
+        }
         let Some(slice) = launched.slice(pass, index) else {
             return Ok(PortServed::Refused(THING_PORT_INPUT_UNKNOWN));
         };
@@ -327,17 +335,14 @@ impl ConsolidationExecutor<'_> {
                 width: 1,
             })
             .await?;
-        let Some(SliceStep {
-            step_hash,
-            outcome,
-            unsaved_usage,
-        }) = steps.into_iter().next()
-        else {
+        let Some(step @ SliceStep { step_hash, .. }) = steps.into_iter().next() else {
             return Err(Error::InvariantViolation(
                 "a child extraction port answered another number of slices",
             )
             .into());
         };
+        let retried = step.parse_retry.is_some();
+        let (outcome, unsaved_usage) = step.charge_parse_retry(charges);
         let (response, failure_policy, binding) = match outcome {
             Ok(StepOutcome::Finished {
                 response,
@@ -352,6 +357,9 @@ impl ConsolidationExecutor<'_> {
             }
             Err(DurableStepError::SpentSchemaValidation { usage, errors, .. }) => {
                 charges.record_usage(&usage);
+                if retried {
+                    table.spent.insert(index);
+                }
                 table.refused.get_or_insert_with(|| {
                     format!("extraction reply refused: {}", errors.join("; "))
                 });
@@ -384,6 +392,9 @@ impl ConsolidationExecutor<'_> {
                 // parks it, never a blind Retry (SEAT-PARK-MODEL-STEP-PATH).
                 if crate::dreamer_runner::dreamer_seat_refusal_of_step(&error).is_some() {
                     return Ok(PortServed::End(PartitionRun::refused_by(error)));
+                }
+                if retried {
+                    table.spent.insert(index);
                 }
                 table.refused.get_or_insert_with(|| error.to_string());
                 return Ok(PortServed::Refused(THING_SLICE_REFUSED));

@@ -58,7 +58,11 @@ pub(crate) use self::budget_wait::{
 pub(crate) use self::compaction_step::{compaction_response_holders_in, is_compaction_step_row};
 pub use self::media_step::{MediaStepOutcome, call_media_as_step};
 
-pub(crate) use self::execute::{ExecutedModelWitness, call_as_step_checked_with_unsaved_usage};
+pub(crate) use self::execute::recover_saved_step;
+pub(crate) use self::execute::{
+    ExecutedModelWitness, call_as_step_checked_counting_sends,
+    call_as_step_checked_with_unsaved_usage,
+};
 pub use self::execute::{call_as_step, call_as_step_checked, call_as_step_with_fallbacks};
 pub(crate) use self::execute::{
     verified_step_consolidation_eligible_in_txn, verified_step_effector_eligible_in_txn,
@@ -116,8 +120,8 @@ pub(crate) use self::response_pins::{
 #[cfg(oneiron_test_support)]
 pub(crate) use self::step_index::{step_index_claim_key_pin_for_test, step_index_key_pin_for_test};
 pub(crate) use self::step_state::{
-    dreamer_step_state_accepts_masked, erase_step_state_owner_in_txn, owner_gone_in_txn,
-    step_state_carriage, step_state_owners,
+    dreamer_step_state_accepts_masked, erase_step_state_owner_in_txn, follow_up_pending,
+    mark_follow_up_pending, owner_gone_in_txn, step_state_carriage, step_state_owners,
 };
 pub(crate) use self::submission_custody::{
     erase_submissions_in_txn, submission_carriage, submission_owners, submission_owners_in_txn,
