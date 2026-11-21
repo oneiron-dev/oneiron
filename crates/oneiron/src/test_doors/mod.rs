@@ -140,6 +140,8 @@ pub mod extraction_steps;
 pub mod extraction_verdict;
 pub mod extraction_wake;
 pub mod fanout_admission;
+#[cfg(feature = "sync")]
+pub mod federation_admitted_rewrite;
 pub mod feed_prune;
 pub mod feeds;
 pub mod fenced_erase_form;

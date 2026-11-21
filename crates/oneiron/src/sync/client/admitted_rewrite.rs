@@ -54,7 +54,7 @@ impl SyncClient {
 /// there an earlier admission set, or `None` when there is none. A part the
 /// window held before its import (`held`) writes nothing: its first import
 /// wrote what it lost then. So does one the window does not hold after it.
-fn admitted_rewrite(
+pub(crate) fn admitted_rewrite(
     window: &LoroDoc,
     part: &[u8],
     held: &VersionVector,

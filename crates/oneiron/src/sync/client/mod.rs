@@ -66,6 +66,8 @@ mod types;
 mod window_pads;
 
 #[cfg(oneiron_test_support)]
+pub(crate) use self::admitted_rewrite::admitted_rewrite;
+#[cfg(oneiron_test_support)]
 pub(crate) use self::base::ResidenceReceipt;
 pub use self::base::SyncClient;
 pub(crate) use self::connect::VerifiedConnectOrigin;
