@@ -13,8 +13,8 @@ use super::channels::{
     truncate_widened_channel_results_to_scope,
 };
 use super::filters::{
-    claim_status_gate_allows, clamp_hides_row, clamp_hides_row_or_word_sources,
-    import_claim_gate_decisions_for_scores, made_by_admits,
+    candidate_matches_criticality_and_stale_worlds, claim_status_gate_allows, clamp_hides_row,
+    clamp_hides_row_or_word_sources, import_claim_gate_decisions_for_scores, made_by_admits,
     pipeline_candidate_matches_filters_and_gate,
 };
 use super::temporal_bound::{
@@ -470,15 +470,21 @@ impl PipelineBuilder<'_> {
             )
         };
         // The call's scope, asked before the clamp, and its slice, after: a
-        // call without the clamp reads through these two alone.
+        // call without the clamp reads through these two alone. The scope
+        // asks the tier and the stale worlds too, so a row either keeps out
+        // stops no round (REVIEW-10311 round 2).
+        let scope_metadata = RefCell::new(EntityMetadataCache::default());
         let in_scope = |store: &crate::store::StoreRead<'_>,
                         txn: &RoTxn<'_>,
                         id: &crate::EntityId|
          -> Result<bool> {
-            match filters.candidate_filter {
-                Some(scope) => scope(store, txn, id),
-                None => Ok(true),
+            if let Some(scope) = filters.candidate_filter
+                && !scope(store, txn, id)?
+            {
+                return Ok(false);
             }
+            let metadata = &mut scope_metadata.borrow_mut();
+            candidate_matches_criticality_and_stale_worlds(store, txn, id, filters, metadata)
         };
         let in_slice = |txn: &RoTxn<'_>, id: &crate::EntityId| -> Result<bool> {
             if !sliced {
@@ -493,7 +499,10 @@ impl PipelineBuilder<'_> {
          -> Result<bool> {
             Ok(in_scope(store, txn, id)? && !hides(store, txn, id)? && in_slice(txn, id)?)
         };
-        let narrowed = filters.candidate_filter.is_some() || sliced;
+        let narrowed = filters.candidate_filter.is_some()
+            || filters.criticality.is_some()
+            || filters.stale_worlds.is_some()
+            || sliced;
         // Widen the collector's window, scan caps and score truncation, not
         // the request sigma settles on.
         if !narrowed && clamp.is_none() {
