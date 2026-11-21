@@ -40,6 +40,17 @@
 //! fallback answers, so the step finishes as if the provider had failed
 //! (RED).
 //!
+//! Test 4, a correction's spend (REVIEW-10342 round 2): a durable step that
+//! asks for JSON from a model with no native JSON mode is corrected by
+//! another call when its reply is not JSON (`llm/step/schema.rs`). The model
+//! holds the step's first reply, which is not JSON, until the owner's erase
+//! of a row the step is bound to has committed. The correction then reaches
+//! no model (guard), and the step ends with the fence's refusal (guard),
+//! carrying the first reply's paid usage, which a Dreamer attempt's park
+//! charges (`dreamer_consolidation/executor/failure.rs`). On the fence's
+//! round-1 build the step ends with the bare refusal, and the paid reply is
+//! charged to no attempt (RED).
+//!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p
 //! oneiron-server --all-features --test
 //! dreamer_route_fences_withdrawn_source_rows`.
@@ -60,8 +71,9 @@ use fake_llm::{FakeLlm, Reply};
 use oneiron::dreamer_runner::EnqueueDreamerConsolidationAttempt;
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::MemoryReceipts;
-use oneiron::llm::{DurableStepContext, StepOutcome, call_as_step};
+use oneiron::llm::{DurableStepContext, FatalLlmError, LlmError, StepOutcome, call_as_step};
 use oneiron::memory::{EraseOptions, EraseReason};
+use oneiron::model_step_error::DurableStepError;
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::{
     BudgetExhaustionPolicy, BudgetGuard, CallClass, CallEnvelope, CallPurpose, ClaimApprovalStatus,
@@ -92,15 +104,28 @@ const CALL_LIMIT: Duration = Duration::from_secs(60);
 
 /// A seat of one model on `model`, for the role [`lent`] lends.
 fn models(model: &FakeLlm) -> ModelsConfig {
+    seat(model, "")
+}
+
+/// [`models`] on a provider with no native JSON mode: a JSON step's schema
+/// rides as a system message, and a reply the schema refuses is corrected
+/// by another call (`llm/step/schema.rs`).
+fn models_without_json_mode(model: &FakeLlm) -> ModelsConfig {
+    seat(model, "capabilities = [\"streaming\"]\n")
+}
+
+/// A seat of one model on `model`, its provider's table ending with
+/// `provider_lines`.
+fn seat(model: &FakeLlm, provider_lines: &str) -> ModelsConfig {
     let models = format!(
         r#"
 [providers.house]
 kind = "local-openai-compat"
-base_url = "{}"
-[roles.generative_reasoner]
+base_url = "{base_url}"
+{provider_lines}[roles.generative_reasoner]
 rungs = [{{ model = "house:step-model" }}]
 "#,
-        model.base_url
+        base_url = model.base_url
     );
     ModelsConfig::from_toml(&models, None).expect("FIXTURE: a valid models config")
 }
@@ -123,13 +148,18 @@ fn opened(dir: &Path) -> Arc<Vault> {
 /// The route a pass lends its role, over the seat on `model`, its rests in
 /// `vault`.
 fn lent(model: &FakeLlm, vault: &Arc<Vault>) -> LentDreamerRoute {
+    lent_on(&models(model), vault)
+}
+
+/// [`lent`] over the seat `models` configures.
+fn lent_on(models: &ModelsConfig, vault: &Arc<Vault>) -> LentDreamerRoute {
     let run = undeclared_run(
         "dreamer-route-source-fence",
         budget(),
         None,
         Arc::new(MemoryReceipts::default()),
     );
-    lent_dreamer_route(&models(model), vault, ModelRole::GenerativeReasoner, run)
+    lent_dreamer_route(models, vault, ModelRole::GenerativeReasoner, run)
         .expect("FIXTURE: the seat serves the role")
 }
 
@@ -179,6 +209,38 @@ fn durable_request(model: &ModelId, words: &str) -> LlmRequest {
         },
     };
     request
+}
+
+/// [`durable_request`] asking for a JSON object with one string `value`.
+fn durable_json_request(model: &ModelId, words: &str) -> LlmRequest {
+    let mut request = durable_request(model, words);
+    request.envelope.response_format = ResponseFormat::Json {
+        schema: json!({
+            "type": "object",
+            "properties": {"value": {"type": "string"}},
+            "required": ["value"],
+        }),
+    };
+    request
+}
+
+/// The context durable steps about `subject` run in, under a queued
+/// attempt in `vault`, as the owner's.
+fn durable_step(vault: &Vault, subject: EntityId) -> DurableStepContext<'_> {
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("FIXTURE: the vault owner");
+    DurableStepContext {
+        vault,
+        attempt_id: queued_attempt(vault),
+        run_id: None,
+        envelope_actor: WriteActor::new(owner, EdgeActorClass::Human),
+        subject,
+        deadline: None,
+        now_ms: 20_000,
+        spend_scope: None,
+        wake_pass_bound: false,
+    }
 }
 
 /// A queued consolidation attempt in `vault`, for durable steps to run under.
@@ -415,20 +477,7 @@ fn a_durable_step_bound_to_an_erased_row_ends_on_no_fallback() {
         let route = lent(&model, &vault);
         let both = route.sourced(vec![erased, kept]);
         let alone = route.sourced(vec![kept]);
-        let owner = vault
-            .ensure_embedded_owner_actor()
-            .expect("FIXTURE: the vault owner");
-        let step = DurableStepContext {
-            vault: &vault,
-            attempt_id: queued_attempt(&vault),
-            run_id: None,
-            envelope_actor: WriteActor::new(owner, EdgeActorClass::Human),
-            subject: person,
-            deadline: None,
-            now_ms: 20_000,
-            spend_scope: None,
-            wake_pass_bound: false,
-        };
+        let step = durable_step(&vault, person);
         let guard = budget();
 
         // Guard: a durable step bound to the kept row is answered by the model.
@@ -473,5 +522,62 @@ fn a_durable_step_bound_to_an_erased_row_ends_on_no_fallback() {
             "a durable step bound to a row erased before its send finished on its fallback, \
              as if its provider had failed"
         );
+    });
+}
+
+#[test]
+fn a_correction_withdrawn_by_an_erase_keeps_the_paid_reply_on_its_error() {
+    run_on_engine_stack("dreamer-route-erased-correction", || async {
+        let model = FakeLlm::start(Vec::new(), Some(Reply::text("unreached"))).await;
+        let dir = tempfile::tempdir().unwrap();
+        let vault = opened(dir.path());
+        let person = stored_person(&vault);
+        let erased = stored_claim(&vault, person, ERASED_WORDS);
+        let kept = stored_claim(&vault, person, KEPT_WORDS);
+        let route = lent_on(&models_without_json_mode(&model), &vault);
+        let both = route.sourced(vec![erased, kept]);
+        let step = durable_step(&vault, person);
+        let guard = budget();
+
+        // The step's first reply, which is not JSON, held by the model until
+        // the owner's erase has committed.
+        model.push(Reply::HoldThen(Box::new(Reply::text("not json"))));
+        let words = format!("{ERASED_WORDS}\n{KEPT_WORDS}");
+        let sent = ended(call_as_step(
+            &step,
+            &*both,
+            &guard,
+            durable_json_request(route.model(), &words),
+        ));
+        let erase = async {
+            model.wait_holding().await;
+            privacy_erase(&vault, erased);
+            model.release();
+        };
+        let (outcome, ()) = tokio::join!(sent, erase);
+        assert_eq!(
+            model.seen().len(),
+            1,
+            "FIXTURE: the correction of a step bound to a row erased since reached the model"
+        );
+        let withdrawn = LlmError::from(FatalLlmError::SourceWithdrawn);
+        match outcome {
+            Err(DurableStepError::SpentLlm { source, usage }) => {
+                assert_eq!(
+                    source, withdrawn,
+                    "FIXTURE: the step ends with the fence's refusal"
+                );
+                assert!(
+                    usage.input.total > 0 && usage.output.total > 0,
+                    "the refused correction's error carries none of the first reply's paid \
+                     usage: {usage:?}"
+                );
+            }
+            Err(DurableStepError::Llm(source)) if source == withdrawn => panic!(
+                "a correction withdrawn by an erase ended with the bare refusal: the first \
+                 reply, answered and paid, is charged to no attempt"
+            ),
+            other => panic!("FIXTURE: the step ends with the fence's refusal, not {other:?}"),
+        }
     });
 }
