@@ -219,10 +219,12 @@ impl Vault {
     /// asks. A widening or a move the rule cannot call a narrowing is asked as an important act;
     /// a narrowing, a neutral move or a change that leaves the row as it is is ordinary. A value
     /// the side-row wall could change is asked as important, because its direction is known only
-    /// after the wall. A change of a travelling row in a rooted vault is also asked as important
-    /// when no owner key of this install proves on the read and the act could wait for proof.
-    /// The write judges again and answers [`Error::ConcurrentWrite`] when the change became more
-    /// important since the person was asked.
+    /// after the wall; for such a value the read checks the owner's proof and nothing else, so
+    /// every other refusal of it still comes from the write, after the ask. A change of a
+    /// travelling row in a rooted vault is also asked as important when no owner key of this
+    /// install proves on the read and the act could wait for proof. The write judges again and
+    /// answers [`Error::ConcurrentWrite`] when the change became more important since the person
+    /// was asked.
     ///
     /// # Errors
     ///

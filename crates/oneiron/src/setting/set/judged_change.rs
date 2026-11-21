@@ -13,6 +13,7 @@ use super::{
 use crate::Vault;
 use crate::batch::secret_scan::{
     NestedBodies, SecretScanMode, admission_form, named_tree, secret_scan_mode_in_txn,
+    wall_plan_places,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
@@ -186,6 +187,8 @@ pub(super) fn judge_change_in_txn(
 /// If it answers `true`, the value the write types can differ from the request, so a direction
 /// derived from the request is no ground for an ordinary act. It errs toward `true`: it reads a
 /// value under a credential name whole whatever its shape and reads an existing handle as changed.
+/// A placement answers `true` by itself, because the plan's one form spells every handle as its
+/// stand-in and so cannot show a placement in a text that already spells that stand-in.
 fn wall_may_change(vault: &Vault, json: &serde_json::Value) -> Result<bool> {
     let mode = {
         let txn = vault.store.env.read_txn()?;
@@ -195,7 +198,9 @@ fn wall_may_change(vault: &Vault, json: &serde_json::Value) -> Result<bool> {
         return Ok(false);
     }
     let tree = named_tree(json)?;
-    Ok(admission_form(&tree, vault.known_values_now()?, NestedBodies::Read)? != tree)
+    let known = vault.known_values_now()?;
+    Ok(wall_plan_places(&tree, known.clone())?
+        || admission_form(&tree, known, NestedBodies::Read)? != tree)
 }
 
 /// The importance of the owner's change as it stands before the door asks.
