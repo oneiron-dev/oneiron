@@ -14,18 +14,27 @@
 //! - An SMB (CIFS) mount reports a mode built from its mount options, while
 //!   the server's Windows security descriptor decides who reads the file.
 //!   That descriptor is not read here, so a file there is refused unless the
-//!   host owner trusts the server's own list ([`TRUST_SMB_ACL_VARIABLE`]).
+//!   host owner trusts the server's own list
+//!   ([`TRUST_NETWORK_FS_ACL_VARIABLE`]).
+//! - An NFS mount that reports no NFSv4 list (an NFSv3 mount, or an NFSv4
+//!   server that does not hand its list to this host) may still decide by a
+//!   list of its own, so a file there is refused on the same terms
+//!   (REVIEW-10143).
 //!
-//! On any other file system the mode decides alone.
+//! On any other file system the mode decides alone, unless it reports an
+//! NFSv4 list, which is then judged.
 
 use std::fs::File;
 use std::io;
 
-/// The environment variable by which the host owner trusts an SMB server's
-/// own access list for the credential files on its mounts, so that every
-/// user that list admits can read them. `1`, `true`, `yes` or `on` (any
-/// case) trusts it; any other value, or none, refuses such a file.
-pub(crate) const TRUST_SMB_ACL_VARIABLE: &str = "ONEIRON_CREDENTIAL_FILES_TRUST_SMB_ACL";
+/// The environment variable by which the host owner trusts a network file
+/// system server's own access list, where this host does not read it, for
+/// the credential files on its mounts, so that every user that list admits
+/// can read them: an SMB mount, and an NFS mount that reports no NFSv4 list.
+/// `1`, `true`, `yes` or `on` (any case) trusts it; any other value, or
+/// none, refuses such a file. A list this host reads is judged either way.
+pub(crate) const TRUST_NETWORK_FS_ACL_VARIABLE: &str =
+    "ONEIRON_CREDENTIAL_FILES_TRUST_NETWORK_FS_ACL";
 
 /// The extended attribute a Linux NFSv4 mount reports a file's list in.
 const NFS4_ACL_ATTRIBUTE: &str = "system.nfs4_acl";
@@ -35,6 +44,21 @@ const CIFS_MAGIC_NUMBER: u64 = 0xFF53_4D42;
 
 /// The `statfs` magic number of an SMB2 or SMB3 mount (`<linux/magic.h>`).
 const SMB2_MAGIC_NUMBER: u64 = 0xFE53_4D42;
+
+/// The `statfs` magic number of an NFS mount of any version
+/// (`<linux/magic.h>`).
+const NFS_MAGIC_NUMBER: u64 = 0x6969;
+
+/// Why a file on an SMB mount is refused, to follow its path.
+const SMB_UNREAD_LIST_REASON: &str = "is on an SMB (CIFS) mount, where the server's own access \
+     list, which this host does not read, decides who can read it whatever its mode shows";
+
+/// Why a file on an NFS mount that reports no NFSv4 list is refused, to
+/// follow its path.
+const NFS_UNREAD_LIST_REASON: &str = "is on an NFS mount that reports no NFSv4 access control \
+     list (an NFSv3 mount, or an NFSv4 server that does not hand its list to this host), where \
+     the server may decide who can read it by a list this host does not read, whatever its \
+     mode shows";
 
 /// `acetype4` of an entry that grants access (RFC 7530 section 6.2.1.1).
 const ACE4_ACCESS_ALLOWED_ACE_TYPE: u32 = 0;
@@ -56,6 +80,31 @@ const REFUSED_GRANTS: [(u32, &str); 5] = [
 
 /// The longest principal name a refusal repeats, in characters.
 const PRINCIPAL_TEXT_LIMIT: usize = 64;
+
+/// The kind of file system a `statfs` magic number names, as the judge
+/// tells them apart.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MountKind {
+    /// CIFS, SMB2 or SMB3: the server's list is never read here.
+    Smb,
+    /// NFS of any version: the server's list is read when the mount reports
+    /// one.
+    Nfs,
+    /// Any other file system, local or network.
+    Other,
+}
+
+impl MountKind {
+    /// The kind the `statfs` magic number `magic` names. The magic is 32 bits
+    /// wide, so the high half of a sign-extended field is ignored.
+    pub(crate) fn of_magic(magic: u64) -> Self {
+        match magic & 0xFFFF_FFFF {
+            CIFS_MAGIC_NUMBER | SMB2_MAGIC_NUMBER => Self::Smb,
+            NFS_MAGIC_NUMBER => Self::Nfs,
+            _ => Self::Other,
+        }
+    }
+}
 
 /// The principals an NFSv4 list may grant a file to.
 #[derive(Clone, Copy)]
@@ -114,26 +163,49 @@ impl std::fmt::Display for NetworkFsRefusal {
 /// list cannot be read, which refuses the file too.
 pub(crate) fn judge(file: &File, principals: Principals) -> io::Result<Option<NetworkFsRefusal>> {
     // The field is signed: a 32-bit host's carries the magic sign-extended,
-    // which `is_smb_magic` reads back.
-    let kind = rustix::fs::fstatfs(file)?.f_type as u64;
-    if is_smb_magic(kind) {
-        return Ok((!smb_acl_trusted()).then(smb_refusal));
-    }
-    match nfs4_list(file)? {
-        Some(list) => judge_nfs4_list(&list, principals),
-        None => Ok(None),
-    }
+    // which `MountKind::of_magic` reads back.
+    let mount = MountKind::of_magic(rustix::fs::fstatfs(file)?.f_type as u64);
+    let list = match mount {
+        MountKind::Smb => None,
+        MountKind::Nfs | MountKind::Other => nfs4_list(file)?,
+    };
+    judge_mount(mount, list.as_deref(), principals, server_list_trusted())
 }
 
-/// Whether the `statfs` magic number `kind` names an SMB mount. The magic is
-/// 32 bits wide, so the high half of a sign-extended field is ignored.
-pub(crate) fn is_smb_magic(kind: u64) -> bool {
-    matches!(kind & 0xFFFF_FFFF, CIFS_MAGIC_NUMBER | SMB2_MAGIC_NUMBER)
+/// Judges a file on a mount of kind `mount` whose NFSv4 list read as `list`
+/// (`None` when the mount reports none), for `principals`. A list that is
+/// read is judged ([`judge_nfs4_list`]). A server's list that is not read
+/// here refuses the file unless the host owner trusts it
+/// (`server_list_trusted`): always on an SMB mount, and on an NFS mount that
+/// reports no list. On any other file system with no list the mode decides.
+pub(crate) fn judge_mount(
+    mount: MountKind,
+    list: Option<&[u8]>,
+    principals: Principals,
+    server_list_trusted: bool,
+) -> io::Result<Option<NetworkFsRefusal>> {
+    let reason = match (mount, list) {
+        (MountKind::Nfs | MountKind::Other, Some(list)) => {
+            return judge_nfs4_list(list, principals);
+        }
+        (MountKind::Other, None) => return Ok(None),
+        _ if server_list_trusted => return Ok(None),
+        (MountKind::Smb, _) => SMB_UNREAD_LIST_REASON,
+        (MountKind::Nfs, None) => NFS_UNREAD_LIST_REASON,
+    };
+    Ok(Some(NetworkFsRefusal {
+        reason: reason.to_owned(),
+        mend: format!(
+            "place it on a local file system, or set {TRUST_NETWORK_FS_ACL_VARIABLE}=1 to trust \
+             that server's list: every user the list admits can then read this credential"
+        ),
+    }))
 }
 
-/// Whether the host owner trusts an SMB server's list ([`TRUST_SMB_ACL_VARIABLE`]).
-fn smb_acl_trusted() -> bool {
-    std::env::var(TRUST_SMB_ACL_VARIABLE).is_ok_and(|value| {
+/// Whether the host owner trusts a server's list that is not read here
+/// ([`TRUST_NETWORK_FS_ACL_VARIABLE`]).
+fn server_list_trusted() -> bool {
+    std::env::var(TRUST_NETWORK_FS_ACL_VARIABLE).is_ok_and(|value| {
         matches!(
             value.trim().to_ascii_lowercase().as_str(),
             "1" | "true" | "yes" | "on"
@@ -141,22 +213,10 @@ fn smb_acl_trusted() -> bool {
     })
 }
 
-/// The refusal of a file on an SMB mount, naming the opt-out and its risk.
-pub(crate) fn smb_refusal() -> NetworkFsRefusal {
-    NetworkFsRefusal {
-        reason: "is on an SMB (CIFS) mount, where the server's own access list, which this \
-                 host does not read, decides who can read it whatever its mode shows"
-            .to_owned(),
-        mend: format!(
-            "place it on a local file system, or set {TRUST_SMB_ACL_VARIABLE}=1 to trust that \
-             server's list: every user the list admits can then read this credential"
-        ),
-    }
-}
-
 /// The open `file`'s NFSv4 list, as the mount reports it; `None` when it
-/// reports none, as a file system that is not NFSv4 does. A list that changes
-/// size between the reads of its size and its bytes is read again.
+/// reports none, as a file system that is not NFSv4 does, and as an NFS
+/// mount does whose server hands it no list. A list that changes size
+/// between the reads of its size and its bytes is read again.
 fn nfs4_list(file: &File) -> io::Result<Option<Vec<u8>>> {
     use rustix::io::Errno;
     for _ in 0..3 {

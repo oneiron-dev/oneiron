@@ -30,11 +30,11 @@
 //! shows as the group bits rather than the group's reach, any macOS entry,
 //! and an NFSv4 list with an entry that grants anyone outside its owner and
 //! group (REVIEW-9811; CREDENTIAL-FILE-NETWORK-FS-RULE = B). A token on an
-//! SMB mount is refused as a credential file there is
-//! (`credential_file::network_fs`). An owner-alone credential needs no POSIX
-//! list check off macOS, because its group bits of zero mask every POSIX
-//! entry; `credential_file::admit` judges a network file system's list for
-//! it too.
+//! SMB mount, or on an NFS mount that reports no NFSv4 list, is refused as a
+//! credential file there is (`credential_file::network_fs`). An owner-alone
+//! credential needs no POSIX list check off macOS, because its group bits of
+//! zero mask every POSIX entry; `credential_file::admit` judges a network
+//! file system's list for it too.
 //!
 //! Each is read from the open handle the text is then read from, so the
 //! file checked is the file read. A link is followed: its target is that

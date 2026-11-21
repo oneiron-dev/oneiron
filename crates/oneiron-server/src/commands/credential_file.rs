@@ -8,8 +8,9 @@
 //! masked by the group bits, so mode 0600 already closes it on a local file
 //! system. On a Linux network file system the server decides by its own
 //! list (`network_fs`): an NFSv4 list that lets in anyone but the owner is
-//! refused, and so is a file on an SMB mount unless the host owner trusts
-//! that server's list.
+//! refused, and so is a file whose server's list is not read here, on an SMB
+//! mount or an NFS mount that reports no NFSv4 list, unless the host owner
+//! trusts that server's list.
 
 use std::fs::File;
 use std::io::{Read, Write};
@@ -33,8 +34,9 @@ pub(crate) enum CredentialFileError {
     )]
     ExtendedAcl { path: PathBuf },
     /// Its network file system's server may let in someone the mode does not
-    /// show: an NFSv4 list entry grants another user, or it is on an SMB
-    /// mount whose list is not read here.
+    /// show: an NFSv4 list entry grants another user, or its server's list is
+    /// not read here (an SMB mount, or an NFS mount that reports no NFSv4
+    /// list).
     #[cfg(any(target_os = "linux", target_os = "android"))]
     #[error("{} {refusal}", path.display())]
     NetworkFs {

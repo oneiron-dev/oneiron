@@ -4,12 +4,13 @@
 //! is admitted when no ALLOW entry that applies to the file grants anyone
 //! but its owner (and, for a group-shared relay token, its group) read or
 //! write of its data or a change of its list or owner; the refusal names the
-//! entry. A file on an SMB mount is refused by its `statfs` magic unless the
-//! host owner trusts the server's list.
+//! entry. A file whose server's list is not read here, on an SMB mount or on
+//! an NFS mount that reports no NFSv4 list (REVIEW-10143), is refused by its
+//! `statfs` magic unless the host owner trusts the server's list.
 //!
-//! The fleet has no NFSv4 or SMB mount, so the lists are handed to the judge
+//! The fleet has no NFS or SMB mount, so the lists are handed to the judge
 //! as the bytes a mount reports in `system.nfs4_acl` (RFC 7530 section
-//! 6.2.1, in XDR), and the SMB check gets the magic numbers.
+//! 6.2.1, in XDR), with the magic number of the mount they come from.
 //!
 //! Fleet command: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron-server --all-features --test credential_file_network_fs`.
@@ -278,50 +279,102 @@ fn a_list_that_does_not_read_to_its_end_is_refused() {
     assert_eq!(door::judge_nfs4_list_for_owner(&one_entry), Ok(None));
 }
 
-/// The SMB mounts (CIFS, SMB2 and SMB3) are known by their `statfs` magic,
-/// also as a 32-bit host's signed field carries it; every other file system,
-/// network or local, is not one.
+/// The `statfs` magic numbers of SMB mounts (CIFS, SMB2 and SMB3), also as
+/// a 32-bit host's signed field carries them.
+const SMB_MAGICS: [u64; 4] = [
+    0xFF53_4D42,
+    0xFE53_4D42,
+    0xFFFF_FFFF_FF53_4D42,
+    0xFFFF_FFFF_FE53_4D42,
+];
+
+/// The `statfs` magic number of an NFS mount of any version.
+const NFS_MAGIC: u64 = 0x6969;
+
+/// The `statfs` magic numbers of file systems that are neither: ext4, tmpfs,
+/// btrfs, XFS, overlayfs, FUSE, and none.
+const OTHER_MAGICS: [u64; 7] = [
+    0xEF53,
+    0x0102_1994,
+    0x9123_683E,
+    0x5846_5342,
+    0x794C_7630,
+    0x6573_5546,
+    0,
+];
+
+/// A file whose server's list this host does not read is refused, naming
+/// the mount, the one opt-out and the risk it takes: on an SMB mount, and on
+/// an NFS mount that reports no NFSv4 list, as an NFSv3 mount or an NFSv4
+/// server without list support does (REVIEW-10143). The host owner's trust
+/// admits it.
 #[test]
-fn the_smb_magic_numbers_name_smb_mounts_alone() {
-    for smb in [
-        0xFF53_4D42,
-        0xFE53_4D42,
-        0xFFFF_FFFF_FF53_4D42,
-        0xFFFF_FFFF_FE53_4D42,
-    ] {
-        assert!(door::is_smb_magic(smb), "{smb:#x}");
-    }
-    for other in [
-        0x6969,      // NFS
-        0xEF53,      // ext4
-        0x0102_1994, // tmpfs
-        0x9123_683E, // btrfs
-        0x5846_5342, // XFS
-        0x794C_7630, // overlayfs
-        0x6573_5546, // FUSE
-        0,
-    ] {
-        assert!(!door::is_smb_magic(other), "{other:#x}");
+fn a_file_whose_server_list_is_not_read_is_refused_unless_trusted() {
+    let mounts = SMB_MAGICS
+        .iter()
+        .map(|&magic| (magic, "is on an SMB (CIFS) mount"))
+        .chain([(
+            NFS_MAGIC,
+            "is on an NFS mount that reports no NFSv4 access control list",
+        )]);
+    for (magic, mount) in mounts {
+        let refusal = door::judge_mount_for_owner(magic, None, false)
+            .expect("nothing to read")
+            .unwrap_or_else(|| panic!("{magic:#x} is refused"));
+        assert!(refusal.starts_with(mount), "{magic:#x}: {refusal}");
+        assert!(
+            refusal.contains(&format!("set {}=1", door::TRUST_NETWORK_FS_ACL_VARIABLE)),
+            "{refusal}"
+        );
+        assert!(
+            refusal.contains("every user the list admits can then read this credential"),
+            "{refusal}"
+        );
+        assert!(
+            refusal.contains("place it on a local file system"),
+            "{refusal}"
+        );
+        assert_eq!(
+            door::judge_mount_for_owner(magic, None, true),
+            Ok(None),
+            "{magic:#x} trusted"
+        );
     }
 }
 
-/// The refusal of a file on an SMB mount names the one opt-out and the risk
-/// it takes.
+/// A list the mount reports is judged on NFS and on any other file system,
+/// and the host owner's trust in a server's list does not admit an entry
+/// this host reads; with no list, a file system that is neither SMB nor NFS
+/// leaves the file to its mode.
 #[test]
-fn the_smb_refusal_names_the_opt_out_and_its_risk() {
-    let refusal = door::smb_refusal_text();
-    assert!(
-        refusal.contains(&format!("set {}=1", door::TRUST_SMB_ACL_VARIABLE)),
-        "{refusal}"
-    );
-    assert!(
-        refusal.contains("every user the list admits can then read this credential"),
-        "{refusal}"
-    );
-    assert!(
-        refusal.contains("place it on a local file system"),
-        "{refusal}"
-    );
+fn a_list_that_is_read_is_judged_and_no_list_leaves_the_mode() {
+    let granted = nfs4_list(&[
+        (ALLOW, 0, OWNER_READ_WRITE, "OWNER@"),
+        (ALLOW, 0, READ_DATA, "EVERYONE@"),
+    ]);
+    for magic in OTHER_MAGICS.into_iter().chain([NFS_MAGIC]) {
+        for trusted in [false, true] {
+            assert_eq!(
+                door::judge_mount_for_owner(magic, Some(&KNFSD_LIST_MODE_0600), trusted),
+                Ok(None),
+                "{magic:#x}"
+            );
+            let refusal = door::judge_mount_for_owner(magic, Some(&granted), trusted)
+                .expect("the list reads")
+                .unwrap_or_else(|| panic!("{magic:#x} refuses the entry"));
+            assert!(
+                refusal.contains("entry 2 of 2 grants `EVERYONE@` READ_DATA"),
+                "{magic:#x}: {refusal}"
+            );
+        }
+    }
+    for magic in OTHER_MAGICS {
+        assert_eq!(
+            door::judge_mount_for_owner(magic, None, false),
+            Ok(None),
+            "{magic:#x}"
+        );
+    }
 }
 
 /// The control: a file on the test host's own file system has no network
