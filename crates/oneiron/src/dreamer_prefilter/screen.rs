@@ -143,6 +143,13 @@ fn screen_text_from_raw(
     ))
 }
 
+/// Whether `config` lets the screen read a witnessed TURN's MESSAGE rows: an
+/// enabled policy at a threshold above zero, the only kind a score can skip
+/// under.
+fn screens_message_words(config: &PrefilterConfig) -> bool {
+    config.enabled && config.threshold > 0.0
+}
+
 /// The words the screen scores one planned TURN on, or `None` when it has
 /// none the screen may read.
 ///
@@ -157,6 +164,15 @@ fn screen_text_from_raw(
 /// (a row the Dreamer may not read, a MESSAGE that is away, a binding that
 /// changed) passes unscored: the branch meets the same refusal and rules on
 /// it. At a zero threshold no score can skip, so no MESSAGE row is read.
+///
+/// The Dreamer's grants on those rows are judged at the time `txn` judges
+/// at, so every snapshot this runs in is opened, or moved, at a persisted
+/// grant clock first, as a branch's read snapshot is: the committed screen
+/// through [`committed_screen_snapshot`], a planning writer through
+/// [`observe_grant_clock_for_message_screen_in_txn`], and the turn wake's
+/// read snapshot behind its sieve pass, which persists the clock before
+/// either reads. A grant that expired since this store last judged one lends
+/// the screen no words.
 ///
 /// # Errors
 ///
@@ -173,7 +189,7 @@ fn screen_words_in_txn(
     else {
         return Ok(None);
     };
-    if own_words.is_some() || config.threshold <= 0.0 {
+    if own_words.is_some() || !screens_message_words(config) {
         return Ok(own_words);
     }
     match projected_turn_text_in(vault, txn, turn) {
@@ -183,6 +199,57 @@ fn screen_words_in_txn(
     }
 }
 
+/// The read snapshot one committed screen runs in, and the policy it holds.
+///
+/// A policy that screens MESSAGE words reads them under the Dreamer's grants,
+/// so its snapshot opens after the grant clock is persisted, as a branch's
+/// read snapshot does, and the policy is read again in it. A policy that
+/// reads no MESSAGE row judges no grant: its snapshot opens with no clock
+/// observation, so the default policy plans at no added cost.
+///
+/// # Errors
+///
+/// Storage errors, a vault a restore swap moved aside, or
+/// [`Error::InvalidConfig`] when the landed config row is unusable.
+fn committed_screen_snapshot(vault: &Vault) -> Result<(heed::RoTxn<'_>, PrefilterConfig)> {
+    let txn = vault.store.env.read_txn()?;
+    let config = vault.prefilter_config_in_txn(&txn)?;
+    if !screens_message_words(&config) {
+        return Ok((txn, config));
+    }
+    // The store gives a thread one read transaction at a time, and the
+    // clock observation may open its own.
+    drop(txn);
+    vault.store.authorization_now()?;
+    let txn = vault.store.env.read_txn()?;
+    let config = vault.prefilter_config_in_txn(&txn)?;
+    Ok((txn, config))
+}
+
+/// Persists the grant clock in a planning writer before its screen runs.
+///
+/// A policy that screens MESSAGE words reads them under the Dreamer's grants
+/// in the caller's transaction, and a grant is judged at a persisted clock
+/// floor, as a branch's read snapshot judges it. Without the observation the
+/// writer judges at the time of this store's last grant decision, and a
+/// grant that expired since still lends the screen its MESSAGE's words. A
+/// policy that reads no MESSAGE row judges no grant, and the writer's clock
+/// floor stays where its own writes put it.
+///
+/// # Errors
+///
+/// Storage errors, or [`Error::InvalidConfig`] when the landed config row is
+/// unusable.
+pub(crate) fn observe_grant_clock_for_message_screen_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+) -> Result<()> {
+    if screens_message_words(&vault.prefilter_config_in_txn(txn)?) {
+        crate::ports::observe_clock_floor_in_txn(&vault.store, txn)?;
+    }
+    Ok(())
+}
+
 /// The POST-ROLE-GATE value screen over a partition planner's input.
 ///
 /// Called at the top of [`crate::dreamer_consolidation::plan_partitions`]. The
@@ -190,20 +257,20 @@ fn screen_words_in_txn(
 /// extracting. A disabled config short-circuits before any read, so the
 /// disabled path is byte-identical planning at zero added cost.
 ///
-/// One snapshot holds the policy, every TURN row as [`Vault::get_raw`] reads
-/// it, and the MESSAGE rows a witnessed TURN's words are read from: the store
-/// gives a thread one read transaction at a time.
+/// One snapshot ([`committed_screen_snapshot`]) holds the policy, every TURN
+/// row as [`Vault::get_raw`] reads it, and the MESSAGE rows a witnessed
+/// TURN's words are read from: the store gives a thread one read transaction
+/// at a time.
 ///
 /// # Errors
 ///
-/// Storage errors, or [`Error::InvalidConfig`] when the landed config row is
-/// unusable.
+/// Storage errors, a vault a restore swap moved aside, or
+/// [`Error::InvalidConfig`] when the landed config row is unusable.
 pub(crate) fn prefilter_partition_input(
     vault: &Vault,
     turns: &[WorkingSetTurn],
 ) -> Result<PrefilterScreen> {
-    let txn = vault.store.env.read_txn()?;
-    let config = vault.prefilter_config_in_txn(&txn)?;
+    let (txn, config) = committed_screen_snapshot(vault)?;
     if !config.enabled {
         return Ok(PrefilterScreen::disabled(turns, config.threshold));
     }
@@ -221,6 +288,10 @@ pub(crate) fn prefilter_partition_input(
 /// committed, under the same policy and the same arithmetic, so an
 /// in-transaction screen and a committed-state screen of the same turns keep
 /// the byte-identical-partition-keys claim on `plan_partitions_in_txn` true.
+///
+/// A MESSAGE grant is judged at the time `txn` judges at: a writer calls
+/// [`observe_grant_clock_for_message_screen_in_txn`] before this, and a read
+/// snapshot is opened after the grant clock is persisted.
 ///
 /// # Errors
 ///
