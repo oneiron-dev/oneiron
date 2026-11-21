@@ -44,9 +44,10 @@ pub(super) fn register_in_txn(
     summary: &EntityId,
     evidence: &ScopeSummaryEvidence,
 ) -> Result<()> {
+    let before = crate::source_audience::LinksBefore::read_in(vault, txn, [*summary])?;
     for pin in &evidence.editor_sources {
         let source = EntityId::from_hex(&pin.id)?;
         crate::ports::record_derived_edge_in_txn(&vault.store, txn, summary, &source)?;
     }
-    crate::source_audience::raise_floors_in_txn(vault, txn, [*summary])
+    before.judge_in_txn(vault, txn)
 }

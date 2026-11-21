@@ -39,10 +39,11 @@ pub(crate) mod binding_door;
 pub(crate) mod carried;
 pub(crate) mod checkpoint;
 pub(crate) mod floor;
-mod floor_state;
+mod floor_migration;
 mod obligation;
 mod rederive;
 mod replica;
+mod source_state;
 pub(crate) mod tables;
 mod wake;
 mod walk;
@@ -58,15 +59,11 @@ use crate::{EntityId, Vault};
 
 pub(crate) use floor::{
     FloorSource, SOURCE_READERS, SourceReaders, floor_source_in, floor_threads_in,
-    raise_floors_in_txn, seal_births_from_erased_inputs_in_txn,
-};
-pub(crate) use floor_state::{
-    backfill_floors, binding_landed_in_txn, floor_waits_in, waiting_floor_readable_in,
 };
 #[cfg(any(test, feature = "test-support", oneiron_test_support))]
-pub(crate) use floor_state::{
-    backfill_floors_from_raising_cursor, end_backfill_without_archived_rows_in_txn,
-    forget_floor_state_in_txn, mark_backfill_done_in_txn, mark_raised_in_txn, mark_waiting_in_txn,
+pub(crate) use floor_migration::{
+    end_backfill_without_archived_rows_in_txn, mark_backfill_done_in_txn, mark_raised_in_txn,
+    mark_waiting_in_txn, sweep_floors_from_raising_cursor,
 };
 pub(crate) use obligation::{
     SourceAudienceBirth, admit_obligation_in_txn, admit_session_obligation_in_txn,
@@ -82,6 +79,12 @@ pub(crate) use replica::{
     event_names_erased_actor_in, event_without_erased_actors, merge_event_in_txn,
     merge_policy_in_txn, names_erased_actor_in, policy_closure_in, policy_conflicts_in, policy_in,
     publishable_in, published_closure_in, redacted_successor_in, thread_source_in,
+};
+#[cfg(any(test, feature = "test-support", oneiron_test_support))]
+pub(crate) use source_state::forget_floor_state_in_txn;
+pub(crate) use source_state::{
+    FloorRead, Fresh, LinksBefore, Verdict, floor_read_in, fold_waiters_in_txn, judge_rows_in_txn,
+    sweep_floors, verdict_in, waiting_floor_readable_in,
 };
 #[cfg(feature = "sync")]
 pub(crate) use wake::{
@@ -264,8 +267,8 @@ pub(crate) fn derived_policies_in(
 }
 
 /// Adds `policies` to those the derived row `row` reads under, in `txn`: a
-/// full-window carrier's, or the floor its own write raised
-/// ([`raise_floors_in_txn`]). Whether the set grew.
+/// full-window carrier's, or a floor a judgement or a fold took
+/// ([`judge_rows_in_txn`], [`fold_waiters_in_txn`]). Whether the set grew.
 ///
 /// # Errors
 ///
@@ -298,24 +301,6 @@ pub(crate) fn erase_derived_policies_in_txn(
     row: &EntityId,
 ) -> Result<()> {
     DERIVED.delete(store, txn, row).map(drop)
-}
-
-/// Seals, in the write that erases `row`, the floor of each row that waits
-/// on it (`floor_state::seal_rows_awaiting_in_txn`; #9289 Opus review 3
-/// P1-A). Each delete door runs it before the record's body and edges go:
-/// the physical purge, the soft erase (but a soft tombstone replayed over a
-/// soft scrub already applied here), and the first application of a peer's
-/// tombstone of a row this vault never held (#10108 reviews).
-///
-/// # Errors
-///
-/// Storage failures.
-pub(crate) fn seal_floors_awaiting_in_txn(
-    store: &crate::store::Store,
-    txn: &mut heed::RwTxn<'_>,
-    row: &EntityId,
-) -> Result<()> {
-    floor_state::seal_rows_awaiting_in_txn(store, txn, row)
 }
 
 /// The policy the row `record` was born under, if it was bound.
@@ -683,8 +668,8 @@ pub(crate) fn bind_record_in_txn(
     }
     // The landing that marked the row born binds it here: the mark goes.
     obligation::clear_birth_in_txn(vault, txn, record)?;
-    // A row written from it before its binding landed waits for it.
-    floor_state::binding_landed_in_txn(vault, txn, record)
+    // A row written from it before its binding landed takes its floor now.
+    source_state::fold_waiters_in_txn(vault, txn, record)
 }
 
 /// Shares the thread policy `thread` with `person` (`share`), or withdraws

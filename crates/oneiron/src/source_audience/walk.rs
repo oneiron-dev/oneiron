@@ -638,8 +638,8 @@ pub(crate) fn readable_with_read_in(
 /// its own binding and carried policies and nothing more. A vault that
 /// holds no policy answers none.
 ///
-/// A row it walks whose floor is not known whole here
-/// ([`super::floor_waits_in`]) was read only because every one of `viewers`
+/// A row it walks whose floor is not known whole here (it reads waiting,
+/// [`super::floor_read_in`]) was read only because every one of `viewers`
 /// reads every source policy this vault holds
 /// ([`super::waiting_floor_readable_in`]): that read met each of them, and
 /// a row derived from it waits too and reads under them, so each is named
@@ -681,7 +681,9 @@ pub(crate) fn read_audience_in(
     while let Some(row) = pending.pop() {
         // A row whose floor waits read only to viewers who read every
         // source policy here, whatever its floor will name once whole.
-        if !every_policy_named && super::floor_waits_in(vault, txn, &row)? {
+        if !every_policy_named
+            && super::floor_read_in(vault, txn, &row)? == super::FloorRead::Waiting
+        {
             policies.extend(super::POLICIES.scan_keys(&vault.store, txn, &[])?);
             every_policy_named = true;
         }
@@ -958,12 +960,14 @@ impl Judge<'_, '_, '_> {
         {
             return Ok(Opened::Decided(false));
         }
-        // A row whose floor is not known whole here (READ-LINEAGE L1; #9289
-        // review 2 P1-1, P1-2) reads only to an owner who reads every source
-        // this vault holds, whatever its floor would name; and it does not
-        // travel on a restricted lane, which carries no audience (#9289
-        // review 3 P1-3). The owner's full window carries it, and the vault
-        // it lands in raises its floor from what that vault holds.
+        // A row whose verdict is sealed reads to no one, the owner included
+        // (READ-LINEAGE-L3 = A). A row whose verdict waits (READ-LINEAGE L1;
+        // #9289 review 2 P1-1, P1-2; Fable design pass 31) reads only to an
+        // owner who reads every source this vault holds, whatever its floor
+        // would name; and neither travels on a restricted lane, which carries
+        // no audience (#9289 review 3 P1-3). The owner's full window carries
+        // them, and the vault they land in judges their links from what it
+        // holds.
         let restricted = matches!(
             self.ask,
             Ask::Travel {
@@ -971,12 +975,13 @@ impl Judge<'_, '_, '_> {
                 ..
             }
         );
-        if (matches!(self.ask, Ask::Read(_)) || restricted)
-            && super::floor_waits_in(self.vault, self.txn, &id)?
-        {
-            let admitted = match self.ask {
-                Ask::Read(viewers) => self.waiting_floor_readable(viewers)?,
-                Ask::Travel { .. } => false,
+        if matches!(self.ask, Ask::Read(_)) || restricted {
+            let admitted = match (super::floor_read_in(self.vault, self.txn, &id)?, self.ask) {
+                (super::FloorRead::Whole, _) => true,
+                (super::FloorRead::Waiting, Ask::Read(viewers)) => {
+                    self.waiting_floor_readable(viewers)?
+                }
+                (super::FloorRead::Waiting | super::FloorRead::Sealed, _) => false,
             };
             if !admitted {
                 return Ok(Opened::Decided(false));

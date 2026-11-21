@@ -46,6 +46,28 @@ crate::side_table::side_tables! {
     /// (READ-LINEAGE L1). A vault that lost it runs the backfill again. Key: ().
     SOURCE_AUDIENCE_FLOOR_BACKFILL: VaultMeta b"source_audience:floor_backfill:v1:done" Named
         [restore: not_imaged] [family: not_imaged] [tier: derived];
+    /// This vault's rows were all judged once (Fable design pass 31, section 5): the migration
+    /// from the floor's wait marks has ended, so no row is read as one written before floors.
+    /// Key: ().
+    SOURCE_AUDIENCE_FLOOR_MIGRATED: VaultMeta b"source_audience:floor_migrated:v1:done" Named
+        // Restore class: Whether the migration ran stands with the rows the image holds, so a
+        // restore never runs it again over rows it already judged.
+        [restore: content] [family: structure] [tier: canonical];
+    /// Each input whose floor a row has not taken yet (Fable design pass 31): the row waits on
+    /// it until it reads bound and whole here, and it reads sealed while the input reads erased.
+    /// An entry leaves only when the row takes the input's floor. Key: id16(row) + id16(input).
+    /// Value: the entry's flags (an old fact's entry, an attestation).
+    SOURCE_AUDIENCE_FLOOR_OPEN: VaultMeta b"source_audience:floor_open:v1:" Named
+        // Restore class: What a row still waits on stands with the rows the image holds: a
+        // restore of an older set reads as the inputs say now, and the sweep takes each entry
+        // whose input is bound and whole.
+        // Payload family: Two row ids and a flag byte: markers with no payload of their own.
+        [restore: content] [family: structure] [tier: canonical];
+    /// The entries of SOURCE_AUDIENCE_FLOOR_OPEN by input (Fable design pass 31), so the write
+    /// that makes an input bound finds the rows waiting on it. The sweep writes any missing pair
+    /// again. Key: id16(input) + id16(row).
+    SOURCE_AUDIENCE_FLOOR_OPEN_BY: VaultMeta b"source_audience:floor_open_by:v1:" Named
+        [restore: not_imaged] [family: not_imaged] [tier: derived];
     /// A row whose floor waits (READ-LINEAGE L1): a row it was written from is not held here
     /// yet, a source's binding has not landed, its lineage does not resolve yet, or the floor
     /// of a row it was written from waits. Key: id16(row).
@@ -55,6 +77,14 @@ crate::side_table::side_tables! {
     /// backfill clears them once it has raised every row. Key: id16(row).
     SOURCE_AUDIENCE_FLOOR_RAISED: VaultMeta b"source_audience:floor_raised:v1:" Named
         [restore: not_imaged] [family: not_imaged] [tier: derived];
+    /// A redirect shell an owner's erase of its head scrubbed (SOURCE-STATE-L2 = A, the lead 21
+    /// Nov 12:2x): a later owner erase of a shell, so an old fact that waits for good on it as an
+    /// input deleted before floors reads sealed, whichever came first, the cascade or the
+    /// migration's judgement of the fact. Goes at the launch reset. Key: id16(shell).
+    SOURCE_AUDIENCE_FLOOR_SHELL_ERASED: VaultMeta b"source_audience:floor_shell_erased:v1:" Named
+        // Restore class: An owner erase that reached a shell stands with the rows the image holds.
+        // Payload family: A row id: a marker with no payload of its own.
+        [restore: content] [family: structure] [tier: canonical];
     /// A row whose floor was raised since the floor backfill's run again began
     /// (FLOOR-BACKFILL-SKIPS-ARCHIVED-ROWS; #10265 review 2 P1-2): the run's own marks, so the
     /// marks a pass before it left never make it skip a row; cleared with them once it has raised
