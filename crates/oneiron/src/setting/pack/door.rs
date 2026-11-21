@@ -357,11 +357,6 @@ impl Vault {
         pack: &str,
         proposal: &str,
     ) -> Result<Vec<String>> {
-        // The yes's own checks, on a read the door drops before it asks.
-        {
-            let txn = self.store.env.read_txn()?;
-            checked_accept_in_txn(self, &txn, owner, pack, proposal)?;
-        }
         // The confirm is for an owner proof, so it stands before the write
         // opens, while the door holds nothing: the prompt can block.
         let witness = self.owner_presence(
