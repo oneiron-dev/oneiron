@@ -9,6 +9,8 @@ use super::*;
 use crate::store::Store;
 
 mod belief;
+#[cfg(oneiron_test_support)]
+mod structure_door;
 
 pub(super) use belief::{fold_belief_structure_in_txn, stage_batch_for_belief};
 
@@ -80,7 +82,7 @@ pub(crate) struct AuthorityStructure {
 /// install pins its root:
 /// its root records, its marks and the world rows of the install keys only
 /// such marks name share one bound (Astra #1422e F1; the Engine, r23).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(super) struct LocalRoots {
     anchors: BTreeSet<[u8; 32]>,
     roots: BTreeSet<RecoveryRootId>,

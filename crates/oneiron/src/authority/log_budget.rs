@@ -55,11 +55,17 @@ use super::*;
 use crate::HostingPrivacyPosture;
 use crate::store::Store;
 
+#[cfg(oneiron_test_support)]
+mod door_view_door;
 mod log_check;
 mod owner_reserve;
 mod owner_signed_work;
 mod policy_bounds;
 
+#[cfg(oneiron_test_support)]
+pub(crate) use door_view_door::{
+    door_view_differs_from_rebuild_in_txn, staged_door_views_differ_from_rebuild,
+};
 pub use log_check::AuthorityLogCheck;
 pub(crate) use log_check::authority_signer_label;
 use owner_reserve::*;
@@ -287,68 +293,89 @@ pub(crate) fn door_view_builds_for_test() -> usize {
     DOOR_VIEW_BUILDS.with(std::cell::Cell::get)
 }
 
+#[cfg(oneiron_test_support)]
+thread_local! {
+    static DOOR_VIEW_ROWS_DECODED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// How many stored rows this thread's door views decoded.
+#[cfg(oneiron_test_support)]
+pub(crate) fn door_view_rows_decoded_for_test() -> u64 {
+    DOOR_VIEW_ROWS_DECODED.with(std::cell::Cell::get)
+}
+
 pub(super) fn door_view(
     store: &Store,
     txn: &heed::RoTxn<'_>,
 ) -> crate::error::Result<Arc<AuthorityDoorView>> {
     super::readonly_fold::per_authority_generation(store, txn, &store.authority_door_view, || {
-        #[cfg(test)]
-        DOOR_VIEW_BUILDS.with(|builds| builds.set(builds.get() + 1));
-        let evidence = super::checkpoint_adopt::cached_adopted_evidence_in_txn(store, txn)?;
-        let mut hashes = Vec::new();
-        let mut entries = Vec::new();
-        for (id, body) in authority_log_rows_in_txn(store, txn)? {
-            // A covered row counts once, from the image.
-            if evidence
-                .as_ref()
-                .is_some_and(|evidence| evidence.covers_id(&id))
-            {
-                continue;
-            }
-            let entry = decode_authority_log_entry_body(&body)?;
-            hashes.push(authority_entry_hash(&entry)?);
-            entries.push(entry);
+        rebuilt_door_view(store, txn)
+    })
+}
+
+/// The door view of every row stored in `txn`, built afresh.
+fn rebuilt_door_view(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+) -> crate::error::Result<AuthorityDoorView> {
+    #[cfg(test)]
+    DOOR_VIEW_BUILDS.with(|builds| builds.set(builds.get() + 1));
+    let evidence = super::checkpoint_adopt::cached_adopted_evidence_in_txn(store, txn)?;
+    let mut hashes = Vec::new();
+    let mut entries = Vec::new();
+    for (id, body) in authority_log_rows_in_txn(store, txn)? {
+        // A covered row counts once, from the image.
+        if evidence
+            .as_ref()
+            .is_some_and(|evidence| evidence.covers_id(&id))
+        {
+            continue;
         }
-        // The structure reads the image's carried rows as the stored rows
-        // they stand for: it admits what the covered history admitted, never
-        // what the folded roster now holds.
-        let carried = evidence
-            .iter()
-            .flat_map(|evidence| evidence.bodies().values());
-        let structure = authority_structure_under(
-            carried.chain(&entries),
-            LocalRoots::read_in_txn(store, txn)?,
+        #[cfg(oneiron_test_support)]
+        DOOR_VIEW_ROWS_DECODED.with(|rows| rows.set(rows.get() + 1));
+        let entry = decode_authority_log_entry_body(&body)?;
+        hashes.push(authority_entry_hash(&entry)?);
+        entries.push(entry);
+    }
+    // The structure reads the image's carried rows as the stored rows
+    // they stand for: it admits what the covered history admitted, never
+    // what the folded roster now holds.
+    let carried = evidence
+        .iter()
+        .flat_map(|evidence| evidence.bodies().values());
+    let structure = authority_structure_under(
+        carried.chain(&entries),
+        LocalRoots::read_in_txn(store, txn)?,
+    );
+    let mut tally = Tally::default();
+    for entry in &entries {
+        tally.count(
+            &structure,
+            entry.signer_key(),
+            is_slip_op(&entry.op),
+            Some(entry),
         );
-        let mut tally = Tally::default();
-        for entry in &entries {
-            tally.count(
-                &structure,
-                entry.signer_key(),
-                is_slip_op(&entry.op),
-                Some(entry),
-            );
+    }
+    let mut parents: BTreeMap<_, &[AuthorityEntryHash]> = hashes
+        .iter()
+        .copied()
+        .zip(entries.iter().map(|entry| entry.parent_hashes.as_slice()))
+        .collect();
+    if let Some(evidence) = &evidence {
+        for (hash, row) in evidence.rows() {
+            tally.count(&structure, &row.signer, row.slip_op, evidence.body(hash));
+            parents.insert(*hash, row.parents.as_slice());
         }
-        let mut parents: BTreeMap<_, &[AuthorityEntryHash]> = hashes
-            .iter()
-            .copied()
-            .zip(entries.iter().map(|entry| entry.parent_hashes.as_slice()))
-            .collect();
-        if let Some(evidence) = &evidence {
-            for (hash, row) in evidence.rows() {
-                tally.count(&structure, &row.signer, row.slip_op, evidence.body(hash));
-                parents.insert(*hash, row.parents.as_slice());
-            }
-        }
-        let projection = stored_fold_projection(&parents);
-        Ok(AuthorityDoorView {
-            structure,
-            rows: tally.rows,
-            counted: tally.counted,
-            issuer_handoffs: tally.issuer_handoffs,
-            strangers: tally.strangers,
-            projection,
-            evidence,
-        })
+    }
+    let projection = stored_fold_projection(&parents);
+    Ok(AuthorityDoorView {
+        structure,
+        rows: tally.rows,
+        counted: tally.counted,
+        issuer_handoffs: tally.issuer_handoffs,
+        strangers: tally.strangers,
+        projection,
+        evidence,
     })
 }
 
