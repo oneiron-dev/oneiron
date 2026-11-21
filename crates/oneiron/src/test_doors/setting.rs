@@ -70,6 +70,16 @@ pub fn plant_undecodable_row(vault: &Vault, key: &str, scope: SettingScope) -> R
     crate::setting::put_stored_bytes(vault, key, SettingMode::Value, scope, &[0xc1, 0xc1])
 }
 
+/// Plants `digest` as the defaults digest `pack`'s head row keeps: a damaged store.
+///
+/// # Errors
+///
+/// A pack with no head; storage errors.
+#[cfg(feature = "test-support")]
+pub fn plant_pack_head_digest(vault: &Vault, pack: &str, digest: &str) -> Result<()> {
+    crate::setting::put_head_digest(vault, pack, digest)
+}
+
 /// What a fresh emergency reschedule plan of `proposals` live replacement times meets under the
 /// owner's proposal count and floor in force: `Err` with the refusal's words where it refuses (row
 /// SETTING-PROJECTED-ROW-REFUSING-HOOKS, SETTING-PROJECTED-EMERGENCY-PAIR = A).

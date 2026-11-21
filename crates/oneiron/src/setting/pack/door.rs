@@ -337,21 +337,31 @@ impl Vault {
     /// default landed.
     ///
     /// The yes can carry an owner key's proof, and a pack's held defaults are the ones it may
-    /// not move by itself, so the door asks for the person at this device before its write.
+    /// not move by itself, so the door asks for the person at this device before its write. It
+    /// asks after the checks it can make on a read of the store (`checked_accept_in_txn`), so a
+    /// yes they refuse raises no prompt; the write makes each of them again.
     ///
     /// # Errors
     ///
-    /// The presence check's refusal ([`Vault::owner_presence`]), before anything is read;
-    /// `InvalidConfig` for a pack with no head, a proposal that is not the pack's waiting one, a
-    /// row that moved since, or a key this build does not know; an owner proof that no longer
-    /// holds; on a rooted vault, the append's typed refusal, and `OwnerKeyRequired` for a yes
-    /// that would wait for the owner's proof; a key's `on_change` refusal; storage errors.
+    /// On a read before the door asks, and again in its write: an owner proof that no longer
+    /// holds; `InvalidConfig` for a pack with no head, a proposal that is not the pack's waiting
+    /// one, a row that moved since, or a key this build does not know; on a rooted vault,
+    /// `CorruptedIndex` for a head whose digest is not 64 hex digits, and the append's typed
+    /// refusal for an install that cannot carry the owner's act. Then the presence
+    /// check's refusal ([`Vault::owner_presence`]). In the write: on a rooted vault, the
+    /// append's typed refusal, and `OwnerKeyRequired` for a yes that would wait for the owner's
+    /// proof; a key's `on_change` refusal; storage errors.
     pub fn accept_pack_defaults(
         &self,
         owner: &AuthenticatedOwner,
         pack: &str,
         proposal: &str,
     ) -> Result<Vec<String>> {
+        // The yes's own checks, on a read the door drops before it asks.
+        {
+            let txn = self.store.env.read_txn()?;
+            checked_accept_in_txn(self, &txn, owner, pack, proposal)?;
+        }
         // The confirm is for an owner proof, so it stands before the write
         // opens, while the door holds nothing: the prompt can block.
         let witness = self.owner_presence(
@@ -377,40 +387,12 @@ fn accept_pack_defaults_in_txn(
     pack: &str,
     proposal: &str,
 ) -> Result<Vec<String>> {
-    let by = owner.revalidate_in_txn(vault, txn)?;
-    let Some(mut head) = head_in_txn(&vault.store, txn, pack)? else {
-        return Err(Error::InvalidConfig(format!(
-            "no pack named `{pack}` has defaults in this vault"
-        )));
-    };
-    let Some(waiting) = head
-        .proposal
-        .take()
-        .filter(|waiting| waiting.digest == proposal)
-    else {
-        return Err(Error::InvalidConfig(format!(
-            "pack `{pack}` has no waiting proposal `{proposal}`: read the list again"
-        )));
-    };
-    let mut checked = Vec::with_capacity(waiting.defaults.len());
-    for proposed in &waiting.defaults {
-        let spec = spec_named(&proposed.key)?;
-        let current =
-            table_of(spec).get_bytes(&vault.store, txn, &pack_row_key(spec.name, pack))?;
-        if current.as_deref().map(row_digest) != proposed.replaced
-            || !spec.kind.decodes(&proposed.value)
-        {
-            return Err(Error::InvalidConfig(format!(
-                "the default of `{}` moved since proposal `{proposal}`: the pack door proposes \
-                 again at its next run",
-                proposed.key
-            )));
-        }
-        let prior = current
-            .as_deref()
-            .and_then(|bytes| rmp_serde::from_slice::<StoredRow>(bytes).ok());
-        checked.push((spec, prior));
-    }
+    let CheckedAccept {
+        by,
+        mut head,
+        waiting,
+        checked,
+    } = checked_accept_in_txn(vault, txn, owner, pack, proposal)?;
     let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
     let mut accepted: BTreeSet<String> = head.accepted.iter().cloned().collect();
     let mut keys = Vec::with_capacity(checked.len());
@@ -488,11 +470,7 @@ fn append_yes_in_txn(
     (pack, head): (&str, &PackHead),
     (owner, mut accepted): (EntityId, Vec<String>),
 ) -> Result<Option<AuthorityEntryHash>> {
-    let Some(digest) = oneiron_hex::decode::<32>(&head.digest) else {
-        return Err(Error::CorruptedIndex(
-            "a pack head's digest is not 64 hex digits",
-        ));
-    };
+    let digest = head_defaults_digest(head)?;
     if head.version.is_empty() {
         tracing::warn!(
             pack,

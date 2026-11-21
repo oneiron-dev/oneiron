@@ -223,6 +223,20 @@ impl Vault {
         .then_some((machine, key)))
     }
 
+    /// [`Self::owner_act_carrier_in_txn`], or the typed refusal of an append
+    /// on an install that carries no owner act. The append makes this check
+    /// first, and a door makes it on a read before it asks for the person at
+    /// this device ([`Vault::owner_act_carrier_stands_in_txn`]): no answer
+    /// of his changes it.
+    pub(super) fn require_owner_act_carrier_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        fold: &AuthorityFold,
+    ) -> Result<(EntityId, ed25519_dalek::SigningKey)> {
+        self.owner_act_carrier_in_txn(txn, fold)?
+            .ok_or_else(|| authority_refused(NO_CARRIER))
+    }
+
     /// Signs, appends and folds the act `op` builds in `txn`, naming the
     /// main-log heads alone, as every owner act does; returns only once the
     /// fold in `txn` counted it.
@@ -247,9 +261,7 @@ impl Vault {
         op: impl FnOnce(EntityId) -> AuthorityOp,
     ) -> Result<AuthorityEntryHash> {
         let fold = self.authority_view_readonly_in_txn(txn)?;
-        let (machine, key) = self
-            .owner_act_carrier_in_txn(txn, &fold)?
-            .ok_or_else(|| authority_refused(NO_CARRIER))?;
+        let (machine, key) = self.require_owner_act_carrier_in_txn(txn, &fold)?;
         let public_key = key.verifying_key().to_bytes();
         // FIX 7908: join a frontier wider than one entry names, else today's path.
         let proof = self.owner_act_proof_signer(&fold, owner_authored);
