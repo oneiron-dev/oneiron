@@ -22,6 +22,10 @@
 //! from the state an older backfill left. #10265 review 2 P1-1, P1-2: the
 //! run again starts at the first row whatever cursor an older pass saved,
 //! and an older pass's raised marks never make it skip a row.
+//!
+//! Fable design pass 31: the migration from the old backfill's tables
+//! judges these rows (section 5, M2; cases 60 to 66), so each reading above
+//! holds after the first housekeeping pass of this build.
 
 use oneiron::test_doors::cleanup_archive::archive_as_cleanup;
 use oneiron::test_doors::read_lineage_floor::{
