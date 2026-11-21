@@ -94,6 +94,8 @@ pub(crate) use check_material::{
     compaction_check_material_accepts_masked, erase_check_material_in_txn,
     put_check_material_in_txn,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use conversation::thread_turn_order_in;
 pub use conversation::{
     ChatLog, ChatLogCut, ChatLogLine, ConversationCompactionUnavailable, ConversationEvidence,
     ConversationFlight, ConversationFlightOutcome, ConversationTurnSpan, capture_conversation_fork,
@@ -101,8 +103,9 @@ pub use conversation::{
     seal_conversation_flight,
 };
 pub(crate) use conversation::{
-    FoldedTurnSummary, chat_log_room, conversation_receipt_in, folded_turn_summary_in,
-    put_conversation_receipt_in_txn, select_action_turns, summary_stands_in,
+    FoldedTurnSummary, chat_log_room, conversation_covered_end_in, conversation_receipt_in,
+    conversation_turns_in, folded_turn_summary_in, put_conversation_receipt_in_txn,
+    select_action_turns, summary_stands_in, thread_turn_key_in,
 };
 pub use driver::{
     CompactionBackend, CompactionBackendRegistry, CompactionDirective, CompactionDriver,
