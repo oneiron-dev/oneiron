@@ -166,7 +166,8 @@ pub use token_ratio::TokenRatios;
 pub(crate) use worker_host::socket_launch_door;
 pub(crate) use worker_host::start_worker_controller;
 pub(crate) use worker_host::{
-    install_snapshot_runtime, permit_worker_launch, session_allocations_for_vault,
+    bind_licence_vault, install_snapshot_runtime, permit_worker_launch,
+    session_allocations_for_vault,
 };
 // FIX 14976: each served vault's drafter bindings, served on this process's
 // own managed EXL3 worker.
