@@ -17,7 +17,10 @@
 //! stored as a custody handle: the seat's own next pull must find that
 //! passport, a series member's included, and never file a second passport
 //! of the same seat beside it
-//! (CAL-PASSPORT-SYSTEM-UID-LOOKUP-MISSES-MASKED-PASSPORT).
+//! (CAL-PASSPORT-SYSTEM-UID-LOOKUP-MISSES-MASKED-PASSPORT). A write to the
+//! seat must read such a passport as the seat's own too, and send the UID
+//! the provider holds, never the handle
+//! (CAL-MASKED-SYSTEM-LITERAL-COMPARES-OUTSIDE-KEYED-LOOKUP).
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test calendar_first_write_copy`.
 
@@ -1124,5 +1127,249 @@ fn a_series_member_s_masked_uid_is_revised_by_its_next_pull() {
         resolve_event_by_uid(&fixture.vault, SERIES_UID).expect("resolve the series UID"),
         Some(master),
         "the series UID still resolves to its master"
+    );
+}
+
+/// The custody record that holds the UID the seat's first write of the
+/// native EVENT mints.
+const MINTED_UID_SECRET: &str = "masked-minted-uid";
+
+/// The custody record that holds the UID of a VEVENT the seat imports.
+const PENDING_UID_SECRET: &str = "masked-pending-uid";
+
+/// The UID of the VEVENT the seat imports and the owner has not reviewed.
+const PENDING_UID: &str = "pending-import@host.example.test";
+
+/// Asserts that the one lifecycle-active passport on `event` keeps `uid` as
+/// a custody handle, and keeps `system` as a handle too when `system_masked`.
+fn assert_one_passport_masked(
+    vault: &Vault,
+    event: EntityId,
+    system_masked: bool,
+    uid: &str,
+    label: &str,
+) {
+    let filed = active_passports(vault, event);
+    assert!(
+        filed.len() == 1
+            && masked(&filed[0].uid, uid)
+            && if system_masked {
+                masked(&filed[0].system, SEAT_SYSTEM)
+            } else {
+                filed[0].system == SEAT_SYSTEM
+            },
+        "FIXTURE: {label}: {filed:?}"
+    );
+}
+
+/// The seat's pull of a VEVENT under `uid` that no write of the vault made:
+/// it imports one EVENT whose passport waits for the owner's review.
+fn pull_pending_import(vault: &Vault, seat: &Seat, uid: &str) -> EntityId {
+    let start = MONDAY + 14 * 3_600;
+    let events = event_count(vault);
+    seat.pull(
+        vault,
+        &[SeatChange::foreign(
+            seat,
+            uid,
+            start,
+            start + 30 * 60,
+            1,
+            false,
+        )],
+        NOW + 10,
+    )
+    .expect("seat pull");
+    assert_eq!(
+        event_count(vault),
+        events + 1,
+        "FIXTURE: the pulled VEVENT imports one EVENT"
+    );
+    let event = resolve_event_by_uid(vault, uid)
+        .expect("resolve the pulled UID")
+        .expect("FIXTURE: the pulled UID resolves to its EVENT");
+    let filed = active_passports(vault, event);
+    assert!(
+        filed.len() == 1 && filed[0].approval == ClaimApprovalStatus::Proposed,
+        "FIXTURE: the import files one passport that waits for the owner's review: {filed:?}"
+    );
+    event
+}
+
+#[test]
+fn a_second_write_of_a_passport_with_a_masked_uid_sends_the_uid_the_provider_holds() {
+    // CAL-MASKED-SYSTEM-LITERAL-COMPARES-OUTSIDE-KEYED-LOOKUP: the UID the
+    // seat's first write mints is a custody value, so the passport the
+    // settled write files keeps it as a custody handle. The seat's next
+    // write takes that passport as its own and must send the minted UID,
+    // which the provider holds, never the handle.
+    let fixture = Fixture::open(None);
+    let seat = Seat::install(&fixture.vault, SEAT_SYSTEM);
+    let native = mint_native_event(&fixture.vault);
+    let uid = minted_uid(native);
+    register_custody_value(&fixture.vault, MINTED_UID_SECRET, &uid);
+
+    let first = seat.write(&fixture.vault, native, NOW + 10);
+    assert_eq!(
+        first.uid, uid,
+        "FIXTURE: the first write sends the minted UID"
+    );
+    assert_one_passport_masked(
+        &fixture.vault,
+        native,
+        false,
+        &uid,
+        "the settled write files one passport whose UID is a custody handle",
+    );
+
+    let second = seat.write(&fixture.vault, native, NOW + 20);
+    assert_eq!(
+        second.uid, uid,
+        "the next write sends the UID the provider holds, never the stored handle"
+    );
+    assert!(
+        second.sequence > first.sequence,
+        "the next write revises the seat's copy: {} after {}",
+        second.sequence,
+        first.sequence
+    );
+}
+
+#[test]
+fn a_second_write_of_a_passport_with_a_masked_system_and_uid_sends_the_uid_the_provider_holds() {
+    // CAL-MASKED-SYSTEM-LITERAL-COMPARES-OUTSIDE-KEYED-LOOKUP: the seat's
+    // system name and the UID its first write mints are custody values, so
+    // the settled write's passport keeps both as custody handles. The next
+    // write must read that passport as the seat's own (its system as the
+    // calendar registry pins it) and send the minted UID; no other source's
+    // UID stands in for it.
+    let fixture = Fixture::open(None);
+    let seat = Seat::install(&fixture.vault, SEAT_SYSTEM);
+    let native = mint_native_event(&fixture.vault);
+    let uid = minted_uid(native);
+    register_custody_value(&fixture.vault, SEAT_SYSTEM_SECRET, SEAT_SYSTEM);
+    register_custody_value(&fixture.vault, MINTED_UID_SECRET, &uid);
+
+    let first = seat.write(&fixture.vault, native, NOW + 10);
+    assert_eq!(
+        first.uid, uid,
+        "FIXTURE: the first write sends the minted UID"
+    );
+    assert_one_passport_masked(
+        &fixture.vault,
+        native,
+        true,
+        &uid,
+        "the settled write files one passport whose system and UID are custody handles",
+    );
+
+    let second = seat.write(&fixture.vault, native, NOW + 20);
+    assert_eq!(
+        second.uid, uid,
+        "the next write sends the UID the provider holds, never the stored handle"
+    );
+    assert!(
+        second.sequence > first.sequence,
+        "the next write revises the seat's copy: {} after {}",
+        second.sequence,
+        first.sequence
+    );
+}
+
+#[test]
+fn a_write_back_of_a_pending_import_under_a_masked_system_replaces_the_pulled_object() {
+    // CAL-MASKED-SYSTEM-LITERAL-COMPARES-OUTSIDE-KEYED-LOOKUP with FIX
+    // CALDAV-PENDING-IMPORT-WRITEBACK-DUPLICATE: the seat's system name is a
+    // custody value, so the passport of a VEVENT it imports keeps the system
+    // as a custody handle and waits for the owner's review. A write of the
+    // EVENT back to the seat must find that pending passport as the seat's
+    // and write under the pulled UID, never mint a second object.
+    let fixture = Fixture::open(None);
+    let seat = Seat::install(&fixture.vault, SEAT_SYSTEM);
+    register_custody_value(&fixture.vault, SEAT_SYSTEM_SECRET, SEAT_SYSTEM);
+    let event = pull_pending_import(&fixture.vault, &seat, PENDING_UID);
+    let filed = active_passports(&fixture.vault, event);
+    assert!(
+        masked(&filed[0].system, SEAT_SYSTEM) && filed[0].uid == PENDING_UID,
+        "FIXTURE: the pending passport keeps the system as a custody handle: {filed:?}"
+    );
+
+    let wrote = seat.write(&fixture.vault, event, NOW + 20);
+    assert_eq!(
+        wrote.uid, PENDING_UID,
+        "the write-back keeps the pulled UID, never a minted one"
+    );
+    assert!(
+        wrote.sequence > 1,
+        "the write-back revises the pulled object: SEQUENCE {}",
+        wrote.sequence
+    );
+}
+
+#[test]
+fn a_write_back_of_a_pending_import_under_a_masked_uid_replaces_the_pulled_object() {
+    // CAL-MASKED-SYSTEM-LITERAL-COMPARES-OUTSIDE-KEYED-LOOKUP with FIX
+    // CALDAV-PENDING-IMPORT-WRITEBACK-DUPLICATE: the UID of a VEVENT the seat
+    // imports is a custody value, so its pending passport keeps the UID as a
+    // custody handle. The write-back reads the handle through the seat's
+    // own copy of the pulled object and writes under the pulled UID: the
+    // handle is no key of that copy and never a UID to send.
+    let fixture = Fixture::open(None);
+    let seat = Seat::install(&fixture.vault, SEAT_SYSTEM);
+    register_custody_value(&fixture.vault, PENDING_UID_SECRET, PENDING_UID);
+    let event = pull_pending_import(&fixture.vault, &seat, PENDING_UID);
+    let filed = active_passports(&fixture.vault, event);
+    assert!(
+        filed[0].system == SEAT_SYSTEM && masked(&filed[0].uid, PENDING_UID),
+        "FIXTURE: the pending passport keeps the UID as a custody handle: {filed:?}"
+    );
+
+    let wrote = seat.write(&fixture.vault, event, NOW + 20);
+    assert_eq!(
+        wrote.uid, PENDING_UID,
+        "the write-back keeps the pulled UID, never a minted one or the handle"
+    );
+    assert!(
+        wrote.sequence > 1,
+        "the write-back revises the pulled object: SEQUENCE {}",
+        wrote.sequence
+    );
+}
+
+#[test]
+fn a_write_to_a_second_calendar_never_sends_another_seat_s_masked_uid() {
+    // CAL-MASKED-SYSTEM-LITERAL-COMPARES-OUTSIDE-KEYED-LOOKUP: a write to a
+    // seat with no passport of its own shares the UID another source's
+    // passport carries. That passport keeps its UID as a custody handle,
+    // which only the seat that holds the source's copy reads, so the write
+    // to the second calendar must not send the handle as its UID.
+    let fixture = Fixture::open(None);
+    let seat = Seat::install(&fixture.vault, SEAT_SYSTEM);
+    let sibling = Seat::install(&fixture.vault, SIBLING_SEAT_SYSTEM);
+    let native = mint_native_event(&fixture.vault);
+    let uid = minted_uid(native);
+    register_custody_value(&fixture.vault, MINTED_UID_SECRET, &uid);
+    let first = seat.write(&fixture.vault, native, NOW + 10);
+    assert_eq!(
+        first.uid, uid,
+        "FIXTURE: the first write sends the minted UID"
+    );
+    assert_one_passport_masked(
+        &fixture.vault,
+        native,
+        false,
+        &uid,
+        "the settled write files one passport whose UID is a custody handle",
+    );
+
+    let wrote = sibling.write(&fixture.vault, native, NOW + 20);
+    assert!(
+        !wrote.uid.contains("[secret "),
+        "the write to the second calendar sends no custody handle as its UID: {}",
+        wrote.uid
+    );
+    assert_eq!(
+        wrote.uid, uid,
+        "the write to the second calendar sends the EVENT's own minted UID"
     );
 }
