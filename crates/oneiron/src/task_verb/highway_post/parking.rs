@@ -114,6 +114,24 @@ impl Memory<'_> {
                 Ok(())
             },
             |wtxn, proposal_ref| {
+                // A composed brief carries its lens rows' words: the proposal
+                // names them as prompt inputs in its birth (census L8-07,
+                // review #7814 P1), so their worlds' withholding holds for it.
+                if let Some(birth) = super::settlement::composed_brief_birth_in(
+                    self.vault(),
+                    &*wtxn,
+                    self.write_actor(),
+                    &post.brief,
+                    super::settlement::TASK_COMPOSED_POST_PROCESS,
+                    now,
+                )? {
+                    crate::provenance::birth::stamp_row_birth_in_txn(
+                        &self.vault().store,
+                        wtxn,
+                        &proposal_ref,
+                        &birth,
+                    )?;
+                }
                 decision_ref = self.proposal_decision_ref_in(&*wtxn, proposal_ref)?;
                 if keep {
                     let mut proposed = lifecycle.clone();
@@ -150,7 +168,10 @@ impl Memory<'_> {
         // decides whether to take it, and escalates to the owner when that is
         // relevant (ARCH-0028). Its yes is a take only when L02's rule admits
         // the agent to work addressed to it; a refused take, like an ask up,
-        // stays in the owner's tray, which is the escalation.
+        // stays in the owner's tray, which is the escalation. A composed
+        // brief is never put to the agent: a model wrote it and no person
+        // has read it, so it waits in the tray for one (L8-07 APPROVAL = A,
+        // review #7818 P1).
         let mut outcome = TaskOutcome::Proposed {
             decision_ref: decision_ref.clone(),
             reason_codes: Vec::new(),
@@ -158,6 +179,7 @@ impl Memory<'_> {
         let mut related = Vec::new();
         if let (Some(decisions), TaskAssignee::AgentDef { agent_def_ref }) =
             (decisions, post.assignee)
+            && post.brief.composed.is_none()
             && self.verify_owner().is_err()
         {
             let state = serde_json::json!({

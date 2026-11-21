@@ -94,6 +94,7 @@ pub mod solved_runs;
 pub mod supervised_rerank;
 pub mod system_one_leg;
 pub mod system_one_rung;
+pub mod task_brief_send;
 mod vault_acts;
 pub mod voice_call;
 pub mod web_search_count;
