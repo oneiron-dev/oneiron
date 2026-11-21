@@ -20,7 +20,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/tts/cartesia.rs` | src | s | 1 const · 1 crate-vis | — | Cartesia Sonic's speech wire, `POST /tts/bytes`: one call speaks one text in a provider voice and answers… |
 | `src/tts/elevenlabs.rs` | src | s | 1 crate-vis | — | ElevenLabs Flash's speech wire, `POST /v1/text-to-speech/{voice}`: one call speaks one text in a provider… |
 | `src/tts/hosted.rs` | src | s | 1 enum · 2 fn · 1 const | HostedWire | The hosted realtime speech tier of ARCH-0061 §5: two hosted wires that are not OpenAI-compatible, Cartesia… |
-| `src/tts/irodori_moss.rs` | src | L | 9 struct · 7 enum · 1 trait · 7 fn · 2 const | AudioDelivery, AudioEncoding, NormalizedPcm, Provider, ProviderAudio, ProviderConfig, ProviderFailure, ProviderMetadata +8 | Experimental Irodori/MOSS-local submission and PCM normalization only |
+| `src/tts/irodori_moss.rs` | src | m | 9 struct · 7 enum · 1 trait · 7 fn · 2 const | AudioDelivery, AudioEncoding, NormalizedPcm, Provider, ProviderAudio, ProviderConfig, ProviderFailure, ProviderMetadata +8 | Experimental Irodori/MOSS-local submission and PCM normalization only |
+| `src/tts/irodori_moss/adapter.rs` | src | m | 6 crate-vis | — | Queue admission, generation checks and PCM handling for `Adapter` |
 | `src/tts/irodori_moss/submissions.rs` | src | s | 7 crate-vis | — | One incremental Text's unsent rest (FIX 10213) |
 | `src/tts/openai_compat.rs` | src | s | 1 struct · 1 fn | OpenAiTtsBackend | The OpenAI-compatible speech wire (`/v1/audio/speech`) |
 | `src/tts/voxcpm2.rs` | src | s | 6 fn · 1 const | — | The VoxCPM2 worker's voice-socket codec (`deploy/voxcpm2`, OF-410), as the server's own-server speech rung… |

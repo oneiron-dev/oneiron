@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use super::owner_confirm;
 use crate::authority::{
     ActAuthority, ActSurface, AuthorityHandoffAlarm, AuthorityKey, HostSlipIssuer,
-    OWNER_KEY_MOVE_NOT_PLANNED, OwnerKeyMovePlan, OwnerKeyMoveSigner,
+    OWNER_KEY_MOVE_NOT_PLANNED, OwnerKeyMoveBinding, OwnerKeyMovePlan, OwnerKeyMoveSigner,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
@@ -29,9 +29,9 @@ use super::Offer;
 pub use oneiron_verb_wire::verbs::shared::{
     HandoffAlarmRequest, SharedActExecuteRequest, SharedActRequest, SharedAddOwnerRequest,
     SharedMemberAskIdRequest, SharedMemberAskKind, SharedMemberRequest,
-    SharedOwnerChangeWaitSetRequest, SharedOwnerKeyMoveConfirm, SharedOwnerKeyMovePlan,
-    SharedOwnerKeyMoveSignRequest, SharedOwnerKeyMoveSigner, SharedReceiptRequest,
-    SharedVaultRequest,
+    SharedOwnerChangeWaitSetRequest, SharedOwnerKeyMoveBinding, SharedOwnerKeyMoveConfirm,
+    SharedOwnerKeyMovePlan, SharedOwnerKeyMoveSignRequest, SharedOwnerKeyMoveSigner,
+    SharedReceiptRequest, SharedVaultRequest,
 };
 
 /// `vault.shared.propose_delete`'s input: the shared vault, the approved
@@ -523,6 +523,14 @@ fn owner_key_move_plan_wire(plan: OwnerKeyMovePlan) -> SharedOwnerKeyMovePlan {
         member: plan.member.to_hex(),
         parents: hex_all(&plan.parents),
         revoked: plan.revoked.iter().map(owner_key_hex).collect(),
+        revoked_bindings: plan
+            .revoked_bindings
+            .iter()
+            .map(|binding| SharedOwnerKeyMoveBinding {
+                authority_key: owner_key_hex(&binding.authority_key),
+                epoch: binding.epoch,
+            })
+            .collect(),
         signers: plan
             .signers
             .iter()
@@ -536,9 +544,9 @@ fn owner_key_move_plan_wire(plan: OwnerKeyMovePlan) -> SharedOwnerKeyMovePlan {
     }
 }
 
-/// An owner key as a plan's wire names it: its key bytes in lowercase hex,
-/// 64 digits for an Ed25519 key, 66 for a passkey's compressed P-256 key
-/// (row WEB-PASSKEY-OWNER-KEY).
+/// An owner key, or a binding's key, as a plan's wire names it: its key
+/// bytes in lowercase hex, 64 digits for an Ed25519 key, 66 for a passkey's
+/// compressed P-256 key (row WEB-PASSKEY-OWNER-KEY).
 fn owner_key_hex(key: &AuthorityKey) -> String {
     match key {
         AuthorityKey::Ed25519(bytes) => oneiron_hex::encode(bytes),
@@ -574,6 +582,19 @@ fn owner_key_move_plan_from_wire(plan: SharedOwnerKeyMovePlan) -> MemoryResult<O
             .revoked
             .iter()
             .map(|text| owner_key("plan.revoked", text))
+            .collect::<MemoryResult<_>>()?,
+        revoked_bindings: plan
+            .revoked_bindings
+            .iter()
+            .map(|binding| {
+                Ok(OwnerKeyMoveBinding {
+                    authority_key: owner_key(
+                        "plan.revoked_bindings.authority_key",
+                        &binding.authority_key,
+                    )?,
+                    epoch: binding.epoch,
+                })
+            })
             .collect::<MemoryResult<_>>()?,
         signers: plan
             .signers

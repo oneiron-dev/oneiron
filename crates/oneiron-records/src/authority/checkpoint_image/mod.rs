@@ -127,7 +127,9 @@ use serde::Serialize;
 /// owner's signs outside every owner key's line waits for an owner key's proof, as the owner's
 /// other choices do, so an image that put one in force is not adopted (FIX
 /// SETTING-COPY-OUTSIDE-OWNER-KEY-LINE).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 58;
+/// 59: the fold keeps every key ever enrolled as the recovery root's authority key, so a recovery
+/// hold's signer R and an answer's owner key judge apart (OPUS-WAYBACK, the box recovery's wait).
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 59;
 
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";

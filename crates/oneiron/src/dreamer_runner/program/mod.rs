@@ -91,6 +91,10 @@ pub use self::read::{
     TurnProgramAdmissionRequest, TurnProgramAdmissionView, TurnProgramOwedWakeItem,
     program_checkpoint, program_run, settled_program_step, turn_program_admission,
 };
+// FIX TURNPROGRAM-OCCURRENCE-ARMINGS-LIVE-ON-A-VAULT-COPY: the paused programs of a vault copy.
+pub use self::read::{
+    PausedTurnProgramItem, PausedTurnProgramsRequest, PausedTurnProgramsView, paused_turn_programs,
+};
 pub use self::rebind::{TurnProgramRebindReceipt, TurnProgramRebindRequest, rebind_turn_program};
 pub use self::release::{
     PROGRAM_HOLD_RELEASE_VERB, ProgramHoldReleaseAction, ProgramHoldReleaseView,

@@ -42,7 +42,11 @@
 //! it, under the same idempotency key. An effect the old home's own outbound ledger resolves as
 //! delivered travels delivered. The freeze waits only for a send mid-call on the old home,
 //! bounded by the transport's call timeout, so only a send that ended uncertain there can reach
-//! the booker twice: each item names those sends, and the adopting writer reports their count.
+//! the booker twice: each item names those sends, and the adopting writer keeps them as the
+//! checkpoint's side row (`booking:emergency_uncertain_send:v1:`, `super::uncertain_send`;
+//! Engine ANSWER BK-EMERGENCY-UNCERTAIN-SEND-RECEIPT = A, 21 Nov 09:14). The owner's run that
+//! delivers a marked send on the new home answers that it may repeat, and the next move carries
+//! the marks still owed. The side row travels inside the checkpoint section, never as its own.
 
 use std::collections::{BTreeMap, BTreeSet};
 
