@@ -27,6 +27,10 @@
 //! the diagnostic goes out, the typed read is refused for its context, and
 //! the check parks to send both again.
 //!
+//! The served vault reads a clock the test owns, held at one time: the
+//! landing declares the check at that time, and the test admits and runs the
+//! check at the time the vault's clock reads, never the host's.
+//!
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p
 //! oneiron-server --all-features --lib -- api::tests::ai_chat_check_judge_room`.
 
@@ -40,6 +44,7 @@ use oneiron::dreamer_runner::maintenance::compaction_check::{
 use oneiron::dreamer_runner::{AdmitDreamerAttempt, DreamerAdmissionOutcome};
 use oneiron::llm::decision::{DecisionBand, DecisionDial, DecisionRung};
 use oneiron::llm::{HostInferenceBinding, HostInferenceContext};
+use oneiron::store::ports::ManualClock;
 use oneiron::{
     BudgetExhaustionPolicy, BudgetGuard, BudgetLease, ContentPart, DreamerAdmittedAttempt,
     DreamerAttemptExecution, DreamerRunnerStore, EntityId, FatalLlmError, FinishReason, LlmBackend,
@@ -50,7 +55,8 @@ use oneiron::{
 use serde_json::Value;
 
 use super::ai_chat_self_compaction::{
-    compaction_calls_report, log_report, reply, self_row_server, turns_until_compaction,
+    SELF_ROW_CONTEXT_TOKENS, compaction_calls_report, log_report, reply, self_row_server_clocked,
+    turns_until_compaction,
 };
 use crate::ai_host::AiHost;
 use crate::ai_host::test_support::{eventually, route_extraction};
@@ -195,12 +201,13 @@ fn allow_judge_extraction(_: &LlmRequest) -> bool {
     true
 }
 
-/// The seconds clock the queue admits by.
-pub(super) fn now_seconds() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs()
+/// The time the served vault's clock is held at, in Unix seconds.
+const VAULT_NOW: u64 = 1_790_000_000;
+
+/// The seconds `server`'s vault clock reads: the time it stamps its rows
+/// at, which the queue admits by and the check runs at.
+pub(super) fn vault_seconds(server: &SyncServer) -> u64 {
+    server.vault().now_recorded_at()
 }
 
 /// What [`landed_check`] leaves: the served vault whose self agent's chat
@@ -219,9 +226,11 @@ struct LandedCheck {
 /// declared is admitted.
 async fn landed_check() -> LandedCheck {
     let fake = FakeLlm::start(Vec::new(), Some(Reply::Computed(Arc::new(reply)))).await;
-    let (dir, prompts, server, host) = self_row_server(
+    let (dir, prompts, server, host) = self_row_server_clocked(
         &fake.base_url,
         oneiron::llm::SelfCompactionSource::RetainedTurns,
+        SELF_ROW_CONTEXT_TOKENS,
+        ManualClock::new(VAULT_NOW).bundle(),
     )
     .await;
     let (agent, _) = server
@@ -255,7 +264,7 @@ async fn landed_check() -> LandedCheck {
         let outcome = store
             .admit_next_maintenance(AdmitDreamerAttempt {
                 lease_owner: "compaction-check-judge-room-test".to_owned(),
-                now: now_seconds() + 1,
+                now: vault_seconds(&server),
                 budget_id: "wake".to_owned(),
                 budget_total_units: 100_000,
                 reserve_units: 100,
@@ -318,7 +327,7 @@ pub(super) async fn run_check_lent(
         cancel: None,
         device_cancel: None,
         budget_id: "test",
-        now_ms: now_seconds() * 1_000,
+        now_ms: vault_seconds(server) * 1_000,
         prepared_wake: None,
         prepared_attempt: None,
         spend_meter: None,

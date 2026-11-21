@@ -63,7 +63,7 @@ use oneiron::{
 };
 use serde_json::{Value, json};
 
-use super::ai_chat_check_judge_room::{finding, now_seconds, run_check, run_check_lent};
+use super::ai_chat_check_judge_room::{finding, run_check, run_check_lent, vault_seconds};
 use super::ai_chat_self_compaction::{
     chat_text, compaction_calls_report, log_report, open_owner_sitting, reply, self_row_server_on,
 };
@@ -421,7 +421,7 @@ async fn pieced_landing_with(setup: Setup) -> PiecedLanding {
         let outcome = store
             .admit_next_maintenance(AdmitDreamerAttempt {
                 lease_owner: "compaction-check-per-chunk-test".to_owned(),
-                now: now_seconds() + 1,
+                now: vault_seconds(&server) + 1,
                 budget_id: "wake".to_owned(),
                 budget_total_units: 100_000,
                 reserve_units: 100,

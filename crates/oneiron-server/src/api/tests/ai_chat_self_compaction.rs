@@ -8,12 +8,13 @@ use std::time::Duration;
 
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
+use oneiron::store::ports::StoreClock;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
 use super::*;
 use crate::ai_host::AiHost;
-use crate::ai_host::test_support::{TEST_SECRET, eventually, models_toml, rooted_vault};
+use crate::ai_host::test_support::{TEST_SECRET, eventually, models_toml, rooted_vault_on};
 use crate::fake_llm::{FakeLlm, Reply};
 use crate::server::SyncServer;
 
@@ -21,6 +22,8 @@ use crate::server::SyncServer;
 /// cheap writer's call as the agent wears it.
 const SELF_WRITER_FRAME: &str =
     "You write this summary as the agent itself, in the first person, about your own conversation.";
+/// The served model's context in [`self_row_server`].
+pub(super) const SELF_ROW_CONTEXT_TOKENS: u64 = 32_768;
 /// A phrase only the fake's summary holds, so a later request that carries
 /// it read the landed summary.
 const SUMMARY_PHRASE: &str = "harbour-ledger-summary";
@@ -122,7 +125,7 @@ pub(super) async fn self_row_server(
     Arc<SyncServer>,
     AiHost,
 ) {
-    self_row_server_on(base_url, source, 32_768).await
+    self_row_server_on(base_url, source, SELF_ROW_CONTEXT_TOKENS).await
 }
 
 /// [`self_row_server`] with the served model's context `context_tokens`,
@@ -131,6 +134,22 @@ pub(super) async fn self_row_server_on(
     base_url: &str,
     source: oneiron::llm::SelfCompactionSource,
     context_tokens: u64,
+) -> (
+    tempfile::TempDir,
+    tempfile::TempDir,
+    Arc<SyncServer>,
+    AiHost,
+) {
+    self_row_server_clocked(base_url, source, context_tokens, StoreClock::default()).await
+}
+
+/// [`self_row_server_on`] with its vault on `store_clock`, a clock the test
+/// owns: the vault stamps and judges by its time.
+pub(super) async fn self_row_server_clocked(
+    base_url: &str,
+    source: oneiron::llm::SelfCompactionSource,
+    context_tokens: u64,
+    store_clock: StoreClock,
 ) -> (
     tempfile::TempDir,
     tempfile::TempDir,
@@ -147,7 +166,7 @@ pub(super) async fn self_row_server_on(
          context_tokens = {context_tokens}\n",
         prompts.path().display().to_string(),
     ));
-    let (dir, vault) = rooted_vault();
+    let (dir, vault) = rooted_vault_on(store_clock);
     let server = SyncServer::new(
         vault,
         SyncServerConfig {
