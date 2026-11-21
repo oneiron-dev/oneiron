@@ -15,6 +15,9 @@
 //! whose lease lapsed, and whose attempt another host leased again, changes
 //! no record.
 
+#[cfg(oneiron_test_support)]
+use std::sync::atomic::Ordering;
+
 use serde::{Deserialize, Serialize};
 
 use super::{EvalAuthoringInventory, EvalAuthoringPlan, EvalAuthoringReport};
@@ -42,6 +45,38 @@ const EXECUTIONS: SideTable<EntityId, EvalAuthoringExecution, Named> =
 
 /// Why an agent with no conferring Grant is refused.
 const NO_GRANT: &str = "no live Grant from a live owner names this agent and lists the verb";
+
+/// Arms the test-only execution-record write fault (FIX
+/// EVAL-AUTHORING-EXECUTE-UNRECORDED-END) on `vault`: the next `count` record
+/// ends and recoveries fail instead of writing, as a storage-write fault
+/// would; queue settle writes are unaffected. `0` disarms. The
+/// `eval_authoring_execution_fault` test door calls it.
+#[cfg(oneiron_test_support)]
+pub(crate) fn fail_execution_writes(vault: &Vault, count: usize) {
+    vault
+        .test_door_state
+        .failing_execution_writes
+        .store(count, Ordering::SeqCst);
+}
+
+/// Fails when the execution-record write fault is armed on `vault`,
+/// consuming one armed failure.
+#[cfg(oneiron_test_support)]
+fn fail_armed_execution_write(vault: &Vault) -> Result<()> {
+    let armed = vault
+        .test_door_state
+        .failing_execution_writes
+        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |count| {
+            count.checked_sub(1)
+        })
+        .is_ok();
+    if armed {
+        return Err(Error::Io(std::io::Error::other(
+            "the armed eval-authoring execution write fault fired",
+        )));
+    }
+    Ok(())
+}
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::skill_optimize::eval_set::authoring::executions::{
@@ -323,6 +358,8 @@ impl Vault {
     ) -> Result<Option<EvalAuthoringExecution>> {
         self.require_coach_attempt(attempt, COACH_EVAL_AUTHORING_FACET)?;
         let id = EntityId::from_bytes(*attempt.status.attempt.id.as_bytes())?;
+        #[cfg(oneiron_test_support)]
+        fail_armed_execution_write(self)?;
         self.with_write_txn_grouped(|txn| {
             require_live_lease_in_txn(self, txn, attempt)?;
             recover_in_txn(self, txn, &id, now)
@@ -371,6 +408,8 @@ impl Vault {
         end: ExecutionEnd,
         now: u64,
     ) -> Result<EvalAuthoringExecution> {
+        #[cfg(oneiron_test_support)]
+        fail_armed_execution_write(self)?;
         self.with_write_txn_grouped(|txn| {
             require_live_lease_in_txn(self, txn, attempt)?;
             let mut execution = EXECUTIONS.get(self, txn, id)?.ok_or_else(not_requested)?;

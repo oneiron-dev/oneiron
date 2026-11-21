@@ -57,8 +57,15 @@ impl Memory<'_> {
                 ],
             ));
         }
-        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
-        if type_byte == ENTITY_TYPE_PERSON && !self.acts_as_own_person() {
+        // Restriction wave 7 (C27): an agent passes to the in-transaction
+        // check, which mints a PERSON only while the owner's setting
+        // `memory.person.agent_may_mint` is on and the agent's own live Grant
+        // names this put's verb. Any other non-human class is refused here,
+        // and so is a handed-on credential, which acts as its key's holder,
+        // not the person (HANDED-ON-SLIP-PERSON).
+        if type_byte == ENTITY_TYPE_PERSON
+            && !(self.acts_as_own_person() || self.actor_class == EdgeActorClass::Agent)
+        {
             return Err(MemoryError::new(
                 MEMORY_CODE_FORBIDDEN,
                 format!(

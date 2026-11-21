@@ -14,9 +14,11 @@
 //! Shares never sum past the cap; when the board still overflows, the
 //! canonical shed order applies unchanged (ARCH-0067 §3).
 //!
-//! Applying a layout is a pure function of typed sections plus the layout:
-//! no store, cache, session or clock is read, and no rendered text is
-//! parsed. Kept rows are matched by the typed ids their producer set.
+//! Applying a layout is a pure function of typed sections, the layout and
+//! the attention rows a fold line names (the owner's
+//! `context_board.fold.attention_rows`, read by the caller): no store,
+//! cache, session or clock is read, and no rendered text is parsed. Kept
+//! rows are matched by the typed ids their producer set.
 
 use super::frame::BoardSection;
 use std::collections::BTreeMap;
@@ -29,7 +31,9 @@ pub use oneiron_verb_wire::context_board::layout::{
     SectionLayout, is_section_key,
 };
 
-/// Rows a fold summary names beside one count before it adds `+N`.
+/// Rows a fold summary names beside one count before it adds `+N`, until the
+/// owner sets `context_board.fold.attention_rows` (read by
+/// `fold_attention_rows`).
 pub const FOLD_ATTENTION_ROWS_MAX: usize = 3;
 
 /// The layout key of a section named `name`: its first word, lower case.
@@ -116,13 +120,15 @@ pub fn unfold_command(key: &str) -> String {
 /// One fold line: the section's total with its change since `baseline`
 /// (the section's counts when the fold applied), each non-zero count with
 /// its change and attention rows, the open command, then the agent's note.
-/// The renderer escapes the whole line as one leaf.
+/// The renderer escapes the whole line as one leaf. Each count names at most
+/// `attention_rows` of its rows; with 0 it shows the count alone.
 #[must_use]
 pub fn fold_line(
     key: &str,
     summary: &FoldSummary,
     fold: &SectionFold,
     baseline: Option<&FoldBaseline>,
+    attention_rows: usize,
 ) -> String {
     let mut parts = Vec::with_capacity(summary.counts.len() + 3);
     let mut head = summary.total.to_string();
@@ -141,11 +147,11 @@ pub fn fold_line(
                 part.push_str(&format!(" ({delta:+})"));
             }
         }
-        if !count.rows.is_empty() {
+        if !count.rows.is_empty() && attention_rows > 0 {
             let shown: Vec<&str> = count
                 .rows
                 .iter()
-                .take(FOLD_ATTENTION_ROWS_MAX)
+                .take(attention_rows)
                 .map(String::as_str)
                 .collect();
             part.push_str(": ");
@@ -182,12 +188,14 @@ pub struct LaidOutBoard {
 /// section renders one line beside its pinned floor and kept rows; a sized
 /// section is fitted to its share (one share across every section of one
 /// key, in order). A pinned section takes no layout. The canonical shed
-/// order still runs over the result.
+/// order still runs over the result. Each fold line names at most
+/// `attention_rows` rows beside a count ([`fold_line`]).
 #[must_use]
 pub fn apply_board_layout(
     sections: &[BoardSection],
     layout: &BoardLayout,
     cap_tok: usize,
+    attention_rows: usize,
 ) -> LaidOutBoard {
     let mut board = LaidOutBoard::default();
     if layout.sections.is_empty() {
@@ -237,9 +245,10 @@ pub fn apply_board_layout(
                         .unwrap_or(&absent)
                 })
             };
-            board
-                .sections
-                .push(section.folded(fold_line(key, &summary, fold, baseline), &fold.keep));
+            board.sections.push(section.folded(
+                fold_line(key, &summary, fold, baseline, attention_rows),
+                &fold.keep,
+            ));
             if !board.folded.iter().any(|folded| folded == key) {
                 board.folded.push(key.to_owned());
             }

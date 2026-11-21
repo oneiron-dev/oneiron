@@ -346,6 +346,7 @@ fn stranger_mark_with_m_keys(
         seen_world_edits: BTreeSet::new(),
         carrier: None,
         act: None,
+        restored_from: None,
     };
     let entry = signed(
         Some(vault_id),

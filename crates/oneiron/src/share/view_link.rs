@@ -51,7 +51,13 @@ pub(crate) fn authorize_share_link_in_txn(
         // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
         if !actor.acts_as_own_person()
             || fold.vault_root_is_conflicted()
-            || !crate::authority::actor_binding_is_active(&fold, &actor.entity_ref(), "human")
+            || !crate::authority::actor_binding_is_live_in(
+                &vault.store,
+                txn,
+                &fold,
+                &actor.entity_ref(),
+                "human",
+            )?
         {
             return Err(refused());
         }

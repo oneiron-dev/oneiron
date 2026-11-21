@@ -2,7 +2,7 @@
 //! 6.5c); HTTP, SDK and MCP reach the same typed door.
 //! Saved terminals and response checkpoints answer before fresh provider admission.
 //! An owner's step parked on its offer's health resumes on its own once the
-//! offer is back.
+//! offer is back, after a restart too on a self-host server.
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -11,7 +11,7 @@ use axum::response::Response;
 use oneiron::agent_dispatch::AgentDispatcher;
 use oneiron::llm::model_step::{
     self, ModelStepReceipt, ModelStepReceiptRequest, ModelStepResult, ModelStepSubmit,
-    ModelStepSubmitRequest, RunStepCaller,
+    ModelStepSubmitRequest, RunStepCaller, StepSubmit, StepSubmitAnswer,
 };
 use oneiron::llm::run_admission::{RunAdmission, WorkPhysical};
 use oneiron::llm::{BudgetDenied, StepSpendScope};
@@ -34,6 +34,8 @@ use crate::api::llm::RefusalCode;
 use crate::auth::CoreAuth;
 use crate::models::OfferLadder;
 use crate::server::{HeldLiveRun, SyncServer};
+
+mod decision_step;
 
 /// The run a live run's own physical step calls are admitted in, on its
 /// scope's meter or its Grant's wallet.
@@ -68,10 +70,15 @@ pub(crate) async fn ai_steps_submit(
     auth: &CoreAuth,
     session: Option<EntityId>,
     input: ModelStepSubmitRequest,
-) -> Listed<ModelStepReceipt> {
-    let (live_run, mut input) = input.into_parts();
-    let answer = match live_run {
-        None => {
+) -> Listed<StepSubmitAnswer> {
+    let Some((live_run, step)) = input.into_parts() else {
+        return listed_answer(Err(MemoryError::bad_request_with(
+            "ai.steps.submit takes a model request or a decision",
+            &["Name exactly one of request and decision."],
+        )));
+    };
+    let answer = match (live_run, step) {
+        (None, StepSubmit::Model(mut input)) => {
             let submitted = input.clone();
             let answer = submit(server, auth, &mut input).await;
             if let Ok(ModelStepReceipt {
@@ -81,11 +88,38 @@ pub(crate) async fn ai_steps_submit(
             {
                 resume_when_back(server, auth, submitted, *until);
             }
-            answer
+            answer.map(StepSubmitAnswer::from)
         }
-        Some(handle) => submit_on_run(server, auth, session, &handle, input).await,
+        (Some(handle), StepSubmit::Model(input)) => {
+            submit_on_run(server, auth, session, &handle, input)
+                .await
+                .map(StepSubmitAnswer::from)
+        }
+        // A run's typed question as a step of its own (FIX
+        // RUN-STEP-TYPED-DECISION-MODE).
+        (Some(handle), StepSubmit::Decision(input)) => {
+            decision_step::decide_on_run(server, auth, session, &handle, input).await
+        }
+        (None, StepSubmit::Decision(_)) => Err(MemoryError::bad_request_with(
+            "a decision step is a live run's own",
+            &["Name the run's live_run, or ask the question through ai.verdict."],
+        )),
     };
-    listed(answer)
+    listed_answer(answer)
+}
+
+/// [`listed`] for `ai.steps.submit`'s answer: its receipt's rows, and a
+/// decision step's typed answer kept beside the receipt.
+fn listed_answer(answer: MemoryResult<StepSubmitAnswer>) -> Listed<StepSubmitAnswer> {
+    let (receipt, decision) = match answer {
+        Ok(StepSubmitAnswer { receipt, decision }) => (Ok(receipt), decision),
+        Err(error) => (Err(error), None),
+    };
+    let (receipt, rows) = listed(receipt);
+    (
+        receipt.map(|receipt| StepSubmitAnswer { receipt, decision }),
+        rows,
+    )
 }
 
 /// How long a parked step whose offer names no end to its rest (a probation
@@ -99,10 +133,11 @@ const RESUME_POLL: Duration = Duration::from_secs(1);
 /// withdrawn meanwhile ends it, and keeps the sends the step made. A step
 /// that parks again waits again; one its owner submits meanwhile is
 /// serialized by its invocation claim. The task holds the server weakly and
-/// ends with it. A restart drops it: a later submission of the same key
-/// resumes the step. A live run's own step that parks is resumed by the
-/// run's next submission of its key: its lease, not an owner proof, admits
-/// it, and the run holds that.
+/// ends with it. A restart drops it: on a self-host server the next start
+/// resumes the step ([`resume_parked_model_steps`]), and on any other a
+/// later submission of the same key does. A live run's own step that parks
+/// is resumed by the run's next submission of its key: its lease, not an
+/// owner proof, admits it, and the run holds that.
 fn resume_when_back(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -144,6 +179,70 @@ fn resume_when_back(
             }
         }
     });
+}
+
+/// The owner's steps parked before this server started resume on their own
+/// (STEP-PARK-BOOT-RESUME), each through [`resume_when_back`], as a step
+/// parked on this server does. A self-host server holds its host root from
+/// construction, and the root acts as the vault's owner through the host
+/// action a request presenting it resolves, judged again at each resume:
+/// the caller is built from it in memory, so no stored credential and no
+/// new key proves the owner. A server that holds no root, and a hosted one,
+/// whose custodial root proves nothing, resume nothing here: the owner's
+/// next submission of the key resumes the step (STEP-PARK-HOSTED-RESUMER).
+/// A live run's parked step waits for the run's own next submission.
+pub(crate) fn resume_parked_model_steps(server: &Arc<SyncServer>) {
+    if server.vault().privacy_posture() != oneiron::HostingPrivacyPosture::SelfHostLocal {
+        return;
+    }
+    let Some(issuer) = server.host_root_issuer.as_deref() else {
+        return;
+    };
+    match parked_on_held_root(server, issuer) {
+        Ok((auth, parked)) => {
+            for step in parked {
+                resume_when_back(server, &auth, step.input, step.until);
+            }
+        }
+        Err(error) => tracing::warn!(
+            code = %error.code,
+            "parked model steps did not resume at start; a submission of each key resumes it"
+        ),
+    }
+}
+
+/// The owner's parked steps, read under the caller the host root `issuer`
+/// makes, with that caller.
+fn parked_on_held_root(
+    server: &SyncServer,
+    issuer: &oneiron::authority::HostSlipIssuer,
+) -> MemoryResult<(CoreAuth, Vec<model_step::ParkedStep>)> {
+    let auth = held_root_caller(server, issuer)?;
+    let owner = owner_proof(&auth, server, "ai.steps.submit")?;
+    let parked = model_step::parked_as_owner(server.vault(), &owner)?;
+    Ok((auth, parked))
+}
+
+/// The caller the host root `issuer` makes, in memory: the root slip this
+/// server retains, verified again now, under its own token's fingerprint,
+/// as a request presenting that root is. FIX 4744 rebuilds a resumed call's
+/// caller through the same constructor, from the root its call recorded;
+/// no call was recorded here, so the retained root is verified afresh.
+fn held_root_caller(
+    server: &SyncServer,
+    issuer: &oneiron::authority::HostSlipIssuer,
+) -> MemoryResult<CoreAuth> {
+    let vault = server.vault();
+    let verified = vault
+        .verified_host_root_slip(issuer)
+        .map_err(MemoryError::from)?;
+    let token = vault
+        .ensure_host_root_slip(issuer)
+        .and_then(|slip| slip.to_token())
+        .map_err(MemoryError::from)?;
+    let instrument = CoreAuth::token_instrument(&token);
+    CoreAuth::from_recorded_host_root(verified, instrument, &**vault)
+        .map_err(|_| internal("ai.steps.submit"))
 }
 
 async fn submit(

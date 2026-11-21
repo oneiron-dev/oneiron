@@ -24,6 +24,7 @@ impl Vault {
             read_proof: None,
             // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
             handed_on_credential: false,
+            account_key_read: false,
             phone_reads: Vec::new(),
             host_action: None,
             room_turn: None,
@@ -34,6 +35,7 @@ impl Vault {
             birth_position: Default::default(),
             owner_authorship: None,
             owner_surface: crate::authority::ActSurface::ThisInstall,
+            answers_as_owner_device: false,
             host_slip_issuer: None,
             invocation: None,
             drain_permit: None,
@@ -57,6 +59,7 @@ impl Vault {
             external_git_source_host: None,
             repo_tool_recipient: crate::origin::secret_projection::RepoToolRecipient::OFF,
             read_filter: None,
+            dispatch_attempt: None,
         }
     }
 
@@ -96,6 +99,7 @@ impl Vault {
             read_proof: None,
             // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
             handed_on_credential: false,
+            account_key_read: false,
             phone_reads: Vec::new(),
             host_action: None,
             room_turn: None,
@@ -106,6 +110,7 @@ impl Vault {
             birth_position: Default::default(),
             owner_authorship: None,
             owner_surface: crate::authority::ActSurface::ThisInstall,
+            answers_as_owner_device: false,
             host_slip_issuer: None,
             invocation: None,
             drain_permit: None,
@@ -129,6 +134,7 @@ impl Vault {
             external_git_source_host: None,
             repo_tool_recipient: crate::origin::secret_projection::RepoToolRecipient::OFF,
             read_filter: None,
+            dispatch_attempt: None,
         }
     }
 }
@@ -163,6 +169,7 @@ impl<'v> Memory<'v> {
                 read_proof: self.read_proof.clone(),
                 // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
                 handed_on_credential: self.handed_on_credential,
+                account_key_read: self.account_key_read,
                 phone_reads: self.phone_reads.clone(),
                 host_action: self.host_action.clone(),
                 room_turn: Some(ceiling),
@@ -175,6 +182,7 @@ impl<'v> Memory<'v> {
                 // in person.
                 owner_authorship: None,
                 owner_surface: crate::authority::ActSurface::ThisInstall,
+                answers_as_owner_device: false,
                 host_slip_issuer: None,
                 // The same logical verb, run inside the turn.
                 invocation: self.invocation,
@@ -201,6 +209,8 @@ impl<'v> Memory<'v> {
                 repo_tool_recipient: self.repo_tool_recipient.clone(),
                 // The caller's own filter narrows the turn's reads too.
                 read_filter: self.read_filter.clone(),
+                // The turn runs inside the same leased run.
+                dispatch_attempt: self.dispatch_attempt,
             },
         })
     }

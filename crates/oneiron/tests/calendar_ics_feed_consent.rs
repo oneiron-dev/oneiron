@@ -31,8 +31,8 @@ use oneiron::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
 use oneiron::calendar::CalendarError;
 use oneiron::calendar::claims::PREDICATE_CALENDAR_ORIGIN;
 use oneiron::calendar::ingest::feed_door::{
-    self as feed, CalendarIcsFeedConfigureRequest, CalendarIcsFeedConsent, CalendarIcsFeedRequest,
-    CalendarIcsFeedReviewDecision, CalendarIcsFeedReviewRequest, CalendarIcsPollResult,
+    self as feed, CalendarIcsFeedConsent, CalendarIcsFeedRequest, CalendarIcsFeedReviewDecision,
+    CalendarIcsFeedReviewRequest, CalendarIcsPollResult,
 };
 use oneiron::calendar::ingest::{
     ICS_PROPERTY_CONTINUATION_ATTEMPT_KIND, IcsFeedFetcher, IcsFeedPollConfig, IcsFetchResponse,
@@ -41,6 +41,7 @@ use oneiron::calendar::ingest::{
 use oneiron::calendar::passport::resolve_event_by_uid;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::Memory;
+use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
 use oneiron::test_doors::label_writers::embedded_owner;
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimSource, EdgeActorClass, EntityId, TimeRange, Vault,
@@ -94,14 +95,24 @@ impl Fixture {
             cadence_min_seconds: 300,
             cadence_max_seconds: 900,
         };
-        feed::configure(
-            &self.memory(),
-            &self.proof,
-            &CalendarIcsFeedConfigureRequest {
-                config: config.clone(),
-            },
-        )
-        .expect("install the feed");
+        // The owner installs a feed as the `calendar.ics_feed` setting, one item per system.
+        let outcome = self
+            .vault
+            .set_setting(
+                SettingCaller::Owner(&self.proof),
+                SetSetting {
+                    item: Some(system.to_owned()),
+                    ..SetSetting::vault_value(
+                        "calendar.ics_feed",
+                        serde_json::to_value(&config).expect("feed config as JSON"),
+                    )
+                },
+            )
+            .expect("install the feed");
+        assert!(
+            matches!(outcome, SetSettingOutcome::Applied { .. }),
+            "the owner's install applies: {outcome:?}"
+        );
         config
     }
 
@@ -598,10 +609,13 @@ fn another_source_under_the_feed_system_never_settles_under_its_consent() {
         .iter()
         .filter(|(_, body)| body.approval == ClaimApprovalStatus::Proposed)
         .collect();
+    // The event's 502 property claims (calendar.time_kind and the 501
+    // attendees) fill the first pass's 500 admissions; the other source's
+    // continuation admits the last two.
     assert_eq!(
         waiting.len(),
-        1,
-        "the other source's one claim waits on its own consent"
+        2,
+        "the other source's two claims wait on their own consent"
     );
     assert!(
         claims

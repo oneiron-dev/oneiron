@@ -8,8 +8,8 @@ use crate::git_wire::ids::GitRefExpectation;
 use crate::git_wire::ids::GitRefName;
 use crate::git_wire::objects::GitCommitRequest;
 use crate::git_wire::objects::GitTreeEntry;
-use crate::git_wire::record::hash_field;
 use oneiron_base::error::Result;
+use oneiron_contracts::fingerprint::LegacyDigest;
 
 /// A reference to an object a plan will publish: either one already in the
 /// store, or the output of an earlier step of the same plan.
@@ -27,19 +27,20 @@ pub struct PlannedPublication {
     pub next: Option<GitWirePlannedOid>,
 }
 
-pub fn hash_publication_target(hasher: &mut blake3::Hasher, publication: &PlannedPublication) {
-    match &publication.expected {
-        GitRefExpectation::Absent => hash_field(hasher, b"absent"),
-        GitRefExpectation::Value(oid) => hash_field(hasher, oid.as_str().as_bytes()),
-        GitRefExpectation::Any => hash_field(hasher, b"any"),
-    }
-    match publication.next {
-        Some(GitWirePlannedOid::Written(index)) => {
-            hash_field(hasher, format!("written:{index}").as_bytes());
-        }
-        Some(GitWirePlannedOid::Existing(index)) => {
-            hash_field(hasher, format!("existing:{index}").as_bytes());
-        }
-        None => hash_field(hasher, b"delete"),
+/// A publication's expectation and target, into a plan hash: each framed by
+/// its length as a u32 big-endian (`purposes::git_wire::PLAN_HASH`).
+pub fn hash_publication_target(digest: &mut LegacyDigest, publication: &PlannedPublication) {
+    let expected = match &publication.expected {
+        GitRefExpectation::Absent => b"absent".as_slice(),
+        GitRefExpectation::Value(oid) => oid.as_str().as_bytes(),
+        GitRefExpectation::Any => b"any".as_slice(),
+    };
+    let target = match publication.next {
+        Some(GitWirePlannedOid::Written(index)) => format!("written:{index}"),
+        Some(GitWirePlannedOid::Existing(index)) => format!("existing:{index}"),
+        None => "delete".to_owned(),
+    };
+    for field in [expected, target.as_bytes()] {
+        digest.len_u32_be_saturating(field.len()).raw(field);
     }
 }

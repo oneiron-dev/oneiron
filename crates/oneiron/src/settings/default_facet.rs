@@ -12,14 +12,16 @@
 //!
 //! [`PREDICATE_VAULT_DEFAULT_FACET`]: crate::claim::PREDICATE_VAULT_DEFAULT_FACET
 
+use oneiron_authority::authority::Direction;
 use serde::{Deserialize, Serialize};
 
-use crate::authority::ActSurface;
+use crate::authority::{ActSurface, OwnerProofGround};
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::error::Result;
 use crate::memory::{Memory, MemoryResult};
 use crate::policy_setting_doors::{PolicySetting, record_policy_setting_act_in_txn};
+use crate::world_keys::{OwnerActImportance, owner_presence_reasons};
 use crate::{EntityId, TimeRange, Vault, WriteActor};
 
 /// The read verb's name, as a refusal names it.
@@ -35,6 +37,29 @@ const SET_VERB: &str = "vault.settings.default_facet.set";
 pub struct DefaultFacet {
     /// The FACET a write with no active mask is born under, as 32 hex.
     pub facet: EntityId,
+}
+
+impl DefaultFacet {
+    /// The facet in force again narrows because nothing changes.
+    /// Another facet widens because facets have no order and a different
+    /// default can widen who reads new writes.
+    #[must_use]
+    pub(crate) fn direction_from(self, standing: Self) -> Direction {
+        if self == standing {
+            Direction::Narrows
+        } else {
+            Direction::Widens
+        }
+    }
+}
+
+/// What [`Vault::set_default_facet_as_owner`]'s checks establish before its
+/// first write, on one snapshot: the owner, the default in force, and the
+/// importance the act asks with.
+struct DefaultFacetChecks {
+    actor: EntityId,
+    prior: DefaultFacet,
+    importance: OwnerActImportance,
 }
 
 impl Vault {
@@ -57,23 +82,60 @@ impl Vault {
     /// claim, superseding the one it replaces, and records the owner's act
     /// with the facet it replaces, in the same commit when `surface` names
     /// where the owner said so. The facet in force again writes and records
-    /// nothing. Answers the default as it now reads.
+    /// nothing. Answers the default as it now reads. When `surface` names an act,
+    /// the door checks on a read before it asks. Changing the facet is important.
+    /// The write derives importance again and answers
+    /// [`Error::ConcurrentWrite`](crate::error::Error::ConcurrentWrite) when
+    /// the act became more important since the person was asked.
     ///
     /// # Errors
     ///
     /// An id that is not a stored FACET (`InvalidFacet`), a proof that no
     /// longer holds, and storage errors.
+    /// [`Error::ConcurrentWrite`](crate::error::Error::ConcurrentWrite) if
+    /// importance rises after the presence check.
     pub fn set_default_facet_as_owner(
         &self,
         owner: &AuthenticatedOwner,
         surface: Option<ActSurface>,
         setting: DefaultFacet,
     ) -> Result<DefaultFacet> {
-        self.with_write_txn_grouped(|txn| {
-            let actor = owner.revalidate_in_txn(self, txn)?;
-            let prior = DefaultFacet {
-                facet: self.default_facet_in_txn(txn)?,
+        self.set_default_facet_as_owner_between(owner, surface, setting, || {})
+    }
+
+    /// [`Self::set_default_facet_as_owner`], with `between` run after the
+    /// door asked and before its write opens: the gap in which another writer
+    /// can commit first (the test door `test_doors::policy_doors_between`).
+    pub(crate) fn set_default_facet_as_owner_between(
+        &self,
+        owner: &AuthenticatedOwner,
+        surface: Option<ActSurface>,
+        setting: DefaultFacet,
+        between: impl FnOnce(),
+    ) -> Result<DefaultFacet> {
+        // A surface names an act. The read checks it and drops before the
+        // door asks. With no surface the door goes straight to its write.
+        let ground = if surface.is_some() {
+            let importance = {
+                let txn = self.store.env.read_txn()?;
+                self.default_facet_checks_in_txn(&txn, owner, setting)?
+                    .importance
             };
+            let witness = self.owner_presence(importance, owner_presence_reasons::DEFAULT_FACET)?;
+            Some(OwnerProofGround::witnessed(&witness))
+        } else {
+            None
+        };
+        between();
+        self.with_write_txn_grouped(|txn| {
+            let DefaultFacetChecks {
+                actor,
+                prior,
+                importance,
+            } = self.default_facet_checks_in_txn(txn, owner, setting)?;
+            if let Some(ground) = &ground {
+                ground.refuse_risen_importance(importance)?;
+            }
             if setting != prior {
                 let claim = self.store.clock.entity_id()?;
                 let now = self.store.clock.now_recorded_at();
@@ -99,10 +161,40 @@ impl Vault {
                 )?;
                 // The signed record goes last, best effort (FIX 4624).
                 if let Some(act) = signed {
-                    self.record_policy_setting_op_in_txn(txn, act);
+                    self.record_policy_setting_op_in_txn(txn, ground.as_ref(), act);
                 }
             }
             Ok(setting)
+        })
+    }
+
+    /// Every check [`Self::set_default_facet_as_owner`] makes before its
+    /// first write, in the order the write makes them, with the importance
+    /// the act asks with: for another facet than the one in force, the two
+    /// refusals the default's own writer gives before it writes. It runs on
+    /// a read before the door asks and again in the write, so a refusal
+    /// raises no prompt.
+    fn default_facet_checks_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        owner: &AuthenticatedOwner,
+        setting: DefaultFacet,
+    ) -> Result<DefaultFacetChecks> {
+        let actor = owner.revalidate_in_txn(self, txn)?;
+        let prior = DefaultFacet {
+            facet: self.default_facet_in_txn(txn)?,
+        };
+        if setting != prior {
+            self.validate_default_facet_in_txn(
+                txn,
+                WriteActor::new(actor, EdgeActorClass::Human),
+                setting.facet,
+            )?;
+        }
+        Ok(DefaultFacetChecks {
+            actor,
+            prior,
+            importance: OwnerActImportance::of_direction(setting.direction_from(prior)),
         })
     }
 }

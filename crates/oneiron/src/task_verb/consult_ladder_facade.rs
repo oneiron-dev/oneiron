@@ -37,7 +37,9 @@ use super::wire_encode::{canonical_bytes, encode_task_verb_body};
 
 mod consent_ask;
 mod finish;
-pub(super) use self::consent_ask::case_ask_anchor;
+pub(crate) use self::consent_ask::case_ask_anchor;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::consent_ask::case_intent;
 
 impl Memory<'_> {
     /// Registers the DISPLAY handle for one peer actor. Board projections
@@ -140,6 +142,7 @@ impl Memory<'_> {
                         assigned_ref: None,
                         actor_generation: None,
                         assigned_generation: None,
+                        answered_heads: None,
                         occurred_at: interrupted.interrupted_at,
                     },
                 )?;

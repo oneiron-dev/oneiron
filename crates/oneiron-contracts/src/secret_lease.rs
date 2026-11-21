@@ -33,3 +33,20 @@ impl SecretLeaseStatus {
         }
     }
 }
+
+impl crate::lifecycle::Lifecycle for SecretLeaseStatus {
+    type Kind = Self;
+
+    fn kind(&self) -> Self::Kind {
+        *self
+    }
+
+    fn next_kinds(kind: Self::Kind) -> &'static [Self::Kind] {
+        match kind {
+            // An active lease expires past its time or is revoked.
+            Self::Active => &[Self::Expired, Self::Revoked],
+            Self::Expired => &[Self::Revoked],
+            Self::Revoked => &[],
+        }
+    }
+}

@@ -92,7 +92,7 @@ impl Memory<'_> {
         if !self.has_task_work_turn() {
             return self.task_work_memory().tasks_create(spec);
         }
-        if spec.brief.is_some() || spec.intent_key.is_some() {
+        if spec.brief.is_some() || spec.intent_key.is_some() || spec.one_liner.is_some() {
             return self.post_create_spec(spec);
         }
         self.tasks_create_with_engine_rate_limit(spec, TaskCreateRateLimit::default())
@@ -250,6 +250,7 @@ impl Memory<'_> {
                     assigned_ref: validated.assignee.and_then(TaskAssignee::entity_ref),
                     actor_generation: None,
                     assigned_generation: None,
+                    answered_heads: None,
                     occurred_at: now,
                 },
             )?;
@@ -442,6 +443,7 @@ impl Memory<'_> {
                 assigned_ref: None,
                 actor_generation: None,
                 assigned_generation: None,
+                answered_heads: None,
                 occurred_at: now,
             },
         )?;
@@ -469,6 +471,7 @@ impl Memory<'_> {
                     assigned_ref: assignee,
                     actor_generation,
                     assigned_generation,
+                    answered_heads: None,
                     occurred_at: now,
                 },
             )?;

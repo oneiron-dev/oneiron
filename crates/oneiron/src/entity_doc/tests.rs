@@ -4,6 +4,7 @@ use super::*;
 use crate::consent::{ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, GrantBound};
 use crate::edge::EdgeActorClass;
 use crate::error::{ArtifactError, Error, Result};
+use crate::provenance::ActorStamp;
 use crate::registry::ENTITY_TYPE_ASSET;
 use crate::store::GateDecisionId;
 use crate::temporal::TimeRange;
@@ -92,7 +93,7 @@ fn edit_request(
 fn birth_and_actor_timestamp_survive_snapshot_and_edits() -> Result<()> {
     // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
     let actor = WriteActor::new(EntityId::now(), EdgeActorClass::Human);
-    let stamp = crate::write_envelope::provenance::ActorStamp {
+    let stamp = ActorStamp {
         token: EntityId::now(),
         class: EdgeActorClass::Human,
     };
@@ -109,7 +110,7 @@ fn birth_and_actor_timestamp_survive_snapshot_and_edits() -> Result<()> {
         reopened.birth(),
         &Birth {
             entity: id.to_hex(),
-            actor: actor.entity_ref().to_hex(),
+            actor: DocActor::Actor(stamp.token),
             at: 123
         }
     );
@@ -155,7 +156,7 @@ fn bounded_registry_evicts_and_reopens_without_rewriting_the_record() -> Result<
     assert_eq!(changes[0].timestamp, 7);
     assert_eq!(
         vault.entity_text_birth(&ids[0])?.actor,
-        writer.entity_ref().to_hex()
+        DocActor::Actor(writer.entity_ref())
     );
     // Existing read APIs expose a view; raw bytes remain a pointer.
     assert_eq!(vault.get(&ids[0])?.expect("view"), b"alpha edited");
@@ -308,7 +309,7 @@ fn timeout_retains_every_output_byte_in_attributed_durable_rewrite() -> Result<(
     let row = vault.entity_text_fork(&fork)?.expect("durable row");
     assert_eq!(row.proposal, proposal.to_hex());
     assert_eq!(row.base, request.base);
-    assert_eq!(row.actor, writer.entity_ref().to_hex());
+    assert_eq!(row.actor, DocActor::Actor(writer.entity_ref()));
     assert!(row.rewrite);
     drop(vault);
     let reopened = Vault::open(dir.path(), config)?;
@@ -658,6 +659,7 @@ fn text_migration_refuses_maintenance_and_semantic_records_atomically() -> Resul
                 entry.type_byte,
                 TimeRange { start: 7, end: 7 },
                 9,
+                0,
                 &body,
             );
             vault.with_write_txn(|txn| {
@@ -722,9 +724,12 @@ fn a_lent_blob_resolves_a_migrated_body_as_a_read_does() -> Result<()> {
         &DocAuthorization::Owner(&owner),
     )?;
     let lent = vault
-        .lend_blob_artifact_version(&artifact, version.version, |_, bytes| {
-            bytes.verified().map(std::borrow::Cow::into_owned)
-        })?
+        .lend_blob_artifact_version(
+            &artifact,
+            version.version,
+            crate::file_secret_marks::SecretSight::Owner,
+            |_, bytes| bytes.verified().map(std::borrow::Cow::into_owned),
+        )?
         .expect("the version is live")?;
     assert_eq!(lent, b"plain text body");
     Ok(())
@@ -735,10 +740,9 @@ fn a_lent_blob_resolves_a_migrated_body_as_a_read_does() -> Result<()> {
 /// a document through the same persist door, so an artifact holding one still restores.
 #[test]
 fn a_document_past_the_text_ceiling_is_written_and_left_out_of_search() -> Result<()> {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::config::VaultConfig {
-        map_size: 64 * 1024 * 1024,
-        ..crate::test_util::embedding_test_config()
-    });
+    let mut config = crate::test_util::embedding_test_config();
+    config.map_size = 64 * 1024 * 1024;
+    let (_dir, vault) = crate::test_util::open_test_vault_with(config);
     let (actor, owner) = actor(&vault)?;
     let id = entity(&vault, actor, &owner, "lantern harbor")?;
     let found = |term: &str| -> Result<bool> {

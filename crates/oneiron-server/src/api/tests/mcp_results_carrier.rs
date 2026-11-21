@@ -284,20 +284,41 @@ async fn discovery_states_the_registered_mcp_surfaces_and_their_endpoints() {
         "a tool one endpoint registers is not advertised on the other",
     );
 
-    // `execute_code` is registered on neither endpoint without a host, so no
-    // endpoint token names it.
+    // The host's durable `execute_code` tool is registered on neither
+    // endpoint without a host. The primary endpoint names no `execute_code`
+    // at all; on tool-first the name is the generated foreign-code verb
+    // (DOOR-070, #3044), and a verified host's tool never displaces it.
     for mode in crate::mcp::McpSurfaceMode::ALL {
-        assert!(
-            crate::mcp::registered_surface(mode)
-                .resolve(crate::mcp::MCP_EXECUTE_CODE_TOOL)
-                .is_none(),
-        );
-        assert!(!capabilities.contains(&format!(
+        let resolved =
+            crate::mcp::registered_surface(mode).resolve(crate::mcp::MCP_EXECUTE_CODE_TOOL);
+        let advertised = capabilities.contains(&format!(
             "{MCP_ENDPOINT_CAPABILITY_PREFIX}{mode}.{tool}",
             mode = mode.as_str(),
             tool = crate::mcp::MCP_EXECUTE_CODE_TOOL,
-        )));
+        ));
+        match mode {
+            crate::mcp::McpSurfaceMode::Primary => {
+                assert_eq!(resolved, None);
+                assert!(!advertised, "the primary endpoint names no execute_code");
+            }
+            crate::mcp::McpSurfaceMode::ToolFirst => {
+                assert!(
+                    matches!(resolved, Some(crate::mcp::McpEndpointTool::Verb(_))),
+                    "tool-first execute_code is the generated verb: {resolved:?}",
+                );
+                assert!(advertised, "tool-first advertises its execute_code verb");
+            }
+        }
     }
+    let hosted_tool_first = crate::mcp::try_registered_surface_with_execution(
+        crate::mcp::McpSurfaceMode::ToolFirst,
+        true,
+    )
+    .expect("the hosted tool-first surface registers");
+    assert!(matches!(
+        hosted_tool_first.resolve(crate::mcp::MCP_EXECUTE_CODE_TOOL),
+        Some(crate::mcp::McpEndpointTool::Verb(_))
+    ));
 
     // Discovery stays deterministic: the same registrations, the same bytes.
     assert_eq!(

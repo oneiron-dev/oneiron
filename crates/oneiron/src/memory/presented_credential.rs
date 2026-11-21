@@ -56,6 +56,14 @@ impl Memory<'_> {
         txn: &heed::RoTxn<'_>,
     ) -> super::MemoryResult<()> {
         super::verify_deletion_authority_in_txn(self.vault, txn, self.actor, self.actor_class)?;
+        self.refuse_handed_on_owner_deletion()
+    }
+
+    /// The refusal [`Self::verify_own_deletion_authority_in`] adds to the
+    /// owner's deletion authority: a handed-on credential deletes as no
+    /// owner, also where the door judges its own person's delete
+    /// (`super::verify_own_person_deletion_authority_in_txn`).
+    pub(crate) fn refuse_handed_on_owner_deletion(&self) -> super::MemoryResult<()> {
         if self.acts_as_own_person() {
             return Ok(());
         }

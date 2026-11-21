@@ -723,7 +723,9 @@ impl Vault {
         births: &[(EntityId, RowBirth)],
     ) -> Result<()> {
         for (row, birth) in births {
-            crate::provenance::birth::stamp_birth_if_absent_in_txn(&self.store, txn, row, birth)?;
+            crate::provenance::birth::stamp_birth_with_floor_if_absent_in_txn(
+                self, txn, row, birth,
+            )?;
         }
         Ok(())
     }

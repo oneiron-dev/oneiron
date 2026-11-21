@@ -133,7 +133,7 @@ pub(crate) async fn vault_federation_burst_disposition(
         move |server, owner| {
             Ok(server.vault().federation_burst_disposition_as_owner(
                 owner,
-                &input.peer.authorize(server.vault())?,
+                BurstPeer::Federated(&input.peer.authorize(server.vault())?),
                 &input.batch_ref,
             )?)
         },

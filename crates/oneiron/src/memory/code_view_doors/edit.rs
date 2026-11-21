@@ -34,7 +34,8 @@ use crate::memory::repo_doors::refusal_error;
 const MASKED_COPY: &str =
     "this view holds a masked copy of the file; edit it in a view of the stored text";
 
-/// Who calls the view edit door, as its host bound it.
+/// Who calls a view editor's door (`vault.code.views.edit`, and the view's
+/// reads `.get` and `.read`, VIEW-BOUND-READ = A), as its host bound it.
 #[derive(Debug, Clone)]
 pub enum CodeViewEditProof {
     /// A live Owner's proof, naming this handle's own human actor: he edits
@@ -63,7 +64,7 @@ struct Edited {
 }
 
 impl Memory<'_> {
-    /// An embedded handle's view edit caller: the vault owner's proof when
+    /// An embedded handle's view editor: the vault owner's proof when
     /// the handle is the embedded owner's, else the handle's own actor.
     pub fn code_view_edit_proof(&self, verb: &str) -> CodeViewEditProof {
         self.embedded_owner(verb)

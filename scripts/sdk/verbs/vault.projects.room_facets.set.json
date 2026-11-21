@@ -1,0 +1,17 @@
+{
+  "name": "vault.projects.room_facets.set",
+  "description": "The owner sets or drops the facets a project's home room reads through: the set holds the project's own facet and reads none its parents' rooms do not. Only the host's own door signs it.",
+  "input": "crate::workspace_roster::ProjectRoomFacetsSetRequest",
+  "output": "crate::workspace_roster::ProjectRoomFacetsState",
+  "call": "memory.projects_set_room_facets(&input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "unstated",
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false,
+  "host_door_proof": "owner"
+}

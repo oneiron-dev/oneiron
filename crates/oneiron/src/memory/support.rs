@@ -58,6 +58,11 @@ pub struct Memory<'v> {
     /// ([`Self::acts_as_own_person`]); its reads still land
     /// ([`Self::reads_as_vault_owner_in_txn`]).
     pub(super) handed_on_credential: bool,
+    /// The host verified an account API key that names this handle's actor,
+    /// a person, and grants `core:read` (OF-448; the lead's ruling
+    /// DEL2-ROOTLESS-MEMBER-KEY-READ = B, 21 Nov): with no proof bound, its
+    /// reads take that key's read Scope ([`crate::Vault::account_key_read_key`]).
+    pub(super) account_key_read: bool,
     /// Original call-bound read keys. Each identity read conjoins their
     /// frozen ceilings and must still carry the same verified credential.
     pub(super) phone_reads: Vec<crate::claim::ScopedReadActorKey>,
@@ -87,6 +92,9 @@ pub struct Memory<'v> {
     /// it (`with_owner_surface`): the audit record of an owner act this
     /// surface makes, never authority (FIX 4650).
     pub(super) owner_surface: crate::authority::ActSurface,
+    /// Whether this surface answers asks as this install's owner device
+    /// (`answering_as_owner_device`, UC-05 PR 2b).
+    pub(super) answers_as_owner_device: bool,
     /// The host's own slip issuer, when a host bound it
     /// (`with_host_slip_issuer`, FIX 3875).
     pub(super) host_slip_issuer: Option<&'v crate::authority::HostSlipIssuer>,
@@ -174,6 +182,10 @@ pub struct Memory<'v> {
     /// (FIX 3977, [`Memory::with_read_filter`]): a request, never
     /// authority. Every read lane the handle opens meets it.
     pub(super) read_filter: Option<crate::gate::RetrievalFilter>,
+    /// The leased agent attempt whose run makes this handle's calls, when a
+    /// host bound one ([`Memory::with_dispatch_attempt`], census L9-37):
+    /// telemetry context its graph_fs mount reads log, never authority.
+    pub(super) dispatch_attempt: Option<crate::attempt_queue::AttemptId>,
 }
 
 /// Actual transport metadata from a host's request or socket upgrade.

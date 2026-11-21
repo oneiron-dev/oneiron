@@ -12,6 +12,7 @@ mod keys;
 mod mirror;
 mod placement;
 mod record;
+pub(crate) mod sources;
 mod store;
 
 pub use self::codec::{

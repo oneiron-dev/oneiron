@@ -10,16 +10,17 @@ use oneiron_browser::{
 use super::admission::{ProgramAdmissionFiling, note_filed_in_txn};
 use super::evidence::{WORKFLOW_FILING_PREDICATE, WorkflowFiling};
 use super::index::{index_failure_in_txn, index_filing_in_txn, index_retire_in_txn, record_group};
+use super::setting_keys::drift_misses_in_txn;
 #[cfg(doc)]
 use super::type_filter;
 use super::{
     DRIFT_REASON, FiledScope, Filing, LibraryActor, RETIRE_FILER_ONLY, RETIRED, RecentOutcome,
-    Retired, RetiredWorkflow, STRICT_MISSES_BEFORE_DRIFT, WORKFLOWS, WORKFLOWS_BY_ID,
-    WorkflowRecord, WorkflowResolution, WorkflowSite, push_recent, strict_misses_after,
-    superseded_by, superseded_reason,
+    Retired, RetiredWorkflow, WORKFLOWS, WORKFLOWS_BY_ID, WorkflowRecord, WorkflowResolution,
+    WorkflowSite, push_recent, strict_misses_after, superseded_by, superseded_reason,
 };
 use crate::Vault;
-use crate::batch::secret_scan::{admitted_from, named_tree};
+use crate::batch::secret_scan::{admitted_from_known, named_tree};
+use crate::code_run::CompareKnown;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::learning::TypeRef;
@@ -203,11 +204,17 @@ pub fn file_workflow(
 ) -> Result<Filing> {
     let same = serde_json::to_value(program).ok();
     // A filed program holds handles where this one may hold the secrets the
-    // side-row wall lifted (OF-067); it is still the same program.
+    // side-row wall lifted (OF-067), or the values base custody holds, read
+    // once a plan without them misses (FIX
+    // REPLAY-COMPARE-KNOWN-OTHER-CALLERS); it is still the same program.
+    let base_known = || vault.known_values_now();
+    let known = CompareKnown::new(Some(&base_known));
     let mut filed = None;
     for record in site_workflows(vault, site, None, None)? {
         if serde_json::to_value(&record.program).ok() == same
-            || admitted_from(&named_tree(&record.program)?, &named_tree(program)?)?
+            || admitted_from_known(&named_tree(&record.program)?, &named_tree(program)?, || {
+                known.get()
+            })?
         {
             filed = Some(record);
             break;
@@ -359,7 +366,8 @@ fn anchor_filing_in_txn(
 /// Counts one library run of `id` from `by`'s call at `at`: whether it met
 /// its postcondition, among its lineage's recent outcomes too, and its
 /// strict misses in a row ([`strict_misses_after`]). The run that brings
-/// them to [`STRICT_MISSES_BEFORE_DRIFT`] retires the program
+/// them to the owner's `browser.library.drift_misses` count (default
+/// [`super::STRICT_MISSES_BEFORE_DRIFT`]) retires the program
 /// [`DRIFT_REASON`] at `by`'s word, in the same write. A program no longer
 /// filed counts nothing.
 ///
@@ -394,7 +402,7 @@ pub fn record_workflow_run(
         push_recent(&mut record.recent, recent, at);
         record.last_run_at = Some(at);
         record.strict_misses = strict_misses_after(record.strict_misses, outcome);
-        if record.strict_misses >= STRICT_MISSES_BEFORE_DRIFT {
+        if record.strict_misses >= drift_misses_in_txn(vault, wtxn)? {
             retire_in_txn(vault, wtxn, record, by, Some(DRIFT_REASON), at)?;
             return Ok(());
         }

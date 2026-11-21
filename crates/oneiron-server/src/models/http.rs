@@ -19,11 +19,32 @@ use crate::config::models::{ProviderConfig, RequestCodec, RequestCompression};
 mod client;
 mod never_sent;
 mod reply_line;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod socket;
 
 pub(super) use reply_line::{
     ReplyBytes, charge_read, holding_chat_replies, holding_replies, read_broker_booked,
 };
 use reply_line::{read_booked, read_whole};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(super) use socket::{get_within_on, post_json_on};
+
+/// The headers each exchange on a managed worker's own Unix socket carries
+/// (L9-15): its provider's `headers` and, for a `key_env` key, its bearer
+/// credential, as [`ProviderHttp`] sends them on the provider's base URL (a
+/// llama-server started with that key answers 401 to a request without it).
+/// They leave only on a connection already checked against the launch's
+/// supervised child.
+#[derive(Clone, Default)]
+pub(super) struct SocketHeaders(reqwest::header::HeaderMap);
+
+impl SocketHeaders {
+    /// `provider`'s. A configured `key_env` that is unset or empty is a
+    /// refusal, as it is for the provider's HTTP client.
+    pub(super) fn new(provider: &ProviderConfig) -> anyhow::Result<Self> {
+        client::provider_headers(provider, KeyStyle::Bearer).map(Self)
+    }
+}
 
 /// The smallest request body worth compressing (ARCH-0081 §6).
 const MIN_COMPRESSED_BYTES: usize = 16 * 1024;
@@ -105,42 +126,13 @@ pub(super) struct BytesReply {
     pub(super) held: ReplyBytes,
 }
 
-/// A media exchange whose answer is taken as it arrives
-/// ([`ProviderHttp::send_media_streamed`]).
-pub(super) enum StreamedReply {
-    /// A 2xx answer, its body still to read.
-    Body(MediaStream),
-    /// Any other status, its body read whole on the media-reply line, for
-    /// the caller to classify.
-    Refused(BytesReply),
-}
-
-/// A 2xx media reply's body, taken a chunk at a time as it arrives and never
-/// held whole here (FIX 6122).
-pub(super) struct MediaStream(reqwest::Response);
-
-impl MediaStream {
-    /// The body's next bytes as they arrive; `None` at its end.
-    pub(super) async fn chunk(&mut self) -> Result<Option<Vec<u8>>, HttpFailure> {
-        Ok(self.0.chunk().await?.map(Vec::from))
-    }
-}
-
 /// What one media exchange sends.
 pub(super) enum MediaSend {
     Get,
     Delete,
     Json(JsonValue),
     Multipart(reqwest::multipart::Form),
-    /// A framed binary body (`application/octet-stream`) carrying an upload
-    /// its admission allowed for one request (FIX 9517): a refused
-    /// compressed body's plain resend asks it again and goes only while it
-    /// still allows the upload.
-    Octets(Vec<u8>, UploadAdmission),
 }
-
-/// Asked right before an upload goes again: `false` sends nothing more.
-pub(super) type UploadAdmission = Arc<dyn Fn() -> bool + Send + Sync>;
 
 /// A finished, non-streamed exchange.
 pub(super) struct JsonReply {

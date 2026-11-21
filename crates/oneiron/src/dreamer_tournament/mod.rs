@@ -45,3 +45,6 @@ use crate::error::Result;
 use crate::temporal::TimeRange;
 #[cfg(test)]
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope};
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::evidence::tournament_evidence_key_pin_for_test;

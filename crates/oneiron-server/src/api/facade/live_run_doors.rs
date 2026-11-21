@@ -319,6 +319,11 @@ where
         if let Some(issuer) = server.host_issuer() {
             dispatcher = dispatcher.with_slip_issuer(issuer);
         }
+        // The host's auto checker reviews the run's claim put as it reviews
+        // a Dreamer write (FIX LIVE-RUN-CHECKER-INJECT).
+        if let Some(checker) = server.decision_host().auto_checker() {
+            dispatcher = dispatcher.with_auto_checker(checker);
+        }
         call(dispatcher)
     })
     .await

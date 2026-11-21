@@ -162,7 +162,10 @@ fn bind_isolated_lane(
     if tier == SandboxGuestTier::FirstPartyDreamer {
         return Ok(());
     }
-    runtime.bind_sandbox_backends(vault.runtime().sandbox_backends());
+    runtime.bind_sandbox_backends(
+        vault.runtime().sandbox_backends(),
+        vault.sandbox_provider()?,
+    );
     runtime.bind_foreign_egress(std::sync::Arc::new(
         crate::code_sandbox::egress::OpenEgressProxy::new(
             std::sync::Arc::clone(vault),

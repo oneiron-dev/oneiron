@@ -47,7 +47,7 @@ fn resolve(
 ) -> anyhow::Result<crate::config::ServeConfig> {
     let dir = tempfile::tempdir().expect("dir");
     let path = dir.path().join("oneiron.toml");
-    std::fs::write(&path, file).expect("write config");
+    crate::owner_only_file::write_owner_only_file(&path, file).expect("write config");
     resolve_serve_config_with_sources(
         &ServeArgs {
             config: Some(path),
@@ -206,7 +206,7 @@ fn a_zero_first_retry_delay_is_refused() {
     )
     .expect_err("a zero first retry delay");
     assert!(
-        refused.to_string().contains("retry_backoff_secs"),
+        format!("{refused:#}").contains("retry_backoff_secs"),
         "{refused}"
     );
     let section = resolve(

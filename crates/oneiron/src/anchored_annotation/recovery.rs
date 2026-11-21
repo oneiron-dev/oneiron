@@ -447,6 +447,7 @@ impl Vault {
         Ok(TextLimits {
             package: self.docedit_package_limits_in_txn(txn)?,
             docx: self.docx_archive_limits_in_txn(txn, None)?,
+            max_offers: super::setting_keys::reattach_max_offers_in_txn(self, txn)?,
         })
     }
 

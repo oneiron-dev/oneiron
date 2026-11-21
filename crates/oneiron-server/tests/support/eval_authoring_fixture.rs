@@ -93,11 +93,13 @@ pub(crate) fn answer_without_plan() -> Reply {
     Reply::text("There is nothing I can decide for this inventory.")
 }
 
-fn models_text(base_url: &str) -> String {
+/// The models config: the local fake as the default seat, then `extra`
+/// (more tables, such as a decision rung's seat).
+fn models_text(base_url: &str, extra: &str) -> String {
     format!(
         "default = \"local:test-model\"\nextraction_egress = true\n\
          [dreamer]\nenabled = false\n[workflows]\nenabled = false\n\
-         [providers.local]\nkind = \"local-openai-compat\"\nbase_url = \"{base_url}\"\n"
+         [providers.local]\nkind = \"local-openai-compat\"\nbase_url = \"{base_url}\"\n{extra}"
     )
 }
 
@@ -232,6 +234,16 @@ impl Fixture {
         script: Vec<Reply>,
         fallback: Option<Reply>,
     ) -> Self {
+        Self::with_models(clock, script, fallback, "").await
+    }
+
+    /// [`Self::new`], with `models` appended to the models config.
+    pub(crate) async fn with_models(
+        clock: Option<Arc<ManualClock>>,
+        script: Vec<Reply>,
+        fallback: Option<Reply>,
+        models: &str,
+    ) -> Self {
         let model = FakeLlm::start(script, fallback).await;
         let dir = tempfile::tempdir().expect("temporary vault directory");
         let mut config = VaultConfig::device();
@@ -259,8 +271,8 @@ impl Fixture {
             .expect("this install's live machine profile");
         install_eval_authoring_recipe(&vault);
         add_unheld_sealed_case(&vault);
-        let models =
-            ModelsConfig::from_toml(&models_text(&model.base_url), None).expect("models config");
+        let models = ModelsConfig::from_toml(&models_text(&model.base_url, models), None)
+            .expect("models config");
         let (server, host) = AiHost::attach(server, Some(&models)).await;
         let server = Arc::new(server);
         let app = build_app(Arc::clone(&server));

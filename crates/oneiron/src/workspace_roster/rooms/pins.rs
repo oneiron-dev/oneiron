@@ -11,6 +11,13 @@
 //! lives on the room body and changes only through these doors
 //! ([`crate::conversation::PIN_UPDATES`]). A pin moves its target into the
 //! PINNED tier of the boards that work in the room; it grants no read.
+//!
+//! An unpin keeps the records it removed beside the list
+//! (ROOM-PINS-LWW-MERGE; RULED ROOM-PIN-CONCURRENT-UNPIN = A, add-wins): a
+//! vault's machines merge their copies of a room record by record
+//! ([`crate::store::conversation_body::merge_room_pins`]), so an unpin
+//! removes only the records it saw and a pin another machine made meanwhile
+//! stays.
 use super::*;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::conversation::{ConversationBody, PIN_UPDATES, RoomPin, RoomPinPolicy, RoomRole};
@@ -73,6 +80,21 @@ impl PinnedBody {
         }
     }
 
+    /// The pin records an unpin removed, which a merge never brings back.
+    fn unpinned(&self) -> &[RoomPin] {
+        match self {
+            Self::Room(body) => &body.unpinned,
+            Self::Home(body) => &body.unpinned,
+        }
+    }
+
+    fn unpinned_mut(&mut self) -> &mut Vec<RoomPin> {
+        match self {
+            Self::Room(body) => &mut body.unpinned,
+            Self::Home(body) => &mut body.unpinned,
+        }
+    }
+
     fn policy(&self) -> RoomPinPolicy {
         match self {
             Self::Room(body) => body.pin_policy,
@@ -100,46 +122,62 @@ impl PinnedBody {
         let bytes = match self {
             Self::Room(body) => body.to_bytes()?,
             Self::Home(body) => {
-                crate::store::conversation_body::validate_room_pins(&body.pins)?;
+                crate::store::conversation_body::validate_room_pins(&body.pins, &body.unpinned)?;
                 crate::store::conversation_body::encode(body)?
             }
         };
-        let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &room)?
-            .ok_or(Error::EntityNotFound)?;
-        if raw.len() < ENTITY_METADATA_HEADER_LEN {
-            return Err(Error::CorruptedIndex("conversation header"));
-        }
-        let header = EntityMetadataHeader::parse(&raw)
-            .ok_or(Error::CorruptedIndex("conversation header"))?;
         PIN_UPDATES.put(&vault.store, txn, &room, &[1])?;
-        vault
-            .batch_in()
-            .put(
-                &room,
-                ENTITY_TYPE_CONVERSATION,
-                crate::TimeRange {
-                    start: header.occurred_start,
-                    end: header.occurred_end,
-                },
-                header.learned_at,
-                &bytes,
-            )
-            .apply(txn)?;
+        put_room_body_in(vault, txn, room, &bytes)?;
         PIN_UPDATES.delete(&vault.store, txn, &room)?;
         Ok(())
     }
 }
 
-/// The pins `room`'s stored body holds, in their stored order, as `txn`
-/// reads them (ROOM-SCOPED-PINS P2). Only the room's admitted projection
-/// reads them, and it serves a pin only when the reader admits its target;
-/// the list itself is never served.
+/// Writes `bytes` as `room`'s body, keeping the room's header times, in the
+/// caller's write transaction. The door that calls it sets its own marker
+/// around the write, as the all-writer guard asks.
+pub(super) fn put_room_body_in(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    room: EntityId,
+    bytes: &[u8],
+) -> Result<()> {
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &room)?
+        .ok_or(Error::EntityNotFound)?;
+    if raw.len() < ENTITY_METADATA_HEADER_LEN {
+        return Err(Error::CorruptedIndex("conversation header"));
+    }
+    let header =
+        EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("conversation header"))?;
+    vault
+        .batch_in()
+        .put(
+            &room,
+            ENTITY_TYPE_CONVERSATION,
+            crate::TimeRange {
+                start: header.occurred_start,
+                end: header.occurred_end,
+            },
+            header.learned_at,
+            bytes,
+        )
+        .apply(txn)?;
+    Ok(())
+}
+
+/// The pins `room`'s stored body holds, one record per target
+/// ([`crate::store::conversation_body::live_room_pins`]), in their stored
+/// order, as `txn` reads them (ROOM-SCOPED-PINS P2). Only the room's admitted
+/// projection reads them, and it serves a pin only when the reader admits its
+/// target; the list itself is never served.
 pub(crate) fn stored_room_pins_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     room: EntityId,
 ) -> Result<Vec<RoomPin>> {
-    Ok(PinnedBody::read_in(vault, txn, room)?.pins().to_vec())
+    Ok(crate::store::conversation_body::live_room_pins(
+        PinnedBody::read_in(vault, txn, room)?.pins(),
+    ))
 }
 
 /// Whether `person` runs `room`: Owner or Admin in an ordinary room
@@ -218,6 +256,88 @@ fn policy_setter_in(
     Ok(body)
 }
 
+/// Whether `caller` may change `room`'s pins and their unpin records from
+/// `held`'s to `body`'s, read in `txn` against the stored body as the pin and
+/// unpin doors read it ([`pin_writer_in`]). A federation peer's room body is
+/// judged by it, without the doors' write-actor check: the peer's grant
+/// authenticated its sender (ROOM-BODY-REPLICA-SETTINGS). An unpin moves a
+/// held pin's record as it is; any other record `body` adds, one `held` holds
+/// neither as a pin nor as an unpin record, is a pin the sender made, so it
+/// must name the writer the pin door writes for `caller` ([`made_by`]).
+#[cfg(feature = "sync")]
+pub(super) fn changes_pins_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    caller: WriteActor,
+    held: &ConversationBody,
+    body: &ConversationBody,
+) -> Result<bool> {
+    let stored = PinnedBody::read_in(vault, txn, room)?;
+    let writer = match pin_writer_in(vault, txn, room, caller, &stored) {
+        Ok(writer) => writer,
+        Err(Error::Claim(ClaimError::ActorLacksClaimAuthority { .. })) => return Ok(false),
+        Err(error) => return Err(error),
+    };
+    for record in body.pins.iter().chain(&body.unpinned) {
+        if held.pins.contains(record) || held.unpinned.contains(record) {
+            continue;
+        }
+        if !made_by(vault, txn, record, writer)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// Whether `record`, a pin a federation peer's room body adds, names
+/// `writer`: the PERSON and acting agent the pin door writes for the peer's
+/// sender ([`pin_writer_in`]). The PERSON must match, and so must the agent
+/// when an agent sends. A PERSON's update may also carry a pin made by one of
+/// its own agents: an agent this vault reads as that PERSON's pen.
+#[cfg(feature = "sync")]
+fn made_by(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    record: &RoomPin,
+    (person, agent): (EntityId, Option<EntityId>),
+) -> Result<bool> {
+    if record.pinned_by != person {
+        return Ok(false);
+    }
+    Ok(match (agent, record.acting_agent) {
+        (Some(agent), acting) => acting == Some(agent),
+        (None, None) => true,
+        (None, Some(acting)) => {
+            let at = crate::ports::job_recorded_at_in_txn(&vault.store, txn)?;
+            acting != person && person_of_actor_in_txn(vault, txn, acting, at)? == Some(person)
+        }
+    })
+}
+
+/// Whether `caller` may set `room`'s pin policy, read in `txn` as the policy
+/// door reads it ([`policy_setter_in`]), for a federation peer's room body
+/// as [`changes_pins_in`].
+#[cfg(feature = "sync")]
+pub(super) fn sets_pin_policy_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    caller: WriteActor,
+) -> Result<bool> {
+    granted(policy_setter_in(vault, txn, room, caller).map(drop))
+}
+
+/// A pin door's refusal ([`lacks`]) as `false`; any other error stays one.
+#[cfg(feature = "sync")]
+fn granted(check: Result<()>) -> Result<bool> {
+    match check {
+        Ok(()) => Ok(true),
+        Err(Error::Claim(ClaimError::ActorLacksClaimAuthority { .. })) => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
 impl Memory<'_> {
     /// An agent bound to a room turn changes only that room's pins.
     fn require_pin_room(&self, room: EntityId) -> MemoryResult<()> {
@@ -234,7 +354,10 @@ impl Memory<'_> {
     /// caller, a current member or its pen agent ([`pin_writer_in`]). The
     /// caller must read the target through the room's own lane
     /// ([`Memory::for_room_turn`]); a target it cannot read answers as not
-    /// found. A target pinned already keeps its first record.
+    /// found, even one pinned already (PIN-RETRY-HIDDEN-TARGET = A, Engine
+    /// 17 Nov 00:11). A target pinned already keeps its first record, which
+    /// a caller who reads it gets back; that retry changes nothing, so it
+    /// marks no room cell for sync.
     pub fn rooms_pins_pin(&self, input: &RoomPinRequest) -> MemoryResult<RoomPinReply> {
         self.require_pin_room(input.room)?;
         let vault = self.vault();
@@ -252,25 +375,37 @@ impl Memory<'_> {
         {
             return Err(MemoryError::from(Error::EntityNotFound));
         }
-        let pin = vault.try_with_write_txn_grouped(|txn| {
+        let (pin, changed) = vault.try_with_write_txn_grouped(|txn| {
             vault.verify_write_actor_in_txn(txn, &caller)?;
             let mut body = PinnedBody::read_in(vault, txn, input.room)?;
             let (person, agent) = pin_writer_in(vault, txn, input.room, caller, &body)?;
             if let Some(pin) = body.pins().iter().find(|pin| pin.target == input.target) {
-                return Ok::<_, MemoryError>(pin.clone());
+                return Ok::<_, MemoryError>((pin.clone(), false));
             }
-            let pin = RoomPin {
+            let mut pin = RoomPin {
                 target: input.target,
                 pinned_by: person,
                 acting_agent: agent,
                 pinned_at: crate::ports::recorded_at_in_txn(&vault.store, txn)?,
             };
+            // A record is pinned once: one the room unpinned never comes
+            // back, so a pin in the same second as an unpin of its twin
+            // takes the next second (ROOM-PINS-LWW-MERGE).
+            while body.unpinned().contains(&pin) {
+                pin.pinned_at += 1;
+            }
             body.pins_mut().push(pin.clone());
             body.write_in(vault, txn, input.room)?;
-            Ok(pin)
+            Ok((pin, true))
         })?;
+        // FIX ROOM-PINS-NOOP-MARKS-DIRTY: only a change marks the room's cell
+        // and queues its flush, as unpin does.
         #[cfg(feature = "sync")]
-        vault.refresh_room_cell_in_live_window(input.room, None);
+        if changed {
+            vault.refresh_room_cell_in_live_window(input.room, None);
+        }
+        #[cfg(not(feature = "sync"))]
+        let _ = changed;
         Ok(RoomPinReply {
             room: input.room,
             pin,
@@ -280,7 +415,9 @@ impl Memory<'_> {
     /// `vault.rooms.pins.unpin`: removes `target` from `room`'s shared pins,
     /// whoever pinned it, under the same writer rule as a pin. It reads no
     /// target, so a deleted or hidden target can still be removed, and it
-    /// answers the same whether or not the target was pinned.
+    /// answers the same whether or not the target was pinned. The records it
+    /// removed stay unpinned: a merge with another machine's copy drops them
+    /// there too, and keeps any record of the target this unpin never saw.
     pub fn rooms_pins_unpin(&self, input: &RoomPinRequest) -> MemoryResult<RoomUnpinReply> {
         self.require_pin_room(input.room)?;
         let vault = self.vault();
@@ -289,11 +426,16 @@ impl Memory<'_> {
             vault.verify_write_actor_in_txn(txn, &caller)?;
             let mut body = PinnedBody::read_in(vault, txn, input.room)?;
             pin_writer_in(vault, txn, input.room, caller, &body)?;
-            let before = body.pins().len();
-            body.pins_mut().retain(|pin| pin.target != input.target);
-            if body.pins().len() == before {
+            let (removed, kept): (Vec<RoomPin>, Vec<RoomPin>) = body
+                .pins()
+                .iter()
+                .cloned()
+                .partition(|pin| pin.target == input.target);
+            if removed.is_empty() {
                 return Ok::<_, MemoryError>(false);
             }
+            *body.pins_mut() = kept;
+            body.unpinned_mut().extend(removed);
             body.write_in(vault, txn, input.room)?;
             Ok(true)
         })?;
@@ -316,17 +458,22 @@ impl Memory<'_> {
         self.require_pin_room(input.room)?;
         let vault = self.vault();
         let caller = self.write_actor();
-        let policy = vault.try_with_write_txn_grouped(|txn| {
+        let (policy, changed) = vault.try_with_write_txn_grouped(|txn| {
             vault.verify_write_actor_in_txn(txn, &caller)?;
             let mut body = policy_setter_in(vault, txn, input.room, caller)?;
-            if body.policy() != input.policy {
+            let changed = body.policy() != input.policy;
+            if changed {
                 body.set_policy(input.policy);
                 body.write_in(vault, txn, input.room)?;
             }
-            Ok::<_, MemoryError>(body.policy())
+            Ok::<_, MemoryError>((body.policy(), changed))
         })?;
         #[cfg(feature = "sync")]
-        vault.refresh_room_cell_in_live_window(input.room, None);
+        if changed {
+            vault.refresh_room_cell_in_live_window(input.room, None);
+        }
+        #[cfg(not(feature = "sync"))]
+        let _ = changed;
         Ok(RoomPinPolicySet {
             room: input.room,
             policy,

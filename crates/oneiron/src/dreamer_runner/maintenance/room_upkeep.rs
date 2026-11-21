@@ -20,6 +20,8 @@
 //!   speaks: only the host, on its own authorised turn, voices a nudge.
 use std::collections::BTreeSet;
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
+
 use super::coach::{COACH_ROOM_NUDGE_PREDICATE, COACH_ROOM_UPKEEP_FACET};
 use super::proposals;
 use crate::claim::ScopedRead;
@@ -39,7 +41,6 @@ use crate::{
 /// Canon names no interval: one day, as long as an idle room-wide offer
 /// waits (OF-530).
 const ROOM_NUDGE_IDLE_SECS: u64 = 24 * 60 * 60;
-const STATE_DOMAIN: &[u8] = b"oneiron:coach-room-upkeep-summary:v1";
 
 /// What the Coach last declared each room's summary from: a hash of the room
 /// and the turns it read there. Key: the room.
@@ -307,13 +308,12 @@ pub(super) fn read_nudge_in_txn(
 
 /// The room and the turns in the Coach's reach there, as one hash.
 fn source_state(input: &RoomUpkeepInput) -> [u8; 32] {
-    let mut hash = blake3::Hasher::new();
-    hash.update(STATE_DOMAIN);
-    hash.update(input.room.as_bytes());
+    let mut hash = LegacyDigest::new(purposes::dreamer_runner::ROOM_UPKEEP_SOURCE_STATE);
+    hash.raw(input.room.as_bytes());
     for turn in &input.source_refs {
-        hash.update(turn.as_bytes());
+        hash.raw(turn.as_bytes());
     }
-    *hash.finalize().as_bytes()
+    hash.finish()
 }
 
 /// Drops the declaration rows of rooms the vault no longer holds.
@@ -336,4 +336,9 @@ fn forget_gone(vault: &Vault, rooms: &[EntityId]) -> Result<()> {
         }
         Ok(())
     })
+}
+
+#[cfg(oneiron_test_support)]
+pub(crate) fn source_state_for_test(input: &RoomUpkeepInput) -> [u8; 32] {
+    source_state(input)
 }

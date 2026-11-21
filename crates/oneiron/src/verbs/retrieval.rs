@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::consent::AuthenticatedOwner;
+use crate::dreamer_runner::maintenance::retrieval_skill_review::RetrievalSlowLoopView;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::store::{
     RetrievalBlendTuningConfig, RetrievalBlendWeightTableEntry, RetrievalBlendWeights,
@@ -20,8 +21,8 @@ pub use crate::retrieval_depth::RecallTelemetry;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::verbs::retrieval::{
-    RetrievalPolicyDisposition, RetrievalPolicyPinRequest, RetrievalRoutingPin,
-    RetrievalRunsRequest, RetrievalTraceRequest, RetrievalTurnRequest,
+    ReadShapePinRequest, RetrievalPolicyDisposition, RetrievalPolicyPinRequest,
+    RetrievalRoutingPin, RetrievalRunsRequest, RetrievalTraceRequest, RetrievalTurnRequest,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -343,8 +344,22 @@ pub struct RetrievalPolicyAdmitRequest {
     pub config: RetrievalPolicyTrainRequest,
 }
 
+/// One model's read-shape arms (ARCH-0051 #decision-r9-bench): the owner's
+/// pin, and each shape's labelled attempts and posterior mean reward (`None`
+/// while the shape has no labelled attempt).
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ReadShapeModelRow {
+    pub model: crate::llm::ModelId,
+    pub pinned: Option<crate::store::ReadShape>,
+    pub verbs_pulls: u32,
+    pub mount_pulls: u32,
+    pub verbs_mean: Option<f64>,
+    pub mount_mean: Option<f64>,
+}
+
 /// The served retrieval policy as the receipts report it: active weights and
-/// their origins, owner pins, the learned posterior, and routing pins.
+/// their origins, owner pins, the learned posterior, routing pins, and the
+/// read-shape arms per model.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RetrievalPolicyView {
     pub policy_version: u8,
@@ -354,8 +369,16 @@ pub struct RetrievalPolicyView {
     pub posterior_tuned_at: u64,
     pub posterior_labeled_runs: usize,
     pub posterior_observations: usize,
+    pub read_shapes_tuned_at: u64,
+    pub read_shapes_labeled_attempts: usize,
+    pub read_shapes: Vec<ReadShapeModelRow>,
     pub routing_manifest_digest: Option<String>,
     pub routing: Vec<RetrievalRoutingPin>,
+    /// The slow loop's last nightly status and its receipts (census
+    /// L1-18): each proposal the Coach offered or refused. Nothing in it
+    /// was applied.
+    #[serde(default)]
+    pub slow_loop: RetrievalSlowLoopView,
 }
 
 /// The outcome of one declared policy update: the trained candidate, whether
@@ -400,6 +423,8 @@ fn policy_view(memory: &Memory<'_>) -> MemoryResult<RetrievalPolicyView> {
         }
         None => (None, Vec::new()),
     };
+    let read_shape_posterior = vault.read_shape_posterior()?;
+    let read_shape_pins = vault.read_shape_pins()?;
     Ok(RetrievalPolicyView {
         policy_version: active.version,
         rows: active.weight_rows(&pins),
@@ -408,9 +433,52 @@ fn policy_view(memory: &Memory<'_>) -> MemoryResult<RetrievalPolicyView> {
         posterior_tuned_at: posterior.tuned_at,
         posterior_labeled_runs: posterior.labeled_runs,
         posterior_observations: posterior.observation_count(),
+        read_shapes_tuned_at: read_shape_posterior.tuned_at,
+        read_shapes_labeled_attempts: read_shape_posterior.labeled_attempts,
+        read_shapes: read_shape_rows(&read_shape_posterior, &read_shape_pins),
         routing_manifest_digest,
         routing,
+        slow_loop: vault.retrieval_slow_loop()?,
     })
+}
+
+/// One row per model the read-shape posterior or the owner's pins name,
+/// sorted by model.
+fn read_shape_rows(
+    posterior: &crate::store::ReadShapePosterior,
+    pins: &crate::store::ReadShapePins,
+) -> Vec<ReadShapeModelRow> {
+    let mut models: Vec<&crate::llm::ModelId> = posterior
+        .arms()
+        .iter()
+        .map(|arm| &arm.model)
+        .chain(pins.pins.iter().map(|pin| &pin.model))
+        .collect();
+    models.sort();
+    models.dedup();
+    models
+        .into_iter()
+        .map(|model| {
+            let arm_of = |shape: crate::store::ReadShape| {
+                posterior
+                    .arms()
+                    .iter()
+                    .find(|arm| arm.model == *model && arm.shape == shape)
+            };
+            let (verbs, mount) = (
+                arm_of(crate::store::ReadShape::Verbs),
+                arm_of(crate::store::ReadShape::Mount),
+            );
+            ReadShapeModelRow {
+                model: model.clone(),
+                pinned: pins.shape_for(model),
+                verbs_pulls: verbs.map_or(0, |arm| arm.pulls),
+                mount_pulls: mount.map_or(0, |arm| arm.pulls),
+                verbs_mean: verbs.map(crate::store::ReadShapeArm::mean),
+                mount_mean: mount.map(crate::store::ReadShapeArm::mean),
+            }
+        })
+        .collect()
 }
 
 pub fn retrieval_policy_get_as_owner(
@@ -423,16 +491,31 @@ pub fn retrieval_policy_get_as_owner(
 }
 
 /// A pin takes effect on the served weights at once and binds every later
-/// learned update; derived rewards still write no facts.
+/// learned update; derived rewards still write no facts. A read-shape pin
+/// binds every later pick for its model.
 pub fn retrieval_policy_pin_as_owner(
     memory: &Memory<'_>,
     owner: &AuthenticatedOwner,
     input: RetrievalPolicyPinRequest,
 ) -> MemoryResult<RetrievalPolicyView> {
     admitted(memory, owner)?;
-    memory
-        .vault()
-        .put_retrieval_policy_pin(input.signal, input.value)?;
+    match (input.signal, input.read_shape) {
+        (Some(signal), None) => {
+            memory
+                .vault()
+                .put_retrieval_policy_pin(signal, input.value)?;
+        }
+        (None, Some(pin)) if input.value.is_none() => {
+            memory.vault().put_read_shape_pin(&pin.model, pin.shape)?;
+        }
+        _ => {
+            return Err(crate::Error::InvalidConfig(
+                "a retrieval policy pin names one blend signal with its value, or one read shape"
+                    .to_owned(),
+            )
+            .into());
+        }
+    }
     policy_view(memory)
 }
 
@@ -479,7 +562,8 @@ pub fn retrieval_policy_admit_as_owner(
     })
 }
 
-/// One declared update: train on the gated outcomes, admit only a
+/// One declared update: label the natural outcomes the user's later words
+/// earned (census L9-06), train on the gated outcomes, admit only a
 /// not-worse candidate (anything else stays an offer), and rebuild the
 /// learned action posterior from the same gated labels.
 pub fn retrieval_policy_update_as_owner(
@@ -488,6 +572,7 @@ pub fn retrieval_policy_update_as_owner(
     input: RetrievalPolicyTrainRequest,
 ) -> MemoryResult<RetrievalPolicyUpdateReceipt> {
     admitted(memory, owner)?;
+    memory.vault().produce_natural_retrieval_outcomes()?;
     let config = input.config();
     let candidate = memory.vault().train_retrieval_policy_candidate(config)?;
     let (disposition, reason) = if candidate.held_out.verdict == RetrievalPolicyVerdict::NotWorse {

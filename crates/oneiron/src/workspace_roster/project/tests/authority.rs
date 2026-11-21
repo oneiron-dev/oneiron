@@ -686,13 +686,12 @@ fn leader_signed_spawn_verifies_from_a_copied_vault_without_the_issuer() -> Resu
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-TESTS-AUTHORITY-ITEMS]: the lib test target's type check fails here (1 errors: E0308 x1); port it, then drop this gate
-#[cfg(any())]
 #[test]
 fn project_slice_entity_refs_cannot_publish_live_off_record_ids() -> Result<()> {
     use crate::llm::ScopeResource;
     use crate::off_record::OffRecordBackendClass;
     use crate::session_overlay::OverlayKeyspace;
+    use std::collections::BTreeSet;
 
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
@@ -713,7 +712,7 @@ fn project_slice_entity_refs_cannot_publish_live_off_record_ids() -> Result<()> 
         match field {
             0 => body.slice.world = Some(tainted),
             1 => body.slice.facet = Some(tainted),
-            2 => body.slice.relationship = Some(tainted),
+            2 => body.slice.relationship = Some(BTreeSet::from([tainted])),
             3 => body.slice.project = Some(tainted),
             4 => {
                 body.slice.readable.insert(ScopeResource::DocumentVersion {
@@ -758,8 +757,6 @@ fn project_slice_entity_refs_cannot_publish_live_off_record_ids() -> Result<()> 
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-TESTS-AUTHORITY-ITEMS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 /// Every entity-bearing position a signed proof carries meets the off-record
 /// guard: slip scope, pact grant and pact bound worlds and facets, the roster
 /// of the anchor it carries (Sol roster review 1) and the slip's holder (Sol
@@ -860,6 +857,7 @@ fn signed_proof_positions_cannot_hide_an_off_record_reference() -> Result<()> {
                     vault.project_type_byte()?,
                     TimeRange { start: 1, end: 1 },
                     1,
+                    None,
                     &bytes,
                 )
                 .apply(txn)

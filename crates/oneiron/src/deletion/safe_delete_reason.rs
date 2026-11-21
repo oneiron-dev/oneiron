@@ -1,13 +1,17 @@
 //! Named deletion reasons accepted by actor-facing doors.
 
+use oneiron_contracts::register::Register;
 use serde::{Deserialize, Serialize};
 
 use super::DeleteReason;
 
 /// Named deletion reasons (S7). There is deliberately NO bare bool delete on
 /// this surface.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Register,
+)]
 #[serde(rename_all = "snake_case")]
+#[register("safe.delete.reason")]
 pub enum SafeDeleteReason {
     /// Tombstone delete: local body scrubbed to a shell, no receipt.
     UserDelete,
@@ -20,27 +24,10 @@ pub enum SafeDeleteReason {
 }
 
 impl SafeDeleteReason {
-    /// Stable string form.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::UserDelete => "user_delete",
-            Self::UserHardDelete => "user_hard_delete",
-            Self::GdprDelete => "gdpr_delete",
-            Self::PolicyDelete => "policy_delete",
-        }
-    }
-
     /// Parses the stable string form.
     #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "user_delete" => Some(Self::UserDelete),
-            "user_hard_delete" => Some(Self::UserHardDelete),
-            "gdpr_delete" => Some(Self::GdprDelete),
-            "policy_delete" => Some(Self::PolicyDelete),
-            _ => None,
-        }
+        <Self as Register>::named(value)
     }
 
     pub(crate) const fn delete_reason(self) -> DeleteReason {

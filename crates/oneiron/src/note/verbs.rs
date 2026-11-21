@@ -196,6 +196,11 @@ impl Vault {
                 let kind = self
                     .get_entity_type_in_txn(txn, &origin)?
                     .ok_or(crate::Error::EntityNotFound)?;
+                // A record kept from use takes no named change (OF-470 C6):
+                // no fork copies it under a fresh id, and none supersedes it.
+                if let Some(refusal) = self.store.use_restricted_in_txn(txn, &origin)? {
+                    return Err(refusal.into());
+                }
                 // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
                 let owner = actor.acts_as_own_person()
                     && crate::memory::verify_owner_actor_binding_in_txn(
@@ -411,8 +416,8 @@ impl Vault {
                     &[origin_facet.as_bytes().as_slice()],
                     at,
                 ) {
-                    crate::provenance::birth::stamp_row_birth_in_txn(
-                        &self.store,
+                    crate::provenance::birth::stamp_birth_with_floor_in_txn(
+                        self,
                         txn,
                         &suggestion,
                         &birth,
@@ -509,7 +514,7 @@ impl Vault {
             // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
             let receipt = self
                 .memory_for_writer(actor)
-                .apply_note_operation_in_lane(txn, note, &operation, None, lane)?;
+                .apply_note_operation_in_lane(txn, note, &operation, None, lane, landing)?;
             return Ok(match receipt.outcome {
                 super::NoteScalarEditOutcome::Applied(_) => {
                     NoteProgramEditOutcome::Edited { head: doc.head }

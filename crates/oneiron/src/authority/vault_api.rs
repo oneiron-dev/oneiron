@@ -9,7 +9,6 @@ use crate::Vault;
 use crate::batch::BatchOp;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::batch::EntityMetadataHeader;
-use crate::batch::apply_ops;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
@@ -45,8 +44,14 @@ pub enum AuthorityEntryStatus {
 
 struct PreparedAuthorityLogRows {
     ids: Vec<EntityId>,
-    ops: Vec<BatchOp>,
+    // Each staged row, with the arriving ReRoot it carries, which the hosted
+    // refusal judges before it stages.
+    rows: Vec<(BatchOp, Option<super::recovery::ArrivingReRoot>)>,
     pending: Option<super::history_admission::PendingAuthorityHistory>,
+    /// Every row the batch carries: each row's store door reads the fold
+    /// beside them, as the batch's preflight did (owner-reserve delta
+    /// review F2).
+    batch: BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
 }
 
 impl PreparedAuthorityLogRows {
@@ -57,22 +62,16 @@ impl PreparedAuthorityLogRows {
         vault: &Vault,
         wtxn: &mut heed::RwTxn<'_>,
     ) -> Result<super::history_admission::AuthorityPut> {
-        let Self { ids, ops, pending } = self;
-        if ops.is_empty() {
+        let Self {
+            ids,
+            rows,
+            pending,
+            batch,
+        } = self;
+        if rows.is_empty() {
             return Ok(super::history_admission::AuthorityPut::Stored(ids));
         }
-        apply_ops(
-            &vault.store,
-            &vault.config,
-            &vault.analyzer,
-            wtxn,
-            ops,
-            vault
-                .text_index_trusted
-                .load(std::sync::atomic::Ordering::Acquire),
-            false,
-            true,
-        )?;
+        vault.stage_authority_rows_judging_re_roots_in_txn(wtxn, rows, &|| Ok(batch.clone()))?;
         if let Some(pending) = pending {
             return Ok(super::history_admission::AuthorityPut::Pending(pending));
         }
@@ -196,7 +195,7 @@ impl Vault {
         keep_pending: bool,
     ) -> Result<PreparedAuthorityLogRows> {
         let mut ids = Vec::with_capacity(entries.len());
-        let mut ops = Vec::with_capacity(entries.len());
+        let mut rows = Vec::with_capacity(entries.len());
         // Rows of this batch, for an ancestry that runs through one.
         let mut batch = BTreeMap::new();
         let mut staged = Vec::with_capacity(entries.len());
@@ -223,10 +222,13 @@ impl Vault {
             )
         };
         for (entry, occurred, learned_at) in entries {
+            let resident =
+                super::retired_signers::authority_row_resident(&self.store, wtxn, entry)?;
             if let Some(fold) = &local
-                && !super::retired_signers::authority_row_resident(&self.store, wtxn, entry)?
+                && !resident
                 && super::door_refuses_retired_standing(
                     &self.store,
+                    self.privacy_posture(),
                     fold,
                     &authority_entry_hash(entry)?,
                     entry,
@@ -247,23 +249,27 @@ impl Vault {
             crate::authority::validate_authority_log_entry_body_bytes(&data)?;
             let id = authority_log_entity_id(entry)?;
             ids.push(id);
-            ops.push(BatchOp::Put {
-                id,
-                entity_type: ENTITY_TYPE_AUTHORITY_LOG,
-                occurred: *occurred,
-                learned_at: *learned_at,
-                row_version: None,
-                data,
-                allow_maintenance: true,
-                allow_reserved_predicate: false,
-                hub_sync_imported: false,
-            });
+            rows.push((
+                BatchOp::Put {
+                    id,
+                    entity_type: ENTITY_TYPE_AUTHORITY_LOG,
+                    occurred: *occurred,
+                    learned_at: *learned_at,
+                    row_version: None,
+                    data,
+                    allow_maintenance: true,
+                    allow_reserved_predicate: false,
+                    hub_sync_imported: false,
+                },
+                super::recovery::arriving_re_root(entry, authority_entry_hash(entry)?, resident),
+            ));
         }
-        if ops.is_empty() {
+        if rows.is_empty() {
             return Ok(PreparedAuthorityLogRows {
                 ids,
-                ops,
+                rows,
                 pending: None,
+                batch,
             });
         }
         // A batch of granting rows, each of whose fold past an adopted image
@@ -288,12 +294,17 @@ impl Vault {
         } else {
             super::import_order::write_stage_order(&self.store, wtxn, &staged)?
         };
-        let mut ops: Vec<_> = ops.into_iter().map(Some).collect();
-        let ops: Vec<_> = order
+        let mut rows: Vec<_> = rows.into_iter().map(Some).collect();
+        let rows: Vec<_> = order
             .into_iter()
-            .filter_map(|index| ops[index].take())
+            .filter_map(|index| rows[index].take())
             .collect();
-        Ok(PreparedAuthorityLogRows { ids, ops, pending })
+        Ok(PreparedAuthorityLogRows {
+            ids,
+            rows,
+            pending,
+            batch,
+        })
     }
 
     /// Reads and decodes one AUTHORITY_LOG entry by entity id.
@@ -582,6 +593,24 @@ impl Vault {
     pub fn authority_generation(&self) -> Result<u64> {
         let rtxn = self.store.env.read_txn()?;
         authority_cache_generation(&self.store, &rtxn)
+    }
+
+    /// Whether `actor_ref` holds an Active binding at `actor_class` in `fold`
+    /// (a fold [`Self::authority_fold`] read) AND its row is live now, its
+    /// kind admitting the class: a soft-deleted actor's binding authorizes
+    /// nothing ([`crate::authority::actor_binding_is_live_in`]).
+    ///
+    /// # Errors
+    ///
+    /// The row or deletion-state read's.
+    pub fn actor_binding_is_live(
+        &self,
+        fold: &AuthorityFold,
+        actor_ref: &EntityId,
+        actor_class: &str,
+    ) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        crate::authority::actor_binding_is_live_in(&self.store, &txn, fold, actor_ref, actor_class)
     }
 
     pub(crate) fn authority_fold_readonly_in_txn(

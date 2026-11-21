@@ -3,6 +3,8 @@
 
 use std::time::Instant;
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use crate::host_memory::{MachineMemory, MemoryLease};
 use crate::sync::transport::{TAG_ROOT_PART, TransportError, decode_root_update_part};
 
@@ -79,7 +81,7 @@ impl RootUpdateAssembly {
                 "missing completed root image",
             ));
         };
-        if blake3::hash(&done.held.bytes).as_bytes() != &done.digest {
+        if ContentHash::of(&done.held.bytes).as_bytes() != &done.digest {
             return Err(TransportError::InvalidPayload(
                 "root update digest mismatch",
             ));

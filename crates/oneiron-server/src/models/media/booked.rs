@@ -47,20 +47,6 @@ impl MediaBackend for BookedReplies {
     }
 
     /// FIX 9517: a call stopped part way keeps what it completed.
-    fn run_progress<'a>(
-        &'a self,
-        request: MediaRequest,
-        lease: &'a BudgetLease,
-    ) -> MediaProgressFuture<'a> {
-        Box::pin(holding_replies(&self.1, async move {
-            let answer = self.0.run_progress(request, lease).await;
-            if let Ok(response) = &answer {
-                charge_decoded(response);
-            }
-            answer
-        }))
-    }
-
     fn run_progress_released<'a>(
         &'a self,
         request: MediaRequest,
