@@ -396,6 +396,27 @@ impl OfferLadder {
             .map(|rung| (&rung.model, rung.prompt.as_deref()))
     }
 
+    /// Whether this ladder's rungs are `other`'s, one for one in ladder
+    /// order: the same engine model at the same configured position, with
+    /// the same prompt. A seat's on-device view that holds a rung the seat
+    /// left out, or lacks one of its rungs, is not that seat on the device
+    /// (L9-15), even when the two ladders have as many rungs.
+    #[must_use]
+    pub(super) fn same_rungs_as(&self, other: &Self) -> bool {
+        self.rungs.len() == other.rungs.len()
+            && self.rungs.iter().zip(&other.rungs).all(|(own, theirs)| {
+                own.model == theirs.model
+                    && own.position == theirs.position
+                    && own.prompt == theirs.prompt
+            })
+    }
+
+    /// Whether this ladder has a rung a call can be sent to.
+    #[must_use]
+    pub(crate) fn has_rungs(&self) -> bool {
+        !self.rungs.is_empty()
+    }
+
     /// One engine model across this ladder and every owner-selectable
     /// fallback that keeps its wire and on-device rule. A quote cannot use
     /// today's health or selected fallback to exclude a possible model.

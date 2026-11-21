@@ -116,6 +116,13 @@ pub trait RecallRerankHost: Sync {
     fn runs_on_device(&self) -> bool {
         false
     }
+
+    /// Whether a host that [`Self::runs_on_device`] keeps a rung of that plan
+    /// under `routes`, a block's carried worlds' model order; when not, the
+    /// block is built again as for a host off the device (L9-15).
+    fn on_device_plan_admitted(&self, _routes: &crate::authority::WorldModelRoutes) -> bool {
+        true
+    }
 }
 
 /// One candidate as its reranker reads it.
@@ -168,6 +175,11 @@ impl RerankEgress<'_> {
             self.refused.store(true, Ordering::Relaxed);
         }
         holds
+    }
+
+    /// Whether the block was built for a host on this device: every row with its words.
+    pub fn on_device(&self) -> bool {
+        self.sent.is_none()
     }
 
     /// Whether [`Self::holds`] has said no.
@@ -422,8 +434,11 @@ impl Memory<'_> {
                 }
                 (Err(error), None) => return Err(error),
             };
-            let (texts, sources, egress) =
-                self.rerank_documents(scope, pin, &block, host.runs_on_device())?;
+            let mut built = self.rerank_documents(scope, pin, &block, host.runs_on_device())?;
+            if built.2.on_device() && !host.on_device_plan_admitted(built.2.model_routes()) {
+                built = self.rerank_documents(scope, pin, &block, false)?;
+            }
+            let (texts, sources, egress) = built;
             if texts.iter().all(String::is_empty) {
                 let mut pack = by_fusion(deadline.as_ref())?;
                 pack.retrieval_meta.rerank = Some(unreranked(&pack));

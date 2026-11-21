@@ -206,14 +206,23 @@ impl AiHandle {
     /// Whether the vault's live model policy routes a call of `role` so that
     /// it never leaves this device (I2-LOCAL, L9-15): every rung and owner's
     /// fallback it may take is a managed worker this server supervises,
-    /// reached over that child's checked channel alone. A route that cannot
-    /// be read is no such route.
+    /// reached over that child's checked channel alone; and `routes`, the
+    /// model order of the worlds whose rows the call carries, leaves a rung
+    /// of that route ([`oneiron::authority::WorldModelRoutes::Inherit`]
+    /// leaves every rung). A route that cannot be read is no such route.
     #[must_use]
-    pub(crate) fn role_routes_on_device(&self, vault: &Vault, role: ModelRole) -> bool {
+    pub(crate) fn role_routes_on_device(
+        &self,
+        vault: &Vault,
+        role: ModelRole,
+        routes: &oneiron::authority::WorldModelRoutes,
+    ) -> bool {
         self.runtime.seat(role).is_some_and(|seat| {
             self.runtime
                 .on_device_route_role(vault, role, seat)
-                .is_ok_and(|route| route.is_some())
+                .is_ok_and(|route| {
+                    route.is_some_and(|route| route.ladder.for_world_routes(routes).has_rungs())
+                })
         })
     }
 

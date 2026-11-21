@@ -16,10 +16,13 @@
 //! policy routes the reranker so that every rung and owner's fallback of its
 //! route is such a worker ([`AiHandle::role_routes_on_device`], I2-LOCAL,
 //! L9-15), this host runs on the device
-//! (`RecallRerankHost::runs_on_device`): it is sent the words of a row a
+//! (`RecallRerankHost::runs_on_device`): a block whose rows' worlds' model
+//! order leaves a rung of that route is sent the words of a row a
 //! device-only world keeps, and each of its calls is admitted on that
 //! on-device route alone, refused unsent once the route could leave the
-//! device. Any other host is sent such a row empty. Each rung a call reaches reserves that price,
+//! device. A block whose worlds' order leaves no such rung is built as for a
+//! host off the device and scored on the reranker's ordinary route, as any
+//! other host's is: a row a device-only world keeps goes to it empty. Each rung a call reaches reserves that price,
 //! so a fallback rung goes out only while the line still covers the whole
 //! payload, and a rung that failed after it went out is charged what it may
 //! have billed. Each rung, the first too, goes out only while the
@@ -42,6 +45,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+use oneiron::authority::WorldModelRoutes;
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::WorkPhysical;
 use oneiron::llm::{BudgetDenied, WorkCancel, WorkClass};
@@ -100,9 +104,9 @@ pub(super) struct ServedRerank {
     /// model-call record: each call's run names no rows (census L5-25).
     off_record: bool,
     /// The vault's model policy routed the reranker on this device when the
-    /// door read it ([`AiHandle::role_routes_on_device`]): each call is
-    /// admitted on that route alone, and refused unsent once it could leave
-    /// the device.
+    /// door read it ([`AiHandle::role_routes_on_device`]): a block the engine
+    /// builds for it ([`RerankEgress::on_device`]) is admitted on that route
+    /// alone, and refused unsent once it could leave the device.
     on_device: bool,
 }
 
@@ -141,9 +145,11 @@ impl SyncServer {
             }
             _ => self.rerank_runtime.handle()?,
         };
-        let on_device = self
-            .ai
-            .role_routes_on_device(&self.vault, ModelRole::Reranker);
+        let on_device = self.ai.role_routes_on_device(
+            &self.vault,
+            ModelRole::Reranker,
+            &WorldModelRoutes::Inherit,
+        );
         let run_id = format!("recall-rerank:{:016x}", rand_core::OsRng.next_u64());
         let units = self.ai.rerank_budget_units();
         let reserve_units = oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS.min(units);
@@ -196,6 +202,14 @@ impl RecallRerankHost for ServedRerank {
         self.on_device
     }
 
+    /// The reranker's on-device route as the policy reads now, with a rung
+    /// `routes` admits: else the engine builds the block again as for a host
+    /// off the device, and [`Self::score`] takes the ordinary route.
+    fn on_device_plan_admitted(&self, routes: &WorldModelRoutes) -> bool {
+        self.ai
+            .role_routes_on_device(&self.vault, ModelRole::Reranker, routes)
+    }
+
     fn score(
         &self,
         query: &str,
@@ -245,9 +259,10 @@ impl RecallRerankHost for ServedRerank {
         });
         let cancel = run.work_context().cancel;
         // The vault's model policy places the call: its manifest's binding
-        // for the role when it has one, the role's seat otherwise. A host on
-        // the device takes the route that keeps the call there, or none.
-        let call = if self.on_device {
+        // for the role when it has one, the role's seat otherwise. A block
+        // built for a host on the device, which carries a kept row's words,
+        // takes the route that keeps the call there, or none.
+        let call = if egress.on_device() {
             self.ai.admit_role_on_device(
                 &self.vault,
                 ModelRole::Reranker,

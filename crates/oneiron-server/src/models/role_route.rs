@@ -438,10 +438,14 @@ impl ModelRuntime {
     /// and every call its ladder sends goes to a managed worker this server
     /// supervises, over that child's checked channel alone
     /// ([`OfferLadder::native_local`]: a manifest's or a model pack's
-    /// on-device route); when the seat itself binds the call, the seat's
-    /// on-device view, when that view serves every rung of the seat. A view
-    /// that drops a rung of the seat would drop a fallback the seat's call
-    /// takes, so it is no route here. `None` when a call of `role` could
+    /// on-device pin of a model a supervised worker serves natively, by its
+    /// own id); when the seat itself binds the call, the seat's on-device
+    /// view, when that view holds exactly the seat's rungs, each at its
+    /// configured position ([`OfferLadder::same_rungs_as`]). A view that
+    /// drops a rung of the seat would drop a fallback the seat's call takes,
+    /// and one that holds a rung the seat left out (a rung the role's
+    /// `leave_device` refuses) would take a fallback the seat's call never
+    /// takes, so neither is a route here. `None` when a call of `role` could
     /// leave the device.
     pub(crate) fn on_device_route_role(
         &self,
@@ -459,8 +463,7 @@ impl ModelRuntime {
         let Some(view) = seat
             .on_device
             .as_ref()
-            .filter(|view| view.native_local())
-            .filter(|view| view.rung_models().count() == seat.ladder.rung_models().count())
+            .filter(|view| view.native_local() && view.same_rungs_as(&seat.ladder))
         else {
             return Ok(None);
         };
