@@ -3,13 +3,15 @@
 
 pub const MAX_DBS: u32 = 32;
 
-/// v45 (FIX ACT-STANDS-RAW-HEAD-SKIPS-KEY-ROTATION and FIX
-/// MACHINE-CROSSING-REMOVALS-UNMAKE-CARRIED-OWNER-ACTS): stored authority-log
-/// rows keep their bytes and change meaning. An owner act whose carrier the
-/// roster re-keyed by a revision that never saw it no longer stands under a
-/// raw roster head that names the old key again; and an owner act that every
-/// one of its carrier's crossing removals saw now stands, where their
-/// conflict at the head alone unmade it. The authority fold schema moves
+/// v45 (FIX ACT-STANDS-RAW-HEAD-SKIPS-KEY-ROTATION, FIX
+/// MACHINE-CROSSING-REMOVALS-UNMAKE-CARRIED-OWNER-ACTS and FIX
+/// MACHINE-CROSSING-REMOVALS-UNMAKE-CARRIED-OWNER-CHOICES): stored
+/// authority-log rows keep their bytes and change meaning. An owner act whose
+/// carrier the roster re-keyed by a revision that never saw it no longer
+/// stands under a raw roster head that names the old key again; and an owner
+/// act, owner choice, world edit or grant travel choice that every one of its
+/// carrier's crossing removals saw now stands, where their conflict at the
+/// head alone unmade it. The authority fold schema moves
 /// 59 -> 60 with it. No old-meaning reader or migration is provided (the
 /// lead's M-1 stored-change rule, path "loud").
 ///

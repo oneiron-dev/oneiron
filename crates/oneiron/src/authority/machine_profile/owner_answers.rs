@@ -328,8 +328,11 @@ pub(in crate::authority) fn act_stands(
 /// removes the machine (so the merge's tie is between removals), and the
 /// chain holds neither of the conflicts its merge adds whatever the numbers
 /// say: a say-so another contests, origins that disagree. A tie with a
-/// revision that keeps the machine keeps the head conflicted.
-fn removals_cross_only(chain: &MachineChain) -> bool {
+/// revision that keeps the machine keeps the head conflicted. The removal
+/// race of the owner's choices and world edits reads it too
+/// (`Standing::owner_act_race`; FIX
+/// MACHINE-CROSSING-REMOVALS-UNMAKE-CARRIED-OWNER-CHOICES).
+pub(in crate::authority) fn removals_cross_only(chain: &MachineChain) -> bool {
     chain.head.removed
         && chain
             .revisions
