@@ -1029,7 +1029,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/booking_deposit/checkout.rs` | src | s | 4 crate-vis | — | A hold of a deposit event type opens its deposit checkout (BK-DEPOSITS; Engine ruling 15 Nov 01:10… |
 | `src/booking_deposit/settle.rs` | src | s | 4 crate-vis | — | A deposit's money moves on the server: the authorization read at confirm, the capture right after it, and… |
 | `src/booking_deposit/stripe.rs` | src | m | 13 crate-vis | — | The Stripe API calls a deposit needs, test mode only |
-| `src/booking_deposit/webhook.rs` | src | s | 6 crate-vis | — | `POST /v1/hooks/stripe/booking-deposit`: Stripe's signed word about a deposit's PaymentIntent |
+| `src/booking_deposit/webhook.rs` | src | m | 6 crate-vis | — | `POST /v1/hooks/stripe/booking-deposit`: Stripe's signed word about a deposit's PaymentIntent |
 | `src/broadcast.rs` | src | s | 10 crate-vis | — | Broadcast group for multi-device fan-out with echo suppression |
 | `src/builtin_host.rs` | src | s | 7 crate-vis | — | The served host's side of the built-in connector packs (OF-519): the connection checks only a served host… |
 | `src/builtin_host/checks.rs` | src | s | 4 crate-vis | — | The served host's connection checks: the engine's provider checks, plus two that need this host's own config |
@@ -2192,7 +2192,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/system_one_leg.rs` | src | s | 1 fn | — | Doors for `tests/system_one_broker_budget.rs` (#7827 review round 2): the System One seat's transport over… |
 | `src/test_doors/system_one_rung.rs` | src | s | 1 re-export | — | Doors for `tests/systemone_pack_run_no_cancel.rs` (SYSTEMONE-PACK-RUN-NO-CANCEL): the System One rung bound… |
 | `src/test_doors/vault_acts.rs` | src | s | 3 crate-vis | — | The one registry behind the doors that run a test's act at a point of a vault's next request… |
-| `src/test_doors/voice_call.rs` | src | s | 1 struct · 3 fn · 1 mod | StandaloneCall | Doors for `tests/voice_self_epoch.rs` (UNBUILT-02 PR 2): the brain of an owner's own standalone call on this… |
+| `src/test_doors/voice_call.rs` | src | m | 2 struct · 9 fn · 1 mod | PhoneCall, StandaloneCall | Doors for `tests/voice_self_epoch.rs` (UNBUILT-02 PR 2), `tests/voice_phone_transcript.rs` (PR 3) and… |
 | `src/test_doors/voice_call/room_turn.rs` | src | s | 2 struct · 3 fn | HelloSlip, RoomTurnCall | Doors for `tests/voice_room_turn_off_record.rs` (row VOICE-ROOM-TURN-SOURCED-OFF-RECORD): the brain of a… |
 | `src/test_doors/web_search_count.rs` | src | s | 1 fn | — | Door for `tests/web_search_owner_max.rs` (restriction wave 19, C73 = B): the result count one web search… |
 | `src/test_doors/wire_health_sweep.rs` | src | s | 8 fn | — | Door for the health-check tests (`tests/own_rate_health_ask.rs`, `tests/wire_health_actor_erase.rs`): one… |
@@ -2216,21 +2216,22 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/voice_host/attachment.rs` | src | s | 1 fn | — | The voice host as a wake-pass attachment: it serves the owner's admitted stream beside one pass and spends… |
 | `src/voice_host/backend.rs` | src | s | 3 crate-vis | — | The voice call's backend for the host's own model calls (OF-410): partial enrichment and the sentence… |
 | `src/voice_host/boot.rs` | src | m | 9 crate-vis | — | The server's own voice loop at serve start (OF-410) |
-| `src/voice_host/boot/phone_call.rs` | src | s | 1 crate-vis | — | Call dependencies for a stranger answered by the authenticated line agent |
-| `src/voice_host/brain.rs` | src | L | 2 struct · 1 fn · 4 crate-vis | ChatBrain, ChatBrainBindings | The voice call's brain (OF-410): the chat role, as `/ai/chat` runs it |
+| `src/voice_host/boot/phone_call.rs` | src | s | 2 crate-vis | — | Call dependencies for a stranger answered by the authenticated line agent |
+| `src/voice_host/brain.rs` | src | L | 2 struct · 1 fn · 5 crate-vis | ChatBrain, ChatBrainBindings | The voice call's brain (OF-410): the chat role, as `/ai/chat` runs it |
+| `src/voice_host/call_wording.rs` | src | s | 4 crate-vis | — | The words a call with other people writes into its conversation (UNBUILT-02 PR 3), and the line the agent… |
 | `src/voice_host/connection.rs` | src | L | 4 crate-vis | — | One private, pre-admitted UDS connection on the existing Tokio runtime |
 | `src/voice_host/entry_barrier.rs` | src | s | 6 crate-vis | — | The newcomer barrier on a live reply (OF-365 P5, FIX 1389) |
 | `src/voice_host/extraction.rs` | src | s | 3 crate-vis | — | Voice partial-enrichment extraction |
 | `src/voice_host/hello_refusal.rs` | src | s | 3 crate-vis | — | A voice hello refused before its call is admitted (`boot`) is answered with one line… |
 | `src/voice_host/media_bridge.rs` | src | L | 1 struct · 1 enum · 22 crate-vis | VoiceMediaBindings, VoiceMediaIn | The host's own speech and hearing on the media seats (OF-410) |
-| `src/voice_host/mod.rs` | src | m | 5 struct · 1 enum · 8 fn · 7 re-export · 5 crate-vis | EnrichmentWork, HostError, VoiceHost, VoiceHostBindings, VoiceHostConfig, VoiceOutputs | Private voice request adapter, not an audio/provider scheduler |
-| `src/voice_host/phone.rs` | src | s | 1 struct · 16 crate-vis | PhoneCallRead | A phone answer's actual receiving-agent read and prepared-output fence |
+| `src/voice_host/mod.rs` | src | m | 5 struct · 1 enum · 8 fn · 8 re-export · 7 crate-vis | EnrichmentWork, HostError, VoiceHost, VoiceHostBindings, VoiceHostConfig, VoiceOutputs | Private voice request adapter, not an audio/provider scheduler |
+| `src/voice_host/phone.rs` | src | s | 1 struct · 18 crate-vis | PhoneCallRead | A phone answer's actual receiving-agent read and prepared-output fence |
 | `src/voice_host/playout_queue.rs` | src | s | 10 crate-vis | — | Frames waiting for the voice wire, spoken audio gated per chunk (FIX 9542) |
 | `src/voice_host/public.rs` | src | m | 21 crate-vis | — | Credential-bound public sessions |
 | `src/voice_host/public_events.rs` | src | m | 15 crate-vis | — | Public event correlation and dequeue fencing, independent of transport |
 | `src/voice_host/public_hold.rs` | src | s | 9 crate-vis | — | A public live voice session's hold on its host's write gate: one admission, taken when the session starts… |
 | `src/voice_host/public_loop.rs` | src | m | 2 crate-vis | — | The public transport drives the existing voice host and media worker |
-| `src/voice_host/record.rs` | src | s | 1 fn · 4 crate-vis | — | What an owner's own voice call keeps (UNBUILT-02 PR 2) |
+| `src/voice_host/record.rs` | src | m | 1 fn · 12 crate-vis | — | What an owner's own voice call keeps (UNBUILT-02 PR 2) |
 | `src/voice_host/serve_bindings.rs` | src | s | 2 struct · 5 fn · 1 crate-vis | VoiceServeBindings, VoiceServeConnection | One-shot bindings supplied by the existing private-connection owner |
 | `src/voice_host/speaker_match.rs` | src | s | 4 crate-vis | — | A call's speakers matched in production (FIX 3344) |
 | `src/voice_host/speech.rs` | src | m | 3 struct · 1 enum · 3 fn · 19 crate-vis | PlayoutFrame, TurnSources, VoiceBrainOut, VoicePlayout | The brain's reply in the host's own voice (OF-410) |
@@ -2310,6 +2311,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/code_run_reply_evidence.rs` | test | m | — | — | RAW-PROVIDER-EVIDENCE-READ (CODE-RUNTIME-02): `vault.code.reply_evidence` reads the model reply a code run… |
 | `tests/commitment_reminder_wording_retry.rs` | test | s | — | — | The host's commitment reminder wording worker on tries that cannot succeed (FIX… |
 | `tests/compaction_refused_receipt.rs` | test | m | — | — | FIX 7745: a self-written call refused after it went out keeps its receipt |
+| `tests/compaction_response_export.rs` | test | m | — | — | A filed compaction step's response artifact holds the compactor's whole answer about the records its call… |
 | `tests/compaction_seat_exact_model.rs` | test | s | — | — | A compaction pass on a vault with no model manifest goes out as one model (FIX-LIST… |
 | `tests/config_file_admission.rs` | test | m | — | — | FIX [CONFIG-VALIDATION-PORT]: a config file is read only once it is admitted by who else can reach it |
 | `tests/config_referenced_file_admission.rs` | test | m | — | — | FIX [CONFIG-SIDE-FILES-MODE-UNCHECKED] and [CONFIG-SIDE-FILE-PARSE-ERRORS-PRINT-PARSER-MESSAGE]: a file a… |
@@ -2333,6 +2335,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/core_memory_retract_verb_hook.rs` | test | L | — | — | [CORE-MEMORY-VERB-SKIPS-FACADE-HOOKS] (FIX-LIST 25699): a token that is not owner-grade retracts through the… |
 | `tests/customer_gpu_job_maximum.rs` | test | L | — | — | Customer GPU jobs on the host (row L10-31; CROSS-ARCH-0023 lifecycle, C2): the `[gpu_jobs]` section, the… |
 | `tests/decision_bands_restart_doors.rs` | test | s | — | — | The `vault.decisions.bands.*` rows across a server restart, at the public door: arch-0076:275… |
+| `tests/decision_precision_config.rs` | test | s | — | — | `[models.decisions.precision]` seats the precision band on the host's decision ladder… |
 | `tests/decision_read_think_start.rs` | test | s | — | — | L2-33 (FIX 22360; lead ruling THINK-START = C, 13 Nov 2026): a served host's ThinkThreshold row starts at… |
 | `tests/delete_authority_served_door.rs` | test | m | — | — | DEL-2 at the core HTTP delete (ARCH-0043, owner DEL-2 = A; Engine ruling 13 Nov 02:51 = A) |
 | `tests/device_burst_replay.rs` | test | m | — | — | L7-41: an own device's burst its home held lands by the home's own drain once the device's rate is back at… |
@@ -2629,6 +2632,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/vault_voices_doors.rs` | test | XL | — | — | Public-door promise tests for the `vault.voices` family (ruling L4-23 = A: each test proves a promise at the… |
 | `tests/vault_weave_doors.rs` | test | L | — | — | The `vault.weave` doors: recipe admission and parking, schedule CRUD and its role gate, per-reader digests… |
 | `tests/vault_workflows_doors.rs` | test | XL | — | — | The saved-workflow doors (ARCH-0053), entered as the SDK enters them: HTTP `POST /v1/core/facade/<verb>`… |
+| `tests/voice_call_announcement.rs` | test | s | — | — | UNBUILT-02 PR 3B: with the owner's `voice.call_transcripts.announce` on (its default), the line agent opens… |
+| `tests/voice_phone_transcript.rs` | test | s | — | — | UNBUILT-02 PR 3: a phone call is kept like any other conversation, under the owner's own setting… |
 | `tests/voice_room_turn_off_record.rs` | test | m | — | — | Row VOICE-ROOM-TURN-SOURCED-OFF-RECORD (census L5-25): a room call's voice turn runs unsourced during an… |
 | `tests/voice_self_epoch.rs` | test | s | — | — | UNBUILT-02 PR 2: an owner's own voice call is an ordinary conversation (VOICE-EPOCH-SOURCE = B) |
 | `tests/voxcpm2_our_voice.rs` | test | m | — | — | — |

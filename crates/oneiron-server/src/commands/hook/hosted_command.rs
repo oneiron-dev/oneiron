@@ -22,11 +22,18 @@
 //!   origin in OAuth mode ([`super::hosted_continue_sign_in`]): a second
 //!   sign-in, `full` at its `/mcp` and `/git`, kept beside the first, which
 //!   `oneiron continue --cloud` alone reads.
+//! - `login --hand-over` makes the hand-over sign-in of that vault: a
+//!   second sign-in, `full` at its `/mcp` alone, kept beside the first,
+//!   which the hooks' hand-over alone reads ([`super::hand_over_queue`]).
+//!   With `--unattended` it files the request with no browser and polls the
+//!   owner's answer, as the hooks start it themselves
+//!   ([`super::hand_over_ask`]).
 //! - `select` selects one recorded vault, or none.
 //! - `logout` forgets one recorded vault, or every one. It never deletes a
 //!   credential file another surface wrote: that surface keeps it. An OAuth
 //!   sign-in `login` made is revoked at the vault and its file removed, and
-//!   so is its continue sign-in.
+//!   so are its continue and hand-over sign-ins; the session logs waiting
+//!   for its hand-over leave the queue.
 //! - `status` reads where the selection stands.
 //!
 //! Each prints the selection's state as one JSON line. It names credential
@@ -39,7 +46,8 @@ use std::time::{Duration, Instant};
 use serde_json::json;
 
 use super::hosted_selection::{self, HostedAuthMode, HostedVault, Selection};
-use super::{hosted_continue_sign_in, hosted_sign_in, recall};
+use super::hosted_sign_in::{CodeDelivery, SignInEnded, StepUp};
+use super::{hand_over_ask, hand_over_queue, hosted_sign_in, recall};
 use crate::cli::{HostedCommand, HostedLoginArgs, HostedLogoutArgs, HostedSelectArgs, McpAuthMode};
 use crate::commands::credential_file::PairedCredentialFile;
 use crate::commands::oauth_sign_in;
@@ -67,7 +75,10 @@ pub fn hosted(command: HostedCommand) -> anyhow::Result<()> {
 /// one stays as it was.
 fn login(args: &HostedLoginArgs) -> anyhow::Result<()> {
     if args.push {
-        return push_login(args);
+        return step_up_login(args, StepUp::Continue, "--push");
+    }
+    if args.hand_over {
+        return step_up_login(args, StepUp::HandOver, "--hand-over");
     }
     let mut selection = held()?;
     let origin = origin(&args.origin)?;
@@ -156,6 +167,7 @@ fn login(args: &HostedLoginArgs) -> anyhow::Result<()> {
                 &staged,
                 Duration::from_secs(args.sign_in_timeout_secs),
                 hosted_sign_in::SignInAsk::Recall,
+                CodeDelivery::Browser,
             )?;
             (HostedAuthMode::OAuth, file, named, Some(staged))
         }
@@ -178,10 +190,14 @@ fn login(args: &HostedLoginArgs) -> anyhow::Result<()> {
     recorded
 }
 
-/// `login --push`: the continue step-up of the vault recorded at `--origin` in
-/// OAuth mode (the one `--vault-id` names, when given). The recorded
-/// sign-in and the selection stay as they are.
-fn push_login(args: &HostedLoginArgs) -> anyhow::Result<()> {
+/// `login --push` or `login --hand-over` (`flag`): the step-up `step_up` of
+/// the vault recorded at `--origin` in OAuth mode (the one `--vault-id`
+/// names, when given), by a browser or, with `--unattended`, by the owner's
+/// inbox alone. A hand-over sign-in that stands forgets the hooks' ask, and
+/// an unattended one that ends with none records how it ended
+/// ([`hand_over_ask::record_end`]). The recorded sign-in and the selection
+/// stay as they are.
+fn step_up_login(args: &HostedLoginArgs, step_up: StepUp, flag: &str) -> anyhow::Result<()> {
     let selection = held()?;
     let origin = origin(&args.origin)?;
     let named = args.vault_id.as_deref().map(vault_id).transpose()?;
@@ -196,11 +212,35 @@ fn push_login(args: &HostedLoginArgs) -> anyhow::Result<()> {
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "no OAuth sign-in to {origin} is recorded here; sign in with `oneiron hosted \
-                 login --origin {origin}` first, then add --push"
+                 login --origin {origin}` first, then add {flag}"
             )
         })?;
-    hosted_continue_sign_in::step_up(vault, Duration::from_secs(args.sign_in_timeout_secs))?;
-    Ok(())
+    let delivery = if args.unattended {
+        CodeDelivery::Unattended
+    } else {
+        CodeDelivery::Browser
+    };
+    // The hooks' ask this run answers for, when they started it.
+    let attempt = if args.unattended {
+        hand_over_ask::waiting_attempt(&vault.origin)
+    } else {
+        None
+    };
+    let made = step_up.run(
+        vault,
+        Duration::from_secs(args.sign_in_timeout_secs),
+        delivery,
+    );
+    if step_up == StepUp::HandOver && (made.is_ok() || args.unattended) {
+        let ended = made.as_ref().err().map(|error| {
+            error
+                .downcast_ref::<SignInEnded>()
+                .copied()
+                .unwrap_or(SignInEnded::Lapsed)
+        });
+        hand_over_ask::record_end(&vault.origin, ended, attempt.as_deref());
+    }
+    made.map(drop)
 }
 
 /// Records the vault at `origin` reached by `file` in `auth_mode`, once
@@ -354,8 +394,9 @@ fn logout(args: &HostedLogoutArgs) -> anyhow::Result<()> {
 }
 
 /// Revokes and removes each OAuth sign-in `login` made among `vaults`, and
-/// its continue sign-in. A credential file another surface wrote stays: that
-/// surface keeps it.
+/// its continue and hand-over sign-ins, empties its hand-over queue and
+/// forgets the hooks' ask for it. A
+/// credential file another surface wrote stays: that surface keeps it.
 fn sign_out(vaults: &[HostedVault]) {
     for vault in vaults
         .iter()
@@ -363,7 +404,10 @@ fn sign_out(vaults: &[HostedVault]) {
     {
         for signed_out in [
             hosted_sign_in::sign_out(&vault.credential_file),
-            hosted_continue_sign_in::sign_out(&vault.origin),
+            StepUp::Continue.sign_out(&vault.origin),
+            StepUp::HandOver.sign_out(&vault.origin),
+            hand_over_queue::clear(vault),
+            hand_over_ask::forget(&vault.origin),
         ] {
             if let Err(error) = signed_out {
                 let _ = writeln!(std::io::stderr().lock(), "{error}");

@@ -122,6 +122,16 @@ pub(super) fn doctor_report(args: DoctorArgs) -> anyhow::Result<serde_json::Valu
         Ok(vault) => {
             let doctor = vault.doctor()?;
             let mut report = serde_json::to_value(&doctor)?;
+            // The sealed rows by their count alone, with the owner's act
+            // that writes their facts again (READ-LINEAGE-L3 = A; design
+            // pass 30, section 4.7).
+            if doctor.facts_hidden_source_unknown > 0 {
+                report["facts_hidden_source_unknown_notice"] = serde_json::Value::String(format!(
+                    "{} facts hidden: source unknown; `oneiron maintain --rederive-sealed` on the \
+                     stopped vault writes them again from the sources that resolve now",
+                    doctor.facts_hidden_source_unknown
+                ));
+            }
             // Which device and runtime computed the stored vectors, so one
             // device's can be found and embedded again (ARCH-0036).
             report["vector_provenance"] =
