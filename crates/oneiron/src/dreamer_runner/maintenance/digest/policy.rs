@@ -88,17 +88,15 @@ impl Vault {
         claim_ref: EntityId,
         expected_revision: [u8; 32],
     ) -> Result<()> {
-        {
-            let txn = self.store.env.read_txn()?;
-            self.read_policy_confirmation_in_txn(&txn, owner, claim_ref, expected_revision)?;
-        }
-        // The read drops before the confirm for the owner proof. The write
-        // has not opened, so the door holds nothing while the prompt can block.
         let witness = self.owner_presence(
             crate::world_keys::OwnerActImportance::Important,
             crate::world_keys::owner_presence_reasons::PROACTIVITY_POLICY,
         )?;
         let ground = OwnerProofGround::witnessed(&witness);
+        {
+            let txn = self.store.env.read_txn()?;
+            self.read_policy_confirmation_in_txn(&txn, owner, claim_ref, expected_revision)?;
+        }
         self.with_write_txn_grouped(|txn| {
             let proposal =
                 self.read_policy_confirmation_in_txn(txn, owner, claim_ref, expected_revision)?;

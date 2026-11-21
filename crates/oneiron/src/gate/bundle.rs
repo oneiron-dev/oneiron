@@ -405,7 +405,7 @@ impl Vault {
         };
         // The read drops before the confirm for the owner proof. The write
         // has not opened, so the door holds nothing while the prompt can block.
-        let ground = if action == GateConsentBundleAction::Approve && has_policy_request {
+        let ground = if has_policy_request {
             let witness = self.owner_presence(
                 crate::world_keys::OwnerActImportance::Important,
                 crate::world_keys::owner_presence_reasons::PROACTIVITY_POLICY,

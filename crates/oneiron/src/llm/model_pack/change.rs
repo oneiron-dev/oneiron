@@ -348,9 +348,7 @@ impl Vault {
         }
         {
             let txn = self.store.env.read_txn()?;
-            if let Err(revert) = self.read_model_pack_revert_in_txn(&txn, owner, request)? {
-                return Ok(revert);
-            }
+            let _ = self.read_model_pack_revert_in_txn(&txn, owner, request)?;
         }
         // The read drops before the confirm for the owner proof. The write
         // has not opened, so the door holds nothing while the prompt can block.
