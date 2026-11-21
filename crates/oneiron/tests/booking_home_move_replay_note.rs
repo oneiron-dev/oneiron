@@ -28,6 +28,12 @@
 //! ref, which names the seat's calendar ref (a CalDAV seat's collection
 //! href) and the booking's UID, and the claim syncs.
 //!
+//! A proof claim is signed for the EVENT it names, and a `claim_of` edge is
+//! any writer's: a proof linked to another booking's EVENT notes no cancel
+//! on that booking (review round 2 of #10166). Red on #10166's head
+//! 91d09f814167: the lookup follows the edge, so the other booking's
+//! captured deposit names the cancel and asks for a refund by hand.
+//!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test booking_home_move_replay_note`.
 #![cfg(all(oneiron_test_support, feature = "sync"))]
 
@@ -58,13 +64,15 @@ use oneiron::test_doors::booking_home_move::{
     booking_inbox_row_version, drop_node_local_booking_rows, move_booking_home,
 };
 use oneiron::{
-    ClaimApprovalStatus, ClaimLifecycleStatus, EdgeActorClass, EntityId, TimeRange, Vault,
-    VaultConfig,
+    ClaimApprovalStatus, ClaimLifecycleStatus, EdgeActorClass, EdgeKind, EntityId, TimeRange,
+    Vault, VaultConfig,
 };
 use oneiron_store::ports::manual_clock::ManualClock;
 
 const DEPOSIT_MINOR: u64 = 4_000;
 const PAYMENT: &str = "pi_replay_note_moved";
+/// The payment of a second booking, which no write of the seat cancelled.
+const OTHER_PAYMENT: &str = "pi_replay_note_other";
 /// The host's own calendar, the seat the booking is written to.
 const HOST_SEAT_SYSTEM: &str = "host-seat";
 /// The visitor's calendar, which the booking was never written to.
@@ -119,11 +127,25 @@ fn slot() -> TimeRange {
 /// Checkout, a hold on its lease, the provider's authorization and the
 /// confirm, then the capture: the deposit stands captured.
 fn captured_booking(machine: &Fixture) -> ConfirmReceipt {
-    let session = SessionKey::derive(b"replay-note-moved");
+    captured_booking_of(machine, b"replay-note-moved", PAYMENT, NOW, |start| {
+        start == slot().start
+    })
+}
+
+/// [`captured_booking`] for the session `seed` paid by `payment`, from `at`,
+/// in the first offered slot whose start `pick` takes.
+fn captured_booking_of(
+    machine: &Fixture,
+    seed: &[u8],
+    payment: &str,
+    at: u64,
+    pick: impl Fn(u64) -> bool,
+) -> ConfirmReceipt {
+    let session = SessionKey::derive(seed);
     let offered = machine
         .offered_slots()
         .into_iter()
-        .find(|offered| offered.start_utc == slot().start)
+        .find(|offered| pick(offered.start_utc))
         .expect("FIXTURE: the slot is offered");
     let lease = begin_deposit_checkout(
         &machine.vault,
@@ -132,9 +154,9 @@ fn captured_booking(machine: &Fixture) -> ConfirmReceipt {
             event_type: event_type(),
             session_key: session,
             terms: terms(),
-            payment_id: PAYMENT.to_owned(),
+            payment_id: payment.to_owned(),
         },
-        NOW,
+        at,
     )
     .expect("FIXTURE: checkout");
     let hold = machine
@@ -144,33 +166,33 @@ fn captured_booking(machine: &Fixture) -> ConfirmReceipt {
             HoldLeaseSpec::CheckoutExtension {
                 server_issued_lease: lease.lease.clone(),
             },
-            NOW,
+            at,
         )
         .expect("FIXTURE: a hold on the checkout lease");
     assert_eq!(
         record_deposit_provider_event(
             &machine.vault,
             &DepositProviderEvent {
-                event_id: format!("evt-auth-{PAYMENT}"),
-                payment_id: PAYMENT.to_owned(),
+                event_id: format!("evt-auth-{payment}"),
+                payment_id: payment.to_owned(),
                 kind: DepositProviderEventKind::Authorized {
                     amount_minor: DEPOSIT_MINOR,
                     currency: "usd".to_owned(),
                 },
             },
-            NOW + 30,
+            at + 30,
         )
         .expect("FIXTURE: the provider's authorization"),
         DepositProviderEventOutcome::Applied(DepositState::Authorized)
     );
     let booked = machine
-        .confirm(&hold, session, NOW + 40)
+        .confirm(&hold, session, at + 40)
         .expect("FIXTURE: the confirm on the authorized deposit");
     settle_booking_deposit(
         &machine.vault,
         &booked.calendar.event_ref,
         &mut Provider,
-        NOW + 50,
+        at + 50,
     )
     .expect("FIXTURE: the capture");
     booked
@@ -386,5 +408,88 @@ fn a_replay_on_the_old_home_after_a_move_notes_the_unattributed_cancel_on_the_ne
             amount_minor: DEPOSIT_MINOR
         }),
         "the note moves no money"
+    );
+}
+
+#[test]
+fn a_replay_proof_linked_to_another_booking_notes_no_cancel_there() {
+    let clock = ManualClock::new(NOW);
+    let machine = Fixture::open_in(
+        tempfile::tempdir().expect("temp dir"),
+        config(&clock),
+        Some(terms()),
+    );
+    machine.enable_host_feed();
+    let seat = Seat::install(&machine.vault, HOST_SEAT_SYSTEM);
+    let booked = captured_booking(&machine);
+    let event = booked.calendar.event_ref;
+    let slot = slot();
+    let live = seat.write(&machine.vault, event, NOW + 55);
+    seat.pull(
+        &machine.vault,
+        &[SeatChange::upsert(&live, slot.start, slot.end, 0, false)],
+        NOW + 60,
+    )
+    .expect("FIXTURE: the seat's first pull");
+    cancel_on_unwritten_calendar(&machine, &booked, NOW + 120);
+    let stored = seat.write_with_lost_answer(&machine.vault, event, NOW + 150);
+    let copy = seat.stripped_rewrite_of_own_write(&live, stored, NOW + 160);
+    seat.replay_refused_over(&machine.vault, event, &copy, NOW + 170);
+    let row = |event: EntityId| format!("{BOOKING_HELD_DEPOSIT_ITEM_PREFIX}{}", event.to_hex());
+    assert_eq!(
+        booking_inbox_row_version(&machine.vault, &row(event)).expect("read the booking's row"),
+        Some(format!("unattributed_cancel:{stored}")),
+        "FIXTURE: the replay notes the cancel on the booking its write cancelled"
+    );
+
+    let other = captured_booking_of(
+        &machine,
+        b"replay-note-other",
+        OTHER_PAYMENT,
+        NOW + 200,
+        |start| start != slot.start,
+    )
+    .calendar
+    .event_ref;
+    let proofs: Vec<EntityId> = machine
+        .vault
+        .claims_for_subject(&event)
+        .expect("claims on the EVENT")
+        .into_iter()
+        .filter(|claim| {
+            machine
+                .vault
+                .get_claim(claim)
+                .expect("read claim")
+                .is_some_and(|body| body.predicate == REPLAY_CANCEL_EVIDENCE)
+        })
+        .collect();
+    assert_eq!(proofs.len(), 1, "FIXTURE: the replay recorded one proof");
+    machine
+        .vault
+        .put_edge(&proofs[0], EdgeKind::ClaimOf, &other, 1.0)
+        .expect("FIXTURE: link the proof to the other booking's EVENT");
+    assert!(
+        machine
+            .vault
+            .claims_for_subject(&other)
+            .expect("claims on the other EVENT")
+            .contains(&proofs[0]),
+        "FIXTURE: the other booking's EVENT now lists the proof"
+    );
+    assert_eq!(
+        booking_inbox_row_version(&machine.vault, &row(other)).expect("read the other row"),
+        None,
+        "a proof signed for one booking notes no cancel on another booking it is linked to \
+         (#10166's head 91d09f814167 names the cancel there)"
+    );
+    assert_eq!(
+        booking_deposit_for_payment(&machine.vault, OTHER_PAYMENT)
+            .expect("read the other deposit")
+            .map(|deposit| deposit.state),
+        Some(DepositState::Captured {
+            amount_minor: DEPOSIT_MINOR
+        }),
+        "the other booking's deposit stands captured"
     );
 }
