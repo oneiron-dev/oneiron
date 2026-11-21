@@ -285,8 +285,15 @@ fn land(
             remote.call("vault.imports.hook_transcript_part", &part, PURPOSE)?;
         imported = view.imported;
     }
-    imported.ok_or_else(|| {
+    let imported = imported.ok_or_else(|| {
         anyhow::anyhow!("the hosted vault took the session's log in parts but did not land it")
+    })?;
+    // Read as one call's answer is read: an answer this command cannot read
+    // is no refusal, so the log waits on.
+    serde_json::from_value(imported).map_err(|error| {
+        anyhow::anyhow!(
+            "the hosted vault landed the log in parts, in an unreadable answer: {error}"
+        )
     })
 }
 
