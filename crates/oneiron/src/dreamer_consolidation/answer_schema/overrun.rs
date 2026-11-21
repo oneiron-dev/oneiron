@@ -145,7 +145,7 @@ pub(crate) fn latch_for_settled_in_txn(
         return Ok(());
     }
     let Some(night) = night_of_in_txn(vault, &*txn, settled.attempt.id)? else {
-        return Ok(None);
+        return Ok(());
     };
     latch_overrun_in_txn(vault, txn, night, stop)
 }
