@@ -596,15 +596,12 @@ impl Vault {
         };
         // The read drops before the confirm for the owner proof. The write
         // has not opened, so the door holds nothing while the prompt can block.
-        let ground = if asks {
-            let witness = self.owner_presence(
-                crate::world_keys::OwnerActImportance::Important,
-                crate::world_keys::owner_presence_reasons::PROACTIVITY_POLICY,
-            )?;
-            Some(OwnerProofGround::witnessed(&witness))
-        } else {
-            None
-        };
+        let _ = asks;
+        let witness = self.owner_presence(
+            crate::world_keys::OwnerActImportance::Important,
+            crate::world_keys::owner_presence_reasons::PROACTIVITY_POLICY,
+        )?;
+        let ground = Some(OwnerProofGround::witnessed(&witness));
         let reverted = self.with_write_txn_grouped(|txn| {
             let (actor, mut row) = self.read_maintenance_revert_in_txn(txn, owner, target)?;
             if let Some(done) = &row.reverted {

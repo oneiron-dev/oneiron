@@ -346,19 +346,17 @@ impl Vault {
         if request.change_ref.trim().is_empty() {
             return Err(invalid("a revert names a change"));
         }
+        let witness = self.owner_presence(
+            crate::world_keys::OwnerActImportance::Important,
+            crate::world_keys::owner_presence_reasons::MODEL_PACK_REVERT,
+        )?;
+        let ground = OwnerProofGround::witnessed(&witness);
         {
             let txn = self.store.env.read_txn()?;
             if let Err(revert) = self.read_model_pack_revert_in_txn(&txn, owner, request)? {
                 return Ok(revert);
             }
         }
-        // The read drops before the confirm for the owner proof. The write
-        // has not opened, so the door holds nothing while the prompt can block.
-        let witness = self.owner_presence(
-            crate::world_keys::OwnerActImportance::Important,
-            crate::world_keys::owner_presence_reasons::MODEL_PACK_REVERT,
-        )?;
-        let ground = OwnerProofGround::witnessed(&witness);
         self.with_write_txn_grouped_after_commit(
             |txn| {
                 let (revert, applied) = match self
