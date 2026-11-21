@@ -345,6 +345,7 @@ pub mod seat_park_model_step;
 pub mod secret_same_value;
 pub mod selector_grant;
 pub mod setting;
+pub mod setting_door_between;
 pub mod setting_keys;
 pub mod settle_backoff;
 pub mod share_claim_refs;
