@@ -1612,23 +1612,27 @@ fn a_held_machines_own_later_answer_is_refused_not_held() {
 }
 
 /// The rows of the crossing removal tests (FIX
-/// MACHINE-CROSSING-REMOVALS-UNMAKE-CARRIED-OWNER-ACTS), on
+/// MACHINE-CROSSING-REMOVALS-UNMAKE-CARRIED-OWNER-ACTS and FIX
+/// MACHINE-CROSSING-REMOVALS-UNMAKE-CARRIED-OWNER-CHOICES), on
 /// [`LaptopBesideNode`]: the root registers the owner's second laptop (a
 /// root-signed roster revision, so it is mine with no carried act); the
-/// node carries the owner's pairing of a new machine with the owner key's
-/// proof; then each laptop removes the node at revision 2, on the pairing,
-/// neither having seen the other. The first removal saw the pairing; the
-/// second saw it when `second_saw`.
+/// node carries one owner act with the owner key's proof; then each laptop
+/// removes the node at revision 2, on that act, neither having seen the
+/// other. The first removal saw the act; the second saw it when
+/// `second_saw`.
 struct CrossingRemovals {
     beside: LaptopBesideNode,
-    paired_machine: EntityId,
-    paired_key: [u8; 32],
-    pairing: AuthorityLogEntry,
+    carried: AuthorityLogEntry,
     removals: [AuthorityLogEntry; 2],
 }
 
 impl CrossingRemovals {
-    fn new(second_saw: bool) -> Self {
+    /// `carry` signs the act the node carries, on the parent it is given:
+    /// the second laptop's registration.
+    fn new(
+        carry: impl FnOnce(&HostedNodeAnswer, AuthorityEntryHash) -> AuthorityLogEntry,
+        second_saw: bool,
+    ) -> Self {
         let mut beside = LaptopBesideNode::new();
         let vault_id = beside.node.vault_id();
         let second = signing(SECOND_LAPTOP_SEED);
@@ -1648,33 +1652,8 @@ impl CrossingRemovals {
             &beside.node.root,
             &[],
         );
-        let paired = signing(PAIRED_SEED);
-        let paired_machine = EntityId::from_bytes([0x74; 16]).expect("an id");
-        let pairing = signed(
-            Some(vault_id),
-            1,
-            vec![hash(&second_registration)],
-            AuthorityOp::MachineProfile(node_profile(
-                vault_id,
-                paired_machine,
-                &paired,
-                MachineRole::Owned(MachineOwnership::Yours),
-                1,
-                Some((
-                    beside.node.machine,
-                    OwnerAct::by_owner(
-                        owner(),
-                        OwnerActKind::Pairing,
-                        paired_machine,
-                        ActSurface::ThisInstall,
-                        [0; 32],
-                    ),
-                )),
-            )),
-            &beside.node.node,
-            &[&beside.node.root],
-        );
-        let pairing_entry = hash(&pairing);
+        let carried = carry(&beside.node, hash(&second_registration));
+        let carried_entry = hash(&carried);
         let node_registration = hash(&beside.node.rows[1]);
         let removal = |carrier: EntityId, carrier_key: &SigningKey, saw: bool| {
             let mut profile = node_profile(
@@ -1695,12 +1674,12 @@ impl CrossingRemovals {
                 )),
             );
             if saw {
-                profile.seen_world_edits.insert(pairing_entry);
+                profile.seen_world_edits.insert(carried_entry);
             }
             signed(
                 Some(vault_id),
                 1,
-                vec![pairing_entry],
+                vec![carried_entry],
                 AuthorityOp::MachineProfile(profile),
                 carrier_key,
                 &[],
@@ -1713,32 +1692,22 @@ impl CrossingRemovals {
         beside.node.rows.push(second_registration);
         Self {
             beside,
-            paired_machine,
-            paired_key: paired.verifying_key().to_bytes(),
-            pairing,
+            carried,
             removals,
         }
     }
 
-    /// The fold with both removals, with the paired machine and its key,
-    /// after asserting what the fixture needs: the pairing alone makes the
-    /// machine mine, and both removals land and cross at the node's roster
-    /// head, which is removed and conflicted.
-    fn removed_fold(self) -> (AuthorityFold, EntityId, [u8; 32]) {
+    /// The fold with the carried act, and the fold with both removals too,
+    /// after asserting that both removals land and cross at the node's
+    /// roster head, which is removed and conflicted.
+    fn folds(self) -> (AuthorityFold, AuthorityFold) {
         let Self {
             mut beside,
-            paired_machine,
-            paired_key,
-            pairing,
+            carried,
             removals,
         } = self;
-        beside.node.rows.push(pairing);
-        let paired = beside.node.fold();
-        assert!(
-            mine(&paired, paired_machine, &paired_key),
-            "FIXTURE: the proven pairing makes the machine mine: {:?}",
-            paired.issues
-        );
+        beside.node.rows.push(carried);
+        let before = beside.node.fold();
         beside.node.rows.extend(removals);
         let removed = beside.node.fold();
         assert!(
@@ -1749,8 +1718,75 @@ impl CrossingRemovals {
             "FIXTURE: both removals land and cross at the node's roster head: {:?}",
             removed.issues
         );
-        (removed, paired_machine, paired_key)
+        (before, removed)
     }
+}
+
+/// The crossing removals over the node's pairing of a new machine with the
+/// owner key's proof: the fold with both removals, with the paired machine
+/// and its key, after asserting that the pairing alone makes the machine
+/// mine.
+fn crossing_removals_over_a_pairing(second_saw: bool) -> (AuthorityFold, EntityId, [u8; 32]) {
+    let paired = signing(PAIRED_SEED);
+    let paired_machine = EntityId::from_bytes([0x74; 16]).expect("an id");
+    let paired_key = paired.verifying_key().to_bytes();
+    let pair = |node: &HostedNodeAnswer, parent: AuthorityEntryHash| {
+        let vault_id = node.vault_id();
+        signed(
+            Some(vault_id),
+            1,
+            vec![parent],
+            AuthorityOp::MachineProfile(node_profile(
+                vault_id,
+                paired_machine,
+                &paired,
+                MachineRole::Owned(MachineOwnership::Yours),
+                1,
+                Some((
+                    node.machine,
+                    OwnerAct::by_owner(
+                        owner(),
+                        OwnerActKind::Pairing,
+                        paired_machine,
+                        ActSurface::ThisInstall,
+                        [0; 32],
+                    ),
+                )),
+            )),
+            &node.node,
+            &[&node.root],
+        )
+    };
+    let (before, removed) = CrossingRemovals::new(pair, second_saw).folds();
+    assert!(
+        mine(&before, paired_machine, &paired_key),
+        "FIXTURE: the proven pairing makes the machine mine: {:?}",
+        before.issues
+    );
+    (removed, paired_machine, paired_key)
+}
+
+/// The crossing removals over the node's home pick of [`PICKED_NODE`] with
+/// the owner key's proof: the fold with both removals, after asserting that
+/// the pick alone is in force.
+fn crossing_removals_over_a_home_pick(second_saw: bool) -> AuthorityFold {
+    let pick = |node: &HostedNodeAnswer, parent: AuthorityEntryHash| {
+        home_pick_row(
+            node.vault_id(),
+            parent,
+            node.machine,
+            &node.node,
+            &[&node.root],
+        )
+    };
+    let (before, removed) = CrossingRemovals::new(pick, second_saw).folds();
+    assert_eq!(
+        home_pick_in_force(&before),
+        Some(PICKED_NODE),
+        "FIXTURE: the proven pick is in force: {:?}",
+        before.issues
+    );
+    removed
 }
 
 /// Two of the owner's laptops remove the node at once, and both removals
@@ -1761,7 +1797,7 @@ impl CrossingRemovals {
 /// conflict unmade the pairing.
 #[test]
 fn a_pairing_both_crossing_removals_saw_keeps_the_machine_mine() {
-    let (removed, paired_machine, paired_key) = CrossingRemovals::new(true).removed_fold();
+    let (removed, paired_machine, paired_key) = crossing_removals_over_a_pairing(true);
     assert!(
         mine(&removed, paired_machine, &paired_key),
         "both removals saw the pairing, so their crossing unmakes nothing: {:?}",
@@ -1774,10 +1810,41 @@ fn a_pairing_both_crossing_removals_saw_keeps_the_machine_mine() {
 /// crossing or not.
 #[test]
 fn a_pairing_one_crossing_removal_did_not_see_is_not_mine() {
-    let (removed, paired_machine, paired_key) = CrossingRemovals::new(false).removed_fold();
+    let (removed, paired_machine, paired_key) = crossing_removals_over_a_pairing(false);
     assert!(
         !mine(&removed, paired_machine, &paired_key),
         "a removal that never saw the pairing takes it away: {:?}",
+        removed.issues
+    );
+}
+
+/// The owner-choice twin (FIX
+/// MACHINE-CROSSING-REMOVALS-UNMAKE-CARRIED-OWNER-CHOICES): two of the
+/// owner's laptops remove the node at once, and both removals saw the home
+/// pick it carried. The pick's removal race reads the node's roster head,
+/// conflicted by the crossing alone and removed whichever wins, so the pick
+/// stays in force. On #9132's head 2903ceb8d156 the conflict unmade it.
+#[test]
+fn a_home_pick_both_crossing_removals_saw_stays_in_force() {
+    let removed = crossing_removals_over_a_home_pick(true);
+    assert_eq!(
+        home_pick_in_force(&removed),
+        Some(PICKED_NODE),
+        "both removals saw the pick, so their crossing unmakes nothing: {:?}",
+        removed.issues
+    );
+}
+
+/// The control: the second laptop's removal never saw the home pick, so the
+/// pick's carrier lost its removal race and no pick is in force, crossing or
+/// not.
+#[test]
+fn a_home_pick_one_crossing_removal_did_not_see_is_not_in_force() {
+    let removed = crossing_removals_over_a_home_pick(false);
+    assert_eq!(
+        home_pick_in_force(&removed),
+        None,
+        "a removal that never saw the pick takes it away: {:?}",
         removed.issues
     );
 }
