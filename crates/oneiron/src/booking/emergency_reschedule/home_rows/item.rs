@@ -1,7 +1,7 @@
 //! `booking:emergency_item:v1:`, the committed checkpoints: the third emergency section a home
 //! move carries (the parent module's doc).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
@@ -17,6 +17,7 @@ use crate::booking::emergency_reschedule::planning::{
     EMERGENCY_ITEM_META_PREFIX, EmergencyItem, ITEM,
 };
 use crate::booking::emergency_reschedule::{EmergencyLocalBasis, EmergencyPick, state};
+use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::outbound_intent_ledger::{
     IntentLedgerError, IntentLedgerRecord, IntentResolution, IntentState, UnconfirmedDelivery,
@@ -49,6 +50,9 @@ struct CarriedItem {
     /// booker, so the new home's send may repeat it (Engine ANSWER
     /// BK-EMERGENCY-PENDING-ITEM-MOVE = A: the move names that case).
     uncertain_lanes: Vec<String>,
+    /// Whether the old home's pending-event lookup names this item: the one whose revision its
+    /// fence holds (`state::pending_effect_fences_in`), which the new home's lookup names again.
+    pending_pointer: bool,
 }
 
 /// A pick without the owner's address or the booker's.
@@ -225,6 +229,9 @@ impl HomeTable for EmergencyItemRows {
         for (key, item) in ITEM.scan(&vault.store, txn)? {
             let item = with_ledger_deliveries(vault, txn, item)?;
             let uncertain = uncertain_lanes(vault, txn, &item, now_ms)?;
+            let pending_pointer = PENDING_EVENT
+                .get(&vault.store, txn, &item.calendar.event_ref)?
+                .is_some_and(|target| target == full_key(EMERGENCY_ITEM_META_PREFIX, &key));
             let EmergencyItem {
                 plan,
                 calendar,
@@ -271,6 +278,7 @@ impl HomeTable for EmergencyItemRows {
                 apology_delivered,
                 picked,
                 uncertain_lanes: uncertain,
+                pending_pointer,
             });
         }
         Ok(Partitioned {
@@ -281,7 +289,10 @@ impl HomeTable for EmergencyItemRows {
 
     /// Lands each whole item as the module doc says and indexes its pending event and its
     /// effects. On a node whose rows are history both lookups are rebuilt from the landed items
-    /// alone.
+    /// alone. Each EVENT's pending lookup names one landed item that still owes a delivery: the
+    /// one the old home's names, else the one owed at the highest revision. Landing order
+    /// never decides it, so an older owed item cannot take the fence from a later one (review
+    /// round 1 of #10109).
     fn adopt(
         vault: &Vault,
         txn: &mut RwTxn<'_>,
@@ -299,6 +310,7 @@ impl HomeTable for EmergencyItemRows {
         }
         let (mut owners, mut bookers) = row_parts(rows.actors);
         let mut landed = BTreeSet::new();
+        let mut pending: BTreeMap<EntityId, ((bool, u32), Vec<u8>)> = BTreeMap::new();
         let mut uncertain = 0_usize;
         for carried in rows.facts.items {
             let (Some(owner), Some(booker)) =
@@ -319,6 +331,7 @@ impl HomeTable for EmergencyItemRows {
                 apology_delivered,
                 picked,
                 uncertain_lanes,
+                pending_pointer,
             } = carried;
             uncertain += uncertain_lanes.len();
             let plan = join_plan(plan, &owner, &booker)?;
@@ -353,14 +366,19 @@ impl HomeTable for EmergencyItemRows {
                 Some(_) if !history => return Ok(TableAdopt::Conflict),
                 _ => ITEM.put(&vault.store, txn, &key, &item)?,
             }
-            lookup::index_item_in(
-                vault,
-                txn,
-                &item,
-                &full_key(EMERGENCY_ITEM_META_PREFIX, &key),
-            )
-            .map_err(booking_failure)?;
+            let item_key = full_key(EMERGENCY_ITEM_META_PREFIX, &key);
+            lookup::index_item_in(vault, txn, &item, &item_key).map_err(booking_failure)?;
+            if let Some(revision) = lookup::pending_revision(&item) {
+                let rank = (pending_pointer, revision.sequence);
+                let event = item.calendar.event_ref;
+                if pending.get(&event).is_none_or(|(best, _)| rank > *best) {
+                    pending.insert(event, (rank, item_key));
+                }
+            }
             landed.insert(key);
+        }
+        for (event, (_, item_key)) in pending {
+            PENDING_EVENT.put(&vault.store, txn, &event, &item_key)?;
         }
         if history {
             for key in ITEM.scan_keys(&vault.store, txn, &[])? {
