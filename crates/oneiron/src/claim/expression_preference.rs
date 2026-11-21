@@ -140,13 +140,16 @@ impl Vault {
                 learned_at,
                 None,
             )?;
-            // The new head, for the live windows' mirror (FIX
-            // CLAIM-RAW-TXN-DOORS-DROP-LIVE-WINDOW-ROWS).
+            // The new head and each head it closed, for the live windows'
+            // mirror (FIX CLAIM-RAW-TXN-DOORS-DROP-LIVE-WINDOW-ROWS; review
+            // 10145 round 1: a closed head stayed Active in the window).
             #[cfg(feature = "sync")]
             crate::batch::queue_committed_rows(
                 self,
                 wtxn,
-                std::collections::BTreeSet::from([claim_id]),
+                std::iter::once(claim_id)
+                    .chain(result.superseded_claim_ids.iter().copied())
+                    .collect(),
             );
             Ok(result)
         })
