@@ -492,13 +492,6 @@ pub struct StoreCore {
     /// lock because the two critical sections never nest.
     #[cfg(feature = "sync")]
     pub(crate) staged_import_confirm_lock: Mutex<()>,
-    /// Held for one host root move of this vault, a re-root or a kit
-    /// recovery: the move reads this install's host issuer seed slot, writes
-    /// its successor seed there, moves the root, and on a failure puts back
-    /// the slot it read. It was a process-wide lock; the slot belongs to this
-    /// vault, and a process holds one store per vault path, so the vault's own
-    /// lock keeps every move of the process on the slot in one line.
-    pub(crate) host_root_move_lock: Mutex<()>,
     /// Held while an install reads its owner signing slot for this vault,
     /// checks the slot's key against the roster and gives a revoked key's slot
     /// a fresh seed. Two callers never act on one reading: a later delete

@@ -69,17 +69,22 @@ fn seed_absent() -> Error {
     Error::Secret(SecretError::KeystoreUnavailable(HOST_ISSUER_SEED_ABSENT))
 }
 
-/// Takes `vault`'s host root move lock for one move: one host root move of
-/// a vault at a time. A move reads this install's slot, writes its successor
-/// seed there, moves the root, and on a failure puts back the slot it read;
-/// two moves interleaved would let the losing one's put-back delete or
-/// overwrite the winner's live seed. Across processes, the vault's writer
-/// lease admits one opener at a time. A move that panicked while holding the
-/// lock left the slot in an unknown state, so the next one refuses.
-fn lock_host_root_moves(vault: &Vault) -> Result<std::sync::MutexGuard<'_, ()>> {
-    vault
-        .store
-        .host_root_move_lock
+/// One host root move at a time in this process. A move reads this
+/// install's slot, writes its successor seed there, moves the root, and on a
+/// failure puts back the slot it read; two moves interleaved would let the
+/// losing one's put-back delete or overwrite the winner's live seed. Across
+/// processes, the vault's writer lease admits one opener at a time. The
+/// lock is the process's, not one store's: the slot is keyed by vault id and
+/// install, so a byte copy of the vault open at a second path, with its own
+/// store and writer lease, names the same slot, and two failed moves on the
+/// vault and its copy could leave there a seed that neither root takes
+/// (FIX-LIST 32277).
+static HOST_ROOT_MOVES: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Takes [`HOST_ROOT_MOVES`] for one move. A move that panicked while
+/// holding it left the slot in an unknown state, so the next one refuses.
+fn lock_host_root_moves() -> Result<std::sync::MutexGuard<'static, ()>> {
+    HOST_ROOT_MOVES
         .lock()
         .map_err(|_| Error::InvariantViolation("host root move lock poisoned"))
 }
@@ -182,7 +187,7 @@ impl Vault {
     /// on, puts the seed read back (`put_back_host_issuer_slot`). A
     /// keystore with no in-place replace keeps nothing and moves nothing.
     pub fn re_root_host_to_new_seed(&self, current: &HostSlipIssuer) -> Result<HostReRoot> {
-        let _moving = lock_host_root_moves(self)?;
+        let _moving = lock_host_root_moves()?;
         let keystore = self.device_keystore()?;
         let slot = self.host_issuer_slot()?;
         let kept = keystore
@@ -223,10 +228,10 @@ impl Vault {
     /// (FIX-LIST 25945). A recovery that then fails, or whose successor
     /// write the keystore faulted on, leaves the slot as it was: emptied
     /// again, or its retired seed put back (`put_back_host_issuer_slot`); a
-    /// slot another seed filled first is left to it. One root move of this
-    /// vault runs at a time, this and a re-root alike.
+    /// slot another seed filled first is left to it. One root move runs at
+    /// a time in this process, this and a re-root alike.
     pub fn recover_host_root_to_new_seed(&self, secret: RestoredKitSecret) -> Result<HostReRoot> {
-        let _moving = lock_host_root_moves(self)?;
+        let _moving = lock_host_root_moves()?;
         // Every outcome leaves the slot as the read below judges it: filled
         // by the escrow, held as it was, or empty when the escrow gave back
         // no seed of the live root (it holds none, or none that reads).
