@@ -15,6 +15,15 @@
 //! with the credential id, the co-owner's, so the owner's assertion never
 //! signs the prepared entry and the land is refused. Green on the head.
 //!
+//! REVIEW-10307 P1: the co-owner enrols the owner's own passkey, under the
+//! same credential id, on a sibling branch of the owner's enrolment. Both
+//! enrolments count, and the passkey list keeps one row per key, the
+//! smallest entry's; the test adds sibling enrolments until that row is the
+//! co-owner's. The owner's prepare still finds the owner's enrolment of the
+//! key, and the owner's vouch lands. Red at 45cbfc35da82 (the prepare
+//! matches the owner on the list's one row, the co-owner's, and refuses);
+//! green on the head.
+//!
 //! The served vault is `recovery_hold_passkey_cancel_routes.rs`'s fixture
 //! with no kit: a self-host vault rooted under its host, its owner bound by
 //! the host root and holding a full human slip, made shared with a
@@ -39,13 +48,14 @@ use base64::Engine as _;
 use ed25519_dalek::{Signer as _, SigningKey};
 use engine_stack::on_engine_stack;
 use oneiron::authority::{
-    ActAuthority, ActSurface, AuthorityKey, CapabilitySlip, HostSlipIssuer, MachineRole,
-    OwnerPasskeyEnrollment, ROLE_OWNER, holder_proof,
+    ActAuthority, ActSurface, AuthorityEntryHash, AuthorityKey, CapabilitySlip, HostSlipIssuer,
+    MachineRole, OwnerPasskeyEnrollment, ROLE_OWNER, holder_proof,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{FederationGrantRole, InitialSharedMember};
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
+use oneiron::test_doors::passkey_vouch_limits::{enrol_owner_passkey_on, main_log_heads};
 use oneiron::test_support::bind_host_owner;
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_server::{build_app, config::SyncServerConfig, server::SyncServer};
@@ -72,6 +82,10 @@ const FLAGS_PRESENT_VERIFIED: u8 = 0x05;
 const OWNER_PASSKEY_SCALAR: u8 = 0x5A;
 /// The shared vault's id.
 const SHARED: u64 = 44;
+/// The most sibling enrolments the co-owner makes before the passkey list
+/// names the co-owner for the owner's passkey: each names it with chance
+/// one half.
+const SIBLING_ATTEMPTS: usize = 24;
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
@@ -211,9 +225,13 @@ impl Home {
         Ok(ActAuthority::Owner(self.owner()?, ActSurface::ThisInstall))
     }
 
-    /// Enrols `key` as `person`'s passkey, with the credential id
-    /// [`CREDENTIAL_ID`], under the host root.
-    fn enrol_passkey_as(&self, person: EntityId, key: &P256SigningKey) -> TestResult {
+    /// `person`'s authority and the enrollment of `key` as their passkey,
+    /// with the credential id [`CREDENTIAL_ID`].
+    fn passkey_enrollment(
+        &self,
+        person: EntityId,
+        key: &P256SigningKey,
+    ) -> TestResult<(ActAuthority, OwnerPasskeyEnrollment)> {
         let authority = ActAuthority::Owner(proof(&self.vault, person)?, ActSurface::ThisInstall);
         let public_key = key
             .verifying_key()
@@ -231,9 +249,47 @@ impl Home {
             client_data_json: assertion.client_data_json,
             signature: assertion.signature,
         };
+        Ok((authority, input))
+    }
+
+    /// Enrols `key` as `person`'s passkey, with the credential id
+    /// [`CREDENTIAL_ID`], under the host root.
+    fn enrol_passkey_as(&self, person: EntityId, key: &P256SigningKey) -> TestResult {
+        let (authority, input) = self.passkey_enrollment(person, key)?;
         self.vault
             .enrol_owner_passkey_as_host(&authority, &input, &self.issuer)?;
         Ok(())
+    }
+
+    /// Enrols `key` as `person`'s passkey on `parents`, a sibling branch of
+    /// every row stored since, under the host root; true when it counted.
+    fn enrol_passkey_on(
+        &self,
+        person: EntityId,
+        key: &P256SigningKey,
+        parents: Vec<AuthorityEntryHash>,
+    ) -> TestResult<bool> {
+        let (authority, input) = self.passkey_enrollment(person, key)?;
+        Ok(enrol_owner_passkey_on(
+            &self.vault,
+            &authority,
+            &input,
+            parents,
+            self.issuer.public_key(),
+            |transcript| self.issuer.sign_slip(transcript),
+        )?)
+    }
+
+    /// The owner the passkey list's row of `key` names.
+    fn listed_owner_of(&self, key: &P256SigningKey) -> TestResult<EntityId> {
+        let public_key = compressed(key);
+        Ok(self
+            .vault
+            .enrolled_owner_passkeys()?
+            .into_iter()
+            .find(|passkey| passkey.live && passkey.public_key == public_key)
+            .ok_or("a live row of the passkey")?
+            .owner)
     }
 
     /// Makes the vault shared and adds a live person as a co-Owner, as
@@ -354,7 +410,48 @@ async fn co_owners_passkey_under_the_same_credential_id_never_vouches_for_the_ow
         first.owner, co_owner,
         "the co-owner's passkey is listed first under the shared credential id"
     );
+    owners_passkey_vouches_for_a_new_device_key(&home).await
+}
 
+#[test]
+fn an_owners_passkey_listed_under_a_co_owners_sibling_enrolment_still_vouches() -> TestResult {
+    on_engine_stack(owners_passkey_listed_under_a_co_owners_sibling_enrolment_still_vouches)
+}
+
+async fn owners_passkey_listed_under_a_co_owners_sibling_enrolment_still_vouches() -> TestResult {
+    let home = Home::serve()?;
+    let co_owner = home.add_co_owner()?;
+    let fork = main_log_heads(&home.vault)?;
+    home.enrol_passkey_as(home.person, &passkey())?;
+    assert_eq!(
+        home.listed_owner_of(&passkey())?,
+        home.person,
+        "guard: the owner's enrolment of the passkey is listed"
+    );
+    // The co-owner enrols the same passkey on a sibling branch until the
+    // list's row of it is a co-owner's enrolment, the smallest entry.
+    for _ in 0..SIBLING_ATTEMPTS {
+        if home.listed_owner_of(&passkey())? == co_owner {
+            break;
+        }
+        assert!(
+            home.enrol_passkey_on(co_owner, &passkey(), fork.clone())?,
+            "the co-owner's sibling enrolment of the passkey counts"
+        );
+    }
+    assert_eq!(
+        home.listed_owner_of(&passkey())?,
+        co_owner,
+        "the passkey list names the co-owner for the owner's passkey"
+    );
+    owners_passkey_vouches_for_a_new_device_key(&home).await
+}
+
+/// The owner's passkey vouches for a new device key over HTTP: the
+/// prepare picks the owner's own passkey as the predecessor, the owner's
+/// verified assertion lands the enrollment, and the key is a live owner
+/// root.
+async fn owners_passkey_vouches_for_a_new_device_key(home: &Home) -> TestResult {
     // The owner's prepare picks the owner's own passkey as the predecessor.
     let device = SigningKey::from_bytes(&[NEW_KEY_SEED; 32]);
     let device_key = AuthorityKey::Ed25519(device.verifying_key().to_bytes());

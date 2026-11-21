@@ -1516,6 +1516,65 @@ impl Vault {
     where
         S: FnOnce(&[u8]) -> Vec<u8>,
     {
+        let device = enrolled_device(input.public_key, input.proof, EnrolledOwnerKeyKind::Device);
+        self.enrol_device_on_parents_for_test(
+            authority,
+            Some(input.machine),
+            device,
+            parents,
+            predecessor,
+            sign_predecessor,
+        )
+    }
+
+    /// [`Self::enrol_owner_key_on_parents_for_test`] for `input`'s passkey,
+    /// its machine this install, as [`Self::enrol_owner_passkey_as`] builds
+    /// the enrollment: the integration tests' door to two owners' sibling
+    /// enrolments of one passkey (REVIEW-10307 P1).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::enrol_owner_key_on_parents_for_test`]; a key, a credential
+    /// id or an assertion that does not decode is
+    /// [`RecordError::InvalidAuthorityLogBody`].
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn enrol_owner_passkey_on_parents_for_test<S>(
+        &self,
+        authority: &ActAuthority,
+        input: &OwnerPasskeyEnrollment,
+        parents: Vec<AuthorityEntryHash>,
+        predecessor: AuthorityKey,
+        sign_predecessor: S,
+    ) -> Result<bool>
+    where
+        S: FnOnce(&[u8]) -> Vec<u8>,
+    {
+        let (_, device) = passkey_enrollment_device(input)?;
+        self.enrol_device_on_parents_for_test(
+            authority,
+            None,
+            device,
+            parents,
+            predecessor,
+            sign_predecessor,
+        )
+    }
+
+    /// The enrollment of `device` on `parents` the two doors above store,
+    /// `holder` its machine, this install (the carrier) when `None`.
+    #[cfg(oneiron_test_support)]
+    fn enrol_device_on_parents_for_test<S>(
+        &self,
+        authority: &ActAuthority,
+        holder: Option<EntityId>,
+        device: DeviceAuthority,
+        parents: Vec<AuthorityEntryHash>,
+        predecessor: AuthorityKey,
+        sign_predecessor: S,
+    ) -> Result<bool>
+    where
+        S: FnOnce(&[u8]) -> Vec<u8>,
+    {
         let (owner, surface) = match authority {
             ActAuthority::Owner(owner, surface) => (owner, *surface),
             ActAuthority::Agent(_) => return Err(authority_refused(OWNER_ONLY)),
@@ -1527,10 +1586,14 @@ impl Vault {
         let (carrier, carrier_key) = self
             .carrier_in_txn(&txn, &fold)
             .map_err(authority_refusal_as(NO_CARRIER))?;
+        let target = match &device.key {
+            AuthorityKey::Ed25519(bytes) => owner_key_enrollment_target(&vault_id, bytes)?,
+            AuthorityKey::P256(bytes) => owner_key_enrollment_target(&vault_id, bytes)?,
+        };
         let act = OwnerAct::by_owner(
             actor,
             OwnerActKind::OwnerKeyEnrollment,
-            owner_key_enrollment_target(&vault_id, &input.public_key)?,
+            target,
             surface,
             OWNER_KEY_ENROLLMENT_SEEN,
         );
@@ -1542,13 +1605,9 @@ impl Vault {
             parent_hashes: parents,
             op: AuthorityOp::OwnerKeyEnroll(OwnerKeyEnroll {
                 act,
-                machine: input.machine,
+                machine: holder.unwrap_or(carrier),
                 carrier,
-                device: enrolled_device(
-                    input.public_key,
-                    input.proof,
-                    EnrolledOwnerKeyKind::Device,
-                ),
+                device,
             }),
             signer: AuthoritySignature {
                 suite: predecessor.suite(),
