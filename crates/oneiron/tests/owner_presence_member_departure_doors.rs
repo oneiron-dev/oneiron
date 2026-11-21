@@ -15,10 +15,10 @@ use oneiron::recovery::PassphraseCost;
 use oneiron::registry::{ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_PERSON};
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::member_departure_between::{
-    leave_shared_vault_between, remove_shared_member_between,
+    leave_shared_vault_between, remove_shared_member_between, remove_shared_member_for_ask_between,
 };
 use oneiron::test_doors::passkey_vouch_limits::{SignedRow, append_signed_rows};
-use oneiron::test_support::bind_host_owner;
+use oneiron::test_support::{bind_host_actor, bind_host_owner};
 use oneiron::world_keys::DevicePin;
 use oneiron::{EntityId, Error, TimeRange, Vault, VaultConfig};
 use oneiron_authority::authority::ACTOR_CLASS_HUMAN;
@@ -398,6 +398,143 @@ fn an_applied_ask_whose_steward_lost_the_role_raises_no_prompt() {
     assert_eq!(dep.history(), history, "the log holds the entries it held");
     assert_eq!(dep.role_of(dep.member), Some(Role::Member));
     assert_eq!(dep.bound_to(&bound), Some(dep.member), "the binding stays");
+}
+
+/// An Owner's removal for a Steward's ask that an applier declined after the apply read it
+/// open: the door refuses on its read, before it asks. The member holds owner authority, so
+/// the removal asks as important while the ask is open.
+#[test]
+fn a_removal_for_an_ask_declined_before_the_door_reads_raises_no_prompt() {
+    let dep = Departure::new();
+    let steward = person(&dep.vault);
+    dep.join(steward, Role::Steward);
+    let signer = dep.enrol_device_key(dep.owner, 7);
+    let bound = dep.bound_key(dep.member, &signer, 15);
+    let ask = dep
+        .vault
+        .ask_shared_member_change(
+            &proof(&dep.vault, steward),
+            SHARED,
+            MemberAskChange::Remove {
+                member: dep.member.to_hex(),
+            },
+        )
+        .expect("the Steward's ask");
+    let presence = scripted_gate(&dep.vault, []);
+    // While the ask is open the removal passes the read, and it asks.
+    let asked = remove_shared_member_for_ask_between(
+        &dep.vault,
+        &dep.owner_proof(),
+        SHARED,
+        dep.member,
+        None,
+        &ask.id,
+        || {},
+    );
+    assert!(
+        matches!(
+            asked,
+            Err(Error::Record(RecordError::OwnerPresenceRequired {
+                here: OwnerPresenceRefusal::Declined
+            }))
+        ),
+        "a removal for an open ask passes the read and asks: {asked:?}"
+    );
+    assert_eq!(presence.prompts(), 1, "that removal showed one prompt");
+    dep.vault
+        .decline_shared_member_ask(&dep.owner_proof(), &ask.id)
+        .expect("an applier declines the ask");
+    let history = dep.history();
+    assert_refused_unasked(
+        &remove_shared_member_for_ask_between(
+            &dep.vault,
+            &dep.owner_proof(),
+            SHARED,
+            dep.member,
+            None,
+            &ask.id,
+            || {},
+        ),
+        "a removal for a declined ask",
+    );
+    assert_eq!(presence.prompts(), 1, "the refusal showed no prompt");
+    assert_eq!(dep.history(), history, "the log holds the entries it held");
+    assert_eq!(dep.role_of(dep.member), Some(Role::Member));
+    assert_eq!(dep.bound_to(&bound), Some(dep.member), "the binding stays");
+}
+
+/// A Deputy's removal for a Steward's ask waits for an Owner's check-in while the ask is
+/// open. Where an applier declines the ask after the door read it and before its write, the
+/// write refuses the closed ask before the check-in judge, so no wait is filed.
+#[test]
+fn a_removal_for_an_ask_declined_after_the_door_read_it_files_no_check_in() {
+    let dep = Departure::new();
+    let steward = person(&dep.vault);
+    dep.join(steward, Role::Steward);
+    let deputy = person(&dep.vault);
+    dep.join(deputy, Role::Deputy);
+    let other = person(&dep.vault);
+    dep.join(other, Role::Member);
+    let ask_to_remove = |member: EntityId| {
+        dep.vault
+            .ask_shared_member_change(
+                &proof(&dep.vault, steward),
+                SHARED,
+                MemberAskChange::Remove {
+                    member: member.to_hex(),
+                },
+            )
+            .expect("the Steward's ask")
+    };
+    let open = ask_to_remove(other);
+    let declined = ask_to_remove(dep.member);
+    let presence = scripted_gate(&dep.vault, []);
+    let (owner_proof, deputy_proof) = (dep.owner_proof(), proof(&dep.vault, deputy));
+    // A rooted vault admits only a bound writer, and the host key holds one live binding.
+    bind_host_actor(&dep.vault, &dep.issuer, deputy, "human")
+        .expect("the host key bound to the Deputy for its acts");
+    let waits = remove_shared_member_for_ask_between(
+        &dep.vault,
+        &deputy_proof,
+        SHARED,
+        other,
+        None,
+        &open.id,
+        || {},
+    );
+    let refused = remove_shared_member_for_ask_between(
+        &dep.vault,
+        &deputy_proof,
+        SHARED,
+        dep.member,
+        None,
+        &declined.id,
+        || {
+            dep.vault
+                .decline_shared_member_ask(&owner_proof, &declined.id)
+                .expect("the Owner declines the ask after the door read it");
+        },
+    );
+    bind_host_owner(&dep.vault, &dep.issuer, dep.owner).expect("the owner's binding again");
+    assert!(
+        matches!(waits, Err(Error::CheckInPending(_))),
+        "a Deputy's removal for an open ask waits for an Owner: {waits:?}"
+    );
+    assert!(
+        matches!(&refused, Err(error) if !matches!(error, Error::CheckInPending(_))),
+        "the write refuses the declined ask before the check-in judge: {refused:?}"
+    );
+    assert_eq!(presence.prompts(), 0, "neither removal showed a prompt");
+    assert_eq!(
+        dep.role_of(other),
+        Some(Role::Member),
+        "a waiting removal changes nothing"
+    );
+    assert_eq!(
+        dep.role_of(dep.member),
+        Some(Role::Member),
+        "the member still holds their role"
+    );
 }
 
 /// Removing a member who holds a binding asks, and a declined confirm stores nothing.

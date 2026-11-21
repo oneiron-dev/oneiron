@@ -64,10 +64,11 @@ impl Vault {
     /// The checks [`Vault::remove_shared_member`] makes on a read of the
     /// store, in the order its write makes them, then the importance the door
     /// asks with: the applier's proof, the vault, the remove power, the live
-    /// holders (a conflicted root is refused there), the Steward of a named
-    /// `ask`, the member's role. The door runs this before it asks, so a
-    /// refusal raises no prompt; the write makes each check again. The
-    /// check-in judge and the issuer's checks stay in the write.
+    /// holders (a conflicted root is refused there), a named `ask` (still
+    /// open, its Steward still a live Steward), the member's role. The door
+    /// runs this before it asks, so a refusal raises no prompt; the write
+    /// makes each check again. The check-in judge and the issuer's checks
+    /// stay in the write.
     pub(super) fn member_removal_importance_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,

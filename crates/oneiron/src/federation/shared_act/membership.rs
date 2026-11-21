@@ -789,8 +789,8 @@ impl Vault {
         }
         let now = crate::ports::recorded_at_in_txn(&self.store, &mut txn)?;
         let holders = self.live_act_holders(&txn, vault_id, now)?;
-        // An ask stands while its Steward does: judged in this writer,
-        // before the change.
+        // An ask stands while it is open and its Steward does: judged in
+        // this writer, before the check-in judge and the change.
         if let Some(ask) = ask {
             self.member_ask_steward_stands_in_txn(&txn, ask, vault_id, &holders)?;
         }
