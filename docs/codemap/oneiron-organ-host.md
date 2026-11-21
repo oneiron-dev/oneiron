@@ -74,4 +74,5 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/mesh_ask_carried.rs` | test | m | — | — | An organ's mesh ask and its answer past the transport's 1 MiB message (FIX 8023): a big ask is offered from… |
 | `tests/organ_fence.rs` | test | s | — | — | OF-060 F4: the engine never depends on an organ, and an organ never depends on the engine (ARCH-0075 section… |
 | `tests/organ_first_party_fence.rs` | test | s | — | — | A first-party organ starts inside the filesystem fence where the host has one (FIX… |
+| `tests/organ_start_fd3_reuse.rs` | test | s | — | — | An organ starts whole while another thread frees and reuses fd 3, the number the organ's socket takes in the… |
 | `tests/organ_syscall_filter.rs` | test | m | — | — | The organ's syscall filter (census L4-09, ARCH-0075 "Syscalls", FIX [ORGAN-SECCOMP-ALLOW-LIST]): an organ… |

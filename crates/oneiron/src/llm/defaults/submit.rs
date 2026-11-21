@@ -14,7 +14,7 @@
 use serde::Serialize;
 
 use super::POLICY;
-use crate::authority::ActSurface;
+use crate::authority::{ActSurface, OwnerProofGround};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::llm::PurposeDefaultTable;
@@ -23,6 +23,7 @@ use crate::policy_model::{
 };
 use crate::policy_setting_doors::{PolicySetting, record_policy_setting_act_in_txn};
 use crate::side_table::{self, Named, SideTable};
+use crate::world_keys::{OwnerActImportance, owner_presence_reasons};
 use crate::{EntityId, Vault};
 
 /// The tables kept for a holder's later say, by proposal id.
@@ -76,6 +77,19 @@ pub fn purpose_default_grant_target() -> String {
     )
 }
 
+/// The ground a landing that names a surface signs on, asked before the
+/// write. A surface says where the owner said so, and the act it records
+/// takes the owner key's proof, so the door asks the person at this device
+/// whoever lands the table. The door holds nothing here: the prompt can
+/// block.
+fn surfaced_landing_ground(vault: &Vault) -> Result<OwnerProofGround> {
+    let witness = vault.owner_presence(
+        OwnerActImportance::Important,
+        owner_presence_reasons::INFERENCE_DEFAULTS,
+    )?;
+    Ok(OwnerProofGround::witnessed(&witness))
+}
+
 impl Vault {
     /// Whether `actor` holds the policy power over the defaults in `txn`.
     fn holds_defaults_power_in_txn(
@@ -87,11 +101,25 @@ impl Vault {
         holds_vault_policy_power_in_txn(self, txn, actor, &purpose_default_grant_target(), now)
     }
 
+    /// Whether `person` holds the policy power over the defaults now, read
+    /// in its own snapshot before a door's write, so only a person whose
+    /// table can land is asked. The door reads a failure here as "no": the
+    /// write then answers with its own reason, and a landing it met after
+    /// all records its act with no owner proof.
+    fn holds_defaults_power_now(&self, person: &AuthenticatedOwner, now: u64) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        let actor = person.revalidate_person_in_txn(self, &txn)?;
+        self.holds_defaults_power_in_txn(&txn, actor, now)
+    }
+
     /// Makes `table` the active defaults in `txn` for the holder `actor`,
-    /// recording an owner's act where `surface` names one.
+    /// recording an owner's act where `surface` names one. The act is signed
+    /// on `ground`, which the door asked for where it named a surface; with
+    /// no surface there is no act and no ground.
     fn land_defaults_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
+        ground: Option<&OwnerProofGround>,
         actor: EntityId,
         table: &PurposeDefaultTable,
         surface: Option<ActSurface>,
@@ -115,7 +143,7 @@ impl Vault {
         POLICY.put(&self.store, txn, &(), table)?;
         // The signed record goes last, best effort (FIX 4624).
         if let Some(act) = signed {
-            self.record_policy_setting_op_in_txn(txn, act);
+            self.record_policy_setting_op_in_txn(txn, ground, act);
         }
         Ok(())
     }
@@ -124,7 +152,9 @@ impl Vault {
     /// the vault's policy power over them in the writing transaction, and
     /// otherwise keeps `table` as an inert proposal (FIX 8211). A holder who
     /// is the owner acting through `surface` has the act recorded with the
-    /// table it replaces; with no `surface`, none is recorded.
+    /// table it replaces; with no `surface`, none is recorded. The door does
+    /// not read the value in force before its write, so it asks for every
+    /// change it cannot tell from its arguments to be a narrowing.
     ///
     /// # Errors
     /// A table that does not validate, a person proof that no longer holds,
@@ -137,12 +167,25 @@ impl Vault {
         now: u64,
     ) -> Result<PurposeDefaultSubmission> {
         table.validate()?;
+        // A landing records an act only where a surface names one, and that
+        // act takes the owner key's proof, so only then does the door ask. A
+        // principal's table never lands, and a person who holds no policy
+        // power leaves an inert proposal that signs nothing: neither is
+        // asked. The power is read here and again in the write.
+        let ground = match (submitter, surface) {
+            (PurposeDefaultSubmitter::Person(person), Some(_))
+                if self.holds_defaults_power_now(person, now).unwrap_or(false) =>
+            {
+                Some(surfaced_landing_ground(self)?)
+            }
+            _ => None,
+        };
         let mut txn = self.store.env.write_txn()?;
         let author = match submitter {
             PurposeDefaultSubmitter::Person(person) => {
                 let actor = person.revalidate_person_in_txn(self, &txn)?;
                 if self.holds_defaults_power_in_txn(&txn, actor, now)? {
-                    self.land_defaults_in_txn(&mut txn, actor, table, surface)?;
+                    self.land_defaults_in_txn(&mut txn, ground.as_ref(), actor, table, surface)?;
                     txn.commit()?;
                     return Ok(PurposeDefaultSubmission::Landed(table.clone()));
                 }
@@ -167,7 +210,9 @@ impl Vault {
     /// table becomes the active defaults through the holder's own landing
     /// (never the unchecked setter); declined, nothing changes. The holder's
     /// person proof and policy power are checked in the ruling's own
-    /// transaction; the first holder to answer settles it.
+    /// transaction; the first holder to answer settles it. The door does not
+    /// read the value in force before its write, so it asks for every change
+    /// it cannot tell from its arguments to be a narrowing.
     ///
     /// # Errors
     /// `Refused` for a person who holds no policy power over the defaults;
@@ -183,6 +228,18 @@ impl Vault {
         now: u64,
     ) -> Result<PurposeDefaultProposal> {
         let id = EntityId::from_hex(proposal_id).map_err(|_| Error::EntityNotFound)?;
+        // An approval lands the table, and a landing that names a surface
+        // records an act that takes the owner key's proof, so only then does
+        // the door ask. A decline lands nothing, and a person who holds no
+        // policy power is refused in the write: neither is asked.
+        let ground = if approve
+            && surface.is_some()
+            && self.holds_defaults_power_now(holder, now).unwrap_or(false)
+        {
+            Some(surfaced_landing_ground(self)?)
+        } else {
+            None
+        };
         let mut txn = self.store.env.write_txn()?;
         let actor = holder.revalidate_person_in_txn(self, &txn)?;
         if !self.holds_defaults_power_in_txn(&txn, actor, now)? {
@@ -199,7 +256,7 @@ impl Vault {
         let holder = actor.to_hex();
         proposal.status = if approve {
             proposal.table.validate()?;
-            self.land_defaults_in_txn(&mut txn, actor, &proposal.table, surface)?;
+            self.land_defaults_in_txn(&mut txn, ground.as_ref(), actor, &proposal.table, surface)?;
             PurposeDefaultProposalStatus::Approved { holder, at: now }
         } else {
             PurposeDefaultProposalStatus::Declined { holder, at: now }

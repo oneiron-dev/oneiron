@@ -3,6 +3,8 @@
 #[cfg(feature = "test-support")]
 use crate::Vault;
 #[cfg(feature = "test-support")]
+use crate::authority::OwnerProofGround;
+#[cfg(feature = "test-support")]
 use crate::consent::AuthenticatedOwner;
 #[cfg(feature = "test-support")]
 use crate::entity_id::EntityId;
@@ -46,6 +48,7 @@ pub fn set_settings_in_one_write(
             for request in requests {
                 outcomes.push(vault.set_setting_in_txn(
                     txn,
+                    Some(&OwnerProofGround::test_door()),
                     SettingCaller::Owner(owner),
                     request,
                 )?);

@@ -88,8 +88,8 @@ impl AdmittedUpdate {
         &self.placements
     }
 
-    /// The writes the update asks of this vault: its rows and edges, and the
-    /// stamps that wait out of it (Astra-b F2 on #1432).
+    /// The writes the update asks of this vault: its rows, edges and admitted
+    /// tombstones, and the stamps that wait out of it (Astra-b F2 on #1432).
     pub(crate) fn writes(&self) -> u64 {
         self.parts()
             .map(|part| {

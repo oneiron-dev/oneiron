@@ -148,6 +148,12 @@ crate::side_table::side_tables! {
     /// ":part:" index for a clip's bytes.
     MODEL_MEDIA_JOB: SyncState b"models:media-job:v1:" Named
         [restore: live] [family: dispatch Response] [tier: canonical];
+    /// The owner key changes this managed install already reported to its
+    /// supervisor (Engine ruling 21 Nov 06:00): the reported entry hashes, 32
+    /// bytes each, ascending. Install-local, never synced: every replica would
+    /// mail else. Key: ().
+    OWNER_KEY_CHANGE_REPORTED: SyncState b"managed:owner_key_change_reported:v1" Raw
+        [restore: live] [family: unclassified] [tier: canonical];
     /// Entity waiting for an embedding. Key: hex32.
     PENDING_EMBEDDING_MARKER: SyncState b"pe:" Raw
         [restore: not_imaged] [family: not_imaged] [tier: derived];

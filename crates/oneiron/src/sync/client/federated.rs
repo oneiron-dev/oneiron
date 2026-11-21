@@ -232,6 +232,7 @@ impl SyncClient {
             role,
             sender,
             delivery.as_ref(),
+            peer.grant(),
         ) {
             Ok(admitted) => admitted,
             Err(error) => {

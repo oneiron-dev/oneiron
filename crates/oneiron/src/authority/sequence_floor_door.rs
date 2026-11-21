@@ -256,3 +256,22 @@ fn arrival_lifted_floors(
         }
     }
 }
+
+/// Whether a fold past a base takes each of `tails` in turn on its signers'
+/// top rows per sequence scope (`fold_resume::scope_tops`, FIX
+/// [ADOPTED-FOLD-TAIL-WALK-SIGNER-COST]): it takes a tail none of whose rows
+/// would move a row's floor or sit past its own. `base` is every row the
+/// first base folded, each tail the rows past the one before it. Past a tail
+/// it declines, the next base is every row so far, as a full fold captures
+/// it. A base's frontier side rows are its side rows no row names. Only each
+/// row's signer, sequence, op scope and parents are read: no signature,
+/// state or tail shape is checked, so a test gives tails whose side rows
+/// stand on tail rows, main rows and frontier side rows of their own world
+/// alone, as `side_tail::shape` admits them.
+#[must_use]
+pub fn scope_tops_tails_taken(
+    base: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    tails: &[BTreeMap<AuthorityEntryHash, AuthorityLogEntry>],
+) -> Vec<bool> {
+    super::fold_resume::scope_tops_tails_taken_for_door(base, tails)
+}

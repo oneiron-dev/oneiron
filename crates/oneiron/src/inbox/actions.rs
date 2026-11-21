@@ -112,6 +112,11 @@ impl Memory<'_> {
             NotificationKind::Ask if producer == crate::gpu_job::GPU_JOB_STOPPED_PRODUCER => {
                 self.gpu_job_resume_actions(row)
             }
+            NotificationKind::VoiceRecognitionWithdrawalLoggedForSubject
+                if producer == crate::voice_identity::VOICE_RECOGNITION_NOTIFICATION_PRODUCER =>
+            {
+                self.voice_consent_restore_actions(row)
+            }
             _ => Vec::new(),
         }
     }

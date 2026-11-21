@@ -14,12 +14,13 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::authority::ActSurface;
+use crate::authority::{ActSurface, OwnerProofGround};
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::error::Result;
 use crate::memory::{Memory, MemoryResult};
 use crate::policy_setting_doors::{PolicySetting, record_policy_setting_act_in_txn};
+use crate::world_keys::{OwnerActImportance, owner_presence_reasons};
 use crate::{EntityId, TimeRange, Vault, WriteActor};
 
 /// The read verb's name, as a refusal names it.
@@ -57,7 +58,9 @@ impl Vault {
     /// claim, superseding the one it replaces, and records the owner's act
     /// with the facet it replaces, in the same commit when `surface` names
     /// where the owner said so. The facet in force again writes and records
-    /// nothing. Answers the default as it now reads.
+    /// nothing. Answers the default as it now reads. The door does not
+    /// read the value in force before its write, so it asks for every
+    /// change it cannot tell from its arguments to be a narrowing.
     ///
     /// # Errors
     ///
@@ -69,6 +72,17 @@ impl Vault {
         surface: Option<ActSurface>,
         setting: DefaultFacet,
     ) -> Result<DefaultFacet> {
+        // No surface names no act, so none is asked for; with one the act
+        // the write may record is asked before it.
+        let ground = if surface.is_some() {
+            let witness = self.owner_presence(
+                OwnerActImportance::Important,
+                owner_presence_reasons::DEFAULT_FACET,
+            )?;
+            Some(OwnerProofGround::witnessed(&witness))
+        } else {
+            None
+        };
         self.with_write_txn_grouped(|txn| {
             let actor = owner.revalidate_in_txn(self, txn)?;
             let prior = DefaultFacet {
@@ -99,7 +113,7 @@ impl Vault {
                 )?;
                 // The signed record goes last, best effort (FIX 4624).
                 if let Some(act) = signed {
-                    self.record_policy_setting_op_in_txn(txn, act);
+                    self.record_policy_setting_op_in_txn(txn, ground.as_ref(), act);
                 }
             }
             Ok(setting)

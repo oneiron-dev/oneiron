@@ -132,6 +132,12 @@ pub struct SyncServer {
     /// a self-hosted vault, which has no box (Fable pass 27 R7).
     pub(crate) recovery_box_hold:
         std::sync::OnceLock<crate::managed::recovery_box_hold::HypnosRecoveryBoxHold>,
+    /// This hosted vault's reporter of its owner key changes, set only by
+    /// managed boot from its wake ledger's spawn identity; empty on a
+    /// self-hosted vault, which has no supervisor to report to (Engine
+    /// ruling 21 Nov 06:00).
+    pub(crate) owner_key_change_report:
+        std::sync::OnceLock<crate::managed::owner_key_change_report::HypnosOwnerKeyChange>,
     /// The self-host root's issuer, loaded at construction from this install's own issuer seed for
     /// the vault when a host secret is configured (FIX-LIST 3018); `None` with no secret, on a
     /// relay, or where this install holds no seed. Never the managed issuer.
@@ -408,6 +414,7 @@ const _: fn(&SyncServer) = |server| {
         runs_device_link, device_link_opened,
         context_reads, renderer_scratch, query_checks, managed_issuer, host_root_issuer,
         recovery_box_hold,
+        owner_key_change_report,
         policy_doors, account_keys, usage_ledger, retrieval_buffer, host_account, wire_telemetry,
         mesh_pressure, retained, presence, booking_calls, booking_deposit_stripe_base,
         removal_deliveries, shared_envs, booking_turn_lines,
