@@ -81,18 +81,17 @@ impl OwnerWorkStatus {
     }
 
     /// What the owner may do next, for a refusal that names a next step: a
-    /// root request whose target's roots or standing moved from the ones he
-    /// saw (FIX 4738, 5551); and what a cancelled or superseded root request
-    /// means for its target (FIX 4739). `None` for every other status.
+    /// root request whose target's roster heads moved since he recorded it
+    /// (FIX 4738); and what a cancelled or superseded root request means for
+    /// its target (FIX 4739). `None` for every other status.
     #[must_use]
     pub fn advice(self) -> Option<&'static str> {
         match self {
             Self::Refused {
                 reason: OwnerWorkRefusal::RootRevisionMismatch,
             } => Some(
-                "the target holds owner roots or a standing of its own other than the ones you \
-                 saw (a target still syncing what you saw waits instead). Review where it stands \
-                 and ask again",
+                "the target's roster heads moved since you recorded the request. Review where it \
+                 stands and ask again",
             ),
             Self::Cancelled => Some(
                 "the target never runs it once it has synced the cancel; a result it signed \

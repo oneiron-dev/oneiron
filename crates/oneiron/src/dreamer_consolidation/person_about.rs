@@ -43,6 +43,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 mod claim_hooks;
 mod sources;
+pub(crate) use sources::ShownAboutLine;
 
 pub(crate) use claim_hooks::{
     erase_person_about_in_txn, mark_person_about_dropped_in_txn, mark_person_about_moved_in_txn,
@@ -775,7 +776,7 @@ impl<E> PersonAboutExecutor<'_, E> {
                     return spent_or_deferred(error, ctx, &charges);
                 }
                 Err(other) => {
-                    return Ok(charges.end_on_step_error(&other.to_string(), &other));
+                    return Ok(charges.end_on_step_error_with_spend(&other.to_string(), &other));
                 }
             };
             let text = match about_line(&response) {

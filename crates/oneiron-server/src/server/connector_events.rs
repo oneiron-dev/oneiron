@@ -15,6 +15,7 @@ use std::time::Duration;
 
 use oneiron::Vault;
 use oneiron::surface_event::SurfaceEventWorkerOutcome;
+use oneiron_base::unix_seconds_now;
 use tokio::sync::broadcast::error::TryRecvError;
 
 use super::core::SyncServer;
@@ -125,16 +126,10 @@ fn drain_pass(vault: &Vault, tick: bool) -> oneiron::Result<bool> {
     carry_write_piggybacks(vault, tick)?;
     for _ in 0..PASS_LIMIT {
         if let SurfaceEventWorkerOutcome::Empty =
-            vault.drain_surface_event_to_connector_wakes(LEASE_OWNER, unix_now())?
+            vault.drain_surface_event_to_connector_wakes(LEASE_OWNER, unix_seconds_now())?
         {
             return Ok(false);
         }
     }
     Ok(true)
-}
-
-fn unix_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs())
 }

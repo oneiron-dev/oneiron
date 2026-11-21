@@ -4,8 +4,8 @@
 use super::model::{
     ANNOTATION_BRIEF_PREDICATE, ANNOTATION_COMMENT_PREDICATE, ANNOTATION_LOCATOR_TEXT_MAX_BYTES,
     ANNOTATION_THREAD_PREDICATE, Anchor, AnnotationComment, BodyAnchor, DriftMarker, FORMAT_CODE,
-    FORMAT_DOCX, FORMAT_DOCX_STORY, FORMAT_HTML, FORMAT_PPTX, FORMAT_TEXT, FORMAT_XLSX, Locator,
-    TaskBrief, ThreadState,
+    FORMAT_DOCX, FORMAT_DOCX_STORY, FORMAT_HTML, FORMAT_IMAGE_OBJECT, FORMAT_IMAGE_PIXEL,
+    FORMAT_PPTX, FORMAT_TEXT, FORMAT_XLSX, Locator, TaskBrief, ThreadState,
 };
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::edge::EdgeActorClass;
@@ -13,6 +13,7 @@ use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{ArtifactError, Error, Result};
 use crate::write_envelope::task_body::TaskRole;
 use crate::write_envelope::{WriteActor, WriteEnvelope, WriteProvenance};
+use oneiron_contracts::msgpack::Entries;
 use rmpv::Value;
 
 const KEY_THREAD_ID: &str = "thread_id";
@@ -76,6 +77,16 @@ const KEY_COMMIT: &str = "commit";
 const KEY_PATH: &str = "path";
 
 const KEY_FILE_HASH: &str = "file_hash";
+
+const KEY_X: &str = "x";
+
+const KEY_Y: &str = "y";
+
+const KEY_W: &str = "w";
+
+const KEY_H: &str = "h";
+
+const KEY_OVERLAY: &str = "overlay";
 
 /// Task role byte for the productivity `role` body ("role": <byte>).
 const TASK_BODY_ROLE_KEY: &str = "role";
@@ -185,6 +196,17 @@ pub(crate) fn encode_locator(locator: &Locator) -> Value {
             (Value::from(KEY_CHAR_START), Value::from(*char_start)),
             (Value::from(KEY_CHAR_END), Value::from(*char_end)),
         ]),
+        Locator::ImagePixel { x, y, w, h } => Value::Map(vec![
+            (Value::from(KEY_FORMAT), Value::from(FORMAT_IMAGE_PIXEL)),
+            (Value::from(KEY_X), Value::from(*x)),
+            (Value::from(KEY_Y), Value::from(*y)),
+            (Value::from(KEY_W), Value::from(*w)),
+            (Value::from(KEY_H), Value::from(*h)),
+        ]),
+        Locator::ImageObject { overlay } => Value::Map(vec![
+            (Value::from(KEY_FORMAT), Value::from(FORMAT_IMAGE_OBJECT)),
+            (Value::from(KEY_OVERLAY), Value::from(*overlay)),
+        ]),
     }
 }
 
@@ -269,6 +291,13 @@ pub(crate) fn decode_locator(value: &Value) -> Result<Locator> {
             let char_end = map_u64(value, KEY_CHAR_END)?;
             Locator::code(commit, path, file_hash, char_start, char_end)
         }
+        FORMAT_IMAGE_PIXEL => Locator::image_pixel(
+            map_u32(value, KEY_X)?,
+            map_u32(value, KEY_Y)?,
+            map_u32(value, KEY_W)?,
+            map_u32(value, KEY_H)?,
+        ),
+        FORMAT_IMAGE_OBJECT => Ok(Locator::image_object(map_u32(value, KEY_OVERLAY)?)),
         _ => Err(Error::Artifact(ArtifactError::InvalidAnchor(
             "unknown locator format",
         ))),
@@ -308,16 +337,7 @@ pub(super) fn encode_thread_head_value(head: &ThreadHead) -> Value {
         ));
     }
     if let Some(body) = &head.body {
-        entries.push((
-            Value::from(KEY_BODY),
-            Value::Map(vec![
-                (
-                    Value::from(KEY_FRONTIER),
-                    Value::Binary(body.frontier.clone()),
-                ),
-                (Value::from(KEY_LOCATOR), encode_locator(&body.locator)),
-            ]),
-        ));
+        entries.push((Value::from(KEY_BODY), encode_body_anchor(body)));
     }
     if let Some(sub_session) = head.sub_session {
         entries.push((
@@ -345,21 +365,7 @@ pub(super) fn decode_thread_head(value: &Value) -> Result<ThreadHead> {
             pinned_version: map_u64(drift_value, KEY_PINNED_VERSION)?,
         }),
     };
-    // A version-only anchor writes no body key.
-    let body = match map_get(value, KEY_BODY) {
-        None | Some(Value::Nil) => None,
-        Some(body_value) => {
-            let Some(Value::Binary(frontier)) = map_get(body_value, KEY_FRONTIER) else {
-                return Err(Error::Artifact(ArtifactError::InvalidAnchor(KEY_FRONTIER)));
-            };
-            Some(BodyAnchor {
-                frontier: frontier.clone(),
-                locator: decode_locator(map_get(body_value, KEY_LOCATOR).ok_or(
-                    Error::Artifact(ArtifactError::InvalidAnchor("body anchor missing locator")),
-                )?)?,
-            })
-        }
-    };
+    let body = decode_body_anchor(value)?;
     let sub_session = match map_get(value, KEY_SUB_SESSION_ID) {
         None | Some(Value::Nil) => None,
         Some(_) => Some(map_entity(value, KEY_SUB_SESSION_ID)?),
@@ -406,16 +412,18 @@ pub(super) fn decode_comment(value: &Value, claim_id: EntityId) -> Result<Annota
     })
 }
 
+/// A brief keeps its thread's whole anchor: a plan-doc span's body (the text
+/// frontier it was read at) as well, so a later read of the brief quotes the
+/// span as the thread does (FIX PLAN-MARKUP-BRIEF-QUOTE).
 pub(super) fn encode_brief_value(
     thread_id: &EntityId,
     task_id: &EntityId,
     brief_ref: &str,
-    anchor_version: u64,
-    locator: &Locator,
+    anchor: &Anchor,
     assignee: Option<&EntityId>,
     transcript: &str,
 ) -> Value {
-    Value::Map(vec![
+    let mut entries = vec![
         (
             Value::from(KEY_THREAD_ID),
             Value::Binary(thread_id.as_bytes().to_vec()),
@@ -425,14 +433,18 @@ pub(super) fn encode_brief_value(
             Value::Binary(task_id.as_bytes().to_vec()),
         ),
         (Value::from(KEY_BRIEF_REF), Value::from(brief_ref)),
-        (Value::from(KEY_ANCHOR_VERSION), Value::from(anchor_version)),
-        (Value::from(KEY_LOCATOR), encode_locator(locator)),
+        (Value::from(KEY_ANCHOR_VERSION), Value::from(anchor.version)),
+        (Value::from(KEY_LOCATOR), encode_locator(&anchor.locator)),
         (
             Value::from(KEY_ASSIGNEE),
             assignee.map_or(Value::Nil, |id| Value::Binary(id.as_bytes().to_vec())),
         ),
         (Value::from(KEY_TRANSCRIPT), Value::from(transcript)),
-    ])
+    ];
+    if let Some(body) = &anchor.body {
+        entries.push((Value::from(KEY_BODY), encode_body_anchor(body)));
+    }
+    Value::Map(entries)
 }
 
 pub(super) fn decode_brief_value(value: &Value, artifact_id: EntityId) -> Result<TaskBrief> {
@@ -448,15 +460,51 @@ pub(super) fn decode_brief_value(value: &Value, artifact_id: EntityId) -> Result
         Some(_) => Some(map_entity(value, KEY_ASSIGNEE)?),
     };
     let thread_text = map_str(value, KEY_TRANSCRIPT)?.to_owned();
+    // A brief written before its value kept the body has no body key and
+    // reads as it did then.
+    let body = decode_body_anchor(value)?;
     Ok(TaskBrief {
         brief_ref,
         task_id,
         thread_id,
-        anchor: Anchor::new(artifact_id, anchor_version, locator),
+        anchor: Anchor {
+            artifact_id,
+            version: anchor_version,
+            locator,
+            body,
+        },
         artifact_version: anchor_version,
         thread_text,
         assignee,
     })
+}
+
+fn encode_body_anchor(body: &BodyAnchor) -> Value {
+    Value::Map(vec![
+        (
+            Value::from(KEY_FRONTIER),
+            Value::Binary(body.frontier.clone()),
+        ),
+        (Value::from(KEY_LOCATOR), encode_locator(&body.locator)),
+    ])
+}
+
+/// The body anchor under `value`'s body key. A version-only anchor writes no
+/// body key.
+fn decode_body_anchor(value: &Value) -> Result<Option<BodyAnchor>> {
+    let body_value = match map_get(value, KEY_BODY) {
+        None | Some(Value::Nil) => return Ok(None),
+        Some(body_value) => body_value,
+    };
+    let Some(Value::Binary(frontier)) = map_get(body_value, KEY_FRONTIER) else {
+        return Err(Error::Artifact(ArtifactError::InvalidAnchor(KEY_FRONTIER)));
+    };
+    Ok(Some(BodyAnchor {
+        frontier: frontier.clone(),
+        locator: decode_locator(map_get(body_value, KEY_LOCATOR).ok_or(Error::Artifact(
+            ArtifactError::InvalidAnchor("body anchor missing locator"),
+        ))?)?,
+    }))
 }
 
 /// The thread and the TASK a brief claim value names, read without its other
@@ -468,14 +516,15 @@ pub(super) fn decode_brief_thread_task(value: &Value) -> Result<(EntityId, Entit
     ))
 }
 
+/// A repeated key reads as absent.
 fn map_get<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
-    let Value::Map(entries) = value else {
-        return None;
-    };
-    entries
-        .iter()
-        .find(|(entry_key, _)| entry_key.as_str() == Some(key))
-        .map(|(_, entry_value)| entry_value)
+    Entries::of(value).ok()?.get(key).ok().flatten()
+}
+
+/// [`map_get`] for the repeated-key test door (`test_doors::repeated_key_lib_rows`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn annotation_map_get_for_test(value: &Value, key: &str) -> Option<Value> {
+    map_get(value, key).cloned()
 }
 
 fn map_str<'a>(value: &'a Value, key: &'static str) -> Result<&'a str> {
@@ -488,6 +537,11 @@ fn map_u64(value: &Value, key: &'static str) -> Result<u64> {
     map_get(value, key)
         .and_then(Value::as_u64)
         .ok_or(Error::Artifact(ArtifactError::InvalidAnchor(key)))
+}
+
+fn map_u32(value: &Value, key: &'static str) -> Result<u32> {
+    u32::try_from(map_u64(value, key)?)
+        .map_err(|_| Error::Artifact(ArtifactError::InvalidAnchor(key)))
 }
 
 fn map_entity(value: &Value, key: &'static str) -> Result<EntityId> {

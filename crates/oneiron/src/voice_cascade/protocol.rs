@@ -25,6 +25,13 @@ impl GenerationEpoch {
     pub fn value(self) -> u64 {
         self.value
     }
+
+    /// The token a session would mint, for `test_doors::voice_generation_epoch`
+    /// only: adapter unit tests outside this crate echo it as a session's.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn minted_for_test_door(session: uuid::Uuid, value: u64) -> Self {
+        Self { session, value }
+    }
 }
 
 #[doc(hidden)]
@@ -45,7 +52,7 @@ pub struct AsrEvent {
 
 impl AsrEvent {
     /// Validate before the session consumes a revision or performs any work.
-    pub(super) fn validate(&self) -> Result<()> {
+    pub fn validate(&self) -> Result<()> {
         if self.kind == AsrEventKind::Final && self.text.trim().is_empty() {
             return Err(invalid("final ASR transcript must be nonempty"));
         }
@@ -259,6 +266,15 @@ pub trait Brain {
     fn heard(&mut self, generation: GenerationEpoch, playback: &HeardPlayback) -> Result<()> {
         let _ = (generation, playback);
         Ok(())
+    }
+
+    /// The capture's session-local speaker key `generation`'s final was heard
+    /// under, when the host route's final named one (UNBUILT-02 PR 4); called
+    /// just before [`Self::start`] with that generation. A brain that keeps the
+    /// call's turns labels the kept words with it; a key only labels, it never
+    /// names who wrote them.
+    fn final_speaker(&mut self, generation: GenerationEpoch, speaker: Option<&str>) {
+        let _ = (generation, speaker);
     }
 }
 

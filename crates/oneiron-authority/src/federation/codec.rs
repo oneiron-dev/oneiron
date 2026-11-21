@@ -1,24 +1,24 @@
 //! Shared MessagePack and entity-ref decoding helpers for the federation module.
 
+use oneiron_contracts::msgpack;
 use rmpv::Value;
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
 
-pub fn optional_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Option<&'a Value> {
-    entries
-        .iter()
-        .find_map(|(candidate, value)| (candidate.as_str() == Some(key)).then_some(value))
+/// The value under `key`, `None` when it is absent; a key stored twice is refused.
+pub fn optional_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<Option<&'a Value>> {
+    msgpack::Entries::new(entries)
+        .get(key)
+        .map_err(|_| invalid_grant())
 }
 
 pub fn required_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&'a Value> {
-    optional_value(entries, key).ok_or_else(invalid_grant)
+    optional_value(entries, key)?.ok_or_else(invalid_grant)
 }
 
-pub fn encode_msgpack_value(value: &Value, context: &'static str) -> Result<Vec<u8>> {
-    let mut out = Vec::new();
-    rmpv::encode::write_value(&mut out, value).map_err(|_| Error::InvariantViolation(context))?;
-    Ok(out)
+pub fn encode_msgpack_value(value: &Value, _context: &'static str) -> Result<Vec<u8>> {
+    Ok(msgpack::encode(value))
 }
 
 pub fn decode_entity_ref(value: &Value) -> Result<EntityId> {

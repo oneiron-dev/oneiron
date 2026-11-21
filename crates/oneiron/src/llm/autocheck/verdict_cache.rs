@@ -13,7 +13,7 @@ use serde_json::json;
 use super::super::decision::catalogue::AUTO_CHECK;
 use super::super::decision::{AnswerContract, Reversibility};
 use super::candidate_state;
-use super::{ALLOW, AutoCheckCandidate, AutoCheckDecisions, AutoCheckOutcome, HOLD};
+use super::{ALLOW, AutoCheckCandidate, AutoCheckDecisions, AutoCheckOutcome, CheckRungs, HOLD};
 
 /// How long a decided verdict stands for the same candidate under the same
 /// effective policy. Canon names a TTL and no number (CALLS: auto-check
@@ -40,22 +40,29 @@ impl VerdictCache {
     /// `decisions`' normalized verdict on `candidate`: a current cached one
     /// for the same content under the same effective policy, else the
     /// ladder's, kept when it decided. An unavailable check is never kept.
+    /// The policy is the rungs this candidate may be asked of, so a verdict
+    /// a rung off this device gave never answers a candidate whose world
+    /// keeps the check on this device.
     pub(super) fn check(
         &mut self,
         decisions: &AutoCheckDecisions,
         candidate: &AutoCheckCandidate<'_>,
         due: Instant,
     ) -> AutoCheckOutcome {
-        let Some(key) = decisions.verdict_key(candidate) else {
-            return decisions.check(candidate, due).normalized();
+        let rungs = decisions.rungs(candidate);
+        let Some(key) = decisions.verdict_key(candidate, &rungs) else {
+            return decisions.check(candidate, &rungs, due).normalized();
         };
         let now = Instant::now();
         self.expire(now);
         if let Some(outcome) = self.verdicts.get(&key) {
             return outcome.clone();
         }
-        let outcome = decisions.check(candidate, due).normalized();
-        if outcome != AutoCheckOutcome::Unavailable {
+        let outcome = decisions.check(candidate, &rungs, due).normalized();
+        // A hold that started or ended while the ladder ran leaves the verdict uncached.
+        if outcome != AutoCheckOutcome::Unavailable
+            && decisions.verdict_key(candidate, &rungs) == Some(key)
+        {
             self.keep(key, outcome.clone(), now);
         }
         outcome
@@ -91,9 +98,17 @@ impl AutoCheckDecisions {
     /// state the ladder reads, and the hash of the effective policy that
     /// decides it (the question's id and version, the dial, the band row in
     /// force and its version, the think and person rows' versions, the
-    /// calibrated model and every rung's pin). None when either does not
-    /// encode: that check is not cached.
-    fn verdict_key(&self, candidate: &AutoCheckCandidate<'_>) -> Option<VerdictKey> {
+    /// calibrated model, the pin of every rung in `rungs`, whether its
+    /// vault's model manifest holds it, and whether the candidate's world kept
+    /// them on this device). A manifest change that holds or frees a rung is a
+    /// new policy, so it never meets a verdict that rung gave or could not
+    /// give. None when either does not encode, or a hold cannot be read: that
+    /// check is not cached.
+    fn verdict_key(
+        &self,
+        candidate: &AutoCheckCandidate<'_>,
+        rungs: &CheckRungs<'_>,
+    ) -> Option<VerdictKey> {
         let question = AUTO_CHECK
             .question(
                 &[],
@@ -107,17 +122,24 @@ impl AutoCheckDecisions {
             .bands
             .resolve(&question, Reversibility::OutboundEffect, self.dial.band)
             .ok()?;
-        let ladder = self.ladder.ladder();
-        let pins: Vec<_> = [
+        let ladder = &rungs.ladder;
+        let slots = [
             ladder.rule,
             ladder.local,
             ladder.system_one,
+            ladder.precision,
             ladder.escalation,
             ladder.big,
-        ]
-        .into_iter()
-        .map(|slot| slot.map(|provider| provider.pin()))
-        .collect();
+        ];
+        let pins: Vec<_> = slots
+            .iter()
+            .map(|slot| slot.map(|provider| provider.pin()))
+            .collect();
+        let held = slots
+            .iter()
+            .map(|slot| slot.map(|provider| provider.held()).transpose())
+            .collect::<crate::Result<Vec<_>>>()
+            .ok()?;
         let policy = serde_json::to_vec(&json!({
             "question": question.id.to_hex(),
             "question_version": question.version,
@@ -127,7 +149,9 @@ impl AutoCheckDecisions {
             "person": self.bands.person_threshold().map(|row| row.version),
             "calibrated": self.calibrated,
             "pins": pins,
+            "held": held,
             "human_pin": ladder.human_pin,
+            "kept_on_device": rungs.kept_on_device,
         }))
         .ok()?;
         let content = serde_json::to_vec(&candidate_state(candidate)).ok()?;

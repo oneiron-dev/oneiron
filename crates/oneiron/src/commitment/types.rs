@@ -62,7 +62,12 @@ pub(super) const KEY_BIRTH_KIND: &str = COMMITMENT_BIRTH_PROVENANCE_KEYS[0];
 
 pub(super) const KEY_BIRTH_REFERENCE: &str = COMMITMENT_BIRTH_PROVENANCE_KEYS[1];
 
-const MAX_COMMITMENT_TEXT_BYTES: usize = 8 * 1024;
+pub(crate) const MAX_COMMITMENT_TEXT_BYTES: usize = 8 * 1024;
+
+/// The most any `commitment.content.max_text_bytes` value admits. Every decode, status change and
+/// series instance accepts up to it. The owner's key, not this ceiling, decides what new text may
+/// hold.
+const COMMITMENT_TEXT_CEILING_BYTES: usize = 64 * 1024;
 
 const MAX_COMMITMENT_PAYLOAD_REF_BYTES: usize = 1024;
 
@@ -136,7 +141,7 @@ impl CommitmentContent {
     fn validate(&self) -> Result<()> {
         validate_non_empty_bounded(
             &self.text,
-            MAX_COMMITMENT_TEXT_BYTES,
+            COMMITMENT_TEXT_CEILING_BYTES,
             "commitment content text must be non-empty and bounded",
         )?;
         if let Some(payload_ref) = &self.payload_ref {

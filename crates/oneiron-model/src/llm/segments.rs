@@ -69,20 +69,7 @@ pub(super) use hex_bytes;
 
 /// `hex` as `N` bytes: exactly `2 * N` lowercase hex digits.
 pub(super) fn parse_hex<const N: usize>(hex: &str) -> Option<[u8; N]> {
-    let digits = hex.as_bytes();
-    if digits.len() != 2 * N {
-        return None;
-    }
-    let nibble = |digit: u8| match digit {
-        b'0'..=b'9' => Some(digit - b'0'),
-        b'a'..=b'f' => Some(digit - b'a' + 10),
-        _ => None,
-    };
-    let mut bytes = [0_u8; N];
-    for (byte, pair) in bytes.iter_mut().zip(digits.chunks_exact(2)) {
-        *byte = (nibble(pair[0])? << 4) | nibble(pair[1])?;
-    }
-    Some(bytes)
+    oneiron_hex::decode(hex)
 }
 
 hex_bytes!(

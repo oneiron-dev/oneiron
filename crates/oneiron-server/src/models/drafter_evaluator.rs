@@ -70,7 +70,7 @@ use oneiron::llm::{
 use oneiron::world_keys::VaultKeyStatus;
 use oneiron::{EntityId, Vault};
 use oneiron_driver::InferenceWorker;
-use oneiron_llm_openai::{OpenAiCompatConfig, build_openai_chat_request};
+use oneiron_llm::openai_compat::{OpenAiCompatConfig, build_openai_chat_request};
 use serde::Deserialize;
 use serde_json::{Map as JsonMap, Value as JsonValue, json};
 

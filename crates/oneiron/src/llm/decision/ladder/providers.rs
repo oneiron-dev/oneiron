@@ -126,6 +126,17 @@ pub trait DecisionProvider: Send + Sync {
     fn leaves_host(&self) -> bool {
         false
     }
+    /// Whether every call it answers is computed on this physical device: in this process,
+    /// or in a model runtime this host supervises and reaches only over a channel it
+    /// authenticates against that child, so that no transport it may use leaves the device
+    /// (I2-LOCAL, as `RecallRerankHost::runs_on_device` says it). Only such a provider is
+    /// asked about a candidate whose world stays on this device (DEC-0005 fix 6). A
+    /// provider that cannot say runs elsewhere, and so does one that may reach a model over
+    /// HTTP, even on this machine: an owner-hosted route that stays on the host
+    /// ([`Self::leaves_host`] false) is not on this device.
+    fn runs_on_device(&self) -> bool {
+        false
+    }
     /// What it costs per thousand units at its rung, as its host knows it (its registered
     /// price over the units it reads); none when the host knows none. The receipt of an
     /// answer it gives carries it (ARCH-0076, "Cost").
@@ -137,6 +148,17 @@ pub trait DecisionProvider: Send + Sync {
     /// that knows only tokens answers `None`: bytes convert to nothing here.
     fn state_budget_bytes(&self) -> Option<usize> {
         None
+    }
+    /// Whether it holds every call now, before any is sent: each question it is asked reads
+    /// as its abstention and nothing reaches its model, so the ladder takes the call on to
+    /// the next rung (a decision role's rung its vault's model manifest binds to another
+    /// model or a narrower route, [`ManifestBoundRung`](crate::llm::decision::ManifestBoundRung)).
+    /// The ladder asks it before each read and sends a held rung nothing: the receipt keeps
+    /// the rung's pin and pins no image to it. A cached auto-check verdict's policy names it,
+    /// so a hold that starts or ends misses the cache. A wrapper that only passes its inner
+    /// provider's calls on forwards its inner provider's.
+    fn held(&self) -> Result<bool> {
+        Ok(false)
     }
     fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision>;
     /// The pack as one request, one answer per question in order. The default asks each
@@ -198,6 +220,11 @@ impl DecisionProvider for RuleDecisionProvider {
         self.pin.clone()
     }
 
+    /// A table lookup in this process: no call leaves the device.
+    fn runs_on_device(&self) -> bool {
+        true
+    }
+
     fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision> {
         Ok(self
             .rows
@@ -256,7 +283,10 @@ impl ModelDecisionProvider {
     pub fn new(pin: ProviderPin, model: Arc<dyn DecisionModel>) -> Result<Self> {
         if !matches!(
             pin.rung,
-            DecisionRung::Local | DecisionRung::SystemOne | DecisionRung::Big
+            DecisionRung::Local
+                | DecisionRung::SystemOne
+                | DecisionRung::Precision
+                | DecisionRung::Big
         ) {
             return Err(invalid("not a model decision rung"));
         }

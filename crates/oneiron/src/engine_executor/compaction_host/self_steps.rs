@@ -122,7 +122,7 @@ impl EngineNativeExecutor<'_> {
             run,
             writer,
             &calls,
-            now_ms(),
+            crate::unix_millis_now(),
         ) {
             Ok(mut steps) => {
                 // The answering try ran last; a pass the gate never accepted
@@ -171,12 +171,4 @@ fn evidence_of(
         last,
         revision: bytes_to_hex_lower(&checkpoint.state_hash),
     })
-}
-
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| {
-            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
-        })
 }

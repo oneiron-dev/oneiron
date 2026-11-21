@@ -63,6 +63,9 @@ pub(super) mod reason {
     pub(crate) const SEALED_OFF: &str = "project revision lies outside the owner's seal";
     pub(crate) const PARENT_HEAD_PENDING: &str = "witnessed parent revision not yet received";
     pub(crate) const PARENT_HEAD_LEADER: &str = "a parent witness names another leader";
+    pub(crate) const ROOM_SET_AT_BIRTH: &str = super::super::ROOM_SET_AT_BIRTH;
+    pub(crate) const ROOM_ANCHOR_MOVED: &str =
+        "a project's facet stays put while its room holds a facet set";
 
     const ALL: &[&str] = &[
         NOT_HELD,
@@ -101,6 +104,8 @@ pub(super) mod reason {
         SEALED_OFF,
         PARENT_HEAD_PENDING,
         PARENT_HEAD_LEADER,
+        ROOM_SET_AT_BIRTH,
+        ROOM_ANCHOR_MOVED,
     ];
 
     /// The static text of a persisted reason; a reason this build does not
@@ -113,14 +118,10 @@ pub(super) mod reason {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ProjectRank {
-    /// The parent's leader, not on the parent's board.
-    Leader,
-    /// A board holder at the parent, or the host acting for the owner.
-    Board,
-}
+#[doc(hidden)]
+use oneiron_records::workspace_roster::project::fold::slice_meet;
+#[doc(hidden)]
+pub use oneiron_records::workspace_roster::project::fold::{ProjectForkConflict, ProjectRank};
 
 /// The signer's highest role at `parent`, after the signature, slip, scope
 /// and authorization checks; never a role the revision grants itself.
@@ -149,6 +150,11 @@ pub struct ProjectEffective {
     /// Main's `bound_by_parents` of the witness head: false for an owner
     /// state (unsigned, or host-signed), which the vault alone caps.
     pub bound_by_parents: bool,
+    /// The home room's signed facet set, met with every other view this one
+    /// meets; `None` where no state met carries a set, so the room reads the
+    /// slice's facet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub room_facets: Option<BTreeSet<EntityId>>,
 }
 
 impl ProjectEffective {
@@ -167,7 +173,17 @@ impl ProjectEffective {
             depth_limit: authority.depth_limit,
             depth_remaining: authority.depth_remaining,
             bound_by_parents,
+            room_facets: authority.room_facets.clone(),
         }
+    }
+    /// The facets the home room reads through: the met set, else the
+    /// slice's facet. `None` is no limit. Read only with a slice.
+    pub(crate) fn room_facet_reach(&self) -> Option<BTreeSet<EntityId>> {
+        self.room_facets.clone().or_else(|| {
+            (self.slice.as_ref())
+                .and_then(|slice| slice.facet)
+                .map(|facet| BTreeSet::from([facet]))
+        })
     }
     /// Main's `fits_under` over effective views; a `None` parent slice admits nothing.
     pub(crate) fn fits_under(&self, parent: &ProjectEffective) -> bool {
@@ -176,12 +192,14 @@ impl ProjectEffective {
             && self.slice_fits_under(parent)
     }
     /// The slice part of [`Self::fits_under`]: this view's slice narrows the
-    /// parent's. A `None` parent slice admits nothing.
+    /// parent's, and its room reads no facet the parent's room does not. A
+    /// `None` parent slice admits nothing.
     pub(crate) fn slice_fits_under(&self, parent: &ProjectEffective) -> bool {
         parent.slice.as_ref().is_some_and(|parent_slice| {
-            self.slice
-                .as_ref()
-                .is_none_or(|slice| parent_slice.attenuate(slice.clone()).is_ok())
+            self.slice.as_ref().is_none_or(|slice| {
+                parent_slice.attenuate(slice.clone()).is_ok()
+                    && !room_widens(parent.room_facet_reach(), self.room_facet_reach())
+            })
         })
     }
     /// A state's own bounds: its members seated, its slice and depth.
@@ -197,9 +215,17 @@ impl ProjectEffective {
     pub(super) fn meet(&mut self, other: &ProjectAuthority) {
         self.meet_view(&Self::bounds(other));
     }
-    /// Narrows this view by another view's seats, slice and depth.
+    /// Narrows this view by another view's seats, slice, room and depth.
     pub(super) fn meet_view(&mut self, other: &ProjectEffective) {
         self.seats.retain(|seat| other.seats.contains(seat));
+        // Where either side carries a set, the room reads the facets both
+        // reach; else each reads its slice's facet, which the slices meet.
+        if self.room_facets.is_some() || other.room_facets.is_some() {
+            self.room_facets = match (self.room_facet_reach(), other.room_facet_reach()) {
+                (Some(mine), Some(theirs)) => Some(&mine & &theirs),
+                (mine, theirs) => mine.or(theirs),
+            };
+        }
         self.slice = match (&self.slice, &other.slice) {
             (Some(slice), Some(other)) => slice_meet(slice, other),
             _ => None,
@@ -236,30 +262,6 @@ pub(super) fn members_of(authority: &ProjectAuthority) -> BTreeSet<&str> {
             .map(String::as_str)
             .collect(),
     }
-}
-
-/// Per axis: unconstrained meets constrained, equal values stay, two
-/// different values meet to nothing; resource sets intersect.
-fn slice_meet(a: &Scope, b: &Scope) -> Option<Scope> {
-    fn axis(a: Option<EntityId>, b: Option<EntityId>) -> Option<Option<EntityId>> {
-        match (a, b) {
-            (Some(a), Some(b)) if a != b => None,
-            (a, b) => Some(a.or(b)),
-        }
-    }
-    Some(Scope {
-        world: axis(a.world, b.world)?,
-        facet: axis(a.facet, b.facet)?,
-        // A relationship set meets as one value: equal sets stay, two
-        // different sets meet to nothing.
-        relationship: match (&a.relationship, &b.relationship) {
-            (Some(left), Some(right)) if left != right => return None,
-            (left, right) => left.clone().or_else(|| right.clone()),
-        },
-        project: axis(a.project, b.project)?,
-        readable: a.readable.intersection(&b.readable).cloned().collect(),
-        writable: a.writable.intersection(&b.writable).cloned().collect(),
-    })
 }
 
 /// Whether a signed state fits under a parent project's effective view.
@@ -349,18 +351,6 @@ pub enum ProjectDisposition {
         state: ProjectHistoryOverBudget,
         frozen: Box<ProjectDisposition>,
     },
-}
-
-/// One fork a parent cycle leaves open (ruling (a)): its worlds tie there,
-/// or install different children there.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ProjectForkConflict {
-    pub anchor: ProjectRevisionHash,
-    pub rank: ProjectRank,
-    /// Every child of `anchor` some world keeps in contention or installs.
-    pub contenders: BTreeSet<ProjectRevisionHash>,
-    /// The causal resolution tips at `anchor` (ruling (b)).
-    pub resolution_tips: BTreeSet<ProjectRevisionHash>,
 }
 
 impl ProjectDisposition {

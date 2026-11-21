@@ -18,7 +18,7 @@ pub(super) const USAGE: &str = "usage: oneiron-bench infer run --arm-id ID --tra
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Transport {
     /// `ModelRuntime` and `RunBackend` in this process, over the
-    /// `oneiron-llm-openai` wire.
+    /// `oneiron_llm::openai_compat` wire.
     Direct,
     /// `OwnServerBackend` and `RemoteLlmClient` to a loopback `oneiron-server`
     /// that routes to the same provider.

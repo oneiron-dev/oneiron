@@ -2,14 +2,13 @@
 //! cooperative review restriction kept as separate states.
 
 use heed::{RoTxn, RwTxn};
-use serde::{Deserialize, Serialize};
 
 use super::{id_key, notice, standing_on_in_txn};
 use crate::deletion::{LegalHoldReason, LegalHoldUseLimit};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::side_table::{self, Named, SideTable, SideTableDbs};
-use crate::store::Store;
+use crate::store::{ManifestDbs, Store};
 
 /// Records kept after a refused privacy erasure (C6). Key: id16 (record).
 pub(super) const USE_LIMITS: SideTable<EntityId, LegalHoldUseLimit, Named> =
@@ -60,15 +59,8 @@ pub(crate) fn legal_hold_use_limit_in_txn(
 /// One record under one filed courtesy ask, record first for admission scans.
 pub(crate) type CooperativeRestrictionKey = (EntityId, [u8; 32], [u8; 16]);
 
-/// A recipient's selected restriction. No hold, content, free-text
-/// allegation, duration or automatic lift is implied by these codes.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct CooperativeRestriction {
-    pub since: u64,
-    pub reason_code: String,
-    pub review_at: u64,
-}
+#[doc(hidden)]
+pub(crate) use oneiron_records::store::legal_hold::use_limit::CooperativeRestriction;
 
 const COOPERATIVE_RESTRICTIONS: SideTable<
     CooperativeRestrictionKey,
@@ -88,6 +80,26 @@ pub(crate) fn cooperative_restriction_active_in_txn(
         .next()
         .transpose()?
         .is_some())
+}
+
+/// Whether the vault holds any record use limit at all, a C6 keep or a
+/// cooperative review restriction, standing or not: two table probes, so a
+/// door that would ask [`use_limit_in_txn`] of every row it ranks asks it
+/// only where one can answer.
+pub(crate) fn any_record_use_limit_in_txn(
+    dbs: &impl SideTableDbs,
+    txn: &RoTxn<'_>,
+) -> Result<bool> {
+    Ok(USE_LIMITS
+        .iter_raw_from(dbs, txn, &[])?
+        .next()
+        .transpose()?
+        .is_some()
+        || COOPERATIVE_RESTRICTIONS
+            .iter_raw_from(dbs, txn, &[])?
+            .next()
+            .transpose()?
+            .is_some())
 }
 
 /// The same record-retention facts as `held_in_txn`, read from a
@@ -112,16 +124,26 @@ pub(crate) enum RecordUseLimit {
     CooperativeReview,
 }
 
+/// What keeps `record` from use at a read or egress door, if anything: its
+/// own C6 limit, a cooperative review restriction on it, or, for a row whose
+/// content is about a PERSON, that PERSON's own C6 limit
+/// ([`super::person_content::kept_person_content_in_txn`]). The typed getter,
+/// retention and write admission ask the record's own facts only.
 pub(crate) fn use_limit_in_txn(
-    dbs: &impl SideTableDbs,
+    dbs: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     record: &EntityId,
 ) -> Result<Option<RecordUseLimit>> {
     if legal_hold_use_limit_in_txn(dbs, txn, record)?.is_some() {
         return Ok(Some(RecordUseLimit::LegalHold));
     }
-    Ok(cooperative_restriction_active_in_txn(dbs, txn, record)?
-        .then_some(RecordUseLimit::CooperativeReview))
+    if cooperative_restriction_active_in_txn(dbs, txn, record)? {
+        return Ok(Some(RecordUseLimit::CooperativeReview));
+    }
+    Ok(
+        super::person_content::kept_person_content_in_txn(dbs, txn, record)?
+            .then_some(RecordUseLimit::LegalHold),
+    )
 }
 
 /// The real legal-hold fact, for callers that report that exact reason.

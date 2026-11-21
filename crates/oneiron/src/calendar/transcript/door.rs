@@ -222,14 +222,15 @@ impl Memory<'_> {
                         }
                         let meeting = event
                             .map(|event| {
+                                let policy =
+                                    crate::calendar::prep::setting_keys::prep_policy_in_txn(
+                                        vault, txn,
+                                    )?;
                                 let meeting = crate::calendar::meeting::meeting_event_in_txn(
                                     vault, txn, &lane, event,
                                 )?
                                 .filter(|meeting| {
-                                    crate::calendar::prep_is_eligible(
-                                        meeting,
-                                        crate::calendar::PrepPolicy::default(),
-                                    )
+                                    crate::calendar::prep_is_eligible(meeting, policy)
                                 })
                                 .ok_or_else(|| {
                                     MemoryError::not_found(

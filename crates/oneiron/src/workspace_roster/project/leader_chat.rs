@@ -23,18 +23,27 @@ struct SpeakerProof {
 /// A rule row about a PROJECT. `false` narrows leader chat; `true` cannot widen it.
 pub const LEADER_CHAT_RULE_PREDICATE: &str = "project.leader_chat";
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct LeaderChat {
-    pub projects: [EntityId; 2],
-    pub actors: [EntityId; 2],
-    /// Each speaker's PERSON, or `None` for an AGENT_DEF that speaks as itself.
-    pub persons: [Option<EntityId>; 2],
-}
+#[doc(hidden)]
+pub use oneiron_records::workspace_roster::project::leader_chat::LeaderChat;
 
 fn key(prefix: &[u8], id: EntityId) -> Vec<u8> {
     [prefix, id.as_bytes()].concat()
 }
+
+/// Binds room `id` as leader chat `chat` under this vault's private key and returns the
+/// binding's bytes: the private admission marker the common put door checks
+/// ([`Vault::open_leader_chat_in_txn`], and `test_doors::archive_room_ledger`).
+pub(crate) fn bind_leader_chat_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    chat: &LeaderChat,
+) -> Result<Vec<u8>> {
+    let bytes = encode(chat)?;
+    vault.store.vault_meta.put(txn, &key(CHAT, id), &bytes)?;
+    Ok(bytes)
+}
+
 /// A local typed writer alone can grant a one-transaction ChildOf permit.
 pub(crate) fn permit_record(
     store: &crate::store::Store,
@@ -402,14 +411,13 @@ impl Vault {
             member_ids: chat.persons.into_iter().flatten().collect(),
             ..Default::default()
         };
-        let bytes = encode(&chat)?;
+        // The private admission marker is checked by the common put door.
+        // The body binding itself travels with replicated conversations.
+        let bytes = bind_leader_chat_in_txn(self, txn, id, &chat)?;
         body.extra.insert(
             CHAT_FIELD.to_owned(),
             rmp_serde::from_slice(&bytes).map_err(|_| denied())?,
         );
-        // The private admission marker is checked by the common put door.
-        // The body binding itself travels with replicated conversations.
-        self.store.vault_meta.put(txn, &key(CHAT, id), &bytes)?;
         crate::conversation::create_in_txn(
             self,
             txn,
@@ -665,6 +673,24 @@ pub(crate) fn bound_reader_in(
         Err(error) => return Err(error),
     }
     Ok(chat.persons[slot].is_none_or(|person| body.member_ids.contains(&person)))
+}
+
+/// The two actors leader chat `room` binds as its writers, `None` for a room
+/// without the binding. A binding that does not decode fails closed. It
+/// checks no leader rule: the doc plane asks only who wrote here
+/// (WORK-TALK-DOC-EDIT = A), and each writer still needs its own authority.
+pub(crate) fn bound_writers_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+) -> Result<Option<[EntityId; 2]>> {
+    let body = crate::conversation::body_in(vault, txn, room)?;
+    let Some(value) = body.extra.get(CHAT_FIELD) else {
+        return Ok(None);
+    };
+    let bytes = rmp_serde::to_vec_named(value).map_err(|_| denied())?;
+    let chat: LeaderChat = decode(&bytes).map_err(|_| denied())?;
+    Ok(Some(chat.actors))
 }
 
 pub(crate) fn admit_witness(

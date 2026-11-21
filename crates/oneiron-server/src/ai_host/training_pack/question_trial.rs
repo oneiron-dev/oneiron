@@ -170,6 +170,7 @@ pub(crate) fn answerer_pins(server: &SyncServer) -> Vec<ProviderPin> {
         &ladder.rule,
         &ladder.local,
         &ladder.system_one,
+        &ladder.precision,
         &ladder.escalation,
         &ladder.big,
     ]

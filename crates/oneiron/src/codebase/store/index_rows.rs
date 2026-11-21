@@ -35,16 +35,16 @@ pub(super) fn delete_exact_index_rows_for_snapshot(
     REPO_INDEX.delete(
         store,
         wtxn,
-        &TextIndexKey {
-            value: snapshot.repo_ref.canonical(),
+        &TextIdKey {
+            text: snapshot.repo_ref.canonical(),
             id: *id,
         },
     )?;
     PROJECT_INDEX.delete(
         store,
         wtxn,
-        &TextIndexKey {
-            value: snapshot.project_id.clone(),
+        &TextIdKey {
+            text: snapshot.project_id.clone(),
             id: *id,
         },
     )?;

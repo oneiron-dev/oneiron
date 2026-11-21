@@ -21,6 +21,7 @@ use crate::batch::{
 use crate::error::ErrorKind;
 use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
 use crate::store::PendingGateConsentRecord;
+use crate::store::gate_reason::GateReceiptOutcome;
 use crate::{EntityId, Error, Result, TimeRange, Vault};
 
 /// What a re-gate did to the consents bound to the old frontier.
@@ -134,22 +135,36 @@ fn restage_claim(
     let Some(fresh) = recorded.map(super::RecordedClaimGateDecision::into_record) else {
         return Ok(None);
     };
-    if fresh.outcome == "deny" {
-        return Ok(None);
-    }
+    let fresh_pending = match fresh.gate_outcome() {
+        Some(GateReceiptOutcome::Deny) => return Ok(None),
+        Some(GateReceiptOutcome::Pending) => true,
+        Some(
+            GateReceiptOutcome::Allow
+            | GateReceiptOutcome::Approved
+            | GateReceiptOutcome::ApprovedAmended
+            | GateReceiptOutcome::Rejected
+            | GateReceiptOutcome::LetGo
+            | GateReceiptOutcome::Superseded
+            | GateReceiptOutcome::Retracted
+            | GateReceiptOutcome::Invalidated
+            | GateReceiptOutcome::Revoked
+            | GateReceiptOutcome::Noted,
+        )
+        | None => false,
+    };
     let attached = fresh
         .receipt_reasons
         .iter()
         .any(|reason| reason == GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED);
     let reasons = if attached {
         vec![GATE_REASON_PENDING_CRITICAL_CONFIRM_ATTACHED.to_owned()]
-    } else if fresh.outcome == "pending" {
+    } else if fresh_pending {
         fresh.reason_codes.clone()
     } else {
         pending.reason_codes.clone()
     };
     let parked_under = vault.store.gate_decision_in_txn(txn, pending.decision_id)?;
-    let same = (attached || fresh.outcome == "pending")
+    let same = (attached || fresh_pending)
         && parked_under.is_some_and(|parked| parked.outcome == fresh.outcome)
         && reasons == pending.reason_codes;
     // A re-staged row is a new pending decision, so a ceremony it newly needs

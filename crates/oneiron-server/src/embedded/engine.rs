@@ -310,6 +310,15 @@ impl<A: AppHost + Clone + 'static> EmbeddedEngine<A> {
         &self.config
     }
 
+    /// What the app shell reports about fetching predictions on this machine: whether it is on
+    /// an unmetered network and on power (ARCH-0023b #predicted-residence). A phone at the
+    /// predicted level asks and fetches only while both hold, closed until the shell reports.
+    /// The report stays on the open vault, so it holds across [`Self::stop`], [`Self::wake`] and
+    /// every reconnect; report again on each change the shell observes. Taken while stopped too.
+    pub fn set_fetch_conditions(&self, conditions: oneiron::sync::FetchConditions) {
+        self.vault.report_fetch_conditions(conditions);
+    }
+
     /// Sends one request over a fresh connection and collects the whole
     /// reply. Refused while the engine is stopped.
     pub async fn request(&self, request: EmbeddedRequest) -> anyhow::Result<EmbeddedReply> {

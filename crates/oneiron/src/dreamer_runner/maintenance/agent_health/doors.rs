@@ -118,22 +118,8 @@ pub struct AgentHealthCardView {
     pub basis: ConcernMoveBasis,
 }
 
-/// The owner's applied prompt continuation of a card's failed attempt
-/// (FIX 3694): the approval it ran under and the successor it enqueued.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AgentHealthPromptInject {
-    /// The approval's id, as 32 hex.
-    pub approval: String,
-    /// The successor attempt, as 32 hex.
-    pub successor: String,
-    /// The Coach ask approved, as 32 hex.
-    pub ask: String,
-    /// The approving owner.
-    pub by: EntityId,
-    pub at: u64,
-    /// The approved prompt is the owner's edit of the Coach's draft.
-    pub edited: bool,
-}
+#[doc(hidden)]
+pub use oneiron_records::dreamer_runner::maintenance::agent_health::doors::AgentHealthPromptInject;
 
 /// The run a card's attempt is in, with that attempt's node marked.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -183,7 +183,15 @@ pub(crate) const FIELD_PREFILTER_SKIPPED: &str = "skipped";
 /// round on a rollup. The savings claim is on the receipt because a budget
 /// filter that could not show its savings would be asking to be believed.
 pub(crate) const FIELD_PREFILTER_TOKENS_SAVED: &str = "tokens_saved";
+/// `true` on every receipt of a round whose screen asked for a turn's words
+/// from its MESSAGE rows, a turn row's and the rollup's alike, whatever the
+/// ask gave; absent on a round that asked for none. Such a receipt stands on
+/// rows it does not name: a turn's novelty is measured against the turns the
+/// round scored before it, and its own MESSAGE rows are read as the Dreamer.
+/// So `vault.receipts` serves it to the vault owner on this device alone.
+pub(crate) const FIELD_PREFILTER_READ_MESSAGE_ROWS: &str = "read_message_rows";
 
+use crate::store::gate_reason::GateReceiptOutcome;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -361,6 +369,19 @@ pub struct ReceiptRecord {
 }
 
 impl ReceiptRecord {
+    /// The outcome a Gate receipt records, read through the one table by its
+    /// `content_kind` field, as `GateDecisionRecord::gate_outcome` reads the
+    /// ledger row it projects. `None` for a receipt of another family, and for
+    /// a word in neither table.
+    #[must_use]
+    pub fn gate_outcome(&self) -> Option<GateReceiptOutcome> {
+        if self.receipt_kind != ReceiptKind::Gate {
+            return None;
+        }
+        let content_kind = self.fields.get("content_kind").map_or("", String::as_str);
+        GateReceiptOutcome::from_stored(&self.outcome, content_kind)
+    }
+
     /// This receipt's free text as the side-row wall keeps it (OF-067), read in
     /// the caller's transaction for the row at `at` (its place and key); `true`
     /// when the wall placed a handle.

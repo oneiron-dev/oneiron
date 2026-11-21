@@ -537,14 +537,7 @@ pub fn decode_native_path(raw: &[u8]) -> Option<PathBuf> {
 
 /// Lowercase hex only, so one item has one name.
 pub fn hex_decode(text: &str) -> Option<Vec<u8>> {
-    if !text.len().is_multiple_of(2) {
-        return None;
-    }
-    let bytes = (0..text.len())
-        .step_by(2)
-        .map(|at| u8::from_str_radix(text.get(at..at + 2)?, 16).ok())
-        .collect::<Option<Vec<u8>>>()?;
-    (oneiron_contracts::entity_id::bytes_to_hex_lower(&bytes) == text).then_some(bytes)
+    oneiron_hex::decode_vec(text)
 }
 
 /// Opaque custody bytes: zeroized on drop, redacted in `Debug`, never named

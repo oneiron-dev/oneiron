@@ -12,6 +12,7 @@
 //! ([`issue_effective_revision`]), from exact refs of the producer's revision in force.
 use std::collections::BTreeSet;
 
+use oneiron_contracts::fingerprint::ContentHash;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -231,7 +232,7 @@ pub(crate) fn bind_producer(
     {
         return Ok(ProducerTarget::PolicyManifest {
             manifest: *manifest,
-            revision: *blake3::hash(body).as_bytes(),
+            revision: *ContentHash::of(body).as_bytes(),
         });
     }
     let mut configs = runs
@@ -477,90 +478,8 @@ fn producer_fix_value(
     }
 }
 
-/// What proves a producer's revision in force (OF-418 L3), kept whole in an issue's evidence.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum EffectProof {
-    /// The skill's admitted head, reached from the base revision through its succession.
-    Skill {
-        /// The head revision, active and loading as canon.
-        head: EntityId,
-        /// Its version.
-        version: String,
-        /// The revisions after the base, oldest first, ending at the head.
-        succession: Vec<EntityId>,
-        /// When the head superseded its predecessor; `None` for a base revised in place.
-        superseded_at: Option<u64>,
-    },
-    /// The manifest's row while the resolved policy reads it, trusted.
-    PolicyManifest {
-        /// The manifest.
-        manifest: EntityId,
-        /// blake3 of its stored row.
-        revision: [u8; 32],
-        /// Every trusted manifest the resolution reads, by id and row digest.
-        trusted_contributors: Vec<(EntityId, [u8; 32])>,
-    },
-    /// The config the newest unbroken streak of an issue's windows recorded, each run's
-    /// record the owner's receipt of the config it ran under.
-    Config {
-        /// Whose config it is.
-        owner: String,
-        /// blake3 of the recorded config.
-        digest: [u8; 32],
-        /// The first run of that streak.
-        first_run: [u8; 16],
-        /// When it started.
-        first_started_at: u64,
-    },
-}
-
-impl EffectProof {
-    /// The proof as a resolution's value reads it, engine-authored.
-    pub(crate) fn value(&self) -> serde_json::Value {
-        match self {
-            Self::Skill {
-                head,
-                version,
-                succession,
-                superseded_at,
-            } => json!({
-                "kind": "skill",
-                "head": head.to_hex(),
-                "version": version,
-                "succession": succession.iter().map(|id| id.to_hex()).collect::<Vec<_>>(),
-                "superseded_at": superseded_at,
-            }),
-            Self::PolicyManifest {
-                manifest,
-                revision,
-                trusted_contributors,
-            } => json!({
-                "kind": "policy_manifest",
-                "manifest": manifest.to_hex(),
-                "revision": bytes_to_hex_lower(revision),
-                "trusted_contributors": trusted_contributors
-                    .iter()
-                    .map(|(id, digest)| json!({
-                        "manifest": id.to_hex(),
-                        "revision": bytes_to_hex_lower(digest),
-                    }))
-                    .collect::<Vec<_>>(),
-            }),
-            Self::Config {
-                owner,
-                digest,
-                first_run,
-                first_started_at,
-            } => json!({
-                "kind": "config",
-                "owner": owner,
-                "revision": bytes_to_hex_lower(digest),
-                "first_run": bytes_to_hex_lower(first_run),
-                "first_started_at": first_started_at,
-            }),
-        }
-    }
-}
+#[doc(hidden)]
+pub(crate) use oneiron_records::dreamer_runner::maintenance::coach_diagnostic::EffectProof;
 
 /// The revision of a producer in force now, as [`issue_effective_revision`] proves it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -705,13 +624,13 @@ fn manifest_in_force(
             continue;
         };
         if crate::gate::manifest_authenticity::manifest_is_trusted(&vault.store, txn, id, body)? {
-            trusted_contributors.push((*id, *blake3::hash(body).as_bytes()));
+            trusted_contributors.push((*id, *ContentHash::of(body).as_bytes()));
         }
     }
     let Some(body) = raw.get(ENTITY_METADATA_HEADER_LEN..) else {
         return Ok(EffectiveRevision::Unknown);
     };
-    let revision = *blake3::hash(body).as_bytes();
+    let revision = *ContentHash::of(body).as_bytes();
     if !trusted_contributors.contains(&(manifest, revision)) {
         return Ok(EffectiveRevision::Unknown);
     }

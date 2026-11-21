@@ -36,7 +36,8 @@ use serde::{Deserialize, Serialize};
 use super::confined::open_file;
 use super::{
     Decoded, ImportWarning, QueuedSession, Totals, below, crossed_decoded, earliest_first,
-    no_hook_root, own_second, queue_dreamer, queued_stamp, read_queued,
+    history_file, no_hook_root, own_second, queue_dreamer, queued_stamp, read_queued, read_text,
+    session_log_name,
 };
 use crate::config::{ImportConfig, ServeConfig};
 use crate::server::SyncServer;
@@ -111,6 +112,39 @@ pub(super) fn enqueue(
             ),
         })?;
     below(&root, &path)?;
+    // What `serve` would refuse at drain, refused here, where the caller sees
+    // it: a misnamed log, a file that is not a regular one, or a log its
+    // source's reader refuses (a hook transcript in neither reader's format)
+    // never queues. A Claude Code or Codex log is read line by line, and
+    // drain counts a line its reader does not know instead of refusing the
+    // log, so the same log queues here as drain would read it.
+    anyhow::ensure!(
+        session_log_name(source, &path),
+        "{} is not a {} session log",
+        path.display(),
+        source.source_id()
+    );
+    // The open never blocks, as drain's does: a FIFO or a device at the
+    // log's name is refused by the type check rather than waited on. Links
+    // are followed here; drain keeps the no-link confinement below the root.
+    let file = fs::File::from(
+        openat(
+            CWD,
+            path.as_path(),
+            OFlags::RDONLY | OFlags::NONBLOCK | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .map_err(|error| anyhow::anyhow!("open {}: {error}", path.display()))?,
+    );
+    anyhow::ensure!(
+        file.metadata()?.is_file(),
+        "{} is not a regular file",
+        path.display()
+    );
+    let text = read_text(file, &path)?;
+    source
+        .decode(&text, &history_file(source, &path))
+        .map_err(|error| anyhow::anyhow!("{}: {error}", path.display()))?;
     let dir = config.import.queue_dir_for(&config.vault_path);
     fs::DirBuilder::new()
         .recursive(true)

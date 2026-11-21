@@ -26,8 +26,8 @@ use super::model::{
     FOLLOWUP_SWEEP_ROWS, FOLLOWUP_WAKE_LIMIT, HUMAN_FOLLOWUP_VERB,
     HUMAN_TASK_FOLLOWUP_SCHEMA_VERSION, HumanFollowupDispatch, HumanFollowupStage, HumanTaskError,
     HumanTaskFollowupRecord, HumanTaskResult, NativeHumanRoute, REBUILD_PAGE,
-    REMINDER_AFTER_SECONDS,
 };
+use super::setting_keys::followup_timings_in_txn;
 use super::storage::{
     FOLLOWUP_SWEEP, FOLLOWUPS, KEY_PARTY_KEY, followup_record_in_txn, put_followup_record_in_txn,
 };
@@ -274,8 +274,9 @@ pub(crate) fn register_human_followup_in_txn(
     if followup_record_in_txn(vault, &*wtxn, task_ref)?.is_some() {
         return Ok(());
     }
+    let reminder_after = followup_timings_in_txn(vault, wtxn)?.reminder_after_secs;
     let next_due_at = crate::task_verb::ask_notice_at_in(vault, wtxn, task_ref, 0)?.map_or_else(
-        || now.saturating_add(REMINDER_AFTER_SECONDS),
+        || now.saturating_add(reminder_after),
         |(notice, deadline)| notice.map_or(deadline, |at| at.min(deadline)),
     );
     put_followup_record_in_txn(
@@ -339,6 +340,11 @@ impl<'a> HumanTaskFollowupDriver<'a> {
     pub fn run_due(&self, now: u64, limit: usize) -> Result<Vec<HumanFollowupDispatch>> {
         let mut dispatched = Vec::new();
         let (due, read_after, resume_after) = self.due_records(now, limit)?;
+        // The ladder's intervals as the vault's settings give them, read once per pass.
+        let timings = {
+            let txn = self.vault.store.env.read_txn()?;
+            followup_timings_in_txn(self.vault, &txn)?
+        };
         for record in due {
             // A settled TASK closes its own loop: the authoritative synced fact
             // wins over anything the local cursor believed.
@@ -390,7 +396,7 @@ impl<'a> HumanTaskFollowupDriver<'a> {
                 dispatched.push(dispatch);
                 continue;
             }
-            let Some((next_stage, family, interval)) = record.stage.advance() else {
+            let Some((next_stage, family, interval)) = record.stage.advance(&timings) else {
                 continue;
             };
             let stage_token = format!("{family}:{}", record.stage_generation);

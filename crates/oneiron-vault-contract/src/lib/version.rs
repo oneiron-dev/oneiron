@@ -315,6 +315,23 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// private origin. A vault VM has no config-drive file for it. This version
 /// stays 3.
 ///
+/// Hosted private networks (HOSTED-EGRESS-OPERATOR-SETTING):
+/// `--hosted-private-network`, repeatable, managed only, names one private
+/// network a hosted node's web fetch (its calendar feed polls included) may
+/// reach, every address in it: `rfc1918` (10.0.0.0/8, 172.16.0.0/12,
+/// 192.168.0.0/16), `cgnat` (100.64.0.0/10) or `ula` (fc00::/7), spelled
+/// exactly so. It is the hosting operator's setting: a managed settings file
+/// that names `hosted_private_networks` is refused. A listed network never
+/// admits the infrastructure the engine knows inside it (the cloud metadata
+/// endpoints it lists in CGNAT or ULA, Tailscale's node address, the node's
+/// own addresses). It carries a build floor, at the engine revision
+/// it merged in, with no `Ping` revision field: an engine before it refuses
+/// the flag before it touches anything, and one at or after it refuses a
+/// spelling outside the three, so a supervisor passes it only with
+/// installed engines at or after the floor. No flag means no network: the
+/// node refuses all three except at a listed private origin, as before. A
+/// vault VM has no config-drive file for it. This version stays 3.
+///
 /// Browser readiness on `Ping` (FIX 7670): a
 /// [`CtlResponse::Ping`](crate::CtlResponse::Ping) carries an optional
 /// `browser` ([`BrowserReadiness`](crate::BrowserReadiness)), how the
@@ -514,6 +531,14 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// only from installed engines at or after the floor, and as unknown from
 /// one before it. A block that does not read is unknown too, never a failed
 /// `Ping`. This version stays 3.
+///
+/// A vault's process readiness on `Ping` (L8-11,
+/// [`ProcessReadinessReport`](crate::ProcessReadinessReport)): an optional
+/// `process`, with the event-loop watchdog's `state` (`ready`, `degraded`,
+/// `recovering` or `draining`) and its last sample's `lag_ms`. It carries a
+/// build floor, at the engine revision it merged in, with no revision field:
+/// a vault built before it sends none, which reads as unknown. A block that
+/// does not read is unknown too, never a failed `Ping`. This version stays 3.
 ///
 /// Live preview lease origins (FIX 1115,
 /// [`PreviewOrigin`](crate::artifact_origin::PreviewOrigin)): the

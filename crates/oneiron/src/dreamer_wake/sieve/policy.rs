@@ -2,10 +2,17 @@
 //! of span is, how sure each rule is, and where the uncertain band lies.
 //! Every number is data the owner can change; the defaults ship as JSON.
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use serde::{Deserialize, Serialize};
 
 use super::rules::RuleClass;
 use crate::Vault;
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
+use crate::batch::export::{
+    ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
+};
 use crate::error::{Error, Result};
 use crate::side_table::{self, LegacyJson, SideTable};
 
@@ -82,12 +89,12 @@ impl SievePolicy {
     }
 
     /// BLAKE3 of the row's canonical JSON: which policy scored a span.
+    /// Stored span policy digests keep their bytes (K, PLAN-UC-04 stage 7).
     pub(super) fn digest(&self) -> Result<[u8; 32]> {
         let json = serde_json::to_vec(self).map_err(|_| invalid())?;
-        let mut hash = blake3::Hasher::new();
-        hash.update(b"oneiron:dreamer-sieve:policy:v1");
-        hash.update(&json);
-        Ok(*hash.finalize().as_bytes())
+        let mut hash = LegacyDigest::new(purposes::dreamer_wake::POLICY_DIGEST);
+        hash.raw(&json);
+        Ok(hash.finish())
     }
 }
 
@@ -190,14 +197,31 @@ impl Vault {
     }
 }
 
-/// The sieve's three per-pass work budgets, the part of its policy a holder
-/// of `engine.controls` may lower.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SievePassBudgets {
-    /// Turns one pass reads.
-    pub max_turns_per_pass: u32,
-    /// Timeline rows one pass's forward scan steps over.
-    pub max_scan_per_pass: u32,
-    /// Bytes of turn text one pass reads.
-    pub max_text_bytes_per_pass: u32,
+/// Lands one archived `DREAMER_SIEVE_POLICY` envelope: the writer's [`SievePolicy::validate`]
+/// rules, then an absent-key exact-bytes install. The next sieve pass reads it; spans already
+/// queued keep the score they were given.
+pub(crate) fn land_archived_dreamer_sieve_policy_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> Result<ArchivedSideRowOutcome> {
+    let (key, value) = match decode_archived_row(&POLICY, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    if value.validate().is_err() {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidValue,
+        ));
+    }
+    install_archived_row(&POLICY, vault, txn, permit, &key, row)
+}
+
+#[doc(hidden)]
+pub use oneiron_records::dreamer_wake::sieve::policy::SievePassBudgets;
+
+#[cfg(oneiron_test_support)]
+pub(crate) fn policy_digest_for_test(policy: &SievePolicy) -> Option<[u8; 32]> {
+    policy.digest().ok()
 }

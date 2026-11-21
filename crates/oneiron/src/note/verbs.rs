@@ -194,6 +194,11 @@ impl Vault {
                 let kind = self
                     .get_entity_type_in_txn(txn, &origin)?
                     .ok_or(crate::Error::EntityNotFound)?;
+                // A record kept from use takes no named change (OF-470 C6):
+                // no fork copies it under a fresh id, and none supersedes it.
+                if let Some(refusal) = self.store.use_restricted_in_txn(txn, &origin)? {
+                    return Err(refusal.into());
+                }
                 let owner = actor.actor_class() == crate::edge::EdgeActorClass::Human
                     && crate::memory::verify_owner_actor_binding_in_txn(
                         self,
@@ -408,8 +413,8 @@ impl Vault {
                     &[origin_facet.as_bytes().as_slice()],
                     at,
                 ) {
-                    crate::provenance::birth::stamp_row_birth_in_txn(
-                        &self.store,
+                    crate::provenance::birth::stamp_birth_with_floor_in_txn(
+                        self,
                         txn,
                         &suggestion,
                         &birth,
@@ -505,7 +510,7 @@ impl Vault {
             };
             let receipt = self
                 .memory(actor.entity_ref(), actor.actor_class())
-                .apply_note_operation_in_lane(txn, note, &operation, None, lane)?;
+                .apply_note_operation_in_lane(txn, note, &operation, None, lane, landing)?;
             return Ok(match receipt.outcome {
                 super::NoteScalarEditOutcome::Applied(_) => {
                     NoteProgramEditOutcome::Edited { head: doc.head }

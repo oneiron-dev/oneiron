@@ -15,8 +15,10 @@
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
+use crate::store::gate_reason::GateReceiptOutcome;
+use crate::store::{GateDecisionId, GateReceipt, PolicyBasis, ReceiptActor};
 use crate::vault::Vault;
+use crate::write_envelope::WriteActor;
 
 use super::WorkspaceApi;
 
@@ -98,7 +100,6 @@ impl WorkspaceEffect<'_> {
         intent: Option<GateDecisionId>,
         result: Option<&EffectResult>,
     ) -> Result<GateDecisionId> {
-        let decision_id = GateDecisionId::from_bytes(vault.store.clock.ulid()?);
         let connector = self.module.catalog_name();
         let parts: [&[u8]; 5] = [
             WORKSPACE_EFFECT_DOMAIN,
@@ -142,30 +143,18 @@ impl WorkspaceEffect<'_> {
         if let Some(intent) = intent {
             details.push(format!("intent:{}", intent.to_hex()));
         }
-        let created_at = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
-        let record = GateDecisionRecord {
-            version: GATE_DECISION_LEDGER_VERSION,
-            decision_id,
-            created_at,
-            outcome: "approved".into(),
-            reason_codes: vec![workspace_effect_reason(connector)],
-            receipt_reasons: Vec::new(),
-            system_notices: crate::store::GateSystemNoticeRecord::receipt_details(
-                WORKSPACE_EFFECT_CONTENT_KIND,
-                details,
-            ),
-            actor_class: self.actor_class.gate_actor_class().into(),
-            actor_ref: Some(self.actor.to_hex()),
-            content_kind: WORKSPACE_EFFECT_CONTENT_KIND.into(),
-            policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.into(),
-            claim_id: None,
-            grant_ref: None,
-            diff_handle: digest.finalize().as_bytes().to_vec(),
-            read_frontier_hash: [0; 32],
-            context: Default::default(),
-            redacted_at: None,
-        };
-        vault.store.append_gate_decision_in_txn(txn, &record)?;
-        Ok(decision_id)
+        let mut receipt = GateReceipt::new(
+            GateReceiptOutcome::Approved,
+            WORKSPACE_EFFECT_CONTENT_KIND,
+            workspace_effect_reason(connector),
+            ReceiptActor::Row(WriteActor::new(self.actor, self.actor_class)),
+            digest.finalize().as_bytes().to_vec(),
+            PolicyBasis::NOT_READ,
+        );
+        receipt.details = details;
+        Ok(vault
+            .store
+            .record_gate_receipt_in_txn(txn, receipt)?
+            .decision_id)
     }
 }

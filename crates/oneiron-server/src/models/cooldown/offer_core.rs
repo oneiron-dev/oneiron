@@ -212,7 +212,9 @@ impl OfferCooldowns {
 
     /// Rests the offer serving `wire_model` for its health after its provider
     /// was down: for a backoff that doubles with each failure in a row from
-    /// [`HEALTH_REST_SECS`] up to [`HEALTH_REST_MAX_SECS`], with jitter. A
+    /// the host's first health rest ([`HEALTH_REST_SECS`] unless its
+    /// `[models] health_rest_secs` says) up to [`HEALTH_REST_MAX_SECS`], with
+    /// jitter. A
     /// failure while it recovers is one more in a row, and its answers since
     /// count no more. A probation slot that is held stays held until its
     /// request ends. `None` when no vault keeps rests.
@@ -229,7 +231,9 @@ impl OfferCooldowns {
         let mut health = self.health.lock().unwrap_or_else(PoisonError::into_inner);
         let held = health.entry(key.to_owned()).or_default();
         let strikes = held.strikes.saturating_add(1);
-        let backoff = HEALTH_REST_SECS
+        let backoff = self
+            .rest_settings
+            .first_secs
             .saturating_mul(1u64 << (strikes - 1).min(16))
             .min(HEALTH_REST_MAX_SECS);
         let mut digest = blake3::Hasher::new();
@@ -464,17 +468,23 @@ impl OfferCooldowns {
         questions
     }
 
-    /// The owner's answer to question `id`: it closes the question, a
-    /// top-up or pay-as-you-go puts its offer back in rotation now, and
-    /// `use_fallback` keeps `fallback` (one of the question's fallbacks) as
-    /// where the offer's calls go while it is parked. `false` when no such
-    /// question is open, the choice is not one it offers, or a
-    /// `use_fallback` names no model it offers.
+    /// The answer to question `id`, given by `answerer` (the owner, or an
+    /// agent his key lets give it): it closes the question, a top-up or
+    /// pay-as-you-go puts its offer back in rotation now, and `use_fallback`
+    /// keeps `fallback` (one of the question's fallbacks) as where the
+    /// offer's calls go while it is parked. A top-up that puts an account
+    /// back in rotation also closes every other question open under that
+    /// account. One write closes each question it closes and keeps who
+    /// answered it ([`QuotaAnswerRecord`]), so a failure before that write
+    /// leaves every question open for a retry. `false` when no such question
+    /// is open, the choice is not one it offers, or a `use_fallback` names no
+    /// model it offers.
     pub fn answer(
         &self,
         id: &str,
         choice: QuotaChoice,
         fallback: Option<&str>,
+        answerer: QuotaAnswerer,
     ) -> oneiron::Result<bool> {
         let Some(vault) = &self.vault else {
             return Ok(false);
@@ -485,7 +495,7 @@ impl OfferCooldowns {
         let Some(question) = question.filter(|question| question.choices.contains(&choice)) else {
             return Ok(false);
         };
-        if choice == QuotaChoice::UseFallback {
+        let fallback = if choice == QuotaChoice::UseFallback {
             let Some(model) = fallback.filter(|model| {
                 question
                     .fallbacks
@@ -495,20 +505,52 @@ impl OfferCooldowns {
                 return Ok(false);
             };
             vault.set_model_fallback(&question.id, model)?;
-        }
+            Some(model.to_owned())
+        } else {
+            None
+        };
+        let mut closed = vec![question.id.clone()];
         if choice.unparks() {
             vault.sync_state_delete(&format!("{PREFIX}{}", question.id))?;
             if let Some(account) = &question.account {
-                account_park::unpark(vault, account)?;
+                for id in account_park::unpark(vault, account)? {
+                    if !closed.contains(&id) {
+                        closed.push(id);
+                    }
+                }
             }
         }
-        vault.sync_state_delete(&question_key(&question.id))?;
+        let answered_at = vault.now_recorded_at();
+        vault.try_with_write_txn_grouped(|txn| {
+            for id in &closed {
+                let record = QuotaAnswerRecord {
+                    question: id.clone(),
+                    choice,
+                    fallback: fallback.clone(),
+                    answered_by: answerer,
+                    answered_at,
+                };
+                record.put_in_txn(vault, txn)?;
+                vault.sync_state_delete_in_write_txn(txn, &question_key(id))?;
+            }
+            Ok::<_, oneiron::Error>(())
+        })?;
         Ok(true)
     }
 
     /// Now, on the clock rests are kept on.
     pub(in crate::models) fn now(&self) -> Option<u64> {
         self.vault.as_ref().map(|vault| vault.now_recorded_at())
+    }
+
+    /// How long, in seconds, one durable step submission waits for its offer
+    /// back from a health rest before the step parks (FIX 11226): the host's
+    /// `[models] step_rest_wait_secs`, under the vault's longest wait.
+    pub(in crate::models) fn step_rest_wait_secs(&self) -> u64 {
+        let longest = self.max_wait_secs();
+        self.rest_settings
+            .step_wait_secs
+            .map_or(longest, |secs| secs.min(longest))
     }
 
     /// The longest a call waits for a cooling chain's first offer back. No

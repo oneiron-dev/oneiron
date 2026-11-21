@@ -14,10 +14,8 @@ use serde::{Deserialize, Serialize};
 use crate::error::Result;
 use crate::team::TeamPattern;
 
-use super::team_shape::CoordinationPattern;
-
-/// Longest team reference kept, the bound `TeamReceipt` applies.
-const MAX_TEAM_REF_BYTES: usize = 256;
+#[doc(hidden)]
+use oneiron_records::agent_dispatch::team_stamp::MAX_TEAM_REF_BYTES;
 
 /// The team run one dispatch works in.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

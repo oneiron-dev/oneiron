@@ -11,10 +11,9 @@ use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_WORLD_KEY_PAD};
 use crate::store::{ManifestDbs, Store};
 use oneiron_contracts::claim::ClaimLifecycleStatus;
 
-use super::tombstone::{
-    ARCHIVE_MARKER, PendingTombstoneKey, decode_tombstone_value, window_label_from_timestamp,
-};
+use super::tombstone::{ARCHIVE_MARKER, decode_tombstone_value, window_label_from_timestamp};
 use crate::side_table::HexId;
+use oneiron_store::side_table::key::WindowEntityHexKey;
 
 /// A world claim's body may already be erased; the deletion txn preserves
 /// its window address before purge so every reader still finds its tombstone.
@@ -143,52 +142,11 @@ fn world_pending_tombstone_exists(
     dbs.port_has_world_pending_tombstone(txn, WindowAddress::new(month))
 }
 
-/// Stable deletion reason surfaced by short-id hydrate.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum HydratedShortIdDeletionReason {
-    UserDelete,
-    UserHardDelete,
-    OwnerErase,
-    GdprDelete,
-    PolicyDelete,
-}
-
-/// Where hydrate found deletion evidence for a short-id row.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum HydratedShortIdDeletionSource {
-    Tombstone,
-    PendingTombstone,
-    DanglingShortId,
-}
-
-/// Deletion metadata returned when a short-id row resolves to deleted state.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct HydratedShortIdDeletion {
-    pub source: HydratedShortIdDeletionSource,
-    pub reason: Option<HydratedShortIdDeletionReason>,
-    pub deleted_at: Option<u64>,
-    pub request_id: Option<String>,
-    pub hard: bool,
-}
-
-/// Renderer-facing lifecycle state for one record in a memory timeline.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MemoryTimelineRecordState {
-    /// The record exists and is not closed by the supersession graph.
-    Live,
-    /// The record exists and has been superseded by at least one newer record.
-    Superseded,
-    /// The record exists as explicitly retracted claim history.
-    Retracted,
-    /// The record exists only as a deletion shell with tombstone metadata.
-    Deleted,
-    /// The graph still references an entity id whose record is absent locally.
-    Missing,
-}
+#[doc(hidden)]
+pub use oneiron_records::deletion::timeline::{
+    HydratedShortIdDeletion, HydratedShortIdDeletionReason, HydratedShortIdDeletionSource,
+    MemoryOperationKind, MemoryTimelineRecordState,
+};
 
 /// One node in a bitemporal supersession timeline.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -269,16 +227,6 @@ impl NamedMemoryVerb {
             Self::Delete | Self::HardDelete => MemoryOperationKind::DeleteEntity,
         }
     }
-}
-
-/// Typed operation family selected by a named memory verb.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MemoryOperationKind {
-    PutEntity,
-    SupersedeClaim,
-    RetractClaim,
-    DeleteEntity,
 }
 
 fn memory_timeline_record_cmp(
@@ -424,7 +372,7 @@ impl Vault {
         id: &EntityId,
         learned_at: u64,
     ) -> Result<Option<HydratedShortIdDeletion>> {
-        let pending_key = PendingTombstoneKey {
+        let pending_key = WindowEntityHexKey {
             window: deletion_window_label(&self.store, txn, id, learned_at)?,
             id: *id,
         };
@@ -480,7 +428,7 @@ impl Vault {
         id: &EntityId,
         learned_at: u64,
     ) -> Result<Option<HydratedShortIdDeletion>> {
-        let pending_key = PendingTombstoneKey {
+        let pending_key = WindowEntityHexKey {
             window: deletion_window_label(&self.store, txn, id, learned_at)?,
             id: *id,
         };
@@ -620,7 +568,23 @@ impl Store {
         if ARCHIVE_MARKER.contains(self, txn, &HexId(*id))? {
             return Ok(true);
         }
-        let pending_key = PendingTombstoneKey {
+        self.entity_tombstone_present_in_txn(txn, id, learned_at)
+    }
+
+    /// [`Self::entity_deletion_present_in_txn`] without the `ac:`
+    /// cleanup-archive marker: whether a delete or an erase names `id`, by
+    /// the `pt:` pending marker or the published window tombstone.
+    ///
+    /// A cleanup run's revert asks this. The archive it undoes is itself an
+    /// `ac:` marker, so the full predicate would read every archived record
+    /// of the run as deleted.
+    pub(crate) fn entity_tombstone_present_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        learned_at: u64,
+    ) -> Result<bool> {
+        let pending_key = WindowEntityHexKey {
             window: deletion_window_label(self, txn, id, learned_at)?,
             id: *id,
         };

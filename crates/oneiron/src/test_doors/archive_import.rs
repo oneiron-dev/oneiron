@@ -1,6 +1,8 @@
 //! Doors for `tests/archive_import_reserved_families.rs`: the whole-vault
 //! import's decision for each reserved predicate family, and a fit install's
-//! claim pair to export (ARCHIVE-IMPORT-RESERVED-CLAIM-ABORTS).
+//! claim pair to export (ARCHIVE-IMPORT-RESERVED-CLAIM-ABORTS). And for
+//! `tests/whole_vault_restore_same_as_links.rs`: a `same_as` link between two
+//! CLAIMs to export.
 
 use std::sync::atomic::Ordering;
 
@@ -122,5 +124,34 @@ pub fn land_section_install_with_fit_receipt(
         body.source = Some(ClaimSource::Observed);
         vault.put_reserved_claim_in_txn(txn, &receipt, &body, occurred, now)?;
         Ok((install, receipt))
+    })
+}
+
+/// Writes a `same_as` link from the CLAIM `source` to the CLAIM `target` at
+/// the coreference weight, as the Dreamer's nightly link applies one between
+/// two consolidated proposals (`federation::put_consolidated_same_as_in_txn`),
+/// without its status claim: an archive fixture for a `same_as` with an end
+/// the import keeps out (REVIEW-9581 round 2).
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn put_claim_pair_same_as(vault: &Vault, source: EntityId, target: EntityId) -> Result<()> {
+    let created_at = vault.now_recorded_at();
+    vault.with_write_txn_grouped(|txn| {
+        vault
+            .batch_in()
+            .edge_with_value_fields(
+                &source,
+                crate::edge::EdgeKind::SameAs,
+                &target,
+                crate::batch::EdgeValueFields {
+                    weight: crate::federation::COREFERENCE_LINK_WEIGHT,
+                    created_at,
+                    vad: oneiron_contracts::affect::Vad::NEUTRAL,
+                    provenance: None,
+                },
+            )
+            .apply(txn)
     })
 }

@@ -46,8 +46,13 @@ pub(super) fn refused_recipes(server: &SyncServer) -> Vec<String> {
         test_bearer(&format!(
             "jti=owner-narrow;principal_ref={owner};actor_class=human;scope=core:read,core:write"
         )),
-        // The host root is not a human owner.
-        owner_bearer(),
+        // The owner's slip narrowed to one facet: live, but not his full slip.
+        // (A bare top-scope holder-"host" slip verifies as the host root on a
+        // rooted self-hosted vault and acts as the owner by FIX 2222 design,
+        // so it cannot probe refusal here.)
+        test_bearer(&format!(
+            "jti=owner-facet;principal_ref={owner};actor_class=human;facets={owner}"
+        )),
     ]
 }
 
@@ -395,6 +400,8 @@ async fn owner_backup_rehearse_and_status_through_the_route() {
     assert!(location["disk_bytes"].as_u64().unwrap() > 0);
     assert_eq!(location["embedder"]["dense"], "not_configured");
     assert!(location["embedder"]["loaded"].is_null());
+    // A vault that is no copy made beside its source holds no paused turn program.
+    assert_eq!(location["paused_turn_programs"], 0);
 }
 
 /// Done-means (G1 check 5): the owner's status keeps what config asks for,
@@ -587,6 +594,11 @@ async fn an_owner_act_queued_behind_a_slip_revocation_commits_nothing() {
             )
             .unwrap()
     );
+    oneiron::vault_cleanup::set_cleanup_posture(
+        vault,
+        oneiron::vault_cleanup::CleanupPosture::ProposeFirst,
+    )
+    .unwrap();
     let cleanup_run =
         oneiron::vault_cleanup::run_vault_cleanup(vault, &oneiron::attempt_queue::AttemptId::now())
             .unwrap();

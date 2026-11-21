@@ -60,7 +60,7 @@ use crate::ai_host::scoped_child::{
     ReaderParentClock, ReaderParentHost, ScopedChildDoor, scoped_child_service,
 };
 use crate::mcp::{McpCodeExecutionHost, McpCodeModeProvider, run_seat};
-use crate::runtime::wall_clock_ms as unix_millis_now;
+use oneiron_base::unix_millis_now;
 
 mod child;
 mod nested;
@@ -558,6 +558,12 @@ impl Worker {
         let parked = crate::ai_host::payer_funding::resume_reader_payer_parks(vault, jobs, now);
         let front = jobs.queued_after(None, QUEUED_PER_TICK)?;
         let waiting = !front.jobs.is_empty() || parked > 0;
+        // A copy restored and not joined claims no child (row
+        // RESTORED-UNJOINED-STARTS-NO-WORK): its queued children wait, their
+        // sessions stay held, and the first tick after the join claims them.
+        if vault.restored_unjoined()? {
+            return Ok((jobs.next_due()?, waiting));
+        }
         let host = self.shared.host();
         if let Some(native) = host.as_ref().and_then(|host| host.engine_native()) {
             // Parents whose window is full, or whose scope has nothing left

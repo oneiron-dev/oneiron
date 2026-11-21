@@ -315,7 +315,8 @@ fn mcp_code_run_ended(
 fn mcp_code_execution_error(error: &crate::mcp::McpCodeExecutionError) -> McpGatewayError {
     let code = match error {
         crate::mcp::McpCodeExecutionError::HostUnbound
-        | crate::mcp::McpCodeExecutionError::RunWaitedOut => -32020,
+        | crate::mcp::McpCodeExecutionError::RunWaitedOut
+        | crate::mcp::McpCodeExecutionError::Refused(_) => -32020,
         crate::mcp::McpCodeExecutionError::RunBinding(_)
         | crate::mcp::McpCodeExecutionError::Run(_)
         | crate::mcp::McpCodeExecutionError::ProviderUnavailable { .. } => -32603,

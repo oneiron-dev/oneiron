@@ -94,6 +94,7 @@ mod distill;
 mod evidence;
 mod imported_chat;
 mod rows;
+pub(crate) mod setting_keys;
 mod validate;
 mod write;
 
@@ -118,6 +119,8 @@ pub use self::validate::{actor_claim_lineage, is_actor_claim_predicate};
 pub(crate) use self::write::actor_claim_facet_in_txn;
 pub use self::write::{project_actor_claims_from_judgments, skill_fit_for, write_actor_claim};
 
+#[cfg(oneiron_test_support)]
+pub(crate) use self::candidate::verdict_stamp;
 pub use self::candidate::{
     CraftCandidateAnswer, CraftCandidateView, CraftCandidatesRequest, CraftCandidatesView,
     CraftVerdict, CraftVerdictView, answer_craft_candidate_as_owner, craft_candidates_as_owner,
@@ -157,8 +160,6 @@ pub(super) const fn invalid(reason: &'static str) -> Error {
     Error::InvalidClaimBody(reason)
 }
 
-// FIX [LIBTEST-QUARANTINE-ACTOR-CLAIMS-TESTS]: the lib test target's type check fails here (26 errors: E0061 x7, E0599 x7, E0308 x6, E0063 x4, E0277 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

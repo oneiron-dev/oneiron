@@ -27,6 +27,7 @@ pub use crate::memory::campaign_records::CAMPAIGN_SCHEMA_VERSION;
 pub use crate::memory::campaign_records::CampaignDefinition;
 pub use crate::memory::campaign_records::CampaignLifecycle;
 pub use crate::memory::campaign_records::CampaignRecord;
+pub use crate::memory::campaign_records::CampaignSendMode;
 pub use crate::memory::campaign_records::CopyReviewMode;
 pub use crate::memory::campaign_records::CreateCampaignRequest;
 pub use crate::memory::campaign_records::UpdateCampaignRequest;
@@ -38,6 +39,9 @@ pub use crate::memory::campaign_records::UpdateCampaignRequest;
 /// name a different owner even by accident. The CA-02 idiom, deliberately: two
 /// CRM records that behave differently at their write boundary would be two
 /// contracts to keep straight.
+///
+/// The vault's first campaign also seeds the vault's house voice guide
+/// ([`Vault::ensure_house_voice_guide`]), after the campaign is stored.
 ///
 /// # Errors
 ///
@@ -62,6 +66,7 @@ pub fn create_campaign(
         reply_snooze_policy,
         voice_guide_ref: request.voice_guide_ref,
         copy_review: request.copy_review.unwrap_or_default(),
+        send_mode: request.send_mode.unwrap_or_default(),
     };
     validate_campaign_definition(&definition)?;
     let record = CampaignRecord {
@@ -75,6 +80,16 @@ pub fn create_campaign(
         validate_voice_guide_in_txn(vault, wtxn, &record.definition)?;
         store_campaign_in_txn(vault, wtxn, &record, kind)
     })?;
+    // The vault's first campaign seeds its house voice guide, which copy
+    // review checks a campaign's copy against when it names no guide. A
+    // failed seed leaves the campaign stored: its unguided sends hold, and
+    // the next create or seeded open tries again.
+    if let Err(error) = vault.ensure_house_voice_guide() {
+        tracing::warn!(
+            kind = ?error.kind(),
+            "the house voice guide was not seeded with this campaign; the next create or open tries again"
+        );
+    }
     Ok(record)
 }
 
@@ -136,6 +151,7 @@ pub fn update_campaign(
                 .voice_guide_ref
                 .unwrap_or(record.definition.voice_guide_ref),
             copy_review: request.copy_review.unwrap_or(record.definition.copy_review),
+            send_mode: request.send_mode.unwrap_or(record.definition.send_mode),
         };
         validate_campaign_definition(&definition)?;
         validate_voice_guide_in_txn(vault, wtxn, &definition)?;
@@ -676,6 +692,15 @@ fn decode_campaign_record(raw: &[u8]) -> Result<CampaignRecord> {
                 Some(mode) => mode
                     .as_str()
                     .and_then(crate::memory::campaign_records::CopyReviewMode::parse)
+                    .ok_or_else(corrupt)?,
+            },
+            // A campaign stored before send modes existed sends 1:1, as
+            // it did then (M-1: keep).
+            send_mode: match definition.get("send_mode") {
+                None => CampaignSendMode::default(),
+                Some(mode) => mode
+                    .as_str()
+                    .and_then(CampaignSendMode::parse)
                     .ok_or_else(corrupt)?,
             },
         },

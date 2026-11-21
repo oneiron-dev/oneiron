@@ -18,6 +18,7 @@ use std::collections::BTreeSet;
 mod ceilings;
 mod class_verdicts;
 mod grants;
+mod read_shape;
 mod working_set;
 pub use ceilings::{
     BriefActPosture, BriefBranchBound, BriefCeiling, BriefCeilingPosture, BriefCeilingTarget,
@@ -30,6 +31,7 @@ pub use class_verdicts::{
     BriefDefaultRule, BriefOutboundScope, BriefPerActCheck,
 };
 pub use grants::{BriefGrant, BriefGrants};
+pub use read_shape::BriefReadShape;
 pub use working_set::{BriefWorkingHandle, BriefWorkingSet};
 
 /// COMM (Engine ruling 21:47): whom the agent may address, as two separate
@@ -53,8 +55,10 @@ impl CommunicationLimits {
     }
 }
 
-/// The head of the line that names each brief field no host produced.
-const UNAVAILABLE_HEAD: &str = "unavailable (no producer yet)";
+#[doc(hidden)]
+use oneiron_records::context_board::self_brief::UNAVAILABLE_HEAD;
+#[doc(hidden)]
+pub use oneiron_records::context_board::self_brief::{BriefPlacement, BriefSkillRow};
 
 /// Inputs must be the effective, already-authorized run/session reads. In
 /// particular, this renderer cannot decide which classes or worlds are visible.
@@ -72,6 +76,9 @@ pub struct SelfBriefInput<'a> {
     pub class_verdicts: Option<&'a BriefClassVerdicts>,
     pub budget_lease_id: Option<&'a str>,
     pub budget: Option<&'a BudgetRead>,
+    /// The read shape the run's attempt woke under (census L9-37), when its
+    /// host stamped one.
+    pub read_shape: Option<BriefReadShape>,
     pub clock_ms: u64,
     pub skill_index: &'a [EntityId],
     pub read_set: &'a SessionReadSet,
@@ -83,16 +90,6 @@ pub struct SelfBriefInput<'a> {
     /// `people` a share (BOARD-LAYOUT); `None` keeps
     /// [`super::PEOPLE_PREFIX_BUDGET_TOK`].
     pub people_budget_tok: Option<usize>,
-}
-
-/// A skill index row is resolved from the skill record and reliability claim;
-/// the mutable confidence cache is never an authority for this number.
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
-pub struct BriefSkillRow {
-    pub id: EntityId,
-    pub hash: Option<String>,
-    pub reliability: f32,
-    pub loaded_hash: Option<String>,
 }
 
 /// A field no host produced is `None`: identity leaves it out, and the
@@ -127,6 +124,10 @@ pub struct SelfBrief {
     pub budget_lease_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub budget: Option<BudgetRead>,
+    /// The read shape the run works through, as its host picked it when the
+    /// run woke (census L9-37).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub read_shape: Option<BriefReadShape>,
     pub clock_ms: u64,
     pub skills: Vec<BriefSkillRow>,
     #[serde(skip)]
@@ -188,6 +189,7 @@ impl SelfBrief {
             class_verdicts: input.class_verdicts.cloned(),
             budget_lease_id: input.budget_lease_id.map(str::to_owned),
             budget: input.budget.cloned(),
+            read_shape: input.read_shape,
             clock_ms: input.clock_ms,
             skills,
             skill_sources,
@@ -231,6 +233,7 @@ impl SelfBrief {
             (self.class_verdicts.is_none(), "class verdicts"),
             (self.budget_lease_id.is_none(), "budget lease"),
             (self.budget.is_none(), "budget"),
+            (self.read_shape.is_none(), "read shape"),
             (self.working_set.scratchpad.is_none(), "scratchpad note"),
             (self.working_set.pins.is_none(), "admitted pins"),
             (self.working_set.replay.is_none(), "replay result bindings"),
@@ -321,15 +324,6 @@ impl SelfBrief {
     }
 }
 
-/// The cached prefix is replaced only at turn one or an epoch fold. A mid-run
-/// call returns an append-only tail update without touching the prefix.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BriefPlacement {
-    TurnOne,
-    Fold,
-    MidRun,
-}
-
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PlacedSelfBrief {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -372,6 +366,9 @@ pub struct SelfBriefState {
     pub class_verdicts: Option<BriefClassVerdicts>,
     pub budget_lease_id: Option<String>,
     pub budget: Option<BudgetRead>,
+    /// The read shape the run's attempt woke under (census L9-37); `None`
+    /// for a caller no host picked one for.
+    pub read_shape: Option<BriefReadShape>,
     pub clock_ms: u64,
     pub skill_index: Vec<EntityId>,
     pub working_set: BriefWorkingSet,
@@ -428,6 +425,7 @@ impl SelfBriefState {
                 class_verdicts: self.class_verdicts.as_ref(),
                 budget_lease_id: self.budget_lease_id.as_deref(),
                 budget: self.budget.as_ref(),
+                read_shape: self.read_shape,
                 clock_ms: self.clock_ms,
                 skill_index: &self.skill_index,
                 read_set,

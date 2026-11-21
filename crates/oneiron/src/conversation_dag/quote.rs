@@ -17,6 +17,7 @@ use crate::store::Store;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{EntityId, Vault, WriteActor};
 use heed::{RoTxn, RwTxn};
+use oneiron_contracts::msgpack::Entries;
 use rmpv::Value;
 use std::collections::BTreeMap;
 
@@ -735,11 +736,15 @@ pub(super) fn message_fields(body: &[u8]) -> Result<Vec<(Value, Value)>> {
     }
 }
 
+/// A repeated key reads as absent.
 pub(super) fn field<'a>(fields: &'a [(Value, Value)], name: &str) -> Option<&'a Value> {
-    fields
-        .iter()
-        .find(|(key, _)| key.as_str() == Some(name))
-        .map(|(_, value)| value)
+    Entries::new(fields).get(name).ok().flatten()
+}
+
+/// [`field`] for the repeated-key test door (`test_doors::repeated_key_lib_rows`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn quote_field_for_test(fields: &[(Value, Value)], name: &str) -> Option<Value> {
+    field(fields, name).cloned()
 }
 
 /// The scalars `start..end` of `text`, or `None` past its end.
@@ -776,13 +781,5 @@ mod hex32 {
 use oneiron_records::conversation_dag::quote::hex;
 
 fn unhex(text: &str) -> Result<[u8; 32]> {
-    let mut out = [0_u8; 32];
-    if text.len() != 64 || !text.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return Err(invalid("invalid quote anchor hash"));
-    }
-    for (slot, pair) in out.iter_mut().zip(text.as_bytes().chunks(2)) {
-        let pair = std::str::from_utf8(pair).map_err(|_| invalid("invalid quote anchor hash"))?;
-        *slot = u8::from_str_radix(pair, 16).map_err(|_| invalid("invalid quote anchor hash"))?;
-    }
-    Ok(out)
+    oneiron_hex::decode_any_case::<32>(text).ok_or_else(|| invalid("invalid quote anchor hash"))
 }

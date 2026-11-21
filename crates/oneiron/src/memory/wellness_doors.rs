@@ -7,14 +7,8 @@ use crate::claim::ClaimReadStatus;
 use crate::consent::AuthenticatedOwner;
 use crate::dreamer_runner::maintenance::action_mode::{ActionModePolicy, ActionModeRule};
 use crate::memory::state_index::StateIndex;
+use crate::store::gate_reason::GateReceiptOutcome;
 use crate::{EntityId, Error};
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct WellnessPolicyConfigureRequest {
-    /// None clears the policy. No built-in bands or population cutoffs are substituted.
-    pub policy: Option<ActionModePolicy>,
-}
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::memory::wellness_doors::WellnessPersonRequest;
@@ -32,29 +26,6 @@ pub struct WellnessProjection {
 }
 
 impl Memory<'_> {
-    pub fn wellness_policy_as_owner(
-        &self,
-        owner: &AuthenticatedOwner,
-    ) -> MemoryResult<Option<ActionModePolicy>> {
-        let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
-        self.affect_owner_in_txn(&txn, owner)?;
-        drop(txn);
-        Ok(self.vault.action_mode_policy()?)
-    }
-
-    pub fn wellness_policy_configure_as_owner(
-        &self,
-        owner: &AuthenticatedOwner,
-        input: &WellnessPolicyConfigureRequest,
-    ) -> MemoryResult<Option<ActionModePolicy>> {
-        let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
-        self.affect_owner_in_txn(&txn, owner)?;
-        drop(txn);
-        Ok(self
-            .vault
-            .set_action_mode_policy(owner, input.policy.clone())?)
-    }
-
     pub fn wellness_derive_as_owner(
         &self,
         owner: &AuthenticatedOwner,
@@ -93,7 +64,7 @@ impl Memory<'_> {
             let measured = self
                 .vault
                 .project_action_mode_in_txn(txn, &person, now, refresh)?;
-            let coping = self.coping_aggregate_in_txn(txn, person, None)?;
+            let coping = self.coping_aggregate_in_txn(txn, &lane, person, None)?;
             let mut refs = vec![person];
             if let Some(claim) = &measured.state_index.claim {
                 let claim = EntityId::from_hex(claim)?;
@@ -167,19 +138,16 @@ impl Memory<'_> {
                     .as_deref()
                     .map(EntityId::from_hex)
                     .transpose()?;
-                let decision = super::authorship::decision(
+                let receipt = super::authorship::decision(
                     self.write_actor(),
                     "wellness_projection",
-                    "approved",
+                    GateReceiptOutcome::Approved,
                     "gate.affect.wellness.configured_policy",
                     target,
                     bytes,
-                    now,
                 );
-                projection.receipt_ref = Some(format!("gate:{}", decision.decision_id.to_hex()));
-                self.vault
-                    .store
-                    .append_gate_decision_in_txn(txn, &decision)?;
+                let record = self.vault.store.record_gate_receipt_in_txn(txn, receipt)?;
+                projection.receipt_ref = Some(format!("gate:{}", record.decision_id.to_hex()));
             }
             Ok(projection)
         })

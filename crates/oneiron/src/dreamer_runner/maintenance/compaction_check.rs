@@ -29,6 +29,7 @@
 
 use std::collections::BTreeMap;
 
+use oneiron_contracts::fingerprint::ContentHash;
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
@@ -56,18 +57,18 @@ use oneiron_model::llm::{
 };
 
 mod conversation;
+mod judge_room;
 mod support;
 pub(crate) use conversation::{ConversationCheckDeclaration, declare_conversation_check_in_txn};
 pub use support::CompactionCheckDecisions;
 
-/// The maintenance facet a self-written landing's check rides.
-pub const COMPACTION_CHECK_FACET: &str = "dreamer.compaction_check";
+#[doc(hidden)]
+pub use oneiron_records::dreamer_runner::maintenance::compaction_check::COMPACTION_CHECK_FACET;
+#[doc(hidden)]
+use oneiron_records::dreamer_runner::maintenance::compaction_check::DECLARATION_KEY;
 
 /// The predicate of the Dreamer's finding a check records.
 pub const COMPACTION_CHECK_PREDICATE: &str = "dreamer.compaction_check.verdict";
-
-/// The payload key the declaration rides under.
-const DECLARATION_KEY: &str = "declaration";
 
 /// A finding's reason when the diagnostic step's reply did not read: the
 /// typed verdict stands without its conflicts.
@@ -231,7 +232,7 @@ pub(crate) fn declare_compaction_check_in_txn(
         txn,
         declaration.input()?,
         declaration.landing_key(),
-        unix_now(),
+        crate::unix_seconds_now(),
     )?;
     Ok(())
 }
@@ -247,6 +248,9 @@ pub struct CompactionCheckModel<'a> {
     pub role: ModelRole,
     /// The host's rubric: prompt data, never engine prose.
     pub rubric: &'a str,
+    /// The input the judge's model holds, as the host lends it: a judge input
+    /// past it settles unjudged (`span_past_judge_room`); `None` sends it whole.
+    pub window_tokens: Option<u64>,
     /// The host's decision path for the typed support verdict (FIX 8713);
     /// `None` before the host staffs one, when the judge's own verdict
     /// stands, recorded as untyped.
@@ -300,12 +304,6 @@ pub async fn run_compaction_check(
     let keyless = model.inference.selected_keyless();
     let paid = model.inference.selected_paid();
     let request = judge_request(&model, &declaration, &read, locality, keyless, paid)?;
-    let judging = match ask_judge(attempt, ctx, &model, request, declaration.writer).await? {
-        Ok(judging) => judging,
-        Err(parked) => return Ok(parked),
-    };
-    let judged = judgment(&judging.response, &declaration);
-    let diagnostic = judged.as_ref().map(|judged| judged.verdict);
     let (cited, state) = (declaration.cited(true), judge_input(&declaration, &read));
     let ask = support::Ask {
         kind: declaration.landing_kind(),
@@ -316,6 +314,18 @@ pub async fn run_compaction_check(
         keyless,
         paid,
     };
+    if let Some(settled) =
+        judge_room::exceeded(&model, &request, &ask, &declaration.evidence_revision)?
+    {
+        record(ctx.vault, attempt_id, &declaration, &settled, now)?;
+        return Ok(judge_room::completed_without_judge());
+    }
+    let judging = match ask_judge(attempt, ctx, &model, request, declaration.writer).await? {
+        Ok(judging) => judging,
+        Err(parked) => return Ok(parked),
+    };
+    let judged = judgment(&judging.response, &declaration);
+    let diagnostic = judged.as_ref().map(|judged| judged.verdict);
     let verdict = match support::verdict(attempt, ctx, &model, &judging, diagnostic, &ask).await? {
         Ok(verdict) => verdict,
         Err(parked) => return Ok(parked),
@@ -519,7 +529,7 @@ fn read_evidence(vault: &Vault, declaration: &CompactionCheckDeclaration) -> Res
         return Ok(Settled::of(StaleEvidence, "summary_withdrawn"));
     };
     if summary.len() as u64 != declaration.artifact_len
-        || bytes_to_hex_lower(blake3::hash(summary.as_bytes()).as_bytes())
+        || bytes_to_hex_lower(ContentHash::of(summary.as_bytes()).as_bytes())
             != declaration.artifact_hash
     {
         return Ok(Settled::of(StaleEvidence, "artifact_changed"));
@@ -786,10 +796,4 @@ fn emit_finding(
         }
         Ok(finding)
     })
-}
-
-fn unix_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs())
 }

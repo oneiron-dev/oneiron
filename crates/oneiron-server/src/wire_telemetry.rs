@@ -21,6 +21,12 @@ const LIMIT_QUESTION: &str = "wire:limit-question:v1:";
 /// A row keeps one question for each window of this many seconds, and counts
 /// every crossing in the window in it.
 const LIMIT_QUESTION_WINDOW_SECS: u64 = 60;
+/// How many counts may wait on the blocking pool at once
+/// (`record_on_blocking_pool`). A call past it waits for a count to end
+/// before it hands its own over, and that wait ends with the call, so calls
+/// dropped while the counter is held leave at most this many counts behind
+/// (FIX [WIRE-TELEMETRY-SYNC-PERSIST-ON-ASYNC-PATH]).
+pub const MAX_PENDING_COUNTS: usize = 64;
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WireWindowReceipt {
     pub started_at: u64,
@@ -340,6 +346,9 @@ pub struct WireTelemetry {
     saving: Mutex<()>,
     flusher_started: std::sync::atomic::AtomicBool,
     limits: Arc<LimitQuestions>,
+    /// One permit for each count on the blocking pool, held until the count
+    /// ends (`record_on_blocking_pool`): `MAX_PENDING_COUNTS` of them.
+    pending_counts: Arc<tokio::sync::Semaphore>,
 }
 fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
     rmp_serde::to_vec_named(value).map_err(|_| Error::CorruptedIndex("wire observation"))
@@ -412,6 +421,7 @@ impl WireTelemetry {
             saving: Mutex::new(()),
             flusher_started: std::sync::atomic::AtomicBool::new(false),
             limits: Arc::new(LimitQuestions::with_pool_pressure()),
+            pending_counts: Arc::new(tokio::sync::Semaphore::new(MAX_PENDING_COUNTS)),
         }
     }
     /// Where this server's `[limits]` rows ask when they are crossed.
@@ -463,7 +473,11 @@ impl WireTelemetry {
         }
         self.save_limit_questions()
     }
-    pub fn set_thresholds(&self, thresholds: &WireThresholds) -> Result<()> {
+    /// Writes the thresholds manifest with no owner proof. Only the unit
+    /// tests and the `test_doors::wire_thresholds` door call it, so the build
+    /// without `--cfg oneiron_test_support` leaves it out (FIX 23188).
+    #[cfg(any(test, oneiron_test_support))]
+    pub(crate) fn set_thresholds(&self, thresholds: &WireThresholds) -> Result<()> {
         self.write_thresholds(thresholds, |txn| {
             self.vault
                 .sync_state_put_in_write_txn(txn, MANIFEST, &encode(thresholds)?)
@@ -766,6 +780,14 @@ impl WireTelemetry {
         active.frozen = false;
         Ok(())
     }
+    /// Runs `held` while the window's counter lock is held, as `observe`
+    /// holds it across a rollover's persist: the door for the test that a
+    /// call never waits for it on a runtime worker.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn while_counter_held<T>(&self, held: impl FnOnce() -> T) -> T {
+        let _active = lock(&self.active);
+        held()
+    }
     pub fn snapshot(&self) -> Result<Option<WireWindowReceipt>> {
         Ok(self
             .active
@@ -819,7 +841,7 @@ impl Drop for WireTelemetry {
 }
 
 mod http;
-pub(crate) use self::http::{observe_http, start_window_receipts};
+pub(crate) use self::http::{observe_http, record_on_blocking_pool, start_window_receipts};
 
 #[cfg(test)]
 mod tests;

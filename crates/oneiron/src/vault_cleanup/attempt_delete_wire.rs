@@ -1,15 +1,29 @@
 //! Explicit cleanup-archived Completed attempt deletion (FIX 9059).
 //! Preview describes one row; confirm checks its exact row and archive mark,
 //! current authority and all deletion effects in a single write transaction.
+//!
+//! Check-in (ROLES-CHECKIN P2.5 2k5e; ARCH-0082 #act-table "Delete items";
+//! Engine ruling P25-SHAPE Q1 = A) judges the confirm in that writer, after
+//! its authority, and its receipt records the decision: the Owner deletes on
+//! their own proof, an Admin's confirm never asks, a Deputy's goes on their
+//! own judgment (`sure`). An agent's confirm (the owner's
+//! `vault_cleanup.attempt_delete.owner_or_admin_only` off, and its live owner
+//! Grant naming the verb) is not judged here, as `vault.delete` does not judge
+//! one (2k5c): PR 3's act gate judges agents, and its receipt records no
+//! decision. No role that reaches this door waits, so it takes no
+//! `check_in_ref`.
 
-use super::attempt_delete_authority::require_delete_in_txn;
+use super::attempt_delete_authority::{DeleteAuthority, require_delete_in_txn};
 use super::attempt_delete_receipts::stamp_in_txn;
 use super::marks::{self, CleanupMark};
-use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptState, decode_record};
+use crate::check_in::{
+    self, ActClass, CheckInDecision, CheckInScope, DoorAct, DoorCheckIn, RolePreset,
+};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::ports::JobQueueRead;
+use crate::{Error, Vault};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::vault_cleanup::attempt_delete_wire::{
@@ -46,6 +60,7 @@ pub fn confirm_attempt_archive_delete_wire(
                 "attempt archive changed; preview again",
             ));
         }
+        let check_in = attempt_delete_check_in_in_txn(vault, txn, &authority, id)?;
         let record = AttemptQueue::new(vault).delete_archived_completed_in_txn(txn, id)?;
         let at = vault.now_recorded_at();
         let receipt_ref = stamp_in_txn(
@@ -63,9 +78,54 @@ pub fn confirm_attempt_archive_delete_wire(
             run_id: record.run_id,
             receipt_ref,
             role: authority.role.to_owned(),
-            grant_ref: authority.grant.map(|grant| grant.to_hex()),
+            grant_ref: authority
+                .grant
+                .map(|(grant, _)| grant)
+                .or(authority.agent_grant)
+                .map(|grant| grant.to_hex()),
+            check_in,
         })
     })
+}
+
+/// The check-in decision of the confirm `authority` admitted for attempt
+/// `id`, judged in `txn`, its writer (module docs). The Owner acts on their
+/// own proof. An Admin or a Deputy is judged under the membership role of
+/// the grant that admitted them, over the attempt's delete digest. An agent
+/// is not judged at this door (module docs): none.
+///
+/// # Errors
+///
+/// `InvariantViolation` if the judge would make the confirm wait, which no
+/// admin role's cell does; as [`check_in::person_door_check_in_in_txn`].
+fn attempt_delete_check_in_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    authority: &DeleteAuthority,
+    id: AttemptId,
+) -> crate::Result<Option<CheckInDecision>> {
+    if authority.agent_grant.is_some() {
+        return Ok(None);
+    }
+    let Some((grant, role)) = authority.grant else {
+        return Ok(Some(check_in::owner_own_proof_decision(ActClass::Delete)));
+    };
+    let act = DoorAct {
+        person: authority.actor,
+        role: RolePreset::of_grant_role(role),
+        grant,
+        verb: "vault.archive.attempt.delete.confirm",
+        act: ActClass::Delete,
+        scope: CheckInScope::default(),
+        effect_digest: check_in::attempt_archive_delete_effect_digest(id.as_bytes()),
+    };
+    let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+    match check_in::person_door_check_in_in_txn(vault, txn, &act, None, now)? {
+        DoorCheckIn::Go(decision) => Ok(Some(decision)),
+        DoorCheckIn::Wait(_) => Err(Error::InvariantViolation(
+            "an attempt archive delete by an Admin or a Deputy never waits",
+        )),
+    }
 }
 
 fn selected_in_txn(

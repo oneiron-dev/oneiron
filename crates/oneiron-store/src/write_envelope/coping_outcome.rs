@@ -7,6 +7,7 @@ use super::affect_trigger::{
 use super::claim_body::{ClaimBody, ClaimSubject, unit_interval_f32};
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_contracts::error::{Error, Result};
+use oneiron_contracts::register::Register;
 use rmpv::Value;
 
 pub const COPING_OUTCOME_PREDICATE: &str = "coping.outcome";
@@ -34,7 +35,9 @@ const EVIDENCE_KEY_CONFIDENCE: &str = "confidence";
     serde::Serialize,
     serde::Deserialize,
     schemars::JsonSchema,
+    Register,
 )]
+#[register("coping.strategy")]
 pub enum CopingStrategy {
     SitSel,
     SitMod,
@@ -46,28 +49,8 @@ pub enum CopingStrategy {
 
 impl CopingStrategy {
     #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::SitSel => "SitSel",
-            Self::SitMod => "SitMod",
-            Self::AttDep => "AttDep",
-            Self::CogChg => "CogChg",
-            Self::ResMod => "ResMod",
-            Self::ERFlex => "ERFlex",
-        }
-    }
-
-    #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "SitSel" => Some(Self::SitSel),
-            "SitMod" => Some(Self::SitMod),
-            "AttDep" => Some(Self::AttDep),
-            "CogChg" => Some(Self::CogChg),
-            "ResMod" => Some(Self::ResMod),
-            "ERFlex" => Some(Self::ERFlex),
-            _ => None,
-        }
+        <Self as Register>::named(value)
     }
 }
 

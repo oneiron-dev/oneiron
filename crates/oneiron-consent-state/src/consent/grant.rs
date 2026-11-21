@@ -8,6 +8,7 @@ use oneiron_store::consent_bound::ConsentDomain;
 use oneiron_store::consent_bound::GrantBound;
 use oneiron_store::consent_bound::invalid_bound;
 use oneiron_store::gate_decision::types::GateDecisionId;
+use oneiron_store::gate_reason::GateReceiptOutcome;
 use oneiron_store::write_envelope::EffectDigest;
 
 // ---------------------------------------------------------------------------
@@ -331,18 +332,22 @@ impl ConsentReceipt {
         }
     }
 
-    /// The pinned Gate outcome string for this receipt.
+    /// The Gate outcome this receipt is recorded under (UC-03 D1 = A): a
+    /// denial is the owner's no, and a code wait's settlement or consumption
+    /// is a noted fact. The word such a row held before, `denied`, `settled`
+    /// or `consumed`, stays in [`Self::reason_code`].
     #[must_use]
-    pub const fn gate_outcome(&self) -> &'static str {
+    pub const fn gate_outcome(&self) -> GateReceiptOutcome {
         match self {
             Self::Approved { .. }
             | Self::Used { .. }
             | Self::BypassCreated { .. }
-            | Self::Bypassed { .. } => "approved",
-            Self::Denied { .. } => "denied",
-            Self::Revoked { .. } => "revoked",
-            Self::CodeWaitSettled { .. } => "settled",
-            Self::CodeWaitConsumed { .. } => "consumed",
+            | Self::Bypassed { .. } => GateReceiptOutcome::Approved,
+            Self::Denied { .. } => GateReceiptOutcome::Rejected,
+            Self::Revoked { .. } => GateReceiptOutcome::Revoked,
+            Self::CodeWaitSettled { .. } | Self::CodeWaitConsumed { .. } => {
+                GateReceiptOutcome::Noted
+            }
         }
     }
 

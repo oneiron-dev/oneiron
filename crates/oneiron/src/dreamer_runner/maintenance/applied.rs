@@ -20,11 +20,13 @@
 //! `MaintenanceInverse::revert_in_txn` calling the kind's own inverse.
 use super::{action_mode, curator, digest, identity, invalid, stewardship};
 use crate::attempt_queue::AttemptId;
+use crate::authority::OwnerProofGround;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::side_table::{self, Named, SideKey, SideTable};
-use crate::store::{GateDecisionId, GateDecisionRecord};
+use crate::store::gate_reason::GateReceiptOutcome;
+use crate::store::{GateDecisionId, GateReceipt, PolicyBasis, ReceiptActor};
 use crate::{ClaimLifecycleStatus, EntityId, Error, Result, Vault, WriteActor};
 use serde::{Deserialize, Serialize};
 
@@ -45,97 +47,14 @@ pub const MAINTENANCE_APPLY_KIND: &str = "dreamer_maintenance_apply";
 pub const IDENTITY_PROVISIONAL_KIND: &str = "dreamer_identity_provisional";
 /// The Gate receipt a background identity settle leaves (FIX 3327).
 const IDENTITY_SETTLE_KIND: &str = "dreamer_identity_settle";
-/// The Gate receipt the owner's revert of one leaves.
-pub const MAINTENANCE_REVERT_KIND: &str = "dreamer_maintenance_revert";
+#[doc(hidden)]
+pub use oneiron_records::dreamer_runner::maintenance::applied::{
+    MAINTENANCE_REVERT_KIND, MaintenanceRevert, MaintenanceTarget,
+};
+
 // The ledger takes only `gate.` reason codes.
 const APPLY_REASON: &str = "gate.dreamer.maintenance_applied";
 const REVERT_REASON: &str = "gate.dreamer.maintenance_reverted";
-
-/// What one applied write is filed under: the finding it landed, the
-/// identity ask a background abstention kept provisional or a background
-/// settle decided, or the project tree fork the Coach put in force; the last
-/// two have no finding claim.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MaintenanceTarget {
-    Finding(EntityId),
-    /// The ask's key, the 64 hex `/v1/owner/identity/asks` lists while it
-    /// is open; a settle's names the mention as its ask would.
-    IdentityAsk([u8; 32]),
-    /// A project and the team-shape fork put in force for it.
-    ProjectTreeFork {
-        project: EntityId,
-        fork: EntityId,
-    },
-}
-
-/// The first byte of a project tree fork's key, ahead of its two ids.
-const PROJECT_TREE_FORK_KEY: u8 = 1;
-
-impl MaintenanceTarget {
-    /// A finding's 32 hex, an identity ask's 64 hex, or a project tree
-    /// fork's project and fork, 32 hex each, joined by `:`.
-    #[must_use]
-    pub fn to_hex(&self) -> String {
-        match self {
-            Self::Finding(id) => id.to_hex(),
-            Self::IdentityAsk(key) => crate::entity_id::bytes_to_hex_lower(key),
-            Self::ProjectTreeFork { project, fork } => {
-                format!("{}:{}", project.to_hex(), fork.to_hex())
-            }
-        }
-    }
-
-    /// The identity ask a 64-hex key names.
-    #[must_use]
-    pub fn identity_ask(hex: &str) -> Option<Self> {
-        identity::parse_key(hex).map(Self::IdentityAsk)
-    }
-
-    /// The finding claim, when the target is one.
-    pub(super) const fn finding(&self) -> Option<EntityId> {
-        match self {
-            Self::Finding(id) => Some(*id),
-            Self::IdentityAsk(_) | Self::ProjectTreeFork { .. } => None,
-        }
-    }
-}
-
-/// A finding's 16 id bytes, an ask's 32 key bytes, or a project tree fork's
-/// tag byte and its project's and fork's 16 id bytes (33): the width tells
-/// them apart.
-impl SideKey for MaintenanceTarget {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        match self {
-            Self::Finding(id) => id.encode_into(out),
-            Self::IdentityAsk(key) => key.encode_into(out),
-            Self::ProjectTreeFork { project, fork } => {
-                out.push(PROJECT_TREE_FORK_KEY);
-                project.encode_into(out);
-                fork.encode_into(out);
-            }
-        }
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        match bytes.len() {
-            16 => EntityId::decode_key(bytes).map(Self::Finding),
-            32 => <[u8; 32]>::decode_key(bytes).map(Self::IdentityAsk),
-            33 => {
-                let (&tag, ids) = bytes.split_first()?;
-                if tag != PROJECT_TREE_FORK_KEY {
-                    return None;
-                }
-                let (project, fork) = ids.split_at(16);
-                Some(Self::ProjectTreeFork {
-                    project: EntityId::decode_key(project)?,
-                    fork: EntityId::decode_key(fork)?,
-                })
-            }
-            _ => None,
-        }
-    }
-}
 
 /// What one applied write changed beyond its finding, and how to undo it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -199,13 +118,14 @@ impl MaintenanceInverse {
 
     /// Undoes the effect, in the revert's transaction, as `owner`, whose
     /// proof a kind that writes through an owner's door rechecks. Each kind
-    /// leaves alone what a later write changed and lists it in `out`.
+    /// leaves alone what a later write changed and lists it in `out`. A
+    /// proactivity policy's rows sign on `ground`, the door's.
     fn revert_in_txn(
         &self,
         vault: &Vault,
         txn: &mut heed::RwTxn<'_>,
         owner: WriteActor,
-        proof: &AuthenticatedOwner,
+        (proof, ground): (&AuthenticatedOwner, Option<&OwnerProofGround>),
         now: u64,
         out: &mut MaintenanceRevert,
     ) -> Result<()> {
@@ -213,7 +133,7 @@ impl MaintenanceInverse {
             Self::Finding | Self::RepresentationPlan => Ok(()),
             Self::Curator(inverse) => curator::revert_in_txn(vault, txn, inverse, owner, now, out),
             Self::ProactivityPolicy(inverse) => {
-                digest::revert_policy_in_txn(vault, txn, inverse, out)
+                digest::revert_policy_in_txn(vault, txn, (proof, ground), inverse, out)
             }
             Self::ReachOut => stewardship::revert_reach_out_in_txn(vault, txn, owner, now, out),
             Self::IdentityProvisional(inverse) => {
@@ -301,34 +221,9 @@ pub struct AppliedMaintenance {
     pub reverted: Option<MaintenanceRevert>,
 }
 
-/// What the owner's revert of one applied write did: the records standing
-/// again in place, the Dreamer's fresh copies of its own signed records as
-/// (record, copy), the outputs the write made that the revert closed, the
-/// settings rows put back, the identity asks put to the owner (64 hex), and
-/// what a later write changed, left as it is (a record's 32-hex id, an ask's
-/// or a mention's 64 hex, or a settings row's name), or what no revert takes
-/// back (a person a settle confirmed). A write closed by its parent's revert
-/// names that parent.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct MaintenanceRevert {
-    pub target: MaintenanceTarget,
-    pub restored: Vec<EntityId>,
-    pub copied: Vec<(EntityId, EntityId)>,
-    pub closed: Vec<EntityId>,
-    pub settings: Vec<String>,
-    pub asked: Vec<String>,
-    pub left_alone: Vec<String>,
-    pub receipt_ref: String,
-    /// The applied write whose revert closed this one with it (a reach-out
-    /// whose revert withdrew this follow-up plan, FIX 3329); none for the
-    /// owner's own revert of it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub parent: Option<MaintenanceTarget>,
-}
-
-/// The BLAKE3 of a claim's body as it stands; `None` when it is gone.
-pub(super) fn claim_revision_in_txn(
+/// The BLAKE3 of a claim's body as it stands; `None` when it is gone. A
+/// curator finding's `source_hash` is its hex.
+pub(crate) fn claim_revision_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
@@ -469,13 +364,10 @@ fn record_finding_in_txn(
         APPLY_REASON,
         target,
         finding_revision.to_vec(),
-        now,
     );
     receipt.context = decision_context::applied(vault, &*txn, target, attempt);
     receipt.grant_ref = grant.map(|grant| grant.to_hex());
-    vault
-        .store
-        .append_fresh_gate_decision_in_txn(txn, &mut receipt)?;
+    let receipt = vault.store.record_gate_receipt_in_txn(txn, receipt)?;
     APPLIED.put(
         &vault.store,
         txn,
@@ -516,18 +408,9 @@ pub(super) fn record_project_tree_fork_in_txn(
     }
     let mut key = Vec::new();
     target.encode_into(&mut key);
-    let mut receipt = decision(
-        actor,
-        MAINTENANCE_APPLY_KIND,
-        APPLY_REASON,
-        target,
-        key,
-        now,
-    );
+    let mut receipt = decision(actor, MAINTENANCE_APPLY_KIND, APPLY_REASON, target, key);
     receipt.context = decision_context::applied(vault, &*txn, target, Some(attempt));
-    vault
-        .store
-        .append_fresh_gate_decision_in_txn(txn, &mut receipt)?;
+    let receipt = vault.store.record_gate_receipt_in_txn(txn, receipt)?;
     APPLIED.put(
         &vault.store,
         txn,
@@ -574,7 +457,6 @@ pub(super) fn close_with_parent_in_txn(
     child: EntityId,
     parent: MaintenanceTarget,
     owner: WriteActor,
-    now: u64,
 ) -> Result<()> {
     let target = MaintenanceTarget::Finding(child);
     let Some(mut row) = APPLIED.get(&vault.store, &*txn, &target)? else {
@@ -594,12 +476,9 @@ pub(super) fn close_with_parent_in_txn(
         REVERT_REASON,
         target,
         handle,
-        now,
     );
     receipt.context = decision_context::answering(vault, &*txn, row.receipt);
-    vault
-        .store
-        .append_fresh_gate_decision_in_txn(txn, &mut receipt)?;
+    let receipt = vault.store.record_gate_receipt_in_txn(txn, receipt)?;
     row.reverted = Some(MaintenanceRevert {
         target,
         restored: Vec::new(),
@@ -646,35 +525,26 @@ fn listed(target: MaintenanceTarget, row: AppliedRow) -> AppliedMaintenance {
     }
 }
 
-/// One approved Gate receipt by `actor`, naming `target`'s claim when it is
-/// a finding; `diff_handle` is never empty.
+/// One approved Gate receipt draft by `actor`, naming `target`'s claim when
+/// it is a finding; `diff_handle` is never empty. It reads no policy. The
+/// store mints the id and the time.
 pub(super) fn decision(
     actor: WriteActor,
-    kind: &str,
+    kind: &'static str,
     reason: &str,
     target: MaintenanceTarget,
     diff_handle: Vec<u8>,
-    now: u64,
-) -> GateDecisionRecord {
-    GateDecisionRecord {
-        version: crate::store::GATE_DECISION_LEDGER_VERSION,
-        decision_id: GateDecisionId::now(),
-        created_at: now,
-        outcome: "approved".to_owned(),
-        reason_codes: vec![reason.to_owned()],
-        receipt_reasons: Vec::new(),
-        system_notices: Vec::new(),
-        actor_class: actor.actor_class().gate_actor_class().to_owned(),
-        actor_ref: Some(actor.entity_ref().to_hex()),
-        content_kind: kind.to_owned(),
-        policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
-        claim_id: target.finding().map(|id| *id.as_bytes()),
-        grant_ref: None,
+) -> GateReceipt {
+    let mut receipt = GateReceipt::new(
+        GateReceiptOutcome::Approved,
+        kind,
+        reason,
+        ReceiptActor::Row(actor),
         diff_handle,
-        read_frontier_hash: [0; 32],
-        context: Default::default(),
-        redacted_at: None,
-    }
+        PolicyBasis::NOT_READ,
+    );
+    receipt.about = target.finding();
+    receipt
 }
 
 impl Vault {
@@ -703,17 +573,40 @@ impl Vault {
     /// retracted as the owner's, and the owner's receipt names it. The row
     /// keeps the revert, so a second revert returns the first one's result
     /// and the Dreamer never applies the same finding again.
+    ///
+    /// The revert of a proactivity policy request puts the digest's rows
+    /// back as the owner's change. Those rows travel (stage 7c-1), so in a
+    /// rooted vault their acts can carry an owner key's proof. The door makes
+    /// its pre-write refusals in a read transaction and returns a failed read
+    /// as its answer. For that kind the door drops the read and asks for the
+    /// person at this device while holding nothing ([`Vault::owner_presence`])
+    /// and refuses with that check's refusal. The write makes the checks again.
+    /// Every other kind signs no owner proof here and is not asked.
     pub fn revert_dreamer_maintenance(
         &self,
         owner: &AuthenticatedOwner,
         target: MaintenanceTarget,
         now: u64,
     ) -> Result<MaintenanceRevert> {
+        let asks = {
+            let txn = self.store.env.read_txn()?;
+            let (_, row) = self.read_maintenance_revert_in_txn(&txn, owner, target)?;
+            row.reverted.is_none()
+                && matches!(row.inverse, MaintenanceInverse::ProactivityPolicy(_))
+        };
+        // The read drops before the confirm for the owner proof. The write
+        // has not opened, so the door holds nothing while the prompt can block.
+        let ground = if asks {
+            let witness = self.owner_presence(
+                crate::world_keys::OwnerActImportance::Important,
+                crate::world_keys::owner_presence_reasons::PROACTIVITY_POLICY,
+            )?;
+            Some(OwnerProofGround::witnessed(&witness))
+        } else {
+            None
+        };
         let reverted = self.with_write_txn_grouped(|txn| {
-            let actor = super::validate_owner_in_txn(self, &*txn, owner)?;
-            let mut row = APPLIED
-                .get(&self.store, &*txn, &target)?
-                .ok_or(Error::EntityNotFound)?;
+            let (actor, mut row) = self.read_maintenance_revert_in_txn(txn, owner, target)?;
             if let Some(done) = &row.reverted {
                 return Ok(done.clone());
             }
@@ -729,8 +622,14 @@ impl Vault {
                 receipt_ref: String::new(),
                 parent: None,
             };
-            row.inverse
-                .revert_in_txn(self, txn, owner_actor, owner, now, &mut out)?;
+            row.inverse.revert_in_txn(
+                self,
+                txn,
+                owner_actor,
+                (owner, ground.as_ref()),
+                now,
+                &mut out,
+            )?;
             if let Some(finding) = target.finding()
                 && !row.inverse.keeps_finding()
                 && self
@@ -745,11 +644,9 @@ impl Vault {
                 REVERT_REASON,
                 target,
                 row.receipt.as_bytes().to_vec(),
-                now,
             );
             receipt.context = decision_context::answering(self, &*txn, row.receipt);
-            self.store
-                .append_fresh_gate_decision_in_txn(txn, &mut receipt)?;
+            let receipt = self.store.record_gate_receipt_in_txn(txn, receipt)?;
             out.receipt_ref = format!("gate:{}", receipt.decision_id.to_hex());
             row.reverted = Some(out.clone());
             // No inverse-membership sync (FIX 10376): a revert stamps the
@@ -760,5 +657,22 @@ impl Vault {
         })?;
         self.store.notify_proactivity_changes();
         Ok(reverted)
+    }
+
+    /// The refusals a revert of `target` makes before its first write, on
+    /// `txn`: the owner's proof and person, and a target no applied write
+    /// names. The door runs them on a read before it asks and again in its
+    /// write. Answers the acting owner and the applied row.
+    fn read_maintenance_revert_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        owner: &AuthenticatedOwner,
+        target: MaintenanceTarget,
+    ) -> Result<(EntityId, AppliedRow)> {
+        let actor = super::validate_owner_in_txn(self, txn, owner)?;
+        let row = APPLIED
+            .get(&self.store, txn, &target)?
+            .ok_or(Error::EntityNotFound)?;
+        Ok((actor, row))
     }
 }

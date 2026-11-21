@@ -15,6 +15,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use oneiron::outbound::{ConnectorReplyJobResult, ConnectorReplyStage};
+use oneiron_base::unix_seconds_now;
 
 use tokio::sync::broadcast::error::TryRecvError;
 
@@ -86,9 +87,9 @@ impl SyncServer {
 /// with its result. A witness repair failure never withholds the ordinary jobs.
 fn reply_pass(server: &Arc<SyncServer>, runtime: &tokio::runtime::Handle) -> oneiron::Result<()> {
     let vault = server.vault();
-    vault.reclaim_connector_reply_jobs(unix_now())?;
+    vault.reclaim_connector_reply_jobs(unix_seconds_now())?;
     match catch_unwind(AssertUnwindSafe(|| {
-        crate::ai_host::repair_connector_reply_witnesses(vault, unix_now())
+        crate::ai_host::repair_connector_reply_witnesses(vault, unix_seconds_now())
     })) {
         Ok(Ok(repaired)) if repaired > 0 => {
             tracing::info!(repaired, "connector reply witnesses repaired");
@@ -101,7 +102,7 @@ fn reply_pass(server: &Arc<SyncServer>, runtime: &tokio::runtime::Handle) -> one
             tracing::warn!("connector witness repair pass panicked; reply jobs continue");
         }
     }
-    while let Some((claimed, job)) = vault.claim_connector_reply_job(unix_now())? {
+    while let Some((claimed, job)) = vault.claim_connector_reply_job(unix_seconds_now())? {
         let result = catch_unwind(AssertUnwindSafe(|| {
             crate::ai_host::run_connector_reply_job(server, runtime, &job)
         }))
@@ -110,7 +111,8 @@ fn reply_pass(server: &Arc<SyncServer>, runtime: &tokio::runtime::Handle) -> one
             fault.reason = Some("connector reply job panicked".to_owned());
             fault
         });
-        let result_ref = vault.settle_connector_reply_job(&claimed, &job, &result, unix_now())?;
+        let result_ref =
+            vault.settle_connector_reply_job(&claimed, &job, &result, unix_seconds_now())?;
         tracing::info!(
             agent = %job.agent.to_hex(),
             stage = ?result.stage,
@@ -120,10 +122,4 @@ fn reply_pass(server: &Arc<SyncServer>, runtime: &tokio::runtime::Handle) -> one
         );
     }
     Ok(())
-}
-
-fn unix_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs())
 }

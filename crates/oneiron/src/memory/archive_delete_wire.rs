@@ -16,8 +16,15 @@
 //! `confirm_archive_purge`); every other caller, an owner on a narrowed
 //! credential included, by its checked siblings under the caller's own
 //! delete authority (`federation::require_delete_authority_in_txn`).
+//!
+//! Each confirmed record is judged by check-in first (ROLES-CHECKIN 2k5c):
+//! its receipt records the decision. A record whose delete waits answers
+//! `CHECK_IN_PENDING` alone, its reason code naming its own pending
+//! check-in, and its item names that check-in as `check_in_ref` once a
+//! holder approves.
 
-use super::archive_purge::{ArchiveDeleteResults, ArchiveExpectation};
+use super::archive_purge::{ArchiveConfirmItem, ArchiveDeleteResults, ArchiveExpectation};
+use super::entity_delete::spends_no_check_in;
 use super::support::verify_deletion_authority_in_txn;
 use super::{
     ArchivePurgeEntry, DeleteReceipt, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
@@ -89,12 +96,14 @@ pub fn preview_archive_delete_wire(
     Ok(view)
 }
 
-/// Deletes each distinct target under the caller's current delete authority.
+/// Deletes each distinct target under the caller's current delete authority,
+/// each judged by check-in first (2k5c).
 ///
 /// # Errors
-/// `BAD_REQUEST` for an item whose entity is no 32-hex id or whose
-/// expectation is no hex, and a failure to judge which door serves the
-/// caller; every other refusal or failure is its target's entry.
+/// `BAD_REQUEST` for an item whose entity is no 32-hex id, whose
+/// expectation is no hex or whose `check_in_ref` is no check-in id, and a
+/// failure to judge which door serves the caller; every other refusal,
+/// failure or wait is its target's entry.
 pub fn confirm_archive_delete_wire(
     memory: &Memory<'_>,
     request: &ArchiveDeleteConfirmRequest,
@@ -102,21 +111,28 @@ pub fn confirm_archive_delete_wire(
     let mut items = request
         .items
         .iter()
-        .map(
-            |item| -> MemoryResult<(EntityId, Option<ArchiveExpectation>)> {
-                Ok((
-                    entity_ref(&item.entity)?,
-                    item.expected.as_ref().map(expectation).transpose()?,
-                ))
-            },
-        )
+        .map(|item| -> MemoryResult<ArchiveConfirmItem> {
+            Ok(ArchiveConfirmItem {
+                entity: entity_ref(&item.entity)?,
+                expected: item.expected.as_ref().map(expectation).transpose()?,
+                check_in_ref: item
+                    .check_in_ref
+                    .as_deref()
+                    .map(|hex| {
+                        EntityId::from_hex(hex).map_err(|_| {
+                            MemoryError::bad_request("check_in_ref is not a check-in id")
+                        })
+                    })
+                    .transpose()?,
+            })
+        })
         .collect::<MemoryResult<Vec<_>>>()?;
-    items.sort_by_key(|(id, _)| *id);
-    items.dedup_by_key(|(id, _)| *id);
+    items.sort_by_key(|item| item.entity);
+    items.dedup_by_key(|item| item.entity);
     let rows: ArchiveDeleteResults<ArchiveDeleteReceiptView> = if owner_door_serves(memory)? {
         items
             .iter()
-            .map(|(id, expected)| (*id, owner_confirm(memory, *id, expected.as_ref())))
+            .map(|item| (item.entity, owner_confirm(memory, item)))
             .collect()
     } else {
         memory
@@ -188,14 +204,17 @@ fn owner_door_serves(memory: &Memory<'_>) -> MemoryResult<bool> {
 
 /// The owner door's delete of one record: a fresh preview, held to the
 /// item's expectation when it names one, then its confirm, which rechecks
-/// that preview in the delete's own writes.
+/// that preview in the delete's own writes. The owner's delete waits on no
+/// check-in, so an item naming one is refused (2k5c).
 fn owner_confirm(
     memory: &Memory<'_>,
-    id: EntityId,
-    expected: Option<&ArchiveExpectation>,
+    item: &ArchiveConfirmItem,
 ) -> MemoryResult<ArchiveDeleteReceiptView> {
-    let preview = memory.preview_archive_purge(&[id])?;
-    if let Some((hash, marker)) = expected
+    if item.check_in_ref.is_some() {
+        return Err(spends_no_check_in());
+    }
+    let preview = memory.preview_archive_purge(&[item.entity])?;
+    if let Some((hash, marker)) = &item.expected
         && preview
             .entries()
             .iter()
@@ -221,21 +240,11 @@ fn entity_ref(text: &str) -> MemoryResult<EntityId> {
 
 fn expectation(expected: &ArchiveDeleteExpectation) -> MemoryResult<ArchiveExpectation> {
     let invalid = || MemoryError::bad_request("expected names the hex a preview returned");
-    let hash = decode_hex(&expected.record_hash)
+    let hash = oneiron_hex::decode_vec_any_case(&expected.record_hash)
         .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
         .ok_or_else(invalid)?;
-    let marker = decode_hex(&expected.archive_marker).ok_or_else(invalid)?;
+    let marker = oneiron_hex::decode_vec_any_case(&expected.archive_marker).ok_or_else(invalid)?;
     Ok((hash, marker))
-}
-
-fn decode_hex(text: &str) -> Option<Vec<u8>> {
-    if !text.len().is_multiple_of(2) || !text.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return None;
-    }
-    (0..text.len())
-        .step_by(2)
-        .map(|at| u8::from_str_radix(&text[at..at + 2], 16).ok())
-        .collect()
 }
 
 fn preview_row(entry: &ArchivePurgeEntry) -> ArchiveDeletePreviewRow {
@@ -259,6 +268,7 @@ fn receipt_view(
         receipt_ref: receipt.receipt_ref,
         role: role.to_owned(),
         grant_ref,
+        check_in: receipt.check_in,
     }
 }
 
@@ -267,5 +277,6 @@ fn error_view(error: MemoryError) -> ArchiveDeleteError {
         code: error.code,
         message: error.message,
         suggestions: error.suggestions,
+        reason_codes: error.reason_codes,
     }
 }

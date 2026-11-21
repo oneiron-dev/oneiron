@@ -16,7 +16,6 @@
 //! kept rows are the read ([`Vault::question_unit_asks`]).
 
 use rmpv::Value;
-use serde::{Deserialize, Serialize};
 
 use super::records::AnswerRecord;
 use super::store::encode;
@@ -36,29 +35,8 @@ const QUESTION_UNIT_ASK_DOMAIN: &[u8] = b"oneiron:question-unit-ask:v1";
 pub(super) const UNIT_ASKS: SideTable<u64, QuestionUnitAsk, Named> =
     SideTable::new(&side_table::TYPED_QUESTION_UNIT_ASK);
 
-/// One unit's person ask: the unit (an artifact unit's artifact), the declined decision it
-/// went up from (its receipt names the question, principal and ask) and, once its holder's
-/// answer landed on the unit, that answer's claim.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct QuestionUnitAsk {
-    /// The ask's arrival number.
-    pub seq: u64,
-    #[serde(with = "super::super::codec::entity")]
-    pub unit: EntityId,
-    /// The unit's source hash when it was asked.
-    pub frontier: [u8; 32],
-    pub source_kind: u8,
-    /// The ladder's abstention that queued the ask, with its receipt.
-    pub declined: TypedDecision,
-    /// The `judgment.answer` claim the holder's answer landed as; none while the ask waits.
-    #[serde(with = "super::super::codec::optional_entity")]
-    pub applied: Option<EntityId>,
-    /// The artifact unit the ask is for, as its caller named it (a sheet row, a paragraph,
-    /// a folder file); none for a graph unit.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub artifact_unit: Option<serde_json::Value>,
-}
+#[doc(hidden)]
+pub use oneiron_records::llm::decision::questions::role_asks::QuestionUnitAsk;
 
 /// The work one unit's ask decides: `question`'s version, asked for
 /// `principal`, over `unit` at its `source` version. Two units, or one unit

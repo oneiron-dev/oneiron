@@ -104,7 +104,7 @@ pub(in crate::sync) fn authorize_sync_selector_in_txn(
         .map(|_| ())
 }
 
-fn authorize_selector_export_in_txn(
+pub(super) fn authorize_selector_export_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     grant_scope: FederationGrantScope,
@@ -210,10 +210,23 @@ pub(super) fn effective_scope_for_grant(
     crate::authority::current_grant_scope(fold, grant_id).map(Ceiling::new)
 }
 
+/// Whether a guest-share snapshot carries the record tombstones its filter
+/// released to the peer (CROSS-VAULT-DELETE-NEVER-ADMITTED = A).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum GuestTombstones {
+    /// A guest document or an unbound guest envelope: no tombstone.
+    Omitted,
+    /// A Connect delivery under a live pact, or a selector socket answer to
+    /// another vault's machine: the owner's delete of a row this vault
+    /// released to the peer travels and removes its copy.
+    Released,
+}
+
 pub(super) fn strip_guest_share_metadata(
     source: &LoroDoc,
     key: &WindowKey,
     withheld: &WithheldKey,
+    tombstones: GuestTombstones,
 ) -> Result<LoroDoc> {
     let out = create_window_doc("guest-share", key);
     let source_entities = source.get_map("entities");
@@ -262,8 +275,29 @@ pub(super) fn strip_guest_share_metadata(
     });
     result?;
 
-    // Tombstone rows are entity ids without type metadata. A guest-share
-    // snapshot omits them to avoid leaking deleted membership/topology counts.
+    // A tombstone row is an entity id without type metadata, so a guest
+    // document omits every one: it would leak deleted membership or topology
+    // counts. A Connect delivery carries only those `source` holds, each of
+    // which the filter released to this peer as a record row it was sent
+    // (`authorize/peer_tombstone_release.rs`).
+    if tombstones == GuestTombstones::Released {
+        let out_tombstones = out.get_map("tombstones");
+        let mut result = Ok(());
+        map_for_each_tombstone_value(&source.get_map("tombstones"), |raw_key, value| {
+            if result.is_err() || value.is_empty() {
+                return;
+            }
+            let Ok(id) = EntityId::from_hex(raw_key) else {
+                return;
+            };
+            if id.to_hex() != raw_key || stripped.contains(&id) {
+                return;
+            }
+            result = map_insert_bytes(&out_tombstones, raw_key, value);
+        });
+        result?;
+    }
+
     // Its NOTEs already passed the selection that made `source`. A guest is
     // another vault, as far as its rows' births go.
     copy_births_within(source, &out, BirthReach::OtherVault(withheld))?;
@@ -298,6 +332,7 @@ fn authorized_base_edge_endpoints(
     selector: &SyncSelector,
     position: &Position,
     withhold: Withhold<'_>,
+    reach: BirthReach<'_>,
 ) -> Result<BTreeSet<EntityId>> {
     let mut wanted = BTreeSet::new();
     map_for_each_value_bytes(edges, |raw, value| {
@@ -336,7 +371,9 @@ fn authorized_base_edge_endpoints(
                 Err(error) => return Err(error),
             };
             reverse_rematerialize_with(vault, &base, &base_key, withhold)?;
-            // Read only for what it selects: no birth is copied.
+            // Read only for what it selects, with the parent's own reach:
+            // a row the release rule withholds from another vault is no
+            // endpoint there, and the owner's own machines keep theirs.
             let selected = filter_window_doc(
                 vault,
                 &base,
@@ -344,7 +381,8 @@ fn authorized_base_edge_endpoints(
                 selector,
                 position,
                 withhold,
-                BirthReach::OtherVault(&WithheldKey::fresh()),
+                reach,
+                GuestTombstones::Omitted,
             )?;
             selected_by_month.insert(base_key.to_string(), selected);
         }
@@ -360,5 +398,7 @@ fn authorized_base_edge_endpoints(
 }
 
 mod filter;
+mod peer_tombstone_release;
+mod release;
 pub(super) use filter::filter_window_doc;
-pub(super) use filter::{member_label_access, member_reads_labels};
+pub(super) use filter::{MemberAccess, member_access, member_reads_row, member_reads_word_sources};

@@ -4,8 +4,8 @@
 use super::tests::{
     CapturingSink, LANDING_LEARNED_AT, PublicationTestOrigin, RecordingRoom, advertise,
     advertised_refs, advertisement_headers, commit_file, fixture_attribution, git, landed_repo_id,
-    landing_outcome, landing_time, pointer_file, pushed_outcome, ref_update, seeded_repo,
-    served_repo, temp_vault, try_advertise,
+    landing_outcome, landing_time, owner_principal, pointer_file, pushed_outcome, ref_update,
+    seeded_repo, served_repo, temp_vault, try_advertise,
 };
 use super::*;
 
@@ -36,7 +36,7 @@ fn smart_http_landing_attaches_a_pointer_only_to_the_ref_that_carries_it() {
             ref_update("refs/heads/assets", None, Some(&assets_oid)),
         ],
         vec![LfsPushedPointer {
-            path: "assets/logo.bin".to_owned(),
+            path: b"assets/logo.bin".to_vec(),
             oid,
             size_bytes: size,
         }],
@@ -71,7 +71,7 @@ fn smart_http_landing_attaches_a_pointer_only_to_the_ref_that_carries_it() {
             ref_update("refs/heads/main", None, Some(&assets_oid)),
         ],
         vec![LfsPushedPointer {
-            path: "assets/logo.bin".to_owned(),
+            path: b"assets/logo.bin".to_vec(),
             oid,
             size_bytes: size,
         }],
@@ -115,7 +115,7 @@ fn smart_http_landing_detaches_the_rows_of_a_deleted_ref() {
     git(&root, &["branch", "release", "refs/heads/main"]);
 
     let pointer = LfsPushedPointer {
-        path: "assets/logo.bin".to_owned(),
+        path: b"assets/logo.bin".to_vec(),
         oid,
         size_bytes: size,
     };
@@ -192,7 +192,7 @@ fn pkt(text: &str) -> Vec<u8> {
 fn stock_git_publication_roundtrip() {
     let (_vault_dir, vault) = temp_vault();
     let (source, repo_dir, _first, second) = served_repo(&vault);
-    let principal = EntityId::now();
+    let principal = owner_principal(&vault);
     let origin = PublicationTestOrigin::start(&vault, principal);
     let url = origin.url();
     let client = tempfile::tempdir().expect("stock client");
@@ -278,7 +278,7 @@ fn stock_git_publication_roundtrip() {
         provenance_claim_id: recovery_attribution.provenance_claim_id,
         actor_id: recovery_attribution.actor_id,
         occurred: landing_time(),
-        learned_at: now_secs(),
+        learned_at: crate::unix_seconds_now(),
     };
     let prepared = vault
         .prepare_origin_publication_for_test(&wire, &ask)
@@ -290,13 +290,19 @@ fn stock_git_publication_roundtrip() {
         None
     );
     assert!(
-        wire.update_ref_cas(&handle, &recovered_ref, None, &second, now_secs())
-            .expect("CAS before crash")
-            .is_applied()
+        wire.update_ref_cas(
+            &handle,
+            &recovered_ref,
+            None,
+            &second,
+            crate::unix_seconds_now()
+        )
+        .expect("CAS before crash")
+        .is_applied()
     );
     assert!(!git(client.path(), &["ls-remote", "--heads", &url]).contains("refs/heads/recovered"));
     let report = vault
-        .reconcile_origin_publications(&wire, repo_id, &handle, now_secs())
+        .reconcile_origin_publications(&wire, repo_id, &handle, crate::unix_seconds_now())
         .expect("recover publication");
     assert!(report.items.contains(&(
         prepared.publication_id,
@@ -511,7 +517,7 @@ fn availability_checks_take_the_hosts_room_for_each_manifest_they_read() {
         &["push", "--quiet", "origin", "HEAD:refs/heads/assets"],
     );
     let pointer = || LfsPushedPointer {
-        path: "assets/logo.bin".to_owned(),
+        path: b"assets/logo.bin".to_vec(),
         oid,
         size_bytes: size,
     };
@@ -616,7 +622,7 @@ fn branches_pushed_together_need_only_their_own_large_file_at_a_shared_path() {
     };
     let left = branch("left", left_oid, left_size);
     let right = branch("right", right_oid, right_size);
-    let origin = PublicationTestOrigin::start(&vault, EntityId::now());
+    let origin = PublicationTestOrigin::start(&vault, owner_principal(&vault));
     let url = origin.url();
     git(
         source.path(),

@@ -34,10 +34,8 @@ pub enum ContentWorld {
     Unknown,
 }
 
-/// Tags of the stored witness (`ri:c:`).
-const EXCLUSIVE: u8 = 1;
-const BASE: u8 = 2;
-const SHARED: u8 = 3;
+#[doc(hidden)]
+use oneiron_records::sync::residence::content_world::{BASE, EXCLUSIVE, SHARED};
 
 impl ContentWorld {
     /// The world a copy of a row in it alone belongs to.

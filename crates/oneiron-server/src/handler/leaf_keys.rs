@@ -356,7 +356,7 @@ pub(super) fn handle(
     let invalid =
         |error: TransportError| ProtocolError::InvalidPayload(protocol::transport_err_msg(error));
     let frame = [&[tag][..], payload].concat();
-    let now_ms = crate::owner::stamp::now_unix_ms();
+    let now_ms = oneiron_base::unix_millis_now();
     match tag {
         TAG_LEAF_KEY_REQUEST => {
             let request = decode_leaf_key_request(payload).map_err(invalid)?;
@@ -452,7 +452,7 @@ pub(super) fn handle(
 /// in flight fails by name, then this socket is offered the home's own
 /// pending requests ([`offer_home_requests`]).
 pub(super) fn relay_tick(server: &SyncServer, conn_id: u32, state: &ConnState) {
-    let now_ms = crate::owner::stamp::now_unix_ms();
+    let now_ms = oneiron_base::unix_millis_now();
     let expired = server.leaf_keys.state().prune(now_ms);
     fail_expired(server, expired);
     offer_home_requests(server, conn_id, state);
@@ -492,7 +492,7 @@ fn offer_home_requests(server: &SyncServer, conn_id: u32, state: &ConnState) {
         return;
     }
     let now = Instant::now();
-    let now_ms = crate::owner::stamp::now_unix_ms();
+    let now_ms = oneiron_base::unix_millis_now();
     for request in held {
         if Some(request.executor_machine()) != home {
             continue;
@@ -597,7 +597,7 @@ fn answer_here(server: &SyncServer, request: &LeafKeyRequest, peer: PeerMachine,
             Err(LeafKeyFailureCause::of_refusal(&error).unwrap_or(LeafKeyFailureCause::HolderFault))
         }
     };
-    let now_ms = crate::owner::stamp::now_unix_ms();
+    let now_ms = oneiron_base::unix_millis_now();
     let mut state = server.leaf_keys.state();
     let entry = state.in_flight.remove(&id);
     match answered {

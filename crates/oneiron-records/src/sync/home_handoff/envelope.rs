@@ -1,0 +1,25 @@
+//! Moved from `crates/oneiron/src/sync/home_handoff/envelope.rs` (lib split R2: record types below the lib).
+//! `oneiron` re-exports each item at its old path.
+
+use crate::sync::home_handoff::refused;
+use ed25519_dalek::Signature;
+use oneiron_base::error::Result;
+use serde::Serialize;
+
+pub const HEADER_DOMAIN: &[u8] = b"oneiron/home-handoff/header/v1\0";
+
+pub fn signature(bytes: &[u8]) -> Result<Signature> {
+    <[u8; 64]>::try_from(bytes)
+        .map(|bytes| Signature::from_bytes(&bytes))
+        .map_err(|_| refused("a signature is malformed"))
+}
+
+pub fn transcript(domain: &[u8], bytes: &[u8]) -> Vec<u8> {
+    let mut out = domain.to_vec();
+    out.extend_from_slice(bytes);
+    out
+}
+
+pub fn encode<V: Serialize + ?Sized>(value: &V) -> Result<Vec<u8>> {
+    rmp_serde::to_vec_named(value).map_err(|_| refused("a handoff value does not encode"))
+}

@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{body_in_txn, decode_fields, encode_fields, invalid, record};
 use crate::consent::AuthenticatedOwner;
+use crate::store::gate_reason::GateReceiptOutcome;
 use crate::{EdgeActorClass, Error, Result, Vault, WriteActor};
 
 pub(crate) const RETRIEVAL_WEIGHTS_KEY: &str = "retrieval_weights";
@@ -177,7 +178,7 @@ pub fn configure_retrieval_weights_as_owner(
             id,
             &body,
             (
-                "allow",
+                GateReceiptOutcome::Allow,
                 vec!["gate.allow.owner_retrieval_weights".to_owned()],
             ),
         )?;

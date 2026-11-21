@@ -66,7 +66,11 @@ fn test_selector_conn_state() -> ConnState {
     ConnState::new(protocol::PROTOCOL_VERSION)
 }
 
-fn bind_selector_test_auth(server: &SyncServer, state: &mut ConnState, member: oneiron::EntityId) {
+async fn bind_selector_test_auth(
+    server: &SyncServer,
+    state: &mut ConnState,
+    member: oneiron::EntityId,
+) {
     let params = crate::test_credentials::bind_payload(
         server,
         &format!("scope=core:read;principal_ref={}", member.to_hex()),
@@ -76,7 +80,9 @@ fn bind_selector_test_auth(server: &SyncServer, state: &mut ConnState, member: o
         serde_json::json!({"requestId": 1, "method": "auth.bind", "params": params}),
     );
     let (tx, mut rx) = mpsc::unbounded_channel();
-    handle_app_message(server, state, protocol::TAG_RPC, &payload[1..], &tx).unwrap();
+    handle_app_message(server, state, protocol::TAG_RPC, &payload[1..], &tx)
+        .await
+        .unwrap();
     assert!(rx.try_recv().is_ok());
 }
 
@@ -278,8 +284,17 @@ async fn residence_update_ack_is_exact_and_follows_durable_import() {
     update_doc.commit();
     let update = update_doc.export(ExportMode::updates(&base_vv)).unwrap();
     let seq = 23_u64;
-    let mut payload = seq.to_be_bytes().to_vec();
-    payload.extend_from_slice(&update);
+    // A residence update travels in its pad envelope with its queue sequence (KS-5, FIX 7107).
+    let payload = oneiron::sync::transport::WindowPadEnvelope {
+        kind: oneiron::sync::transport::WindowPadKind::ResidenceUpdate,
+        form: oneiron::sync::transport::WindowPadForm::PadFree,
+        queue_seq: Some(seq),
+        payload: update.clone(),
+        refs: Vec::new(),
+        sidecar: None,
+    }
+    .encode()
+    .unwrap();
     let (tx, mut rx) = mpsc::unbounded_channel();
     let mut state = ConnState::new(protocol::RESIDENCE_PROTOCOL_VERSION);
     let selector = oneiron::sync::SyncSelector::new(
@@ -301,7 +316,9 @@ async fn residence_update_ack_is_exact_and_follows_durable_import() {
         protocol::TAG_RPC,
         serde_json::json!({"requestId": 77, "method": "auth.bind", "params": params}),
     );
-    handle_app_message(&server, &mut state, protocol::TAG_RPC, &bind[1..], &tx).unwrap();
+    handle_app_message(&server, &mut state, protocol::TAG_RPC, &bind[1..], &tx)
+        .await
+        .unwrap();
     let _ = rx.try_recv().unwrap();
     handle_window_sync(
         &server,
@@ -326,8 +343,22 @@ async fn residence_update_ack_is_exact_and_follows_durable_import() {
     let (ack_key, tag, ack) = expect_window_sync(&rx.try_recv().unwrap());
     assert_eq!(ack_key, key);
     assert_eq!(tag, window_sub_tags::RESIDENCE_ACK);
-    assert_eq!(&ack[..8], &seq.to_be_bytes());
-    assert_eq!(&ack[8..], blake3::hash(&update).as_bytes());
+    // The acknowledgment is the envelope's receipt (466c8c1b7d4): it binds the
+    // queue sequence and the digest of exactly the imported update.
+    let ack = oneiron::sync::transport::WindowPadReceipt::decode(&ack).unwrap();
+    assert_eq!(
+        ack.binding.kind,
+        oneiron::sync::transport::WindowPadKind::ResidenceUpdate
+    );
+    assert_eq!(ack.binding.queue_seq, Some(seq));
+    assert_eq!(
+        &ack.binding.payload_digest,
+        blake3::hash(&update).as_bytes()
+    );
+    assert_eq!(
+        ack.readiness,
+        oneiron::sync::transport::WindowPadReadiness::PadFree
+    );
     assert!(
         rx.try_recv().is_err(),
         "no full-window vector or payload may be sent"
@@ -426,7 +457,9 @@ async fn residence_write_requires_the_authors_scope_write_right() {
         protocol::TAG_RPC,
         serde_json::json!({"requestId": 78, "method": "auth.bind", "params": params}),
     );
-    handle_app_message(&server, &mut state, protocol::TAG_RPC, &bind[1..], &tx).unwrap();
+    handle_app_message(&server, &mut state, protocol::TAG_RPC, &bind[1..], &tx)
+        .await
+        .unwrap();
     let _ = rx.try_recv().unwrap();
     let error = handle_window_sync(
         &server,
@@ -532,7 +565,9 @@ async fn residence_replay_refuses_a_birth_scope_restamp() {
         protocol::TAG_RPC,
         serde_json::json!({"requestId": 79, "method": "auth.bind", "params": params}),
     );
-    handle_app_message(&server, &mut state, protocol::TAG_RPC, &bind[1..], &tx).unwrap();
+    handle_app_message(&server, &mut state, protocol::TAG_RPC, &bind[1..], &tx)
+        .await
+        .unwrap();
     let _ = rx.try_recv().unwrap();
     let error = handle_window_sync(
         &server,
@@ -1094,7 +1129,7 @@ async fn selector_vv_request_sends_filtered_update_only() {
 
     let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
     let mut conn_state = test_selector_conn_state();
-    bind_selector_test_auth(&server, &mut conn_state, member);
+    bind_selector_test_auth(&server, &mut conn_state, member).await;
     handle_window_sync(
         &server,
         1,
@@ -1161,7 +1196,7 @@ async fn selector_connection_rejects_full_window_bypass() {
 
     let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
     let mut conn_state = test_selector_conn_state();
-    bind_selector_test_auth(&server, &mut conn_state, member);
+    bind_selector_test_auth(&server, &mut conn_state, member).await;
     handle_window_sync(
         &server,
         1,
@@ -1241,7 +1276,7 @@ async fn selector_request_authorizes_before_window_creation() {
 
     let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
     let mut conn_state = test_selector_conn_state();
-    bind_selector_test_auth(&server, &mut conn_state, member);
+    bind_selector_test_auth(&server, &mut conn_state, member).await;
     let result = handle_window_sync(
         &server,
         1,
@@ -1340,7 +1375,7 @@ async fn selector_vv_request_rejects_incremental_remote_vv() {
 
     let (direct_tx, mut direct_rx) = mpsc::unbounded_channel::<Vec<u8>>();
     let mut conn_state = test_selector_conn_state();
-    bind_selector_test_auth(&server, &mut conn_state, member);
+    bind_selector_test_auth(&server, &mut conn_state, member).await;
     handle_window_sync(
         &server,
         1,
@@ -2556,6 +2591,137 @@ async fn real_codec_withholds_a_parked_frame_when_the_peer_resumes_after_revocat
     );
 }
 
+/// A selector answer's send judges what the answer was made under again once
+/// it waits on the peer (SELECTOR-RELEASE-POINT = B): an answer whose grant is
+/// deleted while its frame sits parked is withheld when the peer resumes, as a
+/// revoked credential's frame is.
+#[tokio::test]
+async fn real_codec_withholds_a_parked_selector_answer_whose_grant_is_deleted() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+    let grant_id = oneiron::EntityId::now();
+    let grant = oneiron::federation::FederationGrant::new(
+        oneiron::FederationGrantScope::vault(7),
+        oneiron::EntityId::now(),
+        oneiron::federation::FederationGrantRole::Member,
+        oneiron::federation::FederationGrantPreset::Member,
+    );
+    oneiron::sync::put_selector_test_federation_grant(&vault, &grant_id, &grant, 1).unwrap();
+    let mut answers = crate::selector_release::SelectorAnswers::default();
+    let basis = crate::selector_release::SelectorReleaseBasis::take(&vault, grant_id);
+    let queued = answers.queue(basis, vec![vec![7u8; UNDER_THRESHOLD_PAYLOAD]]);
+    let frame = crate::selector_release::queued_answer_frame(&queued[0]).unwrap();
+    let released = answers
+        .release(&vault, &frame)
+        .expect("the answer stands as its send starts");
+
+    let socket = CapturingSocket::default();
+    let registry = Arc::new(MutableRevocations::default());
+    let mut guarded = real_codec_guarded(&socket, &registry, REAL_CODEC_WRITE_BUFFER).await;
+    guarded.answer = Some(released);
+
+    socket.block_writes();
+    let mut send = Box::pin(guarded.send_binary(frame.frame.to_vec()));
+    assert!(
+        futures_util::poll!(send.as_mut()).is_pending(),
+        "the blocked socket must park the send, or this row is not testing the wait"
+    );
+    assert_wire_is_empty(&socket);
+
+    // The host deletes the grant while the answer waits on the peer, and only
+    // then does the peer start reading again.
+    vault.delete_entity(&grant_id).unwrap();
+    socket.unblock_writes();
+
+    let keep_going = tokio::time::timeout(FLUSH_RECONSULT_INTERVAL * 20, send)
+        .await
+        .expect("the send must judge the answer on its own tick, not wait on the peer");
+
+    assert!(
+        !keep_going,
+        "an answer whose grant is gone must not be sent"
+    );
+    assert_wire_is_empty(&socket);
+    assert!(
+        guarded.socket.is_none(),
+        "the refusal must drop the whole real transport"
+    );
+}
+
+/// Each frame of a selector answer is judged as it leaves, not only the first
+/// (SELECTOR-RELEASE-POINT = B): a grant deleted after an answer's first frame
+/// left withholds its next frame from a peer that reads at once, so no send
+/// ever waits.
+#[tokio::test]
+async fn real_codec_withholds_a_later_selector_answer_frame_whose_grant_is_deleted() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+    let grant_id = oneiron::EntityId::now();
+    let grant = oneiron::federation::FederationGrant::new(
+        oneiron::FederationGrantScope::vault(7),
+        oneiron::EntityId::now(),
+        oneiron::federation::FederationGrantRole::Member,
+        oneiron::federation::FederationGrantPreset::Member,
+    );
+    oneiron::sync::put_selector_test_federation_grant(&vault, &grant_id, &grant, 1).unwrap();
+    let mut answers = crate::selector_release::SelectorAnswers::default();
+    let basis = crate::selector_release::SelectorReleaseBasis::take(&vault, grant_id);
+    let queued = answers.queue(
+        basis,
+        vec![
+            vec![7u8; UNDER_THRESHOLD_PAYLOAD],
+            vec![8u8; UNDER_THRESHOLD_PAYLOAD],
+        ],
+    );
+
+    let socket = CapturingSocket::default();
+    let registry = Arc::new(MutableRevocations::default());
+    let mut guarded = real_codec_guarded(&socket, &registry, REAL_CODEC_WRITE_BUFFER).await;
+    let first = crate::selector_release::queued_answer_frame(&queued[0]).unwrap();
+    guarded.answer = answers.release(&vault, &first);
+    assert!(
+        guarded.answer.is_some(),
+        "the answer stands at its first frame"
+    );
+    assert!(
+        guarded.send_binary(first.frame.to_vec()).await,
+        "the first frame leaves while the grant stands"
+    );
+    guarded.answer = None;
+    let first_wire = socket.wire().len();
+    assert!(first_wire > 0, "the first frame must reach the wire");
+
+    // The host deletes the grant between the answer's frames; the peer keeps
+    // reading, so the next frame's send never parks.
+    vault.delete_entity(&grant_id).unwrap();
+    let second = crate::selector_release::queued_answer_frame(&queued[1]).unwrap();
+    guarded.answer = answers.release(&vault, &second);
+    assert!(
+        guarded.answer.is_some(),
+        "a later frame is released under its answer, judged as it leaves"
+    );
+    let keep_going = tokio::time::timeout(
+        FLUSH_RECONSULT_INTERVAL * 20,
+        guarded.send_binary(second.frame.to_vec()),
+    )
+    .await
+    .expect("a writable peer must not hold the send");
+
+    assert!(
+        !keep_going,
+        "a frame of an answer whose grant is gone must not be sent"
+    );
+    assert_eq!(
+        socket.wire().len(),
+        first_wire,
+        "no byte of the later frame may reach the wire"
+    );
+    assert!(
+        guarded.socket.is_none(),
+        "the refusal must drop the whole real transport"
+    );
+}
+
 /// The package id a package's named dependency EDGE resolves to.
 ///
 /// `resolve.nodes[].deps[].name` is the extern-crate name the dependent's code
@@ -2934,13 +3100,13 @@ async fn selector_bursts_defer_and_replay_without_a_window_quota_or_human_pause(
             .unwrap();
     let (tx, mut rx) = mpsc::unbounded_channel();
     let mut state = test_selector_conn_state();
-    bind_selector_test_auth(&server, &mut state, member);
+    bind_selector_test_auth(&server, &mut state, member).await;
     // Holder proofs are dated by the held store clock but checked against the
     // authority clock, which keeps real time: bind every connection up front.
     let mut impostor = test_selector_conn_state();
-    bind_selector_test_auth(&server, &mut impostor, entity_id(0x46));
+    bind_selector_test_auth(&server, &mut impostor, entity_id(0x46)).await;
     let mut reconnected = test_selector_conn_state();
-    bind_selector_test_auth(&server, &mut reconnected, member);
+    bind_selector_test_auth(&server, &mut reconnected, member).await;
     let mut saw_defer = false;
     // More than the retired 64-window quota. Every valid request completes,
     // either immediately or by redeeming its durable response identity.
@@ -3101,7 +3267,9 @@ async fn document_batch_exchange(version: u8) {
                 oneiron::registry::ENTITY_TYPE_TURN,
                 oneiron::TimeRange { start: 1, end: 1 },
                 1,
-                b"ledger",
+                // A canonical empty txt map: both vaults birth the same
+                // document on its first edit (FIX 11794, FIX 11795).
+                &rmp_serde::to_vec_named(&serde_json::json!({"txt": ""})).unwrap(),
             )
             .unwrap();
         vault
@@ -3172,7 +3340,7 @@ async fn document_batch_exchange(version: u8) {
     ));
     assert!(replies.try_recv().is_err());
     let mut impostor = test_selector_conn_state();
-    bind_selector_test_auth(&server, &mut impostor, entity_id(0x46));
+    bind_selector_test_auth(&server, &mut impostor, entity_id(0x46)).await;
     assert!(matches!(
         handle_sync_message(
             &server,
@@ -3186,7 +3354,7 @@ async fn document_batch_exchange(version: u8) {
         Err(ProtocolError::InvalidPayload(_))
     ));
     assert!(replies.try_recv().is_err());
-    bind_selector_test_auth(&server, &mut state, member);
+    bind_selector_test_auth(&server, &mut state, member).await;
     handle_sync_message(
         &server,
         1,

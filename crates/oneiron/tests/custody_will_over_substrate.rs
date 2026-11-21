@@ -25,12 +25,14 @@ use oneiron::authority::{
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::label_writers::embedded_owner;
+use oneiron::test_doors::owner_key_release::bind_owner_with_owner_key;
 use oneiron::test_doors::steward::recover_cloud_account_signed_by_host_root;
 use oneiron::{EntityId, HostingPrivacyPosture, Vault, VaultConfig};
 
 /// One vault under the Hosted posture, rooted under the test host (a
 /// `ROLE_CLOUD`, `CloudCustodial` root), with this install's machine profile
-/// enrolled and the embedded owner authenticated. The vault drops first.
+/// enrolled and the embedded owner authenticated. The custodial root binds
+/// no person there, so the owner is unbound. The vault drops first.
 struct HostedVault {
     vault: Vault,
     issuer: HostSlipIssuer,
@@ -58,6 +60,15 @@ impl HostedVault {
             proof,
             _dir: dir,
         }
+    }
+
+    /// Binds the owner as the managed host's account recovery needs
+    /// (`Vault::recover_cloud_account` reads the owner's active binding):
+    /// with the proof of an owner key this install enrols, since on a hosted
+    /// vault the custodial root alone binds no person.
+    fn bind_owner(&self) {
+        bind_owner_with_owner_key(&self.vault, &self.proof, &self.issuer, self.owner)
+            .expect("the owner bound with this install's owner key's proof");
     }
 
     fn in_host_custody(&self, key: &AuthorityKey) -> bool {
@@ -100,11 +111,13 @@ fn owner_labelled(key: AuthorityKey) -> DeviceAuthority {
 
 /// Will over substrate: after the managed host migrates its root (a ReRoot,
 /// which retires every roster key), the owner's "yours" for this install,
-/// given under his act from his authenticated surface, stands. The new root
-/// is the host's, and no custody check stands in the owner's way.
+/// given under his act from his authenticated surface and proven by the
+/// owner key he enrols here, stands. The new root is the host's, and no
+/// custody check stands in the owner's way.
 #[test]
 fn the_owners_answer_stands_on_a_hosted_vault_after_a_host_reroot() {
     let hosted = HostedVault::open();
+    hosted.bind_owner();
     let next = HostSlipIssuer::from_secret(b"custody will over substrate next host root")
         .expect("the managed host's next root");
     recover_cloud_account_signed_by_host_root(
@@ -120,9 +133,7 @@ fn the_owners_answer_stands_on_a_hosted_vault_after_a_host_reroot() {
     );
 
     // As a managed host does when it starts serving under its new root: it
-    // binds the owner's account and registers this install again.
-    oneiron::test_support::bind_host_owner(&hosted.vault, &next, hosted.owner)
-        .expect("the owner's account bound under the new root");
+    // registers this install again. Its root binds no person.
     let proof = hosted
         .vault
         .authenticate_owner(
@@ -143,6 +154,17 @@ fn the_owners_answer_stands_on_a_hosted_vault_after_a_host_reroot() {
         .expect("this install's machine")
         .id;
 
+    // A carried "yours" stands with an owner key's proof (row
+    // CARRIER-OWNER-PROOF), and the host's custodial root proves nothing: he
+    // enrols this install's owner signing key, and the answer door adds its
+    // proof.
+    hosted
+        .vault
+        .enrol_device_owner_signing_key(
+            &ActAuthority::Owner(proof.clone(), ActSurface::ThisInstall),
+            &next,
+        )
+        .expect("the owner enrols this install's owner signing key under the new root");
     hosted
         .vault
         .set_machine_role(
@@ -196,6 +218,7 @@ fn an_owner_enrolled_key_signs_as_owner_held_on_a_hosted_vault() {
 #[test]
 fn a_host_reroot_successor_stays_in_the_hosts_custody() {
     let hosted = HostedVault::open();
+    hosted.bind_owner();
     let successor = HostSlipIssuer::from_secret(b"custody will over substrate labelled successor")
         .expect("successor key")
         .public_key();

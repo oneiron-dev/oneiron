@@ -107,8 +107,8 @@ pub(in crate::sync) enum EntityStep {
     /// The remote value is refused. Whatever the door staged must be rolled back and the op
     /// recorded in `x:` (ONE-1124); [`ingest_entity_in_savepoint`] does both.
     Quarantine(EntityRefusal),
-    /// Nothing to write: a delete gate holds, the local bytes already match, or the kind never
-    /// replicates.
+    /// Nothing to write: a delete gate or a use limit holds, the local bytes already match, or
+    /// the kind never replicates.
     Skip,
     /// The replicated row was written.
     Materialized(EntityId),
@@ -153,7 +153,7 @@ pub(in crate::sync) enum RefusalRetry {
     Terminal,
     /// A later pass may admit them: the quota window rolls over, the pack kind is installed
     /// (`pack_sync::pack_rejection_keeps_retry_marker`), or the owner raises the authority log's
-    /// signer bound (H72, rule 5).
+    /// signer bound (H72, rule 5) or its fold memory floor past the owner's reserve.
     Retry,
     /// Admission waits on another replicated row this vault has not seen yet.
     DependencyPending,
@@ -450,8 +450,13 @@ fn admit(
     }
     // ONE-1881: a terminal receipt takes its own writer-locked door BEFORE the generic
     // delete-wins and exact-byte shortcuts; the door refuses every tombstone naming it and
-    // neutralizes its `dt:` poison in this transaction.
+    // neutralizes its `dt:` poison in this transaction. A changed receipt at the id of a
+    // use-limited or restricted record is dropped first, as below: the door's shared put would
+    // refuse it as absent, which the window reads as a local failure (REVIEW-9881 round 1).
     if header.entity_type == ENTITY_TYPE_RECEIPT_RECORD {
+        if super::drops_changed_carrier_in_txn(vault, wtxn, &id, blob)? {
+            return Ok(EntityStep::Skip);
+        }
         let wrote = crate::sync::receipt_ingest::ingest_in_txn(
             vault,
             wtxn,
@@ -481,6 +486,22 @@ fn admit(
         }
     }
     if !delete_protected && deleted_here(ctx, wtxn, &id) {
+        // A late re-put of a row hard-deleted here is refused, but its insert
+        // is now in this window's history, which only a compaction drops: the
+        // window owes the erasure sweep one, run on its next pass (ARCH-0038
+        // #housekeeping-sla-open, census L6-05). A soft delete keeps its bytes
+        // for its restore window, so it owes none. A marker that cannot be
+        // read owes one: a compaction too many costs one cut.
+        if vault
+            .local_hard_delete_marker_exists_in_txn(wtxn, &id)
+            .unwrap_or(true)
+        {
+            crate::deletion::owed_window_compaction::owe_window_compaction_in_txn(
+                vault,
+                wtxn,
+                &crate::window_key::WindowKey::new(ctx.window_key),
+            )?;
+        }
         crate::task_authority::note_suppressed_fact_in_txn(
             &vault.store,
             wtxn,
@@ -488,6 +509,17 @@ fn admit(
             header.entity_type,
             &blob[ENTITY_METADATA_HEADER_LEN..],
         )?;
+        return Ok(EntityStep::Skip);
+    }
+    // A record a refused privacy erase kept (C6) or a cooperative review restricts takes no
+    // change from a peer, as it takes none from a named write here (OF-470 C6): a carrier a
+    // device sent before the limit reached it is dropped, and the kept copy stays as it is. The
+    // put door would refuse it as absent, which the window reads as a local failure. A dropped
+    // carrier stays dropped once the limit lifts: the window still carries it, and a later
+    // rematerialization would put it over the kept copy (REVIEW-9881 round 1). It is asked
+    // before every fence below that skips a carrier, so a carrier one of them skips under the
+    // limit is recorded too (REVIEW-9881 round 2: the NOTE purge fence).
+    if super::drops_changed_carrier_in_txn(vault, wtxn, &id, blob)? {
         return Ok(EntityStep::Skip);
     }
     if let Some(step) = withdrawn::withdrawn_generation_step(ctx, wtxn, &id, header, blob)? {
@@ -508,9 +540,12 @@ fn admit(
     }
     // A world-access grant or default stands only on the node that wrote it (RULING
     // L2-53-CEILING): an older peer's row is dropped, and the rest of its window lands. So is a
-    // peer's row of any kind under the id of a grant or default stored here.
+    // peer's row of any kind under the id of a grant or default stored here, and a peer's MACHINE
+    // claim history row whose target is one: it would index the grant as machine history, and the
+    // read predicate would quarantine it.
     if (header.entity_type == crate::registry::ENTITY_TYPE_CLAIM
-        && crate::sync::local_claims::world_access_claim(data))
+        && (crate::sync::local_claims::world_access_claim(data)
+            || crate::sync::local_claims::targets_world_access_claim_in(vault, wtxn, data)?))
         || crate::sync::local_claims::holds_world_access_claim_in(vault, wtxn, &id)?
     {
         return Ok(EntityStep::Skip);
@@ -557,6 +592,11 @@ fn admit(
             return Ok(EntityStep::Skip);
         }
     }
+    // The stored bytes of a kind the replay skip above leaves to its own door take no door
+    // under the limit either.
+    if vault.store.use_restricted_in_txn(wtxn, &id)?.is_some() {
+        return Ok(EntityStep::Skip);
+    }
     // KS-5: a pad reference whose pad is not here waits, pending, for its carrier.
     if let Some(err) = crate::world_keys::pad_reference_waits_in_txn(&vault.store, wtxn, &id, blob)?
     {
@@ -585,6 +625,20 @@ fn admit(
                 "a federation peer cannot turn an agent definition back on or change its models",
             )),
         ));
+    }
+    // ROOM-BODY-REPLICA-SETTINGS: a member peer's room body changes a room setting only with
+    // the power its door asks of the sender. Admission judged it in a read txn; the writer txn
+    // judges it again against the row the put replaces. A refusal here also fails the import
+    // before it persists the update (`member_body_refused`).
+    if header.entity_type == crate::registry::ENTITY_TYPE_CONVERSATION
+        && let Some(sender) = super::member_sender::member_sender(vault)
+        && crate::sync::ingest::peer_row_in_txn(vault, wtxn, ctx.window_key, &id, blob)?
+        && let Some(refusal) = crate::workspace_roster::peer_room_settings_refusal_in_txn(
+            vault, wtxn, id, sender, data,
+        )?
+    {
+        super::member_sender::note_member_body_refused(vault);
+        return Ok(refuse(Some(id), refusal));
     }
     // Pack remote preflight: a malformed REMOTE envelope is refused here, before the name-based
     // remap reads the local map. `InvalidPackByteMap` stays unclassified, so a later one from
@@ -671,7 +725,13 @@ fn admit(
                     "an embedding setup row is not at its fixed time",
                 ));
             }
-            crate::embed::install_replicated_embedding_setup_in_txn(&vault.store, wtxn, &id, data)?;
+            crate::embed::install_replicated_embedding_setup_in_txn(
+                &vault.store,
+                vault.privacy_posture(),
+                wtxn,
+                &id,
+                data,
+            )?;
             None
         }
         _ => None,
@@ -690,6 +750,10 @@ fn admit(
         CarriedClaim::Redacted => return Ok(EntityStep::Materialized(id)),
     };
     let data = crate::workspace_roster::carried_audience_edit_in_txn(vault, wtxn, &id, blob, data)?;
+    // ROOM-PINS-LWW-MERGE: a room body lands with its pin records merged with
+    // the ones held here, record by record.
+    let data =
+        super::room_pins::carried_room_pins_in_txn(vault, wtxn, ctx.window_key, &id, blob, data)?;
     // FIX 3554: a Switch's moved MESSAGE pointer lands with its document's head.
     if crate::entity_doc::moved_pointer_row_in_txn(vault, wtxn, &id, blob)? {
         return Ok(EntityStep::Skip);
