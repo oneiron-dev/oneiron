@@ -447,3 +447,284 @@ fn paired_agent_slip(
         .verify_capability_slip(&issuer.public_key(), &slip, REQUEST_CHALLENGE, &signature)
         .expect("paired agent proves possession of its attenuated credential")
 }
+
+fn records_reader_proof(
+    fixture: &Fixture,
+    readable: &BTreeSet<EntityId>,
+) -> (EntityId, VerifiedSlip) {
+    let agent = create_enabled_agent(&fixture.vault, &fixture.owner_proof);
+    let minted = mint_agent_grant_as(
+        &fixture.vault,
+        &fixture.owner_proof,
+        ActSurface::ThisInstall,
+        AgentGrantMintRequest {
+            agent,
+            authority_scope: read_scope(base_world_id(), None),
+            expires_at: None,
+            repo_bounds: None,
+            verb_classes: BTreeSet::new(),
+            wallet_ref: None,
+            working_view_bounds: None,
+        },
+    )
+    .expect("FIXTURE: owner mints the credential reader's Grant");
+    assert!(minted.grant.confers, "FIXTURE: the reader's Grant confers");
+    let proof = paired_agent_slip(
+        fixture,
+        agent,
+        Some(SlipCaveat {
+            records: Some(readable.iter().map(EntityId::to_hex).collect()),
+            ..Default::default()
+        }),
+    );
+    (agent, proof)
+}
+
+// Return the vault after dropping the utterance so the same fixture can gain
+// refused postings between its baseline and its next first warm result.
+fn credential_speculative_order(
+    vault: Vault,
+    agent: EntityId,
+    proof: &VerifiedSlip,
+) -> (Vault, Vec<EntityId>) {
+    use oneiron::memory::RecallScope;
+    use oneiron::speculative::{
+        SpeculativeFireDecision, SpeculativePartial, SpeculativeSessionConfig,
+    };
+
+    let vault = Arc::new(vault);
+    let order = {
+        let mut session = vault
+            .memory(agent, EdgeActorClass::Agent)
+            .with_read_proof(proof)
+            .speculative_session(
+                Arc::clone(&vault),
+                SpeculativeSessionConfig {
+                    max_fires: 1,
+                    fire_limit: 10,
+                    final_limit: 10,
+                    ..Default::default()
+                },
+                &RecallScope::default(),
+            )
+            .expect("FIXTURE: credential-bound speculative utterance");
+        let terms = [RARE.to_owned(), COMMON.to_owned()];
+        let decision = session
+            .observe_partial(SpeculativePartial {
+                text: QUERY,
+                query_vector: None,
+                entity_labels: &[],
+                salient_terms: &terms,
+            })
+            .expect("FIXTURE: first speculative pass succeeds");
+        assert!(
+            matches!(
+                decision,
+                SpeculativeFireDecision::Fired { partial: false, .. }
+            ),
+            "GUARD: the first partial fires a complete pass, with no deadline"
+        );
+        session
+            .scoped_warm_candidates()
+            .expect("FIXTURE: release the credential's first warm result")
+            .value
+            .into_iter()
+            .map(|hit| hit.id)
+            .collect()
+    };
+    let vault = Arc::try_unwrap(vault)
+        .unwrap_or_else(|_| panic!("GUARD: the dropped utterance retains no vault Arc"));
+    (vault, order)
+}
+
+#[test]
+fn speculative_recall_skips_no_count_postings_in_df() {
+    let fixture = fixture();
+    let (rare, readable) = put_readable_claims(&fixture);
+    let (agent, proof) = records_reader_proof(&fixture, &readable);
+    let (vault, without) = credential_speculative_order(fixture.vault, agent, &proof);
+    let fixture = Fixture { vault, ..fixture };
+    assert_eq!(
+        (
+            without.first(),
+            without.iter().copied().collect::<BTreeSet<_>>()
+        ),
+        (Some(&rare), readable.clone()),
+        "FIXTURE: before refused rows, the speculative result serves exactly the readable set, \
+         RARE first"
+    );
+    let refused = put_refused_claims(&fixture, fixture.facet);
+    assert_indexed(&fixture, rare, &refused);
+    let (_vault, with) = credential_speculative_order(fixture.vault, agent, &proof);
+    assert_eq!(
+        with.iter().copied().collect::<BTreeSet<_>>(),
+        readable,
+        "FIXTURE: the speculative result serves exactly the readable set, none of the eight \
+         refused rows"
+    );
+    assert_eq!(
+        with.first(),
+        Some(&rare),
+        "FAILBEFORE SCOPED-BM25-DF-COUNTS-NON-WORLD-REFUSED-POSTINGS speculative: \
+         records-caveat refusals contribute no df, so the readable RARE claim still leads"
+    );
+}
+
+fn deadline_recall_ids(
+    fixture: &Fixture,
+    agent: EntityId,
+    proof: &VerifiedSlip,
+    effort: oneiron::memory::Effort,
+) -> BTreeSet<EntityId> {
+    use oneiron::memory::RecallScope;
+    use oneiron::retrieval_depth::{
+        RecallExecution, RetrievalDeadline, still_deadline_clock_for_test,
+    };
+    use std::time::Duration;
+
+    // Only this deadline captures the still clock; restore the thread's setting
+    // immediately so it cannot affect the next test on this thread.
+    let was_still = still_deadline_clock_for_test(true);
+    let deadline = RetrievalDeadline::after(Duration::from_secs(60));
+    still_deadline_clock_for_test(was_still);
+    let pack = fixture
+        .vault
+        .memory(agent, EdgeActorClass::Agent)
+        .with_read_proof(proof)
+        .recall_with_execution(
+            RARE,
+            effort,
+            &RecallScope::default(),
+            10,
+            None,
+            None,
+            &RecallExecution {
+                deadline: Some(&deadline),
+                as_of: Some(OCCURRED_AT + 1),
+                ..Default::default()
+            },
+        )
+        .expect("FIXTURE: the credential's recall with a deadline succeeds");
+    assert!(
+        !deadline.was_cut_short() && !pack.retrieval_meta.partial,
+        "GUARD: the generous still-clock deadline cuts no retrieval stage or pack"
+    );
+    pack.items
+        .iter()
+        .map(|item| {
+            let (short, hash) = oneiron::entity_id::parse_short_ref_syntax(&item.short_id)
+                .expect("FIXTURE: the pack's public short reference parses");
+            fixture
+                .vault
+                .hydrate_short_id(short, hash)
+                .expect("FIXTURE: resolve the pack item's identity")
+                .expect("FIXTURE: the pack item names a stored row")
+                .id
+        })
+        .collect()
+}
+
+#[test]
+fn deadline_recall_seeds_readable_match_past_refused_rows() {
+    use oneiron::memory::Effort;
+
+    let fixture = fixture();
+    // The sole readable text match is much longer than the refused TF=2 rows.
+    let text = format!("{RARE} {}", "quartz ".repeat(32));
+    let seed = put_text_claim(&fixture, fixture.facet, &text);
+    let neighbour = put_text_claim(&fixture, fixture.facet, "harbourrope");
+    let readable = BTreeSet::from([seed, neighbour]);
+    fixture
+        .vault
+        .put_edge(&seed, EdgeKind::Supports, &neighbour, 1.0)
+        .expect("FIXTURE: a traversable one-hop edge from the text match to N");
+    assert_eq!(
+        fixture
+            .vault
+            .targets(&seed, EdgeKind::Supports, None)
+            .expect("FIXTURE: read the seed's Supports edge"),
+        vec![neighbour],
+        "FIXTURE: only the readable match directly supports N"
+    );
+    let (agent, proof) = records_reader_proof(&fixture, &readable);
+    let key = fixture
+        .vault
+        .credential_read_key(&proof)
+        .expect("FIXTURE: resolve the records credential")
+        .expect("FIXTURE: the credential grants read");
+    // PPR_SEED_LIMIT in memory/recall/mod.rs is 8. This fresh lane has no
+    // audience, peer or manifest scoped grants, so its window stays 8, not 1000.
+    let seed_window = fixture
+        .vault
+        .scoped_read(key)
+        .with_live_grant_receipts()
+        .search_candidate_limit(8)
+        .expect("FIXTURE: the recall lane's preparatory search window");
+    assert_eq!(
+        seed_window, 8,
+        "GUARD: this credential's seed window is eight"
+    );
+    let light = deadline_recall_ids(&fixture, agent, &proof, Effort::Light);
+    assert_eq!(
+        light,
+        BTreeSet::from([seed]),
+        "FIXTURE: without PPR, only R matches; N is neither a text nor a temporal hit"
+    );
+    let without = deadline_recall_ids(&fixture, agent, &proof, Effort::Medium);
+    assert_eq!(
+        without, readable,
+        "FIXTURE: before refused rows, Medium seeds R and reaches graph-only N"
+    );
+
+    let refused_text = format!("{RARE} {RARE}");
+    let refused: BTreeSet<_> = (0..=seed_window)
+        .map(|_| put_text_claim(&fixture, fixture.facet, &refused_text))
+        .collect();
+    assert!(
+        refused.len() > seed_window,
+        "GUARD: more refused claims than the complete preparatory seed window"
+    );
+    let owner = fixture
+        .vault
+        .search_text(RARE, refused.len() + 1)
+        .expect("FIXTURE: owner's unscoped BM25 rank of every query match");
+    assert_eq!(
+        owner.iter().map(|hit| hit.id).collect::<BTreeSet<_>>(),
+        refused
+            .iter()
+            .copied()
+            .chain([seed])
+            .collect::<BTreeSet<_>>(),
+        "FIXTURE: the unscoped search finds R and every refused posting, but not N"
+    );
+    assert_eq!(
+        owner.last().map(|hit| hit.id),
+        Some(seed),
+        "FIXTURE: every shorter refused TF=2 row ranks above the readable TF=1 match"
+    );
+    let seed_score = owner.last().expect("FIXTURE: R has a score").score;
+    assert!(
+        owner
+            .iter()
+            .take(refused.len())
+            .all(|hit| hit.score > seed_score),
+        "FIXTURE: refused rows strictly outrank R, with no tie at the seed cut"
+    );
+    assert!(
+        owner
+            .iter()
+            .take(seed_window)
+            .all(|hit| refused.contains(&hit.id)),
+        "FIXTURE: the entire old unscoped seed window is filled by refused rows"
+    );
+    let with = deadline_recall_ids(&fixture, agent, &proof, Effort::Medium);
+    assert!(
+        with.is_disjoint(&refused) && with.is_subset(&readable) && with.contains(&seed),
+        "FIXTURE: the credential's pack still serves R and no refused row"
+    );
+    assert!(
+        with.contains(&neighbour),
+        "FAILBEFORE RECALL-PPR-SEED-SCANS-UNSCOPED-CUT: refused rows take no seed \
+         place before the cut, so readable R still seeds its graph-only neighbour N"
+    );
+}
