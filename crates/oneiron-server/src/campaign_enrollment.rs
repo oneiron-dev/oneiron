@@ -113,17 +113,28 @@ pub(crate) fn spawn(
                         let repair = std::mem::take(&mut repair_asks);
                         let ran = tokio::task::spawn_blocking(move || {
                             let _pass = pass;
-                            if repair {
+                            // A copy restored and not joined writes nothing (row
+                            // RESTORED-UNJOINED-STARTS-NO-WORK), and even a repair
+                            // that changes no row commits a Content write, which
+                            // stamps the backup mark: the repair stays pending for
+                            // the first pass after the join. A predicate read error
+                            // holds it too; the pump then fails on the same read.
+                            let held = !matches!(server.vault().restored_unjoined(), Ok(false));
+                            if repair && !held {
                                 if let Err(error) = server.vault().repair_campaign_enrollment_owner_asks() {
                                     tracing::warn!(%error, "campaign enrollment owner asks were not repaired");
                                 }
                             }
-                            pump(&server)
+                            (repair && held, pump(&server))
                         })
                         .await;
                         match ran {
-                            Ok(Ok(more)) => more,
-                            Ok(Err(error)) => {
+                            Ok((repair_held, Ok(more))) => {
+                                repair_asks |= repair_held;
+                                more
+                            }
+                            Ok((repair_held, Err(error))) => {
+                                repair_asks |= repair_held;
                                 tracing::warn!(kind = ?error.kind(), "the campaign enrollment pump failed; it runs again next pass");
                                 false
                             }
