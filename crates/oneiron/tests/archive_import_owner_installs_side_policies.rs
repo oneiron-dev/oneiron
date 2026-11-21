@@ -16,17 +16,17 @@
 //!   its active weights hold the pins; a destination that already holds
 //!   another pin set keeps its pins and weights, the report counts one
 //!   kept-live row, and its next archive holds both tuples.
-//! * `restored_read_shape_pins_install_and_a_different_destination_pin_set_stays`:
-//!   the source archive holds one READ_SHAPE_PINS tuple; the owner import
-//!   installs the pins live and reports one installed row; the actorless
-//!   import leaves the pins empty; a destination with its own pins keeps
-//!   them and reports one kept-live row.
 //! * `a_restored_drafter_policy_that_turns_drafting_off_returns_the_destination_bindings_to_stock`:
 //!   the owner import installs the source DRAFTER_POLICY row that turns
 //!   drafting off with its revision, and no version binding stays served.
 //!   No public door mints a serving version binding (that needs a qualified
 //!   version with a sealed artifact from the training pipeline), so the
 //!   Stock repair of a live binding has no public-path fixture here.
+//! * `restored_read_shape_pins_install_and_a_different_destination_pin_set_stays`:
+//!   the source archive holds one READ_SHAPE_PINS tuple; the owner import
+//!   installs the pins live and reports one installed row; the actorless
+//!   import leaves the pins empty; a destination with its own pins keeps
+//!   them and reports one kept-live row.
 //! * `a_holder_learning_row_over_the_destination_owner_cap_is_held_back`:
 //!   a holder seed above the destination owner's pin cap stays out of force
 //!   and reports one held-back row with reason `local_authority_mismatch`,
@@ -60,13 +60,10 @@ use oneiron::learning_setting_doors::{
     LearningSettingMode, LearningSettingPut, LearningSettingsRequest, learning_settings_as_owner,
     put_learning_setting_as_owner,
 };
-use oneiron::llm::ModelId;
 use oneiron::memory::origin_doors::OriginLfsPathPolicySetRequest;
 use oneiron::memory::{MessageStreamPolicy, MessageWriteMode, StreamCadence, StreamSyncVisibility};
 use oneiron::origin::lfs::{LfsAssetClass, OriginLfsPathMatch, OriginLfsPathRule};
-use oneiron::store::{
-    ReadShape, ReadShapePins, RetrievalBlendSignal, RetrievalPolicyPin, RetrievalPolicyPins,
-};
+use oneiron::store::{RetrievalBlendSignal, RetrievalPolicyPin, RetrievalPolicyPins};
 use oneiron::workspace_roster::ProjectHistoryPolicy;
 use oneiron::{EdgeActorClass, EntityId};
 use retained_side_rows::{
@@ -405,10 +402,88 @@ fn restored_retrieval_pins_install_with_projected_weights_and_a_different_destin
     );
 }
 
+/// A restored drafter policy that turns drafting off installs with its
+/// revision, and no version binding stays served.
+#[test]
+fn a_restored_drafter_policy_that_turns_drafting_off_returns_the_destination_bindings_to_stock() {
+    let (_source_dir, source) = open_source_vault();
+    let source_owner = owner_proof(&source);
+    let excluded = fixed_id(0x5C);
+    let stored = set_drafter_policy_as_owner(
+        &source,
+        &source_owner,
+        &DrafterPolicySetRequest {
+            expected_revision: 0,
+            enabled: false,
+            excluded_worlds: BTreeSet::from([excluded]),
+            recipe: None,
+        },
+    )
+    .expect("the owner turns drafting off on the source");
+    assert!(
+        !stored.enabled,
+        "the source policy turns drafting off: {stored:?}"
+    );
+    assert_eq!(
+        stored.revision, 1,
+        "the first set lands at revision one: {stored:?}"
+    );
+    let source_status =
+        drafter_status_as_owner(&source, &source_owner, &DrafterStatusRequest::default())
+            .expect("read the source drafter status");
+    assert_eq!(
+        source_status.policy, stored,
+        "the source status reads the stored policy"
+    );
+    assert!(
+        source_status.bindings.is_empty(),
+        "the source serves no version binding: {:?}",
+        source_status.bindings
+    );
+    let archive = export_whole(&source);
+
+    let (_dest_dir, dest) = open_later_vault();
+    let dest_owner = owner_proof(&dest);
+    let receipt = dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &dest_owner)
+        .expect("the owner import succeeds");
+    let restored = drafter_status_as_owner(&dest, &dest_owner, &DrafterStatusRequest::default())
+        .expect("read the restored drafter status");
+    assert_eq!(
+        restored.policy, stored,
+        "the owner import installs the off policy with its revision"
+    );
+    assert!(
+        !restored.policy.enabled,
+        "the restored policy keeps drafting off: {:?}",
+        restored.policy
+    );
+    assert_eq!(
+        restored.policy.revision, 1,
+        "the restored policy keeps its revision: {:?}",
+        restored.policy
+    );
+    assert!(
+        restored.bindings.is_empty(),
+        "no version binding stays served once drafting is off: {:?}",
+        restored.bindings
+    );
+    let summary =
+        serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
+    assert_eq!(
+        table_count(&summary, "DRAFTER_POLICY", "installed_rows"),
+        Some(1),
+        "the owner import reports one installed DRAFTER_POLICY row; an absent field means it installed nothing: {summary}"
+    );
+}
+
 /// Restored read-shape pins install live through the owner import only; a
 /// different destination pin set stays.
 #[test]
 fn restored_read_shape_pins_install_and_a_different_destination_pin_set_stays() {
+    use oneiron::llm::ModelId;
+    use oneiron::store::{ReadShape, ReadShapePins};
+
     let mount_model = ModelId::new("test/read-shape-mount@r1").expect("a model id");
     let verbs_model = ModelId::new("test/read-shape-verbs@r1").expect("a model id");
     let (_source_dir, source) = open_source_vault();
@@ -485,81 +560,6 @@ fn restored_read_shape_pins_install_and_a_different_destination_pin_set_stays() 
         table_count(&kept_summary, "READ_SHAPE_PINS", "kept_live_rows"),
         Some(1),
         "the owner import reports one kept-live READ_SHAPE_PINS row: {kept_summary}"
-    );
-}
-
-/// A restored drafter policy that turns drafting off installs with its
-/// revision, and no version binding stays served.
-#[test]
-fn a_restored_drafter_policy_that_turns_drafting_off_returns_the_destination_bindings_to_stock() {
-    let (_source_dir, source) = open_source_vault();
-    let source_owner = owner_proof(&source);
-    let excluded = fixed_id(0x5C);
-    let stored = set_drafter_policy_as_owner(
-        &source,
-        &source_owner,
-        &DrafterPolicySetRequest {
-            expected_revision: 0,
-            enabled: false,
-            excluded_worlds: BTreeSet::from([excluded]),
-            recipe: None,
-        },
-    )
-    .expect("the owner turns drafting off on the source");
-    assert!(
-        !stored.enabled,
-        "the source policy turns drafting off: {stored:?}"
-    );
-    assert_eq!(
-        stored.revision, 1,
-        "the first set lands at revision one: {stored:?}"
-    );
-    let source_status =
-        drafter_status_as_owner(&source, &source_owner, &DrafterStatusRequest::default())
-            .expect("read the source drafter status");
-    assert_eq!(
-        source_status.policy, stored,
-        "the source status reads the stored policy"
-    );
-    assert!(
-        source_status.bindings.is_empty(),
-        "the source serves no version binding: {:?}",
-        source_status.bindings
-    );
-    let archive = export_whole(&source);
-
-    let (_dest_dir, dest) = open_later_vault();
-    let dest_owner = owner_proof(&dest);
-    let receipt = dest
-        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &dest_owner)
-        .expect("the owner import succeeds");
-    let restored = drafter_status_as_owner(&dest, &dest_owner, &DrafterStatusRequest::default())
-        .expect("read the restored drafter status");
-    assert_eq!(
-        restored.policy, stored,
-        "the owner import installs the off policy with its revision"
-    );
-    assert!(
-        !restored.policy.enabled,
-        "the restored policy keeps drafting off: {:?}",
-        restored.policy
-    );
-    assert_eq!(
-        restored.policy.revision, 1,
-        "the restored policy keeps its revision: {:?}",
-        restored.policy
-    );
-    assert!(
-        restored.bindings.is_empty(),
-        "no version binding stays served once drafting is off: {:?}",
-        restored.bindings
-    );
-    let summary =
-        serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
-    assert_eq!(
-        table_count(&summary, "DRAFTER_POLICY", "installed_rows"),
-        Some(1),
-        "the owner import reports one installed DRAFTER_POLICY row; an absent field means it installed nothing: {summary}"
     );
 }
 
