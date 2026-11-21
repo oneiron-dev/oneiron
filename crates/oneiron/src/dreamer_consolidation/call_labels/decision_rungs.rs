@@ -22,11 +22,12 @@ struct Shown<'a> {
     labels: &'a dyn DecisionWireLabels,
 }
 
-/// A ladder's model rungs (local, System One, escalation and big), each
-/// through one call's labels.
+/// A ladder's model rungs (local, System One, precision, escalation and big),
+/// each through one call's labels.
 pub(in crate::dreamer_consolidation) struct LabelledRungs<'a> {
     local: Option<Shown<'a>>,
     system_one: Option<Shown<'a>>,
+    precision: Option<Shown<'a>>,
     escalation: Option<Shown<'a>>,
     big: Option<Shown<'a>>,
 }
@@ -42,6 +43,7 @@ impl<'a> LabelledRungs<'a> {
         Self {
             local: shown(ladder.local),
             system_one: shown(ladder.system_one),
+            precision: shown(ladder.precision),
             escalation: shown(ladder.escalation),
             big: shown(ladder.big),
         }
@@ -61,6 +63,7 @@ impl<'a> LabelledRungs<'a> {
         DecisionLadder {
             local: slot(&self.local),
             system_one: slot(&self.system_one),
+            precision: slot(&self.precision),
             escalation: slot(&self.escalation),
             big: slot(&self.big),
             ..ladder.clone()
