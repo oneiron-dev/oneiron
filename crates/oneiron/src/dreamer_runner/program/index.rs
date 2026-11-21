@@ -5,6 +5,12 @@
 //! every row of each table. Each index row is written and deleted in the
 //! writer that writes or deletes the row it names, so the index holds
 //! exactly the rows its table holds.
+//!
+//! A decision another machine made (`DECIDED`) is keyed by its turn and
+//! registration and names no actor, so its actor is kept beside it, by the
+//! decision's key and by the actor (FIX TURNPROGRAM-ERASE-KEEPS-DECIDED).
+//! These two hold only the decisions whose actor this machine learned: a
+//! decision kept from a row that named none has neither row.
 
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
@@ -30,6 +36,17 @@ pub(super) const TURN_ADMISSION: SideTable<(EntityId, [u8; 32]), (), Named> =
 /// own key: the turn, then the registration it woke.
 const ACTOR_WAKE: SideTable<(EntityId, EntityId, EntityId), (), Named> =
     SideTable::new(&side_table::DREAMER_TURN_PROGRAM_ACTOR_WAKE);
+
+/// The actor of each decision kept here (`DECIDED`) whose actor this machine
+/// learned, keyed as the decision is: the turn, then the registration.
+#[cfg(feature = "sync")]
+const DECIDED_ACTOR: SideTable<(EntityId, EntityId), EntityId, Named> =
+    SideTable::new(&side_table::DREAMER_TURN_PROGRAM_DECIDED_ACTOR);
+/// Each decision [`DECIDED_ACTOR`] names an actor for, keyed by that actor,
+/// then the decision's own key: the turn, then the registration.
+#[cfg(feature = "sync")]
+const ACTOR_DECIDED: SideTable<(EntityId, EntityId, EntityId), (), Named> =
+    SideTable::new(&side_table::DREAMER_TURN_PROGRAM_ACTOR_DECIDED);
 
 /// Indexes `attempt` under the actor its stamp names, in the stamp's writer.
 pub(super) fn index_attempt_in_txn(
@@ -119,4 +136,42 @@ pub(super) fn actor_wakes_in_txn(
         .into_iter()
         .map(|(_, turn, registration)| (turn, registration))
         .collect())
+}
+
+/// The actor kept for the decision held under `(turn, registration)`; none
+/// for a decision whose actor this machine never learned.
+#[cfg(feature = "sync")]
+pub(super) fn decided_actor_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    key: (EntityId, EntityId),
+) -> Result<Option<EntityId>> {
+    DECIDED_ACTOR.get(vault, txn, &key)
+}
+
+/// Keeps `actor` as the actor of the decision held under `key`, in the
+/// writer that keeps the decision or learns its actor, under both keys;
+/// `None` keeps none. An actor kept for an earlier decision under the key
+/// goes from both.
+#[cfg(feature = "sync")]
+pub(super) fn index_decided_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    key: (EntityId, EntityId),
+    actor: Option<EntityId>,
+) -> Result<()> {
+    let held = DECIDED_ACTOR.get(vault, &*txn, &key)?;
+    if held == actor {
+        return Ok(());
+    }
+    if let Some(held) = held {
+        ACTOR_DECIDED.delete(vault, txn, &(held, key.0, key.1))?;
+    }
+    match actor {
+        Some(actor) => {
+            DECIDED_ACTOR.put(vault, txn, &key, &actor)?;
+            ACTOR_DECIDED.put(vault, txn, &(actor, key.0, key.1), &())
+        }
+        None => DECIDED_ACTOR.delete(vault, txn, &key).map(drop),
+    }
 }

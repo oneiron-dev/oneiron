@@ -508,6 +508,7 @@ pub(crate) fn outranking_wake_row_in_txn(
         WakeRow::Admitted {
             turn,
             registration,
+            actor: Some(actor),
             admission,
         }
     } else if state == Some(CarriedState::Released)

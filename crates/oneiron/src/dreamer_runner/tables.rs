@@ -279,6 +279,13 @@ crate::side_table::side_tables! {
     DREAMER_TURN_PROGRAM_ACTOR_ATTEMPT: VaultMeta b"dreamer:turn_program:actor_attempt:v1:"
         Named Engine
         [restore: content] [family: structure] [tier: canonical];
+    /// FIX TURNPROGRAM-ERASE-KEEPS-DECIDED: each decision DREAMER_TURN_PROGRAM_DECIDED_ACTOR names
+    /// an actor for, by that actor, written and deleted with that row.
+    /// Key: id16(actor) + id16(turn) + id16(registration).
+    DREAMER_TURN_PROGRAM_ACTOR_DECIDED: VaultMeta b"dreamer:turn_program:actor_decided:v1:"
+        Named Engine
+        // Restore class: the index stands as the decisions it names do (DECIDED).
+        [restore: live] [family: structure] [tier: canonical];
     /// FIX 5774: each owed turn program wake by its waking actor, written and deleted with the
     /// wake. Key: id16(actor) + id16(turn) + id16(registration).
     DREAMER_TURN_PROGRAM_ACTOR_WAKE: VaultMeta b"dreamer:turn_program:actor_wake:v1:"
@@ -307,6 +314,14 @@ crate::side_table::side_tables! {
     DREAMER_TURN_PROGRAM_DECIDED: VaultMeta b"dreamer:turn_program:decided:v1:" Named
         // Restore class: FIX 5266: a wake the home decided elsewhere stays decided, as its
         // admission does there.
+        [restore: live] [family: structure] [tier: canonical];
+    /// FIX TURNPROGRAM-ERASE-KEEPS-DECIDED: the actor of a decision this machine keeps in
+    /// DREAMER_TURN_PROGRAM_DECIDED, where the row that carried the decision named its actor or the
+    /// wake it consumed here proved it; a decision kept from a row that named none has no row.
+    /// Written in the writer that keeps the decision. Key: id16(turn) + id16(registration).
+    DREAMER_TURN_PROGRAM_DECIDED_ACTOR: VaultMeta b"dreamer:turn_program:decided_actor:v1:"
+        Named Engine
+        // Restore class: the actor stands as the decision it names does (DECIDED).
         [restore: live] [family: structure] [tier: canonical];
     /// FIX 5266: a turn program this machine knows was disarmed, and when, so an older window's
     /// arming of it never arms it here again; the ARM entry's scrub clears it.

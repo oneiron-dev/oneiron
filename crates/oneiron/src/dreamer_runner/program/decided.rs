@@ -25,11 +25,20 @@ use oneiron_records::dreamer_runner::program::replica::encode;
 /// admission the row names goes. An occurrence's wake is admitted where it
 /// was recorded, so a row that names one is refused, and no decision is kept
 /// for it.
+///
+/// The decision's actor is kept beside it (FIX
+/// TURNPROGRAM-ERASE-KEEPS-DECIDED): the actor of the wake the row consumes
+/// here, which the admission proves (it is a digest over that actor), else
+/// `named`, the actor the row itself names. A row that names none and
+/// consumes no wake here keeps none, as every row did before the row named
+/// its actor. A decision kept before gains its actor from a later row of the
+/// same admission; an actor a wake proved is replaced by no row's word.
 pub(super) fn consume_decided_wake_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     map_key: &str,
     admission: [u8; 32],
+    named: Option<EntityId>,
 ) -> Result<RowMerge> {
     let Some(key) = wake_key_ids(map_key) else {
         return Ok(RowMerge::Held);
@@ -38,20 +47,30 @@ pub(super) fn consume_decided_wake_in_txn(
     if owed.as_ref().is_some_and(|wake| wake.occurrence.is_some()) {
         return Ok(RowMerge::Refused("names an occurrence's wake"));
     }
-    let kept = if DECIDED.get(vault, &*txn, &key)? == Some(admission)
-        || ADMISSION.contains(vault, &*txn, &admission)?
-    {
+    // The wake this row decides, where it is owed here.
+    let decided =
+        owed.filter(|wake| wake.authority.rides_to_home() && wake.admission_id() == admission);
+    let proven = decided.as_ref().map(|wake| wake.authority.actor());
+    let marked = DECIDED.get(vault, &*txn, &key)? == Some(admission);
+    let kept = if marked || ADMISSION.contains(vault, &*txn, &admission)? {
         RowMerge::Held
     } else {
         DECIDED.put(vault, txn, &key, &admission)?;
         RowMerge::Written
     };
-    let Some(wake) = owed else {
+    if marked || kept == RowMerge::Written {
+        let actor = match (kept, proven) {
+            (_, Some(actor)) => Some(actor),
+            // A decision first kept here: what its row says, and nothing an
+            // earlier decision under the key left.
+            (RowMerge::Written, None) => named,
+            (_, None) => super::index::decided_actor_in_txn(vault, &*txn, key)?.or(named),
+        };
+        super::index::index_decided_in_txn(vault, txn, key, actor)?;
+    }
+    let Some(wake) = decided else {
         return Ok(kept);
     };
-    if !wake.authority.rides_to_home() || wake.admission_id() != admission {
-        return Ok(kept);
-    }
     WAKE.delete(vault, txn, &key)?;
     super::index::unindex_wake_in_txn(vault, txn, wake.authority.actor(), key)?;
     Ok(RowMerge::Written)
@@ -64,7 +83,9 @@ pub(super) fn consume_decided_wake_in_txn(
 /// whether or not a machine carried it as owed (the home admits its own
 /// turns' wakes, which no `Owed` row ever carried), and each decision it
 /// imported. A machine elected home later then holds every decision, and no
-/// landing of the turn there wakes the program again.
+/// landing of the turn there wakes the program again. Each row names its
+/// wake's actor where this machine knows it: its own admission's always, an
+/// imported decision's where its actor was kept with it.
 pub(crate) fn turn_decided_rows_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -85,6 +106,7 @@ pub(crate) fn turn_decided_rows_in_txn(
             encode(&WakeRow::Admitted {
                 turn,
                 registration,
+                actor: Some(record.wake.authority.actor()),
                 admission,
             })?,
         ));
@@ -96,6 +118,7 @@ pub(crate) fn turn_decided_rows_in_txn(
             encode(&WakeRow::Admitted {
                 turn,
                 registration,
+                actor: super::index::decided_actor_in_txn(vault, txn, (turn, registration))?,
                 admission,
             })?,
         ));
@@ -132,6 +155,7 @@ pub(crate) fn admitted_row_in_txn(
     Ok(Some(encode(&WakeRow::Admitted {
         turn,
         registration,
+        actor: Some(wake.authority.actor()),
         admission,
     })?))
 }
@@ -147,6 +171,7 @@ pub(super) fn admitted_row_for_test(wake: &TurnProgramWake) -> Result<(String, V
         encode(&WakeRow::Admitted {
             turn,
             registration,
+            actor: Some(wake.authority.actor()),
             admission: wake.admission_id(),
         })?,
     ))

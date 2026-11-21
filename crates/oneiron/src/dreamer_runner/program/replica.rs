@@ -141,10 +141,15 @@ pub(super) enum WakeRow {
         admission: [u8; 32],
     },
     /// A machine decided the wake (the home, or the recording machine where it
-    /// admits the wake itself): its admission's identity, and no more.
+    /// admits the wake itself): its admission's identity and, where the
+    /// machine that wrote the row knew it, the wake's actor (FIX
+    /// TURNPROGRAM-ERASE-KEEPS-DECIDED), and no more. A row written before
+    /// the row named its actor names none, and is taken as it was then.
     Admitted {
         turn: EntityId,
         registration: EntityId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        actor: Option<EntityId>,
         admission: [u8; 32],
     },
 }
@@ -361,8 +366,9 @@ pub(crate) fn arming_row_actor(bytes: &[u8]) -> Option<EntityId> {
     decode_arming(bytes).ok().map(|row| row.actor())
 }
 
-/// The actor a carried `Owed`, `Retracted` or `Released` wake row names; an
-/// `Admitted` row names none.
+/// The actor a carried `Owed`, `Retracted` or `Released` wake row names. An
+/// `Admitted` row answers none, whether or not it names its actor: its merge
+/// alone reads that actor (`decided`).
 pub(crate) fn wake_row_actor(bytes: &[u8]) -> Option<EntityId> {
     match decode_wake(bytes).ok()? {
         WakeRow::Owed(wake) => Some(wake.authority.actor()),
@@ -462,8 +468,12 @@ pub(crate) fn merge_wake_row_in_txn(
         } => {
             return super::retraction::merge_released_in_txn(vault, txn, key, actor, admission);
         }
-        WakeRow::Admitted { admission, .. } => {
-            return super::decided::consume_decided_wake_in_txn(vault, txn, map_key, admission);
+        WakeRow::Admitted {
+            actor, admission, ..
+        } => {
+            return super::decided::consume_decided_wake_in_txn(
+                vault, txn, map_key, admission, actor,
+            );
         }
     };
     if home_here_in_txn(vault, txn)? != Some(true) {
