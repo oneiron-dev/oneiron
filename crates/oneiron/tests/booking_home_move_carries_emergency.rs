@@ -105,7 +105,11 @@
 //!
 //! The two blob cases are red on main 2c56ee802949: the apology blob names
 //! each raw token on both machines and on the old home after the ack, and no
-//! blob labels a link as sent to the booker.
+//! blob labels a link as sent to the booker. The release of an earlier
+//! build's blob and the booker's text run green only: the doors
+//! `write_raw_emergency_apology` (that blob) and
+//! `emergency_apology_send_text` (the text the served sinks send) come with
+//! the fix.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test booking_home_move_carries_emergency`.
 #![cfg(all(oneiron_test_support, feature = "sync"))]
@@ -134,8 +138,9 @@ use oneiron::outbound_intent_ledger::{DeliveryReadBack, RemoteTaskHandle, Remote
 use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_PERSON};
 use oneiron::test_doors::booking_home_move::{
     acknowledge_booking_home_move, booking_rows_hold, deliver_emergency_without_answer,
-    drop_node_local_booking_rows, drop_node_local_outbound_rows, emergency_effect_ledger_rows,
-    move_booking_home, record_booking_home_adoption,
+    drop_node_local_booking_rows, drop_node_local_outbound_rows, emergency_apology_send_text,
+    emergency_effect_ledger_rows, move_booking_home, record_booking_home_adoption,
+    write_raw_emergency_apology,
 };
 use oneiron::{
     CalendarSel, ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject,
@@ -501,6 +506,43 @@ struct DeliveringSink;
 
 impl OutboundExecutionSink for DeliveringSink {
     fn execute(&mut self, _request: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
+        OutboundExecutionOutcome::delivered_to_channel("provider:message:fixture")
+    }
+}
+
+/// An emergency apology's send as the sink was handed it, with the text the served sinks send
+/// for it ([`emergency_apology_send_text`]).
+struct ApologySend {
+    intent_ref: String,
+    target: String,
+    content_ref: String,
+    text: Result<Option<String>, BookingError>,
+}
+
+/// A sink that delivers every effect and keeps the apology's send with the text it carries, read
+/// while the send goes, as the served sinks read it.
+struct ApologyTextSink<'v> {
+    vault: &'v Vault,
+    apology: Option<ApologySend>,
+}
+
+impl OutboundExecutionSink for ApologyTextSink<'_> {
+    fn execute(&mut self, request: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
+        if let Some(content_ref) = request.intent.content_ref.as_deref()
+            && request.intent_ref.ends_with(":apology")
+        {
+            self.apology = Some(ApologySend {
+                intent_ref: request.intent_ref.to_owned(),
+                target: request.intent.target.clone(),
+                content_ref: content_ref.to_owned(),
+                text: emergency_apology_send_text(
+                    self.vault,
+                    request.intent_ref,
+                    &request.intent.target,
+                    content_ref,
+                ),
+            });
+        }
         OutboundExecutionOutcome::delivered_to_channel("provider:message:fixture")
     }
 }
@@ -959,6 +1001,151 @@ fn the_old_home_holds_no_raw_pick_link_in_any_blob_once_the_new_home_acknowledge
     new_home
         .pick(delivered(&emergency))
         .expect("the new home's checkpoint still resolves the pick");
+}
+
+#[test]
+fn an_apology_blob_an_earlier_build_wrote_with_raw_links_is_released_at_the_next_open() {
+    let seed = Machine::seed();
+    let emergency = emergency(&seed, &mut DeliveringSink);
+    let item = delivered(&emergency);
+    let token = item.actions[0].0.clone();
+    write_raw_emergency_apology(&seed.vault, &emergency.request, item)
+        .expect("FIXTURE: the apology blob an earlier build wrote");
+    assert!(
+        blob_bodies_hold(&seed.vault, token.as_bytes()),
+        "FIXTURE: the earlier build's blob holds the raw pick link"
+    );
+    // Both machines open on copies of the closed seed, each holding the checkpoint.
+    let (old_home, new_home) = seed.into_old_and_new_home();
+    for (machine, which) in [(&old_home, "the home"), (&new_home, "a second machine")] {
+        assert!(
+            !blob_bodies_hold(&machine.vault, token.as_bytes()),
+            "{which}'s open releases the blob an earlier build wrote with the raw links"
+        );
+        assert!(
+            blob_bodies_hold(&machine.vault, link_sent_label(machine).as_bytes()),
+            "{which} keeps the owner's copy of the apology"
+        );
+    }
+    old_home
+        .pick(item)
+        .expect("the checkpoint's links still resolve the pick");
+}
+
+#[test]
+fn the_ack_releases_an_apology_blob_an_earlier_build_wrote_with_raw_links_on_the_old_home() {
+    let (old_home, new_home, emergency) = delivered_emergency();
+    let item = delivered(&emergency);
+    let token = item.actions[0].0.clone();
+    write_raw_emergency_apology(&old_home.vault, &emergency.request, item)
+        .expect("FIXTURE: the apology blob an earlier build wrote");
+    assert!(
+        blob_bodies_hold(&old_home.vault, token.as_bytes()),
+        "FIXTURE: the earlier build's blob holds the raw pick link"
+    );
+    assert!(
+        move_booking_home(&old_home.vault, &new_home.vault, &[]).expect("move the booking home"),
+        "every section applies"
+    );
+    acknowledge_booking_home_move(&old_home.vault).expect("the old home's writer on the ack");
+    assert!(
+        !blob_bodies_hold(&old_home.vault, token.as_bytes()),
+        "the ack releases on the old home the blob an earlier build wrote with the raw links"
+    );
+    new_home
+        .pick(item)
+        .expect("the new home's checkpoint still resolves the pick");
+}
+
+#[test]
+fn the_booker_is_sent_the_raw_links_filled_in_from_the_checkpoint_and_a_former_home_fills_none() {
+    let seed = Machine::seed();
+    let mut sink = ApologyTextSink {
+        vault: &seed.vault,
+        apology: None,
+    };
+    let emergency = emergency(&seed, &mut sink);
+    let item = delivered(&emergency);
+    let sent = sink
+        .apology
+        .take()
+        .expect("the apology's send reached the sink");
+    let text = sent
+        .text
+        .as_ref()
+        .expect("the home fills the apology's own send")
+        .clone()
+        .expect("an emergency apology's send");
+    for token in &item.actions {
+        assert!(
+            text.contains(&format!("booking:emergency-pick:{}", token.0)),
+            "the booker's text carries each raw pick link"
+        );
+        assert!(
+            !blob_bodies_hold(&seed.vault, token.0.as_bytes()),
+            "the booker's text is stored nowhere"
+        );
+    }
+    assert!(
+        emergency_apology_send_text(
+            &seed.vault,
+            &sent.intent_ref,
+            "someone-else@example.com",
+            &sent.content_ref
+        )
+        .is_err(),
+        "the apology is never filled for another recipient"
+    );
+    assert!(
+        emergency_apology_send_text(
+            &seed.vault,
+            &sent.intent_ref,
+            &sent.target,
+            "blob:00000000000000000000000000000000"
+        )
+        .is_err(),
+        "the apology's send naming another content is never filled"
+    );
+    assert_eq!(
+        emergency_apology_send_text(
+            &seed.vault,
+            "intent:fixture:other-send",
+            &sent.target,
+            &sent.content_ref
+        )
+        .expect("another send"),
+        None,
+        "any other send's content resolves as before"
+    );
+
+    let (old_home, new_home) = seed.into_old_and_new_home();
+    assert!(
+        move_booking_home(&old_home.vault, &new_home.vault, &[]).expect("move the booking home"),
+        "every section applies"
+    );
+    acknowledge_booking_home_move(&old_home.vault).expect("the old home's writer on the ack");
+    assert!(
+        emergency_apology_send_text(
+            &old_home.vault,
+            &sent.intent_ref,
+            &sent.target,
+            &sent.content_ref
+        )
+        .is_err(),
+        "a former home fills no apology once the new home acknowledged the move"
+    );
+    assert_eq!(
+        emergency_apology_send_text(
+            &new_home.vault,
+            &sent.intent_ref,
+            &sent.target,
+            &sent.content_ref
+        )
+        .expect("the new home fills the apology's send")
+        .as_deref(),
+        Some(text.as_str()),
+        "the new home fills the same text from the checkpoint it adopted"
+    );
 }
 
 #[test]

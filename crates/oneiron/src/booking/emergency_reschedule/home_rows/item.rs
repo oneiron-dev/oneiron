@@ -17,7 +17,7 @@ use crate::booking::emergency_reschedule::planning::{
     EMERGENCY_ITEM_META_PREFIX, EmergencyItem, ITEM, ReadoptedSend,
 };
 use crate::booking::emergency_reschedule::uncertain_send::{self, UNCERTAIN_SEND, owed_effects};
-use crate::booking::emergency_reschedule::{EmergencyLocalBasis, EmergencyPick, state};
+use crate::booking::emergency_reschedule::{EmergencyLocalBasis, EmergencyPick, apology, state};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::outbound_intent_ledger::{
@@ -511,7 +511,8 @@ impl HomeTable for EmergencyItemRows {
     /// Drops the raw action tokens of every item here (lead ruling
     /// BK-EMERGENCY-RAW-TOKENS-SEALED = A): the new home holds them now, and this node's items
     /// are history no pick reads, so no second live copy outlasts the move. A row that does
-    /// not decode holds no token any reader takes.
+    /// not decode holds no token any reader takes. A raw apology body an earlier build wrote
+    /// goes with them (FIX [BK-EMERGENCY-APOLOGY-BLOB-HOLDS-RAW-PICK-TOKENS]).
     fn scrub_after_ack(vault: &Vault, txn: &mut RwTxn<'_>) -> Result<()> {
         for key in ITEM.scan_keys(&vault.store, txn, &[])? {
             let Some(mut item) = ITEM.get_lenient(&vault.store, txn, &key)? else {
@@ -520,6 +521,7 @@ impl HomeTable for EmergencyItemRows {
             if item.actions.is_empty() {
                 continue;
             }
+            apology::release_raw_apology_in(vault, txn, &item).map_err(booking_failure)?;
             item.actions.clear();
             ITEM.put(&vault.store, txn, &key, &item)?;
         }

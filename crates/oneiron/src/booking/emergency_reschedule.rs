@@ -320,6 +320,11 @@ pub(super) fn calendar_failure(error: crate::calendar::CalendarError) -> Booking
     }
 }
 
+// FIX [BK-EMERGENCY-APOLOGY-BLOB-HOLDS-RAW-PICK-TOKENS]: the owner's copy and the booker's text.
+mod apology;
+#[cfg(oneiron_test_support)]
+pub(crate) use apology::write_raw_apology_for_doors;
+pub(crate) use apology::{emergency_apology_send_text, release_raw_apologies_on_open};
 // FIX [BK-EMERGENCY-ROWS-NOT-CARRIED-BY-HOME-MOVE]: the rows a home move carries.
 #[cfg(feature = "sync")]
 pub(crate) mod home_rows;

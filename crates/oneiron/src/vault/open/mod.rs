@@ -851,6 +851,17 @@ impl Vault {
         // room rows gets its row once, room by room, before any reader or
         // window holds this handle; an archived vault is left as it is.
         crate::workspace_roster::backfill_room_turns_on_open(&vault)?;
+        // FIX [BK-EMERGENCY-APOLOGY-BLOB-HOLDS-RAW-PICK-TOKENS]: an emergency apology blob an
+        // earlier build wrote with the booker's raw pick links is released on a node holding
+        // its checkpoint, so its body leaves every machine; a failure leaves it to a later open.
+        if let Err(error) =
+            crate::booking::emergency_reschedule::release_raw_apologies_on_open(&vault)
+        {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "raw emergency apology bodies were not released; a later open tries again"
+            );
+        }
         // Carrier data must still match the local installation head on reopen.
         let _ = vault.pack_byte_map_snapshot()?;
         // The image a restore in this vault's place set aside reads, and
