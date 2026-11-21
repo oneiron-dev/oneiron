@@ -292,7 +292,6 @@ impl Vault {
                 "the vault key is not held on this handle: unlock it first",
             ));
         }
-        check_kit_passkey(issue, passkey)?;
         let rotates = current == RecoveryPreset::Standard
             && rotation
                 .as_ref()
@@ -300,6 +299,7 @@ impl Vault {
         // The fact and rotation share one confirm before the kit is drawn,
         // while the door holds nothing. The write checks again after the ask.
         let ground = self.recovery_preset_proof_ground(owner, true, rotates)?;
+        check_kit_passkey(issue, passkey)?;
         between();
         let held = self
             .held_vault_key()

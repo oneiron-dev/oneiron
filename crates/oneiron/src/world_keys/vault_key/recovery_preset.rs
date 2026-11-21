@@ -474,11 +474,11 @@ impl Vault {
         }
         // The door's own refusals come before the ask: the person is not
         // asked about a switch this door or this handle cannot make.
-        let draws = self.sheet_switch_draws(preset, current)?;
         // The fact and rotation share one confirm before anything is drawn or
         // written, while the door holds nothing: the prompt can block. The
         // preset in force is no switch and asks nothing.
         let ground = self.sheet_switch_ground(owner, preset, current, rotation.as_ref())?;
+        let draws = self.sheet_switch_draws(preset, current)?;
         // After the ask: the held key first, then the device wrap, whose read
         // readies signing, then the draw.
         let held = draws
