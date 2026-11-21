@@ -1540,7 +1540,10 @@ pub(super) fn stamp_archived_birth<R: Read + Seek>(
         id,
         &birth,
     ) {
-        Ok(()) => Ok(()),
+        // READ-LINEAGE L1, as on sync (`stamp_birth_or_warn`): a row that
+        // arrived with its birth reads under the inputs this vault holds
+        // (#9289 review 2 P2-4).
+        Ok(()) => crate::source_audience::raise_floors_in_txn(vault, wtxn, [*id]),
         Err(error @ (Error::InvalidConfig(_) | Error::InvariantViolation(_))) => {
             tracing::warn!(
                 entity = %id.to_hex(),

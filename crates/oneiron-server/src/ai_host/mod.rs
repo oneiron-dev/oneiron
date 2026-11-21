@@ -27,6 +27,8 @@ use crate::server::SyncServer;
 
 #[cfg(feature = "code-sandbox-wasmtime")]
 mod code_mode;
+mod code_mode_reach;
+pub(crate) use code_mode_reach::{CodeModeRoute, code_mode_reach};
 mod compaction;
 #[cfg(oneiron_test_support)]
 pub(crate) use compaction::pass_door;

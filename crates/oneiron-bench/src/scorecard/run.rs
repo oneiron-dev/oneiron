@@ -24,6 +24,7 @@ use sha2::Digest;
 
 use super::{
     ScorecardFailure, campaign, keyword, params, parse_flags, parse_slice, profile, required_flag,
+    world_scoped,
 };
 
 /// The flags `scorecard run` takes.
@@ -43,6 +44,8 @@ const KNOWN_FLAGS: &[&str] = &[
     "proposal",
     "proposals",
     "incumbent",
+    "hidden-share",
+    "partition-seed",
 ];
 
 /// The text field staged beside each TURN body for the text index.
@@ -85,13 +88,15 @@ pub(crate) enum Arm<'a> {
     },
 }
 
-/// Which arm the flags ask for: `pipeline` (the default) or `keyword`.
+/// Which arm the flags ask for: `pipeline` (the default), `keyword` or `world-scoped`.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ArmKind {
     /// The Light recall pipeline.
     Pipeline,
     /// The BM25F keyword arm.
     Keyword,
+    /// The scoped text channel as a base-world agent (`world_scoped/`).
+    WorldScoped,
 }
 
 /// One resolved arm, owned: what the sealed run holds across its claim.
@@ -128,31 +133,30 @@ impl OwnedArm {
     }
 }
 
-/// Parse `--arm` and gate the arm-bound flags: `--rank-profile` and
-/// `--dict-dir` need the keyword arm, `--params` needs the pipeline arm.
+/// Parse `--arm` and gate the arm-bound flags: `--params` needs the pipeline
+/// arm, `--rank-profile` and `--dict-dir` the keyword arm, `--hidden-share`
+/// and `--partition-seed` the world-scoped arm.
 fn parse_arm(flags: &BTreeMap<String, String>) -> Result<ArmKind, ScorecardFailure> {
     let kind = match flags.get("arm").map_or("pipeline", String::as_str) {
         "pipeline" => ArmKind::Pipeline,
         "keyword" => ArmKind::Keyword,
+        "world-scoped" => ArmKind::WorldScoped,
         other => {
             return Err(ScorecardFailure::Input(format!("unknown arm: {other}")));
         }
     };
-    if kind == ArmKind::Pipeline {
-        if flags.contains_key("rank-profile") {
-            return Err(ScorecardFailure::Input(
-                "--rank-profile needs --arm keyword".to_owned(),
-            ));
+    for (flag, owner, arm) in [
+        ("params", ArmKind::Pipeline, "pipeline"),
+        ("rank-profile", ArmKind::Keyword, "keyword"),
+        ("dict-dir", ArmKind::Keyword, "keyword"),
+        ("hidden-share", ArmKind::WorldScoped, "world-scoped"),
+        ("partition-seed", ArmKind::WorldScoped, "world-scoped"),
+    ] {
+        if kind != owner && flags.contains_key(flag) {
+            return Err(ScorecardFailure::Input(format!(
+                "--{flag} needs --arm {arm}"
+            )));
         }
-        if flags.contains_key("dict-dir") {
-            return Err(ScorecardFailure::Input(
-                "--dict-dir needs --arm keyword".to_owned(),
-            ));
-        }
-    } else if flags.contains_key("params") {
-        return Err(ScorecardFailure::Input(
-            "--params needs --arm pipeline".to_owned(),
-        ));
     }
     Ok(kind)
 }
@@ -164,6 +168,9 @@ pub(crate) fn run(args: &[String]) -> Result<serde_json::Value, ScorecardFailure
     let slice_name = required_flag(&flags, "slice")?;
     let slice = parse_slice(slice_name)?;
     if slice == Slice::Sealed {
+        if kind == ArmKind::WorldScoped {
+            return Err(world_scoped::sealed_refusal());
+        }
         return run_sealed(&flags, kind);
     }
     for name in [
@@ -212,6 +219,9 @@ pub(crate) fn run(args: &[String]) -> Result<serde_json::Value, ScorecardFailure
                 out,
             )
         }
+        ArmKind::WorldScoped => {
+            world_scoped::replay(&loaded, &flags, engine_commit, budget_rows, repeats, out)
+        }
     }
 }
 
@@ -233,6 +243,7 @@ fn run_sealed(
             profile: profile::resolve_profile(flags.get("rank-profile").map(String::as_str))?,
             dict_dir: flags.get("dict-dir").map(|dir| PathBuf::from(dir.as_str())),
         },
+        ArmKind::WorldScoped => return Err(world_scoped::sealed_refusal()),
     };
     // Before the claim: a dictionary dir that loads fewer than the ja, zh and
     // ko dictionaries would spend the sealed run under the bm25f+dicts id.
@@ -753,7 +764,7 @@ fn run_query(
 }
 
 /// Parse pack time (`YYYY-MM-DDTHH:MM:SSZ`) into unix seconds.
-fn pack_time(text: &str) -> Result<u64, String> {
+pub(super) fn pack_time(text: &str) -> Result<u64, String> {
     let bad = || format!("bad pack time: {text}");
     let bytes = text.as_bytes();
     if bytes.len() != 20

@@ -25,10 +25,10 @@
 //!
 //! The base vault decides every admission ([`AdmissionCustody`], FIX 6647,
 //! FIX 5718 part 3), wherever the body is published. Its custody door mints
-//! only for a body published in that vault. An off-record room holds no
-//! custody of its own yet: a value base custody holds still takes its handle
-//! there, but a fresh key is not placed, and a reply that holds one is
-//! withheld until room-local custody exists.
+//! only for a body published in that vault. A body an off-record room
+//! publishes keeps a fresh key in the room's own custody, in memory only
+//! (ROOM-LOCAL-CUSTODY), and holds its room handle; a value base custody
+//! holds still takes its base handle there.
 
 use std::sync::Arc;
 
@@ -39,9 +39,12 @@ use super::side_row::{CustodyDoor, SidePart, admit_decided_parts};
 use crate::Vault;
 use crate::error::{Error, GateError, Result};
 use crate::secret_record::CustodyWrite;
+use crate::session_overlay::SessionOverlay;
 use crate::side_table::RoutedDbs;
 use crate::store::known_value_index::{KnownSweep, KnownValues};
-use crate::store::{BodyDir, BodyFacts, BodyFile, BodyMeter, BodySink, LINE_INDEX_BLOCK_BYTES};
+use crate::store::{
+    BodyDir, BodyFacts, BodyFile, BodyMeter, BodySink, LINE_INDEX_BLOCK_BYTES, ManifestDbs,
+};
 
 /// The door's whole-read bound: a body within it was read whole by the
 /// door's structured rules as it streamed (the result body store's secret
@@ -234,12 +237,15 @@ impl SpoolAdmission<'_> {
 /// lifts (FIX 6647, FIX 5718 part 3): the base vault decides, with its
 /// switch, the values its owner kept, the values its custody holds, its live
 /// floor and its clock; its custody door mints only when the admitted body
-/// is published in that vault. A body an off-record room publishes takes no
-/// door, so a fresh key in it is not placed (see the module notes).
+/// is published in that vault. A body an off-record room publishes takes the
+/// room's own custody door (see the module notes).
 #[derive(Clone, Copy)]
 pub(crate) struct AdmissionCustody<'v> {
     base: &'v Vault,
     mints: bool,
+    /// The off-record room the body is published in, which keeps its fresh
+    /// keys (ROOM-LOCAL-CUSTODY).
+    room: Option<&'v SessionOverlay>,
 }
 
 impl<'v> AdmissionCustody<'v> {
@@ -248,17 +254,22 @@ impl<'v> AdmissionCustody<'v> {
         Self {
             base: vault,
             mints: true,
+            room: None,
         }
     }
 
     /// A body published along a session's write route over `base`, `write`
     /// being where that route's transaction writes: an on-record stretch
     /// writes base and mints through its door; an off-record room's overlay
-    /// mints nothing.
-    pub(crate) fn routed(base: &'v Vault, write: &RoutedDbs<'_>) -> Self {
+    /// keeps a fresh key in the room's own custody.
+    pub(crate) fn routed(base: &'v Vault, write: RoutedDbs<'v>) -> Self {
         Self {
             base,
             mints: matches!(write, RoutedDbs::Base(_)),
+            room: match write {
+                RoutedDbs::Base(_) => None,
+                RoutedDbs::Session(view) => view.room_overlay(),
+            },
         }
     }
 
@@ -293,9 +304,13 @@ impl<'v> AdmissionCustody<'v> {
         Ok(answer)
     }
 
-    /// The door the admission mints through, if the body lands in base.
-    fn door(self) -> Option<CustodyWrite<'v>> {
-        self.mints.then(|| CustodyWrite::of(self.base))
+    /// The door the admission mints through: base custody's if the body
+    /// lands in base, else the room's own, if it lands in a room.
+    fn door(self) -> Option<CustodyDoor<'v>> {
+        if self.mints {
+            return Some(CustodyDoor::Vault(CustodyWrite::of(self.base)));
+        }
+        self.room.map(CustodyDoor::Room)
     }
 }
 
@@ -342,7 +357,7 @@ pub(crate) fn admit_spool_in_txn<'s>(
         });
     }
     let mut parts = [SidePart::Body(spool.whole()?)];
-    let door = custody.door().map(CustodyDoor::Vault);
+    let door = custody.door();
     let placed = match admit_decided_parts(custody.base, door, wtxn, at, &mut parts) {
         Ok(placed) => placed,
         Err(Error::Gate(GateError::GateWriteRejected { reason_codes, .. })) => {

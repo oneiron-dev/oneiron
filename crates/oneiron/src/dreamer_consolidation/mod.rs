@@ -155,7 +155,8 @@ pub use revert::{
     DreamerChange, DreamerChangeKind, DreamerChanges, DreamerRevertReceipt, RevertedDreamerChange,
 };
 pub(crate) use revert::{
-    dreamer_changes_in_txn, revert_authored_change_in_txn, revert_dreamer_change_in_txn,
+    dreamer_changes_in_txn, restore_replaced_claim_in_txn, revert_authored_change_in_txn,
+    revert_dreamer_change_in_txn,
 };
 pub use roles::{
     DREAMER_EXTRACTION_ROLE, DREAMER_NARRATIVE_ROLE, DREAMER_ROLES, DREAMER_VERDICT_ROLE,
@@ -174,8 +175,9 @@ pub use settle::{
     SettledConflict,
 };
 pub(crate) use settle::{
-    apply_settlement_in_txn, marker_ids, open_conflict_in_txn, open_conflicts_in_txn,
-    revert_settlement_in_txn, settled_answers_in_txn, settlement_revert_lifts_restriction_in,
+    MemberRestore, apply_settlement_in_txn, marker_ids, open_conflict_in_txn,
+    open_conflicts_in_txn, revert_settlement_in_txn, settled_answers_in_txn,
+    settlement_revert_lifts_restriction_in,
 };
 pub use sieve_ports::{
     ExtractionPorts, NeighbourhoodExtraction, NeighbourhoodExtractionPort, PortFuture,

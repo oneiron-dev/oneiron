@@ -35,6 +35,14 @@
 //!   main, which has no void). A destination that logged the same withdrawal first and then its
 //!   own later grant under the same event id keeps that grant live, installs the void, and an
 //!   enrollment citing its grant is admitted (red at f4eec5e9, whose void matched the id alone).
+//! * `a_restored_requested_date_never_joins_a_withdrawal_the_destination_held` (REVIEW-10046
+//!   P1): the source records a withdrawal asked past its clock, so its consent log holds the
+//!   clock date and VOICE_IDENTITY_WITHDRAWAL_REQUESTED_AT the asked one. On a fresh destination
+//!   the asked date lands with its withdrawal and the source's request replays it. A destination
+//!   that recorded the same withdrawal itself, asked at that clock date, holds a byte-identical
+//!   consent row and no date row: its restore keeps the archived date out, so its own retry is
+//!   still a replay and the source's request stays refused (red at f59ca69d, where the archived
+//!   date landed beside it and turned both around).
 //! * `the_owner_restore_installs_the_voice_render_grant_and_the_actorless_import_leaves_none`:
 //!   the owner import installs one VOICE_REF_RENDER_CONSENT row that reads Granted.
 //! * `a_render_decision_for_a_voice_the_destination_banks_under_another_creator_is_held_back`:
@@ -98,7 +106,7 @@ use oneiron::voice_identity::ref_bank::{
 use oneiron::voice_identity::{
     VoiceConsentBasis, VoiceConsentEventV1, VoiceConsentState, VoiceEmbeddingFamily,
     VoiceEmbeddingSpaceV1, VoiceEnrollmentLegalContext, VoiceEnrollmentOrigin,
-    VoiceEnrollmentRequest, VoiceEnrollmentSampleV1, VoicePrintPurpose,
+    VoiceEnrollmentRequest, VoiceEnrollmentSampleV1, VoicePrintPurpose, VoiceWithdrawalRequest,
 };
 use oneiron::{
     ClaimApprovalStatus, ClaimLifecycleStatus, DeleteReason, EdgeActorClass, EntityId, Memory,
@@ -1063,6 +1071,122 @@ fn a_restored_consent_void_voids_only_the_exact_grant_it_names() {
     assert_eq!(
         print.consent_event_ref, "consent-owen-voided",
         "the enrollment cites the destination's own grant"
+    );
+}
+
+/// owen's withdrawal of meeting attribution, recorded by yuki, asked for `occurred_at`.
+fn requested_withdrawal(
+    subject: EntityId,
+    recorder: EntityId,
+    occurred_at: u64,
+) -> VoiceWithdrawalRequest {
+    let grant = voice_consent_event(subject, recorder);
+    VoiceWithdrawalRequest {
+        event_id: "withdrawal-owen-requested".to_owned(),
+        subject_ref: subject,
+        recorded_by_ref: recorder,
+        occurred_at,
+        purposes: grant.purposes,
+        basis: grant.basis,
+    }
+}
+
+/// A restored requested date never joins a withdrawal the destination already held
+/// (REVIEW-10046 P1).
+#[test]
+fn a_restored_requested_date_never_joins_a_withdrawal_the_destination_held() {
+    let (_source_dir, source) = open_source_vault();
+    let now = source.now_recorded_at();
+    let occurred = TimeRange {
+        start: now,
+        end: now,
+    };
+    let subject = fixed_id(0x37);
+    let recorder = fixed_id(0x38);
+    put_person_at(&source, subject, b"owen", occurred, now);
+    put_person_at(&source, recorder, b"yuki", occurred, now);
+    let asked_ahead = requested_withdrawal(subject, recorder, now + 86_400);
+    let clock = source
+        .withdraw_voice_consent(&asked_ahead)
+        .expect("the source records the withdrawal asked past its clock")
+        .occurred_at;
+    assert!(
+        clock < asked_ahead.occurred_at,
+        "setup: the source records the withdrawal at its clock"
+    );
+    let archive = export_whole(&source);
+    assert_eq!(
+        rows_for(
+            &retained_rows(&archive),
+            "VOICE_IDENTITY_WITHDRAWAL_REQUESTED_AT"
+        )
+        .len(),
+        1,
+        "setup: the archive carries the asked date"
+    );
+
+    // A fresh destination: the asked date lands with its withdrawal, and the source's request
+    // replays it.
+    let (_fresh_dir, fresh) = open_later_vault();
+    let fresh_receipt = fresh
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &owner_proof(&fresh))
+        .expect("the owner import into the fresh destination succeeds");
+    let fresh_summary =
+        serde_json::to_value(&fresh_receipt.retained_side_rows).expect("the summary serializes");
+    assert_eq!(
+        table_count(
+            &fresh_summary,
+            "VOICE_IDENTITY_WITHDRAWAL_REQUESTED_AT",
+            "installed_rows"
+        ),
+        Some(1),
+        "the fresh destination installs the asked date with its withdrawal: {fresh_summary}"
+    );
+    let replay = fresh.withdraw_voice_consent(&asked_ahead);
+    assert!(
+        replay.as_ref().is_ok_and(|receipt| receipt.replayed),
+        "the source's request replays the restored withdrawal: {replay:?}"
+    );
+
+    // A destination that recorded the same withdrawal itself, asked at the source's clock date:
+    // the consent rows are byte-identical, and its own request asked for the date it holds.
+    let (_dest_dir, dest) = open_later_vault();
+    let asked_at_clock = requested_withdrawal(subject, recorder, clock);
+    let own = dest
+        .withdraw_voice_consent(&asked_at_clock)
+        .expect("the destination records the same withdrawal at the asked date");
+    assert_eq!(
+        (own.occurred_at, own.replayed),
+        (clock, false),
+        "setup: {own:?}"
+    );
+    let receipt = dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &owner_proof(&dest))
+        .expect("the owner import into the logged destination succeeds");
+    let summary =
+        serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
+    assert_eq!(
+        table_count(&summary, "VOICE_IDENTITY_CONSENT", "unchanged_live_rows"),
+        Some(1),
+        "setup: the destination already holds the byte-identical withdrawal: {summary}"
+    );
+    let retry = dest.withdraw_voice_consent(&asked_at_clock);
+    assert!(
+        retry.as_ref().is_ok_and(|receipt| receipt.replayed),
+        "the destination's own retry is still a replay after the restore: {retry:?}"
+    );
+    assert!(
+        dest.withdraw_voice_consent(&asked_ahead).is_err(),
+        "the source's request stays refused on the destination"
+    );
+    assert_eq!(
+        table_count(
+            &summary,
+            "VOICE_IDENTITY_WITHDRAWAL_REQUESTED_AT",
+            "kept_live_rows"
+        ),
+        Some(1),
+        "the destination keeps its own replay date over the archived one: {summary}"
     );
 }
 

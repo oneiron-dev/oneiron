@@ -103,8 +103,8 @@ use super::{
 };
 use crate::Vault;
 use crate::authority::{
-    ChoiceCount, ChoiceCounts, NameCounts, SettingSlotAct, SettingSlotFold, SettingSlotHead,
-    SettingSlotRow,
+    ChoiceCount, ChoiceCounts, NameCounts, OwnerProofGround, SettingSlotAct, SettingSlotFold,
+    SettingSlotHead, SettingSlotRow,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
@@ -297,7 +297,8 @@ pub(super) fn rooted_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool
 /// Appends the owner `owner`'s applied change `recorded` of a row of `spec` that travels as its
 /// signed act, in the change's write `txn`, from `surface`, with its value inside the act or
 /// beside it ([`slot_value`]); names the entry on the change row; and projects the row
-/// from the fold in the same write.
+/// from the fold in the same write. It signs on `ground`, or with no owner proof where that is
+/// `None`.
 ///
 /// # Errors
 ///
@@ -306,6 +307,7 @@ pub(super) fn rooted_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool
 pub(super) fn append_act_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
+    ground: Option<&OwnerProofGround>,
     spec: &'static SettingSpec,
     (owner, surface): (EntityId, ActSurface),
     recorded: &SettingChange,
@@ -329,6 +331,7 @@ pub(super) fn append_act_in_txn(
     let (value, beside) = slot_value(spec, json);
     let signed = vault.append_setting_slot_act_in_txn(
         txn,
+        ground,
         SettingSlotAct {
             owner,
             surface,
