@@ -64,6 +64,16 @@ pub mod one_click_unsubscribe;
 /// into it rather than growing a second reputation model.
 pub mod send_hygiene;
 
+/// The campaign's own pack Setting keys: whether a dead sticky sender rotates
+/// (`campaign.sender.rotate_on_dead`), and the owner's per-campaign copy
+/// review skip (`campaign.copy_review.skip`).
+pub(crate) mod setting_keys;
+
+/// The vault's house voice guide: the NOTE a campaign's copy review checks
+/// against when the campaign names no voice guide, seeded once, with the
+/// vault's first campaign.
+pub mod house_voice_guide;
+
 /// CA-04's stage-ladder machinery: the pure ladder schema, coded-reply routing,
 /// warm/cold lane selection, the single projector that writes `crm.stage`
 /// through CA-01's transition door, read-side calendar-outcome consumption, and

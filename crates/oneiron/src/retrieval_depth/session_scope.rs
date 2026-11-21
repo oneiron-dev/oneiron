@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
 use crate::claim::{ScopedRead, ScopedReadReceipt, decode_claim_body};
-use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::registry::ENTITY_TYPE_CLAIM;
@@ -84,7 +83,7 @@ fn hit_in_session_scope(
         return Ok(false);
     }
     if let Some(facet) = &scope.facet_ref
-        && !carries_facet(scoped, id, facet)?
+        && !scoped.sits_in_readable_facet(id, facet)?
     {
         return Ok(false);
     }
@@ -133,15 +132,6 @@ fn claim_world(
         return Ok(None);
     }
     Ok(decode_claim_body(&body, true)?.world)
-}
-
-fn carries_facet(scoped: &ScopedRead<'_>, id: &EntityId, facet: &EntityId) -> Result<bool> {
-    let Some(edges) = scoped.edges_out(id)?.value else {
-        return Ok(false);
-    };
-    Ok(edges
-        .iter()
-        .any(|edge| edge.kind == EdgeKind::FacetOf && edge.target == *facet))
 }
 
 impl DepthSearchRequest<'_> {

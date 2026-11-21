@@ -108,6 +108,18 @@ impl Here<'_> {
         self.lease(*len).map_err(PeerError::Failed)
     }
 
+    /// A lease of this machine's memory for an ask the serving node staged
+    /// (FIX 8023), before it is got back; none for an ask that rode inline,
+    /// or with no floor here. A refusal ends the answer as the mesh's own
+    /// error, and the organ reads its own host's refusal.
+    fn hold_asked(self, carried: &Carried) -> Result<Option<Leased>, MeshError> {
+        let Carried::Staged { len, .. } = carried else {
+            return Ok(None);
+        };
+        self.lease(*len)
+            .map_err(|err| MeshError::Io(format!("organ mesh ask: {err}")))
+    }
+
     /// A lease of this machine's memory for `len` bytes this node sends,
     /// held until they are sent; none with no floor here. A refusal ends
     /// the send as the mesh's own error.
@@ -425,7 +437,11 @@ async fn answer(
     here: Here<'_>,
     lines: &mut Vec<crate::receipt::AskReceipt>,
 ) -> Result<(), MeshError> {
-    let ask: PeerAsk = decode(&stream.recv().await?)?;
+    // An ask past the inline bound was staged on the serving node (FIX
+    // 8023): it is got in pieces once this machine holds their memory.
+    let carried: Carried = decode(&stream.recv().await?)?;
+    let _asked = here.hold_asked(&carried)?;
+    let ask: PeerAsk = decode(&take(conn, carried).await?)?;
     let (answered, signed, slot) = run_handler(&ask, asks, lines);
     let _held = match &answered {
         Ok(Answered { value, data, .. }) => {
@@ -446,11 +462,15 @@ async fn answer(
         }),
         Err(refusal) => Err(refusal),
     };
+    // The answer rides as the ask did: staged on the serving node past the
+    // inline bound, so no answer the organ may take fails on the size of
+    // one transport message (FIX 8023).
     let encoded = encode(&PeerAnswer { answered, signed })?;
+    let carried = put(conn, &encoded, sent, here).await?;
     // Sending may partially succeed even on an error. Only the serving
     // host's final receipt can confirm what the organ received.
     lines[slot].unanswered = Some(crate::receipt::Unanswered::Unknown);
-    stream.send(&encoded).await
+    stream.send(&encode(&carried)?).await
 }
 
 fn run_handler(

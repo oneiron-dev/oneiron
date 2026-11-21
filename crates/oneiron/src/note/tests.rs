@@ -144,7 +144,8 @@ fn decode_rejects_every_abi_deviation() {
 
 #[test]
 fn brief_kind_round_trip_is_person_stamped_and_fail_closed() {
-    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
+    let (_dir, vault) =
+        crate::test_util::open_test_vault_with_manifest(crate::VaultConfig::device());
     let actor = actor(0x61);
     vault
         .put_entity(
@@ -486,7 +487,8 @@ fn facet_stamps(vault: &crate::Vault, id: EntityId) -> Vec<EntityId> {
 }
 
 fn owner_fixture() -> (tempfile::TempDir, crate::Vault, crate::WriteActor) {
-    let (dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
+    let (dir, vault) =
+        crate::test_util::open_test_vault_with_manifest(crate::VaultConfig::default());
     let owner = vault.ensure_embedded_owner_actor().unwrap();
     let actor = crate::WriteActor::new(owner, crate::edge::EdgeActorClass::Human);
     (dir, vault, actor)

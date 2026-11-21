@@ -195,7 +195,7 @@ fn a_raw_tool_or_format_control_needs_the_capability_its_typed_field_would() {
                 other => panic!("raw {key} (stream: {stream}) must be refused: {other:?}"),
             }
         }
-        let able = entry(vec![LlmCapability::Streaming, capability.clone()]);
+        let able = entry(vec![LlmCapability::Streaming, capability]);
         let body = super::wire::build_request(&able, &call, false)
             .expect("a capable model takes the raw control")
             .body;

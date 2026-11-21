@@ -90,6 +90,8 @@ mod body;
 mod budget;
 pub(crate) use accounts::AccountKeys;
 use accounts::Caller;
+#[cfg(oneiron_test_support)]
+pub(crate) use accounts::parse_rows;
 use budget::answer_bytes;
 #[cfg(test)]
 use budget::encoding_bytes;

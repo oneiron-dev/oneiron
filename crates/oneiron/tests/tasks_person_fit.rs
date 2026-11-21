@@ -4,7 +4,7 @@
 use std::collections::BTreeSet;
 
 use oneiron::context_board::{
-    People, PeopleView, TaskBoardStatus, TaskIntentPresence, TasksSectionRows,
+    People, PeopleView, TaskBoardStatus, TaskIntentPresence, TasksSection, TasksSectionRows,
 };
 use oneiron::learning::{
     Anchor, LearningCell, LearningEvidence, LearningPredicate, Observation, TypeRef,
@@ -71,6 +71,7 @@ fn tasks_fits_rank_measured_fit_above_completion_count() {
         intents: Vec::new(),
         bare_jobs: Vec::new(),
         source_exhausted: true,
+        rows_shown: TasksSection::RENDER_ROW_CAP,
     };
     // P has two completed rows; Q has one. Main therefore ranks P first.
     for person in [person_p, person_p, person_q] {

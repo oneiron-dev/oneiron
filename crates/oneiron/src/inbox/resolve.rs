@@ -6,9 +6,9 @@ use sha2::{Digest, Sha256};
 use crate::Vault;
 use crate::batch::BatchOp;
 use crate::edit_distance::delta::{
-    AMENDMENT_UNCAPTURED_INBOX, AmendmentDelta, DeltaCaptureContext, EndpointRef, MeasuredEnd,
-    OUTCOME_APPROVED_AMENDED, attach_amendment_deltas, bump_amendment_uncaptured_in_txn,
-    capture_delta_best, live_revision_in_txn, put_amendment_delta_in_txn,
+    AMENDMENT_UNCAPTURED_INBOX, AmendmentDelta, OUTCOME_APPROVED_AMENDED,
+    approved_claim_body_bytes, attach_amendment_deltas, bump_amendment_uncaptured_in_txn,
+    live_revision_in_txn, measured_claim_amendment_in_txn, put_amendment_delta_in_txn,
 };
 use crate::edit_distance::miner::CompilationTargetValidation;
 use crate::edit_distance::miner::record_inbox_learning_in_txn;
@@ -472,12 +472,12 @@ fn accept_member_with_amendment_in_txn(
     // Both sides are normalized to Approved before the Δ is measured, so it
     // reports the DECIDER's edit and not the approval flip this door performs
     // on every accept.
-    let approved = approved_body(amended.as_ref().unwrap_or(&reviewed))?;
+    let approved = approved_claim_body_bytes(amended.as_ref().unwrap_or(&reviewed))?;
     // Proposed end: the claim as reviewed (FIX 7819); a failed read fails only the capture.
     let reviewed_end = if amended_approval {
         Some((
             live_revision_in_txn(&vault.store, wtxn, *id),
-            approved_body(&reviewed)?,
+            approved_claim_body_bytes(&reviewed)?,
         ))
     } else {
         None
@@ -491,7 +491,7 @@ fn accept_member_with_amendment_in_txn(
         rebind_amended_consent(vault, wtxn, &pending, &approved)?;
     }
     if amended_approval || reviewed.approval != ClaimApprovalStatus::Approved {
-        let unamended = approved == approved_body(&reviewed)?;
+        let unamended = approved == approved_claim_body_bytes(&reviewed)?;
         let put = BatchOp::Put {
             id: *id,
             entity_type: ENTITY_TYPE_CLAIM,
@@ -545,7 +545,7 @@ fn accept_member_with_amendment_in_txn(
     // A Δ the door could not measure counts here (FIX 11542):
     // `captured_amendment_delta` is read-only, so the bump rides this write.
     if !delta_reasons.is_empty() {
-        bump_amendment_uncaptured_in_txn(vault, wtxn, AMENDMENT_UNCAPTURED_INBOX)?;
+        bump_amendment_uncaptured_in_txn(&vault.store, wtxn, AMENDMENT_UNCAPTURED_INBOX)?;
     }
     vault.complete_deferred_claim_in_txn(wtxn, id, None, now, learning.map(|(actor, _)| actor))?;
     crate::task_verb::settle_task_proposal_in_txn(
@@ -643,51 +643,16 @@ pub(super) fn captured_amendment_delta(
     reviewed_at: Result<Option<crate::vault::RevisionRef>>,
     proposed: &[u8],
 ) -> (Option<AmendmentDelta>, Vec<String>) {
-    match measured_amendment_in_txn(vault, txn, claim, reviewed_at, proposed) {
+    let measured = reviewed_at.and_then(|reviewed_at| match reviewed_at {
+        Some(reviewed_at) => {
+            measured_claim_amendment_in_txn(&vault.store, txn, claim, reviewed_at, proposed)
+        }
+        None => Ok(None),
+    });
+    match measured {
         Ok(Some(delta)) => (Some(delta), Vec::new()),
         Ok(None) | Err(_) => (None, vec![INBOX_REASON_AMEND_DELTA_UNCAPTURED.to_owned()]),
     }
-}
-
-/// Both ends by their refs, the landed body read back; `None` if either is gone.
-fn measured_amendment_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    claim: &EntityId,
-    reviewed_at: Result<Option<crate::vault::RevisionRef>>,
-    proposed: &[u8],
-) -> Result<Option<AmendmentDelta>> {
-    let (Some(reviewed_at), Some(landed_at)) = (
-        reviewed_at?,
-        live_revision_in_txn(&vault.store, txn, *claim)?,
-    ) else {
-        return Ok(None);
-    };
-    let Some(raw) = vault.store.port_entity_record(txn, claim)? else {
-        return Ok(None);
-    };
-    let landed = approved_body(&crate::write_envelope::claim_body::decode_claim_body(
-        &raw.body, true,
-    )?)?;
-    let context = DeltaCaptureContext::from_bodies(
-        MeasuredEnd {
-            at: EndpointRef::approved_claim(*claim, reviewed_at),
-            content: proposed,
-        },
-        MeasuredEnd {
-            at: EndpointRef::approved_claim(*claim, landed_at),
-            content: &landed,
-        },
-    );
-    Ok(capture_delta_best(context).ok())
-}
-
-/// The claim body as the door will persist it. Approval is the ENGINE's to
-/// set: a submitted body asserting its own approval decides nothing.
-fn approved_body(body: &ClaimBody) -> Result<Vec<u8>> {
-    let mut approved = body.clone();
-    approved.approval = ClaimApprovalStatus::Approved;
-    crate::write_envelope::claim_body::encode_claim_body(&approved)
 }
 
 /// Validates a decider's edit against the proposal it amends.
@@ -699,7 +664,10 @@ fn approved_body(body: &ClaimBody) -> Result<Vec<u8>> {
 /// `claim_consent_binding_parts` binds consent to it. An amendment that moved
 /// either one would land a claim under a classification that never described
 /// it, which is a substitution wearing an edit's clothes. Everything else —
-/// value, confidence, validity, scope — is exactly what an edit is for.
+/// value, confidence, validity, scope — is exactly what an edit is for. An
+/// edited world-access row still carries a value the fold reads (FIX
+/// [WORLD-ACCESS-GENERIC-DOOR-UNDECODABLE]): the fold fails the agent's reads
+/// closed on one it cannot read.
 fn amended_claim_body(reviewed: &ClaimBody, amended_body: &[u8]) -> Result<ClaimBody> {
     let amended = crate::write_envelope::claim_body::decode_claim_body(amended_body, true)?;
     if amended.predicate != reviewed.predicate {
@@ -712,6 +680,7 @@ fn amended_claim_body(reviewed: &ClaimBody, amended_body: &[u8]) -> Result<Claim
             "amendment changes the reviewed claim's subject",
         ));
     }
+    crate::claim::world_access::admit_world_access_value(&amended)?;
     Ok(amended)
 }
 

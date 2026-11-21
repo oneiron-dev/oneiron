@@ -31,7 +31,7 @@ use crate::memory::Memory;
 use crate::outbound::{
     OutboundDispatchActor, OutboundDispatchError, OutboundDispatchGate, OutboundDispatchRequest,
     OutboundDispatchResult, OutboundExecutionOutcome, OutboundExecutionRequest,
-    OutboundExecutionSink, OutboundIntent, OutboundIntentDraft,
+    OutboundExecutionSink, OutboundIntent, OutboundIntentDraft, kept_send_backoff_until,
 };
 use crate::receipt::{DispatchObservationKey, append_dispatch_observation_in_txn};
 use crate::side_table::{self, Named, SideTable};
@@ -401,6 +401,14 @@ impl Vault {
         request: OutboundDispatchRequest,
         sink: &mut S,
     ) -> std::result::Result<OutboundDispatchResult, OutboundDispatchError> {
+        // A copy restored and not joined sends no notice, one whose lease its
+        // image kept included (row RESTORED-UNJOINED-STARTS-NO-WORK): refused
+        // before the lease check and the consent preflight, so its row stays
+        // as the image left it.
+        {
+            let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
+            self.refuse_work_while_restored_unjoined_in_txn(&txn)?;
+        }
         let attempt = self.leased_trusted_contact_notice(attempt)?;
         let attempt = &attempt;
         let notice = decode(attempt)?;
@@ -533,9 +541,7 @@ impl Vault {
                             lease_owner,
                             attempt_count: attempt.attempt_count,
                             // FIX 11660: never before the edge its receipt names.
-                            backoff_until: now
-                                .saturating_add(60)
-                                .max(result.retry_at().unwrap_or(0)),
+                            backoff_until: kept_send_backoff_until(now, result.retry_at()),
                             last_error: Some("notice_not_dispatched".into()),
                             now,
                         },
@@ -558,6 +564,12 @@ impl Vault {
         lease_owner: &str,
         now: u64,
     ) -> Result<Option<(AttemptRecord, TrustedContactNotice)>> {
+        // A copy restored and not joined takes no sender lease (row
+        // RESTORED-UNJOINED-STARTS-NO-WORK). Notices wait in the queue for
+        // the sender's first claim after the join.
+        if self.restored_unjoined()? {
+            return Ok(None);
+        }
         let sender = sender.to_hex();
         loop {
             let claimed = self.with_write_txn_grouped(|wtxn| {

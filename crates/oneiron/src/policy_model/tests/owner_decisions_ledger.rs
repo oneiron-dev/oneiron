@@ -96,7 +96,10 @@ fn a_flood_of_response_parts_is_stopped_while_joining() {
     let part = "x".repeat(4096);
     let parts = (super::contract::POLICY_MODEL_ANSWER_PARSE_MAX_BYTES / 4096) + 2;
     let content: Vec<ContentPart> = (0..parts)
-        .map(|_| ContentPart::Text { text: part.clone() })
+        .map(|_| ContentPart::Text {
+            text: part.clone(),
+            signature: None,
+        })
         .collect();
     assert!(
         super::prompt::response_text(&multi_part_response(content)).is_none(),
@@ -108,9 +111,11 @@ fn a_flood_of_response_parts_is_stopped_while_joining() {
     let ordinary = vec![
         ContentPart::Text {
             text: r#"{"violation":0,"#.to_owned(),
+            signature: None,
         },
         ContentPart::Text {
             text: r#""policy_category":null}"#.to_owned(),
+            signature: None,
         },
     ];
     assert_eq!(

@@ -14,7 +14,7 @@ use std::sync::Arc;
 use oneiron::llm::BrokerIsolation;
 use oneiron::llm::media::{
     AiOperation, InterruptedMediaCall, MediaBackend, MediaFuture, MediaPart, MediaProgressFuture,
-    MediaRequest, MediaResponse, MediaUsage,
+    MediaRequest, MediaResponse, MediaUsage, run_once_released,
 };
 use oneiron::{BudgetLease, FatalLlmError, LlmError, LlmResult, ModelId};
 use serde_json::{Value, json};
@@ -387,7 +387,7 @@ impl<T: OpenAiMediaTransport> MediaBackend for OpenAiEmbedBackend<T> {
         release: Option<oneiron::llm::DispatchRelease<'a>>,
     ) -> MediaProgressFuture<'a> {
         if request.operation != AiOperation::Embed {
-            return self.run_progress(request, lease);
+            return run_once_released(self, request, lease, None);
         }
         Box::pin(async move {
             if request.voice.is_some() {

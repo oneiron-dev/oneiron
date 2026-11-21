@@ -146,6 +146,13 @@ pub trait ConnectorCallHost: OutboundResultSender {
     fn take_send_hold(&mut self) -> Option<&'static str> {
         None
     }
+
+    /// Takes the session manifest of the runner the last `send` went
+    /// through (canon `#runner-fence`, row L8-27): a stdio connector's
+    /// child. `None` when it went through none, or this host starts none.
+    fn take_session_manifest(&mut self) -> Option<oneiron_container::SessionManifest> {
+        None
+    }
 }
 
 /// One held or pending-delivery call, as a settler lists it: its ref, the

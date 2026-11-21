@@ -236,8 +236,12 @@ pub(crate) async fn next_state_part(
     {
         parts.sections.push(section);
     }
-    let laid_out =
-        oneiron::context_board::apply_board_layout(&parts.sections, &layout.layout, cap_tok);
+    let laid_out = oneiron::context_board::apply_board_layout(
+        &parts.sections,
+        &layout.layout,
+        cap_tok,
+        oneiron::context_board::fold_attention_rows(&server.vault),
+    );
     let split = split_board(
         &SplitFrame {
             header: &BoardBlockHeader {

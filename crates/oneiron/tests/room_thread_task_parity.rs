@@ -196,6 +196,7 @@ fn join_room(vault: &Vault, owen: EntityId, room: EntityId, agent: EntityId) -> 
             offer_id: card.offer_id.clone(),
             action: OfferAnswer::Join,
             intent_key: format!("{FIXTURE_PATH}:answer:{}", agent.to_hex()),
+            check_in_ref: None,
         })?;
     let join = accepted.join.ok_or("the host's answer carries no join")?;
     if join.decision.state != JoinDecision::Ready {
@@ -278,6 +279,7 @@ fn speak_trunk(fixture: &Fixture) -> TestResult<(EntityId, EntityId)> {
         conversation_ref: fixture.room.to_hex(),
         turn_ref: Some(turn.to_hex()),
         thread_audience: None,
+        project: None,
         messages: vec![WitnessMessage {
             id: Some(message.to_hex()),
             author: WitnessAuthor::User,
@@ -550,6 +552,7 @@ fn ordinary_room_retry_of_an_unclaimed_rowed_reply_is_queued() -> TestResult {
             conversation_ref: fixture.room.to_hex(),
             turn_ref: Some(reply.to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: Some(EntityId::now().to_hex()),
                 author: WitnessAuthor::Companion,

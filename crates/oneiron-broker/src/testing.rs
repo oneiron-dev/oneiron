@@ -244,7 +244,10 @@ async fn read_request(stream: &mut (impl tokio::io::AsyncRead + Unpin)) -> Optio
 }
 
 /// A reply that names a transfer coding is framed in chunks, as its last
-/// coding must be; any other carries its length.
+/// coding must be; any other carries its length, or the length it names when
+/// its headers already hold a `content-length`: a test can declare more
+/// bytes than the body holds, and the fake then closes short of it, which
+/// the client reads as a cut body.
 fn encode(reply: &FakeReply) -> Vec<u8> {
     let mut out = format!("HTTP/1.1 {} Fake\r\n", reply.status).into_bytes();
     let mut chunked = false;
@@ -262,13 +265,21 @@ fn encode(reply: &FakeReply) -> Vec<u8> {
         out.extend_from_slice(b"0\r\n\r\n");
         return out;
     }
-    out.extend_from_slice(
-        format!(
-            "content-length: {}\r\nconnection: close\r\n\r\n",
-            reply.body.len()
-        )
-        .as_bytes(),
-    );
+    let declared = reply
+        .headers
+        .iter()
+        .any(|(name, _)| name.eq_ignore_ascii_case("content-length"));
+    if declared {
+        out.extend_from_slice(b"connection: close\r\n\r\n");
+    } else {
+        out.extend_from_slice(
+            format!(
+                "content-length: {}\r\nconnection: close\r\n\r\n",
+                reply.body.len()
+            )
+            .as_bytes(),
+        );
+    }
     out.extend_from_slice(&reply.body);
     out
 }

@@ -240,6 +240,7 @@ impl Vault {
                         result: None,
                         result_absence: Some(ConnectorResultAbsence::NotRetained),
                         budget_steering: Vec::new(),
+                        session_manifest: None,
                     }),
                 held.source_rows,
             )),
@@ -251,6 +252,15 @@ impl Vault {
                 // kept.
                 if let Some(settled) = &held.settled {
                     return Ok((settled.outcome(), held.source_rows));
+                }
+                // A copy restored and not joined gives a held row the
+                // refusal its outbound chokepoint gives a new call (row
+                // RESTORED-UNJOINED-STARTS-NO-WORK), read before the expiry
+                // check, so a join that commits during this pass cannot
+                // drive a call whose deadline that check never read.
+                {
+                    let txn = self.store.env.read_txn().map_err(Error::from)?;
+                    self.refuse_work_while_restored_unjoined_in_txn(&txn)?;
                 }
                 if let Some(expired) =
                     self.expire_connector_call_if_due(&call_ref, &held, crate::unix_millis_now())?

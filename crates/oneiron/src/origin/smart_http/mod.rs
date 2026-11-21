@@ -126,6 +126,10 @@ pub(crate) use self::evidence::erase_receive_pack_evidence_actor_in_txn;
 pub use self::held::{AtDiskFloor, HeldBytes, SpillFloor};
 pub use self::hooks::DoorHooksDir;
 pub use self::intent::{ReceivePackRefResult, ReceivePackRefStatus};
+#[cfg(oneiron_test_support)]
+pub(crate) use self::intent::{
+    receive_pack_intent_key_pin_for_test, receive_pack_progress_key_pin_for_test,
+};
 pub(crate) use self::intent_erase::erase_receive_pack_intent_actor_in_txn;
 pub use self::landing::{
     ReceivePackAttribution, ReceivePackCertificate, ReceivePackLanding, refs_already_applied,
@@ -144,48 +148,33 @@ pub use self::push_admission::{admit_receive_pack, serve_bounded_as};
 pub(crate) use self::recipient_serve::store_may_need_masked_copy_in_txn;
 pub use self::recipient_serve::{RepoGitReadContext, serve_bounded_for_recipient};
 pub use self::secret_marks::ReceiveSecretMarks;
+pub(in crate::origin) use self::serve::repo_common_dir;
 pub use self::serve::{
     ServeReport, ServeSink, push_queue_key, serve, serve_bounded, serve_bounded_with_authority,
     serve_with_authority, serve_with_provenance,
 };
 pub use self::serve_cmd::{ServeChild, ServeCommand, ServeRequest};
 
-// FIX [LIBTEST-QUARANTINE-ORIGIN-SMART-HTTP-ADVERTISE-TESTS]: the lib test target's type check fails here (4 errors: E0308 x4); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod advertise_tests;
-// FIX [LIBTEST-QUARANTINE-ORIGIN-SMART-HTTP-CHECKOUT-TESTS]: the lib test target's type check fails here (10 errors: E0308 x3, E0063 x3, E0639 x2, E0061 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod checkout_tests;
-// FIX [LIBTEST-QUARANTINE-ORIGIN-SMART-HTTP-DOOR-SERVE-TESTS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod door_serve_tests;
-// FIX [LIBTEST-QUARANTINE-ORIGIN-SMART-HTTP-EPOCH-TESTS]: the lib test target's type check fails here (2 errors: E0308 x1, E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod epoch_tests;
 #[cfg(test)]
 mod exchange_tests;
-// FIX [LIBTEST-QUARANTINE-ORIGIN-SMART-HTTP-HISTORY-SCAN-TESTS]: the lib test target's type check fails here (3 errors: E0061 x1, E0063 x1, E0599 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod history_scan_tests;
-// FIX [LIBTEST-QUARANTINE-ORIGIN-SMART-HTTP-INTENT-RECOVERY-TESTS]: the lib test target's type check fails here (6 errors: E0308 x3, E0061 x2, E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod intent_recovery_tests;
-// FIX [LIBTEST-QUARANTINE-ORIGIN-SMART-HTTP-LANDING-TESTS]: the lib test target's type check fails here (2 errors: E0599 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod landing_tests;
 #[cfg(test)]
 mod maintain_tests;
 #[cfg(test)]
 mod push_cert_tests;
-// FIX [LIBTEST-QUARANTINE-ORIGIN-SMART-HTTP-RECREATE-TESTS]: the lib test target's type check fails here (5 errors: E0308 x4, E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod recreate_tests;
 #[cfg(test)]

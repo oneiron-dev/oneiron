@@ -3,23 +3,26 @@
 //! Claims, shared run state, and pump admission remain in the parent module.
 
 use super::{
-    AgentDefinition, AgentDispatchStatus, AgentDispatcher, AgentModel, AgentVerbDoor, Arc,
-    AttemptQueue, AttemptRecord, BoundRun, Claimed, DecisionHost, EngineExecutorConfig,
-    EngineExecutorOutcome, EngineExecutorStatus, EngineRunError, EntityId, HostPlannerBinding,
-    HostPlannerDecisions, HostSelfDispatcher, LeaderStarterSkills, McpCodeModeProvider, ModelId,
-    ModelSeat, PlannedModel, PlannerSeat, PlannerSettings, PlannerSkills, ReadSetProducer,
-    ReaderSeats, RunCompaction, RunHostDoor, SKILL_SEPARATOR, ScopeMeter, SeatKind, SeatTask,
-    SpawnHostSeat, SpendScopeId, SyncServer, TaskExposure, TaskTypeRef, UNBOUND_LIST_KEEPS_ROUTE,
-    Vault, WINDOW_FULL_TRIES, WINDOW_FULL_WAIT, WriteActor, agent_dispatch_run_actor,
-    browser_workflow, child_pin, craft, ensure_listed, enter_engine_native_run,
-    finalize_step_captures, fork_executor_run, note_stale_listed_models, note_unbound_listed_run,
-    pattern_launch, pump_caller, run_continuation, scope_funding, task_engine_run_seat,
-    task_run_seat, text, unix_seconds_now,
+    AgentDefinition, AgentDispatchStatus, AgentDispatcher, AgentVerbDoor, Arc, AttemptQueue,
+    AttemptRecord, BoundRun, Claimed, DecisionHost, EngineExecutorConfig, EngineExecutorOutcome,
+    EngineExecutorStatus, EngineRunError, EntityId, HostPlannerBinding, HostPlannerDecisions,
+    HostSelfDispatcher, LeaderStarterSkills, McpCodeModeProvider, ModelId, ModelSeat, PlannedModel,
+    PlannerSeat, PlannerSettings, PlannerSkills, ReadSetProducer, ReaderSeats, RunCompaction,
+    RunHostDoor, SKILL_SEPARATOR, ScopeMeter, SpawnHostSeat, SpendScopeId, SyncServer,
+    TaskExposure, UNBOUND_LIST_KEEPS_ROUTE, Vault, WINDOW_FULL_TRIES, WINDOW_FULL_WAIT, WriteActor,
+    agent_dispatch_run_actor, browser_workflow, child_pin, craft, ensure_listed,
+    enter_engine_native_run, finalize_step_captures, note_stale_listed_models,
+    note_unbound_listed_run, pattern_launch, pump_caller, scope_funding, task_engine_run_seat,
+    text, unix_seconds_now,
 };
 use crate::ai_host::PrefixRefresh;
 use crate::mcp::LiveLeaseRunner;
 use oneiron::engine_executor::SelfBriefPort;
 use oneiron::llm::seat::SeatLearningContext;
+
+mod continuation;
+
+use self::continuation::{appended_exposure, continued_config, continued_seat};
 
 /// Runs the leased attempt until it ends, waits, or fails: a yielded slice
 /// enters again at once, a full window once its compaction can land.
@@ -225,6 +228,22 @@ pub(super) fn run_bound(
         super::attribution::stamp_seatless_executor(vault, &status.attempt, &config, &template);
     }
     super::attribution::bind_before_entry(vault, &status.attempt);
+    // Census L9-37 (ARCH-0051 #decision-r9-bench): the shape the run reads
+    // memory through, picked once for the model its settled config runs on
+    // and kept by every later wake of the attempt; its self brief names it.
+    // Both shapes stay reachable (Engine RULING L9-37-SHAPE-REACH = A). A
+    // pick or stamp that fails leaves the run unstamped, logged.
+    let read_shape = vault
+        .stamp_wake_read_shape(status.attempt.id, &config.model)
+        .inspect_err(|error| {
+            tracing::warn!(
+                kind = ?error.kind(),
+                attempt = ?status.attempt.id,
+                "a wake's read shape was not stamped; the run reads unstamped"
+            );
+        })
+        .ok();
+    door.bind_read_shape(read_shape.map(|stamp| stamp.shape));
     // DOOR-111 S4c-5: a planned team's leader runs with the exact pattern
     // pack its launch froze, its SKILL.md before any other skill's body; a
     // continued run's task, its source's fork, already holds it there.
@@ -443,94 +462,6 @@ fn record_resident_read_sets(
     record(ReadSetProducer::CODE_RUN_HOST_TASK, None);
 }
 
-/// The exposure a source run's [`TaskExposure::append`] left at the end of
-/// a continued run's forked task (FIX 3694): the separator and `body`.
-/// `None` when the task does not end with them, as when the skill changed
-/// since the source ran.
-fn appended_exposure(
-    task: &str,
-    separator: &str,
-    body: &str,
-    skill: EntityId,
-    revision: String,
-) -> Option<TaskExposure> {
-    let start = task.len().checked_sub(separator.len() + body.len())?;
-    let tail = task.get(start..)?;
-    (tail.strip_prefix(separator)? == body).then(|| TaskExposure {
-        skill,
-        revision,
-        content_hash: *blake3::hash(tail.as_bytes()).as_bytes(),
-        start,
-        end: task.len(),
-    })
-}
-
-/// The config a leased successor runs under when it carries the owner's
-/// approved prompt continuation (FIX 3694): its fork of the failed
-/// predecessor's run, seeded from the cut, or re-opened on a later entry.
-/// `None` for any other run. A fork that refuses fails the run under the
-/// refusal's code.
-fn continued_config(
-    vault: &Vault,
-    attempt: &AttemptRecord,
-    template: &EngineExecutorConfig,
-) -> Result<Option<EngineExecutorConfig>, EngineRunError> {
-    if run_continuation(vault, attempt.id).map_err(text)?.is_none() {
-        return Ok(None);
-    }
-    fork_executor_run(vault, attempt, template)
-        .map(|prepared| Some(prepared.config))
-        .map_err(|refusal| EngineRunError::Binding(refusal.to_string()))
-}
-
-/// The seat a continued run is born on (FIX 3694): one of its own, under its
-/// own run's receipt, bound to the model, locality and effort its source ran
-/// on, so the fork's config marker holds on every entry. That model must
-/// still be on the agent's list (`listed`, FIX 4472). It is stamped with
-/// the successor's own dispatch stamp (`type_ref`, DOOR-111 S5), and picked
-/// in the dispatched `agent`'s voice (FIX 4543).
-#[allow(clippy::too_many_arguments)]
-fn continued_seat(
-    vault: &Vault,
-    provider: &dyn McpCodeModeProvider,
-    agent: EntityId,
-    config: &EngineExecutorConfig,
-    type_ref: &TaskTypeRef,
-    listed: Vec<AgentModel>,
-    worlds: Vec<EntityId>,
-    learning: Option<SeatLearningContext>,
-) -> Result<Option<ModelSeat>, String> {
-    // The birth's worlds are the dispatch row's branch world, threaded by the
-    // caller (FIX 11918, Engine 00:54); empty inherits. No federation slip here.
-    task_run_seat(
-        vault,
-        provider,
-        agent,
-        config.run_id,
-        type_ref,
-        worlds,
-        learning,
-        |facet| SeatTask {
-            kind: SeatKind::Attempt,
-            warm_scope: format!("agent-run:{}", config.run_id.to_hex()),
-            task: config.task.clone(),
-            purpose: oneiron::CallPurpose::Other {
-                name: oneiron::engine_executor::ENGINE_EXECUTOR_PURPOSE_NAME.into(),
-            },
-            facet: facet.to_owned(),
-            required: Vec::new(),
-            min_context_tokens: 1,
-            locality: config.model_locality,
-            override_model: Some(config.model.clone()),
-            override_effort: config.seat_effort,
-            listed,
-            worlds: Vec::new(),
-            served: None,
-            learning: None,
-        },
-    )
-}
-
 /// FIX 6030: with no seat the run is still held to its list; a configured
 /// route off the list refuses, naming it. Under the old hook (FIX 4544) the
 /// run keeps that route, as before lists, and the owner is told once per
@@ -688,6 +619,16 @@ fn enter_run(
         config.run_id,
         media_scope,
     ));
+    // RUN-BRIEF-ROUTE-AWARE-ROSTER: what this entry's code-mode calls are
+    // bound to, as its executor routes them: the seat's model where it runs,
+    // else a pinned planned child's pick where its settled config runs it.
+    // Its brief's PEOPLE are read for as far as those calls may go.
+    door.bind_code_mode_route(Some(crate::ai_host::CodeModeRoute {
+        seat: model_seat.map(|seat| (seat.model().clone(), seat.locality())),
+        pinned: planned
+            .filter(|planned| planned.exact)
+            .map(|_| (config.model.clone(), config.model_locality)),
+    }));
     // FIX 17594 D3: the run's self brief, resolved from what this entry
     // bound and installed under the run's connection, and the port its
     // requests carry it through. The live run keeps the installation across
@@ -726,6 +667,7 @@ fn enter_run(
     door.bind_lease(None);
     door.bind_run_ceiling(None);
     door.bind_attempt(None);
+    door.bind_code_mode_route(None);
     entered
 }
 

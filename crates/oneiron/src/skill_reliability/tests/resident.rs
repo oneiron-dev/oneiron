@@ -7,27 +7,26 @@ fn stamped_resident_receipt(
     skill: &EntityId,
 ) -> Result<String> {
     let queue = AttemptQueue::new(vault);
-    let EnqueueOutcome::Enqueued(row) = queue.enqueue(EnqueueAttempt {
-        kind: "resident.rank".into(),
-        payload: Vec::new(),
-        dedupe_key: None,
-        run_id: None,
-        now: 10,
-    })?
+    let dispatcher = AgentDispatcher::new(vault);
+    let now = vault.now_recorded_at();
+    let AgentDispatchOutcome::Dispatched(dispatched) =
+        dispatcher.dispatch_default_base(None, None, None, now)?
     else {
         panic!("new attempt")
     };
+    let row = dispatched.attempt;
 
     let ClaimOutcome::Claimed(leased) = queue.claim_kind(
-        "resident.rank",
+        DREAMER_RUNNER_ATTEMPT_KIND,
         ClaimAttempt {
             lease_owner: "resident-rank".into(),
-            now: 12,
+            now: vault.now_recorded_at(),
         },
     )?
     else {
         panic!("claim")
     };
+    assert_eq!(leased.id, row.id);
     vault.load_resident_skill_pack(
         row.id,
         resident,
@@ -35,16 +34,47 @@ fn stamped_resident_receipt(
         "resident-rank",
         leased.attempt_count,
         "fixture/model@1",
-        11,
+        now,
     )?;
-    queue.fail(crate::attempt_queue::FailAttempt {
-        id: row.id,
-        lease_owner: "resident-rank".into(),
-        attempt_count: leased.attempt_count,
-        reason: "failed".into(),
-        now: 13,
-    })?;
-    Ok(attempt_pack_receipt_id(&row.id))
+    let fail_now = vault.now_recorded_at();
+    crate::failure_ladder::FailureLadder::new(vault).handle_attempt_failure(
+        crate::failure_ladder::HandleAttemptFailure {
+            attempt_id: row.id,
+            lease_owner: "resident-rank".into(),
+            attempt_count: leased.attempt_count,
+            evidence: crate::failure_ladder::TypedFailureEvidence {
+                evidence_ref: None,
+                verdict: crate::failure_ladder::TypedFailureVerdict::Indeterminate,
+                tier: None,
+                stable_reason: "failed".into(),
+            },
+            blocked_reports: Vec::new(),
+            pre_fail_checkpoint_ref: EntityId::now(),
+            qa_thread_ref: EntityId::now(),
+            retry_at: fail_now,
+            now: fail_now,
+        },
+        crate::failure_ladder::FailureScopePolicy::auto(crate::failure_ladder::FailureScope {
+            agent_ref: vault
+                .get_seeded_agent_definition_by_logical_id("sys.default")?
+                .unwrap()
+                .0
+                .to_hex(),
+            skill_ref: None,
+        }),
+    )?;
+    let receipt_id = attempt_pack_receipt_id(&row.id);
+    // The projector mints numerical claims only for anchored outcomes
+    // (projector.rs:535-548): stamp the harness's held-out score beside the
+    // executor revision, so the routed failure below moves the posterior.
+    let mut receipt =
+        crate::receipt::attempt_pack_receipt(vault, &receipt_id)?.expect("stamped pack receipt");
+    receipt.fields.insert(
+        FIELD_SKILL_LEARNING_ANCHOR.to_owned(),
+        serde_json::to_string(&crate::learning::Anchor::HeldOut).expect("anchor encodes"),
+    );
+    crate::receipt::overwrite_attempt_pack_receipt_for_test(vault, &receipt)?;
+    Ok(receipt_id)
 }
 
 #[test]
@@ -127,8 +157,13 @@ fn version_bandit_ranks_only_one_residents_forks_and_own_receipts() -> Result<()
         27,
     )?;
     assert_eq!(loaded.record.version, "1");
+    // The typed dispatch freezes one project/type cell for every receipt; the
+    // ranking must read that cell, not the vault query (see
+    // reliability_query_for_receipt).
+    let mut query_receipt = String::new();
     for at in 30..38 {
         let receipt = stamped_resident_receipt(&vault, &a, &a_old)?;
+        query_receipt.clone_from(&receipt);
         assert!(
             record_attribution_evidence(
                 &vault,
@@ -148,13 +183,35 @@ fn version_bandit_ranks_only_one_residents_forks_and_own_receipts() -> Result<()
     }
     let rows = run_attribution_projector(&vault, 0)?;
     project_skill_reliability(&vault, &rows)?;
-    let ranked = rank_resident_skill_versions(&vault, &a, &[a_old, a_new], "fixture/model@1")?;
+    let ranked = rank_resident_skill_versions(
+        &vault,
+        &a,
+        &[a_old, a_new],
+        "fixture/model@1",
+        &reliability_query_for_receipt(&vault, &query_receipt),
+    )?;
     assert_eq!(ranked[0].0, a_new);
     assert!(ranked[0].1 > ranked[1].1);
     assert!(
-        rank_resident_skill_versions(&vault, &a, &[a_old, b_version], "fixture/model@1").is_err()
+        rank_resident_skill_versions(
+            &vault,
+            &a,
+            &[a_old, b_version],
+            "fixture/model@1",
+            &reliability_query(),
+        )
+        .is_err()
     );
-    assert!(rank_resident_skill_versions(&vault, &a, &[a_old, base], "fixture/model@1").is_err());
+    assert!(
+        rank_resident_skill_versions(
+            &vault,
+            &a,
+            &[a_old, base],
+            "fixture/model@1",
+            &reliability_query(),
+        )
+        .is_err()
+    );
     let EnqueueOutcome::Enqueued(selection) = queue.enqueue(EnqueueAttempt {
         kind: "resident.selected".into(),
         payload: Vec::new(),
@@ -183,6 +240,7 @@ fn version_bandit_ranks_only_one_residents_forks_and_own_receipts() -> Result<()
             "resident-selected",
             leased.attempt_count,
             "fixture/model@1",
+            &reliability_query_for_receipt(&vault, &query_receipt),
             40,
         )?
         .expect("candidate");

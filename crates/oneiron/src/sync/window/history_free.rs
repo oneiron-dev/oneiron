@@ -410,6 +410,16 @@ pub(crate) fn history_free_snapshot(
     check: Option<&HistoryCheck>,
     baseline: Option<&VersionVector>,
 ) -> Result<Vec<u8>> {
+    rooted_history_free_snapshot(doc, check, baseline).map(|(bytes, _)| bytes)
+}
+
+/// [`history_free_snapshot`], and whether it kept the doc's own root, and so all the history the
+/// doc holds.
+fn rooted_history_free_snapshot(
+    doc: &LoroDoc,
+    check: Option<&HistoryCheck>,
+    baseline: Option<&VersionVector>,
+) -> Result<(Vec<u8>, bool)> {
     doc.commit();
     let admits = |start: &VersionVector, frontiers: &Frontiers| {
         baseline.is_none_or(|floor| root_state(start, frontiers).includes_vv(floor))
@@ -419,11 +429,11 @@ pub(crate) fn history_free_snapshot(
     };
     let own_root = doc.shallow_since_vv().to_vv();
     if admits(&own_root, &doc.shallow_since_frontiers()) {
-        return export_snapshot(doc);
+        return Ok((export_snapshot(doc)?, true));
     }
     let (bytes, start, frontiers) = newest_rooted_snapshot(doc)?;
     if admits(&start, &frontiers) {
-        return Ok(bytes);
+        return Ok((bytes, false));
     }
     Err(root_unavailable())
 }
@@ -434,21 +444,21 @@ pub(crate) fn history_free_snapshot(
 /// `check` refuses takes its erased form first, so neither keeps it (FIX 21141). Persistence never
 /// fails for want of a clean root or a proved cut: a cut an import raced is stored as before, and
 /// window `key` owes the erasure sweep a compaction. No export ships the stored root without
-/// checking it again.
+/// checking it again. Returns the snapshot and whether it kept all the history `doc` holds.
 pub(crate) fn persisted_history_free_snapshot(
     vault: &Vault,
     key: &WindowKey,
     doc: &LoroDoc,
     check: &HistoryCheck,
-) -> Result<Vec<u8>> {
+) -> Result<(Vec<u8>, bool)> {
     check.erased_origin.rewrite_live(doc)?;
-    match history_free_snapshot(doc, Some(check), None) {
+    match rooted_history_free_snapshot(doc, Some(check), None) {
         Err(Error::Sync(SyncError::SyncProtocolError {
             context: SyncProtocolValidation::HistoryFreeRootUnavailable,
         })) => {
             let cut = super::shallow::strict_window_cut(doc)?;
             super::shallow::owe_unproved_cut(vault, key, &cut)?;
-            Ok(cut.bytes)
+            Ok((cut.bytes, false))
         }
         other => other,
     }
@@ -766,6 +776,10 @@ fn scrub_for_export(
     withhold: super::Withhold<'_>,
 ) -> Result<Scrubbed> {
     crate::sync::note::refresh(vault, doc, key)?;
+    // A row a use limit keeps here leaves first, so the side-row scrubs
+    // below drop its side rows as a row the window no longer carries.
+    let use_limited_scrubbed =
+        super::use_limited::withhold_use_limited_carriers(vault, doc, Some(key))?;
     let secret_scrubbed = scrub_local_only_carriers(vault, key, doc)?;
     let claims_scrubbed = scrub_local_claim_carriers(vault, key, doc)?;
     let authors_scrubbed = scrub_redacted_attribution_carriers(vault, key, doc)?;
@@ -813,7 +827,8 @@ fn scrub_for_export(
     if super::project_history::carry_project_history(vault, doc)? {
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     }
-    let check = if secret_scrubbed
+    let check = if use_limited_scrubbed
+        || secret_scrubbed
         || claims_scrubbed
         || authors_scrubbed
         || withdrawn_scrubbed

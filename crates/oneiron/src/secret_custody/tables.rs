@@ -24,6 +24,12 @@ crate::side_table::side_tables! {
         [restore: live] [family: dispatch Credential] [tier: canonical];
     SECRET_CUSTODY_INPUT: VaultMeta b"secret_custody:input:v1:" Raw Ciphertext
         [restore: live] [family: dispatch Credential] [tier: canonical];
+    /// A custody record this install minted for a file's key, merged into the synced record of
+    /// the same value once that record opened here (FILE-CUSTODY-MERGE-AFTER-REWRAP): the record
+    /// that holds the value now and when the merge was written. The merged record is revoked
+    /// here, its value erased. Holds no value. Key: id16 (the merged record).
+    SECRET_CUSTODY_MERGE: VaultMeta b"secret_custody:merge:v1:" Named Engine
+        [restore: live] [family: unclassified] [tier: canonical];
     /// What one custody request's executor committed (WILL L04 row 04): the digest of the custody
     /// transition it signed and the rotation receipt it wrote, immutable once written, beside the
     /// latest transition by id. A retry finds it and changes nothing. Key: hash32 (the request's
@@ -58,6 +64,13 @@ crate::side_table::side_tables! {
     SECRET_CUSTODY_RESTORE_RELEASE: VaultMeta b"secret_custody:restore_release:v1:" Named Engine
         [restore: live] [family: structure] [tier: canonical]
         => crate::secret_custody::erase_pending_restore_actor_in_txn;
+    /// One machine's newest same-value statement this vault holds (FIX [SECRETS-SAME-VALUE-FACT]):
+    /// its writer, the time it signed it, the pairs of custody records it proves hold one value
+    /// sealed to each machine mine there, its signature, and the pairs this install opened from it.
+    /// Never a value. This install's own is derived again on each steady pass and the others come
+    /// from the residence home, so no image carries one. Key: id16 (writer machine).
+    SECRET_CUSTODY_SAME_VALUE: VaultMeta b"secret_custody:same_value:v1:" Named Engine
+        [restore: not_imaged] [family: not_imaged] [tier: runtime];
     /// The latest owner-signed custody transition this vault signed of one portable credential
     /// (OF-422): the record without its value, the value sealed to each machine mine here. Key:
     /// hex32(entity id).

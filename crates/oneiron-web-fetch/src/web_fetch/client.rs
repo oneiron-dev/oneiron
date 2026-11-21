@@ -10,8 +10,9 @@
 //!
 //! On a managed node every name the client connects to resolves through
 //! the node's [`HostedEgressGuard`]: a name with any address that is hosted
-//! infrastructure, or a private-network address while the name is no
-//! operator origin's (FIX 7657), fails its connection with the
+//! infrastructure, or a private-network address outside the operator's
+//! networks (HOSTED-EGRESS-OPERATOR-SETTING) while the name is no operator
+//! origin's (FIX 7657), fails its connection with the
 //! [`HostedEgressRefusal`](super::HostedEgressRefusal), and the connection
 //! goes only to the addresses the guard just admitted. The client uses no
 //! proxy, so nothing resolves the name elsewhere.

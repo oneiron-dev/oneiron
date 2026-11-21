@@ -11,11 +11,12 @@
 //! An empty pick on the live socket renegotiates again, and the next socket
 //! asks for no world window.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use base64::Engine;
 use ed25519_dalek::SigningKey;
 use futures_util::{SinkExt, StreamExt};
 use oneiron::EntityId;
@@ -43,7 +44,7 @@ const STEP_WAIT: Duration = Duration::from_secs(20);
 
 /// What the fake home saw, in the order it saw it.
 #[derive(Debug)]
-enum HomeEvent {
+pub(super) enum HomeEvent {
     /// A sync socket opened: its number, counted from 1.
     SyncOpened(usize),
     /// A sync socket asked about a world window.
@@ -71,15 +72,55 @@ struct RpcRequest {
     id: u64,
     method: String,
     window: String,
+    params: serde_json::Value,
 }
 
-struct FakeHome {
+/// What the fake home serves and records for the predicted residence tests.
+#[derive(Debug, Default)]
+pub(super) struct PredictedHome {
+    /// The selectors of the `residence.predict` asks, in order.
+    pub(super) asks: Mutex<Vec<String>>,
+    /// The set bodies `residence.predicted_set` serves, by 64-hex digest.
+    pub(super) sets: Mutex<HashMap<String, Vec<u8>>>,
+    /// The windows of the `residence.promote` asks, in order.
+    pub(super) promotes: Mutex<Vec<String>>,
+    /// The windows of the `residence.window.vv` asks, in order.
+    pub(super) vvs: Mutex<Vec<String>>,
+    /// Every predicted residence RPC method seen, in order.
+    pub(super) methods: Mutex<Vec<String>>,
+}
+
+/// What the fake home serves and records for the followed tombstone tests
+/// (FOLLOWED-WORLD-TIER1-TOMBSTONE-IDS).
+#[derive(Debug, Default)]
+pub(super) struct TombstoneHome {
+    /// The tombstones `residence.tombstones` serves, by window: each row's
+    /// lowercase hex id and its raw tombstone value.
+    pub(super) served: Mutex<HashMap<String, Vec<(String, Vec<u8>)>>>,
+    /// The windows of the `residence.tombstones` asks, in order.
+    pub(super) asks: Mutex<Vec<String>>,
+    /// The windows whose `residence.tombstones` asks the home refuses, as
+    /// its send door refuses a window gone unreadable to the machine.
+    pub(super) refused_windows: Vec<String>,
+    /// Whether the home refuses every followed window (`FOLLOW_REFUSED`).
+    pub(super) refuse_follows: bool,
+    /// How many asks of a window the home answers with no tombstone before
+    /// it serves the planted ones: a delete it makes after the device's
+    /// first passes.
+    pub(super) serve_after_asks: usize,
+}
+
+pub(super) struct FakeHome {
     /// The root image every sync socket gets for its root vector.
     root: Vec<u8>,
     events: mpsc::UnboundedSender<HomeEvent>,
     sync_sockets: AtomicUsize,
     /// Released by the test; taken by the first thin index read.
     held_index: Mutex<Option<oneshot::Receiver<()>>>,
+    /// The predicted residence RPCs' state, when a predicted test serves them.
+    predicted: Option<Arc<PredictedHome>>,
+    /// The followed tombstone RPC's state, when a tombstone test serves it.
+    tombstones: Option<Arc<TombstoneHome>>,
 }
 
 impl FakeHome {
@@ -88,6 +129,46 @@ impl FakeHome {
     /// thin index read.
     async fn start(
         root: Vec<u8>,
+    ) -> (
+        String,
+        mpsc::UnboundedReceiver<HomeEvent>,
+        oneshot::Sender<()>,
+    ) {
+        Self::start_with(root, None, None).await
+    }
+
+    /// Listens like [`Self::start`], serving the predicted residence RPCs from `predicted`:
+    /// `residence.predict` answers unchanged, `residence.predicted_set` serves a planted body,
+    /// `residence.promote` records the ask and refuses it, and `residence.window.vv` answers an
+    /// empty vector.
+    pub(super) async fn start_predicted(
+        root: Vec<u8>,
+        predicted: Arc<PredictedHome>,
+    ) -> (
+        String,
+        mpsc::UnboundedReceiver<HomeEvent>,
+        oneshot::Sender<()>,
+    ) {
+        Self::start_with(root, Some(predicted), None).await
+    }
+
+    /// Listens like [`Self::start`], serving `residence.tombstones` from
+    /// `tombstones`, and refusing every followed window when it says so.
+    pub(super) async fn start_tombstones(
+        root: Vec<u8>,
+        tombstones: Arc<TombstoneHome>,
+    ) -> (
+        String,
+        mpsc::UnboundedReceiver<HomeEvent>,
+        oneshot::Sender<()>,
+    ) {
+        Self::start_with(root, None, Some(tombstones)).await
+    }
+
+    async fn start_with(
+        root: Vec<u8>,
+        predicted: Option<Arc<PredictedHome>>,
+        tombstones: Option<Arc<TombstoneHome>>,
     ) -> (
         String,
         mpsc::UnboundedReceiver<HomeEvent>,
@@ -107,6 +188,8 @@ impl FakeHome {
             events,
             sync_sockets: AtomicUsize::new(0),
             held_index: Mutex::new(Some(held)),
+            predicted,
+            tombstones,
         });
         tokio::spawn(async move {
             while let Ok((stream, _)) = listener.accept().await {
@@ -182,14 +265,20 @@ impl FakeHome {
                     sub_tag,
                     window_sub_tags::PROMOTION_REQUEST | window_sub_tags::FOLLOW_REQUEST
                 ) {
+                    let refused = sub_tag == window_sub_tags::FOLLOW_REQUEST
+                        && self
+                            .tombstones
+                            .as_ref()
+                            .is_some_and(|home| home.refuse_follows);
+                    let answer = if refused {
+                        window_sub_tags::FOLLOW_REFUSED
+                    } else {
+                        window_sub_tags::PROMOTION_GRANTED
+                    };
                     vec![
-                        transport::encode_window_sync(
-                            window,
-                            window_sub_tags::PROMOTION_GRANTED,
-                            &[],
-                        )
-                        .into_result()
-                        .expect("grant frame"),
+                        transport::encode_window_sync(window, answer, &[])
+                            .into_result()
+                            .expect("grant or refusal frame"),
                     ]
                 } else {
                     Vec::new()
@@ -205,6 +294,22 @@ impl FakeHome {
         };
         if request.id == BIND_ID {
             return vec![bind_reply()];
+        }
+        if let Some(tombstones) = &self.tombstones
+            && request.method == "residence.tombstones"
+        {
+            return refuse_tombstones(tombstones, &request)
+                .unwrap_or_else(|| answer_tombstones(tombstones, &request));
+        }
+        if let Some(predicted) = &self.predicted
+            && request.method != "residence.index"
+        {
+            predicted
+                .methods
+                .lock()
+                .expect("the recorded methods")
+                .push(request.method.clone());
+            return answer_predicted(predicted, request).await;
         }
         if request.method != "residence.index" {
             return vec![rpc_envelope(
@@ -244,7 +349,153 @@ fn rpc_request(frame: &[u8]) -> Option<RpcRequest> {
             .as_str()
             .unwrap_or_default()
             .to_owned(),
+        params: envelope["payload"]["params"].clone(),
     })
+}
+
+/// Answers one `residence.tombstones` page: every tombstone planted for the
+/// asked window, in one page, once the window was asked `serve_after_asks`
+/// times before, and records the ask.
+fn answer_tombstones(home: &TombstoneHome, request: &RpcRequest) -> Vec<Vec<u8>> {
+    let earlier = {
+        let mut asks = home.asks.lock().expect("the recorded tombstone asks");
+        let earlier = asks
+            .iter()
+            .filter(|window| **window == request.window)
+            .count();
+        asks.push(request.window.clone());
+        earlier
+    };
+    let served = home.served.lock().expect("the served tombstones");
+    let items: Vec<serde_json::Value> = served
+        .get(&request.window)
+        .filter(|_| earlier >= home.serve_after_asks)
+        .into_iter()
+        .flatten()
+        .map(|(id, value)| {
+            serde_json::json!({
+                "entityId": id,
+                "value": base64::engine::general_purpose::STANDARD.encode(value),
+            })
+        })
+        .collect();
+    let page = serde_json::json!({
+        "window": request.window,
+        "items": items,
+        "nextCursor": null,
+    });
+    vec![rpc_envelope(
+        "rpc.res",
+        request.id,
+        Value::Binary(rmp_serde::to_vec_named(&page).expect("encode the tombstone page")),
+    )]
+}
+
+/// The home's refusal of a `residence.tombstones` ask for a window named in
+/// `refused_windows` (`RESULT_CHANGED`, the send door's answer for a window
+/// gone unreadable to the machine), recording the ask; `None` for any other
+/// window.
+fn refuse_tombstones(home: &TombstoneHome, request: &RpcRequest) -> Option<Vec<Vec<u8>>> {
+    if !home.refused_windows.contains(&request.window) {
+        return None;
+    }
+    home.asks
+        .lock()
+        .expect("the recorded tombstone asks")
+        .push(request.window.clone());
+    Some(vec![rpc_envelope(
+        "rpc.err",
+        request.id,
+        Value::Map(vec![(Value::from("code"), Value::from("RESULT_CHANGED"))]),
+    )])
+}
+
+/// Answers one predicted residence RPC: `residence.predict` records the ask and answers
+/// unchanged, `residence.predicted_set` serves the planted body from the asked offset,
+/// `residence.promote` records the window and refuses it (the tests assert on the recorded
+/// request), and `residence.window.vv` answers an empty vector. Anything else is refused.
+async fn answer_predicted(predicted: &PredictedHome, request: RpcRequest) -> Vec<Vec<u8>> {
+    let RpcRequest {
+        id,
+        method,
+        window,
+        params,
+    } = request;
+    match method.as_str() {
+        "residence.predict" => {
+            predicted
+                .asks
+                .lock()
+                .expect("the recorded asks")
+                .push(params["selector"].as_str().unwrap_or_default().to_owned());
+            let page = serde_json::json!({ "state": "unchanged" });
+            vec![rpc_envelope(
+                "rpc.res",
+                id,
+                Value::Binary(
+                    rmp_serde::to_vec_named(&page).expect("encode the prediction answer"),
+                ),
+            )]
+        }
+        "residence.predicted_set" => {
+            let digest = params["digest"].as_str().unwrap_or_default();
+            let offset = params["offset"].as_u64().unwrap_or(u64::MAX);
+            let sets = predicted.sets.lock().expect("the served sets");
+            let (Some(body), Ok(offset)) = (sets.get(digest), usize::try_from(offset)) else {
+                return vec![refusal(id)];
+            };
+            if offset > body.len() {
+                return vec![refusal(id)];
+            }
+            let total = u64::try_from(body.len()).expect("a served set fits its total");
+            let page = serde_json::json!({
+                "digest": digest,
+                "offset": offset,
+                "total": total,
+                "part": base64::engine::general_purpose::STANDARD.encode(&body[offset..]),
+            });
+            vec![rpc_envelope(
+                "rpc.res",
+                id,
+                Value::Binary(rmp_serde::to_vec_named(&page).expect("encode the set part")),
+            )]
+        }
+        "residence.promote" => {
+            predicted
+                .promotes
+                .lock()
+                .expect("the recorded promotes")
+                .push(window);
+            vec![refusal(id)]
+        }
+        "residence.window.vv" => {
+            predicted
+                .vvs
+                .lock()
+                .expect("the recorded vv asks")
+                .push(window.clone());
+            let page = serde_json::json!({
+                "window": window,
+                "vv": base64::engine::general_purpose::STANDARD
+                    .encode(loro::VersionVector::new().encode()),
+            });
+            vec![rpc_envelope(
+                "rpc.res",
+                id,
+                Value::Binary(rmp_serde::to_vec_named(&page).expect("encode the vv answer")),
+            )]
+        }
+        _ => vec![refusal(id)],
+    }
+}
+
+/// The fake home's refusal of one residence RPC.
+fn refusal(id: u64) -> Vec<u8> {
+    rpc_envelope(
+        "rpc.err",
+        id,
+        Value::Map(vec![(Value::from("code"), Value::from("REFUSED"))]),
+    )
 }
 
 /// One reply envelope, as the home writes it.
@@ -268,7 +519,7 @@ fn bind_reply() -> Vec<u8> {
 
 /// The device's NOTE session: a slip of this host's mint, bound to the key
 /// the device holds.
-fn note_session(device: &Device) -> NoteSyncSession {
+pub(super) fn note_session(device: &Device) -> NoteSyncSession {
     let issuer = HostSlipIssuer::from_secret(FIXTURE_HOST_SECRET).expect("fixture host issuer");
     let key = SigningKey::from_bytes(&[0x5a; 32]);
     let mut claims = device
@@ -287,17 +538,21 @@ fn note_session(device: &Device) -> NoteSyncSession {
 }
 
 /// What the home and the device's run reported so far.
-struct Watch {
-    home: mpsc::UnboundedReceiver<HomeEvent>,
-    sync: mpsc::UnboundedReceiver<SyncEvent>,
-    home_seen: Vec<HomeEvent>,
-    sync_seen: Vec<SyncEvent>,
+pub(super) struct Watch {
+    pub(super) home: mpsc::UnboundedReceiver<HomeEvent>,
+    pub(super) sync: mpsc::UnboundedReceiver<SyncEvent>,
+    pub(super) home_seen: Vec<HomeEvent>,
+    pub(super) sync_seen: Vec<SyncEvent>,
 }
 
 impl Watch {
     /// Reads both reports until `done` holds of them; fails after
     /// [`STEP_WAIT`] naming `what` and all both reported.
-    async fn until(&mut self, what: &str, done: impl Fn(&[HomeEvent], &[SyncEvent]) -> bool) {
+    pub(super) async fn until(
+        &mut self,
+        what: &str,
+        done: impl Fn(&[HomeEvent], &[SyncEvent]) -> bool,
+    ) {
         let deadline = tokio::time::Instant::now() + STEP_WAIT;
         while !done(&self.home_seen, &self.sync_seen) {
             tokio::select! {
@@ -313,7 +568,7 @@ impl Watch {
 }
 
 /// How many negotiations reached `Synced`.
-fn synced(events: &[SyncEvent]) -> usize {
+pub(super) fn synced(events: &[SyncEvent]) -> usize {
     events
         .iter()
         .filter(|event| matches!(event, SyncEvent::StatusChanged(SyncStatus::Synced)))
@@ -328,7 +583,7 @@ fn opened(events: &[HomeEvent], connection: usize) -> bool {
 
 /// The world windows sync socket `connection` asked about, with each ask's
 /// sub tag, in order.
-fn world_asks(events: &[HomeEvent], connection: usize) -> Vec<(String, u8)> {
+pub(super) fn world_asks(events: &[HomeEvent], connection: usize) -> Vec<(String, u8)> {
     events
         .iter()
         .filter_map(|event| match event {

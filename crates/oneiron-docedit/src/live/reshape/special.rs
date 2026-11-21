@@ -93,7 +93,11 @@ fn filled(
         let mut found = node.children.iter().copied().filter(|&child| {
             tree.nodes[child].namespace == A && names.contains(&tree.nodes[child].name.as_str())
         });
-        if last { found.last() } else { found.next() }
+        if last {
+            found.next_back()
+        } else {
+            found.next()
+        }
     };
     let splice = match find(FILLS, false) {
         Some(old) => (tree.nodes[old].span.clone(), fill.into_bytes()),

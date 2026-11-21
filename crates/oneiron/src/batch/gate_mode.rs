@@ -58,13 +58,18 @@ pub(crate) struct ApplyOpsGateMode {
     /// candidates, revalidated in the transaction that applies them. Raw puts
     /// never read it.
     pub(super) owner_authored: Option<crate::consent::OwnerAuthoredWrite>,
-    /// The vault owner's in-person approval of ONE stored proposal, bound to
-    /// its claim id and revalidated in the transaction that approves it
-    /// (`ClaimMaterialization::apply_owner_approval`). The raw Put of that
-    /// claim alone reads it; every other Put in the batch reads nothing.
+    /// The vault owner's in-person approval of ONE stored proposal, or the
+    /// owner's own exact close of one Approved claim, bound to its claim id
+    /// and revalidated in the transaction that writes it
+    /// (`ClaimMaterialization::apply_owner_approval`,
+    /// `Vault::supersede_claim_as_owner`). The raw Put of that claim alone
+    /// reads it; every other Put in the batch reads nothing.
     pub(super) owner_approval: Option<(EntityId, crate::consent::OwnerAuthoredWrite)>,
     /// Call-scoped Imported-source permit for one expression batch of the owner's archive restore.
     pub(super) owner_archive_restore: Option<OwnerArchiveRestorePermit>,
+    /// The same permit for one batch of that restore's edge provenance claims, bound to each
+    /// annotator whose claim the batch puts (REVIEW-9687 round 2 P1).
+    pub(super) owner_archive_restore_annotators: Option<(OwnerArchiveRestorePermit, Vec<EntityId>)>,
     /// The body file each ASSET put this batch stages as a manifest names,
     /// published before the batch (FIX 3677); consumed by that put.
     pub(super) asset_files: HashMap<EntityId, crate::store::AssetBodyFacts>,
@@ -109,6 +114,7 @@ impl ApplyOpsGateMode {
             owner_authored: None,
             owner_approval: None,
             owner_archive_restore: None,
+            owner_archive_restore_annotators: None,
             asset_files: HashMap::new(),
             asset_file_bodies: HashMap::new(),
             replicated_puts: std::collections::BTreeSet::new(),
@@ -162,8 +168,9 @@ impl ApplyOpsGateMode {
         self
     }
 
-    /// Binds the owner's approval proof to the one claim this batch approves.
-    pub(super) fn with_owner_approval(
+    /// Binds the owner's proof to the one claim this batch approves, or
+    /// closes by the owner's own door.
+    pub(crate) fn with_owner_approval(
         mut self,
         claim: EntityId,
         owner_approval: Option<crate::consent::OwnerAuthoredWrite>,
@@ -174,6 +181,15 @@ impl ApplyOpsGateMode {
 
     pub(crate) fn with_owner_archive_restore(mut self, permit: &OwnerArchiveRestorePermit) -> Self {
         self.owner_archive_restore = Some(permit.clone());
+        self
+    }
+
+    pub(super) fn with_owner_archive_restore_for_annotators(
+        mut self,
+        permit: &OwnerArchiveRestorePermit,
+        annotators: Vec<EntityId>,
+    ) -> Self {
+        self.owner_archive_restore_annotators = Some((permit.clone(), annotators));
         self
     }
 
@@ -215,7 +231,7 @@ impl ApplyOpsGateMode {
     }
 
     /// Binds each bound raw CLAIM put to its caller's envelope (FIX 8118).
-    pub(super) fn with_caller_envelopes(
+    pub(crate) fn with_caller_envelopes(
         mut self,
         envelopes: HashMap<EntityId, crate::WriteEnvelope>,
     ) -> Self {

@@ -133,7 +133,8 @@ pub(super) async fn serve(
     let mut conn_state = ConnState::new(protocol_version).with_peer_machine(machine);
     conn_state.locality = locality;
     conn_state.signing_request_transport = signing_request_transport;
-    let subscriber = BroadcastSubscriber::new(conn_id, &server.broadcast_tx);
+    let subscriber =
+        BroadcastSubscriber::new(conn_id, &server.broadcast_tx, &server.broadcast_sessions);
     let app_connection = Connection::new(Hub::for_server(&server), conn_id);
     let (direct_tx, direct_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
     let mut socket = FacadeSocket {
@@ -292,7 +293,9 @@ impl FacadeSocket {
             &payload,
             &self.direct_tx,
             Some(&mut self.app_connection),
-        ) {
+        )
+        .await
+        {
             Ok(Some(call)) => {
                 self.verb_calls
                     .spawn(call.answer(Arc::clone(&self.server), self.direct_tx.clone()));

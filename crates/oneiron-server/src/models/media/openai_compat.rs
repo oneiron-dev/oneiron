@@ -75,14 +75,6 @@ impl<T: OpenAiMediaTransport> MediaBackend for OpenAiCompatMedia<T> {
         self.family(request.operation).run(request, lease)
     }
 
-    fn run_progress<'a>(
-        &'a self,
-        request: MediaRequest,
-        lease: &'a BudgetLease,
-    ) -> MediaProgressFuture<'a> {
-        self.family(request.operation).run_progress(request, lease)
-    }
-
     fn run_progress_released<'a>(
         &'a self,
         request: MediaRequest,

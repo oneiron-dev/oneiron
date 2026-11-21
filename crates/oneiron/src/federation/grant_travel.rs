@@ -167,6 +167,7 @@ impl Vault {
         now: u64,
     ) -> Result<Option<GrantTravel>> {
         let actor = owner.revalidate_in_txn(self, txn)?;
+        let owner_authored = owner.owner_answer_in_txn(self, txn)?;
         live_federation_grant_in(self, txn, grant)?;
         let choice = travel.filter(|choice| !choice.born_with.is_empty());
         let clear = choice.is_none();
@@ -174,8 +175,16 @@ impl Vault {
         let frontier = self
             .authority_view_readonly_in_txn(txn)?
             .append_heads_digest();
-        let signed =
-            self.append_grant_travel_set_in_txn(txn, actor, surface, *grant, choice, seen, now)?;
+        let signed = self.append_grant_travel_set_in_txn(
+            txn,
+            actor,
+            owner_authored.as_ref(),
+            surface,
+            *grant,
+            choice,
+            seen,
+            now,
+        )?;
         let after = self.federation_grant_travel_in_txn(txn, grant)?;
         GrantTravelAct {
             actor,

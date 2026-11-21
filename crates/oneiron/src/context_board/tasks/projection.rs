@@ -11,11 +11,11 @@ use crate::outbound::{ConnectorSendTask, ConnectorSendTaskOutcome};
 use crate::{EntityId, Result, Vault};
 
 #[doc(hidden)]
+use oneiron_records::context_board::tasks::projection::child_board_status;
+#[doc(hidden)]
 pub use oneiron_records::context_board::tasks::projection::{
     CancelRejectionPathology, TaskBoardStatus, TasksOverflow,
 };
-#[doc(hidden)]
-use oneiron_records::context_board::tasks::projection::{TASK_FITS_CAP, child_board_status};
 #[doc(hidden)]
 pub(super) use oneiron_records::context_board::tasks::projection::{
     TASKS_RENDER_ROW_CAP, run_tree_board_status,
@@ -176,8 +176,10 @@ impl TasksSection {
         Self::render_with_cap(intents, bare_jobs, source_exhausted, Self::RENDER_ROW_CAP)
     }
 
-    /// Testable body: production uses [`Self::RENDER_ROW_CAP`]; tests inject a
-    /// small cap so overflow behaviour is exercised without a 100-row fixture.
+    /// Testable body: a board renders under its rows' owner count
+    /// ([`TasksSectionRows::rows_shown`], [`Self::RENDER_ROW_CAP`] by default);
+    /// tests inject a small cap so overflow behaviour is exercised without a
+    /// 100-row fixture.
     pub(crate) fn render_with_cap(
         intents: &[TaskIntentPresence],
         bare_jobs: &[JobPresence],
@@ -215,12 +217,21 @@ pub struct TasksSectionRows {
     /// `false` when the TASK scan stopped at its own cap; see
     /// [`TasksSection::render_bounded`].
     pub source_exhausted: bool,
+    /// The rows [`Self::render`] shows before its footer counts the rest: the
+    /// owner's `context_board.tasks.rows_shown`, read with the rows, else
+    /// [`TasksSection::RENDER_ROW_CAP`].
+    pub rows_shown: usize,
 }
 
 impl TasksSectionRows {
     #[must_use]
     pub fn render(&self) -> TasksSection {
-        TasksSection::render_bounded(&self.intents, &self.bare_jobs, self.source_exhausted)
+        TasksSection::render_with_cap(
+            &self.intents,
+            &self.bare_jobs,
+            self.source_exhausted,
+            self.rows_shown,
+        )
     }
 
     /// PEOPLE (ARCH-0067): names each task's `who` as this reader's board
@@ -317,6 +328,10 @@ impl TasksSectionRows {
                     .or_default() += 1;
             }
         }
+        let fits_shown = crate::context_board::setting_keys::read_count(
+            vault,
+            &crate::context_board::setting_keys::TASKS_FITS_SHOWN,
+        ) as usize;
         let mut fit_reads = PersonFitReads::new(vault);
         self.intents
             .iter()
@@ -348,7 +363,7 @@ impl TasksSectionRows {
                 });
                 ranked
                     .into_iter()
-                    .take(TASK_FITS_CAP)
+                    .take(fits_shown)
                     .map(|(who, _, _)| people.label(who))
                     .collect()
             })
@@ -726,10 +741,16 @@ impl TaskIntentPresence {
         // An acknowledgement answers the settlement that stood when it was
         // made (FIX 3694): a TASK a continuation put back on its lane, live
         // again or settled since, is not acknowledged by it. Both clocks are
-        // recorded seconds; an ack in its failure's own second still counts.
-        let acked = match facts.acked_at {
-            Some(acked_at) => crate::task_verb::task_settled_at_in(vault, rtxn, task_ref)?
-                .is_some_and(|settled| settled <= acked_at),
+        // recorded seconds; an ack in its failure's own second still counts,
+        // for the failed heads it saw there: a second job failing later in
+        // that second stays listed (FIX
+        // TASK-ACK-SAME-SECOND-FAILED-HEAD-HIDDEN). A cancelled row is off
+        // the board however it stands, so its ack bit keeps the fact's own
+        // answer and never gates on a settlement.
+        let acked = match &facts.ack {
+            Some(_) if facts.cancelled => true,
+            Some(ack) => crate::task_verb::task_settlement_in(vault, rtxn, task_ref)?
+                .is_some_and(|settled| ack.answers(settled.at, &settled.failed_heads)),
             None => false,
         };
         Ok(TaskRenderState {

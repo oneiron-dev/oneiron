@@ -230,6 +230,7 @@ async fn cross(row: LimitRow) -> Crossing {
             | EngineLimit::OrganMemoryBytes
             | EngineLimit::OrganMeshObjectBytes
             | EngineLimit::OrganMeshStagedBytes
+            | EngineLimit::SandboxEgressResponseBytes
             | EngineLimit::DeadlineJobsPerCaller
             | EngineLimit::BackupHandoffPendingBackups
             | EngineLimit::BackupHandoffPendingBytes
@@ -259,7 +260,8 @@ async fn cross(row: LimitRow) -> Crossing {
             | EngineLimit::DecisionQuestionsPerCall
             | EngineLimit::ContextEdgeHops
             | EngineLimit::ContextNeighbors
-            | EngineLimit::ContextSelectedEdges,
+            | EngineLimit::ContextSelectedEdges
+            | EngineLimit::ActorExposedRecords,
         ) => {
             unimplemented!("{}: no Rule-5 driver crosses this row yet", row.key())
         }
