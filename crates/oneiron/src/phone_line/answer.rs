@@ -1,8 +1,110 @@
 //! A genuine receiving-agent credential narrowed to one current phone call.
 
+use std::collections::BTreeSet;
+
 use super::*;
 use crate::authority::VerifiedSlip;
 use crate::claim::ScopedReadActorKey;
+use crate::voice_call::PhoneReach;
+
+/// What one call may read under one ceiling: the line's reach frozen at
+/// answer, met with the live reach on every read (VOICE-PHONE-AGENT-REACH
+/// R2). Invariant: `confined` implies `caller_rule` (a confined call is
+/// always also held to its current caller's thread).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct CallReach {
+    scope: Scope,
+    caller_rule: bool,
+    confined: Option<BTreeSet<EntityId>>,
+}
+
+impl CallReach {
+    /// The reach a call freezes from the line's `voice.phone.reach` value:
+    /// the default reads this caller's thread plus the picked documents, a
+    /// custom reads its scope in the current caller's thread (or across
+    /// callers when it includes them), and the whole vault reads everything
+    /// the line agent's own credential reads.
+    pub(crate) fn of(value: &PhoneReach) -> Self {
+        match value {
+            PhoneReach::Default { .. } => Self {
+                scope: Scope::top(),
+                caller_rule: true,
+                confined: Some(value.documents().into_iter().collect()),
+            },
+            PhoneReach::Custom {
+                scope,
+                include_other_callers,
+            } => Self {
+                scope: scope.clone(),
+                // REACH-CUSTOM-CALLER-RULE = A (Engine 16 Nov 04:16): Custom
+                // keeps the current-caller rule unless it includes other
+                // callers; then its Scope alone decides (the per-thread
+                // grants still apply).
+                caller_rule: !include_other_callers,
+                confined: None,
+            },
+            PhoneReach::WholeVault => Self {
+                scope: Scope::top(),
+                caller_rule: false,
+                confined: None,
+            },
+        }
+    }
+
+    /// The narrower of two reaches: the met scope, either caller rule, and
+    /// the picked documents both sides name (a side that names none confines
+    /// nothing away from the other).
+    pub(crate) fn meet(&self, other: &Self) -> Self {
+        Self {
+            scope: self.scope.meet(&other.scope),
+            caller_rule: self.caller_rule || other.caller_rule,
+            confined: match (&self.confined, &other.confined) {
+                (Some(own), Some(other)) => Some(own.intersection(other).copied().collect()),
+                (Some(own), None) | (None, Some(own)) => Some(own.clone()),
+                (None, None) => None,
+            },
+        }
+    }
+
+    /// The scope half of this reach.
+    pub(crate) fn scope(&self) -> &Scope {
+        &self.scope
+    }
+
+    /// Whether a marked phone-thread row reads only in the current caller's thread.
+    pub(crate) fn caller_rule(&self) -> bool {
+        self.caller_rule
+    }
+
+    /// The picked documents a confined call is held to, if any.
+    pub(crate) fn confined(&self) -> Option<&BTreeSet<EntityId>> {
+        self.confined.as_ref()
+    }
+}
+
+/// A call's live consent, as the context prepared for it depends on it: the
+/// scope every ceiling's current reach meets in, which prepared output is
+/// stamped with, and each of those reaches whole (scope, caller rule, picked
+/// documents). A narrowing of the picked documents or of the caller rule
+/// leaves the scope as it was yet withholds rows a prepared history was read
+/// from, so a history stays valid only while this whole value is unchanged
+/// (#8667 review r2 P1).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PhoneLineConsent {
+    scope: Scope,
+    reaches: Vec<CallReach>,
+}
+
+impl PhoneLineConsent {
+    pub(crate) fn new(scope: Scope, reaches: Vec<CallReach>) -> Self {
+        Self { scope, reaches }
+    }
+
+    /// The scope every ceiling's current reach meets in.
+    pub fn scope(&self) -> &Scope {
+        &self.scope
+    }
+}
 
 /// Call identity and owner consent carried by the read key, never a credential.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -14,12 +116,12 @@ pub(crate) struct PhoneLineReadCeiling {
     bridge_actor: EntityId,
     owner_actor: EntityId,
     attempt_ref: String,
-    frozen_scope: Scope,
+    frozen: CallReach,
 }
 
 impl PhoneLineReadCeiling {
     pub(crate) fn frozen_scope(&self) -> &Scope {
-        &self.frozen_scope
+        self.frozen.scope()
     }
 
     /// The line agent answering under this ceiling.
@@ -27,14 +129,19 @@ impl PhoneLineReadCeiling {
         self.agent_ref
     }
 
-    /// Current consent can narrow the frozen call, but never widen it.
+    /// The live reach of the frozen call: the frozen reach met with the
+    /// line's current `voice.phone.reach`. A call never reads wider than its
+    /// answer-time reach nor than the live value: a narrowing lands at the
+    /// next read; a widening back within the answer-time reach (the owner's
+    /// own, or an agent undoing its own narrowing) lands at once, and the rest
+    /// waits for the next call (REACH-AGENT-UNDO-NARROWING = A).
     /// The caller's original credential is checked separately by the read door.
-    pub(crate) fn current_scope_in(
+    pub(crate) fn current_reach_in(
         &self,
         vault: &Vault,
         txn: &heed::RoTxn<'_>,
         caller: &str,
-    ) -> Result<Option<Scope>> {
+    ) -> Result<Option<CallReach>> {
         if EntityId::from_hex(caller).ok() != Some(self.agent_ref) {
             return Ok(None);
         }
@@ -55,7 +162,8 @@ impl PhoneLineReadCeiling {
         {
             return Ok(None);
         }
-        Ok(Some(self.frozen_scope.meet(&line.share_scope)))
+        let live = vault.phone_line_reach_in(txn, self.identity_ref, self.agent_ref)?;
+        Ok(Some(self.frozen.meet(&CallReach::of(&live))))
     }
 
     /// The caller the call's arrival names, while that arrival still stands
@@ -113,7 +221,7 @@ impl Vault {
             bridge_actor: line.bridge_actor,
             owner_actor: line.owner_actor,
             attempt_ref: record.attempt_ref,
-            frozen_scope: line.share_scope.meet(&record.share_scope),
+            frozen: CallReach::of(&self.phone_line_reach_in(&txn, identity_ref, line.agent_ref)?),
         };
         Ok(key.within_phone_line(ceiling))
     }
