@@ -32,13 +32,13 @@ pub(crate) fn clamp_admits(
 /// own test, without the sources of a summary's words
 /// (`DisclosureContext::admits_from`), on the content the pack reads. A
 /// run's shared filter config asks it (the TURN fold, the reranker's words,
-/// L2 evidence, the trace), as does the rank pass over the phonetic code
-/// rung's exact hits; a bounded window's admission (vector, text, temporal,
-/// typed media, the phonetic sound match and learned walk), a narrowed PPR
-/// walk's visibility and its implicit seeds ask [`clamp_admits`]
+/// L2 evidence, the trace); a bounded window's admission (vector, text,
+/// temporal, typed media, the phonetic sound match and learned walk), the
+/// rank pass over the phonetic code rung's exact hits, a narrowed PPR walk's
+/// visibility and its implicit seeds ask [`clamp_admits`]
 /// (PACK-PRESELECT-CLAMP-ROW-ONLY-DISPLACES-READABLE-HIT; REVIEW-10215
-/// round 1). The pack's candidate sweep still asks [`clamp_admits`] of every
-/// row it keeps.
+/// rounds 1 and 2). The pack's candidate sweep still asks [`clamp_admits`]
+/// of every row it keeps.
 pub(crate) fn clamp_prefilter_admits(
     ctx: &DisclosureContext,
     store: &StoreRead<'_>,

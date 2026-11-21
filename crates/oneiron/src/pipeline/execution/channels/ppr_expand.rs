@@ -336,11 +336,13 @@ impl PipelineBuilder<'_> {
 
     /// Whether a clamped pack's sweep refuses `id`, the sources of its words
     /// included ([`crate::context_pack::retained_copies::clamp_admits`]).
-    /// An exact phonetic hit's rank pass asks the clamp of its own row, so a
-    /// hit whose words come from a row the audience may not read ranks in
-    /// the preliminary blend until the sweep drops it. Such a row takes no
-    /// implicit seed slot, so the readable rows below it still seed the
-    /// walk (REVIEW-10215 round 1). False with no clamp, and for a row with
+    /// A list no bounded fetch asked keeps a row the audience could read by
+    /// its own row (`PipelineBuilder::retain_rows_the_clamp_admits`), so a
+    /// row whose words come from a row it may not read can rank in the
+    /// preliminary blend until the sweep drops it. Such a row takes no
+    /// implicit seed slot, so the readable rows below it still seed the walk
+    /// (REVIEW-10215 round 1; the exact phonetic hits ask the sources of
+    /// their words before the blend since round 2). False with no clamp, and for a row with
     /// no parseable envelope.
     fn clamp_refuses_implicit_seed(
         &self,

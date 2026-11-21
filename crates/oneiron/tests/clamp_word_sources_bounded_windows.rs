@@ -20,6 +20,13 @@
 //! never entered the run. The walk's visibility and the implicit seeds now
 //! ask the sources of a row's words too.
 //!
+//! The exact phonetic hits still reached the blend (REVIEW-10215 round 2).
+//! The blend z-scores the code list as a list of its hits and non-hits, so
+//! hits with a hidden source set its scale: a readable hit's lift over the
+//! list's non-hits fell below a text-only hit's, and the clamped pack served
+//! the text hit. The exact hits' rank pass now asks the sources of a row's
+//! words too.
+//!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test clamp_word_sources_bounded_windows`.
 #![cfg(oneiron_test_support)]
@@ -518,9 +525,9 @@ fn expanded_phonetic_pack<'v>(fixture: &'v Fixture, codes: &[&str]) -> ContextPa
         .limit(10)
 }
 
-/// The exact codes have no cut, and their hits' rank pass asks the clamp of
-/// a row's own row, so exact hits with a hidden source reach the run's
-/// preliminary blend, where the pack's sweep drops them later. Each matches
+/// The exact codes have no cut, and their hits' rank pass asked the clamp of
+/// a row's own row, so exact hits with a hidden source reached the run's
+/// preliminary blend, where the pack's sweep dropped them later. Each matches
 /// both of the query's codes and outranks the readable hit, which matches
 /// one. They must not take the expansion's implicit seed slots, or the
 /// readable hit seeds nothing and a claim reachable only through it (a

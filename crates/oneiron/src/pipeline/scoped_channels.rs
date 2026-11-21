@@ -237,8 +237,12 @@ impl PipelineBuilder<'_> {
     /// channel's fetch; one that meets every other check of the scope, the
     /// gate included, is returned, and the pack counts it among the rows its
     /// clamp withheld (`PipelineOutput::disclosure_clamped`), as main's
-    /// preselection counted it. The clamp's test here reads the row alone;
-    /// the preselection before the cuts asks a summary's sources too.
+    /// preselection counted it. The clamp's test here asks the sources of
+    /// the row's words too, as the pack's sweep does: the code list is
+    /// z-scored as a list of its hits and non-hits, so hits whose words come
+    /// from a row the audience may not read would set its scale and push a
+    /// readable hit below rows it outranks, in the blend and in the
+    /// expansion's implicit seeds (REVIEW-10215 round 2).
     pub(super) fn retain_phonetic_hits_in_scope(
         &self,
         rtxn: &RoTxn<'_>,
@@ -293,8 +297,9 @@ impl PipelineBuilder<'_> {
             )? {
                 continue;
             }
-            if crate::context_pack::retained_copies::clamp_prefilter_admits(
+            if crate::context_pack::retained_copies::clamp_admits(
                 clamp,
+                self.vault,
                 &self.read,
                 rtxn,
                 &scored.id,
