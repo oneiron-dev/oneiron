@@ -7,7 +7,6 @@
 //! absence sweep and its written-only tombstone check
 //! (CAL-MASKED-SYSTEM-LITERAL-COMPARES-OUTSIDE-KEYED-LOOKUP).
 
-use std::borrow::Cow;
 use std::collections::BTreeSet;
 
 use super::{
@@ -24,13 +23,12 @@ use crate::vault::Vault;
 /// as written: it reads a stored system or UID as custody reads it, each only
 /// where something else pins it, since a custody record keeps every value it
 /// held and one handle meets each of them. The UID must be pinned to the
-/// passport's EVENT ([`uid_pinned_to_event_in_txn`]); the system must be one
-/// of the vault's calendar systems, stored under handles whose records each
-/// hold that one value ([`passport_system_is`]).
+/// passport's EVENT ([`uid_pinned_to_event_in_txn`]); the system must be
+/// stored under handles whose records each hold that one value
+/// ([`passport_system_is`]).
 pub(super) struct MaskedKey<'k> {
     system: &'k str,
     uid: &'k str,
-    systems: Cow<'k, CalendarSystems>,
     /// Whether `uid` is pinned to the EVENT whose passports are read.
     uid_pinned: bool,
 }
@@ -47,25 +45,6 @@ impl<'k> MaskedKey<'k> {
         Ok(Self {
             system,
             uid,
-            systems: Cow::Owned(CalendarSystems::read_in_txn(vault, txn)?),
-            uid_pinned: uid_pinned_to_event_in_txn(vault, txn, event_ref, uid)?,
-        })
-    }
-
-    /// [`Self::read_in_txn`] for a scan over many EVENTs that read the
-    /// calendar systems once (`systems`).
-    pub(super) fn read_pins_in_txn(
-        vault: &Vault,
-        txn: &heed::RoTxn<'_>,
-        event_ref: &EntityId,
-        system: &'k str,
-        uid: &'k str,
-        systems: &'k CalendarSystems,
-    ) -> Result<Self, CalendarError> {
-        Ok(Self {
-            system,
-            uid,
-            systems: Cow::Borrowed(systems),
             uid_pinned: uid_pinned_to_event_in_txn(vault, txn, event_ref, uid)?,
         })
     }
@@ -81,53 +60,8 @@ impl<'k> MaskedKey<'k> {
     ) -> Result<bool, CalendarError> {
         Ok(
             passport_uid_pinned_is(&value.uid, self.uid, self.uid_pinned, known)?
-                && self.systems.carries(&value.system, self.system, known)?,
+                && passport_system_is(&value.system, self.system, known)?,
         )
-    }
-}
-
-/// The vault's calendar systems ([`calendar_systems_in_txn`]), read once,
-/// which a system name a passport stored is read against
-/// ([`Self::carries`]).
-#[derive(Clone)]
-pub(in crate::calendar) struct CalendarSystems(Vec<String>);
-
-impl CalendarSystems {
-    /// The calendar systems as `txn` reads them.
-    ///
-    /// # Errors
-    ///
-    /// Store failures, and a seat or feed row that does not decode.
-    pub(in crate::calendar) fn read_in_txn(
-        vault: &Vault,
-        txn: &heed::RoTxn<'_>,
-    ) -> Result<Self, CalendarError> {
-        calendar_systems_in_txn(vault, txn).map(Self)
-    }
-
-    /// The calendar systems as the vault reads them now.
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::read_in_txn`].
-    pub(in crate::calendar) fn read(vault: &Vault) -> Result<Self, CalendarError> {
-        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-        Self::read_in_txn(vault, &txn)
-    }
-
-    /// Whether `held`, the system name a passport stored, is `system`
-    /// ([`passport_system_is`]).
-    ///
-    /// # Errors
-    ///
-    /// The custody read's, or a value the wall cannot read.
-    pub(in crate::calendar) fn carries(
-        &self,
-        held: &str,
-        system: &str,
-        known: &CompareKnown<'_>,
-    ) -> Result<bool, CalendarError> {
-        passport_system_is(held, system, &self.0, known)
     }
 }
 
@@ -216,52 +150,33 @@ pub(in crate::calendar) fn derived_uid_among(
 
 /// Whether `held`, the system name a passport stored, is `system`: as
 /// written, or with a custody handle in place of a value custody holds
-/// ([`passport_uid_is`]'s read), when `system` is one of `systems`, the
-/// vault's calendar systems, and each handle `held` holds names a record
-/// that holds one value alone ([`CompareKnown::reads_as_one_value`]). A
-/// custody record keeps every value it held, so once a record that held one
-/// source's system name holds another's, one handle meets both names, and
-/// the registry cannot tell them apart when one is a system no seat or feed
-/// names (an upload's own, a pack source's): a passport stored under such a
+/// ([`passport_uid_is`]'s read), when each handle `held` holds names a
+/// record that holds one value alone ([`CompareKnown::reads_as_one_value`]).
+/// Such a `held` meets one system name alone, the one the claim door masked,
+/// so it reads as that name would read as written, whichever source filed
+/// it: a seat's, a feed's, an owner upload's or a pack source's
+/// (CAL-PASSPORT-STORES-NO-SYSTEM-IDENTITY). A custody record keeps every
+/// value it held, so once a record that held one source's system name holds
+/// another's, one handle meets both names: a passport stored under such a
 /// handle is read as written only, so one calendar's pull never takes or
 /// sweeps another source's passport, whose deletes would then read as the
-/// first calendar's host cancels (blind review round 1 of #10312). A system
-/// no seat or feed of the vault names is read as written only too.
+/// first calendar's host cancels (blind review round 1 of #10312).
 ///
 /// # Errors
 ///
 /// The custody read's, or a value the wall cannot read.
-fn passport_system_is(
+pub(in crate::calendar) fn passport_system_is(
     held: &str,
     system: &str,
-    systems: &[String],
     known: &CompareKnown<'_>,
 ) -> Result<bool, CalendarError> {
     if held == system {
         return Ok(true);
     }
-    if !systems.iter().any(|named| named == system)
-        || !known.reads_as_one_value(&rmpv::Value::from(held))?
-    {
+    if !known.reads_as_one_value(&rmpv::Value::from(held))? {
         return Ok(false);
     }
     passport_uid_is(held, system, known)
-}
-
-/// The calendar systems the vault names, as `txn` reads them: each connector
-/// seat's, installed or taken out of service
-/// ([`crate::calendar::connectors::door::seat_systems_in_txn`]), and each ICS
-/// feed's, installed or polled before
-/// ([`crate::calendar::ingest::feed_door::feed_systems_in_txn`]).
-fn calendar_systems_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-) -> Result<Vec<String>, CalendarError> {
-    let mut systems = crate::calendar::connectors::door::seat_systems_in_txn(vault, txn)?;
-    systems.extend(crate::calendar::ingest::feed_door::feed_systems_in_txn(
-        vault, txn,
-    )?);
-    Ok(systems)
 }
 
 /// Whether `uid` is pinned to `event_ref` ([`uid_pinned_to_in_txn`]), or

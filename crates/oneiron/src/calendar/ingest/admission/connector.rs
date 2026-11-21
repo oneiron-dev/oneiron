@@ -2,7 +2,7 @@
 //! gated importer a feed poll runs, keeping their own routing.
 
 use super::*;
-use crate::calendar::passport::{CalendarSystems, live_passport_keyed};
+use crate::calendar::passport::live_passport_keyed;
 
 /// Connector resources use the same gated importer, but retain their routing.
 pub(in crate::calendar) fn connector_event_ref(
@@ -235,13 +235,12 @@ pub(in crate::calendar) fn defer_connector_delete<'a>(
 /// `(system, uid)` is the one the keyed lookup reads, its stored system and
 /// UID as custody reads each where it is pinned
 /// (CAL-MASKED-SYSTEM-LITERAL-COMPARES-OUTSIDE-KEYED-LOOKUP), with the
-/// calendar systems and the values custody holds read once for the scan.
+/// values custody holds read once for the scan.
 pub(in crate::calendar) fn tombstone_cancels_written_only_event(
     vault: &Vault,
     system: &str,
     uid: &str,
 ) -> Result<bool, CalendarError> {
-    let systems = CalendarSystems::read(vault)?;
     let base_known = || vault.known_values_now();
     let known = CompareKnown::new(Some(&base_known));
     for event_ref in list_event_ids(vault)? {
@@ -252,11 +251,10 @@ pub(in crate::calendar) fn tombstone_cancels_written_only_event(
         {
             continue;
         }
-        let written =
-            live_passport_keyed(vault, &event_ref, passports, system, uid, &systems, &known)?
-                .is_some_and(|(_, value)| {
-                    value.cancelled_since.is_none() && cancel_moves_deposit(&value)
-                });
+        let written = live_passport_keyed(vault, &event_ref, passports, system, uid, &known)?
+            .is_some_and(|(_, value)| {
+                value.cancelled_since.is_none() && cancel_moves_deposit(&value)
+            });
         if written {
             return Ok(true);
         }

@@ -9,21 +9,19 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::calendar::CalendarError;
 use crate::calendar::claims::CalendarPassportValue;
 use crate::calendar::ics::ParsedIcsFeed;
-use crate::calendar::passport::{CalendarSystems, derived_uid_among, passport_uid_among};
+use crate::calendar::passport::{derived_uid_among, passport_system_is, passport_uid_among};
 use crate::code_run::CompareKnown;
 use crate::entity_id::EntityId;
 use crate::vault::Vault;
 
 use super::source_events::{pack_source, source_event_id};
 
-/// One sweep's source: its system, the vault's calendar systems, the pack
-/// calendar source the system names, the UIDs a sync delta names (every UID
+/// One sweep's source: its system, the pack calendar source the system names, the UIDs a sync delta names (every UID
 /// of the system when `None`), and the UIDs the pull carries by instance
 /// (the exception start a VEVENT's RECURRENCE-ID names; `None` for none).
 pub(super) struct SweepSource<'s> {
     vault: &'s Vault,
     system: &'s str,
-    systems: CalendarSystems,
     /// The pack calendar source `system` names, whose EVENT ids derive from
     /// the source and the UID ([`source_event_id`]).
     pack: Option<EntityId>,
@@ -36,8 +34,8 @@ impl<'s> SweepSource<'s> {
     ///
     /// # Errors
     ///
-    /// Store failures, a seat or feed row that does not decode, and a
-    /// system with the pack's prefix that names no calendar source.
+    /// Store failures, and a system with the pack's prefix that names no
+    /// calendar source.
     pub(super) fn read(
         vault: &'s Vault,
         system: &'s str,
@@ -54,7 +52,6 @@ impl<'s> SweepSource<'s> {
         Ok(Self {
             vault,
             system,
-            systems: CalendarSystems::read(vault)?,
             pack: pack_source(vault, system)?.map(|pack| pack.source),
             only_uids,
             present,
@@ -65,7 +62,7 @@ impl<'s> SweepSource<'s> {
     /// (`instance` its exception start, `None` for no exception); `None`
     /// when the passport is not this sweep's: another system's, or of a UID
     /// the delta does not name. The stored system name is the source's as
-    /// [`CalendarSystems::carries`] reads it, and the stored UID is one the
+    /// [`passport_system_is`] reads it, and the stored UID is one the
     /// pull names as [`Self::names_uid`] reads it on `event_ref`.
     ///
     /// # Errors
@@ -79,7 +76,7 @@ impl<'s> SweepSource<'s> {
         value: &CalendarPassportValue,
         known: &CompareKnown<'_>,
     ) -> Result<Option<bool>, CalendarError> {
-        if !self.systems.carries(&value.system, self.system, known)? {
+        if !passport_system_is(&value.system, self.system, known)? {
             return Ok(None);
         }
         if let Some(named) = self.only_uids

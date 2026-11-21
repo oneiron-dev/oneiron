@@ -3,8 +3,12 @@
 
 use super::*;
 
-/// The one admitted passport on `event` for exactly `(system, uid)`. Two
-/// admitted heads for one key are refused, never picked by scan order.
+/// The one admitted passport on `event` for exactly `(system, uid)` as
+/// written. Two admitted heads for one key are refused, never picked by scan
+/// order. Its callers key the engine's own invite system, which the claim
+/// door masks only where the owner registered the engine's own string as a
+/// secret; the move door keys an owner upload's system, which it may mask,
+/// through [`admitted_passport_keyed`].
 pub(crate) fn admitted_passport_for_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -12,11 +16,59 @@ pub(crate) fn admitted_passport_for_in_txn(
     system: &str,
     uid: &str,
 ) -> Result<Option<(EntityId, CalendarPassportValue)>, CalendarError> {
-    let mut matching = admitted_passports_for_event_in_txn(vault, txn, event)?
-        .into_iter()
-        .filter(|(_, value)| value.system == system && value.uid == uid);
-    let found = matching.next();
-    if matching.next().is_some() {
+    sole_admitted_head(
+        admitted_passports_for_event_in_txn(vault, txn, event)?
+            .into_iter()
+            .filter(|(_, value)| value.system == system && value.uid == uid),
+    )
+}
+
+/// The one admitted passport on `event` keyed exactly `(system, uid)` as the
+/// vault reads it now: those whose system and UID are `system` and `uid` as
+/// written, else those that carry the key as custody reads their system and
+/// UID, each where it is pinned ([`MaskedKey`]). The claim door can store an
+/// owner upload's system name as a custody handle, so the move door finds
+/// the series' passport it amends (CAL-PASSPORT-STORES-NO-SYSTEM-IDENTITY).
+/// Two admitted heads for one key are refused, never picked by scan order.
+///
+/// # Errors
+///
+/// [`CalendarError::IcsIngest`] on store or stored-claim decode failures and
+/// on two heads, and the custody read's.
+pub(in crate::calendar) fn admitted_passport_keyed(
+    vault: &Vault,
+    event: &EntityId,
+    system: &str,
+    uid: &str,
+) -> Result<Option<(EntityId, CalendarPassportValue)>, CalendarError> {
+    let written = |value: &CalendarPassportValue| value.system == system && value.uid == uid;
+    let (passports, masked) = {
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        let passports = admitted_passports_for_event_in_txn(vault, &txn, event)?;
+        if passports.is_empty() || passports.iter().any(|(_, value)| written(value)) {
+            return sole_admitted_head(passports.into_iter().filter(|(_, value)| written(value)));
+        }
+        let masked = MaskedKey::read_in_txn(vault, &txn, event, system, uid)?;
+        (passports, masked)
+    };
+    let base_known = || vault.known_values_now();
+    let known = CompareKnown::new(Some(&base_known));
+    let mut carried = Vec::new();
+    for head in passports {
+        if masked.carried_by(&head.1, &known)? {
+            carried.push(head);
+        }
+    }
+    sole_admitted_head(carried.into_iter())
+}
+
+/// The one head of `heads`, the admitted passports of one key; two are
+/// refused.
+fn sole_admitted_head(
+    mut heads: impl Iterator<Item = (EntityId, CalendarPassportValue)>,
+) -> Result<Option<(EntityId, CalendarPassportValue)>, CalendarError> {
+    let found = heads.next();
+    if heads.next().is_some() {
         return Err(ingest("competing live calendar passports"));
     }
     Ok(found)

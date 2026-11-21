@@ -37,8 +37,8 @@ use crate::calendar::claims::{
     PREDICATE_CALENDAR_PASSPORT,
 };
 use crate::calendar::passport::{
-    CalendarSystems, admitted_passports_for_event_in_txn, carries_admitted_uid_in_txn,
-    encode_passport_value, index_passport_uid_in_txn, live_passport_for_in_txn, passport_uid_among,
+    admitted_passports_for_event_in_txn, carries_admitted_uid_in_txn, encode_passport_value,
+    index_passport_uid_in_txn, live_passport_for_in_txn, passport_system_is, passport_uid_among,
     revise_passport_in_txn,
 };
 use crate::calendar::safeguard::CalendarInboundBody;
@@ -270,7 +270,7 @@ pub fn write_calendar_event(
     };
     let base_known = || vault.known_values_now();
     let known = CompareKnown::new(Some(&base_known));
-    let own = seat_passports(vault, &passports, system, &known)?
+    let own = seat_passports(&passports, system, &known)?
         .into_iter()
         .next()
         .map(|(_, value)| value.clone());
@@ -1803,7 +1803,7 @@ fn importer_pending_uid(
     };
     let system = operation.registration().seat.config.system.as_str();
     let mut uids = std::collections::BTreeSet::new();
-    for (_, value) in seat_passports(vault, &pending, system, known)? {
+    for (_, value) in seat_passports(&pending, system, known)? {
         let Some(uid) = seat_uid_of(vault, operation, event_ref, &value.uid, known)? else {
             continue;
         };
@@ -1821,34 +1821,23 @@ fn importer_pending_uid(
 
 /// The passports of `passports` this seat, installed under `system`, keys:
 /// those whose stored system is `system` as written or, where the claim door
-/// stored it as a custody handle, as [`CalendarSystems::carries`] reads it
-/// against the vault's calendar systems, read only when a stored system
-/// holds a handle. In `passports`' order
-/// (CAL-MASKED-SYSTEM-LITERAL-COMPARES-OUTSIDE-KEYED-LOOKUP).
+/// stored it as a custody handle, as [`passport_system_is`] reads it, read
+/// through custody only when the stored system holds a handle. In
+/// `passports`' order (CAL-MASKED-SYSTEM-LITERAL-COMPARES-OUTSIDE-KEYED-LOOKUP).
 ///
 /// # Errors
 ///
-/// Store failures, and the custody read's.
+/// The custody read's.
 fn seat_passports<'p>(
-    vault: &Vault,
     passports: &'p [(EntityId, CalendarPassportValue)],
     system: &str,
     known: &CompareKnown<'_>,
 ) -> Result<Vec<&'p (EntityId, CalendarPassportValue)>, CalendarConnectorError> {
-    let masked = |held: &str| held != system && LiftedKeys::holds_a_handle(held);
-    let systems = if passports.iter().any(|(_, value)| masked(&value.system)) {
-        Some(CalendarSystems::read(vault)?)
-    } else {
-        None
-    };
     let mut keyed = Vec::new();
     for passport in passports {
         let held = passport.1.system.as_str();
         let carried = held == system
-            || match &systems {
-                Some(systems) if masked(held) => systems.carries(held, system, known)?,
-                _ => false,
-            };
+            || (LiftedKeys::holds_a_handle(held) && passport_system_is(held, system, known)?);
         if carried {
             keyed.push(passport);
         }

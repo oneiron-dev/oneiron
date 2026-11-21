@@ -11,7 +11,7 @@ use crate::calendar::claims::{
     PREDICATE_CALENDAR_STATUS, decode_status_value,
 };
 use crate::calendar::ics::ParsedVEvent;
-use crate::calendar::passport::{CalendarSystems, live_passports_for_event};
+use crate::calendar::passport::{live_passports_for_event, passport_system_is};
 use crate::calendar::safeguard::CalendarInboundBody;
 use crate::claim::ClaimLifecycleStatus;
 use crate::code_run::CompareKnown;
@@ -120,12 +120,11 @@ impl PollAdmission<'_> {
             // custody handle read as custody reads it
             // (CAL-MASKED-SYSTEM-LITERAL-COMPARES-OUTSIDE-KEYED-LOOKUP).
             let (vault, system) = (self.vault, self.system);
-            let systems = CalendarSystems::read(vault)?;
             let base_known = || vault.known_values_now();
             let known = CompareKnown::new(Some(&base_known));
             let observed_at = self
                 .cancel_seen_at(event_ref, |value| {
-                    systems.carries(&value.system, system, &known)
+                    passport_system_is(&value.system, system, &known)
                 })?
                 .unwrap_or(self.now);
             match status_ref {
@@ -400,7 +399,7 @@ impl PollAdmission<'_> {
 /// direction is Outbound or TwoWay (RULING DEPOSIT-HOST-CANCEL-SOURCE = A).
 /// The caller reads it as the reporting source's own passport: the one its
 /// keyed lookup finds ([`crate::calendar::live_passport_for`]), or one whose
-/// stored system [`CalendarSystems::carries`] the source's, since the claim
+/// stored system is the source's as [`passport_system_is`] reads it, since the claim
 /// door can store that name as a custody handle
 /// (CAL-MASKED-SYSTEM-LITERAL-COMPARES-OUTSIDE-KEYED-LOOKUP). Only such a source's cancellation moves
 /// deposit money, and not when it is the engine's own cancelled write
