@@ -1,8 +1,9 @@
 //! Door for `tests/gate_receipt_unclear_record_removal.rs`: the write of the
 //! owner's discard of a world copy that takes the Gate decisions of the
 //! claims its windows' writes removed to their retention skeletons, run on a
-//! set of claims without a world fixture, and the Coach's filing of a label
-//! proposal that quotes an amendment's unclear note.
+//! set of claims without a world fixture, the Coach's filing of a label
+//! proposal that quotes an amendment's unclear note, and the signed history
+//! controls of a MACHINE claim.
 
 use std::collections::BTreeSet;
 
@@ -31,4 +32,11 @@ pub fn file_label_proposal(vault: &Vault, receipt: &str, proposal: EntityId) -> 
     crate::dreamer_runner::maintenance::attribution_labels::file_label_proposal_for_test(
         vault, &outcome, proposal,
     )
+}
+
+/// The signed history controls of the MACHINE claim `target`, in its index:
+/// its birth and each later transition.
+pub fn machine_history_controls(vault: &Vault, target: EntityId) -> Result<Vec<EntityId>> {
+    let txn = vault.store.env.read_txn()?;
+    crate::claim::history_store::machine_history_ids_for_target(&vault.store, &txn, target)
 }
