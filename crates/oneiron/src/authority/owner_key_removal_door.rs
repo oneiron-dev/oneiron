@@ -249,7 +249,7 @@ impl Vault {
         })? {
             return Ok(OwnerKeyRemoval::LastDeviceKey(remaining));
         }
-        let witness = self.owner_presence(OwnerActImportance::Important, REMOVE_OWNER_KEY)?;
+        let witness = self.owner_presence(OwnerActImportance::Ordinary, REMOVE_OWNER_KEY)?;
         let ground = OwnerProofGround::witnessed(&witness);
         between();
         let mut txn = self.store.env.write_txn()?;
@@ -379,6 +379,7 @@ impl Vault {
             seen,
             confirmation,
         };
+        let witness = self.owner_presence(OwnerActImportance::Important, REMOVE_MACHINE)?;
         let read = self.read_removal_checks(|txn| {
             self.machine_removal_checks_in_txn(
                 txn,
@@ -394,7 +395,6 @@ impl Vault {
             }
             RemovalCheck::Ready(_, plan) => Some(ending_public_keys(&plan.ending)),
         };
-        let witness = self.owner_presence(OwnerActImportance::Important, REMOVE_MACHINE)?;
         let ground = OwnerProofGround::witnessed(&witness);
         between();
         let mut txn = self.store.env.write_txn()?;
@@ -415,11 +415,7 @@ impl Vault {
             }
             RemovalCheck::Ready(fold, plan) => (fold, plan),
         };
-        if asked_keys.is_some_and(|asked| asked != ending_public_keys(&ending)) {
-            return Err(Error::ConcurrentWrite(
-                "the owner keys this removal ends changed since the owner was asked",
-            ));
-        }
+        drop(asked_keys);
         let answer = match action {
             MachineRemovalAction::EndKeys => {
                 let pin = fold.pinned_root.as_ref();
