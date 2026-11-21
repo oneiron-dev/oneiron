@@ -445,14 +445,14 @@ async fn run_over_mesh(value: Value, handler: &'static dyn AskHandler) -> (Organ
     let nodes = Arc::new(OneNode(serving_id()));
     let asks = AskHandlers::none().with(ASK_VERB, handler);
     let call = ask_call(value);
-    // The router blocks on the mesh runtime from the call's thread, while
-    // this runtime serves the other end.
+    // The router blocks on this runtime from the call's thread, while this
+    // thread drives it: the serving end, and the timers of the mesh's
+    // timeouts. A runtime of the call's own, entered only through
+    // `Handle::block_on`, would drive no timer, so a stalled call would
+    // hang the test rather than end it.
+    let runtime = tokio::runtime::Handle::current();
     let calling = tokio::task::spawn_blocking(move || {
-        let mesh = tokio::runtime::Builder::new_current_thread()
-            .enable_time()
-            .build()
-            .expect("the mesh runtime builds");
-        let router = OrganRouter::new().with_mesh(transport, nodes, mesh.handle().clone());
+        let router = OrganRouter::new().with_mesh(transport, nodes, runtime);
         router.call_with(&asking_vault, call, Vec::new(), &asks)
     });
     let serving = serving_rx.recv().await.expect("the router dials");
