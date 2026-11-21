@@ -11,6 +11,8 @@
 //! `reader_parent_for_wake`, `ReaderSeats::seat_with_parent`); nothing here
 //! makes a second clock, queue or store.
 
+#[cfg(oneiron_test_support)]
+pub(crate) mod child_route_door;
 mod compaction;
 mod generation;
 mod ports;
@@ -30,9 +32,9 @@ use oneiron::dreamer_consolidation::{
 };
 use oneiron::llm::{
     WorkClass, WorkContext,
-    run_admission::{WorkCancel, lookup_work_parent},
+    run_admission::{RunAdmission, WorkCancel, lookup_work_parent},
 };
-use oneiron::{ModelId, ModelLocality, Vault};
+use oneiron::{EntityId, ModelId, ModelLocality, Vault};
 
 use self::generation::GenerationCount;
 use self::ports::ThingChildPorts;
@@ -55,6 +57,17 @@ pub(super) struct ThingRoute {
     pub(super) model: ModelId,
     pub(super) locality: ModelLocality,
     pub(super) window: Option<u64>,
+}
+
+/// A thing child's generation: `ladder` on the child's `run`; the rows
+/// lent to it reach no fence.
+fn child_generation_backend(
+    ladder: Arc<OfferLadder>,
+    run: RunAdmission,
+    _vault: Arc<Vault>,
+    _lent: Vec<EntityId>,
+) -> RunBackend {
+    RunBackend::new(ladder, run)
 }
 
 /// The host a Dreamer pass lends its thing branches.
@@ -215,7 +228,12 @@ impl ThingChildHost for ServedThingChildHost {
             run.work_context(),
         ));
         let backend = CountedBackend::new(
-            RunBackend::new(Arc::clone(&self.route.ladder), run),
+            child_generation_backend(
+                Arc::clone(&self.route.ladder),
+                run,
+                Arc::clone(&self.vault),
+                Vec::new(),
+            ),
             Arc::clone(&count),
             stop.clone(),
         );

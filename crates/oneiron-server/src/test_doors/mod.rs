@@ -26,6 +26,7 @@ pub mod device_home_dial;
 #[cfg(feature = "mesh")]
 pub mod device_sync_dial_gate;
 pub mod dreamer_sourced_route;
+pub mod dreamer_thing_child_route;
 #[cfg(feature = "mesh")]
 pub mod embedded_peer_fixture;
 #[cfg(feature = "mesh")]

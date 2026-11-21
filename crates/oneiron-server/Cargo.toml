@@ -417,6 +417,13 @@ name = "dreamer_route_fences_withdrawn_source_rows"
 path = "tests/dreamer_route_fences_withdrawn_source_rows.rs"
 required-features = ["oneiron/test-support"]
 
+# Its vault holds a `MemoryKeystore` (`oneiron-keystore/test-keystore`, forwarded by
+# `oneiron/test-support`); its thing child route door is `--cfg oneiron_test_support`.
+[[test]]
+name = "thing_child_fences_lent_source_rows"
+path = "tests/thing_child_fences_lent_source_rows.rs"
+required-features = ["oneiron/test-support"]
+
 # The skill library's facade doors serve the owner's root from a `MemoryKeystore` too.
 [[test]]
 name = "vault_skills_doors"
