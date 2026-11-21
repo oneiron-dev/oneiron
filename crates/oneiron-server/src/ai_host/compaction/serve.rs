@@ -279,6 +279,12 @@ impl ServedCompactionBackend {
         // host read whole (REVIEW-9900 round 2).
         let mut known = read_rows;
         known.extend(sources.iter().chain(home_rows.iter()).flatten().copied());
+        // A profiled child's pass compacts what the child saw, whose rows
+        // its window may not name: the rows its input was read from fence
+        // it too ([DREAMER-UNSOURCED-ROLE-CALLS-SEND-UNFENCED]).
+        if let CompactionMeter::Profiled { generation, .. } = &self.meter {
+            known.extend(generation.source_rows().iter().copied());
+        }
         known.sort_unstable();
         known.dedup();
         let fresh: Arc<dyn Fn() -> bool + Send + Sync> = {
