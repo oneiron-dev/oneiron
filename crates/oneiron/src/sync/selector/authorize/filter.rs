@@ -60,6 +60,12 @@ pub(in crate::sync::selector) fn filter_window_doc(
         out.commit();
         return Ok(out);
     }
+    // A machine CLAIM's out-of-month history controls ride beside it, packed
+    // from stored truth into this detached copy; another vault's admission
+    // quarantines machine CLAIMs anyway, so its export packs none.
+    if !matches!(reach, BirthReach::OtherVault(_)) {
+        super::super::machine_history::pack_absent_history_controls(vault, &rtxn, source)?;
+    }
     let (_, mut claims_withheld) = withheld_claim_carriers(
         vault,
         &rtxn,

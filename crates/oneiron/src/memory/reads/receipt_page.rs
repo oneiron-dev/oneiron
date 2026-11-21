@@ -236,6 +236,23 @@ impl Memory<'_> {
         receipts_of_kinds_for(self, limit, kinds)
     }
 
+    /// The family receipts of `kinds` a verb hook chain's receipt tail holds
+    /// for this handle's actor (`runtime_hooks::verb::chain::tail`): the
+    /// newest `limit` this handle reads, less every receipt the vault owner
+    /// alone reads ([`owner_kept_receipts`]), on the owner's own call too. A
+    /// hook is not that reader: its grant may read as someone else, and the
+    /// receipt its body writes names no row of such a receipt, so no row
+    /// screen could judge a copy of it. The read walks past the receipts it
+    /// leaves out ([`hook_tail_receipts_for`]), so no number of them empties
+    /// a tail that older receipts could fill.
+    pub(crate) fn hook_tail_receipts(
+        &self,
+        limit: usize,
+        kinds: &[String],
+    ) -> MemoryResult<Vec<MemoryReceipt>> {
+        hook_tail_receipts_for(self, limit, kinds)
+    }
+
     /// `vault.receipts` a page at a time: [`Self::receipts_of_kinds`]'s
     /// receipts after `after`, up to the full requested `limit` on either ledger.
     ///
@@ -296,6 +313,49 @@ pub(crate) fn receipts_of_kinds_for(
     Ok(kept.into_iter().map(family_receipt).collect())
 }
 
+/// [`Memory::hook_tail_receipts`] for `reader`: the newest `limit` family
+/// receipts of `kinds` it reads, less every receipt the vault owner alone
+/// reads, whoever `reader` is. It walks the family in raw source windows, as
+/// a page does ([`family_page`]): each window starts after the last raw
+/// receipt the one before walked, kept or left out, so the walk passes any
+/// number of receipts it leaves out and ends only on a full tail or the end
+/// of the family; no scan cap cuts it short of receipts that would fill it.
+/// A window that did not fill the tail is followed by one twice as long, up
+/// to the family's window cap ([`MAX_RECEIPT_QUERY_SCAN`]).
+fn hook_tail_receipts_for(
+    reader: &impl ReceiptReader,
+    limit: usize,
+    kinds: &[String],
+) -> MemoryResult<Vec<MemoryReceipt>> {
+    let vault = reader.receipt_vault();
+    let content = reader.receipt_content();
+    let mut query = family_query(limit, kinds)?;
+    let mut kept = Vec::new();
+    let mut fetch = limit;
+    while kept.len() < limit {
+        let pass = ReceiptQuery {
+            limit: fetch,
+            ..query.clone()
+        };
+        let (mut read, walked, exhausted) =
+            vault.receipts_window_for_caller(pass, reader.receipt_destination(), content)?;
+        read.retain(|receipt| {
+            !crate::dreamer_prefilter::prefilter_receipt_read_message_rows(receipt)
+        });
+        kept.extend(reader_kept_receipts(reader, read)?);
+        if exhausted {
+            break;
+        }
+        // The full raw window advances even when every screen kept none.
+        query.after = walked;
+        fetch = fetch.saturating_mul(2).min(MAX_RECEIPT_QUERY_SCAN);
+    }
+    kept.truncate(limit);
+    // A world's name on the owner's own share receipt is his (FIX 5493).
+    crate::share_travel::screen_owner_notice_fields(|| reader.reads_owner_notices(), &mut kept);
+    Ok(kept.into_iter().map(family_receipt).collect())
+}
+
 /// `receipts` cut to what `reader` reads, before any page cut: the receipts
 /// only the vault owner reads leave first ([`owner_kept_receipts`]), then
 /// the ones `reader`'s credential does not read
@@ -309,12 +369,14 @@ fn reader_kept_receipts(
 
 /// `receipts` less the ones only the vault owner reads, for any other
 /// reader, bound to a credential or not: a prefilter receipt of a round whose
-/// screen read MESSAGE rows
-/// ([`crate::dreamer_prefilter::prefilter_receipt_read_message_rows`]). Its
-/// score, its axes and its round's counts stand on the words of the round's
-/// other turns and on MESSAGE rows read as the Dreamer, and it names its own
-/// TURN alone, so a reader of that TURN would learn of words it may not
-/// read. The owner is asked for only when such a receipt is on the page.
+/// screen asked for a turn's words from its MESSAGE rows
+/// ([`crate::dreamer_prefilter::prefilter_receipt_read_message_rows`]). A
+/// turn's novelty axis, and so its score and its round's counts, stand on
+/// the words of turns the round scored before it and on MESSAGE rows read
+/// as the Dreamer. A turn's receipt names its own TURN alone and the
+/// rollup names no row, so a reader of that TURN would learn of words it
+/// may not read. The owner is asked for only when such a receipt is among
+/// the ones fetched.
 fn owner_kept_receipts(
     reader: &impl ReceiptReader,
     mut receipts: Vec<ReceiptRecord>,

@@ -183,11 +183,12 @@ pub(crate) const FIELD_PREFILTER_SKIPPED: &str = "skipped";
 /// round on a rollup. The savings claim is on the receipt because a budget
 /// filter that could not show its savings would be asking to be believed.
 pub(crate) const FIELD_PREFILTER_TOKENS_SAVED: &str = "tokens_saved";
-/// `true` on every receipt of a round whose screen read MESSAGE rows for a
-/// turn's words, a turn row's and the rollup's alike; absent on a round that
-/// read none. Such a receipt stands on rows it does not name: a turn's score
-/// is measured against the round's earlier turns, and its own MESSAGE rows
-/// are read as the Dreamer. So only the vault owner reads it.
+/// `true` on every receipt of a round whose screen asked for a turn's words
+/// from its MESSAGE rows, a turn row's and the rollup's alike, whatever the
+/// ask gave; absent on a round that asked for none. Such a receipt stands on
+/// rows it does not name: a turn's novelty is measured against the turns the
+/// round scored before it, and its own MESSAGE rows are read as the Dreamer.
+/// So `vault.receipts` serves it to the vault owner on this device alone.
 pub(crate) const FIELD_PREFILTER_READ_MESSAGE_ROWS: &str = "read_message_rows";
 
 use crate::store::gate_reason::GateReceiptOutcome;

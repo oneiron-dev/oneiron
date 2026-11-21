@@ -48,11 +48,13 @@ pub struct PrefilterScreen {
     /// Summed [`estimated_prompt_tokens`](crate::dreamer_prefilter::estimated_prompt_tokens) of the SKIPPED turns — the budget
     /// this round did not spend.
     pub estimated_tokens_saved: u64,
-    /// Whether the screen read MESSAGE rows for any scanned turn's words,
-    /// whatever they gave it. The receipts of a round that did stand on rows
-    /// they do not name: a turn's score is measured against the round's
-    /// earlier turns, and its own MESSAGE rows are read as the Dreamer. So
-    /// only the vault owner reads them
+    /// Whether the screen asked for any scanned turn's words from its
+    /// MESSAGE rows, whatever the ask gave: words, none (a turn with no
+    /// MESSAGE row) or a refusal. The receipts of a round that did stand on
+    /// rows they do not name: a turn's novelty is measured against the
+    /// turns the round scored before it, and its own MESSAGE rows are read
+    /// as the Dreamer. So `vault.receipts` serves them to the vault owner
+    /// on this device alone
     /// ([`super::prefilter_receipt_read_message_rows`]).
     pub read_message_rows: bool,
 }

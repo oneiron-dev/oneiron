@@ -89,7 +89,8 @@ impl Vault {
     /// - The slot's seed is created on first use. A slot found empty while the vault
     ///   holds a device key's public half means this install never held that machine's
     ///   seed (a raw copy on another host, a lost keychain): the vault forgets that
-    ///   machine and joins as a new one. No seed is ever imported into a slot.
+    ///   machine, with the choices about it, and joins as a new one at the defaults
+    ///   (`identity::drop_machine_identity_in_txn`). No seed is ever imported into a slot.
     /// - It writes the device key's public half when absent, and refuses one that
     ///   names another key.
     /// - It caches the machine key's public half when absent, on either path, for

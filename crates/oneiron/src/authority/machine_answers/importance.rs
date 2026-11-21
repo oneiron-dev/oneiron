@@ -184,13 +184,44 @@ impl Vault {
         answer: &AnswerAct,
         profile: MachineProfile,
     ) -> Result<OwnerActImportance> {
+        Ok(self
+            .owner_answer_read_checks_in_txn(txn, fold, answer, profile)?
+            .importance)
+    }
+
+    /// The same checks for a removal of `machine` through its own door, on
+    /// the removal's profile: the machine removal door runs them on a read
+    /// before it asks. Answers the owner keys the removal would end.
+    pub(in crate::authority) fn machine_removal_ending_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        fold: &AuthorityFold,
+        answer: &AnswerAct,
+        machine: EntityId,
+    ) -> Result<Vec<EnrolledOwnerKey>> {
+        let profile = role_answer_profile(fold, answer.owner, machine, MachineRole::Removed)?;
+        Ok(self
+            .owner_answer_read_checks_in_txn(txn, fold, answer, profile)?
+            .ending)
+    }
+
+    /// What a door's read runs before it asks: the answer checks, the
+    /// carried profile's validation and, where the frontier needs no join,
+    /// the carrier's sequence.
+    fn owner_answer_read_checks_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        fold: &AuthorityFold,
+        answer: &AnswerAct,
+        profile: MachineProfile,
+    ) -> Result<OwnerAnswerChecks> {
         let checks = self.owner_answer_checks_in_txn(txn, fold, answer, &profile)?;
         self.checked_owner_answer_profile_in_txn(txn, fold, answer, profile, &checks)?;
         if fold.append_heads.len() <= MAX_PARENTS {
             let signer = AuthorityKey::Ed25519(checks.key.verifying_key().to_bytes());
             next_sequence(fold, &signer)?;
         }
-        Ok(checks.importance)
+        Ok(checks)
     }
 
     /// Builds and validates the carried profile without signing any row.

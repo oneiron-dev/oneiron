@@ -77,36 +77,58 @@ impl Vault {
     /// Both policy rows and a replay marker commit together; an agent claim
     /// cannot edit either row directly, nor replay an old confirmation. The
     /// rows travel (stage 7c-1), so in a rooted vault the confirm appends
-    /// the owner's acts, which can carry an owner key's proof: the door asks
-    /// for the person at this device before its write
-    /// ([`Vault::owner_presence`]), and refuses with that check's refusal
-    /// before anything is read.
+    /// the owner's acts, which can carry an owner key's proof. The door makes
+    /// its pre-write refusals on a read transaction, drops it, and asks for
+    /// the person at this device while holding nothing
+    /// ([`Vault::owner_presence`]). It refuses with that check's refusal.
+    /// The write makes the read's checks again.
     pub fn confirm_proactivity_policy_proposal(
         &self,
         owner: &crate::consent::AuthenticatedOwner,
         claim_ref: EntityId,
         expected_revision: [u8; 32],
     ) -> Result<()> {
-        // The confirm is for an owner proof, so it stands before the write
-        // opens, while the door holds nothing: the prompt can block.
+        {
+            let txn = self.store.env.read_txn()?;
+            self.read_policy_confirmation_in_txn(&txn, owner, claim_ref, expected_revision)?;
+        }
+        // The read drops before the confirm for the owner proof. The write
+        // has not opened, so the door holds nothing while the prompt can block.
         let witness = self.owner_presence(
             crate::world_keys::OwnerActImportance::Important,
             crate::world_keys::owner_presence_reasons::PROACTIVITY_POLICY,
         )?;
         let ground = OwnerProofGround::witnessed(&witness);
         self.with_write_txn_grouped(|txn| {
-            let actor = validate_owner_in_txn(self, txn, owner)?;
-            if POLICY_CONFIRMED.contains(&self.store, &*txn, &claim_ref)? {
-                return Err(invalid());
-            }
-            let proposal = load_policy_proposal(self, &*txn, actor, claim_ref)?;
-            if proposal.revision != expected_revision {
-                return Err(invalid());
-            }
+            let proposal =
+                self.read_policy_confirmation_in_txn(txn, owner, claim_ref, expected_revision)?;
             apply_policy_proposal_in_txn(self, txn, Some(&ground), owner, claim_ref, &proposal)
         })?;
         self.store.notify_proactivity_changes();
         Ok(())
+    }
+
+    /// The refusals a confirm of `claim_ref` at `expected_revision` makes
+    /// before its first write, on `txn`: the owner's proof and person, a
+    /// proposal confirmed already, a claim that is no live proposal, and a
+    /// revision other than the one shown. The door runs them on a read before
+    /// it asks and again in its write. Answers the proposal to apply.
+    fn read_policy_confirmation_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        owner: &crate::consent::AuthenticatedOwner,
+        claim_ref: EntityId,
+        expected_revision: [u8; 32],
+    ) -> Result<ProactivityPolicyProposal> {
+        let actor = validate_owner_in_txn(self, txn, owner)?;
+        if POLICY_CONFIRMED.contains(&self.store, txn, &claim_ref)? {
+            return Err(invalid());
+        }
+        let proposal = load_policy_proposal(self, txn, actor, claim_ref)?;
+        if proposal.revision != expected_revision {
+            return Err(invalid());
+        }
+        Ok(proposal)
     }
 
     /// A policy member of the exact bundle already rechecked by the consent
@@ -122,8 +144,28 @@ impl Vault {
         claim_ref: EntityId,
         original: &crate::claim::ClaimBody,
     ) -> Result<()> {
+        if let Some(proposal) =
+            self.bundled_policy_proposal_in_txn(txn, owner, claim_ref, original)?
+        {
+            apply_policy_proposal_in_txn(self, txn, ground, owner, claim_ref, &proposal)?;
+        }
+        Ok(())
+    }
+
+    /// The checks of a bundle's policy member before its rows are set, on
+    /// `txn`: the proposal `claim_ref` names when the owner's approval has
+    /// still to apply it; `None` when `original` is no policy request or its
+    /// revision is confirmed already. The owner's bundle door runs them on a
+    /// read before it asks, and the settlement again in its write.
+    pub(crate) fn bundled_policy_proposal_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        owner: &crate::consent::AuthenticatedOwner,
+        claim_ref: EntityId,
+        original: &crate::claim::ClaimBody,
+    ) -> Result<Option<ProactivityPolicyProposal>> {
         if original.predicate != PROACTIVITY_POLICY_REQUEST_PREDICATE {
-            return Ok(());
+            return Ok(None);
         }
         let actor = validate_owner_in_txn(self, txn, owner)?;
         let proposal = load_policy_proposal(self, txn, actor, claim_ref)?;
@@ -138,12 +180,12 @@ impl Vault {
         }
         if let Some(confirmed) = POLICY_CONFIRMED.get(&self.store, txn, &claim_ref)? {
             return if confirmed == proposal.revision {
-                Ok(())
+                Ok(None)
             } else {
                 Err(invalid())
             };
         }
-        apply_policy_proposal_in_txn(self, txn, ground, owner, claim_ref, &proposal)
+        Ok(Some(proposal))
     }
 
     /// Files a Dreamer-born policy request (FIX 8712): it lands Proposed in

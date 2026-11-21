@@ -103,7 +103,9 @@ pub(crate) enum OnStale {
 pub(crate) enum ReadWrite<T> {
     /// The write landed.
     Written(T),
-    /// The read phase stopped on a pause or a stop; nothing was written.
+    /// The read phase stopped on a pause or a stop; the pass wrote nothing
+    /// (the one writer of [`read_then_write_at_grant_clock`] may still keep
+    /// the clock floor it observed).
     Stopped,
     /// A commit landed between the read and the write on every guarded
     /// try; nothing was written.
@@ -146,16 +148,19 @@ pub(crate) fn read_then_write<R, T>(
 }
 
 /// [`read_then_write`] for a pass whose `read` judges grants: every read
-/// runs at a grant clock persisted just before it, as the engine asks of a
+/// runs at a grant clock observed just before it, as the engine asks of a
 /// snapshot that judges ([`crate::store::Store::authorization_now`]). Each
 /// guarded try observes the clock before its snapshot opens, the tries after
-/// a stale one too, and the one writer persists its clock floor before it
+/// a stale one too, and the one writer stages its clock floor before it
 /// reads. So no read judges a grant at the time of an earlier pass's
-/// observation, and a grant that expired since lends this pass nothing.
+/// observation: a grant that expired before a read's own observation lends
+/// that read nothing. One that expires after it, while the read runs, is
+/// judged as live, as in any snapshot that judges.
 ///
 /// # Errors
 ///
-/// What [`read_then_write`] returns, or a vault a restore swap moved aside.
+/// What [`read_then_write`] returns, or the observation's own failure (a
+/// vault a restore swap moved aside, a clock row that does not read).
 pub(crate) fn read_then_write_at_grant_clock<R, T>(
     vault: &Vault,
     pass: &'static str,
