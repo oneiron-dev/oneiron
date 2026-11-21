@@ -52,9 +52,9 @@ where
     pub(crate) hidden_row: Option<&'a mut dyn FnMut(&EntityId) -> Result<bool>>,
 }
 
-/// An owned own-row test ([`Bm25SearchOptions::hidden_row`]): whether the
-/// read keeps a row from its reader with no count, so its postings count in
-/// no statistic.
+/// An owned own-row test ([`Bm25SearchOptions::hidden_row`]): whether a
+/// row's postings count in no statistic, as its reader may not read it or
+/// its read keeps it with no count.
 pub(crate) type HiddenRowTest<'t> = Box<dyn FnMut(&EntityId) -> Result<bool> + 't>;
 
 #[derive(Debug, Clone, Copy, Default)]

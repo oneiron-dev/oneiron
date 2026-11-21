@@ -13,8 +13,9 @@ pub(super) enum CountFor {
     /// not counted there either; scope honesty names its world instead.
     Receipt,
     /// The document frequency of a BM25 scan the read scores with. The
-    /// worlds the read asked for are its own selection, not a refusal, so a
-    /// row outside them still counts there (FIX
+    /// worlds the read asked for are its own selection, not a refusal, so
+    /// this count skips them: a row outside them still counts there when
+    /// nothing else refuses it a count (FIX
     /// WORLD-SCOPE-BM25-DF-COUNTS-HIDDEN-POSTINGS).
     Statistics,
 }
@@ -38,8 +39,9 @@ impl ScopedRead<'_> {
     /// room's say does not resolve here. A private thread's row counts only
     /// to a reader standing in that thread, a private CLAIM never to a
     /// relationship-gated reader, a NOTE never, and a guest's only inside
-    /// its grant's current scope in this snapshot. A row outside the worlds
-    /// the read asked for counts in statistics alone ([`CountFor`]).
+    /// its grant's current scope in this snapshot. Being outside the worlds
+    /// the read asked for refuses a row its count in the receipt alone
+    /// ([`CountFor`]).
     pub(super) fn refused_row_counts_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -85,7 +87,12 @@ impl ScopedRead<'_> {
     /// refuses and counts (one its status or its band keeps out) still
     /// counts, as in its receipt, and so does a row the floor admits that
     /// only the run's request or the lane's bound caller filter leaves out:
-    /// what a read selects is no refusal.
+    /// what a read selects is no refusal. The worlds the read asked for sit
+    /// on its key, so the floor holds them: a row with no count whatever its
+    /// worlds (every NOTE, any row of a room turn) outside them is hidden
+    /// too. That only ever hides more, so it moves ranking alone. A CLAIM
+    /// whose body does not decode is no candidate (the D19 gate's rule): it
+    /// is hidden unjudged, so one such row never ends the scan.
     ///
     /// The row's count is judged first, so the row gate runs only for a row
     /// the read would not count. The test records nothing: no receipt or
@@ -113,6 +120,11 @@ impl ScopedRead<'_> {
             let Some(row) = self.entity_record_in(txn, id)? else {
                 return Ok(true);
             };
+            if row.entity_type == crate::registry::ENTITY_TYPE_CLAIM
+                && crate::claim::decode_claim_body(&row.body, true).is_err()
+            {
+                return Ok(true);
+            }
             if self.refused_row_counts_in(
                 txn,
                 id,

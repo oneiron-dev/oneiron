@@ -195,8 +195,10 @@ impl PipelineBuilder<'_> {
     /// SCOPED-BM25-DF-COUNTS-NON-WORLD-REFUSED-POSTINGS).
     /// What the run only selects still counts: its types, corpus or
     /// category, a named world or world set, the worlds a turn chose inside
-    /// its ALLOWED-SET, the worlds a read asked for. `None` when nothing
-    /// keeps a row from the reader.
+    /// its ALLOWED-SET, the worlds a read asked for (save, under a scoped
+    /// read, a row with no count whatever its worlds, such as a NOTE, that
+    /// those worlds leave out). `None` when nothing keeps a row from the
+    /// reader.
     ///
     /// Each row it judges is a deadline checkpoint, as at the scope's
     /// admission: a term's document frequency asks it of every posting. It
