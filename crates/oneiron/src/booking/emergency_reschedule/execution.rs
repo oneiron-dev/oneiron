@@ -4,8 +4,35 @@
 
 use super::*;
 
+/// What the owner's emergency run answers (FIX [BK-EMERGENCY-UNCERTAIN-SEND-NOT-SHOWN-TO-OWNER];
+/// Engine ANSWER BK-EMERGENCY-UNCERTAIN-SEND-RECEIPT = A, 21 Nov 09:14): the checkpoint as it
+/// now stands, and a notice for each effect this home delivered whose send had ended uncertain
+/// on the old home before a home move carried the checkpoint here.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EmergencyExecution {
+    pub item: EmergencyItem,
+    /// Each delivered effect that may reach the booker twice, answered once
+    /// (`super::uncertain_send`).
+    pub repeat_notices: Vec<EmergencyRepeatNotice>,
+}
+
+/// One effect this home sent again after its send ended uncertain on the old home: the booker
+/// may receive it twice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EmergencyRepeatNotice {
+    /// `"calendar"`, the updated invite, or `"apology"`, the owner's message to the booker.
+    pub effect: &'static str,
+    /// [`EMERGENCY_REPEAT_NOTICE`].
+    pub message: &'static str,
+}
+
+/// What a repeat notice tells the owner.
+pub const EMERGENCY_REPEAT_NOTICE: &str =
+    "this send ended uncertain on the old home and may repeat";
+
 /// Commits locally on the home node, then consumes the real CAL outcome and
-/// outbound doors. A failed effect leaves an immutable, resumable item.
+/// outbound doors. A failed effect leaves an immutable, resumable item. The
+/// answer names each effect that may repeat ([`EmergencyExecution`]).
 pub fn execute_emergency_plan(
     vault: &Vault,
     request: &EmergencyRescheduleRequest,
@@ -13,7 +40,7 @@ pub fn execute_emergency_plan(
     calendars: &[(EntityId, Vec<crate::calendar::query::CalendarSel>)],
     input: &crate::booking::BookingLifecycleConsumerInput,
     sink: &mut impl crate::outbound::OutboundExecutionSink,
-) -> Result<EmergencyItem, BookingError> {
+) -> Result<EmergencyExecution, BookingError> {
     verify_logged_owner_instruction(vault, request)?;
     if plan.request != *request {
         return Err(refused("plan belongs to another owner instruction"));
@@ -63,7 +90,11 @@ pub fn execute_emergency_plan(
         )?;
         mark_delivered(vault, &mut item, false)?;
     }
-    Ok(item)
+    let repeat_notices = super::uncertain_send::answer_delivered(vault, &item)?;
+    Ok(EmergencyExecution {
+        item,
+        repeat_notices,
+    })
 }
 
 pub(super) enum EmergencyEffect {
