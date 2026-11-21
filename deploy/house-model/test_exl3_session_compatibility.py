@@ -178,6 +178,15 @@ class InheritedExllamav3Environment(unittest.TestCase):
         self.assertNotEqual(digest({"EXL3_GEMV": "0\nEXL3_INT8_GEMV=0"}),
                             digest({"EXL3_GEMV": "0", "EXL3_INT8_GEMV": "0"}))
 
+    def test_a_value_that_is_not_utf8_is_digested(self):
+        # `EXL3_UNUSED=$'\xff'` in a UTF-8 locale: os.environ decodes the byte to the lone surrogate U+DCFF.
+        digest = exl3_server.environment_digest
+        undecodable = digest({"EXL3_UNUSED": "\udcff"})
+        self.assertRegex(undecodable, "^[0-9a-f]{64}$")
+        self.assertNotEqual(undecodable, digest({"EXL3_UNUSED": "ÿ"}))
+        self.assertNotEqual(undecodable, digest({"EXL3_UNUSED": "\\udcff"}))
+        self.assertRegex(digest({"EXL3_\udcff": "0"}), "^[0-9a-f]{64}$")
+
     def test_a_server_with_none_keeps_its_identity(self):
         off = dict.fromkeys(exl3_server.SPEED_PART_DEFAULTS, False)
         self.assertEqual(exl3_server.arithmetic_identity(off), ({}, []))
@@ -243,10 +252,17 @@ class LoadNamesInheritedVariables(unittest.TestCase):
                     mock.patch.object(exl3_server, "rebuilt_extension_digest", return_value=None), \
                     mock.patch.object(cache_usage, "BackendIdentity", side_effect=build), \
                     mock.patch.dict(os.environ, dict(inherited, **environ), clear=True), \
-                    mock.patch("builtins.print"):
+                    mock.patch("builtins.print") as printed:
                 with self.assertRaises(IdentityBuilt) as built:
                     exl3_server.load(args)
+        # The lines `load` printed, for the log checks.
+        self.printed_lines = [str(call.args[0]) for call in printed.call_args_list if call.args]
         return built.exception.kwargs
+
+    def printed_line(self, prefix):
+        lines = [line for line in self.printed_lines if line.startswith(prefix + " ")]
+        self.assertEqual(len(lines), 1, self.printed_lines)
+        return lines[0]
 
     def test_a_server_without_exllamav3_variables_builds_the_stock_identity(self):
         kwargs = self.identity_kwargs({})
@@ -261,6 +277,29 @@ class LoadNamesInheritedVariables(unittest.TestCase):
         env = exl3_server.environment_digest({"EXL3_INT8_GEMV": "0"})
         self.assertEqual(kwargs["server_settings"]["exllamav3_env"], env)
         self.assertEqual(kwargs["kv_arithmetic"], [f"exllamav3_env={env}"])
+        self.assertEqual(self.printed_line("EXL3_ENV"), f"EXL3_ENV EXL3_INT8_GEMV sha256={env}")
+
+    def test_the_log_names_inherited_variables_without_their_values(self):
+        # The review's case: a private token under the prefix in the unit's EnvironmentFile; stdout goes to the
+        # service journal.
+        kwargs = self.identity_kwargs({"EXL3_DEPLOY_TOKEN": "token-value-7f3a", "EXL3_INT8_GEMV": "0"})
+        env = exl3_server.environment_digest({"EXL3_DEPLOY_TOKEN": "token-value-7f3a", "EXL3_INT8_GEMV": "0"})
+        self.assertEqual(kwargs["server_settings"]["exllamav3_env"], env)
+        self.assertEqual(self.printed_line("EXL3_ENV"), f"EXL3_ENV EXL3_DEPLOY_TOKEN EXL3_INT8_GEMV sha256={env}")
+        for line in self.printed_lines:
+            self.assertNotIn("token-value-7f3a", line)
+
+    def test_a_server_starts_with_a_value_that_is_not_utf8(self):
+        # `EXL3_UNUSED=$'\xff'` (and the same byte in an inherited fusion variable) in a UTF-8 locale: load builds
+        # its identity, and its log lines are ASCII, so they print under any stdout encoding.
+        kwargs = self.identity_kwargs({"EXL3_UNUSED": "\udcff", "EXL3_MGEMM_K_THRESHOLD": "\udcff"})
+        env = exl3_server.environment_digest({"EXL3_UNUSED": "\udcff"})
+        self.assertEqual(kwargs["server_settings"]["exllamav3_env"], env)
+        self.assertEqual(kwargs["kv_arithmetic"], [f"exllamav3_env={env}"])
+        self.assertEqual(self.printed_line("EXL3_ENV"), f"EXL3_ENV EXL3_UNUSED sha256={env}")
+        self.assertEqual(self.printed_line("FUSION_ENV_REPLACED"), "FUSION_ENV_REPLACED EXL3_MGEMM_K_THRESHOLD=\\udcff")
+        for prefix in ("EXL3_ENV", "FUSION_ENV_REPLACED"):
+            self.printed_line(prefix).encode("ascii")
 
 
 if __name__ == "__main__":

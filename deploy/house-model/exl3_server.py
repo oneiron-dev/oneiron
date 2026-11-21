@@ -628,9 +628,19 @@ def exllamav3_environment(environ=None):
 
 
 def environment_digest(variables):
-    """The digest of `variables` (`exllamav3_environment`) as settings (`cache_usage.settings_digest`: names and
-    values as JSON, names sorted), or None when there are none."""
-    return cache_usage.settings_digest(variables) if variables else None
+    """The SHA-256 of `variables` (`exllamav3_environment`) as canonical JSON (names sorted, compact separators),
+    or None when there are none. The JSON is ASCII-escaped: a POSIX environment entry may hold bytes that are not
+    UTF-8, which `os.environ` decodes to lone surrogates that a strict UTF-8 encoding refuses."""
+    if not variables:
+        return None
+    text = json.dumps(variables, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return cache_usage.sha256_hex(text.encode("ascii"))
+
+
+def ascii_escaped(text):
+    """`text` with every character outside ASCII as a backslash escape, lone surrogates included, so a log line
+    prints under any stdout encoding."""
+    return text.encode("ascii", "backslashreplace").decode("ascii")
 
 
 def arithmetic_identity(parts, ext_digest=None, env_digest=None):
@@ -771,15 +781,17 @@ def load(args):
     parts = speed_parts(args, ring, args.draft_dir)
     replaced = set_projection_fusion(parts["fuse_projections"])
     if replaced:
-        print("FUSION_ENV_REPLACED " + " ".join(f"{name}={value}" for name, value in sorted(replaced.items())),
-              flush=True)
+        print("FUSION_ENV_REPLACED " + " ".join(f"{name}={ascii_escaped(value)}"
+                                                 for name, value in sorted(replaced.items())), flush=True)
     # The exllamav3 variables this server inherited, taken before it sets any
     # of its own (the draft ring sets EXL3_DEBUG_NO_DRAFT_DEFRAG): its
-    # identity and its snapshots' compatibility name their digest.
+    # identity and its snapshots' compatibility name their digest. The log
+    # line names them without their values: an EnvironmentFile can hold a
+    # secret under the prefix, and stdout goes to the service journal.
     inherited_env = exllamav3_environment()
     env_digest = environment_digest(inherited_env)
     if env_digest:
-        print("EXL3_ENV " + " ".join(f"{name}={value}" for name, value in inherited_env.items())
+        print("EXL3_ENV " + " ".join(ascii_escaped(name) for name in inherited_env)
               + f" sha256={env_digest}", flush=True)
     # A rebuilt exllamav3 extension (README, "GEMM FP16 accumulators"): None with the installed one.
     ext_digest = rebuilt_extension_digest(getattr(args, "exllamav3_ext_dir", None))

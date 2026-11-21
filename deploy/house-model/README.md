@@ -517,8 +517,12 @@ named, not a list of known ones: one that changes nothing costs a cache miss
 or a refused import (`snapshot_incompatible`), never a wrong reuse. The fusion
 pair (`EXL3_MGEMM_K_THRESHOLD`, `EXL3_MGEMM_N_THRESHOLD`) is the exception:
 the `fuse_projections` switch sets or clears it and names itself in
-`speed_parts`. An `EXL3_ENV` line at load lists the variables and the digest.
-With none set, the identity and the compatibility are as before.
+`speed_parts`. An `EXL3_ENV` line at load names the variables and the digest,
+never their values: an `EnvironmentFile` can hold a secret under the prefix,
+and the server's stdout goes to the service journal. The digest hashes the
+names and values as ASCII-escaped JSON, so a value that is not UTF-8 is
+named like any other. With none set, the identity and the compatibility are
+as before.
 
 ### Solo admission
 
