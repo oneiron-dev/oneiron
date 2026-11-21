@@ -329,13 +329,11 @@ fn role_name(role: MachineRole) -> &'static str {
 }
 
 /// One machine's answer as `fold` holds it, with the answers about it that
-/// still wait for the owner's confirm, and the TASK facts it carried that
-/// reached `vault` after its removal and do not count there.
-fn answer_of(
-    vault: &oneiron::Vault,
-    machine: oneiron::EntityId,
-    fold: &AuthorityFold,
-) -> OwnerResult<MachineAnswer> {
+/// still wait for the owner's confirm, and the count of TASK facts it carried
+/// that reached the vault after its removal and do not count there
+/// (`not_counted`, read in the fold's own snapshot:
+/// [`oneiron::Vault::authority_fold_with_task_facts_not_counted`]).
+fn answer_of(machine: oneiron::EntityId, fold: &AuthorityFold, not_counted: u64) -> MachineAnswer {
     let folded = fold.machine(machine);
     let roster = folded.and_then(|folded| folded.roster.as_ref());
     let held = fold
@@ -351,8 +349,7 @@ fn answer_of(
             carrier: answer.carrier().map(|carrier| carrier.to_hex()),
         })
         .collect();
-    let not_counted = vault.task_facts_not_counted_after_removal(machine)?;
-    Ok(MachineAnswer {
+    MachineAnswer {
         machine: machine.to_hex(),
         role: roster.map(|roster| role_name(roster.profile.role)),
         revision: revision_hex(&folded.map_or([0; 32], |folded| {
@@ -369,7 +366,15 @@ fn answer_of(
         task_facts_not_counted_text: oneiron::task_authority::task_facts_not_counted_text(
             not_counted,
         ),
-    })
+    }
+}
+
+/// `machine`'s answer as the vault's authority fold holds it now, with the
+/// count of its TASK facts that arrived after its removal read in the same
+/// snapshot.
+fn answer_now(vault: &oneiron::Vault, machine: oneiron::EntityId) -> OwnerResult<MachineAnswer> {
+    let (fold, not_counted) = vault.authority_fold_with_task_facts_not_counted(machine)?;
+    Ok(answer_of(machine, &fold, not_counted))
 }
 
 /// `GET /v1/owner/machines/answer?machine=<id>`: one machine's answer and its
@@ -384,8 +389,7 @@ async fn get_answer(
     let query = query_params(query)?;
     let answer = blocking(move || -> OwnerResult<MachineAnswer> {
         let machine = entity_id("machine", &query.machine)?;
-        let fold = server.vault().authority_fold()?;
-        answer_of(server.vault(), machine, &fold)
+        answer_now(server.vault(), machine)
     })
     .await?;
     Ok(Json(answer))
@@ -435,7 +439,7 @@ async fn set_answer(
             MachineRole::Owned(request.answer),
             seen,
         )?;
-        answer_of(server.vault(), machine, &server.vault().authority_fold()?)
+        answer_now(server.vault(), machine)
     })
     .await?;
     Ok(Json(answer))
@@ -488,7 +492,7 @@ async fn remove(
             if receipt.landing.held().is_none() {
                 revoke_removed_mesh(&server, machine);
             }
-            let mut answer = answer_of(server.vault(), machine, &server.vault().authority_fold()?)?;
+            let mut answer = answer_now(server.vault(), machine)?;
             answer.ended_owner_keys = receipt.ended_keys.iter().map(revision_hex).collect();
             answer.live_owner_keys = receipt.live_keys.iter().map(revision_hex).collect();
             answer.ends_recovery_root = receipt.remaining.ends_recovery_root;

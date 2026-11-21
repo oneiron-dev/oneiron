@@ -177,9 +177,9 @@ pub(super) enum CarrierStanding {
     /// The signature verifies and the fold admits its carrier for this fact: the machine's
     /// roster chain stands live under the key, or every removal of the machine saw the fact.
     Counts,
-    /// The signature verifies under a key the roster's chain names, but that chain removed
-    /// the machine and not every removal saw this fact. It reached this install after the
-    /// machine's removal, and it does not count.
+    /// The signature verifies under the key the roster's chain removed the machine under,
+    /// with that key in no doubt, and not every removal saw this fact. It reached this
+    /// install after the machine's removal, and it does not count.
     ArrivedAfterRemoval,
     /// Nothing proves it: no settled root, a signature that fails, or a carrier the fold
     /// does not admit.
@@ -261,13 +261,17 @@ fn carried_fact_act(
 /// verified. Only the roster's chain of the machine speaks, as for the carrier of the owner's
 /// acts ([`crate::authority::owner_act_signer_admits`]): an anchor's chain neither admits nor
 /// removes a carrier, since any fresh key can mark any machine live in its own chain (RULINGs
-/// FOREIGN-ANCHOR-FOLD-JUDGE-RULE = C and FOREIGN-ANCHOR-ADMIT-SIDE-P1 = B, 16 Nov). That
-/// chain names the key and does not conflict. While it stands live, the carrier counts. Once
-/// it removed the machine, a fact counts only if every removal saw it
+/// FOREIGN-ANCHOR-FOLD-JUDGE-RULE = C and FOREIGN-ANCHOR-ADMIT-SIDE-P1 = B, 16 Nov). While
+/// that chain stands live under the key, with no conflict, the carrier counts. Once it removed
+/// the machine under the key, a fact counts only if every removal saw it
 /// ([`crate::authority::FoldedMachine::every_removal_saw`]): a removal does not unmake the
 /// facts the machine carried before it, and cannot be used to make new ones after (lead
-/// ruling REMOVED-CARRIER-NEW-FACTS = A, 21 Nov, which keeps SR-2's intent). An install key
-/// is never a roster key, as the carrier rule of the owner's acts has it.
+/// ruling REMOVED-CARRIER-NEW-FACTS = A, 21 Nov, which keeps SR-2's intent). Removals that
+/// cross conflict at the chain's head in what each names beside the key, so their meet
+/// decides, and only a poisoned key proves nothing
+/// ([`crate::authority::FoldedMachine::removed_under_key`]; blind review round 1 P1,
+/// REVIEW-10107). An install key is never a roster key, as the carrier rule of the owner's
+/// acts has it.
 fn carrier_standing(
     fold: &AuthorityFold,
     carrier: &CarrierSignature,
@@ -282,23 +286,22 @@ fn carrier_standing(
     let Some(machine) = fold.machines.get(&carrier.machine) else {
         return CarrierStanding::Unproven;
     };
-    let Some(chain) = machine
-        .roster
-        .as_ref()
-        .filter(|chain| chain.profile.machine_key == carrier.key && !chain.conflicted)
-    else {
+    let Some(chain) = machine.roster.as_ref() else {
         return CarrierStanding::Unproven;
     };
-    if !chain.removed {
-        return if chain.is_live() {
-            CarrierStanding::Counts
-        } else {
-            CarrierStanding::Unproven
+    if chain.removed {
+        return match (
+            machine.removed_under_key(&carrier.key),
+            machine.every_removal_saw(act),
+        ) {
+            (false, _) => CarrierStanding::Unproven,
+            (true, true) => CarrierStanding::Counts,
+            (true, false) => CarrierStanding::ArrivedAfterRemoval,
         };
     }
-    if machine.every_removal_saw(act) {
+    if chain.profile.machine_key == carrier.key && !chain.conflicted && chain.is_live() {
         CarrierStanding::Counts
     } else {
-        CarrierStanding::ArrivedAfterRemoval
+        CarrierStanding::Unproven
     }
 }
