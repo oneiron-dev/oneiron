@@ -134,6 +134,13 @@ fn raise_page_in_txn(
         (Backfill::RaisingAgain, Pass::Again) | (Backfill::Raising, Pass::First | Pass::Whole) => {
             after
         }
+        // A run again that starts here keeps no mark a run before it left:
+        // an older build may have written below a row such a mark names
+        // (#10265 Opus review 3 P2-2 b). It only raises rows again.
+        (Backfill::RaisingAgain, _) => {
+            RAISED_AGAIN.delete_from(&vault.store, txn, &[])?;
+            &[]
+        }
         _ => &[],
     };
     // A pass that begins here with no row raised yet raises archived rows

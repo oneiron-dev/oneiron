@@ -320,15 +320,15 @@ pub(super) fn raise_floor_in_txn(
         add.extend(attested);
     }
     match own_source_in(vault, txn, row, &raw)? {
-        // A live row born under no source (a peer's phone mark that names
+        // A held row born under no source (a peer's phone mark that names
         // no thread) reads to no one, so its stored floor says so too: the
         // phone read and doctor read the stored floor (#9289 review 2 P2-5).
-        // An erased row's shell is no fact; what is written from it inherits
+        // An archived row is held, so it keeps the seal through its raise
+        // while archived and its restore (#10265 Opus review 3 P2-1). An
+        // erased row's shell is no fact; what is written from it inherits
         // the seal from its own source.
         OwnSource::Source(own) if own == sealed_source() => {
-            if !crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, &**txn, row)?
-                .deleted
-            {
+            if !crate::ports::removed_in_txn(&vault.store, &**txn, row)? {
                 add.insert(own);
             }
         }
