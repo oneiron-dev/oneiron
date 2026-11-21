@@ -60,10 +60,12 @@ use crate::inbox::view_values::{AgentInboxItemKind, AgentInboxParticipant, Inbox
 use crate::registry::ENTITY_TYPE_EVENT;
 use crate::{EntityId, Vault};
 
+mod calendar_hold;
 mod emergency_return;
 mod held_deposit;
 mod refund_marked_outside;
 
+pub use self::calendar_hold::{BookingOwnerCardCalendarHold, CALENDAR_HOLD_RECONNECT_VERB};
 pub use self::emergency_return::{BookingDepositReturned, BookingOwnerCardEmergencyReturn};
 pub use self::held_deposit::{
     BookingDepositHeld, BookingDepositHeldReason, BookingOwnerCardDeposit,
@@ -81,6 +83,13 @@ pub const BOOKING_OWNER_CARD_ITEM_PREFIX: &str = "booking:";
 /// day it is, and opens the booking's card. Its own id, so marking the
 /// booking's same-day row done never hides it.
 pub const BOOKING_HELD_DEPOSIT_ITEM_PREFIX: &str = "booking-held-deposit:";
+
+/// The prefix of a booking's calendar-hold INBOX item id; the booking's EVENT
+/// hex follows it. The row stands while an outbox row of an out-of-service
+/// seat holds the booking's calendar changes
+/// ([`BookingOwnerCard::calendar_hold`]), whatever day it is, and opens the
+/// booking's card (CAL-OUTBOX-ROW-OF-REMOVED-SEAT-HOLDS-PULLS = C).
+pub const BOOKING_CALENDAR_HOLD_ITEM_PREFIX: &str = "booking-calendar-hold:";
 
 /// A booking card is an update, as a meeting's prep pack is: the booking
 /// stands, and nothing waits on the owner.
@@ -128,6 +137,11 @@ pub struct BookingOwnerCard {
     /// DEPOSIT-PICK-AFTER-EMERGENCY-CANCEL = A); `None` on every other card.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub emergency_return: Option<BookingOwnerCardEmergencyReturn>,
+    /// The booking's calendar changes an outbox row holds while the seat
+    /// that wrote it is out of service, with "Reconnect it" and "Release the
+    /// hold"; `None` when nothing holds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub calendar_hold: Option<BookingOwnerCardCalendarHold>,
 }
 
 /// One door a booking card offers: the input of the owner's emergency door
@@ -147,6 +161,11 @@ pub struct BookingOwnerCardOffer {
 /// "Updates"): item id `booking:<event hex>`, the EVENT hex as its payload,
 /// at the commit or the cancel. A vault with no live owner makes no row.
 /// Never folded into a thread.
+///
+/// Beside it, any day, each booking whose calendar changes an out-of-service
+/// seat's outbox row holds, as a row of its own for `own_reader` on the same
+/// terms as the held-deposit row below: item id
+/// `booking-calendar-hold:<event hex>`, at the hold's start.
 ///
 /// Beside it, any day, each booking whose deposit a calendar's cancel left
 /// held, as a row of its own for `own_reader`, the one actor reading its own
@@ -192,6 +211,9 @@ pub(crate) fn booking_owner_card_inbox_items(
         };
         if let Some(held) = held_reader.and_then(|reader| held_deposit_row(&read, reader)) {
             items.push(held);
+        }
+        if let Some(hold) = held_reader.and_then(|reader| calendar_hold_row(&read, reader)) {
+            items.push(hold);
         }
         if same_owner_day(read.card.recorded_at, now, read.zone.as_deref()) {
             items.extend(booking_card_row(read.card, &owners));
@@ -351,10 +373,45 @@ fn held_deposit_row(read: &CardRead, reader: EntityId) -> Option<AgentInboxLensI
     })
 }
 
+/// The calendar-hold row of the booking `read` describes, on the own slice
+/// of `reader`, a live owner: when an out-of-service seat's outbox row holds
+/// its calendar changes and `reader` is one of its selected hosts, as the
+/// held-deposit row lists it; `None` otherwise. It is dated by the hold's
+/// start, the earliest last move of a held row.
+fn calendar_hold_row(read: &CardRead, reader: EntityId) -> Option<AgentInboxLensItem> {
+    let hold = read.card.calendar_hold.as_ref()?;
+    if !read.selected_hosts.contains(&reader.to_hex()) {
+        return None;
+    }
+    let card = &read.card;
+    Some(AgentInboxLensItem {
+        item_id: format!("{BOOKING_CALENDAR_HOLD_ITEM_PREFIX}{}", card.event_ref),
+        kind: AgentInboxItemKind::CoordinationUpdate,
+        thread_ref: None,
+        identity_ref: None,
+        actor_ref: reader,
+        facet_ref: None,
+        participants: vec![AgentInboxParticipant {
+            identity_ref: None,
+            actor_ref: reader,
+        }],
+        impact: InboxImpact(BOOKING_OWNER_CARD_INBOX_IMPACT),
+        occurred_at: calendar_hold::calendar_hold_since(hold).unwrap_or(card.recorded_at),
+        receipt_ref: None,
+        payload_ref: Some(card.event_ref.clone()),
+        approval_digest: None,
+        concern: None,
+        diary_review: None,
+        sender: None,
+        widening: None,
+    })
+}
+
 /// The card the INBOX row `item_id` carries, read now for `reader`; `None`
 /// for a row that is no booking card, for a booking that no longer reads as
-/// one, and for a held-deposit row whose deposit no longer stands held as
-/// the row says or whose reader is no selected host.
+/// one, for a held-deposit row whose deposit no longer stands held as the
+/// row says or whose reader is no selected host, and for a calendar-hold row
+/// whose hold no longer stands.
 ///
 /// # Errors
 ///
@@ -364,12 +421,14 @@ pub(crate) fn booking_owner_card_of_item(
     item_id: &str,
     reader: EntityId,
 ) -> Result<Option<BookingOwnerCard>> {
-    let (hex, held_row) = match item_id.strip_prefix(BOOKING_HELD_DEPOSIT_ITEM_PREFIX) {
-        Some(hex) => (hex, true),
-        None => match item_id.strip_prefix(BOOKING_OWNER_CARD_ITEM_PREFIX) {
-            Some(hex) => (hex, false),
-            None => return Ok(None),
-        },
+    let (hex, row) = if let Some(hex) = item_id.strip_prefix(BOOKING_HELD_DEPOSIT_ITEM_PREFIX) {
+        (hex, BookingRow::HeldDeposit)
+    } else if let Some(hex) = item_id.strip_prefix(BOOKING_CALENDAR_HOLD_ITEM_PREFIX) {
+        (hex, BookingRow::CalendarHold)
+    } else if let Some(hex) = item_id.strip_prefix(BOOKING_OWNER_CARD_ITEM_PREFIX) {
+        (hex, BookingRow::Card)
+    } else {
+        return Ok(None);
     };
     let Ok(event_ref) = EntityId::from_hex(hex) else {
         return Ok(None);
@@ -378,7 +437,11 @@ pub(crate) fn booking_owner_card_of_item(
     let rtxn = vault.store.env.read_txn()?;
     let read = card_in_txn(vault, &rtxn, &event_ref, now, Some(reader))?;
     Ok(read
-        .filter(|read| !held_row || lists_held_deposit_row(read, reader))
+        .filter(|read| match row {
+            BookingRow::Card => true,
+            BookingRow::HeldDeposit => lists_held_deposit_row(read, reader),
+            BookingRow::CalendarHold => read.card.calendar_hold.is_some(),
+        })
         .map(|read| read.card))
 }
 
@@ -393,6 +456,17 @@ fn lists_held_deposit_row(read: &CardRead, reader: EntityId) -> bool {
         .as_ref()
         .is_some_and(BookingOwnerCardDeposit::lists_on_inbox)
         && read.selected_hosts.contains(&reader.to_hex())
+}
+
+/// Which of a booking's INBOX rows an item id names.
+#[derive(Clone, Copy)]
+enum BookingRow {
+    /// The same-day booking row (`booking:`).
+    Card,
+    /// The held-deposit row (`booking-held-deposit:`).
+    HeldDeposit,
+    /// The calendar-hold row (`booking-calendar-hold:`).
+    CalendarHold,
 }
 
 /// One booking's card as one snapshot reads it, with what its rows need
@@ -499,6 +573,7 @@ fn card_in_txn(
         .as_ref()
         .map(|context| context.owner_refs.clone())
         .unwrap_or_default();
+    let calendar_hold = calendar_hold::calendar_hold_in_txn(vault, rtxn, event_ref)?;
     let card = BookingOwnerCard {
         event_ref: event_ref.to_hex(),
         visitor,
@@ -512,6 +587,7 @@ fn card_in_txn(
         deposit,
         refund_marked_outside,
         emergency_return,
+        calendar_hold,
     };
     Ok(Some(CardRead {
         card,

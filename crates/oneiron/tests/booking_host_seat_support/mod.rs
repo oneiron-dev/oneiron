@@ -21,7 +21,7 @@ use std::sync::Mutex;
 
 use oneiron::calendar::caldav::CALDAV_PROVIDER_KEY;
 use oneiron::calendar::connectors::door::{
-    self, CalendarConnectorOperation, CalendarConnectorRequest,
+    self, CalendarConnectorKillRequest, CalendarConnectorOperation, CalendarConnectorRequest,
 };
 use oneiron::calendar::connectors::{
     CalendarConnectorError, CalendarConnectorSeatConfig, CalendarRemoteTransport,
@@ -867,6 +867,35 @@ impl Seat {
                 changes,
             });
         run_calendar_connector_sync(vault, &self.operation(vault), &self.transport, now, 7)
+    }
+
+    /// The owner kills the seat (`calendar.connector.kill`): its verbs are
+    /// revoked and its polling stops, and its outbox rows stay as they are.
+    pub(crate) fn kill(&self, vault: &Vault) {
+        let (id, owner) = seat_owner(vault);
+        door::kill(
+            &vault.memory(id, EdgeActorClass::Human),
+            &owner,
+            &CalendarConnectorKillRequest {
+                seat_ref: self.config.seat_ref.clone(),
+                reason_ref: "ops:seat-out-of-service".to_owned(),
+            },
+        )
+        .expect("the owner kills the seat");
+    }
+
+    /// The owner's "Reconnect it": installs this seat's configuration again
+    /// under a new seat ref (`<seat ref>-reconnected`), whose setup reads
+    /// after this seat's. The same configuration writes the same outbox
+    /// scope, so the new seat resumes the old seat's rows.
+    pub(crate) fn reconnect(&self, vault: &Vault) -> Self {
+        Self::install_config(
+            vault,
+            CalendarConnectorSeatConfig {
+                seat_ref: format!("{}-reconnected", self.config.seat_ref),
+                ..self.config.clone()
+            },
+        )
     }
 
     /// The calendar operation on the installed seat: this re-reads the

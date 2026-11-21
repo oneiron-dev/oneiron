@@ -2,6 +2,7 @@
 
 mod archived;
 mod collection;
+mod release;
 
 pub(crate) use self::archived::{plan_archived_calendar_rows, read_back_archived_calendar_rows};
 pub use self::collection::{
@@ -11,6 +12,9 @@ pub use self::collection::{
 pub(super) use self::collection::{
     UnprovenReplaysBeforeRead, cancelled_members_in_flight, first_write_unsettled,
     omission_observed, unproven_replays_before_read, unsettled_writes_of,
+};
+pub(crate) use self::release::{
+    calendar_holds_in_txn, record_released_hold_cancel, release_calendar_holds_as_owner,
 };
 
 use serde::{Deserialize, Serialize};
@@ -1174,7 +1178,7 @@ fn publish_own_stored_copy_in_txn(
 ///
 /// A version below the staged SEQUENCE is another writer's when the pull's
 /// read began after the refusal: `before_read` holds the row as it stands
-/// now ([`UnprovenReplaysBeforeRead`]), so the refusal, and the copy the
+/// now, at its revision ([`UnprovenReplaysBeforeRead`]), so the refusal, and the copy the
 /// provider held then, came before that read, and a refused write is never
 /// sent again. It proves the copy another writer's, as the refusal's own
 /// read would have (CAL-OUTBOX-ROW-OF-REMOVED-SEAT-HOLDS-PULLS): without
@@ -1197,10 +1201,11 @@ pub(super) fn prove_unproven_replay(
     before_read: &UnprovenReplaysBeforeRead,
     now: u64,
 ) -> Result<(), CalendarConnectorError> {
-    let Some(mut row) = self::collection::unproven_replay(vault, operation, uid)? else {
+    let Some((mut row, revision)) = self::collection::unproven_replay(vault, operation, uid)?
+    else {
         return Ok(());
     };
-    let read_after_refusal = before_read.holds(&row);
+    let read_after_refusal = before_read.holds(&row.outbox_id, &revision);
     open_outbox(vault, operation, provider, uid, &mut row)?;
     // A row owes this proof only after a replay's refusal or a first
     // write's, so an unmarked copy reads as the write's where the replay's
