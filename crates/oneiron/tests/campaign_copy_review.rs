@@ -525,6 +525,171 @@ fn a_voice_guide_that_is_not_a_note_is_refused() {
 }
 
 // ---------------------------------------------------------------------------
+// The owner's skip (`campaign.copy_review.skip`)
+// ---------------------------------------------------------------------------
+
+/// The owner turns copy review off for one campaign (lead ruling
+/// COPY-REVIEW-JUDGE-BY-DEFAULT = B, 21 Nov): a family setting key, one item
+/// per campaign, off by default. On the base the key is unknown, so the
+/// owner's set fails and each test here stops there.
+mod owner_skip {
+    use std::collections::BTreeSet;
+
+    use super::*;
+    use oneiron::authority::ActSurface;
+    use oneiron::consent::AuthenticatedOwner;
+    use oneiron::federation::{Scope, ScopeAxis};
+    use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller, set_line};
+    use oneiron::store::GateDecisionId;
+    use oneiron::verbs::{
+        AgentDefinitionCreateRequest, AgentGrantMintRequest, create_agent_definition_as,
+        mint_agent_grant_as,
+    };
+
+    const SKIP_KEY: &str = "campaign.copy_review.skip";
+
+    fn owner_proof(vault: &Vault) -> AuthenticatedOwner {
+        let owner = vault
+            .ensure_embedded_owner_actor()
+            .expect("the vault's owner");
+        vault
+            .authenticate_owner(owner, "principal:owner", true, GateDecisionId::now())
+            .expect("owner proof")
+    }
+
+    /// The change that turns copy review off for `campaign`.
+    fn skip(campaign: EntityId) -> SetSetting {
+        SetSetting {
+            item: Some(campaign.to_hex()),
+            ..SetSetting::vault_value(SKIP_KEY, json!(true))
+        }
+    }
+
+    /// The owner turns copy review off for `campaign`.
+    fn owner_skips(vault: &Vault, campaign: EntityId) {
+        let proof = owner_proof(vault);
+        let outcome = vault
+            .set_setting(SettingCaller::Owner(&proof), skip(campaign))
+            .expect("the owner's skip of copy review");
+        assert!(
+            matches!(outcome, SetSettingOutcome::Applied { .. }),
+            "the owner's skip applies at once: {outcome:?}"
+        );
+    }
+
+    fn held_for_copy_review(vault: &Vault) -> bool {
+        strings(&held_ask_state(vault), "gate_reason_codes")
+            .contains(&PENDING_COPY_REVIEW.to_owned())
+    }
+
+    /// A voice-guided campaign the owner skips sends with no copy review: its
+    /// send holds only for what held it before copy review existed.
+    #[test]
+    fn a_voice_guided_campaign_the_owner_skips_is_not_held_for_copy_review() {
+        let leg =
+            leg(|vault, owner| json!({ "voice_guide_ref": voice_guide(vault, owner).to_hex() }));
+        owner_skips(&leg.vault, leg.campaign);
+        drive_held(&leg.vault, &leg.attempt);
+        assert!(
+            !held_for_copy_review(&leg.vault),
+            "the owner's skip lets the copy go unreviewed: {}",
+            held_ask_state(&leg.vault)
+        );
+    }
+
+    /// The skip wins over a pinned human review too.
+    #[test]
+    fn a_human_review_campaign_the_owner_skips_is_not_held_for_copy_review() {
+        let leg = leg(|_, _| json!({ "copy_review": "human" }));
+        owner_skips(&leg.vault, leg.campaign);
+        drive_held(&leg.vault, &leg.attempt);
+        assert!(
+            !held_for_copy_review(&leg.vault),
+            "the owner's skip lifts the human review hold: {}",
+            held_ask_state(&leg.vault)
+        );
+    }
+
+    /// The skip is per campaign: a row for another campaign leaves this
+    /// one's copy review in force.
+    #[test]
+    fn a_skip_of_another_campaign_leaves_this_one_held_for_copy_review() {
+        let leg =
+            leg(|vault, owner| json!({ "voice_guide_ref": voice_guide(vault, owner).to_hex() }));
+        owner_skips(&leg.vault, EntityId::now());
+        drive_held(&leg.vault, &leg.attempt);
+        assert!(
+            held_for_copy_review(&leg.vault),
+            "another campaign's skip does not reach this one: {}",
+            held_ask_state(&leg.vault)
+        );
+    }
+
+    /// Turning copy review off is the owner's act: an agent that holds the
+    /// key's own grant line gets a check-in for the owner, and the campaign's
+    /// send still holds for copy review.
+    #[test]
+    fn an_agents_skip_waits_for_the_owner_and_the_send_stays_held() {
+        let leg =
+            leg(|vault, owner| json!({ "voice_guide_ref": voice_guide(vault, owner).to_hex() }));
+        let proof = owner_proof(&leg.vault);
+        let agent = EntityId::now();
+        create_agent_definition_as(
+            &leg.vault,
+            &proof,
+            AgentDefinitionCreateRequest {
+                agent_def_ref: agent,
+                definition: serde_json::from_value(json!({
+                    "agent_id": format!("copy-review-skipper-{}", agent.to_hex()),
+                    "desc": "Copy review skip key test agent",
+                    "version": "1.0.0",
+                    "ceiling": "auto",
+                    "enabled": true,
+                }))
+                .expect("typed agent definition"),
+            },
+        )
+        .expect("the owner creates an enabled agent definition");
+        let mut authority_scope = Scope::top();
+        authority_scope.verbs = ScopeAxis::Some(BTreeSet::from([
+            "read".to_owned(),
+            "vault.settings.set".to_owned(),
+            set_line(SKIP_KEY),
+        ]));
+        let minted = mint_agent_grant_as(
+            &leg.vault,
+            &proof,
+            ActSurface::ThisInstall,
+            AgentGrantMintRequest {
+                agent,
+                authority_scope,
+                expires_at: None,
+                repo_bounds: None,
+                verb_classes: BTreeSet::new(),
+                wallet_ref: None,
+                working_view_bounds: None,
+            },
+        )
+        .expect("the owner mints the agent a Grant");
+        assert!(minted.grant.confers, "the Grant confers");
+        let outcome = leg
+            .vault
+            .set_setting(SettingCaller::Agent(agent), skip(leg.campaign))
+            .expect("the agent's skip answers");
+        assert!(
+            matches!(outcome, SetSettingOutcome::Pending { .. }),
+            "an agent's skip waits on the owner's answer: {outcome:?}"
+        );
+        drive_held(&leg.vault, &leg.attempt);
+        assert!(
+            held_for_copy_review(&leg.vault),
+            "the send still holds for copy review: {}",
+            held_ask_state(&leg.vault)
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // The judge (new API)
 // ---------------------------------------------------------------------------
 
