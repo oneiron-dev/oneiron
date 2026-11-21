@@ -22,7 +22,7 @@ use oneiron::test_doors::house_link::put_claim_made_by;
 use oneiron::test_doors::source_audience_binding::{bound_row, reads};
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
-    EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig,
+    EdgeActorClass, EdgeKind, EntityId, TimeRange, Vault, VaultConfig,
 };
 
 const AT: u64 = 1_769_947_200;
@@ -64,7 +64,17 @@ fn claim_born_with(
     role: MadeByInputRole,
     value: &str,
 ) -> EntityId {
-    let id = EntityId::now();
+    claim_born_as(mailbox, EntityId::now(), inputs, role, value)
+}
+
+/// [`claim_born_with`] under the id `id`.
+fn claim_born_as(
+    mailbox: &Mailbox,
+    id: EntityId,
+    inputs: &[EntityId],
+    role: MadeByInputRole,
+    value: &str,
+) -> EntityId {
     let mut body = ClaimBody::new(
         "profile.preference",
         ClaimSubject::Entity(mailbox.owner),
@@ -224,6 +234,62 @@ fn rederive_does_not_close_a_sealed_claim_by_a_restatement_its_verdict_seals() {
         hidden(&mailbox.vault),
         2,
         "doctor counts both sealed CLAIMs",
+    );
+}
+
+/// Fable design pass 31, step L-S5 (the re-derive selects by verdict): of
+/// two restatements of a sealed CLAIM's fact, one that waits for a row on
+/// its way here and a whole one learnt from the mailbox, the re-derive
+/// closes the sealed CLAIM by the whole one, which reads now, though it
+/// meets the waiting one first. Before, it took the first restatement it
+/// met that was not sealed.
+#[test]
+fn rederive_closes_a_sealed_claim_by_a_whole_restatement_before_a_waiting_one() {
+    let mailbox = mailbox();
+    let sealed = sealed_claim(&mailbox, "the fact");
+    // The re-derive meets a subject's CLAIMs in id order: the waiting one
+    // first.
+    let mut ids = [EntityId::now(), EntityId::now()];
+    ids.sort();
+    let [first, second] = ids;
+    let late = EntityId::now();
+    let waiting = claim_born_as(&mailbox, first, &[late], MadeByInputRole::Input, "the fact");
+    let whole = claim_born_as(
+        &mailbox,
+        second,
+        &[mailbox.row],
+        MadeByInputRole::Input,
+        "the fact",
+    );
+    assert!(
+        !reads(&mailbox.vault, waiting, &[mailbox.reader]).expect("the reader's read"),
+        "precondition: a restatement learnt from a row on its way waits for it",
+    );
+    assert!(
+        reads(&mailbox.vault, whole, &[mailbox.reader]).expect("the reader's read"),
+        "precondition: a restatement learnt from the mailbox reads to its reader",
+    );
+    let report = mailbox
+        .vault
+        .rederive_sealed_rows(&owner_proof(&mailbox))
+        .expect("the owner's re-derive");
+    assert_eq!(
+        (report.sealed, report.superseded),
+        (1, 1),
+        "the re-derive closes the one sealed CLAIM",
+    );
+    assert_eq!(
+        mailbox
+            .vault
+            .sources(&sealed, EdgeKind::Supersedes, None)
+            .expect("the CLAIMs that supersede the sealed one"),
+        vec![whole],
+        "the re-derive closed the sealed CLAIM by a restatement that waits, not by the whole one",
+    );
+    assert_eq!(
+        lifecycle(&mailbox.vault, waiting),
+        ClaimLifecycleStatus::Active,
+        "the restatement that waits stays open",
     );
 }
 
