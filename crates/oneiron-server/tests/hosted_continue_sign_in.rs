@@ -372,7 +372,6 @@ struct Allowed {
     authorize: reqwest::Url,
     page: String,
     request_ref: EntityId,
-    #[cfg_attr(not(oneiron_test_support), allow(dead_code))]
     agent: EntityId,
 }
 
@@ -680,6 +679,37 @@ fn logout_signs_out_the_continue_sign_in() {
         assert!(!continue_file.exists(), "the continue sign-in is gone");
         let (status, body) = refresh_at_vault(&served, &held).await;
         assert_eq!(status, 400, "{body}");
+        assert_eq!(body["error"], "invalid_grant", "{body}");
+    });
+}
+
+/// A new plain `hosted login` registers another client, and the continue
+/// sign-in the old client made is signed out with the recall sign-in it
+/// replaced: its file goes, and its refresh token no longer refreshes, so
+/// no `full` sign-in that no command reads stays live at the vault.
+#[test]
+fn a_new_recall_login_signs_out_the_old_continue_sign_in() {
+    run_on_engine_stack("hosted-continue-relogin", || async {
+        let served = Served::start().await;
+        let scratch = Scratch::new();
+        let recall = scratch.login(&served).await;
+        scratch.login_push(&served).await;
+        let continue_file = scratch.continue_file();
+        let held = read_json(&continue_file);
+
+        let again = scratch.login(&served).await;
+        assert_ne!(again.agent, recall.agent, "FIXTURE: another client");
+        assert_ne!(
+            read_json(&scratch.recall_file())["client_id"],
+            held["client_id"],
+            "FIXTURE: the recall sign-in is the new client's"
+        );
+        assert!(
+            !continue_file.exists(),
+            "the old client's continue sign-in is gone"
+        );
+        let (status, body) = refresh_at_vault(&served, &held).await;
+        assert_eq!(status, 400, "it is revoked at the vault: {body}");
         assert_eq!(body["error"], "invalid_grant", "{body}");
     });
 }
