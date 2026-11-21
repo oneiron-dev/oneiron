@@ -23,6 +23,12 @@
 //! while that owner still stands in the room; the filing never seats them
 //! (PLAN-RUN-RESULT-SHARED-ROOM-SETTING).
 //!
+//! The record links the run's trace and never copies it
+//! (PLAN-RUN-FULL-TRACE-INTO-SUB-SESSION = C, lead 21 Nov 13:4x): its
+//! `trace_ref` names the run's own conversation, where its bubbles land, and
+//! they stay there under that conversation's read gate, so a shared room's
+//! other reader learns only the id.
+//!
 //! Every verdict request is built from JSON and every new settlement field
 //! is read back through JSON, so this file compiles on a tree without the
 //! refs and fails there on assertions, never on a compile error.
@@ -34,7 +40,7 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use oneiron::agent_dispatch::AgentDispatcher;
+use oneiron::agent_dispatch::{AgentDispatchStatus, AgentDispatcher};
 use oneiron::anchored_annotation::{AnnotationThreadOpenRequest, AnnotationThreadRequest};
 use oneiron::authority::{ActSurface, AgentTier, MachineRole};
 use oneiron::claim::base_world_id;
@@ -52,6 +58,7 @@ use oneiron::note::{
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
 use oneiron::store::GateDecisionId;
+use oneiron::test_doors::agent_run_speech::speak_as_agent_run;
 use oneiron::test_doors::derive_verbs::define_agent;
 use oneiron::test_doors::room_turn_backfill::{
     room_turn_row, room_turn_rows, run_room_turn_backfill, strip_room_turn_rows,
@@ -295,9 +302,8 @@ fn enter_speaker(fixture: &Fixture, room: EntityId) {
 /// The lease owner the test's run pump claims under.
 const PUMP: &str = "plan-mode-subsession-pump";
 
-/// The run pump claims plan run `run` and settles it as the resident pump
-/// does, with a run that answered nothing: the run's result TURN.
-fn settle_run(fixture: &Fixture, run: EntityId) -> EntityId {
+/// The run pump claims plan run `run`: the claimed try, leased to [`PUMP`].
+fn claim_run(fixture: &Fixture, run: EntityId) -> AgentDispatchStatus {
     let dispatcher = AgentDispatcher::new(&fixture.vault);
     let now = fixture.vault.now_recorded_at();
     let ready = dispatcher
@@ -316,15 +322,60 @@ fn settle_run(fixture: &Fixture, run: EntityId) -> EntityId {
         Some(run.to_hex().as_str()),
         "the claimed try realizes the plan's run"
     );
+    claimed.status
+}
+
+/// The run pump claims plan run `run` and settles it as the resident pump
+/// does, with a run that answered nothing: the run's result TURN.
+fn settle_run(fixture: &Fixture, run: EntityId) -> EntityId {
+    let claimed = claim_run(fixture, run);
     let replay = CodeRunReplayRecord::new(EntityId::now(), CodeRunDeterminism::new(0, [7; 32]));
-    dispatcher
-        .attach_agent_run_result(&claimed.status.attempt, PUMP, &replay, now)
+    AgentDispatcher::new(&fixture.vault)
+        .attach_agent_run_result(
+            &claimed.attempt,
+            PUMP,
+            &replay,
+            fixture.vault.now_recorded_at(),
+        )
         .expect("the run's result lands")
+}
+
+/// [`settle_run`] for a run that spoke `words` before it answered, as its
+/// engine executor speaks: the executor's run id is the claimed attempt's,
+/// as the resident pump runs it, and the bubble lands in the run's own
+/// conversation. The run's result TURN, and the TURN its bubble landed in.
+fn settle_spoken_run(fixture: &Fixture, run: EntityId, words: &str) -> (EntityId, EntityId) {
+    let claimed = claim_run(fixture, run);
+    let executor_run =
+        EntityId::from_bytes(*claimed.attempt.id.as_bytes()).expect("the run's executor id");
+    let spoken = speak_as_agent_run(&fixture.vault, &claimed, executor_run, words, 0)
+        .expect("the run speaks in its own conversation");
+    let replay = CodeRunReplayRecord::new(executor_run, CodeRunDeterminism::new(0, [7; 32]));
+    let result = AgentDispatcher::new(&fixture.vault)
+        .attach_agent_run_result(
+            &claimed.attempt,
+            PUMP,
+            &replay,
+            fixture.vault.now_recorded_at(),
+        )
+        .expect("the run's result lands");
+    (result, spoken)
 }
 
 /// How many records of sub-session `session` in `room` file result TURN
 /// `result`.
 fn filed_results(fixture: &Fixture, room: EntityId, session: EntityId, result: EntityId) -> usize {
+    filed_result_bodies(fixture, room, session, result).len()
+}
+
+/// The bodies of the records of sub-session `session` in `room` that file
+/// result TURN `result`.
+fn filed_result_bodies(
+    fixture: &Fixture,
+    room: EntityId,
+    session: EntityId,
+    result: EntityId,
+) -> Vec<Value> {
     let scope = fixture
         .vault
         .resolve_dag_scope(&ScopeSelector {
@@ -337,17 +388,19 @@ fn filed_results(fixture: &Fixture, room: EntityId, session: EntityId, result: E
     scope
         .records
         .iter()
-        .filter(|record| {
+        .map(|record| {
             let bytes = fixture
                 .vault
                 .get(record)
                 .expect("a record reads")
                 .expect("the record is stored");
-            let body: Value = rmp_serde::from_slice(&bytes).expect("a record body decodes");
+            rmp_serde::from_slice::<Value>(&bytes).expect("a record body decodes")
+        })
+        .filter(|body| {
             body.get("kind") == Some(&json!("plan.run_result"))
                 && body.get("result_ref") == Some(&json!(result.to_hex()))
         })
-        .count()
+        .collect()
 }
 
 /// The TURN ids the owner reads on `room`: its trunk page's turns, then its
@@ -997,5 +1050,75 @@ fn a_shared_room_its_approver_left_keeps_the_runs_result_out_with_the_key_on() {
             .stands_in_room(room, fixture.owner)
             .expect("the owner's standing reads"),
         "the settlement never seats the approving owner in the room again"
+    );
+}
+
+/// Words the plan's run speaks in its own conversation: its trace.
+const TRACE_WORDS: &str = "Merged three duplicate dawn readings";
+
+#[test]
+fn a_shared_room_reader_learns_only_the_id_of_the_runs_trace() {
+    let fixture = fixture();
+    owner_allows_shared_rooms(&fixture);
+    let plan = propose_run_by(&fixture, fixture.agent).expect("the agent proposes its run");
+    let other = put_person(&fixture);
+    let (room, turn) = room_turn(&fixture, &[fixture.owner, other]);
+    let settled = approve_with(
+        &fixture,
+        plan.plan_ref,
+        &plan.revision,
+        json!({"approving_turn_ref": turn.to_hex()}),
+    )
+    .expect("the approval naming the turn lands");
+    let run = run_of(&settled)
+        .expect("the settlement names its run")
+        .expect("the approval lands the plan's run");
+    let session = sub_session_of(&settled).expect("the approval hangs the run off the turn");
+    let (result, spoken) = settle_spoken_run(&fixture, run, TRACE_WORDS);
+    let [record] = &filed_result_bodies(&fixture, room, session, result)[..] else {
+        panic!("with the owner's key on, the shared room takes the run's result once");
+    };
+    let trace = record
+        .get("trace_ref")
+        .and_then(Value::as_str)
+        .and_then(|trace| EntityId::from_hex(trace).ok())
+        .unwrap_or_else(|| {
+            panic!("the filed record links the run's trace by its conversation id: {record}")
+        });
+    assert!(
+        !record.to_string().contains(TRACE_WORDS),
+        "the filed record holds the trace's id, never its words: {record}"
+    );
+    // The trace stays where the run's bubble landed, retained under its own
+    // read gate: the owner, whom that gate admits, reads it through the id.
+    let owners = owner(&fixture)
+        .conversation_transcript(&trace, None, 10)
+        .expect("the owner reads the run's trace through the record's id")
+        .value;
+    assert!(
+        owners.turns.iter().any(|turn| {
+            turn.id == spoken.to_hex()
+                && turn
+                    .messages
+                    .iter()
+                    .any(|message| message.text == TRACE_WORDS)
+        }),
+        "the record's id names the conversation the run's bubble landed in ({} turns read)",
+        owners.turns.len()
+    );
+    let theirs = fixture
+        .vault
+        .memory(other, EdgeActorClass::Human)
+        .conversation_transcript(&trace, None, 10);
+    let words_served = theirs.as_ref().is_ok_and(|page| {
+        page.value.turns.iter().any(|turn| {
+            turn.messages
+                .iter()
+                .any(|message| message.text.contains(TRACE_WORDS))
+        })
+    });
+    assert!(
+        !words_served,
+        "the room's other reader learns only the trace's id: its gate never serves them the run's bubble"
     );
 }
