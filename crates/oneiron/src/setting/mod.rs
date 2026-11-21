@@ -108,7 +108,7 @@ pub use self::read::{Requested, SettingCatalogueEntry, SettingRowView, SettingVi
 pub(crate) use self::read::{
     SettingListFilter, SettingReadCaller, SettingReader, reader_reads_key_in_txn,
 };
-pub(crate) use self::restored::restore_drops_row;
+pub(crate) use self::restored::{restore_drops_row, restored_unjoined_in_txn};
 pub(crate) use self::set::run_after_commit;
 pub use self::set::{EngineSetting, SetSetting, SetSettingOutcome, SettingCaller};
 use crate::Vault;

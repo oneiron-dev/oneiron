@@ -17,6 +17,7 @@ use crate::attempt_queue::validate::{
 use crate::error::Result;
 
 use super::AttemptQueue;
+use super::unjoined_hold::UnjoinedHold;
 
 mod claim_scan;
 
@@ -292,6 +293,8 @@ impl<'a> AttemptQueue<'a> {
     /// deleted alone: an owner-retained row's dedupe entries leave with it,
     /// and one left naming a missing row reads as no pending attempt and is
     /// replaced by the next enqueue, so no dedupe scan runs under the writer.
+    /// On a copy restored and not joined a held `kind` claims nothing and
+    /// touches no entry ([`super::unjoined_hold::UnjoinedHold`]).
     pub(crate) fn claim_owner_retained_matching_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -302,6 +305,9 @@ impl<'a> AttemptQueue<'a> {
         mut permits: impl FnMut(&AttemptRecord) -> Result<bool>,
     ) -> Result<(ClaimOutcome, bool)> {
         check_owner_retained_claim(kind, &input)?;
+        if UnjoinedHold::default().holds(self.store, wtxn, kind)? {
+            return Ok((ClaimOutcome::Empty, false));
+        }
         let mut repaired = false;
         for (key, value) in &plan.0 {
             let current = self.store.attempt_ready.get(wtxn, key)?;

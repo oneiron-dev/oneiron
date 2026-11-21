@@ -223,6 +223,10 @@ impl Vault {
             .cloned()
             .ok_or_else(|| authority_refused(JOIN_NOT_COUNTED))?;
         txn.commit()?;
+        // The work the queue held while the copy had not joined is claimable
+        // now: wake its observers so it starts at once (RULING
+        // RESTORED-UNJOINED-OWNER-DIRECT-WORK = A).
+        self.store.notify_attempt_observers();
         Ok(folded)
     }
 
@@ -257,6 +261,33 @@ impl Vault {
             }
             super::slip_vault::require_host(&fold, issuer)
                 .map_err(|_| authority_refused(NOT_THE_ROOT))?;
+        }
+        Ok(())
+    }
+
+    /// The refusal of new outward work on an install born of a restore of a
+    /// vault a root roots that has not joined it: its restored-from mark
+    /// stands, and it has no machine id or the vault's fold holds no machine
+    /// under it (the one test, [`crate::setting::restored_unjoined_in_txn`]).
+    /// Such a copy starts no work of its own: no agent turn, no scheduled job,
+    /// no send (Setting DESIGN pass 15e "Joined"; row
+    /// RESTORED-UNJOINED-STARTS-NO-WORK). Read in `txn` through the cached
+    /// fold, before anything is written; an install no restore made reads its
+    /// mark alone. The snapshot after its join commits reads it joined, so the
+    /// work it held starts with no restart.
+    ///
+    /// # Errors
+    /// [`crate::error::RecordError::AuthorityRefused`] naming
+    /// [`super::machine_answers::RESTORED_NOT_JOINED`] on such a copy; an
+    /// install row that does not decode; the fold's errors; storage faults.
+    pub(crate) fn refuse_work_while_restored_unjoined_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<()> {
+        if crate::setting::restored_unjoined_in_txn(self, txn)? {
+            return Err(authority_refused(
+                super::machine_answers::RESTORED_NOT_JOINED,
+            ));
         }
         Ok(())
     }

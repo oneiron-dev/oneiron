@@ -281,6 +281,7 @@ impl Vault {
         }
         let watch = crate::federation::StaleSweepWatch::begin(self);
         let mut txn = self.store.env.write_txn()?;
+        let was_unjoined = crate::setting::restored_unjoined_in_txn(self, &txn)?;
         prelude(&mut txn)?;
         let carried: BTreeMap<_, _> = decoded
             .iter()
@@ -385,6 +386,11 @@ impl Vault {
         // A home pick the import landed re-elected this node's MACRO home in
         // the write (DOOR-101): its watchers re-read it now.
         self.store.notify_proactivity_changes();
+        if was_unjoined {
+            // A joined machine's entry may have joined this copy: the work its
+            // queue held may start now.
+            self.store.notify_attempt_observers();
+        }
         // A row written after its window loaded reaches it only through the
         // live mirror.
         #[cfg(feature = "sync")]
