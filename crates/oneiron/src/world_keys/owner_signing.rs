@@ -395,8 +395,11 @@ impl Vault {
     /// change and forget, and with every other enrollment under that PIN.
     ///
     /// The door asks for the person at this device before its write (an
-    /// important act, [`Vault::owner_presence`]), after signing readiness and before
-    /// taking the PIN step.
+    /// important act, [`Vault::owner_presence`]), after the owner check and
+    /// the keystore read, before it readies this install's signing keys and
+    /// before taking the PIN step. Readying those keys writes
+    /// ([`Vault::prepare_install_signing`]), so a refused confirm leaves this
+    /// install's machine as it was.
     /// After the check, the door reads the slot under the PIN step if present
     /// and answers an already live key's receipt without writing an enrollment.
     ///
@@ -416,13 +419,15 @@ impl Vault {
         // The caller is checked first, before this install readies anything.
         self.owner_key_act_owner(authority)?;
         let keystore = self.device_keystore()?;
-        let machine = self.prepare_install_signing()?;
-        let slot = self.owner_signing_slot(machine);
-        let pin = self.device_pin();
+        // Asked before this install's signing keys are readied: readying
+        // them writes (REVIEW-10128 P1 1).
         let witness = self.owner_presence(
             OwnerActImportance::Important,
             owner_presence_reasons::ENROL_THIS_DEVICE_OWNER_SIGNING_KEY,
         )?;
+        let machine = self.prepare_install_signing()?;
+        let slot = self.owner_signing_slot(machine);
+        let pin = self.device_pin();
         let step = pin.as_deref().map(DevicePin::step);
         if device_pin_is_set(keystore.as_ref()).map_err(super::keystore_error)? {
             return match (pin.as_ref(), step) {

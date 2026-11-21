@@ -68,8 +68,11 @@ impl Vault {
     /// seed rule reads, as at the other seed doors.
     ///
     /// The door asks for the person at this device before its write (an
-    /// important act, [`Vault::owner_presence`]), after the read checks and signing
-    /// readiness, before taking the PIN step or slot lock.
+    /// important act, [`Vault::owner_presence`]), after the read checks and
+    /// the keystore read, before it readies this install's signing keys and
+    /// before taking the PIN step or slot lock. Readying those keys writes
+    /// ([`Vault::prepare_install_signing`]), so a refused confirm leaves this
+    /// install's machine as it was.
     ///
     /// # Errors
     /// A refused confirm answers [`crate::error::RecordError::OwnerPresenceRequired`];
@@ -96,8 +99,11 @@ impl Vault {
     /// `test_doors::root_appointment::appoint_owner_root_between`).
     ///
     /// The door asks for the person at this device before its write (an
-    /// important act, [`Vault::owner_presence`]), after the read checks and signing
-    /// readiness, before taking the PIN step or slot lock.
+    /// important act, [`Vault::owner_presence`]), after the read checks and
+    /// the keystore read, before it readies this install's signing keys and
+    /// before taking the PIN step or slot lock. Readying those keys writes
+    /// ([`Vault::prepare_install_signing`]), so a refused confirm leaves this
+    /// install's machine as it was.
     ///
     /// # Errors
     /// A refused confirm answers [`crate::error::RecordError::OwnerPresenceRequired`];
@@ -118,11 +124,15 @@ impl Vault {
             refuse_unneeded_appointment(fold, pin.anchor_key)
         })?;
         between();
-        let slot = self.device_owner_signing_slot()?;
+        // The keystore is read before the door asks, and the slot is made
+        // ready after it: readying this install's signing keys writes
+        // (REVIEW-10128 P1 1).
+        self.device_keystore()?;
         let _asked = self.owner_presence(
             OwnerActImportance::Important,
             owner_presence_reasons::RECOVER_OWNER_ROOT,
         )?;
+        let slot = self.device_owner_signing_slot()?;
         // One step with a first PIN's set, entered before the writer and
         // held to its commit (row OCS-OWNER-PIN): no PIN of this process is
         // set between the successor's making and the commit. So the

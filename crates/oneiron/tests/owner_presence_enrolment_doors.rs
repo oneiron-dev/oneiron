@@ -21,7 +21,7 @@ use oneiron::authority::{
     encode_authority_log_entry_body, webauthn_assertion_envelope, webauthn_challenge,
 };
 use oneiron::consent::AuthenticatedOwner;
-use oneiron::error::{DevicePinRefusal, OwnerPresenceRefusal, RecordError, SecretError};
+use oneiron::error::{DevicePinRefusal, GateError, OwnerPresenceRefusal, RecordError, SecretError};
 use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::recovery::{
     KitIssue, KitSecretKind, PassphraseCost, PieceHome, issue_recovery_root_kit, restore_kit,
@@ -753,6 +753,60 @@ fn is_rootless(served: &ServedVault) -> bool {
         .contains(&AuthorityFoldIssue::NoRootKey)
 }
 
+/// A self-hosted vault whose roster holds no live root key, and the restored
+/// seed of the kit root its install pins: the state the root appointment serves.
+fn rootless_with_kit_seed() -> (ServedVault, RecoveryRootSeed) {
+    let appoint = ServedVault::self_host();
+    let owner_key = SigningKey::from_bytes(&[LOST_KEY_SEED; 32]);
+    appoint
+        .vault
+        .enrol_owner_signing_key_as_host(
+            &appoint.owner_authority(),
+            appoint.enrollment(&owner_key),
+            &appoint.issuer,
+        )
+        .expect("the owner enrols an owner key");
+    appoint
+        .vault
+        .enrol_device_owner_signing_key(&appoint.owner_authority(), &appoint.issuer)
+        .expect("this install holds a predecessor for the activation");
+    let prepared = appoint
+        .vault
+        .prepare_owner_root(&appoint.owner)
+        .expect("a kit root");
+    let seed = restored(authority_vault_id(&appoint.vault), prepared.seed());
+    let _activated = appoint
+        .vault
+        .activate_owner_root(&appoint.owner, prepared, &BTreeSet::new())
+        .expect("the owner activates his root");
+    fork_rootless(&appoint, &owner_key);
+    assert!(
+        is_rootless(&appoint),
+        "guard: the fork leaves no live root key"
+    );
+    (appoint, seed)
+}
+
+/// Puts an empty keystore on `served`'s handle. The handle drops the signing
+/// keys it loaded, the vault still names its machine and its device key, and
+/// no slot holds their seed: readying this install's signing keys now would
+/// forget that machine and mint another.
+fn install_empty_keystore(served: &ServedVault) {
+    served
+        .vault
+        .install_device_keystore(Arc::new(MemoryKeystore::default()));
+}
+
+/// This install's machine once `served`'s own keystore is back on its handle:
+/// the machine the vault named before, unless a door readied the signing keys
+/// under the empty keystore and forgot it.
+fn machine_under_own_keystore(served: &ServedVault) -> EntityId {
+    served
+        .vault
+        .install_device_keystore(served.keystore.clone());
+    served.machine()
+}
+
 /// A declined confirm refuses the host enrolment of an owner key and stores nothing.
 #[test]
 fn a_declined_confirm_refuses_the_host_enrolment_of_an_owner_key_and_stores_nothing() {
@@ -1119,34 +1173,7 @@ fn a_declined_confirm_refuses_the_root_recovery_and_the_root_appointment() {
         "the log holds the entries it held before"
     );
 
-    let appoint = ServedVault::self_host();
-    let owner_key = SigningKey::from_bytes(&[LOST_KEY_SEED; 32]);
-    appoint
-        .vault
-        .enrol_owner_signing_key_as_host(
-            &appoint.owner_authority(),
-            appoint.enrollment(&owner_key),
-            &appoint.issuer,
-        )
-        .expect("the owner enrols an owner key");
-    appoint
-        .vault
-        .enrol_device_owner_signing_key(&appoint.owner_authority(), &appoint.issuer)
-        .expect("this install holds a predecessor for the activation");
-    let prepared = appoint
-        .vault
-        .prepare_owner_root(&appoint.owner)
-        .expect("a kit root");
-    let seed = restored(authority_vault_id(&appoint.vault), prepared.seed());
-    let _activated = appoint
-        .vault
-        .activate_owner_root(&appoint.owner, prepared, &BTreeSet::new())
-        .expect("the owner activates his root");
-    fork_rootless(&appoint, &owner_key);
-    assert!(
-        is_rootless(&appoint),
-        "guard: the fork leaves no live root key"
-    );
+    let (appoint, seed) = rootless_with_kit_seed();
     let presence = scripted_gate(&appoint.vault, [Err(PresenceError::Declined)]);
     let rows = appoint.stored_rows();
     let history = appoint.history();
@@ -1161,6 +1188,123 @@ fn a_declined_confirm_refuses_the_root_recovery_and_the_root_appointment() {
         history,
         "the log holds the entries it held before"
     );
+}
+
+/// A declined confirm at this device's door leaves this install's machine identity unchanged.
+#[test]
+fn a_declined_confirm_at_this_devices_door_leaves_this_installs_machine_identity_unchanged() {
+    let served = ServedVault::self_host();
+    let machine = served.machine();
+    install_empty_keystore(&served);
+    let presence = scripted_gate(&served.vault, [Err(PresenceError::Declined)]);
+    let rows = served.stored_rows();
+    let refused = served
+        .vault
+        .enrol_device_owner_signing_key(&served.owner_authority(), &served.issuer);
+    assert_declined(&refused, "this device's own key enrolment");
+    assert_eq!(presence.prompts(), 1, "the door showed one prompt");
+    assert_eq!(served.stored_rows(), rows, "the refusal stores no row");
+    assert_eq!(
+        machine_under_own_keystore(&served),
+        machine,
+        "the refused door readied no signing keys: this install is the machine it was"
+    );
+}
+
+/// A declined confirm at the root recovery leaves this install's machine identity unchanged.
+#[test]
+fn a_declined_confirm_at_the_root_recovery_leaves_this_installs_machine_identity_unchanged() {
+    let served = ServedVault::hosted();
+    let seed = restored(
+        authority_vault_id(&served.vault),
+        &RecoveryRootSeed::generate().expect("a root seed"),
+    );
+    let root_key = enrol_root_key(&served, &seed);
+    assert!(
+        served.live_owner_key(&root_key),
+        "guard: the root's authority key is live"
+    );
+    let machine = served.machine();
+    install_empty_keystore(&served);
+    let presence = scripted_gate(&served.vault, [Err(PresenceError::Declined)]);
+    let rows = served.stored_rows();
+    let refused = served.vault.recover_owner_root(
+        &served.owner,
+        ActSurface::ThisInstall,
+        RootMaterial::Kit {
+            seed: restored(authority_vault_id(&served.vault), &seed),
+            confirm: None,
+        },
+        RootSuccessor::ThisInstall,
+        &[],
+    );
+    assert_declined(&refused, "the root recovery for this install");
+    assert_eq!(presence.prompts(), 1, "the door showed one prompt");
+    assert_eq!(served.stored_rows(), rows, "the refusal stores no row");
+    assert_eq!(
+        machine_under_own_keystore(&served),
+        machine,
+        "the refused door readied no signing keys: this install is the machine it was"
+    );
+}
+
+/// A declined confirm at the root appointment leaves this install's machine identity unchanged.
+#[test]
+fn a_declined_confirm_at_the_root_appointment_leaves_this_installs_machine_identity_unchanged() {
+    let (appoint, seed) = rootless_with_kit_seed();
+    let machine = appoint.machine();
+    install_empty_keystore(&appoint);
+    let presence = scripted_gate(&appoint.vault, [Err(PresenceError::Declined)]);
+    let rows = appoint.stored_rows();
+    let refused = appoint
+        .vault
+        .appoint_owner_root(&appoint.owner, &seed, None);
+    assert_declined(&refused, "the root appointment");
+    assert_eq!(presence.prompts(), 1, "the door showed one prompt");
+    assert_eq!(appoint.stored_rows(), rows, "the refusal stores no row");
+    assert_eq!(
+        machine_under_own_keystore(&appoint),
+        machine,
+        "the refused door readied no signing keys: this install is the machine it was"
+    );
+}
+
+/// An owner proof of another vault never raises the prompt at the root recovery.
+#[test]
+fn an_owner_proof_of_another_vault_never_raises_the_prompt_at_the_root_recovery() {
+    let served = ServedVault::hosted();
+    let other = ServedVault::hosted();
+    let seed = restored(
+        authority_vault_id(&served.vault),
+        &RecoveryRootSeed::generate().expect("a root seed"),
+    );
+    let root_key = enrol_root_key(&served, &seed);
+    assert!(
+        served.live_owner_key(&root_key),
+        "guard: the root's authority key is live"
+    );
+    let successor = served.enrollment(&SigningKey::from_bytes(&[NEW_KEY_SEED; 32]));
+    let presence = scripted_gate(&served.vault, []);
+    let rows = served.stored_rows();
+    let refused = served.vault.recover_owner_root(
+        &other.owner,
+        ActSurface::ThisInstall,
+        RootMaterial::Kit {
+            seed: restored(authority_vault_id(&served.vault), &seed),
+            confirm: None,
+        },
+        RootSuccessor::Device(successor),
+        &[],
+    );
+    assert!(
+        matches!(
+            refused,
+            Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(_)))
+        ),
+        "another vault's owner proof is refused as no owner of this vault: {refused:?}"
+    );
+    assert_eq!(presence.prompts(), 0, "the door showed no prompt");
+    assert_eq!(served.stored_rows(), rows, "the refusal stores no row");
 }
 
 /// An agent never raises the prompt at an enrolment door.
@@ -1241,6 +1385,37 @@ fn an_input_that_does_not_decode_never_raises_the_prompt() {
             .vault
             .land_owner_key_enrollment_as(&served.owner_authority(), &[9; 32], vec![1]);
     assert_not_valid(&refused, "the landing");
+    assert_eq!(presence.prompts(), 0, "no door showed a prompt");
+    assert_eq!(served.stored_rows(), rows, "the refusals store no row");
+}
+
+/// A passkey assertion whose client data does not decode never raises the prompt.
+#[test]
+fn a_passkey_assertion_whose_client_data_does_not_decode_never_raises_the_prompt() {
+    let served = ServedVault::hosted();
+    let mut undecodable = passkey_input(
+        &served,
+        &software_passkey(FIRST_PASSKEY_SEED),
+        CREDENTIAL_FIRST,
+    );
+    // An opened object and nothing after it: the envelope takes one byte of
+    // client data, and no client data parses from it.
+    undecodable.client_data_json = b"{".to_vec();
+    let presence = scripted_gate(&served.vault, []);
+    let rows = served.stored_rows();
+    let refused = served.vault.enrol_owner_passkey_as_host(
+        &served.owner_authority(),
+        &undecodable,
+        &served.issuer,
+    );
+    assert_not_valid(&refused, "the passkey enrolment");
+    let refused = served.vault.confirm_owner_passkey_as(
+        &served.owner_authority(),
+        &undecodable,
+        served.issuer.public_key(),
+        |_| Ok(Vec::new()),
+    );
+    assert_not_valid(&refused, "the passkey confirmation");
     assert_eq!(presence.prompts(), 0, "no door showed a prompt");
     assert_eq!(served.stored_rows(), rows, "the refusals store no row");
 }

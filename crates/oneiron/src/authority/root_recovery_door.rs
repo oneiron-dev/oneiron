@@ -198,8 +198,12 @@ impl Vault {
     /// door.
     ///
     /// The door asks for the person at this device before its write (an
-    /// important act, [`Vault::owner_presence`]), after signing readiness and before
-    /// taking the PIN step or slot lock.
+    /// important act, [`Vault::owner_presence`]), after it revalidated the
+    /// owner's proof on a read, before it readies this install's signing keys
+    /// and before taking the PIN step or slot lock. Readying those keys
+    /// writes ([`Vault::prepare_install_signing`]), so a refused confirm
+    /// leaves this install's machine as it was, and a proof that is not this
+    /// vault's owner raises no prompt.
     ///
     /// # Errors
     /// A refused confirm answers [`crate::error::RecordError::OwnerPresenceRequired`];
@@ -221,6 +225,19 @@ impl Vault {
         {
             return Err(authority_refused(PROVING_KEY_NAMED_LOST));
         }
+        // The proof is this vault's live owner before the door asks; the
+        // writer revalidates it in its transaction (REVIEW-10128 P1 2).
+        self.owner_key_act_owner(authority)?;
+        // The keystore is read before the door asks, and this install's
+        // signing keys are readied after it: readying them writes
+        // (REVIEW-10128 P1 1).
+        if matches!(successor, RootSuccessor::ThisInstall) {
+            self.device_keystore()?;
+        }
+        let _asked = self.owner_presence(
+            OwnerActImportance::Important,
+            owner_presence_reasons::RECOVER_OWNER_ROOT,
+        )?;
         // Preparing this install's signing keys writes, so its slot is made
         // ready before the writer opens.
         let install = match successor {
@@ -230,10 +247,6 @@ impl Vault {
             )),
             RootSuccessor::Device(_) => None,
         };
-        let _asked = self.owner_presence(
-            OwnerActImportance::Important,
-            owner_presence_reasons::RECOVER_OWNER_ROOT,
-        )?;
         let root_key = signer.authority_key();
         let mut sign_enrolment =
             |_: &AuthorityFold, transcript: &[u8]| signer.sign_authority_transcript(transcript);

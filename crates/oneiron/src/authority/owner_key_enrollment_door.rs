@@ -357,6 +357,11 @@ fn enrolled_passkey(public_key: Vec<u8>, evidence: Vec<u8>) -> DeviceAuthority {
 
 /// `input`'s passkey as the roster names it (compressed SEC1) and its
 /// enrolled shape, its assertion in its envelope as the possession evidence.
+/// The evidence decodes here as the op's own check decodes it in the writer:
+/// a credential id in bounds and the client data of a top-level assertion.
+/// So a passkey door refuses an assertion that does not decode before it
+/// asks (REVIEW-10128 P1 3). Whether the assertion proves possession is
+/// judged in the writer, on the challenge of the entry it writes.
 fn passkey_enrollment_device(input: &OwnerPasskeyEnrollment) -> Result<(Vec<u8>, DeviceAuthority)> {
     let public_key =
         canonical_p256_key_bytes(&input.public_key).map_err(|_| not_valid(NOT_VALID))?;
@@ -368,6 +373,9 @@ fn passkey_enrollment_device(input: &OwnerPasskeyEnrollment) -> Result<(Vec<u8>,
     .map_err(|_| not_valid(NOT_VALID))?;
     let evidence = owner_passkey_possession_evidence(&input.credential_id, &envelope)
         .map_err(|_| not_valid(NOT_VALID))?;
+    if decode_owner_passkey_possession(&evidence).is_none() {
+        return Err(not_valid(NOT_VALID));
+    }
     Ok((public_key.clone(), enrolled_passkey(public_key, evidence)))
 }
 
