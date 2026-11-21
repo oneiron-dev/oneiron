@@ -375,7 +375,7 @@ pub(super) fn run_enrollment_outbound_leg<T: OutboundTransport>(
         vault,
         authority,
         OutboundEffectCommand::New(prepared),
-        now_ms,
+        now_ms / 1_000,
         transport,
     )?;
     super::held::observe_outbound_result(vault, attempt, &held_request, &result, now_ms);
