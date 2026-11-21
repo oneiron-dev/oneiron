@@ -480,6 +480,7 @@ impl<'a, 't> LineagePass<'a, 't> {
             },
             policies: BTreeMap::new(),
             waiting_readable: None,
+            floors: None,
             rows: self.verdicts.remove(&ask).unwrap_or_default(),
         };
         let readable = judge.row_readable(*id, None);
@@ -528,6 +529,7 @@ pub(crate) fn derived_travel_in(
         },
         policies: BTreeMap::new(),
         waiting_readable: None,
+        floors: None,
         rows: BTreeMap::new(),
     };
     if judge.row_readable(*id, None)? {
@@ -623,6 +625,7 @@ pub(crate) fn readable_with_read_in(
         ask: Ask::Read(viewers),
         policies: BTreeMap::new(),
         waiting_readable: None,
+        floors: None,
         rows: BTreeMap::new(),
     };
     judge.row_readable(id, Some(raw))
@@ -673,6 +676,7 @@ pub(crate) fn read_audience_in(
         ask: Ask::Read(viewers),
         policies: BTreeMap::new(),
         waiting_readable: None,
+        floors: None,
         rows: BTreeMap::new(),
     };
     let mut seen: BTreeSet<EntityId> = roots.iter().copied().collect();
@@ -745,6 +749,8 @@ struct Judge<'a, 's, 't> {
     /// Whether the viewers read a row whose floor waits, once asked
     /// ([`super::waiting_floor_readable_in`]).
     waiting_readable: Option<bool>,
+    /// The floor verdicts this judge read, once it read one.
+    floors: Option<super::StateReader<'a, 't>>,
 }
 
 /// A row the judge has opened: decided at once, or waiting on what its
@@ -960,59 +966,54 @@ impl Judge<'_, '_, '_> {
         {
             return Ok(Opened::Decided(false));
         }
-        // A row whose verdict is sealed reads to no one, the owner included
-        // (READ-LINEAGE-L3 = A). A row whose verdict waits (READ-LINEAGE L1;
-        // #9289 review 2 P1-1, P1-2; Fable design pass 31) reads only to an
-        // owner who reads every source this vault holds, whatever its floor
-        // would name; and neither travels on a restricted lane, which carries
-        // no audience (#9289 review 3 P1-3). The owner's full window carries
-        // them, and the vault they land in judges their links from what it
-        // holds.
-        let restricted = matches!(
-            self.ask,
-            Ask::Travel {
-                every_support: true,
-                ..
-            }
-        );
-        if matches!(self.ask, Ask::Read(_)) || restricted {
-            let admitted = match (super::floor_read_in(self.vault, self.txn, &id)?, self.ask) {
-                (super::FloorRead::Whole, _) => true,
-                (super::FloorRead::Waiting, Ask::Read(viewers)) => {
-                    self.waiting_floor_readable(viewers)?
+        // The row's verdict (Fable design pass 31): its stored floor and,
+        // for each input it still waits on, what that input is now. A sealed
+        // row reads to no one, the owner included (READ-LINEAGE-L3 = A). A
+        // waiting row (READ-LINEAGE L1; #9289 review 2 P1-1, P1-2) reads
+        // only to an owner who reads every source this vault holds, whatever
+        // its floor would name. A whole row reads to whom every source of
+        // its verdict admits: a policy's own people (`SourceReaders`); a
+        // phone thread on it is the scoped read's floor conjunct's to judge,
+        // by its grant.
+        match self.ask {
+            Ask::Read(viewers) => match self.floor_verdict(id)? {
+                super::Verdict::Sealed => return Ok(Opened::Decided(false)),
+                super::Verdict::Waiting => {
+                    if !self.waiting_floor_readable(viewers)? {
+                        return Ok(Opened::Decided(false));
+                    }
                 }
-                (super::FloorRead::Waiting | super::FloorRead::Sealed, _) => false,
-            };
-            if !admitted {
-                return Ok(Opened::Decided(false));
-            }
-        }
-        // The policies a full-window carrier brought for a derived row (fix
-        // list row 17207), and the floor its own write raised (READ-LINEAGE
-        // L1): every policy on it reads, whatever the row's own lineage here
-        // says, before anything else; an id that names no source reads to no
-        // one. A phone thread on it is the scoped read's floor conjunct's to
-        // judge, by its grant. A replication walk ships such a row only with
-        // its carried policies, as its own sets them (`travel_closure_in`).
-        if let Some(policies) = super::derived_policies_in(self.vault, self.txn, &id)? {
-            match self.ask {
-                Ask::Read(viewers) => {
-                    for policy in policies {
-                        // A policy's own people (`SourceReaders`).
+                super::Verdict::Whole(sources) => {
+                    for source in sources {
                         let admitted = match super::SOURCE_READERS {
                             super::SourceReaders::OwnSourceReaders => {
-                                self.policy_readable(policy, viewers)?
+                                self.policy_readable(source, viewers)?
                             }
                         };
                         if !admitted
-                            && super::floor_source_in(self.vault, self.txn, &policy)?
+                            && super::floor_source_in(self.vault, self.txn, &source)?
                                 != super::FloorSource::Thread
                         {
                             return Ok(Opened::Decided(false));
                         }
                     }
                 }
-                Ask::Travel { .. } => return Ok(Opened::Decided(false)),
+            },
+            Ask::Travel { every_support, .. } => {
+                // A restricted lane carries no audience (#9289 review 3
+                // P1-3): a row whose verdict is not whole as stored stays
+                // home. The owner's full window carries any row; one with a
+                // stored floor only with its carried policies, as its own
+                // sets them (`travel_closure_in`), and the vault it lands in
+                // judges its links from what it holds.
+                if every_support
+                    && super::floor_read_in(self.vault, self.txn, &id)? != super::FloorRead::Whole
+                {
+                    return Ok(Opened::Decided(false));
+                }
+                if super::derived_policies_in(self.vault, self.txn, &id)?.is_some() {
+                    return Ok(Opened::Decided(false));
+                }
             }
         }
         let binding = super::binding_in(self.vault, self.txn, &id)?;
@@ -1051,6 +1052,16 @@ impl Judge<'_, '_, '_> {
             every.append(&mut supports);
         }
         Ok(Opened::Waiting(Frame::new(id, every, supports)))
+    }
+
+    /// The verdict of the row `id` ([`super::verdict_in`]), through this
+    /// judge's one floor reader.
+    fn floor_verdict(&mut self, id: EntityId) -> Result<super::Verdict> {
+        let reader = match &mut self.floors {
+            Some(reader) => reader,
+            floors => floors.insert(super::StateReader::reader(self.vault, self.txn)?),
+        };
+        reader.verdict(&id, None)
     }
 
     fn waiting_floor_readable(&mut self, viewers: &[EntityId]) -> Result<bool> {

@@ -196,6 +196,10 @@ impl Vault {
         id: &EntityId,
         value: &TombstoneValueV2,
     ) -> Result<()> {
+        // The floor migration judges a row it has not visited while it is
+        // live, before the marker says otherwise (Fable design pass 31,
+        // case 62).
+        crate::source_audience::visit_row_in_txn(self, wtxn, id)?;
         ARCHIVE_MARKER.put(&self.store, wtxn, &HexId(*id), &value.encode().to_vec())?;
         Ok(())
     }
@@ -228,6 +232,9 @@ impl Vault {
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,
     ) -> Result<bool> {
+        // The floor migration judges a row it has not visited while it is
+        // archived, before the restore (Fable design pass 31, case 62).
+        crate::source_audience::visit_row_in_txn(self, wtxn, id)?;
         ARCHIVE_MARKER.delete(&self.store, wtxn, &HexId(*id))
     }
 }

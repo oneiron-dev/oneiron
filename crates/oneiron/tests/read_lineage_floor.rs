@@ -31,6 +31,8 @@ use oneiron::{
 mod archived_rows;
 #[path = "read_lineage_floor/erased_sources.rs"]
 mod erased_sources;
+#[path = "read_lineage_floor/source_states.rs"]
+mod source_states;
 
 const AT: u64 = 1_769_947_200;
 
@@ -469,13 +471,15 @@ fn a_claim_born_from_a_row_not_yet_here_reads_once_the_row_lands() {
     );
 }
 
-/// #9289 review 2 P1-2: facts a vault held before floors were written (a
-/// CLAIM whose birth names a mailbox's row, with no floor) read to no
-/// stranger the moment the vault runs this build, and to the mailbox's
-/// reader once the floor backfill (a housekeeping sweep) has raised them;
-/// the owner reads them throughout.
+/// #9289 review 2 P1-2 (Fable design pass 31, case 2): facts a vault held
+/// before floors were written (a CLAIM whose birth names a mailbox's row,
+/// with no floor) read to no stranger the moment the vault runs this build.
+/// A read judges a fact the migration has not reached one level, so the
+/// mailbox's reader reads them at once, and once the migration (a
+/// housekeeping sweep) has judged them each holds the mailbox's policy; the
+/// owner reads them throughout.
 #[test]
-fn facts_held_before_floors_read_to_the_mailboxs_reader_once_the_backfill_raised_them() {
+fn facts_held_before_floors_read_only_to_the_mailboxs_readers_before_and_after_the_migration() {
     const N: usize = 5;
     let mailbox = owners_mailbox();
     let facts: Vec<EntityId> = (0..N)
@@ -494,8 +498,8 @@ fn facts_held_before_floors_read_to_the_mailboxs_reader_once_the_backfill_raised
     );
     assert_eq!(
         read_count(&mailbox, &facts, mailbox.reader),
-        0,
-        "the mailbox's reader reads facts whose floor the backfill has not raised",
+        N,
+        "the mailbox's reader does not read facts the migration has not judged yet",
     );
     assert_eq!(
         read_count(&mailbox, &facts, mailbox.owner),

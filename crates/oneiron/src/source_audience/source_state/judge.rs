@@ -10,17 +10,17 @@ use heed::{RoTxn, RwTxn};
 use super::reader::{LinkKind, Links, StateReader, took_floor_of_in, word_sources_now_in};
 use super::{
     FOLD_CASCADE, Fresh, JUDGE_ROUNDS, OPEN, OPEN_BY, OpenFlags, SourceState, close_entry_in_txn,
-    delete_level_in, has_open_in, migrated_in, open_entry_in_txn, open_of_in,
+    delete_level_in, has_open_in, judged_all_in, open_entry_in_txn, open_of_in,
 };
 #[cfg(any(test, feature = "test-support", oneiron_test_support))]
 use super::{MIGRATED, SHELL_ERASED};
 use crate::error::Result;
 use crate::source_audience::floor::OwnSource;
-use crate::source_audience::floor_migration;
+use crate::source_audience::floor_migration::{self, Visit};
 use crate::{EntityId, Vault};
 
 /// What one write does for one link of a row it judges.
-enum Act {
+pub(super) enum Act {
     /// The input's floor joins the row's.
     Take(BTreeSet<EntityId>),
     /// The row waits on the input.
@@ -139,12 +139,21 @@ pub(crate) fn judge_rows_in_txn(
         };
         merged.insert(row, joined);
     }
-    let migrating = !migrated_in(&vault.store, txn)?;
+    // While the migration has rows to judge, a row no older build raised
+    // is judged as an old fact, every link (section 5, M2); it, and a row
+    // whose every link this write creates, is then judged in full, so the
+    // migration counts it visited. A row an older build raised and this
+    // write judges for its new links only is healed by the pass.
+    let migrating = !judged_all_in(&vault.store, txn)?;
     let mut old: BTreeSet<EntityId> = BTreeSet::new();
-    if migrating && !floor_migration::old_backfill_done_in(&vault.store, txn)? {
-        for row in merged.keys() {
-            if !floor_migration::raised_in(&vault.store, txn, row)? {
+    let mut whole: BTreeSet<EntityId> = BTreeSet::new();
+    if migrating {
+        for (row, fresh) in &merged {
+            if floor_migration::visit_in(&vault.store, txn, row)? == Visit::OldFact {
                 old.insert(*row);
+                whole.insert(*row);
+            } else if matches!(fresh, Fresh::Row) {
+                whole.insert(*row);
             }
         }
     }
@@ -157,10 +166,8 @@ pub(crate) fn judge_rows_in_txn(
             break;
         }
     }
-    if migrating {
-        for row in merged.keys() {
-            floor_migration::mark_judged_in_txn(&vault.store, txn, row)?;
-        }
+    for row in &whole {
+        floor_migration::mark_visited_in_txn(&vault.store, txn, row)?;
     }
     for row in merged.keys() {
         fold_waiters_in_txn(vault, txn, row)?;
@@ -172,8 +179,8 @@ pub(crate) fn judge_rows_in_txn(
 /// judged once, in the write that creates it here), so the judgement after
 /// the write judges in full only the links the write created: every link of
 /// a row this vault did not hold (or held erased), and each link a held row
-/// did not have. Read before the write, judged after it
-/// ([`Self::judge_in_txn`]).
+/// did not have, or had as another kind of link ([`Links::changed_since`]).
+/// Read before the write, judged after it ([`Self::judge_in_txn`]).
 pub(crate) struct LinksBefore {
     rows: Vec<(EntityId, Before)>,
 }
@@ -182,8 +189,8 @@ pub(crate) struct LinksBefore {
 enum Before {
     /// Not held here, or held erased: every link it has after is new.
     NotHeld,
-    /// Held, with these links.
-    Held(BTreeSet<EntityId>),
+    /// Held, with these links, by input.
+    Held(BTreeMap<EntityId, LinkKind>),
     /// Held while no row here could have a floor: its links were never
     /// judged, and the migration judges them as an old fact's.
     Unread,
@@ -210,7 +217,7 @@ impl LinksBefore {
             let before = match vault.get_raw_in(txn, &row)? {
                 Some(_) if crate::ports::erased_in_txn(&vault.store, txn, &row)? => Before::NotHeld,
                 Some(_) if !floors_possible => Before::Unread,
-                Some(raw) => Before::Held(Links::of(vault, txn, &row, &raw)?.inputs()),
+                Some(raw) => Before::Held(Links::of(vault, txn, &row, &raw)?.by_input()),
                 None => Before::NotHeld,
             };
             held.push((row, before));
@@ -234,13 +241,9 @@ impl LinksBefore {
                 Before::NotHeld => Fresh::Row,
                 Before::Unread => Fresh::None,
                 Before::Held(held) => match vault.get_raw_in(txn, &row)? {
-                    Some(raw) => Fresh::Links(
-                        Links::of(vault, txn, &row, &raw)?
-                            .inputs()
-                            .difference(&held)
-                            .copied()
-                            .collect(),
-                    ),
+                    Some(raw) => {
+                        Fresh::Links(Links::of(vault, txn, &row, &raw)?.changed_since(&held))
+                    }
                     None => Fresh::None,
                 },
             };
@@ -266,10 +269,26 @@ pub(in crate::source_audience) fn judge_row_in_txn(
         return Ok(false);
     };
     let acts = judge_acts_in(vault, txn, row, &raw, fresh, old)?;
+    apply_acts_in_txn(vault, txn, row, &raw, acts)
+}
+
+/// Writes, in `txn`, what `acts` give the links of the held row `row`
+/// (bytes `raw`): whether its floor or its open set grew.
+fn apply_acts_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    row: &EntityId,
+    raw: &[u8],
+    acts: Vec<(EntityId, Act)>,
+) -> Result<bool> {
     let mut grew = false;
+    let mut took = false;
     for (input, act) in acts {
         grew |= match act {
-            Act::Take(floor) => take_floor_in_txn(vault, txn, row, &raw, &floor)?,
+            Act::Take(floor) => {
+                took = true;
+                take_floor_in_txn(vault, txn, row, raw, &floor)?
+            }
             Act::Open(flags) => open_entry_in_txn(&vault.store, txn, row, &input, flags)?,
             Act::OpenSelf => open_entry_in_txn(&vault.store, txn, row, row, OpenFlags::ORDINARY)?,
             Act::Seal => crate::source_audience::add_derived_policies_in_txn(
@@ -283,6 +302,13 @@ pub(in crate::source_audience) fn judge_row_in_txn(
                 false
             }
         };
+    }
+    // A row born under no source (a peer's phone mark that names no thread)
+    // stores the seal even when no link of it takes a floor: doctor's count
+    // of facts hidden with their source unknown reads the stored floors
+    // (SOURCE-STATE-NO-LINK-SEAL-NOT-STORED; pass 31 oracle case 69).
+    if !took {
+        grew |= take_floor_in_txn(vault, txn, row, raw, &BTreeSet::new())?;
     }
     Ok(grew)
 }
@@ -423,13 +449,11 @@ pub(super) fn fold_entry_in_txn(
     Ok(true)
 }
 
-/// Heals, in `txn`, a row the old backfill raised (section 5, M2): its birth
-/// inputs and dependency sources are read again. It takes the floor of each
-/// that is bound and whole, opens an entry on each that has not landed, is
-/// held without its binding or waits on inputs of its own, and leaves a
-/// released or erased input alone, since nothing here says whether the row
-/// took its floor before (limit 3). This gives back the marks a row lost
-/// while it was archived, and hides no row whose floor is whole.
+/// Heals, in `txn`, a row an older build raised (section 5, M2): every
+/// link it names is read again ([`heal_acts_in`]). This gives back the
+/// marks a row lost while it was archived, and the floor of a row an older
+/// build had not raised when this one took its floor (cases 60, 64), and it
+/// hides no row whose floor is whole.
 ///
 /// # Errors
 ///
@@ -445,40 +469,66 @@ pub(in crate::source_audience) fn heal_row_in_txn(
     if crate::source_audience::obligation::row_obligation(&raw).is_present() {
         return Ok(());
     }
-    let mut inputs: BTreeSet<EntityId> =
-        crate::store::birth_record::input_rows_in_txn(&vault.store, txn, row)?
-            .into_iter()
-            .collect();
-    inputs.extend(crate::ports::dependency_sources_in(&vault.store, txn, row)?);
-    inputs.remove(row);
-    let mut acts = Vec::new();
-    {
+    let acts = {
         let mut reader = StateReader::reader(vault, txn)?;
-        for input in &inputs {
-            if crate::ports::removed_in_txn(&vault.store, txn, input)? {
-                continue;
-            }
-            match reader.state(input)? {
-                SourceState::Bound(floor) => acts.push((*input, Act::Take(floor))),
-                SourceState::Pending { .. } => {
-                    acts.push((*input, Act::Open(OpenFlags::ORDINARY)));
-                }
-                SourceState::Sealed | SourceState::Erased => {}
-            }
-        }
-    }
-    for (input, act) in acts {
-        match act {
-            Act::Take(floor) => {
-                take_floor_in_txn(vault, txn, row, &raw, &floor)?;
-            }
-            Act::Open(flags) => {
-                open_entry_in_txn(&vault.store, txn, row, &input, flags)?;
-            }
-            Act::Seal | Act::OpenSelf | Act::Free => {}
-        }
-    }
+        heal_acts_in(&mut reader, vault, txn, row, &raw)?
+    };
+    apply_acts_in_txn(vault, txn, row, &raw, acts)?;
     Ok(())
+}
+
+/// What a heal of the held row `row` (bytes `raw`), a row an older build
+/// raised, gives each link it names, read through `reader` (section 5, M2):
+/// a bound input's floor is taken; an input that has not landed (a walked
+/// one only when it is held here), is held without its binding or waits
+/// opens an ordinary entry; an erased, released or sealed input is left
+/// alone, since nothing here says whether the row took its floor before
+/// (limit 3; cases 45, 54, 63). A lineage that does not resolve opens the
+/// self entry, and a free support frees the row's supports, as a write
+/// judges them.
+///
+/// # Errors
+///
+/// Storage failures.
+pub(super) fn heal_acts_in(
+    reader: &mut StateReader<'_, '_>,
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    row: &EntityId,
+    raw: &[u8],
+) -> Result<Vec<(EntityId, Act)>> {
+    let links = Links::of(vault, txn, row, raw)?;
+    let mut acts = Vec::new();
+    if links.unresolved {
+        acts.push((*row, Act::OpenSelf));
+    }
+    let supports: Vec<EntityId> = links.supports().copied().collect();
+    let freed = reader.frees_any(&supports)?;
+    if freed {
+        acts.push((*row, Act::Free));
+    }
+    for (input, kind) in &links.links {
+        if (*kind == LinkKind::Attestation && freed)
+            || crate::ports::removed_in_txn(&vault.store, txn, input)?
+        {
+            continue;
+        }
+        let flags = if *kind == LinkKind::Attestation {
+            OpenFlags::ORDINARY.attestation()
+        } else {
+            OpenFlags::ORDINARY
+        };
+        match reader.state(input)? {
+            SourceState::Bound(floor) => acts.push((*input, Act::Take(floor))),
+            SourceState::Pending { held } => {
+                if held || *kind == LinkKind::Unwalked {
+                    acts.push((*input, Act::Open(flags)));
+                }
+            }
+            SourceState::Sealed | SourceState::Erased => {}
+        }
+    }
+    Ok(acts)
 }
 
 /// Entries one sweep write reads.

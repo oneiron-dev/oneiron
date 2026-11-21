@@ -20,7 +20,9 @@ use oneiron::memory::SafeDeleteReason;
 use oneiron::provenance::made_by::MadeByInputRole;
 use oneiron::test_doors::claim_refinement_erase::apply_replayed_tombstone;
 use oneiron::test_doors::coach::fence_row_for_hard_delete;
-use oneiron::test_doors::read_lineage_floor::{binding_lands, floor_waits, forget_floor_state};
+use oneiron::test_doors::read_lineage_floor::{
+    binding_lands, floor_sealed, floor_waits, forget_floor_state,
+};
 use oneiron::test_doors::source_audience_binding::{bound_row_read_by, reads};
 use oneiron::{EdgeActorClass, EdgeKind, EntityId};
 
@@ -463,8 +465,9 @@ fn a_claim_arriving_after_the_soft_tombstone_of_its_input_is_sealed() {
 /// source the read walks), whose floor waits; `fact` is born from `derived`,
 /// so it waits too. The owner's hard delete of `middle` is published (the
 /// fence reads it deleted) and a housekeeping pass runs before the purge.
-/// `derived` must keep waiting, so `fact` is not raised open. Then the purge
-/// seals `derived`, and `fact` inherits the seal. Before the fix the pass
+/// `derived` must not settle open: it reads sealed from the publication on
+/// (Fable design pass 31), so `fact` is not raised open. After the purge
+/// both stay sealed, and doctor counts both. Before the fix the pass
 /// settled `derived` with an empty floor and raised `fact` open: a stranger
 /// read it, and the purge sealed `derived` alone.
 #[test]
@@ -495,8 +498,11 @@ fn a_fact_from_a_row_waiting_on_a_published_delete_stays_closed_until_the_purge_
     );
     fence_row_for_hard_delete(&mailbox.vault, middle).expect("middle's hard delete is published");
     housekeeping_pass(&mailbox);
+    // Fable design pass 31, case 28: `middle` reads erased from the
+    // publication on, so `derived`, which still waits on it, reads sealed
+    // before the purge too, in every order of the pass and the purge.
     assert!(
-        floor_waits(&mailbox.vault, derived).expect("the floor's state"),
+        floor_sealed(&mailbox.vault, derived).expect("the floor's state"),
         "SETTLED: a pass before the purge settled a row waiting on a row whose delete is published",
     );
     assert_no_stranger_or_reader_reads(&mailbox, fact, "after a pass before the purge");
