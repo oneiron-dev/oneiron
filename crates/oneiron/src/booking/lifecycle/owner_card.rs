@@ -25,8 +25,9 @@
 //! A live owner's kept booking handle opens the card on any day, after its
 //! row has left the same-day listing
 //! ([`booking_owner_card_row_of_handle`]). The card of a booking the visitor
-//! picked again from the owner's emergency cancel's proposals says the
-//! emergency cancel gave its deposit back ([`emergency_return`]).
+//! picked again from the owner's emergency cancel's proposals says where
+//! the return of the deposit from before that cancel stands
+//! ([`emergency_return`]).
 
 use std::collections::BTreeSet;
 
@@ -111,8 +112,8 @@ pub struct BookingOwnerCard {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deposit: Option<BookingOwnerCardDeposit>,
     /// On a booking the visitor picked again from the owner's emergency
-    /// cancel's proposals: no deposit is held, because the emergency cancel
-    /// gave it back, pending or made (RULING
+    /// cancel's proposals: no deposit is held, and the return of the deposit
+    /// from before that cancel stands pending or made (RULING
     /// DEPOSIT-PICK-AFTER-EMERGENCY-CANCEL = A); `None` on every other card.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub emergency_return: Option<BookingOwnerCardEmergencyReturn>,

@@ -157,8 +157,9 @@ pub(crate) fn refund_deposit_on_host_cancel(
 /// An emergency cancel passes its cancel revision's SEQUENCE as
 /// `emergency_sequence`, and a deposit it moves is marked with it: the
 /// booking the visitor picks again from the emergency's proposals carries
-/// no deposit, and its owner's card says the emergency cancel returned it
-/// (RULING DEPOSIT-PICK-AFTER-EMERGENCY-CANCEL = A).
+/// no deposit, and its owner's card says where the return of the deposit
+/// from before the emergency cancel stands (RULING
+/// DEPOSIT-PICK-AFTER-EMERGENCY-CANCEL = A).
 pub(in crate::booking::lifecycle) fn refund_on_host_cancel_in_writer(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,

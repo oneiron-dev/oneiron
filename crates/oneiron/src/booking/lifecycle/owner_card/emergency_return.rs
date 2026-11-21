@@ -5,10 +5,14 @@
 //! The owner's BK-09 emergency cancel gives the visitor's deposit back
 //! whole in its own commit, and the pick that confirms the booking again
 //! takes no new one. So the owner's card of that booking says no deposit is
-//! held, and that the emergency cancel refunded or released it, pending or
-//! made. The line names no owner: in a shared vault every live owner reads
-//! the card, and the emergency cancel may be another owner's (review round
-//! 1 of #10073). The note offers no act. Only the pick reopens an
+//! held, and where the return of the deposit from before the emergency
+//! cancel stands: a refund or release pending, or made. The line names no
+//! owner: in a shared vault every live owner reads the card, and the
+//! emergency cancel may be another owner's (review round 1 of #10073). Nor
+//! does it say which act refunded or released the deposit, or when: the
+//! settle takes a refund made by hand in the Stripe dashboard, before the
+//! emergency cancel or after it, as the deposit's refund (review round 2 of
+//! #10073). The note offers no act. Only the pick reopens an
 //! emergency-cancelled booking, so the note stands while the booking stands
 //! confirmed and its deposit row carries the emergency cancel's mark; it
 //! reads committed facts each time and stores nothing.
@@ -57,22 +61,30 @@ pub(super) fn emergency_return_note(
         EmergencyReturn::RefundDue => (
             BookingDepositReturned::RefundPending,
             format!(
-                "{booking}: no new deposit held; the refund from the emergency cancel is pending."
+                "{booking}: no new deposit held; the refund of the deposit from before the \
+                 emergency cancel is pending."
             ),
         ),
         EmergencyReturn::Refunded => (
             BookingDepositReturned::Refunded,
-            format!("{booking}: no deposit held (refunded at the emergency cancel)."),
+            format!(
+                "{booking}: no deposit held; the deposit from before the emergency cancel is \
+                 refunded."
+            ),
         ),
         EmergencyReturn::VoidDue => (
             BookingDepositReturned::ReleasePending,
             format!(
-                "{booking}: no new deposit held; the release from the emergency cancel is pending."
+                "{booking}: no new deposit held; the release of the deposit from before the \
+                 emergency cancel is pending."
             ),
         ),
         EmergencyReturn::Voided => (
             BookingDepositReturned::Released,
-            format!("{booking}: no deposit held (released at the emergency cancel)."),
+            format!(
+                "{booking}: no deposit held; the deposit from before the emergency cancel is \
+                 released."
+            ),
         ),
     };
     BookingOwnerCardEmergencyReturn { returned, line }

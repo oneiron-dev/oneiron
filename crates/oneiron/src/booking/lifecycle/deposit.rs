@@ -170,7 +170,7 @@ struct DepositRow {
     /// deposit back whole (released a capture still due, or owed a captured
     /// one back), in that cancel's own commit: the booking the visitor picks
     /// again from its proposals carries no deposit, and the owner's card
-    /// says the emergency cancel returned it (RULING
+    /// says where this deposit's return stands (RULING
     /// DEPOSIT-PICK-AFTER-EMERGENCY-CANCEL = A). Unset on every other row.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     emergency_return_sequence: Option<u32>,
