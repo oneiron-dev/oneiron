@@ -81,11 +81,10 @@ pub fn thing_child_generation(
         AttemptId::now(),
         EntityId::now(),
     ));
-    // The launch lends its compaction none of the rows.
-    drop(lent);
     Arc::new(super::compaction::Generation::new(
         count,
         ScopedChildStop::default(),
         WorkContext::default(),
+        lent,
     ))
 }

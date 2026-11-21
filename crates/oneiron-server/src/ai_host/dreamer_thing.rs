@@ -228,10 +228,13 @@ impl ThingChildHost for ServedThingChildHost {
                 parent_admission,
                 ..Default::default()
             });
+        // The child's compaction compacts what it saw: fenced by the rows
+        // its lent slices were read from, as its own calls are.
         let generation = Arc::new(compaction::Generation::new(
             Arc::clone(&count),
             stop.clone(),
             run.work_context(),
+            sources.clone(),
         ));
         let backend = CountedBackend::new(
             child_generation_backend(
