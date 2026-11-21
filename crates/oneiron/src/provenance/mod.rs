@@ -157,7 +157,9 @@ pub mod body;
 pub(crate) use archive::archived_provenance_body;
 mod codec;
 mod conversation_sources;
-pub(crate) use conversation_sources::{claim_conversation_sources_in, consolidation_refs};
+pub(crate) use conversation_sources::{
+    EvidenceTurn, claim_conversation_sources_in, claim_evidence_turns_in, consolidation_refs,
+};
 mod derived_attachment;
 pub(crate) use derived_attachment::support_project;
 mod edge_ref;

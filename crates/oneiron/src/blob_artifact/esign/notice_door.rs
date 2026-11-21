@@ -124,6 +124,21 @@ impl Memory<'_> {
             let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
             scope.admit_in(&txn, document)?;
             super::ledger::read_in(vault, &txn, document)?;
+            // A copy restored and not joined leaves notices staged (row
+            // RESTORED-UNJOINED-STARTS-NO-WORK). The worker idles until the
+            // join; the notice's own principal gets the join answer now.
+            match scope {
+                NoticeScope::Unattended(_) => {
+                    if crate::setting::restored::restored_unjoined_in_txn(vault, &txn)? {
+                        return Ok(EsignNoticesDispatchView {
+                            document_ref: document.to_hex(),
+                            recovered: 0,
+                            notices: Vec::new(),
+                        });
+                    }
+                }
+                _ => vault.refuse_work_while_restored_unjoined_in_txn(&txn)?,
+            }
         }
         let rows = principal_notices(vault, document, actor)?;
         let mut recovered = 0;

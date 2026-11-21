@@ -181,9 +181,10 @@ pub(crate) async fn read_tool_first(
             &parts.headers,
             failed.unspooled,
             failed.body_digest.as_deref(),
-        )),
+        )
+        .await),
         Err(Unspooled::Failed) => Err(not_buffered()),
-        Err(unspooled) => Err(spool_refused(server, &parts.headers, unspooled, None)),
+        Err(unspooled) => Err(spool_refused(server, &parts.headers, unspooled, None).await),
     }
 }
 
@@ -232,7 +233,7 @@ fn not_buffered() -> Response {
 /// A body the vault had no room or memory to spool, or whose spool did not
 /// read, as the endpoint's connection refusal: no call ran. A body that
 /// arrived whole states its digest (`body_digest`); one that did not, none.
-fn spool_refused(
+async fn spool_refused(
     server: &SyncServer,
     headers: &HeaderMap,
     unspooled: Unspooled,
@@ -261,6 +262,7 @@ fn spool_refused(
         Value::Null,
         McpGatewayError::new(-32603, kind, message),
     )
+    .await
 }
 
 /// What [`read_spool_in`] read of the spool.

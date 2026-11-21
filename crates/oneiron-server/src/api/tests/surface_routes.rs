@@ -2354,7 +2354,13 @@ async fn member_grant_scope_must_admit_the_exact_code_or_blob_export() {
 }
 
 /// The response `app` gives `request`, read whole.
-async fn respond(app: Router, request: Request<Body>) -> (StatusCode, HeaderMap, Bytes) {
+async fn respond(app: Router, mut request: Request<Body>) -> (StatusCode, HeaderMap, Bytes) {
+    request
+        .extensions_mut()
+        .insert(axum::extract::ConnectInfo(std::net::SocketAddr::from((
+            [127, 0, 0, 1],
+            0,
+        ))));
     let response = app.oneshot(request).await.expect("route response");
     let status = response.status();
     let headers = response.headers().clone();

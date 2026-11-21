@@ -939,7 +939,7 @@ impl<'i> UniffiTypes<'i> {
             "// UniFFI records and enums for the Rust types the facade rows reach, from the\n",
         );
         out.push_str(
-            "// facade type inventory (scripts/sdk/facade_types.py). Each derives serde with\n",
+            "// facade type inventory (crates/oneiron-sdk-generator). Each derives serde with\n",
         );
         out.push_str(
             "// the engine type's own wire shape; a row converts at its boundary through\n",

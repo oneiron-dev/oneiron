@@ -11,6 +11,7 @@ fn sample_definition() -> SavedQueryDefinition {
     SavedQueryDefinition {
         schema_version: SAVED_QUERY_SCHEMA_VERSION,
         owner_actor: id(0x21),
+        owner_actor_class: crate::EdgeActorClass::Human,
         scope: QueryScope::default(),
         definition_version: 3,
         filter: FilterAst::Claim {
@@ -40,6 +41,7 @@ fn sample_memo_row() -> VerdictMemoRow {
         definition_version: 3,
         verdict: MatchVerdict::Match,
         why: "because".to_owned(),
+        source_refs: None,
         envelope: SavedQueryDerivationEnvelope {
             content_hash: hex_lower(&[7u8; EVIDENCE_HASH_LEN]),
             model_id: "hard".to_owned(),
@@ -80,18 +82,28 @@ fn memo_key_is_prefix_plus_three_fixed_width_components() {
 #[test]
 fn event_keys_sort_by_epoch_within_the_pair_prefix() {
     let (query, entity) = (id(0x28), id(0x29));
+    let campaign = id(0x2A);
     let mut prefix = MEMBERSHIP_EVENTS.decl().prefix.to_vec();
     prefix.extend_from_slice(&event_pair_prefix(&query, &entity));
     let mut keys = [
-        MEMBERSHIP_EVENTS.key_bytes(&(query, entity, 10)),
-        MEMBERSHIP_EVENTS.key_bytes(&(query, entity, 2)),
-        MEMBERSHIP_EVENTS.key_bytes(&(query, entity, 300)),
+        MEMBERSHIP_EVENTS.key_bytes(&(query, entity, (campaign, 10))),
+        MEMBERSHIP_EVENTS.key_bytes(&(query, entity, (campaign, 2))),
+        MEMBERSHIP_EVENTS.key_bytes(&(query, entity, (campaign, 300))),
     ];
     assert!(keys.iter().all(|key| key.starts_with(&prefix)));
     keys.sort();
-    assert_eq!(keys[0], MEMBERSHIP_EVENTS.key_bytes(&(query, entity, 2)));
-    assert_eq!(keys[1], MEMBERSHIP_EVENTS.key_bytes(&(query, entity, 10)));
-    assert_eq!(keys[2], MEMBERSHIP_EVENTS.key_bytes(&(query, entity, 300)));
+    assert_eq!(
+        keys[0],
+        MEMBERSHIP_EVENTS.key_bytes(&(query, entity, (campaign, 2)))
+    );
+    assert_eq!(
+        keys[1],
+        MEMBERSHIP_EVENTS.key_bytes(&(query, entity, (campaign, 10)))
+    );
+    assert_eq!(
+        keys[2],
+        MEMBERSHIP_EVENTS.key_bytes(&(query, entity, (campaign, 300)))
+    );
 }
 
 /// A row that is not JSON, is missing a field, or names a verdict outside the
@@ -143,6 +155,7 @@ fn canonical_json_is_insertion_order_independent() {
     let evidence = |value| RelevantEvidence {
         entity_ref: id(1),
         claim_values: vec![("predicate".to_string(), value)],
+        claim_value_fingerprints: Vec::new(),
         edge_targets: Vec::new(),
         semantic_inputs: Vec::new(),
         scope_membership: QueryScope {
@@ -176,6 +189,7 @@ fn evidence_hash_covers_relevant_evidence_and_scope() {
     let base = RelevantEvidence {
         entity_ref: id(0x2C),
         claim_values: vec![("crm.fit".to_owned(), json!("fit"))],
+        claim_value_fingerprints: Vec::new(),
         edge_targets: Vec::new(),
         semantic_inputs: Vec::new(),
         scope_membership: QueryScope::default(),
@@ -251,6 +265,7 @@ fn evidence_hash_length_prefixes_prevent_field_smearing() {
     let left = RelevantEvidence {
         entity_ref: id(0x2E),
         claim_values: vec![("ab".to_owned(), json!("c"))],
+        claim_value_fingerprints: Vec::new(),
         edge_targets: Vec::new(),
         semantic_inputs: Vec::new(),
         scope_membership: QueryScope::default(),
@@ -274,19 +289,10 @@ fn memory_watch_is_durable_owner_bound_and_reversible() {
     let vault = crate::Vault::open_unseeded_for_test(dir.path(), VaultConfig::device())
         .expect("open vault");
     register_crm_pack(&vault, 107, 108, TypeByteFamily::Productivity).expect("pack");
-    let owner = id(0xB1);
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
     let other = id(0xB2);
     let anchor = id(0xB3);
     let subject = id(0xB4);
-    vault
-        .put_entity(
-            &owner,
-            crate::registry::ENTITY_TYPE_PERSON,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"owner",
-        )
-        .expect("owner");
     vault
         .put_entity(
             &subject,
@@ -374,8 +380,16 @@ fn a_saved_query_row_answers_only_for_its_own_id() {
         matcher: definition.matcher.clone(),
         eval: definition.eval,
     };
-    let victim = create_saved_query(&vault, victim_owner, &request, 10).expect("victim");
-    let alias = create_saved_query(&vault, attacker, &request, 11).expect("alias");
+    let victim = create_saved_query(
+        &vault,
+        victim_owner,
+        crate::EdgeActorClass::Human,
+        &request,
+        10,
+    )
+    .expect("victim");
+    let alias = create_saved_query(&vault, attacker, crate::EdgeActorClass::Human, &request, 11)
+        .expect("alias");
     // The attacker's own row, rewritten so its body names the victim's row.
     let kind = super::storage::saved_query_type_byte(&vault).expect("kind");
     let raw = vault.get_raw(&alias.query_ref).expect("raw").expect("row");
@@ -467,9 +481,14 @@ fn a_held_claim_never_enrolls_under_negation_or_by_presence() {
             .expect("claim");
     }
     let owner_grants = QueryScope::default();
+    let owner = vault.ensure_embedded_owner_actor().expect("vault owner");
+    let owner_read = sweep_owner_read(&vault, owner, crate::EdgeActorClass::Human)
+        .expect("owner read")
+        .expect("the owner has a usable read");
     let evaluator = SavedQueryEvaluator {
         vault: &vault,
         owner_grants: &owner_grants,
+        owner_read: &owner_read,
         judge: None,
     };
     let verdict = |query: u8, predicate: &str, cmp: ClaimComparison| {
@@ -481,6 +500,7 @@ fn a_held_claim_never_enrolls_under_negation_or_by_presence() {
             },
             ..sample_definition()
         };
+        store_query(&vault, id(query), &definition);
         let request = EvaluationRequest {
             query_ref: id(query),
             campaign_ref: id(query),
@@ -509,4 +529,292 @@ fn a_held_claim_never_enrolls_under_negation_or_by_presence() {
         "a held opt-out still excludes"
     );
     assert_eq!(fit(0xD5), MatchVerdict::NoMatch, "a held fit never enrolls");
+}
+
+/// Registers the saved query kind and stores `definition` as the query
+/// `query_ref` names, as `create` does: the evaluator writes its memo for a
+/// stored query of a registered kind only, and refuses otherwise ("saved
+/// query kind is not registered in this vault"; the 20 Nov night, FIX
+/// [NIGHTLY20-OWN-PR-TEST-REDS]).
+fn store_query(vault: &crate::Vault, query_ref: EntityId, definition: &SavedQueryDefinition) {
+    if super::storage::saved_query_type_byte(vault).is_err() {
+        crate::campaign::register_crm_pack(
+            vault,
+            107,
+            108,
+            crate::registry::TypeByteFamily::Productivity,
+        )
+        .expect("pack");
+    }
+    let kind = super::storage::saved_query_type_byte(vault).expect("kind");
+    let record = SavedQueryRecord {
+        query_ref,
+        definition: definition.clone(),
+        created_at: 10,
+        updated_at: 10,
+    };
+    vault
+        .with_write_txn_grouped(|wtxn| {
+            super::storage::store_record_in_txn(vault, wtxn, &record, kind)
+        })
+        .expect("store the query");
+}
+
+/// Review P1 of #9637: only an inbound `ClaimOf` is a claim about the
+/// candidate. A row the candidate's own outbound `ClaimOf` reaches, withheld
+/// from the reader, is no hidden claim, so `NOT claim exists` stays decided.
+#[test]
+fn a_withheld_outbound_claim_of_peer_leaves_claim_terms_decided() {
+    use crate::{TimeRange, VaultConfig};
+    let dir = tempfile::tempdir().expect("vault dir");
+    let vault = crate::Vault::open_unseeded_for_test(dir.path(), VaultConfig::device())
+        .expect("open vault");
+    let candidate = id(0xC1);
+    let withheld = id(0xC2);
+    vault
+        .put_entity(
+            &candidate,
+            crate::registry::ENTITY_TYPE_TURN,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"candidate",
+        )
+        .expect("candidate");
+    vault
+        .put_entity(
+            &withheld,
+            crate::registry::ENTITY_TYPE_ASSET,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"withheld",
+        )
+        .expect("withheld asset");
+    vault
+        .put_edge(&candidate, crate::edge::EdgeKind::ClaimOf, &withheld, 1.0)
+        .expect("outbound claim_of");
+    // The reader reads TURN rows only, so the ASSET is withheld and counted.
+    let scope = crate::federation::scope_codec::encode_scope_value(
+        &crate::federation::scope_codec::read_preset(),
+    )
+    .expect("read preset encodes");
+    let grant = rmpv::Value::Map(vec![
+        (
+            rmpv::Value::from("actor_ref"),
+            rmpv::Value::from("claim-reader"),
+        ),
+        (
+            rmpv::Value::from("effector"),
+            rmpv::Value::from("core:read"),
+        ),
+        (rmpv::Value::from("scope"), scope),
+        (
+            rmpv::Value::from("selectors"),
+            rmpv::Value::Map(vec![(
+                rmpv::Value::from("entity_types"),
+                rmpv::Value::Array(vec![rmpv::Value::from(crate::registry::ENTITY_TYPE_TURN)]),
+            )]),
+        ),
+        (
+            rmpv::Value::from("receipt_required"),
+            rmpv::Value::from(false),
+        ),
+    ]);
+    let policy = rmpv::Value::Map(vec![
+        (
+            rmpv::Value::from("schema_version"),
+            rmpv::Value::from("1.2"),
+        ),
+        (
+            rmpv::Value::from("pack_id"),
+            rmpv::Value::from("saved-query-outbound-claim-of-test"),
+        ),
+        (rmpv::Value::from("pack_version"), rmpv::Value::from("1")),
+        (
+            rmpv::Value::from("min_engine_version"),
+            rmpv::Value::from("0.0.0"),
+        ),
+        (rmpv::Value::from("defaults"), rmpv::Value::Map(vec![])),
+        (rmpv::Value::from("rules"), rmpv::Value::Array(vec![])),
+        (
+            rmpv::Value::from("actor_ceilings"),
+            rmpv::Value::Array(vec![]),
+        ),
+        (
+            rmpv::Value::from("scoped_grants"),
+            rmpv::Value::Array(vec![grant]),
+        ),
+    ]);
+    let mut data = Vec::new();
+    rmpv::encode::write_value(&mut data, &policy).expect("encode reader manifest");
+    crate::test_util::put_policy_manifest_bytes(&vault, id(0xC3), &data)
+        .expect("install reader manifest");
+    let owner_read = crate::claim::ScopedReadActorKey::new("claim-reader").expect("reader key");
+    let owner_grants = QueryScope::default();
+    let evaluator = SavedQueryEvaluator {
+        vault: &vault,
+        owner_grants: &owner_grants,
+        owner_read: &owner_read,
+        judge: None,
+    };
+    let definition = SavedQueryDefinition {
+        filter: FilterAst::Not {
+            term: Box::new(FilterAst::Claim {
+                predicate: "profile.opted_out".to_owned(),
+                cmp: ClaimComparison::Exists,
+                value: Value::Null,
+            }),
+        },
+        ..sample_definition()
+    };
+    store_query(&vault, id(0xC4), &definition);
+    let request = EvaluationRequest {
+        query_ref: id(0xC4),
+        campaign_ref: id(0xC4),
+        entity_ref: candidate,
+        definition: &definition,
+        cause: MembershipCause::DataChange,
+        valid_at: 10,
+        detected_at: 10,
+    };
+    let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+    let evaluation = std::pin::pin!(evaluator.evaluate_entity(&request));
+    let verdict = match evaluation.poll(&mut cx) {
+        std::task::Poll::Ready(outcome) => outcome.expect("evaluate").decision.verdict,
+        std::task::Poll::Pending => panic!("a hard matcher never waits"),
+    };
+    assert_eq!(
+        verdict,
+        MatchVerdict::Match,
+        "no claim names the candidate: its outbound ClaimOf peer is not one"
+    );
+}
+
+/// Review round 2 P1 of #9637: only a stored CLAIM behind an inbound
+/// `ClaimOf` is a claim about the candidate. A withheld ASSET whose `ClaimOf`
+/// points at the candidate is no hidden claim, so `NOT claim exists` stays
+/// decided.
+#[test]
+fn a_withheld_inbound_non_claim_peer_leaves_claim_terms_decided() {
+    use crate::{TimeRange, VaultConfig};
+    let dir = tempfile::tempdir().expect("vault dir");
+    let vault = crate::Vault::open_unseeded_for_test(dir.path(), VaultConfig::device())
+        .expect("open vault");
+    let candidate = id(0xC1);
+    let withheld = id(0xC2);
+    vault
+        .put_entity(
+            &candidate,
+            crate::registry::ENTITY_TYPE_TURN,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"candidate",
+        )
+        .expect("candidate");
+    vault
+        .put_entity(
+            &withheld,
+            crate::registry::ENTITY_TYPE_ASSET,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"withheld",
+        )
+        .expect("withheld asset");
+    vault
+        .put_edge(&withheld, crate::edge::EdgeKind::ClaimOf, &candidate, 1.0)
+        .expect("inbound claim_of from a non-claim");
+    // The reader reads TURN rows only, so the ASSET is withheld and counted.
+    let scope = crate::federation::scope_codec::encode_scope_value(
+        &crate::federation::scope_codec::read_preset(),
+    )
+    .expect("read preset encodes");
+    let grant = rmpv::Value::Map(vec![
+        (
+            rmpv::Value::from("actor_ref"),
+            rmpv::Value::from("claim-reader"),
+        ),
+        (
+            rmpv::Value::from("effector"),
+            rmpv::Value::from("core:read"),
+        ),
+        (rmpv::Value::from("scope"), scope),
+        (
+            rmpv::Value::from("selectors"),
+            rmpv::Value::Map(vec![(
+                rmpv::Value::from("entity_types"),
+                rmpv::Value::Array(vec![rmpv::Value::from(crate::registry::ENTITY_TYPE_TURN)]),
+            )]),
+        ),
+        (
+            rmpv::Value::from("receipt_required"),
+            rmpv::Value::from(false),
+        ),
+    ]);
+    let policy = rmpv::Value::Map(vec![
+        (
+            rmpv::Value::from("schema_version"),
+            rmpv::Value::from("1.2"),
+        ),
+        (
+            rmpv::Value::from("pack_id"),
+            rmpv::Value::from("saved-query-inbound-non-claim-test"),
+        ),
+        (rmpv::Value::from("pack_version"), rmpv::Value::from("1")),
+        (
+            rmpv::Value::from("min_engine_version"),
+            rmpv::Value::from("0.0.0"),
+        ),
+        (rmpv::Value::from("defaults"), rmpv::Value::Map(vec![])),
+        (rmpv::Value::from("rules"), rmpv::Value::Array(vec![])),
+        (
+            rmpv::Value::from("actor_ceilings"),
+            rmpv::Value::Array(vec![]),
+        ),
+        (
+            rmpv::Value::from("scoped_grants"),
+            rmpv::Value::Array(vec![grant]),
+        ),
+    ]);
+    let mut data = Vec::new();
+    rmpv::encode::write_value(&mut data, &policy).expect("encode reader manifest");
+    crate::test_util::put_policy_manifest_bytes(&vault, id(0xC3), &data)
+        .expect("install reader manifest");
+    let owner_read = crate::claim::ScopedReadActorKey::new("claim-reader").expect("reader key");
+    let owner_grants = QueryScope::default();
+    let evaluator = SavedQueryEvaluator {
+        vault: &vault,
+        owner_grants: &owner_grants,
+        owner_read: &owner_read,
+        judge: None,
+    };
+    let definition = SavedQueryDefinition {
+        filter: FilterAst::Not {
+            term: Box::new(FilterAst::Claim {
+                predicate: "profile.opted_out".to_owned(),
+                cmp: ClaimComparison::Exists,
+                value: Value::Null,
+            }),
+        },
+        ..sample_definition()
+    };
+    store_query(&vault, id(0xC4), &definition);
+    let request = EvaluationRequest {
+        query_ref: id(0xC4),
+        campaign_ref: id(0xC4),
+        entity_ref: candidate,
+        definition: &definition,
+        cause: MembershipCause::DataChange,
+        valid_at: 10,
+        detected_at: 10,
+    };
+    let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+    let evaluation = std::pin::pin!(evaluator.evaluate_entity(&request));
+    let verdict = match evaluation.poll(&mut cx) {
+        std::task::Poll::Ready(outcome) => outcome.expect("evaluate").decision.verdict,
+        std::task::Poll::Pending => panic!("a hard matcher never waits"),
+    };
+    assert_eq!(
+        verdict,
+        MatchVerdict::Match,
+        "no claim names the candidate: a non-claim behind an inbound ClaimOf is not one"
+    );
 }

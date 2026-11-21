@@ -39,7 +39,9 @@ const MENTION_REF: SideTable<(EntityId, EntityId), (), Raw> =
     SideTable::new(&side_table::TAGGING_MENTION_REF);
 
 #[doc(hidden)]
-pub use oneiron_records::tagging::tags::{DerivationEnvelope, MentionReference, MergeEvidence};
+pub use oneiron_records::tagging::tags::{
+    DerivationEnvelope, MentionReference, MergeEvidence, TaggedRelation,
+};
 
 /// Where an unconfirmed mention points. None of these is an edge.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -158,6 +160,11 @@ pub struct TurnTags {
     pub messages: Vec<EntityId>,
     pub mentions: Vec<TaggedMention>,
     pub merge_evidence: Vec<MergeEvidence>,
+    /// The relations the tagger read between the mentions, when its model
+    /// returns relations: empty when it read the turn and found none. A
+    /// relation indexes `mentions`, one per span of the answer in its order.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relations: Option<Vec<TaggedRelation>>,
     /// The turn's mood, when the tagger returned one.
     pub mood: Option<Vad>,
     /// Whether `mood` is an earlier set's, kept because this set's answer

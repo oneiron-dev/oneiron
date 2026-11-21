@@ -2,15 +2,16 @@
 use super::window_rows::PendingTombstoneRow;
 use super::{PortRows, WindowAddress, WindowDeletionRows};
 use crate::EntityId;
-use crate::deletion::{PENDING_TOMBSTONE, PendingTombstoneKey};
+use crate::deletion::PENDING_TOMBSTONE;
 use crate::error::Result;
 use crate::store::ManifestDbs;
 #[cfg(feature = "sync")]
 use crate::store::window_rows::WindowUpdateKey;
 use heed::RoTxn;
+use oneiron_store::side_table::key::WindowEntityHexKey;
 
-fn pending_key(window: WindowAddress<'_>, id: &EntityId) -> PendingTombstoneKey {
-    PendingTombstoneKey {
+fn pending_key(window: WindowAddress<'_>, id: &EntityId) -> WindowEntityHexKey {
+    WindowEntityHexKey {
         window: window.as_str().to_owned(),
         id: *id,
     }

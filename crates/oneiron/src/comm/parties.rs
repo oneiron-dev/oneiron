@@ -71,6 +71,7 @@ pub(super) fn active_comm_party_key_in_txn(
     rtxn: &heed::RoTxn<'_>,
     id: EntityId,
 ) -> CommResult<Option<String>> {
+    note_comm_party_row_read();
     let Some(raw) = store.port_entity_record(rtxn, &id)? else {
         return Ok(None);
     };
@@ -91,6 +92,29 @@ pub(super) fn active_comm_party_key_in_txn(
     Ok(required_string(entries, KEY_PARTY_KEY)
         .ok()
         .map(str::to_owned))
+}
+
+// Test-door tally of the PERSON rows the party validator reads, per thread
+// (FIX COMM-PARTY-LOOKUP-INDEX-CANDIDATES): a lookup past the shortcut reads
+// only the PERSONs the party-key index names for its key.
+#[cfg(oneiron_test_support)]
+thread_local! {
+    static COMM_PARTY_ROW_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(oneiron_test_support)]
+fn note_comm_party_row_read() {
+    COMM_PARTY_ROW_READS.with(|reads| reads.set(reads.get().saturating_add(1)));
+}
+
+#[cfg(not(oneiron_test_support))]
+const fn note_comm_party_row_read() {}
+
+/// The PERSON rows the party validator read on this thread since the last
+/// call.
+#[cfg(oneiron_test_support)]
+pub(crate) fn take_comm_party_row_reads() -> usize {
+    COMM_PARTY_ROW_READS.with(|reads| reads.replace(0))
 }
 
 /// The `party_key` of the active comm-owned PERSON `id`: the address the
@@ -151,14 +175,50 @@ fn active_comm_persons_by_party_key_in_txn(
     Ok(groups)
 }
 
+/// The active comm-owned PERSON rows that carry exactly `party_key`, ids
+/// ascending: the `party_key` group of
+/// [`active_comm_persons_by_party_key_in_txn`].
+///
+/// Once a whole rebuild of the PERSON party-key index (L6-22) has committed,
+/// this reads only the PERSONs the index names under the key, each still in
+/// the PERSON type index and re-read under the walk's rule, so a name a
+/// removal left behind adds nothing. Every row the walk keeps for the key is
+/// named: the index keeps each string `party_key` entry of a PERSON body, and
+/// the rule takes a body's one entry (a repeated entry is no party). Until
+/// that rebuild, every PERSON is read.
+fn active_comm_persons_with_party_key_in_txn(
+    store: &Store,
+    rtxn: &heed::RoTxn<'_>,
+    party_key: &str,
+) -> CommResult<Vec<EntityId>> {
+    let Some(candidates) =
+        crate::store::person_party_keys::person_party_key_candidates_in_txn(store, rtxn, party_key)
+    else {
+        return Ok(active_comm_persons_by_party_key_in_txn(store, rtxn)?
+            .remove(party_key)
+            .unwrap_or_default());
+    };
+    let mut ids = Vec::new();
+    for id in candidates {
+        if store.port_entity_type_indexed(rtxn, ENTITY_TYPE_PERSON, &id)?
+            && active_comm_party_key_in_txn(store, rtxn, id)?.as_deref() == Some(party_key)
+        {
+            ids.push(id);
+        }
+    }
+    ids.sort_unstable();
+    Ok(ids)
+}
+
 /// Resolves one party against synced truth, read-only.
 ///
 /// `PARTY_INDEX_PREFIX` is node-local cache state; the synced truth is the
 /// PERSON body's `party_key`. A cache miss therefore means "look again", not
 /// "absent" — treating it as absence is what mints a twin for a party that
-/// already synced in. On a stale or missing hit this scans the type-4 rows and,
-/// when several active rows share the key, picks the lexicographically smallest
-/// id so every node converges on the same one.
+/// already synced in. On a stale or missing hit this reads the active PERSON
+/// rows that carry the key ([`active_comm_persons_with_party_key_in_txn`])
+/// and, when several share it, picks the lexicographically smallest id so
+/// every node converges on the same one.
 fn lookup_party_in_txn(
     store: &Store,
     rtxn: &heed::RoTxn<'_>,
@@ -167,9 +227,10 @@ fn lookup_party_in_txn(
     if let Some(id) = fresh_indexed_party_in_txn(store, rtxn, party_key)? {
         return Ok(PartyLookup::Fresh(id));
     }
-    Ok(active_comm_persons_by_party_key_in_txn(store, rtxn)?
-        .remove(party_key)
-        .and_then(|ids| ids.into_iter().next())
+    let ids = active_comm_persons_with_party_key_in_txn(store, rtxn, party_key)?;
+    Ok(ids
+        .first()
+        .copied()
         .map_or(PartyLookup::Absent, PartyLookup::Repairable))
 }
 

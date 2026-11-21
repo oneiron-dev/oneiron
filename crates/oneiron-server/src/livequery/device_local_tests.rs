@@ -10,6 +10,7 @@ use super::source::BoundSource;
 use super::subscriptions::LiveQuerySource as _;
 use super::*;
 use crate::server::SyncServer;
+use crate::test_engine_stack::run_on_engine_stack;
 use oneiron::claim::CallerLocality;
 use oneiron::memory::ClaimInput;
 use oneiron::{EdgeActorClass, EntityId};
@@ -311,45 +312,50 @@ async fn a_queued_snapshot_off_this_device_names_no_row_turned_device_local() {
 /// named none. Once one of them is device-local, the result is refused at
 /// the send door: off this device the caller reads only that the result
 /// changed, and the read repeated finds nothing.
-#[tokio::test]
-async fn a_queued_read_result_off_this_device_names_no_row_turned_device_local() {
-    let f = production_socket_tests::fixture().await;
-    let world = put_world(&f.server);
-    let claim = put_claim(&f.server, world);
-    f.server
-        .vault()
-        .batch()
-        .text(
-            &EntityId::from_hex(&claim).unwrap(),
-            &[("body", "orchid kept")],
-        )
-        .commit()
-        .unwrap();
-    let mut socket = production_socket_tests::connect(&f, "human").await;
-    let search = json!({"requestId":8,"method":"vault.search.bm25",
+#[test]
+fn a_queued_read_result_off_this_device_names_no_row_turned_device_local() {
+    run_on_engine_stack(
+        "a_queued_read_result_off_this_device_names_no_row_turned_device_local",
+        || async move {
+            let f = production_socket_tests::fixture().await;
+            let world = put_world(&f.server);
+            let claim = put_claim(&f.server, world);
+            f.server
+                .vault()
+                .batch()
+                .text(
+                    &EntityId::from_hex(&claim).unwrap(),
+                    &[("body", "orchid kept")],
+                )
+                .commit()
+                .unwrap();
+            let mut socket = production_socket_tests::connect(&f, "human").await;
+            let search = json!({"requestId":8,"method":"vault.search.bm25",
         "params":{"query":"orchid","limit":10}});
-    let mut read = async || {
-        production_socket_tests::send(&mut socket, TAG_RPC, search.clone()).await;
-        production_socket_tests::app(&mut socket, TAG_RPC).await
-    };
-    let portable = read().await;
-    assert_eq!(
-        portable["result"]["value"].as_array().map(Vec::len),
-        Some(1),
-        "{portable}"
-    );
-    // 7f203888f4f (#1968, OF-063): a search hit carries its typed record ref
-    // beside the short ref, built from the row this read admitted.
-    let hit = &portable["result"]["value"][0];
-    assert_eq!(hit["record"]["kind"], "CLAIM", "{portable}");
-    assert_eq!(hit["record"]["id"], claim, "{portable}");
-    assert_eq!(hit["record"]["label"], "kept", "{portable}");
+            let mut read = async || {
+                production_socket_tests::send(&mut socket, TAG_RPC, search.clone()).await;
+                production_socket_tests::app(&mut socket, TAG_RPC).await
+            };
+            let portable = read().await;
+            assert_eq!(
+                portable["result"]["value"].as_array().map(Vec::len),
+                Some(1),
+                "{portable}"
+            );
+            // 7f203888f4f (#1968, OF-063): a search hit carries its typed record ref
+            // beside the short ref, built from the row this read admitted.
+            let hit = &portable["result"]["value"][0];
+            assert_eq!(hit["record"]["kind"], "CLAIM", "{portable}");
+            assert_eq!(hit["record"]["id"], claim, "{portable}");
+            assert_eq!(hit["record"]["label"], "kept", "{portable}");
 
-    release_hook::arm(world);
-    let refused = read().await;
-    assert_eq!(refused["error"]["code"], "RESULT_CHANGED", "{refused}");
-    assert!(refused.get("result").is_none(), "{refused}");
-    assert!(!refused.to_string().contains(&claim), "{refused}");
-    let fresh = read().await;
-    assert_eq!(fresh["result"]["value"], json!([]), "{fresh}");
+            release_hook::arm(world);
+            let refused = read().await;
+            assert_eq!(refused["error"]["code"], "RESULT_CHANGED", "{refused}");
+            assert!(refused.get("result").is_none(), "{refused}");
+            assert!(!refused.to_string().contains(&claim), "{refused}");
+            let fresh = read().await;
+            assert_eq!(fresh["result"]["value"], json!([]), "{fresh}");
+        },
+    )
 }

@@ -32,6 +32,7 @@ use oneiron_model::llm::LlmRequest;
 
 mod log;
 mod order;
+mod pieces;
 mod standing;
 mod storage;
 mod window;
@@ -41,7 +42,12 @@ pub use log::{
     read_first_chat_log,
 };
 pub(crate) use log::{chat_log_room, select_action_turns};
-pub(crate) use order::validate_conversation_window_in_txn;
+#[cfg(oneiron_test_support)]
+pub(crate) use order::thread_turn_order_in;
+pub(crate) use order::{
+    conversation_covered_end_in, conversation_turns_in, thread_turn_key_in,
+    validate_conversation_window_in_txn,
+};
 pub(crate) use standing::{FoldedTurnSummary, folded_turn_summary_in, summary_stands_in};
 pub(crate) use storage::{conversation_receipt_in, put_conversation_receipt_in_txn};
 use window::ChatLogWindow;
@@ -55,7 +61,10 @@ const CHAT_COMPACTION_RUN_REF: &str = "chat-compaction";
 const STEP_FILING_REFUSED: &str = "step_filing_refused";
 
 #[doc(hidden)]
-pub use oneiron_records::compaction::conversation::{ConversationEvidence, ConversationTurnSpan};
+pub use oneiron_records::compaction::conversation::{
+    ConversationEvidence, ConversationTurnPiece, ConversationTurnReading, ConversationTurnSpan,
+};
+pub(crate) use pieces::entry_piece_summaries;
 
 /// Why a conversation's self-written compaction did not fly at a
 /// breakpoint. The log stays raw for the turn.
@@ -85,6 +94,13 @@ pub enum ConversationCompactionUnavailable {
     /// do not fit one summary or the backend's input beside it (FIX 9837):
     /// a pin is never dropped, so the log stays raw.
     PinsDoNotFit,
+    /// The first turn past the hot tail does not fit the writer's input
+    /// beside its reply even alone, and no reading in pieces fits either
+    /// (FIX-LIST COMPACTION-FIRST-TURN-PAST-INPUT-ROOM-STALLS): the room
+    /// holds no piece beside its marker, or the piece summaries cannot fit
+    /// one entry. That turn heads every later window, so the log stays raw
+    /// while the writer's room stays the same.
+    TurnPastInputRoom,
 }
 
 impl ConversationCompactionUnavailable {
@@ -101,6 +117,7 @@ impl ConversationCompactionUnavailable {
             Self::Unmetered => "unmetered",
             Self::Pending(_) => "pending",
             Self::PinsDoNotFit => "pins_do_not_fit",
+            Self::TurnPastInputRoom => "turn_past_input_room",
         }
     }
 }
@@ -135,6 +152,10 @@ pub struct ConversationFlight<'a> {
     /// The chat generation whose breakpoint sealed it: its paid calls' job.
     job: EntityId,
     hooks: CompactHooks,
+    /// How its one turn is read when the writer cannot take that turn
+    /// whole (FIX-LIST COMPACTION-FIRST-TURN-PAST-INPUT-ROOM-STALLS); `None`
+    /// for a window of whole turns.
+    pieces: Option<pieces::TurnPieces>,
 }
 
 /// Seals `log`'s window for one flight past its driver's threshold, on the
@@ -179,26 +200,32 @@ pub fn seal_conversation_flight<'a>(
     }
     let budget = driver.summary_token_budget();
     let room = driver.backend().input_token_limit(budget);
-    let Some(window) = window_within(whole, budget, room) else {
-        driver.backend().end_flight();
-        driver.abandon();
-        return Err(Why::NoWindow);
-    };
-    // The agent's own pins the window holds word for word are mandatory
-    // (FIX 9837): the window keeps the whole turns whose pins fit with them.
-    let Some((window, mut pins)) =
-        window_with_pins(window, &driver.memory_profile().verbatim_pins, budget, room)
-    else {
-        driver.backend().end_flight();
-        driver.abandon();
-        return Err(Why::PinsDoNotFit);
+    let sized = sized_window(
+        whole,
+        &driver.memory_profile().verbatim_pins,
+        budget,
+        room,
+        policy.floor_tokens,
+        |ceiling| driver.backend().input_token_limit(ceiling),
+    );
+    let (window, mut pins, pieces) = match sized {
+        Ok(sized) => sized,
+        Err(why) => {
+            driver.backend().end_flight();
+            driver.abandon();
+            return Err(why);
+        }
     };
     let turn_start = window.messages.first().map_or(0, |message| message.turn);
     let fits = |pins: &[String]| {
         crate::tokenizer::count_context_pack_tokens(&pins.join("\n")) as u64 <= budget
-            && room.is_none_or(|room| {
-                compaction_input_tokens(turn_start, &window.messages, pins, None, budget) <= room
-            })
+            && match (&pieces, window.messages.first()) {
+                (Some(plan), Some(message)) => plan.fits(message, pins, budget),
+                _ => room.is_none_or(|room| {
+                    compaction_input_tokens(turn_start, &window.messages, pins, None, budget)
+                        <= room
+                }),
+            }
     };
     // Then the lines a `host.compact` hook pins, while they fit.
     let last = window.messages.last().map_or(0, |message| message.turn);
@@ -240,6 +267,7 @@ pub fn seal_conversation_flight<'a>(
         branch: log.branch,
         turns: window.spans,
         check_material: None,
+        reading: None,
     };
     Ok(ConversationFlight {
         driver,
@@ -249,13 +277,52 @@ pub fn seal_conversation_flight<'a>(
         evidence,
         job,
         hooks,
+        pieces,
     })
+}
+
+/// The window one flight takes from `whole` on a writer whose input holds
+/// `room` beside a reply of `budget`, with the agent's own `profile` pins
+/// it holds, which are mandatory (FIX 9837): the longest run of whole turns
+/// that fits with its pins; or, when not even the first turn fits alone,
+/// that turn alone, read in pieces whose summaries clear the gate's `floor`
+/// (FIX-LIST COMPACTION-FIRST-TURN-PAST-INPUT-ROOM-STALLS), each piece
+/// sized on the writer's room beside its own summary, `piece_room`.
+fn sized_window(
+    whole: &ChatLogWindow,
+    profile: &[String],
+    budget: u64,
+    room: Option<u64>,
+    floor: u64,
+    piece_room: impl Fn(u64) -> Option<u64>,
+) -> Result<
+    (ChatLogWindow, Vec<String>, Option<pieces::TurnPieces>),
+    ConversationCompactionUnavailable,
+> {
+    use ConversationCompactionUnavailable as Why;
+    if let Some(window) = window_within(whole, budget, room) {
+        return window_with_pins(window, profile, budget, room)
+            .map(|(window, pins)| (window, pins, None))
+            .ok_or(Why::PinsDoNotFit);
+    }
+    let turn = window_prefix(whole, 1);
+    let pins = profile_pins(&turn.messages, profile);
+    if crate::tokenizer::count_context_pack_tokens(&pins.join("\n")) as u64 > budget {
+        return Err(Why::PinsDoNotFit);
+    }
+    room.zip(turn.messages.first())
+        .and_then(|(room, message)| {
+            pieces::TurnPieces::plan(message, &pins, budget, room, floor, piece_room)
+        })
+        .map(|plan| (turn, pins, Some(plan)))
+        .ok_or(Why::TurnPastInputRoom)
 }
 
 /// The longest run of `window`'s first turns whose rendered input fits
 /// `room` beside a reply of `budget`, with those turns' own sources and
 /// spans: all of it when it fits whole or nothing bounds it. `None` when not
-/// even its first turn fits. The rest waits for a later flight.
+/// even its first turn fits: that turn then flies alone, read in pieces.
+/// The rest waits for a later flight.
 fn window_within(window: &ChatLogWindow, budget: u64, room: Option<u64>) -> Option<ChatLogWindow> {
     let turn_start = window.messages.first()?.turn;
     let fits = |turns: usize| {
@@ -371,19 +438,55 @@ impl ConversationFlight<'_> {
     #[must_use]
     pub fn fly(self, vault: &Vault) -> ConversationFlightOutcome {
         let backend = std::sync::Arc::clone(self.driver.backend());
-        let (pass, mut execution) = run_pass(backend.as_ref(), &self.request, &self.policy);
+        // A turn read in pieces lands its entry, written from the piece
+        // summaries (FIX-LIST COMPACTION-FIRST-TURN-PAST-INPUT-ROOM-STALLS),
+        // with what those piece passes read.
+        let entry = match &self.pieces {
+            None => None,
+            Some(plan) => match pieces::entry_request(
+                vault,
+                self.driver,
+                backend.as_ref(),
+                &self.request,
+                plan,
+                &self.policy,
+                self.job,
+            ) {
+                Ok(entry) => Some(entry),
+                Err(error) => {
+                    self.driver.abandon();
+                    backend.end_flight();
+                    return ConversationFlightOutcome::Refused(format!(
+                        "entry_refused:{:?}",
+                        error.kind()
+                    ));
+                }
+            },
+        };
+        let request = entry.as_ref().map_or(&self.request, |entry| &entry.request);
+        let (pass, mut execution) = run_pass(backend.as_ref(), request, &self.policy);
         if let Some(execution) = execution.as_mut() {
             file_pass(vault, self.job, execution);
         }
         let outcome = match (pass, execution) {
             (Pass::Accepted(gated, material), Some(mut execution)) => {
-                execution.evidence = Some(CompactionEvidence::Conversation(self.evidence.clone()));
+                // The entry's words carry the piece summaries', so its
+                // receipt carries what their passes read (#10050 review), and
+                // how its turn was read, so the check judges each summary
+                // against the bytes it was given (FIX-LIST
+                // COMPACTION-CHECK-JUDGES-PER-CHUNK).
+                let mut evidence = self.evidence.clone();
+                if let Some(entry) = &entry {
+                    entry.inputs.carry_into(&mut execution);
+                    evidence.reading = Some(entry.reading.clone());
+                }
+                execution.evidence = Some(CompactionEvidence::Conversation(evidence));
                 let (first, last) = (
-                    self.request.turn_start,
-                    self.request
+                    request.turn_start,
+                    request
                         .window
                         .last()
-                        .map_or(self.request.turn_start, |message| message.turn),
+                        .map_or(request.turn_start, |message| message.turn),
                 );
                 match self.driver.integrate_conversation(
                     vault,
@@ -451,7 +554,8 @@ fn run_pass(
         let (product, mut execution) = match backend.compact_as_writer(request, retry) {
             Ok(answer) => answer,
             Err(refusal) => {
-                let spent = spent.map(|spent| spent.with_rejected(rejected).with_calls(calls));
+                let spent =
+                    crate::compaction::refused_pass_execution(backend, spent, rejected, calls);
                 return (Pass::Refused(refusal), spent);
             }
         };

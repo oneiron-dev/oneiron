@@ -117,12 +117,13 @@ pub(crate) fn validate_project_body(id: EntityId, bytes: &[u8]) -> Result<Vec<En
         return Err(invalid());
     }
     slice_refs(&body.slice, &mut ids);
+    ids.extend(body.room_facets.iter().flatten().copied());
     // Every anchor is read, however many (rule 5, FIX 9436): the read fold
     // counts the chain's depth against its threshold row.
     if let Some(signed) = &body.write_proof {
         slip_refs(&signed.slip_wire, &mut ids)?;
         // An earlier authority state is a carrier too: its parents, leader,
-        // board, roster and slice may not name a live off-record id either.
+        // board, roster, slice and room facet set may not name a live off-record id either.
         for link in signed.anchor_links().map_err(|_| invalid())?.iter().rev() {
             authority_refs(&link.authority, &mut ids)?;
             if let Some(proof) = &link.proof {
@@ -177,6 +178,7 @@ fn authority_refs(authority: &ProjectAuthority, ids: &mut Vec<EntityId>) -> Resu
         ids.push(id);
     }
     slice_refs(&authority.slice, ids);
+    ids.extend(authority.room_facets.iter().flatten().copied());
     Ok(())
 }
 
@@ -389,11 +391,12 @@ pub(crate) fn reconcile_project_rooms(
                 Err(Error::InvalidConfig(_)) => return Err(invalid_room()),
                 other => other?,
             };
-        // The room owns its shared pins and their policy; a project touch
-        // derives everything else and carries those forward unchanged.
-        let (pins, pin_policy) = previous
+        // The room owns its shared pins, the records its unpins removed and
+        // the pin policy; a project touch derives everything else and carries
+        // those forward unchanged.
+        let (pins, unpinned, pin_policy) = previous
             .as_ref()
-            .map(|old| (old.pins.clone(), old.pin_policy))
+            .map(|old| (old.pins.clone(), old.unpinned.clone(), old.pin_policy))
             .unwrap_or_default();
         let room = ProjectRoom {
             schema_version: 1,
@@ -403,6 +406,7 @@ pub(crate) fn reconcile_project_rooms(
             claims_scope_ref: body.claims_scope_ref.clone(),
             origin: body.origin_card(),
             pins,
+            unpinned,
             pin_policy,
         };
         if previous.is_none() && !crate::conversation::fresh_id_in_txn(store, txn, room_id)? {

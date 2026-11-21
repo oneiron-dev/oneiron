@@ -131,7 +131,7 @@ impl Vault {
             let rekeys = crate::channel_identity::AssignmentRekeys::begin(&self.store);
             let vad_scope = crate::batch::VadPostcommitScope::new(self, wtxn);
             let result = {
-                let _active_write_txn = crate::store::active_write_txn_guard();
+                let _active_write_txn = crate::store::active_write_txn_guard(self.store.env.id());
                 // A key this write's mask found raises its notice here.
                 match check_federation_imports_in_txn(self, wtxn)
                     .map_err(E::from)
@@ -217,6 +217,11 @@ impl Vault {
         if verb_hook_ask_changed {
             self.notify_verb_hook_ask_changes();
         }
+        // A task-held inquiry answer whose task this write settled or
+        // cancelled leaves memory now that the end is durable (INQUIRE-SHAPE
+        // Q6 = A; FIX INQUIRY-HOLDER-EVICT-ON-TERMINAL-WRITE). It never fails
+        // this write.
+        self.evict_inquiry_answers_after_commit(task_ids.iter().chain(&settled_tasks));
         self.store.notify_task_updates(task_ids);
         // A pad seal can leave its text frontier unchanged. Wake live NOTE
         // subscribers only now that the seal is durable (FIX 12110). A fork

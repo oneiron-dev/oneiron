@@ -225,9 +225,14 @@ fn forget_drains_all_active_matches_beyond_one_page() {
 #[test]
 fn native_client_export_projects_the_shared_five_format_verb() {
     let dir = unique_vault_dir("export");
-    let client =
-        super::client::NativeClient::open(Some(dir.to_string_lossy().into_owned()), None, None)
-            .expect("embedded native client");
+    let client = super::client::NativeClient::open(
+        Some(dir.to_string_lossy().into_owned()),
+        None,
+        None,
+        None,
+        None,
+    )
+    .expect("embedded native client");
     for format in ["toon", "md", "json", "yaml", "txt"] {
         let error = client
             .vault_export(serde_json::json!({"format": format}))
@@ -255,9 +260,14 @@ fn binding_panic_child() {
         return;
     }
     let dir = unique_vault_dir("panic-hook");
-    let client =
-        super::client::NativeClient::open(Some(dir.to_string_lossy().into_owned()), None, None)
-            .expect("embedded native client");
+    let client = super::client::NativeClient::open(
+        Some(dir.to_string_lossy().into_owned()),
+        None,
+        None,
+        None,
+        None,
+    )
+    .expect("embedded native client");
     let caught =
         std::panic::catch_unwind(|| panic!("could not parse row: sentinel-world-text-2b7d"));
     assert!(caught.is_err());

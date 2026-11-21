@@ -17,6 +17,8 @@ pub struct OwnedScopedRead {
     records_cover: records_cover::ArtifactRecordsCover,
     judged_at: Option<u64>,
     read_filter: Option<RetrievalFilter>,
+    receipts_include_live_grants: bool,
+    cited_support: crate::claim::evidence_support::CitedSupport,
     vault: Arc<crate::Vault>,
 }
 
@@ -33,6 +35,7 @@ impl ScopedRead<'_> {
         let Self {
             vault: _,
             session_view: _,
+            stretch: _,
             actor_key,
             audience,
             peer_reads,
@@ -46,6 +49,9 @@ impl ScopedRead<'_> {
             records_cover,
             judged_at,
             read_filter,
+            receipts_include_live_grants,
+            cited_support,
+            source_floor_waived: _,
         } = self;
         Ok(OwnedScopedRead {
             actor_key,
@@ -61,6 +67,8 @@ impl ScopedRead<'_> {
             records_cover,
             judged_at,
             read_filter,
+            receipts_include_live_grants,
+            cited_support,
             vault,
         })
     }
@@ -84,11 +92,14 @@ impl OwnedScopedRead {
             records_cover,
             judged_at,
             read_filter,
+            receipts_include_live_grants,
+            cited_support,
             vault,
         } = self;
         let read = ScopedRead {
             vault: vault.as_ref(),
             session_view: None,
+            stretch: None,
             actor_key,
             audience,
             peer_reads,
@@ -102,11 +113,15 @@ impl OwnedScopedRead {
             records_cover,
             judged_at,
             read_filter,
+            receipts_include_live_grants,
+            cited_support,
+            source_floor_waived: false,
         };
         let result = operation(&read);
         let ScopedRead {
             vault: _,
             session_view: _,
+            stretch: _,
             actor_key,
             audience,
             peer_reads,
@@ -120,6 +135,9 @@ impl OwnedScopedRead {
             records_cover,
             judged_at,
             read_filter,
+            receipts_include_live_grants,
+            cited_support,
+            source_floor_waived: _,
         } = read;
         (
             Self {
@@ -136,6 +154,8 @@ impl OwnedScopedRead {
                 records_cover,
                 judged_at,
                 read_filter,
+                receipts_include_live_grants,
+                cited_support,
                 vault,
             },
             result,
@@ -147,13 +167,14 @@ impl OwnedScopedRead {
         self,
         vault: &'a crate::Vault,
     ) -> std::result::Result<ScopedRead<'a>, Self> {
-        self.into_borrowed_over(vault, None)
+        self.into_borrowed_over(vault, None, None)
     }
 
     /// Returns the same state to a reader of this exact vault composed over
     /// `room`'s view (ARCH-0052 #e5-read-union-open, ONE-1729): the same
-    /// admission and policy gates over the union the stretch can see. A
-    /// room of another vault gives the owner back unchanged.
+    /// admission and policy gates over the union the stretch can see, with
+    /// the stretch's room carried for the rows it staged. A room of another
+    /// vault gives the owner back unchanged.
     pub fn into_borrowed_in_room<'a>(
         self,
         vault: &'a crate::Vault,
@@ -162,13 +183,14 @@ impl OwnedScopedRead {
         if !room.is_of(vault) {
             return Err(self);
         }
-        self.into_borrowed_over(vault, Some(&room.view))
+        self.into_borrowed_over(vault, Some(&room.view), room.stretch)
     }
 
     fn into_borrowed_over<'a>(
         self,
         vault: &'a crate::Vault,
         session_view: Option<&'a crate::store::SessionStoreView<'a>>,
+        stretch: Option<crate::off_record::StretchRoom>,
     ) -> std::result::Result<ScopedRead<'a>, Self> {
         if !std::ptr::eq(self.vault.as_ref(), vault) {
             return Err(self);
@@ -187,11 +209,14 @@ impl OwnedScopedRead {
             records_cover,
             judged_at,
             read_filter,
+            receipts_include_live_grants,
+            cited_support,
             vault: _,
         } = self;
         Ok(ScopedRead {
             vault,
             session_view,
+            stretch,
             actor_key,
             audience,
             peer_reads,
@@ -205,6 +230,9 @@ impl OwnedScopedRead {
             records_cover,
             judged_at,
             read_filter,
+            receipts_include_live_grants,
+            cited_support,
+            source_floor_waived: false,
         })
     }
 }

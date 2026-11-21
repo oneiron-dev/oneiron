@@ -16,9 +16,9 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use oneiron::llm::decision::{AnswerContract, DecisionAnswer};
+use oneiron::llm::decision::{AnswerContract, DecisionAnswer, Reversibility};
 use oneiron::llm::run_admission::RunAdmission;
-use oneiron::task_verb::sdk::{AiVerdict, AiVerdictRequest, AiVerdictReversibility};
+use oneiron::task_verb::sdk::{AiVerdict, AiVerdictRequest};
 use oneiron::{
     CallClass, CallEnvelope, CallPurpose, ContentPart, LlmMessage, LlmMessageRole, LlmRequest,
     ModelTierRef, ResponseFormat, TierPrecedence,
@@ -268,7 +268,7 @@ pub(super) fn check_text(
         state: Some(check.state),
         ceiling: None,
         // The text goes on a live page: at a cut it abstains.
-        reversibility: AiVerdictReversibility::OutboundEffect,
+        reversibility: Reversibility::OutboundEffect,
         deadline_ms: None,
         routine: false,
         image: None,

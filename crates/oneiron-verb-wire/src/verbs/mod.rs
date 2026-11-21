@@ -36,6 +36,7 @@ pub use crate::verbs::coreference::*;
 pub use crate::verbs::courtesy_delete::*;
 pub use crate::verbs::credential::*;
 pub use crate::verbs::custody_drain::*;
+pub use crate::verbs::data_key_generation::*;
 pub use crate::verbs::diary::*;
 pub use crate::verbs::diary_pinned::*;
 pub use crate::verbs::disclosure::*;
@@ -218,6 +219,20 @@ pub struct WorkspaceRefRequest {
     pub workspace_ref: String,
 }
 
+/// The member opens work talk for their own roster row in this workspace.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WorkTalkOpenRequest {
+    pub workspace_ref: String,
+}
+
+/// The member acknowledges the one-vault notice for their own roster row.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OneVaultAcknowledgeRequest {
+    pub workspace_ref: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TaskRequest {
@@ -354,6 +369,7 @@ pub mod calendar;
 pub mod campaign_enrollment;
 pub mod campaign_split;
 pub mod can;
+pub mod claim_refinement;
 pub mod comm_widen;
 pub mod connect_proposal;
 pub mod connector;
@@ -368,6 +384,7 @@ pub mod coreference;
 pub mod courtesy_delete;
 pub mod credential;
 pub mod custody_drain;
+pub mod data_key_generation;
 pub mod diary;
 pub mod diary_pinned;
 pub mod disclosure;
@@ -432,10 +449,14 @@ pub mod shared;
 pub mod shared_admin;
 pub mod shared_members;
 pub mod shared_policy;
+pub mod skill_activation;
 pub mod skill_attribution;
 pub mod skill_defaults;
 pub mod skill_execution;
 pub mod skill_fit;
+pub mod skill_lifecycle;
+pub mod skill_merge;
+pub mod skill_pack_load;
 pub mod skill_package_read;
 pub mod skills;
 pub mod standing;

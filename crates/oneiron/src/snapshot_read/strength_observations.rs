@@ -166,8 +166,9 @@ fn observations_page(
     })
 }
 
-/// The live grant's record scope, or the whole vault for the proven owner
-/// and a base agent whose manifest rows still stand in place of a grant.
+/// The live grant's record scope, or the whole vault for the proven owner.
+/// A base agent with no standing Steward row is refused as any reader
+/// without a grant is ([`live_steward_reader_scope_in_txn`]).
 fn observation_reader_scope_in_txn(
     memory: &Memory<'_>,
     txn: &heed::RoTxn<'_>,
@@ -178,8 +179,8 @@ fn observation_reader_scope_in_txn(
         owner.revalidate_as_vault_owner_in_txn(vault, txn)?;
         return Ok(None);
     }
-    match observation_reader_scope_for_actor_in_txn(vault, txn, memory.actor())? {
-        Some(scope) => Ok(scope),
+    match live_steward_reader_scope_in_txn(vault, txn, memory.actor())? {
+        Some(scope) => Ok(Some(scope)),
         None => Err(MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
             "strength observations read for the owner under its proof or a live Steward reader",
@@ -188,10 +189,29 @@ fn observation_reader_scope_in_txn(
     }
 }
 
+/// A non-owner page reader's record scope in `txn`: the scope of its
+/// standing Steward reach with `read` (for a base agent, under a live
+/// MACHINE binding), else `None`, no read. A base agent with no standing
+/// row has no read here: a public page answers a live grant only, so its
+/// manifest rows never stand in for the grant (lead 21 Nov,
+/// SNAPSHOT-PAGES-SERVE-BASE-AGENT-WITHOUT-STEWARD-ROW = A).
+pub(crate) fn live_steward_reader_scope_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+) -> Result<Option<Scope>> {
+    Ok(observation_reader_scope_for_actor_in_txn(vault, txn, actor)?.flatten())
+}
+
 /// A non-owner actor's record scope in `txn`: the standing reach's scope
 /// with `read` and, for a base agent, a live MACHINE binding; the whole
 /// vault for a base agent with no row; else no read reach. `None` is no
 /// read, `Some(None)` the whole vault, `Some(Some)` the grant's scope.
+///
+/// The whole-vault answer is for the engine's own source check of a derive
+/// Archive item, where the manifest rows decide while no row stands
+/// (untangle 6.3, census X04). The pages read through
+/// [`live_steward_reader_scope_in_txn`], which drops it.
 pub(crate) fn observation_reader_scope_for_actor_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -229,8 +249,9 @@ fn observation_record_reached_in_txn(
 }
 
 /// Whether the observed claim's own row reads for this caller: the scope
-/// reaches its record and the scoped read finds it live.
-fn observed_claim_reads_in_txn(
+/// reaches its record and the scoped read finds it live. The open conflicts
+/// page judges a marker and each member by it too.
+pub(crate) fn observed_claim_reads_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     read: &ScopedRead<'_>,

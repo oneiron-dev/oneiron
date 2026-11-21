@@ -199,7 +199,8 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
                 || (rest.len() == 1
                     && matches!(
                         sub.as_str(),
-                        "run"
+                        "action-bench"
+                            | "run"
                             | "edit-path"
                             | "edit-path-pack"
                             | "fixture-protocol"
@@ -208,6 +209,8 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
                             | "judge"
                             | "measure"
                             | "infra"
+                            | "code-bench-pack"
+                            | "code-bench"
                     )) =>
         {
             let path = rest.first().map_or(Path::new(""), |path| Path::new(path));
@@ -431,6 +434,9 @@ fn run_report(sub: &str, path: &Path) -> BeamResult<String> {
             path,
         )?)?),
         "judge" => Ok(serde_json::to_string_pretty(&super::llm_judge::run(path)?)?),
+        "action-bench" => Ok(serde_json::to_string_pretty(&super::action_bench::run(
+            path,
+        )?)?),
         "tiers" => Ok(serde_json::to_string_pretty(&super::tiers::run(path)?)?),
         "score-nuggets" => Ok(serde_json::to_string_pretty(&super::nuggets::run(path)?)?),
         "fixture-protocol" => Ok(serde_json::to_string_pretty(
@@ -442,6 +448,12 @@ fn run_report(sub: &str, path: &Path) -> BeamResult<String> {
         "edit-path-pack" => Ok(serde_json::to_string_pretty(
             &super::edit_path::write_pack(path)?,
         )?),
+        "code-bench-pack" => Ok(serde_json::to_string_pretty(
+            &super::code_bench::write_pack(path)?,
+        )?),
+        "code-bench" => Ok(serde_json::to_string_pretty(&super::code_bench::grade(
+            path,
+        )?)?),
         _ => Ok(serde_json::to_string_pretty(&run_manifest_path(path)?)?),
     }
 }

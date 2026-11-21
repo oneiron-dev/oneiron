@@ -25,7 +25,7 @@
 //! ([`WorkLine::try_admit_background_bundle`], FIX 6304).
 //!
 //! Task work (`can`, `ask`, `wait`, `tasks.answer`; Rule 5) takes its turn
-//! from one line per vault ([`Vault::admit_task_work`]), whichever door it
+//! from one line per vault (`Vault::admit_task_work`), whichever door it
 //! came in by: a served route, the embedded SDK, a code run's own ask and
 //! wait, or a pumped agent. It never runs without its turn (FIX 10015).
 
@@ -359,7 +359,7 @@ pub const TASK_WORK_BOUND: usize = 2_048;
 /// however long the line, or until its own request deadline (FIX 10015).
 pub const TASK_WORK_WAIT: Duration = Duration::from_secs(300);
 
-/// One piece of task work's turn on a vault ([`Vault::admit_task_work`]):
+/// One piece of task work's turn on a vault (`Vault::admit_task_work`):
 /// dropping it hands the turn to the next caller in line. Task work runs
 /// only while it holds its turn.
 #[must_use = "task work keeps its turn only while it is held"]

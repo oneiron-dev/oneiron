@@ -63,6 +63,7 @@ pub struct RawDatabases {
 /// every write transaction refuses, so neither its rows nor the key custody
 /// it shares with its replacement change through any handle on it.
 pub struct StoreEnv {
+    id: u64,
     env: Env,
     sealed: std::sync::atomic::AtomicBool,
     mark_check: OnceLock<MarkCheck>,
@@ -80,7 +81,9 @@ pub(in crate::store) struct MarkCheck {
 
 impl StoreEnv {
     pub(in crate::store) fn new(env: Env) -> Self {
+        static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         Self {
+            id: NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             env,
             sealed: std::sync::atomic::AtomicBool::new(false),
             mark_check: OnceLock::new(),
@@ -155,6 +158,13 @@ impl StoreEnv {
     pub(in crate::store) fn unseal(&self) {
         self.sealed
             .store(false, std::sync::atomic::Ordering::Release);
+    }
+
+    /// A number no other environment opened in this process shares. A write
+    /// names it as it raises the thread's write depth, so a door that waits
+    /// for this environment's writer knows whether the thread holds it.
+    pub(crate) fn id(&self) -> u64 {
+        self.id
     }
 }
 
@@ -284,6 +294,11 @@ pub struct StoreCore {
     /// What the authority store doors read of one committed generation.
     pub(crate) authority_door_view:
         Mutex<Option<(u64, std::sync::Arc<crate::authority::AuthorityDoorView>)>>,
+    /// What the authority store doors last read of a write's staged rows,
+    /// which a later read of the same write extends while it still holds
+    /// those rows (FIX [AUTHORITY-DOOR-VIEW-MID-BATCH-REBUILD]).
+    pub(crate) authority_door_view_staged:
+        Mutex<Option<std::sync::Arc<crate::authority::AuthorityDoorView>>>,
     /// The row the authority door last held at the owner's reserve, for the
     /// reserve's typed check (Astra owner-reserve r2 F4). Never persisted.
     pub(crate) authority_owner_reserve_hold: Mutex<Option<crate::authority::OwnerReserveHold>>,
@@ -303,6 +318,19 @@ pub struct StoreCore {
     /// The engine's delete guards, supplied by the open door: a store never
     /// exists without them.
     pub(crate) delete_guards: &'static dyn crate::store::StoreDeleteGuards,
+    /// The user deletes in flight that hold their target's brief delete
+    /// reservation, so a delete refused before it linearizes releases one its
+    /// own flight created. Never persisted: a crash keeps each reservation.
+    pub(crate) brief_delete_fences: crate::deletion::BriefDeleteFences,
+    /// The soft deletes' `pt:` markers whose own publication is in flight,
+    /// which no replay publishes in its stead. Never persisted: a crash
+    /// leaves each marker to the next replay.
+    #[cfg(feature = "sync")]
+    pub(crate) tombstone_publications_in_flight: crate::deletion::TombstonePublicationsInFlight,
+    /// When this home last pushed each machine a prediction, for the push
+    /// spacing. Never persisted: a restarted home answers the next ask.
+    #[cfg(feature = "sync")]
+    pub(crate) predicted_pushes: crate::sync::residence::PredictedPushes,
     /// The engine's record-scope stamp hooks, supplied by the open door with
     /// the delete guards.
     pub(crate) scope_stamps: &'static dyn crate::store::StoreScopeStamps,
@@ -375,6 +403,11 @@ pub struct StoreCore {
     /// worker, none until one attaches (FIX 14976,
     /// [`crate::Vault::attach_drafter_serving`]). Never persisted.
     pub(crate) drafter_serving: RwLock<Option<Arc<dyn crate::drafter::DrafterServingRuntime>>>,
+    /// The host operator's mail settings on this vault and the runner its
+    /// blocking mail work runs on, the defaults and none until a host
+    /// installs them (fix list row 17645, [`crate::Vault::install_mail_host`]).
+    /// Never persisted.
+    pub(crate) mail_host: crate::mail_pack::MailHostSlot,
     /// The pool code-mode result bodies held in memory draw on: this
     /// vault's own until the host installs the process's
     /// ([`crate::Vault::set_result_memory`]).
@@ -423,6 +456,10 @@ pub struct StoreCore {
     /// Committed consent answers wake this vault's connector-call settler.
     /// Content-free and in memory only; the durable answer is re-read.
     pub(crate) consent_answers: tokio::sync::Notify,
+    /// A committed per-request Coach host job wakes the host's Coach worker
+    /// beside its tick. Content-free and in memory only; the worker re-reads
+    /// its queue.
+    pub(crate) coach_host_requests: std::sync::Arc<tokio::sync::Notify>,
     /// The committed-notification signal live queries wake on (FIX 3084).
     pub(crate) notification_updates: tokio::sync::watch::Sender<u64>,
     /// Content-free, per-vault: bumped after each commit that revoked a
@@ -455,6 +492,23 @@ pub struct StoreCore {
     /// lock because the two critical sections never nest.
     #[cfg(feature = "sync")]
     pub(crate) staged_import_confirm_lock: Mutex<()>,
+    /// Held while an install reads its owner signing slot for this vault,
+    /// checks the slot's key against the roster and gives a revoked key's slot
+    /// a fresh seed. Two callers never act on one reading: a later delete
+    /// would take a fresh key that a vouch had made live in between. It was a
+    /// process-wide lock; the slot belongs to this vault, and a process holds
+    /// one store per vault path, so the vault's own lock keeps every caller
+    /// of the process that reaches the slot in one line.
+    pub(crate) owner_signing_slot_lock: Mutex<()>,
+    /// Held by the recovery root's door from its hold attempt's reuse check
+    /// to the hold's commit, and by [`crate::Vault::land_due_recovery_holds`]
+    /// for its whole run: the only writers and deleters of this install's
+    /// recovery hold seed slots for this vault. No landing reaps an
+    /// attempt's slot between its pending record and its hold, and no second
+    /// attempt replaces a seed while the first writes. A process holds one
+    /// store per vault path, so the vault's own lock keeps every such caller
+    /// of the process in one line.
+    pub(crate) recovery_hold_lock: Mutex<()>,
     /// This vault's test seams. `#[cfg(test)]` so a production `StoreCore`
     /// carries neither the field nor its types: see [`TestHooks`] for why a
     /// test seam is exactly the state that must not be process-wide.
@@ -743,6 +797,9 @@ macro_rules! manifest_dbs {
             fn key_custody(&self) -> &crate::store::key_custody::KeyCustody { &self.base.core.key_custody }
             fn gate_custody_archived(&self) -> bool { self.base.core.gate_custody_archived() }
             fn is_union(&self) -> bool { self.room.is_some() }
+            fn room_base(&self) -> Option<&Store> { self.room.is_some().then_some(self.base) }
+            fn owning_store(&self) -> Option<&Store> { Some(self.base) }
+            fn room_overlay(&self) -> Option<&crate::session_overlay::SessionOverlay> { self.room }
             fn manifest_memo(&self) -> &crate::gate::ManifestDecodeMemo {
                 &self.base.core.manifest_memo
             }
@@ -789,6 +846,28 @@ macro_rules! manifest_dbs {
             /// alone. A cache keyed and validated by base versions cannot
             /// answer for such a read: overlay writes bump none of them.
             fn is_union(&self) -> bool;
+            /// The base store a room's view composes over, `None` for a
+            /// target that is no room's view. The side-row wall decides a
+            /// room's rows with its custody, which a room only reads and
+            /// never mints through (FIX 2329).
+            fn room_base(&self) -> Option<&Store> {
+                None
+            }
+            /// The store these databases are, or the base a room's view
+            /// composes over: the store whose authority log a reader below
+            /// the vault folds (stage 7c-4, a setting read on an install born
+            /// of a restore). `None` for a core's canonical accessors, which
+            /// no store holds yet.
+            fn owning_store(&self) -> Option<&Store> {
+                self.room_base()
+            }
+            /// The overlay of the room whose view this is, `None` for a
+            /// target that is no room's view: the room keeps a fresh secret
+            /// a row of its own holds in that overlay's custody, in memory
+            /// only (ROOM-LOCAL-CUSTODY).
+            fn room_overlay(&self) -> Option<&crate::session_overlay::SessionOverlay> {
+                None
+            }
             /// The vault's memo of policy manifest decodes.
             fn manifest_memo(&self) -> &crate::gate::ManifestDecodeMemo;
         }
@@ -804,6 +883,7 @@ macro_rules! manifest_dbs {
             fn key_custody(&self) -> &crate::store::key_custody::KeyCustody { &self.core.key_custody }
             fn gate_custody_archived(&self) -> bool { self.core.gate_custody_archived() }
             fn is_union(&self) -> bool { false }
+            fn owning_store(&self) -> Option<&Store> { Some(self) }
             fn manifest_memo(&self) -> &crate::gate::ManifestDecodeMemo {
                 &self.core.manifest_memo
             }
@@ -820,6 +900,10 @@ macro_rules! manifest_dbs {
             fn key_custody(&self) -> &crate::store::key_custody::KeyCustody { &self.core.key_custody }
             fn gate_custody_archived(&self) -> bool { self.core.gate_custody_archived() }
             fn is_union(&self) -> bool { true }
+            fn room_base(&self) -> Option<&Store> { Some(self.base) }
+            fn room_overlay(&self) -> Option<&crate::session_overlay::SessionOverlay> {
+                Some(&self.overlay)
+            }
             fn manifest_memo(&self) -> &crate::gate::ManifestDecodeMemo {
                 &self.core.manifest_memo
             }
