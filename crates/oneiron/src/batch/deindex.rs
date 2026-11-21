@@ -116,17 +116,10 @@ pub(crate) fn deindex_with_machine_history_held_in_txn(
     id: &EntityId,
 ) -> Result<bool> {
     let mut pending = VecDeque::from([*id]);
-    // `retire_machine_history_for_delete` retires the indexed controls only
-    // while the pin names them.
-    if store
-        .vault_meta
-        .get(txn, &crate::claim::history_projection::pin_key(*id))?
-        .is_some()
-    {
-        pending.extend(crate::claim::history_store::machine_history_ids_for_target(
-            store, txn, *id,
-        )?);
-    }
+    pending.extend(
+        crate::claim::history_store::machine_history_ids_retired_by_delete(store, txn, *id)?
+            .unwrap_or_default(),
+    );
     let mut visited = HashSet::new();
     while let Some(record) = pending.pop_front() {
         if !visited.insert(record) {
