@@ -8,7 +8,12 @@
 //! redeem, and the close does not land as the owner asked. The second case
 //! (review 10099 P1): a Dreamer claim on a mirroring-prone predicate the
 //! owner approved. The owner's close keeps the Dreamer's birth envelope, but
-//! it admits nothing new, so GATE-13 isolation does not pend it.
+//! it admits nothing new, so GATE-13 isolation does not pend it. The third
+//! (review 10099 round 2 P1): a trusted policy declares the approved Keep's
+//! predicate critical, so the close of the Approved claim pends on the
+//! declared criticality floor with no tray row to redeem. The owner's proof,
+//! revalidated in the close's transaction, is the in-person confirmation that
+//! floor asks for; a close with no owner proof stays held.
 //!
 //! Needs the doors:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
@@ -22,7 +27,7 @@ use oneiron::memory::ClaimInput;
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use oneiron::store::GateDecisionId;
 use oneiron::temporal::TimeRange;
-use oneiron::test_doors::consolidation::open_dreamer_vault;
+use oneiron::test_doors::consolidation::{declare_predicate_critical, open_dreamer_vault};
 use oneiron::test_doors::derive::{
     Claim, Derived, Named, Settle, Settlement, batch_items, commit,
     open_conflict_with_imported_alternative,
@@ -194,9 +199,8 @@ fn owner_approves(fixture: &Fixture, staged: EntityId) -> (EntityId, Authenticat
     (owner, proof)
 }
 
-/// The owner writes an active replacement and supersedes `old` with it
-/// through `Vault::supersede_claim_as_owner`; `old` must then be Superseded.
-fn owner_supersedes(fixture: &Fixture, owner: EntityId, proof: &AuthenticatedOwner, old: EntityId) {
+/// The owner's active, user-stated replacement claim about the person: its id.
+fn owner_replacement(fixture: &Fixture, owner: EntityId, proof: &AuthenticatedOwner) -> EntityId {
     let input: ClaimInput = serde_json::from_value(json!({
         "predicate": "note.reviewed",
         "subject_ref": fixture.person.to_hex(),
@@ -223,7 +227,13 @@ fn owner_supersedes(fixture: &Fixture, owner: EntityId, proof: &AuthenticatedOwn
         ClaimLifecycleStatus::Active,
         "FIXTURE: the owner's replacement is active"
     );
+    replacement
+}
 
+/// The owner writes an active replacement and supersedes `old` with it
+/// through `Vault::supersede_claim_as_owner`; `old` must then be Superseded.
+fn owner_supersedes(fixture: &Fixture, owner: EntityId, proof: &AuthenticatedOwner, old: EntityId) {
+    let replacement = owner_replacement(fixture, owner, proof);
     let supersede = fixture.vault.supersede_claim_as_owner(
         proof,
         &replacement,
@@ -260,4 +270,50 @@ fn the_owner_supersedes_an_approved_mirroring_isolated_dreamer_claim() {
     let fixture = fixture();
     let (staged, owner, proof) = approved_isolated_dreamer_claim(&fixture);
     owner_supersedes(&fixture, owner, &proof, staged);
+}
+
+/// Review 10099 round 2 P1: on a predicate a trusted policy declares
+/// critical, the owner's supersede closes the approved imported Keep. Its
+/// close pends on the declared criticality floor, which the fallback lift
+/// does not clear, and its tray row is gone; the owner's proof, revalidated
+/// in the close's transaction, confirms it in person.
+#[test]
+fn the_owner_supersedes_an_approved_imported_keep_on_a_declared_critical_predicate() {
+    let fixture = fixture();
+    let (staged, owner, proof) = approved_imported_keep(&fixture);
+    declare_predicate_critical(&fixture.vault, "preference.coffee")
+        .expect("FIXTURE: the policy declares the Keep's predicate critical");
+    owner_supersedes(&fixture, owner, &proof, staged);
+}
+
+/// Control: the same close through `Vault::supersede_claim`, which names no
+/// closer and carries no owner proof, stays held: the owner's proof lifts the
+/// declared floor only for the owner's own close. The approved Keep stays
+/// Active.
+#[test]
+fn a_supersede_with_no_owner_proof_stays_held_on_a_declared_critical_predicate() {
+    let fixture = fixture();
+    let (staged, owner, proof) = approved_imported_keep(&fixture);
+    declare_predicate_critical(&fixture.vault, "preference.coffee")
+        .expect("FIXTURE: the policy declares the Keep's predicate critical");
+    let replacement = owner_replacement(&fixture, owner, &proof);
+
+    let supersede =
+        fixture
+            .vault
+            .supersede_claim(&replacement, &staged, fixture.vault.now_recorded_at());
+    assert!(
+        supersede.is_err(),
+        "a close with no owner proof stays held: {supersede:?}"
+    );
+    assert_eq!(
+        fixture
+            .vault
+            .get_claim(&staged)
+            .expect("read")
+            .expect("the approved Keep remains stored")
+            .lifecycle,
+        ClaimLifecycleStatus::Active,
+        "the held close leaves the approved Keep active"
+    );
 }
