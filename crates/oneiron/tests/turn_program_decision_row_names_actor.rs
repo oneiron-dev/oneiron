@@ -14,6 +14,11 @@
 //! The kept actor goes with its actor's erase, so no row names an erased
 //! actor; the decision itself stays until the second change.
 //!
+//! A machine names on a decision row only the actor its own rows hold for
+//! that decision: its admission's, or the one it kept beside a decision it
+//! imported. The actor a carried `Retracted` row asserts is no proof of it,
+//! and an actor erased on the machine is named by no row it writes.
+//!
 //! A row written before the row named its actor names none, and is taken as
 //! it was then: it merges, it is kept, and a machine that holds no wake of it
 //! writes it again without an actor. A machine that still owes the wake such
@@ -313,6 +318,65 @@ fn named(actor: EntityId) -> serde_json::Value {
     serde_json::to_value(actor).unwrap()
 }
 
+/// The agent's PERSON row on `machine`, where the agent never acted: an
+/// erase marks an actor hard-deleted only where its row is stored. The id is
+/// derived from the name, so it is the agent `agent_slip` made.
+fn store_agent_row(machine: &Machine, agent: EntityId) {
+    assert_eq!(
+        machine
+            .vault
+            .ensure_agent_principal("turn-program-agent")
+            .unwrap(),
+        agent,
+        "fixture: the agent's row took another id on this machine"
+    );
+}
+
+/// The bytes of the row `doc` carries for the wake.
+fn wake_row_bytes(doc: &LoroDoc, turn: EntityId, registration: EntityId) -> Option<Vec<u8>> {
+    match doc.get_map(WAKES).get(&wake_key(turn, registration)) {
+        Some(ValueOrContainer::Value(LoroValue::Binary(bytes))) => Some(bytes.to_vec()),
+        _ => None,
+    }
+}
+
+/// A `Retracted` row for the wake the decision row `decision` decides, with
+/// that decision's turn, registration and admission, naming `actor`.
+fn retracted_row(decision: &serde_json::Value, actor: EntityId) -> Vec<u8> {
+    let admitted = &decision["admitted"];
+    format!(
+        r#"{{"retracted":{{"turn":{},"registration":{},"actor":{},"admission":{}}}}}"#,
+        admitted["turn"],
+        admitted["registration"],
+        named(actor),
+        admitted["admission"]
+    )
+    .into_bytes()
+}
+
+/// Puts the carried row `row` over the row `machine`'s window `doc` holds for
+/// the wake, as a peer's write of an earlier row that won the key does, and
+/// runs one pass of the machine: the pass answers each carried row with the
+/// latest row the machine knows for its key. Answers the row the window then
+/// carries.
+fn answer_to_carried_row(
+    machine: &Machine,
+    doc: &LoroDoc,
+    turn: EntityId,
+    registration: EntityId,
+    row: &[u8],
+) -> Option<serde_json::Value> {
+    doc.get_map(WAKES)
+        .insert(
+            &wake_key(turn, registration),
+            LoroValue::Binary(row.to_vec().into()),
+        )
+        .unwrap();
+    doc.commit();
+    machine.housekeeping();
+    wake_row(doc, turn, registration)
+}
+
 /// The decision row for the wake `recorder` owes, as a build wrote it before
 /// the row named its actor: the turn, the registration and the admission, in
 /// that order, and no more. Answers its map key and its bytes.
@@ -549,5 +613,195 @@ fn an_erase_of_the_actor_drops_the_actor_kept_beside_a_decision() {
     assert!(
         row["admitted"].get("actor").is_none(),
         "a machine wrote a decision with the actor it kept, after that actor's erase: {row}"
+    );
+}
+
+/// A carried `Retracted` row of a decided wake names another actor than the
+/// wake's. The machine that decided the wake answers with its decision under
+/// the actor of its own admission, and a machine that imported the decision
+/// under the actor it kept: neither writes the actor the carried row asserts.
+#[test]
+fn a_wake_answer_names_the_decisions_own_actor_not_the_carried_rows() {
+    let home = Machine::open("machine-home");
+    let recorder = Machine::open("machine-recorder");
+    let third = Machine::open("machine-third");
+    let Taken {
+        agent,
+        turn,
+        registration,
+        doc_home,
+        ..
+    } = home_takes_the_carried_wake(&[&home, &recorder, &third], &home, &recorder);
+
+    home.housekeeping();
+    assert_eq!(
+        home.decisions(turn, registration),
+        1,
+        "fixture: the home did not decide the wake it took"
+    );
+    let doc_third = third.doc();
+    exchange(&doc_third, &doc_home);
+    third.housekeeping();
+    assert!(
+        doors::decision_kept_here(&third.vault, turn, registration).unwrap(),
+        "fixture: the third machine did not keep the decision the window carried"
+    );
+    let decision = wake_row(&doc_home, turn, registration)
+        .expect("fixture: the home's window carries no row for the wake it decided");
+    assert!(
+        decision.get("admitted").is_some(),
+        "fixture: the home's window does not carry its decision: {decision}"
+    );
+    let other = EntityId::from_bytes([0x63; 16]).unwrap();
+    assert_ne!(other, agent);
+    let carried = retracted_row(&decision, other);
+
+    let row = answer_to_carried_row(&home, &doc_home, turn, registration, &carried)
+        .expect("the deciding machine's window carries no row for the wake after its pass");
+    assert!(
+        row.get("admitted").is_some(),
+        "the deciding machine did not answer a carried retraction with its decision: {row}"
+    );
+    assert_eq!(
+        row["admitted"]["actor"],
+        named(agent),
+        "the deciding machine's answer names another actor than its own admission's: {row}"
+    );
+
+    let row = answer_to_carried_row(&third, &doc_third, turn, registration, &carried)
+        .expect("the importing machine's window carries no row for the wake after its pass");
+    assert!(
+        row.get("admitted").is_some(),
+        "the importing machine did not answer a carried retraction with the decision it kept: {row}"
+    );
+    assert_eq!(
+        row["admitted"]["actor"],
+        named(agent),
+        "the importing machine's answer names another actor than the one it kept: {row}"
+    );
+}
+
+/// The actor is hard-deleted on a machine that imported a decision of its
+/// wake, and a carried `Retracted` row of that wake still names the actor.
+/// The machine answers with the decision it kept, and the answer names no
+/// actor: the carried row's word puts an erased actor on no row written here.
+#[test]
+fn a_wake_answer_names_no_actor_erased_here() {
+    let home = Machine::open("machine-home");
+    let recorder = Machine::open("machine-recorder");
+    let third = Machine::open("machine-third");
+    let Taken {
+        agent,
+        turn,
+        registration,
+        doc_home,
+        ..
+    } = home_takes_the_carried_wake(&[&home, &recorder, &third], &home, &recorder);
+
+    home.housekeeping();
+    assert_eq!(
+        home.decisions(turn, registration),
+        1,
+        "fixture: the home did not decide the wake it took"
+    );
+    let doc_third = third.doc();
+    exchange(&doc_third, &doc_home);
+    third.housekeeping();
+    assert!(
+        doors::decision_kept_here(&third.vault, turn, registration).unwrap(),
+        "fixture: the third machine did not keep the decision the window carried"
+    );
+    let decision = wake_row(&doc_third, turn, registration)
+        .expect("fixture: the third machine's window carries no row for the wake");
+    assert_eq!(
+        decision["admitted"]["actor"],
+        named(agent),
+        "fixture: the decision the third machine imported does not name the actor: {decision}"
+    );
+    let carried = retracted_row(&decision, agent);
+
+    store_agent_row(&third, agent);
+    assert!(
+        doors::erase_hard_deleted_actor_programs(&third.vault, agent).unwrap(),
+        "fixture: the actor does not read as erased on the third machine"
+    );
+    assert!(
+        doors::decision_kept_here(&third.vault, turn, registration).unwrap(),
+        "fixture: the erase took the decision itself, which stays until the second change"
+    );
+
+    let row = answer_to_carried_row(&third, &doc_third, turn, registration, &carried)
+        .expect("the window carries no row for the wake after the machine's pass");
+    assert!(
+        row.get("admitted").is_some(),
+        "the machine did not answer a carried retraction with the decision it kept: {row}"
+    );
+    assert!(
+        row["admitted"].get("actor").is_none(),
+        "a wake answer names an actor erased on the machine that wrote it: {row}"
+    );
+}
+
+/// The actor is hard-deleted on the machine that decided its wake, which
+/// keeps the admission. A stale `Owed` row of that wake comes back into the
+/// window. The machine writes its decision over it, and that row names no
+/// actor: the carried wake's actor is erased here.
+#[test]
+fn the_deciding_machine_names_no_erased_actor_on_the_decision_over_a_stale_owed_row() {
+    let home = Machine::open("machine-home");
+    let recorder = Machine::open("machine-recorder");
+    let Taken {
+        agent,
+        turn,
+        registration,
+        doc_home,
+        ..
+    } = home_takes_the_carried_wake(&[&home, &recorder], &home, &recorder);
+    let owed = wake_row_bytes(&doc_home, turn, registration)
+        .expect("fixture: the home's window carries no row for the wake it took");
+    assert!(
+        serde_json::from_slice::<serde_json::Value>(&owed)
+            .unwrap()
+            .get("owed")
+            .is_some(),
+        "fixture: the row the home took is no owed wake"
+    );
+
+    home.housekeeping();
+    assert_eq!(
+        home.decisions(turn, registration),
+        1,
+        "fixture: the home did not decide the wake it took"
+    );
+    store_agent_row(&home, agent);
+    assert!(
+        doors::erase_hard_deleted_actor_programs(&home.vault, agent).unwrap(),
+        "fixture: the actor does not read as erased on the home"
+    );
+    assert_eq!(
+        home.decisions(turn, registration),
+        1,
+        "fixture: the erase took the admission, which an erase keeps"
+    );
+
+    doc_home
+        .get_map(WAKES)
+        .insert(
+            &wake_key(turn, registration),
+            LoroValue::Binary(owed.into()),
+        )
+        .unwrap();
+    doc_home.commit();
+    reverse_rematerialize(&home.vault, &doc_home, &WindowKey::new(WINDOW)).unwrap();
+    doc_home.commit();
+    let row = wake_row(&doc_home, turn, registration)
+        .expect("the window carries no row for the wake after the machine mirrored its state");
+    assert!(
+        row.get("admitted").is_some(),
+        "the deciding machine did not write its decision over a stale owed row: {row}"
+    );
+    assert!(
+        row["admitted"].get("actor").is_none(),
+        "the deciding machine's decision row names an actor erased there: {row}"
     );
 }
