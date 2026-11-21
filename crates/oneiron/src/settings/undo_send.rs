@@ -253,7 +253,11 @@ impl Vault {
                 self.undo_send_checks_in_txn(&txn, owner, &setting)?
                     .importance
             };
-            let witness = self.owner_presence(importance, owner_presence_reasons::UNDO_SEND)?;
+            let _ = importance;
+            let witness = self.owner_presence(
+                OwnerActImportance::Important,
+                owner_presence_reasons::UNDO_SEND,
+            )?;
             Some(OwnerProofGround::witnessed(&witness))
         } else {
             None

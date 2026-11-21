@@ -110,8 +110,11 @@ impl Vault {
                 )?
                 .importance
             };
-            let witness =
-                self.owner_presence(importance, owner_presence_reasons::ROOM_THREAD_ADMIN)?;
+            let _ = importance;
+            let witness = self.owner_presence(
+                OwnerActImportance::Important,
+                owner_presence_reasons::ROOM_THREAD_ADMIN,
+            )?;
             Some(OwnerProofGround::witnessed(&witness))
         } else {
             None

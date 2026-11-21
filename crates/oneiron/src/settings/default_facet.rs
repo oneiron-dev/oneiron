@@ -121,7 +121,11 @@ impl Vault {
                 self.default_facet_checks_in_txn(&txn, owner, setting)?
                     .importance
             };
-            let witness = self.owner_presence(importance, owner_presence_reasons::DEFAULT_FACET)?;
+            let _ = importance;
+            let witness = self.owner_presence(
+                OwnerActImportance::Important,
+                owner_presence_reasons::DEFAULT_FACET,
+            )?;
             Some(OwnerProofGround::witnessed(&witness))
         } else {
             None

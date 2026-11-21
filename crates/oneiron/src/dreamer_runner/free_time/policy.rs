@@ -510,6 +510,10 @@ impl Vault {
         // the owner's asks.
         let ground = match authority {
             FreeTimeAuthority::Owner(_, _) => {
+                let witness = self.owner_presence(
+                    OwnerActImportance::Important,
+                    owner_presence_reasons::FREE_TIME_POLICY,
+                )?;
                 let importance = {
                     let txn = self.store.env.read_txn()?;
                     self.set_free_time_policy_checks_in_txn(
@@ -521,8 +525,7 @@ impl Vault {
                     )?
                     .importance
                 };
-                let witness =
-                    self.owner_presence(importance, owner_presence_reasons::FREE_TIME_POLICY)?;
+                let _ = importance;
                 Some(OwnerProofGround::witnessed(&witness))
             }
             FreeTimeAuthority::Agent(_) => None,

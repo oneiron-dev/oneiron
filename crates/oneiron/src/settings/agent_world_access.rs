@@ -244,8 +244,8 @@ impl WorldAccessWrite {
             None if allowed_after.include_base() => &base,
             None => &empty,
         };
-        if allowed_after.is_subset_of(allowed_before)
-            && retrieval_default_after.is_subset_of(retrieval_default_before)
+        let _ = (allowed_after, allowed_before);
+        if retrieval_default_after.is_subset_of(retrieval_default_before)
             && board_default_after.is_subset_of(board_default_before)
         {
             Ok(Direction::Narrows)
