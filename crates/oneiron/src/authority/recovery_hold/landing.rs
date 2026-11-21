@@ -9,8 +9,9 @@ impl Vault {
     /// hold: a hold whose seed slot is here. In the transaction the hold is
     /// folded again on this install's clock: Due (by this install's own
     /// `instant_in_txn`, or an `ItIsMe`) with R and the held owner live
-    /// revokes each lost key still live and then enrols the held input
-    /// (predecessor R, kind `Device`), all signed by R from the slot, as
+    /// revokes each lost key the root door's rule still admits and then
+    /// enrols the held input (predecessor R, kind `Device`), all signed by
+    /// R from the slot, as
     /// the root door's vouch orders them (a self-hosted owner whose lost
     /// key held their binding is bound again by the enrolment), marks the
     /// rows for the live mirror, commits, announces them, then deletes the
@@ -228,9 +229,14 @@ impl Vault {
 
     /// The landing's write for `hold`, which `root_key` (R) signed, in
     /// `txn`, whose fold before the write is `fold`: each lost key the hold
-    /// names that `fold`'s roster holds live is revoked, then the held input
-    /// is enrolled for the hold's owner (predecessor R, kind `Device`), all
-    /// signed by `sign`. The lost keys go first, as at the root door's
+    /// names that the root door's rule still admits in `fold` is revoked (a
+    /// live owner key of the hold's owner, never R and never the successor:
+    /// [`Vault::revocable_lost_keys_in_txn`]; row
+    /// RECOVERY-HOLD-LOST-KEY-RULE-AT-FOLD), then the held input is enrolled
+    /// for the hold's owner (predecessor R, kind `Device`), all signed by
+    /// `sign`. A lost key revoked since the hold, or one the door would
+    /// have refused (R itself, say, in a hold R signed by hand), is passed
+    /// over. The lost keys go first, as at the root door's
     /// vouch: the enrolment binds a self-hosted owner whose lost key held
     /// their binding. Answers the enrolment and the revocations in the
     /// order written; the caller marks the rows and commits. The root
@@ -248,9 +254,17 @@ impl Vault {
         (hold, root_key): (&RecoveryHold, &AuthorityKey),
         sign: &dyn Fn(&[u8]) -> Result<Vec<u8>>,
     ) -> Result<(OwnerKeyEnrollmentReceipt, Vec<AuthorityEntryHash>)> {
-        let mut revoked = Vec::with_capacity(hold.lost.len());
+        let successor = hold.successor_key();
+        let revocable = self.revocable_lost_keys_in_txn(
+            txn,
+            fold,
+            hold.owner,
+            (root_key, Some(&successor)),
+            &hold.lost,
+        )?;
+        let mut revoked = Vec::with_capacity(revocable.len());
         for key in &hold.lost {
-            if !fold.roster.get(key).is_some_and(|device| !device.revoked) {
+            if !revocable.contains(key) {
                 continue;
             }
             let signer = EntrySigner::Key(root_key, sign);
