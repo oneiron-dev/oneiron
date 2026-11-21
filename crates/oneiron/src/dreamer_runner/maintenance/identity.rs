@@ -23,7 +23,11 @@
 //! conversation that next mentions the name
 //! ([`Vault::resurface_identity_asks`]), with a one-tap GenUI choice card
 //! ([`Vault::identity_card`]) whose buttons answer through
-//! `self.identity.answer`.
+//! `self.identity.answer`. An ask some owner's lane does not open goes
+//! instead to every live person whose lane opens it, a member who knows who
+//! they meant, and each such owner gets a stub naming no ask, row or word
+//! (`route`). A member's own answer settles the mention when it names one of
+//! the candidates they read.
 //!
 //! An agent that must act on a person now (send, pay, invite, share) asks
 //! first through `self.identity.settle` ([`Memory::identity_act_now`]): a
@@ -53,6 +57,7 @@ mod host;
 mod index;
 mod presentation;
 mod recheck;
+mod route;
 pub(crate) mod setting_keys;
 mod settle_undo;
 mod settlement;
@@ -71,10 +76,12 @@ pub(super) use index::{
 use presentation::{card, options_in_txn, view_in_txn};
 pub(super) use recheck::run;
 use recheck::{ask_for_mention_in_txn, context_terms, measure_ask};
+pub use route::IDENTITY_MEMBER_QUESTION_PRODUCER;
+use route::notify_in_txn;
 pub(super) use settle_undo::{SettleInverse, revert_settle_in_txn};
 use settlement::{
     apply_in_txn, ask_answer_id, dreamer_seal, entity_of_kind_in_txn, escalate_in_txn,
-    keep_separate_in_txn, listed_candidates, notify_in_txn, parse_choice, settle_ask_in_txn,
+    keep_separate_in_txn, listed_candidates, parse_choice, settle_ask_in_txn,
 };
 
 use std::collections::BTreeSet;
@@ -85,6 +92,7 @@ use super::applied::{MaintenanceRevert, MaintenanceTarget};
 use crate::authority::ActAuthority;
 use crate::claim::{ClaimReadStatus, ClaimSource};
 use crate::consent::AuthenticatedOwner;
+use crate::edge::EdgeActorClass;
 use crate::identity_topology::{EngineCause, TopologySeal};
 use crate::limit_ask::EngineLimit;
 use crate::llm::decision::DecisionLadder;
@@ -289,6 +297,24 @@ pub(crate) fn keep_asks_separate_for_test(vault: &Vault, now: u64) -> Result<usi
     })
 }
 
+/// Sends every open ask not sent yet to the person at `now`, as an act-now
+/// decision that abstains sends one: the test door's way to escalate an ask.
+/// Returns how many went.
+#[cfg(oneiron_test_support)]
+pub(crate) fn escalate_asks_for_test(vault: &Vault, now: u64) -> Result<usize> {
+    vault.with_write_txn(|txn| {
+        let open = ASKS.scan(&vault.store, txn)?;
+        let mut sent = 0;
+        for (key, ask) in open {
+            if ask.escalated_at.is_none() {
+                escalate_in_txn(vault, txn, &key, ask, now)?;
+                sent += 1;
+            }
+        }
+        Ok(sent)
+    })
+}
+
 /// The name of a mention an effect may not act on yet: its ask is open, or
 /// it is still uncertain and no saved hint settles it. Provenance that names
 /// no saved mention is unsettled too, with an empty name. Reads only, in the
@@ -401,14 +427,31 @@ pub(super) fn revert_provisional_in_txn(
 }
 
 impl Memory<'_> {
-    /// `self.identity.answer`: an owner's tap on a choice card. Only a vault
-    /// owner answers who the people in their conversations are. The topology
+    /// `self.identity.answer`: an owner's tap on a choice card. A vault owner
+    /// answers who the people in their conversations are; a member answers
+    /// an ask raised from their own source, which some owner cannot read, by
+    /// naming a candidate they read (OWNER-NOTICE-MEMBER-ASK-ROUTE Q1 = A),
+    /// and only under their own lane. The topology
     /// decision is his, bound to the ask, only when the request bound his own
     /// proof (`owner_authorship`); otherwise it is an engine seal under
     /// [`EngineCause::OwnerAnswerUnproven`]. The actor or its class alone
     /// never authenticates an owner.
     pub fn identity_answer(&self, input: &IdentityAnswerRequest) -> MemoryResult<IdentitySettled> {
-        self.identity_answer_guarded(input, self.owner_authorship(), &[])
+        self.identity_answer_guarded(input, self.owner_authorship(), &[], None)
+    }
+
+    /// `self.identity.answer` for a member: their tap on the choice card of
+    /// an ask raised from their own source (OWNER-NOTICE-MEMBER-ASK-ROUTE
+    /// Q1 = A), on `person`, the proof of their own verified human
+    /// credential, rechecked in the write as a door a live person uses on
+    /// their own behalf. It applies as [`Self::identity_answer`] does for a
+    /// member; an owner answers on his owner proof.
+    pub fn identity_answer_as_member(
+        &self,
+        person: &AuthenticatedOwner,
+        input: &IdentityAnswerRequest,
+    ) -> MemoryResult<IdentitySettled> {
+        self.identity_answer_guarded(input, None, &[], Some(person))
     }
 
     fn identity_answer_guarded(
@@ -416,6 +459,7 @@ impl Memory<'_> {
         input: &IdentityAnswerRequest,
         owner: Option<&AuthenticatedOwner>,
         owner_evidence: &[EntityId],
+        member: Option<&AuthenticatedOwner>,
     ) -> MemoryResult<IdentitySettled> {
         let key = parse_key(&input.ask)
             .ok_or_else(|| MemoryError::bad_request("ask is 64 hex: an open identity ask"))?;
@@ -448,18 +492,68 @@ impl Memory<'_> {
                     owner_evidence,
                 )?;
             }
-            if !crate::policy_model::owners_in_txn(self.vault(), txn)?.contains(&self.actor()) {
+            if let Some(person) = member
+                && person.revalidate_person_in_txn(self.vault(), txn)? != self.actor()
+            {
                 return Err(MemoryError::new(
                     MEMORY_CODE_FORBIDDEN,
-                    "only a vault owner answers an identity ask",
+                    "identity answer proof does not name the caller",
+                    &["Answer from your own session."],
+                ));
+            }
+            let by_owner =
+                crate::policy_model::owners_in_txn(self.vault(), txn)?.contains(&self.actor());
+            if by_owner && member.is_some() {
+                return Err(MemoryError::new(
+                    MEMORY_CODE_FORBIDDEN,
+                    "an owner's identity answer takes the owner's own proof",
                     &["Answer from the owner's own session."],
+                ));
+            }
+            // A member answers an ask raised from a source some owner does
+            // not read, through their own lane (OWNER-NOTICE-MEMBER-ASK-ROUTE
+            // Q1 = A, the lead 21 Nov 13:2x): a live person of this vault,
+            // no owner, on an ordinary credential of their own. An ask every
+            // owner opens stays the owners' to answer.
+            if !by_owner
+                && !(self.actor_class() == EdgeActorClass::Human
+                    && route::is_member_in_txn(self.vault(), txn, self.actor())?)
+            {
+                return Err(MemoryError::new(
+                    MEMORY_CODE_FORBIDDEN,
+                    "only a vault owner, or a member an ask from their own source went to, \
+                     answers an identity ask",
+                    &["Answer from your own session."],
                 ));
             }
             let seen = admission::open_ask_in_txn(self.vault(), &lane, txn, &key, false)?
                 .ok_or_else(|| MemoryError::not_found("no such open identity ask"))?;
+            if !by_owner
+                && route::route_in_txn(self.vault(), txn, &seen.stored)?
+                    .closed_owners
+                    .is_empty()
+            {
+                return Err(MemoryError::new(
+                    MEMORY_CODE_FORBIDDEN,
+                    "every owner reads this identity ask: it is the owner's to answer",
+                    &["Answer from the owner's own session."],
+                ));
+            }
             let answer = parse_choice(&seen.ask, &input.choice).ok_or_else(|| {
                 MemoryError::bad_request("choice is one of the ask's options or someone_new")
             })?;
+            // A member's "is" settles only rows their lane reads: the
+            // mention, every span naming its own provisional person, and the
+            // candidate it names (admission). "Someone new" asserts the new
+            // person distinct from every candidate, the ones they cannot read
+            // included: that decision is the owner's.
+            if !by_owner && matches!(answer, Answer::SomeoneNew) {
+                return Err(MemoryError::new(
+                    MEMORY_CODE_FORBIDDEN,
+                    "a member's someone-new answer is the owner's decision",
+                    &["Choose the person you meant, or leave the ask for the owner."],
+                ));
+            }
             let held = seen.stored;
             let entity = settle_ask_in_txn(
                 self.vault(),

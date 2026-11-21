@@ -1,12 +1,15 @@
 //! PERSON identity setup, look-before-mint and saved-mention provenance.
-//! Every owner-only door binds the caller's own credential-backed Memory.
+//! Every owner-only door binds the caller's own credential-backed Memory, as
+//! a member's identity answer on their own proof does.
 
 use std::sync::Arc;
 
 use oneiron::authority::ActSurface;
 use oneiron::dreamer_runner::maintenance::identity::{
-    IdentityAnswerEvidenceRequest, IdentityMentionView, IdentitySettled, MentionProvenance,
+    IdentityAnswerEvidenceRequest, IdentityAnswerRequest, IdentityMentionView, IdentitySettled,
+    MentionProvenance,
 };
+use oneiron::memory::MemoryError;
 use oneiron::memory::identity_doors::{
     IdentityLookup, IdentityLookupRequest, PersonCreateRequest, PersonCreated,
 };
@@ -72,7 +75,11 @@ pub(crate) async fn vault_identity_mention(
 }
 
 /// The owner's answer records where his request reached this install
-/// (`surface`, the host's own reading of it): audit only (FIX 4650).
+/// (`surface`, the host's own reading of it): audit only (FIX 4650). Any
+/// other live person answers on their own verified human credential, and
+/// the engine admits only a member an ask from their own source went to,
+/// naming a candidate they read (OWNER-NOTICE-MEMBER-ASK-ROUTE Q1 = A):
+/// the choice card's one tap runs as the person who taps it.
 pub(crate) async fn self_identity_answer(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -82,14 +89,31 @@ pub(crate) async fn self_identity_answer(
     input: IdentityAnswerEvidenceRequest,
 ) -> Listed<IdentitySettled> {
     const VERB: &str = "self.identity.answer";
-    let owner = match owner_proof(auth, server, VERB) {
-        Ok(owner) => owner,
-        Err(error) => return refused(error),
+    let owner_refusal = match owner_proof(auth, server, VERB) {
+        Ok(owner) => {
+            return credential_listing(server, auth, caller, VERB, move |_, _, memory| {
+                memory
+                    .with_owner_surface(surface)
+                    .identity_answer_with_evidence_as_owner(&owner, &input)
+            })
+            .await;
+        }
+        Err(error) => error,
+    };
+    let Ok(person) = super::shared_act_doors::person(server, auth, VERB) else {
+        return refused(owner_refusal);
+    };
+    if !input.evidence_refs.is_empty() {
+        return refused(MemoryError::bad_request(
+            "evidence refs back an owner's identity answer",
+        ));
+    }
+    let answer = IdentityAnswerRequest {
+        ask: input.ask,
+        choice: input.choice,
     };
     credential_listing(server, auth, caller, VERB, move |_, _, memory| {
-        memory
-            .with_owner_surface(surface)
-            .identity_answer_with_evidence_as_owner(&owner, &input)
+        memory.identity_answer_as_member(&person, &answer)
     })
     .await
 }
