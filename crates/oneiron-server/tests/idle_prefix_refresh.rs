@@ -35,6 +35,10 @@ fn models_text(base_url: &str) -> String {
 async fn runtime_at(fake_base_url: &str) -> (tempfile::TempDir, Arc<Vault>, Arc<ModelRuntime>) {
     let dir = tempfile::tempdir().expect("temporary vault directory");
     let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).expect("open vault"));
+    // A hard erase needs this install's keystore and signing, as a host
+    // installs them after each open.
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    vault.prepare_install_signing().expect("install signing");
     let config = ModelsConfig::from_toml(&models_text(fake_base_url), None).expect("models config");
     let runtime = Arc::new(ModelRuntime::build(
         Some(&config),
