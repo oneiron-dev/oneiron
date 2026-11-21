@@ -448,11 +448,9 @@ impl Memory<'_> {
         ) {
             return answer;
         }
-        // The owner proof the host bound for a direct request, or on an
-        // owner-device surface the one this install's owner key signs for
-        // this word after its read and its presence check
-        // (`ask_word_presence`). An ask that asks one party admits a word,
-        // and cuts on it, only under that party's proof.
+        // An ask that asks one party admits a word, and cuts on it, only
+        // under that party's proof: the one the host bound, or the one this
+        // install's owner key signs after the word's read (`ask_word_presence`).
         let proof = self.word_owner_proof(handle, word)?;
         self.answer_under(handle, word, &proof)
     }

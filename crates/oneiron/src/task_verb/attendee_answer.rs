@@ -123,6 +123,36 @@ pub(super) fn approves(option: &TaskAskOptionId) -> bool {
     )
 }
 
+/// Refuses an approving `word` that names a contact no longer live and
+/// active, from a read: the refusal the identity's own writer gives the
+/// same word on its cut (`Vault::resolve_attendee_identity_in_txn`), made
+/// before a device asks for the person
+/// ([`super::ask_guard::approved_act_stands_in`]). The other checks of that
+/// writer are the word's admission's ([`offered_in`]).
+///
+/// # Errors
+///
+/// [`Error::EntityNotFound`] for a contact that is gone,
+/// [`Error::InvalidClaimBody`] for one no longer active; storage errors.
+pub(super) fn approved_act_stands_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    _id: EntityId,
+    _group: &AskGroup,
+    word: &TaskAskWord,
+) -> Result<()> {
+    match word
+        .option
+        .as_ref()
+        .and_then(AttendeeIdentityChoice::from_option)
+    {
+        Some(AttendeeIdentityChoice::Contact(contact)) => {
+            crate::disclosure::require_live_contact_in_txn(vault, txn, &contact)
+        }
+        _ => Ok(()),
+    }
+}
+
 /// [`asked_in`], once `word` names one option the ask CLAIM froze, in its
 /// canonical form; a word that names none is refused. Shared word admission
 /// then asks the owner's own proof of it ([`super::ask_guard`]).

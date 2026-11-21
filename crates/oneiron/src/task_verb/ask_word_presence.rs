@@ -14,9 +14,15 @@
 //!
 //! The door reads before it asks. One read transaction runs every check the
 //! word's admission makes (`ask_record::check_word`), with the person
-//! authenticated as the proof's mint authenticates him and no key in it
+//! authenticated as the proof's mint authenticates them and no key in it
 //! ([`crate::Vault::owner_device_answerer`]), so a word the admission refuses
-//! raises no prompt. The read never asks whether an owner key proves now: a
+//! raises no prompt. For an approving word the same read makes the checks
+//! the approved act's own writer makes on the cut before its first write
+//! (`ask_guard::approved_act_stands_in`: an attendee ask's named contact
+//! still lives, a training offer's model switch still binds), so nobody is
+//! asked to approve an act the settlement then refuses; it refuses such a
+//! word also where the word would not have cut the ask, which the write
+//! would have recorded. The read never asks whether an owner key proves now: a
 //! key that rests under a device PIN proves only inside the window the ask's
 //! PIN step opens, so the mint answers that after the ask. The write admits
 //! the word under the signed proof, derives the importance again and refuses
@@ -161,8 +167,11 @@ impl Memory<'_> {
 
     /// The read an owner-device word gets before anyone is asked: the
     /// person's own checks, the actor's, the ask's, and the word's whole
-    /// admission, in the order the write meets them; then the word's
-    /// importance with its prompt line. Nothing is recorded or signed.
+    /// admission, in the order the write meets them; for an approving word
+    /// the refusals its act's own writer would give on the cut from the
+    /// store as it stands (`ask_guard::approved_act_stands_in`); then the
+    /// word's importance with its prompt line. Nothing is recorded or
+    /// signed.
     fn owner_device_word_read(
         &self,
         handle: &TaskAskHandle,
@@ -185,6 +194,15 @@ impl Memory<'_> {
             word,
             Some(&answerer),
             self.vault().store.clock.now_recorded_at(),
+        )?;
+        // The approved act's own writer refuses on its cut what the store
+        // already refuses; the read gives that before anyone is asked.
+        super::ask_guard::approved_act_stands_in(
+            self.vault(),
+            &txn,
+            handle.group_ref,
+            &group,
+            word,
         )?;
         Ok(word_presence_in(
             self.vault(),

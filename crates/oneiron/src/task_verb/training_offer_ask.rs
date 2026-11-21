@@ -45,7 +45,9 @@ use crate::{EntityId, Vault};
 /// Every training offer ask's intent key starts so:
 /// `training_offer/<offer hex>/<digest>/<owner hex>/<turn hex>`.
 const INTENT_PREFIX: &str = "training_offer/";
+mod approval;
 pub(crate) use crate::gate::training_ask_kind::OFFER_QUESTION_TYPE;
+pub(super) use approval::{approved_act_stands_in, approves};
 /// The question message's metadata keys: the offer tuple plus the generation's
 /// turn. It locates the reservation and proves nothing by itself.
 const META_OFFER: &str = "training_offer";
@@ -619,19 +621,6 @@ fn routed_in(
         })
         .ok_or_else(ask_record::invalid)?;
     Ok(Some(route))
-}
-
-/// Whether `option` approves what a training offer ask asks for: the switch
-/// to the offered model or the training of the custom one. Keep, decline
-/// and postpone leave today's setup ([`super::ask_guard`]).
-pub(super) fn approves(option: &TaskAskOptionId) -> bool {
-    OPTIONS.iter().any(|(id, answer, _)| {
-        *id == option.as_str()
-            && matches!(
-                answer,
-                OfferAnswer::ApproveSwitch | OfferAnswer::ApproveTrain
-            )
-    })
 }
 
 /// Who a training offer ask asks: the owner its reservation names; `None`
