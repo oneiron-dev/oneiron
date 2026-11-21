@@ -29,8 +29,8 @@
 //! waiting on it; a birth input, a dependency source or a named word source
 //! this vault erased seals the row under [`sealed_source`], which admits no
 //! one, the vault owner included (READ-LINEAGE-L3 = A). Doctor counts sealed
-//! rows ([`super::facts_hidden_source_unknown_in`]), and the owner's
-//! re-derive writes their facts again from the sources that resolve now
+//! rows ([`super::floor_counts_in`]), and the owner's re-derive writes their
+//! facts again from the sources that resolve now
 //! ([`crate::Vault::rederive_sealed_rows`]).
 
 use std::collections::BTreeSet;

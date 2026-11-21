@@ -173,14 +173,28 @@ impl OpenFlags {
     }
 }
 
+/// Why a row waits, as doctor counts it (pass 31 step L-S5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Wait {
+    /// An input may still land, bind or settle here: "N facts waiting for a
+    /// source to arrive".
+    Arrival,
+    /// An input was deleted before floors were written: the row waits for
+    /// good (FLOOR-OLD-FACT-ERASED-INPUT = A), itself or through an input
+    /// that does, so it outranks [`Self::Arrival`]: "N facts whose source
+    /// was deleted before tagging".
+    BeforeFloors,
+}
+
 /// What one input of a row is now, as a floor reads it (section 1.3).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SourceState {
     /// Held, live, bound and whole here: its floor.
     Bound(BTreeSet<EntityId>),
     /// Not landed, released, held without its binding, held back, or
-    /// waiting on inputs of its own; `held` when its bytes are here.
-    Pending { held: bool },
+    /// waiting on inputs of its own; `held` when its bytes are here, `wait`
+    /// why a row that waits on it waits.
+    Pending { held: bool, wait: Wait },
     /// Its own floor reads sealed.
     Sealed,
     /// Erased here by a fact other than a release.
@@ -195,7 +209,7 @@ pub(crate) enum Verdict {
     /// Whoever every source of the set admits.
     Whole(BTreeSet<EntityId>),
     /// A live owner who reads every source the vault holds; no one else.
-    Waiting,
+    Waiting(Wait),
 }
 
 /// How a reader that reads the stored floor meets a row: whole as stored,
@@ -503,7 +517,7 @@ pub(crate) fn floor_read_in(vault: &Vault, txn: &RoTxn<'_>, row: &EntityId) -> R
     let raw = vault.get_raw_in(txn, row)?;
     Ok(match reader.verdict(row, raw.as_deref())? {
         Verdict::Sealed => FloorRead::Sealed,
-        Verdict::Waiting => FloorRead::Waiting,
+        Verdict::Waiting(_) => FloorRead::Waiting,
         Verdict::Whole(sources) => {
             let stored = match &raw {
                 Some(raw) => super::floor::floor_in(vault, txn, row, raw)?,

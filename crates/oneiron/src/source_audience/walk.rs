@@ -978,7 +978,7 @@ impl Judge<'_, '_, '_> {
         match self.ask {
             Ask::Read(viewers) => match self.floor_verdict(id)? {
                 super::Verdict::Sealed => return Ok(Opened::Decided(false)),
-                super::Verdict::Waiting => {
+                super::Verdict::Waiting(_) => {
                     if !self.waiting_floor_readable(viewers)? {
                         return Ok(Opened::Decided(false));
                     }

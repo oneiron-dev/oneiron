@@ -25,14 +25,16 @@
 //!
 //! Only a sealed row that is still current is counted or acted on: a
 //! superseded or retracted CLAIM and a replaced summary generation are
-//! history. Only counts leave, never a row, its text or its sources.
+//! history. Doctor counts the current rows that wait beside the sealed ones,
+//! by their verdict ([`floor_counts_in`]; pass 31 step L-S5). Only counts
+//! leave, never a row, its text or its sources.
 
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 
 use heed::RoTxn;
 use serde::Serialize;
 
-use super::floor::{floor_in, names_unknown_source_in};
+use super::source_state::{StateReader, Verdict, Wait};
 use crate::batch::EntityMetadataHeader;
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
@@ -62,8 +64,24 @@ pub struct SealedRowsRederived {
     pub kept: u64,
 }
 
-/// What one current sealed row is, for its re-derive.
-enum Sealed {
+/// Doctor's counts of the current rows whose floor is not whole here, by
+/// their verdict (Fable design pass 31, step L-S5). Only counts, never a
+/// row, its text or its sources.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct FloorCounts {
+    /// Rows whose verdict is sealed: "N facts hidden: source unknown"
+    /// (READ-LINEAGE-L3 = A).
+    pub(crate) hidden_source_unknown: u64,
+    /// Rows that wait for good on an input deleted before floors were
+    /// written, themselves or through an input that does: "N facts whose
+    /// source was deleted before tagging" (FLOOR-OLD-FACT-ERASED-INPUT = A).
+    pub(crate) source_deleted_before_tagging: u64,
+    /// Every other row that waits: "N facts waiting for a source to arrive".
+    pub(crate) waiting_for_source: u64,
+}
+
+/// What one current row is, for its re-derive.
+enum RowKind {
     Claim,
     Summary(WriteActor),
     Other,
@@ -77,49 +95,116 @@ enum Rederived {
     Kept,
 }
 
-/// The rows this vault reads to no one, and that are still current: held,
-/// a CLAIM still `active`, a scope SUMMARY its projection has not replaced.
-/// A row reads to no one when an id on its stored floor names no source, or
-/// when its verdict is sealed by an input it waits on that reads erased.
-fn current_sealed_rows_in(vault: &Vault, txn: &RoTxn<'_>) -> Result<Vec<(EntityId, Sealed)>> {
-    let mut sealed_rows = BTreeSet::new();
-    for entry in super::DERIVED.iter_from(&vault.store, txn, &[])? {
-        let (row, floor) = entry?;
-        if names_unknown_source_in(&vault.store, txn, &floor)? {
-            sealed_rows.insert(row);
-        }
-    }
-    for row in super::source_state::rows_with_open_entries_in(&vault.store, txn)? {
-        if !sealed_rows.contains(&row)
-            && super::verdict_in(vault, txn, &row)? == super::Verdict::Sealed
-        {
-            sealed_rows.insert(row);
-        }
-    }
-    let mut rows = Vec::new();
-    for row in sealed_rows {
-        let Some(raw) = vault.get_raw_in(txn, &row)? else {
-            continue;
-        };
-        let sealed = match EntityMetadataHeader::parse(&raw).map(|header| header.entity_type) {
-            Some(ENTITY_TYPE_CLAIM) => match vault.get_claim_in_txn(txn, &row) {
-                Ok(Some(body)) if body.lifecycle != ClaimLifecycleStatus::Active => continue,
-                Ok(Some(_)) => Sealed::Claim,
-                Ok(None) | Err(Error::InvalidClaimBody(_) | Error::Record(_)) => Sealed::Other,
+/// How one current row whose floor is not whole here reads.
+enum NotWhole {
+    /// Its verdict is sealed: it reads to no one.
+    Sealed(RowKind),
+    /// Its verdict waits, for this reason.
+    Waiting(Wait),
+}
+
+/// What the held row `row` (bytes `raw`) is while it is current: a CLAIM
+/// still `active`, a scope SUMMARY its projection has not replaced, or any
+/// other row; `None` for history (a superseded or retracted CLAIM, a
+/// replaced summary generation).
+fn current_kind_in(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    row: &EntityId,
+    raw: &[u8],
+) -> Result<Option<RowKind>> {
+    Ok(Some(
+        match EntityMetadataHeader::parse(raw).map(|header| header.entity_type) {
+            Some(ENTITY_TYPE_CLAIM) => match vault.get_claim_in_txn(txn, row) {
+                Ok(Some(body)) if body.lifecycle != ClaimLifecycleStatus::Active => {
+                    return Ok(None);
+                }
+                Ok(Some(_)) => RowKind::Claim,
+                Ok(None) | Err(Error::InvalidClaimBody(_) | Error::Record(_)) => RowKind::Other,
                 Err(error) => return Err(error),
             },
             Some(ENTITY_TYPE_SUMMARY) => {
-                match crate::scope_summary::summary_generation_in(vault, txn, &row)? {
-                    SummaryGeneration::Replaced => continue,
-                    SummaryGeneration::Current(requester) => Sealed::Summary(requester),
-                    SummaryGeneration::Undeclared => Sealed::Other,
+                match crate::scope_summary::summary_generation_in(vault, txn, row)? {
+                    SummaryGeneration::Replaced => return Ok(None),
+                    SummaryGeneration::Current(requester) => RowKind::Summary(requester),
+                    SummaryGeneration::Undeclared => RowKind::Other,
                 }
             }
-            _ => Sealed::Other,
-        };
-        rows.push((row, sealed));
+            _ => RowKind::Other,
+        },
+    ))
+}
+
+/// How `row` reads when it is held, live, current and not whole here.
+fn not_whole_in(vault: &Vault, txn: &RoTxn<'_>, row: &EntityId) -> Result<Option<NotWhole>> {
+    let Some(raw) = vault.get_raw_in(txn, row)? else {
+        return Ok(None);
+    };
+    if crate::ports::erased_in_txn(&vault.store, txn, row)? {
+        return Ok(None);
+    }
+    let read = match StateReader::reader(vault, txn)?.verdict(row, Some(&raw))? {
+        Verdict::Whole(_) => return Ok(None),
+        Verdict::Sealed => None,
+        Verdict::Waiting(wait) => Some(wait),
+    };
+    let Some(kind) = current_kind_in(vault, txn, row, &raw)? else {
+        return Ok(None);
+    };
+    Ok(Some(match read {
+        None => NotWhole::Sealed(kind),
+        Some(wait) => NotWhole::Waiting(wait),
+    }))
+}
+
+/// The held, live rows this vault does not read as whole, and that are
+/// still current, each judged by its verdict: sealed rows read to no one,
+/// the vault owner included; waiting rows only to an owner who reads every
+/// source here. It judges each row that stores what can make it read
+/// otherwise: a stored floor, an open entry, a binding (whose policy may no
+/// longer resolve), or an old build's wait the migration has not converted.
+/// Two kinds of row store none of these and are not counted, so no row
+/// scan runs at each doctor: a row the migration has not judged yet (it is
+/// judged one level at each read, and counted once the migration stores its
+/// entry or its seal), and a phone row stamped with a thread that does not
+/// resolve here (it reads to no one).
+fn current_not_whole_rows_in(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+) -> Result<BTreeMap<EntityId, NotWhole>> {
+    let mut rows = BTreeMap::new();
+    let mut judge = |row: EntityId| -> Result<()> {
+        if !rows.contains_key(&row)
+            && let Some(read) = not_whole_in(vault, txn, &row)?
+        {
+            rows.insert(row, read);
+        }
+        Ok(())
+    };
+    for entry in super::DERIVED.iter_from(&vault.store, txn, &[])? {
+        judge(entry?.0)?;
+    }
+    for entry in super::RECORDS.iter_from(&vault.store, txn, &[])? {
+        judge(entry?.0)?;
+    }
+    for row in super::source_state::rows_with_open_entries_in(&vault.store, txn)? {
+        judge(row)?;
+    }
+    for row in super::floor_migration::rows_with_old_marks_in(&vault.store, txn)? {
+        judge(row)?;
     }
     Ok(rows)
+}
+
+/// The current sealed rows, for their re-derive.
+fn current_sealed_rows_in(vault: &Vault, txn: &RoTxn<'_>) -> Result<Vec<(EntityId, RowKind)>> {
+    Ok(current_not_whole_rows_in(vault, txn)?
+        .into_iter()
+        .filter_map(|(row, read)| match read {
+            NotWhole::Sealed(kind) => Some((row, kind)),
+            NotWhole::Waiting(_) => None,
+        })
+        .collect())
 }
 
 /// A count of rows, as the reports carry it.
@@ -127,19 +212,26 @@ fn count(rows: usize) -> Result<u64> {
     u64::try_from(rows).map_err(|_| Error::ArithmeticOverflow("sealed row count"))
 }
 
-/// How many rows this vault reads to no one because an id on their stored
-/// floor names no source, and that are still current: doctor's "N facts
-/// hidden: source unknown" (READ-LINEAGE-L3 = A; design pass 30 section
-/// 4.7). One scan of the stored floors; only the count leaves, never a row,
-/// its text or its sources. A sealed row a later row took the place of (a
-/// superseded or retracted CLAIM, a replaced summary generation) is history
-/// and leaves the count.
+/// Doctor's counts of the current rows this vault does not read as whole
+/// ([`FloorCounts`]): one judgement by verdict of each row that can read
+/// otherwise. A sealed row a later row took the place of (a superseded or
+/// retracted CLAIM, a replaced summary generation) is history and leaves
+/// the counts. Only the counts leave, never a row, its text or its sources.
 ///
 /// # Errors
 ///
 /// Storage failures.
-pub(crate) fn facts_hidden_source_unknown_in(vault: &Vault, txn: &RoTxn<'_>) -> Result<u64> {
-    count(current_sealed_rows_in(vault, txn)?.len())
+pub(crate) fn floor_counts_in(vault: &Vault, txn: &RoTxn<'_>) -> Result<FloorCounts> {
+    let mut counts = FloorCounts::default();
+    for read in current_not_whole_rows_in(vault, txn)?.into_values() {
+        let tally = match read {
+            NotWhole::Sealed(_) => &mut counts.hidden_source_unknown,
+            NotWhole::Waiting(Wait::BeforeFloors) => &mut counts.source_deleted_before_tagging,
+            NotWhole::Waiting(Wait::Arrival) => &mut counts.waiting_for_source,
+        };
+        *tally = tally.saturating_add(1);
+    }
+    Ok(counts)
 }
 
 /// Whether `other` states the fact `sealed` states: one predicate and value
@@ -202,13 +294,13 @@ impl Vault {
         };
         for (row, sealed) in rows {
             let rederived = match sealed {
-                Sealed::Claim => self.rederive_sealed_claim(owner, &row)?,
-                Sealed::Summary(requester) => match self.rederive_scope_summary(row, requester) {
+                RowKind::Claim => self.rederive_sealed_claim(owner, &row)?,
+                RowKind::Summary(requester) => match self.rederive_scope_summary(row, requester) {
                     Ok(_) => Rederived::Queued,
                     Err(error) if refused(&error) => Rederived::Kept,
                     Err(error) => return Err(error),
                 },
-                Sealed::Other => Rederived::Kept,
+                RowKind::Other => Rederived::Kept,
             };
             let tally = match rederived {
                 Rederived::Superseded => &mut report.superseded,
@@ -266,7 +358,8 @@ impl Vault {
     }
 
     /// A current CLAIM other than `sealed` that states the fact of `body`
-    /// and whose floor names only sources that resolve.
+    /// and whose verdict is not sealed: its floor names only sources that
+    /// resolve, and no input it waits on reads erased.
     fn readable_twin_in(
         &self,
         txn: &RoTxn<'_>,
@@ -290,7 +383,7 @@ impl Vault {
             let Some(raw) = self.get_raw_in(txn, &twin)? else {
                 continue;
             };
-            if !names_unknown_source_in(&self.store, txn, &floor_in(self, txn, &twin, &raw)?)? {
+            if StateReader::reader(self, txn)?.verdict(&twin, Some(&raw))? != Verdict::Sealed {
                 return Ok(Some(twin));
             }
         }

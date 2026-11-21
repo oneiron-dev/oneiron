@@ -73,7 +73,7 @@ impl ScopedRead<'_> {
         // its inputs handed over included (O2-9289 P2-1).
         let sources = match crate::source_audience::verdict_in(self.vault, txn, id)? {
             crate::source_audience::Verdict::Sealed => return Ok(false),
-            crate::source_audience::Verdict::Waiting => {
+            crate::source_audience::Verdict::Waiting(_) => {
                 return Ok(self.actor_key.reads_as_vault_owner());
             }
             crate::source_audience::Verdict::Whole(sources) => sources,

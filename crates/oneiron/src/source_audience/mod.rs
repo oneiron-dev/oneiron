@@ -72,7 +72,7 @@ pub(crate) use obligation::{
 #[cfg(feature = "sync")]
 pub(crate) use obligation::{row_obligation, unbound_obligation_in};
 pub use rederive::SealedRowsRederived;
-pub(crate) use rederive::facts_hidden_source_unknown_in;
+pub(crate) use rederive::{FloorCounts, floor_counts_in};
 pub(crate) use replica::{
     ReplicaMerge, bind_replicated_in_txn, event_conflicts_in, event_join,
     event_names_erased_actor_in, event_without_erased_actors, merge_event_in_txn,

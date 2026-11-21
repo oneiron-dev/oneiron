@@ -29,6 +29,7 @@
 //! and judges a row the migration has not visited one level at the read, as
 //! the migration would ([`super::source_state`]).
 
+use std::collections::BTreeSet;
 use std::ops::Bound;
 
 use heed::{RoTxn, RwTxn};
@@ -283,6 +284,27 @@ pub(super) fn old_marks_of_in(
     }
     marks.pending = marks.entries.is_empty() && PENDING.contains(store, txn, row)?;
     Ok(marks)
+}
+
+/// Each row that still holds an old build's wait (a mark, or its pending
+/// row) the migration has not converted: none once it has ended.
+///
+/// # Errors
+///
+/// Storage failures.
+pub(super) fn rows_with_old_marks_in(
+    store: &crate::store::Store,
+    txn: &RoTxn<'_>,
+) -> Result<BTreeSet<EntityId>> {
+    let mut rows = BTreeSet::new();
+    if source_state::migrated_in(store, txn)? {
+        return Ok(rows);
+    }
+    rows.extend(PENDING.scan_keys(store, txn, &[])?);
+    for (row, _) in WAITS.scan_keys(store, txn, &[])? {
+        rows.insert(row);
+    }
+    Ok(rows)
 }
 
 /// An old build's wait of one row, as a read meets it.

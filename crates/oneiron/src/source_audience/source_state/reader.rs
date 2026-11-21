@@ -7,7 +7,7 @@ use heed::RoTxn;
 
 use super::judge::Act;
 use super::{
-    DeleteLevel, MAX_DEPTH, OpenFlags, SHELL_ERASED, SourceState, Verdict, delete_level_in,
+    DeleteLevel, MAX_DEPTH, OpenFlags, SHELL_ERASED, SourceState, Verdict, Wait, delete_level_in,
     has_open_in, later_owner_erase_in, migrated_in, open_of_in,
 };
 use crate::error::{Error, Result};
@@ -169,13 +169,19 @@ impl<'a, 't> StateReader<'a, 't> {
         }
         // Not landed, or a released ASSET whose bytes left with it.
         let Some(raw) = self.vault.get_raw_in(self.txn, input)? else {
-            return Ok(SourceState::Pending { held: false });
+            return Ok(SourceState::Pending {
+                held: false,
+                wait: Wait::Arrival,
+            });
         };
         if crate::source_audience::held_back_in(self.vault, self.txn, input)?.is_some()
             || crate::source_audience::floor::own_source_in(self.vault, self.txn, input, &raw)?
                 == OwnSource::Unbound
         {
-            return Ok(SourceState::Pending { held: true });
+            return Ok(SourceState::Pending {
+                held: true,
+                wait: Wait::Arrival,
+            });
         }
         if !has_open_in(&self.vault.store, self.txn, input)?
             && !floor_migration::has_old_marks_in(
@@ -200,7 +206,7 @@ impl<'a, 't> StateReader<'a, 't> {
         }
         Ok(match self.verdict(input, Some(&raw))? {
             Verdict::Whole(floor) => SourceState::Bound(floor),
-            Verdict::Waiting => SourceState::Pending { held: true },
+            Verdict::Waiting(wait) => SourceState::Pending { held: true, wait },
             Verdict::Sealed => SourceState::Sealed,
         })
     }
@@ -239,7 +245,7 @@ impl<'a, 't> StateReader<'a, 't> {
             if !self.wanted.contains(row) {
                 self.wanted.push(*row);
             }
-            return Ok(Verdict::Waiting);
+            return Ok(Verdict::Waiting(Wait::Arrival));
         }
         let (cuts, deferrals) = (self.cuts, self.deferrals);
         let verdict = self.judge_on_path(row, raw)?;
@@ -330,11 +336,13 @@ impl<'a, 't> StateReader<'a, 't> {
                 .get(&self.vault.store, self.txn, row)?
                 .unwrap_or_default(),
         };
-        let mut waits = false;
+        let mut waits = None;
         let mut entries = open_of_in(&self.vault.store, self.txn, row)?;
         let old =
             floor_migration::old_marks_of_in(&self.vault.store, self.txn, row, self.migrated)?;
-        waits |= old.pending;
+        if old.pending {
+            wait_on(&mut waits, Wait::Arrival);
+        }
         let mut links = None;
         for (input, flags) in old.entries {
             if !entries.iter().any(|(held, _)| *held == input) {
@@ -367,7 +375,7 @@ impl<'a, 't> StateReader<'a, 't> {
             }
             if input == *row {
                 match self.resolved_self(row, raw)? {
-                    SelfEntry::Waits => waits = true,
+                    SelfEntry::Waits(wait) => wait_on(&mut waits, wait),
                     SelfEntry::Sealed => return Ok(Verdict::Sealed),
                     SelfEntry::Resolved(floor) => sources.extend(floor),
                 }
@@ -379,10 +387,10 @@ impl<'a, 't> StateReader<'a, 't> {
                 {
                     return Ok(Verdict::Sealed);
                 }
-                Some(_) => waits = true,
+                Some(_) => wait_on(&mut waits, Wait::BeforeFloors),
                 None => match self.state(&input)? {
                     SourceState::Bound(floor) => sources.extend(floor),
-                    SourceState::Pending { .. } => waits = true,
+                    SourceState::Pending { wait, .. } => wait_on(&mut waits, wait),
                     SourceState::Sealed | SourceState::Erased => return Ok(Verdict::Sealed),
                 },
             }
@@ -405,7 +413,7 @@ impl<'a, 't> StateReader<'a, 't> {
                     };
                     match level {
                         OneLevel::Whole => {}
-                        OneLevel::Waits => waits = true,
+                        OneLevel::Waits(wait) => wait_on(&mut waits, wait),
                         OneLevel::Sealed => return Ok(Verdict::Sealed),
                     }
                 }
@@ -418,10 +426,9 @@ impl<'a, 't> StateReader<'a, 't> {
         )? {
             return Ok(Verdict::Sealed);
         }
-        Ok(if waits {
-            Verdict::Waiting
-        } else {
-            Verdict::Whole(sources)
+        Ok(match waits {
+            Some(wait) => Verdict::Waiting(wait),
+            None => Verdict::Whole(sources),
         })
     }
 
@@ -458,27 +465,26 @@ impl<'a, 't> StateReader<'a, 't> {
     /// Its word sources are judged again from its bytes.
     fn resolved_self(&mut self, row: &EntityId, raw: Option<&[u8]>) -> Result<SelfEntry> {
         let Some(raw) = raw else {
-            return Ok(SelfEntry::Waits);
+            return Ok(SelfEntry::Waits(Wait::Arrival));
         };
         let Some(named) = word_sources_now_in(self.vault, self.txn, row, raw)? else {
-            return Ok(SelfEntry::Waits);
+            return Ok(SelfEntry::Waits(Wait::Arrival));
         };
         let mut floor = BTreeSet::new();
-        let mut waits = false;
+        let mut waits = None;
         for source in named {
             if source == *row {
                 continue;
             }
             match self.state(&source)? {
                 SourceState::Bound(add) => floor.extend(add),
-                SourceState::Pending { .. } => waits = true,
+                SourceState::Pending { wait, .. } => wait_on(&mut waits, wait),
                 SourceState::Sealed | SourceState::Erased => return Ok(SelfEntry::Sealed),
             }
         }
-        Ok(if waits {
-            SelfEntry::Waits
-        } else {
-            SelfEntry::Resolved(floor)
+        Ok(match waits {
+            Some(wait) => SelfEntry::Waits(wait),
+            None => SelfEntry::Resolved(floor),
         })
     }
 
@@ -491,24 +497,28 @@ impl<'a, 't> StateReader<'a, 't> {
         sources: &mut BTreeSet<EntityId>,
     ) -> Result<OneLevel> {
         let (vault, txn) = (self.vault, self.txn);
-        let mut waits = false;
-        for (_, act) in super::judge::heal_acts_in(self, vault, txn, row, raw)? {
+        let mut waits = None;
+        for (input, act) in super::judge::heal_acts_in(self, vault, txn, row, raw)? {
             match act {
                 Act::Take(floor) => sources.extend(floor),
-                Act::Open(_) => waits = true,
+                // The heal opens an entry on a pending input: the row waits
+                // as that input does.
+                Act::Open(_) => {
+                    let wait = match self.state(&input)? {
+                        SourceState::Pending { wait, .. } => wait,
+                        _ => Wait::Arrival,
+                    };
+                    wait_on(&mut waits, wait);
+                }
                 Act::OpenSelf => match self.resolved_self(row, Some(raw))? {
-                    SelfEntry::Waits => waits = true,
+                    SelfEntry::Waits(wait) => wait_on(&mut waits, wait),
                     SelfEntry::Sealed => return Ok(OneLevel::Sealed),
                     SelfEntry::Resolved(floor) => sources.extend(floor),
                 },
                 Act::Seal | Act::Free => {}
             }
         }
-        Ok(if waits {
-            OneLevel::Waits
-        } else {
-            OneLevel::Whole
-        })
+        Ok(waits.map_or(OneLevel::Whole, OneLevel::Waits))
     }
 
     /// The one-level judgement of a row written before floors (section 5,
@@ -524,7 +534,7 @@ impl<'a, 't> StateReader<'a, 't> {
         sources: &mut BTreeSet<EntityId>,
     ) -> Result<OneLevel> {
         let links = Links::of(self.vault, self.txn, row, raw)?;
-        let mut waits = links.unresolved;
+        let mut waits = links.unresolved.then_some(Wait::Arrival);
         let supports: Vec<EntityId> = links.supports().copied().collect();
         let freed = self.frees_any(&supports)?;
         for (input, kind) in &links.links {
@@ -533,9 +543,9 @@ impl<'a, 't> StateReader<'a, 't> {
             }
             match self.state(input)? {
                 SourceState::Bound(floor) => sources.extend(floor),
-                SourceState::Pending { held } => {
+                SourceState::Pending { held, wait } => {
                     if held || *kind == LinkKind::Unwalked {
-                        waits = true;
+                        wait_on(&mut waits, wait);
                     }
                 }
                 SourceState::Sealed => return Ok(OneLevel::Sealed),
@@ -550,15 +560,11 @@ impl<'a, 't> StateReader<'a, 't> {
                     {
                         return Ok(OneLevel::Sealed);
                     }
-                    waits = true;
+                    wait_on(&mut waits, Wait::BeforeFloors);
                 }
             }
         }
-        Ok(if waits {
-            OneLevel::Waits
-        } else {
-            OneLevel::Whole
-        })
+        Ok(waits.map_or(OneLevel::Whole, OneLevel::Waits))
     }
 }
 
@@ -609,7 +615,7 @@ pub(in crate::source_audience) fn mark_entry_in(
 
 /// What a self entry gives at a read.
 enum SelfEntry {
-    Waits,
+    Waits(Wait),
     Sealed,
     Resolved(BTreeSet<EntityId>),
 }
@@ -618,8 +624,14 @@ enum SelfEntry {
 /// gives.
 enum OneLevel {
     Whole,
-    Waits,
+    Waits(Wait),
     Sealed,
+}
+
+/// Notes, in `waits`, one more reason the row waits: the row waits for good
+/// once any reason is [`Wait::BeforeFloors`].
+fn wait_on(waits: &mut Option<Wait>, wait: Wait) {
+    *waits = (*waits).max(Some(wait));
 }
 
 /// Whether a row whose floor is `floor` took the floor of `input`, an

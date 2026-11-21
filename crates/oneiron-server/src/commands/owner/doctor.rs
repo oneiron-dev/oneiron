@@ -132,6 +132,21 @@ pub(super) fn doctor_report(args: DoctorArgs) -> anyhow::Result<serde_json::Valu
                     doctor.facts_hidden_source_unknown
                 ));
             }
+            // The facts that wait, by their count alone (Fable design pass
+            // 31, step L-S5; FLOOR-OLD-FACT-ERASED-INPUT = A).
+            if doctor.facts_source_deleted_before_tagging > 0 {
+                report["facts_source_deleted_before_tagging_notice"] =
+                    serde_json::Value::String(format!(
+                        "{} facts whose source was deleted before tagging",
+                        doctor.facts_source_deleted_before_tagging
+                    ));
+            }
+            if doctor.facts_waiting_for_source > 0 {
+                report["facts_waiting_for_source_notice"] = serde_json::Value::String(format!(
+                    "{} facts waiting for a source to arrive",
+                    doctor.facts_waiting_for_source
+                ));
+            }
             // Which device and runtime computed the stored vectors, so one
             // device's can be found and embedded again (ARCH-0036).
             report["vector_provenance"] =

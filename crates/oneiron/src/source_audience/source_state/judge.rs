@@ -75,7 +75,7 @@ fn judge_acts_in(
                 floor.extend(add.iter().copied());
                 acts.push((*input, Act::Take(add)));
             }
-            SourceState::Pending { held } => {
+            SourceState::Pending { held, .. } => {
                 if judged_now && !landed && (held || *kind == LinkKind::Unwalked) {
                     acts.push((*input, Act::Open(flags)));
                 }
@@ -520,7 +520,7 @@ pub(super) fn heal_acts_in(
         };
         match reader.state(input)? {
             SourceState::Bound(floor) => acts.push((*input, Act::Take(floor))),
-            SourceState::Pending { held } => {
+            SourceState::Pending { held, .. } => {
                 if held || *kind == LinkKind::Unwalked {
                     acts.push((*input, Act::Open(flags)));
                 }

@@ -68,6 +68,17 @@ pub struct VaultDoctorReport {
     /// from cannot be read here: "N facts hidden: source unknown"
     /// (READ-LINEAGE-L3 = A). Only the count, never a fact or its sources.
     pub facts_hidden_source_unknown: u64,
+    /// How many facts wait for good because a source their words came from
+    /// was deleted before this vault tagged facts with their sources: "N
+    /// facts whose source was deleted before tagging"
+    /// (FLOOR-OLD-FACT-ERASED-INPUT = A). They read only to an owner who
+    /// reads every source here. Only the count.
+    pub facts_source_deleted_before_tagging: u64,
+    /// How many facts wait for a source their words came from to arrive,
+    /// bind or settle here: "N facts waiting for a source to arrive". Until
+    /// then they read only to an owner who reads every source here. Only the
+    /// count.
+    pub facts_waiting_for_source: u64,
 }
 
 /// State of the persisted HNSW compatibility row.
@@ -703,13 +714,11 @@ impl Vault {
             "vault_meta.text_index_schema_version",
             &mut unreadable_fields,
         )?;
-        let facts_hidden_source_unknown = crate::source_audience::facts_hidden_source_unknown_in(
-            self, &rtxn,
-        )
-        .unwrap_or_else(|_| {
-            unreadable_fields.push("source_audience.derived".to_owned());
-            0
-        });
+        let floor_counts =
+            crate::source_audience::floor_counts_in(self, &rtxn).unwrap_or_else(|_| {
+                unreadable_fields.push("source_audience.derived".to_owned());
+                crate::source_audience::FloorCounts::default()
+            });
         drop(rtxn);
         let db_manifest = {
             // Held for consistency with `Store::open`'s DB-open serialization;
@@ -731,7 +740,9 @@ impl Vault {
             text_index_schema_version,
             db_manifest,
             unreadable_fields,
-            facts_hidden_source_unknown,
+            facts_hidden_source_unknown: floor_counts.hidden_source_unknown,
+            facts_source_deleted_before_tagging: floor_counts.source_deleted_before_tagging,
+            facts_waiting_for_source: floor_counts.waiting_for_source,
         })
     }
 }
