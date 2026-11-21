@@ -30,15 +30,16 @@ use super::remote::{
 use super::replay_evidence::record_replay_cancel_evidence_in_txn;
 use super::seat::{CalendarConnectorError, CalendarConnectorSeatState};
 
-use crate::batch::secret_scan::{admitted_from_known, named_tree};
+use crate::batch::secret_scan::{LiftedKeys, admitted_from_known, named_tree};
 use crate::calendar::CalendarError;
 use crate::calendar::claims::{
     CalendarPassportDirection, CalendarPassportPresence, CalendarPassportValue,
     PREDICATE_CALENDAR_PASSPORT,
 };
 use crate::calendar::passport::{
-    admitted_passports_for_event_in_txn, carries_admitted_uid_in_txn, encode_passport_value,
-    index_passport_uid_in_txn, live_passport_for_in_txn, revise_passport_in_txn,
+    CalendarSystems, admitted_passports_for_event_in_txn, carries_admitted_uid_in_txn,
+    encode_passport_value, index_passport_uid_in_txn, live_passport_for_in_txn, passport_uid_among,
+    revise_passport_in_txn,
 };
 use crate::calendar::safeguard::CalendarInboundBody;
 use crate::code_run::CompareKnown;
@@ -260,13 +261,22 @@ pub fn write_calendar_event(
         let rtxn = vault.store.env.read_txn().map_err(crate::Error::from)?;
         admitted_passports_for_event_in_txn(vault, &rtxn, &event_ref)?
     };
-    let own = passports
-        .iter()
-        .find(|(_, value)| value.system == system)
+    let base_known = || vault.known_values_now();
+    let known = CompareKnown::new(Some(&base_known));
+    let own = seat_passports(vault, &passports, system, &known)?
+        .into_iter()
+        .next()
         .map(|(_, value)| value.clone());
     let uid = match &own {
-        Some(value) => value.uid.clone(),
-        None => match importer_pending_uid(vault, operation, &event_ref, system)? {
+        Some(value) => {
+            seat_uid_of(vault, operation, &event_ref, &value.uid, &known)?.ok_or_else(|| {
+                ingest_error(
+                    "the seat's passport holds its UID as a custody handle that no remote copy \
+                     of the seat reads as",
+                )
+            })?
+        }
+        None => match importer_pending_uid(vault, operation, &event_ref, &known)? {
             Some(uid) => uid,
             None => shared_uid(&passports).unwrap_or_else(|| local_uid(&event_ref)),
         },
@@ -1769,32 +1779,122 @@ fn open_cursor(
 
 /// The UID the importer's own pending passport vouches for on this seat's
 /// calendar, if any (the lead's ruling 10 Nov 10:3x, FIX
-/// CALDAV-PENDING-IMPORT-WRITEBACK-DUPLICATE). A pending passport of `system`
-/// counts only when the pull wrote this seat's remote object row under its
-/// UID, so the write replaces that object. Two such passports under different
-/// UIDs are refused, never picked by scan order.
+/// CALDAV-PENDING-IMPORT-WRITEBACK-DUPLICATE). A pending passport of the
+/// seat's system ([`seat_passports`]) counts only when the pull wrote this
+/// seat's remote object row under its UID ([`seat_uid_of`]), so the write
+/// replaces that object. Two such passports under different UIDs are
+/// refused, never picked by scan order.
 fn importer_pending_uid(
     vault: &Vault,
     operation: &CalendarConnectorOperation,
     event_ref: &EntityId,
-    system: &str,
+    known: &CompareKnown<'_>,
 ) -> Result<Option<String>, CalendarConnectorError> {
     let pending = {
         let rtxn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-        crate::calendar::passport::importer_pending_passports_in_txn(
-            vault, &rtxn, event_ref, system,
-        )?
+        crate::calendar::passport::importer_pending_passports_in_txn(vault, &rtxn, event_ref)?
     };
+    let system = operation.registration().seat.config.system.as_str();
     let mut uids = std::collections::BTreeSet::new();
-    for (_, value) in pending {
-        if read_remote_object_for_operation(vault, operation, &value.uid)?.is_some() {
-            uids.insert(value.uid);
+    for (_, value) in seat_passports(vault, &pending, system, known)? {
+        let Some(uid) = seat_uid_of(vault, operation, event_ref, &value.uid, known)? else {
+            continue;
+        };
+        if read_remote_object_for_operation(vault, operation, &uid)?.is_some() {
+            uids.insert(uid);
         }
     }
     let mut uids = uids.into_iter();
     let found = uids.next();
     if uids.next().is_some() {
         return Err(ingest_error("competing pending calendar passports"));
+    }
+    Ok(found)
+}
+
+/// The passports of `passports` this seat, installed under `system`, keys:
+/// those whose stored system is `system` as written or, where the claim door
+/// stored it as a custody handle, as [`CalendarSystems::carries`] reads it
+/// against the vault's calendar systems, read only when a stored system
+/// names a handle. In `passports`' order
+/// (CAL-MASKED-SYSTEM-LITERAL-COMPARES-OUTSIDE-KEYED-LOOKUP).
+///
+/// # Errors
+///
+/// Store failures, and the custody read's.
+fn seat_passports<'p>(
+    vault: &Vault,
+    passports: &'p [(EntityId, CalendarPassportValue)],
+    system: &str,
+    known: &CompareKnown<'_>,
+) -> Result<Vec<&'p (EntityId, CalendarPassportValue)>, CalendarConnectorError> {
+    let masked = |held: &str| held != system && LiftedKeys::names_a_handle(held);
+    let systems = if passports.iter().any(|(_, value)| masked(&value.system)) {
+        Some(CalendarSystems::read(vault)?)
+    } else {
+        None
+    };
+    let mut keyed = Vec::new();
+    for passport in passports {
+        let held = passport.1.system.as_str();
+        let carried = held == system
+            || match &systems {
+                Some(systems) if masked(held) => systems.carries(held, system, known)?,
+                _ => false,
+            };
+        if carried {
+            keyed.push(passport);
+        }
+    }
+    Ok(keyed)
+}
+
+/// The UID this seat writes `event_ref` under for `held`, the UID a passport
+/// of the seat stored: `held` itself when it names no custody handle. The
+/// claim door may store a UID as a custody handle, which no provider holds,
+/// so a handle is never sent as a UID: it reads as the one UID a remote copy
+/// of this seat holds in its sealed values that custody reads `held` as and
+/// that `event_ref` pins ([`passport_uid_among`]). None when no copy does;
+/// two such copies are refused
+/// (CAL-MASKED-SYSTEM-LITERAL-COMPARES-OUTSIDE-KEYED-LOOKUP).
+///
+/// # Errors
+///
+/// Store and custody failures, a copy whose sealed values do not open, and
+/// two copies that read as `held`.
+fn seat_uid_of(
+    vault: &Vault,
+    operation: &CalendarConnectorOperation,
+    event_ref: &EntityId,
+    held: &str,
+    known: &CompareKnown<'_>,
+) -> Result<Option<String>, CalendarConnectorError> {
+    if !LiftedKeys::names_a_handle(held) {
+        return Ok(Some(held.to_owned()));
+    }
+    let scope = operation.literal_scope()?;
+    // Drop the table reader before any custody snapshot is acquired.
+    let rows = {
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        REMOTE_OBJECT.scan_from(&vault.store, &txn, REMOTE_OBJECT_TAG)?
+    };
+    let mut found = None;
+    for (key, stored) in rows {
+        if stored.carrier.seat != scope {
+            continue;
+        }
+        let mut row = remote_projection(stored);
+        if LiftedKeys::names_a_handle(&row.uid) {
+            open_cursor(vault, operation, key.0, &mut row)?;
+        }
+        let uids = std::collections::BTreeSet::from([row.uid.as_str()]);
+        if passport_uid_among(vault, event_ref, held, &uids, known)?
+            && found.replace(row.uid).is_some()
+        {
+            return Err(ingest_error(
+                "competing calendar UIDs for one stored handle",
+            ));
+        }
     }
     Ok(found)
 }
@@ -1949,6 +2049,10 @@ pub fn calendar_remote_uid_for_href_for_operation(
 
 /// Resolves a provider deletion against our retained href cursor, not a
 /// provider-asserted UID. Unknown removals have no local source to retract.
+/// It reads the cursor's readable strings only: a UID the side-row wall
+/// stored as a custody handle is no UID a provider holds, so such a cursor
+/// answers none ([`calendar_remote_uid_for_href_for_operation`] opens the
+/// seat's sealed values).
 pub fn calendar_remote_uid_for_href(
     vault: &Vault,
     system: &str,
@@ -1960,6 +2064,7 @@ pub fn calendar_remote_uid_for_href(
         if row.system == system
             && row.calendar_ref == calendar_ref
             && row.href.as_deref() == Some(href)
+            && !LiftedKeys::names_a_handle(&row.uid)
         {
             return Ok(Some(row.uid));
         }

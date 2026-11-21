@@ -22,9 +22,11 @@ pub(crate) fn admitted_passport_for_in_txn(
     Ok(found)
 }
 
-/// The importer's own pending passports on `event` for `system`: live heads
-/// the import filed from this system's feed that still wait for the owner's
-/// review.
+/// The importer's own pending passports on `event`: live heads an import
+/// filed that still wait for the owner's review. The caller picks those of
+/// its system: a stored system name may hold a custody handle, which only a
+/// custody read outside this reader meets
+/// (CAL-MASKED-SYSTEM-LITERAL-COMPARES-OUTSIDE-KEYED-LOOKUP).
 ///
 /// The one exception to the admitted-only rule of
 /// [`admitted_passports_for_event_in_txn`] (the lead's ruling 10 Nov 10:3x,
@@ -42,7 +44,6 @@ pub(crate) fn importer_pending_passports_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     event: &EntityId,
-    system: &str,
 ) -> Result<Vec<(EntityId, CalendarPassportValue)>, CalendarError> {
     let mut values = Vec::new();
     for id in vault.claims_for_subject_in_txn(txn, event)? {
@@ -58,9 +59,7 @@ pub(crate) fn importer_pending_passports_in_txn(
             continue;
         }
         let value = decode_passport_value(&body.value)?;
-        if value.system == system
-            && value.direction.is_inbound_bearing()
-            && value.presence == CalendarPassportPresence::Live
+        if value.direction.is_inbound_bearing() && value.presence == CalendarPassportPresence::Live
         {
             values.push((id, value));
         }
