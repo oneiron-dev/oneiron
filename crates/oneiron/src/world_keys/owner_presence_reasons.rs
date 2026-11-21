@@ -7,11 +7,13 @@
 pub(crate) const ACCEPT_PACK_DEFAULTS: &str = "accept new default settings";
 pub(crate) const AGENT_WORLD_ACCESS: &str = "change which worlds an agent can access";
 pub(crate) const BOARD_LAYOUT: &str = "change the board layout";
+pub(crate) const CANCEL_RECOVERY_HOLD: &str = "cancel a waiting recovery of this vault";
 pub(crate) const CHANGE_SHARED_MEMBER_ROLE: &str = "change a member's role in the shared vault";
 pub(crate) const CHECKPOINT_POLICY: &str = "change which devices vouch for this vault";
 pub(crate) const CONFIRM_HELD_MACHINE_ANSWERS: &str = "approve pending changes to linked devices";
 pub(crate) const CONFIRM_OWNER_PASSKEY: &str = "confirm a passkey that another passkey added";
 pub(crate) const CONFIRM_OWNER_SIGNING_KEY: &str = "confirm a device that a passkey added";
+pub(crate) const CONFIRM_RECOVERY_HOLD: &str = "approve a waiting recovery of this vault";
 pub(crate) const CONVERSATION_LEARNING: &str = "change whether this vault learns from messages";
 pub(crate) const CONVERSATION_TRAINING: &str = "change whether your messages are used for training";
 pub(crate) const DEFAULT_FACET: &str = "change where new memories are saved by default";
