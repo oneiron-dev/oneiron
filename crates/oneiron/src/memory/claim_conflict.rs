@@ -468,34 +468,46 @@ impl Memory<'_> {
                 )
                 .apply(txn)?;
             // Close a pending target's review tray in the same atomic ruling.
-            self.vault.store.close_pending_gate_consent_in_txn(
-                txn,
-                &packet.disputed,
-                GateReceiptOutcome::Superseded,
-                vec!["gate.memory.admin_conflict_ruling".to_owned()],
-                None,
-            )?;
+            // A tray row's close is receipted as the reviewer, its verified
+            // closer, as the proposal's retract below is.
+            self.vault
+                .store
+                .close_pending_gate_consent_closed_by_in_txn(
+                    txn,
+                    &packet.disputed,
+                    GateReceiptOutcome::Superseded,
+                    vec!["gate.memory.admin_conflict_ruling".to_owned()],
+                    None,
+                    crate::store::TrayRemoval::Unanswered,
+                    Some(reviewer_actor),
+                )?;
             // The disputed head's close, as the proposal's below, is the
             // reviewer's own: the Gate judges it as its verified human
-            // closer, not under the closed row's own envelope.
+            // closer, not under the closed row's own envelope. The proof
+            // moves by value, so the close takes its own, revalidated here.
+            let close_owner = ruling_owner_answer(self.vault, &*txn, reviewer, root_owner)?;
             self.vault.supersede_claim_in_txn_as_owner(
                 txn,
                 &ruling_id,
                 &packet.disputed,
                 now,
                 Some(reviewer_actor),
-                ruling_owner_answer(self.vault, txn, reviewer, root_owner)?,
+                close_owner,
             )?;
             // The generic lifecycle projector may re-evaluate a Proposed row
             // as pending. A terminal ruled head must not leave an actionable
             // consent behind, so close any such replay in this transaction.
-            self.vault.store.close_pending_gate_consent_in_txn(
-                txn,
-                &packet.disputed,
-                GateReceiptOutcome::Superseded,
-                vec!["gate.memory.admin_conflict_ruling".to_owned()],
-                None,
-            )?;
+            self.vault
+                .store
+                .close_pending_gate_consent_closed_by_in_txn(
+                    txn,
+                    &packet.disputed,
+                    GateReceiptOutcome::Superseded,
+                    vec!["gate.memory.admin_conflict_ruling".to_owned()],
+                    None,
+                    crate::store::TrayRemoval::Unanswered,
+                    Some(reviewer_actor),
+                )?;
             // The selected proposal is consumed as part of the unit. Keep its
             // value/source/author history, but leave no separate approval that
             // could later create a second canonical head beside the ruling.

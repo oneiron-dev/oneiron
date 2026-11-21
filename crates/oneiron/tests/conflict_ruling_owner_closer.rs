@@ -13,8 +13,10 @@
 //! the owner's ruling is refused there.
 //!
 //! The control rules the same dispute on a predicate no policy declares
-//! critical: it lands on main and on the fix, so naming the closer changes
-//! nothing there.
+//! critical: no floor asks for the owner's proof, so the reviewer as the
+//! close's closer is all it needs. On main the close of the agent's head is
+//! judged as its author, whose foreign-agent ceiling holds an Approved close
+//! pending with no tray row, so the control is expected to fail there too.
 //!
 //! The vault is rooted under a host (a ruling needs a rooted vault and the
 //! owner's active human binding under its root).
@@ -272,8 +274,8 @@ fn the_owners_ruling_closes_an_approved_claim_on_a_declared_critical_predicate()
     f.assert_ruled(&dispute, &receipt);
 }
 
-/// Control: the same ruling on a predicate no policy declares critical
-/// lands on main and on the fix alike.
+/// Control: the same ruling on a predicate no policy declares critical,
+/// where the reviewer as closer is enough and no owner proof is asked.
 #[test]
 fn the_owners_ruling_closes_an_approved_claim_on_an_ordinary_predicate() {
     let f = Fixture::new();
