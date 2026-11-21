@@ -24,9 +24,12 @@ impl Vault {
     /// with no hold and no pending slot record it writes nothing at all.
     /// Before any of that, one sweep reaps the seed slots a crash orphaned:
     /// for each pending slot record, a slot that holds no seed loses its
-    /// record, and a seed no hold names is deleted with its record (the
-    /// door puts its seed again when a run reaped it before the door's
-    /// hold committed). The root door's box arm calls it first; the
+    /// record, and a seed no hold names is deleted with its record. The run
+    /// holds the vault's recovery-hold lock throughout, as the root door's
+    /// hold attempt does from its reuse check to its hold's commit, so it
+    /// never reaps an attempt's slot before its hold names it, and no
+    /// attempt puts a seed between its reads and its deletes. The root
+    /// door's box arm calls it first; the
     /// host's poll of a waiting recovery calls it too (the keystore is
     /// installed after each open, so an open never lands).
     ///
@@ -39,6 +42,11 @@ impl Vault {
             Err(Error::Secret(SecretError::KeystoreUnavailable(_))) => return Ok(Vec::new()),
             Err(other) => return Err(other),
         }
+        let _run = self
+            .store
+            .recovery_hold_lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let (vault_id, views, pending) = {
             let txn = self.store.env.read_txn()?;
             let fold = self.authority_view_readonly_in_txn(&txn)?;
