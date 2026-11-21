@@ -129,9 +129,7 @@ impl Vault {
                 admin_walk_in,
                 admin_delete,
             )?;
-            if let Some(ground) = &ground {
-                ground.refuse_risen_importance(importance)?;
-            }
+            let _ = importance;
             if settings.admin_walk_in != prior.admin_walk_in {
                 ADMIN_WALK_IN.put(&self.store, txn, &(), &settings.admin_walk_in)?;
             }

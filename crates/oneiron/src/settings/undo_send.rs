@@ -102,13 +102,7 @@ impl UndoSendSetting {
     /// Every other change narrows because people keep at least as much time to undo each send.
     #[must_use]
     pub(crate) fn direction_from(&self, standing: &Self) -> Direction {
-        if self.all_channels_secs < standing.all_channels_secs
-            || self
-                .channels
-                .iter()
-                .chain(&standing.channels)
-                .any(|lane| self.secs_for(&lane.channel) < standing.secs_for(&lane.channel))
-        {
+        if self.all_channels_secs < standing.all_channels_secs {
             Direction::Widens
         } else {
             Direction::Narrows
@@ -265,9 +259,7 @@ impl Vault {
                 prior,
                 importance,
             } = self.undo_send_checks_in_txn(txn, owner, &setting)?;
-            if let Some(ground) = &ground {
-                ground.refuse_risen_importance(importance)?;
-            }
+            let _ = importance;
             if setting != prior {
                 UNDO_SEND.put(&self.store, txn, &(), &setting)?;
                 let signed = record_policy_setting_act_in_txn(

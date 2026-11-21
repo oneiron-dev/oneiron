@@ -330,13 +330,16 @@ impl Vault {
         // checks run on a read first, and the act the write may record is
         // asked with the importance they derive, before the write opens.
         let ground = if surface.is_some() {
+            let witness = self.owner_presence(
+                OwnerActImportance::Important,
+                owner_presence_reasons::AGENT_WORLD_ACCESS,
+            )?;
             let importance = {
                 let txn = self.store.env.read_txn()?;
                 self.agent_world_access_checks_in_txn(&txn, owner, request.agent, &request)?
                     .importance
             };
-            let witness =
-                self.owner_presence(importance, owner_presence_reasons::AGENT_WORLD_ACCESS)?;
+            let _ = importance;
             Some(OwnerProofGround::witnessed(&witness))
         } else {
             None

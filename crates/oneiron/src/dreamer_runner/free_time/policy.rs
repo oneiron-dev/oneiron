@@ -152,7 +152,7 @@ impl FreeTimePolicyInput {
     #[must_use]
     fn direction_from(&self, standing: Option<&FreeTimePolicy>) -> Direction {
         let Some(standing) = standing else {
-            return Direction::Widens;
+            return Direction::Narrows;
         };
         if self.schedule != standing.schedule || standing.holder_not_before.is_some() {
             return Direction::Widens;

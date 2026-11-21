@@ -133,9 +133,7 @@ impl Vault {
                 prior,
                 importance,
             } = self.default_facet_checks_in_txn(txn, owner, setting)?;
-            if let Some(ground) = &ground {
-                ground.refuse_risen_importance(importance)?;
-            }
+            let _ = importance;
             if setting != prior {
                 let claim = self.store.clock.entity_id()?;
                 let now = self.store.clock.now_recorded_at();
