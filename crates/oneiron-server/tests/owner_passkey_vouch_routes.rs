@@ -55,7 +55,9 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{FederationGrantRole, InitialSharedMember};
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
-use oneiron::test_doors::passkey_vouch_limits::{enrol_owner_passkey_on, main_log_heads};
+use oneiron::test_doors::passkey_vouch_limits::{
+    enrol_owner_passkey_on, main_log_heads, sign_as_host_root,
+};
 use oneiron::test_support::bind_host_owner;
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_server::{build_app, config::SyncServerConfig, server::SyncServer};
@@ -276,7 +278,7 @@ impl Home {
             &input,
             parents,
             self.issuer.public_key(),
-            |transcript| self.issuer.sign_slip(transcript),
+            |transcript| sign_as_host_root(&self.issuer, transcript),
         )?)
     }
 
