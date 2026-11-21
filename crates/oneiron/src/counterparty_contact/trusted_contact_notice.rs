@@ -556,6 +556,12 @@ impl Vault {
         lease_owner: &str,
         now: u64,
     ) -> Result<Option<(AttemptRecord, TrustedContactNotice)>> {
+        // A copy restored and not joined takes no sender lease (row
+        // RESTORED-UNJOINED-STARTS-NO-WORK). Notices wait in the queue for
+        // the sender's first claim after the join.
+        if self.restored_unjoined()? {
+            return Ok(None);
+        }
         let sender = sender.to_hex();
         loop {
             let claimed = self.with_write_txn_grouped(|wtxn| {

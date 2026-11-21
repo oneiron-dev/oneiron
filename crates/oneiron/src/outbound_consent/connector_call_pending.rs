@@ -78,6 +78,12 @@ impl Vault {
     pub fn expire_connector_calls(&self, now_ms: u64) -> Result<usize, IntentLedgerError> {
         let rows = {
             let txn = self.store.env.read_txn().map_err(Error::from)?;
+            // A copy restored and not joined expires no held calls (row
+            // RESTORED-UNJOINED-STARTS-NO-WORK). Their rows wait for the
+            // first expiry sweep after the join.
+            if crate::setting::restored::restored_unjoined_in_txn(self, &txn)? {
+                return Ok(0);
+            }
             PENDING_CALLS.scan(&self.store, &txn)?
         };
         let mut expired = 0;
@@ -119,6 +125,12 @@ impl Vault {
         }
         let record = {
             let txn = self.store.env.read_txn().map_err(Error::from)?;
+            // A copy restored and not joined does not settle this call (row
+            // RESTORED-UNJOINED-STARTS-NO-WORK). It waits for an expiry
+            // check after the join, without moving its deadline.
+            if crate::setting::restored::restored_unjoined_in_txn(self, &txn)? {
+                return Ok(None);
+            }
             let ttl_secs = connector_call_pending_ttl_secs_in_txn(&self.store, &txn)?;
             if now_ms < connector_call_deadline(pending.held_at_ms, ttl_secs) {
                 return Ok(None);

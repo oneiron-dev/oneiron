@@ -84,6 +84,21 @@ impl Vault {
                 pending.source_rows,
             ));
         }
+        // A copy restored and not joined drives no held call (row
+        // RESTORED-UNJOINED-STARTS-NO-WORK): the row waits for a resume
+        // after the join. The read-only answers above stand, and the
+        // expiry above is held on its own.
+        if self.restored_unjoined()? {
+            return Ok((
+                ConnectorCallOutcome::Held {
+                    call_ref: *call_ref,
+                    decision_ref: None,
+                    reasons: vec!["restored_not_joined".to_owned()],
+                    approval_digest: None,
+                },
+                pending.source_rows,
+            ));
+        }
         self.drive_connector_call(Some(*call_ref), None, pending, host)
     }
 }

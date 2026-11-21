@@ -375,6 +375,12 @@ impl Vault {
                 .env
                 .read_txn()
                 .map_err(crate::error::Error::from)?;
+            // A copy restored and not joined lists no due polls (row
+            // RESTORED-UNJOINED-STARTS-NO-WORK). Tasks wait without stale cleanup;
+            // the first pass after the join can poll them.
+            if crate::setting::restored::restored_unjoined_in_txn(self, &txn)? {
+                return Ok(Vec::new());
+            }
             for row in POLLS.iter_from(&self.store, &txn, &[])? {
                 let (id, state) = row?;
                 let Some(mut record) = super::store::get_ledger_record(self, &txn, &id)? else {
