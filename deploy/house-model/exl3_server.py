@@ -86,7 +86,10 @@ admitted Job every round, as before R4. A Job the Generator cannot cancel
 keeps its call's pages, place and reservation charged until it ends.
 """
 import argparse
+import base64
 import collections
+import hashlib
+import importlib.metadata
 import json
 import os
 import queue
@@ -608,6 +611,71 @@ def set_projection_fusion(on):
     return replaced
 
 
+def file_sha256(path):
+    """The SHA-256 of the file at `path`, read in 16 MiB blocks (an extension module is about 230 MiB)."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 24), b""):
+            digest.update(block)
+    return digest
+
+
+def jit_extension_dir():
+    """The directory exllamav3's JIT build of exllamav3_ext loads from (exllamav3/ext.py builds it through
+    torch.utils.cpp_extension.load when no precompiled module is importable, as with the PyPI wheel), or None
+    when torch cannot name it."""
+    try:
+        from torch.utils import cpp_extension
+        return Path(cpp_extension._get_build_directory("exllamav3_ext", False)).resolve()
+    except Exception:
+        return None
+
+
+def installed_extension(loaded):
+    """Whether `loaded`, the file exllamav3_ext came from, is the installed extension: the module an installed
+    distribution's RECORD lists, with the SHA-256 the RECORD gives (a binary exllamav3 wheel), or exllamav3's
+    own JIT build (`jit_extension_dir`). A copy or hard link elsewhere is neither, and an installed file that
+    was overwritten fails its RECORD digest."""
+    path = Path(loaded).resolve()
+    for dist in importlib.metadata.distributions():
+        for entry in dist.files or ():
+            if entry.name != path.name or Path(dist.locate_file(entry)).resolve() != path:
+                continue
+            if entry.hash is None or entry.hash.mode != "sha256":
+                return False
+            recorded = base64.urlsafe_b64encode(file_sha256(path).digest()).rstrip(b"=").decode()
+            return recorded == entry.hash.value
+    return path.parent == jit_extension_dir()
+
+
+def rebuilt_extension_digest(ext_dir):
+    """The SHA-256 of the exllamav3_ext this process loaded from `ext_dir` (`--exllamav3-ext-dir`: a rebuilt
+    extension, build-exl3-ext.sh, that the launcher put first on PYTHONPATH), or None with no such directory.
+
+    `ext_dir` must be a resolved absolute path and the module must have been loaded from it by that literal path,
+    with no link on the way, so the import and the digest read one directory; build-exl3-ext.sh never rewrites a
+    directory it published. A module loaded from anywhere else refuses the launch, so the identity never names a
+    build that does not run. With no directory, a module that is not the installed extension (`installed_extension`)
+    refuses it too, so a rebuilt extension never runs under the installed one's identity."""
+    loaded = getattr(exllamav3_ext, "__file__", None)
+    if not ext_dir:
+        if loaded and not installed_extension(loaded):
+            raise RuntimeError(f"exllamav3_ext was loaded from {loaded}, which is not the installed extension (no "
+                               "installed distribution's RECORD lists it with that SHA-256, and it is not "
+                               "exllamav3's JIT build); a rebuilt extension runs only with --exllamav3-ext-dir "
+                               "(ONEIRON_HOUSE_EXL3_EXT_DIR)")
+        return None
+    directory = Path(ext_dir)
+    if not directory.is_absolute() or Path(os.path.realpath(directory)) != directory:
+        raise RuntimeError(f"--exllamav3-ext-dir {ext_dir}: name the directory by its resolved absolute path "
+                           f"({os.path.realpath(directory)}; serve-exl3.sh resolves it), so the import and the "
+                           "digest read one directory")
+    if not loaded or Path(loaded).parent != directory or Path(os.path.realpath(loaded)) != Path(loaded):
+        raise RuntimeError(f"--exllamav3-ext-dir {ext_dir}: exllamav3_ext was loaded from {loaded or 'nowhere'}; "
+                           "put the directory itself, not a link to it, first on PYTHONPATH (serve-exl3.sh does)")
+    return file_sha256(loaded).hexdigest()
+
+
 SPEED_PART_HELP = {
     "fuse_projections": "keep same-input projections fused at every bitrate (EXL3_MGEMM_K_THRESHOLD=0)",
     "fp16_prefill": f"FP16 accumulation in reconstructed prefill GEMMs of at least {FP16_PREFILL_MIN_ROWS} rows",
@@ -663,8 +731,11 @@ def load(args):
     if replaced:
         print("FUSION_ENV_REPLACED " + " ".join(f"{name}={value}" for name, value in sorted(replaced.items())),
               flush=True)
+    # A rebuilt exllamav3 extension (README, "GEMM FP16 accumulators"): None with the installed one.
+    ext_digest = rebuilt_extension_digest(getattr(args, "exllamav3_ext_dir", None))
     print("SPEED_PARTS " + " ".join(f"{name}={int(on)}" for name, on in parts.items())
-          + f" ext={getattr(exllamav3_ext, '__file__', '?')}", flush=True)
+          + f" ext={getattr(exllamav3_ext, '__file__', '?')}"
+          + (f" ext_sha256={ext_digest}" if ext_digest else ""), flush=True)
 
     # The shards are checked before anything loads them.
     model_digest = weights_digest(args.target_dir, args.weights_manifest)
@@ -763,13 +834,19 @@ def load(args):
         # Only a server with a speed part on names them, so one with every part off keeps the identity it had
         # before the parts existed.
         server_settings["speed_parts"] = sorted(name for name, on in parts.items() if on)
+    arithmetic = kv_arithmetic(parts)
+    if ext_digest:
+        # A rebuilt extension changes the target's arithmetic (its GEMM accumulators): only a server that runs
+        # one names it, in its settings and in its snapshots' compatibility.
+        server_settings["exllamav3_ext"] = ext_digest
+        arithmetic.append(f"exllamav3_ext={ext_digest}")
     identity = cache_usage.BackendIdentity(
         args.target_dir, template_source,
         cache_settings=cache_settings,
         server_settings=server_settings,
         model_digest=model_digest, launch=launch,
         draft_digest=launch_draft_identity(args.launch_manifest) if draft is not None else None,
-        kv_arithmetic=kv_arithmetic(parts))
+        kv_arithmetic=arithmetic)
     stop_ids = set()
     eos = getattr(target_config, "eos_token_id", None)
     for token in eos if isinstance(eos, list) else [eos]:
@@ -2268,6 +2345,10 @@ def main():
                         f"cache is then as large as the target's, and the pool defaults to "
                         f"{DEFAULT_CACHE_TOKENS_WITHOUT_RING})")
     add_speed_part_flags(p)
+    p.add_argument("--exllamav3-ext-dir", default=None,
+                   help="the directory of a rebuilt exllamav3_ext (build-exl3-ext.sh: FP16 GEMM accumulators on "
+                        "sm_89), which must be first on PYTHONPATH; its SHA-256 joins the identity and the "
+                        "snapshot compatibility (default: the extension installed with exllamav3)")
     p.add_argument("--default-max-tokens", type=int, default=4096,
                    help="the reply cap when a request names none; a request with a reasoning budget "
                         "gets that budget on top, so its answer keeps this room")
