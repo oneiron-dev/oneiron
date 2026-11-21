@@ -19,12 +19,14 @@
 //! and when its restore comes before the run reaches it. #10265 Opus review
 //! P2-2: a pass marks archived rows raised only once it ends, and only when
 //! it began in this build with no row raised yet; P2-3: the run again starts
-//! from the state an older backfill left.
+//! from the state an older backfill left. #10265 review 2 P1-1, P1-2: the
+//! run again starts at the first row whatever cursor an older pass saved,
+//! and an older pass's raised marks never make it skip a row.
 
 use oneiron::test_doors::cleanup_archive::archive_as_cleanup;
 use oneiron::test_doors::read_lineage_floor::{
-    backfill_first_page, end_backfill_without_archived_rows, floor_of, floor_waits, mark_raised,
-    mark_waiting_on,
+    backfill_first_page, backfill_from_an_older_pass_cursor, end_backfill_without_archived_rows,
+    floor_of, floor_waits, mark_backfill_done, mark_raised, mark_waiting_on,
 };
 use oneiron::test_doors::source_audience_binding::{bound_row_read_by, reads};
 use oneiron::{EdgeKind, EntityId};
@@ -558,4 +560,73 @@ fn a_row_an_older_build_raised_before_the_first_page_is_raised_once_more() {
         mailbox.policy,
         "once learnt from a row an older build raised early",
     );
+}
+
+/// #10265 review 2 P1-1, a run again from an older pass's cursor: `fact`,
+/// learnt from `input` before floors, was archived, and the owner erased
+/// `input`. A build before this one skipped the archived `fact` and ended
+/// its pass, but the cursor the sweep kept is the one it saved after the
+/// page that ended at `after`, a row past `fact`. The run again starts at
+/// the first row all the same, so it raises `fact` for the first time over
+/// its erased input: once restored, `fact` waits for good and reads to no
+/// stranger. Before the fix the run again went on from that cursor, never
+/// raised `fact`, and marked archived rows raised; the restore then settled
+/// `fact` on an empty floor, open.
+#[test]
+fn a_run_again_from_an_older_pass_cursor_starts_at_the_first_row() {
+    let mailbox = owners_mailbox();
+    let input = claim_born_before_floors(
+        &mailbox,
+        &[mailbox.row],
+        "fact.erased_input_before_the_cursor",
+    );
+    let fact = claim_born_before_floors(&mailbox, &[input], "fact.archived_before_the_cursor");
+    let after = claim_born_before_floors(&mailbox, &[], "fact.past_the_cursor");
+    archive(&mailbox, fact);
+    erase(&mailbox, input);
+    forget_floor_state(&mailbox.vault).expect("FIXTURE: a vault written before floors");
+    end_backfill_without_archived_rows(&mailbox.vault)
+        .expect("FIXTURE: the older build ends its pass");
+    backfill_from_an_older_pass_cursor(&mailbox.vault, after)
+        .expect("the run again from the older pass's cursor");
+    restore(&mailbox, fact);
+    assert_no_stranger_or_reader_reads(&mailbox, fact, "once restored");
+    assert!(
+        floor_waits(&mailbox.vault, fact).expect("the floor's state"),
+        "a fact the run again never raised settled though its input was erased",
+    );
+}
+
+/// #10265 review 2 P1-2, raised marks an older pass left: in a vault that
+/// held no policy yet, `linked` is `DerivedFrom` `source`, learnt from the
+/// mailbox's row, then on its way, and `fact` is learnt from `linked`; the
+/// row lands, and the cleanup archives `source`. A build before this one
+/// skipped the archived `source`, raised `linked` and `fact` on its empty
+/// floor and marked them raised, and committed its pass's end before its
+/// clearing pages ran. The run again raises both again, `source` with
+/// them, so both hold the mailbox's policy. Before the fix the run again
+/// skipped both on the older pass's marks: their floors stayed empty, and
+/// `fact` read open to a stranger.
+#[test]
+fn a_run_again_raises_rows_an_older_pass_left_marked_raised() {
+    let late = EntityId::now();
+    let mut mailbox = mailbox_with_no_policy_yet(late);
+    let source = claim_born_before_floors(&mailbox, &[late], "fact.archived_source_of_marked_rows");
+    let linked = claim_born_before_floors(&mailbox, &[], "fact.linked_and_marked_raised");
+    mailbox
+        .vault
+        .put_edge(&linked, EdgeKind::DerivedFrom, &source, 1.0)
+        .expect("FIXTURE: linked names its source");
+    let fact = claim_born_before_floors(&mailbox, &[linked], "fact.learnt_from_a_marked_row");
+    mailbox.policy = bound_row_read_by(&mailbox.vault, late, &[mailbox.reader])
+        .expect("late lands, bound to a member's mailbox");
+    archive(&mailbox, source);
+    forget_floor_state(&mailbox.vault).expect("FIXTURE: a vault written before floors");
+    mark_raised(&mailbox.vault, linked).expect("FIXTURE: the older pass raised linked");
+    mark_raised(&mailbox.vault, fact).expect("FIXTURE: the older pass raised fact");
+    mark_backfill_done(&mailbox.vault)
+        .expect("FIXTURE: the older pass commits its end before its clearing pages run");
+    housekeeping_pass(&mailbox);
+    assert_reads_as_its_landed_source(&mailbox, linked, mailbox.policy, "after the run again");
+    assert_reads_as_its_landed_source(&mailbox, fact, mailbox.policy, "after the run again");
 }

@@ -243,6 +243,28 @@ pub(crate) fn end_backfill_without_archived_rows_in_txn(
     Ok(())
 }
 
+/// Marks, in `txn`, the backfill done as the last page of a pass of a build
+/// before this one commits it, before its clearing pages run: the raised
+/// marks stay.
+#[cfg(any(test, feature = "test-support", oneiron_test_support))]
+pub(crate) fn mark_backfill_done_in_txn(vault: &Vault, txn: &mut RwTxn<'_>) -> Result<()> {
+    BACKFILL.put(&vault.store, txn, &(), &true)
+}
+
+/// Runs the floor backfill to the end of its run from the cursor a pass of
+/// a build before this one saved after the page that ended at the entity
+/// key of `after`, as the sweep does when it holds that cursor.
+///
+/// # Errors
+///
+/// Storage failures.
+#[cfg(any(test, feature = "test-support", oneiron_test_support))]
+pub(crate) fn backfill_floors_from_raising_cursor(vault: &Vault, after: &EntityId) -> Result<()> {
+    let mut cursor = vec![RAISING];
+    cursor.extend_from_slice(after.as_bytes());
+    backfill_floors(vault, Some(&cursor), || false).map(|_| ())
+}
+
 /// Marks `row` raised in `txn`, as a write of a build before
 /// FLOOR-BACKFILL-SKIPS-ARCHIVED-ROWS marked a row it raised while the
 /// backfill ran, without the archived rows it was written from.

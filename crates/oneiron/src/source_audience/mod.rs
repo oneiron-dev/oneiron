@@ -64,8 +64,8 @@ pub(crate) use floor_state::{
 };
 #[cfg(any(test, feature = "test-support", oneiron_test_support))]
 pub(crate) use floor_state::{
-    end_backfill_without_archived_rows_in_txn, forget_floor_state_in_txn, mark_raised_in_txn,
-    mark_waiting_in_txn,
+    backfill_floors_from_raising_cursor, end_backfill_without_archived_rows_in_txn,
+    forget_floor_state_in_txn, mark_backfill_done_in_txn, mark_raised_in_txn, mark_waiting_in_txn,
 };
 pub(crate) use obligation::{
     SourceAudienceBirth, admit_obligation_in_txn, admit_session_obligation_in_txn,

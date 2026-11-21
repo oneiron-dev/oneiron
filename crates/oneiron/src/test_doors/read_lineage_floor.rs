@@ -97,6 +97,32 @@ pub fn end_backfill_without_archived_rows(vault: &Vault) -> Result<()> {
     Ok(())
 }
 
+/// Marks the floor backfill done as the last page of a pass of a build
+/// before this one commits it, before its clearing pages run: the raised
+/// marks stay (#10265 review 2 P1-2).
+///
+/// # Errors
+///
+/// Storage failures.
+pub fn mark_backfill_done(vault: &Vault) -> Result<()> {
+    let mut txn = vault.store.env.write_txn()?;
+    crate::source_audience::mark_backfill_done_in_txn(vault, &mut txn)?;
+    txn.commit()?;
+    Ok(())
+}
+
+/// Runs the floor backfill to the end of its run from the cursor a pass of
+/// a build before this one saved after the page that ended at `after`, as
+/// the sweep does when the scheduler kept that cursor though the pass's
+/// last page had ended it (#10265 review 2 P1-1).
+///
+/// # Errors
+///
+/// Storage failures.
+pub fn backfill_from_an_older_pass_cursor(vault: &Vault, after: EntityId) -> Result<()> {
+    crate::source_audience::backfill_floors_from_raising_cursor(vault, &after)
+}
+
 /// Runs the first write of a floor backfill pass in this build, as the
 /// housekeeping sweep does when a pass begins, and drops where the pass
 /// would go on.
