@@ -94,12 +94,14 @@ pub(crate) use self::lifecycle::{archive_version_stands_in_txn, release_archive_
 pub(crate) use self::lifecycle::{release_response_version_in_txn, response_version_stands_in_txn};
 pub use self::provenance::BlobVersionProvenance;
 pub(crate) use self::references::archive_version_claim_tables;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::references::fence_released_asset;
 pub(crate) use self::references::{
-    artifacts_claiming, claimed_hash_rows_exist, record_version_claim,
+    artifacts_claiming, claimed_hash_rows_exist, record_version_claim, release_fenced_only,
 };
 #[cfg(feature = "sync")]
 pub(crate) use self::references::{
-    readmit_held_asset_in_txn, readmit_held_asset_with_facts_in_txn, release_fenced_only,
+    readmit_held_asset_in_txn, readmit_held_asset_with_facts_in_txn,
 };
 pub use self::review_request::SlideReviewLimitsInput;
 pub use self::setting_keys::image_edit_max_ops;
