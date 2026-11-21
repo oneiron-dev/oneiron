@@ -1,5 +1,8 @@
 //! A host-profiled child's original generation accounting, lent to compaction.
 
+use std::sync::Arc;
+
+use crate::entity_id::EntityId;
 use crate::llm::WorkContext;
 use crate::llm::manifest::ModelRole;
 
@@ -17,6 +20,14 @@ pub trait ScopedChildGeneration: Send + Sync {
     /// The role the child's live generation is admitted on. A self-written
     /// live compaction fork must use that role, not the host's chat role.
     fn live_role(&self) -> ModelRole;
+
+    /// The rows the child's input was read from. Its compaction compacts
+    /// what the child saw, which may hold their words though its window
+    /// names none of them, so each compaction call on this generation is
+    /// fenced by them as the child's own calls are: once one is erased,
+    /// deleted or withdrawn, nothing more is sent
+    /// ([DREAMER-UNSOURCED-ROLE-CALLS-SEND-UNFENCED]).
+    fn source_rows(&self) -> Arc<[EntityId]>;
 }
 
 /// One admitted call on the original generation count. An implementation

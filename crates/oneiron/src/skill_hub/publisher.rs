@@ -130,6 +130,20 @@ impl Vault {
             grant_ref,
         })
     }
+
+    /// Whether the publisher's offer-only Grant for `hub` already stands.
+    /// A refused import withdraws only what it minted, and keeps one that
+    /// already stood.
+    pub(super) fn skill_publisher_grant_is_active(
+        &self,
+        identity: &str,
+        hub: EntityId,
+    ) -> Result<bool> {
+        let grant_ref = skill_publisher_grant(identity, hub)?.digest().to_hex();
+        let txn = self.store.env.read_txn()?;
+        crate::consent::standing_grant_is_active_in_txn(&self.store, &txn, &grant_ref)
+    }
+
     /// Withdraws exactly the offer-only grant minted for this publisher and hub.
     /// Bound hooks recheck the same grant before they run.
     pub fn revoke_skill_publisher(

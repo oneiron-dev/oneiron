@@ -55,6 +55,20 @@ fn roomy_floor() -> Arc<dyn crate::code_sandbox::ProposalSpoolFloor> {
     Arc::new(RoomyFloor(tempfile::tempdir().expect("spool dir")))
 }
 
+/// A fresh run id and the production egress proxy for it. `default()` is
+/// what `EgressConfig::from_env` yields when the host sets no config file,
+/// so the proxy matches production under test with no env dependence.
+fn run_identity(vault: &Arc<Vault>) -> (EntityId, Arc<dyn oneiron_container::EgressRelay>) {
+    let run_id = EntityId::now();
+    let egress: Arc<dyn oneiron_container::EgressRelay> =
+        Arc::new(crate::code_sandbox::egress::OpenEgressProxy::new(
+            Arc::clone(vault),
+            run_id,
+            crate::code_sandbox::egress::EgressConfig::default(),
+        ));
+    (run_id, egress)
+}
+
 const JS: &str = include_str!("../../../../tests/fixtures/echo_pack/scripts/adapter.js");
 struct Qualified(String, bool);
 impl super::super::PackQualifier for Qualified {
@@ -464,6 +478,7 @@ fn out_of_manifest_grant_and_output_are_refused_before_any_event() -> Result<()>
     let scratch = tempfile::tempdir()?;
     let seen_secret = Arc::new(Mutex::new(Vec::new()));
     let run = |grant: &PackScriptGrant, output: Vec<u8>| {
+        let (run_id, egress) = run_identity(&vault);
         vault.run_script_pack_in_vm(
             PackScriptRun {
                 name: "fixture.echo",
@@ -481,6 +496,8 @@ fn out_of_manifest_grant_and_output_are_refused_before_any_event() -> Result<()>
                 seen_secret: Arc::clone(&seen_secret),
                 after_run: None,
             }),
+            run_id,
+            egress,
         )
     };
     assert!(run(&grant, output()).is_err());
@@ -523,6 +540,7 @@ fn revoked_custody_refuses_a_script_before_any_inbound_handoff() -> Result<()> {
     vault.revoke_secret("email-token", 1_800_000_100)?;
     let scratch = tempfile::tempdir()?;
     let secret = Arc::new(Mutex::new(Vec::new()));
+    let (run_id, egress) = run_identity(&vault);
     assert!(
         vault
             .run_script_pack_in_vm(
@@ -541,7 +559,9 @@ fn revoked_custody_refuses_a_script_before_any_inbound_handoff() -> Result<()> {
                     output: output(),
                     seen_secret: Arc::clone(&secret),
                     after_run: None
-                })
+                }),
+                run_id,
+                egress,
             )
             .is_err()
     );
@@ -572,6 +592,7 @@ fn foreign_script_cannot_route_to_a_different_channel_agent() -> Result<()> {
     let mut wrong: serde_json::Value = serde_json::from_slice(&output()).unwrap();
     wrong["inbound"][0]["receiving_address_or_handle"] = "other@example.com".into();
     let scratch = tempfile::tempdir()?;
+    let (run_id, egress) = run_identity(&vault);
     assert!(
         vault
             .run_script_pack_in_vm(
@@ -590,7 +611,9 @@ fn foreign_script_cannot_route_to_a_different_channel_agent() -> Result<()> {
                     output: serde_json::to_vec(&wrong).unwrap(),
                     seen_secret: Arc::new(Mutex::new(Vec::new())),
                     after_run: None
-                })
+                }),
+                run_id,
+                egress,
             )
             .is_err()
     );
@@ -608,6 +631,7 @@ fn malformed_wake_cannot_commit_preceding_inbound_or_wake() -> Result<()> {
         output["events"][1]["event_id"] = "arrival-2".into();
         output["events"][malformed_position]["event_id"] = "".into();
         let scratch = tempfile::tempdir()?;
+        let (run_id, egress) = run_identity(&vault);
         assert!(
             vault
                 .run_script_pack_in_vm(
@@ -626,7 +650,9 @@ fn malformed_wake_cannot_commit_preceding_inbound_or_wake() -> Result<()> {
                         output: serde_json::to_vec(&output).unwrap(),
                         seen_secret: Arc::new(Mutex::new(Vec::new())),
                         after_run: None
-                    })
+                    }),
+                    run_id,
+                    egress,
                 )
                 .is_err()
         );
@@ -676,6 +702,7 @@ fn pack_wake_never_fans_out_to_another_agents_matching_subscription() -> Result<
         },
     )?;
     let scratch = tempfile::tempdir()?;
+    let (run_id, egress) = run_identity(&vault);
     let outcome = vault.run_script_pack_in_vm(
         PackScriptRun {
             name: "fixture.echo",
@@ -693,11 +720,14 @@ fn pack_wake_never_fans_out_to_another_agents_matching_subscription() -> Result<
             seen_secret: Arc::new(Mutex::new(Vec::new())),
             after_run: None,
         }),
+        run_id,
+        egress,
     )?;
     assert_eq!(outcome.wakes.len(), 1);
     assert_eq!(outcome.wakes[0].agent, agent);
     let spend = vault.admit_connector_key_dispatches(
         &other_key,
+        "no-fanout-probe",
         "email",
         1,
         ConnectorDispatchTelemetry::default(),
@@ -715,6 +745,7 @@ fn key_revocation_between_guest_run_and_admission_refuses_all_output() -> Result
     let scratch = tempfile::tempdir()?;
     let key_id = grant.key_id;
     let to_revoke = Arc::clone(&vault);
+    let (run_id, egress) = run_identity(&vault);
     let result = vault.run_script_pack_in_vm(
         PackScriptRun {
             name: "fixture.echo",
@@ -736,6 +767,8 @@ fn key_revocation_between_guest_run_and_admission_refuses_all_output() -> Result
                     .unwrap();
             })),
         }),
+        run_id,
+        egress,
     );
     assert!(result.is_err());
     assert!(vault.surface_event_handoff_status("message-1")?.is_none());
@@ -760,6 +793,7 @@ fn stored_wake_id_conflict_rolls_back_new_inbound() -> Result<()> {
         payload: serde_json::json!({"id":"different"}),
     })?;
     let scratch = tempfile::tempdir()?;
+    let (run_id, egress) = run_identity(&vault);
     let result = vault.run_script_pack_in_vm(
         PackScriptRun {
             name: "fixture.echo",
@@ -777,6 +811,8 @@ fn stored_wake_id_conflict_rolls_back_new_inbound() -> Result<()> {
             seen_secret: Arc::new(Mutex::new(Vec::new())),
             after_run: None,
         }),
+        run_id,
+        egress,
     );
     assert!(result.is_err());
     assert!(vault.surface_event_handoff_status("message-1")?.is_none());
@@ -841,6 +877,7 @@ fn delegated_mailbox_reassignment_after_guest_run_cannot_route_to_new_agent() ->
     output["inbound"][0]["receiving_address_or_handle"] = mailbox.into();
     let change = Arc::clone(&vault);
     let scratch = tempfile::tempdir()?;
+    let (run_id, egress) = run_identity(&vault);
     let result = vault.run_script_pack_in_vm(
         PackScriptRun {
             name: "fixture.echo",
@@ -885,6 +922,8 @@ fn delegated_mailbox_reassignment_after_guest_run_cannot_route_to_new_agent() ->
                     .unwrap();
             })),
         }),
+        run_id,
+        egress,
     );
     assert!(result.is_err());
     assert!(vault.surface_event_handoff_status("message-1")?.is_none());
@@ -936,6 +975,7 @@ fn replaced_install_after_source_selection_refuses_old_program_and_wake() -> Res
         Some(selected.2.clone())
     );
     let scratch = tempfile::tempdir()?;
+    let (run_id, egress) = run_identity(&vault);
     let outcome = vault.run_selected_script_pack_in_vm(
         PackScriptRun {
             name: "fixture.echo",
@@ -954,6 +994,8 @@ fn replaced_install_after_source_selection_refuses_old_program_and_wake() -> Res
             after_run: None,
         }),
         selected,
+        run_id,
+        egress,
     );
     assert!(outcome.is_err());
     assert!(vault.surface_event_handoff_status("message-1")?.is_none());

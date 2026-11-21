@@ -356,6 +356,7 @@ fn witness_user_turn(fixture: &PreferenceFixture, words: &str) -> EntityId {
             }],
             occurred_at: fixture.vault.now_recorded_at(),
             assertions: WitnessAssertions::default(),
+            project: None,
         })
         .expect("a witnessed TURN");
     assert_eq!(receipt.turn_id, turn);

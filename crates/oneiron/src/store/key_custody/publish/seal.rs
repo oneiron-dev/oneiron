@@ -47,9 +47,34 @@ impl Store {
         if position.seq == 0 && census.is_empty() && carried.is_empty() {
             return Ok(Sealed::Nothing);
         }
-        if !standing.holds_at(journal, &position)? {
-            let detail = "the publication policy changed during this pass; the next pass seals \
-                          under the newer one";
+        // A census is sealed only to the data key the vault's key state still
+        // names after it: a new data-key generation committed since the pass
+        // read its recipients leaves each behind group pending, so nothing
+        // written after the act rides a head wrapped to the key it replaced.
+        // The act holds the policy lock; this holds without it as well (a
+        // lock that did not take, FIX 7314, or nothing in custody yet).
+        let held: Vec<[u8; 32]> = groups
+            .iter()
+            .filter_map(|recipients| recipients.data_key_held_commitment)
+            .collect();
+        let data_key_moved = !held.is_empty() && {
+            let stored = self.stored_vault_key_commitment()?;
+            held.iter().any(|commitment| stored != Some(*commitment))
+        };
+        let changed = if !standing.holds_at(journal, &position)? {
+            Some(
+                "the publication policy changed during this pass; the next pass seals under the \
+                 newer one",
+            )
+        } else if data_key_moved {
+            Some(
+                "the vault data key moved to a new generation during this pass; the next pass \
+                 seals under it",
+            )
+        } else {
+            None
+        };
+        if let Some(detail) = changed {
             let pending = behind(&position)
                 .into_iter()
                 .map(|due| due.then(|| Err(detail.to_owned())))

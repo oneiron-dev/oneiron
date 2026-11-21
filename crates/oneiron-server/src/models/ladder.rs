@@ -396,6 +396,42 @@ impl OfferLadder {
             .map(|rung| (&rung.model, rung.prompt.as_deref()))
     }
 
+    /// Whether this ladder's rungs are `other`'s, one for one in ladder
+    /// order: the same engine model at the same configured position, with
+    /// the same prompt. A seat's on-device view that holds a rung the seat
+    /// left out, or lacks one of its rungs, is not that seat on the device
+    /// (L9-15), even when the two ladders have as many rungs.
+    #[must_use]
+    pub(super) fn same_rungs_as(&self, other: &Self) -> bool {
+        self.rungs.len() == other.rungs.len()
+            && self.rungs.iter().zip(&other.rungs).all(|(own, theirs)| {
+                own.model == theirs.model
+                    && own.position == theirs.position
+                    && own.prompt == theirs.prompt
+            })
+    }
+
+    /// Whether each rung of `other` has one in this ladder at the same engine
+    /// model, configured position and prompt, in any order: this ladder
+    /// takes every fallback `other`'s call takes, over its own offers
+    /// (L9-15).
+    #[must_use]
+    pub(super) fn holds_rungs_of(&self, other: &Self) -> bool {
+        other.rungs.iter().all(|theirs| {
+            self.rungs.iter().any(|own| {
+                own.model == theirs.model
+                    && own.position == theirs.position
+                    && own.prompt == theirs.prompt
+            })
+        })
+    }
+
+    /// Whether this ladder has a rung a call can be sent to.
+    #[must_use]
+    pub(crate) fn has_rungs(&self) -> bool {
+        !self.rungs.is_empty()
+    }
+
     /// One engine model across this ladder and every owner-selectable
     /// fallback that keeps its wire and on-device rule. A quote cannot use
     /// today's health or selected fallback to exclude a possible model.
@@ -1060,12 +1096,18 @@ impl OfferLadder {
     /// each one parked on a spent window or spent credit (OF-305: asked only
     /// when no rung is left to serve the call). The models it lists for
     /// `use_fallback` are only those that can take this call from this seat.
-    /// The call's `principal`, when its run names one, is who each question
-    /// is asked for (FIX 562).
-    fn ask_parked(&self, walk: &Walk, needs: Needs<'_>, principal: Option<oneiron::EntityId>) {
+    /// The principal the call's `run` names, if any, is who each question is
+    /// asked for (FIX 562). A call whose run's own pre-send condition refuses
+    /// now asks nothing: its input was withdrawn, not stopped by the offers
+    /// ([DREAMER-UNSOURCED-ROLE-CALLS-SEND-UNFENCED]).
+    fn ask_parked(&self, walk: &Walk, needs: Needs<'_>, run: &RunAdmission) {
         let Some(parked) = walk.parked(self.rungs.len()) else {
             return;
         };
+        if run.text_dispatch_refusal().is_some() {
+            return;
+        }
+        let principal = run.principal();
         let own: Vec<&str> = self
             .rungs
             .iter()
@@ -1344,10 +1386,11 @@ impl OfferLadder {
     /// that time, so a caller can say when. Any other last failure is
     /// returned as it came, as is an outage: every rung resting rests for
     /// its health, so the call ends with its provider's own failure, never a
-    /// rate refusal. Every rung parked, the owner is asked about the spent
-    /// ones.
+    /// rate refusal. A call that met no failure and passed rungs for their
+    /// hours refuses as outside them, with when the first opens. Every rung
+    /// parked, the owner is asked about the spent ones.
     fn unanswered(&self, call: Call<'_>, walk: Walk) -> LlmError {
-        self.ask_parked(&walk, call.needs, call.run.principal());
+        self.ask_parked(&walk, call.needs, call.run);
         // The world's own order refused every rung the call met: that
         // refusal is the end, with no rest to name, since an unadmitted rung
         // never rests.
@@ -1387,6 +1430,13 @@ impl OfferLadder {
             }
             .into();
         }
+        // A call that met no failure and passed rungs for their hours: no
+        // rung serves at this hour, until the first of them opens.
+        let closed = if walk.last.is_none() {
+            self.outside_hours_refusal(&walk)
+        } else {
+            None
+        };
         match back.filter(|_| walk.limited()) {
             Some((retry_after, resets_at)) => RetryableLlmError::RateLimited {
                 retry_after,
@@ -1395,6 +1445,7 @@ impl OfferLadder {
             .into(),
             None => walk
                 .last
+                .or(closed)
                 .unwrap_or_else(|| FatalLlmError::InvalidRequest.into()),
         }
     }
@@ -1493,7 +1544,7 @@ impl OfferLadder {
                             )
                             .await;
                         if fell.is_err() {
-                            self.ask_parked(&walk, call.needs, call.run.principal());
+                            self.ask_parked(&walk, call.needs, call.run);
                         }
                         return fell;
                     }
@@ -1767,7 +1818,7 @@ impl OfferLadder {
                     let fell =
                         fallback.stream_from(run, fell_request, selector, false, deadline, binding);
                     if fell.is_err() {
-                        self.ask_parked(&walk, call.needs, call.run.principal());
+                        self.ask_parked(&walk, call.needs, call.run);
                     }
                     return fell;
                 }
@@ -1933,7 +1984,7 @@ impl OfferLadder {
                 }
             }
             Err(error) => {
-                self.ask_parked(&walk, call.needs, call.run.principal());
+                self.ask_parked(&walk, call.needs, call.run);
                 let _ = events.send(Err(error)).await;
             }
         }

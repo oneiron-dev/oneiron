@@ -15,6 +15,9 @@ pub enum ArchiveDeleteRole {
     Member,
     /// An agent under one Grant that names `delete`.
     Agent,
+    /// A person under one live Delegate grant that names `delete` and holds
+    /// the record (the lead's ruling DELEGATE-PERSON-DELETE, 21 Nov).
+    Delegate,
 }
 
 impl ArchiveDeleteRole {
@@ -26,6 +29,7 @@ impl ArchiveDeleteRole {
             Self::Steward => "steward",
             Self::Member => "member",
             Self::Agent => "agent",
+            Self::Delegate => "delegate",
         }
     }
 }

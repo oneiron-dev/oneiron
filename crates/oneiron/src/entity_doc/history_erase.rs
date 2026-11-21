@@ -32,6 +32,18 @@ struct HistoryErase {
     through: Option<Vec<u8>>,
 }
 
+/// What a history erase takes, as the owner's preview shows it and its
+/// confirm binds it: the history, and the encoded frontier the erase runs
+/// through now (the encoding a purge receipt's `applied` uses). A NOTE erase
+/// that names no frontier takes its pin floor, or its head when nothing pins
+/// it, so an edit after the preview moves `through` and the confirm of the
+/// old range no longer lands.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct TextHistoryEraseRange {
+    pub(crate) history: String,
+    pub(crate) through: Vec<u8>,
+}
+
 /// What the owner's history erase did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TextHistoryErase {
@@ -111,7 +123,7 @@ impl Vault {
         entity: &EntityId,
         through: Option<&[u8]>,
     ) -> MemoryResult<TextHistoryErase> {
-        self.start_text_history_erase_with_check_in(owner, entity, through, None)
+        self.start_text_history_erase_with_check_in(owner, entity, through, None, || Ok(None))
             .map(|(erase, _)| erase)
     }
 
@@ -120,47 +132,56 @@ impl Vault {
     /// the decision it runs on: the Owner on their own proof, and with
     /// `check_in_ref` an asker's approved check-in for this erase
     /// ([`crate::check_in::text_history_erase_effect_digest`]), which the
-    /// Owner applies on their own proof. As the record erase confirm does
-    /// (2j), it is spent in a writer of its own, on the Owner's live proof,
-    /// before the erase or its act: a refusal after it leaves the approval
-    /// spent. A waiting erase's `erase` act records the decision.
+    /// Owner applies on their own proof. It is spent on the Owner's live
+    /// proof in the writer that erases, or in the one that starts the
+    /// `erase` act, so an erase that refuses, or an act that never starts,
+    /// leaves the approval unspent (FIX CHECK-IN-SPEND-BEFORE-ERASE). A
+    /// waiting erase's `erase` act records the decision.
+    ///
+    /// `erase_now` runs only on the branch that erases at once, before the
+    /// check-in is spent. The history purge passes its shared confirm there,
+    /// so a call with no confirm still starts the veto-window act, and only
+    /// the branch that erases now is refused without one (PURGE-START,
+    /// Engine 11:34). It answers the frontier its confirm bound
+    /// ([`TextHistoryEraseRange`]), and with no `through` that branch erases
+    /// through exactly that frontier, so an edit after the confirm never
+    /// widens what it erases.
     ///
     /// # Errors
-    /// As [`Self::start_text_history_erase`]; a `check_in_ref` that names no
-    /// approved, unspent check-in for this erase.
+    /// As [`Self::start_text_history_erase`]; `erase_now` fails; a
+    /// `check_in_ref` that names no approved, unspent check-in for this
+    /// erase.
     pub fn start_text_history_erase_with_check_in(
         &self,
         owner: &AuthenticatedOwner,
         entity: &EntityId,
         through: Option<&[u8]>,
         check_in_ref: Option<EntityId>,
+        erase_now: impl FnOnce() -> MemoryResult<Option<Vec<u8>>>,
     ) -> MemoryResult<(TextHistoryErase, CheckInDecision)> {
-        let act_class = crate::check_in::ActClass::Erase;
-        let decision = match check_in_ref {
-            Some(id) => {
-                let applied = crate::check_in::AppliedCheckIn {
-                    id,
-                    verb: "vault.notes.history_purge",
-                    effect_digest: crate::check_in::text_history_erase_effect_digest(
-                        entity, through,
-                    ),
-                };
-                self.with_write_txn_grouped(|txn| {
-                    owner.revalidate_in_txn(self, txn)?;
-                    crate::check_in::owner_act_decision_in_txn(self, txn, act_class, Some(&applied))
-                })?
-            }
-            None => crate::check_in::owner_own_proof_decision(act_class),
-        };
         let vault_id = {
             let txn = self.store.env.read_txn().map_err(Error::from)?;
             owner.revalidate_in_txn(self, &txn)?;
             veto_vault_in_txn(self, &txn)?
         };
+        let confirmed = match vault_id {
+            None => erase_now()?,
+            Some(_) => None,
+        };
+        let applied = check_in_ref.map(|id| crate::check_in::AppliedCheckIn {
+            id,
+            verb: "vault.notes.history_purge",
+            effect_digest: crate::check_in::text_history_erase_effect_digest(entity, through),
+        });
         let Some(vault_id) = vault_id else {
             return self
-                .erase_text_history_as(owner, entity, through)
-                .map(|receipt| (TextHistoryErase::Erased(receipt), decision));
+                .erase_text_history_with_check_in(
+                    owner,
+                    entity,
+                    through.or(confirmed.as_deref()),
+                    applied.as_ref(),
+                )
+                .map(|(receipt, decision)| (TextHistoryErase::Erased(receipt), decision));
         };
         // The other Owners object to an exact range, not to "the head then".
         let note = super::pins::entity_type(self, entity)? == Some(ENTITY_TYPE_NOTE);
@@ -175,13 +196,18 @@ impl Vault {
             through,
         })
         .map_err(|_| Error::InvariantViolation("history erase act payload"))?;
-        let act = self.start_authority_act_recorded(
+        let act = self.start_authority_act_applying(
             owner,
             vault_id,
             ERASE_ACT,
             payload,
-            decision.clone(),
+            crate::check_in::ActClass::Erase,
+            applied.as_ref(),
         )?;
+        let decision = act
+            .check_in
+            .clone()
+            .ok_or(Error::InvariantViolation("history erase act decision"))?;
         Ok((TextHistoryErase::Waiting(act), decision))
     }
 
@@ -198,30 +224,110 @@ impl Vault {
         owner: &AuthenticatedOwner,
         act_id: &str,
     ) -> MemoryResult<PurgeReceipt> {
+        self.execute_text_history_erase(owner, act_id, None)
+    }
+
+    /// [`Self::execute_completed_text_history_erase`] over the range the
+    /// owner's confirm bound: a NOTE act that names no frontier runs through
+    /// `confirmed` ([`Self::text_history_erase_act_range`]'s `through`), never
+    /// through a head that moved after the confirm.
+    ///
+    /// # Errors
+    /// As [`Self::execute_completed_text_history_erase`].
+    pub(crate) fn execute_confirmed_text_history_erase(
+        &self,
+        owner: &AuthenticatedOwner,
+        act_id: &str,
+        confirmed: &[u8],
+    ) -> MemoryResult<PurgeReceipt> {
+        self.execute_text_history_erase(owner, act_id, Some(confirmed))
+    }
+
+    /// The range the `erase` act `act_id`, a history erase `owner` started in
+    /// this vault, takes now ([`TextHistoryEraseRange`]): its own frontier,
+    /// or for a NOTE act that names none the NOTE's purge frontier now.
+    ///
+    /// # Errors
+    /// No such act, or one that is no history erase this caller started
+    /// here; the NOTE no longer reads.
+    pub(crate) fn text_history_erase_act_range(
+        &self,
+        owner: &AuthenticatedOwner,
+        act_id: &str,
+    ) -> MemoryResult<TextHistoryEraseRange> {
+        let (entity, through) = {
+            let txn = self.store.env.read_txn().map_err(Error::from)?;
+            let actor = owner.revalidate_in_txn(self, &txn)?;
+            let (_, plan) = self.started_history_erase_in_txn(&txn, &actor, act_id)?;
+            (EntityId::from_bytes(plan.history)?, plan.through)
+        };
+        let through = match through {
+            Some(through) => through,
+            None => self.note_purge_frontier(entity)?,
+        };
+        Ok(TextHistoryEraseRange {
+            history: entity.to_hex(),
+            through,
+        })
+    }
+
+    /// The range a history purge of NOTE `note` that names no frontier takes
+    /// now ([`TextHistoryEraseRange`]).
+    ///
+    /// # Errors
+    /// The NOTE does not read.
+    pub(crate) fn note_history_erase_range(
+        &self,
+        note: &EntityId,
+    ) -> MemoryResult<TextHistoryEraseRange> {
+        Ok(TextHistoryEraseRange {
+            history: note.to_hex(),
+            through: self.note_purge_frontier(*note)?,
+        })
+    }
+
+    /// The `erase` act `act_id` and its history plan, when it is a history
+    /// erase `actor` started in this vault.
+    fn started_history_erase_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        actor: &EntityId,
+        act_id: &str,
+    ) -> MemoryResult<(PendingAuthorityAct, HistoryErase)> {
+        let act = self
+            .pending_authority_act_in_txn(txn, act_id)?
+            .ok_or_else(|| {
+                MemoryError::new(
+                    MEMORY_CODE_NOT_FOUND,
+                    "no such act",
+                    &["Use the act id the history erase returned."],
+                )
+            })?;
+        let vault_id = self
+            .shared_vault_creation_in_txn(txn)?
+            .map(|creation| creation.vault_id);
+        let plan = history_plan(&act)
+            .filter(|_| act.starter == actor.to_hex() && Some(act.vault_id) == vault_id)
+            .ok_or_else(|| {
+                MemoryError::new(
+                    MEMORY_CODE_FORBIDDEN,
+                    "this act is no history erase this caller started in this vault",
+                    &["Execute a history erase act you started here."],
+                )
+            })?;
+        Ok((act, plan))
+    }
+
+    fn execute_text_history_erase(
+        &self,
+        owner: &AuthenticatedOwner,
+        act_id: &str,
+        confirmed: Option<&[u8]>,
+    ) -> MemoryResult<PurgeReceipt> {
         let (actor, entity, through, done) = {
             let txn = self.store.env.read_txn().map_err(Error::from)?;
             let actor = owner.revalidate_in_txn(self, &txn)?;
-            let act = self
-                .pending_authority_act_in_txn(&txn, act_id)?
-                .ok_or_else(|| {
-                    MemoryError::new(
-                        MEMORY_CODE_NOT_FOUND,
-                        "no such act",
-                        &["Use the act id the history erase returned."],
-                    )
-                })?;
-            let vault_id = self
-                .shared_vault_creation_in_txn(&txn)?
-                .map(|creation| creation.vault_id);
-            let plan = history_plan(&act)
-                .filter(|_| act.starter == actor.to_hex() && Some(act.vault_id) == vault_id)
-                .ok_or_else(|| {
-                    MemoryError::new(
-                        MEMORY_CODE_FORBIDDEN,
-                        "this act is no history erase this caller started in this vault",
-                        &["Execute a history erase act you started here."],
-                    )
-                })?;
+            let (act, plan) = self.started_history_erase_in_txn(&txn, &actor, act_id)?;
             let done = act.execution.as_ref().and_then(|run| run.receipt.clone());
             if done.is_none() && !self.authority_act_completed_in_txn(&txn, &act)? {
                 return Err(MemoryError::new(
@@ -243,17 +349,20 @@ impl Vault {
         if super::pins::entity_type(self, &entity)? == Some(ENTITY_TYPE_NOTE) {
             return self
                 .memory(actor, EdgeActorClass::Human)
-                .purge_note_history_for_act(owner, entity, through.as_deref(), act_id);
+                .purge_note_history_for_act(owner, entity, through.as_deref(), act_id, confirmed);
         }
         let Some(through) = through else {
             return Err(Error::CorruptedIndex("history erase act frontier").into());
         };
-        Ok(self.purge_entity_text_history_for(
-            &entity,
-            &through,
-            &DocAuthorization::Owner(owner),
-            self.now_recorded_at(),
-            Some(act_id),
-        )?)
+        Ok(self
+            .purge_entity_text_history_for(
+                &entity,
+                &through,
+                &DocAuthorization::Owner(owner),
+                self.now_recorded_at(),
+                Some(act_id),
+                None,
+            )?
+            .0)
     }
 }

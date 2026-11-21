@@ -335,7 +335,9 @@ fn check_host_compact_rewrite_with(
 
 /// A host's explicit compaction uses the same sealed request, cheap backend,
 /// six-check gate and epoch mint as automatic compaction. No model logic or
-/// direct writes live in its transport handler.
+/// direct writes live in its transport handler. The host's working set
+/// (CROSS-ARCH-0011 amendment "workingSet") lands on the minted summary in
+/// the mint's own transaction, as its carried-over manifest.
 pub(crate) fn host_compact_as_owner(
     memory: &crate::memory::Memory<'_>,
     owner: &crate::consent::AuthenticatedOwner,
@@ -348,6 +350,8 @@ pub(crate) fn host_compact_as_owner(
     if input.token_ceiling == 0 {
         return Err(MemoryError::bad_request("token_ceiling must be positive"));
     }
+    let working_set = crate::context_pack::dedupe_working_set(&input.working_set)
+        .map_err(|error| MemoryError::bad_request(error.to_string()))?;
     if backend.tier_class() != super::CompactionTierClass::Cheap {
         return Err(MemoryError::bad_request(
             "compaction requires a cheap backend",
@@ -407,6 +411,7 @@ pub(crate) fn host_compact_as_owner(
                     .last()
                     .expect("sealed window is nonempty")
                     .turn;
+                let mut carried = 0;
                 let (epoch, summary) = super::epoch::mint_epoch_summary_guarded(
                     vault,
                     &input.session_ref,
@@ -430,7 +435,15 @@ pub(crate) fn host_compact_as_owner(
                             input.session_ref,
                         )
                     },
-                    |_, _| Ok(()),
+                    |wtxn, mint| {
+                        carried = super::carry::carry_working_set_in_txn(
+                            vault,
+                            wtxn,
+                            &mint.summary_id(),
+                            &working_set,
+                        )?;
+                        Ok(())
+                    },
                 )?;
                 return Ok(crate::compaction::host_request::HostCompactResult {
                     epoch,
@@ -439,6 +452,7 @@ pub(crate) fn host_compact_as_owner(
                     keep_list: request.pins.clone(),
                     first_turn: request.turn_start,
                     last_turn,
+                    carried,
                 });
             }
             Err(failure) => retry = Some(failure.check),

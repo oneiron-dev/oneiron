@@ -27,6 +27,7 @@ pub mod affect;
 mod answer_boundary;
 mod archive_delete_wire;
 mod archive_purge;
+pub(crate) mod archive_restore;
 mod artifact_hosting_doors;
 mod asset_doors;
 mod asset_resolve;
@@ -55,14 +56,17 @@ pub mod browser_capture;
 mod browser_solved;
 mod claim_admission;
 mod claim_conflict;
+#[cfg(oneiron_test_support)]
+pub(crate) use claim_conflict::claim_conflict_packet_digest_for_test;
 mod claim_stale;
 pub mod clustering;
 pub mod commitment_doors;
 mod conflict_settle;
-pub(crate) use conflict_settle::conflict_review_held_in;
+pub(crate) use conflict_settle::dreamer_conflict_review_held_in;
 pub mod consolidation;
 pub mod consolidation_frontier;
 pub mod coping_doors;
+mod coping_lookup;
 mod core_write_doors;
 pub mod device_succession;
 mod diagnostics;
@@ -119,6 +123,7 @@ pub mod identity_doors;
 mod inspection;
 mod key_value;
 mod lifted_view;
+pub(crate) use lifted_view::lifted_keys_of_bodies_in_txn;
 mod locality;
 mod machine_write;
 pub mod merge_queue_doors;
@@ -138,6 +143,7 @@ mod read_lane;
 mod read_selection;
 mod reads;
 mod recall;
+pub(crate) mod recall_replay;
 pub use recall::RecallRequest;
 pub mod repo_doors;
 pub(crate) mod repo_secret_reads;
@@ -218,8 +224,9 @@ pub use claims::{
     ClaimChangeVerdict, ClaimInput, ClaimProposalReview, ClaimProposalReviewRequest,
     ClaimSettleDecision, ClaimSettleRequest, ClaimSettlement, ClaimSettlementAnswer,
     ClaimSettlementReason, ClaimSettlementRevert, ClaimSettlementVerdict, CommitOutcome,
-    CommitReceipt, DeleteReceipt, DeleteRequestState, MULTI_CARDINALITY_PREDICATES, MemoryReceipt,
-    PendingWrite, RecordRefusal, RefusalReason, SafeDeleteReason, SettleWarning, SettleWarningCode,
+    CommitReceipt, DELETE_RECEIPT_VERSION_RELEASE, DeleteReceipt, DeleteRequestState,
+    MULTI_CARDINALITY_PREDICATES, MemoryReceipt, PendingWrite, RecordRefusal, RefusalReason,
+    SafeDeleteReason, SettleWarning, SettleWarningCode,
 };
 pub use conflict_settle::{
     DreamerCandidateDecisionsRequest, DreamerDecidedCandidateView,
@@ -259,7 +266,7 @@ pub use export::{
 pub use export_audit::{ExportAuditScope, ExportReceipt};
 pub(crate) use export_audit::{
     ExportCopy, owner_copy_in_txn, record_export, record_raw_export, record_raw_json_export,
-    turn_thread_root,
+    turn_thread_root, whole_vault_exported_since_in_txn,
 };
 pub use export_kept::KeptExportLapse;
 pub use export_transfer_read::{
@@ -277,11 +284,12 @@ pub use key_value::{
 };
 pub use locality::ProducerRows;
 pub use oneiron_contracts::memory::{
-    MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
+    ExtractionCorrectionPair, ExtractionLayout, ExtractionStepSlice, MEMORY_CODE_BAD_REQUEST,
+    MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
     MEMORY_CODE_INVALID_STATE, MEMORY_CODE_LEASE_REQUIRED, MEMORY_CODE_MODEL_UNAVAILABLE,
     MEMORY_CODE_NOT_FOUND, MEMORY_CODE_OFF_RECORD_SESSION_DOOR, MEMORY_CODE_OWNER_BINDING_REQUIRED,
     MEMORY_CODE_PACED_HOLD, MEMORY_CODE_PENDING_ASK, MEMORY_CODE_VAULT_LOCKED_SINGLE_WRITER,
-    MEMORY_CODE_WRONG_ROOT, MemoryError, MemoryGateDenial, MemoryPolicyDenial,
+    MEMORY_CODE_WRONG_ROOT, MemoryError, MemoryGateDenial, MemoryPending, MemoryPolicyDenial,
     MemoryPolicyExceptionProposal, MemoryResult, MemoryWrongRoot,
 };
 pub(crate) use people_verbs::grant_requested_scope;
@@ -318,6 +326,7 @@ pub use crate::lens::{
 pub use oneiron_contracts::memory::MEMORY_CODE_HOST_ACTION_REFUSED;
 pub use oneiron_contracts::memory::MEMORY_CODE_IDENTITY_UNSETTLED;
 pub use oneiron_contracts::memory::MEMORY_CODE_INVENTED_REFERENCE;
+pub use oneiron_contracts::memory::MEMORY_CODE_OWNER_CONFIRM_REQUIRED;
 pub use oneiron_contracts::memory::{CHECK_IN_PENDING_REASON_PREFIX, MEMORY_CODE_CHECK_IN_PENDING};
 // WILL-PLAN L13 row 03: a room's whole off-record stretch, which no
 // consent record admits a session row to manage.
@@ -373,6 +382,7 @@ pub use search_vector::{
 };
 pub(crate) use session_reads::{
     SessionAnswer, SessionRead, SessionReadContext, room_short_ref, scoped_session_text,
+    scoped_session_text_planned,
 };
 pub use shape_card_doors::{
     ShapeGroupResolveRequest, ShapeItemReceipt, ShapeItemReceiptRequest, ShapePlanCardView,
@@ -394,9 +404,10 @@ pub use support::{
 };
 pub(crate) use transcript::TRANSCRIPT_READ_ATTEMPTS;
 pub use transcript::{
-    MAX_TRANSCRIPT_PAGE_TURNS, TranscriptMessage, TranscriptPage, TranscriptTurn,
+    MAX_TRANSCRIPT_PAGE_TURNS, TranscriptMessage, TranscriptPage, TranscriptSpeaker, TranscriptTurn,
 };
 pub(crate) use witness::WITNESS_OCCURRENCE_SKEW_SECS;
+pub(crate) use witness::live_canonical_person_in_txn;
 pub use witness::{
     AppendToStreamRequest, BeginMessageStreamRequest, CancelStreamRequest, CommitMessageRequest,
     MessageBirth, MessageCancelKind, MessageCancelReason, MessageCommitOptions,
@@ -433,9 +444,9 @@ pub(crate) use witness::{
 pub(crate) use booking_publication::verify_public_booking_owner_in_txn;
 pub(crate) use credential_key::{actor_is_vault_owner_in_txn, owner_exemption_holds_in_txn};
 pub(crate) use support::{
-    embedded_owner_shortcut_holds_in_txn, facade_provenance, hard_deleted_refusal,
+    OwnerRow, embedded_owner_shortcut_holds_in_txn, facade_provenance, hard_deleted_refusal,
     verify_actor_binding, verify_actor_binding_in_txn, verify_deletion_authority_in_txn,
-    verify_owner_actor_binding_in_txn,
+    verify_owner_actor_binding_in_txn, verify_owner_binding_in_txn,
 };
 pub(crate) use witness::{
     ArchivedMessage, ArchivedMessageAdmission, ArchivedMessageLink, admitted_foreign,
@@ -445,8 +456,8 @@ pub(crate) use witness::{
 #[cfg(feature = "sync")]
 pub(crate) use witness::{ForeignTurn, speak_as_counterparty};
 pub(crate) use witness::{
-    IMPORTED_SOURCE_KEY, ImportedTurnStamp, guard_import_stamp, turn_admits_message_bodies,
-    witness_message_body,
+    IMPORTED_SOURCE_KEY, ImportedTurnStamp, guard_import_stamp, guard_phone_thread_mark,
+    turn_admits_message_bodies, witness_message_body,
 };
 pub(crate) use witness::{
     SourceAttribution, SourceSpeaker, imported_message_in_txn, source_speaker_in_txn,

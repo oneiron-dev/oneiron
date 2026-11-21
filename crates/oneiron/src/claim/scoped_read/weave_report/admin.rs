@@ -85,7 +85,7 @@ impl ScopedRead<'_> {
         let key = &self.actor_key;
         if key.actor_ref() != admin.actor().to_hex()
             || key.reads_as_vault_owner()
-            || key.owner_exemption.is_some()
+            || key.relationship_gate_lift_owner().is_some()
             || !key
                 .authority_scope()
                 .is_some_and(|held| held.is_narrowing_of(&scope))
@@ -115,9 +115,11 @@ impl Vault {
     ) -> Result<ScopedReadResult<WeaveReport>> {
         let txn = weave_admin_read_txn(self)?;
         let lane = ScopedRead::weave_admin_lane_in(self, &txn, admin, frame)?;
-        let mut report = lane.weave_report_in_txn(&txn, WeaveReader::Admin(admin), recipe)?;
+        let held = lane.held_for(None);
+        let mut report =
+            lane.weave_report_held_in_txn(&txn, WeaveReader::Admin(admin), recipe, &held)?;
         let (filter, policy) = lane.resolve_retrieval_filter_in(&txn, None)?;
-        lane.redact_sieve_decisions_in(&txn, &policy, &filter, &mut report.value);
+        lane.redact_sieve_decisions_in(&txn, &policy, &filter, &held, &mut report.value);
         Ok(report)
     }
 }

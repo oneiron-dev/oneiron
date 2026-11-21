@@ -661,7 +661,13 @@ fn charter_drift_degrades_to_pending_without_debits() -> Result<()> {
         ),
     )?;
     let pending = vault.propose_connector_charter(&key_id, "never delete on line", 1_001)?;
-    vault.approve_connector_charter(&key_id, pending.compiled_hash, "owner", 1_002)?;
+    vault.approve_connector_charter(
+        &key_id,
+        pending.text_hash,
+        pending.compiled_hash,
+        "owner",
+        1_002,
+    )?;
     let policy = resolve(&vault)?;
     let mut effect = external_effect_gate_input("sender", "send", "line");
     effect.send_ref = Some("intent:one".to_owned());
@@ -702,10 +708,21 @@ fn charter_drift_degrades_to_pending_without_debits() -> Result<()> {
 
     // A fresh propose/approve cycle re-stamps and restores enforcement.
     let restamp = vault.propose_connector_charter(&key_id, "never delete on line", 1_010)?;
-    vault.approve_connector_charter(&key_id, restamp.compiled_hash, "owner", 1_011)?;
+    vault.approve_connector_charter(
+        &key_id,
+        restamp.text_hash,
+        restamp.compiled_hash,
+        "owner",
+        1_011,
+    )?;
     let (decision, charge) = check_effect(&vault, &effect, &policy)?;
     assert_eq!(decision.outcome(), GateOutcome::Allow);
-    assert!(charge.expect("budget stage ran").matched_rows.contains(&0));
+    assert!(
+        charge
+            .expect("budget stage ran")
+            .matched_rows
+            .contains(&crate::connector_key::EffectorBudgetRowId::key(0))
+    );
     Ok(())
 }
 

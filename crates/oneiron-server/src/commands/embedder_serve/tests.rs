@@ -65,7 +65,8 @@ fn widths_the_environment_names_are_served() {
 fn a_config_file_that_names_no_width_serves_the_model_s() {
     let dir = tempfile::tempdir().expect("config dir");
     let path = dir.path().join("oneiron.toml");
-    std::fs::write(&path, "[embedder]\nprovider = \"local\"\n").expect("write config");
+    crate::owner_only_file::write_owner_only_file(&path, "[embedder]\nprovider = \"local\"\n")
+        .expect("write config");
     let (served, _) = served_config_from(
         &serve_args(Some(path), on_cpu(), None),
         &EnvConfig::default(),

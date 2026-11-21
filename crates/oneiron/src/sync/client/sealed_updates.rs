@@ -139,9 +139,10 @@ impl SyncClient {
     /// keeps from its home, goes sealed into the outbox when its world relays
     /// sealed and this machine has met a home that takes sealed updates. Any
     /// other update is left to the daily sealed bundle, as before. A fault is
-    /// logged, never the caller's.
+    /// logged, never the caller's. A member lane keeps none (H8-SHARED-ENV-LANE = B):
+    /// the owner-machines relay runs no leg on it.
     pub(crate) fn relay_withheld_update(&self, window_key: &str, update: &[u8]) {
-        if self.config.federation_peer.is_some() {
+        if self.config.federation_peer.is_some() || self.config.member_lane {
             return;
         }
         if let Err(error) = self.keep_sealed_update(window_key, update) {
@@ -185,12 +186,14 @@ impl SyncClient {
     /// # Errors
     /// [`TransportError::UnknownTag`] on a federation lane; a frame that does
     /// not decode, or one only a machine sends; [`TransportError::Storage`]
-    /// where the cursor or the outbox could not be read or written.
+    /// where the cursor or the outbox could not be read or written. A member
+    /// lane takes none either (H8-SHARED-ENV-LANE = B): the home admits no
+    /// sealed-update frame on it, so one stays the unknown tag it was.
     pub(super) fn handle_sealed_update_frame(
         &mut self,
         payload: &[u8],
     ) -> Result<Vec<Vec<u8>>, TransportError> {
-        if self.config.federation_peer.is_some() {
+        if self.config.federation_peer.is_some() || self.config.member_lane {
             return Err(TransportError::UnknownTag(TAG_SEALED_UPDATE));
         }
         let storage = |error: crate::error::Error| TransportError::Storage(error.to_string());
@@ -660,8 +663,12 @@ impl SyncClient {
 
     /// What this connection owes its home now: every [`SINCE_EVERY`], a
     /// catch-up from its cursor, with the outbox offered again from the
-    /// start; and the outbox updates not yet sent.
+    /// start; and the outbox updates not yet sent. A member lane owes nothing
+    /// (H8-SHARED-ENV-LANE = B): its home never offers.
     fn sealed_update_frames_due(&mut self) -> Vec<Vec<u8>> {
+        if self.config.member_lane {
+            return Vec::new();
+        }
         let Some(epoch) = self.sealed_updates.offered else {
             return Vec::new();
         };

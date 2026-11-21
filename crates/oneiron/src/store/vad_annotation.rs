@@ -21,25 +21,10 @@ use oneiron_contracts::affect::VadAnnotation;
 pub(crate) const VAD_ANNOTATION_META: SideTable<VadAnnotationMetaKey, VadAnnotation, Named> =
     SideTable::new(&side_table::AFFECT_VAD_ANNOTATION_META);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SideKey)]
 pub(crate) struct VadAnnotationMetaKey {
     pub(crate) entity_type: u8,
     pub(crate) id: EntityId,
-}
-
-impl SideKey for VadAnnotationMetaKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.push(self.entity_type);
-        out.extend_from_slice(self.id.as_bytes());
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let (&entity_type, rest) = bytes.split_first()?;
-        Some(Self {
-            entity_type,
-            id: EntityId::decode_key(rest)?,
-        })
-    }
 }
 
 pub(crate) fn vad_annotation_meta_key(entity_type: u8, id: &EntityId) -> VadAnnotationMetaKey {

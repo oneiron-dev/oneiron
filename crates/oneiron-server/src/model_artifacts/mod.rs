@@ -24,8 +24,12 @@ use licence::LicenceClass;
 /// variant names the model; none carries a hub token.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum ArtifactError {
-    /// A non-commercial or unknown licence: the download never starts.
-    #[error("model {model}: licence {licence} is {class}, so the download is refused")]
+    /// A non-commercial or unknown licence: the download never starts, unless
+    /// a self-hosted node's owner admits it.
+    #[error(
+        "model {model}: licence {licence} is {class}, so the download is refused (on a \
+         self-hosted node the owner may admit it with models.install.allow_noncommercial_licences)"
+    )]
     LicenceRefused {
         model: String,
         licence: String,

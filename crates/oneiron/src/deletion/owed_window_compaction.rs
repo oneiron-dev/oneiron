@@ -70,6 +70,7 @@ fn raise_in_txn(
         value.extend_from_slice(receipt.as_bytes());
     }
     vault.store.sync_queue.put(wtxn, &key, &value)?;
+    crate::housekeeping::jobs::erase_obligation_queued_in_txn(&vault.store, wtxn)?;
     Ok(key)
 }
 

@@ -8,6 +8,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::*;
 use crate::store::Store;
 
+mod belief;
+#[cfg(oneiron_test_support)]
+mod structure_door;
+
+pub(super) use belief::{fold_belief_structure_in_txn, stage_batch_for_belief};
+
 /// The key an admission names: an enrollment, a rotation, a re-root, or the
 /// owner's enrollment of a device's own owner signing key (FIX 4920), which
 /// its primary signer, an owner root, vouches for.
@@ -25,7 +31,7 @@ pub(super) fn admits_device(op: &AuthorityOp) -> Option<&DeviceAuthority> {
 
 /// The log's consent structure, read from its signed rows alone, so the
 /// fold's bounds and the store doors judge a row the same way.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct AuthorityStructure {
     /// The verified genesis rows. A log with more than one, even from one
     /// key, has no admitters: the fold reads each as its own vault root.
@@ -45,13 +51,17 @@ pub(crate) struct AuthorityStructure {
     /// The install keys only other anchors' revisions named. Such a key
     /// signs as a machine key does, but as a stranger ([`Self::is_stranger`]).
     stranger_keys: BTreeSet<(crate::EntityId, AuthorityKey)>,
-    /// The machines a filed removal names: removal is terminal, so a
-    /// frontier join one of them carries is a stranger's (FIX 7908).
+    /// The machines a removal filed as this install's own names (a slip
+    /// issuer's or an own anchor's mark, or an answer an own carrier key
+    /// signed): removal is terminal, so a frontier join one of them carries
+    /// is a stranger's (FIX 7908). A stranger anchor's removal mark removes
+    /// nothing here, as the fold reads a foreign anchor's chains only under
+    /// the pin (FIX [STRANGER-REMOVED-MARK-GLOBAL]).
     removed: BTreeSet<crate::EntityId>,
     /// The owner anchors a root record named, each signed by its own anchor
     /// alone (world privacy P6b). An anchor signs only what the fold's anchor
-    /// rules let it: its own root records and its machine marks. It never
-    /// becomes an admitter or a slip issuer.
+    /// rules let it: its own root records, its machine marks and its root
+    /// appointments. It never becomes an admitter or a slip issuer.
     anchors: BTreeSet<[u8; 32]>,
     /// The anchors this install takes rows from as its own: [`LocalRoots`]'
     /// anchors.
@@ -72,7 +82,7 @@ pub(crate) struct AuthorityStructure {
 /// install pins its root:
 /// its root records, its marks and the world rows of the install keys only
 /// such marks name share one bound (Astra #1422e F1; the Engine, r23).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(super) struct LocalRoots {
     anchors: BTreeSet<[u8; 32]>,
     roots: BTreeSet<RecoveryRootId>,
@@ -128,7 +138,7 @@ pub(super) fn is_consent_device(device: &DeviceAuthority) -> bool {
 pub(super) fn authority_structure<'a>(
     entries: impl Iterator<Item = &'a AuthorityLogEntry>,
 ) -> AuthorityStructure {
-    let mut builder: StructureBuilder<'a> = StructureBuilder::default();
+    let mut builder: StructureBuilder<&'a AuthorityLogEntry> = StructureBuilder::default();
     for entry in entries {
         builder.push(entry);
     }
@@ -142,7 +152,7 @@ pub(super) fn authority_structure_under<'a>(
     entries: impl IntoIterator<Item = &'a AuthorityLogEntry>,
     local: LocalRoots,
 ) -> AuthorityStructure {
-    let mut builder: StructureBuilder<'a> = StructureBuilder::under(local);
+    let mut builder: StructureBuilder<&'a AuthorityLogEntry> = StructureBuilder::under(local);
     for entry in entries {
         builder.push(entry);
     }
@@ -264,23 +274,34 @@ fn ancestry_held(
 /// [`authority_structure`] grown a row at a time, as an import stages its
 /// rows: the same structure for the same rows, in any order. A row that
 /// waits for a grant is filed under each key that could give it, so a
-/// settle visits only the rows its new grants wake.
-#[derive(Debug, Default)]
-pub(super) struct StructureBuilder<'a> {
+/// settle visits only the rows its new grants wake. `R` holds a row: a
+/// borrow of it, or a shared row a kept door view owns.
+#[derive(Debug, Clone)]
+pub(super) struct StructureBuilder<R> {
     pub(super) structure: AuthorityStructure,
     root_roles: u16,
     /// Admissions and machine revisions pushed since the last settle.
-    fresh: Vec<&'a AuthorityLogEntry>,
+    fresh: Vec<R>,
     /// Owner and admin admissions no admitter has signed yet, under each
     /// key that signed them.
-    admissions: BTreeMap<AuthorityKey, Vec<&'a AuthorityLogEntry>>,
+    admissions: BTreeMap<AuthorityKey, Vec<R>>,
     /// Machine revisions whose primary signer is no slip issuer yet, under
     /// that signer: an owner answer under its carrier's install key.
-    profiles: BTreeMap<AuthorityKey, Vec<&'a AuthorityLogEntry>>,
+    profiles: BTreeMap<AuthorityKey, Vec<R>>,
     /// The install keys [`Self::file_profile`] granted that [`Self::settle`]
     /// has not yet woken the answers they carry with: the fixed point that
     /// makes a carrier-approved key usable downstream in any batch order.
     woken: Vec<AuthorityKey>,
+    /// The owner answers [`Self::file_profile`] took while their carrier's
+    /// install key stood as a stranger's, under that key. Once a slip
+    /// issuer's or an own anchor's revision takes the key as own,
+    /// [`Self::settle`] files them again as own, so a removal one of them
+    /// carries counts in any row order (REVIEW-9555 P1).
+    stranger_answers: BTreeMap<AuthorityKey, Vec<R>>,
+    /// The install keys [`Self::file_profile`] took as own after they stood
+    /// as a stranger's, whose answers [`Self::settle`] has not yet filed
+    /// again.
+    promoted: Vec<AuthorityKey>,
     /// The grants [`Self::settle`] made since the caller last took them.
     pub(super) grown: Vec<Grant>,
 }
@@ -294,7 +315,37 @@ pub(super) enum Grant {
     Anchor(AuthorityKey),
 }
 
-impl<'a> StructureBuilder<'a> {
+impl<R> Default for StructureBuilder<R> {
+    fn default() -> Self {
+        Self {
+            structure: AuthorityStructure::default(),
+            root_roles: 0,
+            fresh: Vec::new(),
+            admissions: BTreeMap::new(),
+            profiles: BTreeMap::new(),
+            woken: Vec::new(),
+            stranger_answers: BTreeMap::new(),
+            promoted: Vec::new(),
+            grown: Vec::new(),
+        }
+    }
+}
+
+/// Whether [`StructureBuilder::push`] files `entry`: a genesis, a root
+/// record, a machine revision, a root appointment or a consent admission.
+/// It leaves the builder as it was for any other row, so the structure of a
+/// log with such rows added is the structure without them.
+pub(super) fn structure_reads(entry: &AuthorityLogEntry) -> bool {
+    match &entry.op {
+        AuthorityOp::Genesis { .. }
+        | AuthorityOp::MachineProfile(_)
+        | AuthorityOp::OwnerRoot(_)
+        | AuthorityOp::RootAppointment(_) => true,
+        op => admits_device(op).is_some_and(is_consent_device),
+    }
+}
+
+impl<R: Clone + std::ops::Deref<Target = AuthorityLogEntry>> StructureBuilder<R> {
     /// A builder that takes `local`'s anchors as this install's own.
     pub(super) fn under(local: LocalRoots) -> Self {
         let mut builder = Self::default();
@@ -304,24 +355,18 @@ impl<'a> StructureBuilder<'a> {
     }
 
     /// Adds `entry` unsettled.
-    pub(super) fn push(&mut self, entry: &'a AuthorityLogEntry) {
-        match &entry.op {
-            AuthorityOp::Genesis { device, .. } => {
-                if device.key == *entry.signer_key()
-                    && is_consent_device(device)
-                    && !self.structure.roots.contains(entry)
-                    && verify_entry_signatures(entry).is_ok()
-                {
-                    self.structure.roots.push(entry.clone());
-                    self.root_roles |= device.roles;
-                }
+    pub(super) fn push(&mut self, entry: R) {
+        if let AuthorityOp::Genesis { device, .. } = &entry.op {
+            if device.key == *entry.signer_key()
+                && is_consent_device(device)
+                && !self.structure.roots.contains(&entry)
+                && verify_entry_signatures(&entry).is_ok()
+            {
+                self.structure.roots.push(AuthorityLogEntry::clone(&entry));
+                self.root_roles |= device.roles;
             }
-            AuthorityOp::MachineProfile(_) | AuthorityOp::OwnerRoot(_) => self.fresh.push(entry),
-            op => {
-                if admits_device(op).is_some_and(is_consent_device) {
-                    self.fresh.push(entry);
-                }
-            }
+        } else if structure_reads(&entry) {
+            self.fresh.push(entry);
         }
     }
 
@@ -354,7 +399,7 @@ impl<'a> StructureBuilder<'a> {
         }
         for entry in std::mem::take(&mut self.fresh) {
             if let AuthorityOp::OwnerRoot(record) = &entry.op {
-                let Some(anchor) = self_signed_root(entry) else {
+                let Some(anchor) = self_signed_root(&entry) else {
                     continue;
                 };
                 if self.structure.local.roots.contains(&record.root)
@@ -367,21 +412,35 @@ impl<'a> StructureBuilder<'a> {
                 }
             } else if matches!(entry.op, AuthorityOp::MachineProfile(_)) {
                 self.file_profile(entry);
-            } else if signed_by(entry, &self.structure.admitters) {
-                self.admit(entry, &mut admitted, &mut issued);
+            } else if let AuthorityOp::RootAppointment(appointment) = &entry.op {
+                // The pinned root's anchor's appointment admits its
+                // successor, a root key (OWNER-ANCHOR-ROOT-RECOVERY); the
+                // anchor itself stays no admitter and no issuer, and an
+                // appointment out of shape (its successor its own signer, or
+                // not in the one successor shape) admits nothing. Another
+                // anchor's admits nothing: only this install's pin counts one.
+                if self.structure.is_own_anchor(entry.signer_key())
+                    && entry.cosigns.is_empty()
+                    && entry.validate_shape().is_ok()
+                    && verify_entry_signatures(&entry).is_ok()
+                {
+                    self.admit_key(&appointment.successor, &mut admitted, &mut issued);
+                }
+            } else if signed_by(&entry, &self.structure.admitters) {
+                self.admit(&entry, &mut admitted, &mut issued);
             } else {
                 for signature in std::iter::once(&entry.signer).chain(&entry.cosigns) {
                     self.admissions
                         .entry(signature.public_key.clone())
                         .or_default()
-                        .push(entry);
+                        .push(entry.clone());
                 }
             }
         }
         loop {
             if let Some(key) = admitted.pop() {
                 for entry in self.admissions.remove(&key).unwrap_or_default() {
-                    self.admit(entry, &mut admitted, &mut issued);
+                    self.admit(&entry, &mut admitted, &mut issued);
                 }
                 self.grown.push(Grant::Admitter(key));
             } else if let Some(key) = issued.pop() {
@@ -396,6 +455,10 @@ impl<'a> StructureBuilder<'a> {
                 self.grown.push(Grant::Anchor(key));
             } else if let Some(key) = self.woken.pop() {
                 for entry in self.profiles.remove(&key).unwrap_or_default() {
+                    self.file_profile(entry);
+                }
+            } else if let Some(key) = self.promoted.pop() {
+                for entry in self.stranger_answers.remove(&key).unwrap_or_default() {
                     self.file_profile(entry);
                 }
             } else {
@@ -417,6 +480,17 @@ impl<'a> StructureBuilder<'a> {
         if verify_entry_signatures(entry).is_err() {
             return;
         }
+        self.admit_key(device, admitted, issued);
+    }
+
+    /// Admits `device`'s key, and makes it a slip issuer when it holds the
+    /// owner role.
+    fn admit_key(
+        &mut self,
+        device: &DeviceAuthority,
+        admitted: &mut Vec<AuthorityKey>,
+        issued: &mut Vec<AuthorityKey>,
+    ) {
         if device.roles & ROLE_OWNER != 0 && self.structure.issuers.insert(device.key.clone()) {
             issued.push(device.key.clone());
         }
@@ -430,8 +504,11 @@ impl<'a> StructureBuilder<'a> {
     /// install's own, or files it under its signer. An owner answer is
     /// taken when its carrier's install key signed it, alone or beside one
     /// owner key's proof that the fold judges (row CARRIER-OWNER-PROOF), as
-    /// its carrier's key stands: own, or a stranger's (mesh PR1b).
-    fn file_profile(&mut self, entry: &'a AuthorityLogEntry) {
+    /// its carrier's key stands: own, or a stranger's (mesh PR1b). Only a
+    /// revision taken as own files its removal (FIX
+    /// [STRANGER-REMOVED-MARK-GLOBAL]). An answer taken as a stranger's is
+    /// filed again once its carrier's key is taken as own (REVIEW-9555 P1).
+    fn file_profile(&mut self, entry: R) {
         let AuthorityOp::MachineProfile(profile) = &entry.op else {
             return;
         };
@@ -452,19 +529,30 @@ impl<'a> StructureBuilder<'a> {
             }
         };
         if !own && !stranger {
-            self.profiles.entry(signer.clone()).or_default().push(entry);
+            self.profiles
+                .entry(signer.clone())
+                .or_default()
+                .push(entry.clone());
             return;
         }
-        if verify_entry_signatures(entry).is_err() {
+        if verify_entry_signatures(&entry).is_err() {
             return;
         }
-        if profile.role == MachineRole::Removed {
+        if own && profile.role == MachineRole::Removed {
             self.structure.removed.insert(profile.machine);
+        }
+        if !own && profile.carrier.is_some() {
+            self.stranger_answers
+                .entry(signer.clone())
+                .or_default()
+                .push(entry.clone());
         }
         let key = (profile.machine, AuthorityKey::Ed25519(profile.machine_key));
         let vouched = self.structure.vouching_key(&key);
         if own {
-            self.structure.stranger_keys.remove(&key);
+            if self.structure.stranger_keys.remove(&key) {
+                self.promoted.push(key.1.clone());
+            }
             self.structure.machine_keys.insert(key.clone());
         } else if !self.structure.machine_keys.contains(&key) {
             self.structure.stranger_keys.insert(key.clone());
@@ -477,6 +565,11 @@ impl<'a> StructureBuilder<'a> {
 }
 
 impl AuthorityStructure {
+    /// Whether the log holds exactly one verified genesis row.
+    pub(super) fn has_one_root(&self) -> bool {
+        self.roots.len() == 1
+    }
+
     /// Whether a key that may vouch for `entry` signed or cosigned it: an
     /// admitter, or, for a world edit, a world key record, a residence result,
     /// a grant travel choice or an owner work request or result, the install
@@ -512,6 +605,8 @@ impl AuthorityStructure {
             AuthorityOp::AgentGrantAct(record) => install_key(record.machine),
             AuthorityOp::MembershipExecution(record) => install_key(record.machine),
             AuthorityOp::PolicySettingSet(set) => install_key(set.machine),
+            AuthorityOp::SettingCopy(copy) => install_key(copy.machine),
+            AuthorityOp::SettingPackHead(head) => install_key(head.machine),
             AuthorityOp::ExportAct(record) => install_key(record.machine),
             // A frontier join: its carrier's install key, as for the act it
             // leads to, a stranger's once its carrier is removed
@@ -543,6 +638,11 @@ impl AuthorityStructure {
                 None => self.is_anchor(entry.signer_key()) && entry.cosigns.is_empty(),
             },
             AuthorityOp::OwnerRoot(_) => self_signed_root(entry).is_some(),
+            // A root appointment (OWNER-ANCHOR-ROOT-RECOVERY): a stored
+            // root's anchor signs it alone, as its marks.
+            AuthorityOp::RootAppointment(_) => {
+                self.is_anchor(entry.signer_key()) && entry.cosigns.is_empty()
+            }
             // An owner answer: its carrier's install key, alone or beside one
             // owner key's proof, which the fold judges (mesh PR1b, row
             // CARRIER-OWNER-PROOF).
@@ -599,6 +699,8 @@ impl AuthorityStructure {
             AuthorityOp::AgentGrantAct(record) => machine_key(record.machine),
             AuthorityOp::MembershipExecution(record) => machine_key(record.machine),
             AuthorityOp::PolicySettingSet(set) => machine_key(set.machine),
+            AuthorityOp::SettingCopy(copy) => machine_key(copy.machine),
+            AuthorityOp::SettingPackHead(head) => machine_key(head.machine),
             AuthorityOp::ExportAct(record) => machine_key(record.machine),
             AuthorityOp::FrontierJoin(FrontierJoin {
                 family: FrontierJoinFamily::Install(carrier),
@@ -629,6 +731,9 @@ impl AuthorityStructure {
                             if self.awaited_anchors.contains(anchor))
                 }
             },
+            // Only the pinned root's anchor appoints a root here: another
+            // anchor's appointment admits no successor.
+            AuthorityOp::RootAppointment(_) => !self.is_own_anchor(signer),
             _ => false,
         }
     }
@@ -647,6 +752,29 @@ impl AuthorityStructure {
 
     pub(super) fn is_own_anchor(&self, key: &AuthorityKey) -> bool {
         matches!(key, AuthorityKey::Ed25519(anchor) if self.own_anchors.contains(anchor))
+    }
+
+    /// Whether this install believes `entry` (design pass 29: "a chain is
+    /// read only by a reader that believes its admitter"): a key may vouch
+    /// for it, it vouches as no stranger's, and no anchor this install only
+    /// awaits signed it. The roster's rows and the rows of this install's own
+    /// anchors (the pin's and the earlier admitter's) are believed. A foreign
+    /// anchor's rows, an awaited root's own rows, the rows of install keys
+    /// only such marks name, a removed machine's frontier joins (every row
+    /// [`Self::is_stranger`] reads as a stranger's), and rows no key vouches
+    /// for are not: the fold
+    /// trusts an anchor's chains only under the pin (`FoldedMachine::trusted`),
+    /// and awaiting widens only what the gate stores.
+    pub(super) fn believes(&self, entry: &AuthorityLogEntry) -> bool {
+        self.vouches_for(entry)
+            && !self.is_stranger(entry)
+            && (signed_by(entry, &self.admitters) || !self.is_awaited_only(entry.signer_key()))
+    }
+
+    /// An anchor of a root this install awaits and does not take as its own.
+    fn is_awaited_only(&self, key: &AuthorityKey) -> bool {
+        matches!(key, AuthorityKey::Ed25519(anchor)
+            if self.awaited_anchors.contains(anchor) && !self.own_anchors.contains(anchor))
     }
 
     /// Whether `key` signs rows the fold may come to admit: an admitter, an

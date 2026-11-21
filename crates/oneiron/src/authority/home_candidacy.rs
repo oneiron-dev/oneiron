@@ -19,7 +19,9 @@
 //! has not answered never stand as candidates through a declaration
 //! (Engine 10-19, ruling 2).
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
+
+use oneiron_persistent_collections::{PersistentMap, PersistentSet};
 
 use crate::error::{Error, Result};
 use crate::store::Store;
@@ -70,15 +72,15 @@ impl DeclaredHomeCandidacy {
 /// declaration of it replaced, and every one a later one replaced.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct HomeCandidacyState {
-    live: BTreeMap<EntityId, BTreeMap<AuthorityEntryHash, DeclaredHomeCandidacy>>,
-    replaced: BTreeSet<AuthorityEntryHash>,
+    live: PersistentMap<EntityId, PersistentMap<AuthorityEntryHash, DeclaredHomeCandidacy>>,
+    replaced: PersistentSet<AuthorityEntryHash>,
 }
 
 /// The `HomeCandidacy` transition, after the shape, signature, retired,
 /// sequence-floor, parent-merge and vault checks and before any roster
 /// check: its signer is the declaring machine's install key, never a roster
-/// key (FIX 2222: the host root acts as nobody), and some chain of the
-/// machine must name it. It replaces every declaration of its machine its
+/// key (FIX 2222: the host root acts as nobody), and the machine's roster
+/// chain must name it. It replaces every declaration of its machine its
 /// parents carry.
 pub(super) fn apply_home_candidacy(
     state: &mut FoldState,
@@ -128,16 +130,21 @@ pub(super) fn apply_home_candidacy(
 pub(super) fn merge_home_candidacies(merged: &mut HomeCandidacyState, right: &HomeCandidacyState) {
     merged.replaced.extend(right.replaced.iter().copied());
     for (machine, declarations) in &right.live {
-        let live = merged.live.entry(*machine).or_default();
-        for (hash, declaration) in declarations {
-            live.entry(*hash).or_insert_with(|| declaration.clone());
-        }
+        merged.live.modify_or_default(*machine, |live| {
+            for (hash, declaration) in declarations {
+                live.entry(*hash).or_insert_with(|| declaration.clone());
+            }
+        });
     }
+    // A machine whose declarations stay as they were is not written.
     let HomeCandidacyState { live, replaced } = merged;
-    live.retain(|_, declarations| {
-        declarations.retain(|hash, _| !replaced.contains(hash));
-        !declarations.is_empty()
-    });
+    let machines: Vec<EntityId> = live.keys().copied().collect();
+    for machine in &machines {
+        live.modify(machine, |declarations| {
+            declarations.retain(|hash, _| !replaced.contains(hash));
+        });
+    }
+    live.retain(|_, declarations| !declarations.is_empty());
 }
 
 /// Each machine's newest declaration: the one no later declaration of it
@@ -196,7 +203,7 @@ impl AuthorityFold {
         let declared = self.home_candidacy.get(&machine)?;
         let pin = self.pinned_root.as_ref();
         let folded = self.machines.get(&machine);
-        let stands = super::owner_act_signer_admits(folded, &self.roster, &declared.key);
+        let stands = super::owner_act_signer_admits(folded, &self.roster, &declared.key, pin);
         let owner_machine = stands
             && folded.and_then(|folded| owner_machine_key(folded, pin)) == Some(declared.key);
         Some(JudgedHomeCandidacy {
@@ -306,7 +313,12 @@ impl Vault {
             .ok_or_else(|| authority_refused(NO_CARRIER))?;
         let public_key = key.verifying_key().to_bytes();
         let folded = fold.machine(machine);
-        if !super::owner_act_signer_admits(folded, &fold.roster, &public_key) {
+        if !super::owner_act_signer_admits(
+            folded,
+            &fold.roster,
+            &public_key,
+            fold.pinned_root.as_ref(),
+        ) {
             return Err(authority_refused(NO_CARRIER));
         }
         let cloud = folded
