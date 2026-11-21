@@ -118,11 +118,10 @@ impl RecoveryBoxCancelProof {
             }
             Some(RecoveryBoxRelease {
                 receipt,
-                started_at_ms: Some(started_at_ms),
+                started_at_ms: Some(_),
             }) => {
-                transcript.push(RELEASE_TAG_RECEIPT_AND_START);
+                transcript.push(RELEASE_TAG_RECEIPT);
                 transcript.extend_from_slice(&receipt.to_be_bytes());
-                transcript.extend_from_slice(&started_at_ms.to_be_bytes());
             }
         }
         transcript
