@@ -576,6 +576,16 @@ fn deadline_recall_ids(
     proof: &VerifiedSlip,
     effort: oneiron::memory::Effort,
 ) -> BTreeSet<EntityId> {
+    deadline_recall_ids_within(fixture, agent, proof, effort, 10)
+}
+
+fn deadline_recall_ids_within(
+    fixture: &Fixture,
+    agent: EntityId,
+    proof: &VerifiedSlip,
+    effort: oneiron::memory::Effort,
+    limit: usize,
+) -> BTreeSet<EntityId> {
     use oneiron::memory::RecallScope;
     use oneiron::retrieval_depth::{
         RecallExecution, RetrievalDeadline, still_deadline_clock_for_test,
@@ -595,7 +605,7 @@ fn deadline_recall_ids(
             RARE,
             effort,
             &RecallScope::default(),
-            10,
+            limit,
             None,
             None,
             &RecallExecution {
@@ -726,5 +736,341 @@ fn deadline_recall_seeds_readable_match_past_refused_rows() {
         with.contains(&neighbour),
         "FAILBEFORE RECALL-PPR-SEED-SCANS-UNSCOPED-CUT: refused rows take no seed \
          place before the cut, so readable R still seeds its graph-only neighbour N"
+    );
+}
+
+#[test]
+fn room_union_count_floor_ignores_no_count_postings() {
+    use oneiron::WriteActor;
+    use oneiron::code_run::{
+        HostSelfDispatcher, SelfCall, SelfDispatchOutcome, SelfDispatcher, SelfMemorySearchCall,
+    };
+    use oneiron::off_record::OffRecordBackendClass;
+
+    let fixture = fixture();
+    let rare = put_text_claim(&fixture, fixture.facet, RARE);
+    let common = put_text_claim(&fixture, fixture.facet, COMMON);
+    let readable = BTreeSet::from([rare, common]);
+    let (agent, proof) = records_reader_proof(&fixture, &readable);
+    let key = fixture
+        .vault
+        .credential_read_key(&proof)
+        .expect("FIXTURE: resolve the room reader's records credential")
+        .expect("FIXTURE: the credential grants read");
+    let base_docs = fixture
+        .vault
+        .text_index_status()
+        .expect("FIXTURE: base's document count before the room indexes")
+        .total_docs;
+    let session = fixture
+        .vault
+        .off_record_session_vault()
+        .enter("room-union-count-floor", OffRecordBackendClass::Local)
+        .expect("FIXTURE: an off-record stretch with an overlay over base");
+    fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .with_owner_authorship(&fixture.owner_proof)
+        .create_note_in_session(&session, "research", "roomcountpin", &[])
+        .expect("FIXTURE: one indexed room NOTE pins the overlay's document count");
+    let room_marker = fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .in_off_record_session(session.session_ref())
+        .raw_search_text("roomcountpin", 2)
+        .expect("FIXTURE: the owner's composed search reads the indexed room NOTE");
+    assert_eq!(
+        room_marker.len(),
+        1,
+        "FIXTURE: the count-pinning NOTE is indexed in the room"
+    );
+    assert!(
+        fixture
+            .vault
+            .search_text("roomcountpin", 2)
+            .expect("GUARD: base search for the room's marker")
+            .is_empty(),
+        "GUARD: the indexed count-pinning write belongs to the room, not base"
+    );
+    // The first room Text op copies base's total_docs and adds this NOTE.
+    // The overlay's single-value sentinel then shadows later base counts;
+    // its posting cursors still merge later base duplicates. No further room
+    // text writes occur below. The room count has no public getter.
+    let pinned_docs = usize::try_from(base_docs).expect("FIXTURE: base count fits usize") + 1;
+    let h = pinned_docs + 1;
+    assert!(h > pinned_docs, "GUARD: H exceeds the room's pinned count");
+    let dispatcher = HostSelfDispatcher::for_off_record_session(
+        &session,
+        WriteActor::new(agent, EdgeActorClass::Agent),
+        "room-union-count-floor-reader",
+    )
+    .expect("FIXTURE: the reader binds a run to the live stretch")
+    .with_agent_verb_door(Arc::new(RoomRecordsReader(key)));
+    let scores = || {
+        let outcome = dispatcher
+            .dispatch(SelfCall::MemorySearch(SelfMemorySearchCall::new(QUERY, 10)))
+            .expect("FIXTURE: records-caveated BM25 search through the room's union");
+        let SelfDispatchOutcome::MemorySearch(found) = outcome else {
+            panic!("FIXTURE: the room search must answer with scores, got {outcome:?}");
+        };
+        assert_eq!(
+            found.results.len(),
+            2,
+            "FIXTURE: the room search serves exactly two hits, before and after refused rows"
+        );
+        assert_eq!(
+            found
+                .results
+                .iter()
+                .map(|hit| hit.id)
+                .collect::<BTreeSet<_>>(),
+            readable,
+            "FIXTURE: the room search serves A and B only, no refused base row or room NOTE"
+        );
+        let a = f64::from(
+            found
+                .results
+                .iter()
+                .find(|hit| hit.id == rare)
+                .expect("FIXTURE: A has a room BM25 score")
+                .score,
+        );
+        let b = f64::from(
+            found
+                .results
+                .iter()
+                .find(|hit| hit.id == common)
+                .expect("FIXTURE: B has a room BM25 score")
+                .score,
+        );
+        assert!(
+            a.is_finite() && b.is_finite() && a > 0.0 && b > 0.0,
+            "FIXTURE: both readable matches have finite positive scores: A={a}, B={b}"
+        );
+        (a, b)
+    };
+    let (a, b) = scores();
+    println!("ROOM-UNION-COUNT-FLOOR baseline: pinned={pinned_docs}, H={h}, A={a}, B={b}");
+    assert!(
+        (a - b).abs() <= 1e-6 * a.abs().max(1.0),
+        "FIXTURE: equal-shape RARE and COMMON matches score alike in the room: A={a}, B={b}"
+    );
+    assert_eq!(
+        fixture
+            .vault
+            .text_index_status()
+            .expect("GUARD: base count after room indexing and baseline search")
+            .total_docs,
+        base_docs,
+        "GUARD: room indexing and retrieval do not change base's document count"
+    );
+
+    // Deliberately use the base writer, never the session-bound memory handle.
+    let refused: BTreeSet<_> = (0..h)
+        .map(|_| put_text_claim(&fixture, fixture.facet, RARE))
+        .collect();
+    assert_eq!(refused.len(), h, "GUARD: H distinct refused base claims");
+    let owner = fixture
+        .vault
+        .search_text(RARE, h + 2)
+        .expect("GUARD: the owner's unscoped base search sees every RARE posting");
+    assert_eq!(
+        owner.len(),
+        h + 1,
+        "GUARD: base indexes A and all H refused RARE rows"
+    );
+    assert_eq!(
+        owner.iter().map(|hit| hit.id).collect::<BTreeSet<_>>(),
+        refused
+            .iter()
+            .copied()
+            .chain([rare])
+            .collect::<BTreeSet<_>>(),
+        "GUARD: every refused claim itself reached the base text index"
+    );
+    assert_eq!(
+        usize::try_from(
+            fixture
+                .vault
+                .text_index_status()
+                .expect("GUARD: base count after the late writes")
+                .total_docs,
+        )
+        .expect("GUARD: base count fits usize"),
+        pinned_docs - 1 + h,
+        "GUARD: base gained exactly H documents after the room pinned its own sentinel"
+    );
+    let (a, b) = scores();
+    println!("ROOM-UNION-COUNT-FLOOR with refused rows: pinned={pinned_docs}, H={h}, A={a}, B={b}");
+    assert!(
+        (a - b).abs() <= 1e-6 * a.abs().max(1.0),
+        "FAILBEFORE ROOM-UNION-COUNT-FLOOR: a room's count floor takes the counted postings, \
+         so the H refused base rows raise no term's IDF and A still scores as B: A={a}, B={b}"
+    );
+}
+
+// A host door admits only the run's own search with the verified records key.
+// It forwards no SDK verb and grants no write authority.
+struct RoomRecordsReader(ScopedReadActorKey);
+
+impl oneiron::code_run::AgentVerbDoor for RoomRecordsReader {
+    fn call(
+        &self,
+        _call: &oneiron::code_run::SelfAgentVerbCall,
+        _origin: &oneiron::memory::HostWriteOrigin,
+        _invocation: oneiron::runtime_hooks::InvocationId,
+    ) -> oneiron::Result<
+        Result<oneiron::code_run::AgentVerbAnswer, oneiron::code_run::AgentVerbRefusal>,
+    > {
+        panic!("GUARD: the room fixture forwards no SDK verb");
+    }
+
+    fn admit_run_call(
+        &self,
+        call: oneiron::code_run::RunCall,
+    ) -> Result<Option<ScopedReadActorKey>, oneiron::code_run::AgentVerbRefusal> {
+        match call {
+            oneiron::code_run::RunCall::Bridge(oneiron::code_run::SelfEffect::MemorySearch) => {
+                Ok(Some(self.0.clone()))
+            }
+            _ => Err(oneiron::code_run::AgentVerbRefusal {
+                code: "room_fixture_search_only".to_owned(),
+                hook_notice: None,
+            }),
+        }
+    }
+}
+
+// put_text_claim with a chosen id, both of its times at `at`.
+fn put_text_claim_at(fixture: &Fixture, id: EntityId, text: &str, at: u64) -> EntityId {
+    let vault = &fixture.vault;
+    let subject = EntityId::now();
+    vault
+        .put_entity(
+            &subject,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: at, end: at },
+            at,
+            &rmp_serde::to_vec_named(&json!({ "name": "Wren" })).expect("FIXTURE: name body"),
+        )
+        .expect("FIXTURE: the claim's PERSON subject");
+    vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .with_owner_authorship(&fixture.owner_proof)
+        .claim_upsert_scoped(&ScopedClaimInput {
+            id: Some(id.to_hex()),
+            predicate: "profile.preference".to_owned(),
+            subject_ref: subject.to_hex(),
+            value: json!("violet quarry"),
+            confidence: 1.0,
+            source: "user_stated".to_owned(),
+            scope: ClaimScope {
+                world_id: base_world_id().to_hex(),
+                scope_facet_id: fixture.facet.to_hex(),
+                scope_relationship_id: ClaimRelationships::All(AllRelationships::All),
+                scope_project_id: default_project_id().to_hex(),
+            }
+            .into(),
+            sensitivity: Some(PUBLIC_BAND),
+            evidence_turn_refs: Vec::new(),
+            valid_from: None,
+            valid_to: None,
+            occurred_at: Some(at),
+            learned_at: Some(at),
+            salience: None,
+        })
+        .expect("FIXTURE: owner writes the claim");
+    let landed = vault
+        .get_claim(&id)
+        .expect("FIXTURE: read the landed claim")
+        .expect("FIXTURE: claim was stored");
+    assert!(
+        matches!(
+            landed.approval,
+            ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+        ),
+        "FIXTURE: every claim lands surfaceable, never Proposed"
+    );
+    vault
+        .batch()
+        .text(&id, &[("body", text)])
+        .commit()
+        .expect("FIXTURE: index the claim's text");
+    id
+}
+
+#[test]
+fn deadline_recall_seed_lookup_blends_default_recency() {
+    use oneiron::memory::Effort;
+
+    const SEED_WINDOW: usize = 8;
+    const YEAR: u64 = 365 * 86_400;
+    let fixture = fixture();
+    // One more equal lexical match than the seed window. The match with the
+    // greatest id was learned a year after the others.
+    let mut ids: Vec<EntityId> = (0..=SEED_WINDOW).map(|_| EntityId::now()).collect();
+    ids.sort_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
+    let (newest, older) = ids.split_last().expect("FIXTURE: nine ids");
+    let newest = *newest;
+    let first = older[0];
+    for id in older {
+        put_text_claim_at(&fixture, *id, RARE, OCCURRED_AT - YEAR);
+    }
+    put_text_claim_at(&fixture, newest, RARE, OCCURRED_AT);
+    // Graph-only rows: N hangs off the newest match, N0 off the first older
+    // match (a seed with or without the blend: the positive control).
+    let neighbour = put_text_claim(&fixture, fixture.facet, "harbourrope");
+    let control = put_text_claim(&fixture, fixture.facet, "mooringpost");
+    for (from, to) in [(newest, neighbour), (first, control)] {
+        fixture
+            .vault
+            .put_edge(&from, EdgeKind::Supports, &to, 1.0)
+            .expect("FIXTURE: a traversable one-hop edge from a text match");
+    }
+    let readable: BTreeSet<EntityId> = ids.iter().copied().chain([neighbour, control]).collect();
+    let (agent, proof) = records_reader_proof(&fixture, &readable);
+    let key = fixture
+        .vault
+        .credential_read_key(&proof)
+        .expect("FIXTURE: resolve the records credential")
+        .expect("FIXTURE: the credential grants read");
+    assert_eq!(
+        fixture
+            .vault
+            .scoped_read(key)
+            .with_live_grant_receipts()
+            .search_candidate_limit(SEED_WINDOW)
+            .expect("FIXTURE: the recall lane's preparatory search window"),
+        SEED_WINDOW,
+        "GUARD: this credential's seed window is eight"
+    );
+    let owner = fixture
+        .vault
+        .search_text(RARE, ids.len())
+        .expect("FIXTURE: the owner's direct search, which blends the default recency");
+    assert_eq!(
+        owner.iter().map(|hit| hit.id).collect::<Vec<_>>(),
+        std::iter::once(newest)
+            .chain(older.iter().copied())
+            .collect::<Vec<_>>(),
+        "FIXTURE: the blend ranks the newest match first; the eight older matches tie and order \
+         by id, so with no blend the newest (greatest id) sorts ninth, past the seed window"
+    );
+    let light = deadline_recall_ids_within(&fixture, agent, &proof, Effort::Light, readable.len());
+    assert!(
+        !light.contains(&neighbour) && !light.contains(&control),
+        "FIXTURE: without PPR, N and N0 are neither text nor temporal hits"
+    );
+    let medium =
+        deadline_recall_ids_within(&fixture, agent, &proof, Effort::Medium, readable.len());
+    assert!(
+        medium.contains(&control),
+        "FIXTURE: PPR from a seed reaches its graph-only neighbour N0 in this pack"
+    );
+    assert!(
+        medium.contains(&neighbour),
+        "FAILBEFORE REVIEW-10111-R2 recency: the deadline seed lookup blends the default \
+         recency, as the direct search it replaced does, so the newest equal match keeps its \
+         seed place and reaches N"
     );
 }
