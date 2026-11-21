@@ -440,6 +440,50 @@ pub(super) fn takes_booking_write_in_txn(
     Ok(holds_booking_rows_in_txn(vault, txn)? && !elected_home_elsewhere_in_txn(vault, txn)?)
 }
 
+/// Why this node is not the booking home an owner's booking publication write runs on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BookingHomeRefusal {
+    /// No election names any node the vault's booking home: no home serves a page published
+    /// here. `node_id` is this node's sync node id, when it has one.
+    NoHome { node_id: Option<u64> },
+    /// This node's election names `home_node_id` home.
+    Elsewhere { home_node_id: u64, node_id: u64 },
+    /// A home move froze this node's booking rows, or carries them here and has not landed.
+    Moving,
+}
+
+/// FIX [BK-PUBLICATION-CLAIM-REFUSED-AT-SYNC-INGRESS] (BK-PUBLICATION-OFF-HOME-WRITE = B with
+/// B1, lead 21 Nov 17:3x): why this node takes no owner booking publication write now, read in
+/// that write's own transaction, or `None` when it takes one. The two refusals of
+/// [`refuse_off_home_booking_write_in_txn`], the lifecycle writers' fence, decide the election
+/// and the move alike; and a vault with no home designation refuses too, which the lifecycle
+/// door refuses before any writer: the public routes serve a page from the home alone.
+pub(crate) fn publication_home_refusal_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Option<BookingHomeRefusal>, BookingError> {
+    let node_id = crate::identity::read_client_id_from(vault, txn)
+        .map_err(|error| engine_failure("sync node id read", error))?;
+    let home = DreamerRunnerStore::new(vault)
+        .home_node_designation_in_txn(txn)
+        .map_err(|error| engine_failure("home node designation read", error))?;
+    let Some(home) = home else {
+        return Ok(Some(BookingHomeRefusal::NoHome { node_id }));
+    };
+    if let Some(node_id) = node_id
+        && elected_home_elsewhere_in_txn(vault, txn)?
+    {
+        return Ok(Some(BookingHomeRefusal::Elsewhere {
+            home_node_id: home.node_id,
+            node_id,
+        }));
+    }
+    if !holds_booking_rows_in_txn(vault, txn)? {
+        return Ok(Some(BookingHomeRefusal::Moving));
+    }
+    Ok(None)
+}
+
 /// Whether this node's own election names another node home, read in a writer.
 #[cfg(feature = "sync")]
 fn elected_home_elsewhere_in_txn(

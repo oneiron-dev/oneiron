@@ -267,12 +267,26 @@ pub fn load_public_booking_page(
 /// one snapshot (FIX 4777): the page, its `booking.public_page` claim and
 /// each `booking.event_type` claim whose configuration it validated. The
 /// owner check and the token index are authority, never a source.
+///
+/// This is the read the public routes serve a visitor from, so it also
+/// answers `None` on a node that is not the booking home (FIX
+/// [BK-PUBLICATION-CLAIM-REFUSED-AT-SYNC-INGRESS], review round 1): the
+/// fence of the owner's publication writes (`publication_home_refusal_in_txn`
+/// in the lifecycle door). A former home keeps its publication and token rows after a home move, and
+/// takes no later revision or retract of the page, which only the new home
+/// writes; a page it served from them would outlive the owner's retract.
 pub fn load_public_booking_page_listing(
     vault: &Vault,
     page_ref: EntityId,
     now: u64,
 ) -> Result<Option<(BookingPagePublication, Vec<EntityId>)>> {
     let rtxn = vault.store.env.read_txn()?;
+    if crate::booking::lifecycle::publication_home_refusal_in_txn(vault, &rtxn)
+        .map_err(|_| Error::InvalidConfig("booking home read failed".to_owned()))?
+        .is_some()
+    {
+        return Ok(None);
+    }
     load_public_booking_page_listed_in_txn(vault, &rtxn, page_ref, now)
 }
 

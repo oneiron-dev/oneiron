@@ -31,6 +31,14 @@ fn open() -> (tempfile::TempDir, Vault) {
 fn open_unrooted() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("directory");
     let vault = Vault::open(dir.path(), crate::VaultConfig::default()).expect("vault");
+    // The owner publishes on the booking home alone (FIX
+    // [BK-PUBLICATION-CLAIM-REFUSED-AT-SYNC-INGRESS]): the vault is its one node.
+    crate::dreamer_runner::DreamerRunnerStore::new(&vault)
+        .elect_home_node(
+            &[crate::dreamer_runner::DreamerHomeNodeCandidate::always_on_local(9)],
+            1,
+        )
+        .expect("home node");
     for (entity, kind) in [
         (id(1), crate::registry::ENTITY_TYPE_ASSET),
         (id(2), crate::registry::ENTITY_TYPE_PERSON),
