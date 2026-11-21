@@ -267,7 +267,7 @@ fn consent_order(
     entries: &[(AuthorityEntryHash, &AuthorityLogEntry)],
 ) -> Vec<usize> {
     let mut builder = StructureBuilder::under(local);
-    for entry in stored {
+    for &entry in stored {
         builder.push(entry);
     }
     builder.settle();
