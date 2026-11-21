@@ -62,36 +62,6 @@ pub use oneiron_verb_wire::verbs::calendar::{
     BookingDepositRefundReceipt, BookingDepositRefundRequest, BookingDepositRefundState,
 };
 
-/// The owner's deposit refund verb's public spelling.
-const DEPOSIT_REFUND_VERB: &str = "vault.booking.deposit.refund";
-
-/// `vault.booking.deposit.refund` on an embedded handle, as the vault's
-/// embedded owner.
-pub fn refund_booking_deposit(
-    memory: &crate::memory::Memory<'_>,
-    input: &BookingDepositRefundRequest,
-) -> crate::memory::MemoryResult<BookingDepositRefundReceipt> {
-    let owner = memory.embedded_owner(DEPOSIT_REFUND_VERB)?;
-    refund_booking_deposit_as(memory.vault(), &owner, input)
-}
-
-/// `vault.booking.deposit.refund` under the owner's proof, which the
-/// refund's money write revalidates (BK-DEPOSIT-OWNER-RETURN-ACT = A): a
-/// host selected at the booking's confirmation gives its held deposit back
-/// whole once the booking is cancelled or has started. No agent grant and no
-/// visitor token reach it.
-pub fn refund_booking_deposit_as(
-    vault: &crate::Vault,
-    owner: &crate::consent::AuthenticatedOwner,
-    input: &BookingDepositRefundRequest,
-) -> crate::memory::MemoryResult<BookingDepositRefundReceipt> {
-    let event_ref = crate::EntityId::from_hex(input.event_ref.trim()).map_err(|_| {
-        crate::memory::MemoryError::bad_request("event_ref is an entity id in lowercase hex")
-    })?;
-    crate::booking::lifecycle::refund_booking_deposit_as_owner(vault, owner, &event_ref)
-        .map_err(crate::memory::booking_error)
-}
-
 /// The owner's mark of a deposit refund paid outside Stripe: its public
 /// spelling.
 const DEPOSIT_MARK_REFUNDED_OUTSIDE_VERB: &str = "vault.booking.deposit.mark_refunded_outside";
@@ -126,4 +96,34 @@ pub fn mark_booking_deposit_refunded_outside_as(
         input.amount_minor,
     )
     .map_err(crate::memory::booking_error)
+}
+
+/// The owner's deposit refund verb's public spelling.
+const DEPOSIT_REFUND_VERB: &str = "vault.booking.deposit.refund";
+
+/// `vault.booking.deposit.refund` on an embedded handle, as the vault's
+/// embedded owner.
+pub fn refund_booking_deposit(
+    memory: &crate::memory::Memory<'_>,
+    input: &BookingDepositRefundRequest,
+) -> crate::memory::MemoryResult<BookingDepositRefundReceipt> {
+    let owner = memory.embedded_owner(DEPOSIT_REFUND_VERB)?;
+    refund_booking_deposit_as(memory.vault(), &owner, input)
+}
+
+/// `vault.booking.deposit.refund` under the owner's proof, which the
+/// refund's money write revalidates (BK-DEPOSIT-OWNER-RETURN-ACT = A): a
+/// host selected at the booking's confirmation gives its held deposit back
+/// whole once the booking is cancelled or has started. No agent grant and no
+/// visitor token reach it.
+pub fn refund_booking_deposit_as(
+    vault: &crate::Vault,
+    owner: &crate::consent::AuthenticatedOwner,
+    input: &BookingDepositRefundRequest,
+) -> crate::memory::MemoryResult<BookingDepositRefundReceipt> {
+    let event_ref = crate::EntityId::from_hex(input.event_ref.trim()).map_err(|_| {
+        crate::memory::MemoryError::bad_request("event_ref is an entity id in lowercase hex")
+    })?;
+    crate::booking::lifecycle::refund_booking_deposit_as_owner(vault, owner, &event_ref)
+        .map_err(crate::memory::booking_error)
 }
