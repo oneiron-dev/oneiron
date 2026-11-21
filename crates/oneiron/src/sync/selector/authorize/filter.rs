@@ -693,9 +693,10 @@ pub(in crate::sync::selector) fn filter_window_doc(
         });
     }
     // A copy to another vault carries a record's delete only on a Connect
-    // delivery, and only of a row this vault released to the grant's peer
-    // (CROSS-VAULT-DELETE-NEVER-ADMITTED = A): that release, not this export's
-    // selection, decides it, so a delete reaches every copy the peer was sent.
+    // delivery or a selector socket answer, and only of a row this vault
+    // released to the grant's peer (CROSS-VAULT-DELETE-NEVER-ADMITTED = A):
+    // that release, not this export's selection, decides it, so a delete
+    // reaches every copy the peer was sent.
     // The peer's admission lands it only where its own delivery ledger proves
     // the copy. Every other copy to another vault carries none.
     let mut peer_release = (other_vault && tombstones == GuestTombstones::Released)
