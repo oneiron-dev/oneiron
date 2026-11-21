@@ -274,19 +274,17 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
         );
         let critical_floor_only =
             body.approval == ClaimApprovalStatus::Auto && criticality_floor_pend_only;
-        // Owner-authored writes carry their own confirmation: the vault's
-        // owner, revalidated in this transaction, wrote this claim in person,
-        // so it lands Auto with nothing to confirm. The proof rides the
-        // write's options from the door that authenticated the owner; the
-        // envelope only has to name the same actor. An owner's approval of a
-        // stored proposal has no envelope here: the approval materialization
-        // gates the Put without its author's (`ClaimMaterialization::
-        // gate_envelope`), and the approving door forwards the proof for that
-        // one Approved Put alone (`ops_put`).
-        let owner_write = owner_authored.filter(|write| match envelope {
-            Some(envelope) => {
-                envelope.actor().entity_ref() == write.actor()
-                    && envelope.actor().actor_class() == crate::edge::EdgeActorClass::Human
+        // Owner-authored writes carry their own confirmation: the vault's owner, revalidated in
+        // this transaction, wrote this claim in person, so it lands Auto with nothing to confirm.
+        // The proof rides the write's options from the door that authenticated the owner, and the
+        // writing actor (an exact close's verified closer, else the envelope's) has to be that
+        // owner, as a human. An approval, gated with no envelope
+        // (`ClaimMaterialization::gate_envelope`), gets the proof for its one Approved Put alone
+        // (`ops_put`), as does the owner's supersede door's exact close of an Approved claim.
+        let owner_write = owner_authored.filter(|write| match writing {
+            Some(actor) => {
+                actor.entity_ref() == write.actor()
+                    && actor.actor_class() == crate::edge::EdgeActorClass::Human
             }
             None => body.approval == ClaimApprovalStatus::Approved,
         });
@@ -302,6 +300,8 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
                 &body.predicate,
             );
         let owner_authored = (critical_floor_only || owner_approved) && owner_write.is_some();
+        // An exact close answers nothing: its proof lifts the floor above and reaches no row below.
+        let owner_write = owner_write.filter(|_| !verified_close);
         // Only a declared critical class attaches a confirmation. A predicate
         // no policy rule names resolves Critical by fallback, and that
         // default sets the legibility and truncation floors; it does not stop

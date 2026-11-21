@@ -521,19 +521,32 @@ impl Vault {
         // old head's closer, so the Gate judges the owner's supersession and
         // not the old head's own author (FIX
         // OWNER-SUPERSEDE-ROUTE-NAMES-NO-CLOSER, the twin of
-        // OWNER-RETRACT-ROUTE-NAMES-NO-CLOSER).
-        let closer = match owner {
-            Some(owner) => Some(crate::WriteActor::new(
-                owner.revalidate_in_txn(self, &wtxn)?,
-                crate::edge::EdgeActorClass::Human,
-            )),
-            None => None,
+        // OWNER-RETRACT-ROUTE-NAMES-NO-CLOSER). The owner's proof, revalidated
+        // here as well, confirms that close in person where a critical class
+        // asks for it (review 10099 round 2 P1); a narrowed or delegated
+        // credential carries none.
+        let (closer, owner_write) = match owner {
+            Some(owner) => (
+                Some(crate::WriteActor::new(
+                    owner.revalidate_in_txn(self, &wtxn)?,
+                    crate::edge::EdgeActorClass::Human,
+                )),
+                owner.owner_answer_in_txn(self, &wtxn)?,
+            ),
+            None => (None, None),
         };
         if !close(self, &wtxn)? {
             return Ok(false);
         }
         let rekeys = crate::channel_identity::AssignmentRekeys::begin(&self.store);
-        self.supersede_claim_in_txn_as(&mut wtxn, new_id, old_id, now, closer)?;
+        self.supersede_claim_with_closure_grant_in_txn(
+            &mut wtxn,
+            new_id,
+            old_id,
+            now,
+            SupersedeClose::Direct(closer),
+            owner_write,
+        )?;
         rekeys.finish(&self.store, &mut wtxn)?;
         wtxn.commit()?;
         self.store.notify_proactivity_changes();
@@ -570,7 +583,7 @@ impl Vault {
         actor: Option<crate::WriteActor>,
     ) -> Result<()> {
         let close = SupersedeClose::Direct(actor);
-        self.supersede_claim_with_closure_grant_in_txn(wtxn, new_id, old_id, now, close)
+        self.supersede_claim_with_closure_grant_in_txn(wtxn, new_id, old_id, now, close, None)
             .map(|_| ())
     }
 
@@ -585,9 +598,12 @@ impl Vault {
         actor: Option<crate::WriteActor>,
     ) -> Result<Option<crate::gate::RecordedClaimGateDecision>> {
         let close = SupersedeClose::Granted { checker, actor };
-        self.supersede_claim_with_closure_grant_in_txn(wtxn, new_id, old_id, now, close)
+        self.supersede_claim_with_closure_grant_in_txn(wtxn, new_id, old_id, now, close, None)
     }
 
+    /// Closes `old_id` as `close` says. `owner` is the vault owner's
+    /// in-person proof, revalidated in `wtxn` by the owner's own door; it
+    /// rides the close of an Approved `old_id` alone.
     fn supersede_claim_with_closure_grant_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -595,6 +611,7 @@ impl Vault {
         old_id: &EntityId,
         now: u64,
         close: SupersedeClose<'_>,
+        owner: Option<crate::consent::OwnerAuthoredWrite>,
     ) -> Result<Option<crate::gate::RecordedClaimGateDecision>> {
         if new_id == old_id {
             return Err(Error::Claim(ClaimError::ClaimSelfSupersession));
@@ -702,7 +719,13 @@ impl Vault {
                 wtxn, ops, binding, transition, &old_body, checker,
             )?,
             (_, binding) => {
-                self.apply_lifecycle_materialization(wtxn, ops, binding, transition, true)?;
+                // A stored Approved is history on its exact close: the
+                // owner's proof is the in-person confirmation a declared
+                // critical class asks of it, as of the owner's approval.
+                let owner = owner
+                    .filter(|_| old_body.approval == ClaimApprovalStatus::Approved)
+                    .map(|proof| (*old_id, proof));
+                self.apply_lifecycle_materialization(wtxn, ops, binding, transition, true, owner)?;
                 None
             }
         };
@@ -980,7 +1003,7 @@ impl Vault {
         if run == RetractRun::GateAnswerOnly {
             return Ok(None);
         }
-        self.apply_lifecycle_materialization(wtxn, ops, binding, transition, false)?;
+        self.apply_lifecycle_materialization(wtxn, ops, binding, transition, false, None)?;
         // A retract parked for the holder has nothing left to close.
         self.drop_parked_retract_in_txn(wtxn, id)?;
         // FIX 22383: a commitment instance retracted while its promise is open
