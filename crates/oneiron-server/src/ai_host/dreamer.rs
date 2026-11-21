@@ -52,6 +52,8 @@ mod free_time;
 mod pause;
 mod request_sources;
 mod run_log;
+#[cfg(oneiron_test_support)]
+pub(crate) mod sourced_route_door;
 mod task_lend;
 mod urgent_digest;
 #[cfg(test)]
