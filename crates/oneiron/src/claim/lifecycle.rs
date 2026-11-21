@@ -892,15 +892,17 @@ impl Vault {
         let closed_end = lifecycle_close_end_in(&self.store, &*wtxn, &body, &header, now)?;
         // The retraction closes the claim, so its owner is shown no item for
         // the open revision; an open obligation stays open.
+        // A tray row's close is receipted as the door's verified closer.
         let consent_receipt = match run {
             RetractRun::Gated | RetractRun::GateAnswerOnly => {
-                self.store.close_pending_gate_consent_as_in_txn(
+                self.store.close_pending_gate_consent_closed_by_in_txn(
                     wtxn,
                     id,
                     crate::store::gate_reason::GateReceiptOutcome::Retracted,
                     vec!["gate.pending.claim_retracted".to_owned()],
                     None,
                     crate::store::TrayRemoval::Silent,
+                    actor,
                 )?
             }
             RetractRun::ParkedConsent => None,

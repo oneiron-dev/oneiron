@@ -39,16 +39,19 @@ pub(super) fn writing_actor(
     closer.or_else(|| envelope.map(WriteEnvelope::actor))
 }
 
-/// Whether a write is derivation-class, held to the derivation floors
-/// (GATE-12, GATE-13, the checker): its `envelope` is a Dreamer run's or a
-/// `vault.derive` commit's, and no human `closer` closes the row. The birth
-/// envelope names who derived the row, not who closes it, so the owner's
-/// exact close of a Dreamer claim is not held to the Dreamer's floors
-/// (review 10097 P1; GATE-13: owner and human writes never enter).
-pub(super) fn derivation_class(
+/// The `envelope` of a derivation-class write, held to the derivation floors
+/// (GATE-12, GATE-13, the checker) and an action of its Dreamer run and
+/// attempt: a Dreamer run's or a `vault.derive` commit's envelope, when no
+/// human `closer` closes the row. The birth envelope names who derived the
+/// row, not who closes it, so the owner's exact close of a Dreamer claim is
+/// neither held to the Dreamer's floors nor recorded as an action of the
+/// run that derived it (review 10097 P1s; GATE-13: owner and human writes
+/// never enter). The stored birth envelope stays as it is.
+pub(super) fn deriving_envelope(
     envelope: Option<&WriteEnvelope>,
     closer: Option<WriteActor>,
-) -> bool {
-    envelope.is_some_and(super::derivation_class_write)
-        && !closer.is_some_and(|closer| closer.actor_class() == EdgeActorClass::Human)
+) -> Option<&WriteEnvelope> {
+    envelope
+        .filter(|envelope| super::derivation_class_write(envelope))
+        .filter(|_| !closer.is_some_and(|closer| closer.actor_class() == EdgeActorClass::Human))
 }
