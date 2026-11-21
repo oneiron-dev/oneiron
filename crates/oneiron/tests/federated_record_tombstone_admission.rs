@@ -19,6 +19,9 @@
 //!   membership or topology kind is never admitted).
 //! - `a_dropped_tombstone_leaves_the_rest_of_the_update_landing`: red on main
 //!   (the whole update is refused, C2 never lands), green on the head.
+//! - `a_live_peers_hard_delete_after_its_soft_delete_removes_the_shell`: red
+//!   on main (the shell's digest names no delivery, so the hard delete is
+//!   dropped and the shell stays), green on the head.
 //! - `an_owners_delete_of_a_row_the_peer_was_sent_removes_its_copy`: red on
 //!   the receiver-only head (the next delivery carries no tombstone), green on
 //!   the sender's head.
@@ -596,6 +599,92 @@ fn a_dropped_tombstone_leaves_the_rest_of_the_update_landing() {
             .is_some(),
         "FIXTURE: B still holds its own row after the dropped tombstone"
     );
+}
+
+#[test]
+fn a_live_peers_hard_delete_after_its_soft_delete_removes_the_shell() {
+    let (s, b, pact) = setup();
+    let subject = put_person(&s.vault, "kenji");
+    let claim = put_claim(&s.vault, subject, Some(pact.s_world));
+    let (window_key, _first_update, delivery) = export_world(&s, &pact.pact_hex, pact.s_world);
+    let rejoined = SyncClient::rejoin_connect_as(&b.manager, &b.proof, delivery)
+        .expect("FIXTURE: B rejoins the delivery");
+    assert!(
+        matches!(rejoined.status, ConnectRejoinStatus::Imported),
+        "FIXTURE: the rejoin lands, not defers: {:?}",
+        rejoined.status
+    );
+    let delivered = stored_row(&b.vault, &claim)
+        .expect("FIXTURE: B row reads")
+        .expect("FIXTURE: B holds the delivered CLAIM");
+
+    let mut client = bound_client(&b, &pact);
+    let soft = reasoned_tombstone_update(None, &[], claim, TombstoneReason::UserDelete, [0x5b; 16]);
+    let result =
+        client.import_federated_window_update(&window_key, &soft, FederationAdmissionRole::Guest);
+    let shell = stored_row(&b.vault, &claim).expect("FIXTURE: B row reads after the soft delete");
+    assert!(
+        shell
+            .as_ref()
+            .is_some_and(|shell| shell.len() < delivered.len()),
+        "FIXTURE: the live peer's soft delete leaves a shell of C: {result:?}"
+    );
+
+    // The hard delete rides an update that also brings a new row C2. B's
+    // admission writes that row before the tombstone, so the hard tombstone
+    // is the later write to C's key in B's window and replaces the soft one.
+    let second_subject = put_person(&s.vault, "haru");
+    let _second = put_claim(&s.vault, second_subject, Some(pact.s_world));
+    let (_, second_update, _) = export_world(&s, &pact.pact_hex, pact.s_world);
+    let hard = reasoned_tombstone_update(
+        Some(&second_update),
+        &[claim],
+        claim,
+        TombstoneReason::UserHardDelete,
+        [0x5c; 16],
+    );
+    let result =
+        client.import_federated_window_update(&window_key, &hard, FederationAdmissionRole::Guest);
+    assert!(
+        stored_row(&b.vault, &claim)
+            .expect("FIXTURE: B row reads after the hard delete")
+            .is_none(),
+        "KEPT-SOFT-DELETED-SHELL: the live peer's hard delete left the shell its soft delete made: {result:?}"
+    );
+}
+
+/// A crafted update: `base` (or nothing) without the entity rows of
+/// `dropped`, plus one v2 tombstone for `id` with `reason` and `request_id`,
+/// as the engine writes one.
+fn reasoned_tombstone_update(
+    base: Option<&[u8]>,
+    dropped: &[EntityId],
+    id: EntityId,
+    reason: TombstoneReason,
+    request_id: [u8; 16],
+) -> Vec<u8> {
+    let doc = LoroDoc::new();
+    if let Some(base) = base {
+        doc.import(base).expect("FIXTURE: base update imports");
+    }
+    for row in dropped {
+        doc.get_map("entities")
+            .delete(&row.to_hex())
+            .expect("FIXTURE: entity row deletes");
+    }
+    let value = TombstoneValueV2 {
+        reason,
+        deleted_at: T0 + 60,
+        request_id,
+    }
+    .encode()
+    .to_vec();
+    doc.get_map("tombstones")
+        .insert(&id.to_hex(), LoroValue::Binary(value.into()))
+        .expect("FIXTURE: tombstone inserts");
+    doc.commit();
+    doc.export(ExportMode::all_updates())
+        .expect("FIXTURE: crafted update exports")
 }
 
 /// S's month window of its named WORLD, where the delete of a CLAIM in that
