@@ -18,6 +18,11 @@
 //! among the rows its clamp withheld, and a HyDE retry's widened bound
 //! still holds, for the main query and for each subquery the retry asks.
 //!
+//! The temporal window's reader asks the tier and the stale worlds too
+//! (REVIEW-10311 round 2): claims of the other tier or of a stale world that
+//! fill the widened bound nearer the anchor stop no round of the adaptive
+//! window, so it still grows to the eligible claim behind them.
+//!
 //! Run with `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p
 //! oneiron --all-features --test bounded_channel_narrowing_scope` (the
 //! stale stamp, the clamp's contact and Tier-A mark are stored through test
@@ -31,12 +36,14 @@ use oneiron::counterparty_contact::CounterpartyFirstTouch;
 use oneiron::entity_id::ForeignWorldId;
 use oneiron::federation::Scope;
 use oneiron::interlocutor::{Interlocutor, InterlocutorSet};
+use oneiron::pipeline::RetrievalParams;
 use oneiron::query_expansion::{
     CompletionRequest, EvidenceVerdict, GroundingContext, HydeExpander, HydeExpansion, HydeOptions,
     HydeRequest,
 };
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::RetrievalRunRecord;
+use oneiron::temporal::TemporalAnchorMode;
 use oneiron::test_doors::disclosure_word_sources::{
     clamp_admits_with_contact, mark_tier_a, seed_cleared_contact,
 };
@@ -60,6 +67,11 @@ const SUBQUERY_WORD: &str = "numbat";
 /// No rule of the shipped manifest names this predicate, so it resolves
 /// critical by fallback (`tests/owner_approval_criticality_floor.rs`).
 const UNDECLARED_PREDICATE: &str = "loop.alpha";
+/// The shipped manifest's `profile.` rule resolves this predicate normal.
+const NORMAL_PREDICATE: &str = "profile.nickname";
+/// How far from [`ANCHOR`] the eligible claim of the window tests occurred:
+/// past the first round's 30 days at a 10-day sigma, inside the second's 60.
+const BEHIND_THE_FIRST_ROUND: u64 = 45 * DAY;
 /// The foreign world the stale-world tests' claim is scoped to.
 const CLAIM_WORLD: u8 = 0xf5;
 /// A foreign world no claim names.
@@ -190,6 +202,19 @@ impl Fixture {
     /// A claim as [`Self::text_claim`] writes it, whose indexed body holds
     /// `word` alone.
     fn text_claim_holding(&self, world: Option<ForeignWorldId>, word: &str) -> EntityId {
+        let claim = self.claim_at(world, UNDECLARED_PREDICATE, ANCHOR);
+        self.vault
+            .batch()
+            .text(&claim, &[("body", word)])
+            .commit()
+            .expect("FIXTURE: index the claim's text");
+        claim
+    }
+
+    /// One live claim on `predicate`, scoped to `world`, that occurred and
+    /// was learned at `at`, with no text and no vector: only the temporal
+    /// window finds it.
+    fn claim_at(&self, world: Option<ForeignWorldId>, predicate: &str, at: u64) -> EntityId {
         let vault = &self.vault;
         let actor = WriteActor::new(EntityId::now(), EdgeActorClass::Human);
         let subject = EntityId::now();
@@ -212,7 +237,7 @@ impl Fixture {
             ClaimApprovalStatus::Auto,
         );
         let mut candidate = ClaimCandidate::new(
-            UNDECLARED_PREDICATE,
+            predicate,
             ClaimSubject::Entity(subject),
             rmpv::Value::from("fact"),
             1.0,
@@ -227,19 +252,11 @@ impl Fixture {
                 &claim,
                 candidate,
                 &envelope,
-                TimeRange {
-                    start: ANCHOR,
-                    end: ANCHOR,
-                },
-                ANCHOR,
+                TimeRange { start: at, end: at },
+                at,
             )
             .commit()
             .expect("FIXTURE: write the claim");
-        vault
-            .batch()
-            .text(&claim, &[("body", word)])
-            .commit()
-            .expect("FIXTURE: index the claim's text");
         claim
     }
 
@@ -267,6 +284,33 @@ impl Fixture {
                 .with_temporal_now(NOW)
                 .search_temporal(ANCHOR, ANCHOR, 1)
                 .boost_recency(0.0),
+            tier,
+        ))
+    }
+
+    /// An adaptive temporal run in `tier` at [`ANCHOR`], with a 10-day
+    /// sigma, no recency blend and a widened bound at the fusion floor: a
+    /// widening multiple of 1 and no floor, so [`FUSION_LIST_LENGTH`] rows
+    /// fill it.
+    fn adaptive_temporal(&self, tier: Option<bool>) -> Run {
+        self.recorded(in_tier(
+            self.vault
+                .query()
+                .with_temporal_now(NOW)
+                .search_temporal_with_sigma(
+                    ANCHOR,
+                    ANCHOR + 1,
+                    10 * DAY,
+                    TemporalAnchorMode::Occurred,
+                    1,
+                )
+                .temporal_adaptive(true)
+                .boost_recency(0.0)
+                .retrieval_params(RetrievalParams {
+                    temporal_widening_multiple: 1,
+                    temporal_widening_floor: 0,
+                    ..RetrievalParams::shipped()
+                }),
             tier,
         ))
     }
@@ -396,6 +440,63 @@ fn a_temporal_run_counts_no_claim_of_a_stale_world() {
     assert_stale_world_claim_counts_as_no_candidate(
         |fixture| fixture.temporal(None),
         "temporal window",
+    );
+}
+
+/// REVIEW-10311 round 2: a temporal run narrowed to the normal tier, whose
+/// widened bound [`FUSION_LIST_LENGTH`] critical claims at the anchor fill,
+/// still grows its adaptive window to the normal claim that occurred
+/// [`BEHIND_THE_FIRST_ROUND`] before it. The critical claims stop no round.
+#[test]
+fn a_tier_narrowed_temporal_window_grows_past_claims_of_the_other_tier() {
+    let fixture = fixture();
+    let normal = fixture.claim_at(None, NORMAL_PREDICATE, ANCHOR - BEHIND_THE_FIRST_ROUND);
+    assert_eq!(
+        fixture.adaptive_temporal(Some(false)),
+        found(normal),
+        "GUARD: alone in the vault, the normal claim is live, of the normal tier, and inside \
+         the adaptive window's later rounds"
+    );
+    for _ in 0..FUSION_LIST_LENGTH {
+        fixture.claim_at(None, UNDECLARED_PREDICATE, ANCHOR);
+    }
+    assert_eq!(
+        fixture.adaptive_temporal(Some(false)),
+        found(normal),
+        "FAILBEFORE REVIEW-10311 round 2: the temporal window asked no reader for the tier, so \
+         the critical claims filled its bound in the first round and stopped it there, and the \
+         scope's cut dropped them all"
+    );
+}
+
+/// REVIEW-10311 round 2: a temporal run under every world, whose widened
+/// bound [`FUSION_LIST_LENGTH`] claims of a stale world at the anchor fill,
+/// still grows its adaptive window to the live claim that occurred
+/// [`BEHIND_THE_FIRST_ROUND`] before it. The stale world's claims stop no
+/// round.
+#[test]
+fn a_temporal_window_grows_past_claims_of_a_stale_world() {
+    let fixture = fixture();
+    let live = fixture.claim_at(None, UNDECLARED_PREDICATE, ANCHOR - BEHIND_THE_FIRST_ROUND);
+    stamp_world_stale(&fixture.vault, foreign_world(OTHER_WORLD))
+        .expect("FIXTURE: stamp another world stale");
+    assert_eq!(
+        fixture.adaptive_temporal(None),
+        found(live),
+        "GUARD: with another world stale, the live claim is inside the adaptive window's \
+         later rounds"
+    );
+    let world = foreign_world(CLAIM_WORLD);
+    for _ in 0..FUSION_LIST_LENGTH {
+        fixture.claim_at(Some(world), UNDECLARED_PREDICATE, ANCHOR);
+    }
+    stamp_world_stale(&fixture.vault, world).expect("FIXTURE: stamp the claims' world stale");
+    assert_eq!(
+        fixture.adaptive_temporal(None),
+        found(live),
+        "FAILBEFORE REVIEW-10311 round 2: the temporal window asked no reader for the stale \
+         worlds, so the stale world's claims filled its bound in the first round and stopped it \
+         there, and the scope's cut dropped them all"
     );
 }
 
