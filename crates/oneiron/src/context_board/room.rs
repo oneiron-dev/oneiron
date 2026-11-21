@@ -6,8 +6,6 @@ use crate::claim::world_access::WorldAuthoritySet;
 use crate::{EntityId, Result};
 use oneiron_authority::federation::{Scope, ScopeAxis, ScopeId};
 
-// FIX [LIBTEST-QUARANTINE-CONTEXT-BOARD-ROOM-TESTS]: the lib test target's type check fails here (2 errors: E0061 x1, E0277 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

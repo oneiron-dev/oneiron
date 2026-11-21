@@ -20,6 +20,7 @@ fn session_scope_cannot_admit_a_hidden_document_at_any_effort() -> TestResult {
             ENTITY_TYPE_CLAIM,
             range(1),
             1,
+            None,
             &encode_claim_body(&body)?,
         )
         .text(&hidden, &[("body", "launch")])
@@ -77,7 +78,14 @@ fn depth_revision_is_captured_before_host_reranking_can_publish_an_edit() -> Tes
         ) -> RetrievalResult<BackendSpend<Vec<f32>>> {
             self.vault
                 .batch()
-                .put_replicated(&self.id, ENTITY_TYPE_CLAIM, range(2), 2, &self.replacement)
+                .put_replicated(
+                    &self.id,
+                    ENTITY_TYPE_CLAIM,
+                    range(2),
+                    2,
+                    None,
+                    &self.replacement,
+                )
                 .text(&self.id, &[("content", "replacement yak")])
                 .commit()?;
             self.vault.refresh_staged_indexed_at_idle(u64::MAX)?;
@@ -102,7 +110,7 @@ fn depth_revision_is_captured_before_host_reranking_can_publish_an_edit() -> Tes
     let body = claim("ranked zebra")?;
     vault
         .batch()
-        .put_replicated(&id, ENTITY_TYPE_CLAIM, range(1), 1, &body)
+        .put_replicated(&id, ENTITY_TYPE_CLAIM, range(1), 1, None, &body)
         .text(&id, &[("content", "ranked zebra")])
         .commit()?;
     vault.set_indexed_idle_delay_ms(0)?;
@@ -152,6 +160,7 @@ fn session_world_scope_follows_the_ranked_revision_during_debounce() -> TestResu
             ENTITY_TYPE_CLAIM,
             range(1),
             1,
+            None,
             &encode_claim_body(&body)?,
         )
         .text(&id, &[("body", "scopefrontier original")])

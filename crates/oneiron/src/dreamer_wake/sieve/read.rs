@@ -1,6 +1,8 @@
 //! One turn's read: a whole read from its rows, a read that goes on where
 //! the text bound stopped it, and the spans each segment queues.
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
+
 use super::chunks::{self, Chunk, ChunkRef, TurnChunks};
 use super::rules::{self, Carry};
 use super::{
@@ -329,6 +331,7 @@ impl Reader<'_> {
         true
     }
 
+    /// Stored span ids keep their bytes (K, PLAN-UC-04 stage 7).
     fn span(
         &self,
         turn: &EntityId,
@@ -339,24 +342,7 @@ impl Reader<'_> {
         confidence: u8,
     ) -> SieveSpan {
         let (start, end) = (start as u64, end as u64);
-        let mut id = blake3::Hasher::new();
-        id.update(b"oneiron:dreamer-sieve:span:v2");
-        id.update(turn.as_bytes());
-        id.update(chunk.source.as_bytes());
-        id.update(&start.to_be_bytes());
-        id.update(&end.to_be_bytes());
-        id.update(&chunk.digest);
-        match origin {
-            SpanOrigin::Rule { rules, class } => {
-                id.update(&[0, kind as u8, class as u8]);
-                id.update(&rules.to_be_bytes());
-            }
-            SpanOrigin::SavedTag { envelope, index } => {
-                id.update(&[1, kind as u8]);
-                id.update(&envelope);
-                id.update(&index.to_be_bytes());
-            }
-        }
+        let id = span_id(turn, &chunk.source, start, end, &chunk.digest, kind, origin);
         let interest = match kind {
             SpanKind::Date => self.policy.date_interest,
             SpanKind::Name => self.policy.name_interest,
@@ -373,7 +359,7 @@ impl Reader<'_> {
             owed.push(SieveRung::Typing);
         }
         SieveSpan {
-            id: *id.finalize().as_bytes(),
+            id,
             turn: *turn,
             source: chunk.source,
             start,
@@ -438,27 +424,65 @@ fn percent(confidence: f32) -> u8 {
 /// The version of a tag set: every field of its envelope. The served stack
 /// is one, so a head swap at a fixed checkpoint is another derivation and
 /// owes the turn a new read; a stack absent and a stack named empty differ.
+/// Stored READ envelope digests keep their bytes (K, PLAN-UC-04 stage 7).
 pub(super) fn envelope_digest(envelope: &crate::tagging::DerivationEnvelope) -> [u8; 32] {
-    let mut hash = blake3::Hasher::new();
-    hash.update(b"oneiron:dreamer-sieve:tag-envelope:v1");
+    let mut hash = LegacyDigest::new(purposes::dreamer_wake::TAG_ENVELOPE_DIGEST);
     for field in [
         &envelope.content_hash,
         &envelope.model_id,
         &envelope.version,
         &envelope.params_hash,
     ] {
-        hash.update(&(field.len() as u64).to_be_bytes());
-        hash.update(field.as_bytes());
+        hash.len_u64_be(field.len());
+        hash.raw(field.as_bytes());
     }
     match &envelope.stack {
         Some(stack) => {
-            hash.update(&[1]);
-            hash.update(&(stack.len() as u64).to_be_bytes());
-            hash.update(stack.as_bytes());
+            hash.raw(&[1]);
+            hash.len_u64_be(stack.len());
+            hash.raw(stack.as_bytes());
         }
         None => {
-            hash.update(&[0]);
+            hash.raw(&[0]);
         }
     }
-    *hash.finalize().as_bytes()
+    hash.finish()
+}
+
+/// The stored identity of a span's source, offsets, kind and origin.
+pub(crate) fn span_id(
+    turn: &EntityId,
+    source: &EntityId,
+    start: u64,
+    end: u64,
+    chunk_digest: &[u8; 32],
+    kind: SpanKind,
+    origin: SpanOrigin,
+) -> [u8; 32] {
+    let mut id = LegacyDigest::new(purposes::dreamer_wake::SPAN_ID);
+    id.raw(turn.as_bytes());
+    id.raw(source.as_bytes());
+    id.raw(&start.to_be_bytes());
+    id.raw(&end.to_be_bytes());
+    id.raw(chunk_digest);
+    match origin {
+        SpanOrigin::Rule { rules, class } => {
+            id.raw(&[0, kind as u8, class as u8]);
+            id.raw(&rules.to_be_bytes());
+        }
+        SpanOrigin::SavedTag { envelope, index } => {
+            id.raw(&[1, kind as u8]);
+            id.raw(&envelope);
+            id.raw(&index.to_be_bytes());
+        }
+    }
+    id.finish()
+}
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::span_id as span_id_for_test;
+
+#[cfg(oneiron_test_support)]
+pub(crate) fn envelope_digest_for_test(envelope: &crate::tagging::DerivationEnvelope) -> [u8; 32] {
+    envelope_digest(envelope)
 }

@@ -21,7 +21,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use loro::{
     Container, ExpandType, LoroDoc, LoroMap, LoroMovableList, LoroText, LoroValue, StyleConfig,
-    TextDelta, UpdateOptions, ValueOrContainer,
+    TextDelta, ValueOrContainer,
 };
 use oneiron_docedit::docx_body::{
     DocxAnchor, DocxBlock, DocxBlockKind, DocxChange, DocxLock, DocxMark, DocxParagraph, DocxRun,
@@ -238,8 +238,7 @@ pub(super) fn apply(doc: &LoroDoc, op: &DocxBodyOp, minted: &mut Vec<String>) ->
             line(new)?;
             let body =
                 loro_text(&editable(block)?, TEXT).ok_or_else(|| invalid("not a paragraph"))?;
-            body.update(new, UpdateOptions::default())
-                .map_err(|_| invalid("paragraph update"))?;
+            crate::text_diff::set_text(&body, new).map_err(|_| invalid("paragraph update"))?;
         }
         DocxBodyOp::Splice {
             block,
@@ -268,10 +267,9 @@ pub(super) fn apply(doc: &LoroDoc, op: &DocxBodyOp, minted: &mut Vec<String>) ->
         } => {
             bounded(new)?;
             let grid = child_map(&editable(block)?, CELLS).ok_or_else(|| invalid("not a table"))?;
-            loro_text(&grid, &cell_key(*row, *col))
-                .ok_or_else(|| invalid("no such cell"))?
-                .update(new, UpdateOptions::default())
-                .map_err(|_| invalid("cell update"))?;
+            let cell =
+                loro_text(&grid, &cell_key(*row, *col)).ok_or_else(|| invalid("no such cell"))?;
+            crate::text_diff::set_text(&cell, new).map_err(|_| invalid("cell update"))?;
         }
         DocxBodyOp::InsertParagraph {
             after,
@@ -657,4 +655,95 @@ fn bounded(text: &str) -> Result<()> {
 
 fn loro(_: loro::LoroError) -> crate::error::Error {
     invalid("office body document operation")
+}
+
+#[cfg(test)]
+mod text_diff_budget_tests {
+    use super::*;
+    use loro::LoroDoc;
+    use oneiron_docedit::docx_body::{DocxBlock, DocxBlockKind, DocxCell};
+    use std::time::{Duration, Instant};
+
+    /// Before the diff budget this ran for many minutes. Past the budget
+    /// the paragraph keeps the text it held.
+    #[test]
+    fn an_unrelated_set_text_of_a_large_paragraph_is_refused_within_the_budget() {
+        let old = format!("{} tail \u{2713}", "x".repeat((1 << 20) - 16));
+        let new = "\u{e9}dited tail \u{2713}";
+        let doc = LoroDoc::new();
+        import(
+            &doc,
+            &[DocxBlock {
+                id: "p1".to_string(),
+                kind: DocxBlockKind::Paragraph,
+                role: None,
+                text: old.clone(),
+                runs: Vec::new(),
+                cells: Vec::new(),
+                locked: None,
+            }],
+            &[],
+        )
+        .unwrap();
+        let op = DocxBodyOp::SetText {
+            block: "p1".to_string(),
+            text: new.to_string(),
+        };
+        let mut minted: Vec<String> = Vec::new();
+        // testkit-lint: allow(wall-clock) the elapsed time is the budget under test
+        let started = Instant::now();
+        let result = apply(&doc, &op, &mut minted);
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < Duration::from_secs(60),
+            "the replacement took {elapsed:?}"
+        );
+        assert!(result.is_err(), "the set is refused past the budget");
+        assert_eq!(read(&doc).unwrap().blocks[0].text, old);
+    }
+
+    /// Before the diff budget this ran for many minutes. Past the budget
+    /// the cell keeps the text it held.
+    #[test]
+    fn an_unrelated_set_cell_of_a_large_table_cell_is_refused_within_the_budget() {
+        let old = format!("{} tail \u{2713}", "x".repeat((1 << 20) - 16));
+        let new = "\u{e9}dited tail \u{2713}";
+        let doc = LoroDoc::new();
+        import(
+            &doc,
+            &[DocxBlock {
+                id: "t1".to_string(),
+                kind: DocxBlockKind::Table,
+                role: None,
+                text: String::new(),
+                runs: Vec::new(),
+                cells: vec![DocxCell {
+                    row: 0,
+                    col: 0,
+                    text: old.clone(),
+                    paragraphs: Vec::new(),
+                }],
+                locked: None,
+            }],
+            &[],
+        )
+        .unwrap();
+        let op = DocxBodyOp::SetCell {
+            block: "t1".to_string(),
+            row: 0,
+            col: 0,
+            text: new.to_string(),
+        };
+        let mut minted: Vec<String> = Vec::new();
+        // testkit-lint: allow(wall-clock) the elapsed time is the budget under test
+        let started = Instant::now();
+        let result = apply(&doc, &op, &mut minted);
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < Duration::from_secs(60),
+            "the replacement took {elapsed:?}"
+        );
+        assert!(result.is_err(), "the set is refused past the budget");
+        assert_eq!(read(&doc).unwrap().blocks[0].cells[&(0, 0)], old);
+    }
 }

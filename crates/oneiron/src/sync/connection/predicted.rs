@@ -10,9 +10,8 @@ use std::collections::HashSet;
 
 use tokio::sync::mpsc;
 
-use crate::EntityId;
 use crate::Vault;
-use crate::authority::{PredictedResidenceSet, ResidenceDirective};
+use crate::authority::PredictedResidenceSet;
 use crate::side_table::{self, HexId, Raw, SideTable};
 use crate::sync::client::SyncEvent;
 use crate::sync::transport::TransportError;
@@ -93,15 +92,38 @@ async fn unless_home_offline(
     }
 }
 
+/// The first fault of two stages that both ran: `earlier`'s, else `later`'s. A later fault behind
+/// an earlier one is logged, never lost.
+fn first_fault(
+    earlier: Result<(), TransportError>,
+    later: Result<(), TransportError>,
+) -> Result<(), TransportError> {
+    match (earlier, later) {
+        (Err(fault), Err(behind)) => {
+            tracing::warn!(error = %behind, "predicted residence fault behind an earlier one");
+            Err(fault)
+        }
+        (Err(fault), Ok(())) | (Ok(()), Err(fault)) => Err(fault),
+        (Ok(()), Ok(())) => Ok(()),
+    }
+}
+
 impl SyncConnection {
-    /// Runs the predicted level's upkeep each time it wakes: one pass under the host's
-    /// admission, a pause waited out (FIX 12036), errors reported as [`SyncEvent::Error`].
+    /// Runs the predicted level's upkeep each time it wakes, or the app shell's report on the
+    /// open vault changes: one pass under the host's admission, a pause waited out (FIX
+    /// 12036), errors reported as [`SyncEvent::Error`].
     pub(super) async fn run_predicted_residence(
         &self,
         events: mpsc::UnboundedSender<SyncEvent>,
     ) -> std::convert::Infallible {
+        let mut reported = self.manager.vault().watch_fetch_conditions();
         loop {
-            self.predicted_wake.notified().await;
+            // The report's sender lives as long as the vault, which this connection holds; a
+            // closed watch only leaves the wake.
+            tokio::select! {
+                () = self.predicted_wake.notified() => {}
+                Ok(()) = reported.changed() => {}
+            }
             let _round = self.admit_round().await;
             if let Err(error) = self.run_predicted_pass().await {
                 let _ = events.send(SyncEvent::Error(format!(
@@ -113,9 +135,12 @@ impl SyncConnection {
 
     /// Runs one predicted upkeep pass: ask when due and the fetch gate is open, fetch the
     /// adopted set's windows and documents, and evict what the set dropped, at any time. A
-    /// federation lane does nothing. The home's outage ends the pass quietly.
+    /// federation or member lane does nothing: its residence mode is fixed, and a member lane
+    /// stays Opened for its life (H8-SHARED-ENV-LANE = B). The home's outage ends the pass
+    /// quietly. A fault in one stage holds back no later stage, eviction least of all: the pass
+    /// answers its first fault once every stage ran.
     pub(crate) async fn run_predicted_pass(&self) -> Result<(), TransportError> {
-        if self.config.client_config.federation_peer.is_some() {
+        if self.config.client_config.residence_mode_is_fixed() {
             return Ok(());
         }
         let vault = self.manager.vault();
@@ -133,31 +158,51 @@ impl SyncConnection {
             let empty = PredictedResidenceSet::default();
             return unless_home_offline(self.evict_predictions(&empty)).await;
         }
-        if self.fetch_gate_open() {
-            unless_home_offline(self.maybe_ask_prediction()).await?;
-            let target = self.predicted_target()?;
-            unless_home_offline(self.fetch_predicted_windows(&target)).await?;
-            self.fetch_predicted_documents(&target)?;
-            return unless_home_offline(self.evict_predictions(&target)).await;
-        }
+        let gate_open = self.fetch_gate_open();
+        let mut pass = if gate_open {
+            unless_home_offline(self.maybe_ask_prediction()).await
+        } else {
+            Ok(())
+        };
         let target = self.predicted_target()?;
-        unless_home_offline(self.evict_predictions(&target)).await
+        if gate_open {
+            pass = first_fault(
+                pass,
+                unless_home_offline(self.fetch_predicted_windows(&target)).await,
+            );
+            pass = first_fault(pass, self.fetch_predicted_documents(&target));
+        }
+        first_fault(
+            pass,
+            unless_home_offline(self.evict_predictions(&target)).await,
+        )
     }
 
-    /// The accepted residence directives naming `machine`, oldest first, read in one
-    /// transaction.
-    pub(crate) fn directives_naming_machine(
-        vault: &Vault,
-        machine: EntityId,
-    ) -> crate::error::Result<Vec<ResidenceDirective>> {
-        let txn = vault.store.env.read_txn()?;
-        Ok(
-            crate::sync::residence::directive_states_in_txn(vault, &txn)?
-                .into_iter()
-                .filter(|state| state.directive.machine == machine)
-                .map(|state| state.directive)
-                .collect(),
-        )
+    /// Reports the items one board showed on this machine to its home, at most
+    /// [`crate::sync::residence::BOARD_SEEDS_MAX`] of them, whoever ran the board (lead ruling
+    /// PREDICTED-BOARD-SEED-SIGNAL = A, 21 Nov): the home records each one this machine may hold
+    /// as a seed of its next prediction, and the answer is how many it recorded. A machine the
+    /// owner did not set to the predicted level reports nothing (0), and so does a federation
+    /// lane. Nothing is kept for a home that is down: a prediction freezes while it is.
+    ///
+    /// # Errors
+    ///
+    /// As [`crate::sync::SyncClient`]'s residence calls: a refusal for more items than that, for
+    /// a mode other than opened or a missing residence selector; the home's outage; storage.
+    pub async fn report_board_seeds(
+        &self,
+        items: &[crate::EntityId],
+    ) -> Result<u64, TransportError> {
+        if items.is_empty() || self.config.client_config.federation_peer.is_some() {
+            return Ok(0);
+        }
+        let predicted = crate::sync::residence::load_device_sync_preference(self.manager.vault())
+            .map_err(storage)?
+            .is_some_and(|preference| preference.predicted);
+        if !predicted {
+            return Ok(0);
+        }
+        self.client()?.report_board_seeds(items).await
     }
 
     /// Asks the home for a prediction when one is due, and takes a pushed one through the
@@ -255,7 +300,8 @@ impl SyncConnection {
     }
 
     /// Subscribes the target's entity documents through the document registry. A document this
-    /// machine holds no row for waits for its window; any other failure holds the pass back.
+    /// machine holds no row for waits for its window; any other failure, its marker's included,
+    /// is the stage's fault once the other documents ran.
     fn fetch_predicted_documents(
         &self,
         target: &PredictedResidenceSet,
@@ -270,26 +316,36 @@ impl SyncConnection {
                 .ok_or(TransportError::InvalidPayload(
                     "a prediction needs this machine's residence selector",
                 ))?;
+        let mut stage = Ok(());
         for id in &target.documents {
             let marker = HexId(*id);
-            if read_rows(vault, |txn| {
+            match read_rows(vault, |txn| {
                 PREDICTED_DOCUMENT.contains(&vault.store, txn, &marker)
-            })? {
-                continue;
-            }
-            match self.manager.documents().subscribe_entity(*id, &selector) {
-                Ok(()) => {
-                    write_rows(vault, |txn| {
-                        PREDICTED_DOCUMENT.put(&vault.store, txn, &marker, &())
-                    })?;
+            }) {
+                Ok(false) => {}
+                Ok(true) => continue,
+                Err(fault) => {
+                    stage = first_fault(stage, Err(fault));
+                    continue;
                 }
+            }
+            // The marker lands with the subscription row, so eviction can always find what
+            // this pass subscribed.
+            let subscribed =
+                self.manager
+                    .documents()
+                    .subscribe_entity_with(*id, &selector, |txn| {
+                        PREDICTED_DOCUMENT.put(&vault.store, txn, &marker, &())
+                    });
+            match subscribed {
+                Ok(()) => {}
                 Err(error) if admission_denied(&error) => {
                     tracing::warn!(%error, document = %id.to_hex(), "predicted document not subscribed");
                 }
-                Err(error) => return Err(storage(error)),
+                Err(error) => stage = first_fault(stage, Err(storage(error))),
             }
         }
-        Ok(())
+        stage
     }
 
     /// Evicts what the target dropped: predicted windows demote through the demotion path, and
@@ -357,8 +413,9 @@ impl SyncConnection {
     }
 
     /// Unsubscribes the predicted documents the target dropped whose `qd:e:` queue holds no row,
-    /// deleting their `ds:e:` subscription row with their marker. A document with an edit waiting
-    /// stays subscribed: unsynced edits are never evicted.
+    /// under their own id or their copy id, deleting their `ds:e:` subscription rows (a marked
+    /// source's sits under its copy id) with their marker. A document with an edit waiting stays
+    /// subscribed: unsynced edits are never evicted.
     fn evict_predicted_documents(
         &self,
         target: &PredictedResidenceSet,
@@ -371,15 +428,24 @@ impl SyncConnection {
             if target.documents.contains(&marker.0) {
                 continue;
             }
-            if !vault
-                .sync_state_keys_with_prefix(&format!("qd:e:{}:", marker.0.to_hex()))
-                .map_err(storage)?
-                .is_empty()
-            {
+            // A marked source subscribes under its derived copy id (FIX 10872): that row goes
+            // too, derived with no mark consulted, as a note's delete erases it.
+            let copy = crate::origin::secret_projection::copy_id::copy_id(&marker.0).ok();
+            let mut waiting = false;
+            for id in std::iter::once(marker.0).chain(copy) {
+                waiting |= !vault
+                    .sync_state_keys_with_prefix(&format!("qd:e:{}:", id.to_hex()))
+                    .map_err(storage)?
+                    .is_empty();
+            }
+            if waiting {
                 continue;
             }
             write_rows(vault, |txn| {
                 crate::sync::documents::DS_E.delete(&vault.store, txn, marker)?;
+                if let Some(copy) = copy {
+                    crate::sync::documents::DS_E.delete(&vault.store, txn, &HexId(copy))?;
+                }
                 PREDICTED_DOCUMENT
                     .delete(&vault.store, txn, marker)
                     .map(drop)

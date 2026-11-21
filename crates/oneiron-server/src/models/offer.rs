@@ -44,11 +44,12 @@ impl ServedOffer {
 pub enum OfferEndpoint {
     /// A model on this device: nothing leaves it.
     OnDevice,
-    /// A managed EXL3 worker this server supervises, reached only over its
-    /// native channel (I2-LOCAL): each channel is checked against the
-    /// supervised child before any input goes, and its backend sends to
-    /// nothing else, so nothing leaves this device. Made only beside that
-    /// native-only backend (`native_local_offer`), never from a configured
+    /// A managed worker this server supervises, reached only over a channel
+    /// checked against the supervised child before any input goes
+    /// (I2-LOCAL): an EXL3 worker's native channel, or the Unix socket a
+    /// `listen = "unix"` llama.cpp reranker serves on (L9-15). Its backend
+    /// sends to nothing else, so nothing leaves this device. Made only
+    /// beside that backend (`native_local_offer`), never from a configured
     /// label.
     SupervisedNative,
     /// A remote no handshake proves.
@@ -145,9 +146,15 @@ pub(super) fn provider_offer(
 /// The adapter a route names for a managed EXL3 worker's native channel.
 const NATIVE_LOCAL_ADAPTER: &str = "exl3-native";
 
-/// The on-device offer for `model` on `provider` over `native`, the native
-/// channel of its managed EXL3 workers alone (I2-LOCAL): the alternative of
-/// the provider's own offer that a call whose route is on device takes. It
+/// The adapter a route names for a managed llama.cpp reranker's `/v1/rerank`
+/// on its own Unix socket (L9-15).
+const SOCKET_RERANK_ADAPTER: &str = "llama-cpp-socket-rerank";
+
+/// The on-device offer for `model` on `provider` over `native`, the checked
+/// channels of its managed workers alone (I2-LOCAL): its EXL3 workers'
+/// native channels, or for a reranker (`rerank`) its `listen = "unix"`
+/// llama.cpp workers' sockets (L9-15). It is the alternative of the
+/// provider's own offer that a call whose route is on device takes. It
 /// keeps that offer's model, payer, key custody, credential, rates and
 /// catalog revision, so its money is the provider offer's: a paid provider's
 /// call is charged to the same payer under the same budget line and
@@ -165,31 +172,39 @@ pub(super) fn native_local_offer(
     model: ModelId,
     wire_model: &str,
     native: &super::NativeLocal,
+    rerank: bool,
 ) -> anyhow::Result<ServedOffer> {
     let worker = native
         .workers
         .get(wire_model)
         .ok_or_else(|| anyhow::anyhow!("no supervised native worker serves {wire_model}"))?;
     Ok(ServedOffer {
-        binding: native_local_binding(provider, model, worker)?,
+        binding: native_local_binding(provider, model, worker, rerank)?,
         backend: Arc::clone(&native.backend),
         endpoint: OfferEndpoint::SupervisedNative,
     })
 }
 
 /// The binding of [`native_local_offer`] for `model` on `provider`, at
-/// `worker`, the managed EXL3 worker that serves it: the provider's own
-/// offer on device, its route the native adapter at that worker. Read from
-/// the config alone, so `oneiron maintain` binds the on-device view a
+/// `worker`, the managed worker that serves it: the provider's own offer
+/// (its rerank offer when `rerank`) on device, its route the native adapter
+/// at that worker, or for a reranker the socket rerank adapter (L9-15). Read
+/// from the config alone, so `oneiron maintain` binds the on-device view a
 /// serving host's supervisor holds without launching one (FIX 22189).
 pub(super) fn native_local_binding(
     provider: &ProviderConfig,
     model: ModelId,
     worker: &str,
+    rerank: bool,
 ) -> anyhow::Result<OfferBinding> {
-    let own = provider_offer(provider, model, false)?;
+    let own = provider_offer(provider, model, rerank)?;
     let mut binding = own.clone();
-    binding.route = OfferRoute::new(NATIVE_LOCAL_ADAPTER, format!("worker:{worker}"))
+    let adapter = if rerank {
+        SOCKET_RERANK_ADAPTER
+    } else {
+        NATIVE_LOCAL_ADAPTER
+    };
+    binding.route = OfferRoute::new(adapter, format!("worker:{worker}"))
         .map_err(|error| anyhow::anyhow!("native route: {error}"))?;
     binding.locality = ModelLocality::OnDevice;
     if offer_is_free_work(&binding) != offer_is_free_work(&own) {

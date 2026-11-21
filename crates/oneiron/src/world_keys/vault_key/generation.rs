@@ -39,6 +39,37 @@ pub struct DataKeyGenerationWays<'a> {
     pub confirmed_removals: BTreeSet<String>,
 }
 
+/// The ways the owner will present in the act, by name only: what
+/// [`Vault::data_key_generation_preview`] needs, with no secret.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DataKeyGenerationKeptWays {
+    /// The owner keeps the vault password.
+    pub password: bool,
+    /// The credential names of the passkeys the owner keeps.
+    pub passkeys: BTreeSet<String>,
+    /// The labels of the escrows the owner keeps.
+    pub escrows: BTreeSet<String>,
+}
+
+impl DataKeyGenerationWays<'_> {
+    /// The ways this presents, by name.
+    pub fn kept(&self) -> DataKeyGenerationKeptWays {
+        DataKeyGenerationKeptWays {
+            password: self.password.is_some(),
+            passkeys: self
+                .passkeys
+                .iter()
+                .map(|(credential, _)| (*credential).to_owned())
+                .collect(),
+            escrows: self
+                .escrows
+                .iter()
+                .map(|(label, _)| (*label).to_owned())
+                .collect(),
+        }
+    }
+}
+
 /// The refusal of the act's own door under any recovery preset but
 /// Standard, checked before the act and again in its write.
 const PRESET_SWITCH_RUNS_THE_ACT: &str =
@@ -102,12 +133,12 @@ impl DataKeyGenerationDraft<'_> {
 }
 
 impl Vault {
-    /// The wraps of the current key the act would remove: what no presented
+    /// The wraps of the current key the act would remove: what no kept
     /// way covers and what is not this install's device wrap. The screen
     /// names them before the act; the act removes them only when confirmed.
     pub fn data_key_generation_preview(
         &self,
-        ways: &DataKeyGenerationWays<'_>,
+        kept: &DataKeyGenerationKeptWays,
     ) -> Result<Vec<VaultKeyWrapInfo>> {
         let install = self.prepare_install_signing()?;
         let device_id = VaultKeyWrapKind::Device {
@@ -116,21 +147,21 @@ impl Vault {
         .id();
         let mut covered = BTreeSet::new();
         covered.insert(device_id);
-        if ways.password.is_some() {
+        if kept.password {
             covered.insert(VaultKeyWrapKind::Password.id());
         }
-        for (credential, _) in &ways.passkeys {
+        for credential in &kept.passkeys {
             covered.insert(
                 VaultKeyWrapKind::Passkey {
-                    credential: (*credential).to_owned(),
+                    credential: credential.clone(),
                 }
                 .id(),
             );
         }
-        for (label, _) in &ways.escrows {
+        for label in &kept.escrows {
             covered.insert(
                 VaultKeyWrapKind::Escrow {
-                    label: (*label).to_owned(),
+                    label: label.clone(),
                 }
                 .id(),
             );
@@ -300,7 +331,8 @@ impl Vault {
     /// census. A caller that holds the custody publication policy lock
     /// (`Store::custody_policy_guard`) from before the prepare until after
     /// [`Self::finish_data_key_generation`] also spares a pass that would
-    /// stay pending for it.
+    /// stay pending for it. The act settles every agent proposal for the
+    /// generation it replaces.
     pub(crate) fn start_data_key_generation_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -451,6 +483,7 @@ impl Vault {
                 recovery: state.recovery,
             },
         )?;
+        self.settle_data_key_generation_proposals_in_txn(txn, state.generation)?;
         transition.stage_generation(committed, || self.staged_wraps_in_txn(txn, None))?;
         // No inference snapshot admitted under the old key commits after
         // this write: the draft's pause ended every earlier admission and

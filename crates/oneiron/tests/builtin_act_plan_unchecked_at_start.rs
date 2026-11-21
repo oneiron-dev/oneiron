@@ -89,6 +89,7 @@ fn a_builtin_name_starts_a_plan_that_decodes() {
             serde_json::to_vec(&AddOwnerPlan {
                 v: 1,
                 owner: candidate.to_hex(),
+                house_workspace: None,
             })
             .expect("the add_owner plan encodes"),
         ),

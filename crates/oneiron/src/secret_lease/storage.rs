@@ -21,6 +21,7 @@ use crate::side_table::HexId;
 use crate::store::Store;
 use crate::store::secret_name_index::resolve_secret_ref_in_txn;
 use crate::vault::Vault;
+use oneiron_contracts::lifecycle::Lifecycle;
 
 // ---------------------------------------------------------------------------
 // Row IO
@@ -193,7 +194,7 @@ pub(super) fn read_live_lease_in_txn(
     if lease.status == SecretLeaseStatus::Active
         && oneiron_store::expiry::is_expired(now, lease.expires_at)
     {
-        lease.status = SecretLeaseStatus::Expired;
+        lease.status.transition_to(SecretLeaseStatus::Expired)?;
         write_secret_lease_in_txn(store, wtxn, &lease)?;
         teardown_local_registration_in_txn(store, wtxn, lease_id, now)?;
     }
@@ -544,7 +545,7 @@ pub(crate) fn erase_lease_actor_in_txn(
                 None => *at.insert(crate::ports::recorded_at_in_txn(&vault.store, wtxn)?),
             };
             super::grant::retire_lease_in_txn(&vault.store, wtxn, &lease.lease_id, now)?;
-            lease.status = SecretLeaseStatus::Revoked;
+            lease.status.transition_to(SecretLeaseStatus::Revoked)?;
         }
         lease.binding_effector =
             reveal_effector(crate::store::receipt_identity::ERASED_CALL_IDENTITY);

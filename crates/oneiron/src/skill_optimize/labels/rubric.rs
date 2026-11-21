@@ -5,7 +5,9 @@
 use super::*;
 use crate::edge::EdgeKind;
 
-/// The judge head: from the bootstrap `judge` skill, through admitted
+/// The judge head: from the bootstrap `judge` skill (or, once its succession
+/// holds no loadable revision, the admitted restored default:
+/// `agent_dispatch::bootstrap_skill_root_in_txn`), through admitted
 /// succession (`Supersedes`, new to old) to its newest revision, when that
 /// revision is live. The walk alone, without the rubric's skill gates, so a
 /// judge imported under another id still has a head (FIX 9076). `None` when
@@ -19,12 +21,9 @@ pub(crate) fn judge_head_sourced_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
 ) -> Result<(Option<EntityId>, Option<Vec<EntityId>>)> {
-    let mut head = EntityId::derive(
-        crate::entity_id::derived_domains::BOOTSTRAP_SKILL,
-        &[JUDGE_SKILL_ID.as_bytes()],
-    )?;
+    let (mut head, mut sources) =
+        crate::agent_dispatch::bootstrap_skill_root_sourced_in_txn(vault, txn, JUDGE_SKILL_ID)?;
     let mut seen = BTreeSet::from([head]);
-    let mut sources = Some(Vec::new());
     loop {
         let (newer, edge_sources) = vault.filtered_edge_peers_sourced(
             txn,
@@ -302,7 +301,10 @@ pub struct JudgeLabelRecheckRequest<'a> {
 }
 
 /// The host's side of a re-check: one model call per pending pick, made
-/// outside any vault transaction.
+/// outside any vault transaction. The host asks each pick's fits question
+/// on the decision ladder (`JudgeLabelFitCheck::decide`), its Coach model
+/// the ladder's one rung; the seam lends the Coach's seat and the case it
+/// reads, never a verdict of its own.
 pub trait JudgeLabelChecker {
     fn check(&self, request: &JudgeLabelRecheckRequest<'_>) -> Result<JudgeLabelFit>;
 }

@@ -214,6 +214,10 @@ struct CutOriginAuthority {
     /// This copy serves reads only, at every ref.
     #[serde(default)]
     mirror: bool,
+    /// The writer host's git door base (`https://host.example/git`): where a
+    /// push to a copy this host does not write is redirected (RA7).
+    #[serde(default)]
+    writer_door: Option<String>,
 }
 
 async fn cut_origin_authority(
@@ -250,6 +254,7 @@ async fn cut_origin_authority(
             request.residence,
             writer,
             request.mirror,
+            request.writer_door.as_deref(),
         )?)
     })
     .await?;

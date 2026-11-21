@@ -1,5 +1,6 @@
 //! Typed ASSET ingest and consumer-form reads (OF-370, OF-329).
 use base64::Engine as _;
+use oneiron_contracts::fingerprint::ContentHash;
 
 use super::asset_resolve::{AssetConsumer, asset_body};
 use super::{Memory, MemoryError, MemoryResult, caps};
@@ -70,7 +71,7 @@ impl Memory<'_> {
             asset_text_ref: text.map(|id| id.to_hex()),
             embedding_kind: input.embedding_kind,
             mime_type: mime,
-            blake3: blake3::hash(&bytes).to_hex().to_string(),
+            blake3: ContentHash::of(&bytes).to_hex(),
             byte_size: bytes.len() as u64,
         })
     }

@@ -88,6 +88,7 @@ impl ExtractionEncoder for Adas {
                 speaker_links: Vec::new(),
                 mood_parts: Vec::new(),
                 stack_sha16: None,
+                relations: None,
             }),
         }
     }
@@ -187,6 +188,7 @@ fn a_distinct_event_from_a_project_message_stands_in_that_project() {
             conversation_ref: EntityId::now().to_hex(),
             turn_ref: Some(turn.to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: Some(message.to_hex()),
                 author: WitnessAuthor::User,

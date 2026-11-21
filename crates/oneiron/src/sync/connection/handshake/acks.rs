@@ -4,6 +4,7 @@
 use std::collections::{BTreeSet, HashSet};
 
 use futures_util::StreamExt;
+use oneiron_contracts::fingerprint::ContentHash;
 use tokio::time::Duration;
 use tokio_tungstenite::tungstenite::Message;
 
@@ -110,7 +111,7 @@ impl SyncConnection {
                 held_back.insert(queued.window_key);
                 continue;
             };
-            if ack.digest() != blake3::hash(&queued.encoded).as_bytes() {
+            if ack.digest() != ContentHash::of(&queued.encoded).as_bytes() {
                 return Err(SessionFault::remote(
                     "home residence acknowledgment digest mismatch",
                 ));

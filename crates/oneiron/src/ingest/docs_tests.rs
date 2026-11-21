@@ -440,10 +440,13 @@ fn mixed_summary_producers_do_not_abort_or_starve_document_hits() -> Result<()> 
         &crate::conversation_dag::fixtures::body("conversation"),
     )?;
     crate::conversation_dag::test_support::put_dag_test_policy(&vault, actor, true)?;
+    let writer = vault.memory(actor.entity_ref(), actor.actor_class());
     let turn = vault
-        .append_dag_record(&crate::conversation_dag::fixtures::input(
-            conv, None, true, actor,
-        ))?
+        .append_dag_record(
+            &writer,
+            &crate::conversation_dag::fixtures::input(conv, None, true, actor),
+        )
+        .expect("append dag record")
         .id;
     let (dag, _) = vault.mint_and_land_scope_summary(
         &crate::conversation_dag::fixtures::scope(
@@ -976,13 +979,17 @@ fn deep_docs_respect_revision_ceiling_and_quote_validation() -> Result<()> {
     assert_eq!(deep.trigger, DocsDeepTrigger::Dreamer);
     doc.pages[0].text = "# A new page\n\nNew facts.".into();
     assert_eq!(asset, import(&doc, ceiling, 4)?);
+    // Withdrawal-hidden history reads omit stale claims; inspect the retained row.
+    let old_claim = EntityId::from_hex(&deep.claim_refs[0])?;
+    let txn = vault.store.env.read_txn()?;
+    assert!(crate::ports::stale_in_txn(&vault.store, &txn, &old_claim)?);
+    let raw = vault.get_raw_in(&txn, &old_claim)?.unwrap();
     assert_eq!(
-        vault
-            .get_claim(&EntityId::from_hex(&deep.claim_refs[0])?)?
-            .unwrap()
+        crate::claim::decode_claim_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..], false)?
             .lifecycle,
         crate::claim::ClaimLifecycleStatus::Retracted
     );
+    drop(txn);
     assert!(
         vault
             .deep_ingest_docs_asset(&owner, asset, DocsDeepTrigger::Explicit, &ner, 4)?
@@ -1119,8 +1126,8 @@ fn docs_deep_claims_register_source_dependencies_and_refuse_dangling_chunks() ->
 /// Security pack 2, F14 H405: the owner's bulk import consent approved reading
 /// and deriving from this source revision. It never saw the extractor's
 /// output, so under the shipped policy (no `Auto` permit for imported claims)
-/// every derived claim waits `Proposed` in the tray until the owner approves
-/// that claim.
+/// every derived claim waits `Proposed` until the owner reviews the whole
+/// batch (FIX 9884), with no per-claim tray rows.
 #[test]
 fn docs_deep_claims_wait_for_review_under_bulk_import_consent() -> Result<()> {
     let (_dir, vault, owner, _doc, _ceiling, receipt) = deep_fixture()?;
@@ -1158,24 +1165,39 @@ fn docs_deep_claims_wait_for_review_under_bulk_import_consent() -> Result<()> {
                 .is_some()
         );
     }
+    // FIX 9884: one receipt holds the batch review, not a tray row per claim.
+    assert!(vault.pending_gate_consents(20)?.is_empty());
+    let reviews: crate::side_table::SideTable<
+        crate::side_table::HexId,
+        DocsDeepReceipt,
+        crate::side_table::LegacyJson,
+    > = crate::side_table::SideTable::new(&crate::side_table::INGEST_DOCS_DEEP_RECEIPT);
+    let txn = vault.store.env.read_txn()?;
+    let reviews = reviews.scan(&vault.store, &txn)?;
+    assert_eq!(reviews.len(), 1, "one review for the source revision");
+    assert_eq!(reviews[0].1, deep);
+    assert_eq!(deep.review.claims.len(), deep.claim_refs.len());
     assert_eq!(
-        vault.pending_gate_consents(20)?.len(),
-        2,
-        "each derived claim is in the tray"
+        deep.review.decision,
+        crate::claim::ClaimApprovalStatus::Proposed
     );
+    drop(txn);
 
-    // The positive control: the owner's own approval lands one.
-    let approved = EntityId::from_hex(&deep.claim_refs[0])?;
-    let body = vault.get_claim(&approved)?.unwrap();
-    vault.approve_inbox_member_with_edit_at(
-        &approved,
-        &crate::claim::encode_claim_body(&body)?,
-        crate::unix_seconds_now(),
-    )?;
-    assert_eq!(
-        vault.get_claim(&approved)?.unwrap().approval,
-        crate::claim::ClaimApprovalStatus::Approved
-    );
+    // FIX 9884: the owner's batch approval lands every reviewed claim.
+    let reviewed = vault
+        .docs_deep_review_effect(&owner, asset)?
+        .digest()
+        .to_hex();
+    vault.approve_docs_deep_claims(&owner, asset, &reviewed)?;
+    for reference in &deep.claim_refs {
+        assert_eq!(
+            vault
+                .get_claim(&EntityId::from_hex(reference)?)?
+                .unwrap()
+                .approval,
+            crate::claim::ClaimApprovalStatus::Approved
+        );
+    }
     Ok(())
 }
 
@@ -1188,6 +1210,12 @@ fn docs_deep_transport_reimport_preserves_claims_and_receipt() -> Result<()> {
     let ner = Ner(AtomicUsize::new(0));
     let original =
         vault.deep_ingest_docs_asset(&owner, asset, DocsDeepTrigger::Explicit, &ner, 3)?;
+    // FIX 9884: deriving permits no approval; approve the exact batch first.
+    let reviewed = vault
+        .docs_deep_review_effect(&owner, asset)?
+        .digest()
+        .to_hex();
+    vault.approve_docs_deep_claims(&owner, asset, &reviewed)?;
     let calls = ner.0.load(Ordering::Relaxed);
     doc.pages[0].text = format!("\u{feff}{}", doc.pages[0].text);
     assert_eq!(
@@ -1224,6 +1252,12 @@ fn deleting_docs_asset_invalidates_its_deep_claim_at_normal_read() -> Result<()>
     let asset = EntityId::from_hex(&receipt.asset_refs[0])?;
     let deep =
         vault.deep_ingest_docs_asset(&owner, asset, DocsDeepTrigger::Explicit, &MultiNer, 3)?;
+    // FIX 9884: deriving permits no approval; approve the exact batch first.
+    let reviewed = vault
+        .docs_deep_review_effect(&owner, asset)?
+        .digest()
+        .to_hex();
+    vault.approve_docs_deep_claims(&owner, asset, &reviewed)?;
     let claim = EntityId::from_hex(&deep.claim_refs[0])?;
     grant_core_read(&vault, "owner")?;
     let reader = vault.scoped_read(crate::claim::ScopedReadActorKey::new("owner").unwrap());
@@ -1250,6 +1284,12 @@ fn ordinary_docs_source_put_invalidates_live_deep_claims() -> Result<()> {
             &Ner(std::sync::atomic::AtomicUsize::new(0)),
             3,
         )?;
+        // FIX 9884: deriving permits no approval; approve the exact batch first.
+        let reviewed = vault
+            .docs_deep_review_effect(&owner, asset)?
+            .digest()
+            .to_hex();
+        vault.approve_docs_deep_claims(&owner, asset, &reviewed)?;
         let claim = EntityId::from_hex(&deep.claim_refs[0])?;
         grant_core_read(&vault, "owner")?;
         let reader = vault.scoped_read(crate::claim::ScopedReadActorKey::new("owner").unwrap());

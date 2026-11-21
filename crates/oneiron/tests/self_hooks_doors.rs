@@ -388,7 +388,7 @@ fn a_changed_regen_waits_for_the_owner() {
     let bindings = fixture.vault.pack_hook_bindings().expect("list bindings");
     let current = bindings
         .iter()
-        .find(|(id, _)| **id == binding)
+        .find(|(id, _)| *id == binding)
         .expect("the binding still stands");
     assert!(
         current.1.enabled,
