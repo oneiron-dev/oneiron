@@ -10,7 +10,8 @@ use super::super::door::attempt_failure_reason;
 use super::super::storage::{booking_writer, engine_failure, read_txn};
 use super::super::token::hex_lower;
 use super::home_fence::{SettleStanding, settle_standing_in_txn};
-use super::mark_refunded_outside::record_marked_refund;
+pub use super::mark_refunded_outside::RefundPermission;
+use super::mark_refunded_outside::{record_marked_refund, refund_permission_granted};
 use super::refund_ended_unpaid::{AskedRefund, note_refund_ended_unpaid};
 use super::settle_row::{
     QueuedStamp, SettleRow, enqueue_settle, requeue_reason, settle_payload_key,
@@ -119,7 +120,7 @@ impl DepositSettleMove {
 
 /// One provider call: the payment, the move, and the idempotency key the
 /// provider must dedupe it by.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct DepositSettleRequest<'a> {
     pub payment_id: &'a str,
     pub movement: DepositSettleMove,
@@ -141,6 +142,10 @@ pub struct DepositSettleRequest<'a> {
     /// for a refund, or 0 when it holds none that paid or may still pay.
     /// False for every other call.
     pub find_only: bool,
+    /// Asked right before the provider makes a refund: no refund starts once
+    /// the owner marked it refunded outside the provider (review round 2 of
+    /// #10267).
+    pub refund_permission: RefundPermission<'a>,
 }
 
 /// Why a provider call failed.
@@ -560,6 +565,7 @@ fn settle_deposit_key<P: DepositSettlementPort>(
     let earlier_retry_keys: Vec<String> = (0..refund_retry)
         .map(|retry| settle_idempotency_key(movement, refunded_before, retry, digest))
         .collect();
+    let granted = || refund_permission_granted(vault, key);
     match port.settle(&DepositSettleRequest {
         payment_id: &payment_id,
         movement,
@@ -567,6 +573,7 @@ fn settle_deposit_key<P: DepositSettlementPort>(
         earlier_retry_keys: &earlier_retry_keys,
         refunded_by_provider_before,
         find_only,
+        refund_permission: RefundPermission::new(&granted),
     }) {
         Ok(moved) => Ok(
             match record_settled(

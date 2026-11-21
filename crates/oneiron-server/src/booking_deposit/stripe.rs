@@ -395,8 +395,10 @@ impl<'v> StripeClient<'v> {
             .map_err(|_| StripeCallError::Malformed("no PaymentIntent in the reply".to_owned()))
     }
 
-    /// The deposit's refund under the settle move's idempotency `key`: the
-    /// one already made under it, found by its metadata, or else a new one.
+    /// The deposit's refund under the settle move's idempotency `key`, found
+    /// by its metadata, or what else the payment's refunds answer for it;
+    /// [`OwedRefund::NotMade`] when none is made, and then
+    /// [`Self::make_refund`] makes one once the deposit grants it.
     /// Stripe dedupes a repeated key for a day only, so a refund it holds
     /// pending longer is never made twice.
     ///
@@ -429,23 +431,18 @@ impl<'v> StripeClient<'v> {
     /// the row ran stops the new refund, and the card still says the refund
     /// did not go through (review round 2 of #10149).
     ///
-    /// A find (`find_only`: the owner marked the refund refunded outside
-    /// Stripe) reads the same and makes no refund: with nothing found it
-    /// answers [`OwedRefund::NotMade`].
-    ///
     /// The payment's refunds are read page by page
     /// ([`Self::each_payment_refund`]) until the row's own refund turns up:
     /// one past the first page is still its own
     /// (FIX [BK-DEPOSIT-REFUND-LIST-ONE-PAGE]), and a refund the list names
     /// twice is never added up twice.
-    fn refund_once(
+    fn find_owed_refund(
         &self,
         payment_id: &str,
         amount_minor: u64,
         key: &str,
         earlier_retry_keys: &[String],
         refunded_by_provider_before: u64,
-        find_only: bool,
     ) -> Result<OwedRefund, StripeCallError> {
         let mut succeeded = 0_u64;
         let mut held = 0_u64;
@@ -491,12 +488,16 @@ impl<'v> StripeClient<'v> {
                 _ => OwedRefund::MadeElsewhere { succeeded, held },
             });
         }
-        if let Some(refund) = keyed_unpaid {
-            return Ok(OwedRefund::Keyed(refund));
-        }
-        if find_only {
-            return Ok(OwedRefund::NotMade);
-        }
+        Ok(keyed_unpaid.map_or(OwedRefund::NotMade, OwedRefund::Keyed))
+    }
+
+    /// Makes the refund of `amount_minor` under the settle move's `key`.
+    fn make_refund(
+        &self,
+        payment_id: &str,
+        amount_minor: u64,
+        key: &str,
+    ) -> Result<OwedRefund, StripeCallError> {
         let body = self.call(
             "/v1/refunds",
             Some(&[
@@ -627,8 +628,19 @@ impl DepositSettlementPort for StripeClient<'_> {
                 let (earlier, find_only) = (request.earlier_retry_keys, request.find_only);
                 let before = request.refunded_by_provider_before;
                 let owed = self
-                    .refund_once(id, amount_minor, key, earlier, before, find_only)
+                    .find_owed_refund(id, amount_minor, key, earlier, before)
                     .map_err(StripeCallError::into_failure)?;
+                // A find makes no refund, and nor does a row whose refund
+                // the owner marked refunded outside Stripe after it was
+                // planned: the deposit says no right before the POST
+                // (review round 2 of #10267), and the row answers as a find.
+                let owed = match owed {
+                    OwedRefund::NotMade if !find_only && request.refund_permission.granted()? => {
+                        self.make_refund(id, amount_minor, key)
+                            .map_err(StripeCallError::into_failure)?
+                    }
+                    owed => owed,
+                };
                 return if find_only {
                     owed.found_amount(amount_minor)
                 } else {

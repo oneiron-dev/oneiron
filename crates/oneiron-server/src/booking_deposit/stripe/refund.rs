@@ -72,9 +72,11 @@ pub(super) enum OwedRefund {
     /// the row asked for no refund, and only a hand refund pays the rest
     /// (review rounds 1 and 2 of #10149).
     EndedUnpaidPartRefundedByHand(RefundView),
-    /// A find made nothing: the payment holds no refund under the row's own
-    /// key and none made under no settle key
-    /// (FIX [BK-DEPOSIT-FAILED-REFUND-MARK-PAID]).
+    /// No refund is made: the payment holds none under the row's own key and
+    /// none made under no settle key. A find answers it
+    /// (FIX [BK-DEPOSIT-FAILED-REFUND-MARK-PAID]), and so does a row whose
+    /// refund the deposit no longer lets Stripe make (review round 2 of
+    /// #10267); any other row then makes the refund.
     NotMade,
 }
 

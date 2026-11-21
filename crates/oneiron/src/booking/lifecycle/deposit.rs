@@ -74,7 +74,7 @@ pub(super) use self::settle::queue_carried_settle_in_txn;
 pub use self::settle::{
     BOOKING_DEPOSIT_SETTLE_ATTEMPT_KIND, BookingDepositSettlementDrain, DepositProviderFailure,
     DepositSettleMove, DepositSettleRequest, DepositSettleStep, DepositSettlementPort,
-    run_booking_deposit_settlement, settle_booking_deposit,
+    RefundPermission, run_booking_deposit_settlement, settle_booking_deposit,
 };
 use self::settle_row::enqueue_settle;
 
