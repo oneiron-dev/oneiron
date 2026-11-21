@@ -66,6 +66,23 @@ pub(crate) fn private_threads_readable_with_read_in(
     if !crate::source_audience::readable_with_read_in(vault, dbs, txn, id, raw, viewers)? {
         return Ok(false);
     }
+    private_thread_walks_readable_with_read_in(vault, dbs, txn, id, raw, viewers, current)
+}
+
+/// [`private_threads_readable_with_read_in`] without its source-audience
+/// floor: the private-thread walks alone. Only a live owner's
+/// withheld-notice read reaches it (`ScopedRead::withheld_notice_in`), to
+/// learn whether a notice its sources withhold reads to him on every other
+/// gate; that read serves no row.
+pub(crate) fn private_thread_walks_readable_with_read_in(
+    vault: &Vault,
+    dbs: &crate::store::StoreRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    raw: &[u8],
+    viewers: &[EntityId],
+    current: bool,
+) -> Result<bool> {
     if crate::store::ManifestDbs::is_union(dbs) {
         let base = vault.store.read();
         let Some(walk) = thread_walk_kept(vault, &base, txn, id, raw)? else {

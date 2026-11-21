@@ -183,6 +183,7 @@ impl<'v> ScopedRead<'v> {
             read_filter: self.read_filter.clone(),
             receipts_include_live_grants: self.receipts_include_live_grants,
             cited_support: self.cited_support,
+            source_floor_waived: self.source_floor_waived,
         })
     }
 }
