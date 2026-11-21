@@ -58,7 +58,7 @@ impl Vault {
     ) -> Result<PageVerdict> {
         let watch = crate::federation::StaleSweepWatch::begin(self);
         let mut txn = self.store.env.write_txn()?;
-        let was_unjoined = crate::setting::restored::possibly_restored_unjoined_in_txn(self, &txn)?;
+        let was_unjoined = crate::setting::restored::restored_unjoined_in_txn(self, &txn)?;
         let mut merged = history_in_txn(self, &txn)?;
         let resident: BTreeSet<AuthorityEntryHash> = merged.keys().copied().collect();
         let (adopted, evidence) = adopted_context_in_txn(&self.store, &txn)?;

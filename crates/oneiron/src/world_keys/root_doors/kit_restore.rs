@@ -55,9 +55,6 @@ impl Vault {
         let (restore, usable) = self.with_write_txn(|txn| {
             self.restore_world_keys_in_txn(txn, owner, &secret, &request, seed, confirm)
         })?;
-        // A copy the restore joined starts the work its queue held: the
-        // deadline watchers that armed nothing for it read it again.
-        self.store.notify_proactivity_changes();
         for key in usable {
             self.ring_world_key(key);
         }
@@ -97,9 +94,6 @@ impl Vault {
                 self.restore_world_keys_in_txn(txn, owner, secret, request, seed, confirm)?;
             Ok((stored, keys))
         })?;
-        // As in [`Self::restore_world_keys`]: a copy the restore joined
-        // starts the work its queue held.
-        self.store.notify_proactivity_changes();
         for key in usable {
             self.ring_world_key(key);
         }

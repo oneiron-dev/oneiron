@@ -224,11 +224,9 @@ impl Vault {
             .ok_or_else(|| authority_refused(JOIN_NOT_COUNTED))?;
         txn.commit()?;
         // The work the queue held while the copy had not joined is claimable
-        // now: wake its observers, and the deadline watchers that armed
-        // nothing for it, so it starts at once (RULING
+        // now: wake its observers so it starts at once (RULING
         // RESTORED-UNJOINED-OWNER-DIRECT-WORK = A).
         self.store.notify_attempt_observers();
-        self.store.notify_proactivity_changes();
         Ok(folded)
     }
 

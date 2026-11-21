@@ -371,11 +371,6 @@ impl<'a> AttemptQueue<'a> {
     /// never stops the walk. Those entries are left for their own kind's
     /// claim to repair. The seeks grow with the distinct instants other
     /// kinds' jobs wait at, which is why this walk only reads.
-    ///
-    /// On a copy restored and not joined a held `kind` plans nothing, as its
-    /// claim claims nothing: a plan that named a held row would read as ready
-    /// work its claim never takes, and a worker that plans again on every
-    /// empty claim would never idle ([`super::unjoined_hold::UnjoinedHold`]).
     pub(crate) fn owner_retained_matching_claim_plan_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -385,9 +380,6 @@ impl<'a> AttemptQueue<'a> {
         mut permits: impl FnMut(&AttemptRecord) -> Result<bool>,
     ) -> Result<OwnerRetainedPlan> {
         check_owner_retained_claim(kind, input)?;
-        if UnjoinedHold::default().holds(self.store, txn, kind)? {
-            return Ok(OwnerRetainedPlan::default());
-        }
         let floor = |ready: u64| {
             let mut key = [0_u8; READY_KEY_LEN];
             key[..8].copy_from_slice(&ready.to_be_bytes());

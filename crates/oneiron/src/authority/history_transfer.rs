@@ -281,7 +281,7 @@ impl Vault {
         }
         let watch = crate::federation::StaleSweepWatch::begin(self);
         let mut txn = self.store.env.write_txn()?;
-        let was_unjoined = crate::setting::restored::possibly_restored_unjoined_in_txn(self, &txn)?;
+        let was_unjoined = crate::setting::restored::restored_unjoined_in_txn(self, &txn)?;
         prelude(&mut txn)?;
         let carried: BTreeMap<_, _> = decoded
             .iter()
