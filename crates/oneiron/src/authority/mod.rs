@@ -589,6 +589,11 @@ pub(crate) use log_budget::{
     authority_door, authority_signer_label, carried_work_past_owner_reserve_in_txn,
     end_owner_reserve_work_hold, past_owner_reserve_in_txn, signer_has_standing,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use log_budget::{
+    door_view_differs_from_rebuild_in_txn, door_view_rows_decoded_for_test,
+    staged_door_views_differ_from_rebuild,
+};
 pub(crate) use log_structure::carried_rows_never_applied_in_txn;
 #[cfg(oneiron_test_support)]
 pub(crate) use owner_key_line::tail_reaches_old_parents_past_rows_for_test;
@@ -629,7 +634,9 @@ pub(crate) use readonly_fold::{
     AuthorityCachedFold, advance_authority_cache_generation, authority_cache_generation,
     authority_fold_readonly_for_store_in_txn,
 };
-use readonly_fold::{authority_log_rows_in_txn, decode_stored_authority_log_body};
+use readonly_fold::{
+    authority_log_body_in_txn, authority_log_rows_in_txn, decode_stored_authority_log_body,
+};
 pub(crate) use recovery::arriving_re_root;
 pub(crate) use retired_signers::{authority_row_resident, door_ancestor_row, stored_authority_row};
 pub(crate) use sequence_observation::record_authority_sequence_observation_in_txn;
