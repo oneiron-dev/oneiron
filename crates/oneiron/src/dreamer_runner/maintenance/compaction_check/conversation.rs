@@ -218,16 +218,6 @@ pub(super) async fn run_conversation_check(
     let paid = model.inference.selected_paid();
     let input = judge_input(&declaration, &summary, &evidence);
     let request = judge_request(&model, &input, locality, keyless, paid)?;
-    if let Some(settled) = judge_room::exceeded(&model, &request, &declaration.pins_digest()) {
-        record(ctx.vault, attempt_id, &declaration, &settled, now)?;
-        return Ok(judge_room::completed_without_judge());
-    }
-    let judging = match ask_judge(attempt, ctx, &model, request, declaration.writer).await? {
-        Ok(judging) => judging,
-        Err(parked) => return Ok(parked),
-    };
-    let judged = judgment(&judging.response, &declaration);
-    let diagnostic = judged.as_ref().map(|judged| judged.verdict);
     let cited = declaration.cited(true);
     let ask = support::Ask {
         kind: "conversation",
@@ -238,6 +228,17 @@ pub(super) async fn run_conversation_check(
         keyless,
         paid,
     };
+    if let Some(settled) = judge_room::exceeded(&model, &request, &ask, &declaration.pins_digest())?
+    {
+        record(ctx.vault, attempt_id, &declaration, &settled, now)?;
+        return Ok(judge_room::completed_without_judge());
+    }
+    let judging = match ask_judge(attempt, ctx, &model, request, declaration.writer).await? {
+        Ok(judging) => judging,
+        Err(parked) => return Ok(parked),
+    };
+    let judged = judgment(&judging.response, &declaration);
+    let diagnostic = judged.as_ref().map(|judged| judged.verdict);
     let verdict = match support::verdict(attempt, ctx, &model, &judging, diagnostic, &ask).await? {
         Ok(verdict) => verdict,
         Err(parked) => return Ok(parked),
