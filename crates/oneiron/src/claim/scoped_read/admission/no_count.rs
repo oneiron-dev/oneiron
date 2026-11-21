@@ -87,7 +87,13 @@ impl ScopedRead<'_> {
     /// refuses and counts (one its status or its band keeps out) still
     /// counts, as in its receipt, and so does a row the floor admits that
     /// only the run's request or the lane's bound caller filter leaves out:
-    /// what a read selects is no refusal. The worlds the read asked for sit
+    /// what a read selects is no refusal. For a key whose actor reads
+    /// through its own live Grants (A), a row outside every world they reach
+    /// ([`Self::grant_reader_worlds_in`]) that its row gate refuses is hidden,
+    /// counted or not: it lies in no world the reader reads, as a row outside
+    /// a credential's worlds lies (FIX
+    /// GRANT-READER-BM25-DF-COUNTS-HIDDEN-WORLDS). Such a row the key's own
+    /// floor admits is served, and counts. The worlds the read asked for sit
     /// on its key, so the floor holds them: a row with no count whatever its
     /// worlds (every NOTE, any row of a room turn) outside them is hidden
     /// too. That only ever hides more, so it moves ranking alone. A CLAIM
@@ -95,8 +101,9 @@ impl ScopedRead<'_> {
     /// is hidden unjudged, so one such row never ends the scan.
     ///
     /// The row's count is judged first, so the row gate runs only for a row
-    /// the read would not count. The test records nothing: no receipt or
-    /// exclusion count sees the rows it judges.
+    /// the read would not count, or one outside every world a grant reader's
+    /// Grants reach. The test records nothing: no receipt or exclusion count
+    /// sees the rows it judges.
     ///
     /// # Errors
     /// A store, fold or clock failure reading the policy, the holder's
@@ -111,6 +118,7 @@ impl ScopedRead<'_> {
         let policy = crate::gate::resolve_policy_manifest(&self.vault.store, txn)?;
         let floor = self.filter_under(&policy, None)?;
         let authority = HeldAuthority::for_request(None);
+        let grant_worlds = self.grant_reader_worlds_in(txn, &authority);
         Ok(Box::new(move |id: &EntityId| {
             if let Some(worlds) = &worlds
                 && worlds.withholds_in(&store, txn, id)?
@@ -124,6 +132,13 @@ impl ScopedRead<'_> {
                 && crate::claim::decode_claim_body(&row.body, true).is_err()
             {
                 return Ok(true);
+            }
+            if let Some(reached) = &grant_worlds
+                && super::world_scope::outside_reached_worlds_in(&store, txn, id, &row, reached)?
+            {
+                return Ok(
+                    !self.is_entity_retrievable_held_in(txn, &policy, &floor, id, &authority)?
+                );
             }
             if self.refused_row_counts_in(
                 txn,

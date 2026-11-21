@@ -85,6 +85,33 @@ impl ScopedRead<'_> {
         };
         outside_worlds_read_in(&self.store_read(), txn, id, row, &granted.worlds)
     }
+
+    /// The worlds one of this read's own live Grants reaches in `txn`, for
+    /// a key whose actor reads through them (A,
+    /// [`Self::own_live_grants_in`]), joined. A key with no proof, no Scope
+    /// and no owner carries no world ceiling of its own, so these are the
+    /// only worlds a row its own floor (B) refuses can still be read in: a
+    /// row outside them that B refuses is read in no world of the reader's
+    /// (FIX GRANT-READER-BM25-DF-COUNTS-HIDDEN-WORLDS). `None` when A
+    /// stands for no reader here, when its reader holds no live Grant (B
+    /// alone then judges its rows, worlds included), or when one of its
+    /// Grants reaches every world. `authority` holds the Grants A reads.
+    pub(super) fn grant_reader_worlds_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        authority: &super::super::access_gate::HeldAuthority,
+    ) -> Option<ScopeAxis<ScopeId>> {
+        let grants = self.own_live_grants_in(txn, authority)?;
+        if grants.is_empty() {
+            return None;
+        }
+        let reached = grants
+            .iter()
+            .fold(ScopeAxis::Bottom, |reached, (_, grant)| {
+                join_worlds(&reached, &grant.worlds)
+            });
+        (!matches!(reached, ScopeAxis::All)).then_some(reached)
+    }
 }
 
 /// The rows a world keeps from a read under one key, for the statistics a
@@ -128,14 +155,30 @@ impl WorldWithheldRows {
             return Ok(false);
         };
         for worlds in &self.ceilings {
-            if outside_worlds_read_in(store, txn, id, &row, worlds)?
-                || task_outside_worlds_read_in(store, txn, id, &row, worlds)?
-            {
+            if outside_reached_worlds_in(store, txn, id, &row, worlds)? {
                 return Ok(true);
             }
         }
         Ok(false)
     }
+}
+
+/// Whether the stored row `row` of `id`, read in `txn` through `store`, is
+/// kept from a read that reaches only `worlds`: it sits wholly outside them
+/// ([`outside_worlds_read_in`]), or it is a TASK, or one of its authority
+/// facts, born outside them ([`task_outside_worlds_read_in`]).
+///
+/// # Errors
+/// A store or decode failure reading the row's world position.
+pub(super) fn outside_reached_worlds_in(
+    store: &crate::store::StoreRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    row: &EntityRecord,
+    worlds: &ScopeAxis<ScopeId>,
+) -> Result<bool> {
+    Ok(outside_worlds_read_in(store, txn, id, row, worlds)?
+        || task_outside_worlds_read_in(store, txn, id, row, worlds)?)
 }
 
 impl ScopedReadActorKey {
