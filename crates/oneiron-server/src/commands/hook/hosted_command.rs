@@ -247,7 +247,8 @@ fn step_up_login(args: &HostedLoginArgs, step_up: StepUp, flag: &str) -> anyhow:
 /// the origin admits that credential and answers for the vault `id` names
 /// (or, signed in by OAuth with no id named, for the vault it answers), and
 /// selects it. A new OAuth sign-in waits at `staged`: the origin admits it
-/// there, and only then does it take `file`'s place.
+/// there, and only then does it take `file`'s place; the step-ups of the
+/// client it replaced are then signed out.
 fn record(
     args: &HostedLoginArgs,
     selection: &mut Selection,
@@ -309,10 +310,14 @@ fn record(
             ),
         }
     }
-    if let Some(staged) = staged {
-        hosted_sign_in::take_place(staged, file)?;
-        vault.credential_file = absolute(file)?;
-    }
+    let replaced_client = match staged {
+        Some(staged) => {
+            let replaced_client = hosted_sign_in::take_place(staged, file)?;
+            vault.credential_file = absolute(file)?;
+            replaced_client
+        }
+        None => None,
+    };
     vault.verified_at_ms = now_ms();
     // The vault's own earlier record goes; so does any record whose OAuth
     // sign-in file this sign-in has just taken (the origin answers for
@@ -343,6 +348,20 @@ fn record(
         })
         .collect();
     sign_out(&orphaned);
+    // A new OAuth sign-in is another client's: the continue and hand-over
+    // sign-ins the client it replaced made are never read again, so they are
+    // signed out now, not left live at the vault until a logout. Only that
+    // client's go: a later login may have made its own meanwhile.
+    if let Some(replaced_client) = replaced_client
+        && let Some(recorded) = selection.vaults.last()
+    {
+        for step_up in [StepUp::Continue, StepUp::HandOver] {
+            if let Err(error) = step_up.sign_out_replaced_client(&recorded.origin, &replaced_client)
+            {
+                let _ = writeln!(std::io::stderr().lock(), "{error}");
+            }
+        }
+    }
     Ok(())
 }
 
