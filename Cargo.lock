@@ -8191,6 +8191,7 @@ dependencies = [
  "half",
  "loro",
  "oneiron",
+ "oneiron-contracts",
  "oneiron-hex",
  "oneiron-keystore",
  "oneiron-llm",
