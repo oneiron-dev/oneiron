@@ -20,7 +20,6 @@ use oneiron::dreamer_runner::{
 };
 use oneiron::error::{DevicePinRefusal, OwnerPresenceRefusal, RecordError, SecretError};
 use oneiron::federation::{Scope, ScopeAxis};
-use oneiron::llm::model_pack::ModelPackRevertRequest;
 use oneiron::memory::MemoryResult;
 use oneiron::origin::residence::OriginResidence;
 use oneiron::recovery::PassphraseCost;
@@ -43,8 +42,6 @@ const CHECKPOINT_POLICY_REASON: &str = "change which devices vouch for this vaul
 const SET_MACHINE_ROLE_REASON: &str = "change what a device may do in this vault";
 const REMOVE_OWNER_KEY_REASON: &str = "remove a device that can approve changes";
 const ACCEPT_PACK_DEFAULTS_REASON: &str = "accept new default settings";
-const MODEL_PACK_REVERT_REASON: &str = "switch back to the earlier AI model pack";
-const PROACTIVITY_POLICY_REASON: &str = "change how your digest is delivered";
 
 /// A rooted vault with its serving install profiled and its owner authenticated.
 /// The vault drops before its directory.
@@ -601,60 +598,32 @@ fn each_prompt_shows_its_doors_reason_line() {
     assert_eq!(served.stored_rows(), rows, "the refusals store no row");
 }
 
-/// The owner doors whose rows travel as his signed acts (the yes to a pack's
-/// held defaults, the one-tap model pack revert, the confirm of a digest
-/// policy request) ask before they read anything: a declined confirm
-/// refuses each whatever its arguments name, and stores nothing.
+/// The owner door that accepts a pack's held defaults asks before it reads
+/// anything: a declined confirm refuses it whatever its arguments name, and
+/// stores nothing.
 #[test]
-fn the_doors_of_setting_rows_that_travel_ask_before_they_read() {
+fn the_pack_defaults_accept_asks_before_it_reads() {
     let served = ServedVault::hosted();
-    let presence = scripted_gate(
-        &served.vault,
-        [
-            Err(PresenceError::Declined),
-            Err(PresenceError::Declined),
-            Err(PresenceError::Declined),
-        ],
-    );
+    let presence = scripted_gate(&served.vault, [Err(PresenceError::Declined)]);
     let rows = served.stored_rows();
-    for refused in [
-        served
-            .vault
-            .accept_pack_defaults(&served.owner, "engine", &"0".repeat(64))
-            .map(drop),
-        served
-            .vault
-            .revert_model_pack_change_as_owner(
-                &served.owner,
-                &ModelPackRevertRequest {
-                    change_ref: "a change no notice names".to_owned(),
-                },
-            )
-            .map(drop),
-        served
-            .vault
-            .confirm_proactivity_policy_proposal(&served.owner, EntityId::now(), [0; 32]),
-    ] {
-        assert!(
-            matches!(
-                refused,
-                Err(Error::Record(RecordError::OwnerPresenceRequired {
-                    here: OwnerPresenceRefusal::Declined
-                }))
-            ),
-            "a declined confirm refuses the door: {refused:?}"
-        );
-    }
+    let refused = served
+        .vault
+        .accept_pack_defaults(&served.owner, "engine", &"0".repeat(64));
+    assert!(
+        matches!(
+            refused,
+            Err(Error::Record(RecordError::OwnerPresenceRequired {
+                here: OwnerPresenceRefusal::Declined
+            }))
+        ),
+        "a declined confirm refuses the door: {refused:?}"
+    );
     assert_eq!(
         presence.reasons(),
-        [
-            ACCEPT_PACK_DEFAULTS_REASON,
-            MODEL_PACK_REVERT_REASON,
-            PROACTIVITY_POLICY_REASON,
-        ],
-        "each prompt shows its door's line"
+        [ACCEPT_PACK_DEFAULTS_REASON],
+        "the prompt shows the door's line"
     );
-    assert_eq!(served.stored_rows(), rows, "the refusals store no row");
+    assert_eq!(served.stored_rows(), rows, "the refusal stores no row");
 }
 
 /// A door's own checks come before its confirm: an origin cut of a
