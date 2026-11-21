@@ -168,6 +168,11 @@ const HOLD_NOT_COUNTED: &str =
 /// The hold would name more rows than one authority entry may: the log's
 /// encoding bound, never a possession test.
 const HOLD_TOO_MANY_HEADS: &str = "the authority log has more concurrent heads than one recovery hold may name; nothing was written";
+/// Another owner's recovery hold for the same successor key is live: a
+/// successor key is held for one owner at a time, and that hold keeps its
+/// seed. Nothing was written.
+const ANOTHER_OWNERS_HOLD: &str = "another owner's recovery waits for this successor key; \
+                                   nothing was written";
 /// An answer names no live hold: it landed, was cancelled, is void, or no
 /// such hold is counted here. Nothing was written.
 const HOLD_NOT_LIVE: &str = "the recovery hold is not live: it landed, was cancelled, is void, \
@@ -341,25 +346,31 @@ impl Vault {
             .collect())
     }
 
-    /// This install's live hold for `successor`, Waiting or Due: the
-    /// attempt id, its landing second, and whether the seed slot keeps that
-    /// hold's own R. The landing signs only with a hold's own R, so a hold
-    /// whose slot keeps another seed never lands from here. A hold whose R
-    /// the kept seed is comes first; else, while the slot keeps another
-    /// seed, one that `root` (the caller's R) signed, whose seed a racing
-    /// attempt replaced before the door held the recovery-hold lock: the
-    /// door puts R's seed back and answers it. With neither, the kept seed
-    /// is no live hold's, and a new attempt may replace it; an empty slot
-    /// answers no hold, as before.
+    /// This install's live hold for `successor`, Waiting or Due, of
+    /// `owner`, the owner who acts: the attempt id, its landing second, and
+    /// whether the seed slot keeps that hold's own R. A successor key is
+    /// held for one owner at a time: while another owner's hold for it is
+    /// live, the call is refused and that hold keeps its seed (row
+    /// RECOVERY-HOLD-BOX-PATH-WRITES-BEFORE-CHECKS). The landing signs only
+    /// with a hold's own R, so a hold whose slot keeps another seed never
+    /// lands from here. A hold whose R the kept seed is comes first; else,
+    /// while the slot keeps another seed, one that `root` (the caller's R)
+    /// signed, whose seed a racing attempt replaced before the door held
+    /// the recovery-hold lock: the door puts R's seed back and answers it.
+    /// With neither, the kept seed is no live hold's, and a new attempt may
+    /// replace it; an empty slot answers no hold, as before.
     ///
     /// # Errors
-    /// The log's, the clock's and the keystore's.
+    /// [`crate::error::RecordError::AuthorityRefused`] while another
+    /// owner's hold for `successor` is live; the log's, the clock's and the
+    /// keystore's.
     pub(crate) fn live_hold_for_successor_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         machine: EntityId,
         successor: &[u8; 32],
         root: &AuthorityKey,
+        owner: EntityId,
     ) -> Result<Option<(AuthorityEntryHash, u64, bool)>> {
         let fold = self.authority_view_readonly_in_txn(txn)?;
         let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
@@ -377,6 +388,9 @@ impl Vault {
             .collect();
         if live.is_empty() {
             return Ok(None);
+        }
+        if live.iter().any(|view| view.owner != owner) {
+            return Err(authority_refused(ANOTHER_OWNERS_HOLD));
         }
         let slot = self.recovery_hold_slot(&vault_id, machine, successor);
         let kept = self.read_recovery_hold_seed(&slot)?.map(|seed| {

@@ -162,7 +162,7 @@ impl Vault {
             Ok(receipt)
         });
         if let (Err(_), Some(renewal)) = (&appointed, renewal) {
-            self.put_back_unless_appointed(&slot, renewal);
+            self.put_back_unless_on_roster(&slot, renewal);
         }
         appointed
     }
@@ -170,13 +170,13 @@ impl Vault {
     /// The writer renewed the slot and the door failed after it: in the
     /// commit, or in work after a commit that is durable. The slot takes back
     /// its old seed unless this install's roster names the successor, which
-    /// only the committed appointment put there. When the roster cannot be
-    /// read, the slot keeps the successor's seed: a committed successor whose
-    /// seed no install held would leave the roster with a root key nobody
-    /// signs with.
-    fn put_back_unless_appointed(&self, slot: &OwnerSigningSlot, renewal: SlotRenewal) {
+    /// only the door's committed write put there (the appointment, or the
+    /// recovery root's vouch). When the roster cannot be read, the slot
+    /// keeps the successor's seed: a committed successor whose seed no
+    /// install held would leave the roster with a key nobody signs with.
+    pub(crate) fn put_back_unless_on_roster(&self, slot: &OwnerSigningSlot, renewal: SlotRenewal) {
         let successor = AuthorityKey::Ed25519(renewal.successor());
-        let appointed = self
+        let on_roster = self
             .store
             .env
             .read_txn()
@@ -185,13 +185,13 @@ impl Vault {
                 self.authority_view_readonly_in_txn(&txn)
                     .map(|fold| fold.roster.contains_key(&successor))
             });
-        match appointed {
+        match on_roster {
             Ok(true) => {}
             Ok(false) => slot.put_back(renewal),
             Err(error) => tracing::warn!(
                 kind = ?error.kind(),
-                "the appointment's roster was not read after its failed write; this install's \
-                 owner signing slot keeps the successor's seed"
+                "the roster was not read after a failed write that renewed this install's owner \
+                 signing slot; the slot keeps the successor's seed"
             ),
         }
     }
