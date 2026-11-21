@@ -19,10 +19,25 @@ use super::shared_act_doors::person;
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
-/// The rows a preview answer names: the records the legal-hold lift shows.
+/// The rows a preview answer names: the records the legal-hold lift shows,
+/// and the SKILL rows the sheet of a turn-program resume shows (FIX
+/// TURNPROGRAM-OCCURRENCE-ARMINGS-LIVE-ON-A-VAULT-COPY).
 /// A record erase previews under the shared-person proof, whose handles
 /// list the record itself; every other preview names none.
 fn named_rows(preview: &OwnerConfirmPreview) -> Vec<oneiron::EntityId> {
+    if preview.verb == sdk::TURN_PROGRAMS_RESUME_VERB {
+        return preview
+            .takes
+            .as_ref()
+            .and_then(|takes| {
+                serde_json::from_value::<oneiron::dreamer_runner::ResumePausedTurnProgramsPreview>(
+                    takes.clone(),
+                )
+                .ok()
+            })
+            .map(|sheet| super::program_read_doors::resume_sheet_skills(&sheet.programs))
+            .unwrap_or_default();
+    }
     if preview.verb != "vault.legal_holds.lift_and_erase" {
         return Vec::new();
     }
