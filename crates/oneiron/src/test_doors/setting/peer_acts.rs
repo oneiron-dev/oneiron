@@ -551,6 +551,20 @@ pub fn land_signed_setting_act(
     Ok(hash)
 }
 
+/// Lands `acts` here at `ts` in one commit, as one sync batch carries peers' entries, so one
+/// projection pass reads them all (row SETTING-PROJECTED-ROW-REFUSING-HOOKS, REVIEW-10343).
+///
+/// # Errors
+///
+/// The log's refusal of an entry; storage errors.
+#[cfg(feature = "test-support")]
+pub fn land_signed_setting_acts(vault: &Vault, acts: &[&SignedSettingAct], ts: u64) -> Result<()> {
+    let at = crate::temporal::TimeRange { start: ts, end: ts };
+    let entries: Vec<_> = acts.iter().map(|act| (act.0.clone(), at, ts)).collect();
+    vault.put_authority_log_entries(&entries)?;
+    Ok(())
+}
+
 /// The frontier of `pack`'s head acts now (stage 7c-3a).
 ///
 /// # Errors

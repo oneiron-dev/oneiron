@@ -383,6 +383,12 @@ pub(super) fn write_row_in_txn(
         _ => false,
     };
     if same {
+        // An equal row runs no hook; a key whose reader holds the line refuses it while its rows
+        // conflict (`refusal::equal_row_refusal_in_txn`).
+        if let Some(words) = equal_row_refusal_in_txn(vault, txn, spec, slot)? {
+            REFUSED_DECIDING_ACT.with(|refused| refused.set(Some(deciding.act)));
+            return Err(Error::InvalidConfig(words));
+        }
         return Ok(false);
     }
     // A birth over no row is the thing's start, as the door that created it wrote it on its own
@@ -451,8 +457,10 @@ pub(super) fn write_row_in_txn(
         }
     }
     // The key's hook reads the row as it stood before the change, an erased value included
-    // (a seat or a feed it takes out of service): the history keeps none of it.
+    // (a seat or a feed it takes out of service): the history keeps none of it. A row the pass
+    // lands though the hook refused it runs none (`refusal::land_refused_row_in_txn`).
     if let Some(on_change) = spec.on_change
+        && !hook_waived(spec)
         && let Err(error) = on_change(vault, txn, &SettingChange { prior, ..recorded })
     {
         // The act the refused value came from, for the owner's notice of the refusal (`refusal`).
@@ -569,7 +577,9 @@ impl Vault {
     /// refuses here stays as it was, and raises the owner's notice of it (`refusal`). A hook may
     /// judge its row against another row the same pass lands (an act of several rows): the pass
     /// reads each refused row again once a round of it landed another row, until a round lands
-    /// none, and only a refusal that stands then raises the notice.
+    /// none, and only a refusal that stands then raises the notice. A key whose reader holds the
+    /// line lands its refused rows all the same, every one before any notice, so each notice reads
+    /// the rows as the pass leaves them.
     ///
     /// First, in its own write, the owner's rows no act backs are published as batch acts, once
     /// per vault (stage 7a-3, [`Self::publish_settings`]); a fault there is logged, and the
@@ -687,17 +697,16 @@ impl Vault {
                 }
                 round = refused.drain(..).map(|(target, _, _)| target).collect();
             }
-            for (target, reason, deciding) in &refused {
-                tracing::warn!(
-                    reason = %reason,
-                    "the next pass reads again a setting row its key refused here"
-                );
+            // Every row a key lands all the same lands before any notice is raised, so each
+            // notice reads the rows as the pass leaves them (`refusal`).
+            let landings = land_refused_rows_in_txn(self, txn, &refused, now, &mut changed)?;
+            for ((target, reason, deciding), landed) in refused.iter().zip(landings) {
                 record_refusal_in_txn(self, txn, *target)?;
                 // The owner's notice of it (`refusal`), in a savepoint of its own: a fault there
                 // is logged, and the pass goes on.
                 if let Err(error) = crate::batch::savepoint_in_txn(self, txn, |notice| {
                     let refused = (*target, reason.as_str(), *deciding);
-                    raise_refusal_notice_in_txn(self, notice, refused, now).map(Some)
+                    raise_refusal_notice_in_txn(self, notice, refused, landed, now).map(Some)
                 }) {
                     tracing::warn!(
                         kind = ?error.kind(),
