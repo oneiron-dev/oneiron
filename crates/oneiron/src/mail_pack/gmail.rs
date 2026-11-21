@@ -12,8 +12,14 @@
 //! mailbox never fills another mailbox's source, even one replaced at its
 //! door between two reads.
 //!
+//! The wire declares Gmail's per-user quota and counts the bytes it reads,
+//! so the importer paces each step within them ([`GMAIL_MAIL_QUOTA`]); a
+//! 429, or a 403 for a usage limit, answers
+//! [`MAIL_WIRE_RATE_LIMITED`](super::MAIL_WIRE_RATE_LIMITED).
+//!
 //! Call it from a blocking context: `reqwest::blocking` owns its own runtime.
 
+use std::cell::Cell;
 use std::collections::BTreeSet;
 
 use base64::Engine as _;
@@ -21,6 +27,7 @@ use reqwest::header::{AUTHORIZATION, HeaderValue};
 use serde_json::Value;
 
 use super::credential::WireReads;
+use super::quota::{GMAIL_MAIL_QUOTA, MailCall, MailQuota};
 use super::rest::{
     self, FreshAccessTokens, GrantIssuer, RestAnswer, VerifiedCredentials, array, header_value,
     html_text, refused, text_of,
@@ -61,6 +68,8 @@ const MESSAGE_HEADERS: [&str; 9] = [
 pub struct HttpGmailMailWire<'v> {
     vault: &'v Vault,
     client: reqwest::blocking::Client,
+    /// The answer bytes read from Gmail so far.
+    read_bytes: Cell<u64>,
     /// The credentials this wire has seen read their source's mailbox.
     verified: VerifiedCredentials,
     /// The fresh access tokens its sources' stored grants were exchanged
@@ -78,6 +87,7 @@ impl<'v> HttpGmailMailWire<'v> {
         Ok(Self {
             vault,
             client: rest::https_client()?,
+            read_bytes: Cell::new(0),
             verified: VerifiedCredentials::new(),
             tokens: FreshAccessTokens::new(GrantIssuer::Google),
         })
@@ -96,13 +106,15 @@ impl<'v> HttpGmailMailWire<'v> {
             Some(profile) if url == GMAIL_PROFILE_URL && query.is_empty() => {
                 Ok(RestAnswer::Found(profile))
             }
-            _ => rest::send(
+            _ => rest::send_counted(
                 self.client
                     .get(url)
                     .query(query)
                     .header(AUTHORIZATION, auth),
+                &self.read_bytes,
             ),
         })?
+        .unless_rate_limited()?
         .found_or_gone("gmail_mail")
     }
 
@@ -133,7 +145,8 @@ impl<'v> HttpGmailMailWire<'v> {
                         .client
                         .get(GMAIL_PROFILE_URL)
                         .header(AUTHORIZATION, auth.clone());
-                    let profile = rest::send(request)?
+                    let profile = rest::send_counted(request, &self.read_bytes)?
+                        .unless_rate_limited()?
                         .found_or_gone("gmail_mail")?
                         .ok_or_else(|| refused("gmail_mail_profile_not_found"))?;
                     reads_mailbox(&profile, source)?;
@@ -239,6 +252,15 @@ impl MailProviderWire for HttpGmailMailWire<'_> {
     }
 
     fn full(&self, source: &MailSyncSource, provider_id: &str) -> Result<Option<MailFull>> {
+        self.full_charging(source, provider_id, &|_| Ok(()))
+    }
+
+    fn full_charging(
+        &self,
+        source: &MailSyncSource,
+        provider_id: &str,
+        charge: &dyn Fn(MailCall) -> Result<()>,
+    ) -> Result<Option<MailFull>> {
         let params = [("format", "full".to_owned())];
         let url = Self::message_url(provider_id)?;
         let Some(message) = self.get(source, &url, &params)? else {
@@ -250,10 +272,12 @@ impl MailProviderWire for HttpGmailMailWire<'_> {
             collect_parts(payload, 0, &mut parts);
         }
         // A text part Gmail keeps apart is read by its attachment id, under
-        // the same door; a user's attachments are never read here.
+        // the same door, each read charged before it is made; a user's
+        // attachments are never read here.
         for external in std::mem::take(&mut parts.external) {
             require_attachment_id(&external.attachment_id)?;
             let attachment = format!("{url}/attachments/{}", external.attachment_id);
+            charge(MailCall::Attachment)?;
             let Some(body) = self.get(source, &attachment, &[])? else {
                 continue;
             };
@@ -294,8 +318,9 @@ impl MailProviderWire for HttpGmailMailWire<'_> {
                     .get(url.as_str())
                     .query(&params)
                     .header(AUTHORIZATION, auth);
-                rest::send_raw_header_block(request)
+                rest::send_raw_header_block(request, &self.read_bytes)
             })?
+            .unless_rate_limited()?
             .found_or_gone("gmail_mail")?
             .ok_or_else(|| refused("gmail_mail_message_not_found"))?;
         Ok(Some(super::mime::raw_address_headers(&header_block)))
@@ -347,7 +372,8 @@ impl MailProviderWire for HttpGmailMailWire<'_> {
         };
         let mut changes = Vec::new();
         // A label record names the labels it changed, not where the message
-        // stands now: each such message is read again below.
+        // stands now: each such message is named once, after the page's
+        // additions and deletions, for the importer to read again.
         let mut relabeled = BTreeSet::new();
         for record in array(&listed, "history") {
             for added in array(record, "messagesAdded") {
@@ -377,31 +403,11 @@ impl MailProviderWire for HttpGmailMailWire<'_> {
                 relabeled.insert(plain_id(message.get("id"))?);
             }
         }
-        let minimal = [("format", "minimal".to_owned())];
-        for provider_id in relabeled {
-            match self.get(source, &Self::message_url(&provider_id)?, &minimal)? {
-                Some(message) => {
-                    let labels = labels_of(&message);
-                    let trash_or_spam = trash_or_spam(&labels);
-                    changes.push(MailHistoryChange::Labels {
-                        provider_id: provider_id.clone(),
-                        trash_or_spam,
-                        labels,
-                    });
-                    // A message out of trash and spam may never have been
-                    // copied (Gmail reports no addition for it): it is filed
-                    // as added, under the copy setting's rules.
-                    if !trash_or_spam {
-                        changes.push(MailHistoryChange::Added(MailMessageRef {
-                            provider_id,
-                            thread_id: text_of(message.get("threadId")),
-                        }));
-                    }
-                }
-                // Gone since: deleted at the provider.
-                None => changes.push(MailHistoryChange::Deleted { provider_id }),
-            }
-        }
+        changes.extend(
+            relabeled
+                .into_iter()
+                .map(|provider_id| MailHistoryChange::Relabeled { provider_id }),
+        );
         let reached = listed
             .get("historyId")
             .and_then(id_text)
@@ -419,13 +425,25 @@ impl MailProviderWire for HttpGmailMailWire<'_> {
         provider_id: &str,
         attachment: &MailAttachmentRef,
     ) -> Result<Option<Vec<u8>>> {
+        self.attachment_charging(source, provider_id, attachment, &|_| Ok(()))
+    }
+
+    fn attachment_charging(
+        &self,
+        source: &MailSyncSource,
+        provider_id: &str,
+        attachment: &MailAttachmentRef,
+        charge: &dyn Fn(MailCall) -> Result<()>,
+    ) -> Result<Option<Vec<u8>>> {
         let message_url = Self::message_url(provider_id)?;
         // An attachment Gmail keeps apart is fetched by its id; a small one
-        // rides inline in its part of the whole message.
+        // rides inline in its part of the whole message, which is read whole
+        // and charged as that read.
         if let Some(id) = &attachment.provider_attachment_id {
-            return self.attachment_by_id(source, &message_url, id);
+            return self.attachment_by_id(source, &message_url, id, charge);
         }
         let params = [("format", "full".to_owned())];
+        charge(MailCall::Full)?;
         let Some(message) = self.get(source, &message_url, &params)? else {
             return Ok(None);
         };
@@ -441,19 +459,29 @@ impl MailProviderWire for HttpGmailMailWire<'_> {
         // A part described without its id (an imported copy) whose bytes
         // Gmail keeps apart: fetched by the id its part names now.
         match part.pointer("/body/attachmentId").and_then(Value::as_str) {
-            Some(id) => self.attachment_by_id(source, &message_url, id),
+            Some(id) => self.attachment_by_id(source, &message_url, id, charge),
             None => Ok(None),
         }
+    }
+
+    fn quota(&self) -> Option<MailQuota> {
+        Some(GMAIL_MAIL_QUOTA)
+    }
+
+    fn bytes_read(&self) -> u64 {
+        self.read_bytes.get()
     }
 }
 
 impl HttpGmailMailWire<'_> {
-    /// The bytes of the attachment `id` of the message at `message_url`.
+    /// The bytes of the attachment `id` of the message at `message_url`,
+    /// its one request charged through `charge` before it is made.
     fn attachment_by_id(
         &self,
         source: &MailSyncSource,
         message_url: &str,
         id: &str,
+        charge: &dyn Fn(MailCall) -> Result<()>,
     ) -> Result<Option<Vec<u8>>> {
         let plain = id
             .bytes()
@@ -462,6 +490,7 @@ impl HttpGmailMailWire<'_> {
             return Err(refused("gmail_mail_attachment_id_not_plain"));
         }
         let url = format!("{message_url}/attachments/{id}");
+        charge(MailCall::Attachment)?;
         let Some(answer) = self.get(source, &url, &[])? else {
             return Ok(None);
         };

@@ -298,7 +298,8 @@ fn collect_owed_erases(vault: &Vault) -> Result<()> {
 
 /// Fetches up to `limit` of `source`'s waiting attachments through `wire`,
 /// each into its artifact bound to its thread's audience at birth, written
-/// as `actor`. Answers how many were stored.
+/// as `actor`. Answers how many were stored; a fetch its source's quota
+/// refuses ends the round, and the rest wait.
 pub(super) fn fetch_waiting_attachments(
     vault: &Vault,
     source: EntityId,
@@ -351,6 +352,9 @@ pub(super) fn fetch_waiting_attachments(
                 row.state = MailAttachmentState::Failed;
                 row.reason = Some("the provider no longer has it".to_owned());
             }
+            // Its source rests, its provider quota spent: it waits for a
+            // later step.
+            Err(error) if super::quota::is_resting(&error) => break,
             Err(error) => {
                 row.state = MailAttachmentState::Failed;
                 row.reason = Some(error.to_string());
