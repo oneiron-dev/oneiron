@@ -22,9 +22,9 @@ pub(super) fn score_query_terms(
     // A room stages its index rows as it read base when it indexed, and
     // base keeps indexing on record. So a union may hold more postings than
     // the room's count, or a row whose lengths or field stats the room hid.
-    // None of that is corruption there: a term's postings floor the count, a
-    // row the union cannot measure is not scored, and a field with no stats
-    // takes no length normalization.
+    // None of that is corruption there: a term's counted postings floor the
+    // count, a row the union cannot measure is not scored, and a field with
+    // no stats takes no length normalization.
     let union = store.is_union();
     if total_docs == 0 && !union {
         return Ok(Vec::new());
