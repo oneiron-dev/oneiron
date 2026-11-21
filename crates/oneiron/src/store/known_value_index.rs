@@ -167,6 +167,11 @@ struct Known {
     fingerprint: [u8; 32],
     origin: ValueOrigin,
     handle: String,
+    /// The record generation its custody entry was written at, the first
+    /// its holder held these bytes at (FIX
+    /// ERASED-IDENTITY-ROTATION-GENERATION); 0 for a value no custody
+    /// history keeps (a room's kept secret, a person's print).
+    generation: u32,
 }
 
 impl Drop for Known {
@@ -249,8 +254,13 @@ impl KnownValues {
             let Some(handle) = handle_of(custody)? else {
                 continue;
             };
-            for entry in entries {
-                values.push((entry, ValueOrigin::Custody(*custody), handle.clone()));
+            for (generation, entry) in entries {
+                values.push((
+                    entry,
+                    *generation,
+                    ValueOrigin::Custody(*custody),
+                    handle.clone(),
+                ));
             }
         }
         Self::of_entries(&history.master, values)
@@ -291,10 +301,9 @@ impl KnownValues {
         let Some((master, entries)) = store.known_entries_for_in_writer(wtxn, custody)? else {
             return Ok(None);
         };
-        let entries: Vec<KnownEntry> = entries
+        let entries: Vec<(u32, KnownEntry)> = entries
             .into_iter()
             .filter(|(generation, _)| generations.contains(generation))
-            .map(|(_, entry)| entry)
             .collect();
         if entries.is_empty() {
             return Ok(None);
@@ -328,10 +337,9 @@ impl KnownValues {
             let Some((held, entries)) = store.known_entries_for_in_writer(wtxn, custody)? else {
                 return Ok(None);
             };
-            let entries: Vec<KnownEntry> = entries
+            let entries: Vec<(u32, KnownEntry)> = entries
                 .into_iter()
                 .filter(|(at, _)| at == generation)
-                .map(|(_, entry)| entry)
                 .collect();
             if entries.is_empty() {
                 return Ok(None);

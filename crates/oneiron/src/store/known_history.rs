@@ -187,8 +187,10 @@ impl Drop for KnownEntry {
 /// reads them: held for that pass alone, every byte wiped when it drops.
 pub(crate) struct KnownHistory {
     pub(crate) master: Zeroizing<[u8; 32]>,
-    /// Each holder with live entries, in id order.
-    pub(crate) holders: Vec<(EntityId, Vec<KnownEntry>)>,
+    /// Each holder with live entries, in id order, each entry with the
+    /// record generation it was written at, in write order (FIX
+    /// ERASED-IDENTITY-ROTATION-GENERATION).
+    pub(crate) holders: Vec<(EntityId, Vec<(u32, KnownEntry)>)>,
 }
 
 fn index_subject(binding: &CustodyBinding) -> Result<CustodySubject> {
@@ -375,7 +377,7 @@ impl Store {
         let master = copy_master(&custody.read(&index_subject(custody.binding())?.at(at))?)?;
         let mut holders = Vec::new();
         for (holder, refs) in HISTORY.scan(self, wtxn)? {
-            let entries = read_entries(custody, &holder, refs.slots())?;
+            let entries = read_entries_tagged(custody, &holder, refs.tagged())?;
             if !entries.is_empty() {
                 holders.push((holder, entries));
             }
@@ -509,7 +511,7 @@ impl Store {
         let holders = HISTORY
             .scan(self, txn)?
             .into_iter()
-            .map(|(holder, refs)| (holder, refs.slots().collect()))
+            .map(|(holder, refs)| (holder, refs.tagged().collect()))
             .collect();
         Ok(Some(KnownHistoryIds {
             core: Arc::downgrade(&self.core),
@@ -685,7 +687,8 @@ pub(crate) struct KnownHistoryIds {
     core: Weak<StoreCore>,
     binding: CustodyBinding,
     index: u64,
-    holders: Vec<(EntityId, Vec<u64>)>,
+    /// Each holder's committed references: record generation and slot.
+    holders: Vec<(EntityId, Vec<(u32, u64)>)>,
 }
 
 impl KnownHistoryIds {
@@ -698,12 +701,12 @@ impl KnownHistoryIds {
         let custody = LocalCustody::at(&self.binding);
         let master = copy_master(&custody.read(&index_subject(&self.binding)?.at(self.index))?)?;
         let mut holders = Vec::new();
-        for (holder, slots) in &self.holders {
+        for (holder, refs) in &self.holders {
             let subject = holder_subject(&self.binding, holder)?;
             if retirement_in_txn(vault_meta, txn, &subject)?.is_some() {
                 continue;
             }
-            let entries = read_entries(custody, holder, slots.iter().copied())?;
+            let entries = read_entries_tagged(custody, holder, refs.iter().copied())?;
             if !entries.is_empty() {
                 holders.push((*holder, entries));
             }

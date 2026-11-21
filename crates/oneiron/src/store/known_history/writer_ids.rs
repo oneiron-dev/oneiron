@@ -7,7 +7,7 @@ use std::sync::Arc;
 use heed::RwTxn;
 
 use super::{
-    HISTORY, INDEX, KnownHistory, KnownHistoryIds, copy_master, index_subject, read_entries,
+    HISTORY, INDEX, KnownHistory, KnownHistoryIds, copy_master, index_subject, read_entries_tagged,
 };
 use crate::error::Result;
 use crate::store::Store;
@@ -15,7 +15,7 @@ use crate::store::Store;
 impl Store {
     /// [`Store::known_history_in_writer`], read the same way, with the ids
     /// it read: the custody binding, the master's generation and each
-    /// holder's committed slots.
+    /// holder's committed references, each a record generation and a slot.
     ///
     /// # Errors
     ///
@@ -32,12 +32,12 @@ impl Store {
         let mut holders = Vec::new();
         let mut ids = Vec::new();
         for (holder, refs) in HISTORY.scan(self, wtxn)? {
-            let slots: Vec<u64> = refs.slots().collect();
-            let entries = read_entries(custody, &holder, slots.iter().copied())?;
+            let refs: Vec<(u32, u64)> = refs.tagged().collect();
+            let entries = read_entries_tagged(custody, &holder, refs.iter().copied())?;
             if !entries.is_empty() {
                 holders.push((holder, entries));
             }
-            ids.push((holder, slots));
+            ids.push((holder, refs));
         }
         let ids = KnownHistoryIds {
             core: Arc::downgrade(&self.core),
