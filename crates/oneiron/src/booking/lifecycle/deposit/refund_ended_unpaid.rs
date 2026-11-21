@@ -11,13 +11,17 @@
 //! provider for the same refund again under the next retry count, which the
 //! refund's idempotency key names, so the provider makes a new refund rather
 //! than answering the ended one. The note goes once a refund of the deposit
-//! settles.
+//! settles. Where refunds made by hand in the Stripe dashboard cover a part
+//! of what is owed, no refund is made here (a refund made by hand is never
+//! refunded again here): the note says so, the card asks for a hand refund
+//! of the rest, and Return deposit asks Stripe nothing (review round 1 of
+//! #10149).
 
 use serde::{Deserialize, Serialize};
 
 use super::super::storage::{booking_writer, engine_failure};
 use super::home_fence::{SettleStanding, settle_standing_in_txn};
-use super::{DEPOSIT, DepositState, put_deposit};
+use super::{DEPOSIT, DepositProviderFailure, DepositSettleMove, DepositState, put_deposit};
 use crate::Vault;
 use crate::booking::BookingError;
 
@@ -32,13 +36,17 @@ pub(super) struct RefundEndedUnpaid {
     pub(super) retry: u32,
     /// When a settle row first found it ended.
     pub(super) noted_at: u64,
+    /// Refunds made by hand in the provider's dashboard cover a part of what
+    /// is owed, as the provider's last answer said: only a hand refund pays
+    /// the rest, and the owner's return asks the provider nothing.
+    pub(super) part_refunded_by_hand: bool,
 }
 
-/// One refund a settle row asked the provider for: what the deposit owed,
-/// what was refunded before it, and the retry count its key named.
+/// One move a settle row asked the provider for: the move, what was
+/// refunded before it, and the retry count its key named.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct AskedRefund {
-    pub(super) amount_minor: u64,
+    pub(super) movement: DepositSettleMove,
     pub(super) refunded_before: u64,
     pub(super) retry: u32,
 }
@@ -50,14 +58,16 @@ pub(super) const fn is_zero(retry: &u32) -> bool {
     *retry == 0
 }
 
-/// Notes, in its own booking writer, that the provider ended the refund
-/// `asked` with nothing paid back: only while the deposit still owes exactly
-/// that refund, after the same earlier refunds and under the same retry
-/// count, so an answer that a later refund or a retry overtook notes
-/// nothing. A note already standing at that retry count stays as it is,
-/// dated by its first finding, so the hourly ask writes nothing. A node that
-/// froze its booking rows for a home move notes nothing: the new home asks
-/// the same refund and notes it there.
+/// Notes, in its own booking writer, that the provider's `failure` ended
+/// the refund `asked` with nothing paid back; any other failure or move
+/// notes nothing. Only while the deposit still owes exactly that refund,
+/// after the same earlier refunds and under the same retry count, so an
+/// answer that a later refund or a retry overtook notes nothing. A note
+/// already standing at that retry count stays dated by its first finding, so
+/// the hourly ask writes nothing, unless the answer changes whether refunds
+/// made by hand cover a part of it. A node that froze its booking rows for a
+/// home move notes nothing: the new home asks the same refund and notes it
+/// there.
 ///
 /// # Errors
 ///
@@ -66,8 +76,20 @@ pub(super) fn note_refund_ended_unpaid(
     vault: &Vault,
     key: &[u8; 32],
     asked: AskedRefund,
+    failure: &DepositProviderFailure,
     now_utc: u64,
 ) -> Result<(), BookingError> {
+    let (
+        DepositProviderFailure::RefundEndedUnpaid {
+            part_refunded_by_hand,
+            ..
+        },
+        DepositSettleMove::Refund { amount_minor },
+    ) = (failure, asked.movement)
+    else {
+        return Ok(());
+    };
+    let part_refunded_by_hand = *part_refunded_by_hand;
     booking_writer(vault, |wtxn| {
         if settle_standing_in_txn(vault, &*wtxn)? != SettleStanding::Settles {
             return Ok(());
@@ -78,21 +100,23 @@ pub(super) fn note_refund_ended_unpaid(
         else {
             return Ok(());
         };
-        let owes_it = row.state
-            == (DepositState::RefundDue {
-                amount_minor: asked.amount_minor,
-            })
+        let owes_it = row.state == (DepositState::RefundDue { amount_minor })
             && row.refunded_minor == asked.refunded_before
             && row.refund_retry == asked.retry;
-        let noted = row
-            .refund_ended_unpaid
-            .is_some_and(|ended| ended.retry == asked.retry);
-        if !owes_it || noted {
-            return Ok(());
-        }
+        let noted_at = match row.refund_ended_unpaid {
+            _ if !owes_it => return Ok(()),
+            Some(ended) if ended.retry == asked.retry => {
+                if ended.part_refunded_by_hand == part_refunded_by_hand {
+                    return Ok(());
+                }
+                ended.noted_at
+            }
+            _ => now_utc,
+        };
         row.refund_ended_unpaid = Some(RefundEndedUnpaid {
             retry: asked.retry,
-            noted_at: now_utc,
+            noted_at,
+            part_refunded_by_hand,
         });
         row.updated_at = now_utc;
         put_deposit(vault, wtxn, key, &row)

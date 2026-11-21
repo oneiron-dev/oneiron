@@ -189,9 +189,14 @@ pub enum DepositProviderFailure {
     /// The refund asked under this key ended with nothing paid back (failed
     /// or cancelled at the provider), so asking again under it answers the
     /// same. The deposit still owes it and notes it for the owner's card,
-    /// whose Return deposit asks again under a new key; the row asks again
-    /// later, as on [`Self::Permanent`] (FIX [BK-DEPOSIT-FAILED-REFUND-SURFACE]).
-    RefundEndedUnpaid(String),
+    /// whose Return deposit asks again under a new key unless refunds made by
+    /// hand in the provider's dashboard cover a part of it: then only a hand
+    /// refund pays the rest. The row asks again later, as on
+    /// [`Self::Permanent`] (FIX [BK-DEPOSIT-FAILED-REFUND-SURFACE]).
+    RefundEndedUnpaid {
+        reason: String,
+        part_refunded_by_hand: bool,
+    },
 }
 
 impl DepositProviderFailure {
@@ -200,7 +205,7 @@ impl DepositProviderFailure {
             Self::Transient(reason)
             | Self::Pending(reason)
             | Self::Permanent(reason)
-            | Self::RefundEndedUnpaid(reason) => reason,
+            | Self::RefundEndedUnpaid { reason, .. } => reason,
         }
     }
 }
@@ -534,18 +539,12 @@ fn settle_deposit_key<P: DepositSettlementPort>(
             },
         ),
         Err(failure) => {
-            if let (
-                DepositProviderFailure::RefundEndedUnpaid(_),
-                DepositSettleMove::Refund { amount_minor },
-            ) = (&failure, movement)
-            {
-                let asked = AskedRefund {
-                    amount_minor,
-                    refunded_before,
-                    retry: refund_retry,
-                };
-                note_refund_ended_unpaid(vault, key, asked, now_utc)?;
-            }
+            let asked = AskedRefund {
+                movement,
+                refunded_before,
+                retry: refund_retry,
+            };
+            note_refund_ended_unpaid(vault, key, asked, &failure, now_utc)?;
             Ok(DepositSettleStep::Failed(failure))
         }
     }

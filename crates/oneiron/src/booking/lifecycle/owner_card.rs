@@ -38,7 +38,7 @@ use super::CalendarCancellation;
 use super::authorship::counts_in_txn;
 use super::claim::read_booking_facts;
 use super::deposit::{
-    emergency_return_in_txn, held_deposit_in_txn, refund_ended_unpaid_at_in_txn,
+    emergency_return_in_txn, held_deposit_in_txn, refund_ended_unpaid_note_in_txn,
     unattributed_cancel_sequence_in_txn,
 };
 use super::occurrence::inclusive_occurrence;
@@ -229,10 +229,11 @@ pub(crate) fn booking_owner_card_row_of_handle(
 /// replay proof that made its cancel one Oneiron cannot attribute, once one
 /// is noted, so a row marked done comes back when that proof lands in the
 /// same second as the cancel the row was dated by (review round 2 of
-/// #10028), and when a settle row found the refund its deposit owes ended
-/// unpaid at the provider, so a row marked done comes back with each such
-/// refund (FIX [BK-DEPOSIT-FAILED-REFUND-SURFACE]); `None` for every other
-/// row.
+/// #10028), and the retry count and time of the note that a settle row
+/// found the refund its deposit owes ended unpaid at the provider, so a row
+/// marked done comes back with each such refund, a retry's in the same
+/// second too (FIX [BK-DEPOSIT-FAILED-REFUND-SURFACE]; review round 1 of
+/// #10149); `None` for every other row.
 ///
 /// # Errors
 ///
@@ -250,8 +251,8 @@ pub(crate) fn booking_inbox_row_version_in_txn(
     };
     let unattributed = unattributed_cancel_sequence_in_txn(vault, rtxn, &event_ref)?
         .map(|sequence| format!("unattributed_cancel:{sequence}"));
-    let ended = refund_ended_unpaid_at_in_txn(vault, rtxn, &event_ref)?
-        .map(|noted_at| format!("refund_ended_unpaid:{noted_at}"));
+    let ended = refund_ended_unpaid_note_in_txn(vault, rtxn, &event_ref)?
+        .map(|(retry, noted_at)| format!("refund_ended_unpaid:{retry}:{noted_at}"));
     Ok(match (unattributed, ended) {
         (Some(unattributed), Some(ended)) => Some(format!("{unattributed};{ended}")),
         (unattributed, ended) => unattributed.or(ended),
@@ -297,9 +298,10 @@ fn booking_card_row(card: BookingOwnerCard, owners: &[EntityId]) -> Option<Agent
 /// Oneiron cannot attribute once one is noted: its read state then counts
 /// the line as new, so a row marked done before comes back under the same
 /// handle (review round 1 of #10028). A refund its deposit owes that the
-/// provider ended unpaid lists it whatever cancelled the booking, dated by
-/// when a settle row found that, in the same way
-/// (BK-DEPOSIT-FAILED-REFUND-INBOX = A, Engine 21 Nov 10:22).
+/// provider ended unpaid lists it whatever cancelled the booking, or after
+/// the visitor picked an emergency-cancelled booking again, dated by when a
+/// settle row found that (BK-DEPOSIT-FAILED-REFUND-INBOX = A, Engine 21 Nov
+/// 10:22; review round 1 of #10149).
 fn held_deposit_row(read: &CardRead, reader: EntityId) -> Option<AgentInboxLensItem> {
     let deposit = read.card.deposit.as_ref()?;
     if !deposit.lists_on_inbox() || !read.selected_hosts.contains(&reader.to_hex()) {
@@ -317,9 +319,7 @@ fn held_deposit_row(read: &CardRead, reader: EntityId) -> Option<AgentInboxLensI
         }
         _ => occurred_at,
     };
-    let occurred_at = read
-        .refund_ended_unpaid_at
-        .map_or(occurred_at, |noted_at| occurred_at.max(noted_at));
+    let occurred_at = read.refund_ended_unpaid_at.unwrap_or(occurred_at);
     Some(AgentInboxLensItem {
         item_id: format!("{BOOKING_HELD_DEPOSIT_ITEM_PREFIX}{}", card.event_ref),
         kind: AgentInboxItemKind::CoordinationUpdate,

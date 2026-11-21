@@ -3444,10 +3444,12 @@ fn a_booking_picked_again_after_an_emergency_cancel_says_its_deposit_was_release
 /// [`KeyedRefundProvider`] does, and, while `end_new_refunds` is set, ends a
 /// refund asked under a key it has not seen with nothing paid back, as
 /// Stripe ends a refund failed: every later ask under that key answers the
-/// same.
+/// same. `part_refunded_by_hand` says, on each ended answer, that refunds
+/// made by hand cover a part of what is owed.
 #[derive(Default)]
 struct EndingRefundProvider {
     end_new_refunds: bool,
+    part_refunded_by_hand: bool,
     /// The keys whose refund ended unpaid, in order.
     ended: Vec<String>,
     /// The key of every refund asked, in order.
@@ -3468,9 +3470,10 @@ impl DepositSettlementPort for EndingRefundProvider {
                 self.ended.push(key.clone());
             }
             if self.ended.contains(&key) {
-                return Err(DepositProviderFailure::RefundEndedUnpaid(format!(
-                    "the refund under {key} failed"
-                )));
+                return Err(DepositProviderFailure::RefundEndedUnpaid {
+                    reason: format!("the refund under {key} failed"),
+                    part_refunded_by_hand: self.part_refunded_by_hand,
+                });
             }
         }
         self.keyed.settle(request)
@@ -3936,5 +3939,75 @@ fn a_refund_ended_unpaid_again_in_the_same_second_comes_back_to_the_inbox() {
         held_deposit_board(&fixture, at),
         vec![(row, new)],
         "the second stuck refund brings the row back"
+    );
+}
+
+/// Review round 1 of #10149: the provider ends the refund unpaid and says
+/// refunds made by hand in its dashboard cover a part of what is owed. The
+/// host's card says only a hand refund pays the rest, as a held-deposit
+/// INBOX row of its own, and Return deposit asks the provider nothing: the
+/// hourly ask stays under the first key.
+#[test]
+fn a_refund_ended_unpaid_beside_a_part_refunded_by_hand_is_asked_no_more() {
+    let clock = ManualClock::new(NOW);
+    let fixture = Fixture::open_owned_with_terms(&clock, late_refund_terms(50));
+    let booked = captured_booking(&fixture, "pi_ended_part_by_hand", 9);
+    cancel(&fixture, &booked, NOW + 120);
+    let mut provider = EndingRefundProvider {
+        end_new_refunds: true,
+        part_refunded_by_hand: true,
+        ..EndingRefundProvider::default()
+    };
+    drain_settle_rows(&fixture, &mut provider, NOW + 180);
+    assert_eq!(
+        provider.ended.len(),
+        1,
+        "guard: the provider ended the refund"
+    );
+    let first_key = provider.ended[0].clone();
+
+    let card_row = format!("booking:{}", booked.calendar.event_ref.to_hex());
+    let host = fixture.vault.memory(fixture.host, EdgeActorClass::Human);
+    fixture.set_clock(NOW + 240);
+    let card = open_booking_row(&host, &card_row);
+    assert_eq!(
+        card["deposit"],
+        serde_json::json!({
+            "held": "refund_ended_unpaid_part_refunded_by_hand",
+            "amount_minor": 2_000,
+            "currency": "usd",
+            "reason": "cancelled",
+            "line": "Booking at 2026-03-02 09:00 (UTC) was cancelled. The refund of 20.00 USD to \
+                     the visitor did not go through at Stripe, and refunds made by hand in the \
+                     Stripe dashboard cover only part of it. Refund the rest by hand in the \
+                     Stripe dashboard.",
+            "return_offered": true,
+        }),
+        "{card}"
+    );
+    let row = format!("{HELD_DEPOSIT_ROW}{}", booked.calendar.event_ref.to_hex());
+    assert_eq!(
+        held_deposit_rows(&fixture, fixture.host, NOW + 240),
+        vec![row],
+        "the stuck refund lists on the INBOX"
+    );
+
+    fixture.set_clock(NOW + 300);
+    let again = refund_deposit(&host, &booked).expect("the host's press answers");
+    assert_eq!(
+        again["queued"], false,
+        "Return deposit asks nothing: {again}"
+    );
+    drain_settle_rows(&fixture, &mut provider, NOW + 3_800);
+    assert_eq!(
+        provider.asked,
+        vec![first_key.clone(), first_key],
+        "only the hourly ask under the first key"
+    );
+    assert_eq!(
+        fixture.state_of("pi_ended_part_by_hand"),
+        DepositState::RefundDue {
+            amount_minor: 2_000
+        }
     );
 }

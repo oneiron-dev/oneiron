@@ -256,10 +256,10 @@ impl RefundView {
                 "Stripe holds refund {} {}",
                 self.id, self.status
             ))),
-            _ if self.ended_unpaid() => Err(DepositProviderFailure::RefundEndedUnpaid(format!(
-                "Stripe's refund {} is {}",
-                self.id, self.status
-            ))),
+            _ if self.ended_unpaid() => Err(DepositProviderFailure::RefundEndedUnpaid {
+                reason: format!("Stripe's refund {} is {}", self.id, self.status),
+                part_refunded_by_hand: false,
+            }),
             status => Err(DepositProviderFailure::Permanent(format!(
                 "Stripe's refund {} is {status}",
                 self.id
@@ -282,6 +282,11 @@ enum OwedRefund {
     /// pay: what of them succeeded, and what Stripe still holds. The row
     /// asked for no refund in this pass.
     MadeElsewhere { succeeded: u64, held: u64 },
+    /// The refund under the row's own key ended unpaid, and refunds made
+    /// under no settle key cover only a part of what is owed: the row asked
+    /// for no refund, and only a hand refund pays the rest (review round 1
+    /// of #10149).
+    EndedUnpaidPartRefundedByHand(RefundView),
 }
 
 impl OwedRefund {
@@ -295,6 +300,16 @@ impl OwedRefund {
     fn settled_amount(&self, owed: u64) -> Result<u64, DepositProviderFailure> {
         match self {
             Self::Keyed(refund) => refund.settled_amount(),
+            Self::EndedUnpaidPartRefundedByHand(refund) => {
+                Err(DepositProviderFailure::RefundEndedUnpaid {
+                    reason: format!(
+                        "Stripe's refund {} is {}, and refunds made by hand cover only part of \
+                         the {owed} owed",
+                        refund.id, refund.status
+                    ),
+                    part_refunded_by_hand: true,
+                })
+            }
             Self::MadeElsewhere { succeeded, .. } if *succeeded >= owed => Ok(owed),
             Self::MadeElsewhere { succeeded, held } => {
                 let paid_or_held = succeeded.saturating_add(*held);
@@ -507,7 +522,10 @@ impl<'v> StripeClient<'v> {
     /// nothing back, so it hides no refund made elsewhere: those are added up
     /// as if it were not there, and a hand refund that covers what is owed
     /// ends the row. With none, that ended refund answers for itself, and no
-    /// second one is made under the key.
+    /// second one is made under the key. With refunds made elsewhere that
+    /// cover only a part of what is owed, it answers as ended still, so the
+    /// owner's card says so, and says that only a hand refund pays the rest
+    /// (review round 1 of #10149).
     ///
     /// The payment's refunds are read page by page
     /// ([`Self::each_payment_refund`]) until the row's own refund turns up:
@@ -547,7 +565,12 @@ impl<'v> StripeClient<'v> {
             return Ok(OwedRefund::Keyed(refund));
         }
         if succeeded > 0 || held > 0 {
-            return Ok(OwedRefund::MadeElsewhere { succeeded, held });
+            return Ok(match keyed_unpaid {
+                Some(refund) if succeeded.saturating_add(held) < amount_minor => {
+                    OwedRefund::EndedUnpaidPartRefundedByHand(refund)
+                }
+                _ => OwedRefund::MadeElsewhere { succeeded, held },
+            });
         }
         if let Some(refund) = keyed_unpaid {
             return Ok(OwedRefund::Keyed(refund));

@@ -52,7 +52,7 @@ mod settle;
 pub(crate) use self::held::note_unattributed_cancel_in_txn;
 pub(super) use self::held::{
     EmergencyReturn, HeldDeposit, HeldDepositKind, emergency_return_in_txn, held_deposit_in_txn,
-    refund_ended_unpaid_at_in_txn, unattributed_cancel_sequence_in_txn,
+    refund_ended_unpaid_note_in_txn, unattributed_cancel_sequence_in_txn,
 };
 pub use self::home_fence::check_deposit_checkout_admitted;
 use self::home_fence::{

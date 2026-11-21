@@ -59,7 +59,12 @@ impl BookingOwnerCardDeposit {
     /// nothing moves on stays owed until the owner acts
     /// (BK-DEPOSIT-FAILED-REFUND-INBOX = A, Engine 21 Nov 10:22).
     pub(super) const fn lists_on_inbox(&self) -> bool {
-        self.reason.lists_on_inbox() || matches!(self.held, BookingDepositHeld::RefundEndedUnpaid)
+        self.reason.lists_on_inbox()
+            || matches!(
+                self.held,
+                BookingDepositHeld::RefundEndedUnpaid
+                    | BookingDepositHeld::RefundEndedUnpaidPartRefundedByHand
+            )
     }
 }
 
@@ -83,6 +88,11 @@ pub enum BookingDepositHeld {
     /// paid back (failed or cancelled at Stripe): Return deposit asks the
     /// provider for the same refund again, and for nothing more.
     RefundEndedUnpaid,
+    /// A refund owed to the visitor that the provider ended with nothing
+    /// paid back, a part of which refunds made by hand in the Stripe
+    /// dashboard cover: only a hand refund there pays the rest, and Return
+    /// deposit asks Stripe nothing (review round 1 of #10149).
+    RefundEndedUnpaidPartRefundedByHand,
 }
 
 /// Why a booking's deposit is still held.
@@ -112,6 +122,11 @@ pub enum BookingDepositHeldReason {
     Cancelled,
     /// The booked slot has started (a no-show keeps the deposit).
     Started,
+    /// An owner's emergency cancel owed the deposit back whole, and the
+    /// visitor picked the booking again from its proposals: the line is
+    /// about that return, which the provider ended unpaid, whenever the
+    /// booking starts (review round 1 of #10149).
+    PickedAgainAfterEmergencyCancel,
 }
 
 impl BookingDepositHeldReason {
@@ -125,8 +140,9 @@ impl BookingDepositHeldReason {
 
 /// The deposit note of the booking `facts` describe at `now`, for `reader`:
 /// what `held` still holds, once the booking is effectively cancelled or
-/// has started (the owner's return's own condition); `None` before then,
-/// or with nothing held. `cancel_reported` says a calendar's report of the
+/// has started (the owner's return's own condition), and a refund the
+/// provider ended unpaid at any time; `None` before then, or with nothing
+/// held. `cancel_reported` says a calendar's report of the
 /// booking cancelled or removed stands on one of its passports: with an
 /// omission concluding the cancel, that calendar cancelled it, though
 /// another calendar's omission came last. Times read in the owner's `zone`
@@ -141,7 +157,8 @@ pub(super) fn deposit_note(
 ) -> Option<BookingOwnerCardDeposit> {
     let held = held?;
     let cancelled = facts.effective_status() == BookingStatus::Cancelled;
-    if !cancelled && now < facts.slot.start {
+    let ended_refund = matches!(held.kind, HeldDepositKind::RefundEndedUnpaid { .. });
+    if !cancelled && now < facts.slot.start && !ended_refund {
         return None;
     }
     // The booking's own cancel (the visitor's) decides its deposit by the
@@ -149,6 +166,7 @@ pub(super) fn deposit_note(
     let own_cancel = facts.status == BookingStatus::Cancelled;
     let reason = match facts.calendar_cancellation {
         _ if own_cancel => BookingDepositHeldReason::Cancelled,
+        _ if held.emergency_cancelled => BookingDepositHeldReason::PickedAgainAfterEmergencyCancel,
         _ if held.unattributed_cancel_at.is_some() => BookingDepositHeldReason::UnattributedCancel,
         CalendarCancellation::Standing => BookingDepositHeldReason::CalendarCancel,
         CalendarCancellation::Omission if cancel_reported => {
@@ -162,7 +180,12 @@ pub(super) fn deposit_note(
         HeldDepositKind::Captured => BookingDepositHeld::Captured,
         HeldDepositKind::BalanceAfterRefund { .. } => BookingDepositHeld::BalanceAfterRefund,
         HeldDepositKind::BalanceAfterOwedRefund => BookingDepositHeld::BalanceAfterOwedRefund,
-        HeldDepositKind::RefundEndedUnpaid => BookingDepositHeld::RefundEndedUnpaid,
+        HeldDepositKind::RefundEndedUnpaid {
+            part_refunded_by_hand: false,
+        } => BookingDepositHeld::RefundEndedUnpaid,
+        HeldDepositKind::RefundEndedUnpaid {
+            part_refunded_by_hand: true,
+        } => BookingDepositHeld::RefundEndedUnpaidPartRefundedByHand,
     };
     let return_offered = reader.is_some_and(|reader| {
         facts
@@ -208,6 +231,9 @@ fn owner_line(
         }
         BookingDepositHeldReason::Cancelled => format!("{booking} was cancelled."),
         BookingDepositHeldReason::Started => format!("{booking} has started."),
+        BookingDepositHeldReason::PickedAgainAfterEmergencyCancel => {
+            format!("{booking} was picked again after an emergency cancel.")
+        }
     };
     let holds = match held {
         BookingDepositHeld::CaptureDue => {
@@ -223,6 +249,10 @@ fn owner_line(
         BookingDepositHeld::RefundEndedUnpaid => {
             format!("The refund of {money} to the visitor did not go through at Stripe.")
         }
+        BookingDepositHeld::RefundEndedUnpaidPartRefundedByHand => format!(
+            "The refund of {money} to the visitor did not go through at Stripe, and refunds made \
+             by hand in the Stripe dashboard cover only part of it."
+        ),
     };
     let act = match (return_offered, held) {
         (false, _) => "A host selected when it was confirmed can return it.",
@@ -236,6 +266,9 @@ fn owner_line(
         }
         (true, BookingDepositHeld::RefundEndedUnpaid) => {
             "Choose Return deposit to ask Stripe again, or refund it by hand in the Stripe dashboard."
+        }
+        (true, BookingDepositHeld::RefundEndedUnpaidPartRefundedByHand) => {
+            "Refund the rest by hand in the Stripe dashboard."
         }
     };
     format!("{what} {holds} {act}")
