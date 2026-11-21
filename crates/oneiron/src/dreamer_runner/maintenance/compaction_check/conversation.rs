@@ -20,9 +20,11 @@
 //! model is `unreadable_evidence`, `span_past_judge_room`, and no call goes
 //! out ([`super::judge_room`]). Only then is the verdict reached as a run's is
 //! ([`super::support`]). The span and the material are read again before
-//! each later call and after the judgment, so drift during the judgment is
-//! stale too, and no call sends text the span no longer holds. A mismatch
-//! reaches the agent's inbox; nothing here rewrites its words or its byline.
+//! each later call, a part's typed read among them, and after the judgment,
+//! so drift during the judgment is stale too, no call sends text the span no
+//! longer holds, and a finding settled on such a read keeps no judgment of
+//! the parts. A mismatch reaches the agent's inbox; nothing here rewrites its
+//! words or its byline.
 //!
 //! A span whose one turn its writer read in pieces is judged per piece
 //! (FIX-LIST COMPACTION-CHECK-JUDGES-PER-CHUNK; Engine answer 21 Nov 07:39):
@@ -58,10 +60,13 @@ use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerParkCause, DreamerRun
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::{EntityId, Error, Result, Vault};
-use oneiron_model::llm::{ContentPart, LlmRequest, LlmResponse};
 
 #[doc(hidden)]
 use oneiron_records::dreamer_runner::maintenance::compaction_check::conversation::CONVERSATION_DECLARATION_KEY;
+
+mod judge_protocol;
+
+use judge_protocol::{judge_input, judge_request, judgment};
 
 /// Why a check waits: a turn of its span is away from this replica.
 const SPAN_NOT_RESIDENT: &str = "a turn of the checked span is not resident here";
@@ -304,21 +309,17 @@ pub(super) async fn run_conversation_check(
     let mut spend = support::Spend::default();
     let mut pieces = Vec::new();
     let mut decided = None;
+    let mut judge = None;
     let mut stopped = None;
     for (at, (part, input, request)) in asks.into_iter().enumerate() {
         // Each later call goes out only while the span and the material read
         // as they did: a turn erased or moved since the last call stops the
         // check, and the cached text is never sent (#10272 review, round 1).
-        if at > 0 {
-            let reread = read(ctx.vault, &declaration).map_err(|error| {
-                spend.note_before_error(ctx);
-                error
-            })?;
-            let reread = same_parts(reread, &parts, &declaration);
-            if !matches!(reread, Reading::Ready(_)) {
-                stopped = Some(reread);
-                break;
-            }
+        if at > 0
+            && let Some(reread) = changed_parts(ctx, &declaration, &parts, &spend)?
+        {
+            stopped = Some(reread);
+            break;
         }
         let asked = ask_judge(attempt, ctx, &model, request, declaration.writer, &spend).await;
         let judging = match asked.map_err(|error| {
@@ -328,6 +329,19 @@ pub(super) async fn run_conversation_check(
             Ok(judging) => judging,
             Err(parked) => return Ok(parked),
         };
+        judge = Some(judging.judge(&model));
+        // With the host's decisions lent, the typed support read sends this
+        // part's text again: it goes out only while the parts still read as
+        // they did (#10272 review, round 2). A stop here books the
+        // diagnostic's spend.
+        if model.decisions.is_some() {
+            let diagnosed = support::Spend::of(&judging);
+            if let Some(reread) = changed_parts(ctx, &declaration, &parts, &diagnosed)? {
+                spend = diagnosed;
+                stopped = Some(reread);
+                break;
+            }
+        }
         let judged = judgment(&judging.response, &declaration);
         let diagnostic = judged.as_ref().map(|judged| judged.verdict);
         let ask = support::Ask {
@@ -372,10 +386,10 @@ pub(super) async fn run_conversation_check(
             break;
         }
     }
-    let Some(decided) = decided else {
+    let Some(judge) = judge else {
         spend.note_before_error(ctx);
         return Err(Error::InvariantViolation(
-            "a conversation check judges no part",
+            "a conversation check asks the judge nothing",
         ));
     };
     let reread = match stopped {
@@ -388,28 +402,60 @@ pub(super) async fn run_conversation_check(
             same_parts(reread, &parts, &declaration)
         }
     };
-    let mut settled = match reread {
-        Reading::Ready(_) => Settled {
-            verdict: decided.verdict,
-            reason: decided.reason,
-            conflicts: decided.conflicts,
-            evidence_now: Some(declaration.pins_digest()),
-            words_live: true,
-            judge: None,
-            diagnostic: decided.diagnostic,
-            decision: decided.decision,
-        },
-        Reading::Settled(settled) => settled,
-        Reading::Deferred => {
+    let (mut settled, pieces) = match (reread, decided) {
+        (Reading::Ready(_), Some(decided)) => (
+            Settled {
+                verdict: decided.verdict,
+                reason: decided.reason,
+                conflicts: decided.conflicts,
+                evidence_now: Some(declaration.pins_digest()),
+                words_live: true,
+                judge: None,
+                diagnostic: decided.diagnostic,
+                decision: decided.decision,
+            },
+            pieces,
+        ),
+        (Reading::Ready(_), None) => {
+            spend.note_before_error(ctx);
+            return Err(Error::InvariantViolation(
+                "a conversation check reads ready with no part judged",
+            ));
+        }
+        // The read the check settles on no longer holds the parts judged:
+        // the finding keeps none of what the judge said of them, which can
+        // quote erased text (#10272 review, round 2).
+        (Reading::Settled(settled), _) => (settled, Vec::new()),
+        (Reading::Deferred, _) => {
             return Ok(spend.park_with_spend(SPAN_NOT_RESIDENT, DreamerParkCause::Signal));
         }
     };
-    settled.judge = Some(decided.judge);
+    settled.judge = Some(judge);
     if let Err(error) = record(ctx.vault, attempt_id, &declaration, &settled, &pieces, now) {
         spend.note_before_error(ctx);
         return Err(error);
     }
     Ok(spend.completed())
+}
+
+/// The read that stops the check before its next call sends a part's text:
+/// the receipt, the material, the summary and the span read again, `None`
+/// while they still read as `parts`. A storage error hands `spend`, what
+/// the check's calls so far spent, to the meter first.
+fn changed_parts(
+    ctx: &WakeAttemptContext<'_>,
+    declaration: &ConversationCheckDeclaration,
+    parts: &[Part],
+    spend: &support::Spend,
+) -> Result<Option<Reading>> {
+    let reread = read(ctx.vault, declaration).map_err(|error| {
+        spend.note_before_error(ctx);
+        error
+    })?;
+    Ok(match same_parts(reread, parts, declaration) {
+        Reading::Ready(_) => None,
+        reread => Some(reread),
+    })
 }
 
 /// `reread`, a read taken after a judge call, with its parts other than
@@ -651,98 +697,6 @@ fn render(turns: &[ConversationTurnSpan], texts: &[String]) -> String {
         .map(|(at, (span, text))| format!("[{at}] {}: {text}", span.role))
         .collect::<Vec<_>>()
         .join("\n\n")
-}
-
-/// The judge's call: the host's rubric, then the summary and the span it
-/// was cut from, its conflicts citing turns by their place in the span.
-fn judge_request(
-    model: &CompactionCheckModel<'_>,
-    input: &serde_json::Value,
-    locality: oneiron_model::llm::ModelLocality,
-    keyless: bool,
-    paid: bool,
-) -> Result<LlmRequest> {
-    let schema = serde_json::json!({
-        "type": "object", "additionalProperties": false,
-        "required": ["verdict", "conflicts", "reason"],
-        "properties": {
-            "verdict": {"type": "string"},
-            "conflicts": {"type": "array", "items": {
-                "type": "object", "additionalProperties": false,
-                "required": ["assertion", "turns"],
-                "properties": {
-                    "assertion": {"type": "integer"},
-                    "turns": {"type": "array", "items": {"type": "integer"}}
-                }
-            }},
-            "reason": {"type": "string"}
-        }
-    });
-    judge_call(model, schema, input, locality, keyless, paid)
-}
-
-/// What the judge reads for `part`: the span's length in turns and, for a
-/// piece summary, the bytes of the turn it covers; the summary; and the text
-/// it was written from, whole.
-fn judge_input(declaration: &ConversationCheckDeclaration, part: &Part) -> serde_json::Value {
-    let turns = declaration.turns.len();
-    let span = match &part.piece {
-        None => serde_json::json!({"turns": turns}),
-        Some((bytes, total)) => {
-            serde_json::json!({"turns": turns, "bytes": [bytes.start, bytes.end], "of": total})
-        }
-    };
-    serde_json::json!({
-        "span": span,
-        "summary": part.summary,
-        "evidence": part.evidence,
-    })
-}
-
-/// The judge's verdict and its reason, each conflict citing the span's
-/// turns by id; `None` for a reply that is not one. A conflict keeps only
-/// turns of the checked span.
-struct Judged {
-    verdict: CompactionCheckVerdict,
-    conflicts: Vec<serde_json::Value>,
-    reason: String,
-}
-
-fn judgment(response: &LlmResponse, declaration: &ConversationCheckDeclaration) -> Option<Judged> {
-    let text: String = response
-        .message
-        .content
-        .iter()
-        .filter_map(|part| match part {
-            ContentPart::Text { text, .. } => Some(text.as_str()),
-            _ => None,
-        })
-        .collect();
-    let reply: serde_json::Value = serde_json::from_str(text.trim()).ok()?;
-    let verdict = match reply.get("verdict")?.as_str()? {
-        "supported" => CompactionCheckVerdict::Supported,
-        "mismatch" => CompactionCheckVerdict::Mismatch,
-        _ => return None,
-    };
-    let mut conflicts = Vec::new();
-    for conflict in reply.get("conflicts")?.as_array()? {
-        let assertion = conflict.get("assertion")?.as_u64()?;
-        let turns: Vec<String> = conflict
-            .get("turns")?
-            .as_array()?
-            .iter()
-            .filter_map(serde_json::Value::as_u64)
-            .filter_map(|at| usize::try_from(at).ok())
-            .filter_map(|at| declaration.turns.get(at))
-            .map(|span| span.turn.to_hex())
-            .collect();
-        conflicts.push(serde_json::json!({"assertion": assertion, "turns": turns}));
-    }
-    Some(Judged {
-        verdict,
-        conflicts,
-        reason: reply.get("reason")?.as_str()?.to_owned(),
-    })
 }
 
 /// Records one verdict as the Dreamer's finding about the writer, citing
