@@ -35,6 +35,10 @@ pub(crate) const SIDE_TABLE_DISPOSITIONS: &[(&str, ArchiveSideDisposition)] = &[
         "CAMPAIGN_COMPLIANCE_RECEIPT",
         ArchiveSideDisposition::Retained,
     ),
+    (
+        "CAMPAIGN_HOUSE_VOICE_GUIDE",
+        ArchiveSideDisposition::Retained,
+    ),
     ("CHECK_IN_RECEIPT", ArchiveSideDisposition::Retained),
     (
         "COACH_TOPOLOGY_AUDIT_INTENT",
@@ -198,6 +202,7 @@ pub(crate) const SIDE_TABLE_DISPOSITIONS: &[(&str, ArchiveSideDisposition)] = &[
     ),
     ("PROJECT_HISTORY_POLICY", ArchiveSideDisposition::Retained),
     ("PROPOSAL_RECEIPT_HISTORY", ArchiveSideDisposition::Retained),
+    ("READ_SHAPE_PINS", ArchiveSideDisposition::Retained),
     ("RETRIEVAL_POLICY_PINS", ArchiveSideDisposition::Retained),
     (
         "ROOM_THREADS_ADMIN_DELETE",

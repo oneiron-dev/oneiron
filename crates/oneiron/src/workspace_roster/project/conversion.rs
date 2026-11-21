@@ -560,9 +560,7 @@ impl Vault {
                         None,
                         signed_at,
                     )?;
-                    self.batch_in()
-                        .put_engine_history(&project_id, kind, at, now, &encode(&project)?)
-                        .apply(txn)?;
+                    self.land_owner_project_birth_in_txn(txn, project_id, kind, at, now, &project)?;
                     // A new project starts with its row of each `born` setting key (stage 7c-2).
                     crate::setting::write_born_rows_in_txn(self, txn, project_id)?;
                     self.require_owner_head_in_txn(txn, project_id, &project)?;
@@ -611,9 +609,7 @@ impl Vault {
                         None,
                         signed_at,
                     )?;
-                    self.batch_in()
-                        .put_engine_history(&project_id, kind, at, now, &encode(&project)?)
-                        .apply(txn)?;
+                    self.land_owner_project_birth_in_txn(txn, project_id, kind, at, now, &project)?;
                     // A new project starts with its row of each `born` setting key (stage 7c-2).
                     crate::setting::write_born_rows_in_txn(self, txn, project_id)?;
                     self.require_owner_head_in_txn(txn, project_id, &project)?;

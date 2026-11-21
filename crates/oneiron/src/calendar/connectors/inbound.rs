@@ -2,8 +2,9 @@
 
 use super::door::CalendarConnectorOperation;
 use super::outbound::{
-    CalendarRemoteObjectRow, cancelled_members_in_flight, first_write_unsettled, ingest_error,
-    omission_observed, prove_unproven_replay, unsettled_writes_of, write_remote_object,
+    CalendarRemoteObjectRow, UnprovenReplaysBeforeRead, cancelled_members_in_flight,
+    first_write_unsettled, ingest_error, omission_observed, prove_unproven_replay,
+    unproven_replays_before_read, unsettled_writes_of, write_remote_object,
 };
 use super::remote::{
     CalendarRemoteTransport, CalendarSyncOutcome, EchoDisposition, RemoteCalendarChange,
@@ -90,6 +91,11 @@ pub fn run_calendar_connector_sync_with_screener(
     }
 
     operation.revalidate(vault)?;
+    // The seat's refused writes whose stored copy's proof is owed before the
+    // provider read begins: a version this read returns below one's staged
+    // SEQUENCE was read after its refusal, so it proves the copy another
+    // writer's (CAL-OUTBOX-ROW-OF-REMOVED-SEAT-HOLDS-PULLS).
+    let before_read = unproven_replays_before_read(vault, operation)?;
     let batch = transport.pull(
         &seat.config.secret_ref,
         &seat.config.calendar_ref,
@@ -135,6 +141,7 @@ pub fn run_calendar_connector_sync_with_screener(
             transport.provider_key(),
             change,
             screen,
+            &before_read,
             now,
             &mut counters,
         )?;
@@ -210,7 +217,8 @@ struct SyncCounters {
 }
 
 /// Applies one pulled change under the echo law, each admission under
-/// `screen`.
+/// `screen`; `before_read` holds the seat's refused writes that owed their
+/// stored copy's proof before the pull's provider read.
 fn apply_remote_change(
     vault: &Vault,
     operation: &CalendarConnectorOperation,
@@ -218,6 +226,7 @@ fn apply_remote_change(
     provider: &'static str,
     change: &RemoteCalendarChange,
     screen: ConnectorScreen<'_>,
+    before_read: &UnprovenReplaysBeforeRead,
     now: u64,
     counters: &mut SyncCounters,
 ) -> Result<(), CalendarConnectorError> {
@@ -237,7 +246,15 @@ fn apply_remote_change(
             // by this read first, so its own copy never lands unmarked
             // (BK-ECHO-RECONCILE-FAILURE-RELEASES-UNMARKED-COPY), nor a first
             // write's as a second EVENT.
-            prove_unproven_replay(vault, operation, provider, object, &primary.uid, now)?;
+            prove_unproven_replay(
+                vault,
+                operation,
+                provider,
+                object,
+                &primary.uid,
+                before_read,
+                now,
+            )?;
             // A first write's copy coming back before the write binds its
             // UID resolves no EVENT: nothing names the UID the write minted
             // until its passport lands. The resource stays owed and unread,

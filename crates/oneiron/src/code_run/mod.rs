@@ -203,8 +203,9 @@ pub(crate) use self::storage::{
 };
 pub(crate) use self::storage::{
     CodeRunCompactionCoverage, ExecutorOutputSpan, ExecutorStorage, FeedbackRoute, ResultSpeech,
-    SessionInstanceBind, epoch_execution_in, executor_compaction_session_id,
-    executor_speech_message_id_in_run, executor_speech_turn_id_for_run,
+    SessionInstanceBind, canonical_speech_conversation_id_for_run, epoch_execution_in,
+    executor_compaction_session_id, executor_speech_message_id_in_run,
+    executor_speech_turn_id_for_run,
 };
 pub use self::storage::{
     CodeRunModelHealCount, CodeRunSecretLiftProposal, WaitDeliveries, WaitDelivery, WaitKey,

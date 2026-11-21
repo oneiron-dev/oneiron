@@ -50,6 +50,7 @@ mod agent_settle;
 // One proposed claim settled by its id (DOOR-115), with these members' mechanics.
 mod claim_settle;
 mod decision_context;
+mod owner_reading;
 // The Coach's proposals waiting in the tray, for the healer's residue read (OF-418 L4).
 mod pending_heal;
 
@@ -376,11 +377,13 @@ impl Vault {
     ///
     /// An approved proactivity policy request sets the digest's rows as the
     /// owner's change. Those rows travel (stage 7c-1), so in a rooted vault
-    /// their acts can carry an owner key's proof: when the bundle holds such
-    /// a member, an approval asks for the person at this device before its
-    /// write ([`Vault::owner_presence`]) and refuses with that check's
-    /// refusal. A decline, and a bundle with no such member, sign no owner
-    /// proof here and are not asked.
+    /// their acts can carry an owner key's proof. The door makes its pre-write
+    /// refusals in a read transaction and returns a failed read as its answer.
+    /// When the bundle holds such a member, an approval drops the read and
+    /// asks for the person at this device while holding nothing
+    /// ([`Vault::owner_presence`]) and refuses with that check's refusal.
+    /// The write makes the checks again. A decline, and a bundle with no such
+    /// member, sign no owner proof here and are not asked.
     pub fn resolve_gate_consent_bundle(
         &self,
         owner: &AuthenticatedOwner,
@@ -389,13 +392,20 @@ impl Vault {
         action: GateConsentBundleAction,
         now: u64,
     ) -> Result<GateConsentBundleReceipt> {
-        // The confirm is for an owner proof, so it stands before the write
-        // opens, while the door holds nothing: the prompt can block.
-        let ground = if action == GateConsentBundleAction::Approve
-            && self
-                .bundle_holds_proactivity_policy_request(dreamer_run_id)
-                .unwrap_or(false)
-        {
+        require_gate_consent_bundle_run_id(dreamer_run_id)?;
+        let has_policy_request = {
+            let txn = self.store.env.read_txn()?;
+            self.read_owner_bundle_resolution_in_txn(
+                &txn,
+                owner,
+                expected_bundle_id,
+                dreamer_run_id,
+                action,
+            )?
+        };
+        // The read drops before the confirm for the owner proof. The write
+        // has not opened, so the door holds nothing while the prompt can block.
+        let ground = if action == GateConsentBundleAction::Approve && has_policy_request {
             let witness = self.owner_presence(
                 crate::world_keys::OwnerActImportance::Important,
                 crate::world_keys::owner_presence_reasons::PROACTIVITY_POLICY,
@@ -411,20 +421,6 @@ impl Vault {
             action,
             now,
             |_| Ok(None),
-        )
-    }
-
-    /// Whether a live member of the run's bundle is a proactivity policy
-    /// request, read before the settlement's write so the owner's door knows
-    /// to ask. The door reads a failure here as "no": the write then refuses
-    /// the bundle with its own reason. The bundle's id names its members, so
-    /// the write settles the members this read saw or none.
-    fn bundle_holds_proactivity_policy_request(&self, dreamer_run_id: &str) -> Result<bool> {
-        let txn = self.store.env.read_txn()?;
-        Ok(
-            gate_consent_bundle_members_in_txn(&self.store, &txn, dreamer_run_id)?
-                .iter()
-                .any(|entry| entry.body.predicate == PROACTIVITY_POLICY_REQUEST_PREDICATE),
         )
     }
 
@@ -450,33 +446,14 @@ impl Vault {
         let (receipt, recorded_decisions) = self.try_with_write_txn_grouped::<_, _, E>(|wtxn| {
             let grant = admit(&mut *wtxn)?;
             let (actor, owner_answer) = match settler {
-                BundleSettler::Owner(owner, _) => (
-                    // The proof is rechecked where the decision commits: an
-                    // owner whose person, credential or ownership went away
-                    // while the call waited for the writer decides nothing.
-                    owner.revalidate_in_txn(self, &*wtxn)?,
-                    // An owner-tier proof answers each member's obligation,
-                    // for the revision its row showed; a narrower one answers
-                    // none.
-                    owner.owner_answer_in_txn(self, &*wtxn)?,
-                ),
+                BundleSettler::Owner(owner, _) => self.bundle_owner_in_txn(wtxn, owner)?,
                 // An agent's answer is never the owner's: every member's
                 // obligation stays open for the owner.
                 BundleSettler::Agent(agent) => (agent.entity_ref(), None),
             };
-            let members = gate_consent_bundle_members_in_txn(&self.store, &*wtxn, dreamer_run_id)?;
-            if members.is_empty() {
-                return Err(Error::EntityNotFound.into());
-            }
-            let bundle_id = gate_consent_bundle_id(dreamer_run_id, &members);
-            if bundle_id != expected_bundle_id {
-                // Reported against the lowest-sorted live member: the drift is
-                // the group's, and the group is never empty here.
-                return Err(Error::Gate(GateError::GateConsentStale {
-                    claim_id: members[0].member.claim_id,
-                })
-                .into());
-            }
+            let members =
+                self.live_bundle_group_in_txn(wtxn, dreamer_run_id, expected_bundle_id)?;
+            let bundle_id = expected_bundle_id;
 
             let policy = resolve_policy_manifest(&self.store, &*wtxn)?;
             let actor = match settler {
@@ -501,23 +478,10 @@ impl Vault {
             frontier.update(GATE_CONSENT_BUNDLE_DOMAIN);
             for entry in &members {
                 let id = entry.member.claim_id;
-                let (body, header) = live_claim_parts_in_txn(&self.store, &*wtxn, &id)?;
-                // The digest already bound this body; the consent binding is
-                // checked too, so the member is redeemed against the same
-                // content-addressed handle the pending row was parked on.
-                let (diff_handle, read_frontier_hash) =
-                    claim_consent_binding_parts(&self.store, &*wtxn, &body)?;
-                if diff_handle != entry.member.diff_handle
-                    || read_frontier_hash != entry.member.read_frontier_hash
-                {
-                    return Err(Error::Gate(GateError::GateConsentStale { claim_id: id }).into());
-                }
+                let (body, header, machine) =
+                    self.bundle_member_before_replay_in_txn(wtxn, entry)?;
 
                 let mut resolved = body.clone();
-                // A MACHINE claim changes only through its signed history,
-                // whose fold rejects without retracting.
-                let machine =
-                    crate::authority::machine_claim_needs_history(&self.store, &*wtxn, &body)?;
                 let occurred = match action {
                     GateConsentBundleAction::Approve => {
                         resolved.approval = ClaimApprovalStatus::Approved;
@@ -994,15 +958,7 @@ fn replay_gate_consent_bundle_member(
     actor: WriteActor,
     recorded_decisions: &mut Vec<RecordedClaimGateDecision>,
 ) -> Result<()> {
-    let source = body.source.ok_or(Error::InvalidClaimBody(
-        "gate consent bundle member missing claim source",
-    ))?;
-    let envelope = WriteEnvelope::new(
-        actor,
-        source,
-        WriteProvenance::new(Value::from(GATE_BUNDLE_PROVENANCE))?,
-        body.approval,
-    );
+    let envelope = owner_reading::bundle_replay_envelope(body, actor)?;
     let mut recorded_decision = None;
     let gate_result = check_claim_policy_for_write_with_record(
         &vault.store,

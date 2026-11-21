@@ -97,6 +97,7 @@ impl<'v> ScopedRead<'v> {
         lane.read_filter.clone_from(&self.read_filter);
         lane.receipts_include_live_grants = self.receipts_include_live_grants;
         lane.cited_support = self.cited_support;
+        lane.source_floor_waived = self.source_floor_waived;
         Ok(lane)
     }
 }

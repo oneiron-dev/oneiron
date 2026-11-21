@@ -447,7 +447,7 @@ fn enrol_as_host(
 
 /// An authority key as lower-case hex: an Ed25519 key's 32 bytes, a P-256
 /// key's compressed encoding.
-fn authority_key_hex(key: &AuthorityKey) -> String {
+pub(super) fn authority_key_hex(key: &AuthorityKey) -> String {
     match key {
         AuthorityKey::Ed25519(bytes) => oneiron_hex::encode(bytes),
         AuthorityKey::P256(bytes) => oneiron_hex::encode(bytes),

@@ -143,6 +143,14 @@ impl SyncClient {
         // The selector is authorized again at this clock: a grant that lapsed
         // while the window was filtered signs nothing.
         crate::sync::selector::authorize_sync_selector(vault, grant.scope, &selector)?;
+        // The rows it releases are recorded before it is signed, so the
+        // owner's later delete of each follows them to the peer
+        // (CROSS-VAULT-DELETE-SELECTOR-ANSWER-RELEASE): a record that fails
+        // signs nothing.
+        vault.record_peer_release(&crate::share_travel::PeerRelease::new(
+            state.grant_ref,
+            rows.clone(),
+        ))?;
         let body = ConnectWindow {
             pact: request.pact,
             epoch: state.pact_epoch,

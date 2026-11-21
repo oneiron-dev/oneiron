@@ -119,8 +119,9 @@ pub(crate) use self::esign::seal_worker::SealConfig as EsignSealConfig;
 #[cfg(unix)]
 pub(crate) use self::esign::seal_worker::spawn_admitted as spawn_esign_seal_worker_admitted;
 pub(crate) use self::oauth_server::{
-    AUTHORIZE_PATH, PROTECTED_RESOURCE_GIT_METADATA_PATH, PROTECTED_RESOURCE_MCP_METADATA_PATH,
-    REGISTER_PATH, REVOKE_PATH, TOKEN_PATH,
+    AUTHORIZE_PATH, AUTHORIZE_STATUS_PATH, PAGE_TOKEN_HEADER, PAGE_TOKEN_META,
+    PROTECTED_RESOURCE_GIT_METADATA_PATH, PROTECTED_RESOURCE_MCP_METADATA_PATH, PURPOSE_PARAMETER,
+    REGISTER_PATH, REVOKE_PATH, SignInPurpose, TOKEN_PATH,
 };
 pub(crate) mod off_record_rooms;
 mod one_click_unsubscribe;

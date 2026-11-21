@@ -385,7 +385,11 @@ fn a_capture_of_a_cancelled_payment_on_the_new_home_voids_the_deposit() {
         NOW + 50,
     )
     .expect("drain the new home's settle rows");
-    assert_eq!(drained.captured, 1, "the carried capture was asked once");
+    assert_eq!(
+        (drained.captured, drained.voided),
+        (0, 1),
+        "the carried capture was asked once and recorded the void"
+    );
     assert_eq!(
         state_of(&new_home, "pi_move_gone"),
         Some(DepositState::Voided),

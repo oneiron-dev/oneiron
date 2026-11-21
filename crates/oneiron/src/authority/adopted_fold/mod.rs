@@ -55,7 +55,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::fold_resume::{ConfirmKeys, RowMeta};
+use super::fold_resume::RowMeta;
 use super::*;
 use crate::error::Result;
 use oneiron_contracts::authority::AuthorityHistoryReason;
@@ -164,19 +164,19 @@ pub(super) fn fold_adopted_checkpoint_tail(
             Some(reason),
         ))
     };
-    let confirms = if image_stands_here(image, log) {
+    let floors = if image_stands_here(image, log) {
         tail_folds_past(image, &tail, log)
     } else {
         Err(AuthorityHistoryReason::ImageContextMoved)
     };
-    let (confirms, floors) = match confirms {
-        Ok(past) => past,
+    let floors = match floors {
+        Ok(floors) => floors,
         Err(reason) => return Ok(whole(reason)),
     };
     if !gaps.is_empty() {
         return Ok(need(gaps.clone()));
     }
-    let settled = match settle_tail(image, &tail, log, confirms, floors)? {
+    let settled = match settle_tail(image, &tail, log, floors)? {
         Ok(settled) => settled,
         Err(reason) => return Ok(whole(reason)),
     };
@@ -328,15 +328,16 @@ fn whole_history(
 /// row the image holds rejected (only older states could judge it). None for
 /// a residence result past an image that dropped its residence bodies for
 /// [`super::checkpoint_image::AUTHORITY_RESIDENCE_BODY_OVERFLOW`], as at
-/// fold 14 (FIX 11400). Ok with the log's confirms once the tail's joined
-/// them, and the covered rows the tail floors; otherwise why the first tail
-/// row in hash order that does not fold past refuses: the first condition it
-/// fails, in the order checked here.
+/// fold 14 (FIX 11400). Ok with the covered rows the tail floors; otherwise
+/// why the first tail row in hash order that does not fold past refuses: the
+/// first condition it fails, in the order checked here. The confirms each
+/// row's admission joins only admit the next ones: a confirm that then folds
+/// rejected spends nothing in the whole fold ([`settle_tail`]).
 fn tail_folds_past(
     image: &AuthorityCheckpointV2,
     tail: &BTreeMap<AuthorityEntryHash, &AuthorityLogEntry>,
     log: AdoptedTail<'_>,
-) -> std::result::Result<(ConfirmKeys, CoveredFloors), AuthorityHistoryReason> {
+) -> std::result::Result<CoveredFloors, AuthorityHistoryReason> {
     // A root appointment is counted over its whole ancestry, and one arriving
     // can burn its anchor and un-count an appointment the image counted
     // (OWNER-ANCHOR-ROOT-RECOVERY): the whole history folds it.
@@ -396,7 +397,7 @@ fn tail_folds_past(
             return Err(op_refusal(image, tail, log, entry));
         }
     }
-    Ok((confirms, CoveredFloors::of(floored)))
+    Ok(CoveredFloors::of(floored))
 }
 
 /// Why a parent of the tail row `entry` does not stand past the image, or

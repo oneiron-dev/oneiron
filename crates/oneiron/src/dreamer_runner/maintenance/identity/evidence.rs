@@ -267,8 +267,10 @@ impl Memory<'_> {
                 ask: input.ask.clone(),
                 choice: input.choice.clone(),
             },
+            input.proposal.as_deref(),
             Some(owner),
             &evidence,
+            None,
         )
     }
 }

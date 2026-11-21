@@ -334,7 +334,9 @@ pub(crate) use rooms::{
 };
 pub(crate) use rooms::{record_native_room_turn_in_txn, record_room_message_in_txn};
 
-pub(crate) use rooms::{Admitted, admit_participation_in_txn, join_subject_for_actor_in_txn};
+pub(crate) use rooms::{
+    Admitted, admit_participation_in_txn, join_subject_for_actor_in_txn, person_standing_in_txn,
+};
 pub use rooms::{JoinCause, ParticipantView, ParticipantsPage, ParticipantsRequest};
 
 pub use crate::gate::RoomThreadFill;

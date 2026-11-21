@@ -151,6 +151,26 @@ impl Memory<'_> {
         self.get_entity_with_mode(reference, mode)
     }
 
+    /// [`Self::get_entity`] as the `vault.get` verb answers it: a notice
+    /// addressed to another person whose sources alone withhold it from the
+    /// reading live owner answers a withheld stub, a NOTIFICATION view whose
+    /// body is only its `id`, `kind`, `recipient`, `created_at` and
+    /// `body_withheld: true` (lead 21 Nov 06:3x: "he sees that it exists,
+    /// not its body"; Engine ANSWER OWNER-NOTICE-EXISTENCE Q1 = A). Every
+    /// other read answers as [`Self::get_entity`] does. Internal doors keep
+    /// [`Self::get_entity`], whose `None` tells them the row does not read.
+    pub fn get_entity_or_withheld_notice(
+        &self,
+        entity_ref: &str,
+    ) -> MemoryResult<ScopedReadResult<Option<EntityView>>> {
+        let (reference, mode) = entity_read_mode(entity_ref)?;
+        let lane = self
+            .read_lane(ClaimReadStatus::Recorded)?
+            .with_live_grant_receipts();
+        let target = self.read_target(reference, mode)?;
+        self.read_named_view_or_withheld_notice(&lane, target)
+    }
+
     /// [`Self::get_entity`] without persisting the lane's grant time first:
     /// the same lane, scope and admission, its grants judged at the vault's
     /// authority instant as the snapshot reads it, so the read writes

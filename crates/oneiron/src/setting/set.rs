@@ -18,10 +18,11 @@ use super::read::{
     Loaded, StoredRow, chain_of, in_force_of, key_line_grant_in_txn, load_in_txn, names_subject,
     table_of,
 };
+use super::restored::{RESTORED_NOT_JOINED_CHANGE, RowReading, restored_unjoined_in_txn};
 use super::signed_act::sign_owner_change_in_txn;
 use super::{
-    EncodedValue, SetBy, Setter, SettingChange, SettingMode, SettingScope, SettingSpec, WriteTurn,
-    set_line, spec_named, widen_line, widen_line_at, widen_scope_line,
+    EncodedValue, SetBy, Setter, SettingChange, SettingMode, SettingScope, SettingSpec,
+    SettingSync, WriteTurn, set_line, spec_named, widen_line, widen_line_at, widen_scope_line,
 };
 use crate::Vault;
 use crate::authority::OwnerProofGround;
@@ -660,6 +661,17 @@ fn set_in_txn(
         && !replaces_refused
         && prior_value.as_ref() == change.value
         && prior_weight == change.weight_runs;
+    // An install born of a restore that has not joined changes no setting the vault's machines
+    // share (stage 7c-4; DESIGN 1.6, "Restore"), whoever asks: it is no machine of the vault, so
+    // no act of its own counts. A change that leaves the row as it is still answers.
+    if !unchanged
+        && change.spec.sync == SettingSync::Vault
+        && restored_unjoined_in_txn(&vault.store, txn)?
+    {
+        return Err(crate::authority::authority_refused(
+            RESTORED_NOT_JOINED_CHANGE,
+        ));
+    }
     let by_owner = matches!(caller, SettingCaller::Owner(_) | SettingCaller::Engine(_));
     // Which way the change moves its row, against the rows this write sees (A3: the key's
     // comparator gives the direction). A change that leaves the row as it is moves nothing.
@@ -884,8 +896,11 @@ fn direction_in_txn(
         });
     }
     let layer = layer_default_in_txn(&vault.store, txn, spec)?;
-    let (before, _, _) = in_force_of(spec, &loaded, &fits, &chain, &layer)?;
-    let (after, _, _) = in_force_of(spec, &after, &fits, &chain, &layer)?;
+    // A change is judged as a machine of the vault reads its rows: on an install born of a
+    // restore that has not joined, the door refused a `sync: vault` change above, and a `sync:
+    // install` key's rows are the install's own.
+    let (before, _, _) = in_force_of(spec, &loaded, &fits, &chain, &layer, RowReading::Current)?;
+    let (after, _, _) = in_force_of(spec, &after, &fits, &chain, &layer, RowReading::Current)?;
     Ok(ChangeDirection::of(&after, &before, no_wider))
 }
 

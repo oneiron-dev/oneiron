@@ -16,6 +16,31 @@ fn unresolved(project: EntityId, reason: &'static str) -> Error {
     RecordError::ProjectAuthorityUnresolved { project, reason }.into()
 }
 
+/// Refuses each parent `next` links that `linked` does not when that parent's
+/// hard delete has published: it reads deleted, and its purge refuses a live
+/// child, so a new link to it would leave it fenced, unpurged. A live put
+/// runs this in [`validate_transition`]. The owner's doors that land a
+/// project as history (its birth, its seal) run it themselves, because that
+/// admission skips the transition check.
+pub(super) fn reject_fenced_new_parents(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    linked: &[String],
+    next: &[String],
+) -> Result<()> {
+    for parent in next.iter().filter(|parent| !linked.contains(parent)) {
+        let parent = EntityId::from_hex(parent).map_err(|_| refused("invalid parent id"))?;
+        if crate::deletion::ROW_DELETION_FENCE.contains(
+            store,
+            txn,
+            &crate::side_table::HexId(parent),
+        )? {
+            return Err(refused("parent project is deleted"));
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn validate_transition(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -32,23 +57,8 @@ pub(crate) fn validate_transition(
         return Err(refused("a room facet set needs a v4 project proof"));
     }
     let prior = stored(store, txn, id, kind)?;
-    // A parent whose hard delete has published reads deleted, and its purge
-    // refuses a live child: a new link to it would leave it fenced, unpurged.
     let linked = prior.as_ref().map_or(&[][..], |old| old.parents.as_slice());
-    let added = next
-        .parents
-        .iter()
-        .filter(|parent| !linked.contains(parent));
-    for parent in added {
-        let parent = EntityId::from_hex(parent).map_err(|_| refused("invalid parent id"))?;
-        if crate::deletion::ROW_DELETION_FENCE.contains(
-            store,
-            txn,
-            &crate::side_table::HexId(parent),
-        )? {
-            return Err(refused("parent project is deleted"));
-        }
-    }
+    reject_fenced_new_parents(store, txn, linked, &next.parents)?;
     if let Some(old) = &prior {
         // OF-389: a subproject's wrapper TASK is fixed at its spawn.
         if old.wrapper_task != next.wrapper_task {

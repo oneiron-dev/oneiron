@@ -447,6 +447,7 @@ fn prepared_effect(
         admission_ceiling: None,
         co_actor: None,
         exclusive_route: None,
+        idempotency_attempt: None,
     }
 }
 

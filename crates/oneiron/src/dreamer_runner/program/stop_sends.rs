@@ -70,7 +70,7 @@ pub(super) fn abandon_sends_in_txn(
         wtxn,
         attempt,
         IntentEscalationReason::OwnerStopped,
-        now.saturating_mul(1_000),
+        now,
     )
     .map_err(|error| match error {
         IntentLedgerError::Engine(error) => error,

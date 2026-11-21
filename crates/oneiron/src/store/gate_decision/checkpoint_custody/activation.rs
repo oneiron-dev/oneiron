@@ -130,7 +130,9 @@ impl Store {
     /// body it keeps, once what `source` retired took its rows (FIX 6020).
     /// Only then does the new binding commit, with the archive mark lifted
     /// and this install's machine identity dropped, the replacement keeping
-    /// it. Anything short of that leaves it archived, as it was. The caller
+    /// it, and with each timer, feed and idle turn program it holds paused
+    /// (its replacement holds them too, and releases them). Anything short
+    /// of that leaves it archived, as it was. The caller
     /// reopens the vault, whose handles then shred only its own keys.
     /// Its world key pads go through the same plan (KS-5, FIX 5686 part 2):
     /// a pad `source` retired takes its row out, never back from the row's
@@ -234,6 +236,11 @@ impl Store {
                 read_back_credentials_in_txn(self, &wtxn, &mut credentials);
                 fences.put_in_txn(self, &mut wtxn)
             })
+            // With its machine go the choices about the install it was, its
+            // `sync: install` settings and its residence mode and world pick:
+            // they stay with its replacement, as a direct restore leaves an
+            // image's behind (DESIGN 15-setting-primitive 1.6, "Restore"; row
+            // SETTING-ACTIVATE-ARCHIVED-INSTALL-ROWS).
             .and_then(|()| crate::identity::drop_machine_identity_in_txn(self, &mut wtxn))
             // It joins as a new machine born of a restore (row
             // RESTORED-COPIES-ENROL-EACH-OTHER): it lands no image, so its
@@ -245,6 +252,14 @@ impl Store {
             })
             // The orders standing on its source now, not the ones it had.
             .and_then(|()| replace_host_holds_in_txn(self, &mut wtxn, source.host_holds()))
+            // It is a copy beside its replacement from here on, and both hold the timer, feed
+            // and idle programs it had: its own start paused, before the archive lifts (FIX
+            // TURNPROGRAM-OCCURRENCE-ARMINGS-LIVE-ON-A-VAULT-COPY).
+            .and_then(|()| {
+                let at = self.clock.now_recorded_at();
+                crate::dreamer_runner::pause_occurrence_armings_in_txn(self, &mut wtxn, at)
+                    .map(drop)
+            })
             // Its source's pad objects, before the archive lifts.
             .and_then(|()| {
                 landing = install_source_pad_objects_in_txn(

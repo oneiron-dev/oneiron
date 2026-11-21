@@ -351,10 +351,12 @@ pub(super) async fn durable_step(
         // An erased answer is terminal: it never triggers a fallback (FIX 6296).
         // Nor does a lapsed seat login: the step fails, and its try parks on
         // the seat until the login is back (SEAT-PARK-MODEL-STEP-PATH).
+        // Nor does a wake pass's window refusal (`refused_for_window_in_pass`).
         Err(DurableStepError::Llm(LlmError::Fatal(error)))
             if matches!(request.envelope.class, CallClass::Durable { .. })
                 && error != FatalLlmError::ResponseErased
-                && !matches!(error, FatalLlmError::SeatSignedOut { .. }) =>
+                && !matches!(error, FatalLlmError::SeatSignedOut { .. })
+                && !refused_for_window_in_pass(ctx, &error) =>
         {
             let CallClass::Durable { fallback } = &request.envelope.class else {
                 unreachable!()
@@ -1013,6 +1015,15 @@ fn resolve_failure_policy(
     let txn = vault.store.env.read_txn().map_err(Error::from)?;
     let policy = crate::gate::resolve_policy_manifest(&vault.store, &txn)?;
     Ok(policy.dreamer_failure_decision(class))
+}
+
+/// Whether `error` is a window refusal of a step inside a wake pass, which no
+/// deterministic fallback stands in for (Engine 21 Nov 07:38): the same input
+/// meets it on every call, so the Dreamer's try ends Failed with its text,
+/// once, keeping a paid correction's usage on the error, where a fallback's
+/// empty or null reply would hide it. Outside a wake pass the fallback stands.
+fn refused_for_window_in_pass(ctx: &DurableStepContext<'_>, error: &FatalLlmError) -> bool {
+    ctx.deadline.is_some() && crate::dreamer_wake::fatal_refuses_window(error)
 }
 
 /// Whether a failed corrective attempt's settled usage carries any spend

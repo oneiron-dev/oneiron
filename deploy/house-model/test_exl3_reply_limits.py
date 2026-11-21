@@ -8,9 +8,9 @@ import unittest
 
 
 def stand_in_missing_gpu_modules():
-    """Module stand-ins for exllamav3 and jinja2 when they are not installed:
-    the server imports their names at load, and `Server.prepare` touches
-    neither past the sampler it builds."""
+    """Module stand-ins for exllamav3, torch and jinja2 when they are not
+    installed: the server imports their names at load, and `Server.prepare`
+    touches none of them past the sampler it builds."""
     try:
         import exllamav3  # noqa: F401
         import exllamav3.generator.sampler  # noqa: F401
@@ -27,10 +27,18 @@ def stand_in_missing_gpu_modules():
         generator = types.ModuleType("exllamav3.generator")
         sampler = types.ModuleType("exllamav3.generator.sampler")
         sampler.ComboSampler = type("ComboSampler", (Named,), {})
+        ext = types.ModuleType("exllamav3.ext")
+        ext.exllamav3_ext = types.SimpleNamespace()
         root.generator = generator
+        root.ext = ext
         generator.sampler = sampler
         sys.modules.update({"exllamav3": root, "exllamav3.generator": generator,
-                            "exllamav3.generator.sampler": sampler})
+                            "exllamav3.generator.sampler": sampler, "exllamav3.ext": ext})
+    try:
+        import torch  # noqa: F401
+    except ImportError:
+        # exl3_evaluator imports torch at load and uses it only in its calls.
+        sys.modules["torch"] = types.ModuleType("torch")
     try:
         import jinja2  # noqa: F401
     except ImportError:
@@ -75,7 +83,7 @@ class ThinkingTemplate:
 
 
 class Identity:
-    def execution_mode(self, template_kwargs, solo):
+    def execution_mode(self, template_kwargs, solo, prompt_lookup=True):
         return "execution-mode"
 
 

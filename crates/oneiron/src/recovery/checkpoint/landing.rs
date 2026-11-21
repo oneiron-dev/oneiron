@@ -299,6 +299,15 @@ impl Vault {
             }
             if fork {
                 forked.0 = vault.store.fork_gate_custody_in_txn(txn, &gate_custody)?;
+                // A copy served beside its source holds the source's timer, feed and idle
+                // programs, and both would release them: the copy's start paused, in the write
+                // that lands them (FIX TURNPROGRAM-OCCURRENCE-ARMINGS-LIVE-ON-A-VAULT-COPY).
+                // After a merge of live rows these are the armings the live vault holds now.
+                crate::dreamer_runner::pause_occurrence_armings_in_txn(
+                    &vault.store,
+                    txn,
+                    restored_at,
+                )?;
             }
             if let Some(home) = home {
                 vault
