@@ -11,11 +11,17 @@
 //!    resumed after a cut pass) takes the retry's saved reply and asks the model no third time.
 //! 7. A retry the finalize window refuses before it goes out is not counted on the stage line,
 //!    and the refused first reply is still charged.
+//! 8. A retry held back before it went out (here by the finalize window) goes out, prompt
+//!    lookup off, on the try's next run, in place of a fresh original with lookup on.
+//! 9. A retry the backend gives back unsent (no rung serves at this hour) is not counted on the
+//!    stage line.
 //!
 //! Red on main 1b32efa6512: the first parse failure parks the try Retry after one call
 //! (cases 1, 2, 4, 6 fail). Red at 025c8df5887 (review round 1 of #10269, P1 1 and P1 2): the
 //! replay sends the original request a third time (case 6), and the stage line counts the
-//! refused retry (case 7). Doors: `oneiron::test_doors::seat_park_model_step`, built only under
+//! refused retry (case 7). Red at 247b54b8331 (review round 2 of #10269, P1 2 and P1 3): the
+//! next run sends the original with lookup on (case 8), and the stage line counts the retry
+//! given back unsent (case 9). Doors: `oneiron::test_doors::seat_park_model_step`, built only under
 //! `--cfg oneiron_test_support`.
 #![cfg(oneiron_test_support)]
 
@@ -35,10 +41,10 @@ use oneiron::{
     BudgetExhaustionPolicy, BudgetGuard, BudgetLease, ContentPart, DREAMER_GRACEFUL_WRAP_WINDOW_MS,
     DreamerAdmittedAttempt, DreamerAttemptExecution, DreamerAttemptExecutor,
     DreamerConsolidationScope, DreamerParkCause, DreamerRunnerStore, DreamerWakeDriver,
-    FinishReason, LlmBackend, LlmGenerateFuture, LlmInputUsage, LlmMessage, LlmMessageRole,
-    LlmOutputUsage, LlmRequest, LlmResponse, LlmResult, LlmStream, LlmStreamEvent, LlmStreamResult,
-    LlmUsage, ModelLocality, RunWakePass, Vault, VaultConfig, WakeAttemptContext, WakeCancellation,
-    WakePassDeadline, WakePassReport, WakeTrigger,
+    FinishReason, LlmBackend, LlmError, LlmGenerateFuture, LlmInputUsage, LlmMessage,
+    LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmResult, LlmStream, LlmStreamEvent,
+    LlmStreamResult, LlmUsage, ModelLocality, RetryableLlmError, RunWakePass, Vault, VaultConfig,
+    WakeAttemptContext, WakeCancellation, WakePassDeadline, WakePassReport, WakeTrigger,
 };
 use serde_json::Value;
 use tracing::field::{Field, Visit};
@@ -93,12 +99,15 @@ struct ClockStep {
     ms: u64,
 }
 
-/// An immediate backend that repeats its last reply if asked again.
+/// An immediate backend that repeats its last reply if asked again. From call
+/// `outside_hours_from` (0-based) on, it answers that no rung serves at this hour, as a
+/// ladder whose only rung closed does: nothing goes out.
 struct ScriptedBackend {
     replies: Vec<Reply>,
     requests: Mutex<Vec<LlmRequest>>,
     elapsed: Arc<AtomicU64>,
     clock_step: Option<ClockStep>,
+    outside_hours_from: Option<usize>,
 }
 
 impl ScriptedBackend {
@@ -110,7 +119,7 @@ impl ScriptedBackend {
         self.requests.lock().expect("the request log").clone()
     }
 
-    fn respond(&self, request: &LlmRequest) -> LlmResponse {
+    fn respond(&self, request: &LlmRequest) -> LlmResult<LlmResponse> {
         let index = {
             let mut requests = self.requests.lock().expect("the request log");
             let index = requests.len();
@@ -122,8 +131,14 @@ impl ScriptedBackend {
         {
             self.elapsed.store(step.ms, Ordering::SeqCst);
         }
+        if self.outside_hours_from.is_some_and(|from| index >= from) {
+            return Err(LlmError::Retryable(RetryableLlmError::OutsideHours {
+                retry_after: None,
+                resets_at: Vec::new(),
+            }));
+        }
         let (text, finish_reason) = &self.replies[index.min(self.replies.len() - 1)];
-        LlmResponse {
+        Ok(LlmResponse {
             message: LlmMessage {
                 role: LlmMessageRole::Assistant,
                 content: vec![ContentPart::Text {
@@ -148,7 +163,7 @@ impl ScriptedBackend {
             finish_reason: finish_reason.clone(),
             reply_assertions: Default::default(),
             token_scores: None,
-        }
+        })
     }
 }
 
@@ -169,11 +184,11 @@ impl LlmBackend for ScriptedBackend {
         _lease: &'a BudgetLease,
     ) -> LlmGenerateFuture<'a> {
         let response = self.respond(&request);
-        Box::pin(async move { Ok(response) })
+        Box::pin(async move { response })
     }
 
     fn stream<'a>(&'a self, request: LlmRequest, _lease: &'a BudgetLease) -> LlmStreamResult<'a> {
-        let response = self.respond(&request);
+        let response = self.respond(&request)?;
         Ok(LlmStream::new(ReplyStream(Some(LlmStreamEvent::Done {
             message: response.message,
             usage: response.usage,
@@ -346,6 +361,16 @@ fn run_scripted_pass(
     clock_step: Option<ClockStep>,
     replay: bool,
 ) -> TestResult<ExtractionPass> {
+    run_backend_pass(replies, clock_step, replay, None)
+}
+
+/// [`run_scripted_pass`] whose backend answers no rung serves from call `outside_hours_from` on.
+fn run_backend_pass(
+    replies: &[Reply],
+    clock_step: Option<ClockStep>,
+    replay: bool,
+    outside_hours_from: Option<usize>,
+) -> TestResult<ExtractionPass> {
     assert!(!replies.is_empty(), "the backend needs at least one reply");
     let clock = oneiron_store::ports::manual_clock::ManualClock::new(PASS_T);
     let mut config = VaultConfig::device();
@@ -367,6 +392,7 @@ fn run_scripted_pass(
         requests: Mutex::new(Vec::new()),
         elapsed: Arc::clone(&elapsed),
         clock_step,
+        outside_hours_from,
     };
     let guard = BudgetGuard::with_reserve_units(
         WAKE_LINE,
@@ -571,6 +597,66 @@ fn a_retry_the_finalize_window_refuses_is_not_counted_but_charged() -> TestResul
         pass.charged_units()?,
         control.charged_units()?,
         "the refused first reply is charged once"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_retry_held_back_goes_out_with_prompt_lookup_off_on_the_next_run() -> TestResult {
+    let pass = run_scripted_pass(
+        &[BAD_JSON, NO_CANDIDATES],
+        Some(ClockStep {
+            calls: 1,
+            ms: FINALIZE_WINDOW_MS,
+        }),
+        true,
+    )?;
+    assert_eq!(
+        pass.cut_checkpointed,
+        Some(true),
+        "the first run checkpoints once the finalize window held its retry back"
+    );
+    let requests = pass.backend.requests();
+    assert_eq!(
+        requests.len(),
+        2,
+        "the next run asks once: the held-back retry"
+    );
+    assert!(!requests[0].params.contains_key(PROMPT_LOOKUP_PARAM));
+    assert_eq!(
+        requests[1].params.get(PROMPT_LOOKUP_PARAM),
+        Some(&Value::Bool(false)),
+        "the next run sends the retry with prompt lookup off, not the original again"
+    );
+    pass.assert_completed()?;
+    assert_eq!(
+        pass.stage_field("parse_retries").last().map(String::as_str),
+        Some("1"),
+        "the run that sent the retry counts it; stage lines: {:?}",
+        pass.stage_lines
+    );
+    Ok(())
+}
+
+#[test]
+fn a_retry_no_rung_serves_at_this_hour_is_not_counted() -> TestResult {
+    let pass = run_backend_pass(&[BAD_JSON], None, false, Some(1))?;
+    let requests = pass.backend.requests();
+    assert_eq!(
+        requests.len(),
+        2,
+        "the retry reaches the ladder, which gives it back unsent"
+    );
+    assert_eq!(
+        requests[1].params.get(PROMPT_LOOKUP_PARAM),
+        Some(&Value::Bool(false))
+    );
+    assert_eq!(pass.report.completed, 0);
+    assert_eq!(
+        pass.stage_field("parse_retries"),
+        ["0"],
+        "no retry went out; stage lines: {:?}",
+        pass.stage_lines
     );
     Ok(())
 }
