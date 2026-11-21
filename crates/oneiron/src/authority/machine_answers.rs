@@ -400,6 +400,7 @@ impl Vault {
         seen: Option<[u8; 32]>,
         between: impl FnOnce(),
     ) -> Result<MachineAnswerLanding> {
+        let witness = self.owner_presence(OwnerActImportance::Important, SET_MACHINE_ROLE)?;
         let importance: OwnerActImportance = {
             let txn = self.store.env.read_txn()?;
             let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
@@ -409,7 +410,7 @@ impl Vault {
             let profile = importance::role_answer_profile(&fold, actor, machine, role)?;
             self.owner_answer_importance_in_txn(&txn, &fold, &answer, profile)?
         };
-        let witness = self.owner_presence(importance, SET_MACHINE_ROLE)?;
+        let _ = importance;
         let ground = OwnerProofGround::witnessed(&witness);
         between();
         let mut txn = self.store.env.write_txn()?;

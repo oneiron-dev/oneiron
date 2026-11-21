@@ -118,6 +118,8 @@ impl Vault {
         seen: Option<PolicyRevision>,
         between: impl FnOnce(),
     ) -> Result<ConversationTrainingView> {
+        let witness =
+            self.owner_presence(OwnerActImportance::Important, owner_presence_reasons::CONVERSATION_TRAINING)?;
         let importance = {
             let txn = self.store.env.read_txn()?;
             let checks = self.conversation_training_checks_in_txn(&txn, owner, leave_out, seen)?;
@@ -127,8 +129,7 @@ impl Vault {
             }
             checks.importance
         };
-        let witness =
-            self.owner_presence(importance, owner_presence_reasons::CONVERSATION_TRAINING)?;
+        let _ = importance;
         let ground = OwnerProofGround::witnessed(&witness);
         between();
         let mut txn = self.store.env.write_txn()?;
