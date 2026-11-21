@@ -199,9 +199,14 @@ fn complete_read_back<T: OutboundTransport>(
     transport: &mut T,
 ) -> Result<OutboundEffectResult, IntentLedgerError> {
     let body = transport.take_settled_result();
-    // Every intent ledger time is Unix seconds, as a program step's is.
     let done = complete_record_bridged(vault, record.id, now_ms, |wtxn, done| {
-        crate::dreamer_runner::settle_program_outbound_in_txn(vault, wtxn, done, body, now_ms);
+        crate::dreamer_runner::settle_program_outbound_in_txn(
+            vault,
+            wtxn,
+            done,
+            body,
+            now_ms / 1_000,
+        );
     })?;
     // Its settled budget warnings go out with it, as an acked send's do.
     let mut result = effect_result(
@@ -528,11 +533,14 @@ fn send_pending_with_gate<T: OutboundTransport>(
             // A turn program's send settles its step in the Done commit,
             // with the body its transport returned (DOOR-141 PR2); any
             // other send writes nothing more, and nothing here fails it.
-            // Every intent ledger time is Unix seconds, as a program step's is.
             let body = transport.take_settled_result();
             let done = complete_record_bridged(vault, record.id, now_ms, |wtxn, done| {
                 crate::dreamer_runner::settle_program_outbound_in_txn(
-                    vault, wtxn, done, body, now_ms,
+                    vault,
+                    wtxn,
+                    done,
+                    body,
+                    now_ms / 1_000,
                 );
             })?;
             let mut result = effect_result(&done.record, Some(outcome), replayed, None);
