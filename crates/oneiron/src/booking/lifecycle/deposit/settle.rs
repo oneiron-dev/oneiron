@@ -115,7 +115,9 @@ impl DepositProviderFailure {
 pub trait DepositSettlementPort {
     /// Asks the provider for one move, and answers the amount it moved, in
     /// the currency's smallest unit: the amount the payment now has
-    /// captured for a capture (also when an earlier capture already stood);
+    /// captured for a capture (also when an earlier capture already stood;
+    /// 0 when the payment was cancelled at the provider before it, which the
+    /// deposit records as voided);
     /// the amount refunded for a refund, once the provider has finished it;
     /// for a void, 0, or the amount the payment had already captured when a
     /// capture stood before the void (a capture whose reply was lost), which
@@ -136,7 +138,9 @@ pub enum DepositSettleStep {
     Nothing,
     /// Still in its checkout window; due again at this instant.
     Wait { due_at: u64 },
-    /// The provider did this move, and the deposit recorded it.
+    /// The deposit recorded this move of the provider's: the one asked, or
+    /// the void the provider made before a capture that then captured
+    /// nothing.
     Moved(DepositSettleMove),
     /// The provider did not.
     Failed(DepositProviderFailure),
@@ -207,24 +211,33 @@ fn plan_settle(vault: &Vault, key: &[u8; 32], now_utc: u64) -> Result<SettlePlan
 /// is owed back at once, as a refund queued in this same commit. A void that
 /// found the payment already captured (a capture whose reply was lost, then
 /// a cancel that released the deposit) owes that capture back the same way.
-/// Either records what the provider captured. A refund adds to what was
-/// refunded before it; when the owner's return came while it was owed, the
-/// balance of the capture is owed next, queued in the same commit.
+/// Either records what the provider captured. A capture owed that captured
+/// nothing found the payment cancelled at the provider (the owner's act in
+/// its dashboard, or the authorization's expiry): the deposit is voided, as
+/// the provider's cancellation event voids it, and the move recorded is that
+/// void. A refund adds to what was refunded before it; when the owner's
+/// return came while it was owed, the balance of the capture is owed next,
+/// queued in the same commit. Answers the move the deposit recorded.
 fn record_settled(
     vault: &Vault,
     key: &[u8; 32],
     movement: DepositSettleMove,
     moved: u64,
     now_utc: u64,
-) -> Result<(), BookingError> {
+) -> Result<DepositSettleMove, BookingError> {
     booking_writer(vault, |wtxn| {
         let Some(mut row) = DEPOSIT
             .get(&vault.store, &*wtxn, key)
             .map_err(|error| engine_failure("meta read", error))?
         else {
-            return Ok(());
+            return Ok(movement);
         };
+        let mut recorded = movement;
         let next = match (row.state, movement) {
+            (DepositState::CaptureDue { .. }, DepositSettleMove::Capture { .. }) if moved == 0 => {
+                recorded = DepositSettleMove::Void;
+                DepositState::Voided
+            }
             (
                 DepositState::CaptureDue { amount_minor: owed },
                 DepositSettleMove::Capture { .. },
@@ -267,7 +280,7 @@ fn record_settled(
             }
             // The deposit moved on while the call ran (a provider
             // cancellation); its own row settles what is left.
-            _ => return Ok(()),
+            _ => return Ok(movement),
         };
         let refund_owed = matches!(next, DepositState::RefundDue { .. });
         row.state = next;
@@ -281,7 +294,7 @@ fn record_settled(
             };
             enqueue_settle(vault, wtxn, key, cause, now_utc)?;
         }
-        Ok(())
+        Ok(recorded)
     })
 }
 
@@ -327,10 +340,9 @@ fn settle_deposit_key<P: DepositSettlementPort>(
         movement,
         idempotency_key: &idempotency_key,
     }) {
-        Ok(moved) => {
-            record_settled(vault, key, movement, moved, now_utc)?;
-            Ok(DepositSettleStep::Moved(movement))
-        }
+        Ok(moved) => Ok(DepositSettleStep::Moved(record_settled(
+            vault, key, movement, moved, now_utc,
+        )?)),
         Err(failure) => Ok(DepositSettleStep::Failed(failure)),
     }
 }

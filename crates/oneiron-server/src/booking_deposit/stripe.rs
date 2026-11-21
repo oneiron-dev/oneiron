@@ -650,8 +650,12 @@ impl<'v> StripeClient<'v> {
     }
 }
 
-/// The PaymentIntent states in which a refused capture stands done.
-const CAPTURE_DONE: &[&str] = &["succeeded"];
+/// The PaymentIntent states in which a refused capture stands done:
+/// captured, or cancelled before it (in the owner's Stripe dashboard, or by
+/// Stripe once the authorization expired). A cancelled payment received
+/// nothing, so the capture answers 0, and the deposit records the void, as
+/// the `payment_intent.canceled` webhook does.
+const CAPTURE_DONE: &[&str] = &["succeeded", "canceled"];
 
 /// The PaymentIntent states in which a refused void stands settled: cancelled,
 /// or captured before the void, whose capture the deposit then owes back.
