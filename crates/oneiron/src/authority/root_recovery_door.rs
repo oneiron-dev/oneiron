@@ -465,6 +465,15 @@ impl Vault {
             RootSuccessor::ThisInstall => Some(self.device_owner_signing_slot()?),
             RootSuccessor::Device(_) => None,
         };
+        // One attempt at a time, and no landing run beside it: the seed slot
+        // is keyed by the successor alone (row
+        // RECOVERY-HOLD-SEED-SLOT-PER-ATTEMPT). Taken before the PIN's step
+        // and the slot lock; a landing run takes it alone.
+        let _attempt = self
+            .store
+            .recovery_hold_lock
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         // This install's slot is read, renewed and its successor named in
         // the hold under the owner signing slot lock, after the device PIN's
         // step, in the order the vouch arm takes them (REVIEW-9487 P1 2, row
@@ -484,20 +493,29 @@ impl Vault {
             (RootSuccessor::ThisInstall, Some(slot)) => slot.key()?.public_key(),
             (RootSuccessor::ThisInstall, None) => return Err(invalid_authority()),
         };
-        let vault_id = {
-            let txn = self.store.env.read_txn()?;
-            let fold = self.authority_view_readonly_in_txn(&txn)?;
-            let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
-            if let Some((hold, lands_at)) =
-                self.waiting_hold_for_successor_in_txn(&txn, machine, &candidate)?
-            {
-                return Ok(RootRecovery::Held { hold, lands_at });
-            }
-            vault_id
-        };
         let seed = signer.released_seed();
         let expected = signer.public_key();
         let root_key = signer.authority_key();
+        let (vault_id, live) = {
+            let txn = self.store.env.read_txn()?;
+            let fold = self.authority_view_readonly_in_txn(&txn)?;
+            let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
+            let live = self.live_hold_for_successor_in_txn(&txn, machine, &candidate, &root_key)?;
+            (vault_id, live)
+        };
+        if let Some((hold, lands_at, seed_here)) = live {
+            // This R's own live hold whose slot another seed took: the
+            // record, then R's seed, as for a new attempt; it lands at its
+            // own second.
+            if !seed_here {
+                let mut pending = self.store.env.write_txn()?;
+                self.put_recovery_hold_slot_pending_in_txn(&mut pending, &candidate)?;
+                pending.commit()?;
+                let slot = self.recovery_hold_slot(&vault_id, machine, &candidate);
+                self.put_recovery_hold_seed(&slot, &seed, &expected)?;
+            }
+            return Ok(RootRecovery::Held { hold, lands_at });
+        }
         // The pending record first, committed in its own write: a crash
         // between the keystore put and the hold commit still leaves the
         // slot on the sweep's list. The same write settles the successor
@@ -507,7 +525,9 @@ impl Vault {
         // before another run's recovery committed never drops that run's
         // live successor, and R's seed enters only a slot whose record is
         // committed. The writer's refusals that need no successor come
-        // first, so a refused call writes nothing.
+        // first, so a refused call writes nothing. No landing run reaps the
+        // record or the seed before the hold names them: it waits for the
+        // recovery-hold lock.
         let successor_key = {
             let mut pending = self.store.env.write_txn()?;
             if self.recovery_preset_in_txn(&pending)?.is_nobody_but_me() {
@@ -547,16 +567,6 @@ impl Vault {
                 return Err(error);
             }
         };
-        // A landing run on another thread reaps a slot that no committed
-        // hold names, so one that ran between the record's commit and the
-        // hold's took the record, the seed or both. The hold names the slot
-        // now, so both, put again, stay until the hold lands or ends.
-        let mut pending = self.store.env.write_txn()?;
-        self.put_recovery_hold_slot_pending_in_txn(&mut pending, &successor_key)?;
-        pending.commit()?;
-        if self.read_recovery_hold_seed(&slot)?.is_none() {
-            self.put_recovery_hold_seed(&slot, &seed, &expected)?;
-        }
         // The successor is held once the slot lock is let go: a hold asks
         // every signer held for its root, and a signer's answer may read the
         // slot (REVIEW-9678 P1).

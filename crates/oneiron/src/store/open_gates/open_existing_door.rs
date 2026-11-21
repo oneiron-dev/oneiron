@@ -272,6 +272,7 @@ impl Store {
             #[cfg(feature = "sync")]
             staged_import_confirm_lock: Mutex::new(()),
             owner_signing_slot_lock: Mutex::new(()),
+            recovery_hold_lock: Mutex::new(()),
             #[cfg(test)]
             test_hooks: crate::store::TestHooks::default(),
         });
