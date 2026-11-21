@@ -24,6 +24,7 @@ mod tune;
 mod world_scoped;
 
 use std::collections::BTreeMap;
+use std::io::Write as _;
 use std::process::ExitCode;
 
 use oneiron_ruler::pack::Slice;
@@ -110,31 +111,26 @@ fn render(value: &serde_json::Value) -> String {
         .unwrap_or_else(|_| "{\"error\":\"scorecard output did not serialize\"}".to_owned())
 }
 
-/// Print the one stdout line of a subcommand and map it to its exit code:
+/// Write the one stdout line of a subcommand and map it to its exit code:
 /// the summary at 0, a judged summary at 1, an `{"error": ...}` object at 2
-/// for bad input and at 1 for a failure while running.
+/// for bad input and at 1 for a failure while running. A line that cannot be
+/// written to stdout is a failure while running too.
 fn finish(result: Result<serde_json::Value, ScorecardFailure>) -> ExitCode {
-    match result {
-        Ok(summary) => {
-            let line = render(&summary);
-            println!("{line}");
-            ExitCode::SUCCESS
-        }
-        Err(ScorecardFailure::Judged(summary)) => {
-            let line = render(&summary);
-            println!("{line}");
-            ExitCode::from(1)
-        }
-        Err(ScorecardFailure::Input(message)) => {
-            let line = render(&serde_json::json!({ "error": message }));
-            println!("{line}");
-            ExitCode::from(2)
-        }
-        Err(ScorecardFailure::Run(message)) => {
-            let line = render(&serde_json::json!({ "error": message }));
-            println!("{line}");
-            ExitCode::from(1)
-        }
+    let (line, code) = match result {
+        Ok(summary) => (render(&summary), ExitCode::SUCCESS),
+        Err(ScorecardFailure::Judged(summary)) => (render(&summary), ExitCode::from(1)),
+        Err(ScorecardFailure::Input(message)) => (
+            render(&serde_json::json!({ "error": message })),
+            ExitCode::from(2),
+        ),
+        Err(ScorecardFailure::Run(message)) => (
+            render(&serde_json::json!({ "error": message })),
+            ExitCode::from(1),
+        ),
+    };
+    match writeln!(std::io::stdout().lock(), "{line}") {
+        Ok(()) => code,
+        Err(_) => ExitCode::from(1),
     }
 }
 

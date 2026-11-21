@@ -93,8 +93,9 @@ pub(super) async fn hold_lease(
 /// Before a confirm: Stripe's own word on the hold's deposit, when the
 /// webhook has not yet carried it or a home move may have kept it from this
 /// node. The confirm writer refuses a deposit still unauthorized; this
-/// refuses only an authorized one Stripe did not confirm still waits for
-/// capture (`sync_hold_authorization`), as the provider being unavailable.
+/// refuses, as the provider being unavailable, an authorized one Stripe did
+/// not confirm still waits for capture, and one whose payment Stripe says is
+/// cancelled when this node did not record that (`sync_hold_authorization`).
 pub(super) async fn before_confirm(
     server: &Arc<SyncServer>,
     session_key: SessionKey,

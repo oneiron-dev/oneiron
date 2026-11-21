@@ -16,6 +16,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/purposes/agent.rs` | src | s | — | — | Purposes of agent dispatch (`crates/oneiron/src/agent_dispatch`) |
 | `src/purposes/ai_host.rs` | src | s | — | — | Purposes of the AI host (`crates/oneiron-server/src/ai_host`) |
 | `src/purposes/archive.rs` | src | s | — | — | Purposes of the whole-vault archive (`oneiron` `batch::export`) |
+| `src/purposes/bench_scorecard.rs` | src | s | — | — | Purposes of the bench's retrieval ruler arms (`crates/oneiron-bench/src/scorecard/`) |
 | `src/purposes/booking.rs` | src | s | — | — | Purposes of booking (`crates/oneiron/src/booking`) |
 | `src/purposes/broker.rs` | src | s | — | — | Purposes of the credential broker (`oneiron-broker`; ARCH-0069 `#broker-digest`) |
 | `src/purposes/browser_library.rs` | src | s | — | — | Purposes of the browser library (`oneiron-records`' and the core's `browser_library`) |

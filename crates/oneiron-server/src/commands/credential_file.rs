@@ -9,8 +9,9 @@
 //! system. On a Linux network file system the server decides by its own
 //! list (`network_fs`): an NFSv4 list that lets in anyone but the owner is
 //! refused, and so is a file whose server's list is not read here, on an SMB
-//! mount or an NFS mount that reports no NFSv4 list, unless the host owner
-//! trusts that server's list.
+//! mount or an NFSv4 mount that reports no list, unless the host owner
+//! trusts that server's list. An NFSv2 or NFSv3 mount is judged by its mode,
+//! as a local file system is.
 
 use std::fs::File;
 use std::io::{Read, Write};
@@ -35,7 +36,7 @@ pub(crate) enum CredentialFileError {
     ExtendedAcl { path: PathBuf },
     /// Its network file system's server may let in someone the mode does not
     /// show: an NFSv4 list entry grants another user, or its server's list is
-    /// not read here (an SMB mount, or an NFS mount that reports no NFSv4
+    /// not read here (an SMB mount, or an NFSv4 mount that reports no
     /// list).
     #[cfg(any(target_os = "linux", target_os = "android"))]
     #[error("{} {refusal}", path.display())]

@@ -124,8 +124,10 @@ impl Vault {
     /// held enrolment that is not this install's ask, or a join the fold
     /// does not count; an owner refusal when the proof is no longer the
     /// vault's live owner; storage faults. Nothing is written on any error
-    /// but the install's own identity, minted once the reads above pass: not
-    /// the authority clock's reading either, which commits with the join.
+    /// but the install's own identity, minted once the reads above pass and
+    /// the owner has confirmed: not the authority clock's reading either,
+    /// which commits with the join. A declined confirm, or a host with no
+    /// keystore, therefore leaves this install's machine as it was.
     pub fn join_restored_install(
         &self,
         issuer: &HostSlipIssuer,
@@ -144,17 +146,24 @@ impl Vault {
             self.authority_view_readonly_in_txn(&txn)?.vault_id
         }
         .ok_or_else(|| authority_refused(NOT_ROOTED))?;
-        // The install's identity, minted and signed outside the writer.
-        let encryption_key = self.machine_encryption_key(vault_id)?;
-        let request = self.machine_enrolment_request(vault_id, encryption_key)?;
-        if request.restored_from.is_none() {
-            return Err(authority_refused(NOT_RESTORED));
-        }
+        // The confirm comes before the install's identity is minted: the
+        // mint writes, and on a restored copy, whose signing slot is empty
+        // beside the image's device key, it forgets the image's machine
+        // first. The keystore read before it refuses a host that installed
+        // none with no prompt.
+        self.device_keystore()?;
         let witness = self.owner_presence(
             OwnerActImportance::Important,
             owner_presence_reasons::JOIN_RESTORED_INSTALL,
         )?;
         let ground = OwnerProofGround::witnessed(&witness);
+        // The install's identity, minted and signed outside the writer. The
+        // preflight read the restore's mark already; the request names it.
+        let encryption_key = self.machine_encryption_key(vault_id)?;
+        let request = self.machine_enrolment_request(vault_id, encryption_key)?;
+        if request.restored_from.is_none() {
+            return Err(authority_refused(NOT_RESTORED));
+        }
         let mut txn = self.store.env.write_txn()?;
         self.instant_in_write_txn(&mut txn)?;
         let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
