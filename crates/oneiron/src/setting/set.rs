@@ -259,9 +259,11 @@ impl Vault {
         // the ask, and the ask is before the turn, so the door holds nothing while it blocks.
         let ground = match caller {
             SettingCaller::Owner(owner) if owner_change_signs(&request) => {
-                let importance = judged_change::owner_change_importance(self, owner, &request)?;
-                let witness =
-                    self.owner_presence(importance, owner_presence_reasons::SETTING_CHANGE)?;
+                let witness = self.owner_presence(
+                    OwnerActImportance::Important,
+                    owner_presence_reasons::SETTING_CHANGE,
+                )?;
+                judged_change::owner_change_importance(self, owner, &request)?;
                 Some(OwnerProofGround::witnessed(&witness))
             }
             _ => None,
