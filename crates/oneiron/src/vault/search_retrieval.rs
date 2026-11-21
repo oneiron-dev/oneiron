@@ -198,16 +198,33 @@ impl Vault {
         observe: impl FnOnce(&heed::RoTxn<'_>, &[ScoredEntity]),
         dispatch_attempt: Option<AttemptId>,
     ) -> Result<Vec<ScoredEntity>> {
+        let plan = lane.recall_plan()?;
+        let scores =
+            self.search_text_scoped_planned(lane, &plan, query, limit, observe, dispatch_attempt);
+        lane.end_recall_plan()?;
+        scores
+    }
+
+    /// [`Self::search_text_scoped_observed`] under `plan`, a recall plan its
+    /// caller holds open on `lane` (a recall's seed lookup, whose plan its
+    /// principal retrieval goes on to use): the scan neither opens nor ends
+    /// one. Each posting is a candidate only as
+    /// [`crate::claim::ScopedRead::scan_candidates_in`] admits it, and its
+    /// words count in no statistic when the lane keeps it with no count
+    /// ([`crate::claim::ScopedRead::withheld_row_test_in`]).
+    pub(crate) fn search_text_scoped_planned(
+        &self,
+        lane: &crate::claim::ScopedRead<'_>,
+        plan: &crate::claim::SearchPlan,
+        query: &str,
+        limit: usize,
+        observe: impl FnOnce(&heed::RoTxn<'_>, &[ScoredEntity]),
+        dispatch_attempt: Option<AttemptId>,
+    ) -> Result<Vec<ScoredEntity>> {
         let config = crate::config::Bm25RankProfile::default().to_bm25_config()?;
-        let crate::claim::SearchPlan {
-            filter,
-            candidates,
-            policy,
-        } = lane.recall_plan()?;
         // A key that reads nothing by itself still searches the rows its own
         // live Grants read (FIX 7528).
-        if candidates.deny_all {
-            lane.end_recall_plan()?;
+        if plan.candidates.deny_all {
             return Ok(Vec::new());
         }
         let started_at = self.store.clock.now_recorded_at();
@@ -215,9 +232,10 @@ impl Vault {
         // The count this search serves, asked before the read opens. Best
         // effort: the search serves its rows either way.
         let _ = self.measure_limit(EngineLimit::RequestedResultRows, limit as u64);
-        let scores = (|| {
+        // The read ends before the telemetry row is written.
+        let scores = {
             let txn = self.store.env.read_txn()?;
-            let admit = lane.recall_candidates_in(&txn, &policy, &filter, None);
+            let admit = lane.scan_candidates_in(&txn, &plan.policy, &plan.filter);
             let mut admits = |id: &crate::EntityId| admit(id);
             let mut withheld = lane.withheld_row_test_in(&txn)?;
             let scores = self.text_scoped_in_txn(
@@ -237,11 +255,10 @@ impl Vault {
                 },
             )?;
             observe(&txn, scores.as_slice());
-            Ok::<_, Error>(scores)
-        })();
-        lane.end_recall_plan()?;
+            scores
+        };
         let results = TimedSearch {
-            scores: scores?,
+            scores,
             started_at,
             started,
         };

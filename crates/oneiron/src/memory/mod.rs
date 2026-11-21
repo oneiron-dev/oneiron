@@ -382,6 +382,7 @@ pub use search_vector::{
 };
 pub(crate) use session_reads::{
     SessionAnswer, SessionRead, SessionReadContext, room_short_ref, scoped_session_text,
+    scoped_session_text_planned,
 };
 pub use shape_card_doors::{
     ShapeGroupResolveRequest, ShapeItemReceipt, ShapeItemReceiptRequest, ShapePlanCardView,

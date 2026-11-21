@@ -935,6 +935,22 @@ impl<'v> ScopedRead<'v> {
         move |id| self.is_entity_retrievable_held_in(txn, policy, filter, id, &held)
     }
 
+    /// The candidate test of a direct BM25 scan on this read in `txn`
+    /// ([`crate::ports::TextQuery::matches_scope`]): a CLAIM whose body does
+    /// not decode is no candidate, as the pipeline's scoped doors hold
+    /// (`plan_row_decodes`), so one such row never ends the scan; every
+    /// other row goes through [`Self::recall_candidates_in`] with no request.
+    pub(crate) fn scan_candidates_in<'t>(
+        &'t self,
+        txn: &'t heed::RoTxn<'t>,
+        policy: &'t PolicyManifestResolution,
+        filter: &'t ResolvedRetrievalFilter,
+    ) -> impl Fn(&EntityId) -> Result<bool> + 't {
+        let store = self.store_read();
+        let admit = self.recall_candidates_in(txn, policy, filter, None);
+        move |id| Ok(plan_row_decodes(&store, txn, id)? && admit(id)?)
+    }
+
     /// The row gate for a candidate of the retrieval snapshot read in
     /// `snapshot`, under the relationship authority `held` holds for it (FIX
     /// 11648); a candidate checked in any other transaction loads its own,
