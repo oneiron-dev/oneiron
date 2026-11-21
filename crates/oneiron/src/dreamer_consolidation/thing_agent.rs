@@ -132,8 +132,8 @@ pub trait ThingChildHost: Send + Sync {
 /// One launch of a thing's agent: the wake and the leased attempt it runs
 /// under, the parent's guard and actor, the host-bound parent run whose
 /// committed results are lent by name, the resource bound the loan
-/// attenuates and the scope it lends, the exact ports, the spawn's key and
-/// the agent's ask.
+/// attenuates and the scope it lends, the exact ports, the spawn's key, the
+/// agent's ask and the rows its lent slices were read from.
 pub struct ThingChildLaunch<'l, 'c> {
     pub ctx: &'l WakeAttemptContext<'c>,
     pub leased: &'l AttemptRecord,
@@ -146,6 +146,11 @@ pub struct ThingChildLaunch<'l, 'c> {
     pub ports: BTreeSet<String>,
     pub intent_key: String,
     pub ask: String,
+    /// The rows the lent slices' transcripts were read from, sorted and
+    /// deduplicated: the host fences each of the child's model calls by
+    /// them, so none sends a lent row's words once that row is withdrawn
+    /// ([DREAMER-UNSOURCED-ROLE-CALLS-SEND-UNFENCED]).
+    pub sources: Vec<EntityId>,
 }
 
 /// What a launch came to.
