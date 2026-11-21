@@ -56,7 +56,9 @@ pub(super) struct GradingView {
 /// query left with none is dropped, not turned into an abstention (a hidden
 /// answer does not make "no result" right); an abstention query stays. The
 /// view keeps the corpora its queries read, less their hidden records, so a
-/// served hidden record also fails grading as a hit outside its corpus.
+/// served hidden record also fails grading as a hit outside its corpus. A
+/// view that keeps no query still grades: its card counts none, and the arm
+/// still writes every corpus and checks each claim's landing.
 pub(super) fn grading_view(
     source: &PackSlice,
     seed: u32,
@@ -76,11 +78,6 @@ pub(super) fn grading_view(
         if query.expect_empty || !kept.qrels.is_empty() {
             queries.push(kept);
         }
-    }
-    if queries.is_empty() {
-        return Err(ScorecardFailure::Input(
-            "no query keeps a readable relevant record under this partition".to_owned(),
-        ));
     }
     let dropped_queries = source.queries.len() - queries.len();
     let read: BTreeSet<&str> = queries
