@@ -244,17 +244,22 @@ impl Vault {
         confirmation: LastDeviceKeyConfirmation,
         between: impl FnOnce(),
     ) -> Result<OwnerKeyRemoval> {
-        if let RemovalCheck::LastDeviceKey(remaining) = self.read_removal_checks(|txn| {
+        let read = self.read_removal_checks(|txn| {
             self.key_removal_checks_in_txn(txn, owner, key, confirmation)
-        })? {
+        })?;
+        if let RemovalCheck::LastDeviceKey(remaining) = read {
             return Ok(OwnerKeyRemoval::LastDeviceKey(remaining));
         }
         let witness = self.owner_presence(OwnerActImportance::Important, REMOVE_OWNER_KEY)?;
         let ground = OwnerProofGround::witnessed(&witness);
         between();
         let mut txn = self.store.env.write_txn()?;
+        let checked = match read {
+            RemovalCheck::Ready(fold, enrolled) => RemovalCheck::Ready(fold, enrolled),
+            _ => self.key_removal_checks_in_txn(&txn, owner, key, confirmation)?,
+        };
         let (fold, enrolled) =
-            match self.key_removal_checks_in_txn(&txn, owner, key, confirmation)? {
+            match checked {
                 RemovalCheck::NoProvingKey => {
                     return Err(Error::Record(RecordError::OwnerKeyRequired));
                 }
@@ -388,7 +393,9 @@ impl Vault {
             )
         })?;
         let asked_keys = match read {
-            RemovalCheck::NoProvingKey => None,
+            RemovalCheck::NoProvingKey => {
+                return Err(Error::Record(RecordError::OwnerKeyRequired));
+            }
             RemovalCheck::LastDeviceKey(remaining) => {
                 return Ok(MachineRemoval::LastDeviceKey(remaining));
             }
