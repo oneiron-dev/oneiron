@@ -3,7 +3,7 @@
 
 use super::*;
 
-impl<'a> ContextPackBuilder<'a> {
+impl ContextPackBuilder<'_> {
     /// Selects the pack tokenizer for every serialization budget gate
     /// (opt-in reader measurement). The default is the engine-normalized
     /// `o200k` counter; selection never changes authority, ranking, or row
