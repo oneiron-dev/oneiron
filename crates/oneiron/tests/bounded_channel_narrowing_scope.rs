@@ -13,20 +13,40 @@
 //! test first stamps another world stale: the narrowed fetch still finds the
 //! claim.
 //!
+//! A narrowed text scan keeps what the unnarrowed scan gave (REVIEW-10311
+//! round 1): a clamped pack's scan still counts a hidden claim of its tier
+//! among the rows its clamp withheld, and a HyDE retry's widened bound
+//! still holds.
+//!
 //! Run with `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p
 //! oneiron --all-features --test bounded_channel_narrowing_scope` (the
-//! stale stamp is stored through a test door).
+//! stale stamp, the clamp's contact and Tier-A mark are stored through test
+//! doors).
 
 #![cfg(oneiron_test_support)]
 
+use std::collections::BTreeSet;
+
+use oneiron::counterparty_contact::CounterpartyFirstTouch;
 use oneiron::entity_id::ForeignWorldId;
+use oneiron::federation::Scope;
+use oneiron::interlocutor::{Interlocutor, InterlocutorSet};
+use oneiron::query_expansion::{
+    CompletionRequest, EvidenceVerdict, GroundingContext, HydeExpander, HydeExpansion, HydeOptions,
+    HydeRequest,
+};
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::RetrievalRunRecord;
+use oneiron::test_doors::disclosure_word_sources::{
+    clamp_admits_with_contact, mark_tier_a, seed_cleared_contact,
+};
 use oneiron::test_doors::stale_world_stamp::stamp_world_stale;
 use oneiron::{
-    ClaimApprovalStatus, ClaimCandidate, ClaimSource, ClaimSubject, EdgeActorClass, EntityId,
-    PipelineBuilder, TimeRange, Vault, VaultConfig, WriteActor, WriteEnvelope, WriteProvenance,
+    ClaimApprovalStatus, ClaimCandidate, ClaimSource, ClaimSubject, DisclosureContext,
+    EdgeActorClass, EntityId, PipelineBuilder, TimeRange, Vault, VaultConfig, WriteActor,
+    WriteEnvelope, WriteProvenance,
 };
+use oneiron_retrieval::fusion::FUSION_LIST_LENGTH;
 
 const DAY: u64 = 86_400;
 const ANCHOR: u64 = 1_700_000_000;
@@ -42,6 +62,8 @@ const UNDECLARED_PREDICATE: &str = "loop.alpha";
 const CLAIM_WORLD: u8 = 0xf5;
 /// A foreign world no claim names.
 const OTHER_WORLD: u8 = 0xf6;
+/// The contact a clamped pack is assembled for.
+const COUNTERPARTY: &str = "owen@example.com";
 
 struct Fixture {
     _dir: tempfile::TempDir,
@@ -52,13 +74,44 @@ struct Fixture {
 /// candidate count and empty reason.
 fn fixture() -> Fixture {
     let dir = tempfile::tempdir().expect("temporary vault");
+    let vault = Vault::open(dir.path(), fixture_config()).expect("open vault");
+    Fixture { _dir: dir, vault }
+}
+
+fn fixture_config() -> VaultConfig {
     let mut config = VaultConfig::device();
     config.dimensions = DIMENSIONS;
     // A vector write needs a declared embedding model.
     config.embedding_model = Some("test/model@v1".to_owned());
     config.retrieval_telemetry_capture = true;
-    let vault = Vault::open(dir.path(), config).expect("open vault");
-    Fixture { _dir: dir, vault }
+    config
+}
+
+/// A vault its owner opened, and a contact cleared for every axis: only a
+/// Tier-A mark keeps a row from it.
+fn clamp_fixture() -> (Fixture, EntityId) {
+    let dir = tempfile::tempdir().expect("temporary vault");
+    let vault = Vault::open_owned(dir.path(), fixture_config()).expect("open vault");
+    vault
+        .ensure_embedded_owner_actor()
+        .expect("FIXTURE: the vault's owner");
+    let contact = EntityId::now();
+    seed_cleared_contact(&vault, contact, COUNTERPARTY, Scope::top())
+        .expect("FIXTURE: seed the cleared contact");
+    (Fixture { _dir: dir, vault }, contact)
+}
+
+/// The clamp of a pack the owner holds with `contact` present.
+fn with_contact(vault: &Vault, contact: EntityId) -> DisclosureContext {
+    DisclosureContext::resolve(
+        vault,
+        InterlocutorSet::with_session_owner(vec![Interlocutor::known_contact(
+            contact,
+            COUNTERPARTY,
+            CounterpartyFirstTouch::UserIntroduction,
+        )]),
+    )
+    .expect("FIXTURE: resolve the contact's clamp")
 }
 
 /// The foreign-range world whose id is `byte` sixteen times.
@@ -120,6 +173,15 @@ impl Fixture {
     }
 
     fn claim(&self, world: Option<ForeignWorldId>) -> EntityId {
+        let claim = self.text_claim(world);
+        self.vault
+            .put_vector(&claim, &query_vector())
+            .expect("FIXTURE: put the claim's vector");
+        claim
+    }
+
+    /// As [`Self::claim`], with no vector: only the text scan finds it.
+    fn text_claim(&self, world: Option<ForeignWorldId>) -> EntityId {
         let vault = &self.vault;
         let actor = WriteActor::new(EntityId::now(), EdgeActorClass::Human);
         let subject = EntityId::now();
@@ -166,9 +228,6 @@ impl Fixture {
             .commit()
             .expect("FIXTURE: write the claim");
         vault
-            .put_vector(&claim, &query_vector())
-            .expect("FIXTURE: put the claim's vector");
-        vault
             .batch()
             .text(&claim, &[("body", WORD)])
             .commit()
@@ -205,8 +264,12 @@ impl Fixture {
     }
 
     fn recorded(&self, query: PipelineBuilder<'_>) -> Run {
+        self.recorded_at_limit(query, 10)
+    }
+
+    fn recorded_at_limit(&self, query: PipelineBuilder<'_>, limit: usize) -> Run {
         let run = query
-            .limit(10)
+            .limit(limit)
             .capture_retrieval_trace(true)
             .run_with_telemetry()
             .expect("query");
@@ -325,5 +388,137 @@ fn a_temporal_run_counts_no_claim_of_a_stale_world() {
     assert_stale_world_claim_counts_as_no_candidate(
         |fixture| fixture.temporal(None),
         "temporal window",
+    );
+}
+
+/// REVIEW-10311 round 1, P1 1: a clamped pack's text scan narrowed to a tier
+/// scores only the postings its scope admits, and still counts a live claim
+/// of that tier its audience may not read among the rows its clamp withheld,
+/// as the unnarrowed scan's memory-lane read counted it. Narrowed to the
+/// other tier, the hidden claim counts nowhere.
+#[test]
+fn a_tier_narrowed_clamped_text_pack_counts_a_hidden_claim_of_its_tier() {
+    let (fixture, contact) = clamp_fixture();
+    let vault = &fixture.vault;
+    let readable = fixture.text_claim(None);
+    let hidden = fixture.text_claim(None);
+    mark_tier_a(vault, &hidden).expect("FIXTURE: mark the claim Tier A");
+    for (claim, admitted) in [(readable, true), (hidden, false)] {
+        assert_eq!(
+            clamp_admits_with_contact(vault, contact, COUNTERPARTY, &claim)
+                .expect("FIXTURE: ask the clamp"),
+            admitted,
+            "FIXTURE: only the Tier-A claim is kept from the contact"
+        );
+    }
+    let pack = |critical: bool, clamped: bool| -> (BTreeSet<EntityId>, u64) {
+        let mut builder = vault
+            .context_pack()
+            .search_text(WORD, 10)
+            .limit(10)
+            .boost_recency(0.0)
+            .criticality(critical);
+        if clamped {
+            builder = builder.disclosure_context(with_contact(vault, contact));
+        }
+        let run = builder.run_unfinalized_with_telemetry().expect("the pack");
+        let served = run.value.results.iter().map(|entity| entity.id).collect();
+        (served, run.clamped_out())
+    };
+    assert_eq!(
+        pack(true, false).0,
+        BTreeSet::from([readable, hidden]),
+        "FIXTURE: the owner's pack narrowed to the critical tier serves both claims"
+    );
+    assert_eq!(
+        pack(false, true),
+        (BTreeSet::new(), 0),
+        "GUARD: narrowed to the normal tier, the clamped pack serves neither claim and counts \
+         neither among the rows its clamp withheld"
+    );
+    assert_eq!(
+        pack(true, true),
+        (BTreeSet::from([readable]), 1),
+        "FAILBEFORE REVIEW-10311 round 1: the narrowed scan's scope dropped the hidden claim \
+         before the memory lane's read counted it, so the clamp's withheld rows missed it"
+    );
+}
+
+/// A host that finds the evidence short until the run hands it `needed`
+/// candidates. Its expansion asks [`WORD`] and the query vector, which no
+/// claim of the HyDE test holds.
+struct NeedsCandidates {
+    needed: usize,
+}
+
+impl HydeExpander for NeedsCandidates {
+    fn id(&self) -> &str {
+        "test/needs-candidates"
+    }
+
+    fn expand(&self, _: &HydeRequest) -> oneiron::Result<HydeExpansion> {
+        Ok(HydeExpansion {
+            grounded_query: WORD.to_owned(),
+            hypothetical_answer: WORD.to_owned(),
+            embedding: query_vector(),
+            subqueries: Vec::new(),
+        })
+    }
+
+    fn assess_evidence(&self, request: &CompletionRequest) -> oneiron::Result<EvidenceVerdict> {
+        Ok(if request.candidates.len() < self.needed {
+            EvidenceVerdict::Insufficient {
+                gaps: vec![WORD.to_owned()],
+            }
+        } else {
+            EvidenceVerdict::Sufficient
+        })
+    }
+}
+
+/// REVIEW-10311 round 1, P1 2: a HyDE retry widens the text fetch past the
+/// first attempt's bound, and a tier-narrowed scan keeps the widened bound.
+/// One claim more than the text bound matches, and the host needs them all:
+/// the first attempt hands it the bound, and the retry hands it every claim.
+#[test]
+fn a_tier_narrowed_text_run_keeps_the_hyde_retry_bound() {
+    let fixture = fixture();
+    let claims: BTreeSet<EntityId> = (0..=FUSION_LIST_LENGTH)
+        .map(|_| fixture.text_claim(None))
+        .collect();
+    let host = NeedsCandidates {
+        needed: claims.len(),
+    };
+    let run = |tier: Option<bool>| -> (BTreeSet<EntityId>, Option<String>) {
+        let query = in_tier(
+            fixture
+                .vault
+                .query()
+                .search_text(WORD, FUSION_LIST_LENGTH)
+                .boost_recency(0.0),
+            tier,
+        )
+        .hyde(
+            &host,
+            GroundingContext::default(),
+            HydeOptions {
+                channel_limit: 10,
+                retry_once: true,
+            },
+        );
+        let run = fixture.recorded_at_limit(query, claims.len());
+        (run.ids.into_iter().collect(), run.empty_reason)
+    };
+    assert_eq!(
+        run(None),
+        (claims.clone(), None),
+        "GUARD: the unnarrowed run's retry hands the host every claim"
+    );
+    assert_eq!(
+        run(Some(true)),
+        (claims.clone(), None),
+        "FAILBEFORE REVIEW-10311 round 1: the narrowed scan cut the retry's widened read back \
+         to the first bound, so the host found the evidence short twice and the run read \
+         BelowThreshold"
     );
 }
