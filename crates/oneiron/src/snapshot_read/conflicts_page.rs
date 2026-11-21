@@ -7,9 +7,9 @@
 //! for it: a conflict with one unread member is absent whole, counted nowhere
 //! and never named by a cursor. A conflict the owner holds, or one whose
 //! settlement was reverted, is the owner's to answer, so no other reader sees
-//! it. A retained alternative whose staged Keep the owner declined is the
-//! owner's to keep again, so the page leaves it out, as the parked settlement
-//! ask does.
+//! it. A retained alternative whose staged Keep the owner declined, or that
+//! was retracted, is the owner's to keep again, so the page leaves it out, as
+//! the parked settlement ask does.
 
 use serde::{Deserialize, Serialize};
 
