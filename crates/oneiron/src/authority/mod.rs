@@ -474,7 +474,7 @@ pub use owner_key_enrollment_door::{
 pub use owner_key_move_confirm::{
     OWNER_KEY_MOVE_MEMBER_NOT_CONFIRMED, OWNER_KEY_MOVE_NO_HELD_KEY, OWNER_KEY_MOVE_NOT_PLANNED,
     OWNER_KEY_MOVE_NOT_SYNCED, OWNER_KEY_MOVE_PLAN_STALE, OWNER_KEY_MOVE_SIGNER_NOT_EXECUTORS,
-    OwnerKeyMovePlan, OwnerKeyMoveSigner, sign_owner_key_move,
+    OwnerKeyMoveBinding, OwnerKeyMovePlan, OwnerKeyMoveSigner, sign_owner_key_move,
 };
 pub use owner_key_removal_door::{
     EndedOwnerKey, LastDeviceKeyConfirmation, MachineRemoval, MachineRemovalReceipt,
