@@ -474,7 +474,7 @@ pub(super) fn shared_uid(passports: &[(EntityId, CalendarPassportValue)]) -> Opt
     passports
         .iter()
         .map(|(_, value)| &value.uid)
-        .filter(|uid| !LiftedKeys::names_a_handle(uid))
+        .filter(|uid| !LiftedKeys::holds_a_handle(uid))
         .min()
         .cloned()
 }

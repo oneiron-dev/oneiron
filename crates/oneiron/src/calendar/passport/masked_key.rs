@@ -177,13 +177,16 @@ pub(in crate::calendar) fn passport_uid_among(
 /// Whether `held`, the system name a passport stored, is `system`: as
 /// written, or with a custody handle in place of a value custody holds
 /// ([`passport_uid_is`]'s read), when `system` is one of `systems`, the
-/// vault's calendar systems, and no other of them reads as `held`. A custody
-/// record keeps every value it held, so once a record that held a value in
-/// one seat's system name holds one in another seat's, one handle meets both
-/// names: a passport stored under such a handle is read as written only, so
-/// one calendar's pull never takes another calendar's passport, whose deletes
-/// would then read as the first calendar's host cancels. A system no seat or
-/// feed of the vault names (an upload's own) is read as written only too.
+/// vault's calendar systems, and no other of them, nor a system the engine
+/// files its own passports under ([`ENGINE_PASSPORT_SYSTEMS`]), reads as
+/// `held`. A custody record keeps every value it held, so once a record that
+/// held a value in one seat's system name holds one in another seat's, one
+/// handle meets both names: a passport stored under such a handle is read as
+/// written only, so one calendar's pull never takes another calendar's
+/// passport, whose deletes would then read as the first calendar's host
+/// cancels, and a seat's write never takes a booking's or an invite's
+/// passport as its own copy. A system no seat or feed of the vault names (an
+/// upload's own) is read as written only too.
 ///
 /// # Errors
 ///
@@ -200,13 +203,23 @@ fn passport_system_is(
     if !systems.iter().any(|named| named == system) || !passport_uid_is(held, system, known)? {
         return Ok(false);
     }
-    for named in systems {
+    let others = systems.iter().map(String::as_str);
+    for named in others.chain(ENGINE_PASSPORT_SYSTEMS) {
         if named != system && passport_uid_is(held, named, known)? {
             return Ok(false);
         }
     }
     Ok(true)
 }
+
+/// The systems the engine files its own passports under: a booking's and an
+/// iMIP invite's. No seat or feed imports under them, so they are no
+/// calendar systems, yet a handle that reads as one of them may be that
+/// passport's and so is no seat's alone ([`passport_system_is`]).
+const ENGINE_PASSPORT_SYSTEMS: [&str; 2] = [
+    crate::booking::BOOKING_PASSPORT_SYSTEM,
+    crate::calendar::CALENDAR_INVITE_PASSPORT_SYSTEM,
+];
 
 /// The calendar systems the vault names, as `txn` reads them: each connector
 /// seat's, installed or taken out of service

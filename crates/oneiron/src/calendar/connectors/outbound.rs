@@ -1816,7 +1816,7 @@ fn importer_pending_uid(
 /// those whose stored system is `system` as written or, where the claim door
 /// stored it as a custody handle, as [`CalendarSystems::carries`] reads it
 /// against the vault's calendar systems, read only when a stored system
-/// names a handle. In `passports`' order
+/// holds a handle. In `passports`' order
 /// (CAL-MASKED-SYSTEM-LITERAL-COMPARES-OUTSIDE-KEYED-LOOKUP).
 ///
 /// # Errors
@@ -1828,7 +1828,7 @@ fn seat_passports<'p>(
     system: &str,
     known: &CompareKnown<'_>,
 ) -> Result<Vec<&'p (EntityId, CalendarPassportValue)>, CalendarConnectorError> {
-    let masked = |held: &str| held != system && LiftedKeys::names_a_handle(held);
+    let masked = |held: &str| held != system && LiftedKeys::holds_a_handle(held);
     let systems = if passports.iter().any(|(_, value)| masked(&value.system)) {
         Some(CalendarSystems::read(vault)?)
     } else {
@@ -1850,7 +1850,8 @@ fn seat_passports<'p>(
 }
 
 /// The UID this seat writes `event_ref` under for `held`, the UID a passport
-/// of the seat stored: `held` itself when it names no custody handle. The
+/// of the seat stored: `held` itself when it holds no custody handle
+/// ([`LiftedKeys::holds_a_handle`]). The
 /// claim door may store a UID as a custody handle, which no provider holds,
 /// so a handle is never sent as a UID: it reads as the one UID a remote copy
 /// of this seat holds in its sealed values that custody reads `held` as and
@@ -1869,7 +1870,7 @@ fn seat_uid_of(
     held: &str,
     known: &CompareKnown<'_>,
 ) -> Result<Option<String>, CalendarConnectorError> {
-    if !LiftedKeys::names_a_handle(held) {
+    if !LiftedKeys::holds_a_handle(held) {
         return Ok(Some(held.to_owned()));
     }
     let scope = operation.literal_scope()?;
@@ -2068,7 +2069,7 @@ pub fn calendar_remote_uid_for_href(
         if row.system == system
             && row.calendar_ref == calendar_ref
             && row.href.as_deref() == Some(href)
-            && !LiftedKeys::names_a_handle(&row.uid)
+            && !LiftedKeys::holds_a_handle(&row.uid)
         {
             return Ok(Some(row.uid));
         }
