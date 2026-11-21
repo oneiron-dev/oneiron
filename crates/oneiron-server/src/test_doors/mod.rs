@@ -26,6 +26,7 @@ pub mod device_home_dial;
 #[cfg(feature = "mesh")]
 pub mod device_sync_dial_gate;
 pub mod dreamer_sourced_route;
+pub mod dreamer_thing_child_route;
 #[cfg(feature = "mesh")]
 pub mod embedded_peer_fixture;
 #[cfg(feature = "mesh")]
@@ -41,6 +42,7 @@ pub mod hook_transcript_uploads;
 pub mod hosted_import;
 pub mod lens_frames;
 pub mod lfs_install_line;
+pub mod linked_peer;
 pub mod live_fork_rung;
 pub mod live_lease;
 pub mod live_merge_queue_checker_pass;

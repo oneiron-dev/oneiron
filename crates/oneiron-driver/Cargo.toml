@@ -45,6 +45,8 @@ oneiron-testkit = { path = "../oneiron-testkit" }
 # the only door that plants such a row. No package is added: `oneiron` is
 # already a dependency, so the lockfile is untouched.
 oneiron = { version = "0.1.0", path = "../oneiron", features = ["test-support"] }
+# The restored-copy fixtures install an in-memory device keystore (restored_unjoined_deadlines).
+oneiron-keystore = { path = "../oneiron-keystore" }
 # Tests hand-encode turn bodies and legacy job payloads (rmpv-valued).
 rmpv = { workspace = true }
 tempfile = "3"

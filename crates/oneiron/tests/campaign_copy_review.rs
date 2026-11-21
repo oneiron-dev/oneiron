@@ -112,6 +112,31 @@ fn open_vault() -> (tempfile::TempDir, Vault, EntityId) {
     (dir, vault, owner)
 }
 
+/// Roots the vault under the test host and enrols this install's live
+/// machine profile, as a serving start does, then returns the owner's proof.
+/// The owner's agent Grant act needs that profile as its carrier (FIX 4648):
+/// on an unrooted vault no live machine profile carries the act, and the
+/// mint refuses.
+fn rooted_owner_proof(vault: &Vault) -> oneiron::consent::AuthenticatedOwner {
+    let issuer = oneiron::test_support::provision_engine_machines(vault);
+    vault
+        .ensure_serving_install_profile(&issuer, oneiron::authority::MachineRole::Unanswered)
+        .expect("this install's live machine profile");
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the vault's owner");
+    oneiron::test_support::bind_host_owner(vault, &issuer, owner)
+        .expect("the owner's binding under the host root");
+    vault
+        .authenticate_owner(
+            owner,
+            &owner.to_hex(),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .expect("owner proof")
+}
+
 /// The owner's voice guide NOTE.
 fn voice_guide(vault: &Vault, owner: EntityId) -> EntityId {
     vault
@@ -655,7 +680,8 @@ mod owner_skip {
     fn an_agents_skip_waits_for_the_owner_and_the_send_stays_held() {
         let leg =
             leg(|vault, owner| json!({ "voice_guide_ref": voice_guide(vault, owner).to_hex() }));
-        let proof = owner_proof(&leg.vault);
+        // The owner's Grant act needs this install's machine profile.
+        let proof = rooted_owner_proof(&leg.vault);
         let agent = EntityId::now();
         create_agent_definition_as(
             &leg.vault,
@@ -718,10 +744,13 @@ mod owner_skip {
 
 mod judged {
     use super::*;
+    use oneiron::authority::ActSurface;
     use oneiron::campaign::enrollment::{
         CAMPAIGN_COPY_REVIEW_DIAL, CampaignCopyReviewDecisions, CampaignCopyReviewWording,
         CopyReviewOutcome, campaign_program_step,
     };
+    use oneiron::federation::{Scope, ScopeAxis};
+    use oneiron::genui::{GrantMintIntent, GrantMintIntentScope};
     use oneiron::llm::decision::{
         AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionCall, DecisionLadder,
         DecisionProvider, DecisionRung, HumanDecisionQueue, HumanDecisionRequest, ProviderDecision,
@@ -731,7 +760,12 @@ mod judged {
         ContextDefault, NoteOverrides, NoteProgramEdit, NoteProgramEditOutcome, NoteReadRequest,
     };
     use oneiron::registry::ENTITY_TYPE_PERSON;
+    use oneiron::verbs::{
+        AgentDefinitionCreateRequest, AgentGrantMintRequest, create_agent_definition_as,
+        mint_agent_grant_as,
+    };
     use std::cell::Cell;
+    use std::collections::BTreeSet;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// The judge's one model rung: whether the copy follows the guide, and
@@ -1379,6 +1413,248 @@ mod judged {
         assert!(
             strings(&state, "gate_receipt_reasons").contains(&COPY_REVIEW_MISSING.to_owned()),
             "the receipt says no review covers the copy: {state}"
+        );
+    }
+
+    /// Whether `agent`'s scoped NOTE read admits `note`: the read copy
+    /// review makes of a campaign's guide when an agent owns the campaign.
+    fn agent_reads(vault: &Vault, agent: EntityId, note: EntityId) -> bool {
+        let read = vault
+            .memory(agent, EdgeActorClass::Agent)
+            .read_note(&NoteReadRequest {
+                note_ref: note.to_hex(),
+                reason: Some("copy review fixture".to_owned()),
+                version: None,
+                spans: Vec::new(),
+            });
+        matches!(&read, Ok(result) if result.value.is_some())
+    }
+
+    /// A claimed leg of a campaign an agent owns, and that agent. The owner
+    /// creates an enabled agent definition; the agent creates the campaign
+    /// through the JSON door with no voice guide (the create seeds the house
+    /// guide), authors its program and files its step's body; the owner
+    /// mints the Grant that names the campaign's launch, and the agent
+    /// launches it. The sender and the saved query stay the owner's, as in
+    /// [`leg`]. Then the vault is rooted, so the owner's agent Grant act has
+    /// a carrier: with `reads_guide` the owner mints the agent a Grant for
+    /// vault reads (`read`, every band); without it the agent holds no read
+    /// Grant.
+    fn agent_leg(reads_guide: bool) -> (Leg, EntityId) {
+        let base = base();
+        let vault = &base.vault;
+        let member = add_member(&base, MEMBER_ADDRESS);
+        let owner_proof = vault
+            .authenticate_owner(
+                base.owner,
+                &base.owner.to_hex(),
+                true,
+                oneiron::store::GateDecisionId::now(),
+            )
+            .expect("owner proof");
+        let agent = EntityId::now();
+        create_agent_definition_as(
+            vault,
+            &owner_proof,
+            AgentDefinitionCreateRequest {
+                agent_def_ref: agent,
+                definition: serde_json::from_value(json!({
+                    "agent_id": format!("copy-review-campaigner-{}", agent.to_hex()),
+                    "desc": "Agent that owns a reviewed campaign",
+                    "version": "1.0.0",
+                    "ceiling": "auto",
+                    "enabled": true,
+                }))
+                .expect("typed agent definition"),
+            },
+        )
+        .expect("the owner creates an enabled agent definition");
+        let created = invoke_campaign_surface(
+            &vault.memory(agent, EdgeActorClass::Agent),
+            SurfaceCall {
+                verb: "self.campaign.create".to_owned(),
+                body: json!({ "name": "agent copy review campaign" }),
+            },
+        )
+        .expect("the agent's campaign")
+        .body;
+        assert_eq!(
+            created["definition"]["owner_actor"].as_str(),
+            Some(agent.to_hex().as_str()),
+            "the agent owns the campaign: {created}"
+        );
+        assert!(
+            created["definition"]["voice_guide_ref"].is_null(),
+            "the campaign names no voice guide: {created}"
+        );
+        let campaign = EntityId::from_hex(created["campaign_ref"].as_str().unwrap()).unwrap();
+        let version = created["definition"]["definition_version"]
+            .as_u64()
+            .unwrap();
+        // On the vault's clock, as in `launched_campaign`.
+        let now = vault.now_recorded_at();
+        let step = EntityId::now();
+        let program = create_campaign_program(
+            vault,
+            agent,
+            campaign,
+            CAMPAIGN_ENROLLMENT_SCHEMA_VERSION,
+            &CampaignProgramDraft {
+                name: "agent copy review program".to_owned(),
+                steps: vec![step_draft(&base, step, CALL_SEQ, BODY, None)],
+                audience: None,
+            },
+            now,
+        )
+        .expect("the agent's program")
+        .program
+        .program_ref;
+        vault
+            .save_campaign_step_body(
+                program,
+                step,
+                CALL_SEQ,
+                BODY,
+                WriteActor::new(agent, EdgeActorClass::Agent),
+                now,
+            )
+            .expect("the agent files its step's body");
+        vault
+            .mint_standing_outbound_grant(
+                &owner_proof,
+                EntityId::now(),
+                &GrantMintIntent {
+                    principal_ref: agent.to_hex(),
+                    origin_component_id: "campaign-copy-review".to_owned(),
+                    origin_action_id: "launch-grant".to_owned(),
+                    origin_receipt_ref: None,
+                    scope: GrantMintIntentScope::BriefVerbClass {
+                        brief_ref: campaign.to_hex(),
+                        verb_class: "launch".to_owned(),
+                    },
+                },
+            )
+            .expect("the owner's Grant naming the campaign's launch");
+        launch_campaign(vault, agent, EdgeActorClass::Agent, campaign, version, now)
+            .expect("the agent launches its campaign under the owner's Grant");
+        elect_campaign_home_node_designation(
+            vault,
+            &[CampaignHomeNodeCandidate::always_on_local(HOME_NODE)],
+            now,
+        )
+        .unwrap();
+        let attempt = claimed_attempt(&base, campaign, program, step, member);
+        let owner_proof = rooted_owner_proof(vault);
+        if reads_guide {
+            let mut authority_scope = Scope::top();
+            authority_scope.verbs = ScopeAxis::Some(BTreeSet::from(["read".to_owned()]));
+            let minted = mint_agent_grant_as(
+                vault,
+                &owner_proof,
+                ActSurface::ThisInstall,
+                AgentGrantMintRequest {
+                    agent,
+                    authority_scope,
+                    expires_at: None,
+                    repo_bounds: None,
+                    verb_classes: BTreeSet::new(),
+                    wallet_ref: None,
+                    working_view_bounds: None,
+                },
+            )
+            .expect("the owner mints the agent a read Grant");
+            assert!(minted.grant.confers, "the agent's read Grant confers");
+        }
+        let leg = Leg {
+            _dir: base.dir,
+            vault: base.vault,
+            campaign,
+            program,
+            step,
+            attempt,
+        };
+        (leg, agent)
+    }
+
+    /// An agent's campaign that names no voice guide is judged against the
+    /// house voice guide as its agent reads it. The house guide is a research
+    /// NOTE of the owner's, which a Grant for vault reads covers: the judge
+    /// is asked, its pass names the house guide, and the send is not held for
+    /// copy review.
+    #[test]
+    fn an_agents_campaign_is_judged_against_the_house_guide_its_agent_reads() {
+        let (leg, agent) = agent_leg(true);
+        let house = leg
+            .vault
+            .ensure_house_voice_guide()
+            .unwrap()
+            .expect("the house voice guide");
+        assert!(
+            agent_reads(&leg.vault, agent, house),
+            "the agent's read Grant admits the house guide"
+        );
+        let judge = CountingJudge::passing();
+        let outcome = leg
+            .vault
+            .review_enrollment_copy(&leg.attempt, &decisions(&judge))
+            .unwrap();
+        let CopyReviewOutcome::Reviewed(verdict) = outcome else {
+            panic!("the judge reviews the agent's campaign's body: {outcome:?}");
+        };
+        assert!(verdict.passed, "the judge passed the copy: {verdict:?}");
+        assert_eq!(
+            verdict.voice_guide_ref, house,
+            "the body was checked against the house voice guide"
+        );
+        assert!(judge.calls() > 0, "the judge is asked about the copy");
+        drive_held(&leg.vault, &leg.attempt);
+        let state = held_ask_state(&leg.vault);
+        assert!(
+            !strings(&state, "gate_reason_codes").contains(&PENDING_COPY_REVIEW.to_owned()),
+            "a passing review against the house guide clears copy review: {state}"
+        );
+    }
+
+    /// An agent's campaign whose agent cannot read the house guide (the
+    /// owner minted it no read Grant) asks no judge, so no provider sees the
+    /// guide: the review finds the guide unreadable, and the send is held for
+    /// copy review with no review covering its copy (fail closed).
+    #[test]
+    fn an_agents_campaign_whose_agent_cannot_read_the_house_guide_is_held() {
+        let (leg, agent) = agent_leg(false);
+        let house = leg
+            .vault
+            .ensure_house_voice_guide()
+            .unwrap()
+            .expect("the house voice guide");
+        assert!(
+            !agent_reads(&leg.vault, agent, house),
+            "an agent with no read Grant does not read the house guide"
+        );
+        let judge = CountingJudge::passing();
+        let outcome = leg
+            .vault
+            .review_enrollment_copy(&leg.attempt, &decisions(&judge))
+            .unwrap();
+        assert_eq!(
+            outcome,
+            CopyReviewOutcome::GuideUnreadable,
+            "the agent cannot read the house guide"
+        );
+        assert_eq!(
+            judge.calls(),
+            0,
+            "no judge is asked about a guide the campaign's agent cannot read"
+        );
+        drive_held(&leg.vault, &leg.attempt);
+        let state = held_ask_state(&leg.vault);
+        assert!(
+            strings(&state, "gate_reason_codes").contains(&PENDING_COPY_REVIEW.to_owned()),
+            "the send is held for copy review: {state}"
+        );
+        assert!(
+            strings(&state, "gate_receipt_reasons").contains(&COPY_REVIEW_MISSING.to_owned()),
+            "no review covers the copy: {state}"
         );
     }
 }

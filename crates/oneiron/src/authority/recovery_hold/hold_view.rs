@@ -166,7 +166,9 @@ pub struct RecoveryHoldView {
     pub successor_key: AuthorityKey,
     /// The machine that holds the successor key.
     pub successor_machine: EntityId,
-    /// The lost keys the landing revokes.
+    /// The lost keys the hold names. The landing revokes each one the root
+    /// door's rule still admits then: a live owner key of the hold's owner,
+    /// never R and never the successor.
     pub lost: Vec<AuthorityKey>,
     /// Unix seconds the wait ends at, on the door install's clock.
     pub lands_at: u64,

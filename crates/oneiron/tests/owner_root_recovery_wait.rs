@@ -65,6 +65,26 @@
 //! `a_device_successor_on_this_machine_never_answers_this_installs_box_call`.
 //! Both fail on main `42d134bab7a5`.
 //!
+//! The judged-before-writes pins (row
+//! RECOVERY-HOLD-BOX-PATH-WRITES-BEFORE-CHECKS):
+//! `a_refused_box_call_lands_no_due_hold`,
+//! `a_refused_hold_attempt_leaves_this_installs_slot_as_it_was` and
+//! `another_owners_hold_for_the_successor_key_is_never_the_owners`. All
+//! three fail on main `2c56ee802949`. Beside them,
+//! `a_vouch_for_this_install_with_a_revoked_key_enrols_the_slots_fresh_key`
+//! covers the vouch arm's fresh key, made in memory and taken by the slot
+//! just before the commit (it passes on main too). The review's round 2
+//! pins: `a_hold_the_log_refuses_leaves_this_installs_slot_as_it_was` and
+//! `a_removed_owners_hold_never_holds_the_successor_key_against_another_owner`,
+//! both failing on `a7a9486fe5f7`.
+//!
+//! The lost-key pins (row RECOVERY-HOLD-LOST-KEY-RULE-AT-FOLD), each over a
+//! hold R signs by hand, since the door never writes one:
+//! `a_hold_that_names_its_root_key_lost_lands_with_the_root_key_live` and
+//! `a_hold_never_revokes_a_lost_key_that_is_no_owner_key_of_its_owner`.
+//! Both fail on main `8418b839a4ad`, where the landing revoked every live
+//! key a hold named.
+//!
 //! Red on the kit-only rotation head `5adc0295753f`: the file does not
 //! compile there (no `RecoveryHold` ops, no hold view, no answer doors, no
 //! landing, no `RootRecovery::Held`, no `recover_owner_root_waiting`).
@@ -88,10 +108,10 @@ use oneiron::authority::{
     AuthorityLogEntry, AuthorityOp, AuthoritySignature, AuthorityTier, CheckpointRootSigner,
     DeviceAuthority, HostSlipIssuer, MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineEncryptionKey,
     MachineRole, OwnerKeyEnrollment, OwnerRootRecord, RECOVERY_WAIT_DEFAULT, ROLE_AGENT,
-    RecoveryBoxCancelProof, RecoveryHoldAnswer, RecoveryHoldAnswerKind, RecoveryHoldLanding,
-    RecoveryHoldState, RecoveryHoldView, RootMaterial, RootRecovery, RootSuccessor,
-    authority_entry_hash, authority_log_entity_id_from_hash, authority_transcript,
-    decode_authority_log_entry_body, encode_authority_log_entry_body,
+    RecoveryBoxCancelProof, RecoveryHold, RecoveryHoldAnswer, RecoveryHoldAnswerKind,
+    RecoveryHoldEnrolment, RecoveryHoldLanding, RecoveryHoldState, RecoveryHoldView, RootMaterial,
+    RootRecovery, RootSuccessor, authority_entry_hash, authority_log_entity_id_from_hash,
+    authority_transcript, decode_authority_log_entry_body, encode_authority_log_entry_body,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::error::{OwnerPresenceRefusal, RecordError};
@@ -105,7 +125,9 @@ use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::store::recovery_kit::KitPiece;
 use oneiron::test_doors::owner_key_release::release_owner_keys;
-use oneiron::test_doors::root_recovery::{recover_owner_root_waiting, released_authority_seed};
+use oneiron::test_doors::root_recovery::{
+    recover_owner_root_waiting, released_authority_seed, stage_orphan_recovery_hold_seed,
+};
 use oneiron::test_support::bind_host_owner;
 use oneiron::world_keys::{
     NoRecoveryBox, RecoveryAuthoritySigner, RecoveryBoxCanceller, RecoveryBoxHold,
@@ -3507,4 +3529,590 @@ fn a_device_successor_on_this_machine_never_answers_this_installs_box_call() {
     );
     assert_eq!(own_view.state, RecoveryHoldState::Waiting);
     assert!(own_lands_at > lands_at, "its own wait");
+}
+
+/// Revokes this install's owner signing key on the fixture's roster: a zero
+/// wait recovery enrols it, then a zero wait recovery onto a device key
+/// names it lost. Answers that key; the slot still holds its seed.
+fn revoke_this_installs_key(fixture: &Fixture) -> AuthorityKey {
+    let RootRecovery::Vouched { enrollment, .. } = fixture
+        .recover_wait(
+            NO_WAIT,
+            fixture.released_material(0),
+            RootSuccessor::ThisInstall,
+            &[],
+        )
+        .expect("the root's key vouches for this install's key")
+    else {
+        panic!("a zero wait vouches");
+    };
+    let install_key = AuthorityKey::Ed25519(enrollment.public_key);
+    let device = SigningKey::from_bytes(&[NEW3_KEY_SEED; 32]);
+    fixture
+        .recover_wait(
+            NO_WAIT,
+            fixture.released_material(0),
+            RootSuccessor::Device(fixture.enrollment(&device)),
+            std::slice::from_ref(&install_key),
+        )
+        .expect("a recovery onto a device key revokes this install's key");
+    assert!(!fixture.live(&install_key), "this install's key is revoked");
+    install_key
+}
+
+/// This install's owner signing key, as its slot holds it.
+fn slot_key(fixture: &Fixture) -> AuthorityKey {
+    AuthorityKey::Ed25519(
+        fixture
+            .vault
+            .device_owner_signing_key()
+            .expect("this install's owner signing key")
+            .public_key(),
+    )
+}
+
+/// A box call is judged before it lands anything (row
+/// RECOVERY-HOLD-BOX-PATH-WRITES-BEFORE-CHECKS): a call that names a lost
+/// key the owner never enrolled is refused, and the due hold it would
+/// complete stays due, with nothing landed. The same call with no lost key
+/// then lands it and answers `Vouched`. It fails on main `2c56ee802949`,
+/// where the call landed the due hold first and answered `Vouched`.
+#[test]
+fn a_refused_box_call_lands_no_due_hold() {
+    let fixture = fixture();
+    let new_key = SigningKey::from_bytes(&[NEW_KEY_SEED; 32]);
+    let new = key_of(&new_key);
+    let (hold, lands_at) = held(
+        fixture
+            .recover_wait(
+                WAIT,
+                fixture.released_material(0),
+                RootSuccessor::Device(fixture.enrollment(&new_key)),
+                &[],
+            )
+            .expect("the box recovery holds"),
+    );
+    fixture.at(lands_at + 60);
+    let stranger = key_of(&SigningKey::from_bytes(&[STRANGER_KEY_SEED; 32]));
+    let rows = fixture.history().len();
+
+    let refused = fixture
+        .recover_wait(
+            WAIT,
+            fixture.released_material(0),
+            RootSuccessor::Device(fixture.enrollment(&new_key)),
+            std::slice::from_ref(&stranger),
+        )
+        .expect_err("a key the owner never enrolled is no lost key");
+    assert_refused(&refused, "is not a live owner key the owner enrolled");
+    assert_eq!(fixture.history().len(), rows, "the refusal writes no row");
+    assert_eq!(
+        fixture.hold_view(&hold).state,
+        RecoveryHoldState::Due,
+        "the hold still waits to land"
+    );
+    assert!(!fixture.live(&new), "the successor is not enrolled");
+
+    let answer = fixture
+        .recover_wait(
+            WAIT,
+            fixture.released_material(0),
+            RootSuccessor::Device(fixture.enrollment(&new_key)),
+            &[],
+        )
+        .expect("the lawful call lands the hold");
+    assert!(
+        matches!(answer, RootRecovery::Vouched { .. }),
+        "the call completes its own hold: {answer:?}"
+    );
+    assert_eq!(fixture.hold_view(&hold).state, RecoveryHoldState::Landed);
+    assert!(fixture.live(&new), "the successor is enrolled");
+}
+
+/// A refused hold attempt for this install's key leaves this install's
+/// owner signing slot as it was (row
+/// RECOVERY-HOLD-BOX-PATH-WRITES-BEFORE-CHECKS): the door judges the request
+/// before the slot takes a fresh key. The slot's key is revoked, so a new
+/// attempt makes a fresh key; a call that names a lost key the owner never
+/// enrolled is refused, and the slot keeps its old key. A lawful attempt
+/// then holds for a fresh key, the slot takes it, and the box call after
+/// the wait lands it and answers `Vouched`. It fails on main
+/// `2c56ee802949`, where the door renewed the slot before it judged the
+/// lost keys.
+#[test]
+fn a_refused_hold_attempt_leaves_this_installs_slot_as_it_was() {
+    let fixture = fixture();
+    let install_key = revoke_this_installs_key(&fixture);
+    let stranger = key_of(&SigningKey::from_bytes(&[STRANGER_KEY_SEED; 32]));
+    let rows = fixture.history().len();
+
+    let refused = fixture
+        .recover_wait(
+            WAIT,
+            fixture.released_material(0),
+            RootSuccessor::ThisInstall,
+            std::slice::from_ref(&stranger),
+        )
+        .expect_err("a key the owner never enrolled is no lost key");
+    assert_refused(&refused, "is not a live owner key the owner enrolled");
+    assert_eq!(fixture.history().len(), rows, "the refusal writes no row");
+    assert!(fixture.holds().is_empty(), "no hold was written");
+    assert_eq!(
+        slot_key(&fixture),
+        install_key,
+        "the slot keeps its old key"
+    );
+
+    let (hold, lands_at) = held(
+        fixture
+            .recover_wait(
+                WAIT,
+                fixture.released_material(0),
+                RootSuccessor::ThisInstall,
+                &[],
+            )
+            .expect("the lawful attempt holds"),
+    );
+    let successor = fixture.hold_view(&hold).successor_key;
+    assert_ne!(successor, install_key, "the hold names a fresh key");
+    assert_eq!(slot_key(&fixture), successor, "the slot took the fresh key");
+
+    fixture.at(lands_at + 60);
+    let RootRecovery::Vouched { enrollment, .. } = fixture
+        .recover_wait(
+            WAIT,
+            fixture.released_material(0),
+            RootSuccessor::ThisInstall,
+            &[],
+        )
+        .expect("the box call after the wait")
+    else {
+        panic!("the call lands this install's hold and answers Vouched");
+    };
+    assert_eq!(AuthorityKey::Ed25519(enrollment.public_key), successor);
+    assert!(fixture.live(&successor), "this install's fresh key is live");
+}
+
+/// The vouch arm makes this install's fresh key in memory and the slot
+/// takes it as the last step before the commit (row
+/// RECOVERY-HOLD-BOX-PATH-WRITES-BEFORE-CHECKS): a zero wait recovery for
+/// this install while its slot's key is revoked enrols a fresh key, which
+/// the slot then holds and this install signs with.
+#[test]
+fn a_vouch_for_this_install_with_a_revoked_key_enrols_the_slots_fresh_key() {
+    let fixture = fixture();
+    let install_key = revoke_this_installs_key(&fixture);
+
+    let RootRecovery::Vouched { enrollment, .. } = fixture
+        .recover_wait(
+            NO_WAIT,
+            fixture.released_material(0),
+            RootSuccessor::ThisInstall,
+            &[],
+        )
+        .expect("the root's key vouches for a fresh key of this install")
+    else {
+        panic!("a zero wait vouches");
+    };
+    let fresh = AuthorityKey::Ed25519(enrollment.public_key);
+    assert_ne!(fresh, install_key, "a fresh key");
+    assert_eq!(slot_key(&fixture), fresh, "the slot holds the fresh key");
+    assert!(fixture.live(&fresh), "the fresh key is live");
+}
+
+/// A successor key is held for one owner at a time (row
+/// RECOVERY-HOLD-BOX-PATH-WRITES-BEFORE-CHECKS): while the co-Owner's hold
+/// for a device key waits, the first owner's box call with the same root
+/// key and the same device key is refused and writes nothing, and after the
+/// wait the first owner's call lands the co-Owner's due hold but never
+/// answers its enrolment as the first owner's. It fails on main
+/// `2c56ee802949`, where the first owner's call answered the co-Owner's
+/// hold as `Held`.
+#[test]
+fn another_owners_hold_for_the_successor_key_is_never_the_owners() {
+    let fixture = co_owner_wait_fixture();
+    fixture.enrol_root_key();
+    let new_key = SigningKey::from_bytes(&[NEW_KEY_SEED; 32]);
+    let new = key_of(&new_key);
+    let (hold, lands_at) = held(
+        fixture
+            .recover_wait(
+                WAIT,
+                fixture.released(),
+                RootSuccessor::Device(fixture.enrollment(&new_key)),
+                &[],
+            )
+            .expect("the co-Owner's box recovery holds"),
+    );
+    let first_owner = proof(&fixture.vault, fixture.first_owner);
+    let first_owners_input = || {
+        let public_key = new_key.verifying_key().to_bytes();
+        let challenge = fixture
+            .vault
+            .owner_key_enrollment_challenge_as(
+                &fixture.first_owner_authority(),
+                fixture.machine,
+                &public_key,
+            )
+            .expect("the first owner's challenge");
+        OwnerKeyEnrollment {
+            machine: fixture.machine,
+            public_key,
+            proof: new_key.sign(&challenge).to_bytes().to_vec(),
+        }
+    };
+    let first_owners_call = || {
+        recover_owner_root_waiting(
+            &fixture.vault,
+            &first_owner,
+            ActSurface::ThisInstall,
+            fixture.released(),
+            RootSuccessor::Device(first_owners_input()),
+            &[],
+            WAIT,
+        )
+    };
+    let rows = fixture.history().len();
+
+    let refused = first_owners_call().expect_err("the co-Owner's hold is not the first owner's");
+    assert_refused(
+        &refused,
+        "another owner's recovery waits for this successor key",
+    );
+    assert_eq!(fixture.history().len(), rows, "the refusal writes no row");
+    assert_eq!(
+        fixture.hold_view(&hold).state,
+        RecoveryHoldState::Waiting,
+        "the co-Owner's hold waits on"
+    );
+
+    fixture.at(lands_at + 60);
+    let answer = first_owners_call();
+    assert!(
+        !matches!(answer, Ok(RootRecovery::Vouched { .. })),
+        "the co-Owner's enrolment is never the first owner's: {answer:?}"
+    );
+    let view = fixture.hold_view(&hold);
+    assert_eq!(view.owner, fixture.person, "the hold is the co-Owner's");
+    assert_eq!(view.state, RecoveryHoldState::Landed, "the due hold landed");
+    assert!(fixture.live(&new), "the successor is enrolled");
+}
+
+/// A hold the log would refuse leaves this install's owner signing slot as
+/// it was (REVIEW-10327 round 2 P1 1): a box that gives R out at second 0
+/// makes a hold that lands at 0, which no hold row carries. The slot's key
+/// is revoked, so the attempt would make a fresh key; the call is refused
+/// before the slot takes it, writes no row and no hold, and the slot keeps
+/// its old key. It fails on `a7a9486fe5f7`, where the first write renewed
+/// the slot and only the hold row's own check refused the zero second.
+#[test]
+fn a_hold_the_log_refuses_leaves_this_installs_slot_as_it_was() {
+    let fixture = fixture();
+    let install_key = revoke_this_installs_key(&fixture);
+    let rows = fixture.history().len();
+
+    fixture
+        .recover_wait(
+            WAIT,
+            fixture.released_after_box_wait(0, 0),
+            RootSuccessor::ThisInstall,
+            &[],
+        )
+        .expect_err("a hold that lands at second 0 is no hold row");
+    assert_eq!(fixture.history().len(), rows, "the refusal writes no row");
+    assert!(fixture.holds().is_empty(), "no hold was written");
+    assert_eq!(
+        slot_key(&fixture),
+        install_key,
+        "the slot keeps its old key"
+    );
+}
+
+impl CoOwner {
+    /// The first owner enrols the kit root's authority key, so the
+    /// co-Owner's removal, which ends the co-Owner's owner keys, leaves it
+    /// live.
+    fn enrol_root_key_as_first_owner(&self) -> AuthorityKey {
+        let receipt = self
+            .vault
+            .enrol_recovery_authority_key_as_host(
+                &self.first_owner_authority(),
+                self.machine,
+                &self.seed,
+                &self.issuer,
+            )
+            .expect("the first owner enrols the root's authority key");
+        AuthorityKey::Ed25519(receipt.public_key)
+    }
+
+    /// The first owner removes the co-Owner, at once.
+    fn remove_co_owner(&self) {
+        let first_owner = proof(&self.vault, self.first_owner);
+        let act = self
+            .vault
+            .propose_remove_owner(&first_owner, SHARED, self.person, None, None, false)
+            .expect("the first owner starts remove_owner");
+        self.vault
+            .execute_completed_shared_act(&first_owner, &act.id, Some(&self.issuer))
+            .expect("remove_owner runs at once");
+    }
+
+    /// `key`'s enrolment input for this vault and the first owner, with its
+    /// proof of possession.
+    fn first_owners_enrollment(&self, key: &SigningKey) -> OwnerKeyEnrollment {
+        let public_key = key.verifying_key().to_bytes();
+        let challenge = self
+            .vault
+            .owner_key_enrollment_challenge_as(
+                &self.first_owner_authority(),
+                self.machine,
+                &public_key,
+            )
+            .expect("the first owner's challenge");
+        OwnerKeyEnrollment {
+            machine: self.machine,
+            public_key,
+            proof: key.sign(&challenge).to_bytes().to_vec(),
+        }
+    }
+}
+
+/// A hold whose owner is no Owner now holds no successor key against
+/// another owner (REVIEW-10327 round 2 P1 2): the co-Owner's hold for a
+/// device key waits under the root's key, which the first owner enrolled,
+/// and the first owner then removes the co-Owner. The root's key stays
+/// live; at the end of the wait the landing voids the hold and enrols
+/// nothing. The first owner's box call for the same device key then holds
+/// for the first owner. It fails on `a7a9486fe5f7`, where the voided hold
+/// still read as due and refused the first owner's call as another
+/// owner's.
+#[test]
+fn a_removed_owners_hold_never_holds_the_successor_key_against_another_owner() {
+    let fixture = co_owner_wait_fixture();
+    let root_key = fixture.enrol_root_key_as_first_owner();
+    let new_key = SigningKey::from_bytes(&[NEW_KEY_SEED; 32]);
+    let new = key_of(&new_key);
+    let (hold, lands_at) = held(
+        fixture
+            .recover_wait(
+                WAIT,
+                fixture.released(),
+                RootSuccessor::Device(fixture.enrollment(&new_key)),
+                &[],
+            )
+            .expect("the co-Owner's box recovery holds"),
+    );
+    fixture.remove_co_owner();
+    assert!(fixture.live(&root_key), "the root's key stays live");
+
+    fixture.at(lands_at + 60);
+    let voided = fixture
+        .land()
+        .into_iter()
+        .find(|landing| landing.hold == hold)
+        .expect("the landing reads the co-Owner's hold");
+    assert_eq!(
+        voided.state,
+        RecoveryHoldState::Void,
+        "its owner is no Owner now"
+    );
+    assert!(voided.enrollment.is_none(), "a void hold enrols nothing");
+    assert!(!fixture.live(&new), "the successor is not enrolled");
+
+    let first_owner = proof(&fixture.vault, fixture.first_owner);
+    let (own, _) = held(
+        recover_owner_root_waiting(
+            &fixture.vault,
+            &first_owner,
+            ActSurface::ThisInstall,
+            fixture.released(),
+            RootSuccessor::Device(fixture.first_owners_enrollment(&new_key)),
+            &[],
+            WAIT,
+        )
+        .expect("the removed co-Owner's hold is no live hold"),
+    );
+    assert_ne!(own, hold, "a new hold");
+    let view = fixture.hold_view(&own);
+    assert_eq!(
+        view.owner, fixture.first_owner,
+        "the hold is the first owner's"
+    );
+    assert_eq!(view.state, RecoveryHoldState::Waiting);
+}
+
+/// Writes a hold that R signs by hand, a shape no door writes: the owner's
+/// recovery to `successor` with `lost` as its lost keys and its wait over
+/// at `lands_at`. Then puts R's seed in this install's hold slot for
+/// `successor`, as the door's hold attempt does. Answers the hold's entry
+/// hash, which the fold counts.
+fn hold_signed_by_hand(
+    fixture: &Fixture,
+    successor: &SigningKey,
+    lost: Vec<AuthorityKey>,
+    lands_at: u64,
+) -> AuthorityEntryHash {
+    let root_seed = released_authority_seed(&fixture.seed(), &fixture.vault_id, 0);
+    let r_signing = SigningKey::from_bytes(&root_seed);
+    let root_key = key_of(&r_signing);
+    let input = fixture.enrollment(successor);
+    let mut row = AuthorityLogEntry {
+        schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+        vault_id: Some(fixture.vault_id),
+        seq: fixture.next_seq(&root_key),
+        parent_hashes: fixture.heads(),
+        op: AuthorityOp::RecoveryHold(RecoveryHold {
+            owner: fixture.person,
+            enrolment: RecoveryHoldEnrolment {
+                machine: input.machine,
+                public_key: input.public_key,
+                proof: input.proof,
+            },
+            lost,
+            lands_at,
+        }),
+        signer: AuthoritySignature {
+            suite: root_key.suite(),
+            public_key: root_key.clone(),
+            signature: vec![0; 64],
+        },
+        cosigns: Vec::new(),
+        ts: T0,
+    };
+    let transcript = authority_transcript(&row).expect("the transcript");
+    row.signer.signature = r_signing.sign(&transcript).to_bytes().to_vec();
+    let hash = authority_entry_hash(&row).expect("a hash");
+    fixture
+        .vault
+        .import_signed_authority_history(&[
+            encode_authority_log_entry_body(&row).expect("the bytes")
+        ])
+        .expect("the import stores the hold");
+    assert!(
+        fixture
+            .vault
+            .authority_fold()
+            .expect("the fold")
+            .valid_entries
+            .contains(&hash),
+        "the fold counts the hold R signed by hand"
+    );
+    stage_orphan_recovery_hold_seed(&fixture.vault, input.public_key, &root_seed)
+        .expect("R's seed goes in the hold's slot");
+    hash
+}
+
+/// A hold that names R itself among its lost keys lands as the door's
+/// rule reads it (row RECOVERY-HOLD-LOST-KEY-RULE-AT-FOLD): the owner's own
+/// lost key is revoked, the successor is enrolled under R, and R stays
+/// live, since the door never names R lost.
+#[test]
+fn a_hold_that_names_its_root_key_lost_lands_with_the_root_key_live() {
+    let fixture = fixture();
+    let root_key = AuthorityKey::Ed25519(fixture.generation_key(0));
+    let lost_key = key_of(&fixture.enrol_device_key(LOST_KEY_SEED));
+    let new_key = SigningKey::from_bytes(&[NEW_KEY_SEED; 32]);
+    let new = key_of(&new_key);
+    let lands_at = T0 + WAIT.as_secs();
+    let hold = hold_signed_by_hand(
+        &fixture,
+        &new_key,
+        vec![lost_key.clone(), root_key.clone()],
+        lands_at,
+    );
+    assert_eq!(
+        fixture.hold_view(&hold).state,
+        RecoveryHoldState::Waiting,
+        "the hold waits"
+    );
+
+    fixture.at(lands_at + 60);
+    let landings = fixture.land();
+    assert_eq!(landings.len(), 1, "the due hold lands");
+    assert_eq!(landings[0].hold, hold);
+    assert_eq!(landings[0].state, RecoveryHoldState::Landed);
+    assert_eq!(
+        landings[0].revoked.len(),
+        1,
+        "one revocation: the owner's lost key alone"
+    );
+    assert!(fixture.live(&root_key), "R stays live");
+    assert!(!fixture.live(&lost_key), "the owner's lost key is revoked");
+    assert!(fixture.live(&new), "the successor is enrolled");
+    assert_eq!(fixture.hold_view(&hold).state, RecoveryHoldState::Landed);
+}
+
+/// A hold whose lost keys name a live key that is no owner key of its
+/// owner, here an agent-only device, never revokes that key at its landing
+/// (row RECOVERY-HOLD-LOST-KEY-RULE-AT-FOLD): the door refuses such a key
+/// as lost ("is not a live owner key the owner enrolled"), and the landing
+/// reads the same rule.
+#[test]
+fn a_hold_never_revokes_a_lost_key_that_is_no_owner_key_of_its_owner() {
+    let fixture = fixture();
+    let lost_key = key_of(&fixture.enrol_device_key(LOST_KEY_SEED));
+    let keeper = fixture.enrol_device_key(KEEPER_KEY_SEED);
+    let keeper_key = key_of(&keeper);
+    let new_key = SigningKey::from_bytes(&[NEW_KEY_SEED; 32]);
+    let new = key_of(&new_key);
+    // An agent-only device, enrolled by a crafted row an owner key signs,
+    // as `an_agent_key_never_answers_a_hold` enrols it.
+    let agent_key = key_of(&SigningKey::from_bytes(&[AGENT_KEY_SEED; 32]));
+    let mut enroll = AuthorityLogEntry {
+        schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+        vault_id: Some(fixture.vault_id),
+        seq: fixture.next_seq(&keeper_key),
+        parent_hashes: fixture.heads(),
+        op: AuthorityOp::EnrollDevice {
+            device: agent_device(AGENT_KEY_SEED),
+        },
+        signer: AuthoritySignature {
+            suite: keeper_key.suite(),
+            public_key: keeper_key.clone(),
+            signature: vec![0; 64],
+        },
+        cosigns: Vec::new(),
+        ts: T0,
+    };
+    let transcript = authority_transcript(&enroll).expect("the transcript");
+    enroll.signer.signature = keeper.sign(&transcript).to_bytes().to_vec();
+    fixture
+        .vault
+        .import_signed_authority_history(&[
+            encode_authority_log_entry_body(&enroll).expect("the bytes")
+        ])
+        .expect("the import stores the enrolment");
+    assert!(fixture.live(&agent_key), "the agent key is enrolled");
+
+    let refused = fixture
+        .recover_wait(
+            WAIT,
+            fixture.released_material(0),
+            RootSuccessor::Device(fixture.enrollment(&new_key)),
+            &[lost_key.clone(), agent_key.clone()],
+        )
+        .expect_err("the door never names an agent key lost");
+    assert_refused(&refused, "is not a live owner key the owner enrolled");
+
+    let lands_at = T0 + WAIT.as_secs();
+    let hold = hold_signed_by_hand(
+        &fixture,
+        &new_key,
+        vec![lost_key.clone(), agent_key.clone()],
+        lands_at,
+    );
+    fixture.at(lands_at + 60);
+    let landings = fixture.land();
+    assert_eq!(landings.len(), 1, "the due hold lands");
+    assert_eq!(landings[0].hold, hold);
+    assert_eq!(landings[0].state, RecoveryHoldState::Landed);
+    assert_eq!(
+        landings[0].revoked.len(),
+        1,
+        "one revocation: the owner's lost key alone"
+    );
+    assert!(fixture.live(&agent_key), "the agent key stays live");
+    assert!(!fixture.live(&lost_key), "the owner's lost key is revoked");
+    assert!(fixture.live(&keeper_key), "the keeper is untouched");
+    assert!(fixture.live(&new), "the successor is enrolled");
 }

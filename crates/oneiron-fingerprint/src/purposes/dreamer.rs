@@ -14,8 +14,19 @@
 //! tokens to the Dreamer's extraction job, which compares them across its reads. Main has
 //! sent them since the reads landed, so they keep their bytes too (the `EXTRACTION_*`
 //! entries).
+//!
+//! A Dreamer step's follow-up mark (`crates/oneiron/src/llm/step/step_state.rs`) is the
+//! step-state key a refused step's pending follow-up is marked under; the entry says what
+//! it hashes.
 
-purposes! {}
+purposes! {
+    /// The key of a step's follow-up mark (`llm/step/step_state.rs`, `follow_up_mark`):
+    /// the step-state key under which `mark_follow_up_pending` marks that a refused step's
+    /// one follow-up request is pending, read by `follow_up_pending`. One part: the
+    /// refused step's own 32-byte step hash. A derive-key fingerprint, so it never equals
+    /// a step's own hash, which is a content hash of its request.
+    STEP_FOLLOW_UP_PENDING = "oneiron.dreamer.step_follow_up_pending.v1";
+}
 
 legacy_purposes! {
     /// A proactivity digest's locator (`digest_id`): every field it shows, as assembled.

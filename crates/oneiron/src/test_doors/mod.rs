@@ -192,6 +192,7 @@ pub mod gate_receipt_rows;
 pub mod gate_receipt_unclear;
 pub mod gpu_job;
 pub mod grant_roles;
+pub mod grant_sealed_file;
 pub mod graph_ask_centre;
 #[cfg(feature = "sync")]
 pub mod guest_turn_counterparty;
@@ -315,6 +316,7 @@ pub mod read_exposure;
 pub mod read_lineage_floor;
 pub mod recall_gate_judgements;
 pub mod recovery_box_kit_only_fact;
+pub mod recovery_preset_between;
 pub mod removal_import_passes;
 pub mod repeated_key_lib_rows;
 pub mod replay_rows;
@@ -327,6 +329,7 @@ pub mod research_continuation;
 #[cfg(feature = "sync")]
 pub mod residence_directive_run;
 pub mod resident_wake_hold;
+pub mod restored_code_consent_waits;
 pub mod restored_enrolment;
 pub mod retrieval_policy_default_floor;
 pub mod reveal_ask_window;
@@ -384,6 +387,7 @@ pub mod spent_seat;
 pub mod split_phrase_carrier;
 #[cfg(feature = "sync")]
 pub mod staged_vault_import;
+pub mod stale_world_stamp;
 pub mod steward;
 pub mod stored_workspace_roster_rows;
 pub mod stretch_pack_finalize;

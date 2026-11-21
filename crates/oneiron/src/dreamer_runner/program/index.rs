@@ -11,7 +11,8 @@
 //! decision's key and by the actor (FIX TURNPROGRAM-ERASE-KEEPS-DECIDED).
 //! These two hold only the decisions whose actor this machine learned: a
 //! decision kept from a row that named none has neither row. Both rows go
-//! with their actor's erase, and none is written for an actor erased here.
+//! with their actor's erase, and so does the decision they name; none is
+//! written for an actor erased here.
 
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
@@ -179,14 +180,16 @@ pub(super) fn index_decided_in_txn(
     }
 }
 
-/// Drops, in the erase's writer, the actor kept for each decision of one of
-/// `actor`'s wakes, under both keys: no row names an erased actor. The
-/// decisions themselves stay as they were. An index row whose key does not
-/// decode goes with the rest under the actor's prefix, and a kept actor that
-/// does not decode goes by its decision's key (FIX 5736); a row that names
-/// another actor stays.
+/// Deletes, in the erase's writer, each decision kept here of one of
+/// `actor`'s wakes, with the actor kept beside it under both keys: an erase
+/// leaves no decision of its actor, and no row that names it. The decisions
+/// are read by the actor's own prefix alone, so a decision whose actor this
+/// machine never learned stays, and so does one kept under another actor. An
+/// index row whose key does not decode goes with the rest under the actor's
+/// prefix, and a decision whose kept actor does not decode goes by its key
+/// (FIX 5736).
 #[cfg(feature = "sync")]
-pub(super) fn unindex_actor_decided_in_txn(
+pub(super) fn erase_actor_decisions_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     actor: &EntityId,
@@ -206,6 +209,7 @@ pub(super) fn unindex_actor_decided_in_txn(
             .is_none_or(|kept| kept == *actor)
         {
             DECIDED_ACTOR.delete(vault, txn, &key)?;
+            super::DECIDED.delete(vault, txn, &key)?;
         }
     }
     ACTOR_DECIDED

@@ -70,7 +70,7 @@ mod catalog;
 mod dial;
 #[cfg(feature = "mesh")]
 mod dial_gate;
-mod enrolment;
+pub(crate) mod enrolment;
 mod freeze;
 mod host;
 mod removal_delivery;

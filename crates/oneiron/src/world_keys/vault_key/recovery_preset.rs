@@ -51,6 +51,8 @@ pub use recovery_box_hold::{
 
 mod kit_only_switch;
 
+mod sheet_switch_checks;
+
 mod kit_only_fact;
 pub use kit_only_fact::RecoveryBoxKitOnlyFact;
 
@@ -291,9 +293,8 @@ enum SheetHandover {
     /// `keep_sheet` kept it durably before the write (the CLI's file).
     Kept,
     /// Only the answer carries it: entering "Nobody but me" needs this
-    /// install's device wrap, `device_wrap`, to stay; `None` when this
-    /// install's keystore holds no slot for one.
-    Answer { device_wrap: Option<String> },
+    /// install's device wrap to stay, read after the ask.
+    Answer,
 }
 
 /// A kit door's prepared authority rotation: the kit's restored seed and the
@@ -390,6 +391,10 @@ impl Vault {
     /// A mirror rewrite that fails after the commit is answered as
     /// `mirror_pending`. "Any 2 pieces" is turned on with its kit:
     /// [`Self::set_recovery_preset_any_two_as`].
+    ///
+    /// The door asks for an important act when its read says the switch would
+    /// change the kit-only fact; the preset in force asks nothing. An unasked
+    /// fact change is a write conflict.
     pub fn set_recovery_preset_as(
         &self,
         owner: &crate::consent::AuthenticatedOwner,
@@ -419,13 +424,16 @@ impl Vault {
     /// change when the wrap is gone. After a lost answer and a restart the
     /// device reopens the key, and leaving and entering the preset again
     /// issues a new sheet (review of #7766, round 2).
+    ///
+    /// The door asks for an important act when its read says the switch would
+    /// change the kit-only fact; the preset in force asks nothing. An unasked
+    /// fact change is a write conflict.
     pub fn set_recovery_preset_answered_as(
         &self,
         owner: &crate::consent::AuthenticatedOwner,
         preset: RecoveryPreset,
         box_hold: &dyn RecoveryBoxHold,
     ) -> Result<RecoveryPresetChange> {
-        let device_wrap = self.device_wrap_held_here()?;
         let authority = crate::authority::ActAuthority::Owner(
             owner.clone(),
             crate::authority::ActSurface::ThisInstall,
@@ -434,29 +442,10 @@ impl Vault {
             &authority,
             preset,
             |_| Ok(()),
-            SheetHandover::Answer { device_wrap },
+            SheetHandover::Answer,
             None,
             box_hold,
         )
-    }
-
-    /// The id of this install's device wrap when this install's keystore
-    /// holds its slot, read without creating one; `None` with no keystore.
-    fn device_wrap_held_here(&self) -> Result<Option<String>> {
-        let Ok(keystore) = self.device_keystore() else {
-            return Ok(None);
-        };
-        let install = self.prepare_install_signing()?;
-        let held = keystore
-            .get(&self.vault_key_slot(install))
-            .map_err(crate::world_keys::machine::keystore_error)?
-            .is_some();
-        Ok(held.then(|| {
-            VaultKeyWrapKind::Device {
-                install: install.to_hex(),
-            }
-            .id()
-        }))
     }
 
     fn set_recovery_preset_handed_over(
@@ -483,24 +472,28 @@ impl Vault {
                 return Err(crate::authority::authority_refused(KIT_ONLY_NEEDS_KIT));
             }
         }
-        // The kit-only fact's owner proof is signed on the person's confirm,
-        // asked before anything is drawn or written, while the door holds
-        // nothing: the prompt can block.
-        let ground = self.recovery_preset_proof_ground(preset.is_nobody_but_me())?;
-        let issue = match preset {
-            RecoveryPreset::NobodyButMeAnyTwo => return Err(refused(ANY_TWO_NEEDS_KIT)),
-            RecoveryPreset::NobodyButMe if current != preset => {
-                // Custody first, then the held key, as the draw checked them
-                // before it took the key as an argument.
-                if !matches!(self.data_key_custody(), VaultDataKeyCustody::OwnerHeldLocal) {
-                    return Err(refused(PRESET_CUSTODY));
-                }
-                let held = self
-                    .held_vault_key()
-                    .ok_or_else(|| refused("unlock the vault key first"))?;
-                Some(self.draw_recovery_sheet(&held, keep_sheet)?)
-            }
-            RecoveryPreset::NobodyButMe | RecoveryPreset::Standard => None,
+        // The door's own refusals come before the ask: the person is not
+        // asked about a switch this door or this handle cannot make.
+        let draws = self.sheet_switch_draws(preset, current)?;
+        // The fact and rotation share one confirm before anything is drawn or
+        // written, while the door holds nothing: the prompt can block. The
+        // preset in force is no switch and asks nothing.
+        let ground = self.sheet_switch_ground(owner, preset, current, rotation.as_ref())?;
+        // After the ask: the held key first, then the device wrap, whose read
+        // readies signing, then the draw.
+        let held = draws
+            .then(|| {
+                self.held_vault_key()
+                    .ok_or_else(|| refused("unlock the vault key first"))
+            })
+            .transpose()?;
+        let device_wrap = match handover {
+            SheetHandover::Kept => None,
+            SheetHandover::Answer => Some(self.device_wrap_held_here()?),
+        };
+        let issue = match &held {
+            Some(key) => Some(self.draw_recovery_sheet(key, keep_sheet)?),
+            None => None,
         };
         // Target kit-only writes the box-hold-pending marker in its own write
         // before it holds the box, after the no-write checks pass; the switch's
@@ -555,20 +548,29 @@ impl Vault {
             if state.recovery == preset {
                 return Ok((change, None));
             }
+            // An entry whose read drew no sheet raced another switch: said
+            // before the write looks at the kit or rotates the key.
+            let entry = if preset == RecoveryPreset::NobodyButMe {
+                Some(issue.as_ref().ok_or_else(|| refused(PRESET_RACED))?)
+            } else {
+                None
+            };
             // Rotation happens iff Standard goes to kit-only and a generation
             // is live. Kit-only to kit-only and the switch back change no
             // roster.
             if state.recovery == RecoveryPreset::Standard && preset.is_nobody_but_me() {
-                self.maybe_rotate_recovery_authority_in_txn(txn, authority, &rotation)?;
+                self.maybe_rotate_recovery_authority_in_txn(
+                    txn,
+                    authority,
+                    &rotation,
+                    ground.as_ref(),
+                )?;
             }
-            if preset == RecoveryPreset::NobodyButMe {
-                let Some((_, commitment, envelope)) = &issue else {
-                    return Err(refused(PRESET_RACED));
-                };
+            if let Some((_, commitment, envelope)) = entry {
                 if state.commitment != *commitment {
                     return Err(refused("this handle holds another vault key"));
                 }
-                if let SheetHandover::Answer { device_wrap } = &handover {
+                if let Some(device_wrap) = &device_wrap {
                     let stays = match device_wrap {
                         Some(id) => WRAPS.get(&self.store, txn, id)?.is_some(),
                         None => false,
@@ -692,6 +694,9 @@ impl Vault {
     /// generation is live needs the kit:
     /// [`Self::set_recovery_preset_any_two_with_kit_as`].
     ///
+    /// The door asks for an important act when its read says the switch would
+    /// change the kit-only fact. An unasked fact change is a write conflict.
+    ///
     /// # Errors
     ///
     /// A host-managed or supervisor-delivered key; a key this handle does
@@ -717,6 +722,7 @@ impl Vault {
             keep_pieces,
             None,
             box_hold,
+            || {},
         )
     }
 
