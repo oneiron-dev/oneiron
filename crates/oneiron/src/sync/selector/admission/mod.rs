@@ -413,7 +413,11 @@ fn admit_window_update(
         // The birth placements a guest carried never enter the admitted
         // bytes: the part's import lands each beside its row (FIX 3656).
         let placements = routes.admitted_placements(&admitted);
-        admitted.commit_with(CommitOptions::new().origin(role.origin()));
+        admitted.commit_with(
+            CommitOptions::new()
+                .origin(role.origin())
+                .commit_msg(FEDERATION_ADMISSION_MESSAGE),
+        );
         // An admitted tombstone is a write the burst review counts as a row.
         let rows = admitted.get_map("entities").len()
             + admitted.get_map("edges").len()
@@ -448,12 +452,19 @@ fn admit_window_update(
     Ok(admitted)
 }
 
+/// The commit message of every change an admission authors: a window knows
+/// an admission's writes by it, and a later admission's write to a key one
+/// of them set is written again over it
+/// (FEDERATED-ADMISSION-FRESH-DOC-LAMPORT-TIE).
+pub(in crate::sync) const FEDERATION_ADMISSION_MESSAGE: &str = "federation-admission:v1";
+
 /// The doc one part of an admission is authored in. Its op ids derive from
 /// the window it lands in, the update, the role and, for a guest's update, the
 /// source vault its CLAIMs are remapped under (FIX 3497), so one op id never
 /// carries two payloads. The domain is v1 since a WORLD target lands under its
 /// foreign id before its row arrives (FIX 3891): the same update now admits
-/// other bytes.
+/// other bytes. Its first change, whichever write commits it, carries
+/// [`FEDERATION_ADMISSION_MESSAGE`].
 #[cfg(feature = "sync")]
 fn create_admission_doc(
     key: &WindowKey,
@@ -468,6 +479,7 @@ fn create_admission_doc(
     let _edges = doc.get_map("edges");
     let _tombstones = doc.get_map("tombstones");
     doc.commit();
+    doc.set_next_commit_message(FEDERATION_ADMISSION_MESSAGE);
     Ok(doc)
 }
 

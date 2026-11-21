@@ -14,6 +14,20 @@
 //!   its current publication, which is not public: the move carries the
 //!   current head, never the published one it superseded.
 //!
+//! The page's standing invite grant, which the owner's publication write
+//! mints on the node it runs on, is node-local too (FIX
+//! [BK-HOME-MOVE-PAGE-INVITE-GRANT-NOT-CARRIED]; Engine 21 Nov 15:30: "a move
+//! must not quietly stop the page's invite emails"). The new home of a move
+//! held none, so a booking it confirmed sent no invite ("this page carries no
+//! live booking page invite grant"). Now:
+//! - the new home holds the old home's live grant row, the one the invite
+//!   dispatch reads, and it covers the invite of a booking the new home
+//!   confirmed;
+//! - a grant the owner revoked on the old home stays revoked on the new home,
+//!   and a publish there finds it and mints no live one;
+//! - a grant the owner revoked on the new home before the move stays revoked:
+//!   the old home's live row never lands over it.
+//!
 //! The two machines are copies of one vault, as
 //! `tests/booking_home_move_carries_deposit.rs` makes them, taken after the
 //! booking's confirm and before the owner publishes the page: the new home
@@ -25,7 +39,10 @@
 //! the build registers.
 //!
 //! Red on main beff0851b5bf, where no section carries a publication: the new
-//! home resolves no page for the token.
+//! home resolves no page for the token. The two invite grant tests that
+//! follow the old home's grant are red on main 2c56ee80294, where no section
+//! carries a grant: the new home holds none. The third is green there (the
+//! new home keeps its own revoked row) and guards the revoke-wins rule.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test booking_home_move_carries_public_page`.
 #![cfg(all(oneiron_test_support, feature = "sync"))]
@@ -38,11 +55,16 @@ use std::sync::Arc;
 use fixture::{Fixture, MONDAY, NOW, event_type, slot_of};
 use oneiron::booking::{
     BOOKING_PUBLIC_PAGE_PREDICATE, BOOKING_PUBLIC_PAGE_SCHEMA_VERSION, BookingLandingContent,
-    BookingPagePublication, ConfirmReceipt, ConstraintFieldConfig, EventTypeCard, HoldLeaseSpec,
-    PublicBookingAvailability, PublicBookingPageToken, SessionKey, ThemeTokens,
-    booking_config_hash, load_public_booking_page_listing, resolve_public_booking_token,
+    BookingPageInviteContext, BookingPagePublication, ConfirmReceipt, ConstraintFieldConfig,
+    EventTypeCard, HoldLeaseSpec, PublicBookingAvailability, PublicBookingPageToken,
+    PublishBookingPageGrantRequest, SessionKey, ThemeTokens, booking_config_hash,
+    booking_page_invites_authorizes, load_public_booking_page_listing,
+    mint_publish_page_invite_grant, resolve_public_booking_token,
 };
+use oneiron::calendar::CALENDAR_INVITE_VERB;
 use oneiron::memory::ClaimInput;
+use oneiron::outbound_grant::StandingOutboundGrant;
+use oneiron::store::GateDecisionId;
 use oneiron::test_doors::booking_home_move::{drop_node_local_booking_rows, move_booking_home};
 use oneiron::{EdgeActorClass, EntityId, VaultConfig};
 use oneiron_store::ports::manual_clock::ManualClock;
@@ -159,6 +181,42 @@ fn token_of(machine: &Fixture) -> String {
     PublicBookingPageToken::for_page(machine.page).0
 }
 
+/// The page's invite grant on `machine`, as a publish there answers it: a
+/// page that holds a grant, live or revoked, is answered with it and nothing
+/// is written; a page that holds none gets a fresh live one.
+fn publish_page_invite_grant(machine: &Fixture, owner: EntityId) -> StandingOutboundGrant {
+    mint_publish_page_invite_grant(
+        &machine.vault,
+        &PublishBookingPageGrantRequest {
+            page_ref: machine.page,
+            publisher_principal: owner,
+            issued_at: NOW,
+        },
+    )
+    .expect("the page's invite grant")
+}
+
+/// The grant `machine` stores under `grant`'s id, as the invite dispatch
+/// reads it: the live row, else the first revoked one.
+fn stored_grant(machine: &Fixture, grant: &StandingOutboundGrant) -> Option<StandingOutboundGrant> {
+    machine
+        .vault
+        .get_standing_outbound_grant(&grant.id)
+        .expect("read the page's invite grant")
+}
+
+/// The owner's revoke of `grant` on `machine`.
+fn revoke(machine: &Fixture, owner: EntityId, grant: &StandingOutboundGrant) {
+    let proof = machine
+        .vault
+        .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
+        .expect("FIXTURE: the owner's proof");
+    machine
+        .vault
+        .revoke_consent_grant(&proof, &grant.grant_ref())
+        .expect("FIXTURE: the owner revokes the page's invite grant");
+}
+
 /// Whether `machine` reads the page's live, published publication at `now`,
 /// as the public routes read it after the token.
 fn serves_page(machine: &Fixture, now: u64) -> bool {
@@ -232,5 +290,101 @@ fn a_page_unpublished_before_the_move_stays_unpublished_on_the_new_home() {
     assert!(
         !serves_page(&new_home, NOW + 30),
         "the current publication is unpublished: the earlier published one is not carried"
+    );
+}
+
+#[test]
+fn a_live_page_invite_grant_on_the_old_home_covers_a_booking_confirmed_on_the_new_home() {
+    let (seed, clock, owner) = seed();
+    let (old_home, new_home) = old_and_new_home(seed, &clock);
+    publish(&old_home, owner, true);
+    let grant = publish_page_invite_grant(&old_home, owner);
+    assert!(
+        grant.is_active(),
+        "FIXTURE: the owner's publication write minted a live invite grant"
+    );
+    assert_eq!(
+        stored_grant(&new_home, &grant),
+        None,
+        "FIXTURE: the new home holds no invite grant before the move"
+    );
+
+    assert!(
+        move_booking_home(&old_home.vault, &new_home.vault, &[]).expect("the home move"),
+        "every booking section applies"
+    );
+
+    assert_eq!(
+        stored_grant(&new_home, &grant),
+        Some(grant.clone()),
+        "the new home holds the old home's live grant row, not a mint of its own"
+    );
+    let booking = confirmed_booking(&new_home, SessionKey::derive(b"page-move-invite"));
+    assert!(
+        booking_page_invites_authorizes(
+            &new_home.vault,
+            &grant.scope,
+            &BookingPageInviteContext {
+                booking_ref: booking.calendar.event_ref,
+                verb_kind: CALENDAR_INVITE_VERB,
+                requested_recipient: "visitor@example.test",
+            },
+        )
+        .expect("read the booking's binding"),
+        "the carried grant covers the invite of a booking the new home confirmed"
+    );
+}
+
+#[test]
+fn a_page_invite_grant_the_owner_revoked_on_the_old_home_stays_revoked_on_the_new_home() {
+    let (seed, clock, owner) = seed();
+    let (old_home, new_home) = old_and_new_home(seed, &clock);
+    publish(&old_home, owner, true);
+    let grant = publish_page_invite_grant(&old_home, owner);
+    revoke(&old_home, owner, &grant);
+    assert!(
+        !publish_page_invite_grant(&old_home, owner).is_active(),
+        "FIXTURE: the old home keeps the revoke, and a publish there mints no live grant"
+    );
+
+    assert!(
+        move_booking_home(&old_home.vault, &new_home.vault, &[]).expect("the home move"),
+        "every booking section applies"
+    );
+
+    assert_eq!(
+        stored_grant(&new_home, &grant).map(|stored| stored.is_active()),
+        Some(false),
+        "the grant the owner revoked on the old home is revoked on the new home"
+    );
+    assert!(
+        !publish_page_invite_grant(&new_home, owner).is_active(),
+        "a publish on the new home finds the revoked grant and mints no live one"
+    );
+}
+
+#[test]
+fn a_page_invite_grant_the_owner_revoked_on_the_new_home_stays_revoked_after_the_move() {
+    let (seed, clock, owner) = seed();
+    // Published before the copy: both machines hold the page's claim and its
+    // live invite grant row.
+    publish(&seed, owner, true);
+    let (old_home, new_home) = old_and_new_home(seed, &clock);
+    let grant = publish_page_invite_grant(&new_home, owner);
+    revoke(&new_home, owner, &grant);
+    assert!(
+        publish_page_invite_grant(&old_home, owner).is_active(),
+        "FIXTURE: the old home keeps the grant live"
+    );
+
+    assert!(
+        move_booking_home(&old_home.vault, &new_home.vault, &[]).expect("the home move"),
+        "every booking section applies"
+    );
+
+    assert_eq!(
+        stored_grant(&new_home, &grant).map(|stored| stored.is_active()),
+        Some(false),
+        "a revoke on either node wins: the old home's live row never lands over this one"
     );
 }

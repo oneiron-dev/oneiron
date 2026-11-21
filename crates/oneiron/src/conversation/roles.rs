@@ -38,7 +38,13 @@ pub(super) fn role_in(
 /// reads it for that PERSON acting itself; `human` says whether it acts as
 /// a human, the only class the vault owner's binding makes the room's owner.
 /// The room pin doors read a delegate agent's pen PERSON through it, so the
-/// agent never stands above that PERSON. Refused for a non-member.
+/// agent never stands above that PERSON. Refused for a non-member, and for a
+/// PERSON whose deletion this vault records, whichever arm would name it: a
+/// deleted owner is no owner (H149; L9-52 (b), as
+/// [`crate::disclosure::is_vault_owner`] reads it), and a deleted shell
+/// passes no person check (DELETED-ACTOR-SLIP-AUTH = A). [`role_in`] refuses
+/// such a caller first; the callers that skip its write-actor check (a closed
+/// room's owners, a federation peer's room body) are refused here.
 pub(crate) fn person_role_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -47,6 +53,9 @@ pub(crate) fn person_role_in(
     human: bool,
 ) -> Result<RoomRole> {
     let body = body::body_in(vault, txn, room)?;
+    if crate::disclosure::deletion_recorded_in_txn(vault, txn, &id)? {
+        return Err(denied());
+    }
     // The vault owner's active authority binding is the implicit owner role.
     // It is never inferred from untrusted replicated body metadata.
     // Compared as stored bytes: a damaged creator row matches no actor.

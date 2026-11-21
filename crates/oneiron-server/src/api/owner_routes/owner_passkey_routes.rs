@@ -14,9 +14,9 @@
 //!   This install carries and cosigns the act; this host's root signs it as
 //!   the predecessor, as `/owner-signing-keys/enroll` does for a device key.
 //! - `POST .../vouch/prepare` builds the enrollment of a new device's key
-//!   (as `/owner-signing-keys/enroll` takes it) with an enrolled passkey,
-//!   named by its credential id, as the predecessor, and answers the entry
-//!   and the challenge the passkey's assertion names.
+//!   (as `/owner-signing-keys/enroll` takes it) with the acting owner's
+//!   enrolled passkey, named by its credential id, as the predecessor, and
+//!   answers the entry and the challenge the passkey's assertion names.
 //! - `POST .../vouch/land` takes the entry back with that assertion; this
 //!   install cosigns it and it lands only once the fold counted it. The key
 //!   a passkey vouched for acts in part until an owner key that is no
@@ -38,7 +38,7 @@ use axum::response::Json;
 use axum::routing::{get, post};
 use base64::Engine as _;
 use oneiron::authority::{
-    ActAuthority, AuthorityKey, EnrolledOwnerPasskey, OwnerKeyEnrollment, OwnerPasskeyEnrollment,
+    ActAuthority, EnrolledOwnerPasskey, OwnerKeyEnrollment, OwnerPasskeyEnrollment,
     webauthn_assertion_envelope, webauthn_es256_public_key,
 };
 use serde::{Deserialize, Serialize};
@@ -93,7 +93,7 @@ pub(super) fn owner_table() -> OwnerTable {
             OwnerRoute {
                 method: "post",
                 path: "/owner-passkeys/vouch/prepare",
-                summary: "Builds the enrollment of a new device's owner key (`machine`, 32 hex; `public_key`, 64 hex; `proof`, 128 hex) with the enrolled passkey `credential_id` (base64url) as its predecessor. Answers the unsigned `entry` and the `challenge` the passkey's assertion names, both base64url; nothing is enrolled yet.",
+                summary: "Builds the enrollment of a new device's owner key (`machine`, 32 hex; `public_key`, 64 hex; `proof`, 128 hex) with the acting owner's enrolled passkey `credential_id` (base64url) as its predecessor. Answers the unsigned `entry` and the `challenge` the passkey's assertion names, both base64url; nothing is enrolled yet.",
                 row: None,
                 shape: Some(RestShape::json(
                     vouch_prepare_request_body_schema,
@@ -168,7 +168,8 @@ struct VouchPrepareRequest {
     public_key: String,
     /// The new key's signature over its challenge, as 128 lower-case hex.
     proof: String,
-    /// The enrolled passkey that vouches, by its credential id, base64url.
+    /// The acting owner's enrolled passkey that vouches, by its credential
+    /// id, base64url.
     credential_id: String,
 }
 
@@ -398,8 +399,8 @@ async fn enroll(
 }
 
 /// `POST /v1/owner/owner-passkeys/vouch/prepare`: the enrollment of a new
-/// device's key with an enrolled passkey as its predecessor, unsigned, and
-/// the challenge the passkey's assertion names.
+/// device's key with the acting owner's enrolled passkey as its predecessor,
+/// unsigned, and the challenge the passkey's assertion names.
 async fn vouch_prepare(
     auth: CoreAuth,
     headers: HeaderMap,
@@ -417,24 +418,25 @@ async fn vouch_prepare(
             proof: parse_proof(&body.proof)?,
         };
         let credential_id = b64url("credential_id", &body.credential_id)?;
+        // A credential id names no key across owners: enrolment takes the
+        // one the browser posts, so another owner's live passkey may carry
+        // the same id, and another owner may enrol the same passkey on a
+        // sibling branch. The acting owner's own is the one that signs, by
+        // every counted enrolment of it; the door revalidates the owner
+        // when it acts.
+        let actor = owner.actor_for_read(server.vault())?;
         let passkey = server
             .vault()
-            .enrolled_owner_passkeys()?
-            .into_iter()
-            .find(|passkey| passkey.live && passkey.credential_id == credential_id)
+            .live_owner_passkey_key(actor, &credential_id)?
             .ok_or_else(|| {
                 OwnerError::Refused(
-                    "no live passkey of this vault has that credential id".to_owned(),
+                    "no live passkey of the acting owner has that credential id".to_owned(),
                 )
             })?;
         let authority = ActAuthority::Owner(owner, surface);
         let prepared = server
             .vault()
-            .prepare_owner_key_enrollment_as(
-                &authority,
-                input,
-                AuthorityKey::P256(passkey.public_key),
-            )
+            .prepare_owner_key_enrollment_as(&authority, input, passkey)
             .map_err(refusal)?;
         Ok(VouchPrepareReply {
             entry: to_b64url(&prepared.entry),

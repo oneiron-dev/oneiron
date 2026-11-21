@@ -322,13 +322,6 @@ pub(super) fn effect_ref(
     ))
 }
 
-pub(super) fn apology_bytes(item: &EmergencyItem) -> Result<Vec<u8>, BookingError> {
-    serde_json::to_vec(&serde_json::json!({ "reason": item.plan.request.reason,
-        "actions": item.actions.iter().zip(&item.plan.proposals).map(|(token, slot)| serde_json::json!({
-            "action": format!("booking:emergency-pick:{}", token.0), "proposal": slot
-        })).collect::<Vec<_>>() })).map_err(storage_failure)
-}
-
 fn verify_content_head_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -471,12 +464,20 @@ pub(crate) fn verify_frozen_effect_in(
             }
         }
         "apology" => {
-            let content = format!("blob:{}", blob_id(&apology_bytes(&item)?)?.to_hex());
-            verify_content_head_in(vault, txn, &content)?;
-            if value["content_ref"].as_str() != Some(content.as_str())
-                || value["verb"] != "send"
-                || value["channel"] != "email"
-            {
+            // FIX [BK-EMERGENCY-APOLOGY-BLOB-HOLDS-RAW-PICK-TOKENS]: the owner's copy, whose head
+            // this home wrote, or the raw body a send an earlier build froze, whose blob is
+            // released: the booker's text comes from the checkpoint at send time either way.
+            let content = value["content_ref"].as_str().unwrap_or_default();
+            match super::apology::apology_content_of(&item, content)? {
+                super::apology::ApologyContent::OwnerCopy => {
+                    verify_content_head_in(vault, txn, content)?;
+                }
+                super::apology::ApologyContent::FrozenRawBody => {}
+                super::apology::ApologyContent::Other => {
+                    return Err(refused("frozen apology differs from its checkpoint"));
+                }
+            }
+            if value["verb"] != "send" || value["channel"] != "email" {
                 return Err(refused("frozen apology differs from its checkpoint"));
             }
         }

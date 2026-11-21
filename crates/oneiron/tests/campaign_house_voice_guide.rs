@@ -25,6 +25,7 @@ use oneiron::campaign::surface::{CAMPAIGN_SCHEMA_VERSION, CreateCampaignRequest,
 use oneiron::note::NoteReadRequest;
 use oneiron::registry::TypeByteFamily;
 use oneiron::store::GateDecisionId;
+use oneiron::store::ports::ManualClock;
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 
 fn install_keystore(vault: &Vault) {
@@ -210,18 +211,25 @@ fn a_vault_whose_only_campaign_is_deleted_gets_no_guide_at_open() {
     );
 }
 
-/// A source vault opened as its owner's, for a whole-vault archive.
+/// The second the source vault's manual clock reads: long before the
+/// host's clock, on which the restored vault opens.
+const SOURCE_SECOND: u64 = 90;
+
+/// A source vault opened as its owner's, for a whole-vault archive, on a
+/// manual clock at [`SOURCE_SECOND`].
 fn open_owned_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().unwrap();
-    let vault = Vault::open_owned(dir.path(), VaultConfig::default()).expect("the source vault");
+    let mut config = VaultConfig::default();
+    config.store_clock = ManualClock::new(SOURCE_SECOND).bundle();
+    let vault = Vault::open_owned(dir.path(), config).expect("the source vault");
     (dir, vault)
 }
 
 /// Restores `archive` into a fresh vault through its owner's restore door.
-/// The vault opens a wall-clock second after the source, so the engine
-/// seeds' times differ, as an owner's restore meets them.
+/// The vault opens on the host's clock, later than the source's
+/// [`SOURCE_SECOND`], so the engine seeds' times differ, as an owner's
+/// restore meets them.
 fn restored_vault(archive: &[u8]) -> (tempfile::TempDir, Vault) {
-    std::thread::sleep(std::time::Duration::from_millis(1100));
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), VaultConfig::default()).expect("the destination vault");
     let owner = owner(&vault);
