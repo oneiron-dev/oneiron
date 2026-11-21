@@ -144,7 +144,7 @@ pub struct PausedTurnProgramsView {
 /// One armed program a turn does not wake, paused when the store that holds
 /// it was made a copy served beside its source: nothing wakes it there until
 /// the owner resumes it on that copy.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PausedTurnProgramItem {
     pub registration: EntityId,
     /// The actor that armed the program and that it runs as, and its class.
