@@ -21,7 +21,8 @@
 //! deposit's earlier refund under another of its settle keys is no hand
 //! refund, so the owner's return of the balance is refunded. A refund
 //! Stripe ends failed shows on the owner's booking card until a refund
-//! covers it (FIX [BK-DEPOSIT-FAILED-REFUND-SURFACE]).
+//! covers it (FIX [BK-DEPOSIT-FAILED-REFUND-SURFACE]), a hand refund of a
+//! part of it too (review round 1 of #10149).
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -1571,6 +1572,82 @@ async fn a_refund_stripe_ended_failed_shows_on_the_owners_card_until_a_hand_refu
     assert_eq!(refund_posts(&stripe), 1, "no second refund is made");
     let kept = deposit_line();
     assert_eq!(kept["held"], "balance_after_refund", "{kept}");
+}
+
+/// Review round 1 of #10149: Stripe takes the settle row's own refund as
+/// pending, the owner refunds a part of the owed half by hand in the
+/// dashboard, and Stripe then ends the row's refund failed. The part made by
+/// hand does not hide the failure: the owner's booking card says the
+/// visitor's refund did not go through and that only a hand refund pays the
+/// rest, and no refund is made here.
+#[tokio::test]
+async fn a_failed_refund_beside_a_short_hand_refund_shows_on_the_owners_card() {
+    let (fixture, stripe, payment_id) = half_refund_owed("failed-beside-short-hand").await;
+    let event_ref = booking_deposit_for_payment(&fixture.server.vault, &payment_id)
+        .expect("read")
+        .expect("the deposit exists")
+        .event_ref
+        .expect("the deposit's booking");
+    let card_row = format!("booking:{}", event_ref.to_hex());
+    let owner = fixture
+        .server
+        .vault
+        .memory(fixture.owner_actor(), EdgeActorClass::Human);
+    let deposit_line = || -> Value {
+        oneiron::verbs::invoke(&owner, "self.inbox.get", json!({ "item_id": card_row }))
+            .expect("the owner opens the booking card")["booking"]["deposit"]
+            .clone()
+    };
+
+    let now = now_secs().expect("clock");
+    stripe.lock().expect("fake stripe").refund_status = Some("pending".to_owned());
+    let drain = run_settle_pass(&fixture, now - 3_601).await;
+    assert_eq!(drain.pending, 1, "guard: Stripe holds the refund pending");
+    assert_eq!(refund_posts(&stripe), 1, "guard: the row asked once");
+
+    // The owner refunds 1000 of the 2500 owed by hand; Stripe then ends the
+    // row's own refund failed.
+    {
+        let mut stripe = stripe.lock().expect("fake stripe");
+        stripe.refund_status = None;
+        for refund in &mut stripe.refunds {
+            if refund.settle_key.is_some() {
+                refund.status = "failed".to_owned();
+            }
+        }
+        stripe.refunds.push(refund_by_hand(
+            "re_short_by_hand",
+            &payment_id,
+            1_000,
+            "succeeded",
+        ));
+    }
+    let drain = run_settle_pass(&fixture, now).await;
+    assert_eq!(
+        drain.refunded, 0,
+        "the owed half is not refunded: {drain:?}"
+    );
+    assert_eq!(refund_posts(&stripe), 1, "no refund is made here");
+    let stuck = deposit_line();
+    assert_eq!(
+        stuck["held"], "refund_ended_unpaid_part_refunded_by_hand",
+        "{stuck}"
+    );
+    assert_eq!(stuck["amount_minor"], 2_500, "{stuck}");
+    let line = stuck["line"].as_str().expect("the deposit line");
+    assert!(
+        line.contains(
+            "The refund of 2500 JPY to the visitor did not go through at Stripe, and refunds \
+             made by hand in the Stripe dashboard cover only part of it."
+        ),
+        "{line}"
+    );
+    assert_eq!(
+        deposit_state(&fixture, &payment_id),
+        DepositState::RefundDue {
+            amount_minor: 2_500
+        }
+    );
 }
 
 /// Stripe lists a payment's refunds at most 100 to a page, newest first. The
