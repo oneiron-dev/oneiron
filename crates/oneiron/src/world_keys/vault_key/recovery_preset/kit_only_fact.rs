@@ -129,7 +129,7 @@ impl Vault {
             return Ok(None);
         }
         let witness = self.owner_presence(
-            OwnerActImportance::Important,
+            OwnerActImportance::Ordinary,
             owner_presence_reasons::RECOVERY_PRESET,
         )?;
         Ok(Some(OwnerProofGround::witnessed(&witness)))
