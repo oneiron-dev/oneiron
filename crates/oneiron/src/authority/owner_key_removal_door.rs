@@ -60,7 +60,11 @@
 
 use std::collections::BTreeSet;
 
-use super::machine_answers::AnswerAct;
+mod machine_checks;
+
+use self::machine_checks::{
+    MachineRemovalAction, MachineRemovalCheckPhase, MachineRemovalPlan, MachineRemovalRequest,
+};
 use super::owner_key_enrollment_door::EntrySigner;
 use super::*;
 use crate::consent::AuthenticatedOwner;
@@ -186,6 +190,19 @@ pub enum MachineRemoval {
     LastDeviceKey(RemainingOwnerKeys),
 }
 
+/// What a removal door's checks before its first write answer.
+enum RemovalCheck<T> {
+    /// No owner key of this install proves now. On the read it is no answer:
+    /// a key under a device PIN proves only inside the window the ask opens,
+    /// so the door asks and no later check has run.
+    NoProvingKey,
+    /// The removal would end the last owner key held on a device and the
+    /// owner has not confirmed: the door's question, which writes nothing.
+    LastDeviceKey(RemainingOwnerKeys),
+    /// Every check passed on this fold: what the write needs.
+    Ready(AuthorityView, T),
+}
+
 impl Vault {
     /// The owner removes the enrolled owner key `key` and keeps its machine.
     /// This install's owner key signs one `RevokeDevice` of it, and the door
@@ -195,6 +212,11 @@ impl Vault {
     /// When no key held on a device would remain, the door asks first: it
     /// answers [`OwnerKeyRemoval::LastDeviceKey`] and writes nothing unless
     /// `confirmation` is given.
+    ///
+    /// The door checks on a read transaction before it asks for presence.
+    /// An answer the read can give writes nothing and raises no prompt.
+    /// If no owner key proves on the read, the door still checks presence:
+    /// a device PIN can let a key prove. The write checks again.
     ///
     /// # Errors
     /// [`RecordError::OwnerKeyRequired`] when this install holds no owner
@@ -211,34 +233,38 @@ impl Vault {
         key: [u8; 32],
         confirmation: LastDeviceKeyConfirmation,
     ) -> Result<OwnerKeyRemoval> {
+        self.remove_owner_key_between(owner, key, confirmation, || {})
+    }
+
+    /// Runs `between` after the door asks and before its write opens.
+    pub(crate) fn remove_owner_key_between(
+        &self,
+        owner: &AuthenticatedOwner,
+        key: [u8; 32],
+        confirmation: LastDeviceKeyConfirmation,
+        between: impl FnOnce(),
+    ) -> Result<OwnerKeyRemoval> {
+        if let RemovalCheck::LastDeviceKey(remaining) = self.read_removal_checks(|txn| {
+            self.key_removal_checks_in_txn(txn, owner, key, confirmation)
+        })? {
+            return Ok(OwnerKeyRemoval::LastDeviceKey(remaining));
+        }
         let witness = self.owner_presence(OwnerActImportance::Important, REMOVE_OWNER_KEY)?;
         let ground = OwnerProofGround::witnessed(&witness);
+        between();
         let mut txn = self.store.env.write_txn()?;
-        owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
-        let fold = self.authority_view_readonly_in_txn(&txn)?;
-        if !self.holds_proving_owner_key(&fold) {
-            return Err(Error::Record(RecordError::OwnerKeyRequired));
-        }
-        let enrolled = self
-            .enrolled_owner_keys_in_txn(&txn)?
-            .into_iter()
-            .find(|enrolled| enrolled.public_key == key)
-            .ok_or_else(|| authority_refused(NOT_ENROLLED))?;
-        if enrolled.recovery_authority || enrolled.device_machines.is_empty() {
-            return Err(authority_refused(RECOVERY_ROOT_KEY));
-        }
-        if !enrolled.live {
-            return Err(authority_refused(NOT_LIVE));
-        }
-        let ending = vec![enrolled];
-        if confirmation == LastDeviceKeyConfirmation::NotGiven {
-            let remaining = self.owner_keys_remaining_in_txn(&txn, &fold, &ending)?;
-            if remaining.needs_recovery() {
-                return Ok(OwnerKeyRemoval::LastDeviceKey(remaining));
-            }
-        }
+        let (fold, enrolled) =
+            match self.key_removal_checks_in_txn(&txn, owner, key, confirmation)? {
+                RemovalCheck::NoProvingKey => {
+                    return Err(Error::Record(RecordError::OwnerKeyRequired));
+                }
+                RemovalCheck::LastDeviceKey(remaining) => {
+                    return Ok(OwnerKeyRemoval::LastDeviceKey(remaining));
+                }
+                RemovalCheck::Ready(fold, enrolled) => (fold, enrolled),
+            };
         let ended = self
-            .end_owner_keys_in_txn(&mut txn, &ground, ending)?
+            .end_owner_keys_in_txn(&mut txn, &ground, vec![enrolled])?
             .pop()
             .ok_or_else(invalid_authority)?;
         let after = self.authority_view_readonly_in_txn(&txn)?;
@@ -250,6 +276,52 @@ impl Vault {
         txn.commit()?;
         self.note_committed_authority_rows(rows);
         Ok(OwnerKeyRemoval::Removed { ended, remaining })
+    }
+
+    /// Runs a removal's checks on a read transaction and drops it, so the
+    /// door holds nothing when it asks.
+    fn read_removal_checks<T>(
+        &self,
+        check: impl FnOnce(&heed::RoTxn<'_>) -> Result<RemovalCheck<T>>,
+    ) -> Result<RemovalCheck<T>> {
+        let txn = self.store.env.read_txn()?;
+        let read = check(&txn)?;
+        Ok(read)
+    }
+
+    /// Checks the key removal without signing. When no key proves now, the PIN can make
+    /// one prove after this read, so no later check runs on that view.
+    fn key_removal_checks_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        owner: &AuthenticatedOwner,
+        key: [u8; 32],
+        confirmation: LastDeviceKeyConfirmation,
+    ) -> Result<RemovalCheck<EnrolledOwnerKey>> {
+        owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        if !self.holds_proving_owner_key(&fold) {
+            return Ok(RemovalCheck::NoProvingKey);
+        }
+        let enrolled = self
+            .enrolled_owner_keys_in_txn(txn)?
+            .into_iter()
+            .find(|enrolled| enrolled.public_key == key)
+            .ok_or_else(|| authority_refused(NOT_ENROLLED))?;
+        if enrolled.recovery_authority || enrolled.device_machines.is_empty() {
+            return Err(authority_refused(RECOVERY_ROOT_KEY));
+        }
+        if !enrolled.live {
+            return Err(authority_refused(NOT_LIVE));
+        }
+        if confirmation == LastDeviceKeyConfirmation::NotGiven {
+            let remaining =
+                self.owner_keys_remaining_in_txn(txn, &fold, std::slice::from_ref(&enrolled))?;
+            if remaining.needs_recovery() {
+                return Ok(RemovalCheck::LastDeviceKey(remaining));
+            }
+        }
+        Ok(RemovalCheck::Ready(fold, enrolled))
     }
 
     /// The owner removes `machine`, from `surface` (audit only), as
@@ -269,10 +341,17 @@ impl Vault {
     /// removal never saw), the door ends them, under the same question, and
     /// answers the removal as it stands with those keys as ended.
     ///
+    /// The door checks on a read transaction before it asks for presence.
+    /// An answer the read can give writes nothing and raises no prompt.
+    /// If no owner key proves on the read, the door still checks presence:
+    /// a device PIN can let a key prove. The write checks again.
+    ///
     /// # Errors
     /// As [`Self::set_machine_role`], which also refuses a removed machine
     /// that no live owner key names; an authority refusal when the fold does
     /// not count a key's revocation, and then nothing is written.
+    /// [`Error::ConcurrentWrite`] when the keys the removal ends changed
+    /// since the owner was asked.
     pub fn remove_machine(
         &self,
         owner: &AuthenticatedOwner,
@@ -281,43 +360,80 @@ impl Vault {
         seen: Option<[u8; 32]>,
         confirmation: LastDeviceKeyConfirmation,
     ) -> Result<MachineRemoval> {
-        let witness = self.owner_presence(OwnerActImportance::Important, REMOVE_MACHINE)?;
-        let ground = OwnerProofGround::witnessed(&witness);
-        let mut txn = self.store.env.write_txn()?;
-        let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
-        let fold = self.authority_view_readonly_in_txn(&txn)?;
-        let ending = self.owner_keys_ending_with_machine_in_txn(&txn, &fold, machine)?;
-        if confirmation == LastDeviceKeyConfirmation::NotGiven && !ending.is_empty() {
-            let remaining = self.owner_keys_remaining_in_txn(&txn, &fold, &ending)?;
-            if remaining.needs_recovery() {
+        self.remove_machine_between(owner, surface, machine, seen, confirmation, || {})
+    }
+
+    /// Runs `between` after the door asks and before its write opens.
+    pub(crate) fn remove_machine_between(
+        &self,
+        owner: &AuthenticatedOwner,
+        surface: ActSurface,
+        machine: EntityId,
+        seen: Option<[u8; 32]>,
+        confirmation: LastDeviceKeyConfirmation,
+        between: impl FnOnce(),
+    ) -> Result<MachineRemoval> {
+        let request = MachineRemovalRequest {
+            surface,
+            machine,
+            seen,
+            confirmation,
+        };
+        let read = self.read_removal_checks(|txn| {
+            self.machine_removal_checks_in_txn(
+                txn,
+                owner,
+                &request,
+                MachineRemovalCheckPhase::BeforeAsk,
+            )
+        })?;
+        let asked_keys = match read {
+            RemovalCheck::NoProvingKey => None,
+            RemovalCheck::LastDeviceKey(remaining) => {
                 return Ok(MachineRemoval::LastDeviceKey(remaining));
             }
+            RemovalCheck::Ready(_, plan) => Some(ending_public_keys(&plan.ending)),
+        };
+        let witness = self.owner_presence(OwnerActImportance::Important, REMOVE_MACHINE)?;
+        let ground = OwnerProofGround::witnessed(&witness);
+        between();
+        let mut txn = self.store.env.write_txn()?;
+        let (fold, MachineRemovalPlan { ending, action }) = match self
+            .machine_removal_checks_in_txn(
+                &txn,
+                owner,
+                &request,
+                MachineRemovalCheckPhase::BeforeWrite,
+            )? {
+            // The write's checks never stop here: with no proving key they
+            // go on, and the removal ends no key.
+            RemovalCheck::NoProvingKey => {
+                return Err(Error::Record(RecordError::OwnerKeyRequired));
+            }
+            RemovalCheck::LastDeviceKey(remaining) => {
+                return Ok(MachineRemoval::LastDeviceKey(remaining));
+            }
+            RemovalCheck::Ready(fold, plan) => (fold, plan),
+        };
+        if asked_keys.is_some_and(|asked| asked != ending_public_keys(&ending)) {
+            return Err(Error::ConcurrentWrite(
+                "the owner keys this removal ends changed since the owner was asked",
+            ));
         }
-        // Removed in a head the machine stands under here, the roster's or
-        // the pinned anchor's, as `set_machine_role` reads it: the mark of an
-        // anchor this install does not pin removes nothing here.
-        let pin = fold.pinned_root.as_ref();
-        let removed = fold.machine(machine).filter(|folded| {
-            folded
-                .standing_heads(pin)
-                .into_iter()
-                .any(|head| head.removed)
-        });
-        if let Some(standing) = removed
-            && !ending.is_empty()
-        {
-            let receipt = self.end_keys_of_removed_machine_in_txn(
-                &mut txn, &ground, machine, standing, pin, seen, ending,
-            )?;
-            let rows = self.mark_rows_counted_since_in_txn(&mut txn, &fold)?;
-            txn.commit()?;
-            self.note_committed_authority_rows(rows);
-            return Ok(MachineRemoval::Written(receipt));
-        }
-        let proves_joins = owner.proves_joins_in_txn(self, &txn)?;
-        let mut answer =
-            AnswerAct::by_owner((actor, proves_joins), surface, MachineRole::Removed, seen);
-        answer.last_device_key = confirmation;
+        let answer = match action {
+            MachineRemovalAction::EndKeys => {
+                let pin = fold.pinned_root.as_ref();
+                let standing = fold.machine(machine).ok_or_else(invalid_authority)?;
+                let receipt = self.end_keys_of_removed_machine_in_txn(
+                    &mut txn, &ground, machine, standing, pin, seen, ending,
+                )?;
+                let rows = self.mark_rows_counted_since_in_txn(&mut txn, &fold)?;
+                txn.commit()?;
+                self.note_committed_authority_rows(rows);
+                return Ok(MachineRemoval::Written(receipt));
+            }
+            MachineRemovalAction::Answer(answer) => answer,
+        };
         let (landing, ended) = self.machine_role_answer_in_txn(
             &mut txn,
             &fold,
@@ -326,10 +442,10 @@ impl Vault {
             machine,
             MachineRole::Removed,
         )?;
-        // The keys the writer ended, as it ended them: the question above
+        // The keys the writer ended, as it ended them: the checks above
         // read `ending` before the writer judged the signer again, so a
         // signer gone since (a PIN window that closed, say) ends none, and
-        // one held since ends keys the question never read.
+        // one held since ends keys the checks never read.
         let ended_keys: Vec<[u8; 32]> = ended.iter().map(|key| key.public_key).collect();
         let ends_recovery_root = self.ends_recovery_root_in_txn(&txn, &ended_keys)?;
         let live_keys: Vec<[u8; 32]> = self
@@ -376,11 +492,7 @@ impl Vault {
         seen: Option<[u8; 32]>,
         ending: Vec<EnrolledOwnerKey>,
     ) -> Result<MachineRemovalReceipt> {
-        if seen.is_some_and(|seen| seen != standing.answer_revision(pin)) {
-            return Err(Error::ConcurrentWrite(
-                "the machine's answer changed since it was read",
-            ));
-        }
+        check_removed_machine_revision(standing, pin, seen)?;
         let ended_keys: Vec<[u8; 32]> = self
             .end_owner_keys_in_txn(txn, ground, ending)?
             .into_iter()
@@ -465,10 +577,22 @@ impl Vault {
         fold: &AuthorityFold,
         machine: EntityId,
     ) -> Result<Vec<EnrolledOwnerKey>> {
+        Ok(self
+            .proving_owner_keys_ending_with_machine_in_txn(txn, fold, machine)?
+            .unwrap_or_default())
+    }
+
+    /// The machine's ending keys if a key proves now, or no answer if none proves.
+    fn proving_owner_keys_ending_with_machine_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        fold: &AuthorityFold,
+        machine: EntityId,
+    ) -> Result<Option<Vec<EnrolledOwnerKey>>> {
         if !self.holds_proving_owner_key(fold) {
-            return Ok(Vec::new());
+            return Ok(None);
         }
-        self.device_keys_of_machine_in_txn(txn, machine)
+        self.device_keys_of_machine_in_txn(txn, machine).map(Some)
     }
 
     /// Whether `ended`, the keys an act's write ended, hold the recovery
@@ -601,6 +725,25 @@ impl Vault {
         }
         Ok(ended)
     }
+}
+
+/// Checks the revision before ending keys on an already removed machine.
+fn check_removed_machine_revision(
+    standing: &FoldedMachine,
+    pin: Option<&PinnedRoot>,
+    seen: Option<[u8; 32]>,
+) -> Result<()> {
+    if seen.is_some_and(|seen| seen != standing.answer_revision(pin)) {
+        return Err(Error::ConcurrentWrite(
+            "the machine's answer changed since it was read",
+        ));
+    }
+    Ok(())
+}
+
+/// The distinct public keys a removal would end.
+fn ending_public_keys(ending: &[EnrolledOwnerKey]) -> BTreeSet<[u8; 32]> {
+    ending.iter().map(|enrolled| enrolled.public_key).collect()
 }
 
 /// Whether `keys` hold the recovery root's authority key: a key that a
