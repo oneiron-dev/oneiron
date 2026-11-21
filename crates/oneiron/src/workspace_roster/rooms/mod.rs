@@ -33,6 +33,7 @@ mod peer_settings;
 mod pins;
 mod private_threads;
 mod replica;
+mod retry_claim;
 mod speaking;
 #[cfg(test)]
 mod tests;
@@ -172,7 +173,11 @@ pub use upkeep_voice::{
     RoomUpkeepNudge, RoomUpkeepPendingRequest, RoomUpkeepVoiceReceipt, RoomUpkeepVoiceRequest,
 };
 pub use wake::{ROOM_WAKE_ATTEMPT_KIND, RoomWake, RoomWakeTurn, StagedRoomWake};
-pub(crate) use witness::{RoomRegenerationPermit, admit_witness, erase_turn_actor_in_txn};
+#[cfg(oneiron_test_support)]
+pub(crate) use witness::claim_doors as claim_erase_doors;
+pub(crate) use witness::{
+    RoomRegenerationPermit, admit_witness, erase_claim_actor_in_txn, erase_turn_actor_in_txn,
+};
 
 /// One addressed room turn (actor, addressed agents, message ids, reply/thread links). Key: id16
 /// (turn id).
