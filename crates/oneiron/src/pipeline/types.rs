@@ -207,10 +207,11 @@ pub(super) struct PipelineFilterConfig<'a> {
     /// row the audience may not read takes no place in a vector, text,
     /// temporal or typed media fetch
     /// (PACK-PRESELECT-CLAMP-ROW-ONLY-DISPLACES-READABLE-HIT). Set by
-    /// `PipelineBuilder::bounded_result_filters` and, for the phonetic sound
-    /// match and learned walk, `PipelineBuilder::phonetic_candidate_admits`.
-    /// `None` in the run's shared config, whose other reads keep the row's
-    /// own test (`retained_copies::clamp_prefilter_admits`).
+    /// `PipelineBuilder::bounded_result_filters`; for the phonetic sound
+    /// match and learned walk, `PipelineBuilder::phonetic_candidate_admits`;
+    /// and for a narrowed PPR walk's visibility, `pipeline_ppr_visibility`
+    /// (REVIEW-10215 round 1). `None` in the run's shared config, whose other
+    /// reads keep the row's own test (`retained_copies::clamp_prefilter_admits`).
     pub(super) disclosure_word_sources: Option<&'a crate::Vault>,
     /// The call's `made_by` slice (Rule A, OF-466) at a bounded result
     /// channel's admission, so a row the call drops takes no place in a
