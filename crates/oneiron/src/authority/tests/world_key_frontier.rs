@@ -1,10 +1,12 @@
 //! A world whose live settings edits outgrow one key record (Engine rulings
 //! on the owner's rate law, 2026-10-15). A key record names every live edit
 //! of its world, and one record names at most `MAX_PARENTS` parents: a
-//! format bound, never a lockout. The key door refuses with the way out and
-//! raises OF-520's question. A pin door keeps the key in a bridge record, to
-//! the root and to itself alone, and goes on. One machine's settings merge
-//! makes the key recordable for every reader again.
+//! format bound, never a lockout. Since FIX 8497 the key door and a pin
+//! door's wrap step join a frontier wider than one record names first and
+//! wrap on it, so neither refuses for a count. A pin door's pre-wrap on the
+//! old pin's own rows keeps the key in a bridge record, to the root and to
+//! itself alone, raises OF-520's question and goes on. One machine's
+//! settings merge makes the key recordable for every reader again.
 use std::collections::BTreeSet;
 
 use super::machine_identity::{Host, host};
@@ -16,22 +18,24 @@ use super::world_privacy::{settings, world_row};
 use super::world_reissue::{admit, issue, profiled, set_on, sync, with_predecessor};
 use super::*;
 use crate::Vault;
-use crate::error::{Error, SecretError};
-use crate::world_keys::{Withheld, WorldKeyFrontierCheck};
+use crate::world_keys::{Withheld, WorldKeyStatus};
 
-const WAY_OUT: &str = "merge this world's settings from one machine that sees every edit";
-
-/// `by` signs 40 concurrent edits of `world` on `vault`'s heads and the
-/// world's live edits, each keeping it `MyMachines`: more live edits than
-/// one record names.
+/// `by` signs 40 concurrent edits of `world` on the world's live edits and
+/// `vault`'s heads, each keeping it `MyMachines`: more live edits than one
+/// record names. Settings edits are main-log rows, so an earlier flood's
+/// edits are heads here too; the edits name every live edit and then heads
+/// up to `MAX_PARENTS`, as many parents as one entry may name.
 fn flood_on(vault: &Vault, host: &Host, by: &Keyed, world: EntityId) {
     let fold = vault.authority_fold().unwrap();
     let signer = authority_key_from_ed(&by.signing);
     let seq = fold.append_sequences.get(&signer).map_or(1, |seq| seq + 1);
-    let mut parents = fold.append_heads.clone();
-    if let Some(folded) = fold.worlds.get(&world) {
-        parents.extend(folded.live.keys().copied());
-    }
+    let mut parents: BTreeSet<_> = fold
+        .worlds
+        .get(&world)
+        .map(|folded| folded.live.keys().copied().collect())
+        .unwrap_or_default();
+    let room = MAX_PARENTS.saturating_sub(parents.len());
+    parents.extend(fold.append_heads.iter().copied().take(room));
     let rows: Vec<_> = (0..40)
         .map(|ts| {
             let entry = unsigned_entry(
@@ -61,16 +65,20 @@ fn flood(host: &Host, by: &Keyed, world: EntityId) {
     flood_on(&host.vault, host, by, world);
 }
 
-/// Check (Engine, 2026-10-15): the key door refuses a world past the bound
-/// with the way out and raises its question. A kit restore over that vault
-/// pins and keeps every key: the wide world's key goes to the root and to
-/// the restored machine in a bridge record, never to anyone else. Once the
-/// restored machine merges the world's settings, the machine that waited
-/// gets the same key. Before, the restore withheld the wide world's key
-/// (and before that refused whole, leaving an unpinned install that could
-/// not merge).
+/// Check (Engine, 2026-10-15), as FIX 7908 and FIX 8497 left it: a world
+/// whose live edits outgrow one record stops no door. One machine of the
+/// owner's floods two worlds, one keyed and one not, and a machine joins
+/// after the flood. The key door joins the wide frontier and mints the
+/// unkeyed world's key on it, wrapped to the machine that joined later, and
+/// raises no question. A kit restore over that vault pins and keeps every
+/// key and wraps each to the root, to the restored machine and to the
+/// machine that joined later. A settings merge from the restored machine
+/// keeps the wide world's key. Before FIX 8497, the key door refused the
+/// unkeyed world with the way out, and the restore kept the wide world's
+/// key in a bridge record to the root and itself alone while the later
+/// machine waited for that merge.
 #[test]
-fn a_restore_past_one_wide_world_pins_and_withholds_only_that_key() {
+fn a_restore_past_two_wide_worlds_pins_and_wraps_every_key() {
     let host = host();
     enrol_own(&host);
     let flooder = keyed_machine(&host, 46);
@@ -97,27 +105,24 @@ fn a_restore_past_one_wide_world_pins_and_withholds_only_that_key() {
     assert_eq!(fold.worlds[&wide].live.len(), 40);
     assert_eq!(fold.worlds[&unkeyed].live.len(), 40);
 
-    // The key door refuses the unkeyed world with the way out, and raises
-    // its question.
-    let refused = host
-        .vault
-        .ensure_world_key(&host.owner, unkeyed)
-        .unwrap_err();
+    // The key door joins the wide frontier and mints the unkeyed world's
+    // key on it, wrapped to the machine that joined later; no question is
+    // raised.
+    let WorldKeyStatus::Minted(unkeyed_key) =
+        host.vault.ensure_world_key(&host.owner, unkeyed).unwrap()
+    else {
+        panic!("the unkeyed world's first key mints on the joined frontier");
+    };
+    let fold = host.vault.authority_fold().unwrap();
+    assert_eq!(fold.current_world_key(unkeyed).unwrap().id, unkeyed_key);
+    let to_late = WrapRecipient::Machine(late.machine);
     assert!(
-        matches!(&refused, Error::Secret(SecretError::WorldKeyRefused(reason)) if reason.contains(WAY_OUT)),
-        "{refused:?}"
-    );
-    assert!(
-        host.vault
-            .authority_fold()
+        fold.world_key(&unkeyed_key)
             .unwrap()
-            .current_world_key(unkeyed)
-            .is_none()
+            .wraps
+            .contains_key(&to_late)
     );
-    let [check] = host.vault.world_key_frontier_checks().try_into().unwrap();
-    assert_eq!((check.world, check.bound), (unkeyed, MAX_PARENTS));
-    assert!(check.rows > MAX_PARENTS);
-    assert_eq!(WorldKeyFrontierCheck::KIND, "world_key_frontier_wide");
+    assert!(host.vault.world_key_frontier_checks().is_empty());
 
     let Fresh {
         _backups,
@@ -128,56 +133,31 @@ fn a_restore_past_one_wide_world_pins_and_withholds_only_that_key() {
     let restore = fresh.restore_world_keys(&owner, &seed, None).unwrap();
     let here = fresh.local_machine().unwrap().unwrap();
     assert!(here.mine);
-    // The wide world's key goes to the root and to this machine in a bridge
-    // record, and to no one else: the machine that joined later waits.
+    // Every key stays usable, and each goes to the root, to this machine
+    // and to the machine that joined later.
+    let keys = [calm_key, wide_key, unkeyed_key];
     assert_eq!(
         restore.usable.iter().copied().collect::<BTreeSet<_>>(),
-        BTreeSet::from([calm_key, wide_key]),
+        BTreeSet::from(keys),
         "{restore:?}"
     );
     assert!(restore.withheld.is_empty(), "{restore:?}");
     assert!(restore.needs_rehome.is_empty());
     assert_eq!(fresh.world_key(calm).unwrap().id(), &calm_key);
     assert_eq!(fresh.world_key(wide).unwrap().id(), &wide_key);
+    assert_eq!(fresh.world_key(unkeyed).unwrap().id(), &unkeyed_key);
     let root = WrapRecipient::RecoveryRoot(fresh.owner_root_view(None, 0).unwrap().pinned.unwrap());
-    let own: Vec<_> = key_records(&fresh, wide)
-        .into_iter()
-        .filter(|record| record.key == wide_key && record.machine == here.id)
-        .collect();
-    assert!(!own.is_empty());
-    for record in &own {
-        assert!(
-            record
-                .wraps
-                .iter()
-                .all(|(to, _)| *to == root || *to == WrapRecipient::Machine(here.id)),
-            "{:?}",
-            record.wraps.iter().map(|(to, _)| *to).collect::<Vec<_>>()
-        );
+    let fold = fresh.authority_fold().unwrap();
+    for key in keys {
+        let wraps = &fold.world_key(&key).unwrap().wraps;
+        for to in [root, WrapRecipient::Machine(here.id), to_late] {
+            assert!(wraps.contains_key(&to), "{key:?} {to:?}");
+        }
     }
-    let to_late = WrapRecipient::Machine(late.machine);
-    let wraps_of = |vault: &Vault| {
-        vault
-            .authority_fold()
-            .unwrap()
-            .world_key(&wide_key)
-            .unwrap()
-            .wraps
-            .contains_key(&to_late)
-    };
-    assert!(!wraps_of(&fresh));
-    assert_eq!(
-        fresh
-            .world_key_frontier_checks()
-            .iter()
-            .map(|check| check.world)
-            .collect::<Vec<_>>(),
-        vec![wide]
-    );
+    assert!(fresh.world_key_frontier_checks().is_empty());
 
-    // The way out: the restored machine, now mine, merges the world's
-    // settings, and the same door's ensure step wraps the original key to
-    // the machine that waited.
+    // The restored machine, now mine, merges the world's settings and keeps
+    // the same key.
     fresh
         .set_world_privacy_as(
             &owner,
@@ -188,14 +168,15 @@ fn a_restore_past_one_wide_world_pins_and_withholds_only_that_key() {
         )
         .unwrap();
     assert_eq!(fresh.authority_fold().unwrap().worlds[&wide].live.len(), 1);
-    assert!(wraps_of(&fresh));
     assert_eq!(fresh.world_key(wide).unwrap().id(), &wide_key);
 }
 
 /// Astra S2-R2 A2-F5: a key whose root and own wraps already count stays
 /// usable when another reader's wrap has to wait. Before, a same-root
 /// restore withheld the whole key as `FrontierWide` because one machine
-/// that joined later lacked a wrap.
+/// that joined later lacked a wrap. Since FIX 8497 the wrap step joins a
+/// frontier wider than one record names first, so that reader no longer
+/// waits: the restore wraps it too and raises no question.
 #[test]
 fn a_deferred_reader_never_hides_a_usable_restore_key() {
     let host = host();
@@ -225,18 +206,10 @@ fn a_deferred_reader_never_hides_a_usable_restore_key() {
         .unwrap();
     assert_eq!(restore.usable, vec![key], "{restore:?}");
     assert!(restore.withheld.is_empty(), "{restore:?}");
-    assert_eq!(
-        host.vault
-            .world_key_frontier_checks()
-            .iter()
-            .map(|check| check.world)
-            .collect::<Vec<_>>(),
-        vec![wide]
-    );
+    assert!(host.vault.world_key_frontier_checks().is_empty());
     let fold = host.vault.authority_fold().unwrap();
     assert!(
-        !fold
-            .world_key(&key)
+        fold.world_key(&key)
             .unwrap()
             .wraps
             .contains_key(&WrapRecipient::Machine(late.machine))
@@ -320,9 +293,10 @@ fn a_skipped_pre_wrap_keeps_the_key_for_a_re_run() {
 
 /// Astra #1422d F1: the settings door counts each parent once. This machine
 /// signs E, making the world its own, and machine B signs, concurrently
-/// with E, as many edits making it B's as fill one entry beside E and the
-/// main log's heads. No key record follows E, so E is this machine's last
-/// row of the world. The owner resolves the conflict to B here in one edit,
+/// with E, as many edits making it B's as fill one entry beside E. Settings
+/// edits are main-log rows, so these edits are then the main log's heads as
+/// well as the world's live edits. No key record follows E, so E is this
+/// machine's last row of the world. The owner resolves the conflict to B here in one edit,
 /// with no move here first: E, the edit's chain parent, is one of the live
 /// edits. Fails before: the door counted E twice, as the chain and as a
 /// live edit, and refused the request for count.
@@ -339,7 +313,6 @@ fn a_conflict_that_fills_one_entry_resolves_in_one_edit() {
             .unwrap()
             .unwrap()
     };
-    let heads = host.vault.authority_fold().unwrap().append_heads.len();
     let mut concurrent = vec![edit_by(
         &host,
         here,
@@ -347,7 +320,7 @@ fn a_conflict_that_fills_one_entry_resolves_in_one_edit() {
         world,
         settings(ReadLocation::OneMachine(here)),
     )];
-    concurrent.extend((0..MAX_PARENTS - heads - 1).map(|ts| {
+    concurrent.extend((0..MAX_PARENTS - 1).map(|ts| {
         let mut entry = edit_by(
             &host,
             other,
@@ -360,8 +333,8 @@ fn a_conflict_that_fills_one_entry_resolves_in_one_edit() {
     }));
     land(&host, &concurrent);
     let fold = host.vault.authority_fold().unwrap();
-    assert_eq!(fold.append_heads.len(), heads);
-    assert_eq!(fold.worlds[&world].live.len(), MAX_PARENTS - heads);
+    assert_eq!(fold.append_heads.len(), MAX_PARENTS);
+    assert_eq!(fold.worlds[&world].live.len(), MAX_PARENTS);
     assert_eq!(
         read_of(&host, world),
         EffectiveRead::Conflicted {
