@@ -240,6 +240,7 @@ def main():
     p.add_argument("--recurrent-cache-gib", type=int, default=4)
     p.add_argument("--draft-ring-pages", type=int, default=None,
                    help="the draft KV ring per slot (default: exl3_server.py's; 0 turns it off)")
+    worker.add_speed_part_flags(p)
     p.add_argument("--default-max-tokens", type=int, default=4096)
     p.add_argument("--model-id", default="qwen3.8-27b")
     p.add_argument("--weights-manifest")

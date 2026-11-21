@@ -134,18 +134,6 @@ pub(crate) struct LicencePolicy {
     pub(crate) admit_noncommercial: bool,
 }
 
-/// The vault this process serves, whose owner's choice [`LicencePolicy::bound`]
-/// reads; bound when the server is built.
-static LICENCE_VAULT: RwLock<Option<Weak<oneiron::Vault>>> = RwLock::new(None);
-
-/// Binds the vault whose owner's licence choice this process's model
-/// installs read.
-pub(crate) fn bind_licence_vault(vault: &Arc<oneiron::Vault>) {
-    *LICENCE_VAULT
-        .write()
-        .unwrap_or_else(PoisonError::into_inner) = Some(Arc::downgrade(vault));
-}
-
 impl LicencePolicy {
     /// The choice `vault`'s owner made, read now. A key that does not read
     /// keeps today's refusal.
@@ -162,16 +150,33 @@ impl LicencePolicy {
             admit_noncommercial,
         }
     }
+}
 
-    /// The choice of the vault this process serves, read now; with none
-    /// bound (a process that serves no vault), today's refusal.
-    pub(crate) fn bound() -> Self {
-        let vault = LICENCE_VAULT
+/// The vault whose owner's licence choice a worker host's model installs
+/// read, bound when the server is built. The host shares it with each of its
+/// launchers, and each install reads the choice when it runs
+/// ([`LicenceVault::policy`]).
+#[derive(Default)]
+pub(crate) struct LicenceVault(RwLock<Option<Weak<oneiron::Vault>>>);
+
+impl LicenceVault {
+    /// Binds `vault`, whose owner's choice the installs read from now on.
+    pub(crate) fn bind(&self, vault: &Arc<oneiron::Vault>) {
+        *self.0.write().unwrap_or_else(PoisonError::into_inner) = Some(Arc::downgrade(vault));
+    }
+
+    /// The choice of the bound vault's owner, read now; with none bound (a
+    /// process that serves no vault), today's refusal.
+    pub(crate) fn policy(&self) -> LicencePolicy {
+        let vault = self
+            .0
             .read()
             .unwrap_or_else(PoisonError::into_inner)
             .as_ref()
             .and_then(Weak::upgrade);
-        vault.map_or_else(Self::default, |vault| Self::for_vault(&vault))
+        vault.map_or_else(LicencePolicy::default, |vault| {
+            LicencePolicy::for_vault(&vault)
+        })
     }
 }
 

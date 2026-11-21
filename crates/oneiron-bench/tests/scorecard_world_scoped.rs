@@ -12,31 +12,30 @@
 use std::path::Path;
 use std::process::Command;
 
+use oneiron_contracts::fingerprint::purposes::bench_scorecard::{
+    WORLD_SCOPED_PARAMS, WORLD_SCOPED_PARTITION,
+};
+use oneiron_contracts::fingerprint::{ContentHash, Fingerprint, Fingerprinter};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 /// A 40-hex engine commit for the fixtures.
 const ENGINE_COMMIT: &str = "0123456789012345678901234567890123456789";
 
-/// The arm's partition domain (`scorecard/world_scoped/partition.rs`).
-const PARTITION_DOMAIN: &[u8] = b"oneiron-bench.scorecard.world-scoped.partition.v1\0";
-
 /// The fixture's partition: seed 0, half the records hidden.
 const SEED: u32 = 0;
 const HIDDEN_SHARE: u32 = 500;
 
-/// Whether the arm puts `record_id` in the second world: the first 8 bytes
-/// of sha256(domain || seed as 4 little-endian bytes || record id), read
-/// big-endian, modulo 1000, fall below the share.
+/// Whether the arm puts `record_id` in the second world
+/// (`scorecard/world_scoped/partition.rs`): the first 8 bytes of the
+/// fingerprint `WORLD_SCOPED_PARTITION` of (seed as 4 little-endian bytes,
+/// record id), read big-endian, modulo 1000, fall below the share.
 fn hidden(record_id: &str) -> bool {
-    let mut hasher = Sha256::new();
-    hasher.update(PARTITION_DOMAIN);
-    hasher.update(SEED.to_le_bytes());
-    hasher.update(record_id.as_bytes());
-    let digest = hasher.finalize();
-    let mut head = [0u8; 8];
-    head.copy_from_slice(&digest[..8]);
-    u64::from_be_bytes(head) % 1000 < u64::from(HIDDEN_SHARE)
+    let draw = Fingerprint::of_parts(
+        WORLD_SCOPED_PARTITION,
+        &[&SEED.to_le_bytes(), record_id.as_bytes()],
+    );
+    u64::from_be_bytes(draw.prefix::<8>()) % 1000 < u64::from(HIDDEN_SHARE)
 }
 
 /// The first `count` ids `rec-<n>` the partition puts in (`want_hidden`) or
@@ -202,14 +201,24 @@ fn world_scoped_arm_serves_and_grades_readable_records_only() {
     let stdout = String::from_utf8_lossy(&result.stdout);
     assert!(
         result.status.success(),
-        "the world-scoped arm runs (on main the arm and its flags are unknown, exit 2), and a \
-         second-world record served to the agent would fail it: stdout {stdout} stderr {stderr}"
+        "the world-scoped arm runs, and a second-world record served to the agent would fail \
+         it: stdout {stdout} stderr {stderr}"
     );
     let line = summary(&result);
     assert_eq!(line["arm"], "world-scoped");
     assert_eq!(line["retriever"], "world-scoped-text");
     assert_eq!(line["hidden_share_permille"], HIDDEN_SHARE);
     assert_eq!(line["partition_seed"], SEED);
+    assert_eq!(
+        line["params_digest"],
+        Fingerprinter::new(WORLD_SCOPED_PARAMS)
+            .part(b"world-scoped-text")
+            .u64(u64::from(HIDDEN_SHARE))
+            .u64(u64::from(SEED))
+            .finish()
+            .to_hex(),
+        "the params digest is the fingerprint of the retriever, the share and the seed"
+    );
     assert_eq!(
         line["records_hidden"], 3,
         "three records sit in the second world"
@@ -227,9 +236,9 @@ fn world_scoped_arm_serves_and_grades_readable_records_only() {
     hidden_ids.sort();
     assert_eq!(
         line["partition_digest"],
-        sha256_hex(&serde_json::to_vec(&hidden_ids).expect("hidden ids JSON")),
-        "the partition pin hashes the sorted hidden ids as a JSON array: an id holding a \
-         newline cannot make two partitions hash alike"
+        ContentHash::of(&serde_json::to_vec(&hidden_ids).expect("hidden ids JSON")).to_hex(),
+        "the partition pin is the content hash of the sorted hidden ids as a JSON array: an \
+         id holding a newline cannot make two partitions hash alike"
     );
     assert_eq!(
         line["queries_dropped"], 1,

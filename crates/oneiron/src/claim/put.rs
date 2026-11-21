@@ -40,8 +40,10 @@ impl Vault {
     /// supersession chain and this one cannot honour the contract.
     ///
     /// Approving a bound pending Dreamer consent also consolidates VAD after
-    /// commit. A consolidation error is returned with Approved retained. Retry
-    /// [`Vault::consolidate_claim_vad`] for that id to finish this postcommit work.
+    /// commit, once, through the vault's write door: on the calling thread
+    /// when no payment worker is attached, where a consolidation error is
+    /// returned with Approved retained (retry [`Vault::consolidate_claim_vad`]
+    /// for that id to finish this postcommit work), or in the payment worker.
     pub fn put_claim(
         &self,
         id: &EntityId,
@@ -49,33 +51,30 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<()> {
-        let mut wtxn = self.store.env.write_txn()?;
-        let rekeys = crate::channel_identity::AssignmentRekeys::begin(&self.store);
-        let pending = self.pending_dreamer_vad_approval_in_txn(&wtxn, id, body.approval)?;
-        self.put_claim_in_txn(&mut wtxn, id, body, occurred, learned_at)?;
-        if body.predicate == crate::calendar::claims::PREDICATE_CALENDAR_PASSPORT {
-            crate::calendar::settle_generic_calendar_claim_in_txn(
-                self,
-                &mut wtxn,
-                id,
-                self.store.clock.now_recorded_at(),
-            )?;
-        }
-        let approved = self.resolved_dreamer_vad_approvals_in_txn(&wtxn, pending.then_some(*id))?;
-        // The approval's commit carries its consolidation debt (FIX 9598).
-        if !approved.is_empty() {
-            let now = self.store.clock.now_recorded_at();
-            crate::store::owe_claim_vad_in_txn(&self.store, &mut wtxn, &approved, now)?;
-        }
-        rekeys.finish(&self.store, &mut wtxn)?;
-        wtxn.commit()?;
-        self.store.notify_proactivity_changes();
-        // Canonical consolidation opens its own writer only after durable
-        // approval. Errors remain errors, without rolling back Approved.
-        for claim_id in approved {
-            self.consolidate_claim_vad_now(&claim_id, self.store.clock.now_recorded_at())?;
-        }
-        Ok(())
+        self.with_write_txn(|wtxn| {
+            let pending = self.pending_dreamer_vad_approval_in_txn(&*wtxn, id, body.approval)?;
+            self.put_claim_in_txn(wtxn, id, body, occurred, learned_at)?;
+            if body.predicate == crate::calendar::claims::PREDICATE_CALENDAR_PASSPORT {
+                crate::calendar::settle_generic_calendar_claim_in_txn(
+                    self,
+                    wtxn,
+                    id,
+                    self.store.clock.now_recorded_at(),
+                )?;
+            }
+            // The door resolves the approval, owes its consolidation debt in
+            // this commit (FIX 9598) and pays it once after the commit, as it
+            // does for a batch's approvals (review 10144 round 1: a second
+            // consolidation here doubled the edge change events).
+            if pending {
+                crate::batch::queue_dreamer_vad_approvals(self, wtxn, vec![*id]);
+            }
+            crate::batch::queue_proactivity_change(self, wtxn);
+            // The put row, for the live mirror (FIX CLAIM-RAW-TXN-DOORS-DROP-LIVE-WINDOW-ROWS).
+            #[cfg(feature = "sync")]
+            crate::batch::queue_committed_rows(self, wtxn, std::collections::BTreeSet::from([*id]));
+            Ok(())
+        })
     }
 
     /// Transaction-composable [`Vault::put_claim`]. The caller owns commit;
@@ -460,16 +459,18 @@ impl Vault {
         // session-routed one, which composes onto this same helper — are
         // covered by the one check because both arrive through this door.
         crate::batch::reject_family_owned_candidate(&candidate)?;
-        let mut wtxn = self.store.env.write_txn()?;
-        let rekeys = crate::channel_identity::AssignmentRekeys::begin(&self.store);
-        landing(&wtxn)?;
-        self.validate_code_run_claim_target_in_txn(&wtxn, id, Some(candidate.predicate()))?;
-        crate::memory::guard_existing_claim_in_txn(self, &wtxn, envelope.actor(), *id)?;
-        self.apply_candidate_in_txn(&mut wtxn, *id, candidate, envelope, occurred, learned_at)?;
-        rekeys.finish(&self.store, &mut wtxn)?;
-        wtxn.commit()?;
-        self.store.notify_proactivity_changes();
-        Ok(())
+        self.with_write_txn(|wtxn| {
+            landing(&*wtxn)?;
+            self.validate_code_run_claim_target_in_txn(&*wtxn, id, Some(candidate.predicate()))?;
+            crate::memory::guard_existing_claim_in_txn(self, &*wtxn, envelope.actor(), *id)?;
+            self.apply_candidate_in_txn(wtxn, *id, candidate, envelope, occurred, learned_at)?;
+            crate::batch::queue_proactivity_change(self, wtxn);
+            // The candidate row, for the live mirror (FIX
+            // CLAIM-RAW-TXN-DOORS-DROP-LIVE-WINDOW-ROWS).
+            #[cfg(feature = "sync")]
+            crate::batch::queue_committed_rows(self, wtxn, std::collections::BTreeSet::from([*id]));
+            Ok(())
+        })
     }
 
     /// [`Self::put_claim_candidate_with_landing`] with one more step in the
@@ -493,17 +494,19 @@ impl Vault {
     ) -> Result<()> {
         // The same family rule and guards as the candidate door above.
         crate::batch::reject_family_owned_candidate(&candidate)?;
-        let mut wtxn = self.store.env.write_txn()?;
-        let rekeys = crate::channel_identity::AssignmentRekeys::begin(&self.store);
-        landing(&wtxn)?;
-        self.validate_code_run_claim_target_in_txn(&wtxn, id, Some(candidate.predicate()))?;
-        crate::memory::guard_existing_claim_in_txn(self, &wtxn, envelope.actor(), *id)?;
-        self.apply_candidate_in_txn(&mut wtxn, *id, candidate, envelope, occurred, learned_at)?;
-        after_apply(self, &mut wtxn, id)?;
-        rekeys.finish(&self.store, &mut wtxn)?;
-        wtxn.commit()?;
-        self.store.notify_proactivity_changes();
-        Ok(())
+        self.with_write_txn(|wtxn| {
+            landing(&*wtxn)?;
+            self.validate_code_run_claim_target_in_txn(&*wtxn, id, Some(candidate.predicate()))?;
+            crate::memory::guard_existing_claim_in_txn(self, &*wtxn, envelope.actor(), *id)?;
+            self.apply_candidate_in_txn(wtxn, *id, candidate, envelope, occurred, learned_at)?;
+            after_apply(self, wtxn, id)?;
+            crate::batch::queue_proactivity_change(self, wtxn);
+            // The candidate row, for the live mirror (FIX
+            // CLAIM-RAW-TXN-DOORS-DROP-LIVE-WINDOW-ROWS).
+            #[cfg(feature = "sync")]
+            crate::batch::queue_committed_rows(self, wtxn, std::collections::BTreeSet::from([*id]));
+            Ok(())
+        })
     }
 
     /// `landing` runs first in the write transaction; its refusal writes
@@ -528,115 +531,120 @@ impl Vault {
             return Err(Error::Claim(ClaimError::ClaimSelfSupersession));
         }
 
-        let mut wtxn = self.store.env.write_txn()?;
-        let rekeys = crate::channel_identity::AssignmentRekeys::begin(&self.store);
-        landing(&wtxn)?;
-        self.validate_code_run_write_actor_binding_in_txn(&wtxn, envelope)?;
-        // The write-verb guard runs BEFORE the gate checks, because those
-        // deliberately COMMIT their decision receipts on rejection. A stale
-        // target is not a policy question the gate ever gets to answer, and a
-        // rejected code-run supersession must leave no receipt behind.
-        let (mut old_body, old_header) = self.guarded_claim_target_parts_in(&wtxn, old_id)?;
-        self.validate_code_run_claim_target_in_txn(&wtxn, old_id, None)?;
-        self.validate_code_run_claim_target_in_txn(&wtxn, new_id, None)?;
-        crate::memory::require_claim_self_grant_in_txn(
-            self,
-            &wtxn,
-            envelope.actor(),
-            *old_id,
-            &old_body,
-            "memory.claim.supersede",
-        )?;
-        let new_body = self
-            .get_claim_in_txn(&wtxn, new_id)?
-            .ok_or(Error::EntityNotFound)?;
-        crate::memory::require_claim_self_grant_in_txn(
-            self,
-            &wtxn,
-            envelope.actor(),
-            *new_id,
-            &new_body,
-            "memory.claim.edit",
-        )?;
+        let outcome: Result<()> = self.with_write_txn(|wtxn| {
+            landing(&*wtxn)?;
+            self.validate_code_run_write_actor_binding_in_txn(wtxn, envelope)?;
+            // The write-verb guard runs BEFORE the gate checks, because those
+            // deliberately COMMIT their decision receipts on rejection. A stale
+            // target is not a policy question the gate ever gets to answer, and a
+            // rejected code-run supersession must leave no receipt behind.
+            let (mut old_body, old_header) = self.guarded_claim_target_parts_in(&*wtxn, old_id)?;
+            self.validate_code_run_claim_target_in_txn(&*wtxn, old_id, None)?;
+            self.validate_code_run_claim_target_in_txn(&*wtxn, new_id, None)?;
+            crate::memory::require_claim_self_grant_in_txn(
+                self,
+                &*wtxn,
+                envelope.actor(),
+                *old_id,
+                &old_body,
+                "memory.claim.supersede",
+            )?;
+            let new_body = self
+                .get_claim_in_txn(&*wtxn, new_id)?
+                .ok_or(Error::EntityNotFound)?;
+            crate::memory::require_claim_self_grant_in_txn(
+                self,
+                &*wtxn,
+                envelope.actor(),
+                *new_id,
+                &new_body,
+                "memory.claim.edit",
+            )?;
 
-        let policy = crate::gate::resolve_policy_manifest(&self.store, &wtxn)?;
-        // Both bodies are host-typed synthetic effect bodies for ONE memory
-        // verb — gate material this door builds, never claim candidates it
-        // persists — so they carry the operation-effect mode. The supersession
-        // itself (the lifecycle Put and the Supersedes edge below) is what
-        // lands; neither gate body is ever written as a claim.
-        if let Err(err) = self.check_code_run_write_gate_in_txn(
-            &mut wtxn,
-            claim_gate_id,
-            claim_gate_body,
-            envelope,
-            &policy,
-            false,
-            true,
-        ) {
-            wtxn.commit()?;
-            return Err(err);
-        }
-        if let Err(err) = self.check_code_run_write_gate_in_txn(
-            &mut wtxn,
-            edge_gate_id,
-            edge_gate_body,
-            envelope,
-            &policy,
-            false,
-            true,
-        ) {
-            wtxn.commit()?;
-            return Err(err);
-        }
+            let policy = crate::gate::resolve_policy_manifest(&self.store, &*wtxn)?;
+            // Both bodies are host-typed synthetic effect bodies for ONE memory
+            // verb — gate material this door builds, never claim candidates it
+            // persists — so they carry the operation-effect mode. The supersession
+            // itself (the lifecycle Put and the Supersedes edge below) is what
+            // lands; neither gate body is ever written as a claim.
+            if let Err(err) = self.check_code_run_write_gate_in_txn(
+                wtxn,
+                claim_gate_id,
+                claim_gate_body,
+                envelope,
+                &policy,
+                false,
+                true,
+            ) {
+                return Ok(Err(err)); // commits the receipt, then refuses
+            }
+            if let Err(err) = self.check_code_run_write_gate_in_txn(
+                wtxn,
+                edge_gate_id,
+                edge_gate_body,
+                envelope,
+                &policy,
+                false,
+                true,
+            ) {
+                return Ok(Err(err)); // commits the receipt, then refuses
+            }
 
-        let (new_body, _new_header) = self.claim_for_lifecycle_in(&wtxn, new_id)?;
-        Self::require_active_claim(&new_body)?;
-        Self::require_source_trust_supersession_rights(&new_body, &old_body)?;
+            let (new_body, _new_header) = self.claim_for_lifecycle_in(&*wtxn, new_id)?;
+            Self::require_active_claim(&new_body)?;
+            Self::require_source_trust_supersession_rights(&new_body, &old_body)?;
 
-        let revisions = super::supersession_diff::capture_in_txn(self, &wtxn, *old_id, *new_id)?;
-        old_body.lifecycle = ClaimLifecycleStatus::Superseded;
-        old_body.valid_to = Some(now);
-        let data = encode_claim_body(&old_body)?;
+            let revisions =
+                super::supersession_diff::capture_in_txn(self, &*wtxn, *old_id, *new_id)?;
+            old_body.lifecycle = ClaimLifecycleStatus::Superseded;
+            old_body.valid_to = Some(now);
+            let data = encode_claim_body(&old_body)?;
 
-        apply_ops_with_gate_mode(
-            &self.store,
-            &self.config,
-            &self.analyzer,
-            &mut wtxn,
-            vec![
-                BatchOp::Put {
-                    id: *old_id,
-                    entity_type: ENTITY_TYPE_CLAIM,
-                    occurred: TimeRange {
-                        start: old_header.occurred_start,
-                        end: now,
+            apply_ops_with_gate_mode(
+                &self.store,
+                &self.config,
+                &self.analyzer,
+                wtxn,
+                vec![
+                    BatchOp::Put {
+                        id: *old_id,
+                        entity_type: ENTITY_TYPE_CLAIM,
+                        occurred: TimeRange {
+                            start: old_header.occurred_start,
+                            end: now,
+                        },
+                        learned_at: old_header.learned_at,
+                        row_version: None,
+                        data,
+                        allow_maintenance: false,
+                        allow_reserved_predicate: false,
+                        hub_sync_imported: false,
                     },
-                    learned_at: old_header.learned_at,
-                    row_version: None,
-                    data,
-                    allow_maintenance: false,
-                    allow_reserved_predicate: false,
-                    hub_sync_imported: false,
-                },
-                BatchOp::EdgeWithCreatedAt {
-                    src: *new_id,
-                    kind: EdgeKind::Supersedes,
-                    tgt: *old_id,
-                    weight: SUPERSEDES_DEFAULT_WEIGHT,
-                    created_at: now,
-                    vad: Vad::NEUTRAL,
-                    provenance: None,
-                },
-            ],
-            self.text_index_trusted
-                .load(std::sync::atomic::Ordering::Acquire),
-            ApplyOpsGateMode::new(false, false),
-        )?;
-        super::supersession_diff::store_in_txn(self, &mut wtxn, *old_id, *new_id, revisions)?;
-        rekeys.finish(&self.store, &mut wtxn)?;
-        wtxn.commit()?;
-        Ok(())
+                    BatchOp::EdgeWithCreatedAt {
+                        src: *new_id,
+                        kind: EdgeKind::Supersedes,
+                        tgt: *old_id,
+                        weight: SUPERSEDES_DEFAULT_WEIGHT,
+                        created_at: now,
+                        vad: Vad::NEUTRAL,
+                        provenance: None,
+                    },
+                ],
+                self.text_index_trusted
+                    .load(std::sync::atomic::Ordering::Acquire),
+                ApplyOpsGateMode::new(false, false),
+            )?;
+            super::supersession_diff::store_in_txn(self, wtxn, *old_id, *new_id, revisions)?;
+            // Both rows, for the live mirror (FIX CLAIM-RAW-TXN-DOORS-DROP-LIVE-WINDOW-ROWS).
+            #[cfg(feature = "sync")]
+            crate::batch::queue_committed_rows(
+                self,
+                wtxn,
+                std::collections::BTreeSet::from([*new_id, *old_id]),
+            );
+            Ok(Ok(()))
+        })?;
+        outcome
     }
 
     /// `landing` runs first in the write transaction; its refusal writes
@@ -656,38 +664,46 @@ impl Vault {
         gate_body: &ClaimBody,
         landing: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
     ) -> Result<()> {
-        let mut wtxn = self.store.env.write_txn()?;
-        landing(&wtxn)?;
-        self.validate_code_run_write_actor_binding_in_txn(&wtxn, envelope)?;
-        let policy = crate::gate::resolve_policy_manifest(&self.store, &wtxn)?;
-        // The edge verb's gate body is host-typed synthetic effect material
-        // too: what lands is the EDGE below, never this body as a claim.
-        if let Err(err) = self.check_code_run_write_gate_in_txn(
-            &mut wtxn, gate_id, gate_body, envelope, &policy, false, true,
-        ) {
-            wtxn.commit()?;
-            return Err(err);
-        }
+        let outcome: Result<()> = self.with_write_txn(|wtxn| {
+            landing(&*wtxn)?;
+            self.validate_code_run_write_actor_binding_in_txn(wtxn, envelope)?;
+            let policy = crate::gate::resolve_policy_manifest(&self.store, &*wtxn)?;
+            // The edge verb's gate body is host-typed synthetic effect material
+            // too: what lands is the EDGE below, never this body as a claim.
+            if let Err(err) = self.check_code_run_write_gate_in_txn(
+                wtxn, gate_id, gate_body, envelope, &policy, false, true,
+            ) {
+                return Ok(Err(err)); // commits the receipt, then refuses
+            }
 
-        apply_ops(
-            &self.store,
-            &self.config,
-            &self.analyzer,
-            &mut wtxn,
-            vec![BatchOp::Edge {
-                src: *src,
-                kind,
-                tgt: *tgt,
-                weight,
-                vad: Vad::NEUTRAL,
-            }],
-            self.text_index_trusted
-                .load(std::sync::atomic::Ordering::Acquire),
-            false,
-            true,
-        )?;
-        wtxn.commit()?;
-        Ok(())
+            apply_ops(
+                &self.store,
+                &self.config,
+                &self.analyzer,
+                wtxn,
+                vec![BatchOp::Edge {
+                    src: *src,
+                    kind,
+                    tgt: *tgt,
+                    weight,
+                    vad: Vad::NEUTRAL,
+                }],
+                self.text_index_trusted
+                    .load(std::sync::atomic::Ordering::Acquire),
+                false,
+                true,
+            )?;
+            // The edge's source row, for the live mirror (FIX
+            // CLAIM-RAW-TXN-DOORS-DROP-LIVE-WINDOW-ROWS).
+            #[cfg(feature = "sync")]
+            crate::batch::queue_committed_rows(
+                self,
+                wtxn,
+                std::collections::BTreeSet::from([*src]),
+            );
+            Ok(Ok(()))
+        })?;
+        outcome
     }
 
     fn validate_code_run_write_actor_binding_in_txn(

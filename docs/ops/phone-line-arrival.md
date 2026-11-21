@@ -10,10 +10,10 @@ A self-held `voice` ChannelIdentity binds an agent and a separately registered c
 MACHINE actor. Registration uses the existing host-root credential door; a phone number,
 actor-class label or caller field does not authenticate that machine.
 
-An authenticated owner can store a reversible `enabled` setting and an explicit
-six-axis `share_scope` for that exact identity. No row means off. Enabling does not mint a
-read grant. The scope is consent data, recorded with an arrival for review; a future live
-answering path still has to enforce the actual line ceiling on every read. This slice
+An authenticated owner can store a reversible `enabled` setting for that exact identity.
+What the line's agent can see on a call is the setting `voice.phone.reach`. No row means
+off. Enabling does not mint a read grant. The setting is consent data; the answering
+path enforces the line's live ceiling on every read. This slice
 performs no agent-context reads during metadata intake. Turning the setting off is not identity release or
 retirement, and an owner can disable an existing setting even if its old bridge is gone.
 
@@ -232,7 +232,7 @@ no live dispatch callback still use the original plain control send.
 
 - `GET /v1/owner/phone-lines/{identity_ref}` reads the owner's stored setting.
 - `POST /v1/owner/phone-lines/{identity_ref}` stores the native JSON config:
-  `enabled` and the explicit federation `share_scope`.
+  `enabled` only; what the line's agent can see on a call is the setting `voice.phone.reach`.
 - `POST /v1/core/phone-lines/{identity_ref}/arrivals` accepts a JSON object with
   `call_id` and optional `caller` (string or null). Unknown fields are invalid.
   It requires a holder-bound verified slip with core read/write, bound to the actual

@@ -116,6 +116,7 @@ pub(crate) use self::run_task::{
 mod run_writer_proof;
 mod scope;
 pub(crate) use scope::project_descends_from_in_txn;
+pub(crate) mod setting_keys;
 mod skill_default;
 pub(crate) use skill_default::{
     bootstrap_skill_in_force_in_txn, bootstrap_skill_root_in_txn,

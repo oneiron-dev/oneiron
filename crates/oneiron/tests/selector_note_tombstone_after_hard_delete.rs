@@ -15,7 +15,6 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use loro::{ExportMode, LoroDoc, LoroValue, ValueOrContainer};
-use oneiron::batch::EntityMetadataHeader;
 use oneiron::claim::base_world_id;
 use oneiron::deletion::{TombstoneReason, decode_tombstone_value};
 use oneiron::entity_id::LocalWorldId;
@@ -34,6 +33,7 @@ use oneiron::temporal::TimeRange;
 use oneiron::test_doors::label_writers::{embedded_owner, open_member_vault};
 use oneiron::{DeleteReason, EdgeActorClass, EdgeKind, EntityId, Vault, VaultConfig};
 use oneiron_authority::federation::scope_codec::read_preset;
+use oneiron_contracts::record_layout::EntityMetadataHeader;
 
 const SHARED_SCOPE: FederationGrantScope = FederationGrantScope::vault(7);
 

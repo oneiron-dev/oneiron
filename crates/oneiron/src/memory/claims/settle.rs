@@ -643,12 +643,25 @@ impl Memory<'_> {
                                         &prior.body,
                                     ))
                                 });
-                        self.vault.supersede_claim_in_txn_as(
+                        // The owner's approval closes the head as the owner: the
+                        // owner's proof, revalidated here, confirms the close of an
+                        // Approved head in person where a declared critical class
+                        // asks for it (FIX
+                        // OWNER-CLOSE-DOORS-DECLARED-CRITICAL-APPROVED-CLOSE-PENDS).
+                        // A Grant holder's close carries none.
+                        let owner = match authority {
+                            ClaimSettler::Owner(owner) => {
+                                owner.owner_answer_in_txn(self.vault, &*wtxn)?
+                            }
+                            ClaimSettler::Grant(_) => None,
+                        };
+                        self.vault.supersede_claim_in_txn_as_owner(
                             wtxn,
                             &id,
                             &prior.id,
                             now,
                             Some(actor),
+                            owner,
                         )?;
                         read
                     }

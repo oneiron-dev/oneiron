@@ -16,6 +16,7 @@ use std::sync::{Arc, PoisonError};
 use oneiron_keystore::{PresenceConfirmation, PresenceError, PresenceGate};
 
 use super::device_pin::{device_pin_is_set, no_device_pin_here, pin_refused, presence_refused};
+use crate::authority::Direction;
 use crate::error::{DevicePinRefusal, OwnerPresenceRefusal, RecordError, Result};
 use crate::vault::Vault;
 
@@ -26,6 +27,17 @@ pub enum OwnerActImportance {
     Ordinary,
     /// An identity act, a widening, or an act whose direction the door cannot tell.
     Important,
+}
+
+impl OwnerActImportance {
+    /// An act is important when it widens or when its comparator cannot call it a narrowing.
+    #[must_use]
+    pub fn of_direction(direction: Direction) -> Self {
+        match direction {
+            Direction::Widens => Self::Important,
+            Direction::Narrows | Direction::Neutral => Self::Ordinary,
+        }
+    }
 }
 
 /// Why an owner act may go on.

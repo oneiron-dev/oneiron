@@ -389,43 +389,16 @@ impl OffRecordSession<'_> {
         query: &str,
         limit: usize,
     ) -> Result<Vec<ScoredEntity>> {
-        self.search_text_routed_over(route, query, limit, true)
-    }
-
-    /// [`Self::search_text_routed`] over base's postings alone, for a reader
-    /// that reads base alone in this room (a credential that cannot place
-    /// the room's rows): the room's words choose nothing it reads. Its run
-    /// still goes through the room's door.
-    pub(crate) fn search_base_text_routed(
-        &self,
-        route: &SessionWriteRoute,
-        query: &str,
-        limit: usize,
-    ) -> Result<Vec<ScoredEntity>> {
-        self.search_text_routed_over(route, query, limit, false)
-    }
-
-    fn search_text_routed_over(
-        &self,
-        route: &SessionWriteRoute,
-        query: &str,
-        limit: usize,
-        room: bool,
-    ) -> Result<Vec<ScoredEntity>> {
         route.revalidate()?;
         let profile = crate::config::Bm25RankProfile::default();
         let admit = |txn: &heed::RoTxn<'_>| self.participant_in_txn(txn);
-        let (search, holds_room_rows) = if room {
+        // The view ends before the run registers.
+        let (search, holds_room_rows) = {
             let view = self.read_view()?;
             let search = self
                 .vault
                 .search_text_scored(&view, query, limit, &profile, admit)?;
             (search, view.read().holds_room_rows())
-        } else {
-            let search =
-                self.vault
-                    .search_text_scored(&self.vault.store, query, limit, &profile, admit)?;
-            (search, false)
         };
         let started = (search.started_at, search.started);
         self.register_search(
@@ -464,6 +437,54 @@ impl OffRecordSession<'_> {
             started,
             limit,
             view.read().holds_room_rows(),
+        )
+    }
+
+    /// [`Self::search_text_scoped_routed`] under `plan`, a recall plan its
+    /// caller holds open on `lane` (a recall's seed lookup): the scan
+    /// neither opens nor ends one (`memory::scoped_session_text_planned`).
+    /// It scores over `view`, the lane's view of this room, or over base's
+    /// postings alone with `None`, for a lane that reads base alone (the
+    /// room's words then choose nothing it reads); its run registers through
+    /// `route` either way.
+    pub(crate) fn search_text_scoped_routed_planned(
+        &self,
+        route: &SessionWriteRoute,
+        view: Option<&crate::store::SessionStoreView<'_>>,
+        lane: &crate::claim::ScopedRead<'_>,
+        plan: &crate::claim::SearchPlan,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<ScoredEntity>> {
+        route.revalidate()?;
+        let admit = |txn: &heed::RoTxn<'_>| self.participant_in_txn(txn);
+        let ((scores, started), holds_room_rows) = match view {
+            Some(view) => (
+                crate::memory::scoped_session_text_planned(
+                    self.vault, view, lane, plan, query, limit, admit,
+                )?,
+                view.read().holds_room_rows(),
+            ),
+            None => (
+                crate::memory::scoped_session_text_planned(
+                    self.vault,
+                    &self.vault.store,
+                    lane,
+                    plan,
+                    query,
+                    limit,
+                    admit,
+                )?,
+                false,
+            ),
+        };
+        self.register_search(
+            route,
+            crate::store::RetrievalSignal::Text,
+            scores,
+            started,
+            limit,
+            holds_room_rows,
         )
     }
 

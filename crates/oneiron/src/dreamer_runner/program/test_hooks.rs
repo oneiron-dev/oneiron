@@ -62,6 +62,7 @@ pub(crate) fn plant_slip_wake(
         trigger: ProgramTrigger::Turn,
         sealed: None,
         next_due: None,
+        paused_at: None,
     };
     let landed = LandedTurnRef {
         turn,
@@ -179,6 +180,7 @@ pub(crate) fn plant_arming(
         trigger: ProgramTrigger::Turn,
         sealed: None,
         next_due: None,
+        paused_at: None,
     };
     vault.with_write_txn_grouped(|txn| ARM.put(vault, txn, &(actor, registration), &arming))?;
     Ok(registration)
@@ -264,6 +266,7 @@ pub(crate) fn plant_timer_arming(
         },
         sealed: Some(authority),
         next_due: Some(first_at),
+        paused_at: None,
     };
     vault.with_write_txn_grouped(|txn| {
         ARM.put(vault, txn, &(actor, registration), &arming)?;
