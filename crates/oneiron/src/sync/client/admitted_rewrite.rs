@@ -21,6 +21,7 @@ use crate::sync::window::LoadedWindow;
 use loro::{
     ExportMode, ID, IdSpan, LoroDoc, LoroMap, LoroValue, PeerID, ValueOrContainer, VersionVector,
 };
+use oneiron_contracts::fingerprint::ContentHasher;
 
 /// The commit message of a write over a window: a later admission's write to
 /// one of its keys is written again over it, as over the admission it wrote.
@@ -165,15 +166,17 @@ fn rewrite_peer(author: PeerID, window: &VersionVector) -> PeerID {
         .map(|(peer, counter)| (*peer, *counter))
         .collect::<Vec<_>>();
     counters.sort_unstable();
-    let mut hasher = blake3::Hasher::new_derive_key(REWRITE_PEER_CONTEXT);
-    hasher.update(&author.to_be_bytes());
+    let mut hasher = ContentHasher::new();
+    hasher
+        .update(REWRITE_PEER_CONTEXT.as_bytes())
+        .update(&author.to_be_bytes());
     for (peer, counter) in counters {
         hasher.update(&peer.to_be_bytes());
         hasher.update(&counter.to_be_bytes());
     }
-    let hash = hasher.finalize();
+    let hash = hasher.finish().into_bytes();
     let mut low = [0_u8; 8];
-    low.copy_from_slice(&hash.as_bytes()[..8]);
+    low.copy_from_slice(&hash[..8]);
     // Loro refuses the largest peer id.
     u64::from_be_bytes(low) >> 1
 }
