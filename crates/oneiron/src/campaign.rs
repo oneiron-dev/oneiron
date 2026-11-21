@@ -70,7 +70,8 @@ pub mod send_hygiene;
 pub(crate) mod setting_keys;
 
 /// The vault's house voice guide: the NOTE a campaign's copy review checks
-/// against when the campaign names no voice guide, seeded once per vault.
+/// against when the campaign names no voice guide, seeded once, with the
+/// vault's first campaign.
 pub mod house_voice_guide;
 
 /// CA-04's stage-ladder machinery: the pure ladder schema, coded-reply routing,

@@ -4,15 +4,19 @@
 //! voice guide of its own, so the judge reviews every campaign's copy. The
 //! owner edits it as any NOTE.
 //!
-//! The seed runs at every seeded writable open, beside the other seeds, so a
-//! new vault gets its guide when it is created and a vault from before this
-//! build gets it at its next open. Its row in `CAMPAIGN_HOUSE_VOICE_GUIDE`
-//! names the NOTE and is the seed's marker: written in the NOTE's birth
-//! commit, it makes the seed run once. Each replica seeds its own, as the root
-//! project is seeded. A guide the owner deletes is not seeded again: a
-//! campaign with no voice guide of its own then holds its sends, as one whose
-//! guide was deleted does, until the owner names a guide or skips its copy
-//! review (`campaign.copy_review.skip`).
+//! A vault gets its guide with its first campaign: the campaign create door
+//! seeds it once the campaign is stored. A vault from before this build that
+//! already holds a campaign gets it at its next seeded writable open. A vault
+//! that never runs a campaign gets none, so the guide's text never reaches
+//! its reads and context. Its row in `CAMPAIGN_HOUSE_VOICE_GUIDE` names the
+//! NOTE and is the seed's marker: written in the NOTE's birth commit, it makes
+//! the seed run once. Each replica seeds its own, as the root project is
+//! seeded. A guide the owner deletes is not seeded again: a campaign with no
+//! voice guide of its own then holds its sends, as one whose guide was
+//! deleted does, until the owner names a guide or skips its copy review
+//! (`campaign.copy_review.skip`). A failed seed (no owner PERSON yet, an
+//! erased owner) leaves the same hold, and the next create or seeded open
+//! tries again; a vault that has left a share runs no seed at open.
 
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
@@ -53,6 +57,26 @@ pub(crate) fn house_voice_guide_in_txn(
     GUIDE.get(store, txn, &())
 }
 
+/// The open's seed: a vault that holds a campaign and has no house voice
+/// guide yet (one from before this build) gets one. A vault with no campaign,
+/// or with the marker, writes nothing.
+///
+/// # Errors
+///
+/// Storage errors, and a NOTE write the owner's binding refuses.
+pub(crate) fn seed_house_voice_guide_at_open(vault: &Vault) -> Result<()> {
+    if vault.house_voice_guide()?.is_some() {
+        return Ok(());
+    }
+    let Ok(kind) = crate::campaign::surface::campaign_type_byte(vault) else {
+        return Ok(());
+    };
+    if vault.entities_by_type_page(kind, None, 1)?.is_empty() {
+        return Ok(());
+    }
+    vault.ensure_house_voice_guide().map(|_| ())
+}
+
 impl Vault {
     /// The vault's house voice guide NOTE, once seeded; the NOTE may since
     /// have been deleted.
@@ -69,9 +93,9 @@ impl Vault {
     /// [`HOUSE_VOICE_GUIDE_NOTE_KIND`] with [`HOUSE_VOICE_GUIDE_MARKDOWN`],
     /// written by the vault's owner, and its marker row, in one commit. A
     /// vault that already has its marker keeps it, whatever became of the
-    /// NOTE. Open runs it for a seeded vault; a host or test that opened a
-    /// vault unseeded may run it once the owner exists. Returns the guide, or
-    /// `None` when the owner is erased: no one is left to author it.
+    /// NOTE. The campaign create door runs it, and a seeded open for a vault
+    /// that holds a campaign. Returns the guide, or `None` when the owner is
+    /// erased: no one is left to author it.
     ///
     /// # Errors
     ///
