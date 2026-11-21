@@ -135,7 +135,8 @@ pub use policy::{
     set_device_sync_preference, synced_as_replica,
 };
 pub(crate) use policy::{
-    device_world_pick_in, set_device_sync_preference_in_txn, set_device_world_pick_in_txn,
+    device_world_pick_in, drop_residence_choices_in_txn, is_residence_choice_row,
+    set_device_sync_preference_in_txn, set_device_world_pick_in_txn,
 };
 pub use predict::BOARD_SEEDS_MAX;
 pub(crate) use predict::PredictedPushes;

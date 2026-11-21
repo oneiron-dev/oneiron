@@ -20,6 +20,31 @@ const PREFERENCE_LEN: usize = 9;
 /// world's 16 id bytes, ascending. Key: ().
 const WORLD_PICK_KEY: &str = "rs:worlds";
 
+/// Whether `key`, a `sync_state` key, is one of this machine's two residence rows (`rs:mode`,
+/// `rs:worlds`): choices about the install that made them, which do not come back with the
+/// vault onto a new machine (DESIGN 15-setting-primitive 1.6, "Restore"). A direct restore
+/// leaves an image's behind with its machine identity.
+pub(crate) fn is_residence_choice_row(key: &[u8]) -> bool {
+    key == PREFERENCE_KEY.as_bytes() || key == WORLD_PICK_KEY.as_bytes()
+}
+
+/// Deletes this machine's residence rows ([`is_residence_choice_row`]) from `store` in `wtxn`: an
+/// archive the owner activates joins as a new machine (`Vault::activate_archived`), which starts
+/// at the defaults.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn drop_residence_choices_in_txn(
+    store: &crate::store::Store,
+    wtxn: &mut heed::RwTxn<'_>,
+) -> Result<()> {
+    for key in [PREFERENCE_KEY, WORLD_PICK_KEY] {
+        store.sync_state.delete(wtxn, key)?;
+    }
+    Ok(())
+}
+
 /// The owner's last explicit choice for this machine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DeviceSyncPreference {
