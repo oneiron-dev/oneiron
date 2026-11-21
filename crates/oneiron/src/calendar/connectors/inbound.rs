@@ -4,7 +4,8 @@ use super::door::CalendarConnectorOperation;
 use super::outbound::{
     CalendarRemoteObjectRow, UnprovenReplaysBeforeRead, cancelled_members_in_flight,
     first_write_unsettled, ingest_error, omission_observed, prove_unproven_replay,
-    unproven_replays_before_read, unsettled_writes_of, write_remote_object,
+    publish_late_refused_write_copy, unproven_replays_before_read, unsettled_writes_of,
+    write_remote_object,
 };
 use super::remote::{
     CalendarRemoteTransport, CalendarSyncOutcome, EchoDisposition, RemoteCalendarChange,
@@ -255,6 +256,25 @@ fn apply_remote_change(
                 before_read,
                 now,
             )?;
+            let carries_cancel = feed.events.iter().any(|parsed| parsed.cancelled);
+            // A refused write whose proof a read gave (another writer's copy)
+            // may still land: another call of it, sent before the refusal
+            // under the same precondition, reaches the provider once its ETag
+            // recurs. Its copy carries the write's own marker and is the
+            // owner's on every seat of the calendar, never a host cancel
+            // (CAL-REFUSED-WRITE-LATE-SEND-LANDS-UNFENCED). Only a copy that
+            // carries a cancelled VEVENT asks, as for the hold below: a live
+            // copy moves no deposit money.
+            if carries_cancel {
+                publish_late_refused_write_copy(
+                    vault,
+                    operation,
+                    provider,
+                    object,
+                    &primary.uid,
+                    now,
+                )?;
+            }
             // A first write's copy coming back before the write binds its
             // UID resolves no EVENT: nothing names the UID the write minted
             // until its passport lands. The resource stays owed and unread,
@@ -284,7 +304,7 @@ fn apply_remote_change(
             // that may be its write's own (its SEQUENCE and write marker).
             // Only a copy that carries a cancelled VEVENT asks: no other copy
             // is held back here.
-            let in_flight = if feed.events.iter().any(|parsed| parsed.cancelled) {
+            let in_flight = if carries_cancel {
                 let lowest_sequence = feed
                     .events
                     .iter()

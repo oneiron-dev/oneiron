@@ -1254,6 +1254,62 @@ pub(super) fn prove_unproven_replay(
     Ok(())
 }
 
+/// Publishes a pulled resource of `uid` that is the own copy of a refused
+/// write whose proof is no longer owed, before the pull admits it, as the
+/// write's lost receipt would have ([`publish_own_stored_copy_in_txn`]), on
+/// whichever seat of the calendar pulls it first. Another call of the write,
+/// sent before the refusal with the same precondition, landed after the
+/// read that proved the row another writer's, once the provider's ETag
+/// recurred: the copy carries the write's own marker
+/// ([`self::collection::proven_refused_write_of_copy`]) and each staged
+/// member exactly as staged, its SEQUENCE and content hash
+/// ([`stored_copy_of`], with no unmarked reading). The pull then reads the
+/// owner's cancel as the owner's echo, never as a host cancel that refunds
+/// the deposit (CAL-REFUSED-WRITE-LATE-SEND-LANDS-UNFENCED). The row stays
+/// as it is: no receipt is made, no carrier sealed.
+///
+/// The publication reads the row again in its writer and writes nothing
+/// once the row moved from the revision read (a later write of the UID
+/// staged). The caller holds the vault's calendar admission turn.
+pub(super) fn publish_late_refused_write_copy(
+    vault: &Vault,
+    operation: &CalendarConnectorOperation,
+    provider: &str,
+    object: &RemoteCalendarObject,
+    uid: &str,
+    now: u64,
+) -> Result<(), CalendarConnectorError> {
+    let Some((row, revision)) =
+        self::collection::proven_refused_write_of_copy(vault, operation, uid, &object.ics)?
+    else {
+        return Ok(());
+    };
+    let StoredCopy::Own { members, .. } = stored_copy_of(vault, &row, object, false)? else {
+        return Ok(());
+    };
+    // The late call's bytes exactly: a host who restored the booking after
+    // the read and cancels it again may keep the write's marker, and that
+    // cancel still moves money (BK-ECHO-MARK-OVER-NEWER-LIVE-RESTORE).
+    let exact = members.iter().all(|stored| {
+        stored.sequence == row.sequence
+            && row
+                .component_hashes
+                .contains(&(stored.member, stored.content_hash))
+    });
+    if !exact {
+        return Ok(());
+    }
+    vault.try_with_write_txn_grouped(|txn| -> Result<(), CalendarConnectorError> {
+        let Some(stored) = OUTBOX.get(&vault.store, &*txn, &OutboxKey(row.outbox_id))? else {
+            return Ok(());
+        };
+        if self::release::revision(&stored)? != revision {
+            return Ok(());
+        }
+        publish_own_stored_copy_in_txn(vault, txn, operation, provider, &row, &members, now)
+    })
+}
+
 /// The failure of a writer guarded by an outbox row's exact carrier.
 enum CarrierWriteError {
     /// The row moved on since it was read: the writer rolls back.
