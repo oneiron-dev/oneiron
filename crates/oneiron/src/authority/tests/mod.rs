@@ -54,6 +54,8 @@ mod machine_write;
 mod owner_anchor;
 mod pinned_root;
 mod recovery_ceremony;
+#[cfg(feature = "sync")]
+mod removed_carrier_facts;
 mod retired_ceiling;
 mod trusted_renewal;
 mod world_chain_races;
