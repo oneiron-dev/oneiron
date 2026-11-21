@@ -370,6 +370,7 @@ pub(super) fn single_owner_state(
         passkey_contexts: BTreeMap::new(),
         passkey_vouched_keys: BTreeSet::new(),
         passkey_vouch_confirmations: BTreeSet::new(),
+        host_vouched_passkey_owners: BTreeMap::new(),
     };
     (owner, owner_key, parent, state)
 }

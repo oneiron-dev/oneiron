@@ -62,8 +62,8 @@ mod policy_bounds;
 
 pub use log_check::AuthorityLogCheck;
 pub(crate) use log_check::authority_signer_label;
-pub(crate) use owner_reserve::OwnerReserveHold;
 use owner_reserve::*;
+pub(crate) use owner_reserve::{OwnerReserveHold, held_at_owner_reserve_in_txn};
 pub(crate) use owner_signed_work::answers_the_owners_signed_work_in_txn;
 use owner_signed_work::{an_owner_key_signs, answered_row};
 use policy_bounds::signer_bound;
@@ -484,20 +484,7 @@ pub(crate) fn authority_door(
     // only the owner's work lands; every other row waits for the owner to
     // raise the floor. The door judges the log with the row in it (Astra
     // owner-reserve F1).
-    let hash = authority_entry_hash(entry)?;
-    let with_entry = view.projection.bytes_with(&hash, &entry.parent_hashes);
-    if with_entry > owner_reserve_start(store, txn)?
-        && !owner_work(store, txn, &view.structure, &fold, &hash, entry)?
-    {
-        hold_at_owner_reserve(
-            store,
-            &view.projection,
-            OwnerReserveHold {
-                entry: hash,
-                work: false,
-                projected: with_entry,
-            },
-        );
+    if held_at_owner_reserve(store, txn, &view, entry, &fold)? {
         return Ok(AuthorityDoor::AtBound);
     }
     // A self-signed root needs nothing but a fresh key, so an anchor this

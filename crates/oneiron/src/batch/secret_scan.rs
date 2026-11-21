@@ -64,12 +64,12 @@ pub(crate) use self::mask::spool::{
 pub(crate) use self::mask::stream_known::{KnownStreamFinder, StreamKnown};
 pub(super) use self::mask::{MaskedClaimBodies, MaskedFiles};
 pub(crate) use self::mask::{
-    file_mints_in_txn, move_mask_origin_in_txn, rebind_mask_origin_in_txn, side_row::NestedBodies,
-    side_row::admission_form, side_row::known_nested_form,
+    RoomCarry, carry_room_secrets_in_txn, file_spans, mask_origin_in_txn,
+    seal_promoted_message_ops_in_txn, seal_whole_part_in_txn, span_placed_for,
 };
 pub(crate) use self::mask::{
-    file_spans, mask_origin_in_txn, seal_promoted_message_ops_in_txn, seal_whole_part_in_txn,
-    span_placed_for,
+    file_mints_in_txn, move_mask_origin_in_txn, rebind_mask_origin_in_txn, side_row::NestedBodies,
+    side_row::admission_form, side_row::known_nested_form,
 };
 pub(crate) use self::message_parts::seal_message_parts_in_txn;
 use self::provider_tokens::{classify_token, provider_token_spans};
@@ -91,30 +91,6 @@ use crate::store::Store;
 
 const REASON_DETECTED: &str = "gate.secret_scan.detected";
 
-/// The reason the side-row wall adds when it refuses a fresh secret in a row
-/// an off-record room writes (FIX 2329; Engine RULING FIX-2329-ROOM-CUSTODY
-/// = C): the room holds no custody of its own, and no off-record byte enters
-/// base, so a value no custody record holds cannot take a handle there. The
-/// remedy is to put the value in vault custody first, or to run on record.
-const REASON_OFF_RECORD_FRESH_KEY: &str = "gate.secret_scan.off_record_fresh_key";
-
-/// `refusal`, a refusal of a fresh secret in an off-record room's row, with
-/// [`REASON_OFF_RECORD_FRESH_KEY`] after its own reasons.
-fn off_record_fresh_key_refusal(refusal: Error) -> Error {
-    match refusal {
-        Error::Gate(GateError::GateWriteRejected {
-            outcome,
-            mut reason_codes,
-        }) => {
-            reason_codes.push(REASON_OFF_RECORD_FRESH_KEY);
-            Error::Gate(GateError::GateWriteRejected {
-                outcome,
-                reason_codes,
-            })
-        }
-        other => other,
-    }
-}
 const REASON_AWS_ACCESS_KEY_ID: &str = "gate.secret_scan.aws_access_key_id";
 const REASON_GITHUB_TOKEN: &str = "gate.secret_scan.github_token";
 const REASON_GOOGLE_API_KEY: &str = "gate.secret_scan.google_api_key";

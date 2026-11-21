@@ -568,6 +568,7 @@ pub(super) fn fold_authority_log_once_with(
             handoff_or_appointment_retired_keys: BTreeSet::new(),
             host_custody: BTreeSet::new(),
             passkey_limited_keys: BTreeSet::new(),
+            host_vouched_passkey_owners: BTreeMap::new(),
             closed_handoffs: BTreeSet::new(),
             crossed_revocations: BTreeSet::new(),
             genesis_fragile: false,

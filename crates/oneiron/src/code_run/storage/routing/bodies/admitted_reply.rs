@@ -9,9 +9,10 @@
 //!
 //! The base vault decides the admission on either route. On record the body
 //! lands in base, and base custody mints a fresh key's record, as on the
-//! vault. Off record the room holds no custody door: a value base custody
-//! already holds still takes its handle there, but a reply that holds a
-//! fresh key is withheld until room-local custody exists. Its typed
+//! vault. Off record a value base custody already holds still takes its
+//! base handle, and the room keeps a fresh key in its own custody, in memory
+//! only, so the reply holds its room handle (ROOM-LOCAL-CUSTODY). A hit the
+//! wall cannot place withholds the reply on either route: its typed
 //! unavailable content stands in for it, and nothing of it is stored.
 
 use super::*;

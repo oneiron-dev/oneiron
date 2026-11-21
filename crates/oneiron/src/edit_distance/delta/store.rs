@@ -184,9 +184,11 @@ pub(super) fn put_amendment_row_in_txn(
 }
 
 /// Drops the row recorded for the Gate decision `decision`'s receipt, if
-/// there is one. The ledger calls it wherever the decision's content goes: its
-/// retention skeleton (an erase, a delete, a discard, a restore's rerun), a
-/// restore's drop of a row an erase retired, and the row's removal. A
+/// there is one. The ledger reaches it through
+/// `attribution::forget_gate_amendment_in_txn`, with the attribution judged
+/// from the row, wherever the decision's content goes: its retention skeleton
+/// (an erase, a delete, a discard, a restore's rerun), a restore's drop of a
+/// row an erase retired, and the row's removal. A
 /// skeleton keeps the receipt's id and its `approved_amended` outcome, so a
 /// row left behind would still be attached to the redacted receipt, with the
 /// revisions of the bodies it measured. The uncaptured counter keeps its

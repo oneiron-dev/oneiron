@@ -142,8 +142,21 @@ fn selection_file() -> Option<PathBuf> {
 /// The file the OAuth sign-in at `origin` is kept in, beside the selection:
 /// one per origin, so signing in there again replaces it.
 pub(super) fn oauth_sign_in_file(origin: &str) -> Option<PathBuf> {
+    origin_file("hosted-oauth", origin)
+}
+
+/// The file the continue step-up's OAuth sign-in at `origin` is kept in,
+/// beside the recall one ([`oauth_sign_in_file`]): one per origin, so a
+/// step-up there again replaces it (CONTINUE-STEP-UP-MCP-WRITE = A).
+pub(super) fn oauth_continue_sign_in_file(origin: &str) -> Option<PathBuf> {
+    origin_file("hosted-oauth-continue", origin)
+}
+
+/// `{stem}-{digest}.json` in the per-user folder, where `digest` is the
+/// first 16 hex of `origin`'s content hash.
+fn origin_file(stem: &str, origin: &str) -> Option<PathBuf> {
     let digest = oneiron_contracts::fingerprint::ContentHash::of(origin.as_bytes()).to_hex();
-    local_servers::user_dir().map(|dir| dir.join(format!("hosted-oauth-{}.json", &digest[..16])))
+    local_servers::user_dir().map(|dir| dir.join(format!("{stem}-{}.json", &digest[..16])))
 }
 
 /// Creates the per-user folder `path` sits in, owner-only, if it is not

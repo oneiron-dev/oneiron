@@ -47,7 +47,7 @@ const ISO_4217_EXPONENT_3: [&str; 7] = ["BHD", "IQD", "JOD", "KWD", "LYD", "OMR"
 const ISO_4217_EXPONENT_4: [&str; 2] = ["CLF", "UYW"];
 
 /// The ISO-4217 minor-unit exponent of `code`, if it is a listed currency.
-fn iso_4217_exponent(code: &str) -> Option<u32> {
+pub(crate) fn iso_4217_exponent(code: &str) -> Option<u32> {
     [
         (0, &ISO_4217_EXPONENT_0[..]),
         (2, &ISO_4217_EXPONENT_2[..]),

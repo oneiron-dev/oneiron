@@ -219,6 +219,7 @@ impl Vault {
             let txn = self.store.env.read_txn()?;
             let admit = lane.recall_candidates_in(&txn, &policy, &filter, None);
             let mut admits = |id: &crate::EntityId| admit(id);
+            let mut withheld = lane.world_withheld_row_test_in(&txn)?;
             let scores = self.text_scoped_in_txn(
                 &self.store,
                 &txn,
@@ -230,6 +231,9 @@ impl Vault {
                     matches_scope: &mut admits,
                     private_note_ids: None,
                     recency: None,
+                    hidden_row: withheld.as_deref_mut().map(|withheld| {
+                        withheld as &mut dyn FnMut(&crate::EntityId) -> Result<bool>
+                    }),
                 },
             )?;
             observe(&txn, scores.as_slice());
@@ -349,6 +353,7 @@ impl Vault {
                     // FIX 9096 PART: no caller-side recency signal here; the
                     // direct-with-profile path still blends no recency.
                     recency: None,
+                    hidden_row: None,
                 },
             )?
         };

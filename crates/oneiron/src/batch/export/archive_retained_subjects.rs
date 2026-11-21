@@ -185,6 +185,8 @@ pub(crate) const RETAINED_SUBJECT_RULES: &[(&str, RetainedSubjectRule)] = &[
     ("VOICE_IDENTITY_CONSENT", ID_AND_SIDE_ID),
     // The voided grant's subject PERSON, then a 16-byte digest of the (grant, withdrawal) pair.
     ("VOICE_IDENTITY_CONSENT_VOID", ID_AND_SIDE_ID),
+    // The withdrawal's subject PERSON, then a 16-byte digest of the withdrawal's event id.
+    ("VOICE_IDENTITY_WITHDRAWAL_REQUESTED_AT", ID_AND_SIDE_ID),
     ("VOICE_REF_RENDER_CONSENT", Value(render_consent_records)),
     // A reader tag byte, then the reader's PERSON or AGENT_DEF.
     ("WEAVE_DIGEST_SCHEDULE", RawIds { len: 17, ids: &[1] }),
