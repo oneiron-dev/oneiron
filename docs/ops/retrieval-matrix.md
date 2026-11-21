@@ -186,7 +186,11 @@ hidden relevant record leaves the qrels, a query left with none is
 dropped, and a second-world record served to the agent fails the run.
 Run it with the same flags on the build before and after a change to the
 scoped term statistics; the two cards then share `pack_digest` (the
-readable view's) and `params_digest`:
+readable view's) and `params_digest`. Both builds must draw the same
+partition: the draw is the fingerprint
+`oneiron.bench_scorecard.world_scoped_partition.v1` (before it the arm
+drew with SHA-256), so a build that predates the draw puts other records
+in the second world and its card does not compare:
 
 ```sh
 oneiron-bench scorecard run --arm world-scoped \
