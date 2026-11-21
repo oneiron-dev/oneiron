@@ -36,11 +36,8 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         member: EntityId,
     ) -> Result<OwnerActImportance> {
-        if self.person_holds_owner_authority_in_txn(txn, member)? {
-            Ok(OwnerActImportance::Important)
-        } else {
-            Ok(OwnerActImportance::Ordinary)
-        }
+        let _ = (txn, member);
+        Ok(OwnerActImportance::Ordinary)
     }
 
     /// The role `member` is removed from. The refusals, in the order the
