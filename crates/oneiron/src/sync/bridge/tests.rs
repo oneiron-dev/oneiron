@@ -2386,8 +2386,12 @@ fn observer_b_materializes_never_deleted_entity_normally() {
     );
 }
 
+/// A public legacy persona FACET is refused, never materialized, and held
+/// for review: its Loro carrier stays in the doc while one quarantine row
+/// names the refusal. PERSON holds identity; a FACET shaped as one is
+/// refused on every door.
 #[test]
-fn observer_b_rejects_and_scrubs_public_legacy_persona_facet() {
+fn observer_b_rejects_and_quarantines_public_legacy_persona_facet() {
     let (_dir_vault, vault) = test_vault();
     let doc = LoroDoc::new();
     let materializer = Arc::new(Materializer::new());
@@ -2396,20 +2400,16 @@ fn observer_b_rejects_and_scrubs_public_legacy_persona_facet() {
     let person = EntityId::from_bytes_unchecked([0x6A; 16]);
     let learned_at = 1_772_400_000u64;
     let body = crate::companion::tests::support::retired_persona_facet_body(person);
-    map_insert_bytes(
-        &doc.get_map("entities"),
-        &id.to_hex(),
-        &entity_blob(
-            ENTITY_TYPE_FACET,
-            TimeRange {
-                start: learned_at,
-                end: learned_at,
-            },
-            learned_at,
-            &body,
-        ),
-    )
-    .unwrap();
+    let blob = entity_blob(
+        ENTITY_TYPE_FACET,
+        TimeRange {
+            start: learned_at,
+            end: learned_at,
+        },
+        learned_at,
+        &body,
+    );
+    map_insert_bytes(&doc.get_map("entities"), &id.to_hex(), &blob).unwrap();
     doc.commit();
     assert!(
         vault.get(&id).unwrap().is_none(),
@@ -2419,9 +2419,23 @@ fn observer_b_rejects_and_scrubs_public_legacy_persona_facet() {
         vault.get(&person).unwrap().is_none(),
         "legacy replay must not mint a PERSON shell"
     );
-    assert!(
-        map_get_bytes(&doc.get_map("entities"), &id.to_hex()).is_none(),
-        "rejected CRDT carrier is scrubbed"
+    assert_eq!(
+        map_get_bytes(&doc.get_map("entities"), &id.to_hex()).as_deref(),
+        Some(blob.as_slice()),
+        "the refused carrier stays in the doc"
+    );
+    let records = crate::sync::quarantine::quarantined_records(&vault).unwrap();
+    assert_eq!(records.len(), 1, "the refusal is held for review");
+    let rejected = &records[0].1;
+    assert_eq!(rejected.container, QuarantineContainer::Entities);
+    assert_eq!(rejected.reason_code, "InvalidClaimBody");
+    assert_eq!(
+        (rejected.crdt_key_hash, rejected.crdt_key_len),
+        crate::sync::quarantine::crdt_key_metadata(&id.to_hex())
+    );
+    assert_eq!(
+        rejected.payload_hash,
+        crate::sync::quarantine::payload_hash(&blob)
     );
 }
 
@@ -4737,13 +4751,18 @@ fn multi_tombstone_delta_uses_one_top_level_write_transaction() {
 
 /// ONE-521 acceptance 2: one tombstone's purge failure is contained to
 /// that item. Successful siblings commit, while the failed item's live body
-/// survives without partial deletion effects and retains a durable retry
-/// marker. Replaying heals only the failed item without duplicating the
-/// successful siblings' receipts or sweep rows.
+/// stays physically held and fenced from reads, with no dt: marker and a
+/// durable retry marker. Replaying heals only the failed item without
+/// duplicating the successful siblings' receipts or sweep rows.
 #[test]
 fn one_tombstone_failure_does_not_lose_the_rest() {
     let (_dir_vault, vault) = test_vault();
     let materializer = Arc::new(Materializer::new());
+    // The stored row as it rests, past the deletion fence public reads honor.
+    let physical = |id: &EntityId| -> Option<Vec<u8>> {
+        let rtxn = vault.store.env.read_txn().unwrap();
+        crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &rtxn, id).unwrap()
+    };
 
     let a = EntityId::now();
     let b = EntityId::now();
@@ -4769,30 +4788,41 @@ fn one_tombstone_failure_does_not_lose_the_rest() {
     let survivors: Vec<EntityId> = ids
         .iter()
         .copied()
-        .filter(|id| vault.get_raw(id).unwrap().is_some())
+        .filter(|id| physical(id).is_some())
         .collect();
     assert_eq!(
         survivors.len(),
         1,
-        "exactly the failed item keeps its live row; the other two purged"
+        "exactly the failed item keeps its stored row; the other two purged"
     );
     let failed = survivors[0];
     let applied: Vec<EntityId> = ids
         .iter()
         .copied()
-        .filter(|id| vault.get_raw(id).unwrap().is_none())
+        .filter(|id| physical(id).is_none())
         .collect();
     assert_eq!(applied.len(), 2);
 
     // The failed item's body survives without partial deletion effects,
     // while its retry marker remains durable after the batch completes. The
-    // accepted delete fences it from reads until the retry lands.
+    // accepted delete fences the held body from reads until the retry lands.
     assert!(
-        vault
-            .get_raw(&failed)
-            .unwrap()
-            .is_some_and(|raw| raw.len() > crate::batch::ENTITY_METADATA_HEADER_LEN),
+        physical(&failed).is_some_and(|raw| raw.len() > crate::batch::ENTITY_METADATA_HEADER_LEN),
         "an aborted savepoint must leave the failed item's body intact"
+    );
+    assert!(
+        crate::deletion::ROW_DELETION_FENCE
+            .contains(
+                &vault.store,
+                &vault.store.env.read_txn().unwrap(),
+                &crate::side_table::HexId(failed),
+            )
+            .unwrap(),
+        "the accepted delete fences the held body until the retry lands"
+    );
+    assert!(
+        vault.get_raw(&failed).unwrap().is_none(),
+        "the fence hides the held body from raw reads"
     );
     assert!(
         vault.get(&failed).unwrap().is_none(),
@@ -5035,8 +5065,11 @@ fn edge_hydration_rolls_back_late_project_rejection_but_commits_valid_sibling() 
     assert_eq!(rejected[0].1.reason_code, "InvalidProjectBody");
 }
 
-/// A bad MACHINE origin proof must be rejected per row, not abort the sibling.
-/// The valid peer proof has no local enrollment: replay checks the signature's
+/// A MACHINE origin proof that covers another row waits on its history, and
+/// is quarantined per row without aborting the sibling. With no machine
+/// history here the signature proves nothing yet (FIX 4295): the bad row
+/// waits as RemoteMachineHistoryPending while the signed sibling lands. The
+/// valid peer proof needs no local enrollment: replay checks the signature's
 /// origin, not local authority ancestry.
 #[test]
 fn observer_b_quarantines_bad_machine_proof_and_commits_signed_sibling() -> Result<()> {
@@ -5102,11 +5135,11 @@ fn observer_b_quarantines_bad_machine_proof_and_commits_signed_sibling() -> Resu
     assert_eq!(
         records.len(),
         1,
-        "one invalid proof must not reject its sibling"
+        "one pending proof must not reject its sibling"
     );
     let rejected = &records[0].1;
     assert_eq!(rejected.container, QuarantineContainer::Entities);
-    assert_eq!(rejected.reason_code, "InvalidMachineClaimProof");
+    assert_eq!(rejected.reason_code, "RemoteMachineHistoryPending");
     assert_eq!(
         (rejected.crdt_key_hash, rejected.crdt_key_len),
         crate::sync::quarantine::crdt_key_metadata(&bad_id.to_hex())
@@ -5118,18 +5151,15 @@ fn observer_b_quarantines_bad_machine_proof_and_commits_signed_sibling() -> Resu
     Ok(())
 }
 
+/// A revoked in-range project depth edit replays as quarantine, never as
+/// depth: the tampered bytes no longer match their signed contribution, and
+/// the revoked binding proves nothing. The edit is signed by the live vault
+/// owner, the only writer the owner door accepts.
 #[test]
 fn observer_b_quarantines_in_range_project_depth_edit_without_owner_proof() -> crate::Result<()> {
     let (_dir_vault, vault) = test_vault();
     let root = vault.root_project()?;
-    let person = EntityId::now();
-    vault.put_entity(
-        &person,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
+    let person = vault.ensure_embedded_owner_actor().expect("embedded owner");
     let writer = crate::write_envelope::WriteActor::new(person, EdgeActorClass::Human);
     let revoke = crate::subject_model::tests::authorization::root_owner(&vault, writer, 0xB1)?;
     crate::workspace_roster::set_project_depth_signed_for_test(&vault, root, 0, &writer, 2, 0xB1)?;
@@ -5176,6 +5206,9 @@ fn observer_b_quarantines_in_range_project_depth_edit_without_owner_proof() -> c
     Ok(())
 }
 
+/// A signed owner project depth edit replays onto a fresh replica, and a
+/// tampered copy of it is quarantined without moving depth. The edit is
+/// signed by the live vault owner, the only writer the owner door accepts.
 #[test]
 fn observer_b_replays_signed_owner_project_depth_and_rejects_tampering() -> crate::Result<()> {
     let (_dir_a, a) = test_vault();
@@ -5188,14 +5221,7 @@ fn observer_b_replays_signed_owner_project_depth_and_rejects_tampering() -> crat
             .unwrap(),
         1,
     )?;
-    let owner_id = EntityId::now();
-    a.put_entity(
-        &owner_id,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
+    let owner_id = a.ensure_embedded_owner_actor().expect("embedded owner");
     let owner = crate::write_envelope::WriteActor::new(owner_id, EdgeActorClass::Human);
     crate::subject_model::tests::authorization::root_owner(&a, owner, 0xB7)?;
     crate::workspace_roster::set_project_depth_signed_for_test(&a, project, 2, &owner, 2, 0xB7)?;
@@ -5226,13 +5252,7 @@ fn observer_b_replays_signed_owner_project_depth_and_rejects_tampering() -> crat
             .unwrap(),
         1,
     )?;
-    b.put_entity(
-        &owner_id,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
+    b.ensure_embedded_owner_actor().expect("embedded owner");
     b.import_signed_authority_history(&a.export_signed_authority_history()?)?;
     let doc = LoroDoc::new();
     let materializer = Arc::new(Materializer::new());
@@ -5281,6 +5301,10 @@ fn observer_b_replays_signed_owner_project_depth_and_rejects_tampering() -> crat
     Ok(())
 }
 
+/// A signed owner project depth edit arriving before its bind waits as an
+/// immutable fact through retries, then activates when the bind lands,
+/// without resending. The edit is signed by the live vault owner, the only
+/// writer the owner door accepts.
 #[test]
 fn observer_b_project_depth_authority_dependency_survives_retry_until_bind() -> crate::Result<()> {
     let (_dir_source, source) = test_vault();
@@ -5292,14 +5316,9 @@ fn observer_b_project_depth_authority_dependency_survives_retry_until_bind() -> 
         &crate::workspace_roster::ProjectRecord::new(id, Some(root), root, leader).unwrap(),
         1,
     )?;
-    let human = EntityId::now();
-    source.put_entity(
-        &human,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
+    let human = source
+        .ensure_embedded_owner_actor()
+        .expect("embedded owner");
     let writer = crate::write_envelope::WriteActor::new(human, EdgeActorClass::Human);
     crate::subject_model::tests::authorization::root_owner(&source, writer, 0xBB)?;
     let history = source.export_signed_authority_history()?;
@@ -5335,13 +5354,9 @@ fn observer_b_project_depth_authority_dependency_survives_retry_until_bind() -> 
         &crate::workspace_roster::ProjectRecord::new(id, Some(root), root, target_leader).unwrap(),
         1,
     )?;
-    target.put_entity(
-        &human,
-        crate::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"owner",
-    )?;
+    target
+        .ensure_embedded_owner_actor()
+        .expect("embedded owner");
     target.import_signed_authority_history(&history[..1])?;
     let doc = LoroDoc::new();
     let materializer = Arc::new(Materializer::new());
@@ -6073,22 +6088,14 @@ fn the_generic_sync_state_door_cannot_mark_a_carrier_as_written_here() {
 }
 
 /// A restore keeping this vault's authority takes which carriers this vault
-/// wrote from this vault, never from the image: a checkpoint's checksum is
-/// unkeyed, so whoever hands one in could mark a peer's carrier as written
-/// here or unmark this vault's own. Nor does it keep a mark for a carrier
-/// the copy does not hold as one (written after the image, or retyped in it),
-/// which no erasure in the copy could reach.
+/// wrote from this vault, never from the image. A checkpoint is a sealed
+/// artifact (#1666): nobody can rewrite its rows, and it never carries these
+/// marks at all (FIX 17143). The copy takes its marks from the live vault and
+/// keeps only those whose carrier it holds byte for byte: a carrier written
+/// after the image keeps no mark, and a peer carrier the copy holds still
+/// never reads as written here.
 #[test]
 fn a_restore_keeping_authority_takes_the_written_here_marks_from_this_vault() {
-    /// One database's rows in a checkpoint image.
-    type Rows = Vec<(Vec<u8>, Vec<u8>)>;
-    /// A checkpoint image's wire shape.
-    #[derive(serde::Serialize, serde::Deserialize)]
-    struct Image {
-        version: u16,
-        created_at: u64,
-        databases: std::collections::BTreeMap<String, Rows>,
-    }
     let root = tempfile::tempdir().unwrap();
     let vault = Vault::open(root.path().join("source"), VaultConfig::device()).unwrap();
     vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
@@ -6106,19 +6113,25 @@ fn a_restore_keeping_authority_takes_the_written_here_marks_from_this_vault() {
     let core = vault.identity_topology_event(&event).unwrap().unwrap();
     let (peer, blob) = (EntityId::now(), peer_author_carrier(event, &core, other));
     deliver_peer_row(&vault, &peer, &blob);
-    let marks = vault.sync_state_keys_with_prefix("it:authored:").unwrap();
+    assert_eq!(
+        vault
+            .sync_state_keys_with_prefix("it:authored:")
+            .unwrap()
+            .len(),
+        1,
+        "only this vault's own merge is marked"
+    );
     let (twin, kin) = (EntityId::now(), EntityId::now());
     for id in [&twin, &kin] {
         put_test_person(&vault, id);
     }
     merge_here(&vault, twin, kin, Some(own));
-    let retyped = vault
-        .sync_state_keys_with_prefix("it:authored:")
-        .unwrap()
-        .into_iter()
-        .find(|key| !marks.contains(key))
-        .and_then(|key| EntityId::from_hex(&key["it:authored:".len()..]).ok())
-        .unwrap();
+    let image_marks = vault.sync_state_keys_with_prefix("it:authored:").unwrap();
+    assert_eq!(
+        image_marks.len(),
+        2,
+        "the second local merge marks its own carrier"
+    );
     let image = root.path().join("image");
     vault.ensure_vault_key().expect("mint the vault data key");
     vault.snapshot_checkpoint(&image, 300).unwrap();
@@ -6127,38 +6140,13 @@ fn a_restore_keeping_authority_takes_the_written_here_marks_from_this_vault() {
         put_test_person(&vault, id);
     }
     merge_here(&vault, later, head, Some(author));
-    assert_eq!(
-        vault
-            .sync_state_keys_with_prefix("it:authored:")
-            .unwrap()
-            .len(),
-        3
-    );
-
-    let bytes = std::fs::read(&image).unwrap();
-    let mut forged: Image = rmp_serde::from_slice(&bytes[41..]).unwrap();
-    let rows = forged.databases.get_mut("sync_state").unwrap();
-    rows.retain(|(key, _)| !key.starts_with(b"it:authored:"));
-    rows.push((
-        format!("it:authored:{}", peer.to_hex()).into_bytes(),
-        blake3::hash(&blob[crate::batch::ENTITY_METADATA_HEADER_LEN..])
-            .as_bytes()
-            .to_vec(),
-    ));
-    rows.sort();
-    let (_, carrier) = forged
-        .databases
-        .get_mut("entities")
-        .unwrap()
-        .iter_mut()
-        .find(|(key, _)| key.as_slice() == retyped.as_bytes())
-        .unwrap();
-    carrier[crate::batch::ENTITY_TYPE_OFFSET] = crate::registry::ENTITY_TYPE_EVENT;
-    let body = rmp_serde::to_vec_named(&forged).unwrap();
-    let mut file = b"ONEIRONC1".to_vec();
-    file.extend_from_slice(blake3::hash(&body).as_bytes());
-    file.extend_from_slice(&body);
-    std::fs::write(&image, file).unwrap();
+    let live_marks = vault.sync_state_keys_with_prefix("it:authored:").unwrap();
+    assert_eq!(live_marks.len(), 3);
+    let later_mark = live_marks
+        .iter()
+        .find(|key| !image_marks.contains(key))
+        .cloned()
+        .expect("the merge after the image marks its own carrier");
 
     let key = vault.checkpoint_key().unwrap();
     let (copy, _) = Vault::restore_checkpoint_keeping_authority(
@@ -6170,9 +6158,22 @@ fn a_restore_keeping_authority_takes_the_written_here_marks_from_this_vault() {
         320,
     )
     .unwrap();
+    let copy_marks = copy.sync_state_keys_with_prefix("it:authored:").unwrap();
     assert_eq!(
-        copy.sync_state_keys_with_prefix("it:authored:").unwrap(),
-        marks
+        copy_marks, image_marks,
+        "the copy keeps this vault's marks for the carriers it holds"
+    );
+    assert!(
+        !copy_marks.contains(&later_mark),
+        "a carrier written after the image keeps no mark in the copy"
+    );
+    assert!(
+        copy.get_raw(&peer).unwrap().is_some(),
+        "the copy holds the peer carrier"
+    );
+    assert!(
+        !copy_marks.contains(&format!("it:authored:{}", peer.to_hex())),
+        "the held peer carrier is never marked as written here"
     );
     let rtxn = copy.store.env.read_txn().unwrap();
     assert_eq!(
@@ -6182,6 +6183,48 @@ fn a_restore_keeping_authority_takes_the_written_here_marks_from_this_vault() {
             EdgeActorClass::Human
         ))
     );
+    drop(rtxn);
+
+    // No live vault to carry from: the sealed image alone marks nothing.
+    let (plain, _) = Vault::restore_checkpoint(
+        &image,
+        &key,
+        &root.path().join("plain"),
+        VaultConfig::device(),
+        crate::recovery::checkpoint::RestoreReason::Restore,
+        320,
+    )
+    .unwrap();
+    assert!(
+        plain
+            .sync_state_keys_with_prefix("it:authored:")
+            .unwrap()
+            .is_empty(),
+        "no mark ever comes from the image"
+    );
+
+    // The seal closes the old forge: one flipped byte refuses the restore
+    // before any copy exists.
+    let bytes = std::fs::read(&image).unwrap();
+    let mut tampered = bytes.clone();
+    let middle = tampered.len() / 2;
+    tampered[middle] ^= 0x01;
+    let tampered_path = root.path().join("tampered");
+    std::fs::write(&tampered_path, tampered).unwrap();
+    let tampered_copy = root.path().join("tampered_copy");
+    assert!(
+        Vault::restore_checkpoint_keeping_authority(
+            &tampered_path,
+            &key,
+            &tampered_copy,
+            VaultConfig::device(),
+            &vault,
+            320,
+        )
+        .is_err(),
+        "a tampered seal refuses before any copy exists"
+    );
+    assert!(!tampered_copy.exists());
 }
 
 #[test]
