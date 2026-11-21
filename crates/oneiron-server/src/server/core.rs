@@ -75,6 +75,9 @@ pub struct SyncServer {
     /// connects racing the same client id must observe first-binding-wins,
     /// never a read-modify-write interleave.
     pub(crate) lease_registrar: Mutex<()>,
+    /// One owner link act at a time on this server: a hosted peer's link and
+    /// its unlink never interleave ([`crate::linked_peer`]).
+    pub(crate) link_acts: std::sync::Mutex<()>,
     /// Window manager used by server-side safe-point maintenance jobs.
     pub(crate) reassert_manager: Arc<WindowManager>,
     /// Keep the weakly attached Observer B local-read tee alive for this server.
@@ -409,6 +412,7 @@ const _: fn(&SyncServer) = |server| {
         vault, invocation_claims, root_doc, ephemeral_store, message_scopes, dreamer_progress,
         standing_block_cache, broadcast_tx, next_conn_id, lease_registrar, reassert_manager,
         broadcast_sessions,
+        link_acts,
         _reactive_tee, lifecycle_session_id, lifecycle_in_flight, housekeeping_passes,
         residence_work_changed, queue_driver_started, config, transfers, memory, renderer_turns,
         runs_device_link, device_link_opened,

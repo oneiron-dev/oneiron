@@ -796,6 +796,17 @@ name = "selector_answer_carries_released_row_delete"
 path = "tests/selector_answer_carries_released_row_delete.rs"
 required-features = ["oneiron/test-hooks"]
 
+# L10-16's hosted-peer link: the route gates and the link acts serve a `MemoryKeystore` root too.
+[[test]]
+name = "owner_link_routes"
+path = "tests/owner_link_routes.rs"
+required-features = ["oneiron/test-support"]
+
+[[test]]
+name = "hosted_peer_link"
+path = "tests/hosted_peer_link.rs"
+required-features = ["oneiron/test-support"]
+
 [lints]
 workspace = true
 

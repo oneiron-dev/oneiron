@@ -42,6 +42,7 @@ pub mod hook_transcript_uploads;
 pub mod hosted_import;
 pub mod lens_frames;
 pub mod lfs_install_line;
+pub mod linked_peer;
 pub mod live_fork_rung;
 pub mod live_lease;
 pub mod live_merge_queue_checker_pass;
