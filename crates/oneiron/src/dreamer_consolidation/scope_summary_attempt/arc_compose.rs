@@ -132,6 +132,13 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             .dreamer_recipe_policy()
             .ok()
             .map(|policy| policy.arc_child_calls_per_wake);
+        // Every call sends under the rows the Arc's input is read from: its
+        // pinned sources and each row its labels name, as Arc opening's do.
+        let rows = evidence.call_rows().map(|rows| {
+            rows.into_iter()
+                .chain(view.labels.rows())
+                .collect::<Vec<_>>()
+        });
         let lines = loop {
             let user = match arc_input(plan, view, &words) {
                 Ok(user) => user,
@@ -225,8 +232,9 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                     .map(drop)
                     .map_err(str::to_owned)
             };
+            let backend = self.call_backend(rows.clone());
             let outcome =
-                call_as_step_checked(&step_ctx, self.backend, self.guard, request, &check).await;
+                call_as_step_checked(&step_ctx, backend.get(), self.guard, request, &check).await;
             let response = match outcome {
                 Ok(StepOutcome::Finished {
                     response,

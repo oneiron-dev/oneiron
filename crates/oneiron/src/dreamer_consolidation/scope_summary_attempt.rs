@@ -7,7 +7,7 @@
 
 use super::call_labels::{CallLabelMap, LabelKind};
 use super::note_text::NoteText;
-use super::request_sources::SourcedBackend;
+use super::request_sources::{CallBackend, SourcedBackend};
 use super::residency::{residency_deferral, spent_or_deferred, waits_on_residency};
 use super::resources::document_version;
 use super::step_charge::StepChargeTally;
@@ -327,15 +327,10 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 .map_err(str::to_owned),
             None => check_summary_reply(response),
         };
-        let response = match call_as_step_checked(
-            &step_ctx,
-            self.backend,
-            self.guard,
-            request,
-            &check,
-        )
-        .await
-        {
+        let backend = self.call_backend(evidence.call_rows());
+        let outcome =
+            call_as_step_checked(&step_ctx, backend.get(), self.guard, request, &check).await;
+        let response = match outcome {
             Ok(StepOutcome::Finished {
                 response,
                 memoized,
@@ -568,6 +563,12 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         evidence.labels.bind_request(&mut request, None);
         Ok(request)
     }
+
+    /// The narrative route one call sends on: bound to `rows` when they are
+    /// the complete set its input was read from, else the route's own.
+    fn call_backend(&self, rows: Option<Vec<EntityId>>) -> CallBackend<'_> {
+        CallBackend::new(self.backend, self.sourced, rows)
+    }
 }
 
 /// How long a declaration whose scope moved waits before it composes again.
@@ -621,6 +622,20 @@ impl ScopeSummaryEvidence {
         let bytes = serde_json::to_vec(&(&self.source_versions, &self.text, &self.editor_sources))
             .map_err(|_| invalid_consolidation("summary evidence did not hash"))?;
         Ok(*blake3::hash(&bytes).as_bytes())
+    }
+
+    /// The rows a call over this evidence is read from
+    /// ([DREAMER-UNSOURCED-ROLE-CALLS-SEND-UNFENCED]): each source it pinned
+    /// present (an Arc's sitting summaries and claims among them) and each
+    /// row an edited predecessor's text was written from. `None` when a
+    /// pin's id does not decode.
+    fn call_rows(&self) -> Option<Vec<EntityId>> {
+        self.source_versions
+            .iter()
+            .filter(|pin| pin.revision.is_some())
+            .chain(&self.editor_sources)
+            .map(|pin| EntityId::from_hex(&pin.id).ok())
+            .collect()
     }
 }
 

@@ -165,6 +165,9 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                     spend_scope: None,
                     wake_pass_bound: true,
                 };
+                // Each page sends under the whole sitting's rows: its framing
+                // carries the sitting's layout beside the page's own TURNs.
+                let rows = evidence.call_rows();
                 let mut replies = Vec::with_capacity(steps.len());
                 for (request, step_hash, labels) in steps {
                     if ctx.deadline.expired() {
@@ -177,8 +180,9 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                             .map(drop)
                             .map_err(str::to_owned)
                     };
+                    let backend = self.call_backend(rows.clone());
                     let outcome =
-                        call_as_step_checked(&step_ctx, self.backend, self.guard, request, &check).await;
+                        call_as_step_checked(&step_ctx, backend.get(), self.guard, request, &check).await;
                     let response = match outcome {
                         Ok(StepOutcome::Finished {
                             response, memoized, binding, ..
