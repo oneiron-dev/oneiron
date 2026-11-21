@@ -9,9 +9,11 @@
 //! the items to resume, which need their cycles and their spend scopes
 //! landed before them in the one adopting transaction, and last the
 //! leave-notice delegations the home answers removed people with (FIX 7932),
-//! the Coach's topology-audit section (FIX 7817) and the owner's narrowing
-//! history of the base agents' grants (STEWARD-NARROWING-RECEIPT-LOCAL),
-//! which stand on no other table.
+//! the Coach's topology-audit section (FIX 7817), the owner's narrowing
+//! history of the base agents' grants (STEWARD-NARROWING-RECEIPT-LOCAL) and
+//! the booking lifecycle's tokens, deposits, holds and receipts (FIX
+//! [BK-LIFECYCLE-ROWS-NOT-CARRIED-BY-HOME-MOVE]), which stand on no other
+//! table.
 
 use heed::RoTxn;
 
@@ -23,7 +25,7 @@ use crate::side_table::SideTableDbs;
 /// Every table a home move carries in this build, in the order the carrier
 /// exports and adopts them (CALLS: home tables). C2's drain, its adoption
 /// and restore's live keys all walk this one list.
-pub(crate) fn home_tables() -> [HomeTableRegistration; 9] {
+pub(crate) fn home_tables() -> [HomeTableRegistration; 12] {
     [
         HomeTableRegistration::of::<crate::dreamer_runner::FreeTimePolicyRows>(),
         HomeTableRegistration::of::<crate::dreamer_runner::FreeTimeClockRows>(),
@@ -39,6 +41,13 @@ pub(crate) fn home_tables() -> [HomeTableRegistration; 9] {
         // narrowing the owner applied, with its agent and owner as actor
         // parts; independent of every other section.
         HomeTableRegistration::of::<crate::federation::SystemAgentNarrowingRows>(),
+        // Lead ruling BK-HOME-MOVE-CARRIES-BOOKINGS = A (21 Nov 06:2x, "Money
+        // follows the home"): the booking lifecycle's rows, its deposits with
+        // them; each section stands alone, and the new home queues a settle
+        // row for each carried deposit that still owes a move.
+        HomeTableRegistration::of::<crate::booking::lifecycle::home_rows::BookingTokenRows>(),
+        HomeTableRegistration::of::<crate::booking::lifecycle::home_rows::BookingHoldRows>(),
+        HomeTableRegistration::of::<crate::booking::lifecycle::home_rows::BookingReceiptRows>(),
     ]
 }
 
