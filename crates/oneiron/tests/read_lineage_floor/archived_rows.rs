@@ -16,11 +16,15 @@
 //!
 //! #10265 review P1-1, P1-2: in that run again, an archived row's first
 //! raise stays its first when the raise stores its floor before it settles,
-//! and when its restore comes before the run reaches it.
+//! and when its restore comes before the run reaches it. #10265 Opus review
+//! P2-2: a pass marks archived rows raised only once it ends, and only when
+//! it began in this build with no row raised yet; P2-3: the run again starts
+//! from the state an older backfill left.
 
 use oneiron::test_doors::cleanup_archive::archive_as_cleanup;
 use oneiron::test_doors::read_lineage_floor::{
-    end_backfill_without_archived_rows, floor_of, floor_waits,
+    backfill_first_page, end_backfill_without_archived_rows, floor_of, floor_waits, mark_raised,
+    mark_waiting_on,
 };
 use oneiron::test_doors::source_audience_binding::{bound_row_read_by, reads};
 use oneiron::{EdgeKind, EntityId};
@@ -323,33 +327,47 @@ fn a_fact_archived_over_an_erased_input_waits_for_good_after_the_floor_state_was
 
 /// FLOOR-BACKFILL-SKIPS-ARCHIVED-ROWS in a vault whose backfill ended
 /// before the backfill raised archived rows (#10222 Opus review 3: run it
-/// once more): `source` was learnt from the mailbox's row and `fact` from
-/// `source`, both before floors, and the cleanup archived `source`; that
-/// backfill settled `fact` with the archived `source`'s empty floor, so a
-/// stranger reads it. The next pass raises every row once more, `source`
-/// with them, and `fact` then holds the mailbox's policy. `kept`, learnt
-/// from `input` while it stood, keeps reading to the mailbox's reader
-/// through that run though `input` was erased since: the run holds no live
-/// row for good.
+/// once more), from the state that backfill left (#10265 Opus review P2-3):
+/// in a vault that held no policy yet, `source` was learnt from the
+/// mailbox's row, then on its way, and the cleanup archived it once that
+/// row landed. That backfill read the archived `source` as erased: `fact`,
+/// learnt from `source`, waits on it with a mark, and `linked`,
+/// `DerivedFrom` `source`, settled on `source`'s empty floor, so a stranger
+/// reads it. The next pass raises every row once more, `source` with them:
+/// `fact` follows its mark, `linked` is raised again, and both then hold the
+/// mailbox's policy. `kept`, learnt from `input` while it stood, keeps
+/// reading to the mailbox's reader through that run though `input` was
+/// erased since: the run holds no live row for good.
 #[test]
 fn a_vault_backfilled_before_archived_rows_were_raised_raises_them_in_one_more_run() {
-    let mailbox = owners_mailbox();
-    let input = claim_born_from(&mailbox, &[mailbox.row], "learnt from the mailbox");
-    let kept = claim_born_from(&mailbox, &[input], "learnt from input while it stood");
-    let source =
-        claim_born_before_floors(&mailbox, &[mailbox.row], "fact.archived_source_backfilled");
+    let late = EntityId::now();
+    let mut mailbox = mailbox_with_no_policy_yet(late);
+    let source = claim_born_before_floors(&mailbox, &[late], "fact.archived_source_backfilled");
     let fact = claim_born_before_floors(&mailbox, &[source], "fact.held_from_archived_backfilled");
+    let linked = claim_born_before_floors(&mailbox, &[], "fact.linked_to_archived_backfilled");
+    mailbox
+        .vault
+        .put_edge(&linked, EdgeKind::DerivedFrom, &source, 1.0)
+        .expect("FIXTURE: linked names its source");
+    mailbox.policy = bound_row_read_by(&mailbox.vault, late, &[mailbox.reader])
+        .expect("late lands, bound to a member's mailbox");
+    let input = claim_born_from(&mailbox, &[late], "learnt from the mailbox");
+    let kept = claim_born_from(&mailbox, &[input], "learnt from input while it stood");
     archive(&mailbox, source);
     erase(&mailbox, input);
     forget_floor_state(&mailbox.vault).expect("FIXTURE: a vault written before floors");
+    mark_waiting_on(&mailbox.vault, fact, source)
+        .expect("FIXTURE: that backfill left fact waiting on the archived source");
     end_backfill_without_archived_rows(&mailbox.vault)
         .expect("FIXTURE: the backfill ended before it raised archived rows");
+    assert_no_stranger_or_reader_reads(&mailbox, fact, "while it waits on the archived source");
     assert!(
-        reads(&mailbox.vault, fact, &[mailbox.stranger]).expect("the stranger's read"),
-        "precondition: that backfill left the fact from the archived source open",
+        reads(&mailbox.vault, linked, &[mailbox.stranger]).expect("the stranger's read"),
+        "precondition: that backfill left the row linked to the archived source open",
     );
     housekeeping_pass(&mailbox);
     assert_reads_as_its_landed_source(&mailbox, fact, mailbox.policy, "after one more run");
+    assert_reads_as_its_landed_source(&mailbox, linked, mailbox.policy, "after one more run");
     assert_reads_as_its_landed_source(
         &mailbox,
         kept,
@@ -358,6 +376,7 @@ fn a_vault_backfilled_before_archived_rows_were_raised_raises_them_in_one_more_r
     );
     housekeeping_pass(&mailbox);
     assert_reads_as_its_landed_source(&mailbox, fact, mailbox.policy, "after a later pass");
+    assert_reads_as_its_landed_source(&mailbox, linked, mailbox.policy, "after a later pass");
 }
 
 /// #10222 Opus review 3 P2-1: `source` waits on `late`, a row not here yet,
@@ -458,5 +477,85 @@ fn an_archived_fact_restored_before_one_more_run_waits_for_good_on_its_erased_in
     assert!(
         reads(&mailbox.vault, fact, &[mailbox.owner]).expect("the owner's read"),
         "the owner, who reads every source here, does not read a fact that waits for good",
+    );
+}
+
+/// Rows one backfill write reads (`BACKFILL_PAGE`): a row created after
+/// this many rows sits past the first page.
+const BACKFILL_PAGE_ROWS: usize = 64;
+
+/// #10265 Opus review P2-2, a pass an older build ends: the backfill's
+/// first page runs in this build, then a build before it goes on with the
+/// pass and ends it. `source`, learnt from the mailbox's row and archived,
+/// sits past the first page, and so does `fact`, learnt from `source`: the
+/// older build skipped `source`, read it as erased, and left `fact` waiting
+/// on it. The next run raises every row once more, `source` with them, so
+/// `fact` follows its mark and holds the mailbox's policy. Before the fix
+/// the first page marked archived rows raised for the whole pass: the next
+/// run read the backfill as done, and `fact` settled on the never raised
+/// `source`'s empty floor, so a stranger read it.
+#[test]
+fn a_pass_an_older_build_ends_after_the_first_page_raises_archived_rows_once_more() {
+    let mailbox = owners_mailbox();
+    for row in 0..BACKFILL_PAGE_ROWS {
+        claim_born_before_floors(&mailbox, &[], &format!("fact.first_page_row_{row}"));
+    }
+    let source = claim_born_before_floors(
+        &mailbox,
+        &[mailbox.row],
+        "fact.archived_past_the_first_page",
+    );
+    let fact = claim_born_before_floors(&mailbox, &[source], "fact.learnt_past_the_first_page");
+    archive(&mailbox, source);
+    forget_floor_state(&mailbox.vault).expect("FIXTURE: a vault written before floors");
+    backfill_first_page(&mailbox.vault).expect("the backfill's first page runs in this build");
+    mark_waiting_on(&mailbox.vault, fact, source)
+        .expect("FIXTURE: the older build leaves fact waiting on the archived source");
+    end_backfill_without_archived_rows(&mailbox.vault)
+        .expect("FIXTURE: the older build ends the pass");
+    housekeeping_pass(&mailbox);
+    assert_reads_as_its_landed_source(&mailbox, fact, mailbox.policy, "after the next run");
+}
+
+/// #10265 Opus review P2-2, a row an older build raised before this
+/// build's first page: in a vault that held no policy yet, `linked` is
+/// `DerivedFrom` `source`, learnt from the mailbox's row, then on its way;
+/// the row lands, and the cleanup archives `source`. A write of a build before
+/// this one raised `linked` while the backfill ran, without the archived
+/// `source`, so `linked` keeps `source`'s empty floor, and marked it raised;
+/// then this build's pass began. Its end leaves the backfill to run once
+/// more, which raises `linked` again, so a fact learnt from `linked` after
+/// that holds the mailbox's policy. Before the fix the pass skipped
+/// `linked` as raised and marked archived rows raised: `linked` kept its
+/// empty stored floor, and the later fact, which takes it, read open to a
+/// stranger.
+#[test]
+fn a_row_an_older_build_raised_before_the_first_page_is_raised_once_more() {
+    let late = EntityId::now();
+    let mut mailbox = mailbox_with_no_policy_yet(late);
+    let source = claim_born_before_floors(
+        &mailbox,
+        &[late],
+        "fact.archived_source_of_an_early_raised_row",
+    );
+    let linked = claim_born_before_floors(&mailbox, &[], "fact.raised_early_by_an_older_build");
+    mailbox
+        .vault
+        .put_edge(&linked, EdgeKind::DerivedFrom, &source, 1.0)
+        .expect("FIXTURE: linked names its source");
+    mailbox.policy = bound_row_read_by(&mailbox.vault, late, &[mailbox.reader])
+        .expect("late lands, bound to a member's mailbox");
+    archive(&mailbox, source);
+    forget_floor_state(&mailbox.vault).expect("FIXTURE: a vault written before floors");
+    mark_raised(&mailbox.vault, linked)
+        .expect("FIXTURE: an older build's write raised linked without its archived source");
+    housekeeping_pass(&mailbox);
+    housekeeping_pass(&mailbox);
+    let later = claim_born_from(&mailbox, &[linked], "learnt from linked");
+    assert_reads_as_its_landed_source(
+        &mailbox,
+        later,
+        mailbox.policy,
+        "once learnt from a row an older build raised early",
     );
 }

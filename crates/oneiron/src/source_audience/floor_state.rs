@@ -77,7 +77,8 @@ mod marks;
 pub(crate) use self::backfill::backfill_floors;
 #[cfg(any(test, feature = "test-support", oneiron_test_support))]
 pub(crate) use self::backfill::{
-    end_backfill_without_archived_rows_in_txn, forget_floor_state_in_txn,
+    end_backfill_without_archived_rows_in_txn, forget_floor_state_in_txn, mark_raised_in_txn,
+    mark_waiting_in_txn,
 };
 
 /// Each row whose floor waits.

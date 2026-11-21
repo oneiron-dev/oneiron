@@ -212,16 +212,40 @@ fn settle_page_in_txn(
     ))
 }
 
-/// Marks, in `txn`, the backfill done as a build that ran it before the
-/// backfill raised archived rows left it (FLOOR-BACKFILL-SKIPS-ARCHIVED-ROWS).
+/// Ends, in `txn`, the backfill's pass as a build before the backfill
+/// raised archived rows (FLOOR-BACKFILL-SKIPS-ARCHIVED-ROWS) ends it: it
+/// marks the backfill done and clears the raised marks, and leaves
+/// [`ARCHIVED_RAISED`], which it does not know, as it is.
 #[cfg(any(test, feature = "test-support", oneiron_test_support))]
 pub(crate) fn end_backfill_without_archived_rows_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
 ) -> Result<()> {
     BACKFILL.put(&vault.store, txn, &(), &true)?;
-    ARCHIVED_RAISED.delete_from(&vault.store, txn, &[])?;
+    RAISED.delete_from(&vault.store, txn, &[])?;
     Ok(())
+}
+
+/// Marks `row` raised in `txn`, as a write of a build before
+/// FLOOR-BACKFILL-SKIPS-ARCHIVED-ROWS marked a row it raised while the
+/// backfill ran, without the archived rows it was written from.
+#[cfg(any(test, feature = "test-support", oneiron_test_support))]
+pub(crate) fn mark_raised_in_txn(vault: &Vault, txn: &mut RwTxn<'_>, row: &EntityId) -> Result<()> {
+    RAISED.put(&vault.store, txn, row, &())
+}
+
+/// Leaves `row` waiting on `source` in `txn`, with its mark, as the
+/// backfill of a build before #10222 left a row learnt from an archived row
+/// it read as erased.
+#[cfg(any(test, feature = "test-support", oneiron_test_support))]
+pub(crate) fn mark_waiting_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    row: &EntityId,
+    source: &EntityId,
+) -> Result<()> {
+    PENDING.put(&vault.store, txn, row, &())?;
+    super::marks::mark_wait_in_txn(&vault.store, txn, source, row)
 }
 
 /// Forgets, in `txn`, every floor's state and the backfill's: the vault

@@ -82,9 +82,10 @@ pub fn forget_floor_state(vault: &Vault) -> Result<()> {
     Ok(())
 }
 
-/// Marks the floor backfill done as a build that ran it before the backfill
-/// raised archived rows left it (FLOOR-BACKFILL-SKIPS-ARCHIVED-ROWS): each
-/// row keeps the floor it has.
+/// Ends the floor backfill's pass as a build before the backfill raised
+/// archived rows (FLOOR-BACKFILL-SKIPS-ARCHIVED-ROWS) ends it: the backfill
+/// is done, its raised marks are cleared, and each row keeps the floor it
+/// has.
 ///
 /// # Errors
 ///
@@ -92,6 +93,45 @@ pub fn forget_floor_state(vault: &Vault) -> Result<()> {
 pub fn end_backfill_without_archived_rows(vault: &Vault) -> Result<()> {
     let mut txn = vault.store.env.write_txn()?;
     crate::source_audience::end_backfill_without_archived_rows_in_txn(vault, &mut txn)?;
+    txn.commit()?;
+    Ok(())
+}
+
+/// Runs the first write of a floor backfill pass in this build, as the
+/// housekeeping sweep does when a pass begins, and drops where the pass
+/// would go on.
+///
+/// # Errors
+///
+/// Storage failures.
+pub fn backfill_first_page(vault: &Vault) -> Result<()> {
+    crate::source_audience::backfill_floors(vault, None, || true).map(|_| ())
+}
+
+/// Marks `row` raised as a write of a build before the backfill raised
+/// archived rows marked a row it raised while the backfill ran, without the
+/// archived rows it was written from (#10265 Opus review P2-2).
+///
+/// # Errors
+///
+/// Storage failures.
+pub fn mark_raised(vault: &Vault, row: EntityId) -> Result<()> {
+    let mut txn = vault.store.env.write_txn()?;
+    crate::source_audience::mark_raised_in_txn(vault, &mut txn, &row)?;
+    txn.commit()?;
+    Ok(())
+}
+
+/// Leaves `row` waiting on `source`, with its mark, as the backfill of a
+/// build before #10222 left a row learnt from an archived row it read as
+/// erased (#10265 Opus review P2-3).
+///
+/// # Errors
+///
+/// Storage failures.
+pub fn mark_waiting_on(vault: &Vault, row: EntityId, source: EntityId) -> Result<()> {
+    let mut txn = vault.store.env.write_txn()?;
+    crate::source_audience::mark_waiting_in_txn(vault, &mut txn, &row, &source)?;
     txn.commit()?;
     Ok(())
 }
