@@ -190,6 +190,7 @@ impl Vault {
     /// that scored them; the caller still admits each hit again in a fresh
     /// read. `dispatch_attempt` is the leased attempt its telemetry row
     /// names, as [`Self::search_text_observed_for_attempt`] records it.
+    /// Unlike [`Self::search_text_observed`], it blends no recency.
     pub(crate) fn search_text_scoped_observed(
         &self,
         lane: &crate::claim::ScopedRead<'_>,

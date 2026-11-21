@@ -7,7 +7,8 @@ use super::*;
 /// clamp (`hidden_row`, see [`Bm25SearchOptions::hidden_row`]) a term's
 /// document frequency counts only the postings of rows the audience could
 /// read; the document count and the fields' average lengths stay the
-/// vault's.
+/// vault's, except that a room floors a term's count on its counted
+/// postings alone.
 pub(super) fn score_query_terms(
     store: &impl ManifestDbs,
     rtxn: &RoTxn<'_>,

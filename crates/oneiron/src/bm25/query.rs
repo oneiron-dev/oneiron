@@ -46,7 +46,10 @@ where
     /// SCOPED-BM25-DF-COUNTS-NON-WORLD-REFUSED-POSTINGS). The document count and
     /// the fields' average lengths stay the vault's, hidden rows included:
     /// they carry no word of any row (FIX
-    /// [CLAMPED-BM25-IDF-COUNTS-HIDDEN-POSTINGS]). The posting still scores:
+    /// [CLAMPED-BM25-IDF-COUNTS-HIDDEN-POSTINGS]). In a room, whose pinned
+    /// count base postings that joined later may outnumber, a term's count is
+    /// floored on its counted postings alone, clamp or scoped read (REVIEW-10111
+    /// round 2), so no hidden row raises one term's count. The posting still scores:
     /// the read's admission keeps it out, and a clamped pack counts it among
     /// the rows its clamp withheld. `None` counts every posting.
     pub(crate) hidden_row: Option<&'a mut dyn FnMut(&EntityId) -> Result<bool>>,
