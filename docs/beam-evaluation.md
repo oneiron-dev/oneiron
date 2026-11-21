@@ -39,9 +39,18 @@ Each score in `paired`, `picks`, `points`, `frontier` and `agency_lift` has
 two columns (ARCH-0042 `beam:D9`). `beam-fixed` is the float nugget score with
 half credit, from a judge shown the real question. The picks, the frontier and
 the agency lift rest on it. `int-cast-saw-question` takes the same verdicts
-and drops each 0.5 to 0. Neither column is `beam-replicate@3e12035`, whose
-judge sees the placeholder `<question>`. This harness does not run that
-judge pass yet.
+and drops each 0.5 to 0. Neither column is `beam-replicate@3e12035`.
+
+A BEAM `judge` configuration with `replicate_instruction` (the upstream
+3e12035 judge prompt, pinned as `{"content": "...", "sha256": "..."}`) adds
+the third column, `beam-replicate@3e12035`. Each judgment then runs a second,
+separate three-call pass under that prompt, with the literal placeholder
+`<question>` in place of the probing question, and the column int-casts that
+pass's verdicts. Both passes are billed as judge overhead, and the report's
+scorer card names both prompt hashes. Only a BEAM judge takes the pin.
+`score-nuggets`, the proof door, refuses a replay whose judgments lack the
+replicate verdict (`replicate_value`), so no published BEAM number goes out
+without the column.
 
 `crates/oneiron-bench/fixtures/beam_measure.example.json` is a runnable plan
 shape for an OpenAI-compatible local relay. Before using it for real numbers,

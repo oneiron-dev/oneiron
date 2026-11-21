@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 
 use super::super::{ByteBody, OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use super::schema::{CHECKPOINT_HEADER, checkpoint_manifest_schema, pinned_checkpoint_schema};
-use super::{hex_id, now_secs};
+use super::{hex_id, unix_seconds_now};
 use crate::ai_host::training_pack::{trainer_binding, training_declaration};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
@@ -240,7 +240,7 @@ async fn authorize(
             &owner,
             &offer,
             &choice,
-            now_secs(),
+            unix_seconds_now(),
         )?)
     })
     .await?;
@@ -384,7 +384,7 @@ async fn authorize_run(
             &choice.run,
             &choice.spec_blake3,
             choice.declaration,
-            now_secs(),
+            unix_seconds_now(),
         )?;
         Ok(status(run))
     })

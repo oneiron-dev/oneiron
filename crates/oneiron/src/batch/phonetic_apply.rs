@@ -94,6 +94,8 @@ pub(crate) fn delete_from_phonetic_postings(
     id: &EntityId,
 ) -> Result<()> {
     PHONETIC_SOURCE.delete(store, wtxn, id)?;
+    // The learned rung's vectors go with the codes: an erased or renamed name keeps none.
+    crate::phonetic_learned::delete_phonetic_vectors_in_txn(store, wtxn, id)?;
     if let Some(raw) = store.phonetic_forward().get(wtxn, id.as_bytes())? {
         match decode_phonetic_forward_codes(&raw) {
             Ok(codes) => match delete_from_known_phonetic_codes(store, wtxn, id, &codes) {

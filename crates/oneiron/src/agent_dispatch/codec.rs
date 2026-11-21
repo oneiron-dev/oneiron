@@ -22,8 +22,8 @@ use super::types::{
     KEY_CALLER_ORIGIN, KEY_CARRIED_WAKE_KEYS, KEY_COMM, KEY_CONTEXT_FROM, KEY_CONTEXT_SPEC,
     KEY_DEFINITION, KEY_DEPTH_REMAINING, KEY_DIRECT_SPAWN, KEY_FUNDING, KEY_LAUNCH, KEY_OBJECTIVES,
     KEY_ORIGIN_CONVERSATION, KEY_PLAN, KEY_PRESET, KEY_PROJECT_REF, KEY_REQUESTER,
-    KEY_SCHEMA_VERSION, KEY_SCOPE, KEY_SPAWN_INTENT, KEY_TARGET, KEY_TASK_TYPE_PARENTS,
-    KEY_TASK_TYPE_REF, KEY_TEAM, TARGET_CUSTOM, TARGET_SYSTEM,
+    KEY_SCHEMA_VERSION, KEY_SCOPE, KEY_SPAWN_INTENT, KEY_SPAWN_PARENT, KEY_TARGET,
+    KEY_TASK_TYPE_PARENTS, KEY_TASK_TYPE_REF, KEY_TEAM, TARGET_CUSTOM, TARGET_SYSTEM,
 };
 use super::{
     CommReach, DirectSpawnReceipt, SpawnPlanReceipt, TeamRunStamp, healer_context, room_join, types,
@@ -255,6 +255,11 @@ pub fn encode_agent_dispatch_input(input: &AgentDispatchInput) -> Result<Value> 
             ),
         ));
     }
+    // FIX CHECK-IN-SPAWN-PARENT-PRINCIPAL: only a spawned child names its
+    // parent; a root encodes as before.
+    if let Some(parent) = input.spawn_parent {
+        entries.push((Value::from(KEY_SPAWN_PARENT), Value::from(parent.to_hex())));
+    }
     Ok(Value::Map(entries))
 }
 
@@ -351,6 +356,53 @@ pub(crate) fn record_dispatch_input(record: &AttemptRecord) -> Option<AgentDispa
         return None;
     }
     decode_agent_dispatch_input(&payload.input).ok()
+}
+
+/// The spawn parent that `record`'s own stored parent link derives, in
+/// `txn`: the definition its parent attempt's dispatch targets, as the
+/// dispatch writer derives it when it freezes a child
+/// (`AgentDispatcher::spawn_parent_in_txn`). A workflow leaf's stored parent
+/// is its inert wrapper, and the writer froze the leaf from the workflow
+/// dispatch's own parent, so the link crosses the wrapper to the parent the
+/// wrapper records, as the delegation lineage does
+/// (`run_lineage::delegation_lineage_parent_in_txn`). `None` for a root, and
+/// for a parent attempt this machine does not hold or that is no agent
+/// dispatch.
+///
+/// # Errors
+///
+/// Storage errors, and a parent dispatch whose target names no definition.
+pub(crate) fn record_spawn_parent_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    record: &AttemptRecord,
+) -> Result<Option<EntityId>> {
+    let queue = crate::attempt_queue::AttemptQueue::new(vault);
+    let parent_of = |row: &AttemptRecord| {
+        decode_dreamer_attempt_payload(&row.payload)
+            .ok()
+            .and_then(|payload| payload.parent_attempt)
+    };
+    let Some(mut parent) = parent_of(record)
+        .map(|id| queue.get_in_txn(txn, id))
+        .transpose()?
+        .flatten()
+    else {
+        return Ok(None);
+    };
+    if super::workflow_record::is_wrapper(&parent) {
+        let Some(real) = parent_of(&parent)
+            .map(|id| queue.get_in_txn(txn, id))
+            .transpose()?
+            .flatten()
+        else {
+            return Ok(None);
+        };
+        parent = real;
+    }
+    record_dispatch_input(&parent)
+        .map(|input| input.target.agent_definition_ref())
+        .transpose()
 }
 
 pub(super) fn agent_dispatch_status(status: DreamerAttemptStatus) -> Result<AgentDispatchStatus> {

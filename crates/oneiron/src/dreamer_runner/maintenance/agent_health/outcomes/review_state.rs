@@ -3,21 +3,12 @@
 //! state's `health_review:` digest and shared by every receipt of that state.
 //! The rows hold ids only, never a body or brief text.
 
-use serde::{Deserialize, Serialize};
-
+use crate::Result;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
-use crate::{EntityId, Result};
 
-/// The DIAGNOSTICs and evidence one review state froze.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct HealthReviewState {
-    /// The card's DIAGNOSTICs when it was set, newest last.
-    pub diagnostics: Vec<EntityId>,
-    /// The card's receipt and attempt ids when it was set, newest last.
-    pub evidence: Vec<EntityId>,
-}
+#[doc(hidden)]
+pub use oneiron_records::dreamer_runner::maintenance::agent_health::outcomes::review_state::HealthReviewState;
 
 const REVIEW_STATES: SideTable<[u8; 32], HealthReviewState, Named> =
     SideTable::new(&side_table::COACH_AGENT_HEALTH_REVIEW_STATE);

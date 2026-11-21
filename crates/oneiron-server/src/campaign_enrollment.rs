@@ -281,7 +281,7 @@ fn outward(server: &SyncServer, node: u64, attempt: &AttemptRecord) -> Option<Se
             "campaign copy review did not run; a governed send holds for the owner"
         );
     }
-    let now_ms = crate::runtime::wall_clock_ms();
+    let now_ms = oneiron_base::unix_millis_now();
     let drive = vault.drive_enrollment_outbound_leg(node, attempt, &mut sender, now_ms);
     Some(match drive {
         Ok(EnrollmentLegDrive::Dispatched | EnrollmentLegDrive::NothingOwed) => {

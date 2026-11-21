@@ -1,22 +1,297 @@
-//! Owner-installed calendar seats and host iMIP submission, with custody names only.
+//! Owner-installed calendar seats, and the host read of the iMIP submission transport, with
+//! custody names only. A seat's setup is the `calendar.connector_seat` setting, one item per
+//! seat ref; this module keeps what the seat's syncs and its kill switch write.
 use serde::{Deserialize, Serialize};
 
-use super::{CalendarConnectorSeatState, CalendarSyncOutcome};
+use super::seat::ref_parses;
+use super::{
+    CalendarConnectorKillSwitchState, CalendarConnectorSeatConfig, CalendarConnectorSeatState,
+    CalendarSyncOutcome,
+};
+use crate::calendar::ingest::feed_door;
+use crate::calendar::setting_keys::CONNECTOR_SEAT;
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{Memory, MemoryError, MemoryResult};
+use crate::setting::{ChangeStanding, Kind, SettingChange, SettingMode, SettingValue};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EdgeActorClass, Vault};
 
-const SEATS: SideTable<String, CalendarConnectorRegistration, Named> =
-    SideTable::new(&side_table::CALENDAR_CONNECTOR_SEAT);
-const IMIP: SideTable<(), CalendarImipTransportConfig, Named> =
-    SideTable::new(&side_table::CALENDAR_IMIP_TRANSPORT);
+/// What a seat's syncs and kill switch wrote, by seat ref. The setup is the setting's.
+const STATES: SideTable<String, CalendarConnectorSeatRecord, Named> =
+    SideTable::new(&side_table::CALENDAR_CONNECTOR_SEAT_STATE);
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::calendar::connectors::door::{
-    CalendarConnectorConfigureRequest, CalendarConnectorKillRequest, CalendarConnectorRequest,
-    CalendarConnectorWriteRequest, CalendarImipTransportConfig,
+    CalendarConnectorKillRequest, CalendarConnectorReleaseHoldReceipt,
+    CalendarConnectorReleaseHoldRequest, CalendarConnectorRequest, CalendarConnectorWriteRequest,
+    CalendarHoldRow, CalendarHoldSeat, CalendarImipTransportConfig,
 };
+
+/// One seat's setup, the value of `calendar.connector_seat` at the seat's ref: the CalDAV
+/// discovery URL and the seat's configuration. Credentials belong in the named custody record.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CalendarSeatSetup {
+    pub(crate) config: CalendarConnectorSeatConfig,
+    /// CalDAV discovery URL, HTTPS or loopback HTTP, with no credential, query or fragment.
+    pub(crate) endpoint: String,
+}
+
+impl SettingValue for CalendarSeatSetup {
+    fn check(self) -> crate::Result<Self> {
+        validate_endpoint(&self.endpoint)
+            .map_err(|error| crate::Error::InvalidConfig(error.message))?;
+        CalendarConnectorSeatState::new(self.config.clone())
+            .validate()
+            .map_err(|error| crate::Error::InvalidConfig(error.to_string()))?;
+        Ok(self)
+    }
+}
+
+/// The seat refs `calendar.connector_seat` admits as items: the bounded refs a seat config
+/// itself admits.
+pub(crate) fn is_seat_ref(item: &str) -> bool {
+    ref_parses(item)
+}
+
+/// A seat's syncs and kill switch, everything of a registration but its setup.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct CalendarConnectorSeatRecord {
+    cursor: Option<String>,
+    kill_switch: Option<CalendarConnectorKillSwitchState>,
+    last_sync: Option<CalendarSyncOutcome>,
+    /// The system of a seat the setting projection took out of service
+    /// ([`seat_setup_changed_in_txn`]): its imported events keep their passports, so the system
+    /// stays its own ([`seat_of_system_in_txn`]), as its seat ref does. Absent on every other
+    /// record, whose bytes it leaves as they were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    retired_system: Option<String>,
+}
+
+/// The installed seat at `seat_ref` joined with what its syncs and kill switch wrote, or none
+/// when no seat is installed there (or its setup row does not read).
+pub(crate) fn registration_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    seat_ref: &str,
+) -> crate::Result<Option<CalendarConnectorRegistration>> {
+    if !is_seat_ref(seat_ref) {
+        return Ok(None);
+    }
+    let Some(setup) = CONNECTOR_SEAT
+        .read_in_txn(vault, txn, &[], Some(seat_ref))?
+        .value
+    else {
+        return Ok(None);
+    };
+    let record = STATES
+        .get(&vault.store, txn, &setup.config.seat_ref)?
+        .unwrap_or_default();
+    Ok(Some(CalendarConnectorRegistration {
+        endpoint: setup.endpoint,
+        seat: CalendarConnectorSeatState {
+            config: setup.config,
+            cursor: record.cursor,
+            kill_switch: record.kill_switch,
+        },
+        last_sync: record.last_sync,
+    }))
+}
+
+fn put_record_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    row: &CalendarConnectorRegistration,
+) -> crate::Result<()> {
+    STATES.put(
+        &vault.store,
+        txn,
+        &row.seat.config.seat_ref,
+        &CalendarConnectorSeatRecord {
+            cursor: row.seat.cursor.clone(),
+            kill_switch: row.seat.kill_switch.clone(),
+            last_sync: row.last_sync.clone(),
+            retired_system: None,
+        },
+    )?;
+    Ok(())
+}
+
+/// The seat ref of a seat whose passports carry `system`, or none, read in `txn`: an installed
+/// seat, or one the setting projection took out of service. A stopped seat still holds its
+/// system, and so does one taken out of service: its imported events keep their passports.
+pub(crate) fn seat_of_system_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    system: &str,
+) -> crate::Result<Option<String>> {
+    for seat_ref in CONNECTOR_SEAT.items_in_txn(vault, txn)? {
+        let setup = CONNECTOR_SEAT
+            .read_in_txn(vault, txn, &[], Some(&seat_ref))?
+            .value;
+        if setup.is_some_and(|setup| setup.config.system == system) {
+            return Ok(Some(seat_ref));
+        }
+    }
+    Ok(STATES
+        .scan(&vault.store, txn)?
+        .into_iter()
+        .find(|(_, record)| record.retired_system.as_deref() == Some(system))
+        .map(|(seat_ref, _)| seat_ref))
+}
+
+/// The system of every seat, installed or taken out of service, as `txn` reads it: each
+/// system whose passports a seat's pulls and writes key ([`seat_of_system_in_txn`]). A seat
+/// taken out of service keeps its system in its record as its installed setup held it.
+pub(crate) fn seat_systems_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> crate::Result<Vec<String>> {
+    let mut systems = Vec::new();
+    for seat_ref in CONNECTOR_SEAT.items_in_txn(vault, txn)? {
+        if let Some(setup) = CONNECTOR_SEAT
+            .read_in_txn(vault, txn, &[], Some(&seat_ref))?
+            .value
+        {
+            systems.push(setup.config.system);
+        }
+    }
+    systems.extend(
+        STATES
+            .scan(&vault.store, txn)?
+            .into_iter()
+            .filter_map(|(_, record)| record.retired_system),
+    );
+    Ok(systems)
+}
+
+/// Keeps the system of the installed seat at `seat_ref` its own once the setting projection
+/// takes the seat out of service ([`seat_setup_changed_in_txn`]), in its record, which also
+/// keeps the seat ref from being installed again.
+fn retire_seat_system_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    seat_ref: &str,
+    system: &str,
+) -> crate::Result<()> {
+    let seat_ref = seat_ref.to_owned();
+    let mut record = STATES
+        .get(&vault.store, txn, &seat_ref)?
+        .unwrap_or_default();
+    record.retired_system = Some(system.to_owned());
+    STATES.put(&vault.store, txn, &seat_ref, &record)?;
+    Ok(())
+}
+
+/// The `calendar.connector_seat` hook, in the write that changes a seat's row. It keeps the
+/// rules the configure door had: a value row at a seat ref, naming that ref, installed once.
+/// A configured seat is immutable (a change or a clear is refused; a new configuration takes a
+/// new seat ref), but for the setting projection's taking it out of service, which keeps its
+/// system its own; and a seat ref that a seat already used is never installed again, so no
+/// cursor or kill switch outlives its seat. A seat never imports under the system of an
+/// installed ICS feed: each complete poll of the feed cancels every event of its system that
+/// the feed body lacks, the seat's events too. A system whose feed was uninstalled is open to a
+/// seat, since no poll of that feed runs again. Nor does a seat take a pack calendar source's
+/// system, whose complete listings sweep it the same way. Nor does a seat take the system of
+/// an installed seat of another calendar ([`same_calendar`]): a passport names its calendar by
+/// system, so the two calendars' copies, deletes and echoes of one booking would read as one
+/// calendar's, and a delete in the calendar a booking was not written to would refund its
+/// deposit as the host's cancel in the one it was
+/// (CAL-SEAT-DELETE-OF-WRITTEN-ONLY-EVENT-CANCELS-NOTHING).
+///
+/// # Errors
+///
+/// `InvalidConfig` for a pin, a row with no seat ref, a value naming another seat ref, a change
+/// to an installed seat, a seat ref used before, the system of an installed ICS feed, a
+/// system with the pack calendar prefix, or the system of an installed seat of another
+/// calendar.
+pub(crate) fn seat_setup_changed_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    change: &SettingChange,
+) -> crate::Result<()> {
+    if change.mode != SettingMode::Value {
+        return Err(crate::Error::InvalidConfig(
+            "a calendar seat takes no pin".into(),
+        ));
+    }
+    let Some(seat_ref) = change.item.as_deref() else {
+        return Err(crate::Error::InvalidConfig(
+            "calendar.connector_seat is set per seat: name the seat_ref as the item".into(),
+        ));
+    };
+    let decode = |value: Option<&crate::setting::EncodedValue>| {
+        value
+            .and_then(Kind::<Option<CalendarSeatSetup>>::decode)
+            .flatten()
+    };
+    let setup = decode(change.value.as_ref());
+    // The setting projection takes an installed seat out of service where its row reads no
+    // seat: the seat's value beside its signed act was erased here or no longer matches it
+    // (`Quarantined`), or installs at its ref meet with no common predecessor (`Conflict`), so
+    // every machine reads no seat there. Its system stays its own ([`seat_of_system_in_txn`]).
+    // Nobody's change of an installed seat lands.
+    if let Some(installed) = decode(change.prior.as_ref()) {
+        let out_of_service = setup.is_none()
+            && matches!(
+                change.standing,
+                Some(ChangeStanding::Quarantined | ChangeStanding::Conflict)
+            );
+        if !out_of_service {
+            return Err(crate::Error::InvalidConfig(
+                "a configured seat is immutable; use a new seat_ref".into(),
+            ));
+        }
+        return retire_seat_system_in_txn(vault, txn, seat_ref, &installed.config.system);
+    }
+    if let Some(setup) = setup {
+        if setup.config.seat_ref != seat_ref {
+            return Err(crate::Error::InvalidConfig(
+                "the seat's config.seat_ref must be the setting's item".into(),
+            ));
+        }
+        if STATES.contains(&vault.store, &*txn, &seat_ref.to_owned())? {
+            return Err(crate::Error::InvalidConfig(
+                "this seat_ref named an earlier seat; use a new seat_ref".into(),
+            ));
+        }
+        crate::mail_pack::refuse_calendar_source_system(&setup.config.system)?;
+        if feed_door::registration_in_txn(vault, txn, &setup.config.system)?.is_some() {
+            return Err(crate::Error::InvalidConfig(
+                "an installed ICS feed imports under this system, and its complete polls would \
+                 cancel the seat's events; use another system"
+                    .into(),
+            ));
+        }
+        for installed_ref in CONNECTOR_SEAT.items_in_txn(vault, txn)? {
+            if installed_ref == seat_ref {
+                continue;
+            }
+            let installed = CONNECTOR_SEAT
+                .read_in_txn(vault, txn, &[], Some(&installed_ref))?
+                .value;
+            if installed.is_some_and(|installed| {
+                installed.config.system == setup.config.system && !same_calendar(&installed, &setup)
+            }) {
+                return Err(crate::Error::InvalidConfig(
+                    "an installed seat of another calendar imports under this system, and a \
+                     passport names its calendar by system; use another system"
+                        .into(),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Whether two seat setups read one calendar: the same CalDAV endpoint, the same credential
+/// record (the account whose calendar home the endpoint resolves) and the same collection in
+/// it. A new seat of one calendar keeps its system; a seat of another calendar takes its own.
+fn same_calendar(installed: &CalendarSeatSetup, setup: &CalendarSeatSetup) -> bool {
+    installed.endpoint == setup.endpoint
+        && installed.config.secret_ref == setup.config.secret_ref
+        && installed.config.calendar_ref == setup.config.calendar_ref
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CalendarConnectorRegistration {
@@ -71,7 +346,7 @@ impl CalendarConnectorOperation {
 
     fn check_registration_in_txn(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> crate::Result<()> {
         self.owner.revalidate_in_txn(vault, txn)?;
-        let current = SEATS.get(&vault.store, txn, &self.row.seat.config.seat_ref)?;
+        let current = registration_in_txn(vault, txn, &self.row.seat.config.seat_ref)?;
         if current.as_ref() != Some(&self.row) {
             return Err(crate::Error::InvalidConfig(
                 "calendar seat is stopped or moved".into(),
@@ -81,12 +356,48 @@ impl CalendarConnectorOperation {
     }
 
     pub(super) fn literal_scope(&self) -> crate::Result<[u8; 32]> {
-        let mut config = self.row.seat.config.clone();
-        // Only the installed-seat label differs for the same logical operation.
         // Live admission above still uses this operation's unmodified registration.
-        config.seat_ref.clear();
-        super::literal::digest(&(&self.row.endpoint, &config))
+        registration_scope(&self.row)
     }
+}
+
+/// The outbox scope of the seat `row` installs: its endpoint and configuration with the
+/// installed-seat label cleared, since only that label differs for the same logical operation.
+/// A same-config re-install therefore writes the same scope and resumes the seat's rows.
+fn registration_scope(row: &CalendarConnectorRegistration) -> crate::Result<[u8; 32]> {
+    let mut config = row.seat.config.clone();
+    config.seat_ref.clear();
+    super::literal::digest(&(&row.endpoint, &config))
+}
+
+/// One installed seat's outbox scope, read in a txn: whether its kill switch is engaged, and
+/// the calendar it names.
+pub(super) struct InstalledSeatScope {
+    pub(super) scope: [u8; 32],
+    pub(super) killed: bool,
+    pub(super) system: String,
+    pub(super) calendar_ref: String,
+}
+
+/// Every installed seat's outbox scope, read in `txn`. A setup row that does not read is no
+/// seat.
+pub(super) fn installed_seat_scopes_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> crate::Result<Vec<InstalledSeatScope>> {
+    let mut seats = Vec::new();
+    for seat_ref in CONNECTOR_SEAT.items_in_txn(vault, txn)? {
+        let Some(row) = registration_in_txn(vault, txn, &seat_ref)? else {
+            continue;
+        };
+        seats.push(InstalledSeatScope {
+            scope: registration_scope(&row)?,
+            killed: row.seat.kill_switch_engaged(),
+            system: row.seat.config.system.clone(),
+            calendar_ref: row.seat.config.calendar_ref.clone(),
+        });
+    }
+    Ok(seats)
 }
 
 pub fn validate_endpoint(endpoint: &str) -> MemoryResult<()> {
@@ -125,36 +436,6 @@ fn check_owner(
     Ok(())
 }
 
-pub fn configure(
-    memory: &Memory<'_>,
-    owner: &AuthenticatedOwner,
-    input: &CalendarConnectorConfigureRequest,
-) -> MemoryResult<CalendarConnectorRegistration> {
-    validate_endpoint(&input.endpoint)?;
-    let seat = CalendarConnectorSeatState::new(input.config.clone());
-    seat.validate()
-        .map_err(|error| MemoryError::bad_request(error.to_string()))?;
-    memory.with_verified_actor_write_txn(|txn| {
-        check_owner(memory, owner, txn)?;
-        let key = input.config.seat_ref.clone();
-        if let Some(existing) = SEATS.get(&memory.vault().store, txn, &key)? {
-            if existing.endpoint == input.endpoint && existing.seat.config == input.config {
-                return Ok(existing);
-            }
-            return Err(MemoryError::bad_request(
-                "a configured seat is immutable; use a new seat_ref",
-            ));
-        }
-        let row = CalendarConnectorRegistration {
-            endpoint: input.endpoint.clone(),
-            seat,
-            last_sync: None,
-        };
-        SEATS.put(&memory.vault().store, txn, &key, &row)?;
-        Ok(row)
-    })
-}
-
 pub fn get(
     memory: &Memory<'_>,
     owner: &AuthenticatedOwner,
@@ -167,7 +448,7 @@ pub fn get(
         .read_txn()
         .map_err(crate::Error::from)?;
     check_owner(memory, owner, &txn)?;
-    Ok(SEATS.get(&memory.vault().store, &txn, &input.seat_ref)?)
+    Ok(registration_in_txn(memory.vault(), &txn, &input.seat_ref)?)
 }
 
 pub fn kill(
@@ -178,14 +459,13 @@ pub fn kill(
     memory.with_verified_actor_write_txn(|txn| {
         check_owner(memory, owner, txn)?;
         let vault = memory.vault();
-        let mut row = SEATS
-            .get(&vault.store, txn, &input.seat_ref)?
+        let mut row = registration_in_txn(vault, txn, &input.seat_ref)?
             .ok_or_else(|| MemoryError::not_found("calendar seat is not configured"))?;
         row.seat = row
             .seat
             .mark_killed(vault.now_recorded_at(), &input.reason_ref)
             .map_err(|error| MemoryError::bad_request(error.to_string()))?;
-        SEATS.put(&vault.store, txn, &input.seat_ref, &row)?;
+        put_record_in_txn(vault, txn, &row)?;
         Ok(row)
     })
 }
@@ -199,9 +479,7 @@ pub fn observe_sync(
     memory.with_verified_actor_write_txn(|txn| {
         check_owner(memory, owner, txn)?;
         let vault = memory.vault();
-        let key = prior.seat.config.seat_ref.clone();
-        let mut current = SEATS
-            .get(&vault.store, txn, &key)?
+        let mut current = registration_in_txn(vault, txn, &prior.seat.config.seat_ref)?
             .ok_or_else(|| MemoryError::not_found("calendar seat is not configured"))?;
         if current != *prior {
             return Err(MemoryError::bad_request("calendar seat moved during sync"));
@@ -210,51 +488,21 @@ pub fn observe_sync(
             current.seat.cursor = next_cursor.clone();
         }
         current.last_sync = Some(outcome.clone());
-        SEATS.put(&vault.store, txn, &key, &current)?;
+        put_record_in_txn(vault, txn, &current)?;
         Ok(())
     })
 }
 
-pub fn configure_imip(
-    memory: &Memory<'_>,
-    owner: &AuthenticatedOwner,
-    input: &CalendarImipTransportConfig,
-) -> MemoryResult<CalendarImipTransportConfig> {
-    validate_endpoint(&input.endpoint)?;
-    if input.secret_ref.is_empty()
-        || input.secret_ref.len() > 256
-        || input.secret_ref.chars().any(char::is_control)
-    {
-        return Err(MemoryError::bad_request(
-            "secret_ref must be a bounded custody name",
-        ));
-    }
-    memory.with_verified_actor_write_txn(|txn| {
-        check_owner(memory, owner, txn)?;
-        IMIP.put(&memory.vault().store, txn, &(), input)?;
-        Ok(input.clone())
-    })
-}
-
-pub fn get_imip(
-    memory: &Memory<'_>,
-    owner: &AuthenticatedOwner,
-) -> MemoryResult<Option<CalendarImipTransportConfig>> {
-    let txn = memory
-        .vault()
-        .store
-        .env
-        .read_txn()
-        .map_err(crate::Error::from)?;
-    check_owner(memory, owner, &txn)?;
-    Ok(IMIP.get(&memory.vault().store, &txn, &())?)
-}
-
 /// Host-side read for the existing connector-send executor, never a public
 /// configuration or authority fallback. The executor has already admitted the effect.
+/// The owner installs the transport with `vault.settings.set` on
+/// `calendar.imip_transport`; a row that does not read reads as none.
 pub fn imip_transport(vault: &Vault) -> crate::Result<Option<CalendarImipTransportConfig>> {
     let txn = vault.store.env.read_txn()?;
-    IMIP.get(&vault.store, &txn, &())
+    Ok(crate::calendar::setting_keys::IMIP_TRANSPORT
+        .read_in_txn(vault, &txn, &[], None)?
+        .value
+        .0)
 }
 
 /// The installed seat's standing authority at each provider call. A stopped
@@ -266,7 +514,7 @@ pub fn check_installed_connector(
 ) -> crate::Result<()> {
     let txn = vault.store.env.read_txn()?;
     owner.revalidate_in_txn(vault, &txn)?;
-    let current = SEATS.get(&vault.store, &txn, &expected.seat.config.seat_ref)?;
+    let current = registration_in_txn(vault, &txn, &expected.seat.config.seat_ref)?;
     if current.as_ref() != Some(expected) || expected.seat.kill_switch_engaged() {
         return Err(crate::Error::InvalidConfig(
             "calendar seat is stopped or moved".to_owned(),

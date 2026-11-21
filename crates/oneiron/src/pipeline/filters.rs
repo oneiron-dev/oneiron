@@ -155,6 +155,59 @@ pub(super) fn claim_status_gate_allows_with_row(
     Ok(allowed)
 }
 
+/// Whether a clamped pack's audience could not read `id` whatever its status
+/// ([`crate::disclosure::DisclosureContext::admits_row_ignoring_status`]).
+/// Such a row leaves no trace in the run: it takes no rank, and no check that
+/// records a refusal (the D19 gate's `claims_suppressed`, its empty reason)
+/// judges it in the run's caches. False with no clamp, and for a row with no
+/// parseable envelope, which the filters drop downstream as before.
+pub(super) fn clamp_hides_row(
+    store: &StoreRead<'_>,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+    clamp: Option<&crate::disclosure::DisclosureContext>,
+    metadata_cache: &mut EntityMetadataCache,
+) -> Result<bool> {
+    let Some(clamp) = clamp else {
+        return Ok(false);
+    };
+    let Some(entity_type) = metadata_cache
+        .get(store, rtxn, id)?
+        .map(|meta| meta.entity_type)
+    else {
+        return Ok(false);
+    };
+    Ok(!clamp.admits_row_ignoring_status(store, rtxn, id, entity_type)?)
+}
+
+/// [`clamp_hides_row`], or a row whose own row the audience could read but
+/// whose words come from a row it may not
+/// ([`crate::disclosure::DisclosureContext::word_sources_admitted_in_from`]):
+/// a summary covering a Tier-A record. A bounded window that judges its rows
+/// with their status aside asks it, so neither takes a place there and cuts
+/// a readable row out before the pack's preselection drops it
+/// (PACK-PRESELECT-CLAMP-ROW-ONLY-DISPLACES-READABLE-HIT). False with no
+/// clamp, and for a row with no parseable envelope, as there.
+pub(super) fn clamp_hides_row_or_word_sources(
+    vault: &crate::Vault,
+    store: &StoreRead<'_>,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+    clamp: Option<&crate::disclosure::DisclosureContext>,
+    metadata_cache: &mut EntityMetadataCache,
+) -> Result<bool> {
+    if clamp_hides_row(store, rtxn, id, clamp, metadata_cache)? {
+        return Ok(true);
+    }
+    let Some(clamp) = clamp else {
+        return Ok(false);
+    };
+    if metadata_cache.get(store, rtxn, id)?.is_none() {
+        return Ok(false);
+    }
+    Ok(!clamp.word_sources_admitted_in_from(vault, store, rtxn, id, None)?)
+}
+
 pub(super) fn import_claim_gate_decisions_for_scores(
     claim_gate: &mut ClaimStatusGateCache,
     probe_gate: &mut ClaimStatusGateCache,
@@ -177,6 +230,31 @@ pub(super) fn import_claim_gate_decisions_for_scores(
             claim_gate.decisions.entry(id).or_insert(None);
         }
     }
+}
+
+/// Whether the call's `made_by` predicate admits `id` (Rule A, OF-466): a
+/// row's stamped birth names its class; a row with none falls back to its
+/// claim's source, which `claim_class` reads only then. Unknown never
+/// matches. The post-blend filter, the sound match's cut, the bounded
+/// channels' admission ([`pipeline_candidate_matches_filters_and_gate`] under
+/// a config's `made_by`) and the unsliced result lists all ask here, so a row
+/// the call drops sets no cut it then leaves (review #8107), takes no place
+/// in a bounded fetch and seeds no implicit expansion.
+pub(super) fn made_by_admits(
+    store: &StoreRead<'_>,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+    predicate: crate::provenance::made_by::MadeByPredicate,
+    claim_class: impl FnOnce() -> Result<Option<crate::provenance::made_by::MadeByClass>>,
+) -> Result<bool> {
+    if predicate == crate::provenance::made_by::MadeByPredicate::All {
+        return Ok(true);
+    }
+    let class = match crate::provenance::birth::row_birth_in_txn(store, rtxn, id)? {
+        Some(birth) => Some(birth.made_by.process.class),
+        None => claim_class()?,
+    };
+    Ok(predicate.matches(class))
 }
 
 /// ARCH-0039 facet filter (its own pipeline stage, ONE-1117): the
@@ -549,6 +627,41 @@ fn active_set_admits(
     Ok(record_world(store, rtxn, id, Some(&holds))?.is_some_and(holds))
 }
 
+/// Whether the owner's ALLOWED-SET of an ActiveSet turn, `allowed`, keeps
+/// the stored row `id` from the turn, for the statistics a BM25 scan scores
+/// with (FIX WORLD-SCOPE-BM25-DF-COUNTS-HIDDEN-POSTINGS): its world, placed
+/// as [`active_set_admits`] places it, lies outside `allowed`. A claim whose
+/// body does not decode places at no world and is kept: a statistic fails
+/// no run, and the run's admission judges that claim as before. False for a
+/// row `store` does not hold.
+pub(super) fn allowed_set_withholds_row(
+    store: &StoreRead<'_>,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+    allowed: &WorldAuthoritySet,
+) -> Result<bool> {
+    let holds = |world: Option<EntityId>| allowed.admits(world);
+    let Some(raw) = store.port_entity_record(rtxn, id)? else {
+        return Ok(false);
+    };
+    if raw.entity_type == ENTITY_TYPE_CLAIM {
+        return Ok(
+            !crate::claim::decode_claim_body(&raw.body, true).is_ok_and(|body| holds(body.world))
+        );
+    }
+    Ok(
+        !crate::federation::record_scope::note_world::record_world_where(
+            store,
+            rtxn,
+            *id,
+            raw.entity_type,
+            &raw.body,
+            Some(&holds),
+        )?
+        .is_some_and(holds),
+    )
+}
+
 pub(super) fn apply_filters(
     scores: &mut Vec<ScoredEntity>,
     store: &StoreRead<'_>,
@@ -660,6 +773,18 @@ pub(super) fn pipeline_candidate_matches_filters_and_gate(
     let Some(meta) = meta else {
         return Ok(false);
     };
+    // A clamped pack: a row its audience could not read whatever its status
+    // leaves no trace in the run. A check that records a refusal (entity-type
+    // authority, the D19 gate) asks the clamp's own-row test first, so a
+    // hidden dead claim counts in no `claims_suppressed` and moves no empty
+    // reason; the checks that record nothing run first, as before. The
+    // clamp's test with the decoded claim body still runs after the gate.
+    let clamp_hides = || -> Result<bool> {
+        let Some(clamp) = filters.disclosure else {
+            return Ok(false);
+        };
+        Ok(!clamp.admits_row_ignoring_status(store, rtxn, id, meta.entity_type)?)
+    };
 
     if !super::authority::type_allowed(
         filters.authority_filter,
@@ -667,7 +792,9 @@ pub(super) fn pipeline_candidate_matches_filters_and_gate(
         store,
         meta.entity_type,
     ) {
-        metadata_cache.read_suppressed.insert(*id);
+        if !clamp_hides()? {
+            metadata_cache.read_suppressed.insert(*id);
+        }
         return Ok(false);
     }
     if let Some(types) = filters.type_filter
@@ -707,6 +834,9 @@ pub(super) fn pipeline_candidate_matches_filters_and_gate(
     if !candidate_matches_criticality(store, rtxn, id, meta.entity_type, filters.criticality)? {
         return Ok(false);
     }
+    if clamp_hides()? {
+        return Ok(false);
+    }
     if !claim_status_gate_allows_with_row(
         store,
         rtxn,
@@ -729,18 +859,36 @@ pub(super) fn pipeline_candidate_matches_filters_and_gate(
     }
     // P7 at candidate generation: a row the pack's audience may not read
     // takes no slot in a bounded channel. Absence is the boundary, as at the
-    // post-fusion clamp, which still sweeps every survivor.
-    if let Some(clamp) = filters.disclosure
-        && !crate::context_pack::retained_copies::clamp_prefilter_admits(
-            clamp,
-            store.base(),
-            rtxn,
-            id,
-            meta.entity_type,
-            claim_gate.decisions.get(id).and_then(Option::as_ref),
-        )?
-    {
-        return Ok(false);
+    // post-fusion clamp, which still sweeps every survivor. A bounded result
+    // channel's admission asks the pack's own candidate test, the sources of
+    // a row's words included, so a summary whose words come from a row the
+    // audience may not read takes no place in its window
+    // (PACK-PRESELECT-CLAMP-ROW-ONLY-DISPLACES-READABLE-HIT); the run's
+    // shared config judges the row alone.
+    if let Some(clamp) = filters.disclosure {
+        let claim_body = claim_gate.decisions.get(id).and_then(Option::as_ref);
+        let admitted = match filters.disclosure_word_sources {
+            Some(vault) => crate::context_pack::retained_copies::clamp_admits(
+                clamp,
+                vault,
+                store,
+                rtxn,
+                id,
+                meta.entity_type,
+                claim_body,
+            )?,
+            None => crate::context_pack::retained_copies::clamp_prefilter_admits(
+                clamp,
+                store,
+                rtxn,
+                id,
+                meta.entity_type,
+                claim_body,
+            )?,
+        };
+        if !admitted {
+            return Ok(false);
+        }
     }
 
     if !pipeline_candidate_matches_facet_filter(
@@ -778,14 +926,28 @@ pub(super) fn pipeline_candidate_matches_filters_and_gate(
         return Ok(false);
     }
 
-    pipeline_candidate_matches_relationship_filter(
+    if !pipeline_candidate_matches_relationship_filter(
         store,
         rtxn,
         id,
         meta.entity_type,
         filters.relationship_filter,
         metadata_cache,
-    )
+    )? {
+        return Ok(false);
+    }
+    // The call's made_by slice, last: every refusal above keeps its own
+    // bookkeeping, and a slice refusal adds none, since it is the caller's
+    // selection, not a read refusal. An unborn claim's class is its admitted
+    // body's source, which the gate above just decoded into this check's
+    // `claim_gate` (its own cache under a candidate filter).
+    made_by_admits(store, rtxn, id, filters.made_by, || {
+        Ok(claim_gate
+            .decisions
+            .get(id)
+            .and_then(Option::as_ref)
+            .and_then(|body| body.made_by_class()))
+    })
 }
 
 /// The candidate-scan twin of [`apply_facet_filter`], with the same

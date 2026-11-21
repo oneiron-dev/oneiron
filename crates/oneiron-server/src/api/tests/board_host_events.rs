@@ -634,7 +634,7 @@ fn install_board_pack(server: &SyncServer, name: &str) -> String {
 /// one's install and leaves its source stored.
 fn install_board_pack_version(server: &SyncServer, name: &str, version: u32) -> String {
     let section = json!({"section_id": format!("{name}.panel"), "state_family":{"family":"claim","version":1},
-        "verbs":["board.expand"], "authority_lane":"read", "budget_policy":"board.plugin_sections.v1"});
+        "verbs":["describe"], "authority_lane":"read", "budget_policy":"board.plugin_sections.v1"});
     let manifest = format!(
         "---\nname: {name}\ndescription: board pack\nversion: {version}\nkind: capability\n\
          predicates: [\"{name}.topic\"]\n---\nBoard pack\n"
@@ -763,7 +763,7 @@ async fn board_host_pack_install_is_changed_line_and_live_section_next_render() 
     let core_before = core_board(&server, &actor.to_hex(), "pack-session").await;
     assert_eq!(core_before["changed"], json!([]));
     let section = json!({"section_id":"alice.board.panel", "state_family":{"family":"claim","version":1},
-        "verbs":["board.expand"], "authority_lane":"read", "budget_policy":"board.plugin_sections.v1"});
+        "verbs":["describe"], "authority_lane":"read", "budget_policy":"board.plugin_sections.v1"});
     let source = PackSource::from_files(vec![
         HubFile::new("PACK.md", b"---\nname: alice.board\ndescription: board pack\nversion: 1\nkind: capability\npredicates: [\"alice.board.topic\"]\n---\nBoard pack\n"),
         HubFile::new("knowledge/sections/alice.board.panel.json", serde_json::to_vec(&section).unwrap()),
@@ -1109,7 +1109,7 @@ async fn delivering_an_outcome_keeps_the_returned_epoch_current() {
         &server,
         "rider-epoch",
         agent,
-        "board.expand",
+        "describe",
         json!({"key": "VERBS", "frame_epoch": epoch}),
     )
     .await;
@@ -1211,6 +1211,18 @@ async fn a_connector_installed_mid_epoch_rides_the_tail_until_the_next_keyframe(
 async fn a_removed_connector_is_named_by_its_whole_key() {
     let (_dir, server) = auth_test_server();
     let agent = seeded_test_entity_id(0x1021_0005);
+    // The board's task read verifies its bound actor is a stored row, as the
+    // sibling tests' run-proposal fixture stores it.
+    server
+        .vault
+        .put_entity(
+            &agent,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"run agent",
+        )
+        .unwrap();
     let stem = "rider_mail_".repeat(30);
     let (kept, removed) = (oneiron::EntityId::now(), oneiron::EntityId::now());
     for (key, tail) in [(kept, "a"), (removed, "b")] {

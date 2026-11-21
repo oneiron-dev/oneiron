@@ -182,7 +182,7 @@ pub fn resolve_compaction_identity(
     let person = match person {
         Some(person) => person,
         None => vault
-            .actor_subject_anchor(&agent, unix_now())
+            .actor_subject_anchor(&agent, crate::unix_seconds_now())
             .map_err(unreadable)?
             .filter(|anchor| anchor.subject_kind == SubjectKind::Person)
             .map(|anchor| anchor.subject_ref)
@@ -430,10 +430,4 @@ impl CompactionHome {
         }
         RenderedHome { text, refs }
     }
-}
-
-fn unix_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs())
 }

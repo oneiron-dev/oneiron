@@ -82,15 +82,18 @@ pub use pad_custody::PadRestoreNote;
 pub use pad_objects::PadObjectNote;
 pub use pad_reopen::{PadReopenFault, PadReopenReport, PadReopenStage};
 #[cfg(oneiron_test_support)]
-pub(crate) use payload::side_table_registry_gaps;
+pub(crate) use payload::{
+    getter_bytes_for_owner, getter_capture, getter_restore_in_txn, side_table_registry_gaps,
+};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+#[cfg(unix)]
 use std::time::{Duration, Instant};
 pub use tiers::{StorageTier, storage_tier};
 pub use watermark::{
     BACKUP_WATERMARK_MARKER_SUFFIX, BackupArtifactEvidence, BackupMarker, BackupSelection,
-    BackupSnapshotReceipt, BackupWatermark, backup_marker, backup_marker_with_pins, inspect_backup,
-    last_backed_up, verify_with_pins,
+    BackupSnapshotReceipt, BackupWatermark, HeldVerdict, backup_marker, backup_marker_with_pins,
+    inspect_backup, last_backed_up, verify_with_pins,
 };
 pub use write_budget::{AtWriteFloor, RecoveryWriteBudget};
 type CanonicalRows = Vec<(Vec<u8>, Vec<u8>)>;
@@ -126,6 +129,7 @@ const RESTORE_EPOCH: SideTable<u64, RestoreEpoch, Named> =
 /// closed the vault's in-memory nonce spends (FIX 12023 W0, L02 10-31): a
 /// spend whose rows have not landed by then is left to the swap's fence,
 /// which refuses it as it refuses one the swap never waited for.
+#[cfg(unix)]
 const SWAP_SPEND_DRAIN_WAIT: Duration = Duration::from_secs(5);
 /// Whose exterior key custody a restored vault holds (ARCH-0038
 /// #erasure-completeness, "Key custody in a side restore").
@@ -518,6 +522,16 @@ impl Vault {
     /// receipts. A key retirement `source` has committed, its key not yet
     /// destroyed, counts as done. Refuses a checkpoint whose key custody is
     /// not `source`'s.
+    ///
+    /// The copy's turn programs that a timer, a feed or an idle stretch
+    /// wakes start paused: its source holds the same armings and keeps
+    /// releasing them, and nothing dedupes an occurrence between the two
+    /// (FIX TURNPROGRAM-OCCURRENCE-ARMINGS-LIVE-ON-A-VAULT-COPY). So do
+    /// those of every copy made beside a live vault:
+    /// [`Vault::restore_checkpoint_keeping_authority`]'s and
+    /// [`Vault::activate_archived`]'s. A restore that takes its source's
+    /// place ([`Vault::restore_checkpoint`],
+    /// [`Vault::restore_checkpoint_replacing`]) pauses none.
     pub fn restore_checkpoint_beside(
         path: &Path,
         key: &CheckpointKey,
@@ -558,7 +572,7 @@ impl Vault {
         let live = source.capture(&CopyGenerations::of_rows(&image.databases["sync_state"]))?;
         // What the source erased, those after the cut too (FIX 4753).
         let erased = source.erased_ids();
-        image.drop_machine_identity();
+        image.drop_machine_identity_restored(&checkpoint_id)?;
         // The copy holds the source's records, so its host orders hold them too.
         host_holds::carry(&mut image.databases, live.host_holds())?;
         // A pad its forked custody lacks or cannot read comes from the
@@ -601,10 +615,11 @@ impl Vault {
     ///
     /// Whichever of the two sits at this vault's path is the live one, at
     /// every instant of the swap and after a crash anywhere in it; the other
-    /// opens archived. `swap` must exchange the directories the two handles
-    /// opened, not a symlink to one. When `swap` fails, neither directory
-    /// moved; this handle stays sealed, and should lifting this vault's mark
-    /// fail too, the mark stays, which still opens it live where it is. When
+    /// opens archived. `swap` receives this vault's entry first, then its
+    /// replacement's, inside the parents held since the directory checks.
+    /// It must exchange those entries, not reopen their paths (ARCH-0038,
+    /// restore path). A failed swap leaves this handle sealed and both marks
+    /// in place: failure is no proof that nothing moved. When
     /// `swap` returns but the replacement's directory cannot be found at this
     /// vault's path, the swap is refused with both marks left as they were:
     /// the caller must not take either directory to be where it put it.
@@ -612,7 +627,13 @@ impl Vault {
     /// admitted an agent request, or recovered its proof clock, after the
     /// replacement was made refuses it, and nothing moves: the replacement
     /// would not know those proofs; so does one that holds an agent id looser
-    /// than this vault now does (H215). Under the same writer, before the
+    /// than this vault now does (H215), and one whose `sync: install` setting
+    /// or residence choice moved since: the replacement is this machine from
+    /// then on, and this vault drops those choices when it is activated (row
+    /// SETTING-ACTIVATE-ARCHIVED-INSTALL-ROWS). The replacement takes no write
+    /// from before those reads of it until the swap is over. A swap refused
+    /// before its exchange began releases the hold it registered on this
+    /// vault's bodies for the archive. Under the same writer, before the
     /// exchange, the replacement carries this vault's authorization time:
     /// its committed floor and lease, its journaled bound, the times this
     /// handle judged and its clock now, journaled in the replacement's own
@@ -632,10 +653,11 @@ impl Vault {
     /// failed, or are still queued when the wait ends, refuses the swap as
     /// above. The spends stay closed on this handle when the swap then
     /// fails; its admissions take the writer, which refuses none of them.
+    #[cfg(unix)]
     pub fn swap_in_replacement(
         &self,
         replacement: &Self,
-        swap: impl FnOnce() -> std::io::Result<()>,
+        swap: impl FnOnce(&crate::store::HeldEntry, &crate::store::HeldEntry) -> std::io::Result<()>,
     ) -> Result<()> {
         // Waited for before the swap's writer opens, never in it: the
         // queued writes need that writer to commit.
@@ -665,15 +687,23 @@ impl Vault {
         // name, until its custodian releases it (FIX 6022). Its census and
         // registration hold the custody read guard like a snapshot's, so
         // no finisher write guard lands between them (FIX 9067).
-        {
+        let parked_hold = {
             let _custody = self.store.gate_custody_read_guard()?;
-            self.store.hold_parked_archive_bodies()?;
-        }
-        self.store.swap_out(
+            self.store.hold_parked_archive_bodies()?
+        };
+        let exchange_began = std::cell::Cell::new(false);
+        let swapped = self.store.swap_out(
             &replacement.store,
             |txn| {
                 crate::authority::refuse_moved_proof_freshness(self, txn, replacement)?;
                 crate::agent_def::refuse_loosened_agent_id_pins(
+                    &self.store,
+                    txn,
+                    &replacement.store,
+                )?;
+                // The choices about this install it carried still stand: this
+                // vault drops its own when it is activated.
+                crate::identity::refuse_moved_install_choices(
                     &self.store,
                     txn,
                     &replacement.store,
@@ -684,8 +714,27 @@ impl Vault {
                     .store
                     .carry_authorization_high(self.store.authorization_high_in_txn(txn)?)
             },
-            swap,
-        )
+            |live, staged| {
+                exchange_began.set(true);
+                swap(live, staged)
+            },
+        );
+        // A swap refused before its exchange began parked no archive, so the
+        // hold registered for one goes, and a refused retry leaves no record
+        // keeping a body past its last row (REVIEW-10247 round 2). Once the
+        // exchange began, a failure is no proof that nothing moved: the hold
+        // stays.
+        if swapped.is_err()
+            && !exchange_began.get()
+            && let Some(hold) = parked_hold
+            && let Err(error) = self.store.release_parked_archive_hold(hold)
+        {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "a refused swap's archive hold stays until its custodian releases it"
+            );
+        }
+        swapped
     }
     /// An owner's activation of the archived vault at `path` as a side vault
     /// of `source`, the vault that replaced it. Its key custody forks as a
@@ -695,7 +744,9 @@ impl Vault {
     /// in either vault never reaches the other's keys. Every receipt it
     /// keeps is read under its own keys before the activation commits; when
     /// this returns `Ok` it is done, and the vault opens live, joining as a
-    /// new machine: its replacement is the machine it was. Refuses a vault
+    /// new machine: its replacement is the machine it was, and keeps the
+    /// `sync: install` settings and the residence choice it made, which the
+    /// activated vault drops as a direct restore does. Refuses a vault
     /// that is not archived, a `source` whose custody is not the one it
     /// binds, and, before opening anything, a missing `path` or one where
     /// another user could move a directory on it; a refusal leaves it
@@ -857,7 +908,7 @@ impl Vault {
         host_holds::carry_current(&mut image.databases, current)?;
         // Two live vaults never answer as one machine (wp-keys I7).
         if let Custody::Fork(_) = custody {
-            image.drop_machine_identity();
+            image.drop_machine_identity_restored(&checkpoint_id)?;
         }
         let (made, forked, mut vault, mut report) = Self::restore_image(
             image,
@@ -919,7 +970,5 @@ mod test_hooks;
 #[cfg(test)]
 use test_hooks::panic_if_armed;
 
-// FIX [LIBTEST-QUARANTINE-RECOVERY-CHECKPOINT-TESTS]: the lib test target's type check fails here (48 errors: E0061 x41, E0063 x7); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;

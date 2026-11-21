@@ -41,7 +41,9 @@
 )]
 
 mod author_carrier;
+mod binding;
 mod classify;
+mod descriptor;
 mod documents;
 mod frame;
 mod joined_turns;
@@ -57,9 +59,11 @@ use heed::RoTxn;
 use loro::IdSpan;
 use loro::checkpoint::Skeleton;
 
-pub(crate) use self::owners::WINDOW_ROOTS;
+pub(in crate::sync) use self::binding::PartedRows;
+pub(in crate::sync) use self::descriptor::PartLookup;
+pub(crate) use self::descriptor::WINDOW_ROOTS;
 #[allow(unused_imports, reason = "KS7-5 drives them")]
-pub(crate) use self::owners::root_entry;
+pub(crate) use self::descriptor::root_entry;
 #[allow(unused_imports, reason = "KS7-5 drives them")]
 pub(crate) use self::parts::PartHolders;
 use crate::entity_id::EntityId;
@@ -137,6 +141,12 @@ pub(crate) enum SyncUnclassified {
     PendingLoroProjection,
     /// Its key or value does not read with its family's own codec.
     Undecodable,
+    /// Its value reads as a whole row of its family whose own key differs
+    /// from the key that files it (another pin, turn, side row,
+    /// registration or wake): admit refuses such a filing and no writer
+    /// files one (FIX SYNC-DISCARD-KEEPS-UNBOUND-WHOLE-ROW). A receipt names
+    /// it as [`Self::Undecodable`].
+    KeyMismatch,
     /// A window root map no adapter here reads.
     UnknownRoot,
     /// An entity kind the registry does not hold.
@@ -656,4 +666,42 @@ pub(crate) fn restore_checkpoint_windows(
     opened: &dyn OpenedSyncAtoms,
 ) -> Result<SyncRestoreRows> {
     self::restore::restore(carriers, opened)
+}
+
+/// The window-map dispatch functions the checkpoint pin door asks beside
+/// [`root_entry`] (`test_doors::sync_checkpoint_pins`, UC-10 PR 6). Each is
+/// `pub(super)` where it is declared, so a `pub(crate) use` cannot name it
+/// (E0364): each is called from here, under its own name, with its own
+/// signature. Compiled only under `--cfg oneiron_test_support`.
+///
+/// `key_refusal` and `withheld_part_key` read the window map rows
+/// (`super::descriptor`); the other two stay in `owners`.
+#[cfg(oneiron_test_support)]
+pub(crate) mod test_support {
+    use super::{Holder, SyncUnclassified, ValueSplit};
+    use crate::store::checkpoint_payload::rows::OtherClient;
+
+    /// Why `key` of the window root map `root` cannot stand plaintext in a
+    /// skeleton; `None` for an opaque id or a schema name.
+    pub(crate) fn key_refusal(root: &str, key: &str) -> Option<SyncUnclassified> {
+        super::descriptor::key_refusal(root, key)
+    }
+
+    /// Whether the skeleton withholds `key` of `root` as a part's digest.
+    pub(crate) fn withheld_part_key(root: &str, key: &str) -> bool {
+        super::descriptor::withheld_part_key(root, key)
+    }
+
+    /// The client the skeleton withholds `key` of `root` for, beside that
+    /// client's copy of its value.
+    pub(crate) fn withheld_client_key(root: &str, key: &str) -> Option<OtherClient> {
+        super::owners::withheld_client_key(root, key)
+    }
+
+    /// The rightful holders of the key `key` of `root` the skeleton
+    /// withholds, and the actor split out of it: what `withheld_key` returns,
+    /// field by field.
+    pub(crate) fn withheld_key(root: &str, key: &str) -> Option<(Vec<Holder>, Option<ValueSplit>)> {
+        super::owners::withheld_key(root, key).map(|withheld| (withheld.holders, withheld.split))
+    }
 }

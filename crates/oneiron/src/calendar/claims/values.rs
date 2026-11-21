@@ -179,6 +179,17 @@ pub struct CalendarSeriesExceptionValue {
     pub original_start_utc: u64,
 }
 
+/// Value of a `calendar.replay_cancel_evidence` claim: a seat's replay
+/// proof of the owner's cancelled write that read an unmarked stored copy as
+/// the owner's own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CalendarReplayCancelEvidenceValue {
+    /// The write's staged SEQUENCE.
+    pub(crate) sequence: u32,
+    /// When the replay's proof was written.
+    pub(crate) proved_at: u64,
+}
+
 /// Value of a `calendar.successor` claim.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CalendarSuccessorValue {
@@ -198,6 +209,20 @@ pub struct CalendarAttendeeValue {
     pub role: String,
     /// Vendor participation-status token.
     pub partstat: String,
+}
+
+/// The identity of a calendar address such as an attendee's `who`: a
+/// `mailto:` or `MAILTO:` prefix and ASCII case are vendor spelling, not
+/// identity, so two calendar systems that spell one person differently name
+/// one attendee. Invite hygiene matches a recipient by it, and the
+/// `calendar.attendee` conflict set `(event, who)` keys on it.
+pub(crate) fn attendee_address_identity(address: &str) -> String {
+    let trimmed = address.trim();
+    trimmed
+        .strip_prefix("mailto:")
+        .or_else(|| trimmed.strip_prefix("MAILTO:"))
+        .unwrap_or(trimmed)
+        .to_ascii_lowercase()
 }
 
 /// Confirmed/cancelled status of an EVENT.

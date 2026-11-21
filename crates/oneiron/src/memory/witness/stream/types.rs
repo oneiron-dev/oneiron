@@ -4,8 +4,10 @@ use serde::{Deserialize, Serialize};
 
 /// Maximum in-memory UTF-8 text per handle.
 pub const MAX_MESSAGE_STREAM_BYTES: usize = 1024 * 1024;
-/// Default quiet interval. Hosts must pump independently of token arrival.
-pub const DEFAULT_MESSAGE_STREAM_IDLE_MS: u64 = 30_000;
+#[doc(hidden)]
+pub use oneiron_records::memory::witness::stream::types::{
+    DEFAULT_MESSAGE_STREAM_IDLE_MS, StreamCancelReason,
+};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::memory::witness::stream::types::{
@@ -48,12 +50,4 @@ impl MessageStreamHandle {
     pub fn generation(&self) -> EntityId {
         self.generation
     }
-}
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum StreamCancelReason {
-    UserInterrupted,
-    AgentAborted,
-    ExternalSignal,
-    Custom(String),
 }

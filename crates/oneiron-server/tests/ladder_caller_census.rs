@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 /// It does not keep a picked model or a first rung on the device. A wrapper
 /// (`HostModels`, `RunBackend`, `MediaRuntime`, the chat `Recorder`) has the
 /// row: its callers hand it messages or an envelope its row names.
-const LADDER_CALLERS: [(&str, &str); 50] = [
+const LADDER_CALLERS: [(&str, &str); 51] = [
     (
         "ai_host/coach_health.rs",
         "none: the drafter's request has a default scope (the floor)",
@@ -74,6 +74,10 @@ const LADDER_CALLERS: [(&str, &str); 50] = [
     ),
     (
         "ai_host/local_vision.rs",
+        "none: a default scope (the floor)",
+    ),
+    (
+        "ai_host/meeting_follow_up_drafting.rs",
         "none: a default scope (the floor)",
     ),
     (

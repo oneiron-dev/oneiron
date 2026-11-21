@@ -127,18 +127,32 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<ExpressionPreferenceWriteResult> {
-        let mut txn = self.store.env.write_txn()?;
-        let result = self.write_expression_preference_in_txn(
-            &mut txn,
-            actor,
-            claim_id,
-            &ExpressionPreferenceWrite::native(change),
-            occurred,
-            learned_at,
-            None,
-        )?;
-        txn.commit()?;
-        Ok(result)
+        // Through the vault's write door, a group of its own on the calling
+        // thread as the bare transaction was, so the queued row reaches the
+        // live windows' post-commit mirror.
+        self.with_write_txn(|wtxn| {
+            let result = self.write_expression_preference_in_txn(
+                wtxn,
+                actor,
+                claim_id,
+                &ExpressionPreferenceWrite::native(change),
+                occurred,
+                learned_at,
+                None,
+            )?;
+            // The new head and each head it closed, for the live windows'
+            // mirror (FIX CLAIM-RAW-TXN-DOORS-DROP-LIVE-WINDOW-ROWS; review
+            // 10145 round 1: a closed head stayed Active in the window).
+            #[cfg(feature = "sync")]
+            crate::batch::queue_committed_rows(
+                self,
+                wtxn,
+                std::iter::once(claim_id)
+                    .chain(result.superseded_claim_ids.iter().copied())
+                    .collect(),
+            );
+            Ok(result)
+        })
     }
 
     /// Shared owning implementation. Errors require the caller to abort its
@@ -345,9 +359,7 @@ impl Vault {
             if change.origin
                 == ExpressionWriteOrigin::Native(ExpressionPreferenceOrigin::ExplicitUser)
             {
-                crate::memory::explicit_claim_override_in_txn(
-                    self, wtxn, *actor, old_id, &body, learned_at,
-                )?;
+                crate::memory::explicit_claim_override_in_txn(self, wtxn, *actor, old_id, &body)?;
             } else {
                 crate::memory::require_claim_self_grant_in_txn(
                     self,
@@ -366,10 +378,7 @@ impl Vault {
             Some(permit) => gate_mode.with_owner_archive_restore(permit),
             None => gate_mode,
         };
-        apply_ops_with_gate_mode(
-            &self.store,
-            &self.config,
-            &self.analyzer,
+        self.apply_ops_restoring_claim_subjects_in_txn(
             wtxn,
             vec![BatchOp::ClaimCandidate {
                 id: claim_id,
@@ -379,8 +388,6 @@ impl Vault {
                 learned_at,
                 internal_lexical_query_hint: false,
             }],
-            self.text_index_trusted
-                .load(std::sync::atomic::Ordering::Acquire),
             gate_mode,
         )?;
         let mut superseded_claim_ids = Vec::new();
@@ -421,8 +428,26 @@ impl Vault {
         subject: &EntityId,
         at: u64,
     ) -> Result<ExpressionPreferenceSet> {
-        let mut best: BTreeMap<ExpressionPreferenceKind, (EntityId, ClaimBody, u64)> =
-            BTreeMap::new();
+        self.expression_preferences_admitted_in_txn(rtxn, subject, at, |ids| {
+            Ok(vec![true; ids.len()])
+        })
+    }
+
+    /// [`Self::expression_preferences_in_txn`] over the claims `admit` lets
+    /// through: given the ids of the claims in force, in one call, it answers
+    /// for each whether the reader may read it. A bound caller passes its own
+    /// read lane (REVIEW-8147 P1), so the winner of each kind is chosen among
+    /// the claims that reader may read. A claim it may not read neither shows
+    /// its value or ref nor hides a value the reader may see, so the view says
+    /// nothing about it. An id `admit` leaves unanswered is not admitted.
+    pub(crate) fn expression_preferences_admitted_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        subject: &EntityId,
+        at: u64,
+        admit: impl FnOnce(&[EntityId]) -> Result<Vec<bool>>,
+    ) -> Result<ExpressionPreferenceSet> {
+        let mut in_force: Vec<(ExpressionPreferenceKind, EntityId, ClaimBody, u64)> = Vec::new();
         for predicate in [
             PREDICATE_COMPANION_EXPRESSION_LANGUAGE,
             PREDICATE_COMPANION_EXPRESSION_REGISTER,
@@ -462,17 +487,27 @@ impl Vault {
                     PREDICATE_COMPANION_EXPRESSION_KEIGO => ExpressionPreferenceKind::Keigo,
                     _ => ExpressionPreferenceKind::Style,
                 };
-                let replace = best.get(&kind).is_none_or(|(old_id, old, old_learned_at)| {
-                    Self::expression_preference_wins(
-                        (body.source, body.valid_from, learned_at, id),
-                        (old.source, old.valid_from, *old_learned_at, *old_id),
-                    )
-                });
-                if replace {
-                    best.insert(kind, (id, body, learned_at));
-                }
+                in_force.push((kind, id, body, learned_at));
                 Ok(())
             })?;
+        }
+        let ids: Vec<EntityId> = in_force.iter().map(|(_, id, _, _)| *id).collect();
+        let admitted = admit(&ids)?;
+        let mut best: BTreeMap<ExpressionPreferenceKind, (EntityId, ClaimBody, u64)> =
+            BTreeMap::new();
+        for ((kind, id, body, learned_at), admitted) in in_force.into_iter().zip(admitted) {
+            if !admitted {
+                continue;
+            }
+            let replace = best.get(&kind).is_none_or(|(old_id, old, old_learned_at)| {
+                Self::expression_preference_wins(
+                    (body.source, body.valid_from, learned_at, id),
+                    (old.source, old.valid_from, *old_learned_at, *old_id),
+                )
+            });
+            if replace {
+                best.insert(kind, (id, body, learned_at));
+            }
         }
         let mut out = ExpressionPreferenceSet::default();
         for (kind, (id, body, _learned_at)) in best {
@@ -565,76 +600,84 @@ impl Vault {
         claim_id: &EntityId,
         now: u64,
     ) -> Result<()> {
-        let mut wtxn = self.store.env.write_txn()?;
-        let (head, _) = self.claim_for_lifecycle_in(&wtxn, claim_id)?;
-        if !is_expression_preference_predicate(&head.predicate) {
-            return Err(Error::InvalidClaimBody(
-                "claim is not an expression preference",
-            ));
-        }
-        self.verify_expression_preference_retract_actor_in_txn(&wtxn, actor, &head)?;
-        crate::memory::explicit_claim_override_in_txn(
-            self, &mut wtxn, *actor, *claim_id, &head, now,
-        )?;
-
-        // Every direct predecessor is read and judged in this one write
-        // (FIX 8657): the count only feeds the advisory EdgePeerRows check.
-        let direction = EdgeDirection::Out;
-        let kind = EdgeKind::Supersedes;
-        let scope = [
-            &[direction as u8][..],
-            claim_id.as_bytes(),
-            &[kind as u8][..],
-        ]
-        .concat();
-        let mut count = ScanCount::start(&self.store, &wtxn, EngineScan::EdgePeerRows, &scope)?;
-        let mut predecessors = Vec::new();
-        for entry in self.port_edges(&wtxn, claim_id, direction, Some(kind), None)? {
-            count.row();
-            predecessors.push(entry?.target);
-        }
-        count.defer(&self.store);
-
-        self.retract_claim_in_txn(&mut wtxn, claim_id, now)?;
-        let mut ops = Vec::new();
-        for id in predecessors {
-            let (mut body, header) = self.claim_for_lifecycle_in(&wtxn, &id)?;
-            if body.subject != head.subject
-                || body.predicate != head.predicate
-                || body.lifecycle != ClaimLifecycleStatus::Superseded
-            {
-                continue;
+        // Through the vault's write door, a group of its own on the calling
+        // thread as the bare transaction was, so the queued rows reach the
+        // live windows' post-commit mirror.
+        self.with_write_txn(|wtxn| {
+            let (head, _) = self.claim_for_lifecycle_in(&*wtxn, claim_id)?;
+            if !is_expression_preference_predicate(&head.predicate) {
+                return Err(Error::InvalidClaimBody(
+                    "claim is not an expression preference",
+                ));
             }
-            body.lifecycle = ClaimLifecycleStatus::Active;
-            body.valid_to = None;
-            ops.push(BatchOp::Put {
-                id,
-                entity_type: ENTITY_TYPE_CLAIM,
-                occurred: TimeRange {
-                    start: header.occurred_start,
-                    end: now,
-                },
-                learned_at: header.learned_at,
-                row_version: None,
-                data: encode_claim_body(&body)?,
-                allow_maintenance: false,
-                allow_reserved_predicate: false,
-                hub_sync_imported: false,
-            });
-        }
-        if !ops.is_empty() {
-            apply_ops_with_gate_mode(
-                &self.store,
-                &self.config,
-                &self.analyzer,
-                &mut wtxn,
-                ops,
-                self.text_index_trusted
-                    .load(std::sync::atomic::Ordering::Acquire),
-                ApplyOpsGateMode::new(false, false),
-            )?;
-        }
-        wtxn.commit()?;
-        Ok(())
+            self.verify_expression_preference_retract_actor_in_txn(&*wtxn, actor, &head)?;
+            crate::memory::explicit_claim_override_in_txn(self, wtxn, *actor, *claim_id, &head)?;
+
+            // Every direct predecessor is read and judged in this one write
+            // (FIX 8657): the count only feeds the advisory EdgePeerRows check.
+            let direction = EdgeDirection::Out;
+            let kind = EdgeKind::Supersedes;
+            let scope = [
+                &[direction as u8][..],
+                claim_id.as_bytes(),
+                &[kind as u8][..],
+            ]
+            .concat();
+            let mut count =
+                ScanCount::start(&self.store, &*wtxn, EngineScan::EdgePeerRows, &scope)?;
+            let mut predecessors = Vec::new();
+            for entry in self.port_edges(&*wtxn, claim_id, direction, Some(kind), None)? {
+                count.row();
+                predecessors.push(entry?.target);
+            }
+            count.defer(&self.store);
+
+            self.retract_claim_in_txn(wtxn, claim_id, now)?;
+            let mut ops = Vec::new();
+            let mut restored = Vec::new();
+            for id in predecessors {
+                let (mut body, header) = self.claim_for_lifecycle_in(&*wtxn, &id)?;
+                if body.subject != head.subject
+                    || body.predicate != head.predicate
+                    || body.lifecycle != ClaimLifecycleStatus::Superseded
+                {
+                    continue;
+                }
+                body.lifecycle = ClaimLifecycleStatus::Active;
+                body.valid_to = None;
+                restored.push(id);
+                ops.push(BatchOp::Put {
+                    id,
+                    entity_type: ENTITY_TYPE_CLAIM,
+                    occurred: TimeRange {
+                        start: header.occurred_start,
+                        end: now,
+                    },
+                    learned_at: header.learned_at,
+                    row_version: None,
+                    data: encode_claim_body(&body)?,
+                    allow_maintenance: false,
+                    allow_reserved_predicate: false,
+                    hub_sync_imported: false,
+                });
+            }
+            if !ops.is_empty() {
+                apply_ops_with_gate_mode(
+                    &self.store,
+                    &self.config,
+                    &self.analyzer,
+                    wtxn,
+                    ops,
+                    self.text_index_trusted
+                        .load(std::sync::atomic::Ordering::Acquire),
+                    ApplyOpsGateMode::new(false, false),
+                )?;
+                // The restored predecessors, for the live windows' mirror (FIX
+                // CLAIM-RAW-TXN-DOORS-DROP-LIVE-WINDOW-ROWS).
+                #[cfg(feature = "sync")]
+                crate::batch::queue_committed_rows(self, wtxn, restored.into_iter().collect());
+            }
+            Ok(())
+        })
     }
 }

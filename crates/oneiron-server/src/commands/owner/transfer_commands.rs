@@ -123,6 +123,9 @@ fn read_batch(source: &str) -> anyhow::Result<Batch> {
 
 #[derive(Serialize)]
 struct ImportedArchive {
+    /// Whose words the import took the archive's conversations to hold:
+    /// `own` or `foreign` (FIX 15412).
+    speakers: &'static str,
     inserted_entities: usize,
     unchanged_entities: usize,
     replaced_seed_entities: usize,
@@ -137,6 +140,21 @@ struct ImportedArchive {
     /// Archived `regenerates` links whose restored MESSAGE pair does not
     /// prove what the stream proved: left out, not restored.
     skipped_unproven_regenerates_edges: usize,
+    /// Merged and split rows whose merges and splits stayed in the archive:
+    /// each is back as a separate row.
+    unrestored_identity_topology_shells: usize,
+    /// The owner's line for those rows, when there are any.
+    identity_topology_status: Option<String>,
+    /// Merges and splits the owner's restore into a fresh vault decided
+    /// again here (RESTORE-KEEPS-MERGES-AND-SPLITS), by kind.
+    restored_merges: usize,
+    restored_splits: usize,
+    /// The owner's line for them, when there are any.
+    restored_identity_topology_status: Option<String>,
+    /// Archived `same_as` links that stayed out.
+    unrestored_same_as_links: usize,
+    /// The owner's line for those links, when there are any.
+    same_as_status: Option<String>,
     /// Secrets the archive carried as handles only: re-enter each one.
     missing_secrets: Vec<String>,
     /// Secrets the archive could not carry even as a handle, by id: each
@@ -148,6 +166,8 @@ struct ImportedArchive {
     /// under that restore's permit only.
     owner_restore_receipt: Option<String>,
     embedding_setup: ImportedEmbeddingSetup,
+    /// The retained side rows this import kept, and the manifest's table omissions.
+    retained_side_rows: oneiron::batch::export::RetainedSideImportSummary,
 }
 
 /// What the archive's embedding setup did (OF-370): descriptors only, so a
@@ -174,6 +194,41 @@ struct ImportedEmbeddingSetup {
 /// vectors did not.
 const EMBEDDING_SETUP_IMPORTED: &str = "setup imported; vectors pending recompute";
 
+/// The owner's line for the merged and split rows an archive import brought
+/// back as separate rows (OWNEDGES-SHELL-RESTORE = A), when there are any.
+fn identity_topology_status(rows: usize) -> Option<String> {
+    (rows > 0).then(|| {
+        format!(
+            "{rows} merged or split rows came back as separate rows: their merges and splits \
+             were not restored"
+        )
+    })
+}
+
+/// The owner's line for the merges and splits the owner's restore decided
+/// again here (RESTORE-KEEPS-MERGES-AND-SPLITS), when there are any.
+fn restored_identity_topology_status(merges: usize, splits: usize) -> Option<String> {
+    (merges + splits > 0).then(|| {
+        format!(
+            "{merges} merges and {splits} splits came back, each decided again here as part \
+             of your restore; undo any of them as you would one made here"
+        )
+    })
+}
+
+/// The owner's line for the archived `same_as` links an archive import left
+/// out, when there are any.
+fn same_as_status(links: usize) -> Option<String> {
+    (links > 0).then(|| {
+        format!(
+            "{links} identity links were not restored: a link comes back between two people \
+             this import brought back, or, on your own restore, between two memories your \
+             nightly-link grant lets the Dreamer join; a link between two diary entries stays \
+             out, since an imported diary has no writer here to vouch for it"
+        )
+    })
+}
+
 /// Re-imports a whole-vault archive through the vault's import doors.
 fn import_archive(args: crate::cli::ImportArchiveArgs) -> anyhow::Result<()> {
     // The archive is read member by member from its file (FIX 2766), never
@@ -182,16 +237,26 @@ fn import_archive(args: crate::cli::ImportArchiveArgs) -> anyhow::Result<()> {
         .map_err(|error| anyhow::anyhow!("read {}: {error}", args.path.display()))?;
     let config = resolve_serve_config(&args.serve)?;
     let vault = open_stopped_vault(&config, "stop `serve` to import an archive")?;
+    // FIX 15412: the owner names whose words the archive holds; `own` unless
+    // they say otherwise.
+    let speakers = match args.speakers {
+        crate::cli::ArchiveSpeakers::Own => oneiron::batch::export::ArchiveSpeakers::Own,
+        crate::cli::ArchiveSpeakers::Foreign => oneiron::batch::export::ArchiveSpeakers::Foreign,
+    };
     let owner = local_owner(&vault).and_then(|owner| {
         vault.verify_archive_restore_owner(&owner)?;
         Ok(owner)
     });
     let receipt = match owner {
         Ok(owner) => vault
-            .import_whole_vault_archive_from_as_owner(io::BufReader::new(file), &owner)
+            .import_whole_vault_archive_from_as_owner_with_speakers(
+                io::BufReader::new(file),
+                &owner,
+                speakers,
+            )
             .map_err(|error| anyhow::anyhow!("archive import failed: {error}"))?,
         Err(owner_unavailable) => vault
-            .import_whole_vault_archive_from(io::BufReader::new(file))
+            .import_whole_vault_archive_from_with_speakers(io::BufReader::new(file), speakers)
             .map_err(|error| {
                 if oneiron::Vault::is_archive_expression_owner_refusal(&error) {
                     anyhow::anyhow!(
@@ -205,11 +270,21 @@ fn import_archive(args: crate::cli::ImportArchiveArgs) -> anyhow::Result<()> {
                 }
             })?,
     };
+    let restored_merges = receipt
+        .restored_identity_topology
+        .iter()
+        .filter(|event| event.kind == oneiron::batch::export::IdentityTopologyRestoreKind::Merge)
+        .count();
+    let restored_splits = receipt.restored_identity_topology.len() - restored_merges;
     let setup = receipt.embedding_setup;
     let status = setup
         .vectors_pending_recompute()
         .then_some(EMBEDDING_SETUP_IMPORTED);
     emit(&ImportedArchive {
+        speakers: match receipt.speakers {
+            oneiron::batch::export::ArchiveSpeakers::Own => "own",
+            oneiron::batch::export::ArchiveSpeakers::Foreign => "foreign",
+        },
         inserted_entities: receipt.inserted_entities,
         unchanged_entities: receipt.unchanged_entities,
         replaced_seed_entities: receipt.replaced_seed_entities,
@@ -221,6 +296,18 @@ fn import_archive(args: crate::cli::ImportArchiveArgs) -> anyhow::Result<()> {
         unchanged_secrets: receipt.unchanged_secrets,
         skipped_revoked_secrets: receipt.skipped_revoked_secrets,
         skipped_unproven_regenerates_edges: receipt.skipped_unproven_regenerates_edges,
+        unrestored_identity_topology_shells: receipt.unrestored_identity_topology_shells,
+        identity_topology_status: identity_topology_status(
+            receipt.unrestored_identity_topology_shells,
+        ),
+        restored_merges,
+        restored_splits,
+        restored_identity_topology_status: restored_identity_topology_status(
+            restored_merges,
+            restored_splits,
+        ),
+        unrestored_same_as_links: receipt.unrestored_same_as_links,
+        same_as_status: same_as_status(receipt.unrestored_same_as_links),
         missing_secrets: receipt
             .missing_secrets
             .into_iter()
@@ -243,6 +330,7 @@ fn import_archive(args: crate::cli::ImportArchiveArgs) -> anyhow::Result<()> {
             withheld_spaces: setup.withheld.spaces,
             withheld_slots: setup.withheld.slots,
         },
+        retained_side_rows: receipt.retained_side_rows,
     })
 }
 
@@ -265,6 +353,7 @@ pub fn import(command: ImportCommand) -> anyhow::Result<()> {
         ImportCommand::HookTranscript(args) => {
             return super::history_import::import_history(HistorySource::HookTranscript, *args);
         }
+        ImportCommand::Slack(args) => return super::history_import::slack::import_slack(*args),
         ImportCommand::Notes(args) => return super::history_import::notes::import_notes(*args),
         ImportCommand::Archive(args) => return import_archive(*args),
         ImportCommand::Folder(command) => {

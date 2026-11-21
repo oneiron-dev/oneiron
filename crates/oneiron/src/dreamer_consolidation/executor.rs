@@ -14,10 +14,27 @@ mod partition_run;
 mod partition_window;
 mod root_bridge;
 
+// The shared verdict execution the bound extraction read runs beside native.
+pub(crate) use decisions::evidence_version_for_row;
+pub(super) use decisions::{
+    ChargeSink, StatePart, VerdictRead, ask_route_for, decide_pack_with_charges,
+    label_questions_with,
+};
+#[cfg(oneiron_test_support)]
+pub(crate) use decisions::{
+    NativeFixtureMember, NativePackOutcome, NativeResolutionFixture,
+    native_resolution_pack_for_test,
+};
+#[cfg(oneiron_test_support)]
+pub(crate) use extraction::native_decisions_parity::{
+    NativeDecisionsFixture, NativeDecisionsOutcome, NativeSetOutcome,
+    native_extraction_decisions_for_test,
+};
+
 use conflicts::{ConflictInput, ResolvedSets};
 pub use decisions::ConsolidationDecisions;
 pub(super) use decisions::{Decider, ScopedRead};
-pub use extraction::ExtractionPrompt;
+pub use extraction::{EXTRACTION_MAX_TOKENS, ExtractionPrompt};
 use merge_resolution::MergeResolution;
 
 use super::evidence::{
@@ -46,7 +63,9 @@ use super::support::{
 use super::watermark::{WorkingSetTurn, conversation_of, read_turn_facts};
 use crate::claim::{ClaimSource, ClaimSubject};
 use crate::dreamer_runner::{DreamerClaimAuthoringStrategy, DreamerParkCause, dreamer_turn_role};
-use crate::dreamer_wake::{DreamerAttemptExecution, DreamerAttemptExecutor, WakeAttemptContext};
+use crate::dreamer_wake::{
+    DreamerAttemptExecution, DreamerAttemptExecutor, WakeAttemptContext, build_boxed_future,
+};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::inference_context::HostInferenceContext;
@@ -120,6 +139,11 @@ pub(super) enum PartitionRun {
         reason: String,
         refusal: crate::store::model_step_submission::StepBudgetRefusal,
     },
+    /// The provider refused a step for its context window: the try ends
+    /// `Failed` with `reason`, once (Engine 21 Nov 07:38).
+    WindowRefused {
+        reason: String,
+    },
     /// A spent model seat refused a step: the try parks on the seat with
     /// `reason`, until the seat's available write (SEAT-PARK-MODEL-STEP-PATH).
     SeatRefused {
@@ -135,8 +159,9 @@ pub(super) enum PartitionRun {
 
 impl PartitionRun {
     /// The run a failed step ends: a spend scope's refusal for good,
-    /// typed; a spent model seat's refusal, parked on the seat; or a
-    /// refusal the attempt asks again after its retry delay.
+    /// typed; a window refusal, ended Failed; a spent model seat's refusal,
+    /// parked on the seat; or a refusal the attempt asks again after its
+    /// retry delay.
     pub(super) fn refused_by(error: DurableStepError) -> Self {
         let reason = error.to_string();
         if let Some((seat, reset_at_s)) =
@@ -148,10 +173,26 @@ impl PartitionRun {
                 reset_at_s,
             };
         }
+        if crate::dreamer_wake::step_refuses_window(&error) {
+            return Self::WindowRefused { reason };
+        }
         match error {
             DurableStepError::BudgetRefused(refusal) => Self::BudgetRefused { reason, refusal },
             _ => Self::Refused { reason },
         }
+    }
+
+    /// [`Self::refused_by`] once the paid usage `error` carries (a spent
+    /// correction's, a window refusal's after a paid reply among them) has
+    /// joined `charges`, so the run's end settles it (FIX 11554).
+    pub(super) fn refused_with_spend(
+        error: DurableStepError,
+        charges: &mut StepChargeTally,
+    ) -> Self {
+        if let Some(usage) = error.spent_usage() {
+            charges.record_usage(usage);
+        }
+        Self::refused_by(error)
     }
 
     /// This run with work that waits on a role's answer: what it took is kept,
@@ -188,7 +229,7 @@ impl ConsolidationExecutor<'_> {
     /// output keeps the decisions that shaped it. `stages` takes the wall ms
     /// of the gap upsert.
     pub(super) async fn resolve_conflicts(
-        &mut self,
+        &self,
         candidates: Vec<ExtractedCandidate>,
         resources: &BranchResources<'_>,
         ctx: &WakeAttemptContext<'_>,
@@ -334,21 +375,17 @@ impl ConsolidationExecutor<'_> {
             // A spend scope refused the step for good: the try ends Failed,
             // and no open conflict waits for a merge that never runs.
             error @ DurableStepError::BudgetRefused(_) => Err(error),
+            // A window refusal ends the try Failed the same way: no merge
+            // runs for it either (Engine 21 Nov 07:38).
+            error if crate::dreamer_wake::step_refuses_window(&error) => Err(error),
             error => {
                 resources.require_output(resources.scope())?;
                 let mut decisions = Vec::new();
                 for member in members {
                     join_decisions(&mut decisions, &member.decisions);
                 }
-                super::open_conflict::park_open_conflict(
-                    ctx.vault,
-                    self.actor,
-                    attempt_id,
-                    conflict,
-                    members,
-                    &decisions,
-                    &resources.write_fence(),
-                    ctx.now_ms,
+                resources.park_open_conflict(
+                    ctx.vault, self.actor, attempt_id, conflict, members, &decisions, ctx.now_ms,
                 )?;
                 Err(error)
             }
@@ -547,18 +584,18 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
             ));
         }
         if attempt.status.payload.attempt_type == super::root_evidence::bridge::ATTEMPT {
-            return self.run_root_bridge(attempt, ctx).await;
+            return build_boxed_future(|| self.run_root_bridge(attempt, ctx)).await;
         }
         if attempt.status.payload.attempt_type == super::nightly_merge::ATTEMPT {
-            return self.run_nightly_merge(attempt, ctx).await;
+            return build_boxed_future(|| self.run_nightly_merge(attempt, ctx)).await;
         }
         if attempt.status.payload.attempt_type == super::nightly_links::ATTEMPT {
-            return self.run_nightly_links(attempt, ctx).await;
+            return build_boxed_future(|| self.run_nightly_links(attempt, ctx)).await;
         }
         if attempt.status.payload.attempt_type
             == crate::dreamer_runner::DREAMER_NOTE_REVIEW_ATTEMPT_KIND
         {
-            return self.run_note_review(attempt, ctx).await;
+            return build_boxed_future(|| self.run_note_review(attempt, ctx)).await;
         }
         if attempt.status.payload.attempt_type == crate::dreamer_wake::nightly::CONTINUE_ATTEMPT {
             return crate::dreamer_wake::nightly::continue_nightly(attempt, ctx);
@@ -572,13 +609,13 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
             });
         }
         if attempt.status.payload.attempt_type == crate::dreamer_wake::sieve::RUNG_ATTEMPT {
-            return self.run_sieve_rungs(attempt, ctx).await;
+            return build_boxed_future(|| self.run_sieve_rungs(attempt, ctx)).await;
         }
         if attempt.status.payload.attempt_type == crate::dreamer_wake::sieve::TYPING_BATCH_ATTEMPT {
-            return self.run_typing_batch(attempt, ctx).await;
+            return build_boxed_future(|| self.run_typing_batch(attempt, ctx)).await;
         }
         if attempt.status.payload.attempt_type == crate::dreamer_wake::follower::FOLLOWER_ATTEMPT {
-            return self.run_follower(attempt, ctx).await;
+            return build_boxed_future(|| self.run_follower(attempt, ctx)).await;
         }
         // The session-end miner carries its own pinned `{session}` payload,
         // not a partition map. Reject a supplied branch scope explicitly,
@@ -739,8 +776,7 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
             }
         };
         self.pin_prepared_partition(attempt, ctx, plan)?;
-        self.execute_prepared_partition(attempt, ctx, plan, wake)
-            .await
+        build_boxed_future(|| self.execute_prepared_partition(attempt, ctx, plan, wake)).await
     }
 
     async fn execute_partition_window<'w>(

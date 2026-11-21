@@ -6,10 +6,24 @@
 //! and `source()` are the leaf's, so every message string is what it was when
 //! these variants sat flat on `Error`.
 
+use serde::{Deserialize, Serialize};
+
 use crate::entity_id::EntityId;
+use crate::register::Register;
 use crate::room_join::RoomJoinHold;
 
 use super::ErrorKind;
+
+mod owner_key_move;
+
+pub use owner_key_move::{
+    OWNER_KEY_ACT_REASON_PREFIX, OWNER_KEY_MEMBER_REASON_PREFIX, OWNER_KEY_MOVE_CONFIRM_STEP,
+    OWNER_KEY_MOVE_CONFIRM_SUGGESTION, OWNER_KEY_MOVE_CONFIRM_TEXT,
+    OWNER_KEY_MOVE_DEVICE_CONFIRM_OWN_TEXT, OWNER_KEY_MOVE_DEVICE_CONFIRM_TEXT,
+    OWNER_KEY_MOVE_ENROL_STEP, OWNER_KEY_MOVE_ENROL_SUGGESTION, OWNER_KEY_MOVE_ENROL_TEXT,
+    OWNER_KEY_MOVE_NEXT_STEP, OWNER_KEY_MOVE_REFUSAL_TEXT, OWNER_KEY_MOVE_SUGGESTION,
+    OWNER_KEY_NEXT_STEP_REASON_PREFIX, OwnerKeyMoveStep,
+};
 
 /// The voice call that holds a room's assembly: live in `room`, with its
 /// roster missing or a speaker it must place not entered yet. `call` is the
@@ -79,8 +93,58 @@ impl std::fmt::Display for ErasedHoldTarget {
 }
 
 /// A 32-byte revision as a surface shows it: 64 lower-case hex.
+/// The stable reason code of [`RecordError::OwnerKeyRequired`]: an owner
+/// route's refusal state, and a facade or MCP refusal's reason code.
+pub const OWNER_KEY_REQUIRED: &str = "owner_key_required";
+
+/// The stable reason code of [`RecordError::OwnerPresenceRequired`].
+pub const OWNER_PRESENCE_REQUIRED: &str = "owner_presence_required";
+
+/// The prefix of the reason code that names why this device did not confirm the person.
+pub const OWNER_PRESENCE_HERE_REASON_PREFIX: &str = "here:";
+
+/// Why this device did not confirm the person for an owner act.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Register)]
+#[serde(rename_all = "snake_case")]
+#[register("owner.presence.refusal")]
+#[non_exhaustive]
+pub enum OwnerPresenceRefusal {
+    /// The person was asked and did not confirm, so the act stops here.
+    Declined,
+    /// The prompt was shown and nobody answered in time.
+    NoAnswer,
+    /// The screen is locked or locked during the prompt, so confirm again here once unlocked.
+    ScreenLocked,
+    /// The device's prompt failed for a platform reason.
+    PromptFailed,
+}
+
+impl OwnerPresenceRefusal {
+    /// The single suggestion a surface gives with this refusal.
+    #[must_use]
+    pub const fn suggestion(self) -> &'static str {
+        match self {
+            Self::Declined => "Stop this action here.",
+            Self::NoAnswer => "Try again when you are ready to answer the prompt.",
+            Self::ScreenLocked => "Unlock this device, then try again here.",
+            Self::PromptFailed => "Try again when this device's unlock prompt is working.",
+        }
+    }
+}
+
+impl std::fmt::Display for OwnerPresenceRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Declined => "Confirmation was declined on this device, so nothing was changed.",
+            Self::NoAnswer => "The prompt on this device went unanswered, so nothing was changed.",
+            Self::ScreenLocked => "The screen was locked, so nothing was changed.",
+            Self::PromptFailed => "This device's prompt failed, so nothing was changed.",
+        })
+    }
+}
+
 fn revision_hex(revision: &[u8; 32]) -> String {
-    revision.iter().map(|byte| format!("{byte:02x}")).collect()
+    oneiron_hex::encode(revision)
 }
 
 /// What the owner runs when decision seal standing cannot be verified (FIX
@@ -227,6 +291,17 @@ pub enum RecordError {
     /// never echoes a token, key or hidden id. Nothing was written.
     #[error("{0}")]
     AuthorityRefused(&'static str),
+    /// A delete of the PERSON that holds the vault's last Active owner
+    /// binding (the lead's L9-52-OWNER-SELF-DELETE = B, 14 Nov 2026): the
+    /// vault would keep no owner, and no ceremony brings the deleted person
+    /// back. The text names the two ways out (Engine
+    /// L9-52-OWNER-GUARD-COOWNER, 14 Nov 2026): erasing the vault, or binding
+    /// another owner, which an added Owner's first owner key enrolment does
+    /// (FIX OWNER-DELETE-GUARD-RECOVERY). Nothing was written.
+    #[error(
+        "this person holds the vault's last owner binding, so deleting them would leave the vault with no owner: erase the vault if ending it is the goal, or bind another owner first"
+    )]
+    LastBoundOwnerDelete,
     /// The vault's checkpoint root policy cannot be fixed, or the owner's
     /// choice of it cannot stand, and the reason names which rule refused
     /// (mesh PR2c, K06): no eligible root, a quorum the roots cannot meet or
@@ -243,6 +318,38 @@ pub enum RecordError {
         revision_hex(current)
     )]
     CheckpointPolicyRevisionStale { current: [u8; 32] },
+    /// An owner choice door refused an act it could not prove the owner's
+    /// (row CARRIER-OWNER-PROOF): the vault holds an owner key, and this
+    /// install is not the owner's machine and holds none, so the authority
+    /// fold would keep the act waiting with no effect. The owner decides it
+    /// on an owner device. [`OWNER_KEY_REQUIRED`] is its stable reason code
+    /// on every surface. Content-free. Nothing was written.
+    #[error(
+        "This machine is not the owner's and holds no owner key: decide it on an owner device."
+    )]
+    OwnerKeyRequired,
+    /// An owner act that needs the person at this device was refused before
+    /// anything was written. [`OWNER_PRESENCE_REQUIRED`] is its stable reason
+    /// code on every surface; `here` names the local refusal beside it.
+    #[error("{here}")]
+    OwnerPresenceRequired { here: OwnerPresenceRefusal },
+    /// A membership move that would end `member`'s owner keys, refused on an
+    /// install that holds no owner key the vault trusts (row
+    /// HOSTED-ROOT-REVOKES-OWNER-KEY): a revoke of an owner key counts only
+    /// with an owner key's proof, never with the custodial root's alone. Its
+    /// kind is [`ErrorKind::OwnerKeyRequired`]; beside that reason code a
+    /// surface names the next step and the member as reason codes
+    /// ([`OWNER_KEY_NEXT_STEP_REASON_PREFIX`],
+    /// [`OWNER_KEY_MEMBER_REASON_PREFIX`]) and, for a shared act, the act
+    /// ([`OWNER_KEY_ACT_REASON_PREFIX`]). Nothing was written; a shared act
+    /// the move ran for stays pending, and `step` says what moves it on (row
+    /// HOSTED-OWNER-MOVE-TWO-PHASE).
+    #[error("{step}")]
+    OwnerKeyMoveRefused {
+        member: EntityId,
+        step: OwnerKeyMoveStep,
+        act: Option<String>,
+    },
     /// The owner's world recipient choice keeps a world's rows from this
     /// destination (mesh PR2b, L11-B (B)): the reason names his choice (one
     /// named machine, or machines marked mine) and why this destination is
@@ -259,6 +366,14 @@ pub enum RecordError {
     /// owner, or a write facet outside the link's facets.
     #[error("invalid pairing scope: {0}")]
     InvalidPairingScope(&'static str),
+    /// A pairing link names verbs for a published app's backend that no
+    /// Grant row names. The app's grant rows are the owner's explicit Ask,
+    /// default none (PUBLIC-BACKEND = A; APP-BACKEND-LINK-GRANT = A): he
+    /// mints that row as its own act first. Nothing was written.
+    #[error(
+        "an app backend's link names verbs only under a Grant row the owner mints: mint it with vault.agents.grants.mint, then issue the link"
+    )]
+    AppBackendGrantRequired,
     /// Context-pack assembly found a cross-record anomaly before surfacing output.
     #[error("context pack validation failed for entity {}: {reason}", id.to_hex())]
     ContextPackValidation { id: EntityId, reason: &'static str },
@@ -330,6 +445,21 @@ pub enum RecordError {
         "workspace work_companion policy is require: start a work companion; a brought one is refused"
     )]
     WorkCompanionRequired,
+    /// The vault's `one_vault` row is unreadable, so onboarding refuses to
+    /// say which joining line applies. The journal stays resumable: retry
+    /// once the manifest reads again. The Complete step writes nothing on
+    /// this refusal; prior journal progress stays resumable.
+    #[error("workspace one_vault setting is unreadable: repair the policy manifest, then retry")]
+    OneVaultSettingUnreadable,
+    /// The company is not in one-vault mode; work talk stays with the member.
+    #[error("workspace one_vault mode is off: work talk stays with the member")]
+    WorkTalkStaysWithMember,
+    /// The member must acknowledge the company's one-vault notice first.
+    #[error("workspace one_vault notice has not been acknowledged by this member")]
+    OneVaultNotTold,
+    /// A born work companion already holds its talk in the company vault.
+    #[error("work talk requires a brought companion; a work companion is already company-homed")]
+    NoBroughtCompanion,
     /// A CounterpartyContact record failed pinned structural validation.
     /// Nothing was written.
     #[error("invalid counterparty contact body: {0}")]
@@ -389,9 +519,11 @@ pub enum RecordError {
     )]
     AuthorityLogSignerPending { id: EntityId },
     /// Storing this AUTHORITY_LOG row would take its signer, or the log's
-    /// handoffs, past the pinned fold bound (H72). Nothing was written; a
-    /// slip issuer's slip ops, and the rows it signs that only restrict
-    /// authority, are never refused this way.
+    /// handoffs, past the pinned fold bound (H72), or the log past the
+    /// owner's reserve under its fold memory floor, where only the owner's
+    /// work lands ([AUTHORITY-LOG-SIGNER-FLOOD]). Nothing was written, and
+    /// the row may be offered again; a slip issuer's slip ops, and the rows
+    /// it signs that only restrict authority, are never refused this way.
     #[error(
         "authority log at its bound for signer {signer}; row {} not stored",
         id.to_hex()
@@ -400,9 +532,9 @@ pub enum RecordError {
     /// The authority fold needs history this vault does not hold (OF-469):
     /// no fold answers until an import closes it. `missing` ascends; on a
     /// vault that adopted a checkpoint image it may name covered rows, which
-    /// a late fork or an op the image cannot fold past needs. Fetching them
-    /// may name further ancestors: ask for the vault's history request again
-    /// after each import.
+    /// a late fork or an op the image cannot fold past needs, and `reason`
+    /// says which. Fetching them may name further ancestors: ask for the
+    /// vault's history request again after each import.
     #[error("authority history incomplete: {} rows required", missing.len())]
     AuthorityHistoryRequired {
         /// The authority vault (its genesis hash) the history belongs to.
@@ -411,6 +543,8 @@ pub enum RecordError {
         checkpoint: Option<[u8; 32]>,
         /// The authority entry hashes the fold needs, ascending.
         missing: Vec<[u8; 32]>,
+        /// Why it needs them; None only where a refusal names none.
+        reason: Option<crate::authority::AuthorityHistoryReason>,
     },
     /// The persisted authority clock floor is present and does not decode
     /// (FIX 10106): the vault no longer knows the least second it has
@@ -484,6 +618,7 @@ impl RecordError {
             Self::InvalidConversationDag(_) => ErrorKind::InvalidConversationDag,
             Self::InvalidScopeSummary(_) => ErrorKind::InvalidScopeSummary,
             Self::InvalidPairingScope(_) => ErrorKind::InvalidPairingScope,
+            Self::AppBackendGrantRequired => ErrorKind::AppBackendGrantRequired,
             Self::StreamAlreadyActive { .. } => ErrorKind::StreamAlreadyActive,
             Self::StreamNotActive { .. } => ErrorKind::StreamNotActive,
             Self::StreamLimit { .. } => ErrorKind::StreamLimit,
@@ -495,8 +630,13 @@ impl RecordError {
             Self::InvalidFederationGrantBody(_) => ErrorKind::InvalidFederationGrantBody,
             Self::InvalidAuthorityLogBody(_) => ErrorKind::InvalidAuthorityLogBody,
             Self::AuthorityRefused(_) => ErrorKind::AuthorityRefused,
+            Self::LastBoundOwnerDelete => ErrorKind::LastBoundOwnerDelete,
             Self::CheckpointPolicyRefused(_) => ErrorKind::CheckpointPolicyRefused,
             Self::CheckpointPolicyRevisionStale { .. } => ErrorKind::CheckpointPolicyRevisionStale,
+            Self::OwnerKeyRequired | Self::OwnerKeyMoveRefused { .. } => {
+                ErrorKind::OwnerKeyRequired
+            }
+            Self::OwnerPresenceRequired { .. } => ErrorKind::OwnerPresenceRequired,
             Self::WorldRecipientLimit(_) => ErrorKind::WorldRecipientLimit,
             Self::WorldPlacementUnverifiable(_) => ErrorKind::WorldPlacementUnverifiable,
             Self::InvalidAccessGrantBody(_) => ErrorKind::InvalidAccessGrantBody,
@@ -510,6 +650,10 @@ impl RecordError {
                 ErrorKind::WorkspaceMailboxAutonomyNotReady
             }
             Self::WorkCompanionRequired => ErrorKind::WorkCompanionRequired,
+            Self::OneVaultSettingUnreadable => ErrorKind::OneVaultSettingUnreadable,
+            Self::WorkTalkStaysWithMember => ErrorKind::WorkTalkStaysWithMember,
+            Self::OneVaultNotTold => ErrorKind::OneVaultNotTold,
+            Self::NoBroughtCompanion => ErrorKind::NoBroughtCompanion,
             Self::InvalidCounterpartyContactBody(_) => ErrorKind::InvalidCounterpartyContactBody,
             Self::InvalidCommRecordBody(_) => ErrorKind::InvalidCommRecordBody,
             Self::InvalidDiagnosticBody(_) => ErrorKind::InvalidDiagnosticBody,

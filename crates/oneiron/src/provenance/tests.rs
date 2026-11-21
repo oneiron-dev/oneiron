@@ -501,3 +501,102 @@ fn stale_attest_target_reports_the_active_cohort_winner() -> Result<()> {
     drop(rtxn);
     Ok(())
 }
+
+#[cfg(unix)]
+mod committed_delete {
+    use crate::error::Result;
+    use crate::provenance::body::released_bodies_in_txn;
+    use crate::store::owned_body::BODY_RELEASED;
+    use crate::test_util::{entity, open_test_vault_with};
+    use crate::{EntityId, TimeRange, Vault, VaultConfig};
+
+    fn released_bodies(vault: &Vault) -> Result<Vec<[u8; 32]>> {
+        let txn = vault.store.env.read_txn()?;
+        released_bodies_in_txn(&vault.store, &txn, 256)
+    }
+
+    fn open_with_released_body() -> Result<(tempfile::TempDir, Vault, EntityId, [u8; 32])> {
+        let (directory, vault) = open_test_vault_with(VaultConfig::device());
+        let record = entity(0x5B);
+        vault.put_entity(
+            &record,
+            crate::registry::ENTITY_TYPE_RELATIONSHIP,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"delete fixture",
+        )?;
+        let mut bytes: &[u8] = b"released result body\n";
+        let digest = *blake3::hash(bytes).as_bytes();
+        let length = u64::try_from(bytes.len()).expect("fixture length fits u64");
+        let bodies = vault.store.body_dir()?;
+        bodies.import(&digest, length, &mut bytes)?;
+        vault.with_write_txn(|txn| BODY_RELEASED.put(&vault.store, txn, &digest, &1))?;
+        assert!(bodies.open_body(&digest, length)?.is_some());
+        assert_eq!(released_bodies(&vault)?, vec![digest]);
+        assert!(vault.get(&record)?.is_some());
+        Ok((directory, vault, record, digest))
+    }
+
+    #[test]
+    fn a_failed_walk_after_a_committed_delete_still_collects_released_bodies() -> Result<()> {
+        let (directory, vault, record, digest) = open_with_released_body()?;
+        let path = directory
+            .path()
+            .join("bodies")
+            .join(crate::store::body_file_name(&digest));
+        vault.store.test_hooks.fail_next_dependent_walks();
+
+        let error = vault
+            .delete_entity(&record)
+            .expect_err("the post-commit walk fails");
+
+        assert!(
+            error
+                .to_string()
+                .contains("test failure finishing dependent walks")
+        );
+        assert!(vault.is_deleted_shell(&record)?);
+        assert!(!path.try_exists()?, "the released body file was collected");
+        assert!(
+            released_bodies(&vault)?.is_empty(),
+            "the released row was collected"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_failed_walk_keeps_its_error_for_the_caller() -> Result<()> {
+        let (_directory, vault, record, _digest) = open_with_released_body()?;
+        vault.store.test_hooks.fail_next_dependent_walks();
+
+        let error = vault
+            .delete_entity(&record)
+            .expect_err("the post-commit walk fails");
+
+        assert!(
+            error
+                .to_string()
+                .contains("test failure finishing dependent walks")
+        );
+        vault.finish_dependent_walks()?;
+        Ok(())
+    }
+
+    #[test]
+    fn a_clean_delete_collects_released_bodies() -> Result<()> {
+        let (directory, vault, record, digest) = open_with_released_body()?;
+        let path = directory
+            .path()
+            .join("bodies")
+            .join(crate::store::body_file_name(&digest));
+
+        assert!(vault.delete_entity(&record)?);
+
+        assert!(!path.try_exists()?, "the released body file was collected");
+        assert!(
+            released_bodies(&vault)?.is_empty(),
+            "the released row was collected"
+        );
+        Ok(())
+    }
+}

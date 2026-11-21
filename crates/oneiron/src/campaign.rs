@@ -52,12 +52,27 @@ pub mod sender;
 /// rule in Rust.
 pub mod compliance;
 
+/// The one-click unsubscribe link a bulk campaign email carries (ARCH-0059
+/// #opt-out, RFC 8058): the vault-held key, the per-member minter and the
+/// redemption that writes the suppression at once.
+pub mod one_click_unsubscribe;
+
 /// CA-05's send hygiene: the one-transaction bounce/unsubscribe suppression
 /// door, the deterministic RFC 8058 `List-Unsubscribe` headers folded into the
 /// frozen outbound payload, and the sticky-sender binding. Sender health itself
 /// stays in `identity_reputation.rs`; this module wires the campaign webhook
 /// into it rather than growing a second reputation model.
 pub mod send_hygiene;
+
+/// The campaign's own pack Setting keys: whether a dead sticky sender rotates
+/// (`campaign.sender.rotate_on_dead`), and the owner's per-campaign copy
+/// review skip (`campaign.copy_review.skip`).
+pub(crate) mod setting_keys;
+
+/// The vault's house voice guide: the NOTE a campaign's copy review checks
+/// against when the campaign names no voice guide, seeded once, with the
+/// vault's first campaign.
+pub mod house_voice_guide;
 
 /// CA-04's stage-ladder machinery: the pure ladder schema, coded-reply routing,
 /// warm/cold lane selection, the single projector that writes `crm.stage`
@@ -236,6 +251,8 @@ fn slot_matches(
         && existing.family == Some(family)
 }
 
+/// The `campaign.member` claims by campaign and by deriving query (ARCH-0044 H202).
+pub(crate) mod member_index;
 pub(crate) mod tables;
 #[cfg(test)]
 mod tests;

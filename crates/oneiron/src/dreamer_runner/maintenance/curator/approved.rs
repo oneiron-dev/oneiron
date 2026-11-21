@@ -5,9 +5,11 @@
 //! one write with the target's before-state as its inverse and the Dreamer's
 //! receipt naming the approved revision. It never parks behind a second
 //! consent and never stages the target's transition as the embedded owner.
+use oneiron_contracts::fingerprint::ContentHash;
+
 use super::super::applied::{record_approved_in_txn, recorded_in_txn};
 use super::super::{CURATOR_FACET, invalid};
-use super::{PROPOSAL_PREDICATE, apply_in_txn};
+use super::{PROPOSAL_PREDICATE, apply_in_txn, finding_lifts_restriction_in};
 use crate::attempt_queue::AttemptId;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::ports::EntityStoreRead;
@@ -17,8 +19,9 @@ use crate::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, EntityId, Re
 /// of them has committed (FIX 470), so a run-tray approval moves its rungs at
 /// once rather than at the next nightly pass. Each finding applies in a
 /// grouped write of its own, as the nightly pass applies it, through
-/// `Vault::apply_approved_curator_in_txn` with no pass attempt: a finding
-/// already applied, or one whose target moved, applies nothing. A finding
+/// `Vault::apply_approved_curator_rejudged_in_txn` with no pass attempt: a
+/// finding already applied, one whose target moved, or one whose rung now
+/// lifts a restriction applies nothing. A finding
 /// that fails stays approved for the nightly pass to retry, and failures are
 /// logged by count and kind alone. The approval never fails here.
 pub fn apply_after_consent(vault: &Vault, approved: impl IntoIterator<Item = EntityId>, now: u64) {
@@ -35,7 +38,7 @@ pub fn apply_after_consent(vault: &Vault, approved: impl IntoIterator<Item = Ent
     let mut kinds = Vec::new();
     for proposal in findings {
         if let Err(error) = vault.with_write_txn_grouped(|txn| {
-            vault.apply_approved_curator_in_txn(txn, proposal, None, now)
+            vault.apply_approved_curator_rejudged_in_txn(txn, proposal, None, now)
         }) {
             kinds.push(error.kind());
         }
@@ -77,7 +80,10 @@ impl Vault {
     /// target the rung moved; `None` when any of that fails, so a replayed
     /// pass, or a consent door that runs it after the approval commits in
     /// its own write, applies nothing twice. `attempt` is the curator pass
-    /// that applies it, none for a consent door.
+    /// that applies it, none for a consent door. It applies the rung on the
+    /// approval's judgment, so only the approval's own write calls it
+    /// directly (`apply_approved_curator_in_savepoint`); a later write calls
+    /// [`Vault::apply_approved_curator_rejudged_in_txn`].
     ///
     /// # Errors
     ///
@@ -119,7 +125,7 @@ impl Vault {
         let header = EntityMetadataHeader::parse(&raw).ok_or_else(invalid)?;
         if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
             || raw.len() == ENTITY_METADATA_HEADER_LEN
-            || blake3::hash(&raw[ENTITY_METADATA_HEADER_LEN..])
+            || ContentHash::of(&raw[ENTITY_METADATA_HEADER_LEN..])
                 .to_hex()
                 .as_str()
                 != source_hash
@@ -144,5 +150,39 @@ impl Vault {
             now,
         )?;
         Ok(Some(target))
+    }
+
+    /// [`Vault::apply_approved_curator_in_txn`] in a write after the
+    /// approval's own: the consent door's retry once the approval committed
+    /// ([`apply_after_consent`]), or the nightly pass (`attempt`). The
+    /// approval's own write applied the rung with it, after its door judged
+    /// the settler: for a finding that lifts a restriction,
+    /// `vault.claims.settle` refuses a Grant holder that is no person and a
+    /// conflict Keep refuses a Keep by no person; every other approval door
+    /// is the owner's. A finding still unapplied here did not apply there,
+    /// and its rung is judged again in this write: a contact mapping
+    /// restricts by its contact's other heads, which can move after the
+    /// approval while the mapping's own body stays. A rung that now retracts,
+    /// weakens or marks stale a claim that restricts someone's access applies
+    /// nothing, and the finding waits approved: it applies at a later pass
+    /// once its target restricts no one, and a person lifts the restriction
+    /// by their own act (RULING RESTRICTION-CLOSE-BY-CURATOR-APPROVAL).
+    ///
+    /// # Errors
+    ///
+    /// As [`Vault::apply_approved_curator_in_txn`].
+    pub(super) fn apply_approved_curator_rejudged_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        proposal: EntityId,
+        attempt: Option<AttemptId>,
+        now: u64,
+    ) -> Result<Option<EntityId>> {
+        if let Some(finding) = self.get_claim_in_txn(&*txn, &proposal)?
+            && finding_lifts_restriction_in(self, &*txn, &finding)?
+        {
+            return Ok(None);
+        }
+        self.apply_approved_curator_in_txn(txn, proposal, attempt, now)
     }
 }

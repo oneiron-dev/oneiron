@@ -16,13 +16,20 @@ impl Vault {
     /// Installs this install's this-device-only keystore on the vault handle. The host
     /// calls it after each open, as it does `retain_machine_write_signer`.
     /// Signing keys loaded from a keystore installed before are dropped: the next
-    /// signing door loads them from this one.
+    /// signing door loads them from this one. A device PIN installed over that
+    /// keystore is dropped with them ([`Vault::install_device_pin`]).
     pub fn install_device_keystore(&self, keystore: Arc<dyn DeviceKeystore>) {
         *self
             .world_keys
             .keystore
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = Some(keystore);
+        *self
+            .world_keys
+            .device_pin
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = None;
+        self.note_pin_bound_owner_key(None);
         *self
             .world_keys
             .signer
@@ -60,16 +67,17 @@ impl Vault {
     /// [`Vault::prepare_install_signing`] for a host that serves on without it: a
     /// failure is logged by kind, never with key material. True when the keys loaded.
     pub fn prepare_install_signing_logged(&self) -> bool {
-        match self.prepare_install_signing() {
-            Ok(_) => true,
-            Err(error) => {
-                tracing::warn!(
-                    kind = ?error.kind(),
-                    "this install's signing keys did not load; signing doors refuse"
-                );
-                false
-            }
-        }
+        signing_loaded_logged(self.prepare_install_signing())
+    }
+
+    /// [`Vault::prepare_install_signing_logged`] for a door that must never make
+    /// this vault forget its machine (an owner's archive restore, REVIEW-9756
+    /// round 2 P1-2: its read of the vault's rows cannot hold off a writer that
+    /// commits one before the keys load). A slot found empty while the vault holds
+    /// a device key's public half refuses: the keys stay unloaded, and the machine
+    /// and client ids stay as they are.
+    pub(crate) fn prepare_install_signing_keeping_machine_logged(&self) -> bool {
+        signing_loaded_logged(self.prepare_install_signing_with(UnheldMachineSeed::Refuse))
     }
 
     /// Loads this install's signing keys from its `DeviceSigning` keystore slot and
@@ -81,13 +89,20 @@ impl Vault {
     /// - The slot's seed is created on first use. A slot found empty while the vault
     ///   holds a device key's public half means this install never held that machine's
     ///   seed (a raw copy on another host, a lost keychain): the vault forgets that
-    ///   machine and joins as a new one. No seed is ever imported into a slot.
+    ///   machine, with the choices about it, and joins as a new one at the defaults
+    ///   (`identity::drop_machine_identity_in_txn`). No seed is ever imported into a slot.
     /// - It writes the device key's public half when absent, and refuses one that
     ///   names another key.
     /// - It caches the machine key's public half when absent, on either path, for
     ///   a restore that loads no keys (FIX 5472); a cache it cannot write or check
     ///   is logged, and the keys load as before (`identity::cache_machine_pk`).
     pub fn prepare_install_signing(&self) -> Result<EntityId> {
+        self.prepare_install_signing_with(UnheldMachineSeed::ForgetMachine)
+    }
+
+    /// [`Vault::prepare_install_signing`], with `unheld` saying what a slot found
+    /// empty while the vault holds a device key's public half does.
+    fn prepare_install_signing_with(&self, unheld: UnheldMachineSeed) -> Result<EntityId> {
         let keystore = self.device_keystore()?;
         for _ in 0..2 {
             let machine = self.provision_machine_identity()?;
@@ -114,6 +129,11 @@ impl Vault {
                 .map_err(super::machine::keystore_error)?
             {
                 Some(seed) => seed,
+                None if had_public && unheld == UnheldMachineSeed::Refuse => {
+                    return Err(super::refused(
+                        "this install holds no signing seed for the machine this vault names",
+                    ));
+                }
                 None if had_public => {
                     self.with_write_txn_grouped(|wtxn| {
                         if crate::identity::read_machine_id_in_txn(self, wtxn)? == Some(machine) {
@@ -188,6 +208,67 @@ impl Vault {
         }
     }
 
+    /// This install's signing keys for a lookup that must write no vault row
+    /// and no slot (the archive export's signer, L2-23): the keys already loaded for
+    /// the stored machine id, else the ones its keystore slot already holds
+    /// when the vault's device key row names them. Unlike
+    /// [`Vault::load_install_signing_if_minted`] it never mints a machine id
+    /// or a seed, never forgets a machine whose slot is empty, and leaves what
+    /// it reads off the handle. `None` with no keystore, no machine id, an
+    /// empty slot, or a device key row that is absent or names another key.
+    ///
+    /// The slot is read with the keystore's own `get`, as every door reads
+    /// one. On an Apple Secure Enclave keystore whose key selector is gone,
+    /// that `get` makes a new enclave key before the old slot fails to open,
+    /// and the export goes out unsigned (Astra r2 finding 2, FIX
+    /// [ENCLAVE-GET-MAKES-SEALING-KEY]).
+    pub(crate) fn read_install_signer(
+        &self,
+    ) -> Result<Option<Arc<crate::identity::InstallSigner>>> {
+        let Some(keystore) = self
+            .world_keys
+            .keystore
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+        else {
+            return Ok(None);
+        };
+        let (machine, device_pk) = {
+            let txn = self.store.env.read_txn()?;
+            (
+                crate::identity::read_machine_id_in_txn(self, &txn)?,
+                crate::identity::read_device_verifying_key_in_txn(self, &txn)?,
+            )
+        };
+        let Some(machine) = machine else {
+            return Ok(None);
+        };
+        if let Some(signer) = self
+            .loaded_install_signer()
+            .filter(|signer| signer.machine == machine)
+        {
+            return Ok(Some(signer));
+        }
+        let slot = KeystoreSlot {
+            vault_id: *self.vault_id().as_bytes(),
+            install: *machine.as_bytes(),
+            kind: SlotKind::DeviceSigning,
+        };
+        let Some(seed) = keystore
+            .get(&slot)
+            .map_err(super::machine::keystore_error)?
+        else {
+            return Ok(None);
+        };
+        let signer = crate::identity::InstallSigner::derive(machine, &seed);
+        drop(seed);
+        Ok(
+            (device_pk == Some(signer.device_key.verifying_key().to_bytes()))
+                .then(|| Arc::new(signer)),
+        )
+    }
+
     /// The signing keys [`Vault::prepare_install_signing`] left on this handle.
     pub(crate) fn loaded_install_signer(&self) -> Option<Arc<crate::identity::InstallSigner>> {
         self.world_keys
@@ -260,5 +341,31 @@ impl Vault {
             .ok_or(Error::Secret(SecretError::KeystoreUnavailable(
                 "the host installed no keystore on this vault",
             )))
+    }
+}
+
+/// What [`Vault::prepare_install_signing`] does when this install's slot is empty
+/// while the vault holds a device key's public half: this install never held
+/// that machine's seed.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum UnheldMachineSeed {
+    /// The vault forgets that machine and joins as a new one.
+    ForgetMachine,
+    /// The keys do not load, and the machine identity stays.
+    Refuse,
+}
+
+/// True when the keys loaded; a failure is logged by kind, never with key
+/// material.
+fn signing_loaded_logged(prepared: Result<EntityId>) -> bool {
+    match prepared {
+        Ok(_) => true,
+        Err(error) => {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "this install's signing keys did not load; signing doors refuse"
+            );
+            false
+        }
     }
 }

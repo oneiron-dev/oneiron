@@ -1,8 +1,9 @@
 //! Retrieval doors bound one request's shape and never refuse its work for a
-//! count (F21(a): H46, H301, H27; rule 5): an over-large `limit` is served at
-//! the ceiling and says so, a query past `[limits].retrieval_query_bytes` is
-//! a typed 413, and a multi-row read past `[limits].projection_body_bytes`
-//! leaves the rest of its bodies out, each with a marker.
+//! count (F21(a): H46, H301, H27; rule 5): an over-large `limit` is served
+//! whole and reports no clamp (#5024), a query past
+//! `[limits].retrieval_query_bytes` is a typed 413, and a multi-row read past
+//! `[limits].projection_body_bytes` leaves the rest of its bodies out, each
+//! with a marker.
 
 use super::*;
 use oneiron::memory::caps::MAX_SEARCH_LIMIT;
@@ -36,23 +37,18 @@ fn owner_reader(server: &SyncServer) -> String {
     ))
 }
 
-/// Done-means (H46): an over-large `limit` is served at MAX_SEARCH_LIMIT and
-/// the response says so, at every ranked retrieval door; a limit at the
-/// ceiling carries no flag. On main the pack, board, query and raw search
-/// doors ran it unbounded and silently, reason refused past 100 and recall
-/// past 1,000.
+/// Done-means (H46 as #5024 restated it, FIX 56): every ranked retrieval
+/// door serves an over-large `limit` whole, and no response reports a clamp.
+/// MAX_SEARCH_LIMIT was the ceiling these doors cut a count to before #5024;
+/// it is now only the candidate floor a narrowed read fetches.
 #[tokio::test]
-async fn an_over_large_limit_is_served_at_the_ceiling_and_says_so() {
+async fn an_over_large_limit_is_served_whole_and_reports_no_clamp() {
     let (_dir, server) = auth_test_server();
     seed_turn(&server, "The lantern room opens at dusk.");
     let reader = owner_reader(&server);
     // A query vector the test vault's index takes; a malformed one is a 500.
     let vector = vec!["0.1"; oneiron::VaultConfig::device().dimensions].join(",");
-    for (limit, clamped) in [
-        (MAX_SEARCH_LIMIT, false),
-        (MAX_SEARCH_LIMIT + 1, true),
-        (usize::MAX, true),
-    ] {
+    for limit in [MAX_SEARCH_LIMIT, MAX_SEARCH_LIMIT + 1, usize::MAX] {
         let doors = [
             (
                 "POST",
@@ -109,28 +105,25 @@ async fn an_over_large_limit_is_served_at_the_ceiling_and_says_so() {
             )
             .await;
             assert_eq!(status, StatusCode::OK, "{uri} limit {limit}: {reply}");
-            assert_eq!(
-                reply
-                    .pointer(flag)
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false),
-                clamped,
+            assert_ne!(
+                reply.pointer(flag).and_then(Value::as_bool),
+                Some(true),
                 "{uri} limit {limit}: {reply}"
             );
         }
     }
 }
 
-/// Done-means (H46, A3): the native MCP `memory.query` and
-/// `memory.context_pack` and the MCP `recall` tool serve an over-large limit
-/// at the ceiling and say so in their typed responses.
+/// Done-means (H46 and A3 as #5024 restated them, FIX 56): the native MCP
+/// `memory.query` and `memory.context_pack` and the MCP `recall` tool serve
+/// an over-large limit whole, and no typed response reports a clamp.
 #[tokio::test]
-async fn an_over_large_limit_is_served_at_the_ceiling_through_mcp() {
+async fn an_over_large_limit_is_served_whole_through_mcp() {
     let (_dir, server) = auth_test_server();
     let actor = seeded_test_entity_id(0x0F21_0001);
     let credential = "f21-mcp-limit";
     register_mcp_actor(&server, credential, actor, oneiron::EdgeActorClass::Human).await;
-    for (limit, clamped) in [(MAX_SEARCH_LIMIT, false), (usize::MAX, true)] {
+    for limit in [MAX_SEARCH_LIMIT, usize::MAX] {
         for (tool, envelope, arguments, flag) in [
             (
                 "memory.query",
@@ -171,12 +164,9 @@ async fn an_over_large_limit_is_served_at_the_ceiling_through_mcp() {
                 "{tool} limit {limit}: {reply}"
             );
             let output = &reply["result"]["structuredContent"]["output"];
-            assert_eq!(
-                output
-                    .pointer(flag)
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false),
-                clamped,
+            assert_ne!(
+                output.pointer(flag).and_then(Value::as_bool),
+                Some(true),
                 "{tool} limit {limit}: {reply}"
             );
         }
@@ -184,10 +174,14 @@ async fn an_over_large_limit_is_served_at_the_ceiling_through_mcp() {
 }
 
 /// Bug repro (H301): a query one byte past the shipped
-/// `[limits].retrieval_query_bytes` row is refused at every POST query door
-/// with the typed 413 naming the field, the bound and the bytes received.
-/// On main only semantic search had a check (a fixed 8 KiB one) and the rest
-/// ran the query.
+/// `[limits].retrieval_query_bytes` row is refused at the typed-refusal POST
+/// query doors with the typed 413 naming the field, the bound and the bytes
+/// received. The context board asks and runs the query whole (Rule 5,
+/// FIX 6923) and answers 200. Semantic search asks at its own separate
+/// `[limits].semantic_query_bytes` row, which this query does not cross; this
+/// fixture serves no embedder, so it then answers its 503
+/// EMBEDDER_UNAVAILABLE, never the 413. On main only semantic search had a
+/// check (a fixed 8 KiB one) and the rest ran the query.
 #[tokio::test]
 async fn a_query_past_the_shipped_row_is_refused_typed_at_every_query_door() {
     let (_dir, server) = auth_test_server();
@@ -212,12 +206,30 @@ async fn a_query_past_the_shipped_row_is_refused_typed_at_every_query_door() {
             core_request_with_authz("POST", uri, owner_bearer(), Some(&body)),
         )
         .await;
-        assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{uri}");
-        let details = too_large(&reply);
-        assert_eq!(details["field"], field, "{uri}");
-        assert_eq!(details["maxBytes"], SHIPPED_QUERY_ROW, "{uri}");
-        assert_eq!(details["receivedBytes"], SHIPPED_QUERY_ROW + 1, "{uri}");
+        if uri == "/v1/core/context-board" {
+            assert_eq!(status, StatusCode::OK, "{uri}: {reply}");
+        } else if uri == "/api/search/semantic" {
+            // Past the body read and the semantic row's ask, the handler
+            // finds no embedder serving (api/search.rs, embedder_descriptor).
+            assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{uri}: {reply}");
+            assert_eq!(reply["code"], "EMBEDDER_UNAVAILABLE", "{uri}: {reply}");
+        } else {
+            assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{uri}");
+            let details = too_large(&reply);
+            assert_eq!(details["field"], field, "{uri}");
+            assert_eq!(details["maxBytes"], SHIPPED_QUERY_ROW, "{uri}");
+            assert_eq!(details["receivedBytes"], SHIPPED_QUERY_ROW + 1, "{uri}");
+        }
     }
+    let checks = server.retrieval_query_checks();
+    let board = checks
+        .iter()
+        .find(|check| check.door == "context_board")
+        .unwrap();
+    assert_eq!(board.field, "retrieval.query");
+    assert_eq!(board.bound, SHIPPED_QUERY_ROW);
+    assert_eq!(board.bytes, SHIPPED_QUERY_ROW + 1);
+    assert!(!checks.iter().any(|check| check.door == "search_semantic"));
 
     // The native MCP doors answer the same shape with the MCP typed tool
     // error, never an HTTP 413 (A3).

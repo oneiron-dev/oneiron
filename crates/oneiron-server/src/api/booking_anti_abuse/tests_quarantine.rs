@@ -96,7 +96,14 @@ pub(crate) mod tests {
                 "rotating identity and event string cannot bypass the page-wide quarantine budget"
             );
         }
+        // Each installed rule row files its own gate receipt (FIX 9628), so
+        // the ledger also holds this setup's receipts. The budget bounds the
+        // quarantine decisions: the claim-bound rows.
         let decisions = server.vault.gate_decisions(10).expect("decisions");
+        let decisions: Vec<_> = decisions
+            .iter()
+            .filter(|decision| decision.claim_id.is_some())
+            .collect();
         assert_eq!(
             decisions.len(),
             1,
@@ -159,8 +166,16 @@ pub(crate) mod tests {
         let _ = enforce_book(State(server.clone()), retry)
             .await
             .expect("retry guard");
+        // Setup rule rows file their own gate receipts (FIX 9628); the
+        // claim-bound rows are the quarantine decisions.
         assert_eq!(
-            server.vault.gate_decisions(10).expect("decisions").len(),
+            server
+                .vault
+                .gate_decisions(10)
+                .expect("decisions")
+                .iter()
+                .filter(|decision| decision.claim_id.is_some())
+                .count(),
             1,
             "transport fingerprint and timestamps cannot fork a trusted submission identity"
         );
@@ -173,7 +188,16 @@ pub(crate) mod tests {
                 .expect("distinct guard"),
             BookingHttpDisposition::QuarantineAndAccept
         );
-        assert_eq!(server.vault.gate_decisions(10).expect("decisions").len(), 2);
+        assert_eq!(
+            server
+                .vault
+                .gate_decisions(10)
+                .expect("decisions")
+                .iter()
+                .filter(|decision| decision.claim_id.is_some())
+                .count(),
+            2
+        );
         assert_eq!(
             server
                 .vault

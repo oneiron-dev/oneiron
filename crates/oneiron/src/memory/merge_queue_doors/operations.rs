@@ -8,11 +8,14 @@ use crate::repo_mutation::mount::RepoMountRef;
 
 impl Memory<'_> {
     /// `vault.code.merge_queue.enqueue`: queues stored repository proposals
-    /// as one batch through the unchanged `MergeQueue::enqueue`, which keeps
-    /// its size limit and green-base check and speculates six proposals at a
-    /// time (FIX 9948). No proposal is reviewed or landed here; a
-    /// handle-bearing proposal is refused at once, since no test cycle is
-    /// spent on bytes that cannot land in their stack (FIX 12483).
+    /// through `MergeQueue::enqueue`, which keeps its green-base check and
+    /// speculates six proposals at a time (FIX 9948): one batch of up to 63,
+    /// or consecutive batches of at most 63 for more, each staged on the
+    /// head the one before it landed. The answer is the first batch, whose
+    /// `followed_by` names the next ([MERGE-QUEUE-ENQUEUE-SPLITS-LARGE-BATCH]).
+    /// No proposal is reviewed or landed here; a handle-bearing proposal is
+    /// refused at once, since no test cycle is spent on bytes that cannot
+    /// land in their stack (FIX 12483).
     pub fn merge_queue_enqueue_as(
         &self,
         owner: &AuthenticatedOwner,
@@ -123,8 +126,9 @@ impl Memory<'_> {
         Ok(pointers_view(repo.repo, pointers))
     }
 
-    /// The CALL behind batch formation: one enqueue call is one batch, its
-    /// proposals in request order, with no batching window, tick or policy.
+    /// The CALL behind batch formation: one enqueue call is one batch, or
+    /// consecutive batches of at most 63 for more, its proposals in request
+    /// order, with no batching window, tick or policy.
     /// Each proposal is a stored one the caller reads, of this repository's
     /// object store and pinned at `base_green`.
     fn merge_queue_submitted(

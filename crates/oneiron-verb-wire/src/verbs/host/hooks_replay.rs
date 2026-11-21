@@ -1,6 +1,7 @@
 //! Moved from `crates/oneiron/src/verbs/host/hooks_replay.rs` (lib split W3: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+use oneiron_base::request_limits::{ZeroLimitRefused, page_limit_zero_refused};
 use oneiron_contracts::memory::MemoryError;
 use oneiron_contracts::memory::MemoryResult;
 use serde::Deserialize;
@@ -22,7 +23,8 @@ pub struct HooksReplayRequest {
     /// verb hook takes none.
     #[serde(default)]
     pub since: Option<String>,
-    /// Entries to return, 1 or more, [`HOOKS_REPLAY_PAGE_MAX`] a page;
+    /// Entries to return, 1 or more, a page of at most the owner's
+    /// `hooks.replay.page_max` (256 by default) at a time;
     /// [`HOOKS_REPLAY_LIMIT_DEFAULT`] when absent.
     #[serde(default)]
     pub limit: Option<usize>,
@@ -35,14 +37,14 @@ pub struct HooksReplayRequest {
 impl HooksReplayRequest {
     /// The entry count this request names; zero is refused.
     pub fn limit(&self) -> MemoryResult<usize> {
-        let limit = self.limit.unwrap_or(HOOKS_REPLAY_LIMIT_DEFAULT);
-        if limit == 0 {
-            return Err(MemoryError::bad_request_with(
-                "limit must be at least 1",
-                &["Request one entry or more and continue from next_cursor."],
-            ));
-        }
-        Ok(limit)
+        page_limit_zero_refused(self.limit, HOOKS_REPLAY_LIMIT_DEFAULT, usize::MAX)
+            .map(|limit| limit.rows)
+            .map_err(|ZeroLimitRefused| {
+                MemoryError::bad_request_with(
+                    "limit must be at least 1",
+                    &["Request one entry or more and continue from next_cursor."],
+                )
+            })
     }
 }
 

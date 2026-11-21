@@ -98,8 +98,9 @@ impl Memory<'_> {
 }
 
 /// The memory key a prior claim shares with an incoming one: subject,
-/// predicate, world, relationship and exact scope, extended with
-/// `value.question_id` for declared multi-cardinality predicates (B1c).
+/// predicate, world, relationship and exact scope, extended with the value
+/// key identity of a declared multi-cardinality predicate (B1c:
+/// `value.question_id`, `value.who` as a calendar address).
 struct MemoryKey<'a> {
     subject: EntityId,
     input: &'a ClaimInput,
@@ -123,11 +124,10 @@ impl MemoryKey<'_> {
         {
             return false;
         }
-        if !MULTI_CARDINALITY_PREDICATES.contains(&self.input.predicate.as_str()) {
+        let Some(key) = multi_cardinality_value_key(&self.input.predicate) else {
             return true;
-        }
-        let question = |value: &serde_json::Value| value.get(MULTI_CARDINALITY_VALUE_KEY).cloned();
-        question(&msgpack_value_to_json(&body.value)) == question(&self.input.value)
+        };
+        key.identity(&msgpack_value_to_json(&body.value)) == key.identity(&self.input.value)
     }
 
     /// Whether `other` is this same key (FIX 9403): two elements of one
@@ -141,9 +141,8 @@ impl MemoryKey<'_> {
         {
             return false;
         }
-        !MULTI_CARDINALITY_PREDICATES.contains(&self.input.predicate.as_str())
-            || self.input.value.get(MULTI_CARDINALITY_VALUE_KEY)
-                == other.input.value.get(MULTI_CARDINALITY_VALUE_KEY)
+        multi_cardinality_value_key(&self.input.predicate)
+            .is_none_or(|key| key.identity(&self.input.value) == key.identity(&other.input.value))
     }
 }
 

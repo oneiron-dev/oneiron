@@ -8,16 +8,19 @@
 
 use super::authorship::*;
 use super::{Memory, MemoryResult};
-use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, ClaimSubject};
+use crate::claim::{
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+};
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, GateError};
 use crate::side_table::{self, LegacyJson, Raw, SideTable};
-use crate::store::GateDecisionId;
+use crate::store::gate_reason::GateReceiptOutcome;
+use crate::store::{GateDecisionId, PolicyBasis};
 use crate::temporal::TimeRange;
 use crate::{EntityId, WriteActor, WriteEnvelope, WriteProvenance};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use rmpv::Value;
-use serde::{Deserialize, Serialize};
 
 /// Content-addressed claim-conflict review packet. Key: bytes32 (bundle id).
 const PACKET: SideTable<[u8; 32], ClaimConflictBundle, LegacyJson> =
@@ -28,54 +31,10 @@ const RESOLUTION: SideTable<[u8; 32], [u8; 16], Raw> =
     SideTable::new(&side_table::CLAIM_CONFLICT_RESOLUTION);
 const KIND: &str = "consent_bundle:claim_conflict";
 
-/// Typed question, not a prompt string or an instruction hidden in a claim.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ClaimConflictQuestion {
-    ConflictOfInterest,
-}
-
-/// One immutable context member. Bytes include the entity metadata header.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ClaimConflictMember {
-    #[serde(with = "super::authorship::entity_serde")]
-    pub entity: EntityId,
-    pub row_digest: [u8; 32],
-    /// Read projection only. Persistence strips this field's bytes.
-    pub raw: Vec<u8>,
-}
-
-/// One packet: disputed claim, proposed revision, author and subject context.
-/// Only the parties and authenticated owner/delegated reviewer can read it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ClaimConflictBundle {
-    pub bundle_id: [u8; 32],
-    pub question: ClaimConflictQuestion,
-    #[serde(with = "super::authorship::entity_serde")]
-    pub raised_by: EntityId,
-    #[serde(with = "super::authorship::entity_serde")]
-    pub author: EntityId,
-    #[serde(with = "super::authorship::entity_serde")]
-    pub subject: EntityId,
-    #[serde(with = "super::authorship::entity_serde")]
-    pub disputed: EntityId,
-    #[serde(with = "super::authorship::entity_serde")]
-    pub proposal: EntityId,
-    pub authority_root: String,
-    pub policy_frontier: [u8; 32],
-    pub members: Vec<ClaimConflictMember>,
-}
-
-/// A ruling joins the existing Gate ledger. Both old and new claims survive.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ClaimConflictReceipt {
-    pub bundle_id: [u8; 32],
-    pub receipt_ref: String,
-    #[serde(with = "super::authorship::entity_serde")]
-    pub superseded_claim: EntityId,
-    #[serde(with = "super::authorship::entity_serde")]
-    pub ruling_claim: EntityId,
-}
+#[doc(hidden)]
+pub use oneiron_records::memory::claim_conflict::{
+    ClaimConflictBundle, ClaimConflictMember, ClaimConflictQuestion, ClaimConflictReceipt,
+};
 
 /// Replaying a ruled dispute rebuilds its receipt from the recorded Gate
 /// decision, so the retention sweep keeps every decision a marker names.
@@ -105,10 +64,22 @@ fn encode(bundle: &ClaimConflictBundle) -> Result<Vec<u8>, Error> {
 fn digest(bundle: &ClaimConflictBundle) -> Result<[u8; 32], Error> {
     let mut input = bundle.clone();
     input.bundle_id = [0; 32];
-    let mut hash = blake3::Hasher::new();
-    hash.update(b"oneiron.consent_bundle.claim_conflict.v1\0");
-    hash.update(&encode(&input)?);
-    Ok(*hash.finalize().as_bytes())
+    Ok(packet_digest(&encode(&input)?))
+}
+/// A packet's content address: BLAKE3 over
+/// `purposes::claim::CONFLICT_PACKET`'s tag (its NUL included) and then the
+/// stripped packet's bytes, with its own id zeroed. The packet row is keyed
+/// by it and every load checks it, so it keeps its bytes (K, PLAN-UC-04
+/// stage 6).
+fn packet_digest(stripped: &[u8]) -> [u8; 32] {
+    LegacyDigest::new(purposes::claim::CONFLICT_PACKET)
+        .raw(stripped)
+        .finish()
+}
+/// The content address of a packet whose stripped bytes are `stripped`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn claim_conflict_packet_digest_for_test(stripped: &[u8]) -> [u8; 32] {
+    packet_digest(stripped)
 }
 fn load(
     vault: &crate::Vault,
@@ -201,6 +172,7 @@ impl Memory<'_> {
                 || old.scope != next.scope
                 || old.world != next.world
                 || old.rel != next.rel
+                || !same_scope_stamps(&old, &next)
             {
                 return Err(Error::InvalidClaimBody(
                     "conflict proposal must retain the disputed claim's subject and scope",
@@ -253,11 +225,10 @@ impl Memory<'_> {
             let receipt = decision(
                 self.write_actor(),
                 KIND,
-                "pending",
+                GateReceiptOutcome::Pending,
                 "gate.memory.conflict_of_interest",
                 Some(disputed),
                 packet.bundle_id.to_vec(),
-                crate::unix_seconds_now(),
             );
             PACKET.put(
                 &self.vault.store,
@@ -265,9 +236,7 @@ impl Memory<'_> {
                 &packet.bundle_id,
                 &stripped(&packet),
             )?;
-            self.vault
-                .store
-                .append_gate_decision_in_txn(txn, &receipt)?;
+            self.vault.store.record_gate_receipt_in_txn(txn, receipt)?;
             Ok(packet)
         })
     }
@@ -359,14 +328,16 @@ impl Memory<'_> {
             if packet.authority_root != root_id(self.vault, txn)? {
                 return Err(stale(packet.disputed).into());
             }
+            let reviewer_actor = WriteActor::new(self.actor, EdgeActorClass::Human);
             let required = action_bound(
                 self.vault,
                 txn,
-                WriteActor::new(self.actor, EdgeActorClass::Human),
+                reviewer_actor,
                 "memory.conflict_review",
                 packet.disputed,
             )?;
-            let grant_ref = if is_root_owner(self.vault, txn, self.actor)? {
+            let root_owner = is_root_owner(self.vault, txn, self.actor)?;
+            let grant_ref = if root_owner {
                 None
             } else {
                 Some(
@@ -382,7 +353,23 @@ impl Memory<'_> {
                     .gate_decision_in_txn(txn, decision_id)?
                     .ok_or(Error::CorruptedIndex("conflict ruling receipt"))?;
                 if receipt.content_kind != KIND
-                    || receipt.outcome != "approved"
+                    || match receipt.gate_outcome() {
+                        Some(GateReceiptOutcome::Approved) => false,
+                        Some(
+                            GateReceiptOutcome::Allow
+                            | GateReceiptOutcome::Pending
+                            | GateReceiptOutcome::Deny
+                            | GateReceiptOutcome::ApprovedAmended
+                            | GateReceiptOutcome::Rejected
+                            | GateReceiptOutcome::LetGo
+                            | GateReceiptOutcome::Superseded
+                            | GateReceiptOutcome::Retracted
+                            | GateReceiptOutcome::Invalidated
+                            | GateReceiptOutcome::Revoked
+                            | GateReceiptOutcome::Noted,
+                        )
+                        | None => true,
+                    }
                     || receipt.diff_handle.as_slice() != id.as_slice()
                     || receipt.redacted_at.is_some()
                 {
@@ -418,11 +405,26 @@ impl Memory<'_> {
             {
                 return Err(stale(packet.proposal).into());
             }
+            // The ruling replaces the disputed head for that head's audience,
+            // so its row is born at the head's facet and project, which its
+            // read is judged by, never at the vault default of the moment
+            // (review P1 of #10305). A packet raised before the question
+            // door compared the stamps is refused here.
+            let disputed = self
+                .vault
+                .get_claim_in_txn(txn, &packet.disputed)?
+                .ok_or(Error::EntityNotFound)?;
+            if !same_scope_stamps(&disputed, &ruling) {
+                return Err(Error::InvalidClaimBody(
+                    "conflict proposal must retain the disputed claim's subject and scope",
+                )
+                .into());
+            }
             // This is an explicit human ruling ABOUT the proposal, not a
             // relabeling of the proposal itself. Its separate row keeps both
             // original source stamps intact and records the ruling evidence.
             let envelope = WriteEnvelope::new(
-                WriteActor::new(self.actor, EdgeActorClass::Human),
+                reviewer_actor,
                 ClaimSource::UserStated,
                 WriteProvenance::new(Value::Map(vec![
                     (Value::from("conflictBundle"), Value::Binary(id.to_vec())),
@@ -450,7 +452,8 @@ impl Memory<'_> {
                 ruling.confidence,
             )
             .with_validity(ruling.valid_from, ruling.valid_to)
-            .with_stale(ruling.stale);
+            .with_stale(ruling.stale)
+            .with_scope_stamps(disputed.scope_facet, disputed.scope_project);
             // The ruling row is born at the default ClaimOf weight, never at
             // the proposal's own.
             if let Some(scope) = crate::claim::without_initial_weight(ruling.scope) {
@@ -463,8 +466,15 @@ impl Memory<'_> {
                 candidate = candidate.with_salience(salience);
             }
             let ruling_id = EntityId::now();
+            // The root owner's ruling is the owner's own act, in person: the
+            // proof, revalidated in this transaction, confirms the ruling's
+            // Approved row and the close of an Approved disputed head where a
+            // declared critical class asks for it, as the owner's settle does
+            // (FIX OWNER-CONFLICT-RULING-CLOSES-WITH-NO-CLOSER). A delegated
+            // admin's ruling carries none, so such a class waits for the owner.
             self.vault
                 .batch_in()
+                .with_owner_authored(ruling_owner_answer(self.vault, txn, reviewer, root_owner)?)
                 .claim_candidate(
                     &ruling_id,
                     candidate,
@@ -477,53 +487,91 @@ impl Memory<'_> {
                 )
                 .apply(txn)?;
             // Close a pending target's review tray in the same atomic ruling.
-            self.vault.store.close_pending_gate_consent_in_txn(
+            // A tray row's close is receipted as the reviewer, its verified
+            // closer, as the proposal's retract below is.
+            self.vault
+                .store
+                .close_pending_gate_consent_closed_by_in_txn(
+                    txn,
+                    &packet.disputed,
+                    GateReceiptOutcome::Superseded,
+                    vec!["gate.memory.admin_conflict_ruling".to_owned()],
+                    None,
+                    crate::store::TrayRemoval::Unanswered,
+                    Some(reviewer_actor),
+                )?;
+            // The disputed head's close, as the proposal's below, is the
+            // reviewer's own: the Gate judges it as its verified human
+            // closer, not under the closed row's own envelope. The proof
+            // moves by value, so the close takes its own, revalidated here.
+            let close_owner = ruling_owner_answer(self.vault, &*txn, reviewer, root_owner)?;
+            self.vault.supersede_claim_in_txn_as_owner(
                 txn,
+                &ruling_id,
                 &packet.disputed,
                 now,
-                "superseded",
-                vec!["gate.memory.admin_conflict_ruling".to_owned()],
-                None,
+                Some(reviewer_actor),
+                close_owner,
             )?;
-            self.vault
-                .supersede_claim_in_txn(txn, &ruling_id, &packet.disputed, now)?;
             // The generic lifecycle projector may re-evaluate a Proposed row
             // as pending. A terminal ruled head must not leave an actionable
             // consent behind, so close any such replay in this transaction.
-            self.vault.store.close_pending_gate_consent_in_txn(
-                txn,
-                &packet.disputed,
-                now,
-                "superseded",
-                vec!["gate.memory.admin_conflict_ruling".to_owned()],
-                None,
-            )?;
+            self.vault
+                .store
+                .close_pending_gate_consent_closed_by_in_txn(
+                    txn,
+                    &packet.disputed,
+                    GateReceiptOutcome::Superseded,
+                    vec!["gate.memory.admin_conflict_ruling".to_owned()],
+                    None,
+                    crate::store::TrayRemoval::Unanswered,
+                    Some(reviewer_actor),
+                )?;
             // The selected proposal is consumed as part of the unit. Keep its
             // value/source/author history, but leave no separate approval that
             // could later create a second canonical head beside the ruling.
             self.vault
-                .retract_claim_in_txn(txn, &packet.proposal, now)?;
+                .retract_claim_in_txn_as(txn, &packet.proposal, now, Some(reviewer_actor))?;
             let mut receipt = decision(
                 envelope.actor(),
                 KIND,
-                "approved",
+                GateReceiptOutcome::Approved,
                 "gate.memory.admin_conflict_ruling",
                 Some(ruling_id),
                 id.to_vec(),
-                now,
             );
             receipt.grant_ref = grant_ref;
-            receipt.read_frontier_hash = packet.policy_frontier;
-            self.vault
-                .store
-                .append_gate_decision_in_txn(txn, &receipt)?;
-            RESOLUTION.put(&self.vault.store, txn, &id, &receipt.decision_id.as_bytes())?;
+            receipt.basis = PolicyBasis::frontier(packet.policy_frontier);
+            let record = self.vault.store.record_gate_receipt_in_txn(txn, receipt)?;
+            RESOLUTION.put(&self.vault.store, txn, &id, &record.decision_id.as_bytes())?;
             Ok(ClaimConflictReceipt {
                 bundle_id: id,
-                receipt_ref: format!("gate:{}", receipt.decision_id.to_hex()),
+                receipt_ref: format!("gate:{}", record.decision_id.to_hex()),
                 superseded_claim: packet.disputed,
                 ruling_claim: ruling_id,
             })
         })
+    }
+}
+
+/// Whether `a` and `b` carry the same facet and project stamps, the record
+/// position a read of each is judged by.
+fn same_scope_stamps(a: &ClaimBody, b: &ClaimBody) -> bool {
+    (a.scope_facet, a.scope_project) == (b.scope_facet, b.scope_project)
+}
+
+/// The root owner's in-person proof for one write of a conflict ruling,
+/// revalidated in `txn` ([`AuthenticatedOwner::owner_answer_in_txn`]). A
+/// delegated admin's ruling carries none.
+fn ruling_owner_answer(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    reviewer: &AuthenticatedOwner,
+    root_owner: bool,
+) -> Result<Option<crate::consent::OwnerAuthoredWrite>, Error> {
+    if root_owner {
+        reviewer.owner_answer_in_txn(vault, txn)
+    } else {
+        Ok(None)
     }
 }

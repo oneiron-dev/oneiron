@@ -8,10 +8,11 @@ use serde::{Deserialize, Serialize};
 use zeroize::{Zeroize, Zeroizing};
 
 use super::{
-    RECORDS, STEP_UP_CHALLENGE_TTL_SECS, STEP_UP_REQUIRED, StepUpDone, StepUpFactor, StepUpRecord,
-    VerifiedSlip, authority_refused, challenge_key, stale, webauthn,
+    RECORDS, STEP_UP_REQUIRED, StepUpDone, StepUpFactor, StepUpRecord, VerifiedSlip,
+    authority_refused, challenge_key, stale, webauthn,
 };
 use crate::Vault;
+use crate::authority::setting_keys::STEP_UP_CHALLENGE_TTL;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::side_table::{self, Named, SideTable};
@@ -156,7 +157,11 @@ impl Vault {
         crate::world_keys::os_fill(&mut *seed)?;
         let (key_ref, sealed_seed) =
             custody::seal(&self.store, &mut txn, person, &enrollment, &*seed)?;
-        let expires_at = now.saturating_add(STEP_UP_CHALLENGE_TTL_SECS);
+        let ttl = STEP_UP_CHALLENGE_TTL
+            .read_in_txn(self, &txn, &[], None)?
+            .value
+            .secs();
+        let expires_at = now.saturating_add(ttl);
         PENDING.put(
             &self.store,
             &mut txn,
@@ -341,13 +346,31 @@ impl Vault {
 
     /// Explicit owner recovery for lost authenticator apps. Passkey
     /// enrollment and passkey-derived step-ups are not reset by this call.
+    /// With `check_in_ref` the Owner applies an asker's approved check-in
+    /// for this reset on their own proof, spent in the same writer (2k3;
+    /// P25-SHAPE Q1 = A).
     pub fn reset_step_up_totp_as_owner(
         &self,
         owner: &crate::consent::AuthenticatedOwner,
         person: EntityId,
+        check_in_ref: Option<EntityId>,
     ) -> Result<StepUpTotpReset> {
+        let applied = check_in_ref.map(|id| crate::check_in::AppliedCheckIn {
+            id,
+            verb: "vault.step_up.totp.reset",
+            effect_digest: crate::check_in::step_up_reset_effect_digest(
+                &person,
+                StepUpFactor::Totp,
+            ),
+        });
         let mut txn = self.store.env.write_txn()?;
         owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
+        let decision = crate::check_in::owner_act_decision_in_txn(
+            self,
+            &mut txn,
+            crate::check_in::ActClass::KeyRecovery,
+            applied.as_ref(),
+        )?;
         let removed = ENROLLED
             .scan_from(&self.store, &txn, person.as_bytes())?
             .iter()
@@ -358,6 +381,7 @@ impl Vault {
         Ok(StepUpTotpReset {
             person: person.to_hex(),
             removed,
+            check_in: Some(decision),
         })
     }
 }

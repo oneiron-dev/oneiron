@@ -89,6 +89,13 @@ pub(super) struct ConnectorSendTaskBody {
     /// still in flight; device-local intent rows never enter this body.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) outcome: Option<ConnectorSendTaskOutcome>,
+    /// When [`Self::outcome`] was last set: the `now`, in seconds, of the
+    /// write that changed it. The body updater stamps it whenever the
+    /// outcome changes and clears it with the outcome. Additive and elided
+    /// when absent: a body written before the stamp hydrates with none, and
+    /// its settlement stays with its attempts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) outcome_at: Option<u64>,
     /// Synced terminal reason for a mechanically collapsed send.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) suppression: Option<String>,
@@ -126,71 +133,13 @@ pub(super) struct ConnectorSendTaskBody {
     pub(super) occurred_at: u64,
 }
 
-/// Terminal delivery projection carried by the synced connector-send TASK.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ConnectorSendTaskOutcome {
-    Delivered,
-    Failed,
-    Ambiguous,
-    /// The send may have gone out, no lookup could tell, and the owner
-    /// answered not to resend it (FIX 4747). Nothing sends it again.
-    OwnerDeclinedResend,
-}
-
-/// A send that may have gone out and that no provider lookup could settle,
-/// waiting for the owner's word (FIX 4747; canon ARCH-0023b "Still unknown:
-/// ask the owner before any retry"): its TASK sends nothing until he answers
-/// the inbox ask it raised.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct UncertainSendHold {
-    /// When the engine asked the owner, vault clock seconds; the ask's rows
-    /// carry it.
-    pub asked_at: u64,
-    /// The owner answered resend: the TASK's executor sends it once.
-    #[serde(default)]
-    pub resend_released: bool,
-}
+#[doc(hidden)]
+pub use oneiron_records::outbound::connector_task::{
+    ConnectorSendTaskOutcome, SendExecutorLease, UncertainSendHold,
+};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::outbound::connector_task::UncertainSendAnswerOutcome;
-
-/// The sticky send executor of one connector-send TASK (FIX 4747; canon
-/// ARCH-0023b, pending outbound send): only the machine `node_id` names
-/// sends it, and only while the TASK still holds this holder at this
-/// `generation`. A handover moves it to another machine at the next
-/// `generation`. The holder renews `held_until` while the TASK is its to
-/// send; a lease no pass renewed, or one its holder released as it closed,
-/// is expired from `held_until` on, and another machine's reaper may take it
-/// (FIX 4747 slice 4).
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct SendExecutorLease {
-    /// The holder's stable sync node id (`m:client_id`).
-    pub node_id: u64,
-    /// Raised by one on every handover; a take from no lease starts at
-    /// [`SEND_EXECUTOR_LEASE_FIRST_GENERATION`].
-    pub generation: u64,
-    /// Until when the holder holds it, vault clock seconds, as the TASK's
-    /// other times: expired at and after this instant.
-    pub held_until: u64,
-}
-
-impl SendExecutorLease {
-    /// Whether `other` names this lease's holder at this generation,
-    /// whatever either's `held_until`: a renewal or a release keeps the
-    /// holding, so the holder's attempt in flight still passes its fence.
-    #[must_use]
-    pub fn same_holding(self, other: Self) -> bool {
-        self.node_id == other.node_id && self.generation == other.generation
-    }
-
-    /// Whether the lease is expired at `now`: its holder neither renewed it
-    /// past `now` nor holds it any more, so the reaper may take it.
-    #[must_use]
-    pub fn expired_at(self, now: u64) -> bool {
-        now >= self.held_until
-    }
-}
 
 /// The generation a send executor lease starts at when a machine takes a
 /// TASK no machine held. Engine call (CALLS, FIX 4747).
@@ -345,6 +294,10 @@ pub struct ConnectorSendTask {
     /// The owner's ask a send that may have gone out waits on (FIX 4747).
     pub uncertain_send: Option<UncertainSendHold>,
     pub outcome: Option<ConnectorSendTaskOutcome>,
+    /// When [`Self::outcome`] was set, in recorded seconds: the settlement a
+    /// board acknowledgement answers. `None` while in flight and on a body
+    /// written before the stamp.
+    pub outcome_at: Option<u64>,
     /// Synced terminal suppression reason, when the engine collapsed a send.
     pub suppression: Option<String>,
     /// Frozen host UTC offset in minutes. `None` ⇒ hostless schedule: the
@@ -446,6 +399,7 @@ pub(crate) fn put_connector_send_task_in_txn(
         lookup_cleared_generation: None,
         uncertain_send: None,
         outcome: None,
+        outcome_at: None,
         suppression: None,
         utc_offset_minutes: schedule_context.utc_offset_minutes,
         iana_timezone: schedule_context.iana_timezone.clone(),
@@ -637,6 +591,7 @@ impl Vault {
             engine_send_id: body.engine_send_id,
             uncertain_send: body.uncertain_send,
             outcome: body.outcome,
+            outcome_at: body.outcome_at,
             suppression: body.suppression,
             utc_offset_minutes: body.utc_offset_minutes,
             iana_timezone: body.iana_timezone,
@@ -1252,8 +1207,11 @@ pub(super) fn project_connector_send_task_suppression_in_txn(
             body.outcome = Some(ConnectorSendTaskOutcome::Delivered);
             body.suppression = None;
         } else {
+            // The caller fails the attempt in this write: that failure is the
+            // outcome's instant, as for any failed attempt.
             body.outcome = Some(ConnectorSendTaskOutcome::Failed);
             body.suppression = Some("dedupe".to_owned());
+            body.outcome_at = Some(now);
         }
         Ok(())
     })
@@ -1342,6 +1300,34 @@ pub(super) fn project_connector_send_task_outcome_in_txn(
     outcome: ConnectorSendTaskOutcome,
     now: u64,
 ) -> Result<(), Error> {
+    project_outcome_in_txn(vault, wtxn, task_ref, outcome, now, false)
+}
+
+/// [`project_connector_send_task_outcome_in_txn`] in the write that also
+/// fails one of the TASK's attempts at `now`. That failure is the outcome's
+/// instant even when the outcome stands as it was (a send that fails again,
+/// on this machine or on the one that took it over), so every peer's
+/// acknowledgement fence answers the newest failure, as the failed head does
+/// on the machine that holds it. A write that fails no attempt (a replay, a
+/// cleanup) keeps the stamp.
+pub(super) fn project_connector_send_task_attempt_failure_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    task_ref: EntityId,
+    outcome: ConnectorSendTaskOutcome,
+    now: u64,
+) -> Result<(), Error> {
+    project_outcome_in_txn(vault, wtxn, task_ref, outcome, now, true)
+}
+
+fn project_outcome_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    task_ref: EntityId,
+    outcome: ConnectorSendTaskOutcome,
+    now: u64,
+    attempt_failed: bool,
+) -> Result<(), Error> {
     #[cfg(test)]
     if matches!(
         outcome,
@@ -1360,6 +1346,9 @@ pub(super) fn project_connector_send_task_outcome_in_txn(
     update_connector_send_task_body_in_txn(vault, wtxn, task_ref, now, |body| {
         body.outcome = Some(outcome);
         body.suppression = None;
+        if attempt_failed {
+            body.outcome_at = Some(now);
+        }
         Ok(())
     })
 }
@@ -1376,7 +1365,15 @@ fn update_connector_send_task_body_in_txn(
         .port_entity_record(&*wtxn, &task_ref)?
         .ok_or(Error::EntityNotFound)?;
     let mut body = decode_connector_send_task_body(raw.entity_type, &raw.body)?;
+    let outcome_before = body.outcome;
     update(&mut body)?;
+    // The outcome's instant moves with the outcome, and with a write that
+    // fails an attempt (its closure stamps that failure): any other write
+    // that leaves the outcome as it stood keeps the instant already stamped,
+    // so an acknowledgement of that outcome stays answered.
+    if body.outcome != outcome_before {
+        body.outcome_at = body.outcome.map(|_| now);
+    }
     let encoded = rmp_serde::to_vec_named(&body)
         .map_err(|_| Error::InvariantViolation("connector task body encode failed"))?;
     // A no-op update writes NOTHING. The executor re-takes its lease on

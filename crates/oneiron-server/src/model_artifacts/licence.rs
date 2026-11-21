@@ -1,5 +1,9 @@
 //! Which licences let a model download start (the owner's standing grant:
-//! any licence that does not hurt us, never non-commercial weights).
+//! any licence that does not hurt us, never non-commercial weights on our
+//! hosted service). On a self-hosted node the owner may admit non-commercial
+//! and unknown licences for their own use with
+//! `models.install.allow_noncommercial_licences` ([`LicencePolicy`]; lead
+//! ruling GENUI-OPTOUT-MODEL-LICENCE = A, 16 Nov).
 //!
 //! A manifest names its licence by the id its model card declares and pins
 //! the licence file itself, so the exact text and notices sit beside the
@@ -10,6 +14,7 @@
 
 use std::borrow::Cow;
 use std::fmt;
+use std::sync::{Arc, PoisonError, RwLock, Weak};
 
 use serde::{Deserialize, Serialize};
 
@@ -120,14 +125,82 @@ impl LicenceTerms {
     }
 }
 
-/// Whether a manifest's licence lets its download start: the one policy.
+/// The owner's licence choice a download is admitted under.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct LicencePolicy {
+    /// Non-commercial and unknown licences are admitted: the owner's
+    /// `models.install.allow_noncommercial_licences`, which only a
+    /// self-hosted vault honours.
+    pub(crate) admit_noncommercial: bool,
+}
+
+impl LicencePolicy {
+    /// The choice `vault`'s owner made, read now. A key that does not read
+    /// keeps today's refusal.
+    pub(crate) fn for_vault(vault: &oneiron::Vault) -> Self {
+        let admit_noncommercial = oneiron::llm::noncommercial_model_licences_admitted(vault)
+            .unwrap_or_else(|error| {
+                tracing::warn!(
+                    %error,
+                    "models.install.allow_noncommercial_licences did not read; non-commercial and unknown licences stay refused"
+                );
+                false
+            });
+        Self {
+            admit_noncommercial,
+        }
+    }
+}
+
+/// The vault whose owner's licence choice a worker host's model installs
+/// read, bound when the server is built. The host shares it with each of its
+/// launchers, and each install reads the choice when it runs
+/// ([`LicenceVault::policy`]).
+#[derive(Default)]
+pub(crate) struct LicenceVault(RwLock<Option<Weak<oneiron::Vault>>>);
+
+impl LicenceVault {
+    /// Binds `vault`, whose owner's choice the installs read from now on.
+    pub(crate) fn bind(&self, vault: &Arc<oneiron::Vault>) {
+        *self.0.write().unwrap_or_else(PoisonError::into_inner) = Some(Arc::downgrade(vault));
+    }
+
+    /// The choice of the bound vault's owner, read now; with none bound (a
+    /// process that serves no vault), today's refusal.
+    pub(crate) fn policy(&self) -> LicencePolicy {
+        let vault = self
+            .0
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .and_then(Weak::upgrade);
+        vault.map_or_else(LicencePolicy::default, |vault| {
+            LicencePolicy::for_vault(&vault)
+        })
+    }
+}
+
+/// Whether a manifest's licence lets its download start under `policy`:
+/// the one policy.
 ///
 /// Permissive is admitted. Conditional is admitted only when the manifest
 /// names the decision that admits it. Non-commercial and unknown are refused
-/// before any byte is fetched, naming the model and the licence; no decision
-/// admits them. Returns the class admitted.
-pub(crate) fn admit_download(manifest: &ArtifactManifest) -> Result<LicenceClass, ArtifactError> {
-    let terms = &manifest.licence;
+/// before any byte is fetched, naming the model and the licence, unless
+/// `policy` admits them (the self-hosted owner's yes); no decision admits
+/// them. Returns the class admitted.
+pub(crate) fn admit_download(
+    manifest: &ArtifactManifest,
+    policy: LicencePolicy,
+) -> Result<LicenceClass, ArtifactError> {
+    admit_terms(&manifest.id, &manifest.licence, policy)
+}
+
+/// [`admit_download`] for the model named `model` whose licence is `terms`.
+pub(crate) fn admit_terms(
+    model: &str,
+    terms: &LicenceTerms,
+    policy: LicencePolicy,
+) -> Result<LicenceClass, ArtifactError> {
     let class = terms.class();
     let decided = terms
         .decision
@@ -137,11 +210,20 @@ pub(crate) fn admit_download(manifest: &ArtifactManifest) -> Result<LicenceClass
         LicenceClass::Permissive => Ok(class),
         LicenceClass::Conditional if decided => Ok(class),
         LicenceClass::Conditional => Err(ArtifactError::LicenceUndecided {
-            model: manifest.id.to_string(),
+            model: model.to_owned(),
             licence: terms.id.to_string(),
         }),
+        LicenceClass::NonCommercial | LicenceClass::Unknown if policy.admit_noncommercial => {
+            tracing::warn!(
+                model,
+                licence = %terms.id,
+                %class,
+                "licence admitted under the owner's models.install.allow_noncommercial_licences"
+            );
+            Ok(class)
+        }
         LicenceClass::NonCommercial | LicenceClass::Unknown => Err(ArtifactError::LicenceRefused {
-            model: manifest.id.to_string(),
+            model: model.to_owned(),
             licence: terms.id.to_string(),
             class,
         }),

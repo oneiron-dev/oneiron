@@ -34,6 +34,17 @@ pub(in crate::session_overlay) struct TxnSegment {
     _lease: Lease,
 }
 
+impl TxnSegment {
+    /// Publishes every preview replacement, including rollback and scrubbing,
+    /// so K4 sees current rows and the publication releases displaced bytes.
+    pub(super) fn replace_preview(&mut self, preview: Arc<OverlayState>) {
+        self.preview = preview;
+        self.overlay
+            .open_segment_preview
+            .store(Some(Arc::clone(&self.preview)));
+    }
+}
+
 pub(super) static NEXT_OVERLAY_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 /// The next write segment's install nonce (FIX 10004).
@@ -74,6 +85,10 @@ impl TxnSegmentGuard {
             ));
         }
         let result = self.overlay.apply_segment(&segment);
+        // The room's values this write kept stay with its rows, or go with
+        // them (REVIEW-10003 round 2).
+        self.overlay
+            .settle_room_secrets(segment.nonce, result.is_ok());
         self.finished = true;
         result
     }
@@ -81,6 +96,7 @@ impl TxnSegmentGuard {
 
 impl Drop for TxnSegmentGuard {
     fn drop(&mut self) {
+        self.overlay.open_segment_preview.store(None);
         if !self.finished {
             let aborted = ACTIVE_SEGMENT.with(|slot| {
                 let mut slot = slot.borrow_mut();
@@ -93,9 +109,11 @@ impl Drop for TxnSegmentGuard {
                     None
                 }
             });
-            // An aborted segment's copies are gone: the charge returns to
+            // An aborted segment's copies are gone, and the room's values it
+            // kept with them (REVIEW-10003 round 2): the charge returns to
             // what the overlay retains (FIX 10104).
-            if aborted.is_some() {
+            if let Some(aborted) = aborted {
+                self.overlay.settle_room_secrets(aborted.nonce, false);
                 drop(aborted);
                 self.overlay.charge_to(self.overlay.retained_with(None, 0));
             }

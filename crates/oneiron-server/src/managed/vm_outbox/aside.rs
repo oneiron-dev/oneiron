@@ -25,7 +25,6 @@ use oneiron_vault_contract::vm_outbox::{
 use std::fs::File;
 use std::io::{Read, Write};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Records `held`, which `held_by` keeps, as moved aside to `aside` now,
 /// once per copy.
@@ -42,11 +41,7 @@ pub(super) fn record_kept_aside(
     {
         return;
     }
-    let kept_at_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |since| {
-            u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
-        });
+    let kept_at_ms = oneiron_base::unix_millis_now();
     record.aside.push(KeptAside {
         held_by,
         held: held.clone(),

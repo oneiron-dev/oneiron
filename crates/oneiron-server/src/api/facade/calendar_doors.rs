@@ -74,9 +74,8 @@ pub(crate) async fn vault_calendar_instances_move(
 }
 
 use oneiron::calendar::connectors::door::{
-    self as connector, CalendarConnectorConfigureRequest, CalendarConnectorKillRequest,
-    CalendarConnectorRegistration, CalendarConnectorRequest, CalendarConnectorWriteRequest,
-    CalendarImipTransportConfig,
+    self as connector, CalendarConnectorKillRequest, CalendarConnectorRegistration,
+    CalendarConnectorRequest, CalendarConnectorWriteRequest,
 };
 use oneiron::calendar::{CalDavConnector, CalendarSyncOutcome, RemoteWriteReceipt};
 use oneiron::consent::AuthenticatedOwner;
@@ -102,20 +101,6 @@ async fn as_owner<T: Send + 'static>(
         (actor, EdgeActorClass::Human),
         verb,
         move |server, _, memory| act(server, memory, owner),
-    )
-    .await
-}
-
-pub(crate) async fn calendar_connector_configure(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: CalendarConnectorConfigureRequest,
-) -> Listed<CalendarConnectorRegistration> {
-    as_owner(
-        server,
-        auth,
-        "calendar.connector.configure",
-        move |_, memory, owner| connector::configure(&memory, &owner, &input),
     )
     .await
 }
@@ -164,6 +149,7 @@ pub(crate) async fn calendar_connector_pull(
                 Arc::clone(server.vault()),
                 owner.clone(),
                 row.clone(),
+                server.hosted_egress_guard(),
             )
             .map_err(|error| MemoryError::bad_request(error.to_string()))?;
             let operation = wire.operation().clone();
@@ -220,6 +206,7 @@ pub(crate) async fn calendar_connector_write(
                 Arc::clone(server.vault()),
                 owner,
                 row.clone(),
+                server.hosted_egress_guard(),
             )
             .map_err(|error| MemoryError::bad_request(error.to_string()))?;
             let operation = wire.operation().clone();
@@ -236,53 +223,11 @@ pub(crate) async fn calendar_connector_write(
     .await
 }
 
-pub(crate) async fn calendar_imip_configure(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: CalendarImipTransportConfig,
-) -> Listed<CalendarImipTransportConfig> {
-    as_owner(
-        server,
-        auth,
-        "calendar.imip.configure",
-        move |_, memory, owner| connector::configure_imip(&memory, &owner, &input),
-    )
-    .await
-}
-
-pub(crate) async fn calendar_imip_get(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    _input: oneiron::task_verb::sdk::EmptyRequest,
-) -> Listed<Option<CalendarImipTransportConfig>> {
-    as_owner(
-        server,
-        auth,
-        "calendar.imip.get",
-        move |_, memory, owner| connector::get_imip(&memory, &owner),
-    )
-    .await
-}
-
 use oneiron::calendar::ingest::CustodyDoorIcsFeedFetcher;
 use oneiron::calendar::ingest::feed_door::{
-    self as feed, CalendarIcsFeedConfigureRequest, CalendarIcsFeedRegistration,
-    CalendarIcsFeedRequest, CalendarIcsFeedStatus, CalendarIcsPollCompletion,
+    self as feed, CalendarIcsFeedConsent, CalendarIcsFeedRequest, CalendarIcsFeedReviewRequest,
+    CalendarIcsFeedStatus, CalendarIcsPollCompletion,
 };
-
-pub(crate) async fn calendar_ics_configure(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: CalendarIcsFeedConfigureRequest,
-) -> Listed<CalendarIcsFeedRegistration> {
-    as_owner(
-        server,
-        auth,
-        "calendar.ics.configure",
-        move |_, memory, owner| feed::configure(&memory, &owner, &input),
-    )
-    .await
-}
 
 pub(crate) async fn calendar_ics_status(
     server: &Arc<SyncServer>,
@@ -294,6 +239,20 @@ pub(crate) async fn calendar_ics_status(
         auth,
         "calendar.ics.status",
         move |_, memory, owner| feed::status(&memory, &owner, &input),
+    )
+    .await
+}
+
+pub(crate) async fn calendar_ics_review(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: CalendarIcsFeedReviewRequest,
+) -> Listed<CalendarIcsFeedConsent> {
+    as_owner(
+        server,
+        auth,
+        "calendar.ics.review",
+        move |_, memory, owner| feed::review(&memory, &owner, &input),
     )
     .await
 }
@@ -314,6 +273,7 @@ pub(crate) async fn calendar_ics_poll(
                 Arc::clone(server.vault()),
                 owner.clone(),
                 row.config.clone(),
+                server.hosted_egress_guard(),
             )
             .map_err(MemoryError::bad_request)?;
             let fetcher =
@@ -407,4 +367,36 @@ pub(crate) async fn vault_calendar_check_in_answer(
         move |_, memory, owner| meeting::check_in_answer(&memory, &owner, &input),
     )
     .await
+}
+
+/// `calendar.connector.release_hold` (PLAN-CALENDAR-CONNECTOR-RELEASE-HOLD = A): the owner's own
+/// proof, as every owner door takes it, which the release's write revalidates in its snapshot,
+/// and the owner's confirm of its preview; an agent's credential, a delegate's or a visitor's
+/// token releases nothing. It lists the booking's EVENT (`host_door_lists`), the one row its
+/// answer names; a refusal lists none.
+pub(crate) async fn calendar_connector_release_hold(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: oneiron::calendar::connectors::door::CalendarConnectorReleaseHoldRequest,
+) -> Listed<oneiron::calendar::connectors::door::CalendarConnectorReleaseHoldReceipt> {
+    const VERB: &str = "calendar.connector.release_hold";
+    let owner = match super::owner_binding::facade_owner(server, auth, VERB) {
+        Ok(owner) => owner,
+        Err(refusal) => return refused(refusal),
+    };
+    let server = Arc::clone(server);
+    super::clock_ingress::run_blocking(move || {
+        match oneiron::task_verb::sdk::release_calendar_hold_as(server.vault(), &owner, &input) {
+            Ok(receipt) => {
+                let rows = oneiron::EntityId::from_hex(&receipt.event_ref)
+                    .ok()
+                    .into_iter()
+                    .collect();
+                (Ok(receipt), rows)
+            }
+            Err(error) => refused(error),
+        }
+    })
+    .await
+    .unwrap_or_else(|_| refused(super::host_doors::support::internal(VERB)))
 }

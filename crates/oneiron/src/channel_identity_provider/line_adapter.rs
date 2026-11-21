@@ -2,6 +2,7 @@
 
 use std::fmt;
 
+use oneiron_contracts::register::Register;
 use serde::{Deserialize, Serialize};
 
 use super::inbound_types::{
@@ -23,23 +24,13 @@ use crate::error::{Error, Result};
 use crate::surface_event::{InboundSurfaceEventInput, SurfaceCounterpartyStamp};
 
 /// LINE Messaging API plan tier used for quota-aware runtime manifests.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Register)]
 #[serde(rename_all = "snake_case")]
+#[register("line.official.account.plan.tier")]
 pub enum LineOfficialAccountPlanTier {
     Free,
     Paid,
     Enterprise,
-}
-
-impl LineOfficialAccountPlanTier {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Free => "free",
-            Self::Paid => "paid",
-            Self::Enterprise => "enterprise",
-        }
-    }
 }
 
 /// Non-secret LINE Official Account adapter configuration.

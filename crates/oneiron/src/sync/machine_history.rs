@@ -61,21 +61,8 @@ pub(in crate::sync) struct OwedHistory {
     pub(in crate::sync) home_whole: bool,
 }
 
-/// What the last try at an owed history found.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(in crate::sync) enum OwedStatus {
-    /// Owed, and not settled by the last round.
-    #[default]
-    Owed,
-    /// A row the target waits on landed here since: its held rows are tried
-    /// again.
-    Landed,
-    /// The home's own copy of the history does not resolve whole yet.
-    HomePending,
-    /// The home refused the read, or may not read the target's world.
-    HomeRefused,
-}
+#[doc(hidden)]
+pub(in crate::sync) use oneiron_records::sync::machine_history::OwedStatus;
 
 thread_local! {
     /// The vaults an import on this thread landed rows in that an owed

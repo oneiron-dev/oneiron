@@ -208,6 +208,15 @@ pub(super) fn replica_matches_in_txn(
     {
         return Ok(false);
     }
+    // A row a world's own text space takes keeps no vector of the vault's index (DEC-0005
+    // #private-world-vectors), whichever route its order also admits: the home's copy is not
+    // reused, and the row stays pending for the world's space.
+    if !super::world_space::WorldTextSpaces::read_in(vault, txn)?
+        .of_row(&vault.store, txn, &input.entity_id)?
+        .is_empty()
+    {
+        return Ok(false);
+    }
     let worlds = crate::settings::carried_worlds_in(&vault.store, txn, &input.entity_id)?;
     Ok(vault
         .world_model_routes_in_txn(txn, worlds.worlds)?
@@ -222,7 +231,7 @@ impl super::PendingEmbeddingReconciler {
         runtime: &tokio::runtime::Handle,
         report: &mut super::PendingEmbeddingReconcileReport,
     ) -> Result<()> {
-        let work = self.prepare_reconcile_pass(super::unix_millis_now(), report)?;
+        let work = self.prepare_reconcile_pass(crate::unix_millis_now(), report)?;
         let work = self.reuse_home_claim_vectors(runtime, work, report)?;
         self.reconcile_prepared_work(work, report)
     }

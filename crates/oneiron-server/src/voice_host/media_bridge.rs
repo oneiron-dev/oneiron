@@ -41,11 +41,11 @@ use oneiron::voice_cascade::media::{
     VoiceMediaQueue, VoiceMediaSender, VoiceMediaWork, VoiceMediaWorker, VoiceRender,
     voice_media_channel,
 };
-use oneiron::voice_cascade::soniox::SonioxUpdate;
 use oneiron::voice_cascade::{
     AsrEvent, AsrEventKind, AsrStream, Brain, CascadeControl, GenerationEpoch, HeardLedger,
     OutputStop, PcmFrame, TtsCommand, TtsSeamClient,
 };
+use oneiron_speech::asr::soniox::SonioxUpdate;
 use tokio::sync::mpsc;
 
 use super::speech::{self, CHUNK_TICK, Speech, Verdict, Verdicts, VoiceBrainOut, VoicePlayout};
@@ -558,7 +558,7 @@ impl MediaBridge {
         self.started.elapsed()
     }
 
-    pub(super) fn now_ms(&self) -> u64 {
+    pub(super) fn elapsed_ms(&self) -> u64 {
         u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX)
     }
 }

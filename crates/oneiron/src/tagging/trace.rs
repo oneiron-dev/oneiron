@@ -13,10 +13,7 @@ use crate::memory::extraction::{EncoderAttempt, EncoderExecution, EncoderOutput}
 
 /// An attempt id as the 32 lowercase hex digits a trace carries.
 pub(super) fn attempt_hex(id: &AttemptId) -> String {
-    id.as_bytes()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    oneiron_hex::encode(id.as_bytes())
 }
 
 /// What one attempt on one marker did.

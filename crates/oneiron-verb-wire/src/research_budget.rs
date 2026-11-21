@@ -137,18 +137,7 @@ impl RsiOverdraftReceipt {
 
 /// The bytes lowercase hex `text` spells, or `None`.
 pub fn hex_bytes(text: &str) -> Option<Vec<u8>> {
-    let digit = |byte: u8| match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        _ => None,
-    };
-    let text = text.as_bytes();
-    if text.len() % 2 != 0 {
-        return None;
-    }
-    text.chunks(2)
-        .map(|pair| Some((digit(pair[0])? << 4) | digit(pair[1])?))
-        .collect()
+    oneiron_hex::decode_vec(text)
 }
 
 /// The durable receipt of one reservation's terminal outcome.

@@ -14,6 +14,7 @@
 mod common;
 
 mod analyzer_asset_policy;
+mod authority;
 mod booking_lifecycle;
 mod booking_solver;
 mod byte_space_v3_conformance;
@@ -34,6 +35,7 @@ mod cb_oracle_plugin;
 mod cb_oracle_tasks;
 mod channel_identity_email_adapter_smoke;
 mod channel_identity_slack_adapter_smoke;
+mod check_in;
 mod code_consent;
 #[cfg(all(feature = "code-sandbox-wasmtime", target_os = "linux"))]
 mod code_mode_result_memory;

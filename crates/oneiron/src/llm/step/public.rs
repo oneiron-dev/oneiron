@@ -2,16 +2,17 @@
 //! executor: the vault owner on their proof, or a live run's own actor on
 //! its lease (slice 6.5c, primitive D).
 use std::collections::HashSet;
+use std::time::Duration;
 
-use super::super::{
-    BudgetGuard, ContentPart, FallbackRegistry, LlmBackend, LlmError, LlmResponse, ResponseFormat,
-};
+use super::super::{BudgetGuard, FallbackRegistry, LlmBackend, LlmError, RetryableLlmError};
+use super::retry::TransportRetries;
 use super::step_claim::{step_index_lookup, step_index_lookup_in_txn};
+use super::step_result::step_result;
 use super::step_state::step_state_read;
 use super::submission_custody::{SUBMISSIONS, Submission, erased, put_submission_in_txn};
 use super::{
-    DreamerTrapState, DurableStepContext, DurableStepError, StepOutcome, StepProgression,
-    StepSpendScope,
+    DreamerTrapState, DurableStepContext, DurableStepError, DurableStepResult, StepOutcome,
+    StepProgression, StepSpendScope,
 };
 use crate::agent_def::{AgentDefinition, ensure_listed};
 use crate::agent_dispatch::{
@@ -30,11 +31,15 @@ use crate::error::{Error, Result};
 use crate::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use crate::runtime_hooks::InvocationId;
 use crate::runtime_hooks::verb::InvocationEntry;
+use crate::store::model_step_submission::CorrectionPoint;
 use crate::task_verb::HostBinding;
 use crate::{EdgeActorClass, Vault, WriteActor};
 
 pub use super::media_step::media_step_key;
 pub use super::settled::{SettledStepRequest, SettledStepView, settled_step_as_owner};
+
+mod parked;
+pub use parked::{ParkedStep, parked_as_owner};
 
 pub(crate) use crate::model_step_record::MODEL_STEP_ATTEMPT_KIND;
 pub use crate::store::model_step_submission::{
@@ -45,26 +50,32 @@ const WORKER: &str = "model-step-door";
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::llm::step::public::{
-    ModelStepReceipt, ModelStepReceiptRequest, ModelStepSubmitRequest,
+    DecisionStepQuestion, DecisionStepSubmit, ModelStepReceipt, ModelStepReceiptRequest,
+    ModelStepSubmitRequest, StepSubmit, StepSubmitAnswer,
 };
 
 /// Submit or resume the caller's own logical step. Successes AND terminal
 /// failures are durable; replay neither multiplies retries nor sends a failed
 /// request again. The invocation claim only serializes live entries, while
-/// the step's own checkpoints recover across process restarts.
+/// the step's own checkpoints recover across process restarts. A send the
+/// backend holds unsent while its offer rests for its health spends no
+/// declared attempt: the step waits for the offer back up to `rest_wait`, in
+/// all, and past it parks ([`ModelStepResult::Parked`]) until a submission
+/// resumes it (FIX 11226).
 pub async fn submit_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: ModelStepSubmit,
     backend: &dyn LlmBackend,
     guard: &BudgetGuard,
+    rest_wait: Duration,
 ) -> MemoryResult<ModelStepReceipt> {
     admitted(
         submit(
             vault,
             Submitter::Owner(owner),
             input,
-            Some((backend, guard, None)),
+            Some((backend, guard, None, rest_wait)),
         )
         .await?,
     )
@@ -110,6 +121,10 @@ pub struct RunStepCaller<'a> {
 /// books what the step's physical calls spend on the run's spend scope, on
 /// its own live lease, so a replay of a saved step, which makes no call,
 /// books nothing.
+///
+/// A send held unsent while its offer rests for its health returns at once
+/// here, spending no attempt; [`submit_as_run_actor_on_scope`] takes the
+/// wait the host's ladder allows (FIX 11226).
 pub async fn submit_as_run_actor(
     vault: &Vault,
     caller: RunStepCaller<'_>,
@@ -117,12 +132,14 @@ pub async fn submit_as_run_actor(
     backend: &dyn LlmBackend,
     guard: &BudgetGuard,
 ) -> MemoryResult<ModelStepReceipt> {
-    submit_as_run_actor_on_scope(vault, caller, input, backend, guard, None).await
+    submit_as_run_actor_on_scope(vault, caller, input, backend, guard, None, Duration::ZERO).await
 }
 
 /// A run's step on its spend scope's guard, for a typed budget wait. The host
 /// read `spend_scope`'s cap generation before it built `guard`
-/// ([`StepSpendScope::read_before_guards`]).
+/// ([`StepSpendScope::read_before_guards`]). A send held unsent while its
+/// offer rests for its health waits for the offer back up to `rest_wait`, in
+/// all, as the owner's does (FIX 11226).
 pub async fn submit_as_run_actor_on_scope(
     vault: &Vault,
     caller: RunStepCaller<'_>,
@@ -130,8 +147,9 @@ pub async fn submit_as_run_actor_on_scope(
     backend: &dyn LlmBackend,
     guard: &BudgetGuard,
     spend_scope: Option<&StepSpendScope>,
+    rest_wait: Duration,
 ) -> MemoryResult<ModelStepReceipt> {
-    let execution = Some((backend, guard, spend_scope.cloned()));
+    let execution = Some((backend, guard, spend_scope.cloned(), rest_wait));
     admitted(submit(vault, Submitter::Run(caller), input, execution).await?)
 }
 
@@ -314,7 +332,12 @@ async fn submit(
     vault: &Vault,
     submitter: Submitter<'_>,
     input: ModelStepSubmit,
-    execution: Option<(&dyn LlmBackend, &BudgetGuard, Option<StepSpendScope>)>,
+    execution: Option<(
+        &dyn LlmBackend,
+        &BudgetGuard,
+        Option<StepSpendScope>,
+        Duration,
+    )>,
 ) -> MemoryResult<Option<ModelStepReceipt>> {
     validate(&input)?;
     submitter.attached()?;
@@ -376,6 +399,8 @@ async fn submit(
                     input: input.clone(),
                     step_hash: digest,
                     result: None,
+                    sends: 0,
+                    correction: None,
                 };
                 let payload = encode_dreamer_attempt_payload(&DreamerAttemptPayload {
                     attempt_type: MODEL_STEP_ATTEMPT_KIND.into(),
@@ -398,7 +423,7 @@ async fn submit(
             }
         };
         if terminal_result(vault, txn, &row) {
-            return Ok(Some((row, None, None)));
+            return Ok(Some((row, None, None, 0)));
         }
         // A fresh call is held to the run's model list. Saved work answered
         // above without it, as a model removed since does (FIX 8180), and a
@@ -419,8 +444,11 @@ async fn submit(
         } else {
             None
         };
-        // A consumed budget trap's suspension answers no longer: the SAME
-        // attempt and step hash resume (FIX 9928).
+        // A step resumes with the sends its earlier passes made: its declared
+        // attempts count every send, across parks and traps (FIX 11226).
+        let sent = usize::from(row.sends);
+        // A consumed budget trap's suspension, or a park, answers no longer:
+        // the SAME attempt and step hash resume (FIX 9928).
         if row.result.take().is_some() {
             put_submission_in_txn(vault, txn, &id, &mut row)?;
         }
@@ -442,9 +470,9 @@ async fn submit(
                 );
             }
         };
-        Ok(Some((row, Some(attempt), recovery)))
+        Ok(Some((row, Some(attempt), recovery, sent)))
     })?;
-    let Some((mut row, attempt, recovery)) = prepared else {
+    let Some((mut row, attempt, recovery, sent)) = prepared else {
         return Ok(None);
     };
     let Some(attempt) = attempt else {
@@ -453,7 +481,9 @@ async fn submit(
         }
         return view(vault, id, &row).map(Some).map_err(MemoryError::from);
     };
-    let spend_scope = execution.as_ref().and_then(|(_, _, scope)| scope.clone());
+    let spend_scope = execution
+        .as_ref()
+        .and_then(|(_, _, scope, _)| scope.clone());
     let context = DurableStepContext {
         vault,
         attempt_id: id,
@@ -465,14 +495,37 @@ async fn submit(
         spend_scope,
         wake_pass_bound: false,
     };
-    let outcome = if let Some((backend, guard, _)) = execution {
+    // Each send is kept on the step's row before it goes, so a stop while it
+    // is out, or in the wait after it, resumes with it spent (FIX 11226).
+    let keep = move |sends: usize| keep_sends(vault, id, sends);
+    // A schema correction's point is kept on the row with each of its sends,
+    // so the pass after a park continues it and no paid call is asked twice
+    // (STEP-CORRECTION-HEALTH-PARK).
+    let point = std::sync::Mutex::new(row.correction.clone());
+    let keep_point = |at: &CorrectionPoint| {
+        let kept = keep_correction(vault, id, at);
+        if kept && let Ok(mut held) = point.lock() {
+            *held = Some(at.clone());
+        }
+        kept
+    };
+    let retries = TransportRetries::resumed(
+        usize::from(row.input.retry.max_attempts - 1),
+        execution
+            .as_ref()
+            .map_or(Duration::ZERO, |(_, _, _, rest_wait)| *rest_wait),
+        sent,
+    )
+    .keeping(&keep)
+    .correcting(row.correction.clone(), &keep_point);
+    let outcome = if let Some((backend, guard, _, _)) = execution {
         super::execute::call_as_step_with_fallbacks_and_retries(
             &context,
             backend,
             guard,
             row.input.request.clone(),
             &FallbackRegistry::standard(),
-            usize::from(row.input.retry.max_attempts - 1),
+            &retries,
         )
         .await
     } else {
@@ -483,7 +536,18 @@ async fn submit(
         })?;
         super::execute::recover_step(&context, &row.input.request, recovery, None)
     };
-    row.result = Some(step_result(vault, id, &row, outcome)?);
+    // The sends this step has made, its earlier passes' included, stay on
+    // its row for the next pass (FIX 11226).
+    row.sends = u8::try_from(retries.sends()).unwrap_or(u8::MAX);
+    row.result = Some(submitted_step_result(vault, id, &row, outcome)?);
+    // A suspension (a park, a budget trap) keeps the correction the step
+    // stands at for the pass that resumes it; a settled step clears it.
+    row.correction = match row.result {
+        Some(ModelStepResult::Parked { .. } | ModelStepResult::BudgetDenied { .. }) => {
+            point.lock().ok().and_then(|held| held.clone())
+        }
+        _ => None,
+    };
     // A run its host let go, or whose lease lapsed, while the call ran gets
     // no answer, and its try is not settled under a standing it no longer
     // has. An answer the provider gave is already kept by the durable step
@@ -532,68 +596,76 @@ async fn submit(
     view(vault, id, &row).map(Some).map_err(MemoryError::from)
 }
 
-/// The result a step's outcome is saved as. A persistence fault is no
-/// result: it leaves the engine's recoverable payload intact, and a later
-/// submission must be allowed to finish that write path.
-fn step_result(
-    vault: &Vault,
-    id: AttemptId,
-    row: &Submission,
-    outcome: std::result::Result<StepOutcome, DurableStepError>,
-) -> MemoryResult<ModelStepResult> {
-    Ok(match outcome {
-        Ok(StepOutcome::Finished {
-            response, memoized, ..
-        }) => {
-            let claim = step_index_lookup(vault, id, &row.step_hash)?.ok_or(
-                Error::InvalidClaimBody("finished model step has no terminal claim"),
-            )?;
-            let json = response_json(row, &response)?;
-            let fallback_source = FallbackRegistry::source_of(&response);
-            ModelStepResult::Finished {
-                response,
-                json,
-                memoized,
-                fallback_source,
-                claim_ref: claim.to_hex(),
-            }
-        }
-        Ok(StepOutcome::Trapped { trap, .. }) => ModelStepResult::BudgetDenied {
-            trap_ref: trap.trap_claim_id.to_hex(),
-        },
-        Err(DurableStepError::Engine(error)) => return Err(error.into()),
-        Err(DurableStepError::Canonical(error)) => {
-            return Err(MemoryError::bad_request(error.to_string()));
-        }
-        Err(error) => ModelStepResult::Failed {
-            failure: failure(error),
-        },
+/// Keeps `sends` as the sends on step `id`'s row (FIX 11226): what its next
+/// pass starts from. As counted, so a send a health rest or a budget refusal
+/// held back is given back. Whether they kept: a row that is gone, or a
+/// write that faulted, keeps nothing.
+fn keep_sends(vault: &Vault, id: AttemptId, sends: usize) -> bool {
+    let sends = u8::try_from(sends).unwrap_or(u8::MAX);
+    let kept = vault.with_write_txn(|txn| {
+        let Some(mut row) = SUBMISSIONS.get(&vault.store, txn, &id)? else {
+            return Ok(false);
+        };
+        row.sends = sends;
+        put_submission_in_txn(vault, txn, &id, &mut row)?;
+        Ok(true)
+    });
+    kept.unwrap_or_else(|error| {
+        tracing::warn!(%error, "a model step's send count did not keep");
+        false
     })
 }
 
-/// The parsed JSON of a response whose request asked for JSON.
-fn response_json(
+/// Keeps `point` as the correction step `id` stands at
+/// (STEP-CORRECTION-HEALTH-PARK): what its next pass continues. Whether it
+/// kept: a row that is gone or erased, or a write that faulted, keeps
+/// nothing, and the correction's send is not made.
+fn keep_correction(vault: &Vault, id: AttemptId, point: &CorrectionPoint) -> bool {
+    let kept = vault.with_write_txn(|txn| {
+        let Some(mut row) = SUBMISSIONS.get(&vault.store, txn, &id)? else {
+            return Ok(false);
+        };
+        if erased(&row) {
+            return Ok(false);
+        }
+        row.correction = Some(point.clone());
+        put_submission_in_txn(vault, txn, &id, &mut row)?;
+        Ok(!erased(&row))
+    });
+    kept.unwrap_or_else(|error| {
+        tracing::warn!(%error, "a model step's correction point did not keep");
+        false
+    })
+}
+
+/// The result a step's outcome is saved as on its submission row. An offer
+/// that rests for its health past this submission's wait (FIX 11226), or no
+/// rung serves at this hour (UNBUILT-14), parks the step, unsent and unfailed,
+/// until the offer is back, keeping the sends it made. Every other outcome is
+/// saved by the shared conversion ([`step_result`]): a persistence fault is
+/// no result, so a later submission can finish that write path.
+fn submitted_step_result(
+    vault: &Vault,
+    id: AttemptId,
     row: &Submission,
-    response: &LlmResponse,
-) -> MemoryResult<Option<serde_json::Value>> {
-    if !matches!(
-        row.input.request.envelope.response_format,
-        ResponseFormat::Json { .. }
-    ) {
-        return Ok(None);
+    outcome: DurableStepResult<StepOutcome>,
+) -> MemoryResult<ModelStepResult> {
+    // Its offer rests for its health past this submission's wait (FIX 11226),
+    // or no rung serves at this hour (UNBUILT-14): the step parks, unsent and
+    // unfailed, until the offer is back, keeping the sends it made.
+    if let Err(DurableStepError::Llm(LlmError::Retryable(
+        RetryableLlmError::HealthRest { resets_at, .. }
+        | RetryableLlmError::OutsideHours { resets_at, .. },
+    ))) = &outcome
+    {
+        return Ok(ModelStepResult::Parked {
+            until: resets_at.first().copied(),
+            sends: row.sends,
+        });
     }
-    let text: String = response
-        .message
-        .content
-        .iter()
-        .filter_map(|part| match part {
-            ContentPart::Text { text, .. } => Some(text.as_str()),
-            _ => None,
-        })
-        .collect();
-    serde_json::from_str(&text)
-        .map(Some)
-        .map_err(|error| MemoryError::bad_request(error.to_string()))
+    step_result(outcome, &row.input.request.envelope.response_format, || {
+        step_index_lookup(vault, id, &row.step_hash)
+    })
 }
 
 /// The saved terminal of the caller's own step `input` names, read before
@@ -639,10 +711,11 @@ fn saved_terminal(
 /// Whether the row's saved result answers a submission. Finished and Failed
 /// are terminal. A budget trap is a suspension (FIX 9928): it answers while
 /// its trap is unanswered, or its trap does not read, and gives way once the
-/// trap is consumed, so the SAME attempt and step hash resume.
+/// trap is consumed, so the SAME attempt and step hash resume. A park on its
+/// offer's health never answers: a submission resumes it (FIX 11226).
 fn terminal_result(vault: &Vault, txn: &heed::RoTxn<'_>, row: &Submission) -> bool {
     match &row.result {
-        None => false,
+        None | Some(ModelStepResult::Parked { .. }) => false,
         Some(ModelStepResult::BudgetDenied { trap_ref }) => !EntityId::from_hex(trap_ref)
             .and_then(|trap| super::trap::trap_head_in_txn(vault, txn, &trap))
             .is_ok_and(|(_, head)| head.state == DreamerTrapState::Consumed),
@@ -783,70 +856,6 @@ fn run_identity(actor: EntityId, launch: AttemptId, key: &str) -> Result<Attempt
 
 fn hex(id: AttemptId) -> String {
     bytes_to_hex_lower(id.as_bytes())
-}
-
-fn failure(error: DurableStepError) -> ModelStepFailure {
-    let message = error.to_string();
-    let mut out = ModelStepFailure {
-        class: ModelStepFailureClass::Engine,
-        message,
-        llm: None,
-        validation_attempts: None,
-        validation_errors: Vec::new(),
-        spent_usage: None,
-        budget_refusal: None,
-    };
-    match error {
-        DurableStepError::Llm(source) | DurableStepError::ClassifiedLlm { source, .. } => {
-            out.class = llm_class(&source);
-            out.llm = Some(source);
-        }
-        DurableStepError::SpentLlm { source, usage } => {
-            out.class = llm_class(&source);
-            out.llm = Some(source);
-            out.spent_usage = Some(*usage);
-        }
-        DurableStepError::SchemaValidation { attempts, errors } => {
-            out.class = ModelStepFailureClass::SchemaValidation;
-            out.validation_attempts = Some(attempts);
-            out.validation_errors = errors;
-        }
-        DurableStepError::SpentSchemaValidation {
-            attempts,
-            errors,
-            usage,
-        } => {
-            out.class = ModelStepFailureClass::SchemaValidation;
-            out.validation_attempts = Some(attempts);
-            out.validation_errors = errors;
-            out.spent_usage = Some(*usage);
-        }
-        DurableStepError::Fallback(_) => out.class = ModelStepFailureClass::Fallback,
-        DurableStepError::SpentFallback { usage, .. } => {
-            out.class = ModelStepFailureClass::Fallback;
-            out.spent_usage = Some(*usage);
-        }
-        DurableStepError::FinalizeRefused => out.class = ModelStepFailureClass::FinalizeRefused,
-        DurableStepError::SpentFinalizeRefused { usage } => {
-            out.class = ModelStepFailureClass::FinalizeRefused;
-            out.spent_usage = Some(*usage);
-        }
-        DurableStepError::DeadlineHardCut => out.class = ModelStepFailureClass::DeadlineHardCut,
-        DurableStepError::BudgetRefused(refusal) => {
-            out.class = ModelStepFailureClass::BudgetRefused;
-            out.budget_refusal = Some(refusal);
-        }
-        DurableStepError::Engine(_) | DurableStepError::Canonical(_) => {}
-    }
-    out
-}
-
-fn llm_class(error: &LlmError) -> ModelStepFailureClass {
-    match error {
-        LlmError::Retryable(_) => ModelStepFailureClass::Retryable,
-        LlmError::Fatal(_) => ModelStepFailureClass::Fatal,
-        LlmError::BudgetDenied(_) => ModelStepFailureClass::BudgetDenied,
-    }
 }
 
 /// The terminal claim `attempt_id`'s step `step_hash` answers with: the paid

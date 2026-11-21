@@ -1,11 +1,15 @@
 //! Moved from `crates/oneiron/src/context_board/agent_run_status.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+use oneiron_contracts::register::Register;
 use serde::Deserialize;
 use serde::Serialize;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema, Register,
+)]
 #[serde(rename_all = "snake_case")]
+#[register("agent.run.status")]
 pub enum AgentRunStatus {
     Spawned,
     Working,
@@ -45,20 +49,6 @@ impl AgentRunStatus {
         Self::Abandoned,
         Self::Cancelled,
     ];
-
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Spawned => "spawned",
-            Self::Working => "working",
-            Self::NeedsInput => "needs_input",
-            Self::Delivered => "delivered",
-            Self::Archived => "archived",
-            Self::Failed => "failed",
-            Self::Abandoned => "abandoned",
-            Self::Cancelled => "cancelled",
-        }
-    }
 
     #[must_use]
     pub const fn is_terminal(self) -> bool {

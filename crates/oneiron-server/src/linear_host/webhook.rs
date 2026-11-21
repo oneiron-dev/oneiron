@@ -21,6 +21,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use oneiron::linear_sync::LinearWebhookReceipt;
 use oneiron::{LinearSyncError, Vault};
+use oneiron_base::unix_seconds_now;
 use oneiron_linear::{LinearTrackerConfig, normalize_issue_webhook};
 
 use crate::server::SyncServer;
@@ -99,7 +100,7 @@ fn deliver(
             return NOT_CONFIGURED;
         }
     };
-    let Some(expected) = signature.as_deref().and_then(decode_hex) else {
+    let Some(expected) = signature.as_deref().and_then(signature_bytes) else {
         return UNSIGNED;
     };
     match crate::builtin_host::hmac_matches(
@@ -128,7 +129,7 @@ fn deliver(
         Ok(None) => {}
         Err(error) => return refused(&error),
     }
-    let now = unix_now();
+    let now = unix_seconds_now();
     let payload_ref = match vault.archive_provider_event(LINEAR_CHANNEL, &delivery, body, now) {
         Ok(payload_ref) => payload_ref,
         Err(error) => {
@@ -158,15 +159,10 @@ fn refused(error: &LinearSyncError) -> Reply {
     }
 }
 
-fn decode_hex(text: &str) -> Option<Vec<u8>> {
-    let text = text.trim();
-    if text.len() % 2 != 0 || !text.is_ascii() {
-        return None;
-    }
-    (0..text.len())
-        .step_by(2)
-        .map(|at| u8::from_str_radix(&text[at..at + 2], 16).ok())
-        .collect()
+/// A signature header's bytes: hex digits of either case, untrimmed (a
+/// foreign header, HEX-CASE-POLICY = A).
+pub(crate) fn signature_bytes(text: &str) -> Option<Vec<u8>> {
+    oneiron_hex::decode_vec_any_case(text)
 }
 
 fn header(headers: &HeaderMap, name: &str) -> Option<String> {
@@ -174,10 +170,4 @@ fn header(headers: &HeaderMap, name: &str) -> Option<String> {
         .get(name)
         .and_then(|value| value.to_str().ok())
         .map(str::to_owned)
-}
-
-fn unix_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |since| since.as_secs())
 }

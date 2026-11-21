@@ -22,14 +22,19 @@
 use serde::{Deserialize, Serialize};
 
 use super::NoteKind;
+use crate::anchored_annotation::ThreadSubSession;
 use crate::claim::ScopedReadResult;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
+use crate::entity_id::derived_domains::PLAN_RUN_SESSION;
 use crate::error::{Error, RecordError, Result};
 use crate::memory::{EntityRefReceipt, Memory, MemoryResult};
+use crate::registry::{ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::{GateDecisionId, GateDecisionRecord, GateSystemNoticeRecord};
-use crate::{EdgeActorClass, Vault, WriteActor};
+use crate::{EdgeActorClass, TimeRange, Vault, WriteActor};
+
+mod settlement;
 
 /// The plan-doc's NOTE kind on the wire.
 pub const PLAN_DOC_NOTE_KIND: &str = "plugin/plan";
@@ -244,6 +249,15 @@ pub struct PlanDocVerdictRequest {
     /// The revision the owner read (`vault.plans.get`), as 64 hex
     /// characters. The verdict is refused once the text has moved on.
     pub expected_revision: String,
+    /// The conversation TURN the owner approved from; an approval that lands
+    /// the plan's run hangs it off this turn as a sub-session
+    /// (agent-runtime-v1.md:342). Approval only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approving_turn_ref: Option<EntityId>,
+    /// The anchored review thread on this plan-doc the owner approved from;
+    /// it records the run's sub-session. Approval only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approving_thread_ref: Option<EntityId>,
 }
 
 /// The last verdict, as a read shows it.
@@ -294,6 +308,19 @@ pub struct PlanDocSettlementView {
     /// names no agent definition, or a text an edit took out of the
     /// plan-doc's sections.
     pub run_task_ref: Option<EntityId>,
+    /// The SESSION the run hangs off the approving turn by a spawned_by
+    /// edge; `None` when the approval named no turn or landed no run.
+    pub sub_session_id: Option<EntityId>,
+}
+
+/// Where the owner answered a plan-doc from: the approving turn its run
+/// hangs off and the review thread that records the run's sub-session.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct PlanApprovalOrigin {
+    /// The conversation TURN the run hangs off as a sub-session.
+    turn: Option<EntityId>,
+    /// The review thread that records the run's sub-session.
+    thread: Option<EntityId>,
 }
 
 /// The revision of plan-doc `plan` whose text is `markdown`: BLAKE3 under
@@ -475,85 +502,30 @@ impl Memory<'_> {
 }
 
 impl Vault {
-    /// The owner answers plan-doc `plan` at revision `expected_revision`,
-    /// in one writer that rechecks the owner's proof: the verdict is stored
-    /// with that revision, and one gate decision records it.
-    ///
-    /// # Errors
-    ///
-    /// [`GateError::ConsentOwnerNotAuthenticated`](crate::error::GateError::ConsentOwnerNotAuthenticated)
-    /// when the proof no longer holds; [`RecordError::InvalidNoteBody`] for a
-    /// NOTE that is no plan-doc or a revision that is no 64 hex characters;
-    /// [`Error::ConcurrentWrite`] when the text is no longer at
-    /// `expected_revision`; an approval's run that cannot land (its agent
-    /// definition gone). Every refusal writes nothing.
-    pub(crate) fn answer_plan_doc_as(
+    /// The SESSION the run TASK `task` hangs off approving TURN `turn` by a
+    /// spawned_by edge, derived from the run TASK's id: a revision approved
+    /// again keeps its first session and its first spawning turn, and a
+    /// later approval naming another turn never re-parents it.
+    fn plan_run_sub_session_in_txn(
         &self,
-        owner: &AuthenticatedOwner,
-        plan: EntityId,
-        expected_revision: &str,
-        decision: PlanDocDecision,
-    ) -> MemoryResult<PlanDocSettlementView> {
-        if expected_revision.len() != 64
-            || !expected_revision
-                .bytes()
-                .all(|byte| byte.is_ascii_hexdigit())
-        {
-            return Err(invalid("a plan-doc revision is 64 hex characters").into());
+        txn: &mut heed::RwTxn<'_>,
+        owner: EntityId,
+        task: EntityId,
+        turn: EntityId,
+    ) -> MemoryResult<EntityId> {
+        let id = EntityId::derive(PLAN_RUN_SESSION, &[task.as_bytes()])?;
+        let live = crate::vault::live_entity_row_in_txn(&self.store, txn, &id)?.live_type();
+        if live == Some(ENTITY_TYPE_SESSION) {
+            return Ok(id);
         }
-        let expected = expected_revision.to_ascii_lowercase();
-        let settled = self.try_with_write_txn(|txn| -> MemoryResult<PlanDocSettlementView> {
-            let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
-            let (core, markdown, mut review) = plan_doc_in_txn(self, txn, plan)?;
-            let revision = revision_of(plan, &markdown);
-            if revision_hex(&revision) != expected {
-                return Err(Error::ConcurrentWrite("plan-doc revision changed").into());
-            }
-            let before = review.verdict.take();
-            let receipt_ref = self.record_plan_doc_verdict_in_txn(
-                txn,
-                actor,
-                plan,
-                &core,
-                &revision,
-                decision,
-                before.as_ref(),
-            )?;
-            review.verdict = Some(PlanDocVerdict {
-                decision,
-                revision: expected,
-                decided_at: crate::unix_seconds_now(),
-                receipt_ref: receipt_ref.clone(),
-            });
-            PLAN_DOC_REVIEW.put(&self.store, txn, &plan, &review)?;
-            // Execute-on-approve: an approval of a plan that names its agent
-            // definition lands the run in this writer, pinned at the revision
-            // approved, with the budget the plan's text asks.
-            let run_task_ref = match (decision, review.agent_def_ref) {
-                (PlanDocDecision::Approved, Some(agent_def_ref)) => {
-                    match PlanDocBody::from_markdown(&markdown) {
-                        Some(body) => Some(
-                            self.memory(actor, EdgeActorClass::Human)
-                                .land_plan_run_in_txn(txn, plan, &revision, &body, agent_def_ref)?,
-                        ),
-                        None => None,
-                    }
-                }
-                _ => None,
-            };
-            Ok(PlanDocSettlementView {
-                plan_ref: plan,
-                decision,
-                revision: revision_hex(&revision),
-                proposed_by: proposer(&core),
-                receipt_ref,
-                run_task_ref,
-            })
-        })?;
-        if settled.run_task_ref.is_some() {
-            self.store.notify_attempt_observers();
-        }
-        Ok(settled)
+        self.spawn_dag_sub_session_in_txn(
+            txn,
+            &turn,
+            WriteActor::new(owner, EdgeActorClass::Human),
+            id,
+            self.store.clock.now_recorded_at(),
+        )?;
+        Ok(id)
     }
 
     /// Appends the gate decision that records the owner's verdict: the owner
@@ -616,12 +588,15 @@ impl Vault {
 }
 
 /// `vault.plans.approve`: the owner approves plan-doc `input.plan_ref` at
-/// the revision they read.
+/// the revision they read. An approval that names `approving_turn_ref` hangs
+/// the run it lands off that turn as a sub-session, and records the
+/// sub-session on `approving_thread_ref`.
 ///
 /// # Errors
 ///
 /// The owner proof's refusal; a NOTE that is no plan-doc; a text no longer at
-/// `input.expected_revision`.
+/// `input.expected_revision`; an `approving_turn_ref` that names no live TURN
+/// or an `approving_thread_ref` that names no thread on the plan-doc.
 pub fn approve_plan_doc_as(
     vault: &Vault,
     owner: &AuthenticatedOwner,
@@ -632,25 +607,33 @@ pub fn approve_plan_doc_as(
         input.plan_ref,
         &input.expected_revision,
         PlanDocDecision::Approved,
+        PlanApprovalOrigin {
+            turn: input.approving_turn_ref,
+            thread: input.approving_thread_ref,
+        },
     )
 }
 
 /// `vault.plans.reject`: the owner rejects plan-doc `input.plan_ref` at the
-/// revision they read.
+/// revision they read. A rejection names no approving turn or thread.
 ///
 /// # Errors
 ///
-/// As [`approve_plan_doc_as`].
+/// As [`approve_plan_doc_as`], and a rejection that names either ref.
 pub fn reject_plan_doc_as(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: PlanDocVerdictRequest,
 ) -> MemoryResult<PlanDocSettlementView> {
+    if input.approving_turn_ref.is_some() || input.approving_thread_ref.is_some() {
+        return Err(invalid("a rejection names no approving turn or thread").into());
+    }
     vault.answer_plan_doc_as(
         owner,
         input.plan_ref,
         &input.expected_revision,
         PlanDocDecision::Rejected,
+        PlanApprovalOrigin::default(),
     )
 }
 

@@ -79,6 +79,12 @@ impl CampaignConfig {
             if !names.insert(&axis.name) {
                 return invalid("metric_set.axes", "duplicate metric axis");
             }
+            if !axis.tolerance.is_finite() || axis.tolerance < 0.0 {
+                return invalid(
+                    "metric_set.axes",
+                    "tolerance must be finite and non-negative",
+                );
+            }
             primary |= axis.role == MetricRole::Primary;
         }
         if !primary {
@@ -154,6 +160,7 @@ impl CampaignConfig {
     /// Decide only from both arms' held-out values. This scores dominance:
     /// ties reject, improvements without regressions promote, and mixed
     /// improvements/regressions escalate rather than silently crossing floors.
+    /// A change no larger than its axis's tolerance is a tie on that axis.
     pub fn decide_held_out(
         &self,
         incumbent: &Measurement,
@@ -193,6 +200,11 @@ impl CampaignConfig {
             if !delta.is_finite() {
                 return invalid("measurement", "metric delta overflowed");
             }
+            let delta = if delta.abs() <= axis.tolerance {
+                0.0
+            } else {
+                delta
+            };
             better |= delta > 0.0;
             worse |= delta < 0.0;
             if axis.role == MetricRole::Floor && delta < 0.0 {

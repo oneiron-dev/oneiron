@@ -24,8 +24,8 @@ use std::collections::BTreeMap;
 use heed::{RoTxn, RwTxn};
 
 use super::{ResponseDb, ResponseFamily, carrier_row};
+use crate::code_run::replay_rows;
 use crate::error::Result;
-use crate::side_table::{self, SideTableDbs};
 use crate::store::Store;
 
 /// The first byte of a Replay part's carrier, which no [`ResponseDb`] tag
@@ -120,8 +120,8 @@ impl ResponseFamily {
             }
         }
         for (row, (rest, requests)) in groups {
-            if row.starts_with(side_table::CODE_RUN_REPLAY.prefix) {
-                let Some(value) = store.side_vault_meta().get(txn, &row)? else {
+            if replay_rows::is_row_key(&row) {
+                let Some(value) = replay_rows::canonical_bytes_at(store, txn, &row)? else {
                     continue;
                 };
                 if let Some(value) =
@@ -165,7 +165,7 @@ impl ReplayPrune {
     /// Storage and custody errors.
     pub(crate) fn apply_in_txn(self, store: &Store, wtxn: &mut RwTxn<'_>) -> Result<()> {
         for (row, value) in &self.rows {
-            store.side_vault_meta().put(wtxn, row, value)?;
+            replay_rows::put_canonical_bytes_at(store, wtxn, row, value)?;
         }
         for (row, bytes) in &self.starts {
             match bytes {

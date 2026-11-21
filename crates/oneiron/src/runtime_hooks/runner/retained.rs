@@ -237,6 +237,8 @@ impl RetainedPass<'_> {
             actor: run.actor,
         };
         let job = owned.clone();
+        let max_budget_ms =
+            crate::runtime_hooks::setting_keys::hook_max_budget_ms(&self.runs.vault)?;
         let (vault, runtime, verdict, wake, admission) = (
             Arc::clone(&self.runs.vault),
             Arc::clone(&self.runs.runtime),
@@ -261,6 +263,7 @@ impl RetainedPass<'_> {
                     input,
                     now,
                     true,
+                    max_budget_ms,
                 );
                 let _ = answer.send(result);
                 wake();

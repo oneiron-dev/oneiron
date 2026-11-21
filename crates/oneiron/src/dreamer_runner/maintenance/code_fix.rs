@@ -87,8 +87,6 @@ pub(super) use self::work::{wake_blocked_in_txn, wake_in_txn};
 /// Key: `work::work_key`.
 const WORK: SideTable<EntityId, CodeFixWork, Named> =
     SideTable::new(&side_table::FAILURE_SIGNALS_CODE_FIX_WORK);
-/// Domain separator for a blocked report's work key.
-const BLOCKED_WORK_DOMAIN: &[u8] = b"oneiron.code-fix.blocked.v1\0";
 /// Work rows one owner read returns when its caller names no limit.
 pub const MAX_CODE_FIX_WORK: usize = 256;
 /// Work rows one catch-up step reads, and top-up runs it queues: a newly
@@ -177,19 +175,8 @@ pub struct CodeFixDraft {
     pub fix: Option<String>,
 }
 
-/// A candidate fix the deployment's publisher supplied and its operator
-/// pinned: an instruction the replay adds to the failing agent's own, or an
-/// engine build or patch the host's shadow runner runs in a sandboxed arm
-/// (FIX 1661, 2144). It is tried in the vault only; nothing fetches or
-/// installs it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PublisherCandidate {
-    /// The token its result exports under, naming the pinned artifact by its
-    /// whole digest.
-    pub id: String,
-    /// What it is.
-    pub kind: PublisherCandidateKind,
-}
+#[doc(hidden)]
+pub use oneiron_records::dreamer_runner::maintenance::code_fix::PublisherCandidate;
 
 /// The host's models, inside the vault's boundary.
 pub trait CodeFixHost {
@@ -774,3 +761,6 @@ fn measure_candidates(vault: &Vault, candidates: &[ReplayCandidate]) {
     let _ = vault.measure_limit(EngineLimit::MaintenanceRowItems, candidates.len() as u64);
     let _ = vault.measure_limit(EngineLimit::MaintenanceTextBytes, longest as u64);
 }
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::work::blocked_work_key_for_test;

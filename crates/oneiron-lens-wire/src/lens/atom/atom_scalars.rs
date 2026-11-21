@@ -46,6 +46,9 @@ pub(in crate::lens) const MAX_LENS_TEXT_BYTES: usize = 16 * 1024;
 pub struct LensText(String);
 
 impl LensText {
+    /// The most bytes one lens text holds.
+    pub const MAX_BYTES: usize = MAX_LENS_TEXT_BYTES;
+
     pub fn new(value: impl Into<String>) -> Result<Self> {
         let value = value.into();
         if value.len() > MAX_LENS_TEXT_BYTES {

@@ -1,12 +1,18 @@
 //! Typed behaviour values and deterministic, scoped manifest-row selection.
 
 use crate::entity_id::EntityId;
+use oneiron_contracts::msgpack::Entries;
 use rmpv::Value;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum PolicyValueKey {
     ArtifactAnswerQuietSeconds,
     CalendarOutcomeGraceSeconds,
+    /// One claim class's opt-out posture (ARCH-0057 §3.1: per-class posture
+    /// is deployment-local), keyed by the class's registry id: the descriptor
+    /// entity id its predicate derives. The manifest names the class as
+    /// `claim_class_posture:<predicate>`.
+    ClaimClassPosture(EntityId),
     CommOptOutPosture,
     CriticalConfirmLifetimeSeconds,
     DreamerRetryParkSeconds,
@@ -25,8 +31,17 @@ pub(super) enum PolicyValueKey {
     SessionLifetimeCeilingSeconds,
     WorkflowStepMaxTries,
 }
+/// The manifest key prefix of a class's posture row.
+const CLAIM_CLASS_POSTURE_PREFIX: &str = "claim_class_posture:";
+
 impl PolicyValueKey {
     fn parse(value: &str) -> Option<Self> {
+        if let Some(predicate) = value.strip_prefix(CLAIM_CLASS_POSTURE_PREFIX) {
+            crate::write_envelope::claim_predicate::validate_predicate(predicate, false).ok()?;
+            return crate::comm::claim_class_descriptor_id(predicate)
+                .ok()
+                .map(Self::ClaimClassPosture);
+        }
         match value {
             "artifact_answer_quiet_seconds" => Some(Self::ArtifactAnswerQuietSeconds),
             "calendar_outcome_grace_seconds" => Some(Self::CalendarOutcomeGraceSeconds),
@@ -54,6 +69,8 @@ impl PolicyValueKey {
         match self {
             Self::ArtifactAnswerQuietSeconds => "artifact_answer_quiet_seconds",
             Self::CalendarOutcomeGraceSeconds => "calendar_outcome_grace_seconds",
+            // The class travels beside the name: the frontier hash adds its id.
+            Self::ClaimClassPosture(_) => "claim_class_posture",
             Self::CommOptOutPosture => "comm_opt_out_posture",
             Self::CriticalConfirmLifetimeSeconds => "critical_confirm_lifetime_seconds",
             Self::DreamerRetryParkSeconds => "dreamer_retry_park_seconds",
@@ -98,6 +115,7 @@ impl PolicyValueKey {
             // it, on the vault's clock (FIX 8760).
             Self::ArtifactAnswerQuietSeconds
             | Self::CalendarOutcomeGraceSeconds
+            | Self::ClaimClassPosture(_)
             | Self::CommOptOutPosture
             | Self::CriticalConfirmLifetimeSeconds
             | Self::DreamerRetryParkSeconds
@@ -213,9 +231,7 @@ impl PolicyValueRow {
 }
 
 fn field<'a>(entries: &'a [(Value, Value)], name: &str) -> Option<&'a Value> {
-    let mut values = entries.iter().filter(|(key, _)| key.as_str() == Some(name));
-    let value = &values.next()?.1;
-    values.next().is_none().then_some(value)
+    Entries::new(entries).get(name).ok().flatten()
 }
 
 pub(crate) fn parse_optional_why(entries: &[(Value, Value)]) -> Option<Option<PolicyWhy>> {
@@ -294,7 +310,9 @@ pub(super) fn parse_policy_values(value: &Value) -> Option<Vec<PolicyValueRow>> 
                 PolicyValueKey::CalendarOutcomeGraceSeconds => {
                     PolicyValue::CalendarOutcomeGraceSeconds(raw.as_u64()?)
                 }
-                PolicyValueKey::CommOptOutPosture => {
+                // A class's posture takes the same two values as the
+                // vault-wide one, and narrows the same way.
+                PolicyValueKey::ClaimClassPosture(_) | PolicyValueKey::CommOptOutPosture => {
                     PolicyValue::CommOptOutPosture(match raw.as_str()? {
                         "escalate" => crate::gate::resolution::CommOptOutPosture::Escalate,
                         "allow_with_receipt" => {

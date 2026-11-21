@@ -77,6 +77,7 @@ fn record(name: &str, value: &[u8]) -> SecretCustodyRecord {
         name: name.to_owned(),
         class: CustodyClass::CustodyPortable,
         device_only: false,
+        model_reveal_allowed: true,
         value_bytes: value.to_vec(),
         status: SecretCustodyStatus::Active,
         registered_at: AT_REGISTERED,
@@ -408,11 +409,6 @@ fn revoke_derives_stale_taint_without_writing_any_index() {
         0,
         "no secret->artifact index rows are written"
     );
-    assert_eq!(
-        count_rows(&vault, SECRET_EXHAUST_TAINT_PREFIX),
-        0,
-        "body-carried taint needs no sidecar row at all"
-    );
 }
 
 /// Reclaiming a revoked NAME must not resurrect its exhaust.
@@ -531,11 +527,15 @@ fn rotation_does_not_touch_one_byte_of_exhaust() {
     register(&vault, SECRET, VALUE_V1);
 
     let entity = artifact_id(0x31);
+    put_artifact(
+        &vault,
+        &entity,
+        &BlobArtifactBody::new("exhaust.bin", "application/octet-stream"),
+    );
     vault
         .mark_artifact_tainted(&entity, &[taint(SECRET, 0)])
         .expect("attach taint");
-    let key = format!("{SECRET_EXHAUST_TAINT_PREFIX}{}", entity.to_hex()).into_bytes();
-    let before = row_bytes(&vault, &key).expect("taint row");
+    let before = vault.get(&entity).expect("read").expect("artifact row");
     assert_eq!(
         vault.artifact_taint_state(&entity).expect("state"),
         ArtifactTaintState::TaintedLive
@@ -546,7 +546,7 @@ fn rotation_does_not_touch_one_byte_of_exhaust() {
         .expect("rotate");
 
     assert_eq!(
-        row_bytes(&vault, &key).as_deref(),
+        vault.get(&entity).expect("read").as_deref(),
         Some(before.as_slice()),
         "no bulk flip: the stored refs are byte-identical across the rotation"
     );
@@ -570,7 +570,7 @@ fn raw_output_taint_attaches_at_the_action_boundary_and_derives_at_read_time() {
     let raw = b"build finished\n";
     let output = CodeRunRawOutput::from_bytes("out/build.log", raw).expect("raw output");
     vault
-        .put_code_run_raw_output_tainted(&output, raw, &[taint(SECRET, 0)])
+        .put_code_run_raw_output_tainted(None, &output, raw, &[taint(SECRET, 0)])
         .expect("tainted persist");
 
     // The exhaust bytes are still readable exactly as an untainted put's
@@ -583,12 +583,14 @@ fn raw_output_taint_attaches_at_the_action_boundary_and_derives_at_read_time() {
         Some(&raw[..])
     );
     assert_eq!(
-        vault.code_run_raw_output_taint_refs(&output).expect("refs"),
+        vault
+            .code_run_raw_output_taint_refs(None, &output)
+            .expect("refs"),
         vec![taint(SECRET, 0)]
     );
     assert_eq!(
         vault
-            .code_run_raw_output_taint_state(&output)
+            .code_run_raw_output_taint_state(None, &output)
             .expect("state"),
         ArtifactTaintState::TaintedLive
     );
@@ -598,7 +600,7 @@ fn raw_output_taint_attaches_at_the_action_boundary_and_derives_at_read_time() {
         .expect("rotate");
     assert_eq!(
         vault
-            .code_run_raw_output_taint_state(&output)
+            .code_run_raw_output_taint_state(None, &output)
             .expect("state"),
         ArtifactTaintState::TaintedStale
     );
@@ -607,17 +609,17 @@ fn raw_output_taint_attaches_at_the_action_boundary_and_derives_at_read_time() {
     let clean_raw = b"nothing secret here\n";
     let clean = CodeRunRawOutput::from_bytes("out/clean.log", clean_raw).expect("raw output");
     vault
-        .put_code_run_raw_output(&clean, clean_raw)
+        .put_code_run_raw_output(None, &clean, clean_raw)
         .expect("untainted persist");
     assert_eq!(
         vault
-            .code_run_raw_output_taint_state(&clean)
+            .code_run_raw_output_taint_state(None, &clean)
             .expect("state"),
         ArtifactTaintState::Clean
     );
     assert!(
         vault
-            .code_run_raw_output_taint_refs(&clean)
+            .code_run_raw_output_taint_refs(None, &clean)
             .expect("refs")
             .is_empty()
     );
@@ -701,6 +703,11 @@ fn the_blob_body_taint_key_is_optional_and_old_two_key_bodies_still_decode() {
 fn a_taint_ref_naming_a_secret_that_never_existed_reads_stale() {
     let (_tmp, vault) = temp_vault();
     let id = artifact_id(0x51);
+    put_artifact(
+        &vault,
+        &id,
+        &BlobArtifactBody::new("exhaust.bin", "application/octet-stream"),
+    );
     vault
         .mark_artifact_tainted(&id, &[taint("never-registered", 0)])
         .expect("attach");
@@ -715,6 +722,11 @@ fn a_taint_ref_naming_a_secret_that_never_existed_reads_stale() {
 fn malformed_taint_refs_refuse_rather_than_defaulting_to_clean() {
     let (_tmp, vault) = temp_vault();
     let id = artifact_id(0x53);
+    put_artifact(
+        &vault,
+        &id,
+        &BlobArtifactBody::new("exhaust.bin", "application/octet-stream"),
+    );
 
     assert!(matches!(
         vault.mark_artifact_tainted(&id, &[taint("", 0)]),
@@ -727,21 +739,11 @@ fn malformed_taint_refs_refuse_rather_than_defaulting_to_clean() {
         ),
         "one secret cannot be asserted at two generations by one body"
     );
-    assert_eq!(count_rows(&vault, SECRET_EXHAUST_TAINT_PREFIX), 0);
-
-    // A corrupted row REFUSES; it never silently reads Clean.
-    let key = format!("{SECRET_EXHAUST_TAINT_PREFIX}{}", id.to_hex()).into_bytes();
-    let mut wtxn = vault.store.env.write_txn().expect("write txn");
-    vault
-        .store
-        .vault_meta
-        .put(&mut wtxn, &key, b"not messagepack at all")
-        .expect("put corrupt row");
-    wtxn.commit().expect("commit");
-    assert!(matches!(
-        vault.artifact_taint_state(&id),
-        Err(Error::Secret(SecretError::InvalidSecretRotationBody(_)))
-    ));
+    assert_eq!(
+        vault.artifact_taint_refs(&id).expect("refs"),
+        Vec::<SecretTaintRef>::new(),
+        "a refused mark writes nothing"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1090,14 +1092,15 @@ fn no_value_bytes_reach_the_receipt_or_the_taint_ref() {
     }
 
     let id = artifact_id(0x71);
+    put_artifact(
+        &vault,
+        &id,
+        &BlobArtifactBody::new("exhaust.bin", "application/octet-stream"),
+    );
     vault
         .mark_artifact_tainted(&id, &[taint(SECRET, 1)])
         .expect("attach");
-    let taint_row = row_bytes(
-        &vault,
-        format!("{SECRET_EXHAUST_TAINT_PREFIX}{}", id.to_hex()).as_bytes(),
-    )
-    .expect("taint row");
+    let taint_row = vault.get(&id).expect("read").expect("artifact row");
     for needle in [VALUE_V1, VALUE_V2, b"value_bytes".as_slice()] {
         assert!(
             !taint_row.windows(needle.len()).any(|w| w == needle),

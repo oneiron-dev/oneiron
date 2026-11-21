@@ -82,6 +82,321 @@ impl ScopedRead<'_> {
         self.one_of_admits_in(rtxn, id, raw, entity_type, &record, &live)
     }
 
+    /// [`Self::one_grant_alternative_admits_in`] for rows read as one thing,
+    /// such as a person's `about` line with the PERSON, the facts it was
+    /// written from and their sources: one of this key's kept agent Grant
+    /// alternatives alone admits every row of `rows`, and, when the key
+    /// names its holder, one of the holder's Grants that stand for `read` in
+    /// `rtxn` alone admits every row too, met with the key's own Scope. The
+    /// row gate lets each row find its own alternative; here no row does, so
+    /// two Grants never combine into one read (RULING GRANT-COMBINE Q1 = A).
+    /// A key no agent Grant binds admits every row here.
+    ///
+    /// # Errors
+    /// A store or decode failure reading a row's position or facets, or a
+    /// store, fold or clock failure reading the holder's Grants.
+    pub(super) fn one_grant_alternative_admits_each_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        rows: &[(EntityId, Vec<u8>)],
+        authority: &HeldAuthority,
+    ) -> Result<bool> {
+        let mut positions = None;
+        self.one_grant_alternative_holds_in(rtxn, authority, |alternative| {
+            if positions.is_none() {
+                positions = Some(
+                    rows.iter()
+                        .map(|(id, raw)| self.row_position_in(rtxn, id, raw))
+                        .collect::<Result<Option<Vec<_>>>>()?,
+                );
+            }
+            let Some(Some(positions)) = &positions else {
+                return Ok(false);
+            };
+            for ((id, raw), (entity_type, record)) in rows.iter().zip(positions) {
+                if !self.alternative_admits_row_in(
+                    rtxn,
+                    id,
+                    raw,
+                    *entity_type,
+                    record,
+                    alternative,
+                )? {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        })
+    }
+
+    /// [`Self::one_grant_alternative_admits_in`] for a position judged with
+    /// no live row behind it (FIX AGENT-GRANT-ENVELOPE-ONLY-PATHS; RULING
+    /// GRANT-COMBINE Q1 = A): whether `holds` accepts one of this key's kept
+    /// agent Grant alternatives alone and, when the key names its holder, one
+    /// of the holder's Grants that stand for `read` in `rtxn`, alone and met
+    /// with the key's own Scope. A key no agent Grant binds holds every
+    /// position here; one bound by no standing Grant, none. The key's world
+    /// ceiling is the caller's to check.
+    ///
+    /// The holder's Grants are read through `authority`, once per serving txn
+    /// where the caller holds one for the whole read (the change feed, short
+    /// references, loop decisions); the world listing and a timeline's
+    /// deleted shells pass a fresh one, so they read them per call. A kept
+    /// alternative that refuses ends the check before any Grant is read.
+    ///
+    /// # Errors
+    /// `holds`'s, or a store, fold or clock failure reading the holder's
+    /// Grants.
+    fn one_grant_alternative_holds_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        authority: &HeldAuthority,
+        mut holds: impl FnMut(&Scope) -> Result<bool>,
+    ) -> Result<bool> {
+        let kept = self.actor_key.grant_alternatives();
+        if let Some(kept) = kept {
+            let mut one = false;
+            for alternative in kept {
+                if holds(alternative)? {
+                    one = true;
+                    break;
+                }
+            }
+            if !one {
+                return Ok(false);
+            }
+        }
+        let standing = self
+            .actor_key
+            .agent_grant_holder()
+            .map(|holder| {
+                authority.grants().bounds_of(holder, || {
+                    self.vault.agent_grant_read_bounds_in_txn(rtxn, holder)
+                })
+            })
+            .transpose()?;
+        let Some(standing) = standing.as_deref().and_then(|bounds| bounds.as_deref()) else {
+            return Ok(true);
+        };
+        let own = self
+            .actor_key
+            .authority_scope()
+            .cloned()
+            .unwrap_or_else(Scope::top);
+        for bound in standing {
+            if holds(&ScopedReadActorKey::read_authority(&own.meet(bound)))? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Whether one Grant alone holds `world` (`None` is base reality), as
+    /// [`Self::one_grant_alternative_holds_in`] judges it: the graph_fs walk
+    /// lists, and walks into, only a world one Grant alone reads (ARCH-0051
+    /// "a walk lists only what the grant allows"), so a lane held past a
+    /// revoke stops listing that Grant's worlds.
+    ///
+    /// # Errors
+    /// A store, fold or clock failure reading the holder's Grants.
+    pub(crate) fn one_grant_alternative_walks_world_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        world: Option<EntityId>,
+    ) -> Result<bool> {
+        let position = super::actor_key::record_world_scope(world);
+        self.one_grant_alternative_holds_in(
+            rtxn,
+            &HeldAuthority::for_request(None),
+            |alternative| Ok(holds_world(&position, alternative)),
+        )
+    }
+
+    /// Whether one Grant alone holds the deleted shell `raw` of `id` at the
+    /// world-only `position` it still proves, and its facets, as the row gate
+    /// judges a live row's ([`Self::one_of_admits_in`]).
+    ///
+    /// # Errors
+    /// A store failure reading the shell's facets, or the holder's Grants.
+    pub(super) fn one_grant_alternative_holds_shell_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        authority: &HeldAuthority,
+        id: &EntityId,
+        raw: &[u8],
+        position: &Scope,
+    ) -> Result<bool> {
+        self.one_grant_alternative_holds_in(rtxn, authority, |alternative| {
+            self.grant_holds_shell_in(rtxn, id, raw, position, alternative)
+        })
+    }
+
+    /// Whether `grant` alone holds the deleted shell `raw` of `id` at the
+    /// `position` it still proves: that world, its type and its facets.
+    ///
+    /// # Errors
+    /// A store failure reading the shell's facets.
+    fn grant_holds_shell_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        raw: &[u8],
+        position: &Scope,
+        grant: &Scope,
+    ) -> Result<bool> {
+        let entity_type = EntityMetadataHeader::parse(raw)
+            .ok_or(Error::CorruptedIndex("entity header"))?
+            .entity_type;
+        Ok(holds_world(position, grant)
+            && grant.bands.contains(&entity_type)
+            && self.alternative_facets_admit_in(rtxn, id, Some(raw), grant)?)
+    }
+
+    /// Whether `grant`, one live Grant of the reader's own (A), holds the
+    /// deleted shell `raw` of `id` at `position`, as a kept alternative
+    /// holds one ([`Self::grant_holds_shell_in`]). A shell that proves no
+    /// place (`proved` false) reads as if it sat anywhere, so only a Grant
+    /// over every world and every facet holds it (Engine ANSWER
+    /// GRANT-AGENT-DELETED-SHELLS = A).
+    ///
+    /// # Errors
+    /// A store failure reading the shell's facets.
+    pub(super) fn own_grant_holds_shell_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        raw: &[u8],
+        position: &Scope,
+        proved: bool,
+        grant: &Scope,
+    ) -> Result<bool> {
+        use oneiron_authority::federation::ScopeAxis;
+        Ok((proved
+            || matches!(
+                (&grant.worlds, &grant.facets),
+                (ScopeAxis::All, ScopeAxis::All)
+            ))
+            && self.grant_holds_shell_in(rtxn, id, raw, position, grant)?)
+    }
+
+    /// Whether `grant`, one live Grant of the reader's own (A), holds the
+    /// facets of a loop decision's kept read `position` (Engine ANSWER
+    /// LOOP-KEPT-POSITION-FLOOR-AND-GRANT = A): the stored row's, as the row
+    /// gate holds them, where `row` names one stored now; else the facets
+    /// the position stamps, one of them inside the Grant's, as a record that
+    /// never landed sits in its stamped facet. A position that stamps no
+    /// facet, or every facet, reads as if it sat anywhere, so only a Grant
+    /// over every facet holds it.
+    ///
+    /// # Errors
+    /// A store failure reading the stored row's facets.
+    pub(super) fn own_grant_holds_position_facets_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        position: &Scope,
+        row: Option<(&EntityId, Option<&[u8]>)>,
+        grant: &Scope,
+    ) -> Result<bool> {
+        use oneiron_authority::federation::{ScopeAxis, ScopeId};
+        if let Some((id, Some(raw))) = row {
+            return self.alternative_facets_admit_in(rtxn, id, Some(raw), grant);
+        }
+        Ok(match &position.facets {
+            ScopeAxis::Some(stamped) if !stamped.is_empty() => {
+                let stamped: Vec<EntityId> = stamped.iter().map(|ScopeId(id)| *id).collect();
+                crate::federation::facet_read::placed_facets_admit(&grant.facets, &stamped)
+            }
+            ScopeAxis::Some(_) | ScopeAxis::All | ScopeAxis::Bottom => {
+                matches!(grant.facets, ScopeAxis::All)
+            }
+        })
+    }
+
+    /// Whether `alternative`'s facets admit the row `id` whose stored row is
+    /// `raw`, as the key's own facet check judges it ([`facets_admit_in`]);
+    /// with no stored row, only an alternative that holds every facet does.
+    fn alternative_facets_admit_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        raw: Option<&[u8]>,
+        alternative: &Scope,
+    ) -> Result<bool> {
+        let Some(raw) = raw else {
+            return Ok(matches!(
+                alternative.facets,
+                oneiron_authority::federation::ScopeAxis::All
+            ));
+        };
+        match self.session_view {
+            Some(view) => facets_admit_in(self.vault, view, rtxn, *id, raw, &alternative.facets),
+            None => facets_admit_in(
+                self.vault,
+                &self.vault.store,
+                rtxn,
+                *id,
+                raw,
+                &alternative.facets,
+            ),
+        }
+    }
+
+    /// Whether one Grant alone admits a read of the record position `record`
+    /// under `policy`, as a proof of that Grant would at the record door: a
+    /// deleted TASK's kept stamp, a kept loop decision's position with no
+    /// claim, or every position at once for deletion metadata. The record
+    /// door judges no facet, so where the caller's own check judged the
+    /// facets of a `row` (its id and stored row, if any), that Grant's facets
+    /// must admit it too, as the row gate holds them.
+    ///
+    /// # Errors
+    /// A store failure reading the row's facets, or a store, fold or clock
+    /// failure reading the holder's Grants.
+    pub(super) fn one_grant_alternative_admits_record_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        authority: &HeldAuthority,
+        policy: &crate::gate::PolicyManifestResolution,
+        record: &Scope,
+        row: Option<(&EntityId, Option<&[u8]>)>,
+    ) -> Result<bool> {
+        self.one_grant_alternative_holds_in(rtxn, authority, |alternative| {
+            Ok(crate::gate::scoped_read_record_allowed_with_scope(
+                policy,
+                &self.actor_key,
+                record,
+                Some(alternative),
+            ) && row.map_or(Ok(true), |(id, raw)| {
+                self.alternative_facets_admit_in(rtxn, id, raw, alternative)
+            })?)
+        })
+    }
+
+    /// [`Self::one_grant_alternative_admits_record_in`] at the claim door: a
+    /// kept loop decision's claim `view`, judged as its base check judges it.
+    ///
+    /// # Errors
+    /// A store, fold or clock failure reading the holder's Grants.
+    pub(super) fn one_grant_alternative_admits_claim_view_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        authority: &HeldAuthority,
+        policy: &crate::gate::PolicyManifestResolution,
+        view: &crate::gate::ClaimReadView<'_>,
+        row: Option<(&EntityId, Option<&[u8]>)>,
+    ) -> Result<bool> {
+        self.one_grant_alternative_holds_in(rtxn, authority, |alternative| {
+            Ok(crate::gate::scoped_read_claim_view_allowed(
+                policy,
+                &self.actor_key,
+                view,
+                Some(alternative),
+            ) && row.map_or(Ok(true), |(id, raw)| {
+                self.alternative_facets_admit_in(rtxn, id, raw, alternative)
+            })?)
+        })
+    }
+
     /// Whether one of `alternatives` alone admits the row `raw` of `id`,
     /// whose type is `entity_type` and record position `record`: held at one
     /// world the key's ceiling and that alternative both hold, admitted by
@@ -95,37 +410,40 @@ impl ScopedRead<'_> {
         record: &Scope,
         alternatives: &[Scope],
     ) -> Result<bool> {
-        let ceiling = self.actor_key.world_ceiling();
         for alternative in alternatives {
-            let held = note_world::held_at(
-                &self.store_read(),
-                rtxn,
-                *id,
-                entity_type,
-                record,
-                &[&ceiling.worlds, &alternative.worlds],
-            );
-            if !alternative.admits("read", &held, &Scope::top()) {
-                continue;
-            }
-            let facets = match self.session_view {
-                Some(view) => {
-                    facets_admit_in(self.vault, view, rtxn, *id, raw, &alternative.facets)?
-                }
-                None => facets_admit_in(
-                    self.vault,
-                    &self.vault.store,
-                    rtxn,
-                    *id,
-                    raw,
-                    &alternative.facets,
-                )?,
-            };
-            if facets {
+            if self.alternative_admits_row_in(rtxn, id, raw, entity_type, record, alternative)? {
                 return Ok(true);
             }
         }
         Ok(false)
+    }
+
+    /// Whether `alternative` alone admits the row `raw` of `id`, whose type
+    /// is `entity_type` and record position `record`: held at one world the
+    /// key's ceiling and `alternative` both hold, admitted by it, and its
+    /// facets inside its.
+    fn alternative_admits_row_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        raw: &[u8],
+        entity_type: u8,
+        record: &Scope,
+        alternative: &Scope,
+    ) -> Result<bool> {
+        let ceiling = self.actor_key.world_ceiling();
+        let held = note_world::held_at(
+            &self.store_read(),
+            rtxn,
+            *id,
+            entity_type,
+            record,
+            &[&ceiling.worlds, &alternative.worlds],
+        );
+        if !alternative.admits("read", &held, &Scope::top()) {
+            return Ok(false);
+        }
+        self.alternative_facets_admit_in(rtxn, id, Some(raw), alternative)
     }
 
     /// The record position of the row `raw` of `id`, with its type: a
@@ -163,4 +481,9 @@ impl ScopedRead<'_> {
             None => None,
         })
     }
+}
+
+/// Whether `alternative`'s worlds hold the world-only `position`.
+fn holds_world(position: &Scope, alternative: &Scope) -> bool {
+    position.is_narrowing_of(&super::actor_key::world_only(alternative.worlds.clone()))
 }

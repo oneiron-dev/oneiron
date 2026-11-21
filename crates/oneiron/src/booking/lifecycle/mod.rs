@@ -53,14 +53,21 @@
 mod authorship;
 mod claim;
 mod confirmation_state;
+mod deposit;
 mod door;
 mod emergency;
 mod feed_move;
 mod hold_source;
+#[cfg(feature = "sync")]
+pub(crate) mod home_rows;
 mod occurrence;
+mod owner_card;
 mod passport;
 mod public_authority;
+pub(crate) mod setting_keys;
 mod storage;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::storage::{confirm_receipt_key_for_test, revision_receipt_key_for_test};
 mod token;
 mod transition;
 mod types;
@@ -77,6 +84,17 @@ pub use self::claim::{
 pub(in crate::booking) use self::claim::{
     confirmed_booking_starts, confirmed_booking_starts_listed, confirmed_start_for_reminder,
 };
+pub use self::deposit::RefundPermission;
+pub use self::deposit::{
+    BOOKING_DEPOSIT_SETTLE_ATTEMPT_KIND, BookingDepositSettlementDrain, BookingDepositStatus,
+    DEPOSIT_CHECKOUT_WINDOW_SECS, DepositCheckoutLease, DepositCheckoutStart, DepositProviderEvent,
+    DepositProviderEventKind, DepositProviderEventOutcome, DepositProviderFailure,
+    DepositSettleMove, DepositSettleRequest, DepositSettleStep, DepositSettlementPort,
+    DepositState, begin_deposit_checkout, booking_deposit_for_event, booking_deposit_for_payment,
+    booking_deposit_for_session_hold, check_deposit_checkout_admitted,
+    record_deposit_provider_event, run_booking_deposit_settlement, settle_booking_deposit,
+};
+pub(crate) use self::deposit::{refund_booking_deposit_as_owner, refund_deposit_on_host_cancel};
 pub use self::door::{
     BookingLifecycleConsumerInput, BookingLifecycleTurn, BookingOracleRequest,
     enqueue_booking_verb, enqueue_booking_verb_with_publication, issue_checkout_lease,
@@ -87,31 +105,48 @@ pub use self::feed_move::{
     BOOKING_REVISION_INVITE_ATTEMPT_KIND, BookingRevisionInviteDrain, BookingRevisionInvitePayload,
     run_booking_revision_invites,
 };
-pub(crate) use self::feed_move::{FeedMoveOutcome, move_booking_by_feed};
+pub(crate) use self::feed_move::{FeedMoveOutcome, is_booking_event, move_booking_by_feed};
 pub use self::hold_source::VaultActiveHoldSource;
+pub use self::owner_card::BookingOwnerCardRefundMarkedOutside;
+pub use self::owner_card::{
+    BOOKING_CALENDAR_HOLD_ITEM_PREFIX, BOOKING_HELD_DEPOSIT_ITEM_PREFIX,
+    BOOKING_OWNER_CARD_ITEM_PREFIX, BookingDepositHeld, BookingDepositHeldReason,
+    BookingDepositReturned, BookingOwnerCard, BookingOwnerCardCalendarHold,
+    BookingOwnerCardDeposit, BookingOwnerCardEmergencyReturn, BookingOwnerCardOffer,
+    CALENDAR_HOLD_RECONNECT_VERB,
+};
+pub(crate) use self::owner_card::{
+    booking_inbox_row_version_in_txn, booking_owner_card_inbox_items, booking_owner_card_of_item,
+    booking_owner_card_row_of_handle,
+};
 pub use self::token::{
     HoldLeaseSpec, OpaqueCheckoutLeaseToken, OpaqueLifecycleToken, SessionKey, confirm_event_type,
     confirm_hold_taken_at, token_event_type, token_page_ref,
 };
 pub use self::types::{
-    BOOKING_BOOKER_CONTACT_PREDICATE, BOOKING_EVENT_TYPE_REF_PREDICATE, BOOKING_HOLD_META_PREFIX,
-    BOOKING_LIFECYCLE_ATTEMPT_KIND, BOOKING_LIFECYCLE_PREDICATES, BOOKING_PASSPORT_SYSTEM,
-    BOOKING_RECEIPT_META_PREFIX, BOOKING_SOURCE_PAGE_PREDICATE, BOOKING_STATUS_PREDICATE,
-    BOOKING_TOKEN_META_PREFIX, BOOKING_VERBS, BookingBookerContactValue, BookingEventTypeRefValue,
-    BookingLifecycleAttempt, BookingSourcePageValue, BookingStatus, BookingStatusValue,
-    BookingVerb, BookingVerbReceipt, BookingVerbRequest, CalendarRevision, CancelSpec,
-    ConfirmReceipt, ConfirmSpec, DEFAULT_HOLD_TTL_SECS, HoldReceipt, HoldSpec, LifecycleTokenScope,
-    MAX_CHECKOUT_HOLD_TTL_SECS, RescheduleSpec, RevisionReceipt, SoftHoldRow,
+    BOOKING_BOOKER_CONTACT_PREDICATE, BOOKING_CAP_OVERRIDE_PREDICATE,
+    BOOKING_EVENT_TYPE_REF_PREDICATE, BOOKING_HOLD_META_PREFIX, BOOKING_LIFECYCLE_ATTEMPT_KIND,
+    BOOKING_LIFECYCLE_PREDICATES, BOOKING_PASSPORT_SYSTEM, BOOKING_RECEIPT_META_PREFIX,
+    BOOKING_SOURCE_PAGE_PREDICATE, BOOKING_STATUS_PREDICATE, BOOKING_TOKEN_META_PREFIX,
+    BOOKING_VERBS, BookingBookerContactValue, BookingCapOverride, BookingCapOverrideValue,
+    BookingEventTypeRefValue, BookingLifecycleAttempt, BookingSourcePageValue, BookingStatus,
+    BookingStatusValue, BookingVerb, BookingVerbReceipt, BookingVerbRequest, CalendarRevision,
+    CancelSpec, ConfirmReceipt, ConfirmSpec, DEFAULT_HOLD_TTL_SECS, HoldReceipt, HoldSpec,
+    LifecycleTokenScope, MAX_CAP_OVERRIDE_REASON_BYTES, MAX_CHECKOUT_HOLD_TTL_SECS, RescheduleSpec,
+    RevisionReceipt, SoftHoldRow,
 };
 
 pub(crate) use self::confirmation_state::{
     bind_booking_invite_identity_in, booking_invite_identity, booking_invite_identity_in_txn,
     erase_booking_receipt_carriers_in_txn,
 };
+pub(crate) use self::deposit::mark_booking_deposit_refunded_outside;
 pub(super) use self::emergency::{
-    admit_emergency_pick, commit_emergency_item, emergency_current_revision_in,
-    pick_emergency_item, read_emergency_pick,
+    admit_emergency_pick, commit_emergency_item, emergency_action_digest,
+    emergency_current_revision_in, pick_emergency_item, read_emergency_pick,
 };
+// FIX [BK-EMERGENCY-ROWS-NOT-CARRIED-BY-HOME-MOVE]: the emergency writers' home-move fence.
+pub(super) use self::door::holds_booking_rows_in_txn;
 pub(super) use self::storage::booking_writer;
 pub(crate) use self::token::hex_lower;
 pub(super) use self::token::{digest_with, live_hold_in_txn, mint_raw_token};
@@ -199,7 +234,7 @@ mod digest_serde {
         deserializer: D,
     ) -> Result<[u8; 32], D::Error> {
         let hex = String::deserialize(deserializer)?;
-        super::digest_from_hex(&hex)
+        oneiron_hex::decode::<32>(&hex)
             .ok_or_else(|| serde::de::Error::custom("booking digest is not 32 lowercase hex bytes"))
     }
 }
@@ -219,72 +254,15 @@ mod opt_digest_serde {
     ) -> Result<Option<[u8; 32]>, D::Error> {
         match Option::<String>::deserialize(deserializer)? {
             None => Ok(None),
-            Some(hex) => super::digest_from_hex(&hex).map(Some).ok_or_else(|| {
+            Some(hex) => oneiron_hex::decode::<32>(&hex).map(Some).ok_or_else(|| {
                 serde::de::Error::custom("booking digest is not 32 lowercase hex bytes")
             }),
         }
     }
 }
 
-/// Parses exactly 32 lowercase hex bytes.
-fn digest_from_hex(hex: &str) -> Option<[u8; 32]> {
-    if hex.len() != 64 {
-        return None;
-    }
-    let mut out = [0_u8; 32];
-    for (slot, pair) in out.iter_mut().zip(hex.as_bytes().chunks_exact(2)) {
-        let high = hex_nibble(pair[0])?;
-        let low = hex_nibble(pair[1])?;
-        *slot = (high << 4) | low;
-    }
-    Some(out)
-}
-
-const fn hex_nibble(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        _ => None,
-    }
-}
-
-mod entity_ref_serde {
-    use super::{Deserialize, Deserializer, EntityId, Serializer};
-
-    pub(super) fn serialize<S: Serializer>(
-        value: &EntityId,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(&value.to_hex())
-    }
-
-    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<EntityId, D::Error> {
-        let hex = String::deserialize(deserializer)?;
-        EntityId::from_hex(&hex).map_err(serde::de::Error::custom)
-    }
-}
-
-mod entity_refs_serde {
-    use super::{Deserialize, Deserializer, EntityId, Serializer};
-
-    pub(super) fn serialize<S: Serializer>(
-        value: &[EntityId],
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        serializer.collect_seq(value.iter().map(EntityId::to_hex))
-    }
-
-    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<Vec<EntityId>, D::Error> {
-        Vec::<String>::deserialize(deserializer)?
-            .iter()
-            .map(|hex| EntityId::from_hex(hex).map_err(serde::de::Error::custom))
-            .collect()
-    }
-}
+#[doc(hidden)]
+use oneiron_records::booking::lifecycle::{entity_ref_serde, entity_refs_serde};
 
 /// The digest row a lifecycle token resolves through. The token carries no
 /// state; this row is where the EVENT and the permitted action live.
@@ -299,8 +277,9 @@ struct LifecycleTokenRow {
 /// The `booking.token.v1:` prefix carries several row shapes under one flat,
 /// domain-separated digest keyspace (bearer/revision tokens here, checkout
 /// leases as [`CHECKOUT_LEASE`], emergency picks as
-/// `emergency::EMERGENCY_PICK`) — two (here, three) typed tables, one
-/// declaration; the caller always knows which shape a given digest names.
+/// `emergency::EMERGENCY_PICK`, deposits and their booking and provider-event
+/// rows in `deposit`) — several typed tables, one declaration; the caller
+/// always knows which shape a given digest names.
 /// Key: hash32 (the token digest).
 const TOKEN: SideTable<
     [u8; 32],
@@ -308,13 +287,18 @@ const TOKEN: SideTable<
     VersionedNamed<{ types::LIFECYCLE_ROW_VERSION }>,
 > = SideTable::new(&side_table::BOOKING_TOKEN);
 
-/// A server-issued checkout lease, bound to one session.
+/// A server-issued checkout lease, bound to one session and, for a deposit,
+/// to the provider payment the hold waits on (BK-DEPOSITS).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CheckoutLeaseRow {
     #[serde(with = "digest_serde")]
     session_hash: [u8; 32],
     expires_at: u64,
+    /// The key of the deposit this lease's hold waits on. Absent on a lease
+    /// minted with no payment, and on every lease written before deposits.
+    #[serde(default, with = "opt_digest_serde")]
+    deposit_key: Option<[u8; 32]>,
 }
 
 /// Same declaration as [`TOKEN`]; see its doc comment. Key: hash32 (the lease
@@ -393,11 +377,30 @@ struct BookingFacts {
     /// only: a cancel reads it, so a cancel still lands on a booking whose
     /// calendar was cancelled.
     status: BookingStatus,
-    /// Whether a `calendar.status` head on the EVENT says cancelled: the
-    /// booking's own cancel, or a calendar provider's that need not change
+    /// What the `calendar.status` heads on the EVENT say: the booking's own
+    /// cancel, or a calendar provider's that need not change
     /// `booking.status` (FIX 22385).
-    calendar_cancelled: bool,
+    calendar_cancellation: CalendarCancellation,
     context: Option<BookingConfirmationContext>,
+}
+
+/// Whether a booking's `calendar.status` heads say cancelled, and whether a
+/// live VEVENT of a feed ends that cancellation. Ordered, so the strongest
+/// head of an EVENT decides.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum CalendarCancellation {
+    /// No head says cancelled.
+    None,
+    /// Only a feed's omission says cancelled (basis `imported_absence`). The
+    /// next live VEVENT of any source ends it: calendar ingest retracts every
+    /// omission's status of an EVENT a feed reports live, and a booking's
+    /// feed move retracts it in the move's own transaction.
+    Omission,
+    /// A head with any other basis says cancelled: the booking's own cancel,
+    /// an owner's ruling, a provider's cancellation or tombstone. No later
+    /// VEVENT ends it, since ingest never writes `confirmed` back and an
+    /// omission never replaces it.
+    Standing,
 }
 
 impl BookingFacts {
@@ -406,10 +409,10 @@ impl BookingFacts {
     /// cancellation says so. The cap reads the same two heads
     /// (`claim::is_confirmed_booking_in`).
     fn effective_status(&self) -> BookingStatus {
-        if self.calendar_cancelled {
-            BookingStatus::Cancelled
-        } else {
+        if self.calendar_cancellation == CalendarCancellation::None {
             self.status
+        } else {
+            BookingStatus::Cancelled
         }
     }
 }

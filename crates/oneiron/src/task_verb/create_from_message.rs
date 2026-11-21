@@ -52,14 +52,10 @@ impl Memory<'_> {
         // the thread's audience there.
         {
             let lane = self.read_lane(ClaimReadStatus::Recorded)?;
-            let txn = self
-                .vault()
-                .store
-                .env
-                .read_txn()
-                .map_err(crate::Error::from)?;
+            let snapshot = self.lane_snapshot()?;
+            let txn = snapshot.txn();
             if self
-                .get_entity_in_txn(&lane, &txn, source_ref)?
+                .get_entity_in_txn(&lane, txn, snapshot.known(), source_ref)?
                 .value
                 .is_none()
             {

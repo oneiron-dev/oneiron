@@ -9,10 +9,11 @@ The vibe build rules in `AGENTS.md` apply. A change merges as soon as
 comments need no answer. Flag real defects; the author fixes them or puts them on the fix list.
 Do not ask for new tests.
 
-## No backward compatibility
+## Stored data
 
-No vault exists anywhere yet. Formats change freely. Do not ask for migrations, legacy decoders,
-upgrade code, old-format readers or version bumps.
+The stored-data rule in `AGENTS.md` applies. Flag a change that alters what a stored row means,
+or stops it decoding, under an unchanged `STORAGE_ABI_VERSION`. Do not ask for migrations,
+legacy decoders, upgrade code or old-format readers: there are none.
 
 ## What matters most here
 

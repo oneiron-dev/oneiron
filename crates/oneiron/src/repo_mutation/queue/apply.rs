@@ -23,7 +23,7 @@ use super::super::oplog::{
 };
 use super::super::reviewed_stack::StackStep;
 use super::super::snapshot::{SnapshotCustody, capture_repo_snapshot, decode_snapshot};
-use super::super::support::{now_millis, truncate_failure};
+use super::super::support::truncate_failure;
 use super::super::trailer::validate_repo_provenance_request;
 use super::super::types::{
     RepoForkHash, RepoMutationOperation, RepoMutationOutcome, RepoMutationRequest,
@@ -129,7 +129,7 @@ impl Vault {
                     &prepared.oplog,
                     RepoMutationStatus::Applied,
                     None,
-                    now_millis(),
+                    crate::unix_millis_now(),
                 )?;
                 Ok(RepoMutationOutcome {
                     entry,
@@ -148,7 +148,7 @@ impl Vault {
                     &prepared.oplog,
                     RepoMutationStatus::Failed,
                     Some(failure),
-                    now_millis(),
+                    crate::unix_millis_now(),
                 );
                 Err(error)
             }
@@ -205,7 +205,7 @@ impl Vault {
                 &execution,
             )?;
             let repo_key_hash = repo_mutation_repo_key_hash(repo_ref);
-            let started_at_ms = now_millis();
+            let started_at_ms = crate::unix_millis_now();
             let mut wtxn = self.store.env.write_txn()?;
             store_snapshot_if_absent(self, &mut wtxn, fork_hash, &snapshot_bytes)?;
             let seq = allocate_next_repo_mutation_seq(self, &mut wtxn, &repo_key_hash)?;
@@ -275,7 +275,7 @@ impl Vault {
         error: &Error,
     ) -> Result<()> {
         let repo_key_hash = repo_mutation_repo_key_hash(repo_ref);
-        let timestamp = now_millis();
+        let timestamp = crate::unix_millis_now();
         let mut wtxn = self.store.env.write_txn()?;
         store_snapshot_if_absent(self, &mut wtxn, fork_hash, snapshot_bytes)?;
         let seq = allocate_next_repo_mutation_seq(self, &mut wtxn, &repo_key_hash)?;

@@ -7,7 +7,7 @@ use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::outbound_intent_ledger::IntentLedgerError;
 
-use super::{ConnectorCallHost, ConnectorCallOutcome, PENDING_CALLS, PendingConnectorCall, now_ms};
+use super::{ConnectorCallHost, ConnectorCallOutcome, PENDING_CALLS, PendingConnectorCall};
 
 impl PendingConnectorCall {
     /// Lists `rows` among the rows the call's passes picked (FIX 5455),
@@ -64,7 +64,9 @@ impl Vault {
         if let Some(settled) = &pending.settled {
             return Ok((settled.outcome(), pending.source_rows));
         }
-        if let Some(expired) = self.expire_connector_call_if_due(call_ref, &pending, now_ms())? {
+        if let Some(expired) =
+            self.expire_connector_call_if_due(call_ref, &pending, crate::unix_millis_now())?
+        {
             return Ok((expired, pending.source_rows));
         }
         // A sweep-minted row has no trusted presentation context yet:

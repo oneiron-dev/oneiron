@@ -27,7 +27,7 @@ pub(crate) use self::engine_seed_identities::EngineSeedIdentities;
 
 /// `name` of the embedded owner PERSON — the one field the PERSON projection
 /// profile reads at every profile level.
-const EMBEDDED_OWNER_ACTOR_NAME: &str = "Vault owner";
+pub(crate) const EMBEDDED_OWNER_ACTOR_NAME: &str = "Vault owner";
 
 /// The hooks every open door below passes to its store: the one place the
 /// vault names the engine's implementation.
@@ -660,6 +660,7 @@ impl Vault {
             world_keys: Default::default(),
             voice_ref_guard: Default::default(),
             trusted_contact_send_order: Default::default(),
+            import_second_order: Default::default(),
             pending_owner_export_receipts: Default::default(),
             spent_nonces,
             housekeeping: Default::default(),
@@ -675,6 +676,9 @@ impl Vault {
             home_search: Default::default(),
             speculative_passes: Default::default(),
             lfs_read_room: Default::default(),
+            host_text_embedder: Default::default(),
+            #[cfg(feature = "sync")]
+            lfs_release_verdicts: Default::default(),
             host_net_floor: Default::default(),
             proposal_spool: Default::default(),
             sandbox_backends: Default::default(),
@@ -686,6 +690,7 @@ impl Vault {
             code_consent_host: Default::default(),
             managed_owner_check: Default::default(),
             served_transports: Default::default(),
+            one_click_unsubscribe_origin: Default::default(),
             esign_page_inspector: Default::default(),
             xlsx_precision_recalc: Default::default(),
             coach_weave_digest_host: Default::default(),
@@ -694,6 +699,8 @@ impl Vault {
             origin_git_transport: Default::default(),
             #[cfg(any(test, feature = "test-hooks"))]
             slow_retrieval_stage: Default::default(),
+            #[cfg(oneiron_test_support)]
+            test_door_state: Default::default(),
         };
         // A sealed vault (maximum tier) admits the wrap its seal was unlocked with,
         // holds its data key and mirrors its wraps before any caller holds it.
@@ -717,9 +724,17 @@ impl Vault {
         // The companion profile grants by principal and PERSON, for a vault
         // older than their index (ARCH-0044 H424).
         vault.backfill_companion_grant_index(false)?;
+        // The lexical query hints by target, for a vault older than their
+        // index (FIX-LIST row 24676).
+        vault.backfill_lexical_query_hint_index(false)?;
         // The agents owner-agent Grant mints have ever named, for a vault
         // older than their index (PAIR-GRANT-DESIGN Q2 = A).
         crate::federation::backfill_agent_grant_member_index(&vault, false)?;
+        // The PERSON party-key index, for a vault older than it (L6-22).
+        crate::store::person_party_keys::backfill_person_party_key_index(&vault, false)?;
+        // The voice speakers' entries by container, for a vault older than
+        // their index (PLAN-RUN-RESULT-GUARD-SPEAKER-ENTRIES).
+        crate::task_verb::speaker_entry_index::backfill_speaker_entry_index(&vault, false)?;
         vault.backfill_widen_contact_verdict_index(false)?;
         vault.backfill_standing_outbound_grant_index(false)?;
         crate::counterparty_contact::backfill_counterparty_identity_index(&vault, false)?;
@@ -727,6 +742,9 @@ impl Vault {
         vault.backfill_mesh_machine_endpoint_index(false)?;
         vault.backfill_row_deletion_fences_on_open()?;
         vault.backfill_origin_cas_intents_on_open()?;
+        // The campaign.member claims by campaign and query, for a vault older
+        // than their index (ARCH-0044 H202).
+        vault.backfill_campaign_member_index(false)?;
         if matches!(seed_mode, DefaultPolicySeedMode::Required) {
             if seed_content {
                 // The seeded births below stamp the owner's `substrate` FACET,
@@ -760,6 +778,38 @@ impl Vault {
                     "the seeded policy manifest was not upgraded; the vault keeps its own until the next open"
                 ),
             }
+            // The engine pack weighs this build's setting defaults against what the vault
+            // accepted: a tighter one lands, a looser one waits for the owner's yes. A failure
+            // leaves the accepted defaults as they are; the next open tries again.
+            match vault.apply_engine_pack() {
+                Ok(Some(applied)) => tracing::info!(
+                    landed = applied.landed.len(),
+                    moved = applied.moved.len(),
+                    proposed = applied.proposed.len(),
+                    lost = applied.lost.len(),
+                    "the engine pack weighed this build's setting defaults"
+                ),
+                Ok(None) => {}
+                Err(error) => tracing::warn!(
+                    kind = ?error.kind(),
+                    "the engine pack's setting defaults were not weighed; the vault keeps the ones it accepted until the next open"
+                ),
+            }
+            // Setting rows are written again from their signed acts where those moved since the
+            // last pass, or where this build learned a key an act names (stage 7a-2). A failure
+            // leaves the rows as they are; the next authority commit or open tries again.
+            match vault.project_settings() {
+                Ok(projected) if projected.rows_changed > 0 => tracing::info!(
+                    moved = projected.moved,
+                    rows_changed = projected.rows_changed,
+                    "setting rows were written from their signed acts"
+                ),
+                Ok(_) => {}
+                Err(error) => tracing::warn!(
+                    kind = ?error.kind(),
+                    "the setting rows were not projected from their signed acts; the next authority commit or open tries again"
+                ),
+            }
             if seed_content {
                 crate::skill_hub::seed_bootstrap_skills(&vault)?;
                 crate::skill_hub::pack_catalog::seed_builtin_packs(&vault)?;
@@ -769,6 +819,19 @@ impl Vault {
                     .record_hooks
                     .seed_claim_class_descriptors(&vault)?;
                 vault.store.project_writes.seed_root_project(&vault)?;
+                // A vault from before the house voice guide that already
+                // holds a campaign gets its guide here; a new vault gets it
+                // with its first campaign. A failed seed never blocks the
+                // open: unguided campaigns hold their sends, and the next
+                // open tries again.
+                if let Err(error) =
+                    crate::campaign::house_voice_guide::seed_house_voice_guide_at_open(&vault)
+                {
+                    tracing::warn!(
+                        kind = ?error.kind(),
+                        "the house voice guide was not seeded; the next open tries again"
+                    );
+                }
             }
         }
         vault.lfs_chunk_parameters()?;
@@ -788,6 +851,17 @@ impl Vault {
         // room rows gets its row once, room by room, before any reader or
         // window holds this handle; an archived vault is left as it is.
         crate::workspace_roster::backfill_room_turns_on_open(&vault)?;
+        // FIX [BK-EMERGENCY-APOLOGY-BLOB-HOLDS-RAW-PICK-TOKENS]: an emergency apology blob an
+        // earlier build wrote with the booker's raw pick links is released on a node holding
+        // its checkpoint, so its body leaves every machine; a failure leaves it to a later open.
+        if let Err(error) =
+            crate::booking::emergency_reschedule::release_raw_apologies_on_open(&vault)
+        {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "raw emergency apology bodies were not released; a later open tries again"
+            );
+        }
         // Carrier data must still match the local installation head on reopen.
         let _ = vault.pack_byte_map_snapshot()?;
         // The image a restore in this vault's place set aside reads, and
@@ -899,6 +973,28 @@ impl Vault {
         ))
     }
 
+    /// [`Self::live_window`] for a tombstone publication to `key`. With no
+    /// live window, `key` stays held closed until the returned hold drops:
+    /// no open or replacement of it reads the persisted state the publication
+    /// rewrites and then puts back the state from before it
+    /// ([`crate::sync::WindowManager::publication_window`]). Lookup only, as
+    /// [`Self::live_window`] is.
+    #[cfg(feature = "sync")]
+    pub(crate) fn publication_window(
+        &self,
+        key: &crate::window_key::WindowKey,
+    ) -> crate::sync::manager::PublicationWindow {
+        let manager = self
+            .live_window_manager
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .upgrade();
+        match manager {
+            Some(manager) => manager.publication_window(key),
+            None => crate::sync::manager::PublicationWindow::Closed { _hold: None },
+        }
+    }
+
     /// Returns every registry-owned live window without faulting any closed
     /// month into memory. Promotion uses this because a newly unfenced target
     /// can release incident edges whose source belongs to another open month.
@@ -962,9 +1058,9 @@ impl Vault {
     }
 
     /// Shallow-compact `id`'s document row during a sweep. Returns whether the
-    /// compaction ran: an attached manager decides for its own live handles,
-    /// and an attached-but-dropped manager defers rather than rewriting a row a
-    /// live document may still persist over.
+    /// compaction ran: an attached manager compacts under its own live
+    /// handle's writer lock, and an attached-but-dropped manager defers rather
+    /// than rewriting a row a live document may still persist over.
     #[cfg(feature = "sync")]
     pub(crate) fn compact_document_for_sweep(
         &self,
@@ -975,7 +1071,7 @@ impl Vault {
             crate::Error::InvariantViolation("document manager attachment poisoned")
         })?;
         match manager.upgrade() {
-            Some(manager) => manager.compact_closed_document(id, erased),
+            Some(manager) => manager.compact_document_for_sweep(id, erased),
             None if self
                 .live_window_manager_attached
                 .load(std::sync::atomic::Ordering::Acquire) =>

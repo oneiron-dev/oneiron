@@ -68,12 +68,7 @@ pub(super) fn verdict(result: Res<()>) -> StepOutcome {
 }
 
 pub(super) fn sha256_hex(bytes: &[u8]) -> String {
-    let digest: [u8; 32] = sha2::Sha256::digest(bytes).into();
-    let mut out = String::with_capacity(64);
-    for byte in digest {
-        let _ = write!(out, "{byte:02x}");
-    }
-    out
+    oneiron_hex::encode(&sha2::Sha256::digest(bytes))
 }
 
 /// The engine's shipped docedit resource row (`gate::default_manifest`):

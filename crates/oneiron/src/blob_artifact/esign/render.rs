@@ -19,6 +19,10 @@ pub use presentation::{
 mod admitted;
 pub use admitted::InspectionMemory;
 pub use lopdf::DecodeAdmissionError;
+#[cfg(oneiron_test_support)]
+#[doc(hidden)]
+#[path = "../../test_doors/esign_burn.rs"]
+pub mod esign_burn;
 mod evidence;
 mod fields;
 mod preflight;
@@ -468,8 +472,6 @@ impl std::io::Write for BoundedOutput {
     }
 }
 
-// FIX [LIBTEST-QUARANTINE-BLOB-ARTIFACT-ESIGN-RENDER-TESTS]: the lib test target's type check fails here (4 errors: E0063 x4); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 #[path = "render_tests.rs"]
 mod tests;

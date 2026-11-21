@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use oneiron::BudgetLease;
-use oneiron_llm_openai::{
+use oneiron_llm::openai_compat::{
     OpenAiCompatFuture, OpenAiCompatHttpRequest, OpenAiCompatProviderStream,
     OpenAiCompatStreamFrame, OpenAiCompatTransport, OpenAiCompatTransportError,
 };

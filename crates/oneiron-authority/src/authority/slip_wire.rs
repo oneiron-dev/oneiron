@@ -3,6 +3,7 @@ use super::wire_decode::decode_optional_hash;
 use super::*;
 use crate::error::Result;
 use crate::federation::{Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling};
+use oneiron_contracts::msgpack;
 use rmpv::Value;
 use std::collections::BTreeSet;
 
@@ -223,18 +224,15 @@ fn delegation_value(delegation: &SupportDelegation) -> Value {
 }
 
 fn decode_delegation(value: &Value) -> Result<SupportDelegation> {
-    let all = map_entries(value)?;
-    let repairs = optional_values(all, DELEGATION_KEY_REPAIRS);
-    let entries: Vec<(Value, Value)> = all
-        .iter()
-        .filter(|(key, _)| key.as_str() != Some(DELEGATION_KEY_REPAIRS))
-        .cloned()
-        .collect();
-    let entries = entries.as_slice();
-    validate_keys(entries, &SLIP_DELEGATION_KEYS)?;
-    let repairs = match repairs.as_slice() {
-        [] => BTreeSet::new(),
-        [Value::Array(ids)] if !ids.is_empty() => {
+    let checked = msgpack::Entries::of(value)
+        .and_then(|map| map.exact_keys(&SLIP_DELEGATION_KEYS, &[DELEGATION_KEY_REPAIRS]))
+        .map_err(|_| invalid_authority())?;
+    let repairs = match checked
+        .get(DELEGATION_KEY_REPAIRS)
+        .map_err(|_| invalid_authority())?
+    {
+        None => BTreeSet::new(),
+        Some(Value::Array(ids)) if !ids.is_empty() => {
             let mut repairs = BTreeSet::new();
             for id in ids {
                 let repair = id
@@ -247,8 +245,9 @@ fn decode_delegation(value: &Value) -> Result<SupportDelegation> {
             }
             repairs
         }
-        _ => return Err(invalid_authority()),
+        Some(_) => return Err(invalid_authority()),
     };
+    let entries = checked.as_slice();
     let delegation = SupportDelegation {
         purpose: decode_string(required(entries, DELEGATION_KEY_PURPOSE)?)?,
         ticket_ref: decode_optional_string(required(entries, DELEGATION_KEY_TICKET_REF)?)?,
@@ -265,45 +264,26 @@ fn decode_delegation(value: &Value) -> Result<SupportDelegation> {
     Ok(delegation)
 }
 
+/// The slip-mint keys a mint may carry at most once (each optional).
+const SLIP_MINT_OPTIONAL_KEYS: [&str; 6] = [
+    SLIP_KEY_DELEGATION,
+    SLIP_KEY_COMM,
+    SLIP_KEY_RENEWS,
+    SLIP_KEY_TRUSTED_CONTACT,
+    SLIP_KEY_SEAT_CLAIM,
+    SLIP_KEY_MINTING_MEMBER,
+];
+
 pub fn decode_slip_mint(entries: &[(Value, Value)]) -> Result<AuthorityOp> {
     // The support delegation (OF-606), the comm reach (FIX 3899), a
     // renewal's predecessor (FIX 5481), a trusted-contact binding (FIX 4325),
     // a seat claim (FIX 10624) and the minting member (FIX 11713) are the
     // optional keys: each at most once, and every other key exactly as
     // before. A mint signed without one decodes with it absent.
-    let delegations = optional_values(entries, SLIP_KEY_DELEGATION);
-    let comms = optional_values(entries, SLIP_KEY_COMM);
-    let renewals = optional_values(entries, SLIP_KEY_RENEWS);
-    let trusted_contacts = optional_values(entries, SLIP_KEY_TRUSTED_CONTACT);
-    let seat_claims = optional_values(entries, SLIP_KEY_SEAT_CLAIM);
-    let minting_members = optional_values(entries, SLIP_KEY_MINTING_MEMBER);
-    if delegations.len() > 1
-        || comms.len() > 1
-        || renewals.len() > 1
-        || trusted_contacts.len() > 1
-        || seat_claims.len() > 1
-        || minting_members.len() > 1
-    {
-        return Err(invalid_authority());
-    }
-    let base: Vec<(Value, Value)> = entries
-        .iter()
-        .filter(|(key, _)| {
-            !matches!(
-                key.as_str(),
-                Some(
-                    SLIP_KEY_DELEGATION
-                        | SLIP_KEY_COMM
-                        | SLIP_KEY_RENEWS
-                        | SLIP_KEY_TRUSTED_CONTACT
-                        | SLIP_KEY_SEAT_CLAIM
-                        | SLIP_KEY_MINTING_MEMBER
-                )
-            )
-        })
-        .cloned()
-        .collect();
-    validate_keys(&base, &SLIP_MINT_KEYS)?;
+    let checked = msgpack::Entries::new(entries)
+        .exact_keys(&SLIP_MINT_KEYS, &SLIP_MINT_OPTIONAL_KEYS)
+        .map_err(|_| invalid_authority())?;
+    let optional = |key: &str| checked.get(key).map_err(|_| invalid_authority());
     let claims = SlipClaims {
         slip_id: {
             let value = required(entries, SLIP_KEY_SLIP_ID)?;
@@ -373,12 +353,10 @@ pub fn decode_slip_mint(entries: &[(Value, Value)]) -> Result<AuthorityOp> {
             let value = required(entries, SLIP_KEY_SHARE_REF)?;
             decode_optional_string(value)?
         },
-        delegation: delegations
-            .first()
-            .map(|value| decode_delegation(value))
+        delegation: optional(SLIP_KEY_DELEGATION)?
+            .map(decode_delegation)
             .transpose()?,
-        comm: comms
-            .first()
+        comm: optional(SLIP_KEY_COMM)?
             .map(|value| {
                 value
                     .as_str()
@@ -386,35 +364,22 @@ pub fn decode_slip_mint(entries: &[(Value, Value)]) -> Result<AuthorityOp> {
                     .ok_or_else(invalid_authority)
             })
             .transpose()?,
-        trusted_contact: trusted_contacts
-            .first()
-            .map(|value| decode_trusted_contact(value))
+        trusted_contact: optional(SLIP_KEY_TRUSTED_CONTACT)?
+            .map(decode_trusted_contact)
             .transpose()?,
-        seat_claim: seat_claims
-            .first()
-            .map(|value| decode_seat_claim(value))
+        seat_claim: optional(SLIP_KEY_SEAT_CLAIM)?
+            .map(decode_seat_claim)
             .transpose()?,
     };
     let action = SlipMintAction {
         claims,
-        renews: renewals.first().copied().map(decode_hash).transpose()?,
-        minting_member: minting_members
-            .first()
-            .copied()
+        renews: optional(SLIP_KEY_RENEWS)?.map(decode_hash).transpose()?,
+        minting_member: optional(SLIP_KEY_MINTING_MEMBER)?
             .map(decode_id)
             .transpose()?,
     };
     action.validate()?;
     Ok(AuthorityOp::SlipMint(action))
-}
-
-/// Every value `entries` keeps under the optional key `name`.
-fn optional_values<'a>(entries: &'a [(Value, Value)], name: &str) -> Vec<&'a Value> {
-    entries
-        .iter()
-        .filter(|(key, _)| key.as_str() == Some(name))
-        .map(|(_, value)| value)
-        .collect()
 }
 
 fn strings_value(values: &BTreeSet<String>) -> Value {

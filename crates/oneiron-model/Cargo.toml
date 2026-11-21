@@ -13,6 +13,7 @@ doctest = false
 
 [dependencies]
 oneiron-contracts = { version = "0.1.0", path = "../oneiron-contracts" }
+oneiron-hex = { version = "0.1.0", path = "../oneiron-hex" }
 blake3 = { workspace = true }
 futures-core = { workspace = true }
 rmpv = { workspace = true }

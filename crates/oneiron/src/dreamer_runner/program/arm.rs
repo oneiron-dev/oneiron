@@ -94,6 +94,7 @@ pub(crate) fn arm_turn_program_in_txn(
             ProgramTrigger::Timer { first_at, .. } => Some(first_at),
             _ => None,
         },
+        paused_at: None,
     };
     ARM.put(vault, txn, &(actor, arming.registration), &arming)?;
     super::trigger::index_trigger_in_txn(vault, txn, &arming)?;
@@ -141,24 +142,25 @@ pub(crate) fn erase_turn_program_actor_in_txn(
     actor: &EntityId,
 ) -> Result<()> {
     let scope = actor_scope_in_txn(vault, txn, actor)?;
-    // Each arming that decodes leaves its trigger index with it; one that does
-    // not leaves its index row to the next release, which drops it.
-    let mut armed = Vec::new();
-    for row in ARM.iter_raw_from(vault, &*txn, actor.as_bytes())? {
-        let (_, bytes) = row?;
-        if let Ok(arming) = ARM.decode_value(&bytes) {
-            armed.push(arming);
-        }
-    }
-    for arming in &armed {
-        super::trigger::unindex_trigger_in_txn(vault, txn, arming)?;
-    }
+    // The actor's trigger index rows go with its armings, whether or not each
+    // arming decodes: each idle or feed row under its kind's tag, and the
+    // actor's timer row once, so no row lingers past the erase.
+    super::trigger::unindex_actor_triggers_in_txn(vault, txn, *actor)?;
     ARM.delete_from(vault, txn, actor.as_bytes())?;
     DISARMED.delete_from(vault, txn, actor.as_bytes())?;
     for key in &scope.wakes {
         WAKE.delete(vault, txn, key)?;
         super::index::unindex_wake_in_txn(vault, txn, *actor, *key)?;
     }
+    // And each mark and release kept for one of its wakes, with or without
+    // an owed wake here.
+    #[cfg(feature = "sync")]
+    super::retraction::erase_actor_in_txn(vault, txn, actor)?;
+    // And the actor kept beside each decision another machine made of one of
+    // its wakes: no row names the actor past its erase. The decision itself
+    // stays (FIX TURNPROGRAM-ERASE-KEEPS-DECIDED).
+    #[cfg(feature = "sync")]
+    super::index::unindex_actor_decided_in_txn(vault, txn, actor)?;
     scrub_actor_admission_instruments_in_txn(vault, txn, actor)?;
     scrub_actor_step_bodies_in_txn(vault, txn, actor).map(drop)
 }

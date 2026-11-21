@@ -30,9 +30,12 @@
 //! the control plane did not take keeps the row, and the next unlink asks
 //! again. So does a machine removal the roster refused (this install carrying
 //! no live profile to sign the owner's act, for one): the peer's slips are
-//! revoked all the same, and the control plane is still asked. And so do
-//! revokes this install could not sign, holding no slip issuer at the time:
-//! the row keeps the slip and the machine they name for the next unlink.
+//! revoked all the same, and the control plane is still asked. So does a
+//! removal held for the owner's confirmation on an owner device (this install
+//! holding no owner key): it removes the machine once he confirms, and the
+//! next unlink writes no second one while it waits. And so do revokes this
+//! install could not sign, holding no slip issuer at the time: the row keeps
+//! the slip and the machine they name for the next unlink.
 
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::{Mutex, MutexGuard, PoisonError};
@@ -206,6 +209,13 @@ pub(crate) enum MachineRemoval {
     /// profile to sign the owner's act, for one). The peer's slips are
     /// revoked all the same, and the next unlink removes it again.
     Refused { reason: String },
+    /// The removal needed an owner key's proof and this install holds none
+    /// (row CARRIER-OWNER-PROOF): it is stored and held, `answer` is its log
+    /// entry, and it removes the machine once the owner confirms it on an
+    /// owner device. The peer's slips are revoked all the same. The row stays
+    /// owed, and the next unlink reads the machine again; while the held
+    /// removal waits, it writes no second one.
+    Held { answer: String },
 }
 
 /// The unlink's receipt.
@@ -430,10 +440,14 @@ struct RevokedHere {
 }
 
 impl RevokedHere {
-    /// Whether nothing is owed here: a refused machine removal is, and so
-    /// are revokes no slip issuer was here to sign.
+    /// Whether nothing is owed here: a refused or held machine removal is,
+    /// and so are revokes no slip issuer was here to sign.
     const fn settled(&self) -> bool {
-        !self.revokes_owed && !matches!(self.machine_removal, MachineRemoval::Refused { .. })
+        !self.revokes_owed
+            && !matches!(
+                self.machine_removal,
+                MachineRemoval::Refused { .. } | MachineRemoval::Held { .. }
+            )
     }
 }
 
@@ -517,10 +531,11 @@ const fn local_ipv4(ip: Ipv4Addr) -> bool {
 }
 
 /// Removes the peer's machine from the roster, unless a removal already
-/// stands or no revision names it. A refusal that a removal made meanwhile
-/// explains (an unlink at the same time) reads as that removal; any other
-/// refusal is the answer, not an error, so the unlink goes on to the
-/// control plane.
+/// stands, one is held for the owner's confirmation, or no revision names
+/// it. A removal that lands held removes nothing yet. A refusal that a
+/// removal made meanwhile explains (an unlink at the same time) reads as
+/// that removal; any other refusal is the answer, not an error, so the
+/// unlink goes on to the control plane.
 fn remove_machine(
     vault: &oneiron::Vault,
     owner: &AuthenticatedOwner,
@@ -532,8 +547,16 @@ fn remove_machine(
         Some(true) => return Ok(MachineRemoval::AlreadyRemoved),
         Some(false) => {}
     }
+    if let Some(answer) = held_removal(vault, machine)? {
+        return Ok(MachineRemoval::Held { answer });
+    }
     match vault.set_machine_role(owner, surface, machine, MachineRole::Removed, None) {
-        Ok(_) => Ok(MachineRemoval::Removed),
+        Ok(landing) => Ok(match landing.held() {
+            None => MachineRemoval::Removed,
+            Some(answer) => MachineRemoval::Held {
+                answer: oneiron_hex::encode(&answer),
+            },
+        }),
         Err(error) => Ok(
             if machine_removed_in_roster(vault, machine)? == Some(true) {
                 MachineRemoval::AlreadyRemoved
@@ -544,6 +567,22 @@ fn remove_machine(
             },
         ),
     }
+}
+
+/// The log entry of a removal of `machine` that waits held for the owner's
+/// confirmation; `None` when none waits.
+fn held_removal(
+    vault: &oneiron::Vault,
+    machine: oneiron::EntityId,
+) -> oneiron::Result<Option<String>> {
+    Ok(vault
+        .authority_fold()?
+        .held_machine_answers()
+        .get(&machine)
+        .into_iter()
+        .flatten()
+        .find(|(_, answer)| answer.profile.role == MachineRole::Removed)
+        .map(|(entry, _)| oneiron_hex::encode(entry)))
 }
 
 /// Whether the roster holds `machine` removed; `None` when no revision

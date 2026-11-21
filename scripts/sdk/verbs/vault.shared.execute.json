@@ -1,7 +1,7 @@
 {
   "name": "vault.shared.execute",
-  "description": "A live Owner runs a matured shared-vault act and gets its receipt.",
-  "input": "crate::task_verb::sdk::SharedActRequest",
+  "description": "A live Owner runs a matured shared-vault act and gets its receipt; owner_key_revokes carries the rows their device signed for an act that ends owner keys (vault.shared.owner_key_move_sign).",
+  "input": "crate::task_verb::sdk::SharedActExecuteRequest",
   "output": "crate::task_verb::sdk::ActAnswer<crate::task_verb::sdk::SharedActExecuted>",
   "call": "crate::task_verb::sdk::ActAnswer::Done(crate::task_verb::sdk::execute_shared_act(memory.vault(), &memory.embedded_owner(\"vault.shared.execute\")?, None, input)?)",
   "host_door": true,

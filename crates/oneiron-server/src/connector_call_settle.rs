@@ -62,10 +62,6 @@ pub(crate) const CONNECTOR_SETTLE_INTERVAL: Duration = Duration::from_secs(30);
 /// answer's own drive is never raced.
 const BROWSER_WAIT_DRIVE_AFTER: Duration = CONNECTOR_SETTLE_INTERVAL;
 
-/// Paced verb calls' turns one settle pass runs (FIX 8753): one per
-/// principal per round, so one pass serves many principals' heads.
-const PACED_VERB_TURNS_PER_PASS: usize = 64;
-
 /// The longest a call that stays held or undelivered waits between two of
 /// its resumes.
 pub(crate) const CONNECTOR_SETTLE_MAX_BACKOFF: Duration = Duration::from_secs(15 * 60);
@@ -127,6 +123,10 @@ impl SyncServer {
                 tokio::runtime::Handle::current(),
             ),
         ));
+        // This host runs the paced line's turns, in both builds: through the
+        // check above, or each refused at once without one, as before
+        // (DESIGN 15-setting-primitive, stage 5c-2).
+        self.vault().install_paced_verb_turn_runner();
         tokio::spawn(settle_forever(Arc::clone(self), admit))
     }
 }
@@ -186,7 +186,7 @@ fn settle_connector_calls(
     let vault = server.vault();
     // Expiry first, so a call past its deadline settles in this same pass;
     // then the owner asks a hold tried and failed to queue.
-    if let Err(error) = vault.expire_connector_calls(now_ms()) {
+    if let Err(error) = vault.expire_connector_calls(unix_millis_now()) {
         tracing::warn!(%error, "connector call expiry failed");
     }
     if let Err(error) = vault.repair_connector_call_owner_asks() {
@@ -202,8 +202,9 @@ fn settle_connector_calls(
     }
     // Verb calls a budget window paced take their fair turns, each through
     // its own door and Gate again, or end unrun past their deadline (FIX
-    // 8753). Before the connector listing: none of them is a connector call.
-    if let Err(error) = vault.drain_paced_verb_calls(PACED_VERB_TURNS_PER_PASS) {
+    // 8753): the paced line's row, when it is due (stage 5c-2). Before the
+    // connector listing: none of them is a connector call.
+    if let Err(error) = vault.run_due_paced_verb_line() {
         tracing::warn!(%error, "paced verb calls wait for the next pass");
     }
     crate::connector_call_host::resume_exchanges(server, &mut backoffs.1);
@@ -283,7 +284,7 @@ fn settle_connector_calls(
             .map_err(|_| IntentLedgerError::InvalidRecord("connector call reply"))?;
         // The reply rides beside the rows the call's passes picked, kept
         // through every resume (FIX 5455): unknown stays unknown.
-        deliveries.deliver_listing(call.call_ref, &reply, rows.as_deref(), now_ms())?;
+        deliveries.deliver_listing(call.call_ref, &reply, rows.as_deref(), unix_millis_now())?;
         // Its caller stays bound once the row goes, so `connector.call_status`
         // reads the settled wait for that caller and the owner alone.
         vault.ack_connector_call_delivery_keeping_caller(&call.call_ref)?;
@@ -304,7 +305,7 @@ fn settle_approved_browser_waits(server: &SyncServer) -> usize {
     // (so an answer's own drive is not raced) through the same answered
     // pass, which runs the act once.
     let drive_after_ms = BROWSER_WAIT_DRIVE_AFTER.as_secs().saturating_mul(1000);
-    let answered_by_ms = now_ms().saturating_sub(drive_after_ms);
+    let answered_by_ms = unix_millis_now().saturating_sub(drive_after_ms);
     match vault.approved_browser_code_consent_waits(answered_by_ms) {
         Ok(waits) => {
             for wait_id in waits {
@@ -329,4 +330,4 @@ fn settle_approved_browser_waits(server: &SyncServer) -> usize {
     settled
 }
 
-use crate::runtime::wall_clock_ms as now_ms;
+use oneiron_base::unix_millis_now;

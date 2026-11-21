@@ -23,7 +23,7 @@ use crate::code_run::{
 };
 use crate::compaction::output::OutputRef;
 use crate::model_binding::ModelRole;
-use crate::receipt::attempt_pack_receipt_id;
+use crate::receipt::parse_attempt_pack_receipt_id;
 use crate::{EntityId, ModelLocality, Result, Vault};
 
 use super::{ObjectiveFinding, SEALS, SealCheckKind, SealedAttemptReceipt};
@@ -260,7 +260,7 @@ pub fn audit_contract(
     attempt_receipt: &str,
     outcome_receipt: &str,
 ) -> Result<Option<AuditContract>> {
-    let Some(attempt) = pack_receipt_attempt(attempt_receipt) else {
+    let Some(attempt) = parse_attempt_pack_receipt_id(attempt_receipt) else {
         return Ok(None);
     };
     let txn = vault.store.env.read_txn()?;
@@ -269,12 +269,4 @@ pub fn audit_contract(
         .and_then(|stored| stored.audit)
         .map(|audit| audit.contract)
         .filter(|contract| contract.check == outcome_receipt))
-}
-
-/// The attempt a terminal pack receipt id names, when it is exactly one.
-pub(crate) fn pack_receipt_attempt(receipt: &str) -> Option<AttemptId> {
-    let (_, hex) = receipt.rsplit_once(':')?;
-    let entity = EntityId::from_hex(hex).ok()?;
-    let attempt = AttemptId::from_bytes(entity.as_bytes()).ok()?;
-    (attempt_pack_receipt_id(&attempt) == receipt).then_some(attempt)
 }

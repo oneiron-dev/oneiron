@@ -13,19 +13,23 @@ fn run_request(actor: oneiron::EntityId, credential: &str, run_ref: &str) -> Req
     mcp_endpoint_call_request("/mcp", credential, run_ref, "execute_code", args)
 }
 
-/// A run whose guest states `claim` about `subject` in `world`.
+/// A run whose guest states `claim` about `subject` in `world`, citing the
+/// `evidence` TURN a concluded (generated) claim names.
 fn state_in(
+    vault: &oneiron::Vault,
     claim: oneiron::EntityId,
     subject: oneiron::EntityId,
+    evidence: oneiron::EntityId,
     world: oneiron::EntityId,
 ) -> String {
     format!(
-        "await self.memory.claim_upsert({{id: '{}', predicate: 'profile.favorite_drink', \
-         subject_ref: '{}', value: 'sencha', confidence: 1, source: 'user_stated', \
-         world_ref: '{}'}}); finish('stated');",
+        "await vault.claims.upsert({{id: '{}', predicate: 'profile.favorite_drink', \
+         subject_ref: '{}', evidence_turn_refs: ['{}'], value: 'sencha', confidence: 1, \
+         source: 'user_stated', scope: {}}}); finish('stated');",
         claim.to_hex(),
         subject.to_hex(),
-        world.to_hex()
+        evidence.to_hex(),
+        upsert_scope(vault, world)
     )
 }
 
@@ -41,10 +45,7 @@ async fn a_code_run_off_this_device_releases_no_row_its_world_made_device_local(
     let world = seeded_test_entity_id(0x0024_66d3);
     let portable = seeded_test_entity_id(0x0024_66d4);
     let kept = seeded_test_entity_id(0x0024_66d5);
-    let mode = code_mode_server(vec![
-        state_in(portable, subject, world),
-        state_in(kept, subject, world),
-    ]);
+    let mode = code_mode_server(Vec::new());
     for (id, kind) in [
         (subject, oneiron::registry::ENTITY_TYPE_PERSON),
         (world, oneiron::registry::ENTITY_TYPE_WORLD),
@@ -59,6 +60,11 @@ async fn a_code_run_off_this_device_releases_no_row_its_world_made_device_local(
             )
             .unwrap();
     }
+    let evidence = witness_evidence_turn(&mode.vault);
+    mode.backend.scripts.lock().unwrap().extend([
+        state_in(&mode.vault, portable, subject, evidence, world),
+        state_in(&mode.vault, kept, subject, evidence, world),
+    ]);
     let credential = "quickjs-device-local";
     register_mcp_actor(
         &mode.server,
@@ -67,6 +73,9 @@ async fn a_code_run_off_this_device_releases_no_row_its_world_made_device_local(
         oneiron::EdgeActorClass::Human,
     )
     .await;
+    // The upsert's writer reads the PERSON it is about (FIX 1218): else the
+    // run's upsert fails INVENTED_REFERENCE and the step reports facade_error.
+    put_actor_read_grant(&mode.vault, actor, None);
 
     let (_, body) = route_json(
         mode.server.clone(),
@@ -141,7 +150,7 @@ async fn a_code_runs_search_off_this_device_finds_no_device_local_claim() {
     let portable = seeded_test_entity_id(0x0024_66e4);
     let kept = seeded_test_entity_id(0x0024_66e5);
     let mode = code_mode_server(vec![
-        "await self.memory.search({query: 'orchid'}); finish('searched');".to_owned(),
+        "await vault.search({query: 'orchid'}); finish('searched');".to_owned(),
     ]);
     for (id, kind) in [
         (subject, oneiron::registry::ENTITY_TYPE_PERSON),
@@ -165,6 +174,8 @@ async fn a_code_runs_search_off_this_device_finds_no_device_local_claim() {
         oneiron::EdgeActorClass::Human,
     )
     .await;
+    // The claims' writer reads the PERSON they are about (FIX 1218).
+    put_actor_read_grant(&mode.vault, actor, None);
     put_indexed_claim(&mode.vault, actor, portable, subject, None, "orchid lamp");
     put_indexed_claim(
         &mode.vault,
@@ -228,7 +239,6 @@ async fn a_failed_code_run_off_this_device_names_no_device_local_row() {
     let actor = seeded_test_entity_id(0x0024_66f1);
     let subject = seeded_test_entity_id(0x0024_66f2);
     let world = seeded_test_entity_id(0x0024_66f3);
-    let fresh = seeded_test_entity_id(0x0024_66f4);
     let mode = code_mode_server(Vec::new());
     for (id, kind) in [
         (subject, oneiron::registry::ENTITY_TYPE_PERSON),
@@ -252,11 +262,17 @@ async fn a_failed_code_run_off_this_device_names_no_device_local_row() {
         oneiron::EdgeActorClass::Human,
     )
     .await;
+    // The supersession names two claims its writer reads (FIX 1214).
+    put_actor_read_grant(&mode.vault, actor, None);
     let head = put_world_claim(&mode.vault, subject, "profile.favorite_lamp", world);
     let successor = put_world_claim(&mode.vault, subject, "profile.favorite_lantern", world);
+    // The replacement is a live claim too (ONE-1936): the trap guards a NAMED
+    // target, so a fresh id would be refused as invented before the stale
+    // head fails the run.
+    let fresh = put_world_claim(&mode.vault, subject, "profile.favorite_drink", world);
     mode.vault.supersede_claim(&successor, &head, 3).unwrap();
     let script = format!(
-        "try {{ await self.memory.supersede_claim({{oldId: '{}', newId: '{}', now: 5}}); }} \
+        "try {{ await vault.claims.supersede({{oldId: '{}', newId: '{}', now: 5}}); }} \
          catch (error) {{}} finish('');",
         head.to_hex(),
         fresh.to_hex()
@@ -331,12 +347,15 @@ async fn a_replayed_code_run_off_this_device_releases_no_answer_a_device_local_r
     mode.vault
         .put_edge(&holder, oneiron::EdgeKind::About, &about, 1.0)
         .unwrap();
+    // The holder reads the question TURN and the PERSON its answer names
+    // (FIX 9917); the fixture's own grant covers the owner only.
+    put_actor_read_grant(&mode.vault, holder, None);
     let (handle, answered) =
         oneiron::test_support::settle_outcome_ask(&mode.vault, owner, holder, Some("about"))
             .unwrap();
     for offset in [30, 31] {
         let at = answered + offset;
-        let body = oneiron::ClaimBody::new(
+        let mut body = oneiron::ClaimBody::new(
             "outcome.earned",
             oneiron::ClaimSubject::Entity(about),
             rmpv::Value::from("won"),
@@ -345,6 +364,10 @@ async fn a_replayed_code_run_off_this_device_releases_no_answer_a_device_local_r
             oneiron::ClaimLifecycleStatus::Active,
         )
         .unwrap();
+        // A CLAIM is born only under a stored FACET (FIX 7757): the `about`
+        // claim's derived facet names no stored row, so the outcome takes
+        // the vault's default facet.
+        body.scope_facet = mode.vault.default_facet().expect("default facet");
         mode.vault
             .put_claim(
                 &oneiron::EntityId::now(),
@@ -354,8 +377,14 @@ async fn a_replayed_code_run_off_this_device_releases_no_answer_a_device_local_r
             )
             .unwrap();
     }
+    // The asker is no live owner of this vault, so a fact's arrival labels
+    // nothing (FIX OUTCOME-READER-SKIPS-RELATIONSHIP-ACCESS-GATE): a
+    // projection judges both facts under the asker's saved lane, so the
+    // pairs rest on the world-bound claim.
+    oneiron::llm::decision::questions::project_bound_outcomes(&mode.vault, owner, handle.group_ref)
+        .unwrap();
     mode.backend.scripts.lock().unwrap().push_back(format!(
-        "const pairs = await self.memory.tasks.outcomes({{group_ref: '{}'}}); \
+        "const pairs = await tasks.outcomes({{group_ref: '{}'}}); \
          finish(String(pairs.length));",
         handle.group_ref.to_hex()
     ));

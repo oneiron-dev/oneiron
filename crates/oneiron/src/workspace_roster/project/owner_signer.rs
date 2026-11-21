@@ -53,7 +53,8 @@ pub(super) fn owner_signed_at(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<u6
 
 impl Vault {
     /// Signs `next` for the owner at `signed_at`: the owner is revalidated in
-    /// this transaction, and the host signs `next`'s fields as a v3 state over
+    /// this transaction, and the host signs `next`'s fields as a v3 state (v4
+    /// when it carries a room facet set) over
     /// `over`, or, when no signed state precedes it, over `next`'s own
     /// unsigned boundary. The door then lands `next` as history and commits
     /// only once [`Self::require_owner_head_in_txn`] finds it installed.
@@ -78,20 +79,49 @@ impl Vault {
                 proof: None,
             }]
         });
-        let challenge = next.authority_at(ProjectProofVersion::V3).write_challenge(
-            id,
-            ProjectProofVersion::V3,
-            signed_at,
-            &anchor,
-        )?;
+        let version = next.signing_version();
+        let challenge = next
+            .authority_at(version)
+            .write_challenge(id, version, signed_at, &anchor)?;
         next.write_proof = Some(ProjectWriteProof {
             slip_wire: signer.wire().to_owned(),
             holder_signature: signer.sign(&challenge)?,
             signed_at,
             anchor,
-            version: ProjectProofVersion::V3,
+            version,
         });
         Ok(())
+    }
+
+    /// Lands `body`, the owner-signed birth of project `id`, as history: the
+    /// one landing of every owner door that births a project. History lands
+    /// through the replay-shaped admission, which runs neither a live put's
+    /// transition check nor its birth stamp, so this door runs both. A parent
+    /// link to a project whose hard delete has published is refused, and the
+    /// new row takes the birth position a live put's projection stamps, the
+    /// position every agent Grant's read of it is judged against.
+    pub(super) fn land_owner_project_birth_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: EntityId,
+        kind: u8,
+        occurred: TimeRange,
+        learned_at: u64,
+        body: &ProjectRecord,
+    ) -> Result<()> {
+        super::proof::reject_fenced_new_parents(&self.store, txn, &[], &body.parents)?;
+        let bytes = encode(body)?;
+        self.batch_in()
+            .put_engine_history(&id, kind, occurred, learned_at, &bytes)
+            .apply(txn)?;
+        self.store.scope_stamps.stamp_put(
+            &self.store,
+            txn,
+            id,
+            kind,
+            &bytes,
+            crate::batch::row_put::RowPut::Birth,
+        )
     }
 
     /// The owner's act commits only the state it signed as the head the fold

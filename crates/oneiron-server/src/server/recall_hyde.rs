@@ -2,7 +2,7 @@
 //! outside every vault transaction. Completing it never writes vault content.
 use std::collections::BTreeMap;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 mod wait;
 pub(crate) use wait::{spawn_hyde_recall_mpsc, spawn_hyde_recall_oneshot};
@@ -14,6 +14,7 @@ use oneiron::query_expansion::{
 };
 use oneiron::work_line::{LinePermit, TASK_WORK_WAIT, WorkLine};
 use oneiron::{EntityId, Error};
+use oneiron_base::unix_millis_now;
 
 /// Active work and settled completion history are bounded separately, per server instance.
 const HOST_WORK_LIMIT: usize = 1024;
@@ -168,7 +169,7 @@ impl HydeHost {
             .map_err(|_| MemoryError::bad_request("HyDE answer cannot be encoded"))?
             .len();
         let late = work.answer_at.is_some_and(|at| Instant::now() >= at);
-        work.receipt.completed_at_ms = Some(now_ms());
+        work.receipt.completed_at_ms = Some(unix_millis_now());
         work.receipt.received_bytes = received_bytes;
         work.receipt.status = if late {
             HydeHostStatus::DiscardedDeadline
@@ -272,7 +273,7 @@ impl QueuedHyde<'_, '_> {
             }
         }
         let request_id = EntityId::now().to_hex();
-        let requested_at_ms = now_ms();
+        let requested_at_ms = unix_millis_now();
         let deadline_at_ms = self.answer_at.map(|at| {
             requested_at_ms.saturating_add(
                 u64::try_from(at.saturating_duration_since(Instant::now()).as_millis())
@@ -365,14 +366,4 @@ impl HydeExpander for QueuedHyde<'_, '_> {
 
 fn host_error() -> Error {
     Error::InvalidConfig("HyDE host did not supply an answer".to_owned())
-}
-
-fn now_ms() -> u64 {
-    u64::try_from(
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis(),
-    )
-    .unwrap_or(u64::MAX)
 }

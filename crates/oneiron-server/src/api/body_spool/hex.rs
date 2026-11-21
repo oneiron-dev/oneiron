@@ -108,19 +108,10 @@ impl HexFileSink {
     }
 }
 
-/// One hex digit's value; uppercase is not hex here, as in the whole decode.
-fn hex_nibble(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        _ => None,
-    }
-}
-
 impl StringSink for HexFileSink {
     fn write(&mut self, run: &[u8]) -> bool {
         for byte in run {
-            let Some(nibble) = hex_nibble(*byte) else {
+            let Some(nibble) = oneiron_hex::nibble(*byte) else {
                 self.refusal = Some(HexRefusal::InvalidHex);
                 return false;
             };

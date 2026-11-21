@@ -1,0 +1,16 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "oneiron": {
+      "type": "stdio",
+      "command": "oneiron",
+      "args": [
+        "mcp",
+        "--surface",
+        "tool-first",
+        "--credential-file",
+        "${PLUGIN_DATA}/agent.cred"
+      ]
+    }
+  }
+}

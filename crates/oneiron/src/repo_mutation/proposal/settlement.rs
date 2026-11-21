@@ -126,7 +126,7 @@ impl Vault {
         verdicts: &[String],
     ) -> Result<(EntityId, u64)> {
         let receipt = self.store.clock.entity_id()?;
-        let now = super::super::support::now_secs();
+        let now = crate::unix_seconds_now();
         let mut value: Vec<(rmpv::Value, rmpv::Value)> = vec![
             ("proposal".into(), id.to_hex().into()),
             ("actor".into(), actor.to_hex().into()),

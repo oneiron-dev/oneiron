@@ -292,7 +292,7 @@ pub(crate) fn live_grant_covering_effect_in_txn(
     effect: &ExternalEffectGateInput,
     policy: &PolicyManifestResolution,
 ) -> Result<Option<String>> {
-    let (hydrated, _, _) = super::hydrate_external_effect_contact(store, wtxn, effect, policy)?;
+    let hydrated = super::hydrate_external_effect_contact(store, wtxn, effect, policy)?.effect;
     if let Some(grant) =
         standing_outbound_grant_for_effect(store, wtxn, &hydrated, policy, None, None)?
     {

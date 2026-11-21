@@ -43,6 +43,12 @@ use sha2::{Digest, Sha256};
 
 mod support;
 
+// What the hostile organ's evidence modes are handed: one definition, which
+// the organ's bin includes too.
+#[cfg(feature = "hostile-organ-tests")]
+#[path = "support/rogue_evidence.rs"]
+mod rogue_evidence;
+
 use support::GrantAllFloor;
 
 const ORGAN: &str = env!("CARGO_BIN_EXE_oneiron-seal-organ");
@@ -335,6 +341,11 @@ fn ready(dir: &std::path::Path) -> TestResult<Ready> {
     oneiron::test_support::mark_esign_sent(&vault, id, actor, now)?;
     assert!(!vault.esign_document(id)?.ready_to_seal());
     let capability = capabilities.into_iter().next().ok_or("no capability")?.1;
+    // UETA section 10: the signer reviews before they complete.
+    assert!(matches!(
+        vault.execute_signing_action(&capability, &SigningAction::Review, None, None)?,
+        SigningOutcome::Page(_)
+    ));
     assert_eq!(
         vault.execute_signing_action(
             &capability,
@@ -875,8 +886,9 @@ fn a_verdict_whose_report_is_too_large_still_crosses()
 /// `#organ-host-design-seal-binding`), played by `oneiron-seal-rogue`.
 #[cfg(feature = "hostile-organ-tests")]
 mod hostile {
-    use oneiron_organ_protocol::AskCode;
+    use oneiron_organ_protocol::{AskCode, ByteBuf};
 
+    use super::rogue_evidence::EvidenceFixture;
     use super::*;
 
     const ROGUE: &str = env!("CARGO_BIN_EXE_oneiron-seal-rogue");
@@ -1077,6 +1089,692 @@ mod hostile {
         let refused = sealer.seal(&request(), &mut LentInput(&input));
         assert!(unbound(&refused), "{:?}", refused.as_ref().err());
         assert_eq!(keys.signed().len(), 1);
+        Ok(())
+    }
+
+    /// What the evidence tests below share: one PKI under one anchor (a CA,
+    /// a signer and a timestamp authority it issued, the CA's CRL and its
+    /// good OCSP statuses for both), a timestamp authority of the same name
+    /// no anchor reaches, and two forgeries no issuer signed. Synthetic,
+    /// made fresh by rcgen.
+    struct EvidencePki {
+        keys: Keys,
+        anchor: Vec<u8>,
+        fixture: EvidenceFixture,
+        /// A CRL in the CA's name that another key signed.
+        forged_crl: Vec<u8>,
+        /// A good status for the signer from a responder the CA never named.
+        forged_ocsp: Vec<u8>,
+        /// The CA's own good status for the signer.
+        signer_ocsp: Vec<u8>,
+        /// The CA's own good status for the timestamp authority.
+        authority_ocsp: Vec<u8>,
+        /// The CA, which issues what a test adds, and its key.
+        ca: rcgen::CertificateParams,
+        ca_key: rcgen::KeyPair,
+        /// The signer's and the timestamp authority's certificates.
+        signer: Vec<u8>,
+        tsa: Vec<u8>,
+        /// When the PKI was made, in seconds: every window is set from it.
+        now: i64,
+    }
+
+    /// An end-entity certificate's parameters: `name`, `usages`, and the
+    /// CA's CRL distribution point.
+    fn issued_params(
+        name: &str,
+        usages: Vec<rcgen::KeyUsagePurpose>,
+    ) -> TestResult<rcgen::CertificateParams> {
+        let mut params = rcgen::CertificateParams::new(Vec::<String>::new())?;
+        params
+            .distinguished_name
+            .push(rcgen::DnType::CommonName, name);
+        params.key_usages = usages;
+        params.crl_distribution_points = vec![rcgen::CrlDistributionPoint {
+            uris: vec!["http://crl.test/ca.crl".to_owned()],
+        }];
+        Ok(params)
+    }
+
+    /// A timestamp authority's: id-kp-timeStamping, critical and sole
+    /// (RFC 3161 section 2.3).
+    fn time_stamper_params(name: &str) -> TestResult<rcgen::CertificateParams> {
+        let mut params = issued_params(name, vec![rcgen::KeyUsagePurpose::DigitalSignature])?;
+        let mut usage = rcgen::CustomExtension::from_oid_content(
+            &[2, 5, 29, 37],
+            vec![
+                0x30, 0x0a, 0x06, 0x08, 0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x08,
+            ],
+        );
+        usage.set_criticality(true);
+        params.custom_extensions = vec![usage];
+        Ok(params)
+    }
+
+    /// A P-256 key's secret scalar, as the fixture carries it.
+    fn scalar(key: &rcgen::KeyPair) -> TestResult<ByteBuf> {
+        let key = p256::ecdsa::SigningKey::from_pkcs8_der(&key.serialize_der())?;
+        Ok(ByteBuf::from(key.to_bytes().to_vec()))
+    }
+
+    /// Seconds since the epoch as rcgen takes a time.
+    fn offset_time(secs: i64) -> TestResult<time::OffsetDateTime> {
+        Ok(time::OffsetDateTime::from_unix_timestamp(secs)?)
+    }
+
+    fn evidence_pki() -> TestResult<EvidencePki> {
+        evidence_pki_signer_expiring(None)
+    }
+
+    /// The same, the signer's certificate expiring `after` seconds from
+    /// now when given.
+    fn evidence_pki_signer_expiring(after: Option<i64>) -> TestResult<EvidencePki> {
+        use der::Decode;
+        use rcgen::{
+            BasicConstraints, CertificateRevocationListParams, IsCa, Issuer, KeyIdMethod, KeyPair,
+            KeyUsagePurpose,
+        };
+        let now = i64::try_from(unix_seconds_now())?;
+        let ca_key = KeyPair::generate()?;
+        let mut ca = issued_params(
+            "Seal Evidence CA",
+            vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign],
+        )?;
+        ca.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        ca.crl_distribution_points = Vec::new();
+        let anchor = ca.self_signed(&ca_key)?.der().to_vec();
+        let issuer = Issuer::from_params(&ca, &ca_key);
+        let signer_key = KeyPair::generate()?;
+        let mut signer_params = issued_params(
+            "Seal Evidence Signer",
+            vec![KeyUsagePurpose::DigitalSignature],
+        )?;
+        if let Some(after) = after {
+            signer_params.not_after = offset_time(now + after)?;
+        }
+        let signer = signer_params
+            .signed_by(&signer_key, &issuer)?
+            .der()
+            .to_vec();
+        let tsa_key = KeyPair::generate()?;
+        let tsa = time_stamper_params("Seal Evidence TSA")?
+            .signed_by(&tsa_key, &issuer)?
+            .der()
+            .to_vec();
+        let untrusted_key = KeyPair::generate()?;
+        let untrusted = time_stamper_params("Seal Evidence TSA")?
+            .self_signed(&untrusted_key)?
+            .der()
+            .to_vec();
+        let crl = |key: &KeyPair| -> TestResult<Vec<u8>> {
+            let params = CertificateRevocationListParams {
+                this_update: offset_time(now - 3600)?,
+                next_update: offset_time(now + 86_400)?,
+                crl_number: rcgen::SerialNumber::from(1u64),
+                issuing_distribution_point: None,
+                revoked_certs: Vec::new(),
+                key_identifier_method: KeyIdMethod::Sha256,
+            };
+            Ok(params
+                .signed_by(&Issuer::from_params(&ca, key))?
+                .der()
+                .to_vec())
+        };
+        let forger = KeyPair::generate()?;
+        let forged_crl = crl(&forger)?;
+        let ca_crl = crl(&ca_key)?;
+        let keys = Keys {
+            key: p256::ecdsa::SigningKey::from_pkcs8_der(&signer_key.serialize_der())?,
+            cert: signer.clone(),
+            chain: Vec::new(),
+            signed: Mutex::new(Vec::new()),
+        };
+        let by_key = x509_ocsp::ResponderId::ByKey(der::asn1::OctetString::new([0x5a; 20])?);
+        let by_name = x509_ocsp::ResponderId::ByName(
+            x509_cert::Certificate::from_der(&anchor)?
+                .tbs_certificate
+                .subject,
+        );
+        Ok(EvidencePki {
+            forged_ocsp: ocsp_response(&signer, &anchor, &forger, by_key, now)?,
+            signer_ocsp: ocsp_response(&signer, &anchor, &ca_key, by_name.clone(), now)?,
+            authority_ocsp: ocsp_response(&tsa, &anchor, &ca_key, by_name, now)?,
+            forged_crl,
+            fixture: EvidenceFixture {
+                tsa_key: scalar(&tsa_key)?,
+                tsa_certificate: ByteBuf::from(tsa.clone()),
+                untrusted_tsa_key: scalar(&untrusted_key)?,
+                untrusted_tsa_certificate: ByteBuf::from(untrusted),
+                crl: ByteBuf::from(ca_crl),
+                dss_certificates: vec![ByteBuf::from(signer.clone()), ByteBuf::from(tsa.clone())],
+                ..EvidenceFixture::default()
+            },
+            keys,
+            anchor,
+            ca,
+            ca_key,
+            signer,
+            tsa,
+            now,
+        })
+    }
+
+    /// The responder ID that names `certificate` by its subject.
+    fn named_by(certificate: &[u8]) -> TestResult<x509_ocsp::ResponderId> {
+        use der::Decode;
+        Ok(x509_ocsp::ResponderId::ByName(
+            x509_cert::Certificate::from_der(certificate)?
+                .tbs_certificate
+                .subject,
+        ))
+    }
+
+    /// A responder the CA delegated its OCSP to (RFC 6960 section 4.2.2.2:
+    /// the CA issued it, with id-kp-OCSPSigning and digitalSignature), its
+    /// certificate valid from `not_before` to `not_after`: its key and
+    /// certificate.
+    fn delegated_responder(
+        pki: &EvidencePki,
+        not_before: i64,
+        not_after: i64,
+    ) -> TestResult<(rcgen::KeyPair, Vec<u8>)> {
+        let key = rcgen::KeyPair::generate()?;
+        let mut params = issued_params(
+            "Seal Evidence OCSP Responder",
+            vec![rcgen::KeyUsagePurpose::DigitalSignature],
+        )?;
+        params.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::OcspSigning];
+        params.not_before = offset_time(not_before)?;
+        params.not_after = offset_time(not_after)?;
+        let certificate = params
+            .signed_by(&key, &rcgen::Issuer::from_params(&pki.ca, &pki.ca_key))?
+            .der()
+            .to_vec();
+        Ok((key, certificate))
+    }
+
+    /// When an OCSP response says it was produced, and its one status's
+    /// window, in seconds.
+    #[derive(Clone, Copy)]
+    struct OcspTimes {
+        produced_at: i64,
+        this_update: i64,
+        next_update: i64,
+    }
+
+    impl OcspTimes {
+        /// Produced a minute ago, fresh from then for a day.
+        fn usual(now: i64) -> Self {
+            Self {
+                produced_at: now - 60,
+                this_update: now - 60,
+                next_update: now + 86_400,
+            }
+        }
+    }
+
+    /// An OCSPResponse saying `subject`, issued by `issuer`, is good, signed
+    /// by `responder` (the issuer's own key, or one it never delegated) under
+    /// `responder_id`.
+    fn ocsp_response(
+        subject: &[u8],
+        issuer: &[u8],
+        responder: &rcgen::KeyPair,
+        responder_id: x509_ocsp::ResponderId,
+        now: i64,
+    ) -> TestResult<Vec<u8>> {
+        ocsp_response_at(
+            subject,
+            issuer,
+            responder,
+            responder_id,
+            OcspTimes::usual(now),
+            Vec::new(),
+        )
+    }
+
+    /// The same at `times`, carrying `certs` (a delegated responder's
+    /// certificate), which its signature does not cover.
+    fn ocsp_response_at(
+        subject: &[u8],
+        issuer: &[u8],
+        responder: &rcgen::KeyPair,
+        responder_id: x509_ocsp::ResponderId,
+        times: OcspTimes,
+        certs: Vec<Vec<u8>>,
+    ) -> TestResult<Vec<u8>> {
+        use der::asn1::{BitString, GeneralizedTime, ObjectIdentifier, OctetString};
+        use der::{Decode, Encode};
+        use p256::ecdsa::signature::Signer;
+        use x509_cert::spki::AlgorithmIdentifierOwned;
+        let subject = x509_cert::Certificate::from_der(subject)?;
+        let issuer = x509_cert::Certificate::from_der(issuer)?;
+        let at = |secs: i64| -> TestResult<x509_ocsp::OcspGeneralizedTime> {
+            Ok(x509_ocsp::OcspGeneralizedTime(
+                GeneralizedTime::from_unix_duration(std::time::Duration::from_secs(
+                    u64::try_from(secs)?,
+                ))?,
+            ))
+        };
+        let data = x509_ocsp::ResponseData {
+            version: x509_ocsp::Version::V1,
+            responder_id,
+            produced_at: at(times.produced_at)?,
+            responses: vec![x509_ocsp::SingleResponse {
+                cert_id: x509_ocsp::CertId {
+                    hash_algorithm: AlgorithmIdentifierOwned {
+                        oid: ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.2.1"),
+                        parameters: None,
+                    },
+                    issuer_name_hash: OctetString::new(
+                        Sha256::digest(issuer.tbs_certificate.subject.to_der()?).to_vec(),
+                    )?,
+                    issuer_key_hash: OctetString::new(
+                        Sha256::digest(
+                            issuer
+                                .tbs_certificate
+                                .subject_public_key_info
+                                .subject_public_key
+                                .raw_bytes(),
+                        )
+                        .to_vec(),
+                    )?,
+                    serial_number: subject.tbs_certificate.serial_number.clone(),
+                },
+                cert_status: x509_ocsp::CertStatus::good(),
+                this_update: at(times.this_update)?,
+                next_update: Some(at(times.next_update)?),
+                single_extensions: None,
+            }],
+            response_extensions: None,
+        };
+        let key = p256::ecdsa::SigningKey::from_pkcs8_der(&responder.serialize_der())?;
+        let signature: p256::ecdsa::Signature = key.sign(&data.to_der()?);
+        let basic = x509_ocsp::BasicOcspResponse {
+            tbs_response_data: data,
+            signature_algorithm: AlgorithmIdentifierOwned {
+                oid: ObjectIdentifier::new_unwrap("1.2.840.10045.4.3.2"),
+                parameters: None,
+            },
+            signature: BitString::from_bytes(signature.to_der().as_bytes())?,
+            certs: if certs.is_empty() {
+                None
+            } else {
+                Some(
+                    certs
+                        .iter()
+                        .map(|der| x509_cert::Certificate::from_der(der))
+                        .collect::<Result<_, _>>()?,
+                )
+            },
+        };
+        Ok(x509_ocsp::OcspResponse {
+            response_status: x509_ocsp::OcspResponseStatus::Successful,
+            response_bytes: Some(x509_ocsp::ResponseBytes {
+                response_type: ObjectIdentifier::new_unwrap("1.3.6.1.5.5.7.48.1.1"),
+                response: OctetString::new(basic.to_der()?)?,
+            }),
+        }
+        .to_der()?)
+    }
+
+    /// The hostile organ in an evidence mode, with its fixture.
+    fn evidence_host(mode: &str, fixture: &EvidenceFixture) -> TestResult<OrganHost> {
+        let hex: String = rmp_serde::to_vec_named(fixture)?
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        let host = OrganHost::with_floor(HostConfig::default(), Arc::new(GrantAllFloor));
+        let mut spec = seal_spec(ROGUE, FetchGrant::default());
+        spec.args = vec![mode.into(), "schema-2".into(), hex.into()];
+        host.install(spec);
+        Ok(host)
+    }
+
+    /// One direct seal of the fixture PDF at `profile` through the host,
+    /// with the evidence PKI's key and anchor.
+    fn seal_evidence(
+        pki: &EvidencePki,
+        mode: &str,
+        profile: SealProfile,
+    ) -> TestResult<Result<EsignSealed, EsignSealError>> {
+        let host = evidence_host(mode, &pki.fixture)?;
+        let dir = tempfile::tempdir()?;
+        let vault = Vault::open(dir.path(), VaultConfig::device())?;
+        let settings = SealSettings::new(vec![pki.anchor.clone()], "seal");
+        let sealer = HostedSealer::new(&host, &vault, &pki.keys, settings);
+        let input = EsignSealInput::new(ORIGINAL.to_vec(), "op", 0)?;
+        let request = EsignSealRequest {
+            operation_id: "op".to_owned(),
+            profile,
+        };
+        Ok(sealer.seal(&request, &mut LentInput(&input)))
+    }
+
+    /// Whether the seal was left retryable at the host's evidence check,
+    /// with `expected` as its code.
+    fn unproven(result: &Result<EsignSealed, EsignSealError>, expected: &str) -> bool {
+        matches!(
+            result,
+            Err(EsignSealError::Sealer(EsignSealerError::Retryable { stage, code, .. }))
+                if stage == "evidence" && code == expected
+        )
+    }
+
+    /// The organ seals for real at B-T, appends a DSS whose one CRL another
+    /// key signed in the CA's name, claims B-LT, and its verifier passes it.
+    /// The host proves the validation data itself (ARCH-0075
+    /// `#organ-host-design-seal-residual`), finds no evidence for the
+    /// signer, and leaves the seal retryable (ARCH-0064a SGN-04): no sealed
+    /// document, the document still pending.
+    #[test]
+    fn validation_data_with_an_untrusted_crl_leaves_the_seal_retryable() -> TestResult {
+        let mut pki = evidence_pki()?;
+        pki.fixture.dss_crls = vec![ByteBuf::from(pki.forged_crl.clone())];
+        let host = evidence_host("dss-untrusted-crl", &pki.fixture)?;
+        let dir = tempfile::tempdir()?;
+        let ready = ready(dir.path())?;
+        let vault = &ready.vault;
+        let settings = SealSettings::new(vec![pki.anchor.clone()], "seal");
+        let sealer = HostedSealer::new(&host, vault, &pki.keys, settings);
+        let attempt = claim(vault, "seal-test")?;
+        let refused =
+            vault.seal_esign_attempt(&attempt, &sealer, SealProfile::BaselineLt, &ready.url);
+        assert!(
+            matches!(
+                &refused,
+                Err(EsignSealError::Sealer(EsignSealerError::Retryable { stage, code, .. }))
+                    if stage == "evidence" && code == "validation_data_unproven"
+            ),
+            "{refused:?}"
+        );
+        assert!(vault.sealed_esign_document(ready.id)?.is_none());
+        assert_eq!(
+            vault.esign_document(ready.id)?.status,
+            DocumentStatus::Pending
+        );
+        Ok(())
+    }
+
+    /// The same with a good OCSP status for the signer that a responder the
+    /// CA never named signed; the authority's status is the CA's own, so the
+    /// signer's is the one thing missing.
+    #[test]
+    fn validation_data_with_an_untrusted_ocsp_leaves_the_seal_retryable() -> TestResult {
+        let mut pki = evidence_pki()?;
+        pki.fixture.dss_ocsps = vec![
+            ByteBuf::from(pki.forged_ocsp.clone()),
+            ByteBuf::from(pki.authority_ocsp.clone()),
+        ];
+        let result = seal_evidence(&pki, "dss-untrusted-ocsp", SealProfile::BaselineLt)?;
+        assert!(
+            unproven(&result, "validation_data_unproven"),
+            "{:?}",
+            result.as_ref().err()
+        );
+        Ok(())
+    }
+
+    /// A B-LT claim over a DSS that holds the certificates and no CRL or
+    /// OCSP response at all (ARCH-0064a: B-LT is complete certificate and
+    /// revocation material).
+    #[test]
+    fn an_lt_claim_without_revocation_for_the_signer_chain_leaves_the_seal_retryable() -> TestResult
+    {
+        let pki = evidence_pki()?;
+        let result = seal_evidence(&pki, "dss-no-revocation", SealProfile::BaselineLt)?;
+        assert!(
+            unproven(&result, "validation_data_unproven"),
+            "{:?}",
+            result.as_ref().err()
+        );
+        Ok(())
+    }
+
+    /// The organ seals for real at B-LTA, then puts the signature's own
+    /// CMS, a SignedData that is no TSTInfo, in the document timestamp's
+    /// hole; its verifier says the timestamp passed. The host checks the
+    /// token itself (RFC 3161) and leaves the seal retryable.
+    #[test]
+    fn a_document_timestamp_that_proves_nothing_leaves_the_seal_retryable() -> TestResult {
+        let pki = evidence_pki()?;
+        let result = seal_evidence(&pki, "doc-timestamp-forged", SealProfile::BaselineLta)?;
+        assert!(
+            unproven(&result, "document_timestamp_unproven"),
+            "{:?}",
+            result.as_ref().err()
+        );
+        Ok(())
+    }
+
+    /// The organ seals for real at B-LT, then appends a revision whose only
+    /// object holds a hole no signature field names, fills it with a genuine
+    /// token from the anchor's own authority over every other byte, and its
+    /// verifier names that hole a passed document timestamp and claims
+    /// B-LTA. A token is a document timestamp only as the value of a
+    /// `/DocTimeStamp` signature field: the host leaves the seal retryable.
+    #[test]
+    fn a_timestamp_no_signature_field_names_leaves_the_seal_retryable() -> TestResult {
+        let pki = evidence_pki()?;
+        let result = seal_evidence(&pki, "doc-timestamp-unfielded", SealProfile::BaselineLta)?;
+        assert!(
+            unproven(&result, "document_timestamp_unproven"),
+            "{:?}",
+            result.as_ref().err()
+        );
+        Ok(())
+    }
+
+    /// The same genuine token, now the `/Contents` of a well-formed
+    /// `/DocTimeStamp` dictionary that is the `/V` of a field under a
+    /// signature field, whose own `/FT`, by reference, is `/Tx`. A field's
+    /// own type overrides its parent's (ISO 32000-2 §12.7.4.1): that is a
+    /// text field's value, no document timestamp, and the host leaves the
+    /// seal retryable.
+    #[test]
+    fn a_timestamp_in_a_text_field_leaves_the_seal_retryable() -> TestResult {
+        let pki = evidence_pki()?;
+        let result = seal_evidence(&pki, "doc-timestamp-text-field", SealProfile::BaselineLta)?;
+        assert!(
+            unproven(&result, "document_timestamp_unproven"),
+            "{:?}",
+            result.as_ref().err()
+        );
+        Ok(())
+    }
+
+    /// The organ seals for real at B-T, then swaps the signature timestamp
+    /// for a well-formed token over the right imprint from an authority of
+    /// the same name that no anchor reaches. The binding compares no
+    /// unsigned attribute; the host's own token check refuses it.
+    #[test]
+    fn a_forged_signature_timestamp_leaves_the_seal_retryable() -> TestResult {
+        let pki = evidence_pki()?;
+        let result = seal_evidence(&pki, "timestamp-forged", SealProfile::BaselineT)?;
+        assert!(
+            unproven(&result, "signature_timestamp_unproven"),
+            "{:?}",
+            result.as_ref().err()
+        );
+        Ok(())
+    }
+
+    /// The guard: an honest organ's B-LT and B-LTA seals over the issued
+    /// chain, with the anchor's own CRL and authority, are admitted as
+    /// claimed.
+    #[test]
+    fn validation_data_for_the_issued_chain_is_admitted_at_lt_and_lta() -> TestResult {
+        let pki = evidence_pki()?;
+        for profile in [SealProfile::BaselineLt, SealProfile::BaselineLta] {
+            let sealed = seal_evidence(&pki, "dss-honest", profile)?
+                .map_err(|err| format!("{profile:?}: {err:?}"))?;
+            assert_eq!(sealed.achieved, profile);
+        }
+        Ok(())
+    }
+
+    /// The guard for OCSP: a DSS whose revocation evidence is the CA's own
+    /// OCSP statuses for the signer and the authority is admitted at B-LT.
+    #[test]
+    fn validation_data_with_the_issuer_ocsp_statuses_is_admitted_at_lt() -> TestResult {
+        let mut pki = evidence_pki()?;
+        pki.fixture.dss_ocsps = vec![
+            ByteBuf::from(pki.signer_ocsp.clone()),
+            ByteBuf::from(pki.authority_ocsp.clone()),
+        ];
+        let sealed = seal_evidence(&pki, "dss-appended", SealProfile::BaselineLt)?
+            .map_err(|err| format!("{err:?}"))?;
+        assert_eq!(sealed.achieved, SealProfile::BaselineLt);
+        Ok(())
+    }
+
+    /// Sol review 2 R1 ([SEAL-EVIDENCE-OCSP-CLOCKS]): the CA's own good
+    /// statuses for the signer and the authority, fresh at the material's
+    /// time (now, at B-LT) and produced 200 s later, past their nextUpdate:
+    /// a responder clock running ahead within the organ's 300 s. The organ
+    /// weighs the status at the material's time and producedAt apart, and
+    /// so does the host: the seal is admitted at B-LT.
+    #[test]
+    fn an_ocsp_status_fresh_at_the_material_time_is_admitted_though_produced_after_it() -> TestResult
+    {
+        let mut pki = evidence_pki()?;
+        let times = OcspTimes {
+            produced_at: pki.now + 200,
+            this_update: pki.now - 600,
+            next_update: pki.now + 120,
+        };
+        let mut statuses = Vec::new();
+        for subject in [&pki.signer, &pki.tsa] {
+            statuses.push(ByteBuf::from(ocsp_response_at(
+                subject,
+                &pki.anchor,
+                &pki.ca_key,
+                named_by(&pki.anchor)?,
+                times,
+                Vec::new(),
+            )?));
+        }
+        pki.fixture.dss_ocsps = statuses;
+        let sealed = seal_evidence(&pki, "dss-appended", SealProfile::BaselineLt)?
+            .map_err(|err| format!("{err:?}"))?;
+        assert_eq!(sealed.achieved, SealProfile::BaselineLt);
+        Ok(())
+    }
+
+    /// Sol review 2 R3: the signer's good status from a responder the CA
+    /// delegated to, whose certificate is valid only from 150 s after the
+    /// material's time, in a response produced 200 s after it. A delegation
+    /// rides its certificate, and the organ checks a delegate at the
+    /// material's time (pkix checks it at producedAt): the host does the
+    /// same, the status vouches for nothing, and the seal stays retryable.
+    #[test]
+    fn an_ocsp_delegate_not_yet_valid_at_the_material_time_leaves_the_seal_retryable() -> TestResult
+    {
+        let mut pki = evidence_pki()?;
+        let (key, delegate) = delegated_responder(&pki, pki.now + 150, pki.now + 86_400)?;
+        let times = OcspTimes {
+            produced_at: pki.now + 200,
+            this_update: pki.now - 600,
+            next_update: pki.now + 86_400,
+        };
+        let signer_status = ocsp_response_at(
+            &pki.signer,
+            &pki.anchor,
+            &key,
+            named_by(&delegate)?,
+            times,
+            vec![delegate],
+        )?;
+        pki.fixture.dss_ocsps = vec![
+            ByteBuf::from(signer_status),
+            ByteBuf::from(pki.authority_ocsp.clone()),
+        ];
+        let result = seal_evidence(&pki, "dss-appended", SealProfile::BaselineLt)?;
+        assert!(
+            unproven(&result, "validation_data_unproven"),
+            "{:?}",
+            result.as_ref().err()
+        );
+        Ok(())
+    }
+
+    /// The other side of that boundary: a delegate valid at the material's
+    /// time whose certificate expired 100 s later, before the response's
+    /// producedAt (200 s after it). The organ takes its status at the
+    /// material's time, and so does the host: admitted at B-LT.
+    #[test]
+    fn an_ocsp_delegate_valid_at_the_material_time_is_admitted_though_expired_when_it_produced()
+    -> TestResult {
+        let mut pki = evidence_pki()?;
+        let (key, delegate) = delegated_responder(&pki, pki.now - 3600, pki.now + 100)?;
+        let times = OcspTimes {
+            produced_at: pki.now + 200,
+            this_update: pki.now - 600,
+            next_update: pki.now + 86_400,
+        };
+        let signer_status = ocsp_response_at(
+            &pki.signer,
+            &pki.anchor,
+            &key,
+            named_by(&delegate)?,
+            times,
+            vec![delegate],
+        )?;
+        pki.fixture.dss_ocsps = vec![
+            ByteBuf::from(signer_status),
+            ByteBuf::from(pki.authority_ocsp.clone()),
+        ];
+        let sealed = seal_evidence(&pki, "dss-appended", SealProfile::BaselineLt)?
+            .map_err(|err| format!("{err:?}"))?;
+        assert_eq!(sealed.achieved, SealProfile::BaselineLt);
+        Ok(())
+    }
+
+    /// Sol review 2 F7 ([SEAL-EVIDENCE-PATH-TIME-BOUNDARIES]): the
+    /// authority's clock runs 290 s ahead for the signature timestamp only
+    /// (within the organ's 300 s), and the signer's certificate expires
+    /// 200 s from now. The document timestamp, at now, proves the signature
+    /// existed while that certificate was valid. The organ validates the
+    /// signer at its earliest proof (signer_validation_time), and so does
+    /// the host: the seal is admitted at B-LTA.
+    #[test]
+    fn a_signer_valid_when_a_document_timestamp_proves_its_signature_is_admitted_at_lta()
+    -> TestResult {
+        let mut pki = evidence_pki_signer_expiring(Some(200))?;
+        pki.fixture.token_delays_secs = vec![290];
+        let sealed = seal_evidence(&pki, "dss-honest", SealProfile::BaselineLta)?
+            .map_err(|err| format!("{err:?}"))?;
+        assert_eq!(sealed.achieved, SealProfile::BaselineLta);
+        Ok(())
+    }
+
+    /// Sol review 2 F6: the first archival request fails over from the
+    /// signature's authority to a second one, whose token the engine drops
+    /// once its chain is in the DSS, and the first authority's fresh token
+    /// comes 200 s ahead, after the second authority's certificate expired
+    /// (100 s from now). A verifier holds every DSS certificate to a path
+    /// valid at the material's time, so the engine rebuilds the DSS without
+    /// what only the abandoned token needed: admitted at B-LTA.
+    #[test]
+    fn an_archival_failover_leaves_no_abandoned_authority_in_the_dss() -> TestResult {
+        let mut pki = evidence_pki()?;
+        let key = rcgen::KeyPair::generate()?;
+        let mut params = time_stamper_params("Seal Evidence TSA 2")?;
+        params.not_after = offset_time(pki.now + 100)?;
+        let second = params
+            .signed_by(&key, &rcgen::Issuer::from_params(&pki.ca, &pki.ca_key))?
+            .der()
+            .to_vec();
+        pki.fixture.second_tsa_key = scalar(&key)?;
+        pki.fixture.second_tsa_certificate = ByteBuf::from(second);
+        // Request 0 is the signature timestamp, 1 the first archival one,
+        // which the first authority fails, 2 the second authority's, and 3
+        // the first's again, 200 s ahead.
+        pki.fixture.first_authority_unavailable = vec![1];
+        pki.fixture.token_delays_secs = vec![0, 0, 0, 200];
+        let sealed = seal_evidence(&pki, "dss-honest", SealProfile::BaselineLta)?
+            .map_err(|err| format!("{err:?}"))?;
+        assert_eq!(sealed.achieved, SealProfile::BaselineLta);
         Ok(())
     }
 }

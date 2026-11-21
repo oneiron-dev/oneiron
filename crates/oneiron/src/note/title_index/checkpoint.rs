@@ -20,9 +20,16 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::side_table::{HexId, SideKey};
 use crate::store::ManifestDbs;
+use crate::store::checkpoint_payload::rows::descriptor::{AdapterTable, CapturedByAdapter};
 use crate::store::checkpoint_payload::rows::{
     self, ActorPart, Captured, OwnerRef, RowLocator, RowPart, Unresolved,
 };
+
+/// The title reservations, which NOTE's own capture places ([`capture`]).
+pub(crate) const RESERVATION_TABLE: &dyn AdapterTable = &CapturedByAdapter(TITLE_RESERVATION);
+
+/// The reverse title rows, which NOTE's own capture places ([`capture`]).
+pub(crate) const BY_NOTE_TABLE: &dyn AdapterTable = &CapturedByAdapter(TITLE_BY_NOTE);
 
 /// The field a title row's author part fills, with the author's 16 id bytes.
 const AUTHOR: &str = "author";
@@ -47,10 +54,8 @@ fn author_of(key: &[u8]) -> Option<EntityId> {
 /// Whether `digest` is a title digest as the live index spells it: 64
 /// lower-case hex characters.
 fn is_digest(digest: &[u8]) -> bool {
-    digest.len() == DIGEST_HEX_LEN
-        && digest
-            .iter()
-            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+    std::str::from_utf8(digest)
+        .is_ok_and(|text| oneiron_hex::is_lower_hex(text, Some(DIGEST_HEX_LEN)))
 }
 
 /// A reservation key's author and digest, each in the one spelling the live

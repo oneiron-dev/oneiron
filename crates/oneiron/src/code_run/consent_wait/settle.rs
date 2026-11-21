@@ -5,6 +5,8 @@
 //! run in one commit. The answer, the settlement and the run's consumption
 //! of the reply (1b) stay three separate facts.
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use crate::Vault;
 use crate::code_run::ConnectorCallReply;
 use crate::consent::{
@@ -33,15 +35,6 @@ pub(crate) const CODE_WAIT_HOST_UNBOUND: &str = "code_wait_host_unbound";
 pub(crate) const CODE_WAIT_DENIED: &str = "code_wait_denied";
 
 pub(crate) use crate::consent::code_wait_state::CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED;
-
-/// The wall clock, in unix ms, as the connector call's own rows keep it.
-pub(crate) fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| {
-            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
-        })
-}
 
 enum CodeConsentAnswerer {
     Owner(EntityId),
@@ -418,7 +411,7 @@ fn answer_in_txn(
             grant_ref: attribution.grant_ref,
             policy: attribution.policy,
         }),
-        answered_at_ms: now_ms(),
+        answered_at_ms: crate::unix_millis_now(),
     });
     put_code_consent_wait_in_txn(
         vault,
@@ -711,12 +704,12 @@ pub(super) fn settle_with_reply_in_txn(
     rows: Option<&[EntityId]>,
 ) -> Result<bool> {
     let wait_id = row.binding.wait_id;
-    let now = now_ms();
+    let now = crate::unix_millis_now();
     crate::code_run::deliver_wait_listing_in_txn(vault, txn, wait_id, reply, rows, None, now)?;
     let delivered = crate::code_run::settled_wait_reply_in_txn(vault, txn, wait_id)?.ok_or(
         Error::InvariantViolation("a settled code consent wait kept no reply"),
     )?;
-    let reply_digest = *blake3::hash(delivered.as_bytes()).as_bytes();
+    let reply_digest = *ContentHash::of(delivered.as_bytes()).as_bytes();
     let external_reply = row.binding.pending.connector_call().is_some()
         && matches!(
             serde_json::from_str::<ConnectorCallReply>(&delivered),
