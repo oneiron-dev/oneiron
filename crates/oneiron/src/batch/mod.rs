@@ -70,6 +70,7 @@ pub(crate) use self::vad_postcommit::queue_settled_tasks;
 #[cfg(feature = "sync")]
 pub(crate) use self::vad_postcommit::queue_task_updates;
 pub(crate) use self::vad_postcommit::queue_verb_hook_ask_change;
+pub(crate) use self::vad_postcommit::savepoint_in_txn;
 
 pub(crate) use self::authority_log::{
     validate_replicated_authority_log_beside_for_local_vault,
@@ -83,8 +84,8 @@ pub(crate) use self::base_apply::{
 pub(crate) use self::builder::BatchOp;
 pub(crate) use self::claim_materialization::{
     ClaimMaterialization, SuccessionWriter, apply_owner_bound_claim_puts,
-    apply_owner_bound_claim_puts_with_transitions, apply_provenance_claim_puts,
-    authenticated_claim_author_in_txn,
+    apply_owner_bound_claim_puts_in_mode, apply_provenance_claim_puts,
+    authenticated_claim_author_in_txn, inherited_lineage,
 };
 #[cfg(any(test, oneiron_test_support))]
 pub(crate) use self::deindex::deindex_entity_for_test;

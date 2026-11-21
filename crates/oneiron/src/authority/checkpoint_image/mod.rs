@@ -59,6 +59,8 @@ use oneiron_records::authority::checkpoint_image::{ascending, refused};
 mod archive;
 mod replay;
 mod row;
+#[cfg(oneiron_test_support)]
+mod test_support;
 
 use archive::archive_id_of;
 pub use archive::{

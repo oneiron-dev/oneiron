@@ -407,6 +407,15 @@ impl Seat {
         SeatChange::Stored(remote_upsert(&href, Some(&etag), &self.last_write_ics(uid)))
     }
 
+    /// Whether the seat's collection counts `uid` as a member, so a complete
+    /// listing of it can leave the resource out ([`SeatChange::omitted`]).
+    pub(crate) fn lists_member(&self, vault: &Vault, uid: &str) -> bool {
+        calendar_collection_members_for_operation(vault, &self.operation(vault))
+            .expect("the seat's collection members")
+            .iter()
+            .any(|member| member.uid == uid)
+    }
+
     /// Pulls back the seat's own last write of one booking as a provider that
     /// rewrites the stored resource returns it: the written VEVENT at
     /// `sequence` (the written one or higher) with a property of the

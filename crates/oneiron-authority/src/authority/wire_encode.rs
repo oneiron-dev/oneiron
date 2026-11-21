@@ -306,6 +306,9 @@ pub fn op_value(op: &AuthorityOp) -> Value {
         AuthorityOp::AgentGrantAct(record) => super::agent_grant_act::agent_grant_act_value(record),
         AuthorityOp::PolicySettingSet(set) => super::policy_setting::policy_setting_value(set),
         AuthorityOp::SettingCopy(copy) => super::setting_copy::setting_copy_value(copy),
+        AuthorityOp::SettingPackHead(head) => {
+            super::setting_pack_head::setting_pack_head_value(head)
+        }
         AuthorityOp::ExportAct(record) => super::export_act::export_act_value(record),
         AuthorityOp::OwnerKeyEnroll(enroll) => {
             super::owner_key_enrollment::owner_key_enroll_value(enroll)

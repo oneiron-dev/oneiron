@@ -29,6 +29,7 @@
 mod bind;
 mod continue_command;
 mod hosted_command;
+mod hosted_continue_sign_in;
 mod hosted_selection;
 mod hosted_sign_in;
 mod recall;

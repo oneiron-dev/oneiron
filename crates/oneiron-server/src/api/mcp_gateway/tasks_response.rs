@@ -1019,6 +1019,7 @@ mod agent_verb_dispatch {
     include!(concat!(env!("OUT_DIR"), "/agent_verb_dispatch.rs"));
 }
 pub(super) mod native_read;
+mod transport_rows;
 use agent_verb_dispatch::execute_mcp_agent_verb;
 pub(crate) use agent_verb_dispatch::{
     execute_agent_verb_input, mcp_agent_verb_arguments, mcp_agent_verb_input,

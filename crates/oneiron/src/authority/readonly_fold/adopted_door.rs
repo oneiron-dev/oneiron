@@ -73,6 +73,25 @@ pub fn fold_past_overflow_prefix_image(
     fold_past_built_image(vault, covered, true)
 }
 
+/// `op` over `parents`, signed by `issuer`'s host key as the host signs its
+/// own authority rows, and not stored: a test builds a row the roster
+/// believes above a withheld parent, which no public act signs, since each
+/// signs over the vault's held heads (FIX
+/// [ADOPTED-PENDING-BATCH-BELIEF-RED-TEST]).
+///
+/// # Errors
+///
+/// The row's transcript does not encode.
+pub fn host_signed_row(
+    issuer: &crate::authority::HostSlipIssuer,
+    vault_id: AuthorityVaultId,
+    seq: u64,
+    parents: Vec<AuthorityEntryHash>,
+    op: AuthorityOp,
+) -> Result<AuthorityLogEntry> {
+    issuer.sign_entry(Some(vault_id), seq, parents, op, 1)
+}
+
 /// [`fold_past_prefix_image`], with the image's residence bodies dropped
 /// where `overflow` asks.
 fn fold_past_built_image(
@@ -121,6 +140,8 @@ fn fold_past_built_image(
         AdoptedTail {
             tail: &tail,
             held_covered: &cold,
+            // The vault's own rows: every tail row counts.
+            believed: None,
             required: &none_required,
             first_seen_at_secs: &first_seen_at_secs,
             now_secs: key.now_secs,
@@ -146,6 +167,7 @@ fn fold_past_built_image(
         AdoptedTail {
             tail: &closed_tail,
             held_covered: &cold,
+            believed: None,
             required: &none_required,
             first_seen_at_secs: &no_first_seen,
             now_secs: 0,
@@ -190,4 +212,38 @@ fn fold_past_built_image(
 fn as_decoded(fold: &AuthorityFold) -> Result<AuthorityFold> {
     let bytes = rmp_serde::to_vec_named(fold).map_err(|_| invalid_authority())?;
     rmp_serde::from_slice(&bytes).map_err(|_| invalid_authority())
+}
+
+/// Whether the adopted-fold gate's covered-row check passes for `image`'s
+/// covered row summaries, over every signer (FIX
+/// [ADOPTED-FOLD-GATE-SIGNER-COST]): each signer's covered rows in each
+/// sequence scope form one chain. The check reads `image.rows` alone, so a
+/// test may replace them.
+#[must_use]
+pub fn covered_rows_unfloored(image: &AuthorityCheckpointV2) -> bool {
+    crate::authority::adopted_fold::covered_rows_unfloored_for_door(image)
+}
+
+/// The covered rows the adopted fold's tail checks find `tail` floors past
+/// `image` (FIX [ADOPTED-FOLD-TAIL-WALK-SIGNER-COST]): none where it moves no
+/// covered row's floor, and None where only the whole history judges it (a
+/// tail signer's covered rows form no chain, or the tail floors rows the fold
+/// past the image cannot stand for). `rejected` are covered rows the image is
+/// to hold rejected. The checks read `image.rows`, the rows it holds rejected
+/// and `tail` alone, so a test may replace them; no signature is checked.
+#[must_use]
+pub fn tail_floored_rows(
+    image: &AuthorityCheckpointV2,
+    rejected: &BTreeSet<AuthorityEntryHash>,
+    tail: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+) -> Option<BTreeSet<AuthorityEntryHash>> {
+    let tail = tail.iter().map(|(hash, entry)| (*hash, entry)).collect();
+    if rejected.is_empty() {
+        return crate::authority::adopted_fold::tail_floored_rows_for_door(image, &tail);
+    }
+    let mut image = image.clone();
+    image
+        .per_parent
+        .extend(rejected.iter().map(|hash| (*hash, None)));
+    crate::authority::adopted_fold::tail_floored_rows_for_door(&image, &tail)
 }
