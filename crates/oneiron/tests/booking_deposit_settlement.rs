@@ -3729,3 +3729,181 @@ fn a_host_cancel_after_an_owner_write_replayed_over_its_own_marked_copy_refunds(
         "the host's cancel on the seat the owner's write landed on refunds the whole deposit"
     );
 }
+
+/// The embedded owner calls `verb` by name.
+fn owner_call(
+    fixture: &Fixture,
+    verb: &str,
+    input: serde_json::Value,
+) -> Result<serde_json::Value, oneiron::memory::MemoryError> {
+    let (owner, _) = booking_host_seat_support::seat_owner(&fixture.vault);
+    oneiron::verbs::invoke(
+        &fixture.vault.memory(owner, oneiron::EdgeActorClass::Human),
+        verb,
+        input,
+    )
+}
+
+/// The booking card of `event`, as the owner opens the booking's row
+/// (`self.inbox.get`), as JSON.
+fn owner_card(fixture: &Fixture, event: &EntityId) -> serde_json::Value {
+    owner_call(
+        fixture,
+        "self.inbox.get",
+        serde_json::json!({ "item_id": format!("booking:{}", event.to_hex()) }),
+    )
+    .expect("the owner opens the booking's row")["booking"]
+        .clone()
+}
+
+/// The owner previews the release of `event`'s calendar hold through the
+/// sheet and confirms what it shows.
+fn release_calendar_hold(fixture: &Fixture, event: &EntityId) -> serde_json::Value {
+    let preview = owner_call(
+        fixture,
+        "vault.owner_confirm.preview",
+        serde_json::json!({
+            "verb": "calendar.connector.release_hold",
+            "input": { "event_ref": event.to_hex() },
+        }),
+    )
+    .expect("the owner previews the release");
+    let confirm = preview["confirm"]
+        .as_str()
+        .expect("the preview names its confirm")
+        .to_owned();
+    owner_call(
+        fixture,
+        "calendar.connector.release_hold",
+        serde_json::json!({ "event_ref": event.to_hex(), "confirm": confirm }),
+    )
+    .expect("the owner releases the hold")
+}
+
+#[test]
+fn a_killed_seat_s_cancelled_write_holds_until_the_owner_releases_it_and_asks_a_refund_by_hand() {
+    // CAL-OUTBOX-ROW-OF-REMOVED-SEAT-HOLDS-PULLS = C (the lead 21 Nov 09:15)
+    // and PLAN-CALENDAR-CONNECTOR-RELEASE-HOLD = A (09:40): a feed the
+    // booking was not written to cancels it, and the engine writes the
+    // cancelled EVENT through the first seat; the answer is lost, and the
+    // owner kills that seat. The second seat's pull of the cancelled version
+    // may be that write coming back, and only the writing seat settles it, so
+    // it stays held: no refund on a fault path. The card says so and offers
+    // both acts. Once the owner releases the hold through the sheet, the pull
+    // lands, and its host cancel asks the owner to refund by hand instead of
+    // refunding. Red at the PR's base: the card carries no hold.
+    let fixture = Fixture::open(Some(two_hour_terms()));
+    fixture.enable_host_feed();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let second = seat.install_second_seat(&fixture.vault, "seat:host-second");
+    let (booked, _, _) = written_live_then_cancelled_elsewhere(
+        &fixture,
+        &seat,
+        b"killed-seat-release",
+        "pi_killed_seat_release",
+    );
+    let event = booked.calendar.event_ref;
+    let _ = seat.write_with_lost_answer(&fixture.vault, event, NOW + 150);
+    seat.kill(&fixture.vault);
+
+    second
+        .pull(
+            &fixture.vault,
+            &[seat.stored_own_write(&booked.calendar.uid)],
+            NOW + 180,
+        )
+        .expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_killed_seat_release"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "a pull the killed seat's write holds moves no money"
+    );
+    let card = owner_card(&fixture, &event);
+    let hold = &card["calendar_hold"];
+    assert_eq!(
+        hold["holds"][0]["seat"], "killed",
+        "the card shows the hold: {card}"
+    );
+    assert_eq!(hold["holds"][0]["system"], HOST_SEAT_SYSTEM, "{card}");
+    assert_eq!(
+        hold["release_verb"], "calendar.connector.release_hold",
+        "{card}"
+    );
+    assert_eq!(hold["reconnect_verb"], "vault.settings.set", "{card}");
+    assert_ne!(
+        card["deposit"]["reason"], "unattributed_cancel",
+        "before the release no cancel is noted as unattributed: {card}"
+    );
+
+    let released = release_calendar_hold(&fixture, &event);
+    assert_eq!(
+        released["released"].as_array().map(Vec::len),
+        Some(1),
+        "the release names the one held row: {released}"
+    );
+    assert!(
+        owner_card(&fixture, &event).get("calendar_hold").is_none(),
+        "a released hold leaves the card"
+    );
+
+    second
+        .pull(
+            &fixture.vault,
+            &[seat.stored_own_write(&booked.calendar.uid)],
+            NOW + 240,
+        )
+        .expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_killed_seat_release"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "a host cancel after the release never refunds by itself"
+    );
+    let card = owner_card(&fixture, &event);
+    assert_eq!(
+        card["deposit"]["reason"], "unattributed_cancel",
+        "the released pull's cancel asks the owner to refund by hand: {card}"
+    );
+}
+
+#[test]
+fn a_calendar_hold_release_needs_a_held_row_and_the_owner_s_confirm() {
+    // PLAN-CALENDAR-CONNECTOR-RELEASE-HOLD = A: the release goes through the
+    // owner's sheet. While the writing seat is in service its row holds
+    // nothing the owner may release (control: refused before and after the
+    // change); once the seat is killed, a release with no confirm is refused
+    // with OWNER_CONFIRM_REQUIRED. Red at the PR's base: the verb is unknown.
+    let fixture = Fixture::open(Some(two_hour_terms()));
+    fixture.enable_host_feed();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let (booked, _, _) = written_live_then_cancelled_elsewhere(
+        &fixture,
+        &seat,
+        b"release-needs-confirm",
+        "pi_release_needs_confirm",
+    );
+    let event = booked.calendar.event_ref;
+    let _ = seat.write_with_lost_answer(&fixture.vault, event, NOW + 150);
+    let input = serde_json::json!({ "event_ref": event.to_hex() });
+    assert!(
+        owner_call(
+            &fixture,
+            "vault.owner_confirm.preview",
+            serde_json::json!({ "verb": "calendar.connector.release_hold", "input": input }),
+        )
+        .is_err(),
+        "a write of a seat in service holds nothing to release"
+    );
+
+    seat.kill(&fixture.vault);
+    let refused = owner_call(&fixture, "calendar.connector.release_hold", input)
+        .expect_err("a release without the owner's confirm is refused");
+    assert_eq!(refused.code, "OWNER_CONFIRM_REQUIRED", "{refused:?}");
+    assert!(
+        owner_card(&fixture, &event)["calendar_hold"]["holds"][0]["seat"] == "killed",
+        "the refused release leaves the hold standing"
+    );
+}
