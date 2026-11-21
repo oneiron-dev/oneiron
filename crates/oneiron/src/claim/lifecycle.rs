@@ -486,7 +486,8 @@ impl Vault {
     /// chose on a view another write may since have changed (the owner's
     /// answer to `old_id` while `new_id` was screened, say) chooses again in
     /// the transaction of the close. Returns whether it superseded; `false`
-    /// writes nothing. A missing claim is the supersession's own refusal.
+    /// writes nothing of the supersession's. A missing claim is the
+    /// supersession's own refusal.
     pub(crate) fn supersede_claim_when(
         &self,
         new_id: &EntityId,
@@ -521,7 +522,11 @@ impl Vault {
     }
 
     /// The supersession in a write of its own, once `close` agrees in that
-    /// write; `Ok(false)` when it declined and nothing was written.
+    /// write; `Ok(false)` when it declined: the door discards that write, so
+    /// nothing of the supersession's commits. As before every write it takes,
+    /// refused or not, the door first keeps what earlier reads left waiting
+    /// (scan checks, records served to external readers), each in a commit of
+    /// its own.
     ///
     /// The write goes through the vault's write door, a group of its own on
     /// the calling thread as a bare transaction was (`close` is the

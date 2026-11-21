@@ -16,7 +16,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use loro::{LoroDoc, LoroValue, ValueOrContainer};
 use oneiron::claim::decode_claim_body;
@@ -36,9 +36,10 @@ use rmpv::Value;
 /// 2026-03-15 00:00 UTC: every row is learned then, so all of them ride the
 /// base window of March 2026.
 const T0: u64 = 1_773_532_800;
-/// How long the live mirror may take to carry a committed row.
-const WAIT: Duration = Duration::from_secs(30);
+/// The live mirror carries a committed row on its own thread: the test looks
+/// every `POLL`, at most `POLLS` times (30 s of sleep), with no clock read.
 const POLL: Duration = Duration::from_millis(20);
+const POLLS: u32 = 1_500;
 
 fn at(time: u64) -> TimeRange {
     TimeRange {
@@ -127,8 +128,7 @@ fn claims_under_a_loaded_window(
 
 /// Waits until the window carries `id`'s row as the store holds it now.
 fn wait_until_carried(vault: &Vault, window: &LoadedWindow, id: &EntityId, what: &str) {
-    let deadline = Instant::now() + WAIT;
-    loop {
+    for _ in 0..POLLS {
         let stored = vault
             .get_raw(id)
             .expect("read the row")
@@ -136,15 +136,12 @@ fn wait_until_carried(vault: &Vault, window: &LoadedWindow, id: &EntityId, what:
         if carrier(&window.doc, id).as_deref() == Some(stored.as_slice()) {
             return;
         }
-        assert!(
-            Instant::now() < deadline,
-            "after {WAIT:?} the loaded window still carries {what} as it was before the close"
-        );
         std::thread::sleep(POLL);
     }
+    panic!("after {POLLS} looks the loaded window still carries {what} as it was before the close");
 }
 
-/// Red on #10048's head 5d597730f4af: `retract_claim` commits on a bare
+/// Red on main e48dcb1ba29f: `retract_claim` commits on a bare
 /// transaction, which drops the closed claim its in-txn door queued, so the
 /// loaded window keeps the claim active.
 #[test]
@@ -175,7 +172,7 @@ fn a_retract_reaches_the_loaded_window_that_carries_the_claim() {
     );
 }
 
-/// Red on #10048's head 5d597730f4af: `supersede_claim` queues neither claim
+/// Red on main e48dcb1ba29f: `supersede_claim` queues neither claim
 /// and commits on a bare transaction, so the loaded window keeps the old
 /// claim active and carries no Supersedes edge.
 #[test]
