@@ -145,6 +145,7 @@ pub(super) fn apply_origin_cut(
     hash: AuthorityEntryHash,
     counting: (Option<&PinnedRoot>, InstallCounted<'_>),
     restriction_only: bool,
+    needs_proof_off_the_line: bool,
 ) -> std::result::Result<(), AuthorityFoldIssue> {
     if state
         .origin_cut
@@ -162,6 +163,7 @@ pub(super) fn apply_origin_cut(
         machine: cut.machine,
         choice: Some(&choice),
         context: ORIGIN_CUT_REVISION_CONTEXT,
+        needs_proof_off_the_line,
         persons_own_narrowing: false,
     };
     let landing = owner_choice_landing(
@@ -243,13 +245,17 @@ impl Vault {
 
     /// Signs and appends the owner's cut of each of `repos` (portable ids):
     /// epoch `epoch`, refs writer `writer`, as `actor`, the owner the cutting
-    /// door revalidated in `txn`, from `surface`. `txn` is the transaction
+    /// door revalidated in `txn`, from `surface`; a frontier join carries the
+    /// owner key's proof only when `proves_joins`
+    /// ([`crate::consent::AuthenticatedOwner::proves_joins_in_txn`]). `txn`
+    /// is the transaction
     /// that installs the host's own authority row, so the cuts and the row
     /// commit together or not at all (FIX 15740). Each cut supersedes its
     /// repository's live cuts, and each must land live and counted here
     /// before the caller commits. Returns the id of every authority log row
     /// it appended, each frontier join it needed among them, for the
-    /// caller's transaction to hand to the live mirror.
+    /// caller's transaction to hand to the live mirror. The owner's proof is
+    /// signed on `ground`.
     ///
     /// # Errors
     /// [`crate::error::RecordError::AuthorityRefused`] for an install that
@@ -258,7 +264,8 @@ impl Vault {
     pub(crate) fn sign_origin_cuts_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
-        actor: EntityId,
+        ground: &OwnerProofGround,
+        (actor, proves_joins): (EntityId, bool),
         surface: ActSurface,
         repos: &[[u8; 32]],
         (epoch, writer): (u64, EntityId),
@@ -277,12 +284,22 @@ impl Vault {
         for repo in repos {
             let target = origin_cut_target(repo)?;
             let fold = self.authority_view_readonly_in_txn(txn)?;
-            if !super::owner_act_signer_admits(fold.machine(machine), &fold.roster, &public_key) {
+            if !super::owner_act_signer_admits(
+                fold.machine(machine),
+                &fold.roster,
+                &public_key,
+                fold.pinned_root.as_ref(),
+            ) {
                 return Err(authority_refused(NO_CARRIER));
             }
             let seen = fold.origin_cuts.revision(target);
             // FIX 7908: join a frontier wider than one entry names.
-            let joiner = FrontierSigner::Install(machine, &key);
+            // The owner key this install holds proves the act; its join
+            // carries the proof only for the owner's own write (row
+            // OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS, REVIEW-9962 P1).
+            let proof = self.owner_proof_signer(&fold, ground);
+            let joiner =
+                FrontierSigner::install(machine, &key, proof.as_ref().filter(|_| proves_joins));
             let fold = self
                 .prepare_authority_frontier_in_txn(txn, &fold, joiner, MAX_PARENTS)?
                 .unwrap_or(fold);
@@ -306,7 +323,7 @@ impl Vault {
                     writer,
                 }),
                 now,
-                self.owner_proof_signer(&fold).as_deref(),
+                proof.as_ref(),
             )?;
             acts.push((target, authority_entry_hash(&entry)?));
             let at = TimeRange {

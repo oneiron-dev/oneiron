@@ -86,6 +86,21 @@ impl CoreWriteLane<'_> {
     ) -> crate::Result<bool> {
         self.as_ref().admits_puts_in(txn, ids)
     }
+
+    /// Whether this lane's caller may replace the vector, and with it the
+    /// device mark, at every id of `ids` in `txn`: a fresh id always; a
+    /// stored row only when the lane reads it and it is no world-access
+    /// grant or default (`batch::projected_head_target_admitted_in`). A
+    /// vector changes no row's body, scope or fold, so the restriction rule
+    /// a put meets does not judge it. An unbound lane puts anywhere, as
+    /// before (FIX 6068; review of #10218).
+    pub(crate) fn admits_vectors_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        ids: &[crate::EntityId],
+    ) -> crate::Result<bool> {
+        self.as_ref().admits_vectors_in(txn, ids)
+    }
 }
 
 impl CoreWriteLaneRef<'_> {
@@ -94,6 +109,25 @@ impl CoreWriteLaneRef<'_> {
         txn: &heed::RoTxn<'_>,
         ids: &[crate::EntityId],
     ) -> crate::Result<bool> {
+        self.admits_targets_in(txn, ids, crate::batch::put_target_admitted_in)
+    }
+
+    pub(crate) fn admits_vectors_in(
+        self,
+        txn: &heed::RoTxn<'_>,
+        ids: &[crate::EntityId],
+    ) -> crate::Result<bool> {
+        self.admits_targets_in(txn, ids, crate::batch::projected_head_target_admitted_in)
+    }
+
+    /// Whether `admitted` takes every id of `ids` for this lane's reader;
+    /// the TURN doors' owner and an unbound lane take every one.
+    fn admits_targets_in(
+        self,
+        txn: &heed::RoTxn<'_>,
+        ids: &[crate::EntityId],
+        admitted: fn(&ScopedRead<'_>, &heed::RoTxn<'_>, &crate::EntityId) -> crate::Result<bool>,
+    ) -> crate::Result<bool> {
         let (Self::Read(lane) | Self::Target(lane)) = self else {
             return Ok(true);
         };
@@ -101,7 +135,7 @@ impl CoreWriteLaneRef<'_> {
             return Ok(true);
         }
         for id in ids {
-            if !crate::batch::put_target_admitted_in(lane, txn, id)? {
+            if !admitted(lane, txn, id)? {
                 return Ok(false);
             }
         }

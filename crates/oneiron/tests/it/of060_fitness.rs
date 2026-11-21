@@ -403,6 +403,10 @@ fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
         // question, this deployment's routing state under `models:offer-cooldown:v1:`
         // (split by #5763, #4160).
         (RawHit { path: "crates/oneiron-server/src/models/cooldown/account_park.rs".to_owned(), ident: "sync_state_put_in_write_txn".to_owned(), line: "vault.sync_state_put_in_write_txn(txn, &row, &bytes)".to_owned() }, 1),
+        // Restriction wave 11 (#8900): who answered a quota question, kept in the
+        // write that closes it.
+        (RawHit { path: "crates/oneiron-server/src/models/cooldown/offer_core.rs".to_owned(), ident: "try_with_write_txn_grouped".to_owned(), line: "vault.try_with_write_txn_grouped(|txn| {".to_owned() }, 1),
+        (RawHit { path: "crates/oneiron-server/src/models/cooldown/quota_answer.rs".to_owned(), ident: "sync_state_put_in_write_txn".to_owned(), line: "vault.sync_state_put_in_write_txn(txn, &row(&self.question), &bytes)".to_owned() }, 1),
         (RawHit { path: "crates/oneiron-server/src/models/cooldown/offer_core.rs".to_owned(), ident: "try_with_write_txn_grouped".to_owned(), line: "let kept = vault.try_with_write_txn_grouped(|txn| {".to_owned() }, 1),
         (RawHit { path: "crates/oneiron-server/src/models/cooldown/offer_core.rs".to_owned(), ident: "sync_state_put_in_write_txn".to_owned(), line: "vault.sync_state_put_in_write_txn(txn, &key, &bytes)?;".to_owned() }, 1),
         (RawHit { path: "crates/oneiron-server/src/models/cooldown/quota_queue.rs".to_owned(), ident: "try_with_write_txn_grouped".to_owned(), line: "vault.try_with_write_txn_grouped(|txn| {".to_owned() }, 1),
@@ -416,7 +420,7 @@ fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
         // FIX 12516 (#4489): model-call evidence side rows (digests and usage, no
         // text), written after an admitted call.
         (RawHit { path: "crates/oneiron-server/src/ai_host/step/response_capture.rs".to_owned(), ident: "with_write_txn_grouped".to_owned(), line: "vault.with_write_txn_grouped(|txn| record_model_call_in_txn(vault, txn, &record))".to_owned() }, 1),
-        (RawHit { path: "crates/oneiron-server/src/api/llm.rs".to_owned(), ident: "with_write_txn_grouped".to_owned(), line: "vault.with_write_txn_grouped(|txn| record_model_call_in_txn(vault, txn, &record))".to_owned() }, 1),
+        (RawHit { path: "crates/oneiron-server/src/api/llm.rs".to_owned(), ident: "with_write_txn_grouped".to_owned(), line: "if let Err(error) = vault.with_write_txn_grouped(|txn| match reply {".to_owned() }, 1),
         (RawHit { path: "crates/oneiron-server/src/models/native_call_capture.rs".to_owned(), ident: "with_write_txn_grouped".to_owned(), line: ".with_write_txn_grouped(|txn| record_model_call_in_txn(self.vault, txn, &record))".to_owned() }, 1),
         // OF-495 (#1767, #3586): the skill judge's decision journal and the owner's
         // person-time rows, append-only under `skill:judge:v1:`.

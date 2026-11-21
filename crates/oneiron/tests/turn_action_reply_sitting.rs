@@ -158,6 +158,7 @@ fn birth(
         }],
         occurred_at: fixture.vault.now_recorded_at(),
         assertions: WitnessAssertions::default(),
+        project: None,
     }
 }
 

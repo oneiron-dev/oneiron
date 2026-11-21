@@ -193,6 +193,24 @@ pub(crate) fn calendar_source_system(source: EntityId) -> String {
     format!("{CALENDAR_SOURCE_SYSTEM_PREFIX}{}", source.to_hex())
 }
 
+/// Refuses `system` to an ICS feed, a CalDAV seat or an owner's complete upload when it has the
+/// pack's prefix. Only pack calendar sources take such a system ([`calendar_source_system`]),
+/// and a pack source's complete listing cancels every event of its system that the listing
+/// lacks, so no other source shares it.
+///
+/// # Errors
+///
+/// `InvalidConfig` for a system with the pack's prefix.
+pub(crate) fn refuse_calendar_source_system(system: &str) -> Result<()> {
+    if system.starts_with(CALENDAR_SOURCE_SYSTEM_PREFIX) {
+        return Err(Error::InvalidConfig(format!(
+            "a `{CALENDAR_SOURCE_SYSTEM_PREFIX}` system names a pack calendar source, whose \
+             complete listings import under it; use another system"
+        )));
+    }
+    Ok(())
+}
+
 /// The pack calendar source `system` names, with its row, if `system` has the
 /// pack's prefix.
 ///

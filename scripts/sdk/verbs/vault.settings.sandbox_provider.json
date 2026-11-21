@@ -1,0 +1,17 @@
+{
+  "name": "vault.settings.sandbox_provider",
+  "description": "Reads the owner's sandbox provider switch: whether the vault's finite Foreign and Untrusted guests run on ours or on a named vendor's sandbox. Unset reads as ours. Sessions run on ours.",
+  "input": "crate::task_verb::sdk::EmptyRequest",
+  "output": "crate::settings::sandbox_provider::SandboxProviderAnswer",
+  "call": "crate::settings::sandbox_provider::read_sandbox_provider_setting_embedded(memory)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "act_class": "read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

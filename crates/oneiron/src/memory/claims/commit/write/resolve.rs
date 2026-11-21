@@ -18,6 +18,8 @@ pub(super) struct ClaimWrite<'a> {
     pub(super) occurred_at: u64,
     pub(super) learned_at: u64,
     pub(super) key: MemoryKey<'a>,
+    /// Held beside the `UserStated` claims on its key, never over them: an
+    /// observed preference (OF-023) or a generated claim.
     pub(super) beside_stated: bool,
     pub(super) prior: Option<EntityId>,
     /// The original row of an exact signed replay routed to a fresh proposal.
@@ -175,9 +177,9 @@ impl Memory<'_> {
         let value = if input.predicate == crate::booking::BOOKING_PUBLIC_PAGE_PREDICATE {
             let mut claimed = input.value.clone();
             crate::booking::publication::stamp_publication_sponsor(&mut claimed, self.actor);
-            json_to_rmpv(&claimed)
+            json_to_msgpack_value(&claimed)
         } else {
-            json_to_rmpv(&input.value)
+            json_to_msgpack_value(&input.value)
         };
         let world = match &input.world_ref {
             Some(world_ref) => Some(self.resolve_ref(world_ref)?),
@@ -192,7 +194,7 @@ impl Memory<'_> {
                     .collect::<MemoryResult<crate::claim::RelationshipSet>>()
             })
             .transpose()?;
-        let scope_rmpv = input.scope.as_ref().map(json_to_rmpv);
+        let scope_rmpv = input.scope.as_ref().map(json_to_msgpack_value);
         let now = self.vault.store.clock.now_recorded_at();
         let occurred_at = input.occurred_at.unwrap_or(now);
         let learned_at = input.learned_at.unwrap_or(now);
@@ -203,9 +205,15 @@ impl Memory<'_> {
             relationship: relationship.clone(),
         };
         // OF-023: a want derived from behaviour is minted beside the stated
-        // one, never over it. The peer scan is independent of replacement:
-        // seed/propose replace nothing but still collect stated peers.
-        let beside_stated = crate::claim::is_observed_preference(Some(source), &input.predicate);
+        // one, never over it. So is a generated claim (the owner, 22 Sep:
+        // "Generated never supersedes UserStated ... A generated claim that
+        // disagrees lands beside it, Proposed, with a disagreement card"):
+        // the stated head is never its prior, so no author's claim is
+        // replaced and each differing stated peer opens a conflict. The peer
+        // scan is independent of replacement: seed/propose replace nothing
+        // but still collect stated peers.
+        let beside_stated = crate::claim::is_observed_preference(Some(source), &input.predicate)
+            || source == crate::claim::ClaimSource::Generated;
 
         // ADVISORY only (ONE-1936): this lookup runs outside the transaction,
         // so the prior it names may already be closed by the time the write

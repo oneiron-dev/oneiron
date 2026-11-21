@@ -98,6 +98,7 @@ fn two_turn_archive() -> Conversation {
                 messages: vec![message(author, content)],
                 occurred_at: at,
                 assertions: WitnessAssertions::default(),
+                project: None,
             })
             .expect("witness the turn")
             .turn_id

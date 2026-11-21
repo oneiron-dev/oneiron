@@ -30,7 +30,6 @@ fn hash(entry: &AuthorityLogEntry) -> AuthorityEntryHash {
 /// What a log folds under besides its rows.
 #[derive(Clone)]
 struct Under {
-    floors: BTreeMap<AuthorityEntryHash, u64>,
     vouched: BTreeSet<AuthorityEntryHash>,
     unvouched: bool,
     policy: AuthorityObservationPolicy,
@@ -45,7 +44,6 @@ struct Under {
 impl Default for Under {
     fn default() -> Self {
         Self {
-            floors: BTreeMap::new(),
             vouched: BTreeSet::new(),
             unvouched: false,
             policy: AuthorityObservationPolicy::default(),
@@ -416,7 +414,6 @@ impl Chain {
         for case in [
             "a row below its floor",
             "a base row's first-seen receipt dropped",
-            "a floor on a base row",
             "another policy",
             "another posture",
             "another pin",
@@ -427,17 +424,18 @@ impl Chain {
             "no vouch",
         ] {
             let op = self.confirm();
-            let row = self.row(tip, op, None);
+            let mut row = self.row(tip, op, None);
             let mut under = under.clone();
             match case {
                 "a row below its floor" => {
-                    under.floors.insert(hash(&row), row.seq + 1);
+                    // The row is at or below its signer's sequence in its own
+                    // ancestry, so its own transition refuses it as NonMonotonicSeq
+                    // and the tail declines.
+                    let op = row.op.clone();
+                    row = owner_row(self.vault_id, &self.owner, 1, vec![tip], op, None);
                 }
                 "a base row's first-seen receipt dropped" => {
                     under.unseen.insert(genesis);
-                }
-                "a floor on a base row" => {
-                    under.floors.insert(genesis, 0);
                 }
                 "another policy" => under.policy.stale_roster_window_secs = 99,
                 "another posture" => under.posture = Hosted,
@@ -699,42 +697,119 @@ fn a_log_the_resumed_fold_cannot_carry_on_from_falls_back_to_the_whole_fold() {
         request: None,
         permitted: vec![to],
     });
-    let wraps = owner_row(id, &install, 2, vec![hash(&settings)], record, None);
+    let wraps = owner_row(id, &install, 3, vec![hash(&settings)], record, None);
     check(
         &mut misses,
         "a world's settings and key",
         &machined,
         vec![settings.clone(), wraps.clone()],
         &plain,
-        false,
+        true,
     );
-    let with_settings = [machined.clone(), vec![settings]].concat();
+    let with_settings = [machined.clone(), vec![settings.clone()]].concat();
     check(
         &mut misses,
         "a world's key record",
         &with_settings,
         vec![wraps.clone()],
         &plain,
+        true,
+    );
+    // Negative control (FIX-LIST:5462): a key record whose parent is a covered row
+    // off the kept frontier declines. The base holds only main rows, so its frontier
+    // is the settings head; the machine profile it covers is off it.
+    let off_frontier = tip(&machined);
+    let wraps_off = owner_row(id, &install, 2, vec![off_frontier], wraps.op.clone(), None);
+    check(
+        &mut misses,
+        "a world's key record off the kept frontier",
+        &with_settings,
+        vec![wraps_off],
+        &plain,
         false,
     );
     // A base that holds a world and its key carries on, row by row, off
-    // its main head (the machine's profile).
+    // its main head (the world's settings edit).
     let keyed = [with_settings, vec![wraps]].concat();
-    let one = confirm(&machined, &owner, 10, 100, None);
+    // This sibling's own ancestry has install seq 1, so seq 2 transitions
+    // successfully. ScopeTops::past declines it below the base's seq-3 top
+    // for the same signer and world, even though settings is a kept head.
+    let sibling_key = WorldKey::mint(world, FIRST_GENERATION).unwrap();
+    let sibling_binding = WorldKeyBinding {
+        key: *sibling_key.id(),
+        commitment: sibling_key.commitment(),
+        ..binding
+    };
+    let sibling_pad = oneiron_store::world_pad_codec::WorldKeyPad::mint().unwrap();
+    let sibling_envelope = seal_world_key(
+        &sibling_binding,
+        to,
+        &root.recovery_key,
+        &sibling_key,
+        &sibling_pad,
+    )
+    .unwrap()
+    .to_bytes();
+    let sibling_record = AuthorityOp::WorldKeyWraps(WorldKeyWrapsRecord {
+        key: *sibling_key.id(),
+        commitment: sibling_key.commitment(),
+        owner: sibling_binding.owner,
+        policy,
+        machine,
+        wraps: vec![(to, sibling_envelope)],
+        request: None,
+        permitted: vec![to],
+    });
+    let sibling = owner_row(id, &install, 2, vec![hash(&settings)], sibling_record, None);
+    check(
+        &mut misses,
+        "a key record below its signer's top in its world",
+        &keyed,
+        vec![sibling],
+        &plain,
+        false,
+    );
+    let one = owner_row(id, &owner, 10, vec![hash(&settings)], confirm_op(100), None);
     let two = owner_row(id, &owner, 11, vec![hash(&one)], confirm_op(101), None);
     let case = "confirms over a world's key record";
     check(&mut misses, case, &keyed, vec![one, two], &plain, true);
 
     // A side row in the log that names the new row as its parent.
     let row = confirm(&machined, &owner, 10, 100, None);
-    let side = edit(
-        id,
-        &[&row],
-        (machine, &install),
-        1,
-        scope_entity(83),
-        ReadLocation::MyMachines,
-    );
+    let waiting_world = scope_entity(83);
+    let waiting_seed = RecoveryRootSeed::generate().unwrap();
+    let waiting_root = waiting_seed.public(&id).unwrap();
+    let waiting_key = WorldKey::mint(waiting_world, FIRST_GENERATION).unwrap();
+    let waiting_policy = PolicyRevision::of([hash(&row)]);
+    let waiting_binding = WorldKeyBinding {
+        vault_id: id,
+        key: *waiting_key.id(),
+        owner: scope_entity(81),
+        policy: waiting_policy,
+        commitment: waiting_key.commitment(),
+    };
+    let waiting_to = WrapRecipient::RecoveryRoot(waiting_root.id);
+    let waiting_pad = oneiron_store::world_pad_codec::WorldKeyPad::mint().unwrap();
+    let waiting_envelope = seal_world_key(
+        &waiting_binding,
+        waiting_to,
+        &waiting_root.recovery_key,
+        &waiting_key,
+        &waiting_pad,
+    )
+    .unwrap()
+    .to_bytes();
+    let waiting_record = AuthorityOp::WorldKeyWraps(WorldKeyWrapsRecord {
+        key: *waiting_key.id(),
+        commitment: waiting_key.commitment(),
+        owner: waiting_binding.owner,
+        policy: waiting_policy,
+        machine,
+        wraps: vec![(waiting_to, waiting_envelope)],
+        request: None,
+        permitted: vec![waiting_to],
+    });
+    let side = owner_row(id, &install, 1, vec![hash(&row)], waiting_record, None);
     let waiting = [machined, vec![side]].concat();
     check(
         &mut misses,
@@ -794,31 +869,10 @@ fn a_log_the_resumed_fold_cannot_carry_on_from_falls_back_to_the_whole_fold() {
         );
     }
 
-    // A missing receipt reads at its signer's high-water mark (F4, F16):
-    // the head's floor is its own sequence while it is the newest row, and
-    // the new row's once that lands, which puts the head below it.
-    let head = chain_log.last().unwrap();
-    let at_head = Under {
-        floors: BTreeMap::from([(hash(head), head.seq)]),
-        ..Under::default()
-    };
-    let case = "a missing receipt";
-    let base = misses.fold(
-        &format!("{case}: the log"),
-        &chain_log,
-        &at_head,
-        None,
-        false,
-    );
-    misses.expect(&format!("{case}: the log leaves a base"), base.is_some());
-    let row = confirm(&chain_log, &owner, 9, 100, None);
-    let raised = Under {
-        floors: BTreeMap::from([(hash(head), row.seq)]),
-        ..Under::default()
-    };
-    let entries = [chain_log, vec![row]].concat();
-    let case = "a missing receipt read at the new high-water mark";
-    misses.fold(case, &entries, &raised, base.as_ref(), false);
+    // No missing-receipt case: receipts count ingest only (#8449), so a
+    // sequence receipt is no fold input. The first-seen receipt cases (a new
+    // row without one resumes, a base row's dropped one falls back) are in
+    // the generated-chain test.
 
     misses.assert_none();
 }
@@ -842,8 +896,8 @@ fn a_pact_hosted_or_pinned_log_resumes_only_under_its_own_inputs() {
         ),
     };
 
-    // A pact the head's state holds narrower than the merge does not
-    // capture; the other order does.
+    // A party's later narrowing supersedes its own earlier ones (#3817), so a
+    // same-party narrow-then-broad chain captures; the narrowed order does too.
     let fixture = pact_fixture_with_scope(91, symmetric_scope(ScopeAxis::All, ScopeAxis::All));
     let connect = lifecycle_entry(&fixture, vec![tip(&chain_log)], 9, connect_action(&fixture));
     let narrow = FederationDirectionScope {
@@ -861,7 +915,7 @@ fn a_pact_hosted_or_pinned_log_resumes_only_under_its_own_inputs() {
             "a pact broadened at its epoch",
             narrow.clone(),
             broad.clone(),
-            false,
+            true,
         ),
         ("a pact narrowed at its epoch", broad, narrow, true),
     ] {

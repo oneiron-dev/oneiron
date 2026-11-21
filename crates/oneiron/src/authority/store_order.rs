@@ -100,12 +100,23 @@ pub(super) fn tail_ids_in_txn(
     let Some(first) = after.checked_add(1) else {
         return Ok(None);
     };
+    ids_sequenced_in_txn(store, txn, first, next)
+}
+
+/// The store ids sequenced from `first` and below `next`, in sequence
+/// order. None on any inconsistency, as for [`tail_ids_in_txn`].
+pub(super) fn ids_sequenced_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    first: u64,
+    next: u64,
+) -> Result<Option<Vec<EntityId>>> {
     let Some(expected) = next.checked_sub(first) else {
         return Ok(None);
     };
     let mut ids = Vec::new();
     for row in
-        STORE_ORDER.iter_range(store, txn, Bound::Excluded(&after), Bound::Excluded(&next))?
+        STORE_ORDER.iter_range(store, txn, Bound::Included(&first), Bound::Excluded(&next))?
     {
         let Ok((seq, bytes)) = row else {
             return Ok(None);
