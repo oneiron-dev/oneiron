@@ -117,6 +117,11 @@ pub enum ArtifactError {
     /// Nothing was written.
     #[error("invalid SKILL body: {0}")]
     InvalidSkillBody(&'static str),
+    /// A superseding SKILL revision kept its predecessor's version. Same
+    /// kind and code as [`Self::InvalidSkillBody`]; the text names the
+    /// member and both content hashes. Nothing was written.
+    #[error("invalid SKILL body: {0}")]
+    SkillVersionKept(String),
     /// A replicated resident skill arrived before its PERSON or AGENT_DEF owner.
     /// Retry after the dependency materializes; malformed and wrong-kind
     /// owners still fail as invalid SKILL bodies.
@@ -330,7 +335,9 @@ impl ArtifactError {
             Self::EditProposalAlreadySettled { .. } => ErrorKind::EditProposalAlreadySettled,
             Self::EditProposalStale => ErrorKind::EditProposalStale,
             Self::SettleNotAuthorized(_) => ErrorKind::SettleNotAuthorized,
-            Self::InvalidSkillBody(_) | Self::SkillHubGitRead(_) => ErrorKind::InvalidSkillBody,
+            Self::InvalidSkillBody(_) | Self::SkillHubGitRead(_) | Self::SkillVersionKept(_) => {
+                ErrorKind::InvalidSkillBody
+            }
             Self::ResidentOwnerDependencyPending => ErrorKind::ResidentOwnerDependencyPending,
             Self::SkillEditGateRetry(_) => ErrorKind::SkillEditGateRetry,
             Self::SkillContentAnchorTypeMismatch { .. } => {

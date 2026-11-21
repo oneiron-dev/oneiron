@@ -388,7 +388,7 @@ fn a_call_outside_a_seat_carries_only_a_level_a_seat_birth_allows() -> Result<()
     )?;
     let purpose = CallPurpose::Extraction;
     let effort = |wire, ladder: &[ReasoningEffort], authored: Option<ReasoningEffort>| {
-        vault.set_description_policy(&DescriptionPolicy {
+        let policy = DescriptionPolicy {
             models: vec![Described {
                 model: id.clone(),
                 wire,
@@ -405,7 +405,14 @@ fn a_call_outside_a_seat_carries_only_a_level_a_seat_birth_allows() -> Result<()
                 .into_iter()
                 .collect(),
             global_effort: None,
-        })?;
+        };
+        vault.set_setting(
+            crate::setting::SettingCaller::Owner(&crate::test_util::embedded_owner_proof(&vault)),
+            crate::setting::SetSetting::vault_value(
+                "models.description_policy",
+                serde_json::to_value(&policy).unwrap(),
+            ),
+        )?;
         vault.purpose_effort(&purpose, &id, true, ReasoningEffort::Medium)
     };
     let (low, medium, high) = (

@@ -37,6 +37,7 @@ mod levels;
 mod media;
 mod planner;
 mod provider;
+mod role_trainers;
 pub mod sessions;
 pub mod snapshots;
 #[cfg(test)]
@@ -66,10 +67,12 @@ pub use provider::{
     OutputLimitField, ProviderConfig, ProviderKind, RequestCodec, RequestCompression,
     ResponseFormatWire, ResponsesSocket, SiwcProvider,
 };
+pub use role_trainers::RoleTrainerSettings;
 pub use training::{TRAINING_SERVICE_UNIT, TrainingConnectorSettings, TrainingSettings};
 pub use voice::VoiceSettings;
 pub use workers::{
     ArtifactSource, ManagedLaunch, NativeServer, WorkerArtifact, WorkerConfig, WorkerEnvelope,
+    WorkerListen,
 };
 
 use levels::{RoleFile, Shorthand};
@@ -657,6 +660,7 @@ impl ModelsFile {
         let planner = self.planner.resolve()?;
         let training = self.training.resolve()?;
         let workers = workers::resolve(self.workers, &providers, base)?;
+        workers::refuse_socket_provider_off_reranker(&workers, &roles, &media)?;
         let mut models = ModelsConfig {
             providers,
             roles,

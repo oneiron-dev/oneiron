@@ -21,8 +21,36 @@
 
 use std::sync::{Arc, Mutex};
 
-use oneiron::agent_dispatch::{AgentDispatcher, SpendScopeId};
+use oneiron::agent_dispatch::{AgentDispatcher, RunOverdraft, SpendScopeId};
+use oneiron::llm::{BudgetCheckpoint, BudgetDenied};
 use oneiron::{BudgetGuard, EntityId, Vault};
+
+/// The meter a try resumes on from its checkpoint (a workflow step's tool
+/// cursor): its spend, reservations, row tallies and policy as saved, with
+/// the overdraft the owner approved for the run since
+/// ([`grant_run_overdraft`]).
+pub(crate) fn restore_try_meter(
+    saved: BudgetCheckpoint,
+    overdraft: Option<&RunOverdraft>,
+) -> Result<BudgetGuard, BudgetDenied> {
+    let meter = BudgetGuard::from_checkpoint(saved)?;
+    grant_run_overdraft(&meter, overdraft);
+    Ok(meter)
+}
+
+/// The overdraft the owner approved for the try's run (`overdraft`, his
+/// answer to its run-budget ask; ARCH-0026 depletion ladder,
+/// RUNBUDGET-OVERDRAFT) on the try's meter, fresh or restored: its paid cap
+/// rises by the approved cap past what it admitted or spent, once per
+/// approval, so a meter that spent an earlier overdraft or the owner's
+/// `on_budget_exhausted` knob takes the new one whole, and a meter restored
+/// again under the same approval is not widened twice. The scope's room
+/// still bounds every admission ([`LiveLease`]). With none it is unchanged.
+pub(crate) fn grant_run_overdraft(meter: &BudgetGuard, overdraft: Option<&RunOverdraft>) {
+    if let Some(overdraft) = overdraft {
+        meter.grant_overdraft(overdraft.ask, overdraft.cap_units);
+    }
+}
 
 /// One try's meter, bounded by its spend scope's live room.
 pub(crate) struct LiveLease<'a> {
@@ -188,12 +216,15 @@ impl<'a> LiveLease<'a> {
             .and_then(|_| dispatcher.available_units(scope));
         match available {
             Ok(available) => {
-                let limit = self
-                    .budget_units
-                    .min(line.used_units.saturating_add(available));
+                let room = line.used_units.saturating_add(available);
+                let limit = self.budget_units.min(room);
                 if limit != line.limit_units {
                     self.meter.revise_line(limit, self.meter.reserve_units());
                 }
+                // The scope's room bounds every admission on its own, so an
+                // overdraft the meter runs (the owner's answer or his knob)
+                // widens the try's line and never the scope's hard cap.
+                self.meter.revise_ceiling(Some(room));
             }
             Err(error) => tracing::warn!(
                 kind = ?error.kind(),

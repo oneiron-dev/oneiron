@@ -35,6 +35,7 @@ use crate::scope_summary::{
     ArcChildRow, ArcRange, ArcReduceRow, ArcStepRef, ComposedSummary, SummaryLineSources,
     result_digest,
 };
+use oneiron_contracts::fingerprint::ContentHash;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The purpose every summary call is asked under, as a step records it.
@@ -86,7 +87,7 @@ fn materialise(memory: &Memory<'_>, step: &ArcStepRef) -> Result<Option<Material
     };
     if view.model.as_str() != step.model
         || view.purpose != SUMMARY_STEP_PURPOSE
-        || blake3::hash(reply_text(&view.response).as_bytes()).as_bytes() != &step.reply
+        || ContentHash::of(reply_text(&view.response).as_bytes()).as_bytes() != &step.reply
     {
         return Ok(None);
     }
@@ -99,7 +100,7 @@ fn materialise(memory: &Memory<'_>, step: &ArcStepRef) -> Result<Option<Material
     let mut texts = Vec::with_capacity(step.lines.len());
     for (line, held) in wire.lines.iter().zip(&step.lines) {
         let words = line.text.trim();
-        if blake3::hash(words.as_bytes()).as_bytes() != &held.text {
+        if ContentHash::of(words.as_bytes()).as_bytes() != &held.text {
             return Ok(None);
         }
         texts.push(words.to_owned());

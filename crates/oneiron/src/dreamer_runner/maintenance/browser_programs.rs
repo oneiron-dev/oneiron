@@ -32,6 +32,9 @@ use crate::{EntityId, Error, Result, Vault};
 mod diagnostic;
 mod induction;
 
+#[cfg(oneiron_test_support)]
+pub(crate) use induction::program_candidate_digest_for_test;
+
 use induction::{Candidate, INDUCTION_VERSION, Predecessor};
 
 /// The predicate a browser-program finding is filed under.

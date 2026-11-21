@@ -10,6 +10,7 @@
 //! native-id marks, and, apart, the comment inspection with its own
 //! fingerprints. It mints no id and computes no fingerprint of its own.
 
+use oneiron_contracts::fingerprint::ContentHash;
 use oneiron_docedit::edit::transaction::Digest;
 use oneiron_docedit::edit::wire::{DeckTransactionRefusal, inspect_deck};
 use oneiron_docedit::retained_opc::Package;
@@ -75,7 +76,7 @@ impl Memory<'_> {
         }
         // A masked read is not the version's bytes: its fingerprints would
         // address nothing a transaction can edit.
-        if *blake3::hash(&file.bytes).as_bytes() != file.content_hash {
+        if *ContentHash::of(&file.bytes).as_bytes() != file.content_hash {
             return Err(MemoryError::new(
                 MEMORY_CODE_FORBIDDEN,
                 "this version reads masked to this caller, so its edit targets are not the version's",

@@ -85,6 +85,7 @@ impl Memory<'_> {
                 assigned_ref: None,
                 actor_generation: generation,
                 assigned_generation: None,
+                answered_heads: None,
                 occurred_at: now,
             },
         )?;

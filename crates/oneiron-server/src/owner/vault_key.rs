@@ -9,8 +9,9 @@ use std::path::Path;
 use base64::Engine as _;
 use oneiron::recovery::checkpoint::{ArtifactKind, ArtifactUnlocks, CheckpointSigner};
 use oneiron::world_keys::{
-    EscrowRetirement, HybridSecretKey, RecoveryPreset, RecoveryPresetChange, RecoverySheet,
-    ResealedEscrowCapsule, VaultKeyStatus, VaultKeyWrapInfo, VaultKeyWrapKind,
+    DATA_KEY_GENERATION_PAGE_SEAL_NOTICE, DataKeyGenerationOutcome, EscrowRetirement,
+    HybridSecretKey, RecoveryPreset, RecoveryPresetChange, RecoverySheet, ResealedEscrowCapsule,
+    VaultKeyStatus, VaultKeyWrapInfo, VaultKeyWrapKind,
 };
 use oneiron_vault_contract::escrow::{
     ESCROW_REPORT_SCHEMA_VERSION, ESCROW_REPORT_TYPE, EscrowCapsuleReport,
@@ -145,6 +146,73 @@ pub(crate) fn report(vault: &oneiron::Vault) -> oneiron::Result<VaultKeyReport> 
     })
 }
 
+/// What a new data-key generation would remove, named before the act
+/// (DATAKEY-GEN-WAYS = A): every wrap of the current key that no kept way
+/// covers, this install's device wrap aside. The act removes each only when
+/// its id is in `confirmed_removals`.
+#[derive(Clone, Debug, Serialize, schemars::JsonSchema)]
+pub(crate) struct DataKeyGenerationPreviewView {
+    pub(crate) removes: Vec<WrapView>,
+}
+
+impl DataKeyGenerationPreviewView {
+    pub(crate) fn of(vault_id: &[u8; 32], removes: Vec<VaultKeyWrapInfo>) -> Self {
+        Self {
+            removes: removes
+                .into_iter()
+                .map(|info| WrapView::of(vault_id, info))
+                .collect(),
+        }
+    }
+}
+
+/// What a new data-key generation did, as the owner reads it.
+#[derive(Clone, Debug, Serialize, schemars::JsonSchema)]
+pub(crate) struct DataKeyGenerationView {
+    /// The new generation number.
+    pub(crate) generation: u32,
+    /// The commitment naming the new key, 64 hex.
+    pub(crate) commitment: String,
+    /// The wraps of the replaced key the act removed.
+    pub(crate) removed: Vec<WrapView>,
+    /// The wraps the act sealed of the new key.
+    pub(crate) rewrapped: Vec<WrapView>,
+    /// The page-seal mirror rewrite pends: the act stands, and the vault's
+    /// next sealed open repairs the mirror.
+    pub(crate) mirror_pending: bool,
+    /// The vault's pages are sealed and keep their earlier key until a
+    /// re-key (DATAKEY-GEN-PAGE-SEAL = A).
+    pub(crate) pages_keep_earlier_key: bool,
+    /// What the owner is told when the pages keep their earlier key; absent
+    /// otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) notice: Option<String>,
+}
+
+impl DataKeyGenerationView {
+    pub(crate) fn of(vault_id: &[u8; 32], outcome: DataKeyGenerationOutcome) -> Self {
+        Self {
+            generation: outcome.generation,
+            commitment: hex(&outcome.commitment),
+            removed: outcome
+                .removed
+                .into_iter()
+                .map(|info| WrapView::of(vault_id, info))
+                .collect(),
+            rewrapped: outcome
+                .rewrapped
+                .into_iter()
+                .map(|info| WrapView::of(vault_id, info))
+                .collect(),
+            mirror_pending: outcome.mirror_pending,
+            pages_keep_earlier_key: outcome.pages_keep_earlier_key,
+            notice: outcome
+                .pages_keep_earlier_key
+                .then(|| DATA_KEY_GENERATION_PAGE_SEAL_NOTICE.to_owned()),
+        }
+    }
+}
+
 /// The owner's recovery preset, as `GET /v1/owner/vault-key/recovery-preset`
 /// and `oneiron vault-key recovery-preset` answer it.
 #[derive(Clone, Debug, Serialize, schemars::JsonSchema)]
@@ -175,6 +243,13 @@ pub(crate) struct RecoveryPresetSet {
     /// The change committed but the sealed vault's page-seal mirror still
     /// needs repair; the next sealed open repairs it.
     pub(crate) mirror_pending: bool,
+    /// The change committed to `Standard` but the recovery box's release did
+    /// not go through; the box still holds kit-only.
+    pub(crate) box_release_pending: bool,
+    /// The change left "Nobody but me": sign-in and the recovery PIN restore
+    /// no owner control until a new kit's activation deposits its seed in
+    /// the recovery box; the kit itself still serves.
+    pub(crate) box_recovery_needs_new_kit: bool,
 }
 
 impl RecoveryPresetSet {
@@ -200,6 +275,8 @@ impl RecoveryPresetSet {
                 .map(RetiredEscrowView::from)
                 .collect(),
             mirror_pending: change.mirror_pending,
+            box_release_pending: change.box_release_pending,
+            box_recovery_needs_new_kit: change.box_recovery_needs_new_kit,
         };
         (view, change.sheet)
     }

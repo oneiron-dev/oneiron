@@ -79,13 +79,17 @@ async fn send(server: &Arc<SyncServer>, mut request: Request<Body>) -> (StatusCo
             40_000,
         ))));
     let request = slip_credentials::bind_request(server, request);
-    let response = api_routes(Arc::clone(server))
-        .oneshot(request)
-        .await
-        .expect("route response");
-    let status = response.status();
-    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-    (status, body.to_vec())
+    let server = Arc::clone(server);
+    crate::test_engine_stack::on_engine_stack(async move {
+        let response = api_routes(server)
+            .oneshot(request)
+            .await
+            .expect("route response");
+        let status = response.status();
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        (status, body.to_vec())
+    })
+    .await
 }
 
 /// A raw call to the generative seat by its id.
@@ -129,10 +133,13 @@ fn raw(verb: &str, config: &ModelsConfig) -> Request<Body> {
     )
 }
 
-fn chat() -> Request<Body> {
+/// A chat turn; `stream` opts into NDJSON lines (`"type": "done"` last),
+/// else the route answers the whole message once it is saved.
+fn chat(stream: bool) -> Request<Body> {
     let body = json!({
         "conversation_ref": oneiron::EntityId::now().to_hex(),
         "text": "say hello",
+        "stream": stream,
     });
     core_request_with_authz("POST", "/v1/ai/chat", owner_bearer(), Some(&body))
 }
@@ -193,7 +200,7 @@ async fn every_server_call_writes_one_dispatched_row_per_provider_call() {
     );
     assert_eq!((sent(), dispatched(&receipts)), (3, 3));
 
-    let (status, body) = send(&server, chat()).await;
+    let (status, body) = send(&server, chat(true)).await;
     assert_eq!(status, StatusCode::OK);
     let turn = lines(&body);
     assert!(
@@ -226,7 +233,7 @@ async fn a_rung_its_line_cannot_cover_is_denied_and_never_sent() {
         // the server.
         let (_dir, server, host, receipts) = gated_server(&config).await;
         let request = if path == "chat" {
-            chat()
+            chat(false)
         } else {
             raw(path, &config)
         };

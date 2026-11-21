@@ -196,6 +196,13 @@ side_tables! {
         // its live connections owe, so it follows the live vault: a restore neither drops one owed
         // nor brings back an image's (FIX 19634).
         [restore: live] [family: structure] [tier: canonical];
+    /// The peer carriers the sync ingest dropped for a record a refused privacy erase keeps (C6)
+    /// or a cooperative review restricts (REVIEW-9881 round 1): each carrier's BLAKE3 (32 bytes),
+    /// one after another. The ingest drops these exact bytes again, after the limit lifts too, so
+    /// a window that still carries one never puts it over the kept copy; the row's erase forgets
+    /// them. Runtime: never imaged, a restore drops it. Key: hex32 (entity id).
+    SYNC_RESTRICTED_DROPPED_CARRIER: SyncState b"restricted:dropped:" Raw
+        [restore: not_imaged] [family: not_imaged] [tier: runtime];
     /// A retained federation or maintenance item that carries an entity's bytes, so the entity's
     /// erase scrubs it (FIX 7998). Empty value. Key: hex32 (entity id) then the item's reference.
     SYNC_RETAINED_WORK_CARRIER: SyncState b"retained:carrier:" Raw
@@ -318,7 +325,7 @@ side_tables! {
     TEST_MCP_PAIRED_CACHE: SyncState b"test:mcp:paired:" Raw
         [restore: live] [family: unclassified] [tier: canonical];
     /// ARCH-0023b document family: one durable pending CRDT update for a window, applied on top of
-    /// d:w:. Key: yyyy-mm ":" hex8 (sequence).
+    /// d:w:. Key: yyyy-mm ":" hex16 (sequence).
     SYNC_U_W: SyncState b"u:w:" Raw
         [restore: content] [family: mixed WindowUpdate] [tier: canonical];
     /// One owner/vault/metric/day operational meter rollup, moved in each meter row's own write

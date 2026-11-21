@@ -42,7 +42,11 @@ pub(in crate::authority) const CONNECT_SLIP_MEETS_CURRENT_SCOPE: bool = true;
 
 /// Who signed a narrowing, read from the signer's live human binding in the
 /// entry's ancestry, else the signing key itself (FIX 7933). Nothing the
-/// entry asserts names its party.
+/// entry asserts names its party. A passkey the host vouched for that the
+/// passkey limits hold is its own key's party though it binds its owner: a
+/// passkey's own binding names the owner for their verbs and writes alone,
+/// not for the narrowings the owner's other keys made (row
+/// PASSKEY-SELF-BIND).
 pub(in crate::authority) fn narrowing_party(
     state: &FoldState,
     signer: &AuthorityKey,
@@ -50,6 +54,7 @@ pub(in crate::authority) fn narrowing_party(
     state
         .live_actor_binding(signer)
         .filter(|binding| binding.actor_class == ACTOR_CLASS_HUMAN)
+        .filter(|_| !state.host_vouched_passkey_limited(signer))
         .map_or_else(
             || NarrowingParty::Key(signer.clone()),
             |binding| NarrowingParty::Owner(binding.actor_ref),
@@ -65,7 +70,9 @@ pub(in crate::authority) fn projected_narrowing_party(
     fold.actor_bindings
         .get(signer)
         .filter(|binding| {
-            binding.status == ActorBindingStatus::Active && binding.actor_class == ACTOR_CLASS_HUMAN
+            binding.status == ActorBindingStatus::Active
+                && binding.actor_class == ACTOR_CLASS_HUMAN
+                && !fold.host_vouched_passkey_limited(signer)
         })
         .map_or_else(
             || NarrowingParty::Key(signer.clone()),

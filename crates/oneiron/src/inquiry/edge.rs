@@ -15,6 +15,18 @@
 //! in a foreign WORLD is never drawn from: it is not re-shareable. Closing a
 //! statement retracts it.
 //!
+//! A member seat carries its edge from joining (federation.md
+//! #inquiry-first-build: "the edge is created at joining"; Engine rulings
+//! L7-04-COMPANY-HALF and L7-04-NO-PERSONAL-VAULT = A). The member's vault
+//! mints the edge on the member defaults and offers its Connect
+//! ([`Vault::prepare_inquiry_edge_for_join`]); the company's accept writes the
+//! seat, the company's reciprocal grant over the WORLD the pact fixes, and
+//! the Connect in one writer, approved by the seat
+//! ([`Vault::accept_shared_invitation_with_inquiry_edge`], or
+//! [`Vault::attach_inquiry_edge_to_seat`] for a seat accepted without one);
+//! the member's vault applies the company's counter with
+//! [`Vault::accept_connect_as`]. The company's grant ends with the seat.
+//!
 //! The member changes an edge's terms after the mint in place
 //! ([`Vault::change_inquiry_edge_terms`]): the grant row is rewritten, never
 //! re-minted, and a Share receipt records the change.
@@ -24,23 +36,22 @@ use std::collections::BTreeSet;
 use rmpv::Value;
 
 use crate::Vault;
-use crate::authority::{AuthorityVaultId, HostSlipIssuer};
+use crate::authority::{AuthorityVaultId, ConnectOffer, ConnectOfferTerms, HostSlipIssuer};
 use crate::batch::BatchOp;
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
 use crate::consent::AuthenticatedOwner;
-use crate::entity_id::EntityId;
+use crate::entity_id::{EntityId, is_foreign_world_id_range};
 use crate::error::{Error, Result};
 use crate::federation::{
-    ConnectGrantRequest, FederationDirectionScope, FederationGrant, FederationGrantScope,
-    INQUIRE_VERB_CLASS, Scope, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling,
-    connect_direction_projection, decode_federation_grant_body, require_one_connect_per_peer,
+    ConnectGrantApproval, ConnectGrantRequest, ConnectMemberLeaveBinding, FederationDirectionScope,
+    FederationGrant, INQUIRE_VERB_CLASS, Scope, ScopeAxis, ScopeId, Sensitivity,
+    SensitivityCeiling, connect_direction_projection,
 };
 use crate::receipt::GuestRevokeOutcome;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_FEDERATION_GRANT};
 use crate::side_table::{self, Raw, SideTable};
-use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
@@ -48,15 +59,28 @@ use super::receipt::write_inquiry_terms_receipt_in_txn;
 use super::record::InquiryKeep;
 use super::terms::{InquiryCheckInMode, InquiryKeepModes, InquiryTerms, InquiryTierCeiling};
 
+mod join;
+mod leave;
+mod lookup;
+mod scope;
+
+pub use join::{InquiryJoinOffer, InquiryJoinPrepared};
+pub(super) use lookup::{inquiry_edge_grant_in_txn, inquiry_edge_in_txn};
+pub use scope::InquiryScopeItem;
+pub(crate) use scope::drop_inquiry_scope_links_in_txn;
+pub(super) use scope::{NewScopeItem, opened_statements_in_txn};
+
+use join::{
+    inquiry_join_world, is_seat_inquiry_grant_in_txn, refuse_live_connect_in_txn,
+    seat_carries_inquiry_edge_in_txn, unbound_inquiry_edge_in_txn,
+};
+
 /// The predicate of a statement the member opened: a statement about the
 /// member, in the member's words.
 pub const INQUIRY_STATEMENT_PREDICATE: &str = "profile.statement";
 
 /// The verb class of the company's reciprocal grant.
 const PROPOSE_VERB_CLASS: &str = "propose";
-
-/// How many opened statements one page of the WORLD index reads.
-const SCOPE_PAGE: usize = 256;
 
 /// Opened statement → the claim it was drawn from.
 const SCOPE_LINK: SideTable<EntityId, EntityId, Raw> =
@@ -175,18 +199,6 @@ pub struct InquiryEdgeReciprocalGrant {
     pub authority_scope: Scope,
 }
 
-/// One statement in an edge's opened scope.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct InquiryScopeItem {
-    /// The statement's CLAIM in the opened WORLD.
-    pub claim: EntityId,
-    /// The statement, in the member's words.
-    pub statement: String,
-    /// The claim it was drawn from, read from the member-local link; never
-    /// part of an answer.
-    pub drawn_from: Option<EntityId>,
-}
-
 impl InquiryEdge {
     /// The pact direction the edge's grant projects to: the member's vault
     /// shares it as its half of the Connect with the company.
@@ -235,66 +247,6 @@ fn inquiry_edge_scope(world: EntityId, verb: &str) -> Scope {
 
 fn refused(reason: &str) -> Error {
     Error::InvalidConfig(reason.to_owned())
-}
-
-/// The inquiry edge `grant` names, with the grant it decodes from, when it
-/// is a live inquiry edge here. "Live" is the grant's row: its expiry, its
-/// withdrawal and its pact are the caller's to check.
-pub(super) fn inquiry_edge_grant_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    grant: &EntityId,
-) -> Result<Option<(InquiryEdge, FederationGrant)>> {
-    let LiveEntityRow::Live {
-        entity_type: ENTITY_TYPE_FEDERATION_GRANT,
-        body,
-    } = live_entity_row_in_txn(&vault.store, txn, grant)?
-    else {
-        return Ok(None);
-    };
-    let decoded = decode_federation_grant_body(&body)?;
-    let (FederationGrantScope::Connect { peer_vault_id }, Some(terms)) =
-        (&decoded.scope, decoded.inquiry_terms)
-    else {
-        return Ok(None);
-    };
-    let edge = InquiryEdge {
-        grant: *grant,
-        company_vault_id: *peer_vault_id,
-        guest_actor: decoded.member_ref,
-        authority_scope: decoded.authority_scope.clone(),
-        terms,
-        expires_at: decoded.expires_at,
-    };
-    Ok(Some((edge, decoded)))
-}
-
-/// The inquiry edge `grant` names, when it is a live inquiry edge here.
-pub(super) fn inquiry_edge_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    grant: &EntityId,
-) -> Result<Option<InquiryEdge>> {
-    Ok(inquiry_edge_grant_in_txn(vault, txn, grant)?.map(|(edge, _)| edge))
-}
-
-fn require_inquiry_edge_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    grant: &EntityId,
-) -> Result<InquiryEdge> {
-    inquiry_edge_in_txn(vault, txn, grant)?
-        .ok_or_else(|| refused("that grant is not a live inquiry edge of this vault"))
-}
-
-/// One statement to open in an edge's scope: its new CLAIM's id, the member
-/// it is about, its words (trimmed, not empty) and the claim it was drawn
-/// from.
-pub(super) struct NewScopeItem<'a> {
-    pub(super) claim: EntityId,
-    pub(super) member: EntityId,
-    pub(super) statement: &'a str,
-    pub(super) drawn_from: Option<EntityId>,
 }
 
 /// Writes `item` into `edge`'s opened scope in `txn` at `now`: a new CLAIM
@@ -400,83 +352,6 @@ fn rewrite_inquiry_edge_row_in_txn(
     )
 }
 
-/// One live statement of an opened scope, with the body it was read from.
-pub(super) struct OpenedStatement {
-    pub(super) claim: EntityId,
-    pub(super) text: String,
-    pub(super) body: ClaimBody,
-}
-
-/// The live statements of the opened WORLD `world`, in id order: the Active
-/// claims of the statement predicate in that WORLD whose value is text.
-/// Nothing outside the WORLD is read.
-pub(super) fn opened_statements_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    world: EntityId,
-) -> Result<Vec<OpenedStatement>> {
-    let mut statements = Vec::new();
-    let mut after = None;
-    loop {
-        let page = crate::store::claim_projection::claim_ids_for_world_page_in_txn(
-            &vault.store,
-            txn,
-            world,
-            after,
-            SCOPE_PAGE,
-        )?;
-        let Some(last) = page.last().copied() else {
-            return Ok(statements);
-        };
-        for claim in page {
-            let Some(body) = vault.get_claim_in_txn(txn, &claim)? else {
-                continue;
-            };
-            let Some(text) = body.value.as_str().map(str::to_owned) else {
-                continue;
-            };
-            if body.lifecycle != ClaimLifecycleStatus::Active
-                || body.predicate != INQUIRY_STATEMENT_PREDICATE
-                || body.world != Some(world)
-            {
-                continue;
-            }
-            statements.push(OpenedStatement { claim, text, body });
-        }
-        after = Some(last);
-    }
-}
-
-/// Drops the link `statement` was opened with, when it has one: when the
-/// member closes the statement. A link another opened statement holds to
-/// `statement` stays; it goes only with an erase.
-fn drop_inquiry_scope_link_of_statement_in_txn(
-    store: &Store,
-    wtxn: &mut heed::RwTxn<'_>,
-    statement: &EntityId,
-) -> Result<()> {
-    if let Some(source) = SCOPE_LINK.get(store, wtxn, statement)? {
-        SCOPE_LINK.delete(store, wtxn, statement)?;
-        SCOPE_LINK_BY_SOURCE.delete(store, wtxn, &(source, *statement))?;
-    }
-    Ok(())
-}
-
-/// Drops every scope link `claim` stands in, as the opened statement or as
-/// the claim one was drawn from: when an erase removes either claim.
-pub(crate) fn drop_inquiry_scope_links_in_txn(
-    store: &Store,
-    wtxn: &mut heed::RwTxn<'_>,
-    claim: &EntityId,
-) -> Result<()> {
-    drop_inquiry_scope_link_of_statement_in_txn(store, wtxn, claim)?;
-    for (source, opened) in SCOPE_LINK_BY_SOURCE.scan_keys(store, wtxn, claim.as_bytes())? {
-        SCOPE_LINK.delete(store, wtxn, &opened)?;
-        SCOPE_LINK_BY_SOURCE.delete(store, wtxn, &(source, opened))?;
-    }
-    Ok(())
-}
-
 impl Vault {
     /// Mints the member's inquiry edge to one company, approved by `owner`,
     /// in one writer: the empty WORLD "What <company> can ask about", then
@@ -493,49 +368,236 @@ impl Vault {
         owner: &AuthenticatedOwner,
         request: &InquiryEdgeRequest,
     ) -> Result<InquiryEdge> {
+        self.with_write_txn_grouped(|txn| self.mint_inquiry_edge_in_txn(txn, owner, request))
+    }
+
+    /// The writer of [`Self::mint_inquiry_edge`], in the caller's
+    /// transaction.
+    fn mint_inquiry_edge_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        owner: &AuthenticatedOwner,
+        request: &InquiryEdgeRequest,
+    ) -> Result<InquiryEdge> {
         let company = request.company_name.trim();
         if company.is_empty() {
             return Err(refused("an inquiry edge names its company"));
         }
         let name = format!("What {company} can ask about");
+        refuse_live_connect_in_txn(self, txn, &request.company_vault_id)?;
+        let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+        let opened_world = self.create_world_in_txn(txn, owner, &name, now)?;
+        let terms = InquiryTerms {
+            opened_world,
+            tier_ceiling: request.tier_ceiling,
+            check_in_modes: request.check_in_modes,
+            keep_allowed: request.keep_allowed,
+        };
+        let minted = self.mint_connect_grant_in_txn(
+            txn,
+            ConnectGrantApproval::Owner(owner),
+            request.company_vault_id,
+            ConnectGrantRequest {
+                scope: inquiry_edge_scope(opened_world, INQUIRE_VERB_CLASS),
+                inquiry_terms: Some(terms),
+            },
+            request.expires_at,
+            None,
+        )?;
+        Ok(InquiryEdge {
+            grant: minted.grant,
+            company_vault_id: request.company_vault_id,
+            guest_actor: minted.guest_actor,
+            authority_scope: minted.resolved_scope,
+            terms,
+            expires_at: minted.expires_at,
+        })
+    }
+
+    /// Prepares the member's inquiry edge for joining one company's shared
+    /// vault, approved by `owner`, in one writer (federation.md
+    /// #inquiry-first-build: "the edge is created at joining"; Engine ruling
+    /// L7-04-COMPANY-HALF = A): the edge on the member defaults, minted as
+    /// [`Self::mint_inquiry_edge`] mints it, or the unbound edge an earlier
+    /// prepare left to that company; then this host's signed half of the
+    /// Connect that binds it to the company's reciprocal grant, whose WORLD
+    /// the pact's id fixes. The company takes the offer with the seat
+    /// ([`Self::accept_shared_invitation_with_inquiry_edge`]) or later
+    /// ([`Self::attach_inquiry_edge_to_seat`]); this vault then applies the
+    /// company's counter with [`Self::accept_connect_as`] on the edge's
+    /// grant. A live Connect with the company refuses, as the mint does
+    /// (INQUIRE-EDGE-JOIN = A).
+    ///
+    /// # Errors
+    ///
+    /// A blank member or company name; a proof that is not this vault's live
+    /// Owner; an issuer that is not this vault's host; a live Connect with
+    /// the company; any refusal of the edge's mint; storage errors.
+    pub fn prepare_inquiry_edge_for_join(
+        &self,
+        owner: &AuthenticatedOwner,
+        issuer: &HostSlipIssuer,
+        company_vault_id: AuthorityVaultId,
+        company_name: &str,
+        member_name: &str,
+    ) -> Result<InquiryJoinPrepared> {
+        let member = member_name.trim();
+        if member.is_empty() {
+            return Err(refused(
+                "an inquiry edge offered at joining names its member",
+            ));
+        }
         self.with_write_txn_grouped(|txn| {
-            // An edge cannot join a live Connect with the company: the grant
-            // row is never widened in place and a re-scope only narrows
-            // (Engine ruling INQUIRE-EDGE-JOIN = A).
-            let fold = self.authority_fold_readonly_in_txn(txn)?;
-            if require_one_connect_per_peer(&fold, &request.company_vault_id, None).is_err() {
+            owner.revalidate_in_txn(self, txn)?;
+            refuse_live_connect_in_txn(self, txn, &company_vault_id)?;
+            let edge = match unbound_inquiry_edge_in_txn(self, txn, &company_vault_id)? {
+                Some(edge) => edge,
+                None => self.mint_inquiry_edge_in_txn(
+                    txn,
+                    owner,
+                    &InquiryEdgeRequest::member_defaults(company_vault_id, company_name),
+                )?,
+            };
+            let pact_id = crate::authority::fresh_pact_id();
+            let company_world = inquiry_join_world(&company_vault_id, &pact_id)?;
+            let terms = ConnectOfferTerms {
+                grant_ref: edge.grant,
+                peer_vault_id: company_vault_id,
+                outbound: edge.pact_direction()?,
+                inbound: pact_direction_of(&inquiry_edge_scope(company_world, PROPOSE_VERB_CLASS))?,
+            };
+            let connect = self.propose_connect_in_txn(txn, issuer, terms, pact_id)?;
+            Ok(InquiryJoinPrepared {
+                edge,
+                offer: InquiryJoinOffer {
+                    member_name: member.to_owned(),
+                    connect,
+                },
+            })
+        })
+    }
+
+    /// The company's half of a member seat's inquiry edge, in the caller's
+    /// writer, approved by `member`'s live seat in `shared_vault_id` (Engine
+    /// ruling L7-04-COMPANY-HALF = A): the WORLD the offer's pact fixes,
+    /// named "Inquiry edge: <member>"; the company's Connect guest grant to
+    /// the member's vault with verbs `propose` alone over it, released when
+    /// the member leaves; then the Connect logged from the member host's
+    /// offer and signed by this vault's host `issuer`. Answers this host's
+    /// counter, which goes back to the member's vault in the door's answer
+    /// and never into a receipt or a log: it carries the pact's scope opening
+    /// key. An exact repeat of a joined offer writes nothing and answers the
+    /// same counter.
+    pub(crate) fn join_inquiry_edge_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        issuer: &HostSlipIssuer,
+        shared_vault_id: u64,
+        member: EntityId,
+        join: &InquiryJoinOffer,
+    ) -> Result<ConnectOffer> {
+        if !self.holds_inquiry_seat_in_txn(txn, shared_vault_id, member)? {
+            return Err(refused(
+                "an inquiry edge joins only its member's own seat in this shared vault",
+            ));
+        }
+        // The offer names its member, its exact repeat included (review
+        // round 2 of #9195): a repeat answers only an offer the first call
+        // would have taken.
+        if join.member_name.trim().is_empty() {
+            return Err(refused(
+                "an inquiry edge offered at joining names its member",
+            ));
+        }
+        let connect = &join.connect;
+        let fold = self.authority_fold_readonly_in_txn(txn)?;
+        let local = fold
+            .vault_id
+            .ok_or_else(|| refused("this vault has no authority root yet"))?;
+        let seat = ConnectMemberLeaveBinding {
+            shared_vault_id,
+            person_ref: member,
+        };
+        if let Some(pact) = fold.federation_pacts.get(&connect.pact_id) {
+            let grant = pact.grant_ref;
+            if !is_seat_inquiry_grant_in_txn(self, txn, &local, &grant, &connect.pact_id, seat)? {
                 return Err(refused(
-                    "this vault already has a live Connect with that company, and an inquiry \
-                     edge cannot join it yet: disconnect that Connect first, then mint the edge",
+                    "that Connect offer's pact is not this seat's inquiry edge",
                 ));
             }
-            let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
-            let opened_world = self.create_world_in_txn(txn, owner, &name, now)?;
-            let terms = InquiryTerms {
-                opened_world,
-                tier_ceiling: request.tier_ceiling,
-                check_in_modes: request.check_in_modes,
-                keep_allowed: request.keep_allowed,
-            };
-            let minted = self.mint_connect_grant_in_txn(
-                txn,
-                owner,
-                request.company_vault_id,
-                ConnectGrantRequest {
-                    scope: inquiry_edge_scope(opened_world, INQUIRE_VERB_CLASS),
-                    inquiry_terms: Some(terms),
-                },
-                request.expires_at,
-                None,
-            )?;
-            Ok(InquiryEdge {
-                grant: minted.grant,
-                company_vault_id: request.company_vault_id,
-                guest_actor: minted.guest_actor,
-                authority_scope: minted.resolved_scope,
-                terms,
-                expires_at: minted.expires_at,
-            })
+            return Ok(self.accept_connect_in_txn(txn, issuer, grant, connect)?.1);
+        }
+        // One edge per seat (ARCH-0043 #inquiry-edge: "Every member seat
+        // carries an inquiry edge"; FIX INQUIRY-EDGE-ONE-PER-SEAT). The exact
+        // repeat was answered above, so a live inquiry edge of the seat here
+        // belongs to another pact: a second edge, refused before any WORLD,
+        // grant or pact is written.
+        if seat_carries_inquiry_edge_in_txn(self, txn, &fold, &local, seat)? {
+            return Err(refused("this member seat already carries an inquiry edge"));
+        }
+        // The WORLD is named for the seat's PERSON as this vault holds it,
+        // never for the name the member's offer gives, which could be another
+        // member's; a PERSON with no stored name reads as its id's prefix. Its
+        // first 48 characters keep the WORLD's name inside its 256 bytes.
+        let member_name: String = crate::reaction::person_name_in(self, txn, member)?
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or_else(|| member.to_hex()[..8].to_owned())
+            .trim()
+            .chars()
+            .take(48)
+            .collect();
+        let world = inquiry_join_world(&local, &connect.pact_id)?;
+        // A member who leaves and joins again gets a new WORLD, so its name
+        // carries the pact's own part.
+        let name = format!("Inquiry edge: {member_name} ({})", &world.to_hex()[..8]);
+        let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+        // The seat checked above approves the WORLD; the grant's mint below
+        // re-checks it in this writer, and a refusal rolls the WORLD back.
+        self.put_world_in_txn(txn, world, &name, now, |_, _| Ok(()))?;
+        let minted = self.mint_connect_grant_in_txn(
+            txn,
+            ConnectGrantApproval::InquirySeat {
+                shared_vault_id,
+                member,
+            },
+            connect.from_vault,
+            ConnectGrantRequest {
+                scope: inquiry_edge_scope(world, PROPOSE_VERB_CLASS),
+                inquiry_terms: None,
+            },
+            None,
+            None,
+        )?;
+        Ok(self
+            .accept_connect_in_txn(txn, issuer, minted.grant, connect)?
+            .1)
+    }
+
+    /// Attaches a member's inquiry edge to their seat, accepted earlier
+    /// without one (Engine ruling L7-04-NO-PERSONAL-VAULT = A): on `member`'s
+    /// own person-tier proof, for their own live seat in `shared_vault_id`
+    /// (delegates and guests aside), the company's half of the edge is
+    /// written as the accept writes it, in one writer and signed by this
+    /// vault's host `issuer`. No Owner act: the seat approves its own edge
+    /// (L7-04-COMPANY-HALF = A). An exact repeat answers the same counter and
+    /// writes nothing. Until an edge is attached, an inquiry to the seat has
+    /// no route and answers `unavailable`.
+    ///
+    /// # Errors
+    ///
+    /// A proof of no live person; no seat of theirs here; an offer that is
+    /// not for this vault or that its pact's terms refuse; a live Connect
+    /// with the member's vault; storage errors.
+    pub fn attach_inquiry_edge_to_seat(
+        &self,
+        member: &AuthenticatedOwner,
+        issuer: &HostSlipIssuer,
+        shared_vault_id: u64,
+        join: &InquiryJoinOffer,
+    ) -> Result<ConnectOffer> {
+        self.with_write_txn_grouped(|txn| {
+            let actor = member.revalidate_person_in_txn(self, txn)?;
+            self.join_inquiry_edge_in_txn(txn, issuer, shared_vault_id, actor, join)
         })
     }
 
@@ -564,7 +626,7 @@ impl Vault {
             let world = self.create_world_in_txn(txn, owner, &name, now)?;
             let minted = self.mint_connect_grant_in_txn(
                 txn,
-                owner,
+                ConnectGrantApproval::Owner(owner),
                 member_vault_id,
                 ConnectGrantRequest {
                     scope: inquiry_edge_scope(world, PROPOSE_VERB_CLASS),
@@ -688,104 +750,5 @@ impl Vault {
             self.store.notify_credential_revocations();
         }
         Ok(outcome)
-    }
-
-    /// Opens one statement to the company, approved by `owner`, in one
-    /// writer: a new CLAIM about the member in the edge's opened WORLD,
-    /// stated by the member, and, when it was drawn from another claim
-    /// (`drawn_from`, live and outside the opened WORLD), the member-local
-    /// link to it. The link never enters the statement's body.
-    pub fn open_inquiry_scope_item(
-        &self,
-        owner: &AuthenticatedOwner,
-        grant: EntityId,
-        statement: &str,
-        drawn_from: Option<EntityId>,
-    ) -> Result<InquiryScopeItem> {
-        let statement = statement.trim();
-        if statement.is_empty() {
-            return Err(refused("an opened statement has words"));
-        }
-        let claim = EntityId::now();
-        self.with_write_txn_grouped(|txn| {
-            let member = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
-            let edge = require_inquiry_edge_in_txn(self, txn, &grant)?;
-            let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
-            open_inquiry_scope_item_in_txn(
-                self,
-                txn,
-                &NewScopeItem {
-                    claim,
-                    member,
-                    statement,
-                    drawn_from,
-                },
-                &edge,
-                now,
-            )
-        })?;
-        self.store.notify_proactivity_changes();
-        Ok(InquiryScopeItem {
-            claim,
-            statement: statement.to_owned(),
-            drawn_from,
-        })
-    }
-
-    /// Closes one opened statement, approved by `owner`, in one writer: the
-    /// statement's CLAIM is retracted and its own member-local link dropped;
-    /// a statement of another edge drawn from it keeps its link. Only a
-    /// statement of this edge's opened WORLD closes here; a closed one
-    /// closes again as a no-op.
-    pub fn close_inquiry_scope_item(
-        &self,
-        owner: &AuthenticatedOwner,
-        grant: EntityId,
-        claim: EntityId,
-    ) -> Result<()> {
-        self.with_write_txn_grouped(|txn| {
-            owner.revalidate_as_vault_owner_in_txn(self, txn)?;
-            let edge = require_inquiry_edge_in_txn(self, txn, &grant)?;
-            let body = self
-                .get_claim_in_txn(txn, &claim)?
-                .ok_or(Error::EntityNotFound)?;
-            if body.world != Some(edge.terms.opened_world)
-                || body.predicate != INQUIRY_STATEMENT_PREDICATE
-            {
-                return Err(refused(
-                    "that claim is not a statement of this edge's opened scope",
-                ));
-            }
-            if body.lifecycle == ClaimLifecycleStatus::Active {
-                let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
-                self.retract_claim_in_txn(txn, &claim, now)?;
-            }
-            drop_inquiry_scope_link_of_statement_in_txn(&self.store, txn, &claim)
-        })?;
-        self.store.notify_proactivity_changes();
-        Ok(())
-    }
-
-    /// "What <company> can ask about": the live statements of the edge's
-    /// opened scope, in id order, for `owner` alone. Empty until the member
-    /// opens one.
-    pub fn inquiry_scope_items(
-        &self,
-        owner: &AuthenticatedOwner,
-        grant: EntityId,
-    ) -> Result<Vec<InquiryScopeItem>> {
-        let txn = self.store.env.read_txn()?;
-        owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
-        let edge = require_inquiry_edge_in_txn(self, &txn, &grant)?;
-        opened_statements_in_txn(self, &txn, edge.terms.opened_world)?
-            .into_iter()
-            .map(|opened| {
-                Ok(InquiryScopeItem {
-                    claim: opened.claim,
-                    statement: opened.text,
-                    drawn_from: SCOPE_LINK.get(&self.store, &txn, &opened.claim)?,
-                })
-            })
-            .collect()
     }
 }

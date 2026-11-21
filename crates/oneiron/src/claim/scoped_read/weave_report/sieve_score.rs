@@ -12,6 +12,7 @@
 //! still change only the served copy.
 use std::collections::{BTreeMap, BTreeSet};
 
+use super::super::access_gate::HeldAuthority;
 use super::super::{
     ScopedRead, WeaveItemView, WeaveSieveDiscoveryView, WeaveSieveFindingView, WeaveSieveScoreView,
 };
@@ -28,18 +29,20 @@ use crate::gate::{PolicyManifestResolution, ResolvedRetrievalFilter};
 impl ScopedRead<'_> {
     /// Every sampled audit whose rows this reader's floor admits, in
     /// attempt order, read whole (rule 5). Its turn, its source and each
-    /// entity it names pass the floor's own admission,
-    /// [`Self::is_entity_retrievable_with_policy_in`], unchanged. A row the
-    /// floor refuses or cannot answer for (a storage or decode error)
-    /// withholds the audit, as an audit row that does not decode is
-    /// withheld; neither fails the report, and neither widens it.
+    /// entity it names pass the floor's own admission under the read's
+    /// `held` authority, [`Self::is_entity_retrievable_held_in`], unchanged.
+    /// A row the floor refuses or cannot answer for (a storage or decode
+    /// error) withholds the audit, as an audit row that does not decode is
+    /// withheld; neither fails the report, and neither widens it. A reader
+    /// who reads no row at all sees no audit.
     pub(super) fn weave_sieve_audits_in(
         &self,
         txn: &heed::RoTxn<'_>,
         policy: &PolicyManifestResolution,
         filter: &ResolvedRetrievalFilter,
+        held: &HeldAuthority,
     ) -> Vec<WeaveItem> {
-        if filter.deny_all {
+        if self.reads_nothing_held_in(txn, policy, filter, held) {
             return Vec::new();
         }
         let rows = match crate::dreamer_wake::sieve::sieve_audits_in_txn(self.vault, txn) {
@@ -71,7 +74,7 @@ impl ScopedRead<'_> {
                     readable
                 } else {
                     let readable = match self
-                        .is_entity_retrievable_with_policy_in(txn, policy, filter, &id)
+                        .is_entity_retrievable_held_in(txn, policy, filter, &id, held)
                     {
                         Ok(readable) => readable,
                         Err(error) => {
@@ -114,21 +117,23 @@ impl ScopedRead<'_> {
     /// Serves each sampled audit's kept decisions in `report` past this
     /// reader's own floor (FIX 8322): every evidence id and pinned evidence
     /// version a decision names passes
-    /// [`Self::is_entity_retrievable_with_policy_in`], as the audit's own
-    /// rows do, or is left out of the served copy, its decision marked in
-    /// the item's `redacted`. A floor that does not answer redacts. The
-    /// decision, the audit and its period always stay.
+    /// [`Self::is_entity_retrievable_held_in`] under the read's `held`
+    /// authority, as the audit's own rows do, or is left out of the served
+    /// copy, its decision marked in the item's `redacted`. A floor that does
+    /// not answer redacts. The decision, the audit and its period always
+    /// stay.
     pub(crate) fn redact_sieve_decisions_in(
         &self,
         txn: &heed::RoTxn<'_>,
         policy: &PolicyManifestResolution,
         filter: &ResolvedRetrievalFilter,
+        held: &HeldAuthority,
         report: &mut WeaveReport,
     ) {
         let mut floor: BTreeMap<EntityId, bool> = BTreeMap::new();
         let mut admits = |id: EntityId| -> bool {
             *floor.entry(id).or_insert_with(|| {
-                match self.is_entity_retrievable_with_policy_in(txn, policy, filter, &id) {
+                match self.is_entity_retrievable_held_in(txn, policy, filter, &id, held) {
                     Ok(readable) => readable,
                     Err(error) => {
                         tracing::warn!(

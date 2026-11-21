@@ -63,6 +63,10 @@ const INTERRUPTED_MARK: &str = " [interrupted: the person cut in here]";
 /// How an answer that ended without a stop ends its history entry: every
 /// word it said was spoken, and the answer is not whole (FIX 7808).
 const INCOMPLETE_MARK: &str = " [incomplete: the answer ended before it finished]";
+/// How the call's history hears the line the call opened with: as System
+/// context, as a safeguard notice is heard, so no conversation a model is
+/// sent opens with the agent's own message.
+const ANNOUNCED: &str = "Said to the person when the call opened:";
 /// What the call's earlier turns become for a turn assembled for a new
 /// audience (CALLS.md: FIX 1389 history).
 const PRIOR_TURNS_ON_NEW_AUDIENCE: PriorTurns = PriorTurns::Dropped;
@@ -104,8 +108,9 @@ pub struct ChatBrainBindings {
     pub funding: Option<PayerPerson>,
     /// Where the turns' events go: the host's `brain_out`.
     pub out: mpsc::Sender<VoiceBrainOut>,
-    /// Where an owner's own call keeps its answered turns (UNBUILT-02);
-    /// `None` keeps none, as a phone call or a call heard in a room.
+    /// Where the call keeps its answered turns: an owner's own call, a phone
+    /// call between its two divider rows, or a room call in the room
+    /// (UNBUILT-02); `None` keeps none.
     pub(crate) record: Option<CallRecord>,
 }
 
@@ -120,7 +125,9 @@ pub struct ChatBrain {
     /// The room's live speakers `history` was heard under, for a call heard
     /// in a room.
     history_live: Option<RoomLiveSpeakerEntries>,
-    history_phone_scope: Option<oneiron::federation::Scope>,
+    /// The call's live consent `history` was read under: any change to it,
+    /// its scope or not, drops that history (#8667 review r2 P1).
+    history_phone_consent: Option<oneiron::phone_line::PhoneLineConsent>,
     turn: Option<Running>,
     retiring: Vec<JoinHandle<()>>,
     /// Each tool context, beside the rows the connector call listed.
@@ -132,6 +139,10 @@ pub struct ChatBrain {
     /// person heard of it arrives (FIX 4899): words speech never took count
     /// as unheard.
     interrupted: BTreeMap<GenerationEpoch, String>,
+    /// The speaker key the host route's final named for its generation, when
+    /// it named one (UNBUILT-02 PR 4): taken by the turn that generation
+    /// starts, to label the kept words.
+    final_speaker: Option<(GenerationEpoch, String)>,
 }
 
 /// One history message, beside the rows it was made from (FIX 4778): the
@@ -198,23 +209,30 @@ impl ChatBrain {
             .chat_seat()
             .cloned()
             .ok_or_else(|| refused("no [models] rung serves generative_reasoner"))?;
-        let history_phone_scope = bindings
+        let history_phone_consent = bindings
             .phone
             .as_ref()
-            .map(|phone| phone.current_scope())
+            .map(|phone| phone.current_consent())
             .transpose()?;
+        // A phone call's thread shows where the call starts; its end is
+        // written when the brain drops, however the call ended.
+        if let Some(record) = &bindings.record {
+            let vault = &bindings.vault;
+            crate::server::blocking(|| record.open(vault));
+        }
         Ok(Self {
             bindings,
             seat,
             history: Arc::new(Mutex::new(Vec::new())),
             history_revision: None,
             history_live: None,
-            history_phone_scope,
+            history_phone_consent,
             turn: None,
             retiring: Vec::new(),
             foreign: Vec::new(),
             said_by: BTreeMap::new(),
             interrupted: BTreeMap::new(),
+            final_speaker: None,
         })
     }
 
@@ -344,11 +362,22 @@ impl ChatBrain {
             BudgetExhaustionPolicy::Suspend,
             payer.clone(),
         )?;
+        // Whether the call's room has a live stretch that keeps no record,
+        // read once at the turn's arrival: for the turn's run here and for
+        // whether the turn is kept (census L5-25).
+        let room = self.bindings.room;
+        let no_record_at_arrival = room.is_some_and(|room| vault.room_has_unrecorded_stretch(room));
         let run = ai.model_runtime().funded_run(line, meter, funding.clone());
         // Its permits and metered settlement carry the rows the input was
-        // read from (FIX 6935).
+        // read from (FIX 6935). In a stretch that keeps no record they name
+        // no rows, so no receipt names them or their worlds.
         let read = oneiron::skill_optimize::union_source_rows([Some(said_from.as_slice())]);
         let run = run.sourced(read);
+        let run = if no_record_at_arrival {
+            run.off_record()
+        } else {
+            run
+        };
         let run = match &self.bindings.phone {
             Some(phone) => {
                 let phone = Arc::clone(phone);
@@ -368,8 +397,6 @@ impl ChatBrain {
             .ladder
             .stream_recorded(&run, admitted.request.clone(), None)
             .map_err(|error| refused(format!("{error:?}")))?;
-        let room = self.bindings.room;
-        let no_record_at_arrival = room.is_some_and(|room| vault.room_has_unrecorded_stretch(room));
         let capture = ModelCallCapture {
             vault: Arc::clone(vault),
             ladder: Arc::clone(&admitted.ladder),
@@ -508,6 +535,78 @@ impl ChatBrain {
         self.foreign.push((result, rows));
     }
 
+    /// Speaks the line the host opened `request`'s generation with (its
+    /// `transcript`; UNBUILT-02 PR 3B) as that generation's whole answer,
+    /// with no model call. It is made from the answering agent's definition,
+    /// whose name it says, and enters the call's history as said, so the
+    /// first turn answers after it. A call that keeps its turns keeps it
+    /// first, before it is handed to speech, so it lands ahead of every turn
+    /// the caller's words start.
+    pub(crate) fn announce(&mut self, request: &BrainRequest) -> oneiron::Result<()> {
+        self.abort();
+        let phone_consent = self
+            .bindings
+            .phone
+            .as_ref()
+            .map(|phone| phone.current_consent())
+            .transpose()
+            .map_err(refused)?;
+        if phone_consent.is_some() && phone_consent != self.history_phone_consent {
+            self.history = Arc::new(Mutex::new(Vec::new()));
+            self.foreign.clear();
+            self.said_by.clear();
+        }
+        self.rebuild_history(request.audience_revision, None)?;
+        let generation = request.generation;
+        let said_from = vec![self.bindings.agent];
+        if let Some(phone) = &self.bindings.phone {
+            let scope = phone_consent
+                .as_ref()
+                .map(|consent| consent.scope().clone())
+                .ok_or_else(|| refused("phone context has no captured scope"))?;
+            phone
+                .prepare_generation(
+                    generation,
+                    scope,
+                    said_from.clone(),
+                    request.interlocutors.clone(),
+                )
+                .map_err(refused)?;
+        }
+        self.history_phone_consent = phone_consent;
+        self.said_by.insert(generation, said_from.clone());
+        let sources = Arc::new(Mutex::new(Some(TurnSources {
+            said: said_from.clone(),
+            found: Vec::new(),
+        })));
+        let announcement = Announcement {
+            generation,
+            line: request.transcript.clone(),
+            kept: self
+                .bindings
+                .record
+                .clone()
+                .map(|record| (Arc::clone(&self.bindings.vault), record)),
+            room: self.bindings.room,
+            sources: Arc::clone(&sources),
+            said_from: said_from.clone(),
+            out: self.bindings.out.clone(),
+            history: Arc::clone(&self.history),
+        };
+        let handle = tokio::spawn(announcement.run());
+        // Its history entry is written whole before it is spoken, so a
+        // cancel adds no interrupted answer of its own.
+        self.turn = Some(Running {
+            generation,
+            handle,
+            said: Arc::new(Mutex::new(None)),
+            memories: Arc::new(Mutex::new(None)),
+            sources,
+            said_from,
+        });
+        Ok(())
+    }
+
     pub(super) fn producer_pending(&self, generation: GenerationEpoch) -> bool {
         self.turn
             .as_ref()
@@ -603,14 +702,14 @@ fn room_audience<'a>(
 impl Brain for ChatBrain {
     fn start(&mut self, request: &BrainRequest) -> oneiron::Result<()> {
         self.abort();
-        let phone_scope = self
+        let phone_consent = self
             .bindings
             .phone
             .as_ref()
-            .map(|phone| phone.current_scope())
+            .map(|phone| phone.current_consent())
             .transpose()
             .map_err(refused)?;
-        if phone_scope.is_some() && phone_scope != self.history_phone_scope {
+        if phone_consent.is_some() && phone_consent != self.history_phone_consent {
             // An aborted task may still own the old Arc on another executor.
             self.history = Arc::new(Mutex::new(Vec::new()));
             self.foreign.clear();
@@ -618,9 +717,15 @@ impl Brain for ChatBrain {
         }
         let (memories, heard, live) = self.memories(request)?;
         self.rebuild_history(request.audience_revision, live)?;
-        let (stream, tainted, memories, said_from, capture) =
-            self.open(request, memories, heard, phone_scope.as_ref())?;
-        self.history_phone_scope = phone_scope;
+        let (stream, tainted, memories, said_from, capture) = self.open(
+            request,
+            memories,
+            heard,
+            phone_consent
+                .as_ref()
+                .map(oneiron::phone_line::PhoneLineConsent::scope),
+        )?;
+        self.history_phone_consent = phone_consent;
         let generation = request.generation;
         // The person's words: no stored row yet; an owner's own call keeps
         // them, with the answer, once the answer stops (UNBUILT-02).
@@ -643,18 +748,34 @@ impl Brain for ChatBrain {
         })));
         let said = Arc::new(Mutex::new(Some(String::new())));
         let memories = Arc::new(Mutex::new(memories));
-        // An owner's own call keeps the turn once its answer stops: the
-        // person's words as heard now, then the answer (UNBUILT-02).
-        let kept = self.bindings.record.map(|record| KeptTurn {
-            ai: self.bindings.ai.clone(),
-            vault: Arc::clone(&self.bindings.vault),
-            record,
-            agent: self.bindings.agent,
-            transcript: request.transcript.clone(),
-            heard_at: self.bindings.vault.now_recorded_at(),
-            funding: self.bindings.funding.clone(),
-            budget_units: self.bindings.ai.chat_settings().turn_budget_units,
-        });
+        // The final's speaker key, when the host route's final named one for
+        // this generation: taken now, to label the kept words.
+        let speaker = match self.final_speaker.take() {
+            Some((generation, key)) if generation == request.generation => Some(key),
+            other => {
+                self.final_speaker = other;
+                None
+            }
+        };
+        // A recorded call keeps the turn once its answer stops: the
+        // person's words as heard now, then the answer (UNBUILT-02), unless
+        // the owner keeps no transcripts of calls with other people.
+        let kept = self
+            .bindings
+            .record
+            .clone()
+            .filter(|record| record.keeps_turns(&self.bindings.vault))
+            .map(|record| KeptTurn {
+                ai: self.bindings.ai.clone(),
+                vault: Arc::clone(&self.bindings.vault),
+                record,
+                agent: self.bindings.agent,
+                transcript: request.transcript.clone(),
+                heard_at: self.bindings.vault.now_recorded_at(),
+                speaker,
+                funding: self.bindings.funding.clone(),
+                budget_units: self.bindings.ai.chat_settings().turn_budget_units,
+            });
         let turn = Turn {
             generation,
             capture,
@@ -756,6 +877,13 @@ impl Brain for ChatBrain {
             .push((text_message(LlmMessageRole::System, note), rows));
         Ok(())
     }
+
+    /// The speaker key the host route's final named for `generation`, when it
+    /// named one: stored until the turn that generation starts takes it, to
+    /// label the kept words. `None` clears a stored key.
+    fn final_speaker(&mut self, generation: GenerationEpoch, speaker: Option<&str>) {
+        self.final_speaker = speaker.map(|key| (generation, key.to_owned()));
+    }
 }
 
 /// The history's note on what the person heard of an answer (FIX 4899):
@@ -829,6 +957,96 @@ fn visible_chars(text: &str) -> usize {
 impl Drop for ChatBrain {
     fn drop(&mut self) {
         self.abort();
+        let Some(record) = self.bindings.record.take() else {
+            return;
+        };
+        // The call's end row closes its thread: it lands after every turn
+        // still keeping what it keeps, which an abort does not interrupt.
+        let vault = Arc::clone(&self.bindings.vault);
+        let running: Vec<JoinHandle<()>> = self
+            .retiring
+            .drain(..)
+            .filter(|handle| !handle.is_finished())
+            .collect();
+        match tokio::runtime::Handle::try_current() {
+            Ok(runtime) if !running.is_empty() => {
+                runtime.spawn(async move {
+                    for handle in running {
+                        let _ended = handle.await;
+                    }
+                    crate::server::blocking(|| record.close(&vault));
+                });
+            }
+            _ => crate::server::blocking(|| record.close(&vault)),
+        }
+    }
+}
+
+/// A call's opening line, handed to speech whole as its generation's answer
+/// (UNBUILT-02 PR 3B).
+struct Announcement {
+    generation: GenerationEpoch,
+    line: String,
+    /// Where a call that keeps its turns keeps the line.
+    kept: Option<(Arc<Vault>, CallRecord)>,
+    /// The room a room call is heard in: a live stretch there that keeps no
+    /// record keeps no line, as it keeps no turn.
+    room: Option<EntityId>,
+    /// The rows it was made from, sent with its event.
+    sources: Arc<Mutex<Option<TurnSources>>>,
+    /// The rows what it says is made from, for its history entry.
+    said_from: Vec<EntityId>,
+    out: mpsc::Sender<VoiceBrainOut>,
+    history: Arc<Mutex<Vec<HistoryEntry>>>,
+}
+
+impl Announcement {
+    async fn run(self) {
+        // Only a line outside a no-record stretch is kept, as only such a
+        // turn is (`Turn::run`; census L5-25).
+        if let Some((vault, record)) = &self.kept
+            && !self
+                .room
+                .is_some_and(|room| vault.room_has_unrecorded_stretch(room))
+        {
+            crate::server::blocking(|| record.keep_announcement(vault, &self.line));
+        }
+        if let Ok(mut history) = self.history.lock() {
+            history.push((
+                text_message(
+                    LlmMessageRole::System,
+                    format!("{ANNOUNCED} \"{}\"", self.line),
+                ),
+                self.said_from.clone(),
+            ));
+        }
+        let sources = self
+            .sources
+            .lock()
+            .ok()
+            .and_then(|mut sources| sources.take());
+        let delta = VoiceBrainOut {
+            generation: self.generation,
+            event: BrainEvent::TextDelta(self.line.clone()),
+            externally_tainted: false,
+            memories: None,
+            sources,
+        };
+        if self.out.send(delta).await.is_err() {
+            return;
+        }
+        let done = VoiceBrainOut {
+            generation: self.generation,
+            event: BrainEvent::Done,
+            externally_tainted: false,
+            memories: None,
+            sources: None,
+        };
+        if self.out.send(done).await.is_err() {
+            tracing::debug!(
+                "voice brain: the host stopped listening before the announcement ended"
+            );
+        }
     }
 }
 
