@@ -36,6 +36,7 @@ pub(crate) const NON_BASE_WORLD_CLAIM_FRACTION: &str =
     "change how much context comes from other worlds";
 pub(crate) const ORIGIN_CUT: &str = "change which host writes this repository";
 pub(crate) const PROACTIVITY_POLICY: &str = "change how your digest is delivered";
+pub(crate) const RECOVERY_PRESET: &str = "change how this vault can be recovered";
 pub(crate) const RECOVER_OWNER_ROOT: &str = "restore your control of this vault";
 pub(crate) const REMOVE_MACHINE: &str = "remove a device linked to this vault";
 pub(crate) const REMOVE_OWNER_KEY: &str = "remove a device that can approve changes";

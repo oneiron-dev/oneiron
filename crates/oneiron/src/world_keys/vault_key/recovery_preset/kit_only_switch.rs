@@ -201,8 +201,8 @@ impl Vault {
         rotation: Option<PreparedRotation>,
         box_hold: &dyn RecoveryBoxHold,
     ) -> Result<RecoveryPresetAnyTwoChange> {
-        let owner = match authority {
-            crate::authority::ActAuthority::Owner(owner, _) => owner,
+        let (owner, surface) = match authority {
+            crate::authority::ActAuthority::Owner(owner, surface) => (owner, *surface),
             crate::authority::ActAuthority::Agent(_) => {
                 return Err(crate::authority::authority_refused(PRESET_OWNER_ONLY));
             }
@@ -219,6 +219,9 @@ impl Vault {
                 return Err(crate::authority::authority_refused(KIT_ONLY_NEEDS_KIT));
             }
         }
+        // The kit-only fact's owner proof is signed on the person's confirm,
+        // asked before the kit is drawn, while the door holds nothing.
+        let ground = self.recovery_preset_proof_ground(true)?;
         let held = self
             .held_vault_key()
             .ok_or_else(|| refused("the vault key is not held on this handle: unlock it first"))?;
@@ -252,7 +255,7 @@ impl Vault {
             box_hold,
         )?;
         let written = self.with_write_txn(|txn| {
-            owner.revalidate_in_txn(self, txn)?;
+            let actor = owner.revalidate_in_txn(self, txn)?;
             self.clear_recovery_box_hold_pending_in_txn(txn, attempt)?;
             let mut state = STATE
                 .get(&self.store, txn, &())?
@@ -279,6 +282,15 @@ impl Vault {
                 box_release_pending: false,
                 box_recovery_needs_new_kit: false,
             };
+            // The managed node folds the switch from its signed fact, written
+            // in this write (WAYBACK-BOX-HOLD-FROM-DEVICE-SWITCH = A).
+            self.append_recovery_box_kit_only_fact_in_txn(
+                txn,
+                ground.as_ref(),
+                actor,
+                surface,
+                preset.is_nobody_but_me(),
+            )?;
             state.recovery = preset;
             // [VAULT-DATA-KEY-ROTATION]: its `start_data_key_generation_in_txn`
             // will run last in this write, after the STATE put.

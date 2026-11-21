@@ -48,6 +48,9 @@ pub use recovery_box_hold::{NoRecoveryBox, RecoveryBoxHold, RecoveryBoxHoldPendi
 
 mod kit_only_switch;
 
+mod kit_only_fact;
+pub use kit_only_fact::RecoveryBoxKitOnlyFact;
+
 const SHEET_KEK_CONTEXT: &str = "oneiron/vault-key-sheet/v1";
 const SHEET_CHECK_CONTEXT: &str = "oneiron/vault-key-sheet/v1/check";
 const SHEET_SECRET_LEN: usize = 32;
@@ -462,8 +465,8 @@ impl Vault {
         rotation: Option<PreparedRotation>,
         box_hold: &dyn RecoveryBoxHold,
     ) -> Result<RecoveryPresetChange> {
-        let owner = match authority {
-            crate::authority::ActAuthority::Owner(owner, _) => owner,
+        let (owner, surface) = match authority {
+            crate::authority::ActAuthority::Owner(owner, surface) => (owner, *surface),
             crate::authority::ActAuthority::Agent(_) => {
                 return Err(crate::authority::authority_refused(PRESET_OWNER_ONLY));
             }
@@ -477,6 +480,10 @@ impl Vault {
                 return Err(crate::authority::authority_refused(KIT_ONLY_NEEDS_KIT));
             }
         }
+        // The kit-only fact's owner proof is signed on the person's confirm,
+        // asked before anything is drawn or written, while the door holds
+        // nothing: the prompt can block.
+        let ground = self.recovery_preset_proof_ground(preset.is_nobody_but_me())?;
         let issue = match preset {
             RecoveryPreset::NobodyButMeAnyTwo => return Err(refused(ANY_TWO_NEEDS_KIT)),
             RecoveryPreset::NobodyButMe if current != preset => {
@@ -525,7 +532,7 @@ impl Vault {
             box_hold,
         )?;
         let written = self.with_write_txn(|txn| {
-            owner.revalidate_in_txn(self, txn)?;
+            let actor = owner.revalidate_in_txn(self, txn)?;
             if let Some(attempt) = hold_attempt {
                 self.clear_recovery_box_hold_pending_in_txn(txn, attempt)?;
             }
@@ -590,6 +597,15 @@ impl Vault {
                     leave_marker = Some(attempt);
                 }
             }
+            // The managed node folds the switch from its signed fact, written
+            // in this write (WAYBACK-BOX-HOLD-FROM-DEVICE-SWITCH = A).
+            self.append_recovery_box_kit_only_fact_in_txn(
+                txn,
+                ground.as_ref(),
+                actor,
+                surface,
+                preset.is_nobody_but_me(),
+            )?;
             state.recovery = preset;
             // [VAULT-DATA-KEY-ROTATION]: its `start_data_key_generation_in_txn`
             // will run last in this write, after the STATE put.
