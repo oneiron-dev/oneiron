@@ -74,20 +74,20 @@ pub(super) fn card_offers_minutes(card: &oneiron::booking::EventTypeCard, minute
     minutes == card.duration_min || card.allowed_durations_min.contains(&minutes)
 }
 
+/// A slot answer's final check, on the cached and the solved path and in a
+/// constraint turn: the snapshot's page still carries the publication the
+/// attempt read and, through a personal link, that link is still live, both
+/// in one read ([`PublicBookingAuthority::recheck`], BK-PERSONAL-LINKS). A
+/// link revoked or ended by "not you?" while the slots were read answers the
+/// one public 404, with the page still published.
 pub(super) fn recheck(
     server: &SyncServer,
     authority: Option<&PublicBookingAuthority>,
 ) -> Result<(), ApiError> {
     if let Some(authority) = authority {
-        let current = oneiron::booking::load_public_booking_page(
-            &server.vault,
-            authority.page_ref,
-            now_secs()?,
-        )
-        .map_err(|_| public::public_booking_not_found())?;
-        if current.as_ref() != Some(&authority.publication) {
-            return Err(public::public_booking_not_found());
-        }
+        authority
+            .recheck(&server.vault, now_secs()?)
+            .map_err(|_| public::public_booking_not_found())?;
     }
     Ok(())
 }
