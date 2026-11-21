@@ -1157,12 +1157,10 @@ impl Vault {
         check_in_ref: Option<EntityId>,
         between: impl FnOnce(),
     ) -> Result<SharedActExecutionReceipt> {
-        let importance = {
-            let txn = self.store.env.read_txn()?;
-            self.member_removal_importance_in_txn(&txn, admin, vault_id, member, ask, check_in_ref)?
-        };
-        let witness =
-            self.owner_presence(importance, owner_presence_reasons::REMOVE_SHARED_MEMBER)?;
+        let witness = self.owner_presence(
+            OwnerActImportance::Important,
+            owner_presence_reasons::REMOVE_SHARED_MEMBER,
+        )?;
         let ground = OwnerProofGround::witnessed(&witness);
         between();
         let own_issuer = self.membership_issuer(slips);
