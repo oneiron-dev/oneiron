@@ -103,6 +103,18 @@ pub(crate) fn registration_in_txn(
     Ok(Some(CalendarIcsFeedRegistration { config, last_poll }))
 }
 
+/// The system of every installed feed and of every feed that completed a poll, as `txn` reads
+/// it: each system whose passports a feed's polls key. A poll row outlives its feed, since a
+/// system an earlier feed polled under is never installed again.
+pub(crate) fn feed_systems_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> crate::Result<Vec<String>> {
+    let mut systems = ICS_FEED.items_in_txn(vault, txn)?;
+    systems.extend(POLLS.scan_keys(&vault.store, txn, &[])?);
+    Ok(systems)
+}
+
 /// The `calendar.ics_feed` hook, in the write that changes a feed's row. It keeps the rules the
 /// configure door had: a system names exactly one complete feed (two feeds sharing a system
 /// would otherwise cancel each other's absent UIDs), so a value row sits at its own system,

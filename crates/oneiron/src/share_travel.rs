@@ -20,6 +20,8 @@ mod agent_pack_export;
 mod copy;
 mod guest_window;
 mod pack_notice;
+#[cfg(feature = "sync")]
+mod peer_release;
 mod reader_prompts;
 pub(crate) mod tables;
 
@@ -36,6 +38,10 @@ pub use self::pack_notice::{
     WorldRecipientNotice,
 };
 pub(crate) use self::pack_notice::{screen_owner_notice_fields, world_label_in_txn};
+#[cfg(feature = "sync")]
+pub use self::peer_release::PeerRelease;
+#[cfg(feature = "sync")]
+pub(crate) use self::peer_release::peer_release_recorded_in;
 
 /// The share receipt field listing the born-with fields that travelled.
 pub const FIELD_TRAVELLED: &str = "travelled";

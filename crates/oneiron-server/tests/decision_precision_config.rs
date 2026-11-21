@@ -58,7 +58,7 @@ fn models_toml(base_url: &str, decisions: &str) -> String {
 fn seat_table(table: &str, model: &str, version: &str, remote_opt_in: bool) -> String {
     format!(
         "[decisions.{table}]\n\
-         endpoint = \"http://127.0.0.1:9/v1/systemone\"\n\
+         endpoint = \"http://127.0.0.1/v1/systemone\"\n\
          key_env = \"{BEARER_ENV}\"\n\
          model = \"{model}\"\n\
          version = \"{version}\"\n\
@@ -134,7 +134,7 @@ async fn precision_settings_fill() {
 fn head_and_band_must_agree_on_the_remote_opt_in() {
     let both = |head: bool, band: bool| {
         models_toml(
-            "http://127.0.0.1:9/v1",
+            "http://127.0.0.1/v1",
             &(seat_table("system_one", HEAD_MODEL, HEAD_REVISION, head)
                 + &seat_table("precision", BAND_MODEL, BAND_REVISION, band)),
         )
@@ -165,7 +165,7 @@ fn head_and_band_must_agree_on_the_remote_opt_in() {
 
     // A refusal of the band's table names the band's table.
     let keyless = models_toml(
-        "http://127.0.0.1:9/v1",
+        "http://127.0.0.1/v1",
         &seat_table("precision", BAND_MODEL, BAND_REVISION, false)
             .replace(&format!("key_env = \"{BEARER_ENV}\"\n"), ""),
     );

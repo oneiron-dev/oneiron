@@ -102,6 +102,40 @@ pub struct EmergencyItem {
     pub calendar_delivered: bool,
     pub apology_delivered: bool,
     pub(crate) picked: Option<EmergencyPick>,
+    /// The ledger generation of each owed effect whose local outbound ledger identity is not its
+    /// idempotency key, by lane (`state::effect_ledger_ref`). A home that adopted this checkpoint
+    /// back over its own earlier send of that effect, one whose replay never sends it again,
+    /// took the next generation at the owner's resume ([`Self::readopted_sends`]; FIX
+    /// [BK-EMERGENCY-DEFERRED-SEND-STRANDED-ON-FORMER-HOME]). Every generation's send reaches its
+    /// provider under the key the effect's first ledger row carries
+    /// (`OutboundDispatchRequest::idempotency_identity_ref`). A move carries the map, so each
+    /// later home reads and sends under the current generation. Empty, and not written, for every
+    /// checkpoint no such home resumed: a row stored before reads as before.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub(crate) ledger_generations: std::collections::BTreeMap<String, u32>,
+    /// The owed effects whose send this home's own outbound ledger held, undelivered, when the
+    /// home adopted the checkpoint back from another home, by lane ([`ReadoptedSend`]). Any other
+    /// new home sends such an effect (Engine ANSWER BK-EMERGENCY-PENDING-ITEM-MOVE = A), while
+    /// this home's row may be one its replay never sends again, so the owner's resume here takes
+    /// the effect's next ledger generation once that row reads as one
+    /// (`state::readopted_send_takes_fresh_attempt`). Kept on this home only: a move never carries
+    /// it. Empty, and not written, for every other checkpoint.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub(crate) readopted_sends: std::collections::BTreeMap<String, ReadoptedSend>,
+}
+
+/// One owed effect's send this home's own outbound ledger held, undelivered, when it adopted
+/// the checkpoint back (`EmergencyItem::readopted_sends`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ReadoptedSend {
+    /// The effect's ledger generation then, whose row this home held.
+    pub(crate) generation: u32,
+    /// Whether an owner's resume here has since handed that row to its replay while the replay
+    /// could send it again: from then on the row's stop or deferral may follow this home's own
+    /// send, which no move's uncertain-send mark names.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) replayed: bool,
 }
 
 impl EmergencyItem {

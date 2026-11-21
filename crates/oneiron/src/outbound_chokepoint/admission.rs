@@ -320,6 +320,10 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         });
     }
     let mut wtxn = vault.store.env.write_txn()?;
+    // An install born of a restore that has not joined sends nothing, new or
+    // resumed, whoever asks (row RESTORED-UNJOINED-STARTS-NO-WORK): refused
+    // first under the writer, so no row is written and no transport is called.
+    vault.refuse_work_while_restored_unjoined_in_txn(&wtxn)?;
     // The owner the proof names, revalidated under this writer: the Pending
     // row keeps it, and every later send of the row rechecks it (FIX 11591).
     let mut authorizing_owner = None;
@@ -819,7 +823,8 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         request,
         prepared.idempotency_supported,
         budget_accounting,
-    )?;
+    )?
+    .with_idempotency_attempt(prepared.idempotency_attempt)?;
     // The proof is the Gate's ACTUAL selected tap under this writer lock,
     // not an availability observation from dispatch preparation. Spend,
     // decision, typed proof, budget marker and Pending insert commit together.

@@ -108,14 +108,21 @@ struct Fixture {
     _dir: tempfile::TempDir,
 }
 
-/// Lands an owner claim and answers its id.
-fn owner_claim(vault: &Vault, owner: EntityId, value: &str) -> TestResult<EntityId> {
+/// Lands an owner claim of `predicate` and answers its id. Each fixture claim takes its own
+/// predicate: an undeclared predicate keeps one head per subject, so a second claim of the same
+/// one would supersede the first, and a machine may not hold a superseded head.
+fn owner_claim(
+    vault: &Vault,
+    owner: EntityId,
+    predicate: &str,
+    value: &str,
+) -> TestResult<EntityId> {
     let claim = EntityId::now();
     let receipt = vault
         .memory(owner, EdgeActorClass::Human)
         .claim_upsert(&ClaimInput {
             id: Some(claim.to_hex()),
-            predicate: "profile.name".to_owned(),
+            predicate: predicate.to_owned(),
             subject_ref: owner.to_hex(),
             value: json!(value),
             confidence: 0.9,
@@ -177,8 +184,8 @@ impl Fixture {
                 ..Default::default()
             },
         )?);
-        let first = owner_claim(&vault, owner, "Board Seed First")?;
-        let second = owner_claim(&vault, owner, "Board Seed Second")?;
+        let first = owner_claim(&vault, owner, "profile.name", "Board Seed First")?;
+        let second = owner_claim(&vault, owner, "profile.hobby", "Board Seed Second")?;
         let grant_id = stand_selector_grant(
             &vault,
             own_device_residence_scope(),

@@ -432,6 +432,23 @@ impl ScopedRead<'_> {
         self.actor_key.grant_reader()
     }
 
+    /// The live Grants A judges this read's rows under in `rtxn`, each with
+    /// its Scope: its reader's own, held in `held` (the serving txn's held
+    /// authority, if any) as A holds them; `None` when A stands for no
+    /// reader here.
+    pub(super) fn own_live_grants_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        held: Option<&HeldAuthority>,
+    ) -> Option<Rc<[(EntityId, Scope)]>> {
+        let reader = self.grant_reader()?;
+        let load = || reader_grants_or_empty_in(self.vault, rtxn, reader);
+        Some(match held {
+            Some(held) => held.grants().of(reader, load),
+            None => load().into(),
+        })
+    }
+
     /// The row under `grant` alone: the Grant first admits the row's record
     /// position and holds it inside the Grant's facets, then the row's own
     /// admission runs under the floor a proof of the Grant gives this key,

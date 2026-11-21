@@ -47,6 +47,8 @@ mod loop_decisions;
 pub(crate) use loop_decisions::{
     saved_weave_loop_reason_decisions_in_txn, scrub_saved_weave_loop_reasons_in_txn,
 };
+// A published period's notice, born from the rows the period reads.
+mod period_notice;
 // A hard delete inside a saved period: rows rewritten, not the period (FIX 7693).
 mod rerender;
 mod rewrite;
@@ -1238,8 +1240,13 @@ impl ScopedRead<'_> {
                 .iter()
                 .any(|section| !section.items.is_empty());
             if owner.is_none() && any {
-                self.vault
-                    .record_notification_in_txn(txn, &id.notification(row.next_due_at, now))?;
+                self.vault.record_weave_period_notice_in_txn(
+                    txn,
+                    id,
+                    row.next_due_at,
+                    &report.value,
+                    now,
+                )?;
             }
             // The lens's generate step renders the period on the Dreamer's
             // lent model, queued in this same write.

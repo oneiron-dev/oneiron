@@ -189,6 +189,7 @@ pub struct OutboundCallRequest {
     /// did (FIX 11591): every later send of it rechecks that this owner is
     /// still a live owner.
     authorizing_owner: Option<EntityId>,
+    /// Unix seconds, whatever clock the caller reads.
     pub now_ms: u64,
 }
 
@@ -548,6 +549,9 @@ pub struct IntentLedgerRecord {
     pub payload_hash: [u8; 32],
     pub(super) payload: Vec<u8>,
     pub idempotency_key: String,
+    /// The attempt whose row id `idempotency_key` is the hex of, when not this
+    /// row's own (`IntentLedgerRecord::with_idempotency_attempt`); else `None`.
+    pub(crate) idempotency_attempt_id: Option<AttemptId>,
     pub idempotency_supported: bool,
     pub authorization_binding: Option<OutboundAuthorizationBinding>,
     pub(crate) admitted_approval: Option<AdmittedApproval>,
@@ -568,6 +572,8 @@ pub struct IntentLedgerRecord {
     /// A later definite non-delivery describes only that later attempt.
     pub delivery_uncertain: bool,
     pub state: IntentState,
+    /// Unix seconds, as every time in this ledger; the `_ms` names predate
+    /// that unit and stay the codec's keys.
     pub created_ms: u64,
     pub updated_ms: u64,
 }
@@ -616,6 +622,7 @@ impl IntentLedgerRecord {
             payload_hash,
             payload: request.payload,
             idempotency_key: bytes_to_hex_lower(&id),
+            idempotency_attempt_id: None,
             idempotency_supported,
             authorization_binding: request.authorization_binding,
             admitted_approval: None,
@@ -692,6 +699,7 @@ impl fmt::Debug for IntentLedgerRecord {
                 &format_args!("[{} bytes redacted]", self.payload.len()),
             )
             .field("idempotency_key", &self.idempotency_key)
+            .field("idempotency_attempt_id", &self.idempotency_attempt_id)
             .field("idempotency_supported", &self.idempotency_supported)
             .field("authorization_binding", &self.authorization_binding)
             .field("binding_version", &self.binding_version)

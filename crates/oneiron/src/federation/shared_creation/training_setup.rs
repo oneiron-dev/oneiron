@@ -17,12 +17,13 @@
 //! was asked answers it too, as a view derived on each read (Engine ruling
 //! 10-21): a setup answer never signs over an admin's choice.
 
-use super::SHARED_VAULT_CREATION;
+use super::{SHARED_VAULT_CREATION, SharedVaultCreation};
+use crate::EntityId;
 use crate::Vault;
 use crate::authority::{ActSurface, AuthorityFold, OwnerProofGround, authority_refused};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
-use crate::world_keys::{OwnerActImportance, PolicyRevision, owner_presence_reasons};
+use crate::world_keys::{PolicyRevision, owner_presence_reasons};
 
 /// The question identity's own domain.
 const QUESTION_CONTEXT: &str = "oneiron shared vault setup training question v1";
@@ -61,6 +62,22 @@ pub struct SharedTrainingSetupAnswer {
     pub on: bool,
     /// The setting revision the admin's surface showed them.
     pub seen: PolicyRevision,
+}
+
+/// What [`Vault::answer_shared_training_setup`]'s own checks establish on
+/// one snapshot, when the answer is the first.
+struct SharedTrainingSetupChecks {
+    person: EntityId,
+    creation: SharedVaultCreation,
+}
+
+/// [`Vault::answer_shared_training_setup`]'s own checks on one snapshot: the
+/// replay answer, or what the setting writer needs.
+enum TrainingSetupGate {
+    /// The same answer again: the recorded answer, nothing signed.
+    Replay(SharedTrainingSetupQuestion),
+    /// The first answer: what the setting writer needs.
+    First(SharedTrainingSetupChecks),
 }
 
 /// The setup question's identity: the vault id and its creator, under the
@@ -148,8 +165,11 @@ impl Vault {
     /// with the counted admin choice of the setting in force now. Setup never
     /// reopens.
     ///
-    /// The door does not read the value in force before its write, so it asks
-    /// for every change it cannot tell from its arguments to be a narrowing.
+    /// The door makes its checks, and the setting's, on a read before it
+    /// asks: a replay answers there, with no prompt and nothing signed. A
+    /// first yes asks and a first no asks nothing; the write derives the
+    /// importance again, and answers [`Error::ConcurrentWrite`] when the act
+    /// became more important since the person was asked.
     ///
     /// # Errors
     /// A refusal when the proof is no longer a live person of this vault or
@@ -166,44 +186,34 @@ impl Vault {
         surface: ActSurface,
         answer: &SharedTrainingSetupAnswer,
     ) -> Result<SharedTrainingSetupQuestion> {
-        let importance = if answer.on {
-            OwnerActImportance::Important
-        } else {
-            OwnerActImportance::Ordinary
+        let importance = {
+            let txn = self.store.env.read_txn()?;
+            match self.shared_training_setup_checks_in_txn(&txn, owner, answer)? {
+                // A replay answers on the read, with no prompt and no write
+                // transaction.
+                TrainingSetupGate::Replay(question) => return Ok(question),
+                TrainingSetupGate::First(_) => self.conversation_learning_importance_in_txn(
+                    &txn,
+                    owner,
+                    answer.on,
+                    false,
+                    Some(answer.seen),
+                )?,
+            }
         };
         let witness =
             self.owner_presence(importance, owner_presence_reasons::SHARED_TRAINING_SETUP)?;
         let ground = OwnerProofGround::witnessed(&witness);
         let mut txn = self.store.env.write_txn()?;
-        let person = owner.revalidate_person_in_txn(self, &txn)?;
-        self.require_learning_admin_in_txn(&txn, person)?;
-        let Some(mut creation) = self.shared_vault_creation_in_txn(&txn)? else {
-            return Err(authority_refused(NOT_SHARED));
+        let first = match self.shared_training_setup_checks_in_txn(&txn, owner, answer)? {
+            // A replay: the transaction is dropped with nothing signed.
+            TrainingSetupGate::Replay(question) => return Ok(question),
+            TrainingSetupGate::First(first) => first,
         };
-        if answer.question_ref != question_ref(creation.vault_id, &creation.owner_ref) {
-            return Err(Error::InvalidConfig(WRONG_QUESTION.to_owned()));
-        }
-        let fold = self.authority_view_readonly_in_txn(&txn)?;
-        let setting = &fold.conversation_training_vault;
-        match self.standing_setup_in_txn(&txn, &fold, &creation.training_setup)? {
-            SharedTrainingSetup::Answered { on, .. } if on != answer.on => {
-                return Err(authority_refused(ALREADY_ANSWERED));
-            }
-            answered @ SharedTrainingSetup::Answered { .. } => {
-                // A replay: the transaction is dropped with nothing signed.
-                return Ok(SharedTrainingSetupQuestion {
-                    setup: Some(answered),
-                    seen: setting.revision(),
-                });
-            }
-            // Counted choices in conflict are never signed over, whatever
-            // display time their entries carry (FIX 7710, FIX 7711).
-            SharedTrainingSetup::Pending { .. } => {
-                if !setting.choices.conflict.is_empty() {
-                    return Err(authority_refused(CONFLICTED));
-                }
-            }
-        }
+        let SharedTrainingSetupChecks {
+            person,
+            mut creation,
+        } = first;
         let (setting_act, view, answered_at) = self.set_conversation_learning_in_txn(
             &mut txn,
             &ground,
@@ -229,6 +239,57 @@ impl Vault {
             setup: Some(creation.training_setup),
             seen: view.revision,
         })
+    }
+
+    /// The admin's revalidation, the admin rule, the creation, the question
+    /// and the standing setup, on one snapshot: every check
+    /// [`Self::answer_shared_training_setup`] makes before the setting
+    /// writer. The door runs it on a read before it asks, and again in its
+    /// write.
+    ///
+    /// # Errors
+    /// A refusal when the proof is no longer a live person of this vault or
+    /// is no admin of it, when the vault was never shared, when the question
+    /// is answered otherwise, or when the setting's counted choices conflict;
+    /// [`Error::InvalidConfig`] when `question_ref` names another question.
+    fn shared_training_setup_checks_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        owner: &AuthenticatedOwner,
+        answer: &SharedTrainingSetupAnswer,
+    ) -> Result<TrainingSetupGate> {
+        let person = owner.revalidate_person_in_txn(self, txn)?;
+        self.require_learning_admin_in_txn(txn, person)?;
+        let Some(creation) = self.shared_vault_creation_in_txn(txn)? else {
+            return Err(authority_refused(NOT_SHARED));
+        };
+        if answer.question_ref != question_ref(creation.vault_id, &creation.owner_ref) {
+            return Err(Error::InvalidConfig(WRONG_QUESTION.to_owned()));
+        }
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        let setting = &fold.conversation_training_vault;
+        match self.standing_setup_in_txn(txn, &fold, &creation.training_setup)? {
+            SharedTrainingSetup::Answered { on, .. } if on != answer.on => {
+                Err(authority_refused(ALREADY_ANSWERED))
+            }
+            answered @ SharedTrainingSetup::Answered { .. } => {
+                Ok(TrainingSetupGate::Replay(SharedTrainingSetupQuestion {
+                    setup: Some(answered),
+                    seen: setting.revision(),
+                }))
+            }
+            // Counted choices in conflict are never signed over, whatever
+            // display time their entries carry (FIX 7710, FIX 7711).
+            SharedTrainingSetup::Pending { .. } => {
+                if !setting.choices.conflict.is_empty() {
+                    return Err(authority_refused(CONFLICTED));
+                }
+                Ok(TrainingSetupGate::First(SharedTrainingSetupChecks {
+                    person,
+                    creation,
+                }))
+            }
+        }
     }
 
     /// `recorded` as it stands on `fold`: a pending question reads as the

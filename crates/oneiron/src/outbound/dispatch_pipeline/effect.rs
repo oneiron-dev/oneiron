@@ -103,6 +103,11 @@ pub(super) fn execute_admitted<S: OutboundExecutionSink>(
         },
         co_actor,
         exclusive_route: exclusive_route_attempt(request)?,
+        idempotency_attempt: request
+            .idempotency_identity_ref
+            .as_deref()
+            .map(crate::outbound::outbound_dispatch_attempt_id)
+            .transpose()?,
     };
     let authority = crate::outbound_consent::OutboundBindingAuthority::for_vault(vault)?;
     let mut transport = DispatchChokepointTransport::new(vault, request, verb_contract, sink);

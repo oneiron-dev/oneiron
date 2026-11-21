@@ -259,13 +259,20 @@ fn row_of(value: &str) -> Option<EntityId> {
 /// no world withheld from `destination` keeps any of them
 /// ([`Vault::off_device_readable_for`], mesh PR2b). A served form's rows are
 /// placed as `content` holds them (FIX 7355); every other family's as base
-/// does.
+/// does. A prefilter receipt of a round whose screen asked for a turn's
+/// words from its MESSAGE rows stands on rows it does not name
+/// ([`crate::dreamer_prefilter::prefilter_receipt_read_message_rows`]), so
+/// its strictest input is not known and it stays on this device (DEC-0005:
+/// what is derived from a world follows its strictest input).
 fn off_device_admits(
     vault: &Vault,
     content: ReceiptContent<'_>,
     receipt: &ReceiptRecord,
     destination: &ReadDestination,
 ) -> Result<bool> {
+    if crate::dreamer_prefilter::prefilter_receipt_read_message_rows(receipt) {
+        return Ok(false);
+    }
     let Some(rows) = referenced_rows(vault, receipt)? else {
         return Ok(false);
     };

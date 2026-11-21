@@ -71,6 +71,11 @@ pub(crate) fn restore_found_key_text_in_txn(
     } else {
         return Ok(false);
     };
+    // A NOTE kept from use takes no named change (OF-470 C6): the ruling is
+    // refused whole, as a sealed NOTE's is, so the key stays open.
+    if let Some(refusal) = vault.store.use_restricted_in_txn(txn, &note)? {
+        return Err(refusal);
+    }
     if note == record || is_live_note_in_txn(vault, txn, note)? {
         restore_live_in_txn(vault, txn, note, text_form, value, actor)?;
     }

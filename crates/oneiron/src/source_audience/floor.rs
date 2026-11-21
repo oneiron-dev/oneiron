@@ -27,10 +27,13 @@
 //! input this vault erased is born under [`sealed_source`]
 //! ([`seal_births_from_erased_inputs_in_txn`]), which admits no one, the
 //! vault owner included (READ-LINEAGE-L3 = A); doctor counts such rows
-//! ([`facts_hidden_source_unknown_in`]). Only proof of erasure seals (#9289
-//! review 2 P1-1): a row it was written from that has not landed here yet,
-//! or lineage that does not resolve yet, leaves its floor pending, and the
-//! write that lands what it waits on raises it again ([`super::floor_state`]).
+//! ([`super::facts_hidden_source_unknown_in`]), and the owner's re-derive
+//! writes their facts again from the sources that resolve now
+//! ([`crate::Vault::rederive_sealed_rows`]). Only proof of erasure seals
+//! (#9289 review 2 P1-1): a row it was written from that has not landed here
+//! yet, or lineage that does not resolve yet, leaves its floor pending, and
+//! the write that lands what it waits on raises it again
+//! ([`super::floor_state`]).
 
 use std::collections::BTreeSet;
 
@@ -320,15 +323,15 @@ pub(super) fn raise_floor_in_txn(
         add.extend(attested);
     }
     match own_source_in(vault, txn, row, &raw)? {
-        // A live row born under no source (a peer's phone mark that names
+        // A held row born under no source (a peer's phone mark that names
         // no thread) reads to no one, so its stored floor says so too: the
         // phone read and doctor read the stored floor (#9289 review 2 P2-5).
-        // An erased row's shell is no fact; what is written from it inherits
+        // An archived row is held, so it keeps the seal through its raise
+        // while archived and its restore (#10265 Opus review 3 P2-1). An
+        // erased row's shell is no fact; what is written from it inherits
         // the seal from its own source.
         OwnSource::Source(own) if own == sealed_source() => {
-            if !crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, &**txn, row)?
-                .deleted
-            {
+            if !crate::ports::removed_in_txn(&vault.store, &**txn, row)? {
                 add.insert(own);
             }
         }
@@ -435,27 +438,4 @@ pub(crate) fn floor_threads_in(
         }
     }
     Ok(Some(threads))
-}
-
-/// How many rows this vault reads to no one because an id on their stored
-/// floor names no source: doctor's "N facts hidden: source unknown"
-/// (READ-LINEAGE-L3 = A; design pass 30 section 4.7). One scan of the
-/// stored floors; only the count leaves, never a row, its text or its
-/// sources.
-///
-/// # Errors
-///
-/// Storage failures.
-pub(crate) fn facts_hidden_source_unknown_in(vault: &Vault, txn: &RoTxn<'_>) -> Result<u64> {
-    let mut hidden = 0_u64;
-    for entry in super::DERIVED.iter_from(&vault.store, txn, &[])? {
-        let (_, floor) = entry?;
-        for source in &floor {
-            if floor_source_in(vault, txn, source)? == FloorSource::Unknown {
-                hidden += 1;
-                break;
-            }
-        }
-    }
-    Ok(hidden)
 }

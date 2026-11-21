@@ -116,7 +116,8 @@ A reranker keeps its HTTP route, unless its worker row listens on a Unix
 socket of its own (`listen = "unix"`, L9-15; run-with-models.md section 8):
 that launch is reached on its socket alone, each connection after the same
 UID and PID check, and the reranker seat gets the same kind of on-device
-offer. Other Unix targets retain their existing transport semantics: no PID
+offer. A recall whose reranker route is that view alone sends it the words
+of a row a device-only world keeps (L9-15). Other Unix targets retain their existing transport semantics: no PID
 check, no on-device offer, and no `listen = "unix"` row.
 
 ## Non-vault model worker controller

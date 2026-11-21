@@ -348,7 +348,14 @@ impl Vault {
                 owner_archive_restore::full_manifest_digest(&archive.manifest)?,
             )?;
             owner_actor = Some(actor);
-            Some(OwnerArchiveRestorePermit::mint(owner_id, receipt))
+            // The archive's signature, judged again on this writer's snapshot, decides one thing
+            // here: whether the choices about the install that wrote it land on this one
+            // (SETTING-ARCHIVE-RESTORE-INSTALL-ROWS = A). It admits nothing else.
+            let own_export =
+                super::archive_exported_by_this_install_in_txn(self, &wtxn, &archive.manifest)?;
+            Some(OwnerArchiveRestorePermit::mint(
+                owner_id, receipt, own_export,
+            ))
         } else {
             if let Some(actor) = actor {
                 super::expression_import::validate_local_actor(self, &wtxn, actor)?;

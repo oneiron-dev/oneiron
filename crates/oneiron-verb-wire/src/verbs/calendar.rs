@@ -80,6 +80,40 @@ pub struct BookingDepositRefundReceipt {
     pub queued: bool,
 }
 
+/// `vault.booking.deposit.mark_refunded_outside`'s input
+/// (BK-DEPOSIT-FAILED-REFUND-MARK-PAID = B): the booking, by its EVENT's hex
+/// entity id, and the amount the calling host paid the visitor back outside
+/// Stripe, which must be the refund the deposit owes now.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BookingDepositMarkRefundedOutsideRequest {
+    pub event_ref: String,
+    /// The refund owed now, in minor units of the deposit's currency.
+    pub amount_minor: u64,
+    /// The caller's own key for this mark, 1 to 200 bytes: a repeat of the
+    /// call under the same key answers the first mark and records nothing,
+    /// whatever the deposit owes since, so a retried call never marks
+    /// another refund (review round 1 of #10267).
+    pub idempotency_key: String,
+}
+
+/// What `vault.booking.deposit.mark_refunded_outside` recorded: the amount
+/// marked refunded outside Stripe and when. `recorded` is false when the
+/// refund stood marked already: a retry records nothing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BookingDepositMarkRefundedOutsideReceipt {
+    /// The booking's EVENT, lowercase hex.
+    pub event_ref: String,
+    /// The amount marked, in minor units of `currency`.
+    pub amount_minor: u64,
+    /// The deposit terms' currency, frozen at checkout.
+    pub currency: String,
+    /// When the mark was recorded, Unix seconds.
+    pub marked_at: u64,
+    pub recorded: bool,
+}
+
 /// Source-redacted occupancy over an inclusive UTC-seconds window.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]

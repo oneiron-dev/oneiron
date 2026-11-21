@@ -74,6 +74,7 @@ fn persist_pending(
         payload_hash: call.payload_hash,
         payload: call.payload.to_vec(),
         idempotency_key: call.idempotency_key.expect("idempotency key"),
+        idempotency_attempt_id: None,
         idempotency_supported,
         authorization_binding: Some(authorization_binding),
         admitted_approval: None,
@@ -579,7 +580,9 @@ fn content_digest_is_hash_of_msgpack_minus_digest_key() {
         .iter()
         .map(|(key, _)| key.as_str().expect("row keys are strings"))
         .collect();
-    assert_eq!(stored_keys, INTENT_LEDGER_VALUE_KEYS);
+    // Every key but the idempotency attempt, which only a row whose provider
+    // key names another attempt writes (review round 2 of #10220).
+    assert_eq!(stored_keys, &INTENT_LEDGER_VALUE_KEYS[..24]);
 
     let (digest_key, digest_value) = entries.pop().expect("the row carries a final entry");
     assert_eq!(digest_key.as_str(), Some(KEY_CONTENT_DIGEST));
