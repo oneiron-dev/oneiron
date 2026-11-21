@@ -20,7 +20,8 @@
 //!
 //! Once a booking is cancelled or has started, the card also says what its
 //! deposit still holds and offers Return deposit ([`held_deposit`]); where a
-//! calendar's cancel moved no money, that line is an INBOX row of its own
+//! calendar's cancel moved no money, or a refund owed to the visitor ended
+//! unpaid at the provider, that line is an INBOX row of its own
 //! ([`BOOKING_HELD_DEPOSIT_ITEM_PREFIX`]) until the deposit holds nothing.
 //! A live owner's kept booking handle opens the card on any day, after its
 //! row has left the same-day listing
@@ -37,7 +38,8 @@ use super::CalendarCancellation;
 use super::authorship::counts_in_txn;
 use super::claim::read_booking_facts;
 use super::deposit::{
-    emergency_return_in_txn, held_deposit_in_txn, unattributed_cancel_sequence_in_txn,
+    emergency_return_in_txn, held_deposit_in_txn, refund_ended_unpaid_at_in_txn,
+    unattributed_cancel_sequence_in_txn,
 };
 use super::occurrence::inclusive_occurrence;
 use super::storage::decode_claim_value;
@@ -71,7 +73,8 @@ pub const BOOKING_OWNER_CARD_ITEM_PREFIX: &str = "booking:";
 
 /// The prefix of a held deposit's INBOX item id; the booking's EVENT hex
 /// follows it. The row stands while a calendar's cancel left the booking's
-/// deposit held ([`BookingDepositHeldReason::lists_on_inbox`]), whatever
+/// deposit held ([`BookingDepositHeldReason::lists_on_inbox`]), or while a
+/// refund it owes the visitor stands ended unpaid at the provider, whatever
 /// day it is, and opens the booking's card. Its own id, so marking the
 /// booking's same-day row done never hides it.
 pub const BOOKING_HELD_DEPOSIT_ITEM_PREFIX: &str = "booking-held-deposit:";
@@ -226,7 +229,10 @@ pub(crate) fn booking_owner_card_row_of_handle(
 /// replay proof that made its cancel one Oneiron cannot attribute, once one
 /// is noted, so a row marked done comes back when that proof lands in the
 /// same second as the cancel the row was dated by (review round 2 of
-/// #10028); `None` for every other row.
+/// #10028), and when a settle row found the refund its deposit owes ended
+/// unpaid at the provider, so a row marked done comes back with each such
+/// refund (FIX [BK-DEPOSIT-FAILED-REFUND-SURFACE]); `None` for every other
+/// row.
 ///
 /// # Errors
 ///
@@ -242,10 +248,14 @@ pub(crate) fn booking_inbox_row_version_in_txn(
     else {
         return Ok(None);
     };
-    Ok(
-        unattributed_cancel_sequence_in_txn(vault, rtxn, &event_ref)?
-            .map(|sequence| format!("unattributed_cancel:{sequence}")),
-    )
+    let unattributed = unattributed_cancel_sequence_in_txn(vault, rtxn, &event_ref)?
+        .map(|sequence| format!("unattributed_cancel:{sequence}"));
+    let ended = refund_ended_unpaid_at_in_txn(vault, rtxn, &event_ref)?
+        .map(|noted_at| format!("refund_ended_unpaid:{noted_at}"));
+    Ok(match (unattributed, ended) {
+        (Some(unattributed), Some(ended)) => Some(format!("{unattributed};{ended}")),
+        (unattributed, ended) => unattributed.or(ended),
+    })
 }
 
 /// The booking row of `card` for the vault's live `owners`: item id
@@ -281,14 +291,18 @@ fn booking_card_row(card: BookingOwnerCard, owners: &[EntityId]) -> Option<Agent
 
 /// The held-deposit row of the booking `read` describes, on the own slice
 /// of `reader`, a live owner: when a calendar's cancel left its deposit
-/// held and `reader` is one of its selected hosts; `None` otherwise. It is
+/// held, or a refund it owes ended unpaid, and `reader` is one of its
+/// selected hosts; `None` otherwise. It is
 /// dated by the cancel, or the start when that came first, and by a cancel
 /// Oneiron cannot attribute once one is noted: its read state then counts
 /// the line as new, so a row marked done before comes back under the same
-/// handle (review round 1 of #10028).
+/// handle (review round 1 of #10028). A refund its deposit owes that the
+/// provider ended unpaid lists it whatever cancelled the booking, dated by
+/// when a settle row found that, in the same way
+/// (BK-DEPOSIT-FAILED-REFUND-INBOX = A, Engine 21 Nov 10:22).
 fn held_deposit_row(read: &CardRead, reader: EntityId) -> Option<AgentInboxLensItem> {
     let deposit = read.card.deposit.as_ref()?;
-    if !deposit.reason.lists_on_inbox() || !read.selected_hosts.contains(&reader.to_hex()) {
+    if !deposit.lists_on_inbox() || !read.selected_hosts.contains(&reader.to_hex()) {
         return None;
     }
     let card = &read.card;
@@ -303,6 +317,9 @@ fn held_deposit_row(read: &CardRead, reader: EntityId) -> Option<AgentInboxLensI
         }
         _ => occurred_at,
     };
+    let occurred_at = read
+        .refund_ended_unpaid_at
+        .map_or(occurred_at, |noted_at| occurred_at.max(noted_at));
     Some(AgentInboxLensItem {
         item_id: format!("{BOOKING_HELD_DEPOSIT_ITEM_PREFIX}{}", card.event_ref),
         kind: AgentInboxItemKind::CoordinationUpdate,
@@ -357,7 +374,7 @@ pub(crate) fn booking_owner_card_of_item(
             || card
                 .deposit
                 .as_ref()
-                .is_some_and(|deposit| deposit.reason.lists_on_inbox() && deposit.return_offered)
+                .is_some_and(|deposit| deposit.lists_on_inbox() && deposit.return_offered)
     }))
 }
 
@@ -373,6 +390,9 @@ struct CardRead {
     /// When a cancel Oneiron cannot attribute was first noted on its
     /// deposit, while the deposit holds anything.
     unattributed_cancel_at: Option<u64>,
+    /// When a settle row found the refund its deposit owes ended unpaid at
+    /// the provider, while the owner may ask for it again.
+    refund_ended_unpaid_at: Option<u64>,
 }
 
 /// `event_ref`'s card at `now`, as `reader` reads it, read in one snapshot;
@@ -439,6 +459,7 @@ fn card_in_txn(
         .and_then(|context| context.host_zones.first().cloned());
     let held = held_deposit_in_txn(vault, rtxn, event_ref)?;
     let unattributed_cancel_at = held.as_ref().and_then(|held| held.unattributed_cancel_at);
+    let refund_ended_unpaid_at = held.as_ref().and_then(|held| held.refund_ended_unpaid_at);
     let cancel_reported = held.is_some()
         && facts.calendar_cancellation == CalendarCancellation::Omission
         && calendar_cancel_reported_in_txn(vault, rtxn, event_ref);
@@ -477,6 +498,7 @@ fn card_in_txn(
         zone,
         selected_hosts,
         unattributed_cancel_at,
+        refund_ended_unpaid_at,
     }))
 }
 

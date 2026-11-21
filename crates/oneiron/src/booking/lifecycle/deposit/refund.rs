@@ -211,6 +211,11 @@ enum OwnerReturn {
     /// The refund owed now settles first, and its record owes the balance
     /// (its settle row is queued already).
     AfterOwedRefund,
+    /// The refund owed now, which the provider ended unpaid, is asked again
+    /// under the deposit's next retry count; its settle row is to be queued
+    /// under a cause of its own, so a row of the ended ask, waiting an hour,
+    /// does not stand for it.
+    Retried,
 }
 
 /// The owner's return of `row`'s deposit, whole: a capture still due is
@@ -219,8 +224,10 @@ enum OwnerReturn {
 /// of a capture a cancel overtook) gains the balance (review round 2 of
 /// #9977): owed at once after that refund settled, or once it settles while
 /// it is owed, so the provider refunds the earlier part once. A row
-/// refunded before its capture was recorded gains nothing. What it moves is
-/// what the owner's line shows held ([`held_of`]).
+/// refunded before its capture was recorded gains nothing. A refund owed
+/// whose ask the provider ended unpaid is asked again, and nothing more: a
+/// balance the owner kept stays kept. What it moves is what the owner's line
+/// shows held ([`held_of`]).
 fn owner_return(row: &mut DepositRow) -> OwnerReturn {
     let Some((kind, amount_minor)) = held_of(row) else {
         return OwnerReturn::Nothing;
@@ -244,6 +251,10 @@ fn owner_return(row: &mut DepositRow) -> OwnerReturn {
             row.state = DepositState::RefundDue { amount_minor };
             OwnerReturn::Queued
         }
+        HeldDepositKind::RefundEndedUnpaid => {
+            row.refund_retry = row.refund_retry.saturating_add(1);
+            OwnerReturn::Retried
+        }
     }
 }
 
@@ -260,10 +271,13 @@ fn owner_return(row: &mut DepositRow) -> OwnerReturn {
 /// a host cancel does, with its settle row queued "owner-refund"; the
 /// booking's status and revision stay as they are. After a refund of part of
 /// the capture (a visitor's late cancel) the balance is owed: at once when
-/// that refund has settled, and once it settles while it is owed. A deposit
-/// that already owes or has settled its whole return is left as it stands,
-/// so a retry queues nothing. The receipt's amount is the whole return:
-/// what was refunded before and what is owed now.
+/// that refund has settled, and once it settles while it is owed. A refund
+/// owed whose ask the provider ended unpaid (failed or cancelled at Stripe)
+/// is asked again under a new key, for the same amount (FIX
+/// [BK-DEPOSIT-FAILED-REFUND-SURFACE]). A deposit that already owes or has
+/// settled its whole return, or whose ended refund is asked again already,
+/// is left as it stands, so a retry queues nothing. The receipt's amount is
+/// the whole return: what was refunded before and what is owed now.
 ///
 /// # Errors
 ///
@@ -322,8 +336,15 @@ pub(crate) fn refund_booking_deposit_as_owner(
             row.updated_at = now_utc;
             put_deposit(vault, wtxn, &link.deposit_key, &row)?;
         }
-        if matches!(returned, OwnerReturn::Queued) {
-            enqueue_settle(vault, wtxn, &link.deposit_key, "owner-refund", now_utc)?;
+        match returned {
+            OwnerReturn::Queued => {
+                enqueue_settle(vault, wtxn, &link.deposit_key, "owner-refund", now_utc)?;
+            }
+            OwnerReturn::Retried => {
+                let cause = format!("owner-refund-retry-{}", row.refund_retry);
+                enqueue_settle(vault, wtxn, &link.deposit_key, &cause, now_utc)?;
+            }
+            OwnerReturn::Nothing | OwnerReturn::AfterOwedRefund => {}
         }
         let queued = !matches!(returned, OwnerReturn::Nothing);
         let (state, amount_minor) = match row.state {

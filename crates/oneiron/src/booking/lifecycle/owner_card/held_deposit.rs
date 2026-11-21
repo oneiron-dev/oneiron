@@ -17,7 +17,11 @@
 //! is on the booking card only, a calendar's plain omission of the booking
 //! included (review round 1 of #10028). The line reads committed facts each
 //! time: it goes when the deposit no longer holds anything (a return owed
-//! or made) and comes back with nothing stored.
+//! or made) and comes back with nothing stored. A refund owed whose ask the
+//! provider ended unpaid reads as held again: the line says so, Return
+//! deposit asks the provider again, and the line is an INBOX row of its own
+//! whatever cancelled the booking (FIX [BK-DEPOSIT-FAILED-REFUND-SURFACE];
+//! BK-DEPOSIT-FAILED-REFUND-INBOX = A, Engine 21 Nov 10:22).
 
 use serde::{Deserialize, Serialize};
 
@@ -47,6 +51,18 @@ pub struct BookingOwnerCardDeposit {
     pub return_offered: bool,
 }
 
+impl BookingOwnerCardDeposit {
+    /// Whether the line is an INBOX row of its own as well as a note on the
+    /// booking card: where the reason lists it
+    /// ([`BookingDepositHeldReason::lists_on_inbox`]), and wherever a refund
+    /// owed to the visitor ended unpaid, whatever cancelled the booking: money
+    /// nothing moves on stays owed until the owner acts
+    /// (BK-DEPOSIT-FAILED-REFUND-INBOX = A, Engine 21 Nov 10:22).
+    pub(super) const fn lists_on_inbox(&self) -> bool {
+        self.reason.lists_on_inbox() || matches!(self.held, BookingDepositHeld::RefundEndedUnpaid)
+    }
+}
+
 /// Which part of a deposit is still held.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -63,6 +79,10 @@ pub enum BookingDepositHeld {
     /// yet made leaves of the capture: Return deposit refunds the balance
     /// once that refund is made.
     BalanceAfterOwedRefund,
+    /// A refund owed to the visitor that the provider ended with nothing
+    /// paid back (failed or cancelled at Stripe): Return deposit asks the
+    /// provider for the same refund again, and for nothing more.
+    RefundEndedUnpaid,
 }
 
 /// Why a booking's deposit is still held.
@@ -142,6 +162,7 @@ pub(super) fn deposit_note(
         HeldDepositKind::Captured => BookingDepositHeld::Captured,
         HeldDepositKind::BalanceAfterRefund { .. } => BookingDepositHeld::BalanceAfterRefund,
         HeldDepositKind::BalanceAfterOwedRefund => BookingDepositHeld::BalanceAfterOwedRefund,
+        HeldDepositKind::RefundEndedUnpaid => BookingDepositHeld::RefundEndedUnpaid,
     };
     let return_offered = reader.is_some_and(|reader| {
         facts
@@ -199,6 +220,9 @@ fn owner_line(
         BookingDepositHeld::BalanceAfterOwedRefund => format!(
             "A partial refund of its deposit is owed and not yet made; {money} more is still held."
         ),
+        BookingDepositHeld::RefundEndedUnpaid => {
+            format!("The refund of {money} to the visitor did not go through at Stripe.")
+        }
     };
     let act = match (return_offered, held) {
         (false, _) => "A host selected when it was confirmed can return it.",
@@ -209,6 +233,9 @@ fn owner_line(
         }
         (true, BookingDepositHeld::BalanceAfterOwedRefund) => {
             "Choose Return deposit to refund the balance once that refund is made."
+        }
+        (true, BookingDepositHeld::RefundEndedUnpaid) => {
+            "Choose Return deposit to ask Stripe again, or refund it by hand in the Stripe dashboard."
         }
     };
     format!("{what} {holds} {act}")

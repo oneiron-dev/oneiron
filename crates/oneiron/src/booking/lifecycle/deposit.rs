@@ -46,12 +46,13 @@ use crate::{EntityId, Vault};
 mod held;
 mod home_fence;
 mod refund;
+mod refund_ended_unpaid;
 mod settle;
 
 pub(crate) use self::held::note_unattributed_cancel_in_txn;
 pub(super) use self::held::{
     EmergencyReturn, HeldDeposit, HeldDepositKind, emergency_return_in_txn, held_deposit_in_txn,
-    unattributed_cancel_sequence_in_txn,
+    refund_ended_unpaid_at_in_txn, unattributed_cancel_sequence_in_txn,
 };
 pub use self::home_fence::check_deposit_checkout_admitted;
 use self::home_fence::{
@@ -63,6 +64,7 @@ pub(super) use self::refund::{
     refund_on_visitor_cancel_in_writer,
 };
 pub(crate) use self::refund::{refund_booking_deposit_as_owner, refund_deposit_on_host_cancel};
+use self::refund_ended_unpaid::RefundEndedUnpaid;
 use self::settle::enqueue_settle;
 #[cfg(feature = "sync")]
 pub(super) use self::settle::queue_carried_settle_in_txn;
@@ -181,6 +183,18 @@ pub(super) struct DepositRow {
     /// DEPOSIT-PICK-AFTER-EMERGENCY-CANCEL = A). Unset on every other row.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     emergency_return_sequence: Option<u32>,
+    /// How many times the owner asked again for the refund owed now after
+    /// the provider ended it unpaid (FIX [BK-DEPOSIT-FAILED-REFUND-SURFACE]):
+    /// from the first on, the refund's idempotency key names it, so the
+    /// provider makes a new refund. 0, and left out, on every other row.
+    #[serde(default, skip_serializing_if = "refund_ended_unpaid::is_zero")]
+    refund_retry: u32,
+    /// The refund owed now, asked under `refund_retry`, that the provider
+    /// ended with nothing paid back: the owner's line says so, and Return
+    /// deposit asks again. Unset on every other row, and once a refund of
+    /// the deposit settles.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    refund_ended_unpaid: Option<RefundEndedUnpaid>,
     updated_at: u64,
 }
 
@@ -363,6 +377,8 @@ pub fn begin_deposit_checkout(
                 balance_owed_after_refund: false,
                 unattributed_cancel: None,
                 emergency_return_sequence: None,
+                refund_retry: 0,
+                refund_ended_unpaid: None,
                 updated_at: now_utc,
             },
         };

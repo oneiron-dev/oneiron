@@ -12,6 +12,7 @@ use super::super::door::attempt_failure_reason;
 use super::super::storage::{booking_writer, engine_failure, read_txn, refused};
 use super::super::token::hex_lower;
 use super::home_fence::{SettleStanding, settle_standing_in_txn};
+use super::refund_ended_unpaid::{AskedRefund, note_refund_ended_unpaid};
 use super::{
     DEPOSIT, DEPOSIT_BOOKING, DepositState, MAX_FAILURE_BYTES, booking_key, bounded, put_deposit,
 };
@@ -185,12 +186,21 @@ pub enum DepositProviderFailure {
     /// lacks the permission, say). The deposit still owes the move, so its
     /// row asks again later and does not end on this answer.
     Permanent(String),
+    /// The refund asked under this key ended with nothing paid back (failed
+    /// or cancelled at the provider), so asking again under it answers the
+    /// same. The deposit still owes it and notes it for the owner's card,
+    /// whose Return deposit asks again under a new key; the row asks again
+    /// later, as on [`Self::Permanent`] (FIX [BK-DEPOSIT-FAILED-REFUND-SURFACE]).
+    RefundEndedUnpaid(String),
 }
 
 impl DepositProviderFailure {
     fn reason(&self) -> &str {
         match self {
-            Self::Transient(reason) | Self::Pending(reason) | Self::Permanent(reason) => reason,
+            Self::Transient(reason)
+            | Self::Pending(reason)
+            | Self::Permanent(reason)
+            | Self::RefundEndedUnpaid(reason) => reason,
         }
     }
 }
@@ -249,6 +259,9 @@ enum SettlePlan {
         /// What the provider refunded before this refund; 0 for any other
         /// move.
         refunded_before: u64,
+        /// How many times the owner asked again for this refund after the
+        /// provider ended it unpaid; 0 for any other move.
+        refund_retry: u32,
     },
 }
 
@@ -298,14 +311,14 @@ fn plan_settle(vault: &Vault, key: &[u8; 32], now_utc: u64) -> Result<SettlePlan
         else {
             return Ok(SettlePlan::Nothing);
         };
-        let mut refunded_before = 0;
+        let (mut refunded_before, mut refund_retry) = (0, 0);
         let movement = match row.state {
             DepositState::CaptureDue { amount_minor } => {
                 DepositSettleMove::Capture { amount_minor }
             }
             DepositState::VoidDue => DepositSettleMove::Void,
             DepositState::RefundDue { amount_minor } => {
-                refunded_before = row.refunded_minor;
+                (refunded_before, refund_retry) = (row.refunded_minor, row.refund_retry);
                 DepositSettleMove::Refund { amount_minor }
             }
             state if state.is_open() => {
@@ -325,6 +338,7 @@ fn plan_settle(vault: &Vault, key: &[u8; 32], now_utc: u64) -> Result<SettlePlan
             payment_id: row.payment_id,
             movement,
             refunded_before,
+            refund_retry,
         })
     })
 }
@@ -421,6 +435,7 @@ fn record_settled(
             {
                 let refunded = row.refunded_minor.saturating_add(moved);
                 let balance_owed = std::mem::take(&mut row.balance_owed_after_refund);
+                row.refund_ended_unpaid = None;
                 match row.captured_minor {
                     Some(captured) if balance_owed && captured > refunded => {
                         row.refunded_minor = refunded;
@@ -462,36 +477,42 @@ fn settle_deposit_key<P: DepositSettlementPort>(
     port: &mut P,
     now_utc: u64,
 ) -> Result<DepositSettleStep, BookingError> {
-    let (payment_id, movement, refunded_before) = match plan_settle(vault, key, now_utc)? {
-        SettlePlan::Nothing => return Ok(DepositSettleStep::Nothing),
-        SettlePlan::Wait { due_at } => return Ok(DepositSettleStep::Wait { due_at }),
-        SettlePlan::HomeMoving { due_at } => return Ok(DepositSettleStep::HomeMoving { due_at }),
-        SettlePlan::Move {
-            payment_id,
-            movement,
-            refunded_before,
-        } => (payment_id, movement, refunded_before),
-    };
+    let (payment_id, movement, refunded_before, refund_retry) =
+        match plan_settle(vault, key, now_utc)? {
+            SettlePlan::Nothing => return Ok(DepositSettleStep::Nothing),
+            SettlePlan::Wait { due_at } => return Ok(DepositSettleStep::Wait { due_at }),
+            SettlePlan::HomeMoving { due_at } => {
+                return Ok(DepositSettleStep::HomeMoving { due_at });
+            }
+            SettlePlan::Move {
+                payment_id,
+                movement,
+                refunded_before,
+                refund_retry,
+            } => (payment_id, movement, refunded_before, refund_retry),
+        };
     // One key per deposit, move and amount: a retry of the same move is
     // deduped by the provider, and a smaller capture after a cancel is a
     // new request rather than a mismatched replay. A refund after an
     // earlier one also names what was refunded before it, so a balance
-    // equal to the earlier refund is not taken for its replay.
+    // equal to the earlier refund is not taken for its replay, and a refund
+    // the owner asked again after the provider ended it unpaid names its
+    // retry count, so the provider makes a new refund.
     let key_hex = hex_lower(key);
     let digest = &key_hex[..32];
-    let idempotency_key = if refunded_before > 0 {
-        format!(
-            "oneiron-deposit-{}-{}-after-{refunded_before}-{digest}",
-            movement.tag(),
-            movement.amount_minor(),
-        )
-    } else {
-        format!(
-            "oneiron-deposit-{}-{}-{digest}",
-            movement.tag(),
-            movement.amount_minor(),
-        )
+    let after = match refunded_before {
+        0 => String::new(),
+        before => format!("-after-{before}"),
     };
+    let retry = match refund_retry {
+        0 => String::new(),
+        retry => format!("-retry-{retry}"),
+    };
+    let idempotency_key = format!(
+        "oneiron-deposit-{}-{}{after}{retry}-{digest}",
+        movement.tag(),
+        movement.amount_minor(),
+    );
     match port.settle(&DepositSettleRequest {
         payment_id: &payment_id,
         movement,
@@ -512,7 +533,21 @@ fn settle_deposit_key<P: DepositSettlementPort>(
                 SettleRecord::HomeMoving { due_at } => DepositSettleStep::HomeMoving { due_at },
             },
         ),
-        Err(failure) => Ok(DepositSettleStep::Failed(failure)),
+        Err(failure) => {
+            if let (
+                DepositProviderFailure::RefundEndedUnpaid(_),
+                DepositSettleMove::Refund { amount_minor },
+            ) = (&failure, movement)
+            {
+                let asked = AskedRefund {
+                    amount_minor,
+                    refunded_before,
+                    retry: refund_retry,
+                };
+                note_refund_ended_unpaid(vault, key, asked, now_utc)?;
+            }
+            Ok(DepositSettleStep::Failed(failure))
+        }
     }
 }
 

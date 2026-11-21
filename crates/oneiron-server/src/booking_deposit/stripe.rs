@@ -244,15 +244,20 @@ struct RefundList {
 
 impl RefundView {
     /// What the deposit records of this refund: its amount once it
-    /// succeeded; pending while Stripe still holds it; a refusal once it
-    /// failed or was cancelled, which leaves the refund owed and its settle
-    /// row asking again hourly (the owner's line for it is
-    /// FIX [BK-DEPOSIT-FAILED-REFUND-SURFACE]).
+    /// succeeded; pending while Stripe still holds it; ended unpaid once it
+    /// failed or was cancelled, which leaves the refund owed, its settle row
+    /// asking again hourly, and the owner's card offering to ask Stripe
+    /// again under a new key (FIX [BK-DEPOSIT-FAILED-REFUND-SURFACE]); a
+    /// refusal on a status Stripe never documented.
     fn settled_amount(&self) -> Result<u64, DepositProviderFailure> {
         match self.status.as_str() {
             "succeeded" => Ok(self.amount),
             "pending" | "requires_action" => Err(DepositProviderFailure::Pending(format!(
                 "Stripe holds refund {} {}",
+                self.id, self.status
+            ))),
+            _ if self.ended_unpaid() => Err(DepositProviderFailure::RefundEndedUnpaid(format!(
+                "Stripe's refund {} is {}",
                 self.id, self.status
             ))),
             status => Err(DepositProviderFailure::Permanent(format!(
