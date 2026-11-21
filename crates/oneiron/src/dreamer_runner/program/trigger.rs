@@ -270,17 +270,19 @@ fn record_occurrence_in_txn(
 
 /// A timer's next due time after it woke at `due_at`, read at `now`: `None` for a timer that
 /// wakes once; past `now` otherwise, so due times missed while no node released wake it once.
-fn next_due_after(due_at: u64, every_secs: u64, now: u64) -> Result<Option<u64>> {
+/// A repeat so long that the next due time fits no `u64` is `None` too: the timer woke at
+/// `due_at` and wakes no more. It is never an error (review #10113): the release of an actor's
+/// due timers is one write, and failing it there took back the wakes of the actor's other due
+/// timers and left its row failing at every retry.
+fn next_due_after(due_at: u64, every_secs: u64, now: u64) -> Option<u64> {
     if every_secs == 0 {
-        return Ok(None);
+        return None;
     }
     let missed = now.saturating_sub(due_at) / every_secs;
     missed
         .checked_add(1)
         .and_then(|steps| steps.checked_mul(every_secs))
         .and_then(|step| due_at.checked_add(step))
-        .map(Some)
-        .ok_or(Error::ArithmeticOverflow("turn program timer due time"))
 }
 
 /// The keys of the programs indexed under `kind`, read in `txn`.
@@ -494,7 +496,7 @@ fn release_actor_timers_in_txn(
             &due_at.to_be_bytes(),
             due_at,
         )?;
-        arming.next_due = next_due_after(due_at, every_secs, now)?;
+        arming.next_due = next_due_after(due_at, every_secs, now);
         ARM.put(vault, txn, &(actor, registration), &arming)?;
     }
     arm_actor_timers_in_txn(vault, txn, actor, None, None)
