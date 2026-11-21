@@ -260,8 +260,12 @@ impl Vault {
         let ground = match caller {
             SettingCaller::Owner(owner) if owner_change_signs(&request) => {
                 let importance = judged_change::owner_change_importance(self, owner, &request)?;
+                let _ = importance;
                 let witness =
-                    self.owner_presence(importance, owner_presence_reasons::SETTING_CHANGE)?;
+                    self.owner_presence(
+                        OwnerActImportance::Important,
+                        owner_presence_reasons::SETTING_CHANGE,
+                    )?;
                 Some(OwnerProofGround::witnessed(&witness))
             }
             _ => None,

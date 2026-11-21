@@ -213,7 +213,6 @@ pub(super) fn owner_change_importance(
     if let Some(json) = &request.value
         && wall_reads_in_txn(vault, &txn, json)?
     {
-        owner.revalidate_in_txn(vault, &txn)?;
         return Ok(OwnerActImportance::Important);
     }
     let value = match request.value.clone() {
