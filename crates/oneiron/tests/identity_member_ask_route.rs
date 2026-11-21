@@ -18,15 +18,16 @@
 //! then the turn is bound to a source policy only the member reads, standing
 //! in for a turn landed from the member's own mailbox, and the ask is sent.
 //!
-//! Red on main (the first two tests and the last): every ask goes to the
-//! owners whatever their lane reads, so the owner gets an Ask he cannot
-//! open, the member gets nothing, and the member's answer is refused
-//! "only a vault owner answers an identity ask". The member answers through
-//! `self.identity.member_answer`'s door, on their own person proof; the red
-//! pin, whose base has no such door, answers through `self.identity.answer`'s
-//! native door on their slip. The other two are guards that hold on both: a
-//! member's "someone new" is the owner's decision, and an ask every owner
-//! reads still goes to the owner alone.
+//! Red on main (every test but the fourth): every ask goes to the owners
+//! whatever their lane reads, so the owner gets an Ask he cannot open, the
+//! member gets nothing (the third test fails there before its someone-new
+//! answer), and the member's answer is refused "only a vault owner answers
+//! an identity ask". The member answers through `self.identity.answer`'s
+//! member door, on their own person proof; the red pin, whose base has no
+//! such door, answers through the native `Memory::identity_answer` on their
+//! slip. On the head a member's "someone new" is the owner's decision, and
+//! the fourth test is a guard that holds on both: an ask every owner reads
+//! still goes to the owner alone.
 //!
 //! Each `FIXTURE:` assertion checks the setup, never the fix.
 //!
@@ -190,9 +191,8 @@ impl Fixture {
             .collect()
     }
 
-    /// The member's answer `choice` to `ask`, on their own credential.
     /// The member's answer `choice` to `ask` through
-    /// `self.identity.member_answer`'s door, on their own person proof bound
+    /// `self.identity.answer`'s member door, on their own person proof bound
     /// to their slip, as the host builds it for a person's own act.
     fn members_answer(&self, ask: &str, choice: &str) -> Result<IdentitySettled, MemoryError> {
         let person = self

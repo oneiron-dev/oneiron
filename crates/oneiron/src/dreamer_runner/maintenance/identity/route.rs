@@ -115,7 +115,11 @@ fn members_in_txn(
 /// The human lane of `person`, who is no owner, as a credential of their own
 /// reads: a row that names a relationship or a private scope only on their
 /// live grants, the vault's own unscoped rows open, and a source-bound row
-/// only when its source policy names them.
+/// only when its source policy names them. It reaches every member whose
+/// answer door opens the ask. A credential narrowed further (to some records
+/// or channels) may read less: such a member gets an Ask their door then
+/// finds absent. No word travels with it, and the answer is judged again
+/// under their own credential.
 fn member_read(vault: &Vault, person: EntityId) -> Result<ScopedRead<'_>> {
     let key = ScopedReadActorKey::with_actor_class(person.to_hex(), ACTOR_CLASS_HUMAN)
         .ok_or_else(|| Error::InvalidConfig("an identity ask's reader has no read key".into()))?

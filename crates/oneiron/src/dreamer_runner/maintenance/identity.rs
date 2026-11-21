@@ -440,12 +440,12 @@ impl Memory<'_> {
         self.identity_answer_guarded(input, self.owner_authorship(), &[], None)
     }
 
-    /// `self.identity.member_answer`: a member's tap on the choice card of an
-    /// ask raised from their own source (OWNER-NOTICE-MEMBER-ASK-ROUTE
+    /// `self.identity.answer` for a member: their tap on the choice card of
+    /// an ask raised from their own source (OWNER-NOTICE-MEMBER-ASK-ROUTE
     /// Q1 = A), on `person`, the proof of their own verified human
     /// credential, rechecked in the write as a door a live person uses on
     /// their own behalf. It applies as [`Self::identity_answer`] does for a
-    /// member; an owner answers through `self.identity.answer`.
+    /// member; an owner answers on his owner proof.
     pub fn identity_answer_as_member(
         &self,
         person: &AuthenticatedOwner,
@@ -506,7 +506,7 @@ impl Memory<'_> {
             if by_owner && member.is_some() {
                 return Err(MemoryError::new(
                     MEMORY_CODE_FORBIDDEN,
-                    "an owner answers an identity ask through self.identity.answer",
+                    "an owner's identity answer takes the owner's own proof",
                     &["Answer from the owner's own session."],
                 ));
             }
