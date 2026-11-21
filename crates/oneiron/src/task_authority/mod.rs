@@ -70,8 +70,11 @@ pub(crate) use crate::store::task_authority_guard::{
 mod binding_generation;
 mod consult_executor;
 mod fact_proof;
+mod removed_carrier;
 mod task_maker;
 pub use binding_generation::{BindingGeneration, BindingId};
+pub(crate) use removed_carrier::carried_fact_acts_in_txn;
+pub use removed_carrier::task_facts_not_counted_text;
 pub use task_maker::{TaskMaker, task_ref_of_maker};
 
 /// Strict body schema for authority facts. Version 2 is version 1 plus the
@@ -1499,6 +1502,39 @@ impl FactCountRule {
         };
         self.task_facts.insert(task_ref, facts);
         counts
+    }
+
+    /// Whether `fact`, which the row `fact_ref` with `body` states, counts here by some row,
+    /// before the fold's actor rules: that row counts ([`Self::counted`]: this install's door
+    /// wrote exactly `body`, as the owner's restore marks each fact it lands, or its carrier's
+    /// signature proves it), or a counted row of its task states the same fact, as the signed
+    /// twin a restore adopts does. A task whose own row fails its strict read counts no fact.
+    pub(crate) fn counts_by_any_row(
+        &mut self,
+        vault: &Vault,
+        rtxn: &heed::RoTxn<'_>,
+        fact_ref: &EntityId,
+        body: &[u8],
+        fact: &TaskAuthorityFact,
+    ) -> Result<bool> {
+        let task_ref = fact.task_ref;
+        if self
+            .counted(vault, rtxn, fact_ref, body, task_ref)?
+            .is_some()
+        {
+            return Ok(true);
+        }
+        let facts = match self.task_facts.remove(&task_ref) {
+            Some(facts) => facts,
+            None => match vault.counted_task_facts_in(rtxn, task_ref, self) {
+                Ok(facts) => Some(facts),
+                Err(Error::Record(RecordError::InvalidTaskBody(_))) => None,
+                Err(error) => return Err(error),
+            },
+        };
+        let counts = facts.as_ref().is_some_and(|facts| facts.contains(fact));
+        self.task_facts.insert(task_ref, facts);
+        Ok(counts)
     }
 }
 

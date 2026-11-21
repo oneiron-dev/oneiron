@@ -382,6 +382,7 @@ pub use search_vector::{
 };
 pub(crate) use session_reads::{
     SessionAnswer, SessionRead, SessionReadContext, room_short_ref, scoped_session_text,
+    scoped_session_text_planned,
 };
 pub use shape_card_doors::{
     ShapeGroupResolveRequest, ShapeItemReceipt, ShapeItemReceiptRequest, ShapePlanCardView,
@@ -454,8 +455,8 @@ pub(crate) use witness::{
 #[cfg(feature = "sync")]
 pub(crate) use witness::{ForeignTurn, speak_as_counterparty};
 pub(crate) use witness::{
-    IMPORTED_SOURCE_KEY, ImportedTurnStamp, guard_import_stamp, turn_admits_message_bodies,
-    witness_message_body,
+    IMPORTED_SOURCE_KEY, ImportedTurnStamp, guard_import_stamp, guard_phone_thread_mark,
+    turn_admits_message_bodies, witness_message_body,
 };
 pub(crate) use witness::{
     SourceAttribution, SourceSpeaker, imported_message_in_txn, source_speaker_in_txn,

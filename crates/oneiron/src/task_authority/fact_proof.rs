@@ -7,16 +7,21 @@
 //! admitted the carrier.
 //!
 //! Which actors a carrier may speak for is the judge's answer, and the judge is SPLIT-6's
-//! (`owner_proof.rs`, its off-log family row). Until that row lands, [`carrier_admitted`] is
+//! (`owner_proof.rs`, its off-log family row). Until that row lands, [`carrier_standing`] is
 //! the one seam it replaces: any machine the fold admitted carries any actor's act of use, as
 //! a hosted node carries the facts of the persons and agents signed in to it (DESIGN 7.3).
+//!
+//! A removed machine's signature proves only the facts every removal of it saw: the remover
+//! names each fact it counted, by its carried act ([`carried_fact_act`]), beside the world
+//! edits it saw (`super::removed_carrier`).
 
 use ed25519_dalek::Signer as _;
 
 use crate::Vault;
 use crate::authority::{
-    AuthorityFold, AuthorityKey, AuthorityVaultId, AuthorityView, CarrierSignature,
-    authority_view_readonly_for_store_in_txn, carrier_signature_verifies, carrier_transcript,
+    AuthorityEntryHash, AuthorityFold, AuthorityKey, AuthorityVaultId, AuthorityView,
+    CarrierSignature, authority_view_readonly_for_store_in_txn, carrier_signature_verifies,
+    carrier_transcript,
 };
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -166,6 +171,21 @@ pub(super) struct FactProof {
     rooted: Option<(AuthorityVaultId, AuthorityView)>,
 }
 
+/// How the fold stands a fact's carrier ([`FactProof::standing`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum CarrierStanding {
+    /// The signature verifies and the fold admits its carrier for this fact: the machine's
+    /// roster chain stands live under the key, or every removal of the machine saw the fact.
+    Counts,
+    /// The signature verifies under the key the roster's chain removed the machine under,
+    /// with that key in no doubt, and not every removal saw this fact. It reached this
+    /// install after the machine's removal, and it does not count.
+    ArrivedAfterRemoval,
+    /// Nothing proves it: no settled root, a signature that fails, or a carrier the fold
+    /// does not admit.
+    Unproven,
+}
+
 impl FactProof {
     pub(super) fn in_txn(store: &Store, txn: &heed::RoTxn<'_>) -> Result<Self> {
         let view = authority_view_readonly_for_store_in_txn(store, store.privacy_posture, txn)?;
@@ -175,35 +195,113 @@ impl FactProof {
     }
 
     /// Whether `carrier` proves the fact row `fact_ref` whose canonical body without its
-    /// carrier is `unsigned`: the signature verifies under this vault's id and the fold
-    /// admitted its machine under its key. Nothing proves a fact in a vault with no settled
-    /// root, an unrooted one or one whose root conflicted.
+    /// carrier is `unsigned`: it [`CarrierStanding::Counts`]. Nothing proves a fact in a vault
+    /// with no settled root, an unrooted one or one whose root conflicted.
     pub(super) fn proves(
         &self,
         fact_ref: &EntityId,
         unsigned: &[u8],
         carrier: &CarrierSignature,
     ) -> bool {
-        self.rooted.as_ref().is_some_and(|(vault, fold)| {
-            carrier_signature_verifies(carrier, TASK_FACT_CARRIER_DOMAIN, vault, fact_ref, unsigned)
-                && carrier_admitted(fold, carrier)
-        })
+        self.standing(fact_ref, unsigned, carrier) == CarrierStanding::Counts
+    }
+
+    /// How the fold stands `carrier` for the fact row `fact_ref` whose canonical body without
+    /// its carrier is `unsigned`: the signature verifies under this vault's id, and then the
+    /// fold judges its carrier ([`carrier_standing`]).
+    pub(super) fn standing(
+        &self,
+        fact_ref: &EntityId,
+        unsigned: &[u8],
+        carrier: &CarrierSignature,
+    ) -> CarrierStanding {
+        let Some((vault, fold)) = self.rooted.as_ref() else {
+            return CarrierStanding::Unproven;
+        };
+        if !carrier_signature_verifies(carrier, TASK_FACT_CARRIER_DOMAIN, vault, fact_ref, unsigned)
+        {
+            return CarrierStanding::Unproven;
+        }
+        let act = carried_fact_act(vault, fact_ref, &carrier.machine, unsigned);
+        carrier_standing(fold, carrier, &act)
+    }
+
+    /// The act a removal of `machine` names when it saw the fact row `fact_ref`, whose
+    /// canonical body without its carrier is `unsigned` ([`carried_fact_act`]); `None` in a
+    /// vault with no settled root, where nothing proves a fact.
+    pub(super) fn carried_act(
+        &self,
+        fact_ref: &EntityId,
+        machine: &EntityId,
+        unsigned: &[u8],
+    ) -> Option<AuthorityEntryHash> {
+        self.rooted
+            .as_ref()
+            .map(|(vault, _)| carried_fact_act(vault, fact_ref, machine, unsigned))
     }
 }
 
-/// Whether `fold` admitted `carrier`'s machine under its key: a profile chain of that machine
-/// names the key and is live, or was removed. A removal does not unmake the facts the machine
-/// carried before it (SR-2 = A). A conflicted chain admits nothing, and an install key is
-/// never a roster key, as the carrier rule of the owner's acts has it (`owner_act.rs`).
-fn carrier_admitted(fold: &AuthorityFold, carrier: &CarrierSignature) -> bool {
-    !fold
+/// The act a removal of `machine` names, beside the world edits it saw, when it saw the fact
+/// row `fact_ref` of `vault` whose canonical body without its carrier is `unsigned`: the
+/// [`ContentHash`] of the row's carrier transcript. It binds what the carrier's signature binds
+/// (the vault, the row, the machine and the body), and the transcript's tag keeps it apart
+/// from every authority entry hash a removal names.
+fn carried_fact_act(
+    vault: &AuthorityVaultId,
+    fact_ref: &EntityId,
+    machine: &EntityId,
+    unsigned: &[u8],
+) -> AuthorityEntryHash {
+    let transcript =
+        carrier_transcript(TASK_FACT_CARRIER_DOMAIN, vault, fact_ref, machine, unsigned);
+    ContentHash::of(&transcript).into_bytes()
+}
+
+/// How `fold` stands `carrier`, whose signature over the fact whose carried act is `act`
+/// verified. Only the roster's chain of the machine speaks, as for the carrier of the owner's
+/// acts ([`crate::authority::owner_act_signer_admits`]): an anchor's chain neither admits nor
+/// removes a carrier, since any fresh key can mark any machine live in its own chain (RULINGs
+/// FOREIGN-ANCHOR-FOLD-JUDGE-RULE = C and FOREIGN-ANCHOR-ADMIT-SIDE-P1 = B, 16 Nov). While
+/// that chain stands live under the key, with no conflict, the carrier counts. Once it removed
+/// the machine under the key, a fact counts only if every removal saw it
+/// ([`crate::authority::FoldedMachine::every_removal_saw`]): a removal does not unmake the
+/// facts the machine carried before it, and cannot be used to make new ones after (lead
+/// ruling REMOVED-CARRIER-NEW-FACTS = A, 21 Nov, which keeps SR-2's intent). Removals that
+/// cross conflict at the chain's head in what each names beside the key, so their meet
+/// decides, and only a poisoned key proves nothing
+/// ([`crate::authority::FoldedMachine::removed_under_key`]; blind review round 1 P1,
+/// REVIEW-10107). An install key is never a roster key, as the carrier rule of the owner's
+/// acts has it.
+fn carrier_standing(
+    fold: &AuthorityFold,
+    carrier: &CarrierSignature,
+    act: &AuthorityEntryHash,
+) -> CarrierStanding {
+    if fold
         .roster
         .contains_key(&AuthorityKey::Ed25519(carrier.key))
-        && fold.machines.get(&carrier.machine).is_some_and(|machine| {
-            machine.chains().any(|(_, chain)| {
-                chain.profile.machine_key == carrier.key
-                    && !chain.conflicted
-                    && (chain.is_live() || chain.removed)
-            })
-        })
+    {
+        return CarrierStanding::Unproven;
+    }
+    let Some(machine) = fold.machines.get(&carrier.machine) else {
+        return CarrierStanding::Unproven;
+    };
+    let Some(chain) = machine.roster.as_ref() else {
+        return CarrierStanding::Unproven;
+    };
+    if chain.removed {
+        return match (
+            machine.removed_under_key(&carrier.key),
+            machine.every_removal_saw(act),
+        ) {
+            (false, _) => CarrierStanding::Unproven,
+            (true, true) => CarrierStanding::Counts,
+            (true, false) => CarrierStanding::ArrivedAfterRemoval,
+        };
+    }
+    if chain.profile.machine_key == carrier.key && !chain.conflicted && chain.is_live() {
+        CarrierStanding::Counts
+    } else {
+        CarrierStanding::Unproven
+    }
 }

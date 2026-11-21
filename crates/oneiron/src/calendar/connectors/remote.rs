@@ -471,7 +471,7 @@ pub(super) fn shared_uid(passports: &[(EntityId, CalendarPassportValue)]) -> Opt
 }
 
 /// The UID a locally originated EVENT gets on its first outbound write.
-pub(super) fn local_uid(event_ref: &EntityId) -> String {
+pub(in crate::calendar) fn local_uid(event_ref: &EntityId) -> String {
     format!("{}@{LOCAL_UID_DOMAIN}", event_ref.to_hex())
 }
 

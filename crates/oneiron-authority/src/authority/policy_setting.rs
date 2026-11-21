@@ -41,6 +41,14 @@
 //! names. Every row is judged in its own slot, and the act lands in all of
 //! them or none. The op's own fields stay its first row, so a one-row act
 //! encodes as in stage 7a-2, and `more` is absent from every older entry.
+//!
+//! One setting is read by the fold itself and has no local row: the
+//! recovery box's kit-only switch ([`PolicySetting::RecoveryBoxKitOnly`],
+//! WAYBACK-BOX-HOLD-FROM-DEVICE-SWITCH = A, 17 Nov). The recovery preset is
+//! a row of the install that changed it, so the switch's own write signs
+//! this act for the managed node that holds the box. Its value is
+//! [`recovery_box_kit_only_value`] of on or off, and only an owner key's
+//! proof counts it.
 
 use std::collections::BTreeSet;
 
@@ -91,6 +99,24 @@ pub fn setting_value_digest(json: &[u8]) -> [u8; 32] {
 #[must_use]
 pub fn policy_setting_revision(live: impl IntoIterator<Item = AuthorityEntryHash>) -> [u8; 32] {
     super::owner_act::act_revision(POLICY_SETTING_REVISION_CONTEXT, live)
+}
+
+/// The value of an act of [`PolicySetting::RecoveryBoxKitOnly`]: BLAKE3 over
+/// `true` (the recovery preset is kit-only) or `false` as JSON, as every
+/// setting act's value is a digest of the value it left as JSON.
+#[must_use]
+pub fn recovery_box_kit_only_value(kit_only: bool) -> [u8; 32] {
+    let json: &[u8] = if kit_only { b"true" } else { b"false" };
+    oneiron_contracts::fingerprint::ContentHash::of(json).into_bytes()
+}
+
+/// Which switch `value` is as an act of [`PolicySetting::RecoveryBoxKitOnly`]
+/// ([`recovery_box_kit_only_value`]): `None` for any other digest.
+#[must_use]
+pub fn recovery_box_kit_only_of(value: &[u8; 32]) -> Option<bool> {
+    [true, false]
+        .into_iter()
+        .find(|kit_only| recovery_box_kit_only_value(*kit_only) == *value)
 }
 
 /// The target an owner act names when it changes no row of its own: a
@@ -214,6 +240,13 @@ pub enum PolicySetting {
     /// setting's reserved target; its digests cover the agent with its
     /// tiers, which stay node-local claims (RULING L2-53-CEILING).
     AgentWorldAccess,
+    /// Whether the vault's recovery preset is kit-only ("Nobody but me" or
+    /// "any 2 pieces"), for the recovery box a managed node holds
+    /// (WAYBACK-BOX-HOLD-FROM-DEVICE-SWITCH = A). The fold reads it and no
+    /// install keeps a row of it: its value is
+    /// [`recovery_box_kit_only_value`] of on or off, and an act counts only
+    /// with an owner key's proof.
+    RecoveryBoxKitOnly,
 }
 
 impl PolicySetting {
@@ -231,6 +264,7 @@ impl PolicySetting {
             Self::DefaultFacet => "settings.default_facet",
             Self::UndoSend => "settings.undo_send",
             Self::AgentWorldAccess => "settings.agent_world_access",
+            Self::RecoveryBoxKitOnly => "settings.recovery_box_kit_only",
         }
     }
 
@@ -247,6 +281,7 @@ impl PolicySetting {
             Self::DefaultFacet => "default_facet",
             Self::UndoSend => "undo_send",
             Self::AgentWorldAccess => "agent_world_access",
+            Self::RecoveryBoxKitOnly => "recovery_box_kit_only",
         }
     }
 
@@ -263,6 +298,7 @@ impl PolicySetting {
             "default_facet" => Self::DefaultFacet,
             "undo_send" => Self::UndoSend,
             "agent_world_access" => Self::AgentWorldAccess,
+            "recovery_box_kit_only" => Self::RecoveryBoxKitOnly,
             _ => return None,
         })
     }
@@ -278,7 +314,8 @@ impl PolicySetting {
             | Self::NonBaseWorldClaimFraction
             | Self::DefaultFacet
             | Self::UndoSend
-            | Self::AgentWorldAccess => OwnerActKind::PolicySetting,
+            | Self::AgentWorldAccess
+            | Self::RecoveryBoxKitOnly => OwnerActKind::PolicySetting,
             Self::FreeTimePolicy => OwnerActKind::FreeTimePolicy,
         }
     }
@@ -395,7 +432,8 @@ impl PolicySettingSet {
     /// BLAKE3 is the act's `value`.
     ///
     /// A batch (stage 7a-3) is an act on catalogue keys alone, its first row
-    /// included, and no two of its rows name one target.
+    /// included, and no two of its rows name one target. A kit-only act
+    /// leaves one of its two values ([`recovery_box_kit_only_value`]).
     pub fn validate(&self) -> Result<()> {
         if !is_policy_setting_name(&self.setting) {
             return Err(invalid_authority());
@@ -406,6 +444,12 @@ impl PolicySettingSet {
             || self.act.answer.is_some()
             || (self.value.is_none() && known.is_some() && !free_time)
             || (known.is_some() && (self.slot.is_some() || self.inline.is_some()))
+            || (known == Some(PolicySetting::RecoveryBoxKitOnly)
+                && self
+                    .value
+                    .as_ref()
+                    .and_then(recovery_box_kit_only_of)
+                    .is_none())
         {
             return Err(invalid_authority());
         }

@@ -7,7 +7,8 @@ use super::*;
 /// clamp (`hidden_row`, see [`Bm25SearchOptions::hidden_row`]) a term's
 /// document frequency counts only the postings of rows the audience could
 /// read; the document count and the fields' average lengths stay the
-/// vault's.
+/// vault's, except that a room floors a term's count on its counted
+/// postings alone.
 pub(super) fn score_query_terms(
     store: &impl ManifestDbs,
     rtxn: &RoTxn<'_>,
@@ -22,9 +23,9 @@ pub(super) fn score_query_terms(
     // A room stages its index rows as it read base when it indexed, and
     // base keeps indexing on record. So a union may hold more postings than
     // the room's count, or a row whose lengths or field stats the room hid.
-    // None of that is corruption there: a term's postings floor the count, a
-    // row the union cannot measure is not scored, and a field with no stats
-    // takes no length normalization.
+    // None of that is corruption there: a term's counted postings floor the
+    // count, a row the union cannot measure is not scored, and a field with
+    // no stats takes no length normalization.
     let union = store.is_union();
     if total_docs == 0 && !union {
         return Ok(Vec::new());
@@ -95,8 +96,11 @@ pub(super) fn score_query_terms(
                 counted
             }
         };
-        // The list's own length checks the index and floors a union's count,
-        // clamp or none; only the IDF takes the audience's count.
+        // The list's own length checks the index, clamp or none. A union's
+        // count floor takes the audience's count, as the IDF does: a room's
+        // pinned count can sit below base postings that joined later, and a
+        // floor on the whole list would raise one term's count by its hidden
+        // rows alone.
         let postings = entries.len() as f64;
         if postings > n && !union {
             return Err(corrupted_with_diagnostic(
@@ -105,8 +109,8 @@ pub(super) fn score_query_terms(
                 Bm25DiagnosticKind::MalformedPostingAlignment,
             ));
         }
-        let n = n.max(postings);
         let df = counted as f64;
+        let n = n.max(df);
         let idf = ((n - df + 0.5) / (df + 0.5) + 1.0).ln();
         'entries: for entry in entries {
             let id = entry.id;

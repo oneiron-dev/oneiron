@@ -35,34 +35,45 @@ use serde::{Deserialize, Serialize};
 
 use super::storage::{booking_writer, engine_failure, read_txn, refused};
 use super::token::{
-    OpaqueCheckoutLeaseToken, SessionKey, digest_with, hex_lower, lease_digest, mint_raw_token,
-    session_digest,
+    OpaqueCheckoutLeaseToken, SessionKey, digest_with, lease_digest, mint_raw_token, session_digest,
 };
 use super::types::{MAX_CHECKOUT_HOLD_TTL_SECS, SoftHoldRow};
 use super::{CHECKOUT_LEASE, CheckoutLeaseRow, digest_serde, entity_ref_serde};
-use crate::attempt_queue::EnqueueAttempt;
 use crate::booking::{BookingError, DepositTerms, EventTypeKey};
 use crate::side_table::{self, SideTable, VersionedNamed};
 use crate::{EntityId, Vault};
 
 mod held;
+mod home_fence;
 mod refund;
+mod refund_ended_unpaid;
 mod settle;
+mod settle_row;
 
 pub(crate) use self::held::note_unattributed_cancel_in_txn;
 pub(super) use self::held::{
-    HeldDeposit, HeldDepositKind, held_deposit_in_txn, unattributed_cancel_sequence_in_txn,
+    EmergencyReturn, HeldDeposit, HeldDepositKind, emergency_return_in_txn, held_deposit_in_txn,
+    refund_ended_unpaid_note_in_txn, unattributed_cancel_sequence_in_txn,
+};
+pub use self::home_fence::check_deposit_checkout_admitted;
+use self::home_fence::{
+    CHECKOUT_MOVING, SettleStanding, admits_deposits_here, awaits_carried_deposits, put_deposit,
+    settle_standing_in_txn,
 };
 pub(super) use self::refund::{
     cap_refund_on_visitor_reschedule_in_writer, refund_on_host_cancel_in_writer,
     refund_on_visitor_cancel_in_writer,
 };
 pub(crate) use self::refund::{refund_booking_deposit_as_owner, refund_deposit_on_host_cancel};
+use self::refund_ended_unpaid::RefundEndedUnpaid;
+#[cfg(feature = "sync")]
+pub(super) use self::settle::queue_carried_settle_in_txn;
 pub use self::settle::{
     BOOKING_DEPOSIT_SETTLE_ATTEMPT_KIND, BookingDepositSettlementDrain, DepositProviderFailure,
     DepositSettleMove, DepositSettleRequest, DepositSettleStep, DepositSettlementPort,
     run_booking_deposit_settlement, settle_booking_deposit,
 };
+use self::settle_row::enqueue_settle;
 
 /// The checkout window a deposit's lease opens: the hold lives this long
 /// while the visitor pays ("~15min", ARCH-0062:225). A checkout started
@@ -120,7 +131,7 @@ impl DepositState {
 /// One deposit, keyed by its provider payment's digest.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct DepositRow {
+pub(super) struct DepositRow {
     #[serde(with = "digest_serde")]
     session_hash: [u8; 32],
     #[serde(with = "entity_ref_serde")]
@@ -165,6 +176,26 @@ struct DepositRow {
     /// cancel Oneiron cannot attribute. Unset on every other row.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     unattributed_cancel: Option<UnattributedCancel>,
+    /// The SEQUENCE of the owner's BK-09 emergency cancel that gave this
+    /// deposit back whole (released a capture still due, or owed a captured
+    /// one back), in that cancel's own commit: the booking the visitor picks
+    /// again from its proposals carries no deposit, and the owner's card
+    /// says where this deposit's return stands (RULING
+    /// DEPOSIT-PICK-AFTER-EMERGENCY-CANCEL = A). Unset on every other row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    emergency_return_sequence: Option<u32>,
+    /// How many times the owner asked again for the refund owed now after
+    /// the provider ended it unpaid (FIX [BK-DEPOSIT-FAILED-REFUND-SURFACE]):
+    /// from the first on, the refund's idempotency key names it, so the
+    /// provider makes a new refund. 0, and left out, on every other row.
+    #[serde(default, skip_serializing_if = "refund_ended_unpaid::is_zero")]
+    refund_retry: u32,
+    /// The refund owed now, asked under `refund_retry`, that the provider
+    /// ended with nothing paid back: the owner's line says so, and Return
+    /// deposit asks again. Unset on every other row, and once a refund of
+    /// the deposit settles.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    refund_ended_unpaid: Option<RefundEndedUnpaid>,
     updated_at: u64,
 }
 
@@ -185,7 +216,7 @@ struct UnattributedCancel {
 /// A booking's deposit. Key: hash32 (the booking digest).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct DepositBookingRow {
+pub(super) struct DepositBookingRow {
     #[serde(with = "digest_serde")]
     deposit_key: [u8; 32],
 }
@@ -193,7 +224,7 @@ struct DepositBookingRow {
 /// A provider event already applied. Key: hash32 (the provider event digest).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct DepositProviderEventRow {
+pub(super) struct DepositProviderEventRow {
     #[serde(with = "digest_serde")]
     deposit_key: [u8; 32],
     recorded_at: u64,
@@ -201,21 +232,21 @@ struct DepositProviderEventRow {
 
 /// Same `booking.token.v1:` declaration as [`super::TOKEN`]; see its doc
 /// comment. Key: hash32 (the payment digest).
-const DEPOSIT: SideTable<
+pub(super) const DEPOSIT: SideTable<
     [u8; 32],
     DepositRow,
     VersionedNamed<{ super::types::LIFECYCLE_ROW_VERSION }>,
 > = SideTable::new(&side_table::BOOKING_TOKEN);
 
 /// Same declaration. Key: hash32 (the booking digest).
-const DEPOSIT_BOOKING: SideTable<
+pub(super) const DEPOSIT_BOOKING: SideTable<
     [u8; 32],
     DepositBookingRow,
     VersionedNamed<{ super::types::LIFECYCLE_ROW_VERSION }>,
 > = SideTable::new(&side_table::BOOKING_TOKEN);
 
 /// Same declaration. Key: hash32 (the provider event digest).
-const DEPOSIT_PROVIDER_EVENT: SideTable<
+pub(super) const DEPOSIT_PROVIDER_EVENT: SideTable<
     [u8; 32],
     DepositProviderEventRow,
     VersionedNamed<{ super::types::LIFECYCLE_ROW_VERSION }>,
@@ -299,6 +330,9 @@ pub fn begin_deposit_checkout(
     let key = deposit_key(&start.payment_id);
     let session_hash = session_digest(&start.session_key);
     booking_writer(vault, |wtxn| {
+        if !admits_deposits_here(vault, &*wtxn)? {
+            return Err(refused(CHECKOUT_MOVING));
+        }
         let config = crate::booking::config::load_event_type_config_in_txn(
             vault,
             &*wtxn,
@@ -343,6 +377,9 @@ pub fn begin_deposit_checkout(
                 refunded_minor: 0,
                 balance_owed_after_refund: false,
                 unattributed_cancel: None,
+                emergency_return_sequence: None,
+                refund_retry: 0,
+                refund_ended_unpaid: None,
                 updated_at: now_utc,
             },
         };
@@ -371,56 +408,6 @@ pub fn begin_deposit_checkout(
         enqueue_settle(vault, wtxn, &key, "expiry", now_utc)?;
         Ok(DepositCheckoutLease { lease, expires_at })
     })
-}
-
-fn put_deposit(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    key: &[u8; 32],
-    row: &DepositRow,
-) -> Result<(), BookingError> {
-    DEPOSIT
-        .put(&vault.store, wtxn, key, row)
-        .map_err(|error| engine_failure("meta write", error))
-}
-
-/// The payload of one [`BOOKING_DEPOSIT_SETTLE_ATTEMPT_KIND`] row: the
-/// deposit whose next move is owed. The move itself is read from committed
-/// state when the row runs.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct DepositSettlePayload {
-    /// The deposit's key, lowercase hex.
-    deposit_key: String,
-}
-
-fn enqueue_settle(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    key: &[u8; 32],
-    cause: &str,
-    now_utc: u64,
-) -> Result<(), BookingError> {
-    let hex = hex_lower(key);
-    let payload = serde_json::to_vec(&DepositSettlePayload {
-        deposit_key: hex.clone(),
-    })
-    .map_err(|_| refused("booking deposit settle payload did not encode"))?;
-    crate::ports::JobQueue::port_job_enqueue(
-        vault,
-        wtxn,
-        EnqueueAttempt {
-            kind: BOOKING_DEPOSIT_SETTLE_ATTEMPT_KIND.to_owned(),
-            payload,
-            dedupe_key: Some(format!(
-                "{BOOKING_DEPOSIT_SETTLE_ATTEMPT_KIND}:{hex}:{cause}"
-            )),
-            run_id: None,
-            now: now_utc,
-        },
-    )
-    .map_err(|error| engine_failure("booking deposit settle enqueue", error))?;
-    Ok(())
 }
 
 // -------------------------------------------------------------------------
@@ -462,6 +449,13 @@ pub enum DepositProviderEventOutcome {
     /// The authorized amount or currency is not the deposit's terms; the
     /// deposit stays unauthorized, and its window's end voids it.
     TermsMismatch,
+    /// Not applied now, and nothing changed: it froze its booking rows for a
+    /// home move its target has not acknowledged, or it awaits the move that
+    /// carries its deposits here. The provider must deliver it again.
+    Deferred,
+    /// Not this node's to apply: it froze its booking rows for a move its
+    /// target acknowledged. The new home asks the provider before a confirm.
+    MovedAway,
 }
 
 /// Applies one verified provider event to its deposit, once.
@@ -470,6 +464,12 @@ pub enum DepositProviderEventOutcome {
 /// currency. A refusal keeps the deposit, and the hold that waits on it,
 /// open for a retry on the same payment. A cancellation closes any deposit
 /// not yet captured.
+///
+/// During a home move it writes nothing (FIX [BK-LIFECYCLE-ROWS-NOT-CARRIED-BY-HOME-MOVE]):
+/// [`DepositProviderEventOutcome::Deferred`] on the old home until its move is
+/// acknowledged, and on the new home for a payment it does not know before the
+/// move lands, never acknowledged as no deposit's; then
+/// [`DepositProviderEventOutcome::MovedAway`] on the old home.
 ///
 /// # Errors
 ///
@@ -486,6 +486,11 @@ pub fn record_deposit_provider_event(
     let key = deposit_key(&event.payment_id);
     let event_key = provider_event_key(&event.event_id);
     booking_writer(vault, |wtxn| {
+        match settle_standing_in_txn(vault, &*wtxn)? {
+            SettleStanding::Settles => {}
+            SettleStanding::MoveUnacknowledged => return Ok(DepositProviderEventOutcome::Deferred),
+            SettleStanding::MovedAway => return Ok(DepositProviderEventOutcome::MovedAway),
+        }
         if DEPOSIT_PROVIDER_EVENT
             .get(&vault.store, &*wtxn, &event_key)
             .map_err(|error| engine_failure("meta read", error))?
@@ -497,7 +502,11 @@ pub fn record_deposit_provider_event(
             .get(&vault.store, &*wtxn, &key)
             .map_err(|error| engine_failure("meta read", error))?
         else {
-            return Ok(DepositProviderEventOutcome::UnknownPayment);
+            return Ok(if awaits_carried_deposits(vault, &*wtxn)? {
+                DepositProviderEventOutcome::Deferred
+            } else {
+                DepositProviderEventOutcome::UnknownPayment
+            });
         };
         DEPOSIT_PROVIDER_EVENT
             .put(

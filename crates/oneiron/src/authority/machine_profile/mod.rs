@@ -119,6 +119,21 @@ pub struct FoldedMachine {
     /// For each key a chain here names, the trust scopes in which another
     /// machine claims it: `Roster` for an accepted roster revision.
     pub(super) shared: BTreeMap<[u8; 32], BTreeSet<MachineAdmitter>>,
+    /// The carried acts every `Removed` revision of the roster's chain saw:
+    /// the meet of their `seen_world_edits`, empty when the chain holds no
+    /// removal. A removed machine's act that only its own signature proves
+    /// keeps counting only if each removal saw it
+    /// ([`Self::every_removal_saw`]).
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub(super) roster_removals_saw: BTreeSet<AuthorityEntryHash>,
+    /// The key the roster's chain removed the machine under, when it removed
+    /// it and nothing poisons that key: no other machine claims it, the
+    /// machine named no other, and it is no authority key. Crossing removals
+    /// keep it: they conflict at the chain's head only in what each names
+    /// beside the key (its carrier and what it saw), and their meet
+    /// ([`Self::every_removal_saw`]) decides what keeps counting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) roster_removed_key: Option<[u8; 32]>,
 }
 
 /// One admitter's revisions of one machine.
@@ -429,7 +444,33 @@ impl FoldedMachine {
                 .map(|(key, chain)| (*key, clear(chain)))
                 .collect(),
             shared: self.shared.clone(),
+            roster_removals_saw: self.roster_removals_saw.clone(),
+            roster_removed_key: self.roster_removed_key,
         }
+    }
+
+    /// Whether every removal in the roster's chain saw `act`, an act this
+    /// machine carried outside the authority log (a TASK fact, by its
+    /// carrier transcript's digest). Past its removal such an act counts only
+    /// then: a removal does not unmake what the machine carried before it,
+    /// and cannot be used to carry new acts after (lead ruling
+    /// REMOVED-CARRIER-NEW-FACTS = A, 21 Nov), as an owner act a removed
+    /// carrier carried stands only if the revisions that took it away saw it
+    /// ([`owner_answers::act_stands`]). Crossing removals meet: an act stands
+    /// only if each saw it.
+    #[must_use]
+    pub(crate) fn every_removal_saw(&self, act: &AuthorityEntryHash) -> bool {
+        self.roster_removals_saw.contains(act)
+    }
+
+    /// Whether the roster's chain removed this machine under `key`, with that
+    /// key in no doubt ([`Self::roster_removed_key`]). Two owner devices that
+    /// remove the machine at once leave the key so: the conflict at the
+    /// chain's head is only in what each removal names beside it, and it
+    /// unmakes no act both saw (blind review round 1 P1, REVIEW-10107).
+    #[must_use]
+    pub(crate) fn removed_under_key(&self, key: &[u8; 32]) -> bool {
+        self.roster_removed_key.as_ref() == Some(key)
     }
 
     /// The trusted identity under this install's pin: `trusted_under` the

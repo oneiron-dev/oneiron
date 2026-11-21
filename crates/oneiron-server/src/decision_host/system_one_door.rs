@@ -56,6 +56,7 @@ pub fn system_one_rung_for_test(
     .map_err(|error| anyhow::anyhow!("invalid stub System One seat: {error}"))?;
     Ok(SystemOneRungForTest {
         rung: SystemOneRung {
+            label: "system one",
             vault,
             seat: Arc::new(seat),
             guard: BudgetGuard::new("system-one", 1_000_000, BudgetExhaustionPolicy::Suspend),

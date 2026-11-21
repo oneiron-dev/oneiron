@@ -732,7 +732,7 @@ pub(crate) fn apply_owner_bound_claim_puts_with_transitions(
 
 /// [`apply_owner_bound_claim_puts_with_transitions`] under `gate_mode`, which
 /// gets `bindings` as its claim materializations.
-fn apply_owner_bound_claim_puts_in_mode(
+pub(crate) fn apply_owner_bound_claim_puts_in_mode(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     ops: Vec<BatchOp>,
@@ -789,7 +789,7 @@ mod provenance_puts;
 mod succession;
 use demotion::demotion_body;
 pub(crate) use provenance_puts::apply_provenance_claim_puts;
-pub(crate) use succession::SuccessionWriter;
+pub(crate) use succession::{SuccessionWriter, inherited_lineage};
 
 #[cfg(test)]
 mod tests;

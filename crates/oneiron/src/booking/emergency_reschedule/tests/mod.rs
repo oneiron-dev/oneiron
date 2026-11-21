@@ -471,6 +471,7 @@ fn execute(
         &consumer(vault, now),
         spy,
     )
+    .map(|run| run.item)
 }
 
 fn emergency_records(vault: &Vault) -> Vec<crate::outbound_intent_ledger::IntentLedgerRecord> {

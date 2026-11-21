@@ -3,6 +3,7 @@
 //! State, admission, and shutdown definitions remain in the parent module.
 
 mod ledger_report;
+mod owner_key_change_report;
 mod teardown;
 
 use teardown::StartingHandles;
@@ -184,6 +185,11 @@ async fn serve_with_handles(
     // Rehearsal scratch a stopped process left in `<data>.rehearsals` goes
     // before any worker starts or ready is said (FIX 5677).
     owner_host.sweep_rehearsals(&vault);
+    // The owner key change report's baseline, before any worker starts or
+    // anything serves: every owner key entry the vault holds now is history,
+    // never mailed, and every change landed after it is reported (Engine
+    // ruling 21 Nov 06:00).
+    crate::managed::owner_key_change_report::baseline_cursor(&vault);
     // The one credential-broker context, built from the opened vault: the
     // `[models]` providers, the System One seat, the embedder and the GPU
     // pods read their `key_secret` keys at its custody door, call by call.
@@ -354,6 +360,9 @@ async fn serve_with_handles(
     // The recovery box's kit-only hold rides the ledger's socket and spawn
     // identity; the recovery preset switch is its only caller.
     sync_server.configure_recovery_box_hold(ledger.recovery_box_hold())?;
+    // The owner key change report rides the same socket and identity; the
+    // reporter task beside the ledger report is its only caller.
+    sync_server.configure_owner_key_change_report(ledger.owner_key_change_report())?;
     // The native preview socket has only exact held-lease origins. No flag
     // means no registration caller or listener, preserving standalone hosts.
     let previews = managed
@@ -549,6 +558,10 @@ async fn serve_with_handles(
         Arc::clone(&state),
         Arc::clone(&sync_server),
         training_changes,
+        shutdown.triggered(),
+    ));
+    handles.owner_key_change_report = Some(owner_key_change_report::spawn(
+        Arc::clone(&sync_server),
         shutdown.triggered(),
     ));
 

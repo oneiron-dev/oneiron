@@ -49,6 +49,7 @@ mod project;
 mod proposal;
 mod publish;
 mod read;
+mod restored;
 mod set;
 mod signed_act;
 pub(crate) mod tables;
@@ -64,10 +65,12 @@ pub use oneiron_setting_contract::{
 pub use self::ask::SettingAsk;
 pub(crate) use self::ask::erase_setting_ask_actor_in_txn;
 pub use self::beside::SettingTravel;
+#[cfg(all(oneiron_test_support, feature = "test-support", feature = "sync"))]
+pub(crate) use self::beside::land_pack_table_from_peer;
 #[cfg(all(oneiron_test_support, feature = "test-support"))]
 pub(crate) use self::beside::{
     beside_row_for, beside_row_json, beside_row_of, land_beside_row, land_pack_table,
-    pack_table_bytes,
+    land_pack_table_shared_row, pack_table_bytes,
 };
 pub(crate) use self::beside::{beside_row_watched_in_txn, notes_projection_pass_in_txn};
 pub(crate) use self::born::write_born_rows_in_txn;
@@ -105,6 +108,7 @@ pub use self::read::{Requested, SettingCatalogueEntry, SettingRowView, SettingVi
 pub(crate) use self::read::{
     SettingListFilter, SettingReadCaller, SettingReader, reader_reads_key_in_txn,
 };
+pub(crate) use self::restored::restore_drops_row;
 pub(crate) use self::set::run_after_commit;
 pub use self::set::{EngineSetting, SetSetting, SetSettingOutcome, SettingCaller};
 use crate::Vault;

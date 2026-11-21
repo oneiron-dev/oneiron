@@ -15,7 +15,9 @@
 //! read it opens no payment.
 
 use oneiron::booking::agent_api::BookingDepositCheckout;
-use oneiron::booking::lifecycle::{DepositCheckoutStart, begin_deposit_checkout};
+use oneiron::booking::lifecycle::{
+    DepositCheckoutStart, begin_deposit_checkout, check_deposit_checkout_admitted,
+};
 use oneiron::booking::{
     BookingError, DepositTerms, EventTypeKey, OpaqueCheckoutLeaseToken, SessionKey,
     configured_deposit_terms, deposit_checkout_idempotency_key,
@@ -88,6 +90,10 @@ pub(crate) fn open_hold_checkout(
         Some(shown) if *shown != terms => return Err(CheckoutFailure::TermsChanged),
         Some(_) => {}
     }
+    // A node a home move is leaving or reaching opens no payment: the
+    // payment would stand on no deposit here, or beside the one the move
+    // carries.
+    check_deposit_checkout_admitted(vault).map_err(CheckoutFailure::Booking)?;
     let publishable = publishable_key(vault)
         .map_err(|error| CheckoutFailure::Stripe(StripeCallError::Setup(error)))?;
     let client = StripeClient::new(vault, stripe_base).map_err(CheckoutFailure::Stripe)?;

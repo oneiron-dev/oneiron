@@ -9,6 +9,8 @@ use ed25519_dalek::SigningKey;
 
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
+use crate::world_keys::OwnerActImportance;
+use crate::world_keys::owner_presence_reasons::{ENROLL_MACHINE, SET_MACHINE_ROLE};
 use crate::{EntityId, TimeRange, Vault};
 
 use super::machine_identity::SERVING_INSTALL_ROLE;
@@ -294,6 +296,9 @@ impl Vault {
     /// device, the machine stands as before, and no credential is sealed
     /// again.
     ///
+    /// The door does not read the value in force before its write, so it asks for every
+    /// change it cannot tell from its arguments to be a narrowing.
+    ///
     /// # Errors
     /// [`Error::ConcurrentWrite`] when `seen` is not the machine's current
     /// revision; [`Error::InvalidConfig`] when this install carries no live
@@ -308,11 +313,13 @@ impl Vault {
         role: MachineRole,
         seen: Option<[u8; 32]>,
     ) -> Result<MachineAnswerLanding> {
+        let witness = self.owner_presence(OwnerActImportance::Important, ENROLL_MACHINE)?;
+        let ground = OwnerProofGround::witnessed(&witness);
         let mut txn = self.store.env.write_txn()?;
         let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
         let proves_joins = owner.proves_joins_in_txn(self, &txn)?;
         let answer = AnswerAct::by_owner((actor, proves_joins), surface, role, seen);
-        let landing = self.enroll_machine_in_txn(&mut txn, answer, request, role)?;
+        let landing = self.enroll_machine_in_txn(&mut txn, &ground, answer, request, role)?;
         txn.commit()?;
         #[cfg(feature = "sync")]
         if landing.held().is_none() {
@@ -346,6 +353,9 @@ impl Vault {
     /// windows in the write and announced once it committed, as at
     /// [`Self::remove_machine`].
     ///
+    /// The door does not read the value in force before its write, so it asks for every
+    /// change it cannot tell from its arguments to be a narrowing.
+    ///
     /// # Errors
     /// As [`Self::enroll_machine`], and [`invalid_authority`] for a machine no
     /// roster revision and no mark of the pinned anchor names, or one already
@@ -360,13 +370,15 @@ impl Vault {
         role: MachineRole,
         seen: Option<[u8; 32]>,
     ) -> Result<MachineAnswerLanding> {
+        let witness = self.owner_presence(OwnerActImportance::Important, SET_MACHINE_ROLE)?;
+        let ground = OwnerProofGround::witnessed(&witness);
         let mut txn = self.store.env.write_txn()?;
         let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         let proves_joins = owner.proves_joins_in_txn(self, &txn)?;
         let answer = AnswerAct::by_owner((actor, proves_joins), surface, role, seen);
         let (landing, _) =
-            self.machine_role_answer_in_txn(&mut txn, &fold, answer, machine, role)?;
+            self.machine_role_answer_in_txn(&mut txn, &fold, &ground, answer, machine, role)?;
         let rows = self.mark_rows_counted_since_in_txn(&mut txn, &fold)?;
         txn.commit()?;
         self.note_committed_authority_rows(rows);
@@ -386,6 +398,7 @@ impl Vault {
         &self,
         txn: &mut heed::RwTxn<'_>,
         fold: &AuthorityFold,
+        ground: &OwnerProofGround,
         answer: AnswerAct,
         machine: EntityId,
         role: MachineRole,
@@ -412,7 +425,7 @@ impl Vault {
             act: None,
             ..current.profile.clone()
         };
-        self.append_owner_answer_ending_keys_in_txn(txn, fold, answer, profile)
+        self.append_owner_answer_ending_keys_in_txn(txn, fold, ground, answer, profile)
     }
 
     /// Enrols in the caller's transaction under the owner's act, carried by
@@ -420,6 +433,7 @@ impl Vault {
     pub(super) fn enroll_machine_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
+        ground: &OwnerProofGround,
         answer: AnswerAct,
         request: &MachineEnrolmentRequest,
         role: MachineRole,
@@ -444,7 +458,7 @@ impl Vault {
             answer.kind = OwnerActKind::MachineAnswer;
         }
         self.ensure_machine_row_in_txn(txn, request.machine)?;
-        self.append_owner_answer_in_txn(txn, &fold, answer, profile)
+        self.append_owner_answer_in_txn(txn, &fold, ground, answer, profile)
     }
 
     /// Whether this install may sign a revision in `role` under a host root
@@ -594,10 +608,11 @@ impl Vault {
         &self,
         txn: &mut heed::RwTxn<'_>,
         fold: &AuthorityFold,
+        ground: &OwnerProofGround,
         answer: AnswerAct,
         profile: MachineProfile,
     ) -> Result<MachineAnswerLanding> {
-        self.append_owner_answer_ending_keys_in_txn(txn, fold, answer, profile)
+        self.append_owner_answer_ending_keys_in_txn(txn, fold, ground, answer, profile)
             .map(|(landing, _)| landing)
     }
 
@@ -610,6 +625,7 @@ impl Vault {
         &self,
         txn: &mut heed::RwTxn<'_>,
         fold: &AuthorityFold,
+        ground: &OwnerProofGround,
         answer: AnswerAct,
         mut profile: MachineProfile,
     ) -> Result<(MachineAnswerLanding, Vec<EndedOwnerKey>)> {
@@ -633,6 +649,18 @@ impl Vault {
         }
         profile.seen_world_edits =
             super::act_standing::acknowledged_by_in_txn(&self.store, txn, fold, profile.machine)?;
+        // A removal names, beside those, each TASK fact the machine carried that this install
+        // counts: past the removal its signature proves no other (lead ruling
+        // REMOVED-CARRIER-NEW-FACTS = A).
+        if profile.role == MachineRole::Removed {
+            profile
+                .seen_world_edits
+                .extend(crate::task_authority::carried_fact_acts_in_txn(
+                    self,
+                    txn,
+                    profile.machine,
+                )?);
+        }
         profile.carrier = Some(carrier);
         profile.act = Some(OwnerAct {
             owner: answer.owner,
@@ -649,7 +677,7 @@ impl Vault {
         // answer that needs the proof is held. Its join carries the same
         // proof only for the owner's own write (row
         // OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS, REVIEW-9962 P1).
-        let proof = self.owner_proof_signer(fold);
+        let proof = self.owner_proof_signer(fold, ground);
         // FIX 7908: join a frontier wider than one entry names, else today's path.
         let joiner = FrontierSigner::install(
             carrier,
@@ -676,7 +704,7 @@ impl Vault {
         )?;
         let landing = self.land_machine_profile_in_txn(txn, entry, &profile, now)?;
         let ended = if landing.held().is_none() && !ending.is_empty() {
-            self.end_owner_keys_in_txn(txn, ending)?
+            self.end_owner_keys_in_txn(txn, ground, ending)?
         } else {
             Vec::new()
         };

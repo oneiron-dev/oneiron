@@ -4,7 +4,7 @@
 
 use super::archive_retained_side_rows::retained_side_row_withholds_credential;
 use super::{
-    ArchiveRetainedSideRow, ArchiveSideFamily, OwnerArchiveRestorePermit,
+    ArchiveRetainedSideRow, ArchiveSideFamily, OwnerArchiveRestorePermit, ProjectRootMap,
     RetainedSideHeldBackReason, SideRowBytes,
 };
 use crate::error::{Error, Result, StoreError};
@@ -247,6 +247,7 @@ pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGrou
         }
         name if name == side_table::VOICE_IDENTITY_CONSENT.name
             || name == side_table::VOICE_IDENTITY_CONSENT_VOID.name
+            || name == side_table::VOICE_IDENTITY_WITHDRAWAL_REQUESTED_AT.name
             || name == side_table::VOICE_REF_RENDER_CONSENT.name =>
         {
             Some(Group::Voice)
@@ -271,11 +272,14 @@ pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGrou
 }
 
 /// Lands one staged group in input order, without starting any workflow or refreshing caches.
+/// `projects` maps a whole-vault archive's source root onto this vault's root; the setting rows
+/// read a row scoped at the source root as scoped here.
 pub(crate) fn land_archived_side_group_in_txn(
     group: ArchivedSideGroup,
     vault: &crate::Vault,
     txn: &mut heed::RwTxn<'_>,
     permit: &OwnerArchiveRestorePermit,
+    projects: Option<&ProjectRootMap>,
     rows: &[ArchiveRetainedSideRow],
     refresh: &mut ArchivedSideRowRefresh,
 ) -> Result<Vec<ArchivedSideRowOutcome>> {
@@ -285,6 +289,7 @@ pub(crate) fn land_archived_side_group_in_txn(
                 vault,
                 txn,
                 permit,
+                projects,
                 rows,
                 &mut refresh.setting_wakes,
             )

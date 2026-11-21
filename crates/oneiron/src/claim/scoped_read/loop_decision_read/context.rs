@@ -250,16 +250,16 @@ impl ScopedRead<'_> {
 
     /// A kept record position under the reader's live authority, as a stored
     /// row's own admission judges it apart from the row: the proof live, the
-    /// credential's records and a guest's current view; then B, the key's
+    /// credential's records, a guest's current view and no legal use limit
+    /// on the stored record (unless the read asks its use); then B, the key's
     /// own floor (its type in the reader's bands, the relationship gate, then
     /// the claim selectors or the record door over the kept Scope), else A,
     /// one of the reader's own live Grants alone, under the floor a proof of
     /// it gives the key, holding the position's world, facet and type, as
     /// the row gate's A judges a row (Engine ANSWER
-    /// LOOP-KEPT-POSITION-FLOOR-AND-GRANT = A), never for a stored record a
-    /// legal use limit keeps. Two Grants never combine. No status, evidence
-    /// or landing is asked: those govern the claim, not whether its decision
-    /// may be seen.
+    /// LOOP-KEPT-POSITION-FLOOR-AND-GRANT = A). Two Grants never combine.
+    /// No status, evidence or landing is asked: those govern the claim, not
+    /// whether its decision may be seen.
     fn loop_position_admitted_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -287,17 +287,19 @@ impl ScopedRead<'_> {
         let row = record
             .zip(stored.as_deref())
             .map(|(id, raw)| (id, Some(raw)));
-        if self.loop_position_held_in(txn, read, &read.filter, None, position, row)? {
-            return Ok(true);
-        }
-        // A legal use limit keeps the stored record as storage only, so no
-        // Grant alone admits its kept position, as the row gate refuses the
-        // row (FIX 5226; review round 2 of #10040).
+        // A legal use limit keeps the stored record as storage only, so
+        // neither the key's own floor nor one Grant alone admits its kept
+        // position, as the row gate refuses the row to every ordinary
+        // reader (FIX 5226; review round 2 of #10040; FIX-LIST
+        // LOOP-KEPT-POSITION-USE-LIMIT-FLOOR).
         if let Some(id) = record
             && !read.held.asks_use_of(id)
             && crate::store::legal_hold::use_limit_in_txn(&self.vault.store, txn, id)?.is_some()
         {
             return Ok(false);
+        }
+        if self.loop_position_held_in(txn, read, &read.filter, None, position, row)? {
+            return Ok(true);
         }
         Ok(self.own_position_readable_by_grant_in(
             txn,

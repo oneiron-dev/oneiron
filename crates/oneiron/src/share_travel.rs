@@ -280,6 +280,34 @@ pub(crate) fn export_travel_source_rows(
     }))
 }
 
+/// The local rows each prepared guest-window export under `grant` listed (a
+/// Connect delivery or a guest document), read in `txn`. A prepared receipt
+/// claims no delivery: it says this vault released the row to that grant's
+/// peer, which bounds what a delete may tell the peer
+/// (CROSS-VAULT-DELETE-NEVER-ADMITTED). A receipt whose write failed and
+/// waits in memory for its retry is not here.
+#[cfg(feature = "sync")]
+pub(crate) fn guest_window_rows_prepared_for_grant(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    grant: &EntityId,
+) -> Result<BTreeSet<EntityId>> {
+    let grant = grant.to_hex();
+    let mut rows = BTreeSet::new();
+    for row in EXPORT_TRAVEL.iter_from(&vault.store, txn, &[])? {
+        if let ExportTarget::GuestWindow {
+            grant_ref,
+            source_rows,
+            ..
+        } = row?.1.target
+            && grant_ref == grant
+        {
+            rows.extend(source_rows);
+        }
+    }
+    Ok(rows)
+}
+
 /// The born-with text `choice` lets travel with `entity`, read in the door's
 /// one `txn` through the sharer's `lane` (FIX 3307): the target and each of
 /// its birth's prompt rows only as that lane admits them, nothing a world in
