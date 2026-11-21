@@ -9,15 +9,22 @@
 #
 # It builds exllamav3 at exactly EXLLAMAV3_COMMIT (v1.6.0, the version
 # requirements-exl3.lock pins) with that one line changed, for sm_89 only,
-# against the torch of ONEIRON_HOUSE_PYTHON. Into <out dir> it writes the
-# extension module and exllamav3_ext.build.json: the commit, the changed
-# line, the toolchain and the module's SHA-256. The server loads the module
-# when <out dir> is first on PYTHONPATH (serve-exl3.sh) and names its SHA-256
-# in its identity.
+# against the torch of ONEIRON_HOUSE_PYTHON. It writes <out dir>, which must
+# not exist yet: the extension module and exllamav3_ext.build.json (the
+# commit, the changed line, the toolchain and the module's SHA-256). The
+# server loads the module when <out dir> is first on PYTHONPATH
+# (serve-exl3.sh) and names its SHA-256 in its identity.
+#
+# A published directory is never written again: a running worker maps its
+# module, and overwriting that file can kill the worker (SIGBUS). Each build
+# goes into a new directory, written beside it under a temporary name and
+# renamed to <out dir> whole once complete; point ONEIRON_HOUSE_EXL3_EXT_DIR
+# at it on the next restart.
 #
 # Needs git, a CUDA 12.8 toolkit at CUDA_HOME (the CUDA torch 2.11.0+cu128 is
 # built with) and, where the system compiler is newer than nvcc 12.8 takes, a
-# host compiler it does take (gcc 14 or older) in CUDAHOSTCXX. MAX_JOBS bounds
+# host compiler it does take (gcc 14 or older) in CUDAHOSTCXX, which
+# exllamav3's setup.py passes to nvcc as -ccbin. MAX_JOBS bounds
 # the parallel nvcc jobs (default 2; each can take several GiB). About 13
 # minutes with 2 jobs.
 #
@@ -31,6 +38,12 @@ STOCK_LINE='#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ == 860)'
 H_ACC_LINE='#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ == 860 || __CUDA_ARCH__ == 890)'
 
 OUT=${1:?usage: build-exl3-ext.sh <out dir>}
+OUT=${OUT%/}
+if [ -e "$OUT" ]; then
+  echo "build-exl3-ext.sh: $OUT exists; a running worker may map the module there, so build into a new" \
+    "directory and point ONEIRON_HOUSE_EXL3_EXT_DIR at it on the next restart" >&2
+  exit 1
+fi
 : "${ONEIRON_HOUSE_PYTHON:=/opt/oneiron-house/.venv/bin/python}"
 : "${CUDA_HOME:?build-exl3-ext.sh: set CUDA_HOME to a CUDA 12.8 toolkit}"
 : "${MAX_JOBS:=2}"
@@ -50,7 +63,8 @@ case "$torch_build" in
 esac
 
 work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT
+stage=
+trap 'rm -rf "$work" ${stage:+"$stage"}' EXIT
 git -C "$work" init --quiet src
 git -C "$work/src" fetch --quiet --depth 1 "$EXLLAMAV3_REPO" "$EXLLAMAV3_COMMIT"
 git -C "$work/src" -c advice.detachedHead=false checkout --quiet FETCH_HEAD
@@ -89,11 +103,15 @@ if [ "${#built[@]}" -ne 1 ] || [ ! -f "${built[0]}" ]; then
   echo "build-exl3-ext.sh: the build wrote no single exllamav3_ext module" >&2
   exit 1
 fi
-mkdir -p "$OUT"
+# Written beside <out dir> (one file system, so the rename below is one
+# step) and published whole.
+mkdir -p "$(dirname "$OUT")"
+stage="$OUT.partial.$$"
+mkdir "$stage"
 module=$(basename "${built[0]}")
-cp "${built[0]}" "$OUT/$module"
-"$ONEIRON_HOUSE_PYTHON" - "$OUT" "$module" "$EXLLAMAV3_COMMIT" "$GEMM_INNER" "$H_ACC_LINE" "$nvcc_release" \
-  "$torch_build" "${CUDAHOSTCXX:-}" <<'EOF'
+cp "${built[0]}" "$stage/$module"
+digest=$("$ONEIRON_HOUSE_PYTHON" - "$stage" "$module" "$EXLLAMAV3_COMMIT" "$GEMM_INNER" "$H_ACC_LINE" \
+  "$nvcc_release" "$torch_build" "${CUDAHOSTCXX:-}" <<'EOF'
 import hashlib
 import json
 import sys
@@ -112,5 +130,14 @@ record = {
     "sha256": hashlib.sha256((Path(out) / module).read_bytes()).hexdigest(),
 }
 (Path(out) / "exllamav3_ext.build.json").write_text(json.dumps(record, indent=2) + "\n")
-print(f"built {module} sha256 {record['sha256']} into {out}")
+print(record["sha256"])
 EOF
+)
+# mv -T renames onto <out dir> only while it does not exist (or is empty):
+# a directory published meanwhile is refused, not merged into.
+if ! mv -T "$stage" "$OUT"; then
+  echo "build-exl3-ext.sh: $OUT appeared during the build; the module is not published" >&2
+  exit 1
+fi
+stage=
+echo "built $module sha256 $digest into $OUT"

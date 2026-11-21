@@ -608,13 +608,23 @@ def set_projection_fusion(on):
     return replaced
 
 
+# The record build-exl3-ext.sh writes beside every module it builds: it marks a rebuilt extension.
+REBUILT_EXTENSION_RECORD = "exllamav3_ext.build.json"
+
+
 def rebuilt_extension_digest(ext_dir):
     """The SHA-256 of the exllamav3_ext this process loaded from `ext_dir` (`--exllamav3-ext-dir`: a rebuilt
     extension, build-exl3-ext.sh, that the launcher put first on PYTHONPATH), or None with no such directory. A
-    module loaded from anywhere else refuses the launch, so the identity never names a build that does not run."""
-    if not ext_dir:
-        return None
+    module loaded from anywhere else refuses the launch, so the identity never names a build that does not run.
+    With no directory, a module beside build-exl3-ext.sh's record (a rebuilt one, reached through PYTHONPATH or
+    a link) refuses it too, so a rebuilt extension never runs under the installed one's identity."""
     loaded = getattr(exllamav3_ext, "__file__", None)
+    if not ext_dir:
+        if loaded and (Path(loaded).resolve().parent / REBUILT_EXTENSION_RECORD).exists():
+            raise RuntimeError(f"exllamav3_ext was loaded from {loaded}, a rebuilt extension (build-exl3-ext.sh "
+                               f"wrote {REBUILT_EXTENSION_RECORD} beside it), with no --exllamav3-ext-dir: name "
+                               "its directory in ONEIRON_HOUSE_EXL3_EXT_DIR, or take it off PYTHONPATH")
+        return None
     if not loaded or Path(loaded).resolve().parent != Path(ext_dir).resolve():
         raise RuntimeError(f"--exllamav3-ext-dir {ext_dir}: exllamav3_ext was loaded from {loaded or 'nowhere'}; "
                            "put the directory first on PYTHONPATH (serve-exl3.sh does)")

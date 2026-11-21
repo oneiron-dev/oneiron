@@ -472,9 +472,13 @@ its error as about 1 % of output RMS at k=4096. `build-exl3-ext.sh <dir>`
 builds exllamav3 v1.6.0's extension with the same path on for sm_89 (RTX
 4090): one line of `exllamav3_ext/quant/exl3_gemm_inner.cuh` (QWEN-EVAL-1
 arm opus-skill A-0008). It needs a CUDA 12.8 toolkit (`CUDA_HOME`) and a host
-compiler nvcc 12.8 takes (`CUDAHOSTCXX`, gcc 14 or older), takes about 13
-minutes with 2 nvcc jobs, and writes `exllamav3_ext.build.json` beside the
-module.
+compiler nvcc 12.8 takes (`CUDAHOSTCXX`, gcc 14 or older; exllamav3's
+setup.py passes it to nvcc as `-ccbin`), takes about 13 minutes with 2 nvcc
+jobs, and writes `exllamav3_ext.build.json` beside the module. `<dir>` must
+not exist: a running worker maps the module in a published directory, and
+overwriting that file can kill the worker, so each build writes a new
+directory (under a temporary name beside it, renamed whole when complete)
+and the next restart points `ONEIRON_HOUSE_EXL3_EXT_DIR` at it.
 
 `ONEIRON_HOUSE_EXL3_EXT_DIR=<dir>` puts the module first on PYTHONPATH and
 passes `--exllamav3-ext-dir`. The server refuses to start when the
@@ -482,7 +486,10 @@ extension it loaded is not that directory's, and names the module's SHA-256
 in its server settings (`exllamav3_ext`) and in its session snapshots'
 compatibility, so its answers and KV are never taken for the installed
 build's. Unset, the server runs the installed extension and identifies as
-before. The managed worker runs the installed extension.
+before, and it refuses a module with `exllamav3_ext.build.json` beside it (a
+rebuilt one reached through PYTHONPATH), so a rebuilt extension never runs
+under the installed one's identity. The managed worker runs the installed
+extension.
 
 Measured on the Dreamer's nightly call (GPU run 4, mel's RTX 4090 at 400 W,
 on the ring, pool and prompt lookup; opus-skill's own build of the same

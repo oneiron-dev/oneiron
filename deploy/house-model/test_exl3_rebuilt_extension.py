@@ -1,10 +1,12 @@
 """A rebuilt exllamav3 extension (`ONEIRON_HOUSE_EXL3_EXT_DIR`, build-exl3-ext.sh):
 the launcher puts its directory first on PYTHONPATH and names it to the
 server, and the server takes the SHA-256 of the module it loaded from there,
-or refuses to start when the module came from anywhere else. CPU only, with
-the stand-ins of `test_exl3_reply_limits`; no model is loaded, and the
-launcher runs a stand-in interpreter. Run from this folder:
-`python3 -m unittest test_exl3_rebuilt_extension`."""
+or refuses to start when the module came from anywhere else; unset, the
+server refuses a rebuilt module (one with the recipe's record beside it).
+The recipe refuses an output directory that already exists. CPU only, with
+the stand-ins of `test_exl3_reply_limits`; no model is loaded, the launcher
+runs a stand-in interpreter, and the recipe stops before it builds. Run from
+this folder: `python3 -m unittest test_exl3_rebuilt_extension`."""
 import hashlib
 import os
 import subprocess
@@ -55,6 +57,28 @@ class RebuiltExtensionDigest(unittest.TestCase):
                 self.assertRaises(RuntimeError):
             exl3_server.rebuilt_extension_digest(str(self.ext_dir))
 
+    def test_no_directory_keeps_the_installed_module(self):
+        installed = Path(self.dir.name) / "site-packages" / MODULE
+        installed.parent.mkdir()
+        installed.write_bytes(b"the installed extension")
+        with self.loaded_from(installed):
+            self.assertIsNone(exl3_server.rebuilt_extension_digest(None))
+
+    def test_no_directory_refuses_a_rebuilt_module(self):
+        # the record build-exl3-ext.sh writes beside its module
+        (self.ext_dir / "exllamav3_ext.build.json").write_text("{}\n")
+        link = Path(self.dir.name) / "linked" / MODULE
+        link.parent.mkdir()
+        link.symlink_to(self.module)
+        for path in (self.module, link):
+            for ext_dir in (None, ""):
+                with self.subTest(path=path, ext_dir=ext_dir), self.loaded_from(path), \
+                        self.assertRaisesRegex(RuntimeError, "rebuilt extension"):
+                    exl3_server.rebuilt_extension_digest(ext_dir)
+        with self.loaded_from(self.module):
+            self.assertEqual(exl3_server.rebuilt_extension_digest(str(self.ext_dir)),
+                             hashlib.sha256(b"a rebuilt extension").hexdigest())
+
 
 class Launcher(unittest.TestCase):
     """serve-exl3.sh with a stand-in interpreter that prints what it was given."""
@@ -94,6 +118,25 @@ class Launcher(unittest.TestCase):
         self.assertEqual(run.returncode, 2)
         self.assertIn("holds no exllamav3_ext module", run.stderr)
         self.assertEqual(run.stdout, "")
+
+
+class BuildRecipe(unittest.TestCase):
+    """build-exl3-ext.sh stops before it fetches or builds anything."""
+
+    def test_an_existing_directory_is_refused(self):
+        with tempfile.TemporaryDirectory() as root:
+            published = Path(root) / "ext"
+            published.mkdir()
+            (published / MODULE).write_bytes(b"a published module")
+            for arg in (str(published), f"{published}/"):
+                with self.subTest(arg=arg):
+                    run = subprocess.run(["bash", str(HERE / "build-exl3-ext.sh"), arg],
+                                         env={"PATH": os.environ.get("PATH", "/usr/bin:/bin")},
+                                         capture_output=True, text=True, timeout=30)
+                    self.assertEqual(run.returncode, 1, run.stderr)
+                    self.assertIn("exists", run.stderr)
+                    self.assertEqual((published / MODULE).read_bytes(), b"a published module")
+                    self.assertEqual(sorted(p.name for p in Path(root).iterdir()), ["ext"])
 
 
 if __name__ == "__main__":
