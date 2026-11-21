@@ -16,17 +16,33 @@ use super::*;
 /// `hold_kit_only(false)` once, best-effort, while the vault still reads
 /// `Standard`, and answers the first error. The marker [`RecoveryBoxHoldPending`]
 /// stays set, and a managed boot resends the hold.
+///
+/// On a hosted vault the box's wait is the recovery wait
+/// (WAYBACK-BOX-WAIT-ENGINE-HOLD-ONE-WAIT = A): the vault reports its
+/// `recovery.wait` to the box ([`Vault::report_recovery_wait_to_box`]), the
+/// box waits that long before it releases the root's authority key, and the
+/// root's door then lands at the box's release time
+/// ([`crate::authority::RootMaterial::ReleasedAfterBoxWait`]).
 pub trait RecoveryBoxHold {
     /// Holds kit-only (`true`) or releases it (`false`) on the recovery box.
     fn hold_kit_only(&self, kit_only: bool) -> Result<()>;
+
+    /// Tells the recovery box the vault's recovery wait: the box waits
+    /// `wait` before it releases the root's authority key, read when a
+    /// release opens. Until the vault reports, the box waits 24 hours.
+    fn report_recovery_wait(&self, wait: std::time::Duration) -> Result<()>;
 }
 
-/// No recovery box: every hold answers `Ok`. The preset doors' callers pass
-/// it until OPUS-WAYBACK-BOX wires the HTTP hold.
+/// No recovery box: every hold and every report answers `Ok`. The preset
+/// doors' callers pass it until OPUS-WAYBACK-BOX wires the HTTP hold.
 pub struct NoRecoveryBox;
 
 impl RecoveryBoxHold for NoRecoveryBox {
     fn hold_kit_only(&self, _kit_only: bool) -> Result<()> {
+        Ok(())
+    }
+
+    fn report_recovery_wait(&self, _wait: std::time::Duration) -> Result<()> {
         Ok(())
     }
 }
@@ -43,6 +59,22 @@ pub struct RecoveryBoxHoldPending {
 }
 
 impl Vault {
+    /// Reports this vault's recovery wait ([`Vault::recovery_wait_in_txn`])
+    /// to the recovery box. A managed boot calls it once, and so does every
+    /// change of the wait once it commits. An error changes nothing here:
+    /// the caller logs it, the box keeps its last value (24 hours until the
+    /// first report), and the next boot reports again.
+    ///
+    /// # Errors
+    /// The store's, and the box's answer.
+    pub fn report_recovery_wait_to_box(&self, box_hold: &dyn RecoveryBoxHold) -> Result<()> {
+        let wait = {
+            let txn = self.store.env.read_txn()?;
+            self.recovery_wait_in_txn(&txn)?
+        };
+        box_hold.report_recovery_wait(wait)
+    }
+
     /// The box-hold-pending marker, if set: the hold a switch asked for and its attempt. A
     /// managed boot resends the hold that matches the preset when it is set.
     pub fn recovery_box_hold_pending(&self) -> Result<Option<RecoveryBoxHoldPending>> {
