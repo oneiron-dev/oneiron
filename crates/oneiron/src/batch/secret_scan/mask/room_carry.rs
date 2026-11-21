@@ -11,14 +11,24 @@
 //! close wiped it) stays as written: it names nothing, in base as in the
 //! room. A row base holds already keeps its bytes, as the save's replay
 //! compares them, so a retry never mints again.
+//!
+//! A selected save carries the NOTE, CLAIM and conversation shell it lands
+//! too (ROOM-CUSTODY-SAVED-ARTIFACTS), through one [`RoomCarry`]: a NOTE's
+//! texts ([`RoomCarry::text_in_txn`]), a CLAIM's values
+//! ([`RoomCarry::value_in_txn`]), a shell's row ([`RoomCarry::ops_in_txn`]).
+//! A saved result MESSAGE's body is carried whole, read as the door read it
+//! ([`RoomCarry::body_in_txn`], ROOM-CUSTODY-REPLY-BODIES): the carried bytes
+//! are a new body in base, which the MESSAGE names in place of the room's.
 
 use std::collections::BTreeMap;
+use std::ops::Range;
 
 use heed::RwTxn;
 use rmpv::Value;
 use zeroize::Zeroize;
 
 use super::HANDLE_OPEN;
+use super::body::{opens_json, opens_whole_messagepack};
 use super::wipe::{PlanOps, PlanTree};
 use crate::Vault;
 use crate::batch::BatchOp;
@@ -45,46 +55,10 @@ pub(crate) fn carry_room_secrets_in_txn(
     room: &SessionOverlay,
     ops: Vec<BatchOp>,
 ) -> Result<Vec<BatchOp>> {
-    let kept = room.kept_room_secrets()?;
-    if kept.is_empty() {
-        return Ok(ops);
+    match RoomCarry::of(room)? {
+        Some(mut carry) => carry.ops_in_txn(vault, wtxn, ops),
+        None => Ok(ops),
     }
-    let mut carry = RoomCarry {
-        kept,
-        moved: BTreeMap::new(),
-    };
-    let mut ops = PlanOps::from_owned(ops);
-    for op in ops.iter_mut() {
-        let BatchOp::Put { id, data, .. } = op else {
-            continue;
-        };
-        if !names_room_handle(data) || vault.store.port_entity_present(wtxn, id)? {
-            continue;
-        }
-        // A row that is no one MessagePack value keeps its bytes: a room
-        // handle in it stays as written, naming nothing.
-        let mut cursor = data.as_slice();
-        let Ok(decoded) = rmpv::decode::read_value(&mut cursor) else {
-            continue;
-        };
-        let mut tree = PlanTree(decoded);
-        if !cursor.is_empty() || !carry.value(vault, wtxn, *id, &mut tree.0)? {
-            continue;
-        }
-        let mut body = Vec::with_capacity(data.len());
-        rmpv::encode::write_value(&mut body, &tree.0)
-            .map_err(|_| Error::InvariantViolation("a carried saved row did not encode"))?;
-        data.zeroize();
-        *data = body;
-    }
-    Ok(ops.into_ops())
-}
-
-/// Whether `data` holds a room handle's opening, as written.
-fn names_room_handle(data: &[u8]) -> bool {
-    let open = room_handle_open();
-    data.windows(open.len())
-        .any(|window| window == open.as_bytes())
 }
 
 /// `[secret r`: how a room handle opens in a text.
@@ -92,17 +66,148 @@ fn room_handle_open() -> String {
     format!("{HANDLE_OPEN}{}", crate::session_overlay::ROOM_SECRET_SIGIL)
 }
 
-/// One save's moves: the secrets the room keeps, and each room handle moved
-/// so far with its base handle, so a value takes one base record.
-struct RoomCarry {
+/// One save's moves out of a room: the secrets the room keeps, and each
+/// room handle moved so far with its base handle, so a value takes one base
+/// record.
+pub(crate) struct RoomCarry {
     kept: Vec<KeptRoomSecret>,
     moved: BTreeMap<String, String>,
 }
 
+/// A text a carry moved a room handle of: the text as carried, and each
+/// span of the text as read that took a span of it, in order.
+pub(crate) struct CarriedText {
+    pub(crate) text: String,
+    pub(crate) spans: Vec<(Range<usize>, Range<usize>)>,
+}
+
 impl RoomCarry {
-    /// `value`, a row `record` writes, with each room handle in its texts
+    /// The carry of one save out of the room whose overlay is `room`;
+    /// `None` when the room keeps no secret.
+    ///
+    /// # Errors
+    ///
+    /// A poisoned room custody lock.
+    pub(crate) fn of(room: &SessionOverlay) -> Result<Option<Self>> {
+        let kept = room.kept_room_secrets()?;
+        Ok((!kept.is_empty()).then(|| Self {
+            kept,
+            moved: BTreeMap::new(),
+        }))
+    }
+
+    /// `ops`, writes of this save, with each room handle a fresh row names
+    /// moved (see the module notes).
+    ///
+    /// # Errors
+    ///
+    /// Custody and storage errors, and a carried row that does not encode
+    /// again.
+    pub(crate) fn ops_in_txn(
+        &mut self,
+        vault: &Vault,
+        wtxn: &mut RwTxn<'_>,
+        ops: Vec<BatchOp>,
+    ) -> Result<Vec<BatchOp>> {
+        let mut ops = PlanOps::from_owned(ops);
+        for op in ops.iter_mut() {
+            let BatchOp::Put { id, data, .. } = op else {
+                continue;
+            };
+            if !self.names_kept_handle(data) || vault.store.port_entity_present(wtxn, id)? {
+                continue;
+            }
+            // A row that is no one MessagePack value keeps its bytes: a room
+            // handle in it stays as written, naming nothing.
+            let mut cursor = data.as_slice();
+            let Ok(decoded) = rmpv::decode::read_value(&mut cursor) else {
+                continue;
+            };
+            let mut tree = PlanTree(decoded);
+            if !cursor.is_empty() || !self.value_in_txn(vault, wtxn, *id, &mut tree.0)? {
+                continue;
+            }
+            let mut body = Vec::with_capacity(data.len());
+            rmpv::encode::write_value(&mut body, &tree.0)
+                .map_err(|_| Error::InvariantViolation("a carried saved row did not encode"))?;
+            data.zeroize();
+            *data = body;
+        }
+        Ok(ops.into_ops())
+    }
+
+    /// `body`, the result body a saved MESSAGE of `record` names, with each
+    /// room handle it holds moved (ROOM-CUSTODY-REPLY-BODIES), the body read
+    /// as the door read it when the room admitted it (`Masker::mask_body`):
+    /// JSON, a whole MessagePack value, or one text. A JSON field the door
+    /// lifted whole holds a bare room handle, which only a JSON read finds
+    /// (REVIEW-10057 round 2). `None` when it moves none; a body that is none
+    /// of these keeps its bytes, and a room handle in it stays as written,
+    /// naming nothing.
+    ///
+    /// # Errors
+    ///
+    /// Custody and storage errors, and a carried body that does not encode
+    /// again.
+    pub(crate) fn body_in_txn(
+        &mut self,
+        vault: &Vault,
+        wtxn: &mut RwTxn<'_>,
+        record: EntityId,
+        body: &[u8],
+    ) -> Result<Option<Vec<u8>>> {
+        if !self.names_kept_handle(body) {
+            return Ok(None);
+        }
+        if opens_json(body)
+            && let Ok(value) = serde_json::from_slice::<Value>(body)
+        {
+            let mut tree = PlanTree(value);
+            if !self.value_in_txn(vault, wtxn, record, &mut tree.0)? {
+                return Ok(None);
+            }
+            return serde_json::to_vec(&tree.0).map(Some).map_err(|_| {
+                Error::InvariantViolation("a carried JSON result body did not encode")
+            });
+        }
+        let mut cursor = body;
+        if opens_whole_messagepack(body)
+            && let Ok(decoded) = rmpv::decode::read_value(&mut cursor)
+            && cursor.is_empty()
+        {
+            let mut tree = PlanTree(decoded);
+            if !self.value_in_txn(vault, wtxn, record, &mut tree.0)? {
+                return Ok(None);
+            }
+            let mut carried = Vec::with_capacity(body.len());
+            rmpv::encode::write_value(&mut carried, &tree.0)
+                .map_err(|_| Error::InvariantViolation("a carried result body did not encode"))?;
+            return Ok(Some(carried));
+        }
+        match std::str::from_utf8(body) {
+            Ok(text) => Ok(self
+                .text_in_txn(vault, wtxn, record, text)?
+                .map(|carried| carried.text.into_bytes())),
+            Err(_) => Ok(None),
+        }
+    }
+
+    /// Whether `data` holds, as written, the handle of a secret the room
+    /// keeps: bare, or in a text.
+    fn names_kept_handle(&self, data: &[u8]) -> bool {
+        self.kept.iter().any(|secret| {
+            data.windows(secret.handle.len())
+                .any(|window| window == secret.handle.as_bytes())
+        })
+    }
+
+    /// `value`, a value `record` writes, with each room handle in its texts
     /// moved: whether any was.
-    fn value(
+    ///
+    /// # Errors
+    ///
+    /// Custody and storage errors.
+    pub(crate) fn value_in_txn(
         &mut self,
         vault: &Vault,
         wtxn: &mut RwTxn<'_>,
@@ -112,7 +217,9 @@ impl RoomCarry {
         match value {
             Value::String(text) => {
                 let Some(carried) = (match text.as_str() {
-                    Some(text) => self.text(vault, wtxn, record, text)?,
+                    Some(text) => self
+                        .text_in_txn(vault, wtxn, record, text)?
+                        .map(|carried| carried.text),
                     None => None,
                 }) else {
                     return Ok(false);
@@ -122,7 +229,9 @@ impl RoomCarry {
             }
             Value::Binary(bytes) => {
                 let Some(carried) = (match std::str::from_utf8(bytes) {
-                    Ok(text) => self.text(vault, wtxn, record, text)?,
+                    Ok(text) => self
+                        .text_in_txn(vault, wtxn, record, text)?
+                        .map(|carried| carried.text),
                     Err(_) => None,
                 }) else {
                     return Ok(false);
@@ -133,15 +242,15 @@ impl RoomCarry {
             Value::Array(items) => {
                 let mut moved = false;
                 for item in items {
-                    moved |= self.value(vault, wtxn, record, item)?;
+                    moved |= self.value_in_txn(vault, wtxn, record, item)?;
                 }
                 Ok(moved)
             }
             Value::Map(fields) => {
                 let mut moved = false;
                 for (key, member) in fields {
-                    moved |= self.value(vault, wtxn, record, key)?;
-                    moved |= self.value(vault, wtxn, record, member)?;
+                    moved |= self.value_in_txn(vault, wtxn, record, key)?;
+                    moved |= self.value_in_txn(vault, wtxn, record, member)?;
                 }
                 Ok(moved)
             }
@@ -149,42 +258,65 @@ impl RoomCarry {
         }
     }
 
-    /// `text` with each room handle the room keeps a value under moved to
-    /// its base handle; `None` when it names none.
-    fn text(
+    /// `text`, a text `record` writes, with each room handle the room keeps
+    /// a value under moved to its base handle, and where each moved; `None`
+    /// when it moves none.
+    ///
+    /// # Errors
+    ///
+    /// Custody and storage errors.
+    pub(crate) fn text_in_txn(
         &mut self,
         vault: &Vault,
         wtxn: &mut RwTxn<'_>,
         record: EntityId,
         text: &str,
-    ) -> Result<Option<String>> {
+    ) -> Result<Option<CarriedText>> {
+        // A whole text that is a bare room handle takes the bare base handle,
+        // as a field a mask lifted whole holds one (REVIEW-10003).
+        if is_room_secret_handle(text) {
+            return Ok(self
+                .base_handle(vault, wtxn, record, text)?
+                .map(|base| CarriedText {
+                    spans: vec![(0..text.len(), 0..base.len())],
+                    text: base,
+                }));
+        }
         if !text.contains(&room_handle_open()) {
             return Ok(None);
         }
         let mut out = String::with_capacity(text.len());
-        let mut rest = text;
-        let mut moved = false;
-        while let Some(at) = rest.find(HANDLE_OPEN) {
-            out.push_str(&rest[..at]);
-            out.push_str(HANDLE_OPEN);
-            let after = &rest[at + HANDLE_OPEN.len()..];
-            rest = match after.split_once(']') {
-                Some((handle, tail)) if is_room_secret_handle(handle) => {
-                    match self.base_handle(vault, wtxn, record, handle)? {
-                        Some(base) => {
-                            out.push_str(&base);
-                            out.push(']');
-                            moved = true;
-                            tail
-                        }
-                        None => after,
-                    }
-                }
-                _ => after,
+        let mut spans = Vec::new();
+        // `out` holds `text` up to `from`; the search goes on at `at`.
+        let mut from = 0;
+        let mut at = 0;
+        while let Some(open) = text[at..].find(HANDLE_OPEN).map(|found| at + found) {
+            let inner = open + HANDLE_OPEN.len();
+            let Some(len) = text[inner..].find(']') else {
+                break;
             };
+            let handle = &text[inner..inner + len];
+            at = inner;
+            if !is_room_secret_handle(handle) {
+                continue;
+            }
+            let Some(base) = self.base_handle(vault, wtxn, record, handle)? else {
+                continue;
+            };
+            out.push_str(&text[from..open]);
+            let carried = out.len();
+            out.push_str(HANDLE_OPEN);
+            out.push_str(&base);
+            out.push(']');
+            from = inner + len + 1;
+            spans.push((open..from, carried..out.len()));
+            at = from;
         }
-        out.push_str(rest);
-        Ok(moved.then_some(out))
+        if spans.is_empty() {
+            return Ok(None);
+        }
+        out.push_str(&text[from..]);
+        Ok(Some(CarriedText { text: out, spans }))
     }
 
     /// The base handle the value the room keeps under `handle` (bare) takes:

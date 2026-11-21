@@ -167,9 +167,10 @@ impl Vault {
         &self,
         txn: &mut heed::RwTxn<'_>,
         what: &'static str,
+        ground: Option<&OwnerProofGround>,
         op: impl FnOnce(EntityId) -> AuthorityOp,
     ) -> Option<AuthorityEntryHash> {
-        match self.append_carried_act_in_savepoint(txn, op) {
+        match self.append_carried_act_in_savepoint(txn, ground, op) {
             Ok(hash) => Some(hash),
             Err(error) => {
                 tracing::warn!(
@@ -188,10 +189,11 @@ impl Vault {
     pub(super) fn append_carried_act_in_savepoint(
         &self,
         txn: &mut heed::RwTxn<'_>,
+        ground: Option<&OwnerProofGround>,
         op: impl FnOnce(EntityId) -> AuthorityOp,
     ) -> Result<AuthorityEntryHash> {
         let mut savepoint = self.store.env.nested_write_txn(txn)?;
-        let hash = self.append_carried_act_in_txn(&mut savepoint, op)?;
+        let hash = self.append_carried_act_in_txn(&mut savepoint, ground, op)?;
         savepoint.commit()?;
         Ok(hash)
     }
@@ -224,12 +226,13 @@ impl Vault {
     /// Signs, appends and folds the act `op` builds in `txn`, naming the
     /// main-log heads alone, as every owner act does; returns only once the
     /// fold in `txn` counted it.
-    fn append_carried_act_in_txn(
+    pub(super) fn append_carried_act_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
+        ground: Option<&OwnerProofGround>,
         op: impl FnOnce(EntityId) -> AuthorityOp,
     ) -> Result<AuthorityEntryHash> {
-        self.append_owner_carried_act_in_txn(txn, None, op)
+        self.append_owner_carried_act_in_txn(txn, None, ground, op)
     }
 
     /// [`Self::append_carried_act_in_txn`], for an act that is the owner's
@@ -240,6 +243,7 @@ impl Vault {
         &self,
         txn: &mut heed::RwTxn<'_>,
         owner_authored: Option<&crate::consent::OwnerAuthoredWrite>,
+        ground: Option<&OwnerProofGround>,
         op: impl FnOnce(EntityId) -> AuthorityOp,
     ) -> Result<AuthorityEntryHash> {
         let fold = self.authority_view_readonly_in_txn(txn)?;
@@ -261,13 +265,22 @@ impl Vault {
         }
         let now = self.instant_in_txn(txn)?.secs();
         let op = op(machine);
-        // A setting act lands through the gate that reads an owner key's
-        // proof whoever carried it (row CARRIER-OWNER-PROOF), so it keeps
-        // that pick; its door lends no write, and its join stays unproven.
-        // Every other carried act is proved as the owner's own write alone.
-        let proof = match &op {
-            AuthorityOp::PolicySettingSet(_) => self.owner_proof_signer(&fold),
-            _ => proof,
+        // The owner's setting act lands through the gate that reads an owner
+        // key's proof whoever carried it (row CARRIER-OWNER-PROOF), so it
+        // keeps that pick; its door lends no write, and its join stays
+        // unproven. It is a setting set, or his yes to a pack's defaults
+        // (stage 7c-3c). An engine statement (a copy, a pack door's head) is
+        // never his act: like every other carried act it is proved as the
+        // owner's own write alone.
+        let owners_setting_act = match &op {
+            AuthorityOp::PolicySettingSet(_) => true,
+            AuthorityOp::SettingPackHead(head) => head.accept.is_some(),
+            _ => false,
+        };
+        let proof = if owners_setting_act {
+            ground.and_then(|ground| self.owner_proof_signer(&fold, ground))
+        } else {
+            proof
         };
         let entry =
             sign_side_entry_with_owner_proof(&fold, &key, seq, parents, op, now, proof.as_ref())?;
@@ -296,6 +309,7 @@ impl Vault {
         txn: &mut heed::RwTxn<'_>,
         what: &'static str,
         owner_authored: Option<&crate::consent::OwnerAuthoredWrite>,
+        ground: Option<&OwnerProofGround>,
         op: impl FnOnce(EntityId) -> AuthorityOp,
     ) -> Option<AuthorityEntryHash> {
         let appended = self
@@ -304,8 +318,12 @@ impl Vault {
             .nested_write_txn(txn)
             .map_err(crate::Error::from)
             .and_then(|mut savepoint| {
-                let hash =
-                    self.append_owner_carried_act_in_txn(&mut savepoint, owner_authored, op)?;
+                let hash = self.append_owner_carried_act_in_txn(
+                    &mut savepoint,
+                    owner_authored,
+                    ground,
+                    op,
+                )?;
                 savepoint.commit()?;
                 Ok(hash)
             });

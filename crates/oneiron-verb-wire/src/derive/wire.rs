@@ -211,6 +211,17 @@ pub struct DeriveLeftItemView {
     pub reason: String,
 }
 
+/// A claim an undone item had replaced that stands again as a fresh copy.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct DeriveCopiedClaimView {
+    /// The undone item's name inside its batch.
+    pub item: String,
+    /// The replaced claim, which stays closed.
+    pub replaced: EntityId,
+    /// Its fresh copy, written as the replaced claim's original author.
+    pub copy: EntityId,
+}
+
 /// `vault.derive.revert`'s answer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DeriveRevertView {
@@ -221,4 +232,8 @@ pub struct DeriveRevertView {
     pub left: Vec<DeriveLeftItemView>,
     /// The revert's receipt in the gate decision ledger, hex.
     pub receipt: String,
+    /// Each claim an undone item had replaced that does not reopen and
+    /// stands again as a fresh copy under a new id.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub copied: Vec<DeriveCopiedClaimView>,
 }

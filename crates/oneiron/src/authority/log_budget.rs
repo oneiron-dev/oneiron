@@ -47,19 +47,23 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use super::adopted_evidence::AdoptedEvidence;
-use super::log_structure::{
-    AuthorityStructure, LocalRoots, authority_structure, authority_structure_under,
-    self_signed_root, signed_by,
-};
+use super::log_structure::{AuthorityStructure, authority_structure, self_signed_root, signed_by};
 use super::*;
 use crate::HostingPrivacyPosture;
 use crate::store::Store;
 
+mod door_rows;
+#[cfg(oneiron_test_support)]
+mod door_view_door;
 mod log_check;
 mod owner_reserve;
 mod owner_signed_work;
 mod policy_bounds;
 
+#[cfg(oneiron_test_support)]
+pub(crate) use door_view_door::{
+    door_view_differs_from_rebuild_in_txn, staged_door_views_differ_from_rebuild,
+};
 pub use log_check::AuthorityLogCheck;
 pub(crate) use log_check::authority_signer_label;
 use owner_reserve::*;
@@ -196,7 +200,9 @@ pub(super) fn is_uncounted(entry: &AuthorityLogEntry, issuers: &BTreeSet<Authori
 }
 
 /// What the store doors read of the stored log: its consent structure, and
-/// each signer's stored rows. Built once per authority generation. On a vault
+/// each signer's stored rows. Built once per authority generation, from the
+/// last such view and the rows stored since where it can be
+/// ([`door_rows`]). On a vault
 /// that adopted a checkpoint image (OF-469), the stored log is the image's
 /// covered history and the raw rows past it: each covered row counts once,
 /// from the image's summary and carried body, whether or not its raw bytes
@@ -215,10 +221,12 @@ pub(crate) struct AuthorityDoorView {
     strangers: usize,
     /// An upper bound on the peak a fold of every stored row projects
     /// ([`stored_fold_projection`]), which the owner reserve reads.
-    projection: FoldProjection,
+    projection: DoorProjection,
     /// The adopted image's evidence the view read, for the doors' other
     /// readers in the same generation.
     pub(super) evidence: Option<Arc<AdoptedEvidence>>,
+    /// What the view read, for the next generation's view to extend.
+    kept: door_rows::DoorRows,
 }
 
 impl AuthorityDoorView {
@@ -231,7 +239,7 @@ impl AuthorityDoorView {
 }
 
 /// The per-signer and log-wide counts of a door view.
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 struct Tally {
     rows: BTreeMap<AuthorityKey, usize>,
     counted: usize,
@@ -287,69 +295,22 @@ pub(crate) fn door_view_builds_for_test() -> usize {
     DOOR_VIEW_BUILDS.with(std::cell::Cell::get)
 }
 
+#[cfg(oneiron_test_support)]
+thread_local! {
+    static DOOR_VIEW_ROWS_DECODED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// How many stored rows this thread's door views decoded.
+#[cfg(oneiron_test_support)]
+pub(crate) fn door_view_rows_decoded_for_test() -> u64 {
+    DOOR_VIEW_ROWS_DECODED.with(std::cell::Cell::get)
+}
+
 pub(super) fn door_view(
     store: &Store,
     txn: &heed::RoTxn<'_>,
 ) -> crate::error::Result<Arc<AuthorityDoorView>> {
-    super::readonly_fold::per_authority_generation(store, txn, &store.authority_door_view, || {
-        #[cfg(test)]
-        DOOR_VIEW_BUILDS.with(|builds| builds.set(builds.get() + 1));
-        let evidence = super::checkpoint_adopt::cached_adopted_evidence_in_txn(store, txn)?;
-        let mut hashes = Vec::new();
-        let mut entries = Vec::new();
-        for (id, body) in authority_log_rows_in_txn(store, txn)? {
-            // A covered row counts once, from the image.
-            if evidence
-                .as_ref()
-                .is_some_and(|evidence| evidence.covers_id(&id))
-            {
-                continue;
-            }
-            let entry = decode_authority_log_entry_body(&body)?;
-            hashes.push(authority_entry_hash(&entry)?);
-            entries.push(entry);
-        }
-        // The structure reads the image's carried rows as the stored rows
-        // they stand for: it admits what the covered history admitted, never
-        // what the folded roster now holds.
-        let carried = evidence
-            .iter()
-            .flat_map(|evidence| evidence.bodies().values());
-        let structure = authority_structure_under(
-            carried.chain(&entries),
-            LocalRoots::read_in_txn(store, txn)?,
-        );
-        let mut tally = Tally::default();
-        for entry in &entries {
-            tally.count(
-                &structure,
-                entry.signer_key(),
-                is_slip_op(&entry.op),
-                Some(entry),
-            );
-        }
-        let mut parents: BTreeMap<_, &[AuthorityEntryHash]> = hashes
-            .iter()
-            .copied()
-            .zip(entries.iter().map(|entry| entry.parent_hashes.as_slice()))
-            .collect();
-        if let Some(evidence) = &evidence {
-            for (hash, row) in evidence.rows() {
-                tally.count(&structure, &row.signer, row.slip_op, evidence.body(hash));
-                parents.insert(*hash, row.parents.as_slice());
-            }
-        }
-        let projection = stored_fold_projection(&parents);
-        Ok(AuthorityDoorView {
-            structure,
-            rows: tally.rows,
-            counted: tally.counted,
-            issuer_handoffs: tally.issuer_handoffs,
-            strangers: tally.strangers,
-            projection,
-            evidence,
-        })
-    })
+    door_rows::door_view(store, txn)
 }
 
 /// Whether `entry`'s signer has standing to store a replicated row: a key
@@ -652,7 +613,10 @@ pub(crate) fn past_owner_reserve_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
 ) -> crate::error::Result<bool> {
-    Ok(door_view(store, txn)?.projection.bytes() > owner_reserve_start(store, txn)?)
+    Ok(door_view(store, txn)?
+        .projection
+        .bytes_past(owner_reserve_start(store, txn)?)
+        .is_some())
 }
 
 /// [`past_owner_reserve_in_txn`] after the carried work for `request`
@@ -665,11 +629,10 @@ pub(crate) fn carried_work_past_owner_reserve_in_txn(
     request: &AuthorityEntryHash,
 ) -> crate::error::Result<bool> {
     let view = door_view(store, txn)?;
-    let projected = view.projection.bytes();
-    if projected <= owner_reserve_start(store, txn)? {
+    let Some(projected) = view.projection.bytes_past(owner_reserve_start(store, txn)?) else {
         end_owner_reserve_work_hold(store, request);
         return Ok(false);
-    }
+    };
     hold_at_owner_reserve(
         store,
         &view.projection,
@@ -740,6 +703,7 @@ fn carries_own_will(
         | AuthorityOp::MembershipExecution(_)
         | AuthorityOp::PolicySettingSet(_)
         | AuthorityOp::SettingCopy(_)
+        | AuthorityOp::SettingPackHead(_)
         | AuthorityOp::ExportAct(_)
         | AuthorityOp::FrontierJoin(_)
         | AuthorityOp::CustodyPermitPiece(_)

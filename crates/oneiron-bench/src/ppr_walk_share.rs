@@ -14,6 +14,8 @@ use oneiron::memory::{Effort, Memory, RecallScope, WitnessAuthor, WitnessMessage
 use oneiron::off_record::{OffRecordBackendClass, OffRecordSession};
 use oneiron::rerank::{RerankCandidate, Reranker};
 use oneiron::retrieval_depth::RecallExecution;
+use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
+use oneiron::store::GateDecisionId;
 use oneiron::test_support::{bind_host_owner, provision_engine_machines, test_host_issuer};
 use oneiron::{
     BudgetExhaustionPolicy, BudgetGuard, EdgeActorClass, EdgeKind, EntityId, TimeRange, Vault,
@@ -23,8 +25,11 @@ use rand::{Rng, SeedableRng, rngs::StdRng};
 use serde::Serialize;
 
 /// Usage printed by `--help` and after a bad flag.
-const USAGE: &str = "usage: oneiron-bench ppr-walk-share [--records N] [--edges-per-record K] [--cases C] [--repetitions R] [--seed S] [--out PATH]
-Defaults: N=2000 K=4 C=5 R=5 S=42, out = stdout. One JSON object per timed recall, then a {\"summary\": ...} line.";
+const USAGE: &str = "usage: oneiron-bench ppr-walk-share [--records N] [--edges-per-record K] [--cases C] [--repetitions R] [--seed S] [--hub-cap H]... [--out PATH]
+Defaults: N=2000 K=4 C=5 R=5 S=42, out = stdout. --hub-cap H (repeatable): one arm per value, in order, on the one corpus; before an arm's timed calls the owner sets the narrowed walk's hub cap (retrieval.ppr.narrowed_hub_fanout_cap) to H. H = default (first only) times the default; with no --hub-cap one default arm runs. One JSON object per timed recall, then a {\"summary\": ...} line.";
+
+/// The owner Setting that caps a narrowed walk's hub groups (`oneiron::ppr` walk).
+const HUB_CAP_KEY: &str = "retrieval.ppr.narrowed_hub_fanout_cap";
 
 /// Generated vocabulary: `benchw000`..`benchw399`, one analyzer token each.
 const VOCABULARY: usize = 400;
@@ -58,6 +63,9 @@ struct Settings {
     cases: usize,
     repetitions: usize,
     seed: u64,
+    /// The arms, in order: the narrowed walk's hub cap the owner sets before each arm's timed
+    /// calls; `None`: the default. Empty: one default arm.
+    hub_caps: Vec<Option<u32>>,
     out: Option<String>,
 }
 
@@ -69,6 +77,7 @@ fn default_settings() -> Settings {
         cases: 5,
         repetitions: 5,
         seed: 42,
+        hub_caps: Vec::new(),
         out: None,
     }
 }
@@ -88,6 +97,16 @@ fn parse_args(args: &[String]) -> Result<Settings, WalkShareError> {
             "--cases" => settings.cases = positive(text, flag)?,
             "--repetitions" => settings.repetitions = positive(text, flag)?,
             "--seed" => settings.seed = unsigned(text, flag)?,
+            "--hub-cap" if text == "default" => {
+                if !settings.hub_caps.is_empty() {
+                    return Err(WalkShareError::Argument(
+                        "--hub-cap default must come first: an arm cannot clear a cap set before it"
+                            .into(),
+                    ));
+                }
+                settings.hub_caps.push(None);
+            }
+            "--hub-cap" => settings.hub_caps.push(Some(positive_u32(text, flag)?)),
             "--out" => settings.out = Some(text.to_owned()),
             other => return Err(WalkShareError::Argument(format!("unknown flag `{other}`"))),
         }
@@ -113,6 +132,16 @@ fn positive(text: &str, flag: &str) -> Result<usize, WalkShareError> {
         .filter(|count: &usize| *count > 0)
         .ok_or_else(|| {
             WalkShareError::Argument(format!("{flag} must be a positive integer, got `{text}`"))
+        })
+}
+
+/// A positive u32 flag value.
+fn positive_u32(text: &str, flag: &str) -> Result<u32, WalkShareError> {
+    text.parse()
+        .ok()
+        .filter(|count: &u32| *count > 0)
+        .ok_or_else(|| {
+            WalkShareError::Argument(format!("{flag} must be a positive u32, got `{text}`"))
         })
 }
 
@@ -380,6 +409,8 @@ fn gen_queries(rng: &mut StdRng, texts: &[String], cases: usize) -> Vec<String> 
 /// One timed High recall, emitted as one JSON line.
 #[derive(Debug, Serialize)]
 struct CallRow {
+    /// The arm's hub cap; `None`: the default.
+    hub_cap: Option<u32>,
     case: usize,
     query: String,
     reader: &'static str,
@@ -390,6 +421,8 @@ struct CallRow {
     expand_walk_us: u64,
     expand_walks: u64,
     results: usize,
+    /// The pack's item short ids, in rank order: arms compare their results by these.
+    top_ids: Vec<String>,
     error: Option<String>,
 }
 
@@ -401,7 +434,7 @@ fn timed_recall(
     memory: &Memory<'_>,
     session: &OffRecordSession<'_>,
     query: &str,
-) -> (usize, Option<String>, u64) {
+) -> (Vec<String>, Option<String>, u64) {
     let guard = BudgetGuard::new(
         "ppr-walk-share",
         10_000_000,
@@ -409,7 +442,13 @@ fn timed_recall(
     );
     let lease = match guard.admit() {
         Ok(admission) => admission.lease,
-        Err(denied) => return (0, Some(format!("budget admission refused: {denied:?}")), 0),
+        Err(denied) => {
+            return (
+                Vec::new(),
+                Some(format!("budget admission refused: {denied:?}")),
+                0,
+            );
+        }
     };
     let execution = RecallExecution {
         reranker: Some(&StubReranker),
@@ -428,8 +467,12 @@ fn timed_recall(
     );
     let wall_us = started.elapsed().as_micros().min(u128::from(u64::MAX)) as u64;
     match outcome {
-        Ok(pack) => (pack.items.len(), None, wall_us),
-        Err(error) => (0, Some(error.to_string()), wall_us),
+        Ok(pack) => (
+            pack.items.into_iter().map(|item| item.short_id).collect(),
+            None,
+            wall_us,
+        ),
+        Err(error) => (Vec::new(), Some(error.to_string()), wall_us),
     }
 }
 
@@ -494,29 +537,41 @@ fn run_with(
     let session = vault
         .off_record_session_vault()
         .enter("ppr-walk-share", OffRecordBackendClass::Local)?;
+    let arms = if settings.hub_caps.is_empty() {
+        vec![None]
+    } else {
+        settings.hub_caps.clone()
+    };
     let mut rows = Vec::new();
-    for (case, query) in queries.iter().enumerate() {
-        for (reader, memory) in &readers {
-            for rep in 0..=settings.repetitions {
-                timer.take();
-                let (results, error, wall_us) = timed_recall(memory, &session, query);
-                let totals = timer.take();
-                if rep == 0 {
-                    continue;
+    for hub_cap in arms {
+        if let Some(cap) = hub_cap {
+            set_hub_cap(&vault, owner, cap)?;
+        }
+        for (case, query) in queries.iter().enumerate() {
+            for (reader, memory) in &readers {
+                for rep in 0..=settings.repetitions {
+                    timer.take();
+                    let (top_ids, error, wall_us) = timed_recall(memory, &session, query);
+                    let totals = timer.take();
+                    if rep == 0 {
+                        continue;
+                    }
+                    rows.push(CallRow {
+                        hub_cap,
+                        case,
+                        query: query.clone(),
+                        reader: *reader,
+                        rep,
+                        wall_us,
+                        search_walk_us: totals.search_us,
+                        search_walks: totals.search_count,
+                        expand_walk_us: totals.expand_us,
+                        expand_walks: totals.expand_count,
+                        results: top_ids.len(),
+                        top_ids,
+                        error,
+                    });
                 }
-                rows.push(CallRow {
-                    case,
-                    query: query.clone(),
-                    reader: *reader,
-                    rep,
-                    wall_us,
-                    search_walk_us: totals.search_us,
-                    search_walks: totals.search_count,
-                    expand_walk_us: totals.expand_us,
-                    expand_walks: totals.expand_count,
-                    results,
-                    error,
-                });
             }
         }
     }
@@ -529,6 +584,22 @@ fn run_with(
     Ok(rows)
 }
 
+/// The owner sets the narrowed walk's hub cap, as an owner changes any Setting.
+fn set_hub_cap(vault: &Vault, owner: EntityId, cap: u32) -> Result<(), WalkShareError> {
+    let proof = vault.authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())?;
+    let outcome = vault.set_setting(
+        SettingCaller::Owner(&proof),
+        SetSetting::vault_value(HUB_CAP_KEY, serde_json::json!(cap)),
+    )?;
+    if matches!(outcome, SetSettingOutcome::Applied { .. }) {
+        Ok(())
+    } else {
+        Err(WalkShareError::Argument(format!(
+            "the owner's hub cap {cap} did not apply: {outcome:?}"
+        )))
+    }
+}
+
 /// Nearest-rank percentile over ascending samples; 0.0 when empty.
 fn percentile(sorted: &[f64], pct: f64) -> f64 {
     if sorted.is_empty() {
@@ -539,7 +610,7 @@ fn percentile(sorted: &[f64], pct: f64) -> f64 {
 }
 
 /// Median and p95 of one reader's wall times, walk shares and expand-only shares.
-fn reader_summary(rows: &[CallRow], reader: &str) -> serde_json::Value {
+fn reader_summary(rows: &[&CallRow], reader: &str) -> serde_json::Value {
     let mut wall = Vec::new();
     let mut share = Vec::new();
     let mut expand = Vec::new();
@@ -571,10 +642,26 @@ fn reader_summary(rows: &[CallRow], reader: &str) -> serde_json::Value {
 
 /// The final summary line: per-reader medians, the corpus, and the stub-reranker caveat.
 fn summary(rows: &[CallRow], settings: &Settings) -> serde_json::Value {
+    let mut arms: Vec<Option<u32>> = Vec::new();
+    for row in rows {
+        if !arms.contains(&row.hub_cap) {
+            arms.push(row.hub_cap);
+        }
+    }
+    let arms: Vec<serde_json::Value> = arms
+        .into_iter()
+        .map(|hub_cap| {
+            let arm: Vec<&CallRow> = rows.iter().filter(|row| row.hub_cap == hub_cap).collect();
+            serde_json::json!({
+                "hub_cap": hub_cap,
+                "owner": reader_summary(&arm, "owner"),
+                "agent": reader_summary(&arm, "agent"),
+            })
+        })
+        .collect();
     serde_json::json!({
         "summary": {
-            "owner": reader_summary(rows, "owner"),
-            "agent": reader_summary(rows, "agent"),
+            "arms": arms,
             "corpus": {
                 "records": settings.records,
                 "requested_edges": settings.records.saturating_mul(settings.edges_per_record),
@@ -648,6 +735,7 @@ mod tests {
             cases: 1,
             repetitions: 1,
             seed: 7,
+            hub_caps: Vec::new(),
             out: None,
         };
         let mut jsonl = Vec::new();

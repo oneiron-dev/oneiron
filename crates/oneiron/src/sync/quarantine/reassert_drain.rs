@@ -443,5 +443,13 @@ pub(in crate::sync) fn apply_replayed_tombstone_for_sync_in_txn(
     #[cfg(test)]
     maybe_inject_purge_failure()?;
     crate::deletion::tombstone_scope::capture_received_scope_in_txn(vault, wtxn, id, raw_value);
-    vault.apply_replayed_tombstone_in_txn(wtxn, id, raw_value)
+    // A soft delete the live peer lane admitted carries that lane's delivery
+    // to the shell it leaves, so the lane's later hard delete still matches.
+    let shell =
+        crate::sync::ingest::ShellDelivery::before_replay_in_txn(vault, wtxn, *id, raw_value)?;
+    let applied = vault.apply_replayed_tombstone_in_txn(wtxn, id, raw_value)?;
+    if let Some(shell) = shell {
+        shell.note_shell_in_txn(vault, wtxn)?;
+    }
+    Ok(applied)
 }

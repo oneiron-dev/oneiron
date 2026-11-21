@@ -891,6 +891,7 @@ impl PassExecutorFactory for ObservedFactory {
                 guard,
                 egress: self.egress,
                 rubric: &self.compaction_check_rubric,
+                window: self.windows.get(&weaver.model).copied(),
             });
         Ok(ObservedExecutor {
             inner: self
@@ -970,6 +971,7 @@ impl PassExecutorFactory for ObservedFactory {
                 guard,
                 egress: self.egress,
                 rubric: &self.compaction_check_rubric,
+                window: self.windows.get(&weaver.model).copied(),
             });
         self.inner
             .as_mut()

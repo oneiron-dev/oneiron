@@ -4,7 +4,7 @@
 //! agent, which holds no credential, with the row's verb hooks once around
 //! it, and answers the same wire value a credential's call of the row does.
 
-use oneiron::claim::WeaveReportRequest;
+use oneiron::claim::{CallerLocality, WeaveReportRequest};
 use oneiron::lens::WeaveLensRequest;
 
 use super::{
@@ -12,10 +12,33 @@ use super::{
     MemoryResult, PoisonError, RunAdmission, RunHostDoor, StreamConnectionId, SyncServer, Value,
     VerifiedSlip, WriteActor, agent_memory, decode, encode, sdk, verb_hook_boundary,
 };
-use crate::ai_host::{WeaveLensCaller, render_live_weave_lens_for_run};
+use crate::ai_host::{CodeModeRoute, WeaveLensCaller, render_live_weave_lens_for_run};
 use crate::lens_frames::CardOwner;
 
 impl RunHostDoor {
+    /// Binds what the code-mode calls of the run's next entry are bound to,
+    /// so its brief's PEOPLE are read for as far as those calls may go
+    /// (RUN-BRIEF-ROUTE-AWARE-ROSTER). `None` clears it once the entry ends.
+    pub(crate) fn bind_code_mode_route(&self, route: Option<CodeModeRoute>) {
+        *self
+            .code_mode_route
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = route;
+    }
+
+    /// The caller the run's brief PEOPLE are read for now: on this device
+    /// only while no rung any code-mode call of the entry in flight may
+    /// reach leaves the device, read afresh at each call
+    /// ([`crate::api::run_brief_people_locality`]); off it between entries.
+    pub(super) fn brief_people_locality(&self) -> CallerLocality {
+        let route = self
+            .code_mode_route
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        crate::api::run_brief_people_locality(&self.server, route.as_ref())
+    }
+
     /// What this door holds for its run's `describe(self)` (FIX 17594): the
     /// run ceiling its host bound for the entry in flight, and, for a turn
     /// program a verified slip woke, that slip's credential ceiling beside
@@ -84,8 +107,8 @@ impl RunHostDoor {
 /// Answers the run's `describe(self)`: its self brief as the run stands
 /// now, read for its agent over the run's own board connection, its budget
 /// the run's own `line`, its ceilings from what its door holds (`host`),
-/// and the rows the brief is derived from. Blocking: call it on a blocking
-/// thread of the server's runtime.
+/// its PEOPLE for a caller at `people_at`, and the rows the brief is derived
+/// from. Blocking: call it on a blocking thread of the server's runtime.
 #[expect(
     clippy::too_many_arguments,
     reason = "each argument is one axis of the run's host binding"
@@ -98,6 +121,7 @@ pub(super) fn self_brief_as_agent(
     board: &StreamConnectionId,
     line: Option<&RunAdmission>,
     host: &BriefHostFacts,
+    people_at: CallerLocality,
     input: Value,
 ) -> MemoryResult<(Value, Vec<EntityId>)> {
     let memory = agent_memory(server, actor, origin, invocation);
@@ -109,7 +133,7 @@ pub(super) fn self_brief_as_agent(
             let request: DescribeRequest = decode(input)?;
             let handle = tokio::runtime::Handle::current();
             let (output, sources) = handle.block_on(crate::api::describe_self_for_run(
-                server, actor, board, line, host, &request,
+                server, actor, board, line, host, people_at, &request,
             ))?;
             rows = sources;
             Ok(output)

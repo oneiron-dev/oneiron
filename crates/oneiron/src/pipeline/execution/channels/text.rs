@@ -2,7 +2,7 @@
 
 use super::admit::{AdmitSignal, ChannelAccumulator};
 use super::turn_fold;
-use crate::bm25::Bm25Config;
+use crate::bm25::{Bm25Config, HiddenRowTest};
 use crate::disclosure::DisclosureContext;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -10,12 +10,12 @@ use crate::pipeline::builder::PipelineBuilder;
 use crate::pipeline::channels::{fusion_fetch_limit, truncate_widened_channel_results_to_scope};
 use crate::pipeline::execution::types::HydeAttemptOverrides;
 use crate::pipeline::filters::{
-    claim_status_gate_allows, clamp_hides_row, import_claim_gate_decisions_for_scores,
-    pipeline_candidate_matches_filters_and_gate,
+    allowed_set_withholds_row, claim_status_gate_allows, clamp_hides_row,
+    import_claim_gate_decisions_for_scores, pipeline_candidate_matches_filters_and_gate,
 };
 use crate::pipeline::types::{
     ClaimStatusGateCache, EntityMetadataCache, PER_SCAN_CAP_FACTOR, PipelineFilterConfig,
-    ScoredEntity, TurnFold,
+    ScoredEntity, TurnFold, WorldAuthoritySet,
 };
 use crate::query_expansion::{HydeExpansion, retry_channel_limit};
 use crate::retrieval_quality::RetrievalDiagnostics;
@@ -33,6 +33,10 @@ pub(super) struct TextChannelInputs<'a> {
     pub(super) authority_filter: &'a crate::gate::ResolvedRetrievalFilter,
     pub(super) text_scope_widening_active: bool,
     pub(super) private_note_ids: Option<&'a crate::claim::ScopedDiaryCandidates>,
+    /// The owner's ALLOWED-SET of an ActiveSet turn
+    /// ([`crate::store::world_authority::ResolvedWorldAuthority::allowed_set`]),
+    /// resolved once for the run; `None` under every other world scope.
+    pub(super) world_allowed_set: Option<&'a WorldAuthoritySet>,
     /// The D19 widening probe's gate cache, moved in and reused as the
     /// exact-posting probe gate.
     pub(super) claim_gate_widening_probe: ClaimStatusGateCache,
@@ -174,31 +178,91 @@ impl PipelineBuilder<'_> {
         Ok(claim_gate_text_widening_active)
     }
 
-    /// A clamped read's own-row test for its BM25 statistics
-    /// ([`crate::bm25::Bm25SearchOptions::hidden_row`]), `None` without a
-    /// clamp. Each row it judges is a deadline checkpoint, as at the scope's
-    /// admission: under a clamp a term's document frequency asks it of every
-    /// posting. It answers each row once across the stage's reads (the turn
-    /// fold's longer reads ask again of the same postings).
+    /// The own-row test of the run's BM25 statistics
+    /// ([`crate::bm25::Bm25SearchOptions::hidden_row`]): a row the reader
+    /// may not read whatever its status counts in none. That is a row a
+    /// clamped pack's audience may not read (`filter_config.disclosure`), or
+    /// one a world keeps from the reader (FIX
+    /// WORLD-SCOPE-BM25-DF-COUNTS-HIDDEN-POSTINGS): a device-local world
+    /// off this device (`filter_config.device_local`), a world outside the
+    /// owner's ALLOWED-SET of an ActiveSet turn (`world_allowed_set`), or a
+    /// world the run's scoped reader may not read
+    /// ([`crate::claim::ScopedReadActorKey::world_withheld_rows_in`]: its
+    /// verified credential's worlds and its holder's standing agent Grants).
+    /// A run scored for a scoped read ([`Self::statistics_read`]) asks that
+    /// read instead, which also hides every other row it refuses and counts
+    /// nowhere ([`crate::claim::ScopedRead::withheld_row_test_in`]; FIX
+    /// SCOPED-BM25-DF-COUNTS-NON-WORLD-REFUSED-POSTINGS).
+    /// What the run only selects still counts: its types, corpus or
+    /// category, a named world or world set, the worlds a turn chose inside
+    /// its ALLOWED-SET, the worlds a read asked for (save, under a scoped
+    /// read, a row with no count whatever its worlds, such as a NOTE, that
+    /// those worlds leave out). `None` when nothing keeps a row from the
+    /// reader.
+    ///
+    /// Each row it judges is a deadline checkpoint, as at the scope's
+    /// admission: a term's document frequency asks it of every posting. It
+    /// answers each row once across the stage's reads (the turn fold's
+    /// longer reads ask again of the same postings).
     fn hidden_row_test<'t>(
         &'t self,
         rtxn: &'t RoTxn<'_>,
-        clamp: Option<&'t DisclosureContext>,
+        (filter_config, world_allowed_set): (
+            PipelineFilterConfig<'t>,
+            Option<&'t WorldAuthoritySet>,
+        ),
         metadata: &'t mut EntityMetadataCache,
-    ) -> Option<Box<dyn FnMut(&EntityId) -> Result<bool> + 't>> {
-        let clamp = clamp?;
+    ) -> Result<Option<HiddenRowTest<'t>>> {
+        let clamp = filter_config.disclosure;
+        let device_local = filter_config
+            .device_local
+            .filter(|flagged| !flagged.is_empty());
+        let mut scoped = match self.statistics_read {
+            Some(read) => Some(read.withheld_row_test_in(rtxn)?),
+            None => None,
+        };
+        let reader = match (&scoped, self.statistics_reader_key()) {
+            (None, Some(key)) => key.world_withheld_rows_in(self.vault, rtxn)?,
+            _ => None,
+        };
+        if clamp.is_none()
+            && device_local.is_none()
+            && world_allowed_set.is_none()
+            && reader.is_none()
+            && scoped.is_none()
+        {
+            return Ok(None);
+        }
         let mut answers = std::collections::HashMap::<EntityId, bool>::new();
-        Some(Box::new(move |id: &EntityId| {
+        Ok(Some(Box::new(move |id: &EntityId| {
             if let Some(&hidden) = answers.get(id) {
                 return Ok(hidden);
             }
             if let Some(deadline) = self.deadline {
                 deadline.checkpoint()?;
             }
-            let hidden = clamp_hides_row(&self.read, rtxn, id, Some(clamp), metadata)?;
+            let hidden = clamp_hides_row(&self.read, rtxn, id, clamp, metadata)?
+                || match device_local {
+                    Some(flagged) => {
+                        crate::settings::device_local_keeps_among(&self.read, rtxn, flagged, id)?
+                    }
+                    None => false,
+                }
+                || match world_allowed_set {
+                    Some(allowed) => allowed_set_withholds_row(&self.read, rtxn, id, allowed)?,
+                    None => false,
+                }
+                || match &reader {
+                    Some(withheld) => withheld.withholds_in(&self.read, rtxn, id)?,
+                    None => false,
+                }
+                || match scoped.as_mut() {
+                    Some(withheld) => withheld(id)?,
+                    None => false,
+                };
             answers.insert(*id, hidden);
             Ok(hidden)
-        }))
+        })))
     }
 
     /// Runs the text channel, the next of `stages_left` deadline stages, and
@@ -271,9 +335,9 @@ impl PipelineBuilder<'_> {
                 let mut retry_hidden_metadata = EntityMetadataCache::default();
                 let mut retry_hidden_row = self.hidden_row_test(
                     rtxn,
-                    inputs.filter_config.disclosure,
+                    (inputs.filter_config, inputs.world_allowed_set),
                     &mut retry_hidden_metadata,
-                );
+                )?;
                 let mut retry_exact_posting_matches_scope = |id: &EntityId| {
                     pipeline_candidate_matches_filters_and_gate(
                         &self.read,
@@ -398,8 +462,11 @@ impl PipelineBuilder<'_> {
         let stage_metadata = inputs.scan_metadata(self, metadata_cache, &mut scan_metadata);
         let result_filters = self.bounded_result_filters(inputs.filter_config);
         let mut hidden_metadata = EntityMetadataCache::default();
-        let mut hidden_row =
-            self.hidden_row_test(rtxn, inputs.filter_config.disclosure, &mut hidden_metadata);
+        let mut hidden_row = self.hidden_row_test(
+            rtxn,
+            (inputs.filter_config, inputs.world_allowed_set),
+            &mut hidden_metadata,
+        )?;
         let mut exact_posting_matches_scope = |id: &EntityId| {
             pipeline_candidate_matches_filters_and_gate(
                 &self.read,

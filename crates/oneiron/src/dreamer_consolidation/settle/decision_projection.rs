@@ -50,8 +50,9 @@ fn fields(value: Json) -> Map<String, Json> {
 /// each stored member, keepable while it stands, then each retained
 /// alternative. A candidate the round dropped rides as retained, never as a
 /// stored claim; keeping it lands it (FIX 496). One whose staged Keep the
-/// owner declined is the owner's to keep again, never this ladder's (FIX
-/// 7072). Every keepable row is offered: none is dropped for room.
+/// owner declined, or that was retracted, is the owner's to keep again,
+/// never this ladder's (FIX 7072). Every keepable row is offered: none is
+/// dropped for room.
 pub(crate) fn settle_rows_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,

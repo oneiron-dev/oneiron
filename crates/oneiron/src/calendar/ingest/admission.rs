@@ -558,6 +558,9 @@ impl PollAdmission<'_> {
     /// ([`crate::claim::claim_surfaceable`]), so it does not block the
     /// omission, and the omission is admitted beside it without superseding
     /// it, so the owner's answer to it stays owed (review round 2 of #9677).
+    /// This read comes before the omission's screen: an approval of that status
+    /// landing from it to the omission's settlement is decided in that writer
+    /// (`consent::close_omission_beside_admitted_cancel_in_txn`).
     /// The other way round, a status whose body the screen flagged waits on
     /// the owner too (the standing consent holds it), so it supersedes no
     /// admitted status: that one stays live beside it until the owner's

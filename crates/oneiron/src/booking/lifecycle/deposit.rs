@@ -46,10 +46,13 @@ use crate::{EntityId, Vault};
 mod held;
 mod home_fence;
 mod refund;
+mod refund_ended_unpaid;
 mod settle;
+mod settle_row;
 
 pub(super) use self::held::{
-    HeldDeposit, HeldDepositKind, held_deposit_in_txn, unattributed_cancel_sequence_in_txn,
+    EmergencyReturn, HeldDeposit, HeldDepositKind, emergency_return_in_txn, held_deposit_in_txn,
+    refund_ended_unpaid_note_in_txn, unattributed_cancel_sequence_in_txn,
 };
 pub use self::home_fence::check_deposit_checkout_admitted;
 use self::home_fence::{
@@ -61,7 +64,7 @@ pub(super) use self::refund::{
     refund_on_visitor_cancel_in_writer,
 };
 pub(crate) use self::refund::{refund_booking_deposit_as_owner, refund_deposit_on_host_cancel};
-use self::settle::enqueue_settle;
+use self::refund_ended_unpaid::RefundEndedUnpaid;
 #[cfg(feature = "sync")]
 pub(super) use self::settle::queue_carried_settle_in_txn;
 pub use self::settle::{
@@ -69,6 +72,7 @@ pub use self::settle::{
     DepositSettleMove, DepositSettleRequest, DepositSettleStep, DepositSettlementPort,
     run_booking_deposit_settlement, settle_booking_deposit,
 };
+use self::settle_row::enqueue_settle;
 
 /// The checkout window a deposit's lease opens: the hold lives this long
 /// while the visitor pays ("~15min", ARCH-0062:225). A checkout started
@@ -174,6 +178,26 @@ pub(super) struct DepositRow {
     /// keeps its note.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     unattributed_cancel: Option<UnattributedCancel>,
+    /// The SEQUENCE of the owner's BK-09 emergency cancel that gave this
+    /// deposit back whole (released a capture still due, or owed a captured
+    /// one back), in that cancel's own commit: the booking the visitor picks
+    /// again from its proposals carries no deposit, and the owner's card
+    /// says where this deposit's return stands (RULING
+    /// DEPOSIT-PICK-AFTER-EMERGENCY-CANCEL = A). Unset on every other row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    emergency_return_sequence: Option<u32>,
+    /// How many times the owner asked again for the refund owed now after
+    /// the provider ended it unpaid (FIX [BK-DEPOSIT-FAILED-REFUND-SURFACE]):
+    /// from the first on, the refund's idempotency key names it, so the
+    /// provider makes a new refund. 0, and left out, on every other row.
+    #[serde(default, skip_serializing_if = "refund_ended_unpaid::is_zero")]
+    refund_retry: u32,
+    /// The refund owed now, asked under `refund_retry`, that the provider
+    /// ended with nothing paid back: the owner's line says so, and Return
+    /// deposit asks again. Unset on every other row, and once a refund of
+    /// the deposit settles.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    refund_ended_unpaid: Option<RefundEndedUnpaid>,
     updated_at: u64,
 }
 
@@ -356,6 +380,9 @@ pub fn begin_deposit_checkout(
                 refunded_minor: 0,
                 balance_owed_after_refund: false,
                 unattributed_cancel: None,
+                emergency_return_sequence: None,
+                refund_retry: 0,
+                refund_ended_unpaid: None,
                 updated_at: now_utc,
             },
         };

@@ -243,6 +243,13 @@ impl Vault {
                 )?,
                 _ => Vec::new(),
             };
+            // The scrub of a held row recorded its soft delete and sealed the
+            // floors waiting on it. For an id with no row here, the first
+            // application seals them, as the erase of a held row does
+            // (#10108 review P1-1).
+            if !IDENTITY_SOFT_DELETE_MARKER.contains(&self.store, &*wtxn, &HexId(*id))? {
+                crate::source_audience::seal_floors_awaiting_in_txn(&self.store, wtxn, id)?;
+            }
             IDENTITY_SOFT_DELETE_MARKER.put(&self.store, wtxn, &HexId(*id), &Vec::new())?;
             // A peer deleted a world: its delete time bounds how long a pin
             // change here still rewraps the world's keys.
@@ -314,6 +321,10 @@ impl Vault {
             // manipulation. The guarded write keeps every-boot replay a
             // read-only no-op once the marker exists.
             if !HARD_DELETE_MARKER.contains(&self.store, &*wtxn, &marker_key)? {
+                // A floor that waits for the row to land is sealed at the
+                // tombstone's first application, as the erase of a held row
+                // seals it (#10108 review P1-1).
+                crate::source_audience::seal_floors_awaiting_in_txn(&self.store, wtxn, id)?;
                 HARD_DELETE_MARKER.put(&self.store, wtxn, &marker_key, &marker_value.to_vec())?;
             }
             // No canonical row here names it, but a residence copy may: its
@@ -385,8 +396,9 @@ impl Vault {
         }
         // A peer's release of a blob version (L9-44, Engine ruling 13 Nov
         // 17:56) may arrive as its claim's tombstone alone: the version this
-        // vault's chain keeps under the claim is read before the purge takes
-        // the claim's body, and released after it.
+        // vault's chain keeps under the claim, or on a replica that keeps no
+        // chain the claim's pair and bytes (REVIEW-7640-NO-CHAIN-REPLICA-REPLAY),
+        // is read before the purge takes the claim's body, and released after it.
         let released_version =
             crate::blob_artifact::replayed_claim_version_in_txn(&self.store, &*wtxn, id)?;
         // A legal hold on the version's artifact or ASSET keeps the version, so it keeps the

@@ -299,7 +299,7 @@ pub(crate) fn adopted_image_view_in_txn(
 /// Publishes `verified`/`evidence` only when the caller's rows are still
 /// the committed tip: a separate thread opens its own read txn (a second
 /// read txn on a thread holding the caller's write txn fails, as in
-/// `per_authority_generation`), and the publish lands only when committed
+/// `readonly_fold::cache_fold_if_committed`), and the publish lands only when committed
 /// state names the same `ADOPTED` row and image id. A write txn's
 /// uncommitted adoption, and a stale snapshot superseded since, never
 /// publish. Concurrent publishers race on the mutex; every published entry

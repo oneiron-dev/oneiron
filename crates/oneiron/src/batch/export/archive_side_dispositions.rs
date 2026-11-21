@@ -285,6 +285,10 @@ pub(crate) const SIDE_TABLE_DISPOSITIONS: &[(&str, ArchiveSideDisposition)] = &[
         "VOICE_IDENTITY_CONSENT_VOID",
         ArchiveSideDisposition::Retained,
     ),
+    (
+        "VOICE_IDENTITY_WITHDRAWAL_REQUESTED_AT",
+        ArchiveSideDisposition::Retained,
+    ),
     ("VOICE_REF_RENDER_CONSENT", ArchiveSideDisposition::Retained),
     ("WEAVE_DIGEST_SCHEDULE", ArchiveSideDisposition::Retained),
     ("WEAVE_DIGEST_SETTINGS", ArchiveSideDisposition::Retained),
