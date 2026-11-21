@@ -40,7 +40,9 @@
 //! A vault whose backfill ended before it raised archived rows raises every
 //! row once more ([`Backfill::RaisingAgain`]), and so does one whose pass a
 //! build before this one began or went on with, or began after rows were
-//! raised (#10265 Opus review P2-2). Until it first ends, a row it has not
+//! raised (#10265 Opus review P2-2). The run again starts at the first row
+//! whatever cursor the pass before it left, and keeps its own raised marks
+//! (#10265 review 2 P1-1, P1-2). Until it first ends, a row it has not
 //! raised waits like a pending row when it names a birth input or a
 //! dependency source (lineage no read walks), a word source not held here,
 //! or lineage that does not resolve yet; and a write raises the not yet
@@ -89,6 +91,11 @@ const PENDING: SideTable<EntityId, (), Named> =
 /// Each row raised since the backfill began.
 const RAISED: SideTable<EntityId, (), Named> =
     SideTable::new(&side_table::SOURCE_AUDIENCE_FLOOR_RAISED);
+/// Each row raised since the run again began ([`Backfill::RaisingAgain`]):
+/// its own marks, so the raised marks a pass before it left never make it
+/// skip a row (#10265 review 2 P1-2).
+const RAISED_AGAIN: SideTable<EntityId, (), Named> =
+    SideTable::new(&side_table::SOURCE_AUDIENCE_FLOOR_RAISED_AGAIN);
 /// Whether the backfill has raised every row.
 const BACKFILL: SideTable<(), bool, Named> =
     SideTable::new(&side_table::SOURCE_AUDIENCE_FLOOR_BACKFILL);
@@ -129,6 +136,31 @@ const SETTLE_ROUNDS: usize = 1024;
 /// Storage failures.
 pub(crate) fn backfill_done_in(vault: &Vault, txn: &RoTxn<'_>) -> Result<bool> {
     Ok(BACKFILL.get(&vault.store, txn, &())?.unwrap_or(false))
+}
+
+/// Whether the pass the backfill is in (`backfill`) has raised `row`: the
+/// first pass's marks, or the run again's own; once the backfill is done,
+/// every row counts as raised.
+fn raised_in(vault: &Vault, txn: &RoTxn<'_>, row: &EntityId, backfill: Backfill) -> Result<bool> {
+    match backfill {
+        Backfill::Raising => RAISED.contains(&vault.store, txn, row),
+        Backfill::RaisingAgain => RAISED_AGAIN.contains(&vault.store, txn, row),
+        Backfill::Done => Ok(true),
+    }
+}
+
+/// Marks `row` raised in `txn` by the pass the backfill is in (`backfill`).
+fn put_raised_mark_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    row: &EntityId,
+    backfill: Backfill,
+) -> Result<()> {
+    match backfill {
+        Backfill::Raising => RAISED.put(&vault.store, txn, row, &()),
+        Backfill::RaisingAgain => RAISED_AGAIN.put(&vault.store, txn, row, &()),
+        Backfill::Done => Ok(()),
+    }
 }
 
 /// How far the backfill has gone in this vault.
@@ -365,9 +397,9 @@ fn first_raise_in(
 ) -> Result<bool> {
     Ok(match backfill {
         Backfill::Done => false,
-        Backfill::Raising => !RAISED.contains(&vault.store, txn, row)?,
+        Backfill::Raising => !raised_in(vault, txn, row, backfill)?,
         Backfill::RaisingAgain => {
-            !RAISED.contains(&vault.store, txn, row)?
+            !raised_in(vault, txn, row, backfill)?
                 && archived_in(&vault.store, txn, row)?
                 && !super::DERIVED.contains(&vault.store, txn, row)?
         }
@@ -510,7 +542,7 @@ impl Closure {
             if backfilling {
                 for source in sources.written_from.iter().chain(&sources.attested_by) {
                     if !seen.contains(source)
-                        && !RAISED.contains(&vault.store, txn, source)?
+                        && !raised_in(vault, txn, source, backfill)?
                         && raisable_in(vault, txn, source)?
                     {
                         below.push(*source);
@@ -651,9 +683,7 @@ impl Closure {
                     mark_wait_in_txn(&vault.store, txn, awaited, row)?;
                 }
             }
-            if backfill != Backfill::Done {
-                RAISED.put(&vault.store, txn, row, &())?;
-            }
+            put_raised_mark_in_txn(vault, txn, row, backfill)?;
         }
         Ok(settled)
     }

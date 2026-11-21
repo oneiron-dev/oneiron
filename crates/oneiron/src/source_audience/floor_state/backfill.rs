@@ -9,7 +9,10 @@ use std::ops::Bound;
 use heed::RwTxn;
 
 use super::marks::take_marks_of_in_txn;
-use super::{ARCHIVED_RAISED, BACKFILL, Backfill, PENDING, RAISED, backfill_in, raisable_in};
+use super::{
+    ARCHIVED_RAISED, BACKFILL, Backfill, PENDING, RAISED, RAISED_AGAIN, backfill_in, raisable_in,
+    raised_in,
+};
 use crate::error::Result;
 use crate::{EntityId, Vault};
 
@@ -31,6 +34,12 @@ const RAISING: u8 = 0;
 /// writes [`RAISING`] after its page, so a pass it goes on with runs again.
 const RAISING_WHOLE: u8 = 3;
 
+/// A backfill cursor's first byte: raising again, in the run again
+/// ([`Backfill::RaisingAgain`]), the rows after the entity key that follows
+/// it. Only a cursor of the run again goes on in it: from any other, the
+/// run again starts at the first row (#10265 review 2 P1-1).
+const RAISING_AGAIN: u8 = 4;
+
 /// A backfill cursor's first byte: clearing the raised marks.
 const CLEARING: u8 = 1;
 
@@ -48,11 +57,14 @@ const SETTLING: u8 = 2;
 /// ended before it raised archived rows raises every row once more, the
 /// same way ([`Backfill::RaisingAgain`]); so does a vault whose pass a
 /// build before this one began or went on with, or began after rows were
-/// raised (#10265 Opus review P2-2). Then, and in each
-/// later run, it raises every waiting row again, a page per write
-/// (#9289 review 3 P1-4, P1-6). In a vault where no row can have a floor yet
-/// it does nothing, and runs at the next pass again. The rows it raised, and
-/// where an unfinished run goes on (`None` once this run has ended).
+/// raised (#10265 Opus review P2-2). The run again starts at the first row
+/// whatever cursor the pass before it left, and keeps its own raised marks,
+/// so neither an older pass's cursor nor its marks make it skip a row
+/// (#10265 review 2 P1-1, P1-2). Then, and in each later run, it raises
+/// every waiting row again, a page per write (#9289 review 3 P1-4, P1-6).
+/// In a vault where no row can have a floor yet it does nothing, and runs at
+/// the next pass again. The rows it raised, and where an unfinished run goes
+/// on (`None` once this run has ended).
 ///
 /// # Errors
 ///
@@ -68,9 +80,10 @@ pub(crate) fn backfill_floors(
         let (page, next) = vault.with_write_txn(|txn| match cursor.split_first() {
             Some((&CLEARING, _)) => clear_page_in_txn(vault, txn),
             Some((&SETTLING, after)) => settle_page_in_txn(vault, txn, after),
-            Some((&RAISING_WHOLE, after)) => raise_page_in_txn(vault, txn, after, true),
-            Some((_, after)) => raise_page_in_txn(vault, txn, after, false),
-            None => raise_page_in_txn(vault, txn, &[], false),
+            Some((&RAISING_WHOLE, after)) => raise_page_in_txn(vault, txn, after, Pass::Whole),
+            Some((&RAISING_AGAIN, after)) => raise_page_in_txn(vault, txn, after, Pass::Again),
+            Some((_, after)) => raise_page_in_txn(vault, txn, after, Pass::First),
+            None => raise_page_in_txn(vault, txn, &[], Pass::First),
         })?;
         raised = raised.saturating_add(page);
         let Some(next) = next else {
@@ -83,14 +96,25 @@ pub(crate) fn backfill_floors(
     }
 }
 
+/// The pass a raising cursor was written in.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Pass {
+    /// A first pass ([`RAISING`]): one a build before this one began or went
+    /// on with, or one that began after rows were raised.
+    First,
+    /// A first pass this build began with no row raised ([`RAISING_WHOLE`]).
+    Whole,
+    /// The run again ([`RAISING_AGAIN`]).
+    Again,
+}
+
 /// One backfill write: raises the entity rows after the key `after`, live
-/// or archived, in a pass that began in this build with no row raised
-/// before its first page when `whole`.
+/// or archived, in the pass `pass` whose cursor names `after`.
 fn raise_page_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
     after: &[u8],
-    whole: bool,
+    pass: Pass,
 ) -> Result<(u64, Option<Vec<u8>>)> {
     let backfill = backfill_in(vault, txn)?;
     if backfill == Backfill::Done {
@@ -102,6 +126,16 @@ fn raise_page_in_txn(
     if !crate::source_audience::floor::floors_possible_in(vault, txn)? {
         return Ok((0, None));
     }
+    // A cursor goes on only in the pass that wrote it. The run again starts
+    // at the first row from any cursor but its own: the sweep can hold the
+    // cursor an older pass saved before its last page ended it (#10265
+    // review 2 P1-1). A first pass never goes on from the run again's.
+    let after: &[u8] = match (backfill, pass) {
+        (Backfill::RaisingAgain, Pass::Again) | (Backfill::Raising, Pass::First | Pass::Whole) => {
+            after
+        }
+        _ => &[],
+    };
     // A pass that begins here with no row raised yet raises archived rows
     // from its first page, so it needs no run again: its cursor says so, and
     // its end marks archived rows raised. A pass a build before this one
@@ -109,10 +143,14 @@ fn raise_page_in_txn(
     // write of a build before this one raised them without the archived rows
     // they were written from), runs again once it ends (#10265 Opus review
     // P2-2).
-    let whole = whole
-        || (backfill == Backfill::Raising
-            && after.is_empty()
-            && RAISED.iter_from(&vault.store, txn, &[])?.next().is_none());
+    let whole = backfill == Backfill::Raising
+        && ((pass == Pass::Whole && !after.is_empty())
+            || (after.is_empty() && RAISED.iter_from(&vault.store, txn, &[])?.next().is_none()));
+    let tag = match backfill {
+        Backfill::RaisingAgain => RAISING_AGAIN,
+        _ if whole => RAISING_WHOLE,
+        _ => RAISING,
+    };
     let lower = if after.is_empty() {
         Bound::Unbounded
     } else {
@@ -141,7 +179,7 @@ fn raise_page_in_txn(
     }
     let mut raised = 0_u64;
     for row in &rows {
-        if RAISED.contains(&vault.store, txn, row)? || !raisable_in(vault, txn, row)? {
+        if raised_in(vault, txn, row, backfill)? || !raisable_in(vault, txn, row)? {
             continue;
         }
         crate::source_audience::floor::raise_floors_in_txn(vault, txn, [*row])?;
@@ -149,7 +187,7 @@ fn raise_page_in_txn(
     }
     match last {
         Some(last) if scanned == BACKFILL_PAGE => {
-            let mut next = vec![if whole { RAISING_WHOLE } else { RAISING }];
+            let mut next = vec![tag];
             next.extend(last);
             Ok((raised, Some(next)))
         }
@@ -163,20 +201,29 @@ fn raise_page_in_txn(
     }
 }
 
-/// One backfill write once every row is raised: clears raised marks; once
-/// none is left, the run goes on raising the waiting rows again.
+/// One backfill write once every row is raised: clears raised marks, the
+/// first pass's and the run again's; once none is left, the run goes on
+/// raising the waiting rows again.
 fn clear_page_in_txn(vault: &Vault, txn: &mut RwTxn<'_>) -> Result<(u64, Option<Vec<u8>>)> {
-    let keys = RAISED
+    let first = RAISED
         .iter_from(&vault.store, txn, &[])?
         .take(CLEAR_PAGE)
         .map(|entry| entry.map(|(row, ())| row))
         .collect::<Result<Vec<_>>>()?;
-    for row in &keys {
+    for row in &first {
         RAISED.delete(&vault.store, txn, row)?;
+    }
+    let again = RAISED_AGAIN
+        .iter_from(&vault.store, txn, &[])?
+        .take(CLEAR_PAGE.saturating_sub(first.len()))
+        .map(|entry| entry.map(|(row, ())| row))
+        .collect::<Result<Vec<_>>>()?;
+    for row in &again {
+        RAISED_AGAIN.delete(&vault.store, txn, row)?;
     }
     Ok((
         0,
-        Some(if keys.len() == CLEAR_PAGE {
+        Some(if first.len() + again.len() == CLEAR_PAGE {
             vec![CLEARING]
         } else {
             vec![SETTLING]
@@ -295,6 +342,7 @@ pub(crate) fn forget_floor_state_in_txn(vault: &Vault, txn: &mut RwTxn<'_>) -> R
     super::marks::AWAITED.delete_from(&vault.store, txn, &[])?;
     super::marks::WAITS.delete_from(&vault.store, txn, &[])?;
     RAISED.delete_from(&vault.store, txn, &[])?;
+    RAISED_AGAIN.delete_from(&vault.store, txn, &[])?;
     BACKFILL.delete_from(&vault.store, txn, &[])?;
     ARCHIVED_RAISED.delete_from(&vault.store, txn, &[])?;
     Ok(())
