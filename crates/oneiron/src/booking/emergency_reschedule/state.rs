@@ -179,6 +179,22 @@ pub(super) fn effect_ref(
     ))
 }
 
+/// The local outbound ledger identity of `item`'s effect on `lane`, whose idempotency key is
+/// [`effect_ref`]: that key itself at ledger generation 0, else the key with its generation
+/// appended (`EmergencyItem::ledger_generations`). The send's attempt id derives from it
+/// (`outbound_dispatch_attempt_id`), and the provider's idempotency key stays [`effect_ref`].
+pub(super) fn effect_ledger_ref(
+    item: &EmergencyItem,
+    lane: &str,
+    hash: [u8; 32],
+) -> Result<String, BookingError> {
+    let reference = effect_ref(item, lane, hash)?;
+    Ok(match item.ledger_generations.get(lane) {
+        None | Some(0) => reference,
+        Some(generation) => format!("{reference}:ledger-generation:{generation}"),
+    })
+}
+
 pub(super) fn apology_bytes(item: &EmergencyItem) -> Result<Vec<u8>, BookingError> {
     serde_json::to_vec(&serde_json::json!({ "reason": item.plan.request.reason,
         "actions": item.actions.iter().zip(&item.plan.proposals).map(|(token, slot)| serde_json::json!({
@@ -251,7 +267,9 @@ pub(crate) fn verify_frozen_effect_in(
         )
     };
     if effect_ref(&item, lane, hash)? != key
-        || crate::outbound::outbound_dispatch_attempt_id(key).map_err(storage_failure)? != attempt
+        || crate::outbound::outbound_dispatch_attempt_id(&effect_ledger_ref(&item, lane, hash)?)
+            .map_err(storage_failure)?
+            != attempt
     {
         return Err(refused(
             "frozen emergency effect conflicts with its checkpoint",

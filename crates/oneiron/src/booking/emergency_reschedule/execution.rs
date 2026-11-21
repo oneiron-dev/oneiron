@@ -157,6 +157,10 @@ pub(super) fn dispatch_item_effect(
         }
     };
     let intent_ref = state::effect_ref(item, lane, hash)?;
+    // The attempt this send is admitted by: a later ledger generation than the one its
+    // idempotency key names only once a home adopted the checkpoint back over its own deferred
+    // or stopped send (FIX [BK-EMERGENCY-DEFERRED-SEND-STRANDED-ON-FORMER-HOME]).
+    let ledger_ref = state::effect_ledger_ref(item, lane, hash)?;
     let (verb, channel) = if payload.is_some() {
         (crate::calendar::CALENDAR_INVITE_VERB, "calendar")
     } else {
@@ -174,8 +178,8 @@ pub(super) fn dispatch_item_effect(
         )),
     );
     let mut dispatch = OutboundDispatchRequest::new(
-        format!("outbound:{intent_ref}"),
-        intent_ref,
+        format!("outbound:{ledger_ref}"),
+        intent_ref.clone(),
         intent,
         // The gate principal is the verified human owner, not the agent trigger.
         OutboundDispatchActor {
@@ -190,6 +194,9 @@ pub(super) fn dispatch_item_effect(
         OutboundDeliveryWindowDecision::DeliverNow,
     )
     .counterparty_ref(item.plan.recipient.clone());
+    if ledger_ref != intent_ref {
+        dispatch.ledger_identity_ref = Some(ledger_ref);
+    }
     if let Some(payload) = payload {
         dispatch = dispatch.calendar_invite(payload.clone());
     }

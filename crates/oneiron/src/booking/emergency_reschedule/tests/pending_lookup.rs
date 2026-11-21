@@ -386,6 +386,7 @@ fn damaged_request_plan_rows_refuse_only_the_indexed_event() {
                         calendar_delivered: true,
                         apology_delivered: true,
                         picked: None,
+                        ledger_generations: Default::default(),
                     };
                     planning::ITEM
                         .put(&vault.store, txn, &checkpoint_row, &checkpoint)

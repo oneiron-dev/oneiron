@@ -58,6 +58,12 @@ struct CarriedItem {
     /// Whether the old home's pending-event lookup names this item: the one whose revision its
     /// fence holds (`state::pending_effect_fences_in`), which the new home's lookup names again.
     pending_pointer: bool,
+    /// The ledger generation of each owed effect whose local ledger identity is not its
+    /// idempotency key (`EmergencyItem::ledger_generations`), so every later home's ledger reads
+    /// and sends follow that identity. Not written when there is none, so a section that
+    /// carries none encodes as before and a section encoded before decodes.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    ledger_generations: BTreeMap<String, u32>,
 }
 
 /// A pick without the owner's address or the booker's.
@@ -91,8 +97,9 @@ const ITEM_DECLS: [&SideTableDecl; 4] = [
 /// keeps as the row's `updated_ms` (review round 2 of #10109).
 const MID_CALL_BOUND_SECS: u64 = 60;
 
-/// This node's outbound ledger row of `item`'s effect on `lane`, if any. A row that does not
-/// read as a ledger row is none: only a store failure is an error.
+/// This node's outbound ledger row of `item`'s effect on `lane` under the effect's current
+/// ledger identity (`state::effect_ledger_ref`), if any. A row that does not read as a ledger
+/// row is none: only a store failure is an error.
 fn ledger_record(
     vault: &Vault,
     txn: &RoTxn<'_>,
@@ -100,7 +107,7 @@ fn ledger_record(
     lane: &str,
     hash: [u8; 32],
 ) -> Result<Option<IntentLedgerRecord>> {
-    let reference = state::effect_ref(item, lane, hash).map_err(booking_failure)?;
+    let reference = state::effect_ledger_ref(item, lane, hash).map_err(booking_failure)?;
     let attempt = crate::outbound::outbound_dispatch_attempt_id(&reference)
         .map_err(|_| invalid("an emergency effect has no outbound attempt id"))?;
     match read_intent_for_attempt_in_txn(vault, txn, attempt, 0) {
@@ -152,6 +159,34 @@ fn uncertain_lanes(
         }
     }
     Ok(uncertain)
+}
+
+/// Raises the ledger generation of each effect `item` owes while this node's outbound ledger
+/// holds its send deferred or stopped under the effect's current identity: such a row's replay
+/// never sends again (`outbound_chokepoint::replay`, FIX 7960), so every owner's resume here
+/// would refuse, where any other new home sends it under the same idempotency key (Engine
+/// ANSWER BK-EMERGENCY-PENDING-ITEM-MOVE = A; FIX
+/// [BK-EMERGENCY-DEFERRED-SEND-STRANDED-ON-FORMER-HOME]). A send this ledger holds delivered
+/// or still pending keeps its identity: its replay completes it or sends it again.
+fn raise_stranded_generations(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    item: &mut EmergencyItem,
+) -> Result<()> {
+    for (lane, hash) in owed_effects(item) {
+        while ledger_record(vault, txn, item, lane, hash)?.is_some_and(|record| {
+            matches!(
+                IntentResolution::from_record(&record),
+                Ok(IntentResolution::Deferred | IntentResolution::Stopped { .. })
+            )
+        }) {
+            let generation = item.ledger_generations.entry(lane.to_owned()).or_default();
+            *generation = generation
+                .checked_add(1)
+                .ok_or_else(|| invalid("an emergency effect has no next ledger generation"))?;
+        }
+    }
+    Ok(())
 }
 
 /// `item` with each owed effect this node's outbound ledger resolves as delivered marked
@@ -241,6 +276,7 @@ impl HomeTable for EmergencyItemRows {
                 calendar_delivered,
                 apology_delivered,
                 picked,
+                ledger_generations,
             } = item;
             let (plan, mut owner, mut booker) = split_plan(&key, plan)?;
             booker.actions = actions;
@@ -279,6 +315,7 @@ impl HomeTable for EmergencyItemRows {
                 picked,
                 uncertain_lanes: uncertain.into_iter().collect(),
                 pending_pointer,
+                ledger_generations,
             });
         }
         Ok(Partitioned {
@@ -288,11 +325,12 @@ impl HomeTable for EmergencyItemRows {
     }
 
     /// Lands each whole item as the module doc says and indexes its pending event and its
-    /// effects. On a node whose rows are history both lookups are rebuilt from the landed items
-    /// alone. Each EVENT's pending lookup names one landed item that still owes a delivery: the
-    /// one the old home's names, else the one owed at the highest revision. Landing order
-    /// never decides it, so an older owed item cannot take the fence from a later one (review
-    /// round 1 of #10109).
+    /// effects, each owed effect this node's own ledger holds deferred or stopped under its next
+    /// ledger generation ([`raise_stranded_generations`]). On a node whose rows are history both
+    /// lookups are rebuilt from the landed items alone. Each EVENT's pending lookup names one
+    /// landed item that still owes a delivery: the one the old home's names, else the one owed
+    /// at the highest revision. Landing order never decides it, so an older owed item cannot
+    /// take the fence from a later one (review round 1 of #10109).
     fn adopt(
         vault: &Vault,
         txn: &mut RwTxn<'_>,
@@ -332,6 +370,7 @@ impl HomeTable for EmergencyItemRows {
                 picked,
                 uncertain_lanes,
                 pending_pointer,
+                ledger_generations,
             } = carried;
             let plan = join_plan(plan, &owner, &booker)?;
             check_key(&key, &plan.request, calendar.event_ref)?;
@@ -350,7 +389,7 @@ impl HomeTable for EmergencyItemRows {
                     return Err(invalid("a carried emergency pick and its parties disagree"));
                 }
             };
-            let item = EmergencyItem {
+            let mut item = EmergencyItem {
                 plan,
                 calendar,
                 basis,
@@ -359,7 +398,9 @@ impl HomeTable for EmergencyItemRows {
                 calendar_delivered,
                 apology_delivered,
                 picked,
+                ledger_generations,
             };
+            raise_stranded_generations(vault, txn, &mut item)?;
             match ITEM.get_lenient(&vault.store, txn, &key)? {
                 Some(here) if here == item => {}
                 Some(_) if !history => return Ok(TableAdopt::Conflict),
