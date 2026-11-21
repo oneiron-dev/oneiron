@@ -26,7 +26,8 @@ pub(crate) use feed_diff::{
     admitted_passport_for_in_txn, importer_pending_passports_in_txn, resolve_admitted_event_by_uid,
 };
 pub(in crate::calendar) use feed_diff::{
-    classify_event_passport, index_passport_uid_in_txn, revise_passport_in_txn,
+    admitted_passport_keyed, classify_event_passport, index_passport_uid_in_txn,
+    revise_passport_in_txn,
 };
 
 use crate::ports::EntityStoreRead;
@@ -49,7 +50,9 @@ use crate::vault::Vault;
 mod masked_key;
 
 use masked_key::MaskedKey;
-pub(in crate::calendar) use masked_key::{CalendarSystems, derived_uid_among, passport_uid_among};
+pub(in crate::calendar) use masked_key::{
+    derived_uid_among, passport_system_is, passport_uid_among,
+};
 
 /// The reason code on the tray resolution of a waiting passport revision
 /// that a later revision replaced.
@@ -310,8 +313,8 @@ pub fn live_passport_for(
 
 /// The passport of `passports`, the live ones of `event_ref`, keyed exactly
 /// `(system, uid)` as the vault reads it now ([`passport_keyed`]), for a
-/// scan over many EVENTs that read their passports, the calendar systems
-/// (`systems`) and the values custody holds (`known`) once.
+/// scan over many EVENTs that read their passports and the values custody
+/// holds (`known`) once.
 ///
 /// # Errors
 ///
@@ -322,7 +325,6 @@ pub(in crate::calendar) fn live_passport_keyed(
     passports: Vec<(EntityId, CalendarPassportValue)>,
     system: &str,
     uid: &str,
-    systems: &CalendarSystems,
     known: &CompareKnown<'_>,
 ) -> Result<Option<(EntityId, CalendarPassportValue)>, CalendarError> {
     passport_keyed(
@@ -331,7 +333,7 @@ pub(in crate::calendar) fn live_passport_keyed(
         uid,
         || {
             let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-            MaskedKey::read_pins_in_txn(vault, &txn, event_ref, system, uid, systems)
+            MaskedKey::read_in_txn(vault, &txn, event_ref, system, uid)
         },
         known,
     )
