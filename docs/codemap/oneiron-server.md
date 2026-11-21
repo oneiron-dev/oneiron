@@ -106,7 +106,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/live_lease.rs` | src | s | 1 struct · 13 crate-vis | LiveLeaseState | A metered try's spend lease, read live (FIX 1819): a workflow step's try, a reader child's run, or an… |
 | `src/ai_host/local_vision.rs` | src | m | 8 crate-vis | — | The Local-vision seat as the decision ladder's Local rung (OF-329 over OF-600): the small vision model bound… |
 | `src/ai_host/meeting_follow_up_drafting.rs` | src | m | 1 crate-vis | — | The host worker that drafts a meeting's follow-ups (CAL-08; Engine RULING CAL-08-FOLLOWUP-APPROVAL = A, Sun… |
-| `src/ai_host/mod.rs` | src | s | 2 struct · 4 mod · 1 re-export · 33 crate-vis | AiHandle, AiHost | The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats… |
+| `src/ai_host/mod.rs` | src | s | 2 struct · 4 mod · 1 re-export · 35 crate-vis | AiHandle, AiHost | The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats… |
 | `src/ai_host/payer_funding.rs` | src | m | 14 crate-vis | — | Who pays for a model call that a room's spend scope bounds (OF-531, FIX 805) |
 | `src/ai_host/policy.rs` | src | s | 5 crate-vis | — | The Dreamer's extraction route: what vault policy must already allow before a pass may send a transcript to… |
 | `src/ai_host/question_timer.rs` | src | s | 3 crate-vis | — | The hand-off of a bound Dreamer's timer work (OF-506, FIX 1149) |
@@ -130,6 +130,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/stewardship/pace.rs` | src | s | 9 crate-vis | — | When a reach-out whose draft failed is drafted again (FIX 9465) |
 | `src/ai_host/stewardship/sources.rs` | src | s | 8 crate-vis | — | What each model a follow-up draft goes to may read of its sources (FIX 8714) |
 | `src/ai_host/sync_wake.rs` | src | s | 3 crate-vis | — | A peer's sync apply wakes the Dreamer (ARCH-0026 #wake): a turn another host wrote gets the turn producer's… |
+| `src/ai_host/task_brief.rs` | src | s | 6 crate-vis | — | The task-brief composer's model on this server (census L8-07): the `[models.roles.local_reasoner]` seat… |
 | `src/ai_host/test_support.rs` | src | s | 14 crate-vis | — | Shared fixtures for the AI host's tests: a rooted, granted vault and `[models]` pointed at the local fake… |
 | `src/ai_host/tests.rs` | test | L | — | — | The host's start-up decisions and one real Dreamer pass on its own trigger, against the local fake model… |
 | `src/ai_host/trained_serving.rs` | src | s | 3 crate-vis | — | Actual trained-checkpoint serving, separate from a bound custody receipt |
@@ -1755,7 +1756,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/kept_on_device_tests.rs` | test | m | — | — | World privacy on a fallback ladder (owner ruling 2026-10-14, "Models": no silent fallback to a cloud model… |
 | `src/models/ladder.rs` | src | XL | 1 struct · 5 fn · 1 re-export · 42 crate-vis | OfferLadder | One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on… |
 | `src/models/ladder/cache_warmth.rs` | src | m | 6 crate-vis | — | Prompt-cache warmth (FIX 6029): this runtime's own note, in memory, of which reusable prefix each route… |
-| `src/models/ladder/call_deadline.rs` | src | m | 1 enum · 7 fn · 16 crate-vis | CallDeadline | One call's deadline across its whole walk (FIX 7792, FIX 8134, FIX 8213): every rung it sends, every wait… |
+| `src/models/ladder/call_deadline.rs` | src | m | 1 enum · 7 fn · 17 crate-vis | CallDeadline | One call's deadline across its whole walk (FIX 7792, FIX 8134, FIX 8213): every rung it sends, every wait… |
 | `src/models/ladder/decision_posture.rs` | src | s | 1 crate-vis | — | A decision call whose question's posture keeps its unit text on the host (FIX 9525): it goes down only the… |
 | `src/models/ladder/device_bound.rs` | src | s | 1 crate-vis | — | A ladder held to this device for one Dreamer pass (FIX 12735): each of its rungs sends on the device, and… |
 | `src/models/ladder/generation.rs` | src | m | 8 fn · 4 crate-vis | — | The generation walk of one chat call: its entry points and the walk rung by rung; the send to one rung is in… |
@@ -2184,7 +2185,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/memory_owner_commit.rs` | src | s | 1 fn · 1 crate-vis | — | Door for `tests/memory_verb_owner_proof_at_commit.rs` (FIX… |
 | `src/test_doors/memory_timeline_projection.rs` | src | s | 1 fn | — | Door for `tests/timeline_shell_projection_recheck.rs` (FIX TIMELINE-SHELL-TWO-SNAPSHOT-CAP): the projection… |
 | `src/test_doors/merge_queue_checker_pressure.rs` | src | s | 1 fn | — | Doors for `tests/merge_queue_checker_pressure.rs` ([GUEST-PIDS-PRESSURE-MERGE-QUEUE-CHECKER], FIX 8013… |
-| `src/test_doors/mod.rs` | src | s | 84 mod | — | Doors for the integration tests to crate-private items, as in `oneiron::test_doors` |
+| `src/test_doors/mod.rs` | src | s | 85 mod | — | Doors for the integration tests to crate-private items, as in `oneiron::test_doors` |
 | `src/test_doors/model_licence.rs` | src | s | 1 fn | — | The model licence admission under the owner's choice (`models.install.allow_noncommercial_licences`), read… |
 | `src/test_doors/native_board.rs` | src | s | 2 fn | — | Doors for `tests/room_pins_native.rs` (ROOM-SCOPED-PINS P2c): what a pumped run's native board and self… |
 | `src/test_doors/off_router_wire_counts.rs` | src | s | 2 fn | — | Doors for `tests/wire_counts_off_runtime.rs`: the wire counts an e-sign QR capability refusal and an MCP… |
@@ -2215,6 +2216,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/supervised_rerank.rs` | src | s | 1 fn · 1 re-export | — | Doors for `tests/supervised_rerank_socket.rs` (L9-15): the reranker on a managed llama.cpp worker's own Unix… |
 | `src/test_doors/system_one_leg.rs` | src | s | 1 fn | — | Doors for `tests/system_one_broker_budget.rs` (#7827 review round 2): the System One seat's transport over… |
 | `src/test_doors/system_one_rung.rs` | src | s | 1 re-export | — | Doors for `tests/systemone_pack_run_no_cancel.rs` (SYSTEMONE-PACK-RUN-NO-CANCEL): the System One rung bound… |
+| `src/test_doors/task_brief_send.rs` | src | s | 1 fn | — | Census L8-07 door (review #7821 round 1, P1 x2): one composed brief's model call, sent on a runtime's… |
 | `src/test_doors/vault_acts.rs` | src | s | 3 crate-vis | — | The one registry behind the doors that run a test's act at a point of a vault's next request… |
 | `src/test_doors/voice_call.rs` | src | m | 3 struct · 15 fn · 1 mod | PhoneCall, RoomCall, StandaloneCall | Doors for `tests/voice_self_epoch.rs` (UNBUILT-02 PR 2), `tests/voice_phone_transcript.rs` (PR 3)… |
 | `src/test_doors/voice_call/room_turn.rs` | src | s | 2 struct · 3 fn | HelloSlip, RoomTurnCall | Doors for `tests/voice_room_turn_off_record.rs` (row VOICE-ROOM-TURN-SOURCED-OFF-RECORD): the brain of a… |
@@ -2612,6 +2614,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/system_one_broker_budget.rs` | test | s | — | — | L9-19 (ARCH-0036 #decision-deadline part 4), #7827 review round 2: a System One seat whose key is a vault… |
 | `tests/systemone_pack_run_no_cancel.rs` | test | s | — | — | [SYSTEMONE-PACK-RUN-NO-CANCEL] (FIX-LIST l26281): a caller-run pack decide whose work is cancelled while the… |
 | `tests/t0i_token_revoke_log_on_stdout.rs` | test | s | — | — | `oneiron token revoke` (and `oneiron revoke`) print their JSON answer on stdout, with the log lines on… |
+| `tests/task_brief_egress.rs` | test | s | — | — | The task-brief composer's model call never reaches a model its prompt may not go to (census L8-07; review… |
 | `tests/thing_child_fences_lent_source_rows.rs` | test | m | — | — | A Dreamer thing child sends nothing of its input again once a row its lent slices were read from is erased… |
 | `tests/timeline_shell_projection_recheck.rs` | test | m | — | — | [TIMELINE-SHELL-TWO-SNAPSHOT-CAP]: the core memory timeline route (`GET /v1/core/memory/{id}/timeline`)… |
 | `tests/token_agent_own_vault_agent.rs` | test | s | — | — | `oneiron token agent` leaves its agent one of this vault's own agents (PRIVACY-07) |
