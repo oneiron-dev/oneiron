@@ -426,10 +426,81 @@ impl ModelRuntime {
         &self,
         vault: &Vault,
         role: ModelRole,
-        mut request: LlmRequest,
+        request: LlmRequest,
     ) -> Result<(RoleCall, Option<String>), RoleRefusal> {
         let seat = self.seat(role).ok_or(RoleRefusal::NoSeat)?;
         let route = self.route_role(vault, role, seat)?;
+        self.admit_on_route(vault, role, request, route)
+    }
+
+    /// Where a call of `role` runs when it must not leave this device
+    /// (I2-LOCAL, L9-15): [`Self::route_role`]'s route when it is on device
+    /// and every call its ladder sends goes to a managed worker this server
+    /// supervises, over that child's checked channel alone
+    /// ([`OfferLadder::native_local`]: a manifest's or a model pack's
+    /// on-device route); when the seat itself binds the call, the seat's
+    /// on-device view, when that view serves every rung of the seat. A view
+    /// that drops a rung of the seat would drop a fallback the seat's call
+    /// takes, so it is no route here. `None` when a call of `role` could
+    /// leave the device.
+    pub(crate) fn on_device_route_role(
+        &self,
+        vault: &Vault,
+        role: ModelRole,
+        seat: &Seat,
+    ) -> Result<Option<RoleRoute>, RoleRefusal> {
+        let route = self.route_role(vault, role, seat)?;
+        if route.locality == ModelLocality::OnDevice && route.ladder.native_local() {
+            return Ok(Some(route));
+        }
+        if !route.seat_bound || route.model != seat.model {
+            return Ok(None);
+        }
+        let Some(view) = seat
+            .on_device
+            .as_ref()
+            .filter(|view| view.native_local())
+            .filter(|view| view.rung_models().count() == seat.ladder.rung_models().count())
+        else {
+            return Ok(None);
+        };
+        Ok(Some(RoleRoute {
+            model: route.model,
+            locality: ModelLocality::OnDevice,
+            ladder: self.ladder_for_role(role, view),
+            seat_bound: true,
+        }))
+    }
+
+    /// [`Self::admit_role`] on the route a call of `role` takes when it must
+    /// not leave this device ([`Self::on_device_route_role`]): refused before
+    /// it is sent when a call of `role` could leave the device now.
+    pub(crate) fn admit_role_on_device(
+        &self,
+        vault: &Vault,
+        role: ModelRole,
+        request: LlmRequest,
+    ) -> Result<RoleCall, RoleRefusal> {
+        let seat = self.seat(role).ok_or(RoleRefusal::NoSeat)?;
+        let route = self
+            .on_device_route_role(vault, role, seat)?
+            .ok_or_else(|| RoleRefusal::RouteNotServed {
+                model: seat.model.clone(),
+                route: ModelLocality::OnDevice,
+            })?;
+        self.admit_on_route(vault, role, request, route)
+            .map(|(call, _)| call)
+    }
+
+    /// Admits `request` as a call of `role` on `route`, beside the catalog
+    /// entry the engine's admission read.
+    fn admit_on_route(
+        &self,
+        vault: &Vault,
+        role: ModelRole,
+        mut request: LlmRequest,
+        route: RoleRoute,
+    ) -> Result<(RoleCall, Option<String>), RoleRefusal> {
         let key = ModelTierRef(role_key(role));
         if route.seat_bound {
             // The seat is this call's binding, as a routed seat's is: a

@@ -1840,9 +1840,10 @@ turn whose messages show none) is found but not reranked yet: it follows
 the reranked rows in its first-stage order. Each
 text is judged by the write door as it would leave, a turn's messages
 joined as the reranker would read them, and one the door refuses is sent
-empty. So is a row a device-only world keeps, at the revision scored: a
-`[models]` reranker is reached over HTTP, never on the device. A row sent
-empty scores last. A block with no text to send makes no call and says
+empty. So is a row a device-only world keeps, at the revision scored,
+unless the reranker runs on this device: a reranker reached over HTTP never
+does, and one whose route is a socket worker's on-device view alone does
+(the next section). A row sent empty scores last. A block with no text to send makes no call and says
 `skipped` with `no_candidates`. Each rung, a fallback's too, goes out only
 while that device-only verdict, run again, keeps none of the rows it sends
 with words. Once it keeps one (its world was flagged while a rung was out),
@@ -1904,8 +1905,17 @@ other systems, on any kind but `llama_cpp`, on an external row, and on a
 provider that another role or a media seat names, or whose other reranker
 models no such row serves: nothing listens on that provider's `base_url`.
 Only the process that launches the worker reaches it; another process's
-reranker on that provider sends nothing. Recall still sends a device-only
-row empty: it does not take the seat's on-device view yet.
+reranker on that provider sends nothing.
+
+A recall at high, xhigh or max sends such a reranker the words of a row a
+device-only world keeps (L9-15) when the vault's model policy routes the
+reranker on this device alone: a manifest's or model pack's on-device route
+whose every rung is a supervised worker's, or, with neither binding the
+role, the seat's on-device view when it serves every rung of the seat.
+Each rerank call of that recall is then admitted on that on-device route
+alone, and is refused unsent if the route could leave the device by then.
+A seat with one HTTP rung beside its socket rungs is no such route, so the
+recall still sends that row empty, as it does to any other reranker.
 
 ## 9. The decision read
 

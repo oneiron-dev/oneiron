@@ -203,6 +203,32 @@ impl AiHandle {
         self.runtime.admit_role(vault, role, request)
     }
 
+    /// Whether the vault's live model policy routes a call of `role` so that
+    /// it never leaves this device (I2-LOCAL, L9-15): every rung and owner's
+    /// fallback it may take is a managed worker this server supervises,
+    /// reached over that child's checked channel alone. A route that cannot
+    /// be read is no such route.
+    #[must_use]
+    pub(crate) fn role_routes_on_device(&self, vault: &Vault, role: ModelRole) -> bool {
+        self.runtime.seat(role).is_some_and(|seat| {
+            self.runtime
+                .on_device_route_role(vault, role, seat)
+                .is_ok_and(|route| route.is_some())
+        })
+    }
+
+    /// [`Self::admit_role`] on the route that keeps a call of `role` on this
+    /// device ([`Self::role_routes_on_device`]): refused before it is sent
+    /// when that route could leave the device now.
+    pub(crate) fn admit_role_on_device(
+        &self,
+        vault: &Vault,
+        role: ModelRole,
+        request: oneiron::LlmRequest,
+    ) -> Result<RoleCall, RoleRefusal> {
+        self.runtime.admit_role_on_device(vault, role, request)
+    }
+
     /// A run that declares nothing on `meter` (a chat turn's line), with this
     /// server's run receipts.
     pub(crate) fn undeclared_run(

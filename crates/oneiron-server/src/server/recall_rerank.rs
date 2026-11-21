@@ -9,11 +9,17 @@
 //! its words and the share the reranker's template adds to it
 //! (`[models.recall] rerank_pair_template_units`, ARCH-0004
 //! `#rerank-door-open`), and a line that cannot cover them refuses the call
-//! unsent. A `[models]` reranker rung
-//! is reached over HTTP (`/v1/rerank`), never in this process nor over a
-//! supervised worker's native channel (I2-LOCAL names no native rerank), so
-//! this host does not run on the device (`RecallRerankHost::runs_on_device`):
-//! a row a device-only world keeps is sent to it empty. Each rung a call reaches reserves that price,
+//! unsent. A `[models]` reranker rung is reached over HTTP (`/v1/rerank`),
+//! or, on a managed llama.cpp worker row that listens on a Unix socket of
+//! its own (`listen = "unix"`), on that socket alone, each connection
+//! checked against the worker's supervised child. When the vault's model
+//! policy routes the reranker so that every rung and owner's fallback of its
+//! route is such a worker ([`AiHandle::role_routes_on_device`], I2-LOCAL,
+//! L9-15), this host runs on the device
+//! (`RecallRerankHost::runs_on_device`): it is sent the words of a row a
+//! device-only world keeps, and each of its calls is admitted on that
+//! on-device route alone, refused unsent once the route could leave the
+//! device. Any other host is sent such a row empty. Each rung a call reaches reserves that price,
 //! so a fallback rung goes out only while the line still covers the whole
 //! payload, and a rung that failed after it went out is charged what it may
 //! have billed. Each rung, the first too, goes out only while the
@@ -93,6 +99,11 @@ pub(super) struct ServedRerank {
     /// The recall serves a caller whose off-record session keeps no
     /// model-call record: each call's run names no rows (census L5-25).
     off_record: bool,
+    /// The vault's model policy routed the reranker on this device when the
+    /// door read it ([`AiHandle::role_routes_on_device`]): each call is
+    /// admitted on that route alone, and refused unsent once it could leave
+    /// the device.
+    on_device: bool,
 }
 
 impl SyncServer {
@@ -130,6 +141,9 @@ impl SyncServer {
             }
             _ => self.rerank_runtime.handle()?,
         };
+        let on_device = self
+            .ai
+            .role_routes_on_device(&self.vault, ModelRole::Reranker);
         let run_id = format!("recall-rerank:{:016x}", rand_core::OsRng.next_u64());
         let units = self.ai.rerank_budget_units();
         let reserve_units = oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS.min(units);
@@ -168,6 +182,7 @@ impl SyncServer {
             lease,
             runtime,
             off_record,
+            on_device,
         }))
     }
 }
@@ -175,6 +190,10 @@ impl SyncServer {
 impl RecallRerankHost for ServedRerank {
     fn lease(&self) -> &BudgetLease {
         &self.lease
+    }
+
+    fn runs_on_device(&self) -> bool {
+        self.on_device
     }
 
     fn score(
@@ -226,15 +245,22 @@ impl RecallRerankHost for ServedRerank {
         });
         let cancel = run.work_context().cancel;
         // The vault's model policy places the call: its manifest's binding
-        // for the role when it has one, the role's seat otherwise.
-        let call = self
-            .ai
-            .admit_role(
+        // for the role when it has one, the role's seat otherwise. A host on
+        // the device takes the route that keeps the call there, or none.
+        let call = if self.on_device {
+            self.ai.admit_role_on_device(
+                &self.vault,
+                ModelRole::Reranker,
+                rerank_request(query, &texts, ModelLocality::OnDevice),
+            )
+        } else {
+            self.ai.admit_role(
                 &self.vault,
                 ModelRole::Reranker,
                 rerank_request(query, &texts, ModelLocality::OwnServer),
             )
-            .map_err(|refusal| unavailable(&format!("the reranker call was refused: {refusal}")))?;
+        }
+        .map_err(|refusal| unavailable(&format!("the reranker call was refused: {refusal}")))?;
         let model = call.request.model.clone();
         let may_send = || egress.holds();
         let line = Arc::new(BatchLine {
