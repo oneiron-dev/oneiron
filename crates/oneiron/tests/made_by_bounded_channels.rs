@@ -649,10 +649,11 @@ fn a_call_the_nearest_rows_match_keeps_its_nearest_row() {
 /// One live, UserStated claim by a human writer about a person, written
 /// through the public batch (no birth stamp), as
 /// `tests/vault_embedding_spaces_doors.rs` writes it, occurring over
-/// `occurred` and learned now. A claim's read-side access factor halves with
-/// its age down to `ACCESS_FACTOR_FLOOR` (0.05) while a PERSON row keeps 1.0,
-/// so a claim learned in 1970 scores at that floor, below every concluded
-/// row, and no unsliced call ranks it first.
+/// `occurred` and learned now. The blend reads a row's learned time twice:
+/// as its recency, and, for a claim alone, as an access factor that halves
+/// with age down to `ACCESS_FACTOR_FLOOR` (0.05) while a PERSON row keeps
+/// 1.0. A claim learned in 1970 loses on both, so no unsliced call ranks it
+/// above the concluded rows.
 fn put_stated_claim(vault: &Vault, occurred: TimeRange) -> EntityId {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
