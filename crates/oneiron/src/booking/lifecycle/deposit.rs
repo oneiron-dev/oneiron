@@ -48,7 +48,6 @@ mod home_fence;
 mod refund;
 mod settle;
 
-pub(crate) use self::held::note_unattributed_cancel_in_txn;
 pub(super) use self::held::{
     HeldDeposit, HeldDepositKind, held_deposit_in_txn, unattributed_cancel_sequence_in_txn,
 };
@@ -169,15 +168,19 @@ pub(super) struct DepositRow {
     /// with no write marker as the owner's own while this deposit was held
     /// (BK-ECHO-UNMARKED-SAME-SHAPE-COPY = C): a host's cancel at its
     /// SEQUENCE would read the same, so the owner's line names it as a
-    /// cancel Oneiron cannot attribute. Unset on every other row.
+    /// cancel Oneiron cannot attribute. Unset on every other row, and set by
+    /// no writer since the replay records it as a synced claim on the EVENT
+    /// (FIX [BK-REPLAY-NOTE-NOT-CARRIED-TO-NEW-HOME]); a row noted before
+    /// keeps its note.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     unattributed_cancel: Option<UnattributedCancel>,
     updated_at: u64,
 }
 
 /// The first replay that read an unmarked stored copy as the owner's
-/// cancelled write while a deposit was held
-/// ([`note_unattributed_cancel_in_txn`]).
+/// cancelled write while a deposit was held: a row noted before the replay's
+/// evidence became a synced claim, or the claim as the deposit's node reads
+/// it (`held::unattributed_cancel_in_txn`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct UnattributedCancel {

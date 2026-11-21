@@ -4,10 +4,8 @@
 //! and the owner's line on the booking card read it from the one rule here
 //! ([`held_of`]), so the line shows exactly when the return moves money.
 
-use super::{
-    DEPOSIT, DEPOSIT_BOOKING, DepositRow, DepositState, UnattributedCancel, booking_key,
-    put_deposit,
-};
+use super::home_fence::settles_deposits_here;
+use super::{DEPOSIT, DEPOSIT_BOOKING, DepositRow, DepositState, UnattributedCancel, booking_key};
 use crate::error::{Error, Result};
 use crate::{EntityId, Vault};
 
@@ -35,7 +33,7 @@ pub(in crate::booking::lifecycle) struct HeldDeposit {
     /// The terms' currency, ISO 4217 lowercase.
     pub(in crate::booking::lifecycle) currency: String,
     /// When a cancel Oneiron cannot attribute was first noted on it
-    /// ([`note_unattributed_cancel_in_txn`]); `None` while none was.
+    /// ([`unattributed_cancel_in_txn`]); `None` while none was.
     pub(in crate::booking::lifecycle) unattributed_cancel_at: Option<u64>,
 }
 
@@ -90,18 +88,22 @@ pub(in crate::booking::lifecycle) fn held_deposit_in_txn(
     let Some(row) = DEPOSIT.get(&vault.store, rtxn, &link.deposit_key)? else {
         return Ok(None);
     };
-    Ok(held_of(&row).map(|(kind, amount_minor)| HeldDeposit {
+    let Some((kind, amount_minor)) = held_of(&row) else {
+        return Ok(None);
+    };
+    Ok(Some(HeldDeposit {
         kind,
         amount_minor,
         currency: row.terms.currency.clone(),
-        unattributed_cancel_at: row.unattributed_cancel.map(|noted| noted.noted_at),
+        unattributed_cancel_at: unattributed_cancel_in_txn(vault, rtxn, event_ref, &row)?
+            .map(|noted| noted.noted_at),
     }))
 }
 
 /// The SEQUENCE of the replay proof that noted a cancel Oneiron cannot
 /// attribute on the deposit of the booking `event_ref`
-/// ([`note_unattributed_cancel_in_txn`]), read in `rtxn`; `None` for a
-/// booking this node holds no deposit for, or one with no such note.
+/// ([`unattributed_cancel_in_txn`]), read in `rtxn`; `None` for a booking
+/// this node holds no deposit for, or one with no such note.
 ///
 /// # Errors
 ///
@@ -114,59 +116,51 @@ pub(in crate::booking::lifecycle) fn unattributed_cancel_sequence_in_txn(
     let Some(link) = DEPOSIT_BOOKING.get(&vault.store, rtxn, &booking_key(event_ref))? else {
         return Ok(None);
     };
-    Ok(DEPOSIT
-        .get(&vault.store, rtxn, &link.deposit_key)?
-        .and_then(|row| row.unattributed_cancel)
-        .map(|noted| noted.sequence))
+    let Some(row) = DEPOSIT.get(&vault.store, rtxn, &link.deposit_key)? else {
+        return Ok(None);
+    };
+    Ok(unattributed_cancel_in_txn(vault, rtxn, event_ref, &row)?.map(|noted| noted.sequence))
 }
 
-/// Records, in the calendar writer `wtxn`, that a seat's replay of the
-/// owner's cancelled write of the booking `event_ref` at `sequence` read a
-/// stored copy with no write marker as the owner's own
-/// (BK-ECHO-UNMARKED-SAME-SHAPE-COPY = C, lead 21 Nov 04:3x): the deposit
-/// stays as that write decides, and a host's cancel at that SEQUENCE reads
-/// the same, so the owner's line asks the owner to refund by hand, dated
-/// `now`. Only a deposit a host cancel would move (a capture still due, or
-/// captured) is marked, and only once; an EVENT with no deposit is left
-/// alone.
+/// The first replay of the owner's cancelled write of the booking
+/// `event_ref` that read a stored copy with no write marker as the owner's
+/// own while `row`, its deposit, was held (BK-ECHO-UNMARKED-SAME-SHAPE-COPY
+/// = C): the deposit stays as that write decides, and a host's cancel at
+/// that SEQUENCE reads the same, so the owner's line asks the owner to refund
+/// by hand, dated by the proof.
 ///
-/// The row is written through the deposits' one writer, so the home-move
-/// fence holds here too (review round 2 of #10058, FIX
-/// [BK-LIFECYCLE-ROWS-NOT-CARRIED-BY-HOME-MOVE]): a node that froze its
-/// booking rows for a move writes no note on their history. It refuses, the
-/// replay's proof writer drops whole, and the outbox keeps the proof owed, so
-/// a later write or pull of the seat proves it again; it lands here once a
-/// cancelled move gives the rows back.
-///
-/// # Errors
-///
-/// Storage errors; a refusal on a node that froze its booking rows.
-pub(crate) fn note_unattributed_cancel_in_txn(
+/// A row noted before the replay's evidence became a claim keeps its own
+/// note (stored change: keep). Otherwise the seat's replay proof recorded it
+/// as a synced claim on the EVENT (FIX [BK-REPLAY-NOTE-NOT-CARRIED-TO-NEW-HOME],
+/// BK-REPLAY-NOTE-DELIVERY = A), read only where this node holds the live
+/// deposit, so the note reaches the new home after a booking home move, and
+/// only while a host cancel would move the deposit: a capture still due, or
+/// captured. The booking names its deposit from its confirm on, in the
+/// commit where its capture falls due, and a deposit's state only moves on
+/// from there, so a deposit that stands so now stood so at the proof.
+fn unattributed_cancel_in_txn(
     vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
+    rtxn: &heed::RoTxn<'_>,
     event_ref: &EntityId,
-    sequence: u32,
-    now: u64,
-) -> Result<()> {
-    let Some(link) = DEPOSIT_BOOKING.get(&vault.store, &*wtxn, &booking_key(event_ref))? else {
-        return Ok(());
-    };
-    let Some(mut row) = DEPOSIT.get(&vault.store, &*wtxn, &link.deposit_key)? else {
-        return Ok(());
-    };
-    if row.unattributed_cancel.is_some()
-        || !matches!(
-            row.state,
-            DepositState::CaptureDue { .. } | DepositState::Captured { .. }
-        )
-    {
-        return Ok(());
+    row: &DepositRow,
+) -> Result<Option<UnattributedCancel>> {
+    if row.unattributed_cancel.is_some() {
+        return Ok(row.unattributed_cancel);
     }
-    row.unattributed_cancel = Some(UnattributedCancel {
-        sequence,
-        noted_at: now,
-    });
-    row.updated_at = now;
-    put_deposit(vault, wtxn, &link.deposit_key, &row)
-        .map_err(|error| Error::InvalidConfig(error.to_string()))
+    if !matches!(
+        row.state,
+        DepositState::CaptureDue { .. } | DepositState::Captured { .. }
+    ) || !settles_deposits_here(vault, rtxn)
+        .map_err(|error| Error::InvalidConfig(error.to_string()))?
+    {
+        return Ok(None);
+    }
+    Ok(
+        crate::calendar::connectors::replay_cancel_evidence_in_txn(vault, rtxn, event_ref)?.map(
+            |evidence| UnattributedCancel {
+                sequence: evidence.sequence,
+                noted_at: evidence.proved_at,
+            },
+        ),
+    )
 }
