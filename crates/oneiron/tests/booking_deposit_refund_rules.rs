@@ -3201,8 +3201,11 @@ fn a_kept_booking_handle_opens_its_card_on_a_later_day() {
 // carries no deposit, because the emergency cancel gave it back whole; the
 // owner's card of that booking says so. The line names no owner: in a shared
 // vault every live owner reads the card, and the emergency cancel may be
-// another owner's (review round 1 of #10073). Each card is read through the
-// verbs by name, so the pre-fix head builds these tests: its red is an assert.
+// another owner's (review round 1 of #10073). Nor does it say which act
+// refunded or released the deposit, or when: the settle may find it refunded
+// by hand in the Stripe dashboard before the emergency cancel (review round 2
+// of #10073). Each card is read through the verbs by name, so the pre-fix
+// head builds these tests: its red is an assert.
 
 /// The owner cancels `booked`, which starts at `hour`, in a BK-09 emergency
 /// at `now`, before its start, with its proposals delivered; then the
@@ -3300,9 +3303,10 @@ fn booking_label_utc(start: u64) -> String {
 
 /// A captured deposit: the owner's emergency cancel owes it back whole, the
 /// visitor picks one of its proposals, and the booking stands confirmed
-/// again with no deposit. Its card says the refund from the emergency cancel
-/// is pending, then, once the provider refunded it, that no deposit is held
-/// because the emergency cancel refunded it. It offers no Return deposit.
+/// again with no deposit. Its card says the refund of the deposit from
+/// before the emergency cancel is pending, then, once the provider refunded
+/// it, that no deposit is held and that deposit is refunded. It offers no
+/// Return deposit.
 #[test]
 fn a_booking_picked_again_after_an_emergency_cancel_says_its_deposit_was_refunded() {
     let clock = ManualClock::new(NOW);
@@ -3329,7 +3333,8 @@ fn a_booking_picked_again_after_an_emergency_cancel_says_its_deposit_was_refunde
         serde_json::json!({
             "returned": "refund_pending",
             "line": format!(
-                "{label}: no new deposit held; the refund from the emergency cancel is pending."
+                "{label}: no new deposit held; the refund of the deposit from before the \
+                 emergency cancel is pending."
             ),
         }),
         "{card}"
@@ -3355,16 +3360,19 @@ fn a_booking_picked_again_after_an_emergency_cancel_says_its_deposit_was_refunde
         card["emergency_return"],
         serde_json::json!({
             "returned": "refunded",
-            "line": format!("{label}: no deposit held (refunded at the emergency cancel)."),
+            "line": format!(
+                "{label}: no deposit held; the deposit from before the emergency cancel is \
+                 refunded."
+            ),
         }),
         "{card}"
     );
 }
 
 /// A deposit still to capture: the owner's emergency cancel releases it,
-/// and the card of the booking the visitor picks again says the release is
-/// pending, then that no deposit is held because the emergency cancel
-/// released it.
+/// and the card of the booking the visitor picks again says the release of
+/// the deposit from before the emergency cancel is pending, then that no
+/// deposit is held and that deposit is released.
 #[test]
 fn a_booking_picked_again_after_an_emergency_cancel_says_its_deposit_was_released() {
     let clock = ManualClock::new(NOW);
@@ -3394,7 +3402,8 @@ fn a_booking_picked_again_after_an_emergency_cancel_says_its_deposit_was_release
         serde_json::json!({
             "returned": "release_pending",
             "line": format!(
-                "{label}: no new deposit held; the release from the emergency cancel is pending."
+                "{label}: no new deposit held; the release of the deposit from before the \
+                 emergency cancel is pending."
             ),
         }),
         "{card}"
@@ -3415,7 +3424,10 @@ fn a_booking_picked_again_after_an_emergency_cancel_says_its_deposit_was_release
         card["emergency_return"],
         serde_json::json!({
             "returned": "released",
-            "line": format!("{label}: no deposit held (released at the emergency cancel)."),
+            "line": format!(
+                "{label}: no deposit held; the deposit from before the emergency cancel is \
+                 released."
+            ),
         }),
         "{card}"
     );
