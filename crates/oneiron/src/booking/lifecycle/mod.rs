@@ -58,6 +58,8 @@ mod door;
 mod emergency;
 mod feed_move;
 mod hold_source;
+#[cfg(feature = "sync")]
+pub(crate) mod home_rows;
 mod occurrence;
 mod owner_card;
 mod passport;
@@ -88,8 +90,8 @@ pub use self::deposit::{
     DepositProviderEventKind, DepositProviderEventOutcome, DepositProviderFailure,
     DepositSettleMove, DepositSettleRequest, DepositSettleStep, DepositSettlementPort,
     DepositState, begin_deposit_checkout, booking_deposit_for_event, booking_deposit_for_payment,
-    booking_deposit_for_session_hold, record_deposit_provider_event,
-    run_booking_deposit_settlement, settle_booking_deposit,
+    booking_deposit_for_session_hold, check_deposit_checkout_admitted,
+    record_deposit_provider_event, run_booking_deposit_settlement, settle_booking_deposit,
 };
 pub(crate) use self::deposit::{
     note_unattributed_cancel_in_txn, refund_booking_deposit_as_owner, refund_deposit_on_host_cancel,
@@ -140,6 +142,8 @@ pub(super) use self::emergency::{
     admit_emergency_pick, commit_emergency_item, emergency_current_revision_in,
     pick_emergency_item, read_emergency_pick,
 };
+// FIX [BK-EMERGENCY-ROWS-NOT-CARRIED-BY-HOME-MOVE]: the emergency writers' home-move fence.
+pub(super) use self::door::holds_booking_rows_in_txn;
 pub(super) use self::storage::booking_writer;
 pub(crate) use self::token::hex_lower;
 pub(super) use self::token::{digest_with, live_hold_in_txn, mint_raw_token};

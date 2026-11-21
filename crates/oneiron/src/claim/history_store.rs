@@ -578,6 +578,25 @@ pub(crate) fn machine_history_indexed(
         .is_some())
 }
 
+/// The signed history controls [`retire_machine_history_for_delete`] retires
+/// with `target`: every control the target index names while the
+/// authenticated pin is present. `None` when no pin is present, so an erase
+/// retires nothing.
+pub(crate) fn machine_history_ids_retired_by_delete(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    target: EntityId,
+) -> Result<Option<Vec<EntityId>>> {
+    if store
+        .vault_meta
+        .get(txn, &super::history_projection::pin_key(target))?
+        .is_none()
+    {
+        return Ok(None);
+    }
+    machine_history_ids_for_target(store, txn, target).map(Some)
+}
+
 /// A local erasure of a MACHINE claim takes its signed history with it, as
 /// the controls embed the born content: this drops the pin, the target index
 /// and a host move's carry record, and returns the controls, which the caller
@@ -590,12 +609,12 @@ pub(crate) fn retire_machine_history_for_delete(
     // A carry names the history the move carried; no later birth at this id
     // inherits it.
     super::history_projection::CARRY.delete(store, txn, &target)?;
-    let pin = super::history_projection::pin_key(target);
-    if store.vault_meta.get(txn, &pin)?.is_none() {
+    let Some(controls) = machine_history_ids_retired_by_delete(store, txn, target)? else {
         return Ok(Vec::new());
-    }
-    let controls = machine_history_ids_for_target(store, txn, target)?;
-    store.vault_meta.delete(txn, &pin)?;
+    };
+    store
+        .vault_meta
+        .delete(txn, &super::history_projection::pin_key(target))?;
     for control in &controls {
         let mut key = target_prefix(target);
         key.extend_from_slice(control.as_bytes());

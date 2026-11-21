@@ -167,6 +167,18 @@ struct Known {
     fingerprint: [u8; 32],
     origin: ValueOrigin,
     handle: String,
+    /// The custody slot its holder's entry of these bytes is held at (FIX
+    /// ERASED-IDENTITY-ROTATION-GENERATION): a holder's slots only grow and
+    /// one holder's same bytes keep one slot, so a value its holder took
+    /// later always holds a higher one. 0 for a value no custody history
+    /// keeps (a room's kept secret, a person's print); for bytes read both
+    /// ways, the lower.
+    slot: u64,
+    /// The highest slot among the entries these bytes were read from: what
+    /// [`KnownValues::held_slot`] reads, so bytes read from history and
+    /// from a room too never pin their record below its history (blind
+    /// review round 1 of #10138).
+    newest_slot: u64,
 }
 
 impl Drop for Known {
@@ -249,8 +261,8 @@ impl KnownValues {
             let Some(handle) = handle_of(custody)? else {
                 continue;
             };
-            for entry in entries {
-                values.push((entry, ValueOrigin::Custody(*custody), handle.clone()));
+            for (slot, entry) in entries {
+                values.push((entry, *slot, ValueOrigin::Custody(*custody), handle.clone()));
             }
         }
         Self::of_entries(&history.master, values)
@@ -288,13 +300,13 @@ impl KnownValues {
         custody: &EntityId,
         generations: &[u32],
     ) -> Result<Option<Self>> {
-        let Some((master, entries)) = store.known_entries_for_in_writer(wtxn, custody)? else {
+        let Some((master, entries)) = store.known_slot_entries_for_in_writer(wtxn, custody)? else {
             return Ok(None);
         };
-        let entries: Vec<KnownEntry> = entries
+        let entries: Vec<(u64, KnownEntry)> = entries
             .into_iter()
-            .filter(|(generation, _)| generations.contains(generation))
-            .map(|(_, entry)| entry)
+            .filter(|(generation, _, _)| generations.contains(generation))
+            .map(|(_, slot, entry)| (slot, entry))
             .collect();
         if entries.is_empty() {
             return Ok(None);
@@ -325,13 +337,14 @@ impl KnownValues {
         let mut master = None;
         let mut holders = Vec::with_capacity(bound.len());
         for (custody, generation) in bound {
-            let Some((held, entries)) = store.known_entries_for_in_writer(wtxn, custody)? else {
+            let Some((held, entries)) = store.known_slot_entries_for_in_writer(wtxn, custody)?
+            else {
                 return Ok(None);
             };
-            let entries: Vec<KnownEntry> = entries
+            let entries: Vec<(u64, KnownEntry)> = entries
                 .into_iter()
-                .filter(|(at, _)| at == generation)
-                .map(|(_, entry)| entry)
+                .filter(|(at, _, _)| at == generation)
+                .map(|(_, slot, entry)| (slot, entry))
                 .collect();
             if entries.is_empty() {
                 return Ok(None);

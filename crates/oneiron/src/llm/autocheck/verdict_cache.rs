@@ -59,7 +59,10 @@ impl VerdictCache {
             return outcome.clone();
         }
         let outcome = decisions.check(candidate, &rungs, due).normalized();
-        if outcome != AutoCheckOutcome::Unavailable {
+        // A hold that started or ended while the ladder ran leaves the verdict uncached.
+        if outcome != AutoCheckOutcome::Unavailable
+            && decisions.verdict_key(candidate, &rungs) == Some(key)
+        {
             self.keep(key, outcome.clone(), now);
         }
         outcome
@@ -95,9 +98,12 @@ impl AutoCheckDecisions {
     /// state the ladder reads, and the hash of the effective policy that
     /// decides it (the question's id and version, the dial, the band row in
     /// force and its version, the think and person rows' versions, the
-    /// calibrated model, the pin of every rung in `rungs` and whether the
-    /// candidate's world kept them on this device). None when either does
-    /// not encode: that check is not cached.
+    /// calibrated model, the pin of every rung in `rungs`, whether its
+    /// vault's model manifest holds it, and whether the candidate's world kept
+    /// them on this device). A manifest change that holds or frees a rung is a
+    /// new policy, so it never meets a verdict that rung gave or could not
+    /// give. None when either does not encode, or a hold cannot be read: that
+    /// check is not cached.
     fn verdict_key(
         &self,
         candidate: &AutoCheckCandidate<'_>,
@@ -117,16 +123,23 @@ impl AutoCheckDecisions {
             .resolve(&question, Reversibility::OutboundEffect, self.dial.band)
             .ok()?;
         let ladder = &rungs.ladder;
-        let pins: Vec<_> = [
+        let slots = [
             ladder.rule,
             ladder.local,
             ladder.system_one,
+            ladder.precision,
             ladder.escalation,
             ladder.big,
-        ]
-        .into_iter()
-        .map(|slot| slot.map(|provider| provider.pin()))
-        .collect();
+        ];
+        let pins: Vec<_> = slots
+            .iter()
+            .map(|slot| slot.map(|provider| provider.pin()))
+            .collect();
+        let held = slots
+            .iter()
+            .map(|slot| slot.map(|provider| provider.held()).transpose())
+            .collect::<crate::Result<Vec<_>>>()
+            .ok()?;
         let policy = serde_json::to_vec(&json!({
             "question": question.id.to_hex(),
             "question_version": question.version,
@@ -136,6 +149,7 @@ impl AutoCheckDecisions {
             "person": self.bands.person_threshold().map(|row| row.version),
             "calibrated": self.calibrated,
             "pins": pins,
+            "held": held,
             "human_pin": ladder.human_pin,
             "kept_on_device": rungs.kept_on_device,
         }))

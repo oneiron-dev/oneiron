@@ -83,6 +83,7 @@ use oneiron::authority::{
     encode_authority_log_entry_body,
 };
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::error::{OwnerPresenceRefusal, RecordError};
 use oneiron::federation::{FederationGrantRole, InitialSharedMember};
 use oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED;
 use oneiron::recovery::{
@@ -101,7 +102,10 @@ use oneiron::world_keys::{
 use oneiron::{
     EdgeActorClass, EntityId, ErrorKind, HostingPrivacyPosture, TimeRange, Vault, VaultConfig,
 };
-use oneiron_keystore::{DeviceKeystore, KeystoreSlot, MemoryKeystore, SlotKind};
+use oneiron_keystore::{
+    DeviceKeystore, KeystoreSlot, ManualPresenceClock, MemoryKeystore, PresenceError, PresenceGate,
+    PresenceWindow, ScriptedPresence, SlotKind,
+};
 use oneiron_store::ports::manual_clock::ManualClock;
 
 /// The instant every fixture opens at.
@@ -2842,4 +2846,60 @@ fn a_wait_report_the_box_refuses_answers_its_error() {
         .vault
         .report_recovery_wait_to_box(&NoRecoveryBox)
         .expect("no box: nothing to report");
+}
+
+/// A declined confirm at a box recovery that would wait holds nothing: the
+/// hold arm asks for the person at this device before it readies anything,
+/// as the vouch arm does (OWNER-KEY-PRESENCE = B), so the refusal writes no
+/// row and leaves no seed of R in a slot. With the confirm given, the same
+/// call holds.
+#[test]
+fn a_declined_confirm_holds_nothing_and_a_given_one_holds() {
+    let fixture = fixture();
+    let lost_key = key_of(&fixture.enrol_device_key(LOST_KEY_SEED));
+    let new_key = SigningKey::from_bytes(&[NEW_KEY_SEED; 32]);
+    let presence = Arc::new(ScriptedPresence::new([
+        Err(PresenceError::Declined),
+        Ok(()),
+    ]));
+    let window = PresenceWindow::new(ManualPresenceClock::new(1_000_000, 1_000_000));
+    fixture
+        .vault
+        .install_presence_gate(Arc::new(PresenceGate::new(presence.clone(), window)));
+    let rows = fixture.history().len();
+    let recover = || {
+        fixture.recover_wait(
+            WAIT,
+            fixture.released_material(0),
+            RootSuccessor::Device(fixture.enrollment(&new_key)),
+            std::slice::from_ref(&lost_key),
+        )
+    };
+
+    let refused = recover();
+    assert!(
+        matches!(
+            refused,
+            Err(oneiron::Error::Record(RecordError::OwnerPresenceRequired {
+                here: OwnerPresenceRefusal::Declined
+            }))
+        ),
+        "a declined confirm refuses the box recovery's hold: {refused:?}"
+    );
+    assert_eq!(presence.prompts(), 1, "the hold arm showed one prompt");
+    assert_eq!(fixture.history().len(), rows, "the refusal writes no row");
+    assert!(fixture.holds().is_empty(), "no hold was written");
+    assert!(
+        !fixture.slot_present(&new_key.verifying_key().to_bytes()),
+        "no seed of R went to a slot"
+    );
+
+    let (hold, lands_at) = held(recover().expect("with the confirm given, the box recovery holds"));
+    assert_eq!(presence.prompts(), 2, "the second call asked again");
+    assert_eq!(fixture.history().len(), rows + 1, "one hold row");
+    assert_eq!(fixture.hold_view(&hold).lands_at, lands_at);
+    assert!(
+        fixture.slot_present(&new_key.verifying_key().to_bytes()),
+        "this install keeps R's seed for the hold"
+    );
 }
