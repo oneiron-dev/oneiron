@@ -289,14 +289,15 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_runner/maintenance/mod.rs` | src | s | 5 mod | — | — |
 | `src/dreamer_runner/maintenance/representation/mod.rs` | src | s | 1 struct | RepresentationSourceRef | Moved from `crates/oneiron/src/dreamer_runner/maintenance/representation/mod.rs` (lib split W2: wire types… |
 | `src/dreamer_runner/maintenance/stewardship.rs` | src | s | 1 struct · 1 fn | StewardshipDraftRoute | Moved from `crates/oneiron/src/dreamer_runner/maintenance/stewardship.rs` (lib split W2: wire types below… |
-| `src/dreamer_runner/mod.rs` | src | s | 5 mod · 51 re-export | — | — |
+| `src/dreamer_runner/mod.rs` | src | s | 5 mod · 55 re-export | — | — |
 | `src/dreamer_runner/observation.rs` | src | s | 6 struct · 1 enum | WakeDeferredJob, WakeOutcomeState, WakeOutcomeView, WakeParkedJob, WakeRecipeJobView, WakeSettlementRequest, WakeSettlementsRequest | Moved from `crates/oneiron/src/dreamer_runner/observation.rs` (lib split W2: wire types below the lib) |
 | `src/dreamer_runner/owner_doors.rs` | src | s | 10 struct · 1 fn | ConsolidationHomeCandidate, ConsolidationHomeNode, ConsolidationHomePickHead, ConsolidationHomePickReceipt, ConsolidationHomePickRequest, ConsolidationHomeView, ConsolidationLineageRequest, ConsolidationLineageView +2 | Moved from `crates/oneiron/src/dreamer_runner/owner_doors.rs` (lib split W2: wire types below the lib) |
-| `src/dreamer_runner/program/mod.rs` | src | s | 4 mod · 39 re-export | — | — |
+| `src/dreamer_runner/program/mod.rs` | src | s | 5 mod · 43 re-export | — | — |
 | `src/dreamer_runner/program/read/mod.rs` | src | s | 1 mod · 29 re-export | — | — |
 | `src/dreamer_runner/program/read/views.rs` | src | m | 24 struct · 5 enum | OwedWakeHoldView, PausedTurnProgramItem, PausedTurnProgramsRequest, PausedTurnProgramsView, ProgramAdmissionOutcomeView, ProgramCheckpointCallView, ProgramCheckpointConsentView, ProgramCheckpointHeadView +21 | Moved from `crates/oneiron/src/dreamer_runner/program/read/views.rs` (lib split W2: wire types below the lib) |
 | `src/dreamer_runner/program/rebind.rs` | src | s | 2 struct | TurnProgramRebindReceipt, TurnProgramRebindRequest | Moved from `crates/oneiron/src/dreamer_runner/program/rebind.rs` (lib split W2: wire types below the lib) |
 | `src/dreamer_runner/program/release.rs` | src | s | 2 struct · 1 enum | ProgramHoldReleaseAction, ProgramHoldReleaseView, ReleaseTurnProgramHoldRequest | Moved from `crates/oneiron/src/dreamer_runner/program/release.rs` (lib split W2: wire types below the lib) |
+| `src/dreamer_runner/program/resume_paused.rs` | src | s | 4 struct | ResumePausedTurnProgramItem, ResumePausedTurnProgramsPreview, ResumePausedTurnProgramsRequest, ResumedTurnPrograms | The wire shapes of the owner's resume of paused turn programs (`vault.turn_programs.resume`, FIX… |
 | `src/dreamer_runner/program/types.rs` | src | s | 4 struct · 2 enum · 5 fn · 2 const · 2 crate-vis | ArmTurnProgram, DisarmTurnProgram, OccurrenceKind, ProgramRecipePin, ProgramTrigger, TurnProgramRegistration | Moved from `crates/oneiron/src/dreamer_runner/program/types.rs` (lib split W2: wire types below the lib) |
 | `src/dreamer_wake/mod.rs` | src | s | 4 mod · 20 re-export | — | — |
 | `src/dreamer_wake/night_step.rs` | src | s | 1 fn | — | Moved from `crates/oneiron/src/dreamer_wake/night_step.rs` (lib split W1: wire types below the lib) |
