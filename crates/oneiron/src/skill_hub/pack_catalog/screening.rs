@@ -243,6 +243,37 @@ impl Vault {
     }
 }
 
+/// One listed connector tool the install screen keeps out, and the rule it
+/// tripped.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+pub struct SkippedConnectorTool {
+    /// The tool's listed name.
+    pub tool: String,
+    /// The rule it tripped and where, e.g.
+    /// `properties.limit.description: parameter-description injection`.
+    pub reason: String,
+}
+
+/// The pack install rules' verdict on a connector's listed tools, tool by
+/// tool (FIX SCREENING-PER-TOOL-SKIP).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ConnectorToolScreen {
+    /// A fault of the whole listing (no install policy, or a name listed
+    /// twice): no tool installs.
+    pub refused: Option<String>,
+    /// Each tool whose name, description or input schema trips a rule, or
+    /// whose schema does not resolve, in listed order. Every other listed
+    /// tool passes.
+    pub skipped: Vec<SkippedConnectorTool>,
+}
+impl ConnectorToolScreen {
+    /// The listed tool `name` passes: nothing refused the listing and the
+    /// tool is not skipped.
+    pub fn admits(&self, name: &str) -> bool {
+        self.refused.is_none() && !self.skipped.iter().any(|skip| skip.tool == name)
+    }
+}
+
 impl Vault {
     /// The pack install rules on a generic catalog connector's listed tools
     /// (OF-189): hidden instructions, zero-width, RTL and homoglyph
@@ -254,36 +285,85 @@ impl Vault {
         tools: &[PackObservedTool],
         holder: &str,
     ) -> Result<Option<String>> {
-        let txn = self.store.env.read_txn()?;
-        let resolution = crate::gate::resolve_policy_manifest(&self.store, &txn)?;
-        let Some(policy) = resolution.pack_install_policy() else {
-            return Ok(Some("pack install policy unavailable".into()));
+        let Some(rules) = self.connector_screen_rules(holder)? else {
+            return Ok(Some(POLICY_UNAVAILABLE.into()));
         };
-        let rules = policy.effective(holder);
         let mut seen = BTreeSet::new();
-        for PackObservedTool {
-            name,
-            description,
-            input_schema,
-        } in tools
-        {
-            if !seen.insert(name) {
-                return Ok(Some(format!("duplicate listed tool: {name}")));
+        for tool in tools {
+            if !seen.insert(&tool.name) {
+                return Ok(Some(format!("duplicate listed tool: {}", tool.name)));
             }
-            let resolved = match ResolvedToolSchema::parse(input_schema) {
-                Ok(schema) => schema,
-                Err(reason) => return Ok(Some(format!("tool {name}: {reason}"))),
-            };
-            if let Some(reason) = decoded_rule(name, &rules)
-                .or_else(|| decoded_rule(description, &rules))
-                .map(str::to_owned)
-                .or_else(|| screen_resolved_schema(&resolved, &rules))
-            {
-                return Ok(Some(format!("tool {name}: {reason}")));
+            if let Some(reason) = screen_listed_tool(tool, &rules) {
+                return Ok(Some(format!("tool {}: {reason}", tool.name)));
             }
         }
         Ok(None)
     }
+
+    /// The same rules as [`Vault::screen_connector_tools`], answered tool by
+    /// tool: a tripped tool is named in `skipped` and the rest pass
+    /// (FIX SCREENING-PER-TOOL-SKIP). Only a fault of the whole listing
+    /// refuses it all.
+    pub fn screen_connector_tools_each(
+        &self,
+        tools: &[PackObservedTool],
+        holder: &str,
+    ) -> Result<ConnectorToolScreen> {
+        let Some(rules) = self.connector_screen_rules(holder)? else {
+            return Ok(ConnectorToolScreen {
+                refused: Some(POLICY_UNAVAILABLE.into()),
+                skipped: Vec::new(),
+            });
+        };
+        let mut seen = BTreeSet::new();
+        let mut skipped = Vec::new();
+        for tool in tools {
+            if !seen.insert(&tool.name) {
+                return Ok(ConnectorToolScreen {
+                    refused: Some(format!("duplicate listed tool: {}", tool.name)),
+                    skipped: Vec::new(),
+                });
+            }
+            if let Some(reason) = screen_listed_tool(tool, &rules) {
+                skipped.push(SkippedConnectorTool {
+                    tool: tool.name.clone(),
+                    reason,
+                });
+            }
+        }
+        Ok(ConnectorToolScreen {
+            refused: None,
+            skipped,
+        })
+    }
+
+    /// The pack install rules in force for `holder`, `None` when the policy
+    /// manifest holds none.
+    fn connector_screen_rules(&self, holder: &str) -> Result<Option<EffectivePackInstallPolicy>> {
+        let txn = self.store.env.read_txn()?;
+        let resolution = crate::gate::resolve_policy_manifest(&self.store, &txn)?;
+        Ok(resolution
+            .pack_install_policy()
+            .map(|policy| policy.effective(holder)))
+    }
+}
+
+const POLICY_UNAVAILABLE: &str = "pack install policy unavailable";
+
+/// The first rule one listed tool trips, on its name, its description and
+/// its resolved input schema; `None` when it passes.
+fn screen_listed_tool(
+    tool: &PackObservedTool,
+    rules: &EffectivePackInstallPolicy,
+) -> Option<String> {
+    let resolved = match ResolvedToolSchema::parse(&tool.input_schema) {
+        Ok(schema) => schema,
+        Err(reason) => return Some(reason),
+    };
+    decoded_rule(&tool.name, rules)
+        .or_else(|| decoded_rule(&tool.description, rules))
+        .map(str::to_owned)
+        .or_else(|| screen_resolved_schema(&resolved, rules))
 }
 
 fn screen_resolved_schema(
