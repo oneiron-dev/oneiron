@@ -89,10 +89,12 @@ import argparse
 import base64
 import collections
 import hashlib
+import hmac
 import importlib.metadata
 import json
 import os
 import queue
+import secrets
 import socket
 import sys
 import threading
@@ -181,6 +183,17 @@ KV_ARITHMETIC_PARTS = ("fuse_projections", "fp16_prefill")
 # EnvironmentFile, would fuse projections that the identity and the snapshot
 # compatibility do not name.
 PROJECTION_FUSION_ENV = ("EXL3_MGEMM_K_THRESHOLD", "EXL3_MGEMM_N_THRESHOLD")
+# The prefix of exllamav3's own environment variables. exllamav3 reads many
+# that pick the target's kernels or arithmetic, in Python (EXL3_FUSED_SAMPLER,
+# EXL3_BC_ATTN, ...) and in the extension (EXL3_INT8_GEMV, EXL3_GEMV,
+# EXL3_GRAPHS, ...). The server names every one it inherits in its identity
+# (`exllamav3_environment`), not a list of known ones: a variable that changes
+# nothing costs a cache or snapshot miss, never a wrong reuse.
+EXLLAMAV3_ENV_PREFIX = "EXL3_"
+# The least key the inherited variables' digest takes, in bytes: a key file
+# shorter than this is refused, and a process without one draws this many
+# random bytes (`environment_key`).
+ENV_DIGEST_KEY_BYTES = 32
 # FP16 accumulation runs in a reconstructed prefill GEMM of at least this many
 # rows into an FP16 output (`install_fp16_prefill`).
 FP16_PREFILL_MIN_ROWS = 384
@@ -611,6 +624,69 @@ def set_projection_fusion(on):
     return replaced
 
 
+def exllamav3_environment(environ=None):
+    """The exllamav3 variables (EXLLAMAV3_ENV_PREFIX) in `environ` (the process environment by default) that no
+    switch owns, by name, sorted: every one but the fusion pair, which the fuse_projections switch sets or clears
+    (`set_projection_fusion`) and names in speed_parts. Taken at load, before the server sets any of its own."""
+    environ = os.environ if environ is None else environ
+    return {name: environ[name] for name in sorted(environ)
+            if name.startswith(EXLLAMAV3_ENV_PREFIX) and name not in PROJECTION_FUSION_ENV}
+
+
+def environment_key(path=None):
+    """The key of the inherited exllamav3 variables' digest (`environment_digest`): the bytes of the file at `path`
+    (`--exllamav3-env-key-file`; at least ENV_DIGEST_KEY_BYTES), which workers that exchange session snapshots
+    share, or, without one, ENV_DIGEST_KEY_BYTES random bytes of this process's own, so its digest matches no
+    other process's (a refused import or a cache miss, never a wrong reuse)."""
+    if path is None:
+        return secrets.token_bytes(ENV_DIGEST_KEY_BYTES)
+    with open(path, "rb") as f:
+        key = f.read()
+    if len(key) < ENV_DIGEST_KEY_BYTES:
+        raise ValueError(f"--exllamav3-env-key-file {path} holds {len(key)} bytes; "
+                         f"the key needs at least {ENV_DIGEST_KEY_BYTES}")
+    return key
+
+
+def environment_digest(variables, key):
+    """The HMAC-SHA-256 under `key` (`environment_key`) of `variables` (`exllamav3_environment`) as canonical JSON
+    (names sorted, compact separators), or None when there are none. Keyed, because the digest reaches the service
+    journal, every reply's execution mode and the snapshots' compatibility: a plain hash of a short value (a
+    six-digit pin) is found by hashing every candidate. The JSON is ASCII-escaped: a POSIX environment entry may
+    hold bytes that are not UTF-8, which `os.environ` decodes to lone surrogates that a strict UTF-8 encoding
+    refuses."""
+    if not variables:
+        return None
+    text = json.dumps(variables, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hmac.new(key, text.encode("ascii"), hashlib.sha256).hexdigest()
+
+
+def ascii_escaped(text):
+    """`text` with every character outside ASCII as a backslash escape, lone surrogates included, so a log line
+    prints under any stdout encoding."""
+    return text.encode("ascii", "backslashreplace").decode("ascii")
+
+
+def arithmetic_identity(parts, ext_digest=None, env_digest=None):
+    """What the server's identity names beyond the stock server's: the server-settings entries and the
+    kv_arithmetic list (session snapshot compatibility). The speed parts that are on are named in the settings
+    (`speed_parts`), and those in KV_ARITHMETIC_PARTS bind snapshots too. A rebuilt extension's digest
+    (`rebuilt_extension_digest`) and the digest of the inherited exllamav3 variables (`environment_digest`) can
+    change the target's arithmetic, so each binds both. Each is named only when present, so a server with none
+    keeps the identity and the snapshot compatibility it had before they existed."""
+    settings = {}
+    if any(parts.values()):
+        settings["speed_parts"] = sorted(name for name, on in parts.items() if on)
+    arithmetic = kv_arithmetic(parts)
+    if ext_digest:
+        settings["exllamav3_ext"] = ext_digest
+        arithmetic.append(f"exllamav3_ext={ext_digest}")
+    if env_digest:
+        settings["exllamav3_env"] = env_digest
+        arithmetic.append(f"exllamav3_env={env_digest}")
+    return settings, arithmetic
+
+
 def file_sha256(path):
     """The SHA-256 of the file at `path`, read in 16 MiB blocks (an extension module is about 230 MiB)."""
     digest = hashlib.sha256()
@@ -729,7 +805,19 @@ def load(args):
     parts = speed_parts(args, ring, args.draft_dir)
     replaced = set_projection_fusion(parts["fuse_projections"])
     if replaced:
-        print("FUSION_ENV_REPLACED " + " ".join(f"{name}={value}" for name, value in sorted(replaced.items())),
+        print("FUSION_ENV_REPLACED " + " ".join(f"{name}={ascii_escaped(value)}"
+                                                 for name, value in sorted(replaced.items())), flush=True)
+    # The exllamav3 variables this server inherited, taken before it sets any
+    # of its own (the draft ring sets EXL3_DEBUG_NO_DRAFT_DEFRAG): its
+    # identity and its snapshots' compatibility name their keyed digest. The
+    # log line names them without their values: an EnvironmentFile can hold a
+    # secret under the prefix, and stdout goes to the service journal.
+    inherited_env = exllamav3_environment()
+    env_key_file = getattr(args, "exllamav3_env_key_file", None)
+    env_digest = environment_digest(inherited_env, environment_key(env_key_file))
+    if env_digest:
+        print("EXL3_ENV " + " ".join(ascii_escaped(name) for name in inherited_env)
+              + f" hmac_sha256={env_digest} key={ascii_escaped(env_key_file) if env_key_file else 'process'}",
               flush=True)
     # A rebuilt exllamav3 extension (README, "GEMM FP16 accumulators"): None with the installed one.
     ext_digest = rebuilt_extension_digest(getattr(args, "exllamav3_ext_dir", None))
@@ -830,16 +918,11 @@ def load(args):
         cache_settings["draft_ring_pages"] = ring
     server_settings = {"context": args.context, "draft": draft is not None, "draft_tokens": depth,
                        "max_in_flight": batch}
-    if any(parts.values()):
-        # Only a server with a speed part on names them, so one with every part off keeps the identity it had
-        # before the parts existed.
-        server_settings["speed_parts"] = sorted(name for name, on in parts.items() if on)
-    arithmetic = kv_arithmetic(parts)
-    if ext_digest:
-        # A rebuilt extension changes the target's arithmetic (its GEMM accumulators): only a server that runs
-        # one names it, in its settings and in its snapshots' compatibility.
-        server_settings["exllamav3_ext"] = ext_digest
-        arithmetic.append(f"exllamav3_ext={ext_digest}")
+    # The speed parts on, a rebuilt extension (its GEMM accumulators) and the
+    # inherited exllamav3 variables: only a server that runs one names it, in
+    # its settings and in its snapshots' compatibility.
+    named, arithmetic = arithmetic_identity(parts, ext_digest, env_digest)
+    server_settings.update(named)
     identity = cache_usage.BackendIdentity(
         args.target_dir, template_source,
         cache_settings=cache_settings,
@@ -2349,6 +2432,11 @@ def main():
                    help="the directory of a rebuilt exllamav3_ext (build-exl3-ext.sh: FP16 GEMM accumulators on "
                         "sm_89), which must be first on PYTHONPATH; its SHA-256 joins the identity and the "
                         "snapshot compatibility (default: the extension installed with exllamav3)")
+    p.add_argument("--exllamav3-env-key-file", default=None,
+                   help=f"a file of at least {ENV_DIGEST_KEY_BYTES} random bytes, shared by the workers that "
+                        "exchange session snapshots: the key of the digest of the inherited EXL3_* variables in "
+                        "the identity and the snapshot compatibility (default: a random key of this process's "
+                        "own, so with such variables set its snapshots match no other process's)")
     p.add_argument("--default-max-tokens", type=int, default=4096,
                    help="the reply cap when a request names none; a request with a reasoning budget "
                         "gets that budget on top, so its answer keeps this room")

@@ -35,6 +35,10 @@ pub(crate) const SIDE_TABLE_DISPOSITIONS: &[(&str, ArchiveSideDisposition)] = &[
         "CAMPAIGN_COMPLIANCE_RECEIPT",
         ArchiveSideDisposition::Retained,
     ),
+    (
+        "CAMPAIGN_HOUSE_VOICE_GUIDE",
+        ArchiveSideDisposition::Retained,
+    ),
     ("CHECK_IN_RECEIPT", ArchiveSideDisposition::Retained),
     (
         "COACH_TOPOLOGY_AUDIT_INTENT",

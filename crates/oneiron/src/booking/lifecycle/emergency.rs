@@ -331,6 +331,12 @@ fn validate_emergency_proposals(
     Ok(())
 }
 
+/// The digest `token`'s pick row is keyed by (`EMERGENCY_PICK`): the one name the owner's copy
+/// of the apology gives a pick link (FIX [BK-EMERGENCY-APOLOGY-BLOB-HOLDS-RAW-PICK-TOKENS]).
+pub(in crate::booking) fn emergency_action_digest(token: &OpaqueLifecycleToken) -> [u8; 32] {
+    token_digest(token)
+}
+
 /// One released pick action per proposal, each row naming the item it picks
 /// for.
 fn mint_emergency_actions(

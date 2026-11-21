@@ -756,6 +756,50 @@ impl Memory<'_> {
         one_named_view(self.read_named_views_in_txn(lane, txn, known, &[target])?)
     }
 
+    /// [`Self::read_named_view`] as `vault.get` answers it
+    /// ([`Memory::get_entity_or_withheld_notice`]): where the read finds no
+    /// row at a live id, the withheld stub of a notice addressed to another
+    /// person that its sources alone withhold from the reading live owner
+    /// ([`ScopedRead::withheld_notice_in`]), judged in the read's own
+    /// snapshot and under its receipt. The stub's three times are the
+    /// notice's `created_at`: its envelope's `learned_at` moves on every
+    /// mark, which would tell when its recipient read it.
+    pub(super) fn read_named_view_or_withheld_notice(
+        &self,
+        lane: &ScopedRead<'_>,
+        target: ReadTargetSlot,
+    ) -> MemoryResult<ScopedReadResult<Option<EntityView>>> {
+        lane.persist_grant_clock()?;
+        let snapshot = self.lane_snapshot()?;
+        let read = one_named_view(self.read_named_views_in_txn(
+            lane,
+            snapshot.txn(),
+            snapshot.known(),
+            &[target],
+        )?)?;
+        if read.value.is_some() {
+            return Ok(read);
+        }
+        let Some((id, ReadMode::Live)) = target else {
+            return Ok(read);
+        };
+        let stub = lane
+            .withheld_notice_in(snapshot.txn(), id)?
+            .map(|notice| EntityView {
+                id_hex: notice.id.to_hex(),
+                short_ref: None,
+                kind: self
+                    .vault
+                    .entity_kind_name(crate::registry::ENTITY_TYPE_NOTIFICATION),
+                occurred_start: notice.created_at,
+                occurred_end: notice.created_at,
+                learned_at: notice.created_at,
+                body: Some(notice.stub_body()),
+                made_by: None,
+            });
+        Ok(read.map(|_| stub))
+    }
+
     /// A resolved live id as `get_entity` serves it, with admission, its
     /// narrowing receipt and the native view in the caller's snapshot.
     /// Prepare `lane` and persist its grant clock before opening `txn` with

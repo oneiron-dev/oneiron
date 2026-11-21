@@ -212,12 +212,14 @@ impl Vault {
         if !live {
             return Err(authority_refused(HOLD_NOT_LIVE));
         }
-        let actors_passkey = self
-            .enrolled_owner_passkeys_in_txn(txn)?
-            .into_iter()
-            .any(|listed| {
-                listed.owner == actor && AuthorityKey::P256(listed.public_key) == *passkey
-            });
+        // Every counted enrollment of the key, not the list's one row of it
+        // (REVIEW-10307 P1): another owner may enrol it on a sibling branch.
+        let actors_passkey = match passkey {
+            AuthorityKey::P256(key) => self
+                .live_owner_passkeys_in_txn(txn, actor)?
+                .contains_key(key),
+            AuthorityKey::Ed25519(_) => false,
+        };
         if !actors_passkey || !fold.roster.get(passkey).is_some_and(answers_recovery_holds) {
             return Err(authority_refused(PASSKEY_NOT_ACTORS));
         }

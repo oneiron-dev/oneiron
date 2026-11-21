@@ -21,7 +21,7 @@ use crate::lens::GeneratedUiCard;
 use crate::limit_ask::EngineLimit;
 use crate::model_decision::catalogue::IDENTITY_SETTLE;
 use crate::model_decision::{AnswerContract, DecisionAnswer, Reversibility};
-use crate::{Error, Result, Vault};
+use crate::{EntityId, Error, Result, Vault};
 
 impl Vault {
     /// Open asks the host decides now, act-now ones first, up to `limit`,
@@ -319,17 +319,17 @@ impl Vault {
             let hits = self.tagged_mentions_of_name(ask.kind, &ask.name)?;
             let txn = self.store.env.read_txn()?;
             let admit = admission::Admit::in_txn(read, &txn)?;
-            let mut newest = None;
+            let mut newest: Option<(EntityId, EntityId)> = None;
             for hit in hits {
                 if hit.turn > since
-                    && newest.is_none_or(|held| hit.turn > held)
+                    && newest.is_none_or(|(held, _)| hit.turn > held)
                     && admit.reads_source(&txn, &hit.turn, &hit.mention.message)?
                 {
-                    newest = Some(hit.turn);
+                    newest = Some((hit.turn, hit.mention.message));
                 }
             }
             drop(txn);
-            let Some(newest) = newest else {
+            let Some((newest, message)) = newest else {
                 continue;
             };
             let moved = self.with_write_txn_grouped(|txn| {
@@ -343,7 +343,9 @@ impl Vault {
                 current.surfaced_turn = Some(newest);
                 ASKS.put(&self.store, txn, &key, &current)?;
                 index::sync_ask_membership(&self.store, txn, &key, Some(&old), Some(&current))?;
-                notify_in_txn(self, txn, &key, &current, &newest, now)?;
+                // Each reader gets it only where their lane reads the later
+                // mention too: the Ask names its turn and conversation.
+                notify_in_txn(self, txn, &key, &current, (&newest, &message), now)?;
                 Ok(true)
             })?;
             sent += usize::from(moved);
@@ -403,6 +405,7 @@ impl Vault {
             Ok(IdentitySettled {
                 ask: key_hex(&key),
                 entity: entity.to_hex(),
+                proposed: false,
             })
         })
     }

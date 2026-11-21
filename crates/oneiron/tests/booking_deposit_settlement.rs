@@ -1676,6 +1676,66 @@ fn a_second_seat_s_cancelled_version_of_the_first_seat_s_unproven_replay_is_no_h
 }
 
 #[test]
+fn a_second_seat_s_host_cancel_after_the_first_seat_read_an_older_copy_refunds() {
+    // CAL-OUTBOX-ROW-OF-REMOVED-SEAT-HOLDS-PULLS: the owner's cancelled
+    // write never reaches the provider, and the host edits the live copy
+    // without raising its SEQUENCE. The first seat's replay is refused on
+    // that copy and its reconciliation read fails, so its row owes the proof
+    // of the stored copy, and the second seat holds back every cancelled
+    // version that may be the write's. The first seat's next pull, whose
+    // read began after the refusal, finds the copy below the staged
+    // SEQUENCE: another writer's, so the proof is owed no longer. The second
+    // seat's pull of the host's cancel at the staged SEQUENCE then lands:
+    // before the start, it refunds whole.
+    let fixture = Fixture::open(Some(two_hour_terms()));
+    fixture.enable_host_feed();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let second = seat.install_second_seat(&fixture.vault, "seat:host-second");
+    let (booked, live, start) = written_live_then_cancelled_elsewhere(
+        &fixture,
+        &seat,
+        b"second-seat-older-copy-after-unproven-replay",
+        "pi_second_seat_older_copy_after_unproven_replay",
+    );
+
+    seat.write_unsent(&fixture.vault, booked.calendar.event_ref, NOW + 150);
+    let staged = seat.staged_sequence(&fixture.vault, &booked.calendar.uid);
+    seat.replay_refused_unread(&fixture.vault, booked.calendar.event_ref, NOW + 170);
+    seat.pull(
+        &fixture.vault,
+        &[SeatChange::upsert(
+            &live,
+            start,
+            start + 30 * 60,
+            live.sequence,
+            false,
+        )],
+        NOW + 175,
+    )
+    .expect("seat pull");
+    second
+        .pull(
+            &fixture.vault,
+            &[SeatChange::upsert(
+                &live,
+                start,
+                start + 30 * 60,
+                staged,
+                true,
+            )],
+            NOW + 180,
+        )
+        .expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_second_seat_older_copy_after_unproven_replay"),
+        DepositState::RefundDue {
+            amount_minor: 4_000
+        },
+        "the second seat's host cancel after the first seat proved the copy foreign refunds whole"
+    );
+}
+
+#[test]
 fn a_second_seat_s_cancelled_version_of_a_masked_write_in_flight_is_no_host_cancel() {
     // CAL-SECOND-SEAT-CANCELLED-VERSION-MISSES-OTHER-SEAT-WRITE (review
     // round 1 of #10020, P1-2): as the write in flight above, but the
@@ -2950,10 +3010,10 @@ fn a_host_cancel_below_a_refused_replay_whose_proof_is_owed_refunds_by_its_first
     // Review round 1 of #10020: as above, but the refused replay's
     // reconciliation read fails, so its row owes the proof of the stored
     // copy. The host's cancellation sits below the SEQUENCE the write staged,
-    // so it is never the write's own copy and no pull proves anything from
-    // it: it must not wait for that proof. The next pull reads it as the
-    // host's cancel, dated by its first sighting, before the start, and it
-    // refunds whole.
+    // so it is never the write's own copy: it must not wait for that proof.
+    // The next pull, read after the refusal, proves the copy another
+    // writer's and reads the cancellation as the host's, dated by its first
+    // sighting, before the start, and it refunds whole.
     let fixture = Fixture::open(Some(two_hour_terms()));
     fixture.enable_host_feed();
     let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
@@ -3179,9 +3239,12 @@ fn a_stale_live_copy_read_while_a_replay_awaits_its_proof_keeps_the_deposit() {
     // Review round 1 of #9841: the provider stores the owner's cancelled
     // write, rewrites it, and the answer is lost; the replay is refused and
     // its reconciliation pull fails, so the proof waits for the seat's next
-    // pull. A pull read before the write landed then delivers the seat's
+    // pull. A pull whose read began before that refusal, and so may have
+    // read the resource before the write landed, then delivers the seat's
     // live copy at the earlier SEQUENCE: it proves nothing, and the proof
-    // still waits. The seat's report of the owner's own copy moves no money.
+    // still waits (CAL-OUTBOX-ROW-OF-REMOVED-SEAT-HOLDS-PULLS: only a read
+    // that began after the refusal proves such a copy another writer's).
+    // The seat's report of the owner's own copy moves no money.
     let fixture = Fixture::open(Some(two_hour_terms()));
     fixture.enable_host_feed();
     let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
@@ -3193,6 +3256,54 @@ fn a_stale_live_copy_read_while_a_replay_awaits_its_proof_keeps_the_deposit() {
     );
 
     let stored = seat.write_with_lost_answer(&fixture.vault, booked.calendar.event_ref, NOW + 150);
+    seat.pull_read_before_replay_refused_unread(
+        &fixture.vault,
+        &[SeatChange::upsert(
+            &live,
+            start,
+            start + 30 * 60,
+            live.sequence,
+            false,
+        )],
+        booked.calendar.event_ref,
+        NOW + 170,
+        NOW + 175,
+    )
+    .expect("seat pull");
+    seat.pull_rewritten_own_write(&fixture.vault, &live, stored, NOW + 180)
+        .expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_stale_live_before_proof"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "the seat's report of the owner's own copy after a stale live copy moves no money"
+    );
+}
+
+#[test]
+fn a_host_cancel_after_an_older_copy_read_after_an_unproven_replay_refunds() {
+    // CAL-OUTBOX-ROW-OF-REMOVED-SEAT-HOLDS-PULLS: the owner's cancelled
+    // write never reaches the provider, and the host edits the live copy
+    // without raising its SEQUENCE. The replay is refused on that copy and
+    // its reconciliation read fails, so the row owes the proof of the stored
+    // copy. The seat's next pull, whose read began after the refusal, finds
+    // the copy below the staged SEQUENCE: a refused write is never sent
+    // again, so that copy is another writer's and the proof is owed no
+    // longer. The host's later cancel at the staged SEQUENCE carries no
+    // write marker; it is the host's, before the start, and refunds whole.
+    let fixture = Fixture::open(Some(two_hour_terms()));
+    fixture.enable_host_feed();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let (booked, live, start) = written_live_then_cancelled_elsewhere(
+        &fixture,
+        &seat,
+        b"older-copy-after-unproven-replay",
+        "pi_older_copy_after_unproven_replay",
+    );
+
+    seat.write_unsent(&fixture.vault, booked.calendar.event_ref, NOW + 150);
+    let staged = seat.staged_sequence(&fixture.vault, &booked.calendar.uid);
     seat.replay_refused_unread(&fixture.vault, booked.calendar.event_ref, NOW + 170);
     seat.pull(
         &fixture.vault,
@@ -3206,14 +3317,24 @@ fn a_stale_live_copy_read_while_a_replay_awaits_its_proof_keeps_the_deposit() {
         NOW + 175,
     )
     .expect("seat pull");
-    seat.pull_rewritten_own_write(&fixture.vault, &live, stored, NOW + 180)
-        .expect("seat pull");
+    seat.pull(
+        &fixture.vault,
+        &[SeatChange::upsert(
+            &live,
+            start,
+            start + 30 * 60,
+            staged,
+            true,
+        )],
+        NOW + 180,
+    )
+    .expect("seat pull");
     assert_eq!(
-        state_of(&fixture, "pi_stale_live_before_proof"),
-        DepositState::Captured {
+        state_of(&fixture, "pi_older_copy_after_unproven_replay"),
+        DepositState::RefundDue {
             amount_minor: 4_000
         },
-        "the seat's report of the owner's own copy after a stale live copy moves no money"
+        "the host's cancel after an older copy read after the refusal refunds whole"
     );
 }
 
@@ -3680,4 +3801,357 @@ fn a_host_cancel_after_an_owner_write_replayed_over_its_own_marked_copy_refunds(
         },
         "the host's cancel on the seat the owner's write landed on refunds the whole deposit"
     );
+}
+
+/// The embedded owner calls `verb` by name.
+fn owner_call(
+    fixture: &Fixture,
+    verb: &str,
+    input: serde_json::Value,
+) -> Result<serde_json::Value, oneiron::memory::MemoryError> {
+    let (owner, _) = booking_host_seat_support::seat_owner(&fixture.vault);
+    oneiron::verbs::invoke(
+        &fixture.vault.memory(owner, oneiron::EdgeActorClass::Human),
+        verb,
+        input,
+    )
+}
+
+/// The booking card of `event`, as the owner opens the booking's row
+/// (`self.inbox.get`), as JSON.
+fn owner_card(fixture: &Fixture, event: &EntityId) -> serde_json::Value {
+    owner_call(
+        fixture,
+        "self.inbox.get",
+        serde_json::json!({ "item_id": format!("booking:{}", event.to_hex()) }),
+    )
+    .expect("the owner opens the booking's row")["booking"]
+        .clone()
+}
+
+/// The owner previews the release of `event`'s calendar hold through the
+/// sheet (`vault.owner_confirm.preview`) under the vault owner's own proof:
+/// the embedded doors ask a writer lease the fixture's handle does not hold.
+fn preview_calendar_hold_release(
+    fixture: &Fixture,
+    event: &EntityId,
+) -> Result<oneiron::verbs::OwnerConfirmPreview, oneiron::memory::MemoryError> {
+    let (id, owner) = booking_host_seat_support::seat_owner(&fixture.vault);
+    oneiron::verbs::preview_owner_confirm(
+        &fixture.vault.memory(id, oneiron::EdgeActorClass::Human),
+        &owner,
+        oneiron::verbs::OwnerConfirmPreviewRequest {
+            verb: "calendar.connector.release_hold".to_owned(),
+            input: serde_json::json!({ "event_ref": event.to_hex() }),
+        },
+    )
+}
+
+/// The owner calls `calendar.connector.release_hold` on `event` with
+/// `confirm`, under the vault owner's own proof.
+fn release_calendar_hold_with(
+    fixture: &Fixture,
+    event: &EntityId,
+    confirm: Option<String>,
+) -> Result<serde_json::Value, oneiron::memory::MemoryError> {
+    let (_, owner) = booking_host_seat_support::seat_owner(&fixture.vault);
+    oneiron::verbs::release_calendar_hold_as(
+        &fixture.vault,
+        &owner,
+        &oneiron::calendar::connectors::door::CalendarConnectorReleaseHoldRequest {
+            event_ref: event.to_hex(),
+            confirm,
+        },
+    )
+    .map(|receipt| serde_json::to_value(receipt).expect("the receipt encodes"))
+}
+
+/// The owner previews the release of `event`'s calendar hold through the
+/// sheet and confirms what it shows.
+fn release_calendar_hold(fixture: &Fixture, event: &EntityId) -> serde_json::Value {
+    let preview = preview_calendar_hold_release(fixture, event)
+        .unwrap_or_else(|error| panic!("the owner previews the release: {error:?}"));
+    release_calendar_hold_with(fixture, event, Some(preview.confirm))
+        .unwrap_or_else(|error| panic!("the owner releases the hold: {error:?}"))
+}
+
+#[test]
+fn a_killed_seat_s_cancelled_write_holds_until_the_owner_releases_it_and_asks_a_refund_by_hand() {
+    // CAL-OUTBOX-ROW-OF-REMOVED-SEAT-HOLDS-PULLS = C (the lead 21 Nov 09:15)
+    // and PLAN-CALENDAR-CONNECTOR-RELEASE-HOLD = A (09:40): a feed the
+    // booking was not written to cancels it, and the engine writes the
+    // cancelled EVENT through the first seat; the answer is lost, and the
+    // owner kills that seat. The second seat's pull of the cancelled version
+    // may be that write coming back, and only the writing seat settles it, so
+    // it stays held: no refund on a fault path. The card says so and offers
+    // both acts. Once the owner releases the hold through the sheet, the pull
+    // lands, and its host cancel asks the owner to refund by hand instead of
+    // refunding. Red at the PR's base: the card carries no hold.
+    let fixture = Fixture::open(Some(two_hour_terms()));
+    fixture.enable_host_feed();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let second = seat.install_second_seat(&fixture.vault, "seat:host-second");
+    let (booked, _, _) = written_live_then_cancelled_elsewhere(
+        &fixture,
+        &seat,
+        b"killed-seat-release",
+        "pi_killed_seat_release",
+    );
+    let event = booked.calendar.event_ref;
+    let _ = seat.write_with_lost_answer(&fixture.vault, event, NOW + 150);
+    seat.kill(&fixture.vault);
+
+    second
+        .pull(
+            &fixture.vault,
+            &[seat.stored_own_write(&booked.calendar.uid)],
+            NOW + 180,
+        )
+        .expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_killed_seat_release"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "a pull the killed seat's write holds moves no money"
+    );
+    let card = owner_card(&fixture, &event);
+    let hold = &card["calendar_hold"];
+    assert_eq!(
+        hold["holds"][0]["seat"], "killed",
+        "the card shows the hold: {card}"
+    );
+    assert_eq!(hold["holds"][0]["system"], HOST_SEAT_SYSTEM, "{card}");
+    assert_eq!(
+        hold["release_verb"], "calendar.connector.release_hold",
+        "{card}"
+    );
+    assert_eq!(hold["reconnect_verb"], "vault.settings.set", "{card}");
+    assert_ne!(
+        card["deposit"]["reason"], "unattributed_cancel",
+        "before the release no cancel is noted as unattributed: {card}"
+    );
+
+    let released = release_calendar_hold(&fixture, &event);
+    assert_eq!(
+        released["released"].as_array().map(Vec::len),
+        Some(1),
+        "the release names the one held row: {released}"
+    );
+    assert!(
+        owner_card(&fixture, &event).get("calendar_hold").is_none(),
+        "a released hold leaves the card"
+    );
+
+    second
+        .pull(
+            &fixture.vault,
+            &[seat.stored_own_write(&booked.calendar.uid)],
+            NOW + 240,
+        )
+        .expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_killed_seat_release"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "a host cancel after the release never refunds by itself"
+    );
+    let card = owner_card(&fixture, &event);
+    assert_eq!(
+        card["deposit"]["reason"], "unattributed_cancel",
+        "the released pull's cancel asks the owner to refund by hand: {card}"
+    );
+}
+
+#[test]
+fn a_calendar_hold_release_needs_a_held_row_and_the_owner_s_confirm() {
+    // PLAN-CALENDAR-CONNECTOR-RELEASE-HOLD = A: the release goes through the
+    // owner's sheet. While the writing seat is in service its row holds
+    // nothing the owner may release (control: refused before and after the
+    // change); once the seat is killed, a release with no confirm is refused
+    // with OWNER_CONFIRM_REQUIRED. Red at the PR's base: the verb is unknown.
+    let fixture = Fixture::open(Some(two_hour_terms()));
+    fixture.enable_host_feed();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let (booked, _, _) = written_live_then_cancelled_elsewhere(
+        &fixture,
+        &seat,
+        b"release-needs-confirm",
+        "pi_release_needs_confirm",
+    );
+    let event = booked.calendar.event_ref;
+    let _ = seat.write_with_lost_answer(&fixture.vault, event, NOW + 150);
+    let refused = preview_calendar_hold_release(&fixture, &event)
+        .err()
+        .expect("a write of a seat in service holds nothing to release");
+    assert_eq!(refused.code, "NOT_FOUND", "{refused:?}");
+
+    seat.kill(&fixture.vault);
+    let refused = release_calendar_hold_with(&fixture, &event, None)
+        .expect_err("a release without the owner's confirm is refused");
+    assert_eq!(refused.code, "OWNER_CONFIRM_REQUIRED", "{refused:?}");
+    assert!(
+        owner_card(&fixture, &event)["calendar_hold"]["holds"][0]["seat"] == "killed",
+        "the refused release leaves the hold standing"
+    );
+}
+
+#[test]
+fn a_same_config_reconnect_of_a_killed_seat_ends_its_calendar_hold() {
+    // Review of #10130, finding 3: a same-config re-install under a new seat
+    // ref writes the killed seat's scope, so the reconnected seat settles or
+    // proves the row and nothing is on hold, whichever of the two seats'
+    // setups reads first. Red before the fix where the killed seat's setup
+    // reads first: the card still shows the hold as the killed seat's.
+    let fixture = Fixture::open(Some(two_hour_terms()));
+    fixture.enable_host_feed();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let (booked, _, _) = written_live_then_cancelled_elsewhere(
+        &fixture,
+        &seat,
+        b"reconnect-ends-hold",
+        "pi_reconnect_ends_hold",
+    );
+    let event = booked.calendar.event_ref;
+    let _ = seat.write_with_lost_answer(&fixture.vault, event, NOW + 150);
+    seat.kill(&fixture.vault);
+    let card = owner_card(&fixture, &event);
+    assert_eq!(
+        card["calendar_hold"]["holds"][0]["seat"], "killed",
+        "control: the killed seat's row holds: {card}"
+    );
+
+    let _ = seat.reconnect(&fixture.vault);
+    let card = owner_card(&fixture, &event);
+    assert!(
+        card.get("calendar_hold").is_none(),
+        "a reconnected seat's row is on no hold: {card}"
+    );
+}
+
+#[test]
+fn a_released_hold_holds_again_once_the_owner_reconnects_its_seat() {
+    // Review of #10130, finding 2: a release counts only while the writing
+    // seat is out of service. Once the owner reconnects it (a same-config
+    // re-install), its row is that seat's to settle or prove again, so the
+    // second seat's pull of the cancelled version is held as before the
+    // release: no refund and no unattributed cancel. Red before the fix: the
+    // release mark still matches the unmoved row, the pull lands and notes
+    // the cancel as unattributed.
+    let fixture = Fixture::open(Some(two_hour_terms()));
+    fixture.enable_host_feed();
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let second = seat.install_second_seat(&fixture.vault, "seat:host-second");
+    let (booked, _, _) = written_live_then_cancelled_elsewhere(
+        &fixture,
+        &seat,
+        b"released-then-reconnected",
+        "pi_released_then_reconnected",
+    );
+    let event = booked.calendar.event_ref;
+    let _ = seat.write_with_lost_answer(&fixture.vault, event, NOW + 150);
+    seat.kill(&fixture.vault);
+    let released = release_calendar_hold(&fixture, &event);
+    assert_eq!(
+        released["released"].as_array().map(Vec::len),
+        Some(1),
+        "the release names the one held row: {released}"
+    );
+
+    let _ = seat.reconnect(&fixture.vault);
+    second
+        .pull(
+            &fixture.vault,
+            &[seat.stored_own_write(&booked.calendar.uid)],
+            NOW + 240,
+        )
+        .expect("seat pull");
+    assert_eq!(
+        state_of(&fixture, "pi_released_then_reconnected"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "the reconnected seat's row holds the pull again: no refund"
+    );
+    let card = owner_card(&fixture, &event);
+    assert_ne!(
+        card["deposit"]["reason"], "unattributed_cancel",
+        "the held pull lands no cancel: {card}"
+    );
+}
+
+/// A native EVENT the owner made in the vault, seeded `seed`, on the fixture
+/// Monday at 11:00 for 30 minutes: no source carries it, so its first write
+/// to a seat mints its UID.
+fn mint_native_event(fixture: &Fixture, seed: u8) -> EntityId {
+    let id = fixture::test_id(seed);
+    let mut data = Vec::new();
+    rmpv::encode::write_value(
+        &mut data,
+        &rmpv::Value::Map(vec![(
+            rmpv::Value::from("name"),
+            rmpv::Value::from("planning-session"),
+        )]),
+    )
+    .expect("encode the EVENT body");
+    let start = MONDAY + 11 * 3_600;
+    fixture
+        .vault
+        .put_entity(
+            &id,
+            oneiron::registry::ENTITY_TYPE_EVENT,
+            oneiron::TimeRange {
+                start,
+                end: start + 30 * 60,
+            },
+            NOW,
+            &data,
+        )
+        .expect("put the native EVENT");
+    id
+}
+
+#[test]
+fn a_killed_seat_s_later_write_of_a_native_event_is_released_like_any_other() {
+    // Blind review round 1 of #10130 (P1, release.rs stages_first_write): a
+    // native EVENT's first write mints its UID, and every later write of the
+    // EVENT keeps it. Once the first write settled, a passport carries the
+    // UID, so a later write's row stages no first write, and its hold is the
+    // owner's to release. Control: an EVENT whose first write never settled
+    // stays unreleasable. Red before the fix: the later write's hold reads as
+    // a first write's, and the preview refuses with INVALID_STATE.
+    let fixture = Fixture::open(None);
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let written = mint_native_event(&fixture, 0x72);
+    let unwritten = mint_native_event(&fixture, 0x73);
+    let first = seat.write(&fixture.vault, written, NOW + 10);
+    assert!(
+        first.uid.ends_with("@calendar.invalid"),
+        "FIXTURE: the first write mints the native EVENT's UID: {}",
+        first.uid
+    );
+    seat.write_unsent(&fixture.vault, written, NOW + 20);
+    seat.write_unsent(&fixture.vault, unwritten, NOW + 30);
+    seat.kill(&fixture.vault);
+
+    let refused = preview_calendar_hold_release(&fixture, &unwritten)
+        .err()
+        .expect("control: a first write that never settled is not released");
+    assert_eq!(refused.code, "INVALID_STATE", "{refused:?}");
+
+    let preview = preview_calendar_hold_release(&fixture, &written).unwrap_or_else(|error| {
+        panic!("the owner previews the release of the later write's hold: {error:?}")
+    });
+    let released = release_calendar_hold_with(&fixture, &written, Some(preview.confirm))
+        .unwrap_or_else(|error| panic!("the owner releases the later write's hold: {error:?}"));
+    assert_eq!(
+        released["released"].as_array().map(Vec::len),
+        Some(1),
+        "the release ends the later write's one hold: {released}"
+    );
+    let after = preview_calendar_hold_release(&fixture, &written)
+        .err()
+        .expect("the released row holds nothing more");
+    assert_eq!(after.code, "NOT_FOUND", "{after:?}");
 }

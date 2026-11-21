@@ -72,6 +72,17 @@ pub(in crate::dreamer_consolidation) fn extraction_reply(
     contract_reply(reply_json(response)?)
 }
 
+/// Why an extraction reply is refused when its text is no JSON, even after
+/// [`reply_json`]'s one mend.
+const NOT_JSON: &str = "extraction response must be JSON";
+
+/// Whether a refused extraction step's `errors` say its reply failed the
+/// JSON parse, as [`reply_json`] refuses it: not a cut reply, a contract
+/// fault or a citation fault, whose JSON parsed.
+pub(in crate::dreamer_consolidation) fn failed_json_parse(errors: &[String]) -> bool {
+    errors.iter().any(|error| error.ends_with(NOT_JSON))
+}
+
 /// `response`'s text as JSON, mended only as [`extraction_reply`] says.
 pub(in crate::dreamer_consolidation) fn reply_json(
     response: &LlmResponse,
@@ -94,10 +105,9 @@ pub(in crate::dreamer_consolidation) fn reply_json(
                 && text.starts_with('{')
                 && text.ends_with(']') =>
         {
-            serde_json::from_str(&format!("{text}}}"))
-                .map_err(|_| invalid_consolidation("extraction response must be JSON"))
+            serde_json::from_str(&format!("{text}}}")).map_err(|_| invalid_consolidation(NOT_JSON))
         }
-        Err(_) => Err(invalid_consolidation("extraction response must be JSON")),
+        Err(_) => Err(invalid_consolidation(NOT_JSON)),
     }
 }
 

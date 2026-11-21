@@ -500,6 +500,15 @@ pub struct StoreCore {
     /// one store per vault path, so the vault's own lock keeps every caller
     /// of the process that reaches the slot in one line.
     pub(crate) owner_signing_slot_lock: Mutex<()>,
+    /// Held by the recovery root's door from its hold attempt's reuse check
+    /// to the hold's commit, and by [`crate::Vault::land_due_recovery_holds`]
+    /// for its whole run: the only writers and deleters of this install's
+    /// recovery hold seed slots for this vault. No landing reaps an
+    /// attempt's slot between its pending record and its hold, and no second
+    /// attempt replaces a seed while the first writes. A process holds one
+    /// store per vault path, so the vault's own lock keeps every such caller
+    /// of the process in one line.
+    pub(crate) recovery_hold_lock: Mutex<()>,
     /// This vault's test seams. `#[cfg(test)]` so a production `StoreCore`
     /// carries neither the field nor its types: see [`TestHooks`] for why a
     /// test seam is exactly the state that must not be process-wide.

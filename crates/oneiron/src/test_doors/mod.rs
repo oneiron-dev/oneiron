@@ -49,6 +49,7 @@ pub mod builtin_pack_seed;
 pub mod burst_receipt_stored_shape;
 pub mod call_receipt_damage;
 pub mod callable_skill;
+pub mod campaign_copy_review;
 pub mod campaign_member_index;
 pub mod campaign_opt_out_line;
 pub mod candidate_scope;
@@ -59,6 +60,7 @@ pub mod checker_masked_candidate;
 pub mod checkpoint_descriptor;
 pub mod checkpoint_pins;
 pub mod checkpoint_registry;
+pub mod claim_body_damage;
 pub mod claim_facet_birth;
 pub mod claim_publication_text;
 pub mod claim_refinement_erase;
@@ -142,6 +144,8 @@ pub mod extraction_steps;
 pub mod extraction_verdict;
 pub mod extraction_wake;
 pub mod fanout_admission;
+#[cfg(feature = "sync")]
+pub mod federation_admitted_rewrite;
 pub mod feed_prune;
 pub mod feeds;
 pub mod fenced_erase_form;
@@ -295,6 +299,7 @@ pub mod peer_author_redaction;
 #[cfg(feature = "sync")]
 pub mod pending_work_reports;
 pub mod pending_write_tray;
+pub mod policy_doors_between;
 #[cfg(feature = "sync")]
 pub mod predicted_residence;
 pub mod profiles_other_machine;
@@ -328,6 +333,7 @@ pub mod room_facet_limit;
 pub mod room_facet_set;
 #[cfg(feature = "sync")]
 pub mod room_fact_marks;
+pub mod room_owner_standing;
 pub mod room_speaker_entries;
 pub mod room_turn_backfill;
 pub mod room_turn_claims;
@@ -348,6 +354,7 @@ pub mod seat_park_model_step;
 pub mod secret_same_value;
 pub mod selector_grant;
 pub mod setting;
+pub mod setting_door_between;
 pub mod setting_keys;
 pub mod settle_backoff;
 pub mod share_claim_refs;

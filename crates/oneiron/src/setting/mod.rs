@@ -49,7 +49,7 @@ mod project;
 mod proposal;
 mod publish;
 mod read;
-mod restored;
+pub(crate) mod restored;
 mod set;
 mod signed_act;
 pub(crate) mod tables;

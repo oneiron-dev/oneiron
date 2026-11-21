@@ -266,6 +266,20 @@ impl ScopedRead<'_> {
         {
             return Ok(false);
         }
+        // A live owner's withheld-notice read judges every gate but the
+        // row's source floor (`Self::withheld_notice_in`); no other read
+        // waives it.
+        if self.source_floor_waived {
+            return crate::conversation::private_thread_walks_readable_with_read_in(
+                self.vault,
+                &self.store_read(),
+                txn,
+                *id,
+                raw,
+                &viewers,
+                self.room_peer,
+            );
+        }
         crate::conversation::private_threads_readable_with_read_in(
             self.vault,
             &self.store_read(),

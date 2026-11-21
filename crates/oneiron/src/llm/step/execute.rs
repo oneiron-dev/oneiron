@@ -158,7 +158,24 @@ pub(crate) async fn call_as_step_checked_with_unsaved_usage(
     request: LlmRequest,
     check: &ReplyCheck,
 ) -> (DurableStepResult<StepOutcome>, Option<LlmUsage>) {
+    let (outcome, unsaved_usage, _) =
+        call_as_step_checked_counting_sends(ctx, backend, guard, request, check).await;
+    (outcome, unsaved_usage)
+}
+
+/// [`call_as_step_checked_with_unsaved_usage`] with how many times this run
+/// of the step asked its backend: a send the backend gave back unsent (a
+/// budget refusal, a health rest, hours no rung serves) is not among them,
+/// and saved work answers with none (#10269 review, round 2).
+pub(crate) async fn call_as_step_checked_counting_sends(
+    ctx: &DurableStepContext<'_>,
+    backend: &dyn LlmBackend,
+    guard: &BudgetGuard,
+    request: LlmRequest,
+    check: &ReplyCheck,
+) -> (DurableStepResult<StepOutcome>, Option<LlmUsage>, usize) {
     let mut unsaved_usage = None;
+    let retries = TransportRetries::schedule(DREAMER_STEP_RETRY_BACKOFF_MS.len());
     let outcome = durable_step(
         ctx,
         backend,
@@ -166,11 +183,30 @@ pub(crate) async fn call_as_step_checked_with_unsaved_usage(
         request,
         &super::super::FallbackRegistry::standard(),
         Some(check),
-        &TransportRetries::schedule(DREAMER_STEP_RETRY_BACKOFF_MS.len()),
+        &retries,
         Some(&mut unsaved_usage),
     )
     .await;
-    (outcome, unsaved_usage)
+    (outcome, unsaved_usage, retries.sends())
+}
+
+/// `request`'s saved work in this attempt alone: its memo or saved payload
+/// finished as [`durable_step`] finishes it, or `None` when it has none.
+/// Nothing is admitted, sent or charged, and a miss writes nothing. A reply
+/// a check refused is never saved, so it answers `None`.
+pub(crate) fn recover_saved_step(
+    ctx: &DurableStepContext<'_>,
+    guard: &BudgetGuard,
+    request: &LlmRequest,
+) -> DurableStepResult<Option<StepOutcome>> {
+    let step_hash = request.canonical_hash()?;
+    let recovery = {
+        let txn = ctx.vault.store.env.read_txn().map_err(Error::from)?;
+        recovery_in_txn(ctx.vault, &txn, ctx.attempt_id, &step_hash, request)?
+    };
+    recovery
+        .map(|recovery| recover_step(ctx, request, recovery, Some(guard)))
+        .transpose()
 }
 
 /// Durable step with an explicitly owned deterministic runner registry.

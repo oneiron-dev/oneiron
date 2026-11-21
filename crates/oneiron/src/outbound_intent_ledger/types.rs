@@ -189,6 +189,7 @@ pub struct OutboundCallRequest {
     /// did (FIX 11591): every later send of it rechecks that this owner is
     /// still a live owner.
     authorizing_owner: Option<EntityId>,
+    /// Unix seconds, whatever clock the caller reads.
     pub now_ms: u64,
 }
 
@@ -571,6 +572,8 @@ pub struct IntentLedgerRecord {
     /// A later definite non-delivery describes only that later attempt.
     pub delivery_uncertain: bool,
     pub state: IntentState,
+    /// Unix seconds, as every time in this ledger; the `_ms` names predate
+    /// that unit and stay the codec's keys.
     pub created_ms: u64,
     pub updated_ms: u64,
 }
