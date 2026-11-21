@@ -26,7 +26,9 @@
 //! the vault's `/mcp` ([`StepUp::HandOver`]): its recall sign-in is `read`,
 //! and the import writes. With none standing, or when a send does not land
 //! the log whole, the log waits in the vault's hand-over queue
-//! ([`hand_over_queue`]), and the first to wait says so on stderr. Every
+//! ([`hand_over_queue`]), and the first to wait says so on stderr; the
+//! first session end that finds no hand-over sign-in also files the request
+//! for one itself, as an ask in the owner's inbox ([`hand_over_ask`]). Every
 //! hand-over that lands a log whole lands the waiting logs of the same host
 //! after it, each read through the same checks and sent only while its
 //! session is bound to that vault alone (row
@@ -46,11 +48,11 @@ use oneiron::ingest::history::{
 use super::transcript::SessionLogs;
 use super::{CallUnconfirmed, Hosted, ToolRefused, transcript};
 use crate::cli::HookHost;
-use crate::commands::hook::hand_over_queue;
 use crate::commands::hook::hosted_selection::{HostedAuthMode, HostedVault};
 use crate::commands::hook::hosted_sign_in::StepUp;
 use crate::commands::hook::recall::RpcRefusal;
 use crate::commands::hook::session_binding::{self, SessionBinding};
+use crate::commands::hook::{hand_over_ask, hand_over_queue};
 
 /// The hooks' hand-over to the selected hosted vault: `host`'s session log
 /// at `log` (Claude Code's with its subagents' logs), landed through
@@ -67,7 +69,8 @@ use crate::commands::hook::session_binding::{self, SessionBinding};
 /// never land.
 ///
 /// An OAuth selection goes on its hand-over sign-in; with none standing,
-/// the log is queued for the vault and nothing is sent. A log that does not
+/// the log is queued for the vault, nothing is sent, and the owner is asked
+/// for the sign-in when an ask is due ([`hand_over_ask::start_if_due`]). A log that does not
 /// land whole (its send failed, or turns wait behind another import) is
 /// queued too, for a later session end. Once a log lands whole, the logs of
 /// the same host waiting for the vault go over the same bridge, oldest
@@ -86,8 +89,10 @@ pub(in crate::commands::hook) fn hand_over_hosted(
     let oauth = vault.auth_mode == HostedAuthMode::OAuth;
     let on = if oauth {
         let Some(file) = StepUp::HandOver.held(vault) else {
-            if hand_over_queue::enqueue(vault, host, session, log)? {
-                note(&hand_over_queue::waiting_note(&vault.origin));
+            let first = hand_over_queue::enqueue(vault, host, session, log)?;
+            let asked = hand_over_ask::start_if_due(oneiron, vault);
+            if first || asked {
+                note(&hand_over_queue::waiting_note(&vault.origin, asked));
             }
             return Ok(());
         };

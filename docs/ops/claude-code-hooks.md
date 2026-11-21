@@ -145,8 +145,15 @@ waited.
   (`hosted login --hand-over`, above). While none stands, the log waits on
   this machine: one small file per session in
   `hosted-hand-over-queue-<origin hash>/` beside `hosted.json`, naming the
-  session and its log's path, never a copy of the log, and the first log to
-  wait says on stderr which command lets it land. The next hand-over that
+  session and its log's path, never a copy of the log. The first session end
+  that finds no hand-over sign-in also files the request for one itself: it
+  starts `oneiron hosted login --hand-over --unattended` in the background,
+  and your inbox asks to "land this machine's coding sessions in your hosted
+  vault as each ends". Allow it within 10 minutes (the vault keeps a request
+  that long), and the logs waiting land at the next session end. Session
+  ends ask again only once a day after a request lapsed, and never after you
+  denied one (run `hosted login --hand-over` then); the record is
+  `hosted-hand-over-ask-<origin hash>.json`. The next hand-over that
   lands a log sends the logs waiting after it, each read again as below; a
   log that is gone leaves the queue. At most 256 logs wait for one vault,
   and a further one takes the oldest one's place. `logout` empties the
@@ -293,7 +300,11 @@ oneiron hosted status
   in `hosted-oauth-hand-over-<origin hash>.json` beside the first, and only
   the `hand-over` hook reads it; recall stays on the `read` sign-in. The
   import still needs your Grant naming `vault.imports.hook_transcript` for
-  that agent. `logout` signs it out with the first.
+  that agent. `logout` signs it out with the first. You need not run it
+  yourself: the first session end that finds no hand-over sign-in files the
+  same request on its own (below). `--unattended` is that form: it opens no
+  browser, files the ask in your inbox, and waits for your answer for up to
+  `--sign-in-timeout-secs`.
 - `select` takes a recorded vault id, or its first characters when no other
   recorded id begins with them; `--none` selects none. `logout` forgets one
   recorded vault, or every one. Neither deletes a credential file another

@@ -30,6 +30,7 @@
 
 mod bind;
 mod continue_command;
+mod hand_over_ask;
 mod hand_over_queue;
 mod hosted_command;
 mod hosted_continue_sign_in;

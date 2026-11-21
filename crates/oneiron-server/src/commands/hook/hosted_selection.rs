@@ -160,6 +160,12 @@ pub(super) fn oauth_hand_over_sign_in_file(origin: &str) -> Option<PathBuf> {
     origin_file("hosted-oauth-hand-over", origin)
 }
 
+/// The file the hooks' own hand-over sign-in request for `origin` is
+/// recorded in, beside the selection: one per origin.
+pub(super) fn hand_over_ask_file(origin: &str) -> Option<PathBuf> {
+    origin_file("hosted-hand-over-ask", origin)
+}
+
 /// The folder the hand-over queue of `vault` is kept in, beside the
 /// selection: the session logs that wait for its hand-over sign-in. One per
 /// origin and vault id, so a log queued for one vault never goes to another

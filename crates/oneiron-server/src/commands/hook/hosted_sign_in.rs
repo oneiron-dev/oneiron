@@ -29,6 +29,14 @@
 //! machine's coding sessions in his hosted vault as each ends; only the
 //! hooks' hand-over reads it (HOOK-HOSTED-HAND-OVER-OAUTH-READ-TIER = B, lead
 //! 07:0x; [`super::hand_over_queue`]).
+//!
+//! An unattended sign-in ([`CodeDelivery::Unattended`], `hosted login
+//! --hand-over --unattended`, which the hooks start themselves) opens no
+//! browser: the command loads the consent page itself, which records the
+//! request and the owner's inbox ask, and polls its answer with the page's
+//! token, as the page's script does; the allow's redirect carries the code.
+
+mod unattended;
 
 use std::io::{Read as _, Write as _};
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
@@ -39,6 +47,8 @@ use base64::Engine as _;
 use rand_core::{OsRng, RngCore as _};
 use serde::Deserialize;
 
+pub(super) use self::unattended::SignInEnded;
+use self::unattended::polled_code;
 use super::hosted_selection::{self, HostedAuthMode, HostedVault};
 use crate::api::{
     AUTHORIZE_PATH, PROTECTED_RESOURCE_GIT_METADATA_PATH, PROTECTED_RESOURCE_MCP_METADATA_PATH,
@@ -146,15 +156,27 @@ impl<'a> SignInAsk<'a> {
     }
 }
 
+/// How a sign-in's code comes back once the owner allows it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum CodeDelivery {
+    /// The person's browser opens the consent page and comes back to a
+    /// one-time listener on this machine's loopback.
+    Browser,
+    /// No browser: this command loads the consent page itself, which files
+    /// the owner's inbox ask, and polls his answer ([`unattended`]).
+    Unattended,
+}
+
 /// Signs this user in at the vault at `origin` for what `ask` names and
 /// writes the sign-in to `token_file`, within `timeout` from the start to
-/// the browser's return. Runs on the blocking pool of the command's
-/// runtime.
+/// the code's return by `delivery`. Runs on the blocking pool of the
+/// command's runtime.
 pub(super) fn sign_in(
     origin: &str,
     token_file: &Path,
     timeout: Duration,
     ask: SignInAsk<'_>,
+    delivery: CodeDelivery,
 ) -> anyhow::Result<()> {
     let runtime = tokio::runtime::Handle::try_current()
         .map_err(|_| anyhow::anyhow!("hosted login signs in on the command's runtime"))?;
@@ -216,16 +238,15 @@ pub(super) fn sign_in(
             .query_pairs_mut()
             .append_pair("resource", &document.resource);
     }
-    let _ = writeln!(
-        std::io::stderr().lock(),
-        "To {} {origin}, open this page in a browser on this machine:\n  {authorize}\n\
-         It shows a match code. Allow the request in your Oneiron inbox when its match code is \
-         the same; this command waits up to {}s.",
-        ask.why(),
-        timeout.as_secs()
-    );
-    open_in_browser(authorize.as_str());
-    let code = wait_for_code(&listener, &state, &issuer, deadline)?;
+    let code = match delivery {
+        CodeDelivery::Browser => {
+            say_open(ask, origin, &authorize, timeout);
+            wait_for_code(&listener, &state, &issuer, deadline)?
+        }
+        CodeDelivery::Unattended => {
+            runtime.block_on(polled_code(&client, &authorize, &state, &issuer, deadline))?
+        }
+    };
     let token_endpoint = format!("{origin}{TOKEN_PATH}");
     let answer = runtime.block_on(oauth_sign_in::token_call(
         &client,
@@ -246,6 +267,20 @@ pub(super) fn sign_in(
         resource,
     };
     OAuthSignIn::from_answer(party, answer, oauth_sign_in::now_ms())?.write(token_file)
+}
+
+/// Asks the person to open `authorize` in a browser on this machine, and
+/// opens it there.
+fn say_open(ask: SignInAsk<'_>, origin: &str, authorize: &reqwest::Url, timeout: Duration) {
+    let _ = writeln!(
+        std::io::stderr().lock(),
+        "To {} {origin}, open this page in a browser on this machine:\n  {authorize}\n\
+         It shows a match code. Allow the request in your Oneiron inbox when its match code is \
+         the same; this command waits up to {}s.",
+        ask.why(),
+        timeout.as_secs()
+    );
+    open_in_browser(authorize.as_str());
 }
 
 /// Where a new sign-in for `token_file` waits until its origin admits it
@@ -274,7 +309,7 @@ pub(super) fn take_place(staged: &Path, token_file: &Path) -> anyhow::Result<()>
 /// the same client ([`SignInAsk::client_id`]) for more than recall, kept in
 /// a file of its own beside the recall one ([`StepUp::file`]), which one
 /// command alone reads.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum StepUp {
     /// `oneiron continue --cloud`'s ([`SignInAsk::Continue`]).
     Continue,
@@ -344,15 +379,21 @@ impl StepUp {
     }
 
     /// Runs the step-up for the OAuth selection `vault`, waiting up to
-    /// `timeout` for the owner's answer, and keeps the sign-in it makes in
-    /// its file in place of any earlier one, which is revoked. Refused for a
+    /// `timeout` for the owner's answer by `delivery`, and keeps the sign-in
+    /// it makes in its file in place of any earlier one, which is revoked.
+    /// Refused for a
     /// selection signed in another way; when the owner allowed a tier other
     /// than the one asked; and when, by the time it is kept, `vault` is no
     /// longer recorded with that recall sign-in (a `hosted logout`, or a new
     /// `hosted login`, while the owner had not yet answered). Such a sign-in
     /// is signed out again and nothing is kept. The check and the keeping
     /// run under the file's refresh lock, which a sign-out takes too.
-    pub(super) fn run(self, vault: &HostedVault, timeout: Duration) -> anyhow::Result<PathBuf> {
+    pub(super) fn run(
+        self,
+        vault: &HostedVault,
+        timeout: Duration,
+        delivery: CodeDelivery,
+    ) -> anyhow::Result<PathBuf> {
         anyhow::ensure!(
             vault.auth_mode == HostedAuthMode::OAuth,
             "this step-up is an OAuth sign-in's, and {} is signed in another way",
@@ -364,7 +405,13 @@ impl StepUp {
         })?;
         hosted_selection::create_user_dir_for(&file)?;
         let staged = staged_file(&file);
-        sign_in(&vault.origin, &staged, timeout, self.ask(&recall.client_id))?;
+        sign_in(
+            &vault.origin,
+            &staged,
+            timeout,
+            self.ask(&recall.client_id),
+            delivery,
+        )?;
         let made = OAuthSignIn::read(&staged)?;
         if made.scope != self.scope() {
             let _ = sign_out(&staged);

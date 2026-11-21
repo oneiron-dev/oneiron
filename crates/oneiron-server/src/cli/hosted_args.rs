@@ -92,6 +92,13 @@ pub struct HostedLoginArgs {
         conflicts_with_all = ["auth_mode", "credential_file", "owner_upgrade_headers_file", "push"]
     )]
     pub hand_over: bool,
+
+    /// With --hand-over: file the request without a browser. The owner's
+    /// inbox asks for it as usual, and this command polls his answer for up
+    /// to --sign-in-timeout-secs. The session hooks start this themselves
+    /// at the first session end that finds no hand-over sign-in.
+    #[arg(long, requires = "hand_over")]
+    pub unattended: bool,
 }
 
 #[derive(Args, Clone, Debug)]
