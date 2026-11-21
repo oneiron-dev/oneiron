@@ -4659,17 +4659,25 @@ fn a_masked_tombstone_conclusion_dates_cal_07_by_its_first_sighting() {
 
 #[test]
 fn a_late_replay_after_a_proven_refusal_is_the_owner_s_copy_on_the_second_seat() {
-    assert_late_replay_is_the_owner_s_copy(true);
+    assert_late_replay_is_the_owner_s_copy(true, false);
 }
 
 #[test]
 fn a_late_replay_after_a_proven_refusal_is_the_owner_s_copy_on_the_writing_seat() {
-    assert_late_replay_is_the_owner_s_copy(false);
+    assert_late_replay_is_the_owner_s_copy(false, false);
 }
 
-fn assert_late_replay_is_the_owner_s_copy(second_seat_first: bool) {
+#[test]
+fn a_late_replay_the_provider_rewrote_after_a_proven_refusal_is_the_owner_s_copy() {
+    assert_late_replay_is_the_owner_s_copy(true, true);
+}
+
+/// `rewritten`: the provider rewrites the late copy it stores, keeping its
+/// SEQUENCE and marker (BK-DEPOSIT-REWRITTEN-ECHO-OF-OWNER-WRITE-REFUNDS).
+fn assert_late_replay_is_the_owner_s_copy(second_seat_first: bool, rewritten: bool) {
     use oneiron::calendar::connectors::{
-        CalendarWriteOutboxState, calendar_write_outbox_row, calendar_write_outbox_rows,
+        CalendarWriteOutboxState, RemoteCalendarObject, calendar_write_outbox_row,
+        calendar_write_outbox_rows,
     };
     use oneiron::calendar::{live_passport_for, parse_ics_feed};
 
@@ -4743,6 +4751,35 @@ fn assert_late_replay_is_the_owner_s_copy(second_seat_first: bool) {
         captured,
         "FIXTURE: the deposit is still captured before either pull"
     );
+    let late = if rewritten {
+        let ics = ics.replacen(
+            "END:VEVENT\r\n",
+            "COMMENT:stored by the provider\r\nEND:VEVENT\r\n",
+            1,
+        );
+        let feed = parse_ics_feed(ics.as_bytes()).expect("FIXTURE: the rewritten copy parses");
+        let copy = feed
+            .events
+            .first()
+            .expect("FIXTURE: the rewritten copy carries a VEVENT");
+        assert_ne!(
+            copy.content_hash, event.content_hash,
+            "FIXTURE: the provider's rewrite changes the copy's content hash"
+        );
+        assert_eq!(
+            (copy.sequence, copy.cancelled),
+            (staged.sequence, true),
+            "FIXTURE: the rewrite keeps the staged cancellation and SEQUENCE"
+        );
+        SeatChange::Stored(RemoteCalendarObject {
+            sequence: copy.sequence,
+            content_hash: copy.content_hash,
+            ics: ics.into_bytes(),
+            ..object.clone()
+        })
+    } else {
+        late
+    };
 
     let seats = if second_seat_first {
         [&second, &seat]
