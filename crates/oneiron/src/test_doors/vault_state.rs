@@ -29,16 +29,28 @@ pub(crate) struct VaultTestDoorState {
 pub struct VaultTestDoorExtensions(Mutex<HashMap<TypeId, Arc<dyn Any + Send + Sync>>>);
 
 impl VaultTestDoorExtensions {
-    /// The `T` kept here, made with `T::default()` at its first use.
+    /// The `T` kept here, made with `T::default()` at its first use. The default is made with the
+    /// map unlocked, so a `T::default()` that reads another value of this map does not deadlock;
+    /// when two first uses race, the value inserted first is kept and the other is dropped.
     #[must_use]
     pub fn get<T: Any + Default + Send + Sync>(&self) -> Arc<T> {
-        let value = Arc::clone(
-            self.0
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .entry(TypeId::of::<T>())
-                .or_insert_with(|| Arc::new(T::default())),
-        );
+        let key = TypeId::of::<T>();
+        let kept = self
+            .0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&key)
+            .cloned();
+        let value = kept.unwrap_or_else(|| {
+            let made: Arc<dyn Any + Send + Sync> = Arc::new(T::default());
+            Arc::clone(
+                self.0
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .entry(key)
+                    .or_insert(made),
+            )
+        });
         value
             .downcast::<T>()
             .unwrap_or_else(|_| unreachable!("each value is keyed by its own type"))
