@@ -26,6 +26,8 @@ use oneiron::{
     EdgeActorClass, EdgeKind, EntityId, TimeRange, Vault, VaultConfig,
 };
 
+mod erased_sources;
+
 const AT: u64 = 1_769_947_200;
 
 struct Mailbox {
@@ -563,45 +565,5 @@ fn a_claim_waiting_for_its_source_does_not_travel_on_a_restricted_lane() {
     assert!(
         !travels_restricted(&mailbox.vault, learnt).expect("the waiting CLAIM's travel"),
         "LEAK: a CLAIM whose floor waits travels on a restricted lane",
-    );
-}
-
-/// #9289 review 3 P1-1, P1-6: a row waiting on a source that is then erased
-/// waits on nothing that can land. The next housekeeping pass (the floor
-/// sweep, now on the schedule) raises it again, so it stops waiting and its
-/// readers read it again.
-#[test]
-fn a_row_whose_awaited_source_was_erased_stops_waiting_at_the_next_pass() {
-    let mailbox = owners_mailbox();
-    let middle = claim_born_from(&mailbox, &[EntityId::now()], "learnt from a row on its way");
-    let derived = claim_born_from(&mailbox, &[], "derived from middle");
-    mailbox
-        .vault
-        .put_edge(&derived, EdgeKind::DerivedFrom, &middle, 1.0)
-        .expect("FIXTURE: the derived row names middle");
-    assert!(
-        floor_waits(&mailbox.vault, derived).expect("the floor's state"),
-        "precondition: a row written from a waiting row waits too",
-    );
-    assert!(
-        !reads(&mailbox.vault, derived, &[mailbox.reader]).expect("the reader's read"),
-        "precondition: a waiting row reads to no one but the owner",
-    );
-    mailbox
-        .vault
-        .memory(mailbox.owner, EdgeActorClass::Human)
-        .safe_delete(&middle.to_hex(), SafeDeleteReason::UserDelete)
-        .expect("the owner deletes middle");
-    mailbox
-        .vault
-        .housekeeping_all(HousekeepingBudget::unbounded())
-        .expect("a housekeeping pass runs the floor sweep");
-    assert!(
-        !floor_waits(&mailbox.vault, derived).expect("the floor's state"),
-        "STUCK: a row whose awaited source was erased still waits after a housekeeping pass",
-    );
-    assert!(
-        reads(&mailbox.vault, derived, &[mailbox.reader]).expect("the reader's read"),
-        "a row that no longer waits reads to the reader again",
     );
 }
