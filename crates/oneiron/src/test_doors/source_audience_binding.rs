@@ -30,36 +30,70 @@ pub fn bound_row(vault: &Vault, reader: EntityId) -> Result<(EntityId, EntityId)
 ///
 /// No reader, or storage, encoding, or source-audience admission failures.
 pub fn bound_row_read_by(vault: &Vault, row: EntityId, readers: &[EntityId]) -> Result<EntityId> {
+    vault.with_write_txn(|txn| {
+        let policy = put_unbound_row_in_txn(vault, txn, row, readers)?;
+        source_audience::bind_record_in_txn(vault, txn, &row, &policy)?;
+        Ok(policy)
+    })
+}
+
+/// [`bound_row_read_by`] without its binding: the row lands stamped with
+/// its source's birth, as a mail landing writes it before the binding lands
+/// in a later write ([`bind_row`]). Returns the policy id.
+///
+/// # Errors
+///
+/// No reader, or storage, encoding, or source-audience admission failures.
+pub fn unbound_row_read_by(vault: &Vault, row: EntityId, readers: &[EntityId]) -> Result<EntityId> {
+    vault.with_write_txn(|txn| put_unbound_row_in_txn(vault, txn, row, readers))
+}
+
+/// Lands the binding of the stamped row `row` to `policy`
+/// (`bind_record_in_txn`), as the binding of an [`unbound_row_read_by`] row
+/// lands.
+///
+/// # Errors
+///
+/// The binding's refusal, or storage failures.
+pub fn bind_row(vault: &Vault, row: EntityId, policy: EntityId) -> Result<()> {
+    vault.with_write_txn(|txn| source_audience::bind_record_in_txn(vault, txn, &row, &policy))
+}
+
+/// Puts the mail-style CONVERSATION `row` under a new source policy read by
+/// each of `readers`, stamped with that source's birth and not bound yet.
+fn put_unbound_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    row: EntityId,
+    readers: &[EntityId],
+) -> Result<EntityId> {
     let by = *readers
         .first()
         .ok_or_else(|| Error::InvalidConfig("a source policy needs a reader".into()))?;
     let at = vault.now_recorded_at();
     let body = conversation_body(&row)?;
-    vault.with_write_txn(|txn| {
-        let policy = source_audience::create_source_policy_in_txn(
-            vault,
-            txn,
-            readers.iter().copied().collect(),
-            false,
-            by,
+    let policy = source_audience::create_source_policy_in_txn(
+        vault,
+        txn,
+        readers.iter().copied().collect(),
+        false,
+        by,
+        at,
+    )?;
+    let birth = SourceAudienceBirth::mint_in(vault, txn, &policy)?;
+    let stamped = birth.stamp_in_txn(vault, txn, &row, &body)?;
+    vault
+        .batch_in()
+        .put_source_bound(
+            &row,
+            ENTITY_TYPE_CONVERSATION,
+            TimeRange { start: at, end: at },
             at,
-        )?;
-        let birth = SourceAudienceBirth::mint_in(vault, txn, &policy)?;
-        let stamped = birth.stamp_in_txn(vault, txn, &row, &body)?;
-        vault
-            .batch_in()
-            .put_source_bound(
-                &row,
-                ENTITY_TYPE_CONVERSATION,
-                TimeRange { start: at, end: at },
-                at,
-                &stamped,
-                &birth,
-            )
-            .apply(txn)?;
-        source_audience::bind_record_in_txn(vault, txn, &row, &policy)?;
-        Ok(policy)
-    })
+            &stamped,
+            &birth,
+        )
+        .apply(txn)?;
+    Ok(policy)
 }
 
 /// The body of the mail-style CONVERSATION `row`.

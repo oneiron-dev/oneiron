@@ -316,3 +316,29 @@ pub fn asset_id_of(
 ) -> Result<EntityId> {
     crate::blob_artifact::blob_artifact_asset_entity_id(content_hash)
 }
+
+/// Publishes the owner's hard delete of `row` as the publish door writes it
+/// for the floor (`deletion/publish.rs`, a hard reason): the rows waiting
+/// on `row` take its floor while it still reads whole, then the read fence
+/// goes in, in one write. The purge lands later, as a replayed tombstone.
+///
+/// # Errors
+///
+/// Storage failures.
+pub fn publish_hard_delete_fence(vault: &Vault, row: EntityId) -> Result<()> {
+    let mut txn = vault.store.env.write_txn()?;
+    crate::source_audience::before_erase_in_txn(
+        vault,
+        &mut txn,
+        &row,
+        crate::source_audience::DeleteLevel::Hard,
+    )?;
+    crate::deletion::ROW_DELETION_FENCE.put(
+        &vault.store,
+        &mut txn,
+        &crate::side_table::HexId(row),
+        &Vec::new(),
+    )?;
+    txn.commit()?;
+    Ok(())
+}
