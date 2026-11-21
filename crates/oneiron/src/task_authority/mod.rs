@@ -44,7 +44,7 @@
 //! proved Owner fact naming another owner is skipped, not a fork.
 
 use std::cmp::Ordering;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::ports::EdgeStoreRead;
 
@@ -1270,10 +1270,13 @@ fn proved_fact(
 /// install's door wrote with exactly that body (the written-here index), or one its
 /// carrier's signature proves ([`proved_fact`]). The proof reads the fold once, at the first
 /// row that needs it, so a reader that judges many rows builds it at most once. The fold's
-/// actor rules still bound a counted fact; this rule says only whether a row is a fact.
+/// actor rules still bound a counted fact: [`Self::counts`] asks them too.
 #[derive(Default)]
 pub(crate) struct FactCountRule {
     proof: Option<fact_proof::FactProof>,
+    /// Each task's counted facts, read once per task by [`Self::counts`]; `None` for a
+    /// task whose own row fails its strict read, which the live fold refuses.
+    task_facts: BTreeMap<EntityId, Option<Vec<TaskAuthorityFact>>>,
 }
 
 impl FactCountRule {
@@ -1316,7 +1319,15 @@ impl FactCountRule {
     }
 
     /// Whether the fact row `fact_ref` with `body`, about `task_ref`, counts in `vault`'s
-    /// fold: this install's door wrote exactly `body`, or its carrier's signature proves it.
+    /// fold: the row counts (this install's door wrote exactly `body`, or its carrier's
+    /// signature proves it), and the fold admits its fact, judged against `task_ref`'s other
+    /// counted facts as [`TaskAuthorityFacts::fold`] judges a fact of its pass. So an Owner
+    /// fact whose maker derives another task, or a fact by an actor its kind does not admit,
+    /// does not count (FIX TASK-FACT-RESTORE-COUNT-SKIPS-ADMISSION).
+    ///
+    /// A task the live fold refuses (a forked owner or assignment, or an own row that fails
+    /// its strict read) reads on no device, so each of its counted rows still counts here:
+    /// no answer is guessed past the refusal.
     pub(crate) fn counts(
         &mut self,
         vault: &Vault,
@@ -1325,12 +1336,30 @@ impl FactCountRule {
         body: &[u8],
         task_ref: EntityId,
     ) -> Result<bool> {
-        Ok(
-            fact_proof::written_here_in(&vault.store, rtxn, fact_ref, body)?
-                || self
-                    .proved(vault, rtxn, fact_ref, body, task_ref)?
-                    .is_some(),
-        )
+        let Some(fact) = self.counted(vault, rtxn, fact_ref, body, task_ref)? else {
+            return Ok(false);
+        };
+        let facts = match self.task_facts.remove(&task_ref) {
+            Some(facts) => facts,
+            None => match vault.counted_task_facts_in(rtxn, task_ref, self) {
+                Ok(facts) => Some(facts),
+                Err(Error::Record(RecordError::InvalidTaskBody(_))) => None,
+                Err(error) => return Err(error),
+            },
+        };
+        let counts = match &facts {
+            None => Ok(true),
+            Some(facts) => {
+                match TaskAuthorityFacts::counts_any_of(facts, std::slice::from_ref(&fact)) {
+                    Ok(admitted) => Ok(admitted),
+                    // The fold refuses the task (a fork), over facts in hand: no store read.
+                    Err(Error::InvariantViolation(_)) => Ok(true),
+                    Err(error) => Err(error),
+                }
+            }
+        };
+        self.task_facts.insert(task_ref, facts);
+        counts
     }
 }
 
@@ -1573,8 +1602,23 @@ impl Vault {
         if SUPPRESSED.contains(&self.store, rtxn, &task_ref)? {
             return Err(fact_suppressed());
         }
-        let mut proved = Vec::new();
         let mut count = FactCountRule::default();
+        let proved = self.counted_task_facts_in(rtxn, task_ref, &mut count)?;
+        if self.counts_a_refused_fact_in(rtxn, task_ref, &proved, &mut count)? {
+            return Err(fact_suppressed());
+        }
+        TaskAuthorityFacts::fold(&proved)
+    }
+
+    /// Every authority fact scoped to `task_ref` whose row counts here, read as
+    /// [`Self::task_authority_facts_in`] reads them, before the fold's actor rules.
+    fn counted_task_facts_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        task_ref: EntityId,
+        count: &mut FactCountRule,
+    ) -> Result<Vec<TaskAuthorityFact>> {
+        let mut proved = Vec::new();
         // Rule 5: every inbound edge is read and every fact absorbed, however
         // many; past its threshold row the fold asks, and never refuses.
         let mut scanned = ScanCount::start(
@@ -1628,10 +1672,7 @@ impl Vault {
             proved.push(fact);
         }
         scanned.finish(self);
-        if self.counts_a_refused_fact_in(rtxn, task_ref, &proved, &mut count)? {
-            return Err(fact_suppressed());
-        }
-        TaskAuthorityFacts::fold(&proved)
+        Ok(proved)
     }
 
     /// Whether the fold of `task_ref`'s counted `facts` would count a fact this vault refused
