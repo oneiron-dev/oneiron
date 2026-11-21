@@ -1692,6 +1692,8 @@ async fn an_ask_again_behind_a_short_hand_refund_answers_the_earlier_failed_refu
         let mut client = crate::booking_deposit::stripe::StripeClient::new(&vault, &base)
             .unwrap_or_else(|error| panic!("the Stripe client: {error}"));
         let earlier_retry_keys = [first_key];
+        let granted =
+            || -> Result<bool, oneiron::booking::lifecycle::DepositProviderFailure> { Ok(true) };
         client.settle(&oneiron::booking::lifecycle::DepositSettleRequest {
             payment_id: &payment_id,
             movement: oneiron::booking::lifecycle::DepositSettleMove::Refund {
@@ -1701,6 +1703,7 @@ async fn an_ask_again_behind_a_short_hand_refund_answers_the_earlier_failed_refu
             earlier_retry_keys: &earlier_retry_keys,
             refunded_by_provider_before: 0,
             find_only: false,
+            refund_permission: oneiron::booking::lifecycle::RefundPermission::new(&granted),
         })
     })
     .await
@@ -1722,6 +1725,45 @@ async fn an_ask_again_behind_a_short_hand_refund_answers_the_earlier_failed_refu
         1,
         "no refund is made behind the hand refund"
     );
+}
+
+/// Review round 2 of #10267: the owner marks the refund a settle row
+/// planned refunded outside Stripe while the row runs. The row reads the
+/// payment's refunds and finds none, then asks the deposit's permission
+/// right before the POST; the deposit says no, so no refund is made, and
+/// the row answers as a find that found none.
+#[tokio::test]
+async fn a_refund_the_deposit_no_longer_permits_is_never_made() {
+    let (fixture, stripe, payment_id) = half_refund_owed("refund-not-permitted").await;
+    let vault = Arc::clone(&fixture.server.vault);
+    let base = fixture.server.booking_deposit_stripe_base().to_owned();
+    let (answer, asked) = tokio::task::spawn_blocking(move || {
+        use oneiron::booking::lifecycle::DepositSettlementPort;
+        let mut client = crate::booking_deposit::stripe::StripeClient::new(&vault, &base)
+            .unwrap_or_else(|error| panic!("the Stripe client: {error}"));
+        let asked = std::cell::Cell::new(0_u32);
+        let denied = || -> Result<bool, oneiron::booking::lifecycle::DepositProviderFailure> {
+            asked.set(asked.get() + 1);
+            Ok(false)
+        };
+        let answer = client.settle(&oneiron::booking::lifecycle::DepositSettleRequest {
+            payment_id: &payment_id,
+            movement: oneiron::booking::lifecycle::DepositSettleMove::Refund {
+                amount_minor: 2_500,
+            },
+            idempotency_key: "oneiron-deposit-refund-2500-refund-not-permitted",
+            earlier_retry_keys: &[],
+            refunded_by_provider_before: 0,
+            find_only: false,
+            refund_permission: oneiron::booking::lifecycle::RefundPermission::new(&denied),
+        });
+        (answer, asked.get())
+    })
+    .await
+    .expect("the settle call ran");
+    assert_eq!(answer, Ok(0), "the row answers as a find that found none");
+    assert_eq!(asked, 1, "the deposit was asked once, before the POST");
+    assert_eq!(refund_posts(&stripe), 0, "no refund is made");
 }
 
 /// FIX [BK-DEPOSIT-SHORT-HAND-REFUND-NO-OWNER-LINE]: the owner refunds 1000
