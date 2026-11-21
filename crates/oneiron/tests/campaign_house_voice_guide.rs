@@ -9,9 +9,17 @@
 //! whole-vault restore keeps the guide the archive's vault had, or its
 //! absence once the owner deleted it.
 //!
+//! The guide is an instruction for the copy review's judge, so it is
+//! explicit-only with extraction off (FIX VOICE-GUIDE-NOTES-REACH-CONTEXT-PACKS):
+//! no ordinary retrieval returns it, the owner's own recall included, and its
+//! owner still reads it by ref.
+//!
 //! On the base the seed does not exist, so this file does not compile there.
 //! On the seed's head before the archive carried the marker, the two restore
 //! tests fail at their first assert: the restored vault holds no marker.
+//! On main before the explicit-only kind, the guide is a vault-readable
+//! `research` NOTE: the explicit-only test fails at its context assert, and
+//! the recall test at its last assert (the recall answers the guide).
 //!
 //! Run: `cargo test --locked -p oneiron --all-features --test campaign_house_voice_guide`
 
@@ -22,10 +30,13 @@ use std::sync::Arc;
 use oneiron::campaign::house_voice_guide::HOUSE_VOICE_GUIDE_MARKDOWN;
 use oneiron::campaign::register_crm_pack;
 use oneiron::campaign::surface::{CAMPAIGN_SCHEMA_VERSION, CreateCampaignRequest, create_campaign};
-use oneiron::note::NoteReadRequest;
+use oneiron::memory::RecallRequest;
+use oneiron::note::{ContextDefault, ExtractionDefault, NoteReadRequest};
 use oneiron::registry::TypeByteFamily;
 use oneiron::store::GateDecisionId;
 use oneiron::store::ports::ManualClock;
+use oneiron::task_verb::sdk::recall_unembedded;
+use oneiron::write_envelope::WriteActor;
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 
 fn install_keystore(vault: &Vault) {
@@ -208,6 +219,87 @@ fn a_vault_whose_only_campaign_is_deleted_gets_no_guide_at_open() {
         vault.house_voice_guide().unwrap(),
         None,
         "a deleted campaign seeds no guide"
+    );
+}
+
+/// A seeded vault with the CRM pack and its first campaign, so it holds its
+/// house voice guide; its owner; and the guide.
+fn seeded_vault_with_guide(path: &Path) -> (Vault, EntityId, EntityId) {
+    drop(open_crm_vault(path));
+    let vault = open_seeded(path);
+    let owner = owner(&vault);
+    create(&vault, owner, "spring campaign");
+    let guide = vault
+        .house_voice_guide()
+        .unwrap()
+        .expect("the first campaign seeds the house voice guide");
+    (vault, owner, guide)
+}
+
+/// The house voice guide is an instruction for the copy review's judge, as a
+/// lens's intent is: explicit-only, and never extracted into claims. Its
+/// owner still reads it by ref.
+#[test]
+fn the_house_voice_guide_is_explicit_only_and_never_extracted() {
+    let dir = tempfile::tempdir().unwrap();
+    let (vault, _, guide) = seeded_vault_with_guide(dir.path());
+    let defaults = vault.note_defaults(guide).unwrap().defaults;
+    assert_eq!(
+        defaults.context,
+        ContextDefault::ExplicitOnly,
+        "no ordinary retrieval returns the guide: {defaults:?}"
+    );
+    assert_eq!(
+        defaults.extraction,
+        ExtractionDefault::Disabled,
+        "no claim is extracted from the guide: {defaults:?}"
+    );
+    assert_eq!(owner_reads(&vault, guide), HOUSE_VOICE_GUIDE_MARKDOWN);
+}
+
+/// The owner's recall of a word the house voice guide holds answers the
+/// owner's own research NOTE that holds it, and leaves the guide out: the
+/// guide's lines reach no unrelated context.
+#[test]
+fn the_owners_recall_leaves_the_house_voice_guide_out() {
+    let dir = tempfile::tempdir().unwrap();
+    let (vault, owner, guide) = seeded_vault_with_guide(dir.path());
+    let note = vault
+        .create_note(
+            "research",
+            "Write warmly to the quillwort growers.",
+            WriteActor::new(owner, EdgeActorClass::Human),
+        )
+        .expect("the owner's research NOTE");
+    vault.set_indexed_idle_delay_ms(0).expect("idle delay row");
+    let published = vault
+        .refresh_staged_indexed_at_idle(u64::MAX)
+        .expect("idle publication");
+    assert!(
+        published.failed.is_empty(),
+        "every staged text publishes: {published:?}"
+    );
+    let pack = recall_unembedded(
+        &vault.memory(owner, EdgeActorClass::Human),
+        RecallRequest {
+            query: "warmly".to_owned(),
+            ..RecallRequest::default()
+        },
+    )
+    .expect("the owner's recall");
+    let ids: Vec<String> = pack
+        .items
+        .iter()
+        .filter_map(|item| item.record.as_ref())
+        .map(|record| record.id.clone())
+        .collect();
+    assert!(
+        ids.contains(&note.to_hex()),
+        "the recall answers the owner's NOTE that holds the word: {ids:?}"
+    );
+    assert!(
+        !ids.contains(&guide.to_hex()),
+        "the recall leaves the house voice guide out: {ids:?}"
     );
 }
 
