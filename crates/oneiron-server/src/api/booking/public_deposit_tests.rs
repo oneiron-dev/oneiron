@@ -1768,6 +1768,8 @@ async fn an_ask_again_behind_a_short_hand_refund_answers_the_earlier_failed_refu
         let mut client = crate::booking_deposit::stripe::StripeClient::new(&vault, &base)
             .unwrap_or_else(|error| panic!("the Stripe client: {error}"));
         let earlier_retry_keys = [first_key];
+        let granted =
+            || -> Result<bool, oneiron::booking::lifecycle::DepositProviderFailure> { Ok(true) };
         client.settle(&oneiron::booking::lifecycle::DepositSettleRequest {
             payment_id: &payment_id,
             movement: oneiron::booking::lifecycle::DepositSettleMove::Refund {
@@ -1775,7 +1777,9 @@ async fn an_ask_again_behind_a_short_hand_refund_answers_the_earlier_failed_refu
             },
             idempotency_key: &retry_key,
             earlier_retry_keys: &earlier_retry_keys,
+            refunded_by_provider_before: 0,
             find_only: false,
+            refund_permission: oneiron::booking::lifecycle::RefundPermission::new(&granted),
         })
     })
     .await
@@ -1797,6 +1801,193 @@ async fn an_ask_again_behind_a_short_hand_refund_answers_the_earlier_failed_refu
         1,
         "no refund is made behind the hand refund"
     );
+}
+
+/// Review round 2 of #10267: the owner marks the refund a settle row
+/// planned refunded outside Stripe while the row runs. The row reads the
+/// payment's refunds and finds none, then asks the deposit's permission
+/// right before the POST; the deposit says no, so no refund is made, and
+/// the row answers as a find that found none.
+#[tokio::test]
+async fn a_refund_the_deposit_no_longer_permits_is_never_made() {
+    let (fixture, stripe, payment_id) = half_refund_owed("refund-not-permitted").await;
+    let vault = Arc::clone(&fixture.server.vault);
+    let base = fixture.server.booking_deposit_stripe_base().to_owned();
+    let (answer, asked) = tokio::task::spawn_blocking(move || {
+        use oneiron::booking::lifecycle::DepositSettlementPort;
+        let mut client = crate::booking_deposit::stripe::StripeClient::new(&vault, &base)
+            .unwrap_or_else(|error| panic!("the Stripe client: {error}"));
+        let asked = std::cell::Cell::new(0_u32);
+        let denied = || -> Result<bool, oneiron::booking::lifecycle::DepositProviderFailure> {
+            asked.set(asked.get() + 1);
+            Ok(false)
+        };
+        let answer = client.settle(&oneiron::booking::lifecycle::DepositSettleRequest {
+            payment_id: &payment_id,
+            movement: oneiron::booking::lifecycle::DepositSettleMove::Refund {
+                amount_minor: 2_500,
+            },
+            idempotency_key: "oneiron-deposit-refund-2500-refund-not-permitted",
+            earlier_retry_keys: &[],
+            refunded_by_provider_before: 0,
+            find_only: false,
+            refund_permission: oneiron::booking::lifecycle::RefundPermission::new(&denied),
+        });
+        (answer, asked.get())
+    })
+    .await
+    .expect("the settle call ran");
+    assert_eq!(answer, Ok(0), "the row answers as a find that found none");
+    assert_eq!(asked, 1, "the deposit was asked once, before the POST");
+    assert_eq!(refund_posts(&stripe), 0, "no refund is made");
+}
+
+/// FIX [BK-DEPOSIT-SHORT-HAND-REFUND-NO-OWNER-LINE]: the owner refunds 1000
+/// of the 2500 owed by hand in the dashboard before the settle row asks.
+/// Stripe holds no refund under the row's keys, and the row makes none, so
+/// nothing ends there: the owner's booking card still says the hand refunds
+/// cover only part of the refund owed and asks for a hand refund of the
+/// rest. A hand refund of the rest settles the refund, and the line goes.
+#[tokio::test]
+async fn a_short_hand_refund_before_the_row_asks_shows_on_the_owners_card() {
+    let (fixture, stripe, payment_id) = half_refund_owed("short-hand-before-ask").await;
+    let event_ref = booking_deposit_for_payment(&fixture.server.vault, &payment_id)
+        .expect("read")
+        .expect("the deposit exists")
+        .event_ref
+        .expect("the deposit's booking");
+    let card_row = format!("booking:{}", event_ref.to_hex());
+    let owner = fixture
+        .server
+        .vault
+        .memory(fixture.owner_actor(), EdgeActorClass::Human);
+    let deposit_line = || -> Value {
+        oneiron::verbs::invoke(&owner, "self.inbox.get", json!({ "item_id": card_row }))
+            .expect("the owner opens the booking card")["booking"]["deposit"]
+            .clone()
+    };
+
+    let now = now_secs().expect("clock");
+    stripe
+        .lock()
+        .expect("fake stripe")
+        .refunds
+        .push(refund_by_hand(
+            "re_short_before_ask",
+            &payment_id,
+            1_000,
+            "succeeded",
+        ));
+    let drain = run_settle_pass(&fixture, now - 3_601).await;
+    assert_eq!(
+        drain.refunded, 0,
+        "the owed half is not refunded: {drain:?}"
+    );
+    assert_eq!(refund_posts(&stripe), 0, "no refund is made here");
+    let stuck = deposit_line();
+    assert_eq!(stuck["held"], "part_refunded_by_hand", "{stuck}");
+    assert_eq!(stuck["amount_minor"], 2_500, "{stuck}");
+    assert_eq!(stuck["return_offered"], false, "{stuck}");
+    let line = stuck["line"].as_str().expect("the deposit line");
+    assert!(
+        line.contains(
+            "Refunds made by hand in the Stripe dashboard cover only part of the refund of 2500 \
+             JPY owed to the visitor. Refund the rest by hand in the Stripe dashboard."
+        ),
+        "{line}"
+    );
+
+    // The owner refunds the missing 1500 by hand.
+    stripe
+        .lock()
+        .expect("fake stripe")
+        .refunds
+        .push(refund_by_hand(
+            "re_rest_by_hand",
+            &payment_id,
+            1_500,
+            "succeeded",
+        ));
+    let drain = run_settle_pass(&fixture, now).await;
+    assert_eq!(
+        drain.refunded, 1,
+        "the hand refunds stand as the deposit's refund: {drain:?}"
+    );
+    assert_eq!(
+        deposit_state(&fixture, &payment_id),
+        DepositState::Refunded {
+            amount_minor: 2_500
+        }
+    );
+    let kept = deposit_line();
+    assert_eq!(kept["held"], "balance_after_refund", "{kept}");
+    assert_eq!(
+        refund_posts(&stripe),
+        0,
+        "the settle row never asked Stripe for a refund"
+    );
+}
+
+/// Review round 1 of #10267: the owner refunds the half a late cancel owes
+/// by hand in the dashboard, and the deposit records that refund from it.
+/// Return deposit then owes the balance. The hand refund is the first
+/// refund's and counts for no other, so Stripe is asked to refund the
+/// balance under its own key, and the payment ends refunded whole.
+#[tokio::test]
+async fn a_hand_refund_recorded_for_an_earlier_refund_pays_no_later_one() {
+    let (fixture, stripe, payment_id) = half_refund_owed("hand-refund-then-balance").await;
+    let event_ref = booking_deposit_for_payment(&fixture.server.vault, &payment_id)
+        .expect("read")
+        .expect("the deposit exists")
+        .event_ref
+        .expect("the deposit's booking");
+    let owner = fixture
+        .server
+        .vault
+        .memory(fixture.owner_actor(), EdgeActorClass::Human);
+    stripe
+        .lock()
+        .expect("fake stripe")
+        .refunds
+        .push(refund_by_hand(
+            "re_half_by_hand",
+            &payment_id,
+            2_500,
+            "succeeded",
+        ));
+    let drain = run_settle_pass(&fixture, now_secs().expect("clock")).await;
+    assert_eq!(
+        drain.refunded, 1,
+        "guard: the hand refund settles the half: {drain:?}"
+    );
+    assert_eq!(
+        refund_posts(&stripe),
+        0,
+        "guard: no refund is made for the half"
+    );
+
+    let returned = oneiron::verbs::invoke(
+        &owner,
+        "vault.booking.deposit.refund",
+        json!({ "event_ref": event_ref.to_hex() }),
+    )
+    .expect("the owner returns the balance");
+    assert_eq!(returned["queued"], true, "{returned}");
+    let drain = run_settle_pass(&fixture, now_secs().expect("clock") + 1).await;
+    assert_eq!(
+        refund_posts(&stripe),
+        1,
+        "Stripe is asked to refund the balance: {drain:?}"
+    );
+    let refunded: u64 = stripe
+        .lock()
+        .expect("fake stripe")
+        .refunds
+        .iter()
+        .filter(|refund| refund.status == "succeeded")
+        .map(|refund| refund.amount)
+        .sum();
+    assert_eq!(refunded, 5_000, "the payment is refunded whole");
 }
 
 // FIX [BK-DEPOSIT-FAILED-REFUND-MARK-PAID] (BK-DEPOSIT-MARK-PAID-STRIPE-HOLDS-REFUND
@@ -1823,7 +2014,11 @@ fn mark_refunded_outside<'a>(
     let marked = oneiron::verbs::invoke(
         &owner,
         "vault.booking.deposit.mark_refunded_outside",
-        json!({ "event_ref": event_ref.to_hex(), "amount_minor": amount_minor }),
+        json!({
+            "event_ref": event_ref.to_hex(),
+            "amount_minor": amount_minor,
+            "idempotency_key": format!("mark-{amount_minor}"),
+        }),
     )
     .expect("the owner marks the refund");
     let card_row = format!("booking:{}", event_ref.to_hex());

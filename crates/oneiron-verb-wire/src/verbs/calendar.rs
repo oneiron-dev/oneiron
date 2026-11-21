@@ -90,6 +90,11 @@ pub struct BookingDepositMarkRefundedOutsideRequest {
     pub event_ref: String,
     /// The refund owed now, in minor units of the deposit's currency.
     pub amount_minor: u64,
+    /// The caller's own key for this mark, 1 to 200 bytes: a repeat of the
+    /// call under the same key answers the first mark and records nothing,
+    /// whatever the deposit owes since, so a retried call never marks
+    /// another refund (review round 1 of #10267).
+    pub idempotency_key: String,
 }
 
 /// What `vault.booking.deposit.mark_refunded_outside` recorded: the amount
