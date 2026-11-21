@@ -37,8 +37,9 @@ use oneiron::calendar::connectors::{
 use oneiron::calendar::parse_ics_feed;
 use oneiron::calendar::passport::{live_passports_for_event, resolve_event_by_uid};
 use oneiron::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
+use oneiron::memory::{ClaimProposalReviewRequest, ClaimSettleDecision, ClaimSettleRequest};
 use oneiron::registry::ENTITY_TYPE_EVENT;
-use oneiron::{EntityId, TimeRange, Vault};
+use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault};
 
 /// The seat every test writes the native EVENT to.
 const SEAT_SYSTEM: &str = "first-write-seat";
@@ -1371,5 +1372,67 @@ fn a_write_to_a_second_calendar_never_sends_another_seat_s_masked_uid() {
     assert_eq!(
         wrote.uid, uid,
         "the write to the second calendar sends the EVENT's own minted UID"
+    );
+}
+
+/// The UID of a VEVENT the seat imports that holds the text a custody handle
+/// opens with, and no handle: a provider may choose any UID text.
+const HANDLE_TEXT_UID: &str = "item-[secret note]@host.example.test";
+
+/// The owner approves every passport the import filed on `event`, as the
+/// connector smoke does: the import gate files them pending review, and only
+/// an admitted passport lends its UID to a write to another calendar.
+fn approve_import_passports(vault: &Vault, event: EntityId) {
+    let (id, owner) = seat_owner(vault);
+    let memory = vault.memory(id, EdgeActorClass::Human);
+    for (passport, _) in live_passports_for_event(vault, &event).expect("passports") {
+        let claim_ref = passport.to_hex();
+        let review = memory
+            .claim_review_as_owner(
+                &owner,
+                &ClaimProposalReviewRequest {
+                    claim_ref: claim_ref.clone(),
+                    grant_ref: None,
+                },
+            )
+            .expect("review the import's passport");
+        memory
+            .claim_settle_as_owner(
+                &owner,
+                &ClaimSettleRequest {
+                    claim_ref,
+                    review_id: review.review_id,
+                    decision: ClaimSettleDecision::Approve,
+                    grant_ref: None,
+                },
+            )
+            .expect("approve the import's passport");
+    }
+}
+
+#[test]
+fn a_write_to_a_second_calendar_shares_a_uid_that_holds_handle_text_but_no_handle() {
+    // CAL-MASKED-SYSTEM-LITERAL-COMPARES-OUTSIDE-KEYED-LOOKUP: a provider's
+    // UID may hold `[secret ` as literal text. No mask placed a handle there,
+    // so it is the UID the first calendar's provider holds, and a write to a
+    // second calendar shares it as it shares any other source's UID.
+    let fixture = Fixture::open(None);
+    let seat = Seat::install(&fixture.vault, SEAT_SYSTEM);
+    let sibling = Seat::install(&fixture.vault, SIBLING_SEAT_SYSTEM);
+    let event = pull_pending_import(&fixture.vault, &seat, HANDLE_TEXT_UID);
+    approve_import_passports(&fixture.vault, event);
+    let filed = active_passports(&fixture.vault, event);
+    assert!(
+        filed.len() == 1
+            && filed[0].uid == HANDLE_TEXT_UID
+            && filed[0].approval == ClaimApprovalStatus::Approved,
+        "FIXTURE: the owner approves the import's one passport, which keeps the UID as written: \
+         {filed:?}"
+    );
+
+    let wrote = sibling.write(&fixture.vault, event, NOW + 20);
+    assert_eq!(
+        wrote.uid, HANDLE_TEXT_UID,
+        "the write to the second calendar shares the UID the first calendar's provider holds"
     );
 }
