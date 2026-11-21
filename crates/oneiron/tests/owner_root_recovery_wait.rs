@@ -21,7 +21,7 @@
 //! of the door-clock test runs at `lands_at - 60`: the anchor measures
 //! real elapsed seconds, so a literal one-second margin would be flaky.
 //!
-//! The 23 tests: the 13 build-leg tests (`a_released_recovery_waits_then_lands`,
+//! The 22 tests: the 13 build-leg tests (`a_released_recovery_waits_then_lands`,
 //! `zero_wait_lands_at_once`, `a_sheet_cancel_stops_the_attempt_and_a_retry_lands`,
 //! `a_cancel_without_an_owner_key_is_refused`,
 //! `a_device_the_recovery_removes_still_cancels`,
@@ -35,10 +35,11 @@
 //! `a_landing_binds_a_co_owner_whose_lost_key_held_their_binding`,
 //! `the_waits_rows_are_marked_for_the_live_mirror`,
 //! `a_box_call_after_the_wait_lands_and_answers_vouched`,
-//! `a_kit_recovery_cancels_a_due_hold_on_the_door_install`), and the three
-//! Sol-fix pins (`a_foreign_anchors_cancel_never_stops_a_hold`,
-//! `a_kit_cancel_reaches_a_hold_only_an_adopted_checkpoint_carries`
-//! (ignored: needs an adopted image), `a_retry_after_a_cancelled_hold_keeps_its_seed_and_lands`),
+//! `a_kit_recovery_cancels_a_due_hold_on_the_door_install`), and two of the
+//! three Sol-fix pins (`a_foreign_anchors_cancel_never_stops_a_hold`,
+//! `a_retry_after_a_cancelled_hold_keeps_its_seed_and_lands`; the third,
+//! `a_kit_cancel_reaches_a_hold_only_an_adopted_checkpoint_carries`, is in
+//! `recovery_hold_adopted_image.rs`, whose replica adopts an image),
 //! and the two ANCHORS-E6 pins (Fable pass 29: an anchor is no voice in a
 //! shared judge): `a_fresh_roots_anchor_beside_the_root_key_never_stops_a_hold`
 //! and `the_kits_cancel_is_the_root_keys_own_row`.
@@ -2562,35 +2563,6 @@ fn the_kits_cancel_is_the_root_keys_own_row() {
         vec![fixture.person],
         "the kit's Cancel names the owner its R was enrolled for"
     );
-}
-
-#[test]
-#[ignore = "needs an adopted checkpoint image carrying the hold: adopt_authority_checkpoint needs an owner-pairing pin, certified root key bindings and attestations, which no integration-test path builds (no adopting test in tests/)"]
-fn a_kit_cancel_reaches_a_hold_only_an_adopted_checkpoint_carries() {
-    // Vault A holds a live attempt.
-    let fixture = fixture();
-    let lost = fixture.enrol_device_key(LOST_KEY_SEED);
-    let lost_key = key_of(&lost);
-    let new_key = SigningKey::from_bytes(&[NEW_KEY_SEED; 32]);
-    let (hold, _) = held(
-        fixture
-            .recover_wait(
-                WAIT,
-                fixture.released_material(0),
-                RootSuccessor::Device(fixture.enrollment(&new_key)),
-                std::slice::from_ref(&lost_key),
-            )
-            .expect("the box recovery holds"),
-    );
-    assert_eq!(fixture.hold_view(&hold).state, RecoveryHoldState::Waiting);
-    // Not reachable from here: write A's checkpoint image, adopt it on a
-    // replica that stores no raw hold row, and run the kit cancel-all
-    // there. `Vault::adopt_authority_checkpoint` verifies the image
-    // against an owner-pairing pin and per-root certified key bindings
-    // plus attestations (`attest_authority_checkpoint`); building those
-    // needs the pairing-link and checkpoint-key stack, which no
-    // integration test reaches. The full test would then assert the
-    // replica's kit cancel-all writes a Cancel for the carried hold.
 }
 
 #[test]
