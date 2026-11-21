@@ -19,6 +19,14 @@
 //! refuses it for its context, and the check parks to send it again. The
 //! guard, a span that fits the window, is judged on both.
 //!
+//! With the host's decisions lent, the typed support read sends the judge's
+//! model the same span inside its question turn, a larger request than the
+//! diagnostic's. A window the diagnostic fits and the typed read runs past
+//! settles the check the same way, before either call. Red at the first fix
+//! (77c1bfff), which sized the diagnostic and the question's wording alone:
+//! the diagnostic goes out, the typed read is refused for its context, and
+//! the check parks to send both again.
+//!
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p
 //! oneiron-server --all-features --lib -- api::tests::ai_chat_check_judge_room`.
 
@@ -26,9 +34,11 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use oneiron::dreamer_runner::maintenance::compaction_check::{
-    COMPACTION_CHECK_FACET, COMPACTION_CHECK_PREDICATE, CompactionCheckModel, run_compaction_check,
+    COMPACTION_CHECK_FACET, COMPACTION_CHECK_PREDICATE, CompactionCheckDecisions,
+    CompactionCheckModel, run_compaction_check,
 };
 use oneiron::dreamer_runner::{AdmitDreamerAttempt, DreamerAdmissionOutcome};
+use oneiron::llm::decision::{DecisionBand, DecisionDial, DecisionRung};
 use oneiron::llm::{HostInferenceBinding, HostInferenceContext};
 use oneiron::{
     BudgetExhaustionPolicy, BudgetGuard, BudgetLease, ContentPart, DreamerAdmittedAttempt,
@@ -44,6 +54,7 @@ use super::ai_chat_self_compaction::{
 };
 use crate::ai_host::AiHost;
 use crate::ai_host::test_support::{eventually, route_extraction};
+use crate::decision_host::DecisionHost;
 use crate::fake_llm::{FakeLlm, Reply};
 use crate::server::SyncServer;
 
@@ -54,12 +65,16 @@ const RUBRIC: &str = "the test rubric the judge reads the summary against its sp
 const SMALL_CONTEXT_TOKENS: u64 = 256;
 /// A judge context every span of this chat fits.
 const LARGE_CONTEXT_TOKENS: u64 = 1_000_000;
+/// The host's wording of the typed support question under test: prompt
+/// data, never engine prose.
+const SUPPORT_WORDING: &str = "Does the retained span support everything the summary says?";
 
 /// The judge: it records every request it is sent, refuses one whose text
-/// runs past `context_tokens` as a provider refuses it for its context, and
-/// answers any other `supported`.
+/// runs past `context_tokens`, or one past its first `answered`, as a
+/// provider refuses it for its context, and answers any other `supported`.
 struct RecordingJudge {
     context_tokens: u64,
+    answered: Option<usize>,
     requests: Mutex<Vec<LlmRequest>>,
 }
 
@@ -67,7 +82,17 @@ impl RecordingJudge {
     fn new(context_tokens: u64) -> Self {
         Self {
             context_tokens,
+            answered: None,
             requests: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// A judge that answers its first `answered` requests and refuses each
+    /// later one for its context, whatever its size.
+    fn answering_first(answered: usize) -> Self {
+        Self {
+            answered: Some(answered),
+            ..Self::new(u64::MAX)
         }
     }
 
@@ -134,11 +159,13 @@ impl LlmBackend for RecordingJudge {
         _lease: &'a BudgetLease,
     ) -> LlmGenerateFuture<'a> {
         let tokens = request_tokens(&request);
-        self.requests
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push(request);
-        let answer = if tokens > self.context_tokens {
+        let mut requests = self.requests.lock().unwrap_or_else(PoisonError::into_inner);
+        let past_answered = self
+            .answered
+            .is_some_and(|answered| requests.len() >= answered);
+        requests.push(request);
+        drop(requests);
+        let answer = if tokens > self.context_tokens || past_answered {
             Err(LlmError::Fatal(FatalLlmError::ContextWindowExceeded {
                 message: format!(
                     "a {tokens}-token request exceeds the {}-token context",
@@ -264,6 +291,19 @@ pub(super) async fn run_check(
     judge: &dyn LlmBackend,
     window_tokens: u64,
 ) -> DreamerAttemptExecution {
+    run_check_lent(server, check, judge, Some(window_tokens), None).await
+}
+
+/// [`run_check`] on the window `window_tokens`, if any, with the typed
+/// support verdict on `decisions`' ladder as the server's host lends it:
+/// up to its Big rung, so no person is asked.
+async fn run_check_lent(
+    server: &SyncServer,
+    check: &DreamerAdmittedAttempt,
+    judge: &dyn LlmBackend,
+    window_tokens: Option<u64>,
+    decisions: Option<&DecisionHost>,
+) -> DreamerAttemptExecution {
     let model = ModelId::new("test/judge@r1").unwrap();
     let guard = BudgetGuard::with_reserve_units(
         "compaction-check-judge-room",
@@ -297,8 +337,17 @@ pub(super) async fn run_check(
         },
         role: oneiron::dreamer_consolidation::DREAMER_NARRATIVE_ROLE,
         rubric: RUBRIC,
-        window_tokens: Some(window_tokens),
-        decisions: None,
+        window_tokens,
+        decisions: decisions.map(|host| CompactionCheckDecisions {
+            ladder: host.ladder().ladder(),
+            dial: DecisionDial {
+                first: DecisionRung::Local,
+                ceiling: DecisionRung::Big,
+                band: DecisionBand::default(),
+            },
+            bands: host.bands(),
+            wording: SUPPORT_WORDING.to_owned(),
+        }),
     };
     run_compaction_check(check, &ctx, lent).await.unwrap()
 }
@@ -370,4 +419,64 @@ async fn a_span_within_the_judges_window_is_judged() {
     );
     let finding = finding(&landed.server, &landed.agent).expect("the check records its finding");
     assert_eq!(finding["verdict"], "supported", "{finding}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_typed_read_past_the_judges_window_settles_unreadable_with_no_judge_call() {
+    let landed = landed_check().await;
+    let decisions = DecisionHost::new(landed.server.vault());
+    // The probe, with no window lent: the judge answers the diagnostic and
+    // refuses the typed read for its context, so the check parks having sent
+    // both, and their sizes place the window.
+    let probe = RecordingJudge::answering_first(1);
+    let probed = run_check_lent(
+        &landed.server,
+        &landed.check,
+        &probe,
+        None,
+        Some(&decisions),
+    )
+    .await;
+    let sizes: Vec<u64> = probe.requests().iter().map(request_tokens).collect();
+    let [diagnostic, typed] = sizes[..] else {
+        panic!("the probe sends the diagnostic and the typed read: {sizes:?} tokens; {probed:?}");
+    };
+    assert!(
+        diagnostic < typed,
+        "the typed read sends the span inside its question turn: {sizes:?} tokens"
+    );
+    // A window the diagnostic fits and the typed read runs past.
+    let window = typed - 1;
+    let judge = RecordingJudge::new(window);
+    let execution = run_check_lent(
+        &landed.server,
+        &landed.check,
+        &judge,
+        Some(window),
+        Some(&decisions),
+    )
+    .await;
+
+    let requests = judge.requests();
+    assert!(
+        matches!(
+            &execution,
+            DreamerAttemptExecution::Completed {
+                completed_units: 0,
+                step_bindings,
+            } if step_bindings.is_empty()
+        ),
+        "the check completes having spent nothing, never parks to ask again: {execution:?}; \
+         on a {window}-token window the judge was sent {} request(s) of {:?} tokens",
+        requests.len(),
+        requests.iter().map(request_tokens).collect::<Vec<_>>(),
+    );
+    assert!(
+        requests.is_empty(),
+        "no judge call goes out when the typed read runs past its window"
+    );
+    let finding = finding(&landed.server, &landed.agent).expect("the check records its finding");
+    assert_eq!(finding["verdict"], "unreadable_evidence", "{finding}");
+    assert_eq!(finding["reason"], "span_past_judge_room", "{finding}");
+    assert_eq!(finding["judge"], Value::Null, "no judge read it: {finding}");
 }

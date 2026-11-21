@@ -89,10 +89,10 @@ use oneiron::authority::{
     AUTHORITY_LOG_SCHEMA_VERSION, ActAuthority, ActSurface, AppointmentVerdict,
     AuthorityAttestation, AuthorityEntryHash, AuthorityFold, AuthorityFoldIssue, AuthorityKey,
     AuthorityLogEntry, AuthorityOp, AuthoritySignature, AuthorityTier, CheckpointRootSigner,
-    DeviceAuthority, HostSlipIssuer, MachineOwnership, MachineRole, OwnerKeyEnrollment, ROLE_ADMIN,
-    ROLE_AGENT, ROLE_OWNER, ROOT_APPOINTMENT_SUCCESSOR_PROOF_KIND, RecoveryRootId, RootAppointment,
-    RootChange, authority_entry_hash, authority_transcript, decode_authority_log_entry_body,
-    encode_authority_log_entry_body, root_appointment_challenge,
+    DeviceAuthority, HostSlipIssuer, MachineOwnership, MachineRole, OwnerKeyEnrollment,
+    OwnerProofGround, ROLE_ADMIN, ROLE_AGENT, ROLE_OWNER, ROOT_APPOINTMENT_SUCCESSOR_PROOF_KIND,
+    RecoveryRootId, RootAppointment, RootChange, authority_entry_hash, authority_transcript,
+    decode_authority_log_entry_body, encode_authority_log_entry_body, root_appointment_challenge,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::error::SecretError;
@@ -1155,6 +1155,7 @@ impl CheckpointRootSigner for RestReadingSigner {
         &self,
         _vault: &Vault,
         _fold: &AuthorityFold,
+        _ground: &OwnerProofGround,
         transcript: &[u8],
     ) -> oneiron::Result<Vec<u8>> {
         Ok(self.key.sign(transcript).to_bytes().to_vec())
@@ -1231,6 +1232,7 @@ impl CheckpointRootSigner for GatedRootSigner {
         &self,
         _vault: &Vault,
         _fold: &AuthorityFold,
+        _ground: &OwnerProofGround,
         transcript: &[u8],
     ) -> oneiron::Result<Vec<u8>> {
         Ok(self.key.sign(transcript).to_bytes().to_vec())

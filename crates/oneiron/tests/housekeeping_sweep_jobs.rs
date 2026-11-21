@@ -1,5 +1,5 @@
-//! DESIGN 15-setting-primitive, stage 5a-2: the engine's 20 sweeps are jobs of the one runner, and
-//! their cadences are 20 Setting keys.
+//! DESIGN 15-setting-primitive, stage 5a-2: the engine's 21 sweeps are jobs of the one runner, and
+//! their cadences are 21 Setting keys.
 //! - each sweep has a key `housekeeping.<sweep>.every` at the cadence the code held before, and
 //!   each sweep's job takes its cadence from its key and is armed by the engine alone;
 //! - a handle's first pass arms and runs every engine sweep, and reports the host-only ones; the
@@ -55,7 +55,7 @@ const HOUR: u64 = 3_600;
 const DAY: u64 = 24 * HOUR;
 
 /// Every engine sweep, and the cadence the code held for it before stage 5a.
-const CADENCES: [(HousekeepingSweep, u64); 20] = [
+const CADENCES: [(HousekeepingSweep, u64); 21] = [
     (HousekeepingSweep::SecretLeaseExpiry, HOUR),
     (HousekeepingSweep::CriticalConfirmExpiry, HOUR),
     (HousekeepingSweep::SymbolLeaseExpiry, 5 * MINUTE),
@@ -76,6 +76,7 @@ const CADENCES: [(HousekeepingSweep, u64); 20] = [
     (HousekeepingSweep::ModelPackRetirement, MINUTE),
     (HousekeepingSweep::OAuthExpiry, HOUR),
     (HousekeepingSweep::EsignTokenExpiry, HOUR),
+    (HousekeepingSweep::SourceFloorBackfill, HOUR),
 ];
 
 /// The engine sweeps that run to their end with nothing failed on a new vault, so each is next
@@ -232,7 +233,7 @@ fn a_first_pass_runs_every_engine_sweep_and_the_next_finds_each_due_a_cadence_la
         assert_eq!(fx.due(sweep), None, "{}: not armed before", sweep.code());
     }
     let first = fx.pass();
-    assert_eq!(first.sweeps.len(), 26, "{first:#?}");
+    assert_eq!(first.sweeps.len(), 27, "{first:#?}");
     for (sweep, secs) in CADENCES {
         let ran = outcome(&first, sweep);
         assert!(

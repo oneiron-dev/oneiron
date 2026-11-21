@@ -23,6 +23,7 @@
 use std::collections::BTreeSet;
 
 use oneiron::authority::CommReach;
+use oneiron::claim::CallerLocality;
 use oneiron::context_board::{
     BriefCredentialCeiling, BriefReadShape, BriefRunCeiling, BriefWorkingHandle, BriefWorkingSet,
     CommunicationLimits, SelfBriefState, SessionReadSet, StreamConnectionId,
@@ -31,6 +32,7 @@ use oneiron::llm::run_admission::RunAdmission;
 use oneiron::memory::{MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::DescribeRequest;
 
+use crate::ai_host::{CodeModeRoute, code_mode_reach};
 use crate::server::SyncServer;
 
 /// What the host that resolves a brief holds for it (FIX 17594, Engine
@@ -158,7 +160,8 @@ pub(super) fn scratchpad_family(
 /// Answers a pumped run's `describe(self)` for its agent `actor`, over the
 /// run's own board `connection`, its entry spending on `line`: the run's
 /// brief with the agent's loaded skills from the run's own session reads,
-/// the PEOPLE its own lane reads and the ceilings its door holds the facts
+/// the PEOPLE its own lane reads for a caller at `people_at`
+/// ([`run_brief_people_locality`]) and the ceilings its door holds the facts
 /// for (`host`), and beside it the rows the brief is derived from
 /// ([`oneiron::context_board::SelfBrief::sources`]). The wire value is the
 /// credential path's `TaskDescription::SelfCard`.
@@ -168,6 +171,7 @@ pub(crate) async fn describe_self_for_run(
     connection: &StreamConnectionId,
     line: Option<&RunAdmission>,
     host: &BriefHostFacts,
+    people_at: CallerLocality,
     request: &DescribeRequest,
 ) -> MemoryResult<(serde_json::Value, Vec<oneiron::EntityId>)> {
     // describe(self) names the run's own brief and nothing else (FIX 3256).
@@ -177,7 +181,7 @@ pub(crate) async fn describe_self_for_run(
             "describe(self) names the run's own brief",
         ));
     }
-    let people = run_people(server, actor)?;
+    let people = run_people(server, actor, people_at)?;
     let reads = crate::api::run_session_reads(server, actor, connection).await;
     let state = resolved_state(server, actor, line, &reads, host)?;
     let key = (actor.entity_ref(), connection.0.clone());
@@ -387,7 +391,7 @@ pub(crate) fn run_brief_state(
 
 /// [`run_people`] for a host outside the context board: the PEOPLE a pumped
 /// run's self brief lays its roster out from, as its describe(self) reads
-/// them (FIX 17594 D3).
+/// them for a caller at `at` (FIX 17594 D3).
 ///
 /// # Errors
 ///
@@ -395,27 +399,52 @@ pub(crate) fn run_brief_state(
 pub(crate) fn run_brief_people(
     server: &SyncServer,
     actor: oneiron::WriteActor,
+    at: CallerLocality,
 ) -> MemoryResult<oneiron::context_board::People> {
-    run_people(server, actor)
+    run_people(server, actor, at)
 }
 
-/// The vault's people as the agent's own lane reads them for a caller off
-/// this device ([`read_people`]). A run's brief goes into the model requests
-/// of every seat its ladder may take and is sent again until its next
-/// boundary, so it is judged off this device always: a derived text follows
-/// its strictest input (DEC-0005:476; RULING RUN-BRIEF-ROSTER-SHAPE = A).
-/// Giving an all-on-device run its full view back (DEC-0005:564) is FIX-LIST
-/// RUN-BRIEF-ROUTE-AWARE-ROSTER.
+/// The caller a pumped run's brief PEOPLE are read for, the run's code-mode
+/// calls bound to `route`: on this device only while no rung any of those
+/// calls may reach leaves the device ([`code_mode_reach`]); off it when the
+/// reach is wider, and with no route bound. A run's brief goes into the
+/// model requests of every route its calls may take and is sent again until
+/// its next boundary, so it follows its strictest destination (DEC-0005:476;
+/// RULING RUN-BRIEF-ROSTER-SHAPE = A), and a run whose every route stays on
+/// the device reads as a caller on this device (DEC-0005:564;
+/// RUN-BRIEF-ROUTE-AWARE-ROSTER). The reach is read again before each
+/// request: a held brief is judged under the caller it gives then
+/// ([`run_brief_fallen_rows`]).
+pub(crate) fn run_brief_people_locality(
+    server: &SyncServer,
+    route: Option<&CodeModeRoute>,
+) -> CallerLocality {
+    match route {
+        Some(route)
+            if code_mode_reach(server.ai.models(), &server.vault, route)
+                == oneiron::ModelLocality::OnDevice =>
+        {
+            CallerLocality::OnDevice
+        }
+        _ => CallerLocality::OffDevice,
+    }
+}
+
+/// The vault's people as the agent's own lane reads them for a caller at
+/// `at` ([`read_people`]), the caller the run's routes give
+/// ([`run_brief_people_locality`]).
 fn run_people(
     server: &SyncServer,
     actor: oneiron::WriteActor,
+    at: CallerLocality,
 ) -> MemoryResult<oneiron::context_board::People> {
-    read_people(server, &run_people_read(server, actor)?)
+    read_people(server, &run_people_read(server, actor, at)?)
 }
 
 /// The rows of a pumped run's brief prefix that no longer stand for the
-/// reader its PEOPLE were read under, the agent's own lane for a caller off
-/// this device ([`fallen_brief_rows`]).
+/// agent's own lane read for a caller at `at`, the caller the run's routes
+/// give now ([`fallen_brief_rows`]). A prefix read on this device whose
+/// routes now leave it finds here each row only this device reads.
 ///
 /// # Errors
 ///
@@ -423,33 +452,39 @@ fn run_people(
 pub(crate) fn run_brief_fallen_rows(
     server: &SyncServer,
     actor: oneiron::WriteActor,
+    at: CallerLocality,
     sources: &[oneiron::EntityId],
     resident: &BTreeSet<oneiron::EntityId>,
 ) -> MemoryResult<BTreeSet<oneiron::EntityId>> {
-    fallen_brief_rows(server, &run_people_read(server, actor)?, sources, resident)
+    fallen_brief_rows(
+        server,
+        &run_people_read(server, actor, at)?,
+        sources,
+        resident,
+    )
 }
 
-/// The agent's own lane for a caller off this device: the reader a run's
-/// PEOPLE are read under and its brief's fallen rows are judged under, so
-/// both follow one reader ([`run_people`]).
+/// The agent's own lane for a caller at `at`: the reader a run's PEOPLE are
+/// read under and its brief's fallen rows are judged under, so both follow
+/// one reader ([`run_people`]).
 fn run_people_read(
     server: &SyncServer,
     actor: oneiron::WriteActor,
+    at: CallerLocality,
 ) -> MemoryResult<oneiron::claim::ScopedRead<'_>> {
     let key = oneiron::claim::ScopedReadActorKey::with_actor_class(
         actor.entity_ref().to_hex(),
         actor.actor_class().gate_actor_class(),
     )
     .ok_or_else(|| internal("run actor key invalid"))?;
-    Ok(server
-        .vault
-        .scoped_read(key.at(oneiron::claim::CallerLocality::OffDevice)))
+    Ok(server.vault.scoped_read(key.at(at)))
 }
 
 /// The rows of a staged brief prefix, kept past the boundary it was
-/// prepared at, that no longer stand for `read`, the reader its PEOPLE were
-/// read under ([BRIEF-PREFIX-STALE-PAST-REVOKE]): each of `sources` that is
-/// deleted, erased or withdrawn now
+/// prepared at, that no longer stand for `read`, the reader the brief is
+/// judged under now ([BRIEF-PREFIX-STALE-PAST-REVOKE]; a pumped run's reads
+/// as far as its calls may go now, RUN-BRIEF-ROUTE-AWARE-ROSTER): each of
+/// `sources` that is deleted, erased or withdrawn now
 /// ([`oneiron::code_run::withdrawn_source_rows`]), each person its roster
 /// holds, `resident`, that `read` no longer reads, judged as
 /// [`read_people`] admits a person, and each fact of an `about` line the

@@ -57,7 +57,7 @@ use oneiron_store::batch::secret_scan::mask::text_log;
 mod text_spans;
 mod wipe;
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -93,7 +93,7 @@ use crate::store::known_value_index::KnownValues;
 use crate::write_envelope::ClaimCandidate;
 pub(in crate::batch) use batch_door::mask_batch_ops;
 pub(crate) use promoted_message_parts::seal_promoted_message_ops_in_txn;
-pub(crate) use room_carry::carry_room_secrets_in_txn;
+pub(crate) use room_carry::{RoomCarry, carry_room_secrets_in_txn};
 use split_phrase::Spread;
 pub(crate) use text_spans::{file_spans, span_placed_for};
 use text_spans::{merged, occurrences, secret_spans};
@@ -550,6 +550,11 @@ struct Masker {
     /// read: a custody identity read as its erase read it before a record
     /// it names took a longer value (blind review round 2 of #9528).
     records_longest: Option<usize>,
+    /// With `records`, each record's values held at most at the custody
+    /// slot this names for it: a custody identity read as its erase read
+    /// it, before a record it names took another value (FIX
+    /// ERASED-IDENTITY-ROTATION-GENERATION). `None` reads every slot.
+    records_through: Option<BTreeMap<String, u64>>,
     /// The door's scan read each text this pass reads now by the same text
     /// rules and found no shape: none is sought again (speed).
     shapes_read: bool,
@@ -996,7 +1001,12 @@ impl Masker {
     fn known_whole(&self, value: &[u8]) -> Option<String> {
         let known = self.known.as_ref()?;
         let records = self.records.as_ref();
-        match text::known_spans(known, records, self.records_longest, value, |_| false).as_slice() {
+        let through = self.records_through.as_ref();
+        match text::known_spans(known, records, self.records_longest, through, value, |_| {
+            false
+        })
+        .as_slice()
+        {
             [hit] if hit.span == (0..value.len()) => Some(hit.handle.to_owned()),
             _ => None,
         }

@@ -38,7 +38,10 @@
 pub(crate) mod binding_door;
 pub(crate) mod carried;
 pub(crate) mod checkpoint;
+pub(crate) mod floor;
+mod floor_state;
 mod obligation;
+mod rederive;
 mod replica;
 pub(crate) mod tables;
 mod wake;
@@ -53,6 +56,15 @@ use crate::side_table::{self, Named, SideTable};
 use crate::store::source_audience_obligation::SourceAudienceObligation;
 use crate::{EntityId, Vault};
 
+pub(crate) use floor::{
+    FloorSource, SOURCE_READERS, SourceReaders, floor_source_in, floor_threads_in,
+    raise_floors_in_txn, seal_births_from_erased_inputs_in_txn,
+};
+#[cfg(any(test, feature = "test-support", oneiron_test_support))]
+pub(crate) use floor_state::forget_floor_state_in_txn;
+pub(crate) use floor_state::{
+    backfill_floors, binding_landed_in_txn, floor_waits_in, waiting_floor_readable_in,
+};
 pub(crate) use obligation::{
     SourceAudienceBirth, admit_obligation_in_txn, admit_session_obligation_in_txn,
     binding_stands_on, body_names_obligation, keeps_row_obligation, mark_birth_in_txn,
@@ -60,6 +72,8 @@ pub(crate) use obligation::{
 };
 #[cfg(feature = "sync")]
 pub(crate) use obligation::{row_obligation, unbound_obligation_in};
+pub use rederive::SealedRowsRederived;
+pub(crate) use rederive::facts_hidden_source_unknown_in;
 pub(crate) use replica::{
     ReplicaMerge, bind_replicated_in_txn, event_conflicts_in, event_join,
     event_names_erased_actor_in, event_without_erased_actors, merge_event_in_txn,
@@ -206,7 +220,10 @@ pub(crate) fn any_landed_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool
 /// Notes, in the write that materializes it, a row a source landed: one
 /// whose own body carries the source-audience obligation, valid or
 /// malformed, whatever its kind, as the walk reads a row's stamp (fix list
-/// rows 16255, 16256). Every base write of a row runs it, whoever writes.
+/// rows 16255, 16256), or a phone thread's row whose own body carries its
+/// phone mark in any shape (READ-LINEAGE L1 hook 4: until one is written,
+/// no write gives a row a floor, [`floor::floors_possible_in`]). Every base
+/// write of a row runs it, whoever writes.
 ///
 /// # Errors
 ///
@@ -214,9 +231,12 @@ pub(crate) fn any_landed_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool
 pub(crate) fn note_landed_in(
     store: &crate::store::Store,
     txn: &mut heed::RwTxn<'_>,
+    entity_type: u8,
     body: &[u8],
 ) -> Result<()> {
-    if obligation::body_names_obligation(body) && LANDED.get(store, txn, &())? != Some(true) {
+    let landed = obligation::body_names_obligation(body)
+        || crate::voice_call::body_phone_marked(entity_type, body);
+    if landed && LANDED.get(store, txn, &())? != Some(true) {
         LANDED.put(store, txn, &(), &true)?;
     }
     Ok(())
@@ -240,13 +260,13 @@ pub(crate) fn derived_policies_in(
     DERIVED.get(&vault.store, txn, row)
 }
 
-/// Adds `policies` to those the derived row `row` reads under, in `txn`.
-/// Whether the set grew.
+/// Adds `policies` to those the derived row `row` reads under, in `txn`: a
+/// full-window carrier's, or the floor its own write raised
+/// ([`raise_floors_in_txn`]). Whether the set grew.
 ///
 /// # Errors
 ///
 /// Storage failures.
-#[cfg(feature = "sync")]
 pub(crate) fn add_derived_policies_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -275,6 +295,24 @@ pub(crate) fn erase_derived_policies_in_txn(
     row: &EntityId,
 ) -> Result<()> {
     DERIVED.delete(store, txn, row).map(drop)
+}
+
+/// Seals, in the write that erases `row`, the floor of each row that waits
+/// on it (`floor_state::seal_rows_awaiting_in_txn`; #9289 Opus review 3
+/// P1-A). Each delete door runs it before the record's body and edges go:
+/// the physical purge, the soft erase (but a soft tombstone replayed over a
+/// soft scrub already applied here), and the first application of a peer's
+/// tombstone of a row this vault never held (#10108 reviews).
+///
+/// # Errors
+///
+/// Storage failures.
+pub(crate) fn seal_floors_awaiting_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    row: &EntityId,
+) -> Result<()> {
+    floor_state::seal_rows_awaiting_in_txn(store, txn, row)
 }
 
 /// The policy the row `record` was born under, if it was bound.
@@ -641,7 +679,9 @@ pub(crate) fn bind_record_in_txn(
         None => RECORDS.put(&vault.store, txn, record, policy)?,
     }
     // The landing that marked the row born binds it here: the mark goes.
-    obligation::clear_birth_in_txn(vault, txn, record)
+    obligation::clear_birth_in_txn(vault, txn, record)?;
+    // A row written from it before its binding landed waits for it.
+    floor_state::binding_landed_in_txn(vault, txn, record)
 }
 
 /// Shares the thread policy `thread` with `person` (`share`), or withdraws

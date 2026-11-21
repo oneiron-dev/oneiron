@@ -40,7 +40,8 @@ use crate::error::{Error, Result};
 use crate::gate::confirm::{
     GATE_REASON_ALLOW_CRITICAL_CONFIRM_ATTACHED, GATE_REASON_ALLOW_CRITICAL_OWNER_AUTHORED,
     GATE_REASON_ALLOW_FALLBACK_CRITICALITY, GATE_REASON_PENDING_CRITICAL_CONFIRM_ATTACHED,
-    critical_claim_can_land_auto_with_confirm, pending_row_holds_critical_confirm,
+    critical_claim_can_land_auto_with_confirm, owner_proof_lifts_criticality_floor,
+    pending_row_holds_critical_confirm,
 };
 use crate::gate::constants::LOCAL_WRITE_ACTOR_CLASS;
 use crate::gate::decision::{GateDecision, GateOutcome, GateReasonCode};

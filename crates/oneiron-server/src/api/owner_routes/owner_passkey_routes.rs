@@ -268,13 +268,13 @@ pub(crate) fn vouch_land_receipt_schema() -> serde_json::Value {
 }
 
 /// Bytes the browser spelled as base64url, padded or not.
-fn b64url(field: &str, value: &str) -> OwnerResult<Vec<u8>> {
+pub(super) fn b64url(field: &str, value: &str) -> OwnerResult<Vec<u8>> {
     base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(value.trim_end_matches('='))
         .map_err(|_| OwnerError::Invalid(format!("{field} must be base64url")))
 }
 
-fn to_b64url(bytes: &[u8]) -> String {
+pub(super) fn to_b64url(bytes: &[u8]) -> String {
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
 }
 
@@ -288,7 +288,7 @@ fn passkey_key(value: &str) -> OwnerResult<Vec<u8>> {
 }
 
 /// The predecessor signature a passkey's assertion makes: its envelope.
-fn assertion_envelope(
+pub(super) fn assertion_envelope(
     authenticator_data: &str,
     client_data_json: &str,
     signature: &str,

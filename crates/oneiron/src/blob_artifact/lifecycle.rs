@@ -396,6 +396,22 @@ pub(crate) fn release_claimed_version_in_txn(
     }
     let mut cleanup = BlobArtifactLifecycleCleanup::default();
     tear_in_txn(write, wtxn, claim, &mut cleanup)?;
+    settle_chainless_release_in_txn(write, wtxn, artifact, content_hash, cleanup)?;
+    Ok(true)
+}
+
+/// Settles what a released version's claim named on a vault that holds no chain version under
+/// that claim (a replica), once the claim is gone: the pair `artifact` x `content_hash` goes
+/// unless a retained claim still names it, and then the bytes go unless something live holds
+/// them. Folds `cleanup`'s graph and vector accounting.
+fn settle_chainless_release_in_txn(
+    write: &crate::secret_custody::CustodyWrite<'_>,
+    wtxn: &mut RwTxn<'_>,
+    artifact: &EntityId,
+    content_hash: &[u8; BLOB_ARTIFACT_CONTENT_HASH_LEN],
+    mut cleanup: BlobArtifactLifecycleCleanup,
+) -> Result<()> {
+    let store = write.store;
     if forget_released_pair_in_txn(store, wtxn, artifact, content_hash)? {
         release_unheld_bytes(
             store,
@@ -412,7 +428,7 @@ pub(crate) fn release_claimed_version_in_txn(
     if cleanup.had_vector {
         crate::store::vector_index::increment_vector_version(store, wtxn)?;
     }
-    Ok(true)
+    Ok(())
 }
 
 /// The version of this vault's chain of `artifact` whose ledger claim is `claim`, with its hash.
@@ -431,12 +447,14 @@ fn chained_version_of(
     Ok(None)
 }
 
-/// A version of a live artifact's chain here whose `blob.version` claim a peer's tombstone is
-/// about to purge: read before the purge, released after it
+/// A live artifact's `blob.version` claim here that a peer's tombstone is about to purge, with
+/// the version of this vault's chain that keeps it: read before the purge, released after it
 /// ([`release_replayed_claim_version_in_txn`]).
 pub(crate) struct ReplayedClaimVersion {
     artifact: EntityId,
-    version: u64,
+    /// The chain version under the claim; `None` on a vault that holds no chain version under it
+    /// (a replica), where the claim's pair and bytes stand for the version.
+    version: Option<u64>,
     content_hash: [u8; BLOB_ARTIFACT_CONTENT_HASH_LEN],
 }
 
@@ -457,10 +475,10 @@ impl ReplayedClaimVersion {
     }
 }
 
-/// The chain version a replayed tombstone of `claim` takes with it: `Some` when `claim` is a
-/// `blob.version` claim of a live artifact here and this vault's chain of that artifact keeps a
-/// version under it. `None` for any other record. Read before the replay's purge takes the
-/// claim's body.
+/// What a replayed tombstone of `claim` takes with it: `Some` when `claim` is a `blob.version`
+/// claim of a live artifact here, with the version this vault's chain of that artifact keeps
+/// under it, if one does (REVIEW-7640-NO-CHAIN-REPLICA-REPLAY: a replica keeps none). `None` for
+/// any other record. Read before the replay's purge takes the claim's body.
 ///
 /// # Errors
 ///
@@ -470,18 +488,15 @@ pub(crate) fn replayed_claim_version_in_txn(
     txn: &RoTxn<'_>,
     claim: &EntityId,
 ) -> Result<Option<ReplayedClaimVersion>> {
-    let Some((artifact, _)) = live_version_claim_reference(store, txn, claim)? else {
+    let Some((artifact, claimed_hash)) = live_version_claim_reference(store, txn, claim)? else {
         return Ok(None);
     };
-    Ok(
-        chained_version_of(store, txn, &artifact, claim)?.map(|(version, content_hash)| {
-            ReplayedClaimVersion {
-                artifact,
-                version,
-                content_hash,
-            }
-        }),
-    )
+    let chained = chained_version_of(store, txn, &artifact, claim)?;
+    Ok(Some(ReplayedClaimVersion {
+        artifact,
+        version: chained.map(|(version, _)| version),
+        content_hash: chained.map_or(claimed_hash, |(_, content_hash)| content_hash),
+    }))
 }
 
 /// A peer's purge of a version's `blob.version` claim releases that version of this vault's chain
@@ -490,7 +505,8 @@ pub(crate) fn replayed_claim_version_in_txn(
 /// uploader's chain would keep a version whose claim is gone, and reading it would answer
 /// `CorruptedIndex`. The version goes as the owner's release takes it, after the replay purged the
 /// claim; the artifact stays even when emptied, and a legal hold on the artifact or its ASSET
-/// keeps the version.
+/// keeps the version. A vault with no chain version under the claim (a replica) settles the
+/// claim's pair and bytes as the owner's release there does (REVIEW-7640-NO-CHAIN-REPLICA-REPLAY).
 ///
 /// # Errors
 ///
@@ -500,11 +516,20 @@ pub(crate) fn release_replayed_claim_version_in_txn(
     wtxn: &mut RwTxn<'_>,
     replayed: &ReplayedClaimVersion,
 ) -> Result<()> {
+    let Some(version) = replayed.version else {
+        return settle_chainless_release_in_txn(
+            write,
+            wtxn,
+            &replayed.artifact,
+            &replayed.content_hash,
+            BlobArtifactLifecycleCleanup::default(),
+        );
+    };
     release_version_in_txn(
         write,
         wtxn,
         &replayed.artifact,
-        replayed.version,
+        version,
         &replayed.content_hash,
         false,
         VersionClaimRow::PurgedByReplay,

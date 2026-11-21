@@ -35,17 +35,30 @@ where
     pub(crate) exact_posting_matches_scope: &'a mut F,
     /// The scoped query's transaction-local, authenticated diary NOTE ids.
     pub(crate) private_note_ids: Option<&'a crate::claim::ScopedDiaryCandidates>,
-    /// A clamped read's own-row test: whether its audience could not read a
-    /// row whatever its status. A posting that scores for such a row counts
-    /// in no query term's document frequency, so no word of a row the
-    /// audience may not read moves the score of a row it may (REVIEW-9980
-    /// round 2). The document count and the fields' average lengths stay the
-    /// vault's, hidden rows included: they carry no word of any row (FIX
-    /// [CLAMPED-BM25-IDF-COUNTS-HIDDEN-POSTINGS]). The posting still scores:
+    /// A read's own-row test: whether its reader may not read a row whatever
+    /// its status, as a clamped pack's audience may not, or as a world keeps
+    /// it from the reader, or whether a scoped read refuses the row and
+    /// counts it nowhere ([`crate::claim::ScopedRead::withheld_row_test_in`]).
+    /// A posting that scores for such a row counts in no query term's
+    /// document frequency, so no word of a row the reader may not read moves
+    /// the score of a row it may (REVIEW-9980 round 2; FIX
+    /// WORLD-SCOPE-BM25-DF-COUNTS-HIDDEN-POSTINGS,
+    /// SCOPED-BM25-DF-COUNTS-NON-WORLD-REFUSED-POSTINGS). The document count and
+    /// the fields' average lengths stay the vault's, hidden rows included:
+    /// they carry no word of any row (FIX
+    /// [CLAMPED-BM25-IDF-COUNTS-HIDDEN-POSTINGS]). In a room, whose pinned
+    /// count base postings that joined later may outnumber, a term's count is
+    /// floored on its counted postings alone, clamp or scoped read (REVIEW-10111
+    /// round 2), so no hidden row raises one term's count. The posting still scores:
     /// the read's admission keeps it out, and a clamped pack counts it among
     /// the rows its clamp withheld. `None` counts every posting.
     pub(crate) hidden_row: Option<&'a mut dyn FnMut(&EntityId) -> Result<bool>>,
 }
+
+/// An owned own-row test ([`Bm25SearchOptions::hidden_row`]): whether a
+/// row's postings count in no statistic, as its reader may not read it or
+/// its read keeps it with no count.
+pub(crate) type HiddenRowTest<'t> = Box<dyn FnMut(&EntityId) -> Result<bool> + 't>;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct PrefixExpansionPostingDecision {

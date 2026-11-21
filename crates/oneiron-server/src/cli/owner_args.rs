@@ -132,6 +132,15 @@ pub struct MaintainArgs {
     #[arg(long)]
     pub lift_secrets: bool,
 
+    /// Write again, from the sources that resolve now, the facts doctor
+    /// counts as hidden because their source is unknown: a sealed CLAIM is
+    /// closed by a current CLAIM that states its fact under sources that
+    /// resolve, or else the TURNs of its evidence are owed a fresh read; a
+    /// sealed scope summary is declared again. A sealed row itself is never
+    /// unsealed, and the report holds counts only.
+    #[arg(long)]
+    pub rederive_sealed: bool,
+
     #[command(flatten)]
     pub serve: ServeArgs,
 }

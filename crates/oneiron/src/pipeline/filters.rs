@@ -180,6 +180,34 @@ pub(super) fn clamp_hides_row(
     Ok(!clamp.admits_row_ignoring_status(store, rtxn, id, entity_type)?)
 }
 
+/// [`clamp_hides_row`], or a row whose own row the audience could read but
+/// whose words come from a row it may not
+/// ([`crate::disclosure::DisclosureContext::word_sources_admitted_in_from`]):
+/// a summary covering a Tier-A record. A bounded window that judges its rows
+/// with their status aside asks it, so neither takes a place there and cuts
+/// a readable row out before the pack's preselection drops it
+/// (PACK-PRESELECT-CLAMP-ROW-ONLY-DISPLACES-READABLE-HIT). False with no
+/// clamp, and for a row with no parseable envelope, as there.
+pub(super) fn clamp_hides_row_or_word_sources(
+    vault: &crate::Vault,
+    store: &StoreRead<'_>,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+    clamp: Option<&crate::disclosure::DisclosureContext>,
+    metadata_cache: &mut EntityMetadataCache,
+) -> Result<bool> {
+    if clamp_hides_row(store, rtxn, id, clamp, metadata_cache)? {
+        return Ok(true);
+    }
+    let Some(clamp) = clamp else {
+        return Ok(false);
+    };
+    if metadata_cache.get(store, rtxn, id)?.is_none() {
+        return Ok(false);
+    }
+    Ok(!clamp.word_sources_admitted_in_from(vault, store, rtxn, id, None)?)
+}
+
 pub(super) fn import_claim_gate_decisions_for_scores(
     claim_gate: &mut ClaimStatusGateCache,
     probe_gate: &mut ClaimStatusGateCache,
@@ -599,6 +627,41 @@ fn active_set_admits(
     Ok(record_world(store, rtxn, id, Some(&holds))?.is_some_and(holds))
 }
 
+/// Whether the owner's ALLOWED-SET of an ActiveSet turn, `allowed`, keeps
+/// the stored row `id` from the turn, for the statistics a BM25 scan scores
+/// with (FIX WORLD-SCOPE-BM25-DF-COUNTS-HIDDEN-POSTINGS): its world, placed
+/// as [`active_set_admits`] places it, lies outside `allowed`. A claim whose
+/// body does not decode places at no world and is kept: a statistic fails
+/// no run, and the run's admission judges that claim as before. False for a
+/// row `store` does not hold.
+pub(super) fn allowed_set_withholds_row(
+    store: &StoreRead<'_>,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+    allowed: &WorldAuthoritySet,
+) -> Result<bool> {
+    let holds = |world: Option<EntityId>| allowed.admits(world);
+    let Some(raw) = store.port_entity_record(rtxn, id)? else {
+        return Ok(false);
+    };
+    if raw.entity_type == ENTITY_TYPE_CLAIM {
+        return Ok(
+            !crate::claim::decode_claim_body(&raw.body, true).is_ok_and(|body| holds(body.world))
+        );
+    }
+    Ok(
+        !crate::federation::record_scope::note_world::record_world_where(
+            store,
+            rtxn,
+            *id,
+            raw.entity_type,
+            &raw.body,
+            Some(&holds),
+        )?
+        .is_some_and(holds),
+    )
+}
+
 pub(super) fn apply_filters(
     scores: &mut Vec<ScoredEntity>,
     store: &StoreRead<'_>,
@@ -796,18 +859,36 @@ pub(super) fn pipeline_candidate_matches_filters_and_gate(
     }
     // P7 at candidate generation: a row the pack's audience may not read
     // takes no slot in a bounded channel. Absence is the boundary, as at the
-    // post-fusion clamp, which still sweeps every survivor.
-    if let Some(clamp) = filters.disclosure
-        && !crate::context_pack::retained_copies::clamp_prefilter_admits(
-            clamp,
-            store,
-            rtxn,
-            id,
-            meta.entity_type,
-            claim_gate.decisions.get(id).and_then(Option::as_ref),
-        )?
-    {
-        return Ok(false);
+    // post-fusion clamp, which still sweeps every survivor. A bounded result
+    // channel's admission asks the pack's own candidate test, the sources of
+    // a row's words included, so a summary whose words come from a row the
+    // audience may not read takes no place in its window
+    // (PACK-PRESELECT-CLAMP-ROW-ONLY-DISPLACES-READABLE-HIT); the run's
+    // shared config judges the row alone.
+    if let Some(clamp) = filters.disclosure {
+        let claim_body = claim_gate.decisions.get(id).and_then(Option::as_ref);
+        let admitted = match filters.disclosure_word_sources {
+            Some(vault) => crate::context_pack::retained_copies::clamp_admits(
+                clamp,
+                vault,
+                store,
+                rtxn,
+                id,
+                meta.entity_type,
+                claim_body,
+            )?,
+            None => crate::context_pack::retained_copies::clamp_prefilter_admits(
+                clamp,
+                store,
+                rtxn,
+                id,
+                meta.entity_type,
+                claim_body,
+            )?,
+        };
+        if !admitted {
+            return Ok(false);
+        }
     }
 
     if !pipeline_candidate_matches_facet_filter(

@@ -19,7 +19,8 @@ use crate::dreamer_wake::{
 use crate::llm::decision::{DecisionLadder, GeneratedDecisions, GeneratedRung, GeneratedStep};
 use crate::model_decision::catalogue::COMPACTION_SUPPORT;
 use crate::model_decision::{
-    AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, ProviderPin, Reversibility,
+    AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionQuestion,
+    ProviderPin, Reversibility,
 };
 use crate::model_step_context::{DurableStepContext, StepEffectBinding};
 use crate::model_step_error::DurableStepError;
@@ -203,6 +204,60 @@ impl Spend {
     }
 }
 
+/// The typed read's request about `ask` as the ladder's generated read
+/// sends it, before its seal; `None` with no decisions lent. The check sizes
+/// it against the judge's window beside the diagnostic's.
+///
+/// # Errors
+///
+/// The question's own errors.
+pub(super) fn typed_request(
+    model: &CompactionCheckModel<'_>,
+    ask: &Ask<'_>,
+) -> Result<Option<LlmRequest>> {
+    let Some(decisions) = &model.decisions else {
+        return Ok(None);
+    };
+    let question = question(model, decisions, ask)?;
+    Ok(Some(decisions.ladder.generated_request(
+        shell(model, ask),
+        &[&question],
+        ask.state,
+        decisions.dial,
+        &decisions.bands,
+    )))
+}
+
+/// The support question about `ask`, keyed by the landing's kind and the
+/// rubric the judge reads by: a new rubric is a new question with its own
+/// bands.
+fn question(
+    model: &CompactionCheckModel<'_>,
+    decisions: &CompactionCheckDecisions<'_>,
+    ask: &Ask<'_>,
+) -> Result<DecisionQuestion> {
+    let rubric = blake3::hash(model.rubric.as_bytes());
+    COMPACTION_SUPPORT.question(
+        &[ask.kind.as_bytes(), rubric.as_bytes().as_slice()],
+        decisions.wording.clone(),
+        AnswerContract::Choice {
+            options: vec![SUPPORTED.to_owned(), MISMATCH.to_owned()],
+        },
+    )
+}
+
+/// The typed read's request about `ask` before the ladder adds its turn:
+/// the judge's rubric, on the judge's own binding.
+fn shell(model: &CompactionCheckModel<'_>, ask: &Ask<'_>) -> LlmRequest {
+    judge_shell(
+        model,
+        serde_json::json!({}),
+        ask.locality,
+        ask.keyless,
+        ask.paid,
+    )
+}
+
 /// The units one generation spent.
 fn units(usage: &LlmUsage) -> u64 {
     usage.input.total.saturating_add(usage.output.total)
@@ -283,21 +338,10 @@ pub(super) async fn verdict(
         spend_scope: None,
         wake_pass_bound: true,
     };
-    // Keyed by the landing's kind and the rubric the judge reads by: a new
-    // rubric is a new question with its own bands.
-    let rubric = blake3::hash(model.rubric.as_bytes());
-    let question = COMPACTION_SUPPORT
-        .question(
-            &[ask.kind.as_bytes(), rubric.as_bytes().as_slice()],
-            decisions.wording.clone(),
-            AnswerContract::Choice {
-                options: vec![SUPPORTED.to_owned(), MISMATCH.to_owned()],
-            },
-        )
-        .map_err(|error| {
-            spend.note_before_error(ctx);
-            error
-        })?;
+    let question = question(model, decisions, ask).map_err(|error| {
+        spend.note_before_error(ctx);
+        error
+    })?;
     let (vault, role, inference) = (ctx.vault, model.role, &model.inference);
     let seal = move |request: LlmRequest| -> Result<LlmRequest> {
         Ok(vault
@@ -315,13 +359,7 @@ pub(super) async fn verdict(
             step: &step,
             guard: model.guard,
         },
-        request: judge_shell(
-            model,
-            serde_json::json!({}),
-            ask.locality,
-            ask.keyless,
-            ask.paid,
-        ),
+        request: shell(model, ask),
         seal: &seal,
     };
     let deadline = RetrievalDeadline::hard(

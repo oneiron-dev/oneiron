@@ -21,7 +21,8 @@
 //!
 //! Neither route needs a root this host holds: the key signs the binding
 //! itself. Only an Ed25519 owner device key that a counted enrolment names
-//! this owner for binds; a passkey signs no binding. The wire form is the
+//! this owner for binds here; a passkey binds through `/owner-passkeys/bind`
+//! (row PASSKEY-SELF-BIND). The wire form is the
 //! owner key routes': a key, an entry, a transcript and a signature as
 //! lower-case hex.
 

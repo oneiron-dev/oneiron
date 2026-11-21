@@ -27,7 +27,7 @@ mod order;
 mod scope;
 mod value;
 
-pub use self::decide::{Decided, FoundFit, FoundRow, Met, decide, decide_met};
+pub use self::decide::{Decided, FoundFit, FoundRow, Met, decide, decide_met, deciding_met};
 pub use self::key::{RowKey, check_item, check_name};
 pub use self::order::{
     AbsentEnd, ChainOrder, ChangeDirection, EachOrder, Order, Quorum, SetOrder, absent_meet,
@@ -101,9 +101,10 @@ pub enum Restore {
     Content,
 }
 
-/// Where a key's value holds. From stage 7a-2 an owner's change of a `Vault` key whose value is
-/// closed ([`SettingValue::CLOSED`]) travels as its signed act to every machine of a rooted
-/// vault; an `Install` key's never leaves its install.
+/// Where a key's value holds. From stage 7a-2 an owner's change of a `Vault` key travels as its
+/// signed act to every machine of a rooted vault, its value inside the act where the value type
+/// is closed ([`SettingValue::CLOSED`]) and beside it otherwise (stage 7c-1); an `Install` key's
+/// never leaves its install.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SettingSync {
@@ -272,6 +273,10 @@ pub enum SettingSource {
     Met,
     /// No row: the catalogue default.
     Default,
+    /// Every row that decided is a copy of a pack's default, the row at this scope among them: a
+    /// thing's birth row copied from a default no one chose (DESIGN 1.6, "Explicit against
+    /// seeded"). Like [`Self::Default`], no one made it; a row someone set reads [`Self::Row`].
+    Seeded(SettingScope),
     /// The deciding row at this scope does not decode: the key's strictest value, never the
     /// default (DEC-0005, four substrate rules, rule 4).
     Unreadable(SettingScope),

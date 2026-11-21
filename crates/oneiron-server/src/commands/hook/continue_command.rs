@@ -300,6 +300,22 @@ fn steps(remote: &mut dyn ContinueRemote, plan: &Plan, out: &mut dyn Write) -> a
     }
 }
 
+/// A tool call the vault answered with an error result: it refused the
+/// call itself.
+#[derive(Debug)]
+pub(crate) struct ToolRefused {
+    verb: String,
+    said: String,
+}
+
+impl std::fmt::Display for ToolRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} stopped: {}", self.verb, self.said)
+    }
+}
+
+impl std::error::Error for ToolRefused {}
+
 /// A call the vault may have acted on whose answer this command never read:
 /// none came before the deadline, the bridge said it got none it could read
 /// ([`UNANSWERED_ERROR_KINDS`]), or the one that came holds no output this
@@ -565,7 +581,11 @@ impl<'a> Hosted<'a> {
                 .pointer("/content/0/text")
                 .and_then(Value::as_str)
                 .unwrap_or("no reason given");
-            anyhow::bail!("{verb} stopped: {said}");
+            return Err(ToolRefused {
+                verb: verb.to_owned(),
+                said: said.to_owned(),
+            }
+            .into());
         }
         let Some(output) = result.pointer("/structuredContent/output").cloned() else {
             return Err(unconfirmed("it answered no output".to_owned()).into());

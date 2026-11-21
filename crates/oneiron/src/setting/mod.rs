@@ -37,6 +37,8 @@
 
 pub(crate) mod archive_restore;
 mod ask;
+mod beside;
+mod born;
 mod carry;
 mod catalogue;
 mod change;
@@ -47,6 +49,7 @@ mod project;
 mod proposal;
 mod publish;
 mod read;
+mod restored;
 mod set;
 mod signed_act;
 pub(crate) mod tables;
@@ -61,6 +64,16 @@ pub use oneiron_setting_contract::{
 
 pub use self::ask::SettingAsk;
 pub(crate) use self::ask::erase_setting_ask_actor_in_txn;
+pub use self::beside::SettingTravel;
+#[cfg(all(oneiron_test_support, feature = "test-support", feature = "sync"))]
+pub(crate) use self::beside::land_pack_table_from_peer;
+#[cfg(all(oneiron_test_support, feature = "test-support"))]
+pub(crate) use self::beside::{
+    beside_row_for, beside_row_json, beside_row_of, land_beside_row, land_pack_table,
+    land_pack_table_shared_row, pack_table_bytes,
+};
+pub(crate) use self::beside::{beside_row_watched_in_txn, notes_projection_pass_in_txn};
+pub(crate) use self::born::write_born_rows_in_txn;
 #[cfg(all(oneiron_test_support, feature = "test-support"))]
 pub(crate) use self::carry::carry_between_in_txn;
 pub(crate) use self::carry::carry_settings_in_txn;
@@ -76,9 +89,11 @@ pub(crate) use self::change::{
     settings_after_in_txn, settings_head_in_txn,
 };
 pub use self::learned::{LEARNED_SCOPES, LearnedRange, SettingFitView};
-pub use self::pack::{ENGINE_PACK, PackApplied, ProposedDefaultView};
+pub use self::pack::{ENGINE_PACK, ENGINE_PACK_VERSION, PackApplied, ProposedDefaultView};
 #[cfg(all(oneiron_test_support, feature = "test-support"))]
-pub(crate) use self::pack::{delete_layer_row, layer_row_revision};
+pub(crate) use self::pack::{
+    delete_layer_row, head_version_and_digest, layer_row_revision, table_digest_and_bytes,
+};
 pub use self::page_max::PageMax;
 pub use self::project::SettingsProjected;
 #[cfg(all(oneiron_test_support, feature = "test-support"))]
@@ -93,6 +108,7 @@ pub use self::read::{Requested, SettingCatalogueEntry, SettingRowView, SettingVi
 pub(crate) use self::read::{
     SettingListFilter, SettingReadCaller, SettingReader, reader_reads_key_in_txn,
 };
+pub(crate) use self::restored::restore_drops_row;
 pub(crate) use self::set::run_after_commit;
 pub use self::set::{EngineSetting, SetSetting, SetSettingOutcome, SettingCaller};
 use crate::Vault;
@@ -242,6 +258,19 @@ pub struct SettingSpec {
     pub after_commit: Option<OnCommitted>,
     /// Taken before the write of a change to the key opens ([`WriteTurn`]).
     pub write_turn: Option<WriteTurn>,
+    /// Each new thing of the key's narrowest scope starts with a row copied from another key
+    /// (stage 7c-2; DESIGN 1.6, `born`): the door that creates the thing writes it, and a thing
+    /// with no row reads the strictest value, never the wider one.
+    pub born: Option<Born>,
+}
+
+/// Where a `born` key's things take their first row from (DESIGN 1.6, "The project-depth
+/// carriers become two keys"): the value in force of the key `from` at the vault when the thing
+/// is created. The row is a copy: of a pack's default it is seeded, of a row someone set explicit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Born {
+    /// The catalogue name of the key the row is copied from.
+    pub from: &'static str,
 }
 
 impl SettingSpec {
@@ -264,6 +293,7 @@ impl SettingSpec {
         on_change: None,
         after_commit: None,
         write_turn: None,
+        born: None,
     };
 
     /// Whether a row may sit at `kind`.
@@ -348,6 +378,7 @@ impl std::fmt::Debug for SettingSpec {
         formatter
             .debug_struct("SettingSpec")
             .field("name", &self.name)
+            .field("born", &self.born)
             .finish_non_exhaustive()
     }
 }

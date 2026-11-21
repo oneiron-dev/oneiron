@@ -150,6 +150,29 @@ enum Reply {
 }
 
 impl DecisionLadder<'_> {
+    /// The request the generated read of `questions` over `state` sends on `shell`, before
+    /// its seal, as [`Self::run_pack_generated_spent`] renders it with no wire labels: every
+    /// question in one call (a policy that asks fewer per call sends parts of it), the
+    /// person question last when `dial` reaches the person and `policy` has a person row,
+    /// and the ladder's paired question beside them. A caller sizes it against its model's
+    /// input window before it runs the pack.
+    #[must_use]
+    pub fn generated_request(
+        &self,
+        shell: LlmRequest,
+        questions: &[&DecisionQuestion],
+        state: &Value,
+        dial: DecisionDial,
+        policy: &DecisionBandPolicy,
+    ) -> LlmRequest {
+        let person = self
+            .person
+            .filter(|_| dial.ceiling == DecisionRung::Human && policy.person_threshold().is_some());
+        let asked: Vec<&DecisionQuestion> = questions.iter().copied().chain(person).collect();
+        let paired = self.paired.map(|paired| (paired, questions));
+        request(shell, &asked, paired, state, None)
+    }
+
     /// [`Self::run_pack`] with the generated read as the dial's first rung, in place of
     /// that slot's provider. Each request asks the questions (the person's last, when the
     /// dial reaches the person) over the call's state, with the ladder's paired question

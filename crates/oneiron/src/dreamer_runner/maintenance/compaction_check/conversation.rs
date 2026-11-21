@@ -271,19 +271,31 @@ pub(super) async fn run_conversation_check(
     let locality = judge_locality(&model)?;
     let keyless = model.inference.selected_keyless();
     let paid = model.inference.selected_paid();
-    // Every part is sized before any call: one past the judge's window
-    // settles the check unjudged, with nothing spent.
+    // Every part is sized before any call, its diagnostic request and its
+    // typed read: one past the judge's window settles the check unjudged,
+    // with nothing spent.
+    let cited = declaration.cited(true);
     let mut asks = Vec::with_capacity(parts.len());
     for part in &parts {
         let input = judge_input(&declaration, part);
         let request = judge_request(&model, &input, locality, keyless, paid)?;
-        if let Some(settled) = judge_room::exceeded(&model, &request, &declaration.pins_digest()) {
+        let ask = support::Ask {
+            kind: "conversation",
+            subject: declaration.writer,
+            evidence: &cited,
+            state: &input,
+            locality,
+            keyless,
+            paid,
+        };
+        if let Some(settled) =
+            judge_room::exceeded(&model, &request, &ask, &declaration.pins_digest())?
+        {
             record(ctx.vault, attempt_id, &declaration, &settled, &[], now)?;
             return Ok(judge_room::completed_without_judge());
         }
         asks.push((part, input, request));
     }
-    let cited = declaration.cited(true);
     let mut spend = support::Spend::default();
     let mut pieces = Vec::new();
     let mut decided = None;

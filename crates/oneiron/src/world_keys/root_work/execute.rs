@@ -21,14 +21,17 @@ use std::collections::BTreeSet;
 
 use super::super::kit::KitSeed;
 use super::super::root_doors::ACTIVATION_OWNER_ONLY;
-use super::super::{ConfirmedWorldKit, RecoveryRootSeed, WorldKitRestore, refused};
+use super::super::{
+    ConfirmedWorldKit, OwnerActImportance, RecoveryRootSeed, WorldKitRestore,
+    owner_presence_reasons, refused,
+};
 use super::{
     RootMaterial, RootRecheck, RootSecret, RootWorkDone, material_refused, request_confirmation,
 };
 use crate::authority::{
     ActAuthority, ActSurface, AuthorityEntryHash, AuthorityFold, MachineEnrolmentRequest,
-    OwnerWorkBody, OwnerWorkOutcome, OwnerWorkRefusal, OwnerWorkRequest, RecoveryRootId,
-    RequestCode, RootChange, authority_refused,
+    OwnerProofGround, OwnerWorkBody, OwnerWorkOutcome, OwnerWorkRefusal, OwnerWorkRequest,
+    RecoveryRootId, RequestCode, RootChange, authority_refused,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
@@ -322,7 +325,10 @@ impl Vault {
     /// activation; the kit's rows, its escrow wrap and the enacted result
     /// commit together. A sealed vault's page-seal mirror is rewritten after
     /// the commit: a failure there reports the change committed and the
-    /// mirror pending, and draws nothing again.
+    /// mirror pending, and draws nothing again. The owner's confirm comes
+    /// after the kit's and the activation's checks and before this install's
+    /// signing keys are readied, so a declined one leaves this install's
+    /// machine as it was.
     fn run_kit_confirm(
         &self,
         authority: &ActAuthority,
@@ -336,7 +342,13 @@ impl Vault {
             ActAuthority::Agent(_) => return Err(authority_refused(ACTIVATION_OWNER_ONLY)),
         };
         let (row, prepared) = self.draw_kit_confirm(owner, pieces, passphrase)?;
-        let (secret, request, predecessor) = self.activation_prep(owner, &prepared, carry)?;
+        let predecessor = self.activation_checks(owner, &prepared, carry)?;
+        let witness = self.owner_presence(
+            OwnerActImportance::Important,
+            owner_presence_reasons::KIT_ACTIVATION,
+        )?;
+        let ground = OwnerProofGround::witnessed(&witness);
+        let (secret, request, predecessor) = self.activation_prep(predecessor)?;
         let transition = self.begin_wrap_transition()?;
         let confirmed = self.answer_root_request(asked, Answer::Enacted, |txn| {
             let activated = self.activate_owner_root_in_txn(
@@ -347,6 +359,7 @@ impl Vault {
                 &prepared,
                 carry,
                 &predecessor,
+                &ground,
             )?;
             let (replaced, escrow) = self.confirm_kit_rows_in_txn(txn, &transition, &row)?;
             Ok(ConfirmedWorldKit {

@@ -24,7 +24,8 @@ mod tombstone;
 
 pub(in crate::sync) use self::birth_watch::{note_born, watch_births, watches};
 pub(in crate::sync) use self::delivery::{
-    Delivery, delivered_rows, note_delivered_in_txn, payload_rows, with_delivery,
+    Delivery, ShellDelivery, delivered_rows, delivered_tombstones, note_delivered_in_txn,
+    payload_rows, with_delivery,
 };
 
 pub(crate) use self::dropped_carriers::forget_dropped_carriers_in_txn;

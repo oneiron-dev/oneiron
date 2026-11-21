@@ -303,7 +303,19 @@ pub async fn run_compaction_check(
     let keyless = model.inference.selected_keyless();
     let paid = model.inference.selected_paid();
     let request = judge_request(&model, &declaration, &read, locality, keyless, paid)?;
-    if let Some(settled) = judge_room::exceeded(&model, &request, &declaration.evidence_revision) {
+    let (cited, state) = (declaration.cited(true), judge_input(&declaration, &read));
+    let ask = support::Ask {
+        kind: declaration.landing_kind(),
+        subject: declaration.writer,
+        evidence: &cited,
+        state: &state,
+        locality,
+        keyless,
+        paid,
+    };
+    if let Some(settled) =
+        judge_room::exceeded(&model, &request, &ask, &declaration.evidence_revision)?
+    {
         record(ctx.vault, attempt_id, &declaration, &settled, now)?;
         return Ok(judge_room::completed_without_judge());
     }
@@ -315,16 +327,6 @@ pub async fn run_compaction_check(
         };
     let judged = judgment(&judging.response, &declaration);
     let diagnostic = judged.as_ref().map(|judged| judged.verdict);
-    let (cited, state) = (declaration.cited(true), judge_input(&declaration, &read));
-    let ask = support::Ask {
-        kind: declaration.landing_kind(),
-        subject: declaration.writer,
-        evidence: &cited,
-        state: &state,
-        locality,
-        keyless,
-        paid,
-    };
     let verdict = match support::verdict(attempt, ctx, &model, &judging, diagnostic, &ask).await? {
         Ok(verdict) => verdict,
         Err(parked) => return Ok(parked),

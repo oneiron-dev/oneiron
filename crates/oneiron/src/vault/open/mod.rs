@@ -660,6 +660,7 @@ impl Vault {
             world_keys: Default::default(),
             voice_ref_guard: Default::default(),
             trusted_contact_send_order: Default::default(),
+            import_second_order: Default::default(),
             pending_owner_export_receipts: Default::default(),
             spent_nonces,
             housekeeping: Default::default(),

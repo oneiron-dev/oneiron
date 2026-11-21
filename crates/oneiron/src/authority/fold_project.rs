@@ -205,6 +205,9 @@ pub(super) fn project_once(
         host_custody: merged
             .as_ref()
             .map_or_else(BTreeSet::new, super::machine_profile::host_custody_closure),
+        host_vouched_passkey_owners: merged.as_ref().map_or_else(BTreeMap::new, |state| {
+            state.host_vouched_passkey_owners.clone()
+        }),
         passkey_limited_keys: merged.as_ref().map_or_else(BTreeSet::new, |state| {
             state
                 .roster

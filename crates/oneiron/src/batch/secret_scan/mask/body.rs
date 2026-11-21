@@ -58,7 +58,7 @@ pub(super) fn reads_as_text(data: &[u8]) -> bool {
 /// skips, its first byte opens one (`{`, `[`, `"`, `-`, a digit, or the `t`,
 /// `f`, `n` of `true`, `false`, `null`). Its parser refuses any other first
 /// byte at once, so a body this refuses it refuses too (speed).
-fn opens_json(data: &[u8]) -> bool {
+pub(super) fn opens_json(data: &[u8]) -> bool {
     data.iter()
         .find(|&&byte| !matches!(byte, b' ' | b'\n' | b'\t' | b'\r'))
         .is_some_and(|&byte| {
@@ -73,6 +73,6 @@ fn opens_json(data: &[u8]) -> bool {
 /// 0x80 is a positive fixint, a whole value of that one byte, so a longer
 /// body that opens with one never reads whole, and an empty one reads as
 /// nothing (speed).
-fn opens_whole_messagepack(data: &[u8]) -> bool {
+pub(super) fn opens_whole_messagepack(data: &[u8]) -> bool {
     data.len() == 1 || data.first().is_some_and(|&byte| byte >= 0x80)
 }
