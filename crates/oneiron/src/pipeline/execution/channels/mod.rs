@@ -238,7 +238,7 @@ impl PipelineBuilder<'_> {
             // and scans that way too when it finds one; candidate-filtered
             // text always does, and needs no probe.
             let text_scope_active = codebase_scope_active
-                || self.has_strict_text_scope_filter()
+                || self.has_strict_scope_filter(filter_config)
                 || occurred_range.is_some();
             let text_scope_widening_active = text_scope_active
                 || self.claim_gate_text_widening_probe(
