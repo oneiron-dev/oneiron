@@ -13,17 +13,20 @@ impl Vault {
         packet: &ClaimHistoryHandoff,
         pin: &ClaimHistoryHandoffPin<'_>,
     ) -> Result<VerifiedClaimHistoryHandoff> {
-        let mut txn = self.store.env.write_txn()?;
-        let verified = self.adopt_machine_history_handoff_in_txn(
-            &mut txn,
-            target,
-            packet,
-            pin,
-            Succession::Strict,
-            &StoreRows,
-        )?;
-        txn.commit()?;
-        Ok(verified)
+        // Through the vault's write door, a group of its own on the calling
+        // thread as the bare transaction was, so the queued row reaches the
+        // live windows' post-commit mirror.
+        self.with_write_txn(|wtxn| {
+            let verified = self.adopt_machine_history_handoff_in_txn(
+                wtxn,
+                target,
+                packet,
+                pin,
+                Succession::Strict,
+                &StoreRows,
+            )?;
+            Ok(verified)
+        })
     }
 
     /// The one adoption core, in the caller's writer: verify `packet`'s
@@ -215,6 +218,10 @@ impl Vault {
             false,
             false,
         )?;
+        // The healed live row, for the live windows' mirror (FIX
+        // CLAIM-RAW-TXN-DOORS-DROP-LIVE-WINDOW-ROWS).
+        #[cfg(feature = "sync")]
+        crate::batch::queue_committed_rows(self, txn, std::collections::BTreeSet::from([target]));
         Ok(())
     }
 
