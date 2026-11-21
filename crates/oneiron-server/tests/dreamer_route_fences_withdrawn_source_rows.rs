@@ -30,6 +30,16 @@
 //! then fails, and nothing more reaches the model. On main the ladder sends
 //! it again after the wait and it is answered (RED).
 //!
+//! Test 3, a durable step's fallback (REVIEW-10342 round 1): a durable
+//! step, whose fatal failures a deterministic fallback answers as the merge
+//! resolution's value step's do, runs through the production step layer on
+//! the lent route. One bound to the kept row is answered by the model
+//! (guard). The owner erases a row; a step bound to both rows then reaches
+//! no model and ends with an error, and its fallback answers nothing. On the
+//! fence's first build the fence's refusal is an invalid request, which the
+//! fallback answers, so the step finishes as if the provider had failed
+//! (RED).
+//!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p
 //! oneiron-server --all-features --test
 //! dreamer_route_fences_withdrawn_source_rows`.
@@ -47,15 +57,18 @@ use std::time::Duration;
 
 use engine_stack::run_on_engine_stack;
 use fake_llm::{FakeLlm, Reply};
+use oneiron::dreamer_runner::EnqueueDreamerConsolidationAttempt;
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::MemoryReceipts;
+use oneiron::llm::{DurableStepContext, StepOutcome, call_as_step};
 use oneiron::memory::{EraseOptions, EraseReason};
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::{
     BudgetExhaustionPolicy, BudgetGuard, CallClass, CallEnvelope, CallPurpose, ClaimApprovalStatus,
-    ClaimBody, ClaimLifecycleStatus, ClaimSubject, ContentPart, EdgeActorClass, EntityId,
-    LlmMessage, LlmMessageRole, LlmRequest, ModelId, ModelLocality, ModelTierRef, ResponseFormat,
-    TierPrecedence, TimeRange, Vault, VaultConfig,
+    ClaimBody, ClaimLifecycleStatus, ClaimSubject, ContentPart, DeterministicFallback,
+    DreamerConsolidationScope, DreamerRunnerStore, EdgeActorClass, EnqueueDreamerAttemptOutcome,
+    EntityId, LlmMessage, LlmMessageRole, LlmRequest, ModelId, ModelLocality, ModelTierRef,
+    ResponseFormat, TierPrecedence, TimeRange, Vault, VaultConfig, WriteActor,
 };
 use oneiron_keystore::MemoryKeystore;
 use oneiron_server::config::models::ModelsConfig;
@@ -149,6 +162,42 @@ fn request(model: &ModelId, words: &str) -> LlmRequest {
         params: BTreeMap::new(),
         provider_options: BTreeMap::new(),
         host_segments: None,
+    }
+}
+
+/// A durable Dreamer step whose input is `words`: a deterministic fallback
+/// answers any fatal failure of its call, as the merge resolution's value
+/// step's does (`executor/merge_resolution.rs`).
+fn durable_request(model: &ModelId, words: &str) -> LlmRequest {
+    let mut request = request(model, words);
+    request.envelope.class = CallClass::Durable {
+        fallback: DeterministicFallback {
+            name: "json_rules_v1".into(),
+            config: Some(
+                json!({"version": 1, "rows": [{"failure": "fatal", "value": {"value": null}}]}),
+            ),
+        },
+    };
+    request
+}
+
+/// A queued consolidation attempt in `vault`, for durable steps to run under.
+fn queued_attempt(vault: &Vault) -> oneiron::AttemptId {
+    let enqueued = DreamerRunnerStore::new(vault)
+        .enqueue_consolidation(EnqueueDreamerConsolidationAttempt {
+            scope: DreamerConsolidationScope::Micro,
+            input: rmpv::Value::from("input:durable-step-source-fence"),
+            parent_attempt: None,
+            dedupe_key: Some("durable-step-source-fence".to_owned()),
+            run_id: None,
+            now: 10,
+        })
+        .expect("FIXTURE: the attempt is queued");
+    match enqueued {
+        EnqueueDreamerAttemptOutcome::Enqueued(status)
+        | EnqueueDreamerAttemptOutcome::Existing(status) => status.attempt.id,
+        // The outcome enum is `#[non_exhaustive]` outside the crate.
+        other => panic!("FIXTURE: unexpected enqueue outcome {other:?}"),
     }
 }
 
@@ -350,6 +399,79 @@ fn a_rate_wait_resend_sends_nothing_once_a_source_row_is_erased() {
             model.seen().len(),
             3,
             "the rate wait's resend of a request read from a row erased since reached the model"
+        );
+    });
+}
+
+#[test]
+fn a_durable_step_bound_to_an_erased_row_ends_on_no_fallback() {
+    run_on_engine_stack("dreamer-route-erased-durable-step", || async {
+        let model = FakeLlm::start(Vec::new(), Some(Reply::text("read"))).await;
+        let dir = tempfile::tempdir().unwrap();
+        let vault = opened(dir.path());
+        let person = stored_person(&vault);
+        let erased = stored_claim(&vault, person, ERASED_WORDS);
+        let kept = stored_claim(&vault, person, KEPT_WORDS);
+        let route = lent(&model, &vault);
+        let both = route.sourced(vec![erased, kept]);
+        let alone = route.sourced(vec![kept]);
+        let owner = vault
+            .ensure_embedded_owner_actor()
+            .expect("FIXTURE: the vault owner");
+        let step = DurableStepContext {
+            vault: &vault,
+            attempt_id: queued_attempt(&vault),
+            run_id: None,
+            envelope_actor: WriteActor::new(owner, EdgeActorClass::Human),
+            subject: person,
+            deadline: None,
+            now_ms: 20_000,
+            spend_scope: None,
+            wake_pass_bound: false,
+        };
+        let guard = budget();
+
+        // Guard: a durable step bound to the kept row is answered by the model.
+        let answered = ended(call_as_step(
+            &step,
+            &*alone,
+            &guard,
+            durable_request(route.model(), KEPT_WORDS),
+        ))
+        .await;
+        assert!(
+            matches!(
+                answered,
+                Ok(StepOutcome::Finished {
+                    failure_policy: None,
+                    ..
+                })
+            ),
+            "FIXTURE: a durable step of a live row is answered by the model"
+        );
+        assert_eq!(
+            model.seen().len(),
+            1,
+            "FIXTURE: that step reached the model"
+        );
+
+        privacy_erase(&vault, erased);
+        let refused = ended(call_as_step(
+            &step,
+            &*both,
+            &guard,
+            durable_request(route.model(), &format!("{ERASED_WORDS}\n{KEPT_WORDS}")),
+        ))
+        .await;
+        assert_eq!(
+            model.seen().len(),
+            1,
+            "FIXTURE: a step bound to a row erased since reached the model"
+        );
+        assert!(
+            !matches!(refused, Ok(StepOutcome::Finished { .. })),
+            "a durable step bound to a row erased before its send finished on its fallback, \
+             as if its provider had failed"
         );
     });
 }
