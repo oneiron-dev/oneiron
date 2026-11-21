@@ -608,7 +608,7 @@ pub(super) fn prepare_call(
     .map_err(failed)?;
 
     // The owner's own standalone call keeps its answered turns in its home
-    // (UNBUILT-02); a call heard in a room keeps none yet (PR 3).
+    // (UNBUILT-02); a call heard in a room keeps none yet (PR 4).
     let record = if standalone {
         standalone_call_record(server, person, agent, payer, auth.peer(), auth.locality())
     } else {

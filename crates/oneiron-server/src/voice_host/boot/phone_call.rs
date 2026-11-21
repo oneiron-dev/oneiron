@@ -19,6 +19,7 @@ use crate::voice_host::backend::CallBackend;
 use crate::voice_host::phone::PhoneCallRead;
 use crate::voice_host::{
     ChatBrain, ChatBrainBindings, VoiceHost, VoiceHostBindings, VoiceWireBindings,
+    phone_call_record,
 };
 
 pub(in crate::voice_host) fn prepare_phone_call(
@@ -108,9 +109,10 @@ pub(in crate::voice_host) fn prepare_phone_call(
         payer,
         funding: None,
         out,
-        // A phone call keeps no turn yet: a stranger's words, under the
-        // owner's call-transcript settings, are UNBUILT-02 PR 3.
-        record: None,
+        // The caller's words and the answers, kept as the agent's thread
+        // with that number under the owner's call-transcript setting
+        // (UNBUILT-02 PR 3).
+        record: phone_call_record(vault, agent, phone.caller(), &call_ref),
     })
     .map_err(failed)?;
     let render = settings

@@ -57,6 +57,25 @@ impl ScopedRead<'_> {
         Ok((key, definition))
     }
 
+    /// The number the call's arrival names as its caller, as the line's
+    /// provider gave it: untrusted text, never a recognised person or an
+    /// instruction. Read under the same live credential and line consent as
+    /// [`Self::phone_line_agent_read`], for the call's transcript (UNBUILT-02
+    /// PR 3), which keeps it only normalised. `None` when the arrival names
+    /// none; refused for a reader with no phone call, or with more than one.
+    pub fn phone_line_caller(&self) -> Result<Option<String>> {
+        let [ceiling] = self.actor_key.phone_lines.as_slice() else {
+            return Err(crate::phone_line::invalid());
+        };
+        self.persist_grant_clock()?;
+        let txn = self.vault.store.env.read_txn()?;
+        let _policy = self.live_policy_manifest_in(&txn)?;
+        if !self.proof_live_in(&txn)? || self.phone_line_scope_in(&txn)?.is_none() {
+            return Err(crate::phone_line::invalid());
+        }
+        ceiling.caller_in(self.vault, &txn)
+    }
+
     /// The actual anonymous phone audience under this reader's current
     /// line consent. Ordinary readers cannot supply a phone disclosure.
     pub fn phone_line_disclosure(
