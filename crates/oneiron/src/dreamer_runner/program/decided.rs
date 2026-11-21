@@ -14,25 +14,29 @@ use crate::error::Result;
 #[doc(hidden)]
 use oneiron_records::dreamer_runner::program::replica::encode;
 
-/// `actor`, unless it is erased here: no row this machine writes, and no row
-/// it keeps beside a decision, names an erased actor.
-fn unerased_in_txn(
+/// Whether `actor` is erased here (FIX TURNPROGRAM-ERASE-KEEPS-DECIDED). This
+/// machine keeps no decision of such an actor's wake and writes no decision
+/// row for one: the erase deleted what was kept, the merge refuses a row
+/// that names the actor, and the scrub takes such rows out of the windows.
+/// A decision whose actor this machine never learned (`None`) is no erased
+/// actor's by anything it holds, and is taken as before.
+pub(super) fn erased_here_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     actor: Option<EntityId>,
-) -> Result<Option<EntityId>> {
+) -> Result<bool> {
     match actor {
-        Some(actor) if vault.carrier_actor_erased_in_txn(txn, &actor)? => Ok(None),
-        actor => Ok(actor),
+        Some(actor) => vault.carrier_actor_erased_in_txn(txn, &actor),
+        None => Ok(false),
     }
 }
 
 /// The actor of the decision this machine holds for the wake keyed `key`
 /// under `admission`, from its own rows alone: its admission record's actor,
 /// else the actor kept beside the decision it imported. Never the actor a
-/// carried `Retracted` or `Released` row asserts, which no digest proves, and
-/// never an actor erased here: such a decision is written with no actor, as
-/// every decision was before the row named one.
+/// carried `Retracted` or `Released` row asserts, which no digest proves.
+/// The caller writes no row for an actor erased here
+/// ([`erased_here_in_txn`]).
 pub(super) fn decision_actor_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -43,14 +47,13 @@ pub(super) fn decision_actor_in_txn(
         .get(vault, txn, &admission)?
         .filter(|record| record.wake.key() == key)
         .map(|record| record.wake.authority.actor());
-    let actor = match own {
-        Some(actor) => Some(actor),
+    match own {
+        Some(actor) => Ok(Some(actor)),
         None if DECIDED.get(vault, txn, &key)? == Some(admission) => {
-            super::index::decided_actor_in_txn(vault, txn, key)?
+            super::index::decided_actor_in_txn(vault, txn, key)
         }
-        None => None,
-    };
-    unerased_in_txn(vault, txn, actor)
+        None => Ok(None),
+    }
 }
 
 /// Consumes, in the caller's writer, the wake an `Admitted` row decided: the
@@ -71,10 +74,16 @@ pub(super) fn decision_actor_in_txn(
 /// `named`, the actor the row itself names. A row that names none and
 /// consumes no wake here keeps none, as every row did before the row named
 /// its actor. A decision kept before gains its actor from a later row of the
-/// same admission; an actor a wake proved is replaced by no row's word. An
-/// actor erased here is kept beside no decision: its erase dropped what was
-/// kept (`erase_turn_program_actor_in_txn`), and a row that arrives after it
-/// adds none.
+/// same admission; an actor a wake proved is replaced by no row's word.
+///
+/// A row of an actor erased here is refused before any write: the actor of
+/// the wake it would consume here, else the one it names. The erase deleted
+/// the actor's decisions (`erase_turn_program_actor_in_txn`), and no row that
+/// arrives after it keeps one again. A row that names another actor than the
+/// wake owed here proves is never refused for that: it consumes the wake
+/// under the proven actor, since a refusal would leave a live actor's wake
+/// owed here for a second decision. A row that names no actor is refused for
+/// no erase: nothing ties it to one.
 pub(super) fn consume_decided_wake_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -93,6 +102,9 @@ pub(super) fn consume_decided_wake_in_txn(
     let decided =
         owed.filter(|wake| wake.authority.rides_to_home() && wake.admission_id() == admission);
     let proven = decided.as_ref().map(|wake| wake.authority.actor());
+    if erased_here_in_txn(vault, &*txn, proven.or(named))? {
+        return Ok(RowMerge::Refused("names an actor erased here"));
+    }
     let marked = DECIDED.get(vault, &*txn, &key)? == Some(admission);
     let kept = if marked || ADMISSION.contains(vault, &*txn, &admission)? {
         RowMerge::Held
@@ -108,7 +120,6 @@ pub(super) fn consume_decided_wake_in_txn(
             (RowMerge::Written, None) => named,
             (_, None) => super::index::decided_actor_in_txn(vault, &*txn, key)?.or(named),
         };
-        let actor = unerased_in_txn(vault, &*txn, actor)?;
         super::index::index_decided_in_txn(vault, txn, key, actor)?;
     }
     let Some(wake) = decided else {
@@ -128,8 +139,9 @@ pub(super) fn consume_decided_wake_in_txn(
 /// imported. A machine elected home later then holds every decision, and no
 /// landing of the turn there wakes the program again. Each row names its
 /// wake's actor where this machine knows it: its own admission's, an
-/// imported decision's where its actor was kept with it. An actor erased
-/// here is named by neither: its decision is written with no actor.
+/// imported decision's where its actor was kept with it. A decision of an
+/// actor erased here owes no row (FIX TURNPROGRAM-ERASE-KEEPS-DECIDED): the
+/// admission this machine keeps of it past the erase writes none.
 pub(crate) fn turn_decided_rows_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -144,29 +156,33 @@ pub(crate) fn turn_decided_rows_in_txn(
         if record.wake.occurrence.is_some() || !record.wake.authority.rides_to_home() {
             continue;
         }
+        let actor = Some(record.wake.authority.actor());
+        if erased_here_in_txn(vault, txn, actor)? {
+            continue;
+        }
         let (turn, registration) = record.wake.key();
         rows.push((
             wake_key((turn, registration)),
             encode(&WakeRow::Admitted {
                 turn,
                 registration,
-                actor: unerased_in_txn(vault, txn, Some(record.wake.authority.actor()))?,
+                actor,
                 admission,
             })?,
         ));
     }
     for row in DECIDED.iter_from(vault, txn, turn.as_bytes())? {
         let ((turn, registration), admission) = row?;
+        let actor = super::index::decided_actor_in_txn(vault, txn, (turn, registration))?;
+        if erased_here_in_txn(vault, txn, actor)? {
+            continue;
+        }
         rows.push((
             wake_key((turn, registration)),
             encode(&WakeRow::Admitted {
                 turn,
                 registration,
-                actor: unerased_in_txn(
-                    vault,
-                    txn,
-                    super::index::decided_actor_in_txn(vault, txn, (turn, registration))?,
-                )?,
+                actor,
                 admission,
             })?,
         ));
@@ -181,9 +197,10 @@ pub(crate) fn wake_row_decided(bytes: &[u8]) -> bool {
 }
 
 /// The `Admitted` row that replaces the carried `Owed` row `bytes` once this
-/// machine holds its admission; `None` for any other row. It names the
+/// machine holds its admission; `None` for any other row, and for the wake
+/// of an actor erased here, whose decision goes into no window. It names the
 /// carried wake's actor, which the admission it is matched by is a digest
-/// over, unless that actor is erased here.
+/// over.
 pub(crate) fn admitted_row_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -198,14 +215,15 @@ pub(crate) fn admitted_row_in_txn(
         return Ok(None);
     }
     let admission = wake.admission_id();
-    if !ADMISSION.contains(vault, txn, &admission)? {
+    let actor = Some(wake.authority.actor());
+    if !ADMISSION.contains(vault, txn, &admission)? || erased_here_in_txn(vault, txn, actor)? {
         return Ok(None);
     }
     let (turn, registration) = wake.key();
     Ok(Some(encode(&WakeRow::Admitted {
         turn,
         registration,
-        actor: unerased_in_txn(vault, txn, Some(wake.authority.actor()))?,
+        actor,
         admission,
     })?))
 }
