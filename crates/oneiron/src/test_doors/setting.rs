@@ -418,6 +418,22 @@ pub fn forget_projected_setting_rows(vault: &Vault) -> Result<usize> {
     Ok(forgotten)
 }
 
+/// Forgets every record of a setting projection and leaves the rows it wrote (row
+/// SETTING-PROJECTED-ROW-REFUSING-HOOKS): each row then holds its value while its acts read as
+/// moved, as a row does once a peer's act arrived and before the projection pass read it. The
+/// records forgotten.
+///
+/// # Errors
+///
+/// Storage errors.
+#[cfg(feature = "test-support")]
+pub fn forget_setting_projection_records(vault: &Vault) -> Result<usize> {
+    let mut txn = vault.store.env.write_txn()?;
+    let forgotten = crate::setting::forget_projection_records_in_txn(vault, &mut txn)?;
+    txn.commit()?;
+    Ok(forgotten)
+}
+
 /// `test.ordered_cap` as a read at the places `known` resolves it: the value, its source and
 /// how the acts behind it stand.
 ///

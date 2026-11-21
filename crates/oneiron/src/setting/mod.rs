@@ -95,11 +95,11 @@ pub(crate) use self::pack::{
 };
 pub use self::page_max::PageMax;
 pub use self::project::SettingsProjected;
-#[cfg(all(oneiron_test_support, feature = "test-support"))]
-pub(crate) use self::project::forget_projected_rows_in_txn;
 pub(crate) use self::project::{
     SETTING_REFUSAL_NOTIFICATION_PRODUCER, setting_refusal_taps_in_txn,
 };
+#[cfg(all(oneiron_test_support, feature = "test-support"))]
+pub(crate) use self::project::{forget_projected_rows_in_txn, forget_projection_records_in_txn};
 pub use self::proposal::SettingProposal;
 pub use self::publish::SettingsPublished;
 #[cfg(all(oneiron_test_support, feature = "test-support"))]

@@ -7,7 +7,13 @@
 //! - the other machine refuses the other side of the same pair, and finds the same notice;
 //! - the owner's tap, an equal value of the row this install holds, signs an act that replaces
 //!   the refused one, the row settles, and the notice offers no tap any more;
-//! - a key whose hook reads no other row names the refused act alone, with the hook's reason.
+//! - a key whose hook reads no other row names the refused act alone, with the hook's reason;
+//! - a refused further row of a batch act offers its tap (REVIEW-10294 P1-2);
+//! - the owner's equal value over acts no pass has read here signs nothing: only a refusal this
+//!   install's pass recorded of the acts as they stand lets an equal value sign (REVIEW-10294
+//!   P1-3);
+//! - the installed ICS feed's configuration set again is a no-op of its hook, so a keep-value tap
+//!   of it can sign (REVIEW-10294 P1-4).
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test setting_refusal_notice`.
 
@@ -25,8 +31,9 @@ use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::setting::{
     EnrolledMachine, SettingFrontier, SlotName, enroll_machine_with_key,
-    forget_projected_setting_rows, land_setting_act_from, set_setting_as_engine, setting_changes,
-    setting_frontier_of, setting_slot_heads,
+    forget_projected_setting_rows, forget_setting_projection_records, land_setting_act_from,
+    land_setting_batch_from, set_setting_as_engine, setting_changes, setting_frontier_of,
+    setting_slot_heads,
 };
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 use oneiron_authority::authority::{AuthorityEntryHash, authority_log_entity_id_from_hash};
@@ -333,4 +340,106 @@ fn a_refused_act_of_a_key_whose_hook_reads_no_other_row_is_named_alone_with_the_
     assert!(!detail.contains("It meets"), "{detail:?}");
     assert_eq!(notice["subject_refs"].as_array().map(Vec::len), Some(1));
     assert_eq!(notice["actions"][0]["args"]["value"], json!(0));
+}
+
+#[test]
+fn a_refused_further_row_of_a_batch_act_offers_its_tap() {
+    let fx = Fixture::rooted();
+    let frontier =
+        setting_frontier_of(&fx.vault, &[vault_row(COUNT), vault_row(CAPPED)]).expect("frontier");
+    land_setting_batch_from(
+        &fx.vault,
+        &fx.desktop,
+        fx.owner,
+        &frontier,
+        &[
+            (vault_row(COUNT), Some(json!(4))),
+            (vault_row(CAPPED), Some(json!(9))),
+        ],
+        T0,
+    )
+    .expect("the batch lands");
+    assert_eq!(fx.reads(COUNT), json!(4), "the batch's first row lands");
+    assert_eq!(
+        fx.reads(CAPPED),
+        json!(0),
+        "its further row is refused here"
+    );
+
+    assert_eq!(
+        fx.the_notice()["actions"],
+        json!([{
+            "verb": "vault.settings.set",
+            "args": {
+                "key": CAPPED,
+                "item": null,
+                "scope": { "kind": "vault" },
+                "pin": false,
+                "value": 0,
+            },
+        }]),
+        "the tap names the refused further row, not the batch's first row"
+    );
+}
+
+#[test]
+fn the_owners_equal_value_over_acts_no_pass_has_read_signs_nothing() {
+    let fx = Fixture::rooted();
+    fx.owner_sets(CAPPED, json!(4));
+    let heads = setting_slot_heads(&fx.vault, vault_row(CAPPED)).expect("the heads");
+
+    // The row holds 4 and its acts read as moved, as once a peer's act arrived and before the
+    // pass read it: no pass refused them here.
+    assert!(
+        forget_setting_projection_records(&fx.vault).expect("the records forgotten") > 0,
+        "the owner's act was projected"
+    );
+    fx.owner_sets(CAPPED, json!(4));
+    assert_eq!(
+        setting_slot_heads(&fx.vault, vault_row(CAPPED)).expect("the heads"),
+        heads,
+        "an equal value signs no act over acts this install never refused"
+    );
+    assert!(fx.refusal_notices().is_empty());
+}
+
+#[test]
+fn the_installed_feeds_configuration_set_again_is_a_no_op_of_its_hook() {
+    let fx = Fixture::rooted();
+    let feed = json!({
+        "secret_ref": "ics-feed:work",
+        "system": "work-ics",
+        "cadence_min_seconds": 600,
+        "cadence_max_seconds": 1200,
+    });
+    let row = |value: Value| SetSetting {
+        item: Some("work-ics".to_owned()),
+        ..SetSetting::vault_value("calendar.ics_feed", value)
+    };
+    set_setting_as_engine(&fx.vault, None, row(feed.clone())).expect("the engine installs it");
+
+    // The owner's equal value over the engine's row writes (the row becomes his), so the hook
+    // runs with the installed configuration on both sides.
+    let outcome = fx
+        .vault
+        .set_setting(SettingCaller::Owner(&fx.owner_proof), row(feed.clone()))
+        .expect("the same configuration again is no change to the installed feed");
+    assert!(
+        matches!(
+            outcome,
+            SetSettingOutcome::Applied {
+                sequence: Some(_),
+                ..
+            }
+        ),
+        "the owner's row is written: {outcome:?}"
+    );
+
+    let mut other = feed;
+    other["cadence_max_seconds"] = json!(1800);
+    let refused = fx
+        .vault
+        .set_setting(SettingCaller::Owner(&fx.owner_proof), row(other))
+        .expect_err("a change to the installed feed is still refused");
+    assert!(refused.to_string().contains("immutable"), "{refused}");
 }

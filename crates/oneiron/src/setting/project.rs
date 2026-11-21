@@ -705,6 +705,28 @@ pub(crate) fn forget_projected_rows_in_txn(
     Ok(forgotten)
 }
 
+/// Forgets every record of a projection and leaves the rows it wrote (row
+/// SETTING-PROJECTED-ROW-REFUSING-HOOKS tests): each row then holds its value while its acts read
+/// as moved, as a row does once a peer's act arrived and before the pass read it. The records
+/// forgotten.
+///
+/// # Errors
+///
+/// Storage errors.
+#[cfg(all(oneiron_test_support, feature = "test-support"))]
+pub(crate) fn forget_projection_records_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+) -> Result<usize> {
+    let mut forgotten = 0;
+    for (target, _) in PROJECTIONS.scan(&vault.store, txn)? {
+        if PROJECTIONS.delete(&vault.store, txn, &target)? {
+            forgotten += 1;
+        }
+    }
+    Ok(forgotten)
+}
+
 /// A row beside an act that a target's last projection read, as an erase of it takes its value
 /// out of the setting history (stage 7c-1, `change::scrub_beside_value_in_txn`).
 pub(super) struct BesideSource {
