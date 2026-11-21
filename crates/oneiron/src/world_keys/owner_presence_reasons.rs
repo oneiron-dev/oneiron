@@ -7,9 +7,11 @@
 pub(crate) const ACCEPT_PACK_DEFAULTS: &str = "accept new default settings";
 pub(crate) const AGENT_WORLD_ACCESS: &str = "change which worlds an agent can access";
 pub(crate) const BOARD_LAYOUT: &str = "change the board layout";
+pub(crate) const CANCEL_RECOVERY_HOLD: &str = "cancel a waiting recovery of this vault";
 pub(crate) const CHANGE_SHARED_MEMBER_ROLE: &str = "change a member's role in the shared vault";
 pub(crate) const CHECKPOINT_POLICY: &str = "change which devices vouch for this vault";
 pub(crate) const CONFIRM_HELD_MACHINE_ANSWERS: &str = "approve pending changes to linked devices";
+pub(crate) const CONFIRM_RECOVERY_HOLD: &str = "approve a waiting recovery of this vault";
 pub(crate) const CONVERSATION_LEARNING: &str = "change whether this vault learns from messages";
 pub(crate) const CONVERSATION_TRAINING: &str = "change whether your messages are used for training";
 pub(crate) const DEFAULT_FACET: &str = "change where new memories are saved by default";
@@ -29,6 +31,7 @@ pub(crate) const NON_BASE_WORLD_CLAIM_FRACTION: &str =
     "change how much context comes from other worlds";
 pub(crate) const ORIGIN_CUT: &str = "change which host writes this repository";
 pub(crate) const PROACTIVITY_POLICY: &str = "change how your digest is delivered";
+pub(crate) const RECOVERY_PRESET: &str = "change how this vault can be recovered";
 pub(crate) const REMOVE_MACHINE: &str = "remove a device linked to this vault";
 pub(crate) const REMOVE_OWNER_KEY: &str = "remove a device that can approve changes";
 pub(crate) const REMOVE_SHARED_MEMBER: &str = "remove a member from the shared vault";

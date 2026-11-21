@@ -301,6 +301,7 @@ pub mod re_root_stale_sweep;
 pub mod read_exposure;
 pub mod read_lineage_floor;
 pub mod recall_gate_judgements;
+pub mod recovery_box_kit_only_fact;
 pub mod removal_import_passes;
 pub mod repeated_key_lib_rows;
 pub mod replay_rows;
