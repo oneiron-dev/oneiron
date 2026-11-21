@@ -422,7 +422,7 @@ impl Vault {
         // Asked before this install's signing keys are readied: readying
         // them writes (REVIEW-10128 P1 1).
         let witness = self.owner_presence(
-            OwnerActImportance::Important,
+            OwnerActImportance::Ordinary,
             owner_presence_reasons::ENROL_THIS_DEVICE_OWNER_SIGNING_KEY,
         )?;
         let machine = self.prepare_install_signing()?;

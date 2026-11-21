@@ -235,7 +235,7 @@ impl Vault {
             self.device_keystore()?;
         }
         let _asked = self.owner_presence(
-            OwnerActImportance::Important,
+            OwnerActImportance::Ordinary,
             owner_presence_reasons::RECOVER_OWNER_ROOT,
         )?;
         // Preparing this install's signing keys writes, so its slot is made

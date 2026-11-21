@@ -472,7 +472,7 @@ impl Vault {
     {
         self.owner_key_act_owner(authority)?;
         let witness = self.owner_presence(
-            OwnerActImportance::Important,
+            OwnerActImportance::Ordinary,
             owner_presence_reasons::ENROL_OWNER_SIGNING_KEY,
         )?;
         self.enrol_owner_signing_key_on_entry_fold_as(
@@ -967,12 +967,12 @@ impl Vault {
     where
         S: FnMut(&[u8]) -> Result<Vec<u8>>,
     {
-        let (public_key, device) = passkey_enrollment_device(input)?;
         self.owner_key_act_owner(authority)?;
         let witness = self.owner_presence(
             OwnerActImportance::Important,
             owner_presence_reasons::ENROL_OWNER_PASSKEY,
         )?;
+        let (public_key, device) = passkey_enrollment_device(input)?;
         let (entry, machine) = self.enrol_owner_device_as(
             authority,
             &witness,
@@ -1146,7 +1146,7 @@ impl Vault {
     ) -> Result<PreparedOwnerKeyEnrollment> {
         self.owner_key_act_owner(authority)?;
         let _asked = self.owner_presence(
-            OwnerActImportance::Important,
+            OwnerActImportance::Ordinary,
             owner_presence_reasons::ENROL_OWNER_SIGNING_KEY,
         )?;
         let mut txn = self.store.env.write_txn()?;

@@ -232,7 +232,7 @@ impl Vault {
             recovery_authority_enrollment(seed, &vault_id, 0, machine, actor)?
         };
         let witness = self.owner_presence(
-            OwnerActImportance::Important,
+            OwnerActImportance::Ordinary,
             owner_presence_reasons::ENROL_RECOVERY_AUTHORITY_KEY,
         )?;
         self.enrol_owner_key_of_kind_as(
