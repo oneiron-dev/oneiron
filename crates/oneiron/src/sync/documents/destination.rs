@@ -51,7 +51,7 @@ fn text_withheld_for(
     // a frame queued before the limit is withheld at release (Engine ANSWER
     // SERVING-DOORS-OWNER-WINDOW-USE-LIMIT = B; FIX
     // EGRESS-CARRIES-ROWS-DERIVED-FROM-USE-LIMITED-RECORDS).
-    if crate::scope_summary::row_or_word_source_use_limited_in(vault, txn, &id)? {
+    if vault.row_or_word_source_use_limited_in(txn, &id)? {
         return Ok(true);
     }
     if vault.get_entity_type_in_txn(txn, &id)? == Some(crate::registry::ENTITY_TYPE_NOTE)

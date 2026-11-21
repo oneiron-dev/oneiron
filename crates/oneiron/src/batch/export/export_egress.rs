@@ -45,7 +45,7 @@ use super::export_manifest::{
 /// one (a SUMMARY or PSYCH_PROFILE of a use-limited CLAIM), as the owner's
 /// own read withholds it (FIX 1496 S8; FIX
 /// EGRESS-CARRIES-ROWS-DERIVED-FROM-USE-LIMITED-RECORDS:
-/// `scope_summary::row_or_word_source_use_limited_in`). Every caller holds
+/// `Vault::row_or_word_source_use_limited_in`). Every caller holds
 /// the txn; no nested txn is opened here.
 ///
 /// The third conjunct is the source-audience hold (FIX
@@ -95,7 +95,7 @@ fn egress_keeps_id_out_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityI
     if store.off_record_sessions.contains_entity(id)? {
         return Ok(true);
     }
-    if crate::scope_summary::row_or_word_source_use_limited_in(vault, txn, id)? {
+    if vault.row_or_word_source_use_limited_in(txn, id)? {
         return Ok(true);
     }
     crate::source_audience::lineage_held_in(vault, txn, id)
