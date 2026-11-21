@@ -3981,15 +3981,21 @@ fn a_refund_ended_unpaid_beside_a_part_refunded_by_hand_is_asked_no_more() {
                      the visitor did not go through at Stripe, and refunds made by hand in the \
                      Stripe dashboard cover only part of it. Refund the rest by hand in the \
                      Stripe dashboard.",
-            "return_offered": true,
+            "return_offered": false,
         }),
-        "{card}"
+        "Return deposit moves nothing here, so the card offers none (review round 2 of \
+         #10149): {card}"
     );
     let row = format!("{HELD_DEPOSIT_ROW}{}", booked.calendar.event_ref.to_hex());
     assert_eq!(
         held_deposit_rows(&fixture, fixture.host, NOW + 240),
-        vec![row],
+        vec![row.clone()],
         "the stuck refund lists on the INBOX"
+    );
+    assert_eq!(
+        open_booking_row(&host, &row)["deposit"],
+        card["deposit"],
+        "the row opens the same card, though it offers no Return deposit"
     );
 
     fixture.set_clock(NOW + 300);
@@ -4008,6 +4014,209 @@ fn a_refund_ended_unpaid_beside_a_part_refunded_by_hand_is_asked_no_more() {
         fixture.state_of("pi_ended_part_by_hand"),
         DepositState::RefundDue {
             amount_minor: 2_000
+        }
+    );
+}
+
+/// Review round 2 of #10149: the owner's emergency cancel owes the captured
+/// deposit back whole, the visitor picks a later slot from its proposals,
+/// and the provider ends that refund unpaid. The host asks again, and before
+/// that refund settles presses Return deposit a second time on the booking
+/// picked again, which stands live and has not started: the press changes
+/// nothing and answers so, as on a cancelled booking, and the refund is made
+/// once.
+#[test]
+fn a_second_press_on_a_picked_again_booking_while_its_refund_is_asked_again_changes_nothing() {
+    let clock = ManualClock::new(NOW);
+    let fixture = Fixture::open_owned(&clock, None);
+    let booked = captured_booking(&fixture, "pi_repick_pressed_twice", 9);
+    let picked = emergency_cancel_then_repick(&fixture, &booked, 9, NOW + 90, NOW + 120);
+    let mut provider = EndingRefundProvider {
+        end_new_refunds: true,
+        ..EndingRefundProvider::default()
+    };
+    drain_settle_rows(&fixture, &mut provider, NOW + 180);
+    assert_eq!(
+        provider.ended.len(),
+        1,
+        "guard: the provider ended the refund"
+    );
+    assert!(
+        picked.start > NOW + 400,
+        "guard: the slot picked again has not started"
+    );
+
+    let host = fixture.vault.memory(fixture.host, EdgeActorClass::Human);
+    fixture.set_clock(NOW + 300);
+    let retry = refund_deposit(&host, &booked).expect("the host asks again");
+    assert_eq!(retry["queued"], true, "{retry}");
+    let again = refund_deposit(&host, &booked).expect("a second press answers");
+    assert_eq!(
+        again,
+        serde_json::json!({
+            "event_ref": booked.calendar.event_ref.to_hex(),
+            "state": "refund_due",
+            "amount_minor": 4_000,
+            "currency": "usd",
+            "queued": false,
+        }),
+        "a second press while the refund is asked again changes nothing"
+    );
+
+    provider.end_new_refunds = false;
+    drain_settle_rows(&fixture, &mut provider, NOW + 360);
+    assert_eq!(
+        provider.asked.len(),
+        2,
+        "the refund is asked again once: {:?}",
+        provider.asked
+    );
+    assert_eq!(
+        fixture.state_of("pi_repick_pressed_twice"),
+        DepositState::Refunded {
+            amount_minor: 4_000
+        }
+    );
+    assert_eq!(provider.keyed.refunded_minor(), 4_000, "refunded once");
+}
+
+/// Review round 2 of #10149: the host's return is refunded under one settle
+/// row, the provider ends it unpaid, the host asks again under a row of its
+/// own, and the provider ends that ask unpaid too. On the hourly ask only
+/// the row of the host's last ask asks the provider; the row queued before
+/// it ends on its next run, and does not ask the same refund beside it hour
+/// after hour.
+#[test]
+fn the_hosts_ask_again_ends_the_settle_row_queued_before_it() {
+    let clock = ManualClock::new(NOW);
+    let fixture = Fixture::open_owned(&clock, None);
+    let booked = captured_booking(&fixture, "pi_ended_rows", 9);
+    cancel_on_unwritten_calendar(&fixture, &booked, NOW + 120);
+    let host = fixture.vault.memory(fixture.host, EdgeActorClass::Human);
+    fixture.set_clock(NOW + 140);
+    let returned = refund_deposit(&host, &booked).expect("the host returns the deposit");
+    assert_eq!(returned["queued"], true, "{returned}");
+    let mut provider = EndingRefundProvider {
+        end_new_refunds: true,
+        ..EndingRefundProvider::default()
+    };
+    drain_settle_rows(&fixture, &mut provider, NOW + 180);
+    fixture.set_clock(NOW + 320);
+    let retry = refund_deposit(&host, &booked).expect("the host asks again");
+    assert_eq!(retry["queued"], true, "{retry}");
+    drain_settle_rows(&fixture, &mut provider, NOW + 360);
+    assert_eq!(
+        provider.ended.len(),
+        2,
+        "guard: the provider ended both asks: {:?}",
+        provider.ended
+    );
+    let retry_key = provider.ended[1].clone();
+    assert!(retry_key.contains("-retry-1-"), "{retry_key}");
+
+    // Both rows are due again an hour after their last ask.
+    let asked_before = provider.asked.len();
+    let pass = run_booking_deposit_settlement(
+        &fixture.vault,
+        "deposit-settle-worker",
+        &mut provider,
+        16,
+        NOW + 4_000,
+    )
+    .expect("the hourly pass");
+    assert_eq!(
+        provider.asked[asked_before..].to_vec(),
+        vec![retry_key.clone()],
+        "only the row of the host's last ask asks the provider"
+    );
+    assert_eq!(
+        (pass.settled_nothing, pass.still_owed),
+        (1, 1),
+        "the row queued before the host's ask ends: {pass:?}"
+    );
+    let asked_before = provider.asked.len();
+    drain_settle_rows(&fixture, &mut provider, NOW + 8_000);
+    assert_eq!(
+        provider.asked[asked_before..].to_vec(),
+        vec![retry_key],
+        "one row asks hourly from then on"
+    );
+    assert_eq!(
+        fixture.state_of("pi_ended_rows"),
+        DepositState::RefundDue {
+            amount_minor: 4_000
+        }
+    );
+}
+
+/// Review round 2 of #10149: the provider ends the host's refund unpaid, the
+/// host asks again, and refunds made by hand in the provider's dashboard
+/// before that ask ran cover a part of what is owed, so the provider makes
+/// no new refund and answers that the refund ended unpaid beside them. The
+/// card keeps the stuck refund, says only a hand refund pays the rest and
+/// offers no Return deposit; its INBOX row comes back and opens; a press asks
+/// nothing.
+#[test]
+fn a_short_hand_refund_before_the_hosts_ask_runs_keeps_the_stuck_refund_on_the_card() {
+    let clock = ManualClock::new(NOW);
+    let fixture = Fixture::open_owned(&clock, None);
+    let booked = captured_booking(&fixture, "pi_short_before_retry", 9);
+    cancel_on_unwritten_calendar(&fixture, &booked, NOW + 120);
+    let host = fixture.vault.memory(fixture.host, EdgeActorClass::Human);
+    fixture.set_clock(NOW + 140);
+    let returned = refund_deposit(&host, &booked).expect("the host returns the deposit");
+    assert_eq!(returned["queued"], true, "{returned}");
+    let mut provider = EndingRefundProvider {
+        end_new_refunds: true,
+        ..EndingRefundProvider::default()
+    };
+    drain_settle_rows(&fixture, &mut provider, NOW + 180);
+    fixture.set_clock(NOW + 320);
+    let retry = refund_deposit(&host, &booked).expect("the host asks again");
+    assert_eq!(retry["queued"], true, "{retry}");
+
+    // A hand refund of a part of the 40.00 lands before the ask runs.
+    provider.part_refunded_by_hand = true;
+    drain_settle_rows(&fixture, &mut provider, NOW + 360);
+    assert_eq!(
+        provider.ended.len(),
+        2,
+        "guard: the ask again ended beside the hand refund: {:?}",
+        provider.ended
+    );
+    let row = format!("{HELD_DEPOSIT_ROW}{}", booked.calendar.event_ref.to_hex());
+    let new = oneiron::agent_inbox_lens::AgentInboxReadState::New;
+    assert_eq!(
+        held_deposit_board(&fixture, NOW + 400),
+        vec![(row.clone(), new)],
+        "the stuck refund keeps its INBOX row"
+    );
+    let card = open_booking_row(&host, &row);
+    assert_eq!(
+        card["deposit"],
+        serde_json::json!({
+            "held": "refund_ended_unpaid_part_refunded_by_hand",
+            "amount_minor": 4_000,
+            "currency": "usd",
+            "reason": "calendar_cancel",
+            "line": "Booking at 2026-03-02 09:00 (UTC) was cancelled in a calendar. The refund of \
+                     40.00 USD to the visitor did not go through at Stripe, and refunds made by \
+                     hand in the Stripe dashboard cover only part of it. Refund the rest by hand \
+                     in the Stripe dashboard.",
+            "return_offered": false,
+        }),
+        "{card}"
+    );
+    fixture.set_clock(NOW + 420);
+    let again = refund_deposit(&host, &booked).expect("the host's press answers");
+    assert_eq!(
+        again["queued"], false,
+        "Return deposit asks nothing: {again}"
+    );
+    assert_eq!(
+        fixture.state_of("pi_short_before_retry"),
+        DepositState::RefundDue {
+            amount_minor: 4_000
         }
     );
 }

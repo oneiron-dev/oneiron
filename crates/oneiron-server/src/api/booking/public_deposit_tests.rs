@@ -22,7 +22,8 @@
 //! refund, so the owner's return of the balance is refunded. A refund
 //! Stripe ends failed shows on the owner's booking card until a refund
 //! covers it (FIX [BK-DEPOSIT-FAILED-REFUND-SURFACE]), a hand refund of a
-//! part of it too (review round 1 of #10149).
+//! part of it too (review round 1 of #10149), and one made before the
+//! owner's ask again runs (review round 2).
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -1647,6 +1648,77 @@ async fn a_failed_refund_beside_a_short_hand_refund_shows_on_the_owners_card() {
         DepositState::RefundDue {
             amount_minor: 2_500
         }
+    );
+}
+
+/// Review round 2 of #10149: Stripe ends the settle row's refund failed, the
+/// owner asks again, and before that ask runs refunds 1000 of the 2500 owed
+/// by hand in the dashboard. The ask under its new key, which names the
+/// first ask's key as an earlier key of the same refund, makes no refund
+/// and answers that the refund ended unpaid beside a short hand refund, so
+/// the owner's card keeps the stuck refund and says only a hand refund pays
+/// the rest; it is not a refusal that drops the line.
+#[tokio::test]
+async fn an_ask_again_behind_a_short_hand_refund_answers_the_earlier_failed_refund() {
+    let (fixture, stripe, payment_id) = half_refund_owed("short-hand-before-retry").await;
+    let now = now_secs().expect("clock");
+    stripe.lock().expect("fake stripe").refund_status = Some("failed".to_owned());
+    let drain = run_settle_pass(&fixture, now - 3_601).await;
+    assert_eq!(drain.refunded, 0, "guard: a failed refund is no refund");
+    assert_eq!(refund_posts(&stripe), 1, "guard: the row asked once");
+
+    // The owner refunds 1000 of the 2500 by hand before the ask again runs.
+    let first_key = {
+        let mut stripe = stripe.lock().expect("fake stripe");
+        stripe.refund_status = None;
+        stripe.refunds.push(refund_by_hand(
+            "re_short_before_retry",
+            &payment_id,
+            1_000,
+            "succeeded",
+        ));
+        stripe
+            .refunds
+            .iter()
+            .find_map(|refund| refund.settle_key.clone())
+            .expect("the row's failed refund")
+    };
+    let retry_key = first_key.replacen("-2500-", "-2500-retry-1-", 1);
+    assert_ne!(retry_key, first_key, "guard: {first_key}");
+    let vault = Arc::clone(&fixture.server.vault);
+    let base = fixture.server.booking_deposit_stripe_base().to_owned();
+    let answer = tokio::task::spawn_blocking(move || {
+        use oneiron::booking::lifecycle::DepositSettlementPort;
+        let mut client = crate::booking_deposit::stripe::StripeClient::new(&vault, &base)
+            .unwrap_or_else(|error| panic!("the Stripe client: {error}"));
+        let earlier_retry_keys = [first_key];
+        client.settle(&oneiron::booking::lifecycle::DepositSettleRequest {
+            payment_id: &payment_id,
+            movement: oneiron::booking::lifecycle::DepositSettleMove::Refund {
+                amount_minor: 2_500,
+            },
+            idempotency_key: &retry_key,
+            earlier_retry_keys: &earlier_retry_keys,
+        })
+    })
+    .await
+    .expect("the ask again ran");
+    assert!(
+        matches!(
+            answer,
+            Err(
+                oneiron::booking::lifecycle::DepositProviderFailure::RefundEndedUnpaid {
+                    part_refunded_by_hand: true,
+                    ..
+                }
+            )
+        ),
+        "{answer:?}"
+    );
+    assert_eq!(
+        refund_posts(&stripe),
+        1,
+        "no refund is made behind the hand refund"
     );
 }
 
