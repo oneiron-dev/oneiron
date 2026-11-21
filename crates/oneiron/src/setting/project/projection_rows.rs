@@ -671,7 +671,7 @@ impl Vault {
                         project_target_in_txn(self, savepoint, target, now).map(Some)
                     }) {
                         Ok(projected) => {
-                            for projected in projected {
+                            if let Some(projected) = projected {
                                 landed |= !projected.changed.is_empty();
                                 changed.extend(projected.changed);
                             }
