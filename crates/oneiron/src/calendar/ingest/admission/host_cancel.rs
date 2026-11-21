@@ -11,9 +11,10 @@ use crate::calendar::claims::{
     PREDICATE_CALENDAR_STATUS, decode_status_value,
 };
 use crate::calendar::ics::ParsedVEvent;
-use crate::calendar::passport::live_passports_for_event;
+use crate::calendar::passport::{CalendarSystems, live_passports_for_event};
 use crate::calendar::safeguard::CalendarInboundBody;
 use crate::claim::ClaimLifecycleStatus;
+use crate::code_run::CompareKnown;
 use crate::entity_id::EntityId;
 
 impl PollAdmission<'_> {
@@ -48,10 +49,7 @@ impl PollAdmission<'_> {
             .as_ref()
             .and_then(|passport| passport.cancelled_since)
             .unwrap_or(self.now);
-        if passport
-            .as_ref()
-            .is_some_and(|passport| cancel_moves_deposit(self.system, passport))
-        {
+        if passport.as_ref().is_some_and(cancel_moves_deposit) {
             self.settle_host_cancelled_deposit(event_ref, seen_at)?;
         }
         self.admit_imported_cancel_status(event_ref, event, seen_at)
@@ -118,8 +116,17 @@ impl PollAdmission<'_> {
             basis,
         )?;
         if basis == CalendarStatusBasis::ImportedCancel {
+            // This source's passports, a stored system name that holds a
+            // custody handle read as custody reads it
+            // (CAL-MASKED-SYSTEM-LITERAL-COMPARES-OUTSIDE-KEYED-LOOKUP).
+            let (vault, system) = (self.vault, self.system);
+            let systems = CalendarSystems::read(vault)?;
+            let base_known = || vault.known_values_now();
+            let known = CompareKnown::new(Some(&base_known));
             let observed_at = self
-                .cancel_seen_at(event_ref, |value| value.system == self.system)?
+                .cancel_seen_at(event_ref, |value| {
+                    systems.carries(&value.system, system, &known)
+                })?
                 .unwrap_or(self.now);
             match status_ref {
                 Some(status_ref) => {
@@ -131,8 +138,8 @@ impl PollAdmission<'_> {
         Ok(())
     }
 
-    /// When a calendar the EVENT was written to ([`cancel_moves_deposit`]
-    /// of each passport's own system) first reported its cancellation, for
+    /// When a calendar the EVENT was written to ([`cancel_moves_deposit`])
+    /// first reported its cancellation, for
     /// the deposit's start rule (RULING DEPOSIT-HOST-CANCEL-AFTER-START = A);
     /// `None` when none has. Each such report is stored on its passport
     /// (`cancelled_since`) before the refund commits: a tombstone's sweep
@@ -143,9 +150,7 @@ impl PollAdmission<'_> {
     /// cancel, and an omission stamps nothing, since it is no cancellation
     /// evidence.
     fn written_cancel_seen_at(&self, event_ref: EntityId) -> Result<Option<u64>, CalendarError> {
-        self.cancel_seen_at(event_ref, |value| {
-            cancel_moves_deposit(&value.system, value)
-        })
+        self.cancel_seen_at(event_ref, |value| Ok(cancel_moves_deposit(value)))
     }
 
     /// The earliest `cancelled_since` among the EVENT's live passports that
@@ -154,13 +159,17 @@ impl PollAdmission<'_> {
     fn cancel_seen_at(
         &self,
         event_ref: EntityId,
-        counts: impl Fn(&CalendarPassportValue) -> bool,
+        counts: impl Fn(&CalendarPassportValue) -> Result<bool, CalendarError>,
     ) -> Result<Option<u64>, CalendarError> {
-        Ok(live_passports_for_event(self.vault, &event_ref)?
-            .into_iter()
-            .filter(|(_, value)| counts(value))
-            .filter_map(|(_, value)| value.cancelled_since)
-            .min())
+        let mut first = None;
+        for (_, value) in live_passports_for_event(self.vault, &event_ref)? {
+            if let Some(since) = value.cancelled_since
+                && counts(&value)?
+            {
+                first = Some(first.map_or(since, |seen: u64| seen.min(since)));
+            }
+        }
+        Ok(first)
     }
 
     /// A VEVENT the passport already carries (or an older SEQUENCE of it):
@@ -207,7 +216,7 @@ impl PollAdmission<'_> {
             return Ok(());
         }
         let seen_at = passport.cancelled_since.unwrap_or(passport.last_seen_at);
-        if cancel_moves_deposit(self.system, &passport) {
+        if cancel_moves_deposit(&passport) {
             self.settle_host_cancelled_deposit(event_ref, seen_at)?;
         }
         if self.explicit_status_admitted_after(event_ref, passport_ref)? {
@@ -387,33 +396,36 @@ impl PollAdmission<'_> {
     }
 }
 
-/// Whether `passport` is `system`'s own and names a calendar the EVENT was
-/// written to: its direction is Outbound or TwoWay (RULING
-/// DEPOSIT-HOST-CANCEL-SOURCE = A). Only such a source's cancellation moves
+/// Whether `passport` names a calendar the EVENT was written to: its
+/// direction is Outbound or TwoWay (RULING DEPOSIT-HOST-CANCEL-SOURCE = A).
+/// The caller reads it as the reporting source's own passport: the one its
+/// keyed lookup finds ([`crate::calendar::live_passport_for`]), or one whose
+/// stored system [`CalendarSystems::carries`] the source's, since the claim
+/// door can store that name as a custody handle
+/// (CAL-MASKED-SYSTEM-LITERAL-COMPARES-OUTSIDE-KEYED-LOOKUP). Only such a source's cancellation moves
 /// deposit money, and not when it is the engine's own cancelled write
 /// ([`cancel_moves_deposit`]). A source the visitor can write (their own calendar the
 /// owner subscribes to, a shared calendar) holds an Inbound passport, so its
 /// cancellation writes `calendar.status` and the CAL-07 evidence and leaves
 /// the deposit as it stands. The engine's own passports (the booking's and
 /// the iMIP invite's) name no calendar.
-pub(super) fn names_written_calendar(system: &str, passport: &CalendarPassportValue) -> bool {
-    passport.system == system
-        && system != crate::booking::BOOKING_PASSPORT_SYSTEM
-        && system != crate::calendar::invite::CALENDAR_INVITE_PASSPORT_SYSTEM
+pub(super) fn names_written_calendar(passport: &CalendarPassportValue) -> bool {
+    passport.system != crate::booking::BOOKING_PASSPORT_SYSTEM
+        && passport.system != crate::calendar::invite::CALENDAR_INVITE_PASSPORT_SYSTEM
         && matches!(
             passport.direction,
             CalendarPassportDirection::Outbound | CalendarPassportDirection::TwoWay
         )
 }
 
-/// Whether a cancellation `system` reports through `passport` moves deposit
-/// money: the passport names a calendar the EVENT was written to
+/// Whether a cancellation its source reports through `passport`, that
+/// source's own, moves deposit money: the passport names a calendar the EVENT was written to
 /// ([`names_written_calendar`]), and the cancellation is not the engine's own
 /// write of the EVENT already cancelled to that calendar
 /// (`written_cancelled`; BK-DEPOSIT-REWRITTEN-ECHO-OF-OWNER-WRITE-REFUNDS). The
 /// owner who writes an EVENT a feed the booking was not written to cancelled
 /// mirrors that cancel; a provider that rewrites the written resource sends
 /// it back as a new version, which is still no host cancel.
-pub(super) fn cancel_moves_deposit(system: &str, passport: &CalendarPassportValue) -> bool {
-    names_written_calendar(system, passport) && !passport.written_cancelled
+pub(super) fn cancel_moves_deposit(passport: &CalendarPassportValue) -> bool {
+    names_written_calendar(passport) && !passport.written_cancelled
 }

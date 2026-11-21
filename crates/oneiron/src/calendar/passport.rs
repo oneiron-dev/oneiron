@@ -49,6 +49,7 @@ use crate::vault::Vault;
 mod masked_key;
 
 use masked_key::MaskedKey;
+pub(in crate::calendar) use masked_key::{CalendarSystems, derived_uid_among, passport_uid_among};
 
 /// The reason code on the tray resolution of a waiting passport revision
 /// that a later revision replaced.
@@ -304,6 +305,35 @@ pub fn live_passport_for(
             MaskedKey::read_in_txn(vault, &txn, event_ref, system, uid)
         },
         &known,
+    )
+}
+
+/// The passport of `passports`, the live ones of `event_ref`, keyed exactly
+/// `(system, uid)` as the vault reads it now ([`passport_keyed`]), for a
+/// scan over many EVENTs that read their passports, the calendar systems
+/// (`systems`) and the values custody holds (`known`) once.
+///
+/// # Errors
+///
+/// As [`live_passport_for`].
+pub(in crate::calendar) fn live_passport_keyed(
+    vault: &Vault,
+    event_ref: &EntityId,
+    passports: Vec<(EntityId, CalendarPassportValue)>,
+    system: &str,
+    uid: &str,
+    systems: &CalendarSystems,
+    known: &CompareKnown<'_>,
+) -> Result<Option<(EntityId, CalendarPassportValue)>, CalendarError> {
+    passport_keyed(
+        passports,
+        system,
+        uid,
+        || {
+            let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+            MaskedKey::read_pins_in_txn(vault, &txn, event_ref, system, uid, systems)
+        },
+        known,
     )
 }
 
