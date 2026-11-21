@@ -30,6 +30,13 @@
 //!   birth for it. Neither the entity pass nor the birth-map observer stamps the birth while the
 //!   restriction stands, and the forward rematerialization after the lift does not either: the
 //!   carrier the birth rides beside was dropped (REVIEW-9881 round 1).
+//! * `a_note_edit_dropped_under_a_restriction_at_the_purge_fence_stays_out_after_the_drain`: the
+//!   device's header edit of a NOTE arrives while a cooperative review restricts it and an
+//!   unproven purge retry fences it. The hub makes the update durable, the review lifts and the
+//!   purge proof settles the NOTE's marker, and the marker drain rematerializes the window from
+//!   the hub's update rows, whose entities map still carries the edit: the hub keeps its stored
+//!   NOTE (REVIEW-9881 round 2). The drain is the path that reaches it: a persist, an export door
+//!   and a cold open's reverse pass each pack the stored NOTE core over the window's carrier first.
 //!
 //! The first two run red at main 6f0800329f2, whose ingest hands the carrier to the put door, and
 //! green at the fix. The third runs red at ca7a0807956, whose ingest drops the carrier only while
@@ -38,7 +45,9 @@
 //! drop, and green at main. The fifth runs red before the lift where the birth gate leaves out
 //! both its limit conjuncts (or where the entity pass or the birth-map observer alone skips the
 //! gate's limit conjuncts), red after the lift where it leaves out only the dropped-carrier
-//! conjunct, and green at main.
+//! conjunct, and green at main. The sixth runs red where the drop is asked below the NOTE purge
+//! fence (the round-1 order 61609b9a3d2 moved), whose skip records no digest, so the drain puts
+//! the edit, and green at main.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test sync_ingest_drops_a_use_limited_carrier`.
 
 #![cfg(all(feature = "sync", feature = "test-support", oneiron_test_support))]
@@ -49,12 +58,14 @@ mod sync_harness;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::deletion::LegalHoldTarget;
 use oneiron::memory::{EraseOptions, EraseReason};
+use oneiron::note::{NoteActor, NoteCore, NoteKind, encode_note_core};
 use oneiron::provenance::birth::RowBirth;
 use oneiron::receipt::{ReceiptKind, ReceiptRecord};
-use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_RECEIPT_RECORD};
+use oneiron::registry::{ENTITY_TYPE_NOTE, ENTITY_TYPE_PERSON, ENTITY_TYPE_RECEIPT_RECORD};
 use oneiron::store::GateDecisionId;
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::{self, WindowExport};
+use oneiron::sync::{drain_remat_markers, export_updates_since, server_state};
 use oneiron::test_doors::campaign_member_index::{lift_restriction, restrict_record};
 use oneiron::test_doors::media_vector_replica::stored_row;
 use oneiron::write_envelope::provenance::made_by::{MadeBy, MadeByClass, MadeByProcess};
@@ -63,7 +74,8 @@ use oneiron_store::receipt_ref::ReceiptRef;
 use std::collections::BTreeMap;
 
 use crate::sync_harness::{
-    T0, TestNode, WINDOW, make_entity_blob, map_insert_bytes, sync_through_doors, test_config,
+    ENTITY_METADATA_HEADER_LEN, T0, TestNode, WINDOW, make_entity_blob, map_get_bytes,
+    map_insert_bytes, sync_through_doors, test_config,
 };
 
 const KEPT_WORDS: &[u8] = b"a kept person";
@@ -492,5 +504,184 @@ fn a_birth_carried_for_the_restricted_row_is_not_stamped_before_or_after_the_lif
             .as_deref(),
         Some(kept_copy.as_slice()),
         "the hub keeps its stored copy after the lift"
+    );
+}
+
+/// The `rm:w:` row that holds `id` behind a purge retry in [`WINDOW`], and the replay-provenance
+/// sidecar beside it (`sync/quarantine/remat_markers.rs`). A marker with no sidecar is an
+/// unproven one: a NOTE carrier waits at the purge fence while it stands.
+fn purge_marker_keys(id: &EntityId) -> (String, String) {
+    (
+        format!("rm:w:{WINDOW}:{}", id.to_hex()),
+        format!("rmp:w:{WINDOW}:{}", id.to_hex()),
+    )
+}
+
+/// Holds `id` behind an unproven purge retry in [`WINDOW`], as a failed CRDT-tombstone purge
+/// leaves it.
+fn set_unproven_purge_marker(vault: &Vault, id: &EntityId) {
+    let (marker, _) = purge_marker_keys(id);
+    vault
+        .sync_state_put(&marker, &[1])
+        .expect("FIXTURE: set the unproven purge marker");
+}
+
+/// Settles `id`'s purge retry in [`WINDOW`], as its purge proof does: the marker and its sidecar
+/// go, and the row stays stored.
+fn settle_purge_marker(vault: &Vault, id: &EntityId) {
+    let (marker, provenance) = purge_marker_keys(id);
+    vault
+        .sync_state_delete(&marker)
+        .expect("FIXTURE: clear the purge marker");
+    vault
+        .sync_state_delete(&provenance)
+        .expect("FIXTURE: clear the purge marker's provenance");
+}
+
+#[test]
+fn a_note_edit_dropped_under_a_restriction_at_the_purge_fence_stays_out_after_the_drain() {
+    let mut hub = TestNode::with_config("hub", 2, hosted_config());
+    mint_machine_id(&hub.vault);
+    hub.open_window(WINDOW);
+    let mut device = TestNode::new("device", 1);
+    mint_machine_id(&device.vault);
+    device.open_window(WINDOW);
+    let key = WindowKey::new(WINDOW);
+
+    // The hub stores a NOTE in the window: its row is the NOTE core alone.
+    let note = EntityId::now();
+    let owner = hub
+        .vault
+        .ensure_embedded_owner_actor()
+        .expect("FIXTURE: the hub names its embedded owner actor");
+    let core = encode_note_core(&NoteCore {
+        kind: NoteKind::OpinionTake,
+        author_ref: NoteActor::Actor(owner),
+        source_revision_ref: [0x42; 16],
+    })
+    .expect("FIXTURE: the NOTE core encodes");
+    hub.put_entity_in_window(
+        WINDOW,
+        &note,
+        &make_entity_blob(ENTITY_TYPE_NOTE, T0, &core),
+    );
+    let kept_copy = stored_row(&hub.vault, &note)
+        .expect("FIXTURE: read the hub's stored NOTE")
+        .expect("FIXTURE: the hub stores the NOTE");
+
+    // The device takes the hub's window op as it is. An export door packs the stored NOTE core
+    // over the carrier it sends, and the device's edit must follow the op the hub's durable rows
+    // hold.
+    let seed = export_updates_since(hub.doc(WINDOW), &device.doc(WINDOW).oplog_vv().encode())
+        .expect("FIXTURE: export the hub's NOTE op");
+    let imported = device
+        .doc(WINDOW)
+        .import(&seed)
+        .expect("FIXTURE: the device imports the hub's NOTE op");
+    assert!(
+        imported.pending.is_none(),
+        "FIXTURE: the device holds every op the hub's NOTE op follows"
+    );
+    assert_eq!(
+        stored_row(&device.vault, &note)
+            .expect("FIXTURE: read the device's stored NOTE")
+            .as_deref(),
+        Some(kept_copy.as_slice()),
+        "FIXTURE: the device holds the hub's NOTE"
+    );
+
+    // A cooperative review restricts the NOTE, and its purge retry is not proven yet.
+    restrict(&hub.vault, note);
+    set_unproven_purge_marker(&hub.vault, &note);
+
+    // The device has heard of neither: it changes the NOTE's metadata header and keeps its core,
+    // which a NOTE birth may not change.
+    let edited = make_entity_blob(
+        ENTITY_TYPE_NOTE,
+        T0 + 5,
+        &kept_copy[ENTITY_METADATA_HEADER_LEN..],
+    );
+    assert_ne!(
+        edited, kept_copy,
+        "FIXTURE: the edit changes the NOTE's header"
+    );
+    device.put_entity_in_window(WINDOW, &note, &edited);
+    assert_ne!(
+        stored_row(&device.vault, &note)
+            .expect("FIXTURE: read the device's edited NOTE")
+            .as_deref(),
+        Some(kept_copy.as_slice()),
+        "FIXTURE: the header edit is a write on the unrestricted device"
+    );
+
+    // The hub admits the device's update and makes it durable, as its server does, then imports
+    // it: the ingest meets the restriction and the purge fence together.
+    let update = export_updates_since(device.doc(WINDOW), &hub.doc(WINDOW).oplog_vv().encode())
+        .expect("FIXTURE: export the device's edit");
+    let inserts = window::admit_window_update_residence_with_vault(
+        &hub.vault,
+        hub.doc(WINDOW),
+        &update,
+        &key,
+    )
+    .expect("FIXTURE: the hub's window admits the device's update");
+    server_state::persist_imported_window_update(&hub.vault, &key, &update, &inserts)
+        .expect("FIXTURE: the hub persists the device's update");
+    let imported = hub
+        .doc(WINDOW)
+        .import(&update)
+        .expect("FIXTURE: the hub imports the device's update");
+    assert!(
+        imported.pending.is_none(),
+        "FIXTURE: the hub holds every op the device's edit follows"
+    );
+    assert_eq!(
+        map_get_bytes(&hub.doc(WINDOW).get_map("entities"), &note.to_hex()).as_deref(),
+        Some(edited.as_slice()),
+        "FIXTURE: the hub's window carries the device's edit"
+    );
+    assert_eq!(
+        stored_row(&hub.vault, &note)
+            .expect("FIXTURE: read the hub's stored NOTE")
+            .as_deref(),
+        Some(kept_copy.as_slice()),
+        "FIXTURE: while the restriction and the purge fence stand the hub keeps its stored NOTE"
+    );
+
+    // The review lifts the restriction and the purge proof settles the NOTE's marker, neither
+    // rewriting the row. Another entity's unproven purge retry keeps the window flagged, so the
+    // marker drain rematerializes it.
+    lift_restriction(&hub.vault, note).expect("FIXTURE: lift the restriction");
+    settle_purge_marker(&hub.vault, &note);
+    set_unproven_purge_marker(&hub.vault, &EntityId::now());
+
+    // No persist, export or reverse pass runs before the drain, so no NOTE refresh packs the
+    // stored core over the carrier: the drain loads the window from the hub's update rows.
+    assert!(
+        !server_state::window_snapshot_present(&hub.vault, &key)
+            .expect("FIXTURE: look for the hub's window snapshot"),
+        "FIXTURE: the hub holds no window snapshot, so the drain rebuilds the window from its update rows"
+    );
+    let durable = window::rebuild_window_from_updates(&hub.vault, hub.name, &key)
+        .expect("FIXTURE: rebuild the window the drain loads");
+    assert_eq!(
+        map_get_bytes(&durable.get_map("entities"), &note.to_hex()).as_deref(),
+        Some(edited.as_slice()),
+        "FIXTURE: the window the drain loads carries the device's edit"
+    );
+    let report = drain_remat_markers(&hub.vault, hub.name, &hub.materializer)
+        .expect("the drain rematerializes the flagged window");
+    assert_eq!(
+        report.still_pending,
+        vec![WINDOW.to_owned()],
+        "FIXTURE: the drain rematerialized the window, whose other marker stays: {report:?}"
+    );
+
+    assert_eq!(
+        stored_row(&hub.vault, &note)
+            .expect("read the hub's stored NOTE")
+            .as_deref(),
+        Some(kept_copy.as_slice()),
+        "a NOTE edit the hub dropped under the restriction at the purge fence does not land when the drain rematerializes the window after the lift"
     );
 }

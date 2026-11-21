@@ -1,7 +1,11 @@
-//! Doors for `tests/voice_self_epoch.rs` (UNBUILT-02 PR 2): the brain of an
-//! owner's own standalone call on this device, its record resolved as a
-//! call's boot resolves it, and one of its turns driven from the person's
-//! final transcript to its stop, with what the turn keeps written.
+//! Doors for `tests/voice_self_epoch.rs` (UNBUILT-02 PR 2),
+//! `tests/voice_phone_transcript.rs` (PR 3) and
+//! `tests/voice_call_announcement.rs` (PR 3B): the brain of an owner's own
+//! standalone call on this device, or of a phone call its line agent
+//! answered, its record and opening line resolved as the call's boot
+//! resolves them, the opening line spoken as the call's loop opens it, and
+//! one of its turns driven from the speaker's final transcript to its stop,
+//! with what the turn keeps written.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -10,13 +14,18 @@ use std::time::Duration;
 use oneiron::authority::PeerMachine;
 use oneiron::claim::CallerLocality;
 use oneiron::interlocutor::InterlocutorSet;
-use oneiron::voice_cascade::{Brain, BrainEvent, BrainRequest, RetrievalContext};
-use oneiron::{EdgeActorClass, EntityId, WriteActor};
+use oneiron::voice_cascade::{
+    Brain, BrainEvent, BrainRequest, RetrievalContext, VoiceCascadeSession,
+};
+use oneiron::{EdgeActorClass, EntityId, Vault, WriteActor};
 use tokio::sync::mpsc;
 
 use crate::auth::{CoreAuth, CoreScope};
 use crate::server::SyncServer;
-use crate::voice_host::{ChatBrain, ChatBrainBindings, VoiceBrainOut, standalone_call_record};
+use crate::voice_host::{
+    ChatBrain, ChatBrainBindings, VoiceBrainOut, phone_call_opening, phone_call_record,
+    phone_call_session, standalone_call_record,
+};
 
 /// The seeded agent a call answers with, as the call's boot reads it.
 const DEFAULT_AGENT: &str = "sys.default";
@@ -103,45 +112,206 @@ impl StandaloneCall {
     /// The turn did not start, its answer did not stop, or it did not
     /// settle in time.
     pub async fn say(&mut self, generation: u64, transcript: &str) -> anyhow::Result<()> {
-        let request = BrainRequest {
-            generation: oneiron::test_doors::voice_generation_epoch::generation_epoch(
-                CASCADE_SESSION,
-                generation,
+        drive_turn(
+            &mut self.brain,
+            &mut self.out,
+            &self.session_ref,
+            generation,
+            transcript,
+        )
+        .await
+    }
+}
+
+/// A phone call the line agent answered, held open by its brain. Its line
+/// agent is the seeded default agent; the call's phone read fence is not
+/// the door's subject, so the brain holds none.
+pub struct PhoneCall {
+    brain: ChatBrain,
+    out: mpsc::Receiver<VoiceBrainOut>,
+    vault: Arc<Vault>,
+    session_ref: String,
+    agent: EntityId,
+    conversation: EntityId,
+    /// The line the call opens with, until it is spoken.
+    opening: Option<String>,
+}
+
+impl PhoneCall {
+    /// A phone call from `caller` (the arrival's caller text; `None` when
+    /// withheld), answered by the seeded default agent: its record and its
+    /// opening line resolved as the phone call's boot resolves them, so its
+    /// start row is written.
+    ///
+    /// # Errors
+    ///
+    /// No default agent, no record, or no chat seat.
+    pub fn answer(server: &Arc<SyncServer>, caller: Option<&str>) -> anyhow::Result<Self> {
+        let vault = server.vault();
+        let (agent, definition) = vault
+            .get_seeded_agent_definition_by_logical_id(DEFAULT_AGENT)?
+            .ok_or_else(|| anyhow::anyhow!("no default agent"))?;
+        let opening = phone_call_opening(vault, &definition);
+        let session_ref = format!("voice-call:{}", EntityId::now().to_hex());
+        let record = phone_call_record(vault, agent, caller, &session_ref)
+            .ok_or_else(|| anyhow::anyhow!("the phone call keeps nothing"))?;
+        let conversation = record.conversation;
+        let (out, receiver) = mpsc::channel(64);
+        let brain = ChatBrain::new(ChatBrainBindings {
+            ai: server.ai.clone(),
+            vault: Arc::clone(vault),
+            auth: CoreAuth::from_oauth_relay(
+                agent.to_hex(),
+                BTreeSet::from([CoreScope::Read, CoreScope::Write]),
             ),
-            transcript: transcript.to_owned(),
-            retrieval: RetrievalContext {
-                result_refs: Vec::new(),
-                promoted: false,
-                run_id: None,
-                partial: false,
-            },
-            session_ref: self.session_ref.clone(),
-            tools_enabled: false,
-            interlocutors: InterlocutorSet::owner_alone(),
-            audience_revision: 0,
-            tool_events: Vec::new(),
-            externally_tainted: false,
+            phone: None,
+            room: None,
+            instructions: None,
+            agent,
+            payer: WriteActor::new(agent, EdgeActorClass::Agent),
+            funding: None,
+            out,
+            record: Some(record),
+        })
+        .map_err(|error| anyhow::anyhow!("voice brain: {error:?}"))?;
+        Ok(Self {
+            brain,
+            out: receiver,
+            vault: Arc::clone(vault),
+            session_ref,
+            agent,
+            conversation,
+            opening,
+        })
+    }
+
+    /// The call opens as its loop opens it: its opening line, when the owner's
+    /// announcement is on, opened by the call's voice session as a
+    /// generation with no caller's words before it, and spoken by the brain
+    /// to its end, with what it keeps written. What the brain handed to
+    /// speech; `None` when the call opens silent.
+    ///
+    /// # Errors
+    ///
+    /// The session refused the generation, the brain did not speak the line
+    /// to its end, or it did not settle in time.
+    pub async fn open(&mut self) -> anyhow::Result<Option<String>> {
+        let Some(line) = self.opening.take() else {
+            return Ok(None);
         };
-        self.brain.start(&request)?;
+        let mut session = VoiceCascadeSession::new(
+            Arc::clone(&self.vault),
+            phone_call_session(&self.session_ref, self.agent),
+        )?;
+        let request = session.open_announcement(line)?;
+        self.brain.announce(&request)?;
+        let brain = &self.brain;
+        let events = &mut self.out;
         tokio::time::timeout(TURN_PATIENCE, async {
+            let mut said = String::new();
             loop {
-                let Some(out) = self.out.recv().await else {
+                let Some(out) = events.recv().await else {
                     anyhow::bail!("the brain stopped sending");
                 };
                 match out.event {
+                    BrainEvent::TextDelta(text) => said.push_str(&text),
                     BrainEvent::Done => break,
-                    BrainEvent::Incomplete => anyhow::bail!("the answer did not stop"),
-                    BrainEvent::Error(error) => anyhow::bail!("the turn failed: {error}"),
-                    BrainEvent::TextDelta(_) | BrainEvent::Tool(_) => {}
+                    other => anyhow::bail!("the announcement did not end whole: {other:?}"),
                 }
             }
-            // What the turn keeps lands on its own task after its stop.
-            while !self.brain.at_rest() {
+            while !brain.at_rest() {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
-            Ok(())
+            Ok(Some(said))
         })
         .await
-        .map_err(|_| anyhow::anyhow!("the turn did not settle in time"))?
+        .map_err(|_| anyhow::anyhow!("the announcement did not settle in time"))?
     }
+
+    /// The line agent answering the call.
+    #[must_use]
+    pub fn agent(&self) -> EntityId {
+        self.agent
+    }
+
+    /// The call's thread.
+    #[must_use]
+    pub fn conversation(&self) -> EntityId {
+        self.conversation
+    }
+
+    /// One turn: `transcript` as the caller's final at `generation`, as
+    /// [`StandaloneCall::say`] drives it.
+    ///
+    /// # Errors
+    ///
+    /// As [`StandaloneCall::say`].
+    pub async fn say(&mut self, generation: u64, transcript: &str) -> anyhow::Result<()> {
+        drive_turn(
+            &mut self.brain,
+            &mut self.out,
+            &self.session_ref,
+            generation,
+            transcript,
+        )
+        .await
+    }
+
+    /// The caller hangs up: the brain drops, which writes the call's end
+    /// row before this returns.
+    pub fn hang_up(self) {
+        drop(self.brain);
+    }
+}
+
+/// One turn of `brain`'s call: `transcript` as the speaker's final at
+/// `generation`, its answer streamed to its stop, then until the brain is at
+/// rest, so whatever the turn keeps has landed.
+async fn drive_turn(
+    brain: &mut ChatBrain,
+    events: &mut mpsc::Receiver<VoiceBrainOut>,
+    session_ref: &str,
+    generation: u64,
+    transcript: &str,
+) -> anyhow::Result<()> {
+    let request = BrainRequest {
+        generation: oneiron::test_doors::voice_generation_epoch::generation_epoch(
+            CASCADE_SESSION,
+            generation,
+        ),
+        transcript: transcript.to_owned(),
+        retrieval: RetrievalContext {
+            result_refs: Vec::new(),
+            promoted: false,
+            run_id: None,
+            partial: false,
+        },
+        session_ref: session_ref.to_owned(),
+        tools_enabled: false,
+        interlocutors: InterlocutorSet::owner_alone(),
+        audience_revision: 0,
+        tool_events: Vec::new(),
+        externally_tainted: false,
+    };
+    brain.start(&request)?;
+    tokio::time::timeout(TURN_PATIENCE, async {
+        loop {
+            let Some(out) = events.recv().await else {
+                anyhow::bail!("the brain stopped sending");
+            };
+            match out.event {
+                BrainEvent::Done => break,
+                BrainEvent::Incomplete => anyhow::bail!("the answer did not stop"),
+                BrainEvent::Error(error) => anyhow::bail!("the turn failed: {error}"),
+                BrainEvent::TextDelta(_) | BrainEvent::Tool(_) => {}
+            }
+        }
+        // What the turn keeps lands on its own task after its stop.
+        while !brain.at_rest() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|_| anyhow::anyhow!("the turn did not settle in time"))?
 }

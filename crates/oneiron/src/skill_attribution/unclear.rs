@@ -253,7 +253,11 @@ pub(crate) fn put_unclear_in_txn(
         if crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, &*wtxn, id)?.deleted
         {
             UNCLEAR.delete(&vault.store, wtxn, &key)?;
-            crate::dreamer_runner::maintenance::forget_unclear_notes_in_txn(vault, wtxn, &key)?;
+            crate::dreamer_runner::maintenance::forget_unclear_notes_in_txn(
+                &crate::secret_custody::CustodyWrite::of(vault),
+                wtxn,
+                &key,
+            )?;
             return Ok(());
         }
     }
@@ -305,7 +309,11 @@ pub(crate) fn delete_unclear_in_txn(
 ) -> Result<()> {
     let key = unclear_key(lane, reference);
     UNCLEAR.delete(&vault.store, wtxn, &key)?;
-    crate::dreamer_runner::maintenance::forget_unclear_notes_in_txn(vault, wtxn, &key)
+    crate::dreamer_runner::maintenance::forget_unclear_notes_in_txn(
+        &crate::secret_custody::CustodyWrite::of(vault),
+        wtxn,
+        &key,
+    )
 }
 
 /// Withdraws the amendment row filed under the receipt `gate:<hex>` of each
@@ -328,9 +336,7 @@ pub(crate) fn delete_gate_receipt_unclear_in_txn(
     for decision in decisions {
         let key = gate_receipt_unclear_key(*decision);
         UNCLEAR.delete(write.store, wtxn, &key)?;
-        crate::dreamer_runner::maintenance::withdraw_unclear_notes_unheld_in_txn(
-            write, wtxn, &key,
-        )?;
+        crate::dreamer_runner::maintenance::forget_unclear_notes_in_txn(write, wtxn, &key)?;
     }
     Ok(())
 }

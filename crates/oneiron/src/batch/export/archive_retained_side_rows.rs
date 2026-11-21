@@ -469,6 +469,7 @@ pub(crate) fn land_standing_grants_first_in_txn<R: Read + Seek>(
     wtxn: &mut RwTxn<'_>,
     archive: &IndexedArchive<'_, R>,
     permit: Option<&super::OwnerArchiveRestorePermit>,
+    projects: Option<&super::ProjectRootMap>,
     refresh: &mut super::archive_side_install::ArchivedSideRowRefresh,
 ) -> Result<BTreeSet<[u8; 32]>> {
     use super::archive_side_install::{
@@ -497,6 +498,7 @@ pub(crate) fn land_standing_grants_first_in_txn<R: Read + Seek>(
         vault,
         wtxn,
         permit,
+        projects,
         &rows,
         refresh,
     )?;
@@ -517,7 +519,8 @@ pub(crate) fn land_standing_grants_first_in_txn<R: Read + Seek>(
 /// Installs the owner's supported source tables and otherwise keeps envelopes inert in the
 /// import transaction; actor and actorless doors retain only, with the original inert counts.
 /// A row [`land_standing_grants_first_in_txn`] installed, named in `landed_first`, counts as
-/// installed and lands no second time.
+/// installed and lands no second time. `projects` is the import's map of the source root onto
+/// this vault's root, which a landing group reads a row's place through.
 /// On the owner door, each source-live HOOKS_GRANT tuple kept as a retained row is recorded
 /// under `restore_receipt_hex` (32 hex) for the restore group's accept to install.
 pub(crate) fn install_or_retain_side_rows_in_txn<R: Read + Seek>(
@@ -525,6 +528,7 @@ pub(crate) fn install_or_retain_side_rows_in_txn<R: Read + Seek>(
     wtxn: &mut RwTxn<'_>,
     archive: &IndexedArchive<'_, R>,
     permit: Option<&super::OwnerArchiveRestorePermit>,
+    projects: Option<&super::ProjectRootMap>,
     restore_receipt_hex: Option<&str>,
     landed_first: &BTreeSet<[u8; 32]>,
     refresh: &mut super::archive_side_install::ArchivedSideRowRefresh,
@@ -573,8 +577,9 @@ pub(crate) fn install_or_retain_side_rows_in_txn<R: Read + Seek>(
         // The enum declaration order is the fixed owning-group dependency order.
         for (group, staged) in groups {
             let (keys, rows): (Vec<_>, Vec<_>) = staged.into_iter().unzip();
-            let outcomes =
-                land_archived_side_group_in_txn(group, vault, wtxn, permit, &rows, refresh)?;
+            let outcomes = land_archived_side_group_in_txn(
+                group, vault, wtxn, permit, projects, &rows, refresh,
+            )?;
             if outcomes.len() != rows.len() {
                 return Err(Error::InvariantViolation(
                     "an archive landing group must return one outcome per envelope",

@@ -461,6 +461,9 @@ pub(super) struct PreparedCall {
     pub(super) brain: ChatBrain,
     pub(super) media: VoiceWireBindings,
     pub(super) live: Option<oneiron::conversation::LiveSpeakerCall>,
+    /// The line the call opens with before anyone speaks: a phone call's
+    /// announcement (UNBUILT-02 PR 3B); `None` opens silent.
+    pub(super) opening: Option<String>,
 }
 
 pub(super) fn prepare_call(
@@ -608,7 +611,7 @@ pub(super) fn prepare_call(
     .map_err(failed)?;
 
     // The owner's own standalone call keeps its answered turns in its home
-    // (UNBUILT-02); a call heard in a room keeps none yet (PR 3).
+    // (UNBUILT-02); a call heard in a room keeps none yet (PR 4).
     let record = if standalone {
         standalone_call_record(server, person, agent, payer, auth.peer(), auth.locality())
     } else {
@@ -648,6 +651,7 @@ pub(super) fn prepare_call(
             queue_capacity: settings.queue_capacity,
         },
         live,
+        opening: None,
     })
 }
 
