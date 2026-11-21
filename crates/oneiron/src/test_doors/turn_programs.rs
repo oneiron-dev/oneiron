@@ -261,6 +261,18 @@ pub fn erase_actor_programs(vault: &Vault, actor: EntityId) -> Result<()> {
     crate::dreamer_runner::turn_program_test_hooks::erase_actor_programs(vault, actor)
 }
 
+/// Marks `actor` hard-deleted on this machine, then erases its turn programs,
+/// in one writer, as a hard delete of its row does; the row itself stays.
+/// Answers whether the actor then reads as erased here, which needs its
+/// PERSON or MACHINE row stored here.
+///
+/// # Errors
+///
+/// A store failure.
+pub fn erase_hard_deleted_actor_programs(vault: &Vault, actor: EntityId) -> Result<bool> {
+    crate::dreamer_runner::turn_program_test_hooks::erase_hard_deleted_actor_programs(vault, actor)
+}
+
 /// Each idle or feed row one of `actor`'s programs keeps: its kind tag and registration.
 ///
 /// # Errors

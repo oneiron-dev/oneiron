@@ -142,8 +142,8 @@ pub(crate) use self::confirmation_state::{
 };
 pub(crate) use self::deposit::mark_booking_deposit_refunded_outside;
 pub(super) use self::emergency::{
-    admit_emergency_pick, commit_emergency_item, emergency_current_revision_in,
-    pick_emergency_item, read_emergency_pick,
+    admit_emergency_pick, commit_emergency_item, emergency_action_digest,
+    emergency_current_revision_in, pick_emergency_item, read_emergency_pick,
 };
 // FIX [BK-EMERGENCY-ROWS-NOT-CARRIED-BY-HOME-MOVE]: the emergency writers' home-move fence.
 pub(super) use self::door::holds_booking_rows_in_txn;

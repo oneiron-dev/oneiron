@@ -169,6 +169,7 @@ impl ConsolidationExecutor<'_> {
         let mut charges = StepChargeTally {
             units,
             step_bindings,
+            parse_retries: 0,
             #[cfg(oneiron_test_support)]
             spent_observations: Vec::new(),
         };

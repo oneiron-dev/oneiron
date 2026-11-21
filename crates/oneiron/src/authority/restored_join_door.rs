@@ -267,6 +267,23 @@ impl Vault {
         Ok(())
     }
 
+    /// Whether this install is a copy restored from an image of a vault a
+    /// root roots that has not joined it, in its own snapshot (the one test,
+    /// [`crate::setting::restored::restored_unjoined_in_txn`]): a host's
+    /// runner of the image's own work (its hooks, reader children, parked
+    /// code runs) asks it before it starts any, and starts none while it
+    /// holds (row RESTORED-UNJOINED-STARTS-NO-WORK). An install no restore
+    /// made reads its mark alone. The first snapshot after the join reads it
+    /// joined.
+    ///
+    /// # Errors
+    /// An install row that does not decode; the fold's errors; storage
+    /// faults.
+    pub fn restored_unjoined(&self) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        crate::setting::restored::restored_unjoined_in_txn(self, &txn)
+    }
+
     /// The refusal of new outward work on an install born of a restore of a
     /// vault a root roots that has not joined it: its restored-from mark
     /// stands, and it has no machine id or the vault's fold holds no machine
