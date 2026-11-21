@@ -19,8 +19,9 @@ use std::time::Duration;
 
 use loro::{LoroDoc, LoroValue, ValueOrContainer};
 use oneiron::claim::decode_claim_body;
+use oneiron::edge::{EdgeConfirmationStatus, EdgeProvenanceFlags};
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
-use oneiron::sync::bridge::{Materializer, format_edge_key};
+use oneiron::sync::bridge::{Materializer, encode_edge_value_for_crdt, format_edge_key};
 use oneiron::sync::manager::WindowManager;
 use oneiron::sync::residence::residence_window_for_blob;
 use oneiron::sync::window::LoadedWindow;
@@ -31,7 +32,9 @@ use oneiron::test_doors::derive::{
 };
 use oneiron::test_doors::derive_verbs::{define_agent, grant_derive_rows, lease_run};
 use oneiron::test_doors::steward::dreamer;
-use oneiron::{ClaimLifecycleStatus, EdgeActorClass, EdgeKind, EntityId, TimeRange, Vault};
+use oneiron::{
+    ClaimLifecycleStatus, EdgeActorClass, EdgeInfo, EdgeKind, EntityId, TimeRange, Vault,
+};
 use oneiron_contracts::record_layout::ENTITY_METADATA_HEADER_LEN;
 use oneiron_keystore::MemoryKeystore;
 use serde_json::{Value, json};
@@ -185,6 +188,50 @@ fn wait_until_edge(window: &LoadedWindow, edge_key: &str, what: &str) {
         std::thread::sleep(POLL);
     }
     panic!("after {POLLS} looks the loaded window still carries no {what}");
+}
+
+/// The bytes the window's doc carries for the edge `edge_key`.
+fn edge_carrier(doc: &LoroDoc, edge_key: &str) -> Option<Vec<u8>> {
+    match doc.get_map("edges").get(edge_key)? {
+        ValueOrContainer::Value(LoroValue::Binary(bytes)) => Some(bytes.to_vec()),
+        _ => None,
+    }
+}
+
+/// Waits until the window carries the edge `edge_key` with `expected` bytes.
+fn wait_until_edge_value(window: &LoadedWindow, edge_key: &str, expected: &[u8], what: &str) {
+    for _ in 0..POLLS {
+        if edge_carrier(&window.doc, edge_key).as_deref() == Some(expected) {
+            return;
+        }
+        // testkit-lint: allow(sleep) the live mirror runs on its own thread (sync/manager/live_mirror.rs:213) with no change signal a test can wait on
+        std::thread::sleep(POLL);
+    }
+    panic!("after {POLLS} looks the loaded window still carries {what} as it was before the write");
+}
+
+/// The stored Supports edge from `source` to `head`.
+fn stored_supports_edge(vault: &Vault, source: &EntityId, head: &EntityId) -> EdgeInfo {
+    vault
+        .edges_out(source)
+        .expect("read the source's edges")
+        .into_iter()
+        .find(|edge| edge.kind == EdgeKind::Supports && edge.target == *head)
+        .expect("the Supports edge is stored")
+}
+
+/// The store's encoding of the Supports edge's value, as the window's edge
+/// backfill encodes it (sync/window/reverse.rs:673-679).
+fn stored_supports_edge_value(vault: &Vault, source: &EntityId, head: &EntityId) -> Vec<u8> {
+    let edge = stored_supports_edge(vault, source, head);
+    encode_edge_value_for_crdt(
+        edge.kind,
+        edge.weight,
+        edge.created_at,
+        edge.vad,
+        edge.provenance,
+    )
+    .expect("the edge value encodes")
 }
 
 /// A derived claim reaches the loaded window that carries its subject.
@@ -370,6 +417,77 @@ fn a_derived_supports_edge_reaches_the_loaded_window_that_carries_its_source() {
     );
 
     wait_until_edge(&window, &edge, "Supports edge");
+}
+
+/// A derived evidence item on a Supports edge the store already holds
+/// reaches the loaded window with the edge's restamped value (REVIEW-10223
+/// round 1 P1). The bare edge lands before the window opens, so the cold
+/// open carries it and only the evidence item can change it.
+/// Red on main 40119849b1fe: the evidence item's savepoint drops the rows it
+/// queued. Red at b74da02af9e4 too: the edge already exists, so no edge put
+/// queues its source, and the provenance restamp queued nothing; the loaded
+/// window keeps the bare edge value.
+#[test]
+fn a_derived_evidence_item_on_an_existing_supports_edge_reaches_the_loaded_window() {
+    let dir = tempfile::tempdir().expect("temporary vault");
+    let vault = open_vault(dir.path());
+    let dreamer = dreamer(&vault).expect("the Dreamer");
+    let pass = consolidate_unbound_turn(&vault, "call me Owen", None, None, &reply())
+        .expect("one consolidation pass");
+    let [head] = pass.landed.as_slice() else {
+        panic!("one landed claim, found {}", pass.landed.len());
+    };
+    let head = *head;
+    let source = witness_turn(&vault, "my name is Owen").expect("a TURN");
+    vault
+        .put_edge(&source, EdgeKind::Supports, &head, 1.0)
+        .expect("the bare Supports edge");
+    assert_eq!(
+        stored_supports_edge(&vault, &source, &head).provenance,
+        None,
+        "fixture: the Supports edge is bare before the evidence commit"
+    );
+    let source_raw = vault
+        .get_raw(&source)
+        .expect("read the source")
+        .expect("the source is stored");
+    let (_manager, window) = loaded_window_for(&vault, &source_raw);
+    let edge = format_edge_key(&source, EdgeKind::Supports, &head);
+    wait_until_edge(&window, &edge, "bare Supports edge");
+    let carried_before =
+        edge_carrier(&window.doc, &edge).expect("the cold open carries the bare Supports edge");
+
+    let committed = commit(
+        &vault,
+        dreamer,
+        EdgeActorClass::System,
+        "run-evidence-existing-edge",
+        &[Derived::Evidence(Evidence {
+            local: "evidence",
+            head: Named::Stored(head),
+            sources: vec![Named::Stored(source)],
+        })],
+    )
+    .expect("commit");
+    let [item] = committed.items.as_slice() else {
+        panic!("one item: {:?}", committed.items);
+    };
+    assert!(item.landed, "the evidence lands: {:?}", item.reasons);
+    assert_eq!(
+        stored_supports_edge(&vault, &source, &head).provenance,
+        Some(EdgeProvenanceFlags {
+            confirmation_status: EdgeConfirmationStatus::Confirmed,
+            actor_class: EdgeActorClass::System,
+        }),
+        "the store holds the Supports edge restamped by the evidence item"
+    );
+    let expected = stored_supports_edge_value(&vault, &source, &head);
+    assert_ne!(
+        expected, carried_before,
+        "fixture: the restamp changes the edge value, so the window assert cannot pass vacuously"
+    );
+
+    wait_until_edge_value(&window, &edge, &expected, "Supports edge");
 }
 
 /// A PERSON minted on a live run reaches the loaded window that carries its
