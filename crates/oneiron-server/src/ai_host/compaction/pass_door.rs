@@ -7,21 +7,27 @@
 //! and the request one call of a live flight sends, on the house route;
 //! and (FIX-LIST ERASE-SERVED-KV-CACHE-REVIEW-RETRY-TEST) a server whose
 //! `key_secret` providers send through the credential broker, as serve's do.
+//! And for `tests/thing_child_fences_lent_source_rows.rs` (FIX-LIST
+//! DREAMER-UNSOURCED-ROLE-CALLS-SEND-UNFENCED): one pass on the house route
+//! as a host-profiled child's run compacts on it.
 //! Compiled only under `--cfg oneiron_test_support`; never API.
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use oneiron::code_run::{LiveCompactionFork, LiveForkRung, bind_compaction_caller};
+use oneiron::code_run::{
+    LiveCompactionFork, LiveForkRung, ScopedChildGeneration, bind_compaction_caller,
+};
 use oneiron::compaction::{CompactionBackend, CompactionRequest};
 use oneiron::llm::run_admission::{KeyCustody, OfferBinding, OfferRoute, Payer};
 use oneiron::llm::{ContentPart, LlmMessage, LlmMessageRole, SelfCompactionSource};
 use oneiron::settings::CallerLocality;
-use oneiron::{EdgeActorClass, EntityId, LlmRequest, WriteActor};
+use oneiron::{BudgetGuard, EdgeActorClass, EntityId, LlmRequest, WriteActor};
 
 use super::live_fork::{LiveBind, bind_live_compaction_fork};
 use super::{
-    AnsweringRungSlot, CodeModeCompaction, LiveAdmission, LiveCompaction, ServedCompactionBackend,
+    AnsweringRungSlot, CodeModeCompaction, CompactionMeter, LiveAdmission, LiveCompaction,
+    ServedCompactionBackend,
 };
 use crate::config::models::BrokerConfig;
 use crate::models::{AnsweringRung, BrokerContext, KeyDoor, RoleCall, RoleRefusal};
@@ -63,6 +69,40 @@ pub fn house_pass(server: &SyncServer, request: &CompactionRequest) -> Result<Pa
         .first()
         .ok_or("code mode's compaction serves no house seat")?;
     let product = house
+        .compact(request, None)
+        .map_err(|refusal| format!("{refusal:?}"))?;
+    Ok(PassAnswer {
+        summary: product.summary_text,
+        admitted_model: None,
+        filed_calls: 0,
+    })
+}
+
+/// One pass of `request` on the house route's backend as a host-profiled
+/// child's run compacts on it, metered as `metered_registry` meters it:
+/// each call admitted on the child's original `generation` and spent on
+/// `guard`. A pass blocks on the host's runtime, so call it off that
+/// runtime.
+///
+/// # Errors
+///
+/// The pass's refusal, in its debug words.
+pub fn profiled_house_pass(
+    server: &SyncServer,
+    guard: BudgetGuard,
+    generation: Arc<dyn ScopedChildGeneration>,
+    request: &CompactionRequest,
+) -> Result<PassAnswer, String> {
+    let live = live(server)?;
+    let house = live
+        .served
+        .first()
+        .ok_or("code mode's compaction serves no house seat")?;
+    let backend = ServedCompactionBackend {
+        meter: CompactionMeter::Profiled { guard, generation },
+        ..ServedCompactionBackend::clone(house)
+    };
+    let product = backend
         .compact(request, None)
         .map_err(|refusal| format!("{refusal:?}"))?;
     Ok(PassAnswer {
