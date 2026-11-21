@@ -503,7 +503,7 @@ impl SyncClient {
             )
             .map_err(map_federated_admission_err)?;
             let born = watch_births(&vault, births.births(), || {
-                self.import_accepted_window_update(admission_key.as_str(), &window, update)?;
+                self.import_admitted_part(admission_key.as_str(), &window, update)?;
                 let lane = AssetBodyLane::FederationReceive { role: durable.role };
                 with_manager_peer(&self.manager, lane, None, |peer| {
                     for (body, bytes) in &carried_bodies {
@@ -651,7 +651,7 @@ impl SyncClient {
             with_delivery(delivery, || {
                 crate::sync::ingest::with_member_sender(&vault, part.first_party_sender(), || {
                     with_placements(&vault, key, part.placements(), || {
-                        self.import_accepted_window_update(window_key, &window, part.bytes())
+                        self.import_admitted_part(window_key, &window, part.bytes())
                     })
                 })
             })
