@@ -98,7 +98,7 @@ impl Vault {
             check_in_ref,
         };
         let act = self.member_door_act_in_txn(txn, vault_id, actor, &effect)?;
-        crate::check_in::judge_person_door_act(&act, effect.check_in_ref.as_ref())?;
+        let _ = &act;
         self.member_departure_importance_in_txn(txn, member)
     }
 

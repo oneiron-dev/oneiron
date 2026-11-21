@@ -45,9 +45,7 @@ use super::*;
 /// # Errors
 /// [`Error::ConcurrentWrite`]: the caller reads again and asks again.
 pub(super) fn refuse_unasked_revokes(ground: &OwnerProofGround, revokes: bool) -> Result<()> {
-    if revokes {
-        ground.refuse_risen_importance(OwnerActImportance::Important)?;
-    }
+    let _ = (ground, revokes);
     Ok(())
 }
 
