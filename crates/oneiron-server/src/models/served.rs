@@ -18,9 +18,10 @@ pub(super) fn record_served_model(usage: Option<&mut JsonValue>, served: Option<
     usage.insert(SERVED_MODEL_KEY.to_owned(), served);
 }
 
-/// Where the rung that answered runs, and its engine id, when the receipt
-/// knows them: a receipt kept before either existed names neither.
-pub(super) struct AnsweringRung<'a> {
+/// What a served receipt stamps about the rung that answered: its engine id
+/// and where it runs, when the receipt knows them. A receipt kept before
+/// either existed names neither.
+pub(super) struct ServedRungStamp<'a> {
     pub(super) model_id: Option<&'a str>,
     pub(super) locality: Option<ModelLocality>,
 }
@@ -38,7 +39,7 @@ pub(super) fn served_receipt(
     failed_rungs: usize,
     passed_over: JsonValue,
     raw_provider: JsonValue,
-    answering: AnsweringRung<'_>,
+    answering: ServedRungStamp<'_>,
 ) -> JsonValue {
     let reported = raw_provider.get(SERVED_MODEL_KEY).cloned();
     let mut receipt = Map::new();

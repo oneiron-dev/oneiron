@@ -72,7 +72,7 @@ use super::forward::{Ended, forward};
 use super::http;
 use super::media::{HeldJob, MediaAnswer, MediaDispatchRelease, MediaRung, RetryHint, RungVoices};
 use super::offer::ServedOffer;
-use super::served::{AnsweringRung, served_receipt, stamp_cache_horizon};
+use super::served::{ServedRungStamp, served_receipt, stamp_cache_horizon};
 use super::source_admission::{self, SourceAdmission};
 use super::status::RungHealth;
 use super::walk::{Passed, Walk, ends_call, failure_kind, provider_down};
@@ -187,7 +187,7 @@ impl PendingReceipt {
             self.failed,
             self.passed_over.clone(),
             raw_provider,
-            AnsweringRung {
+            ServedRungStamp {
                 model_id: self.model_id.as_deref(),
                 locality: self.locality,
             },
