@@ -211,6 +211,7 @@ pub(super) fn owner_change_importance(
     // A value the wall reads is not typed here: the write gives the wall's answer first and the
     // type's after it, as it did before the door read first.
     if let Some(json) = &request.value
+        && spec.kind.from_json(json.clone()).is_ok()
         && wall_reads_in_txn(vault, &txn, json)?
     {
         owner.revalidate_in_txn(vault, &txn)?;
@@ -227,6 +228,9 @@ pub(super) fn owner_change_importance(
         weight_runs: checked_weight(spec, request)?,
     };
     let judged = judge_change_in_txn(vault, &txn, &change, SettingCaller::Owner(owner), request)?;
+    if judged.unchanged {
+        return Ok(OwnerActImportance::Important);
+    }
     if !judged.unchanged {
         refuse_loose_move_of_all_quorum(spec, judged.moved)?;
         // A travelling act can wait for proof regardless of direction. A PIN-bound key only
