@@ -120,8 +120,16 @@ fn run_case_citing(
     }
     let turns = support::witness_turns(&vault, words)?;
     let (counts, recorded, reasoner) = keyed(script);
-    let (client, attempt, now_ms, page, config, policy_pin, lent) =
-        support::bind_lent(&vault, &turns, reasoner)?;
+    let support::LentAttempt {
+        client,
+        attempt,
+        now_ms,
+        page,
+        config,
+        policy_pin,
+        lent,
+        ..
+    } = support::bind_lent_attempt(&vault, &turns, reasoner)?;
     let served = support::page_turns(&page)?;
     let subject_hex = subject.to_hex();
     let mut built = Vec::with_capacity(candidates.len());
@@ -461,8 +469,16 @@ fn declared_subject_never_operand() -> TestResult<()> {
     )?;
     let turns = support::witness_turns(&vault, &["owen chooses black coffee", "yuki chooses tea"])?;
     let (counts, _recorded, reasoner) = keyed(merge_script());
-    let (client, attempt, now_ms, page, config, policy_pin, lent) =
-        support::bind_lent(&vault, &turns, reasoner)?;
+    let support::LentAttempt {
+        client,
+        attempt,
+        now_ms,
+        page,
+        config,
+        policy_pin,
+        lent,
+        ..
+    } = support::bind_lent_attempt(&vault, &turns, reasoner)?;
     let _lent = lent;
     let served = support::page_turns(&page)?;
     let subject_hex = subject.to_hex();

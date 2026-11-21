@@ -388,32 +388,6 @@ pub(crate) fn seed_single_valued(vault: &Vault, predicates: &[&str]) -> TestResu
     )
 }
 
-/// Binds one admitted attempt with the lent scripted ladder and reads its inputs page.
-pub(crate) fn bind_lent(
-    vault: &Arc<Vault>,
-    turns: &[EntityId],
-    reasoner: Arc<KeyedReasoner>,
-) -> TestResult<(
-    OneironClient,
-    String,
-    u64,
-    Value,
-    ExtractionSelectionConfig,
-    String,
-    Arc<ExtractionVerdictFixture>,
-)> {
-    let bound = bind_lent_attempt(vault, turns, reasoner)?;
-    Ok((
-        bound.client,
-        bound.attempt,
-        bound.now_ms,
-        bound.page,
-        bound.config,
-        bound.policy_pin,
-        bound.lent,
-    ))
-}
-
 /// Holds one admitted attempt bound with the lent scripted ladder, with its admission kept for a native leg on the same attempt.
 pub(crate) struct LentAttempt {
     /// Holds the bound client of the attempt.
