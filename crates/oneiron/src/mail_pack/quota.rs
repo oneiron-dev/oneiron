@@ -71,6 +71,10 @@ pub enum MailCall {
     RawHeaders,
     /// One page of a search (Gmail `messages.list` with `q`).
     Search,
+    /// Opening or renewing the mailbox's push channel (Gmail `users.watch`).
+    Watch,
+    /// Closing it (Gmail `users.stop`).
+    StopWatch,
 }
 
 /// The quota units each kind of call costs.
@@ -85,6 +89,8 @@ pub struct MailCallCosts {
     pub own_addresses: u32,
     pub raw_headers: u32,
     pub search: u32,
+    pub watch: u32,
+    pub stop_watch: u32,
 }
 
 impl MailCallCosts {
@@ -101,6 +107,8 @@ impl MailCallCosts {
             MailCall::OwnAddresses => self.own_addresses,
             MailCall::RawHeaders => self.raw_headers,
             MailCall::Search => self.search,
+            MailCall::Watch => self.watch,
+            MailCall::StopWatch => self.stop_watch,
         }
     }
 }
@@ -126,10 +134,11 @@ pub struct MailQuota {
 /// Gmail's limits for one user of a new project and its calls' costs, as
 /// ARCH-0027 #mail-drive rules them (from RESEARCH-1393 #quotas): 6,000
 /// units a minute; a listing page 5, a metadata read 20, a full or raw read
-/// 60, a history page 2, an attachment 20; 2,500 MB of downloads a day. The
-/// profile and the send-as list are Google's 1. A text part Gmail keeps
-/// apart is read as an attachment, an attachment that rides inline is read
-/// in its whole message, and the credential check reads the profile.
+/// 60, a history page 2, an attachment 20, a push channel's watch 100 and
+/// its stop 50; 2,500 MB of downloads a day. The profile and the send-as
+/// list are Google's 1. A text part Gmail keeps apart is read as an
+/// attachment, an attachment that rides inline is read in its whole
+/// message, and the credential check reads the profile.
 pub const GMAIL_MAIL_QUOTA: MailQuota = MailQuota {
     units_per_minute: 6_000,
     bytes_per_day: 2_500 * 1_000_000,
@@ -144,6 +153,8 @@ pub const GMAIL_MAIL_QUOTA: MailQuota = MailQuota {
         own_addresses: 1,
         raw_headers: 60,
         search: 5,
+        watch: 100,
+        stop_watch: 50,
     },
     first_call_check: Some(MailCall::Anchor),
 };
@@ -414,6 +425,14 @@ impl MailProviderWire for MeteredMailWire<'_> {
             .inner
             .attachment_charging(source, provider_id, attachment, &|call| self.charge(call));
         self.settled(answer)
+    }
+
+    fn watch(&self, source: &MailSyncSource, topic: &str) -> Result<u64> {
+        self.metered(MailCall::Watch, |wire| wire.watch(source, topic))
+    }
+
+    fn stop_watch(&self, source: &MailSyncSource) -> Result<()> {
+        self.metered(MailCall::StopWatch, |wire| wire.stop_watch(source))
     }
 
     fn quota(&self) -> Option<MailQuota> {
