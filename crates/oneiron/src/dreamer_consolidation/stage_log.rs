@@ -69,6 +69,9 @@ pub(crate) struct PartitionStages {
     pub(super) gap_ms: u64,
     /// Sealing the write, the checker's turn and the promotion commit.
     pub(super) commit_ms: u64,
+    /// The extraction replies that failed the JSON parse and were asked
+    /// again once with prompt lookup off, as the attempt's settle counted.
+    pub(super) parse_retries: u32,
     landing: LandingTally,
 }
 
@@ -93,6 +96,7 @@ impl PartitionStages {
             resolve_ms: 0,
             gap_ms: 0,
             commit_ms: 0,
+            parse_retries: 0,
             landing: LandingTally::default(),
         }
     }
@@ -187,6 +191,7 @@ impl PartitionStages {
             total_ms = ms_since(self.started),
             landed,
             rejected,
+            parse_retries = self.parse_retries,
             outcome = %outcome,
             snapshot_at_exports =
                 loro::snapshot_at_exports().saturating_sub(self.exports_at_start),

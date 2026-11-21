@@ -3,7 +3,6 @@
 use super::executor::PartitionRun;
 use super::parallel::ExtractedPartition;
 use super::recipe_failure::RecipeFailure;
-use super::sieve_ports::SliceStep;
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_runner::{DreamerParkCause, DreamerRunnerStore};
@@ -23,6 +22,9 @@ use oneiron_model::llm::{DreamerFailureDecision, LlmResponse, LlmUsage};
 pub struct StepChargeTally {
     pub(super) units: u64,
     pub(super) step_bindings: Vec<StepEffectBinding>,
+    /// How many extraction replies failed the JSON parse and were asked
+    /// again once with prompt lookup off: the partition's stage line shows it.
+    pub(super) parse_retries: u32,
     /// Holds every spent generation the shared verdict execution accounted, in order.
     /// It serves test observation only: production settlement reads units and bindings
     /// alone.
@@ -277,6 +279,13 @@ impl StepChargeTally {
         self.units = self.units.saturating_add(usage_units(usage));
     }
 
+    /// Charges the `usage` of an extraction reply that failed the JSON parse
+    /// and was asked again once with prompt lookup off, and counts that retry.
+    pub(super) fn record_parse_retry(&mut self, usage: &LlmUsage) {
+        self.record_usage(usage);
+        self.parse_retries = self.parse_retries.saturating_add(1);
+    }
+
     /// Units a scoped agent's own generation spent on the attempt's guard
     /// (FIX 7508), charged once when its parent stops waiting on it.
     pub(super) fn record_units(&mut self, units: u64) {
@@ -500,12 +509,8 @@ pub(super) fn tally_extracted_outcomes(
     let mut trapped = false;
     let mut budget_refused = false;
     let mut seat_refused = None;
-    for SliceStep {
-        outcome,
-        unsaved_usage,
-        ..
-    } in extracted.steps
-    {
+    for step in extracted.steps {
+        let (outcome, unsaved_usage) = step.charge_parse_retry(charges);
         match tally_slice_outcome(vault, outcome, unsaved_usage, charges)? {
             SliceFate::Trapped => trapped = true,
             SliceFate::BudgetRefused { .. } => budget_refused = true,

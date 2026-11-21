@@ -201,6 +201,7 @@ impl ConsolidationExecutor<'_> {
         charges: &mut StepChargeTally,
         stages: &mut PartitionStages,
     ) -> Result<DreamerAttemptExecution> {
+        stages.parse_retries = charges.parse_retries;
         // Empty unless this branch's finish ran early in a window; from
         // here on the branch writes its rows at once.
         let held = resources.take_held_escalations();

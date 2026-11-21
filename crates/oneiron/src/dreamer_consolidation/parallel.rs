@@ -329,15 +329,8 @@ impl ConsolidationExecutor<'_> {
         let mut seat_refused = None;
         let mut trapped = false;
         let mut checkpoint = false;
-        for (
-            slice,
-            SliceStep {
-                outcome,
-                unsaved_usage,
-                ..
-            },
-        ) in slices.iter().zip(steps)
-        {
+        for (slice, step) in slices.iter().zip(steps) {
+            let (outcome, unsaved_usage) = step.charge_parse_retry(charges);
             match tally_slice_outcome(ctx.vault, outcome, unsaved_usage, charges)? {
                 SliceFate::Finished {
                     binding,

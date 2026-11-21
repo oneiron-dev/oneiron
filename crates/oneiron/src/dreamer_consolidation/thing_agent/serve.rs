@@ -327,17 +327,13 @@ impl ConsolidationExecutor<'_> {
                 width: 1,
             })
             .await?;
-        let Some(SliceStep {
-            step_hash,
-            outcome,
-            unsaved_usage,
-        }) = steps.into_iter().next()
-        else {
+        let Some(step @ SliceStep { step_hash, .. }) = steps.into_iter().next() else {
             return Err(Error::InvariantViolation(
                 "a child extraction port answered another number of slices",
             )
             .into());
         };
+        let (outcome, unsaved_usage) = step.charge_parse_retry(charges);
         let (response, failure_policy, binding) = match outcome {
             Ok(StepOutcome::Finished {
                 response,

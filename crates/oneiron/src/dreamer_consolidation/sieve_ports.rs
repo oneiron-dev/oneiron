@@ -20,13 +20,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::Poll;
 
 use super::call_labels::CallLabelMap;
-use super::executor::extraction::CitationCheck;
+use super::executor::extraction::{CitationCheck, failed_json_parse, prompt_lookup_off};
 use super::executor::{ConsolidationExecutor, Decider, ExtractionPrompt, ScopedRead};
 use super::extracted_people::MintNamespace;
 use super::failure_rules::{FailureRules, Stage};
 use super::provenance::KeptDecision;
 use super::resources::PagePastRoom;
 use super::roles::{DREAMER_EXTRACTION_ROLE, RoleCall};
+use super::step_charge::StepChargeTally;
 use crate::dreamer_wake::WakePassDeadline;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -35,7 +36,7 @@ use crate::llm::decision::AskTo;
 use crate::model_binding::ModelRole;
 use crate::model_decision::{DecisionQuestion, EvidenceVersion};
 use crate::model_step_context::{DurableStepContext, StepEffectBinding, StepOutcome};
-use crate::model_step_error::{DurableStepError, DurableStepResult};
+use crate::model_step_error::{DurableStepError, DurableStepResult, ReplyCheck};
 use oneiron_model::llm::{
     BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, LlmBackend, LlmMessage,
     LlmMessageRole, LlmRequest, LlmResponse, LlmUsage, ModelTierRef, ResponseFormat, Scope,
@@ -252,6 +253,25 @@ pub struct SliceStep {
     pub outcome: DurableStepResult<StepOutcome>,
     /// A fresh response's usage when serialization or its checkpoint write failed.
     pub unsaved_usage: Option<LlmUsage>,
+    /// When this step is the one retry, with prompt lookup off, of a reply
+    /// that failed the JSON parse: that refused reply's spend.
+    pub parse_retry_usage: Option<LlmUsage>,
+}
+
+impl SliceStep {
+    /// This step's outcome and unsaved usage, once `charges` holds the spend
+    /// of a refused reply its retry replaced and counts that retry. Every
+    /// tally of a slice step takes it through here, so both calls are
+    /// charged exactly once.
+    pub(super) fn charge_parse_retry(
+        self,
+        charges: &mut StepChargeTally,
+    ) -> (DurableStepResult<StepOutcome>, Option<LlmUsage>) {
+        if let Some(usage) = &self.parse_retry_usage {
+            charges.record_parse_retry(usage);
+        }
+        (self.outcome, self.unsaved_usage)
+    }
 }
 
 /// The sieve's rungs on the executor's own roles: one generated pack per
@@ -449,21 +469,7 @@ async fn extract_slices(child: NeighbourhoodExtraction<'_>) -> DurableStepResult
         if let Some(past) = slice.page_past_room {
             return Err(DurableStepError::Engine(past.refusal()));
         }
-        let mut request = ConsolidationExecutor::extraction_request(
-            &child.call,
-            child.prompt,
-            slice.transcript,
-            slice.labels,
-            slice.scope,
-            &child.namespace,
-        )?;
-        if let Some(rules) = child.rules {
-            rules.bind(Stage::Extraction, &mut request);
-        }
-        let mut request = vault
-            .authorize_model_role(DREAMER_EXTRACTION_ROLE, request, &child.call.inference)?
-            .into_request();
-        super::roles::bind_reasoning(vault, child.call.backend, &mut request)?;
+        let request = slice_request(&child, slice, false)?;
         requests.push((request.canonical_hash()?, request));
         authored.push(None);
     }
@@ -488,35 +494,112 @@ async fn extract_slices(child: NeighbourhoodExtraction<'_>) -> DurableStepResult
         .iter()
         .map(|slice| child.call.call_backend(Some(slice.sources.to_vec())))
         .collect();
+    let child = &child;
     let jobs = requests
         .iter()
+        .zip(&child.slices)
         .zip(&checks)
         .zip(&backends)
         .zip(&authored)
-        .map(|((((_, request), check), backend), authored)| {
-            let backend: &dyn LlmBackend = match authored {
-                Some(authored) => authored,
-                None => backend.get(),
-            };
-            call_as_step_checked_with_unsaved_usage(
-                child.step,
-                backend,
-                child.guard,
-                request.clone(),
-                check,
-            )
-        })
+        .map(
+            |(((((step_hash, request), slice), check), backend), authored)| async move {
+                let backend: &dyn LlmBackend = match authored {
+                    Some(authored) => authored,
+                    None => backend.get(),
+                };
+                let (outcome, unsaved_usage) = call_as_step_checked_with_unsaved_usage(
+                    child.step,
+                    backend,
+                    child.guard,
+                    request.clone(),
+                    check,
+                )
+                .await;
+                let step = SliceStep {
+                    step_hash: *step_hash,
+                    outcome,
+                    unsaved_usage,
+                    parse_retry_usage: None,
+                };
+                match authored {
+                    Some(_) => step,
+                    None => retry_without_prompt_lookup(child, slice, backend, check, step).await,
+                }
+            },
+        )
         .collect();
-    let outcomes = ordered_slots(jobs, child.width).await;
-    Ok(requests
-        .into_iter()
-        .zip(outcomes)
-        .map(|((step_hash, _), (outcome, unsaved_usage))| SliceStep {
-            step_hash,
-            outcome,
-            unsaved_usage,
-        })
-        .collect())
+    Ok(ordered_slots(jobs, child.width).await)
+}
+
+/// `slice`'s extraction request on the child's role: the child's failure
+/// rules bound, sealed for the role, its reasoning bound; with prompt lookup
+/// off on an own server when `lookup_off`, the one change the retry of a
+/// reply that failed the JSON parse makes.
+fn slice_request(
+    child: &NeighbourhoodExtraction<'_>,
+    slice: &SliceCall<'_>,
+    lookup_off: bool,
+) -> DurableStepResult<LlmRequest> {
+    let vault = child.step.vault;
+    let mut request = ConsolidationExecutor::extraction_request(
+        &child.call,
+        child.prompt,
+        slice.transcript,
+        slice.labels,
+        slice.scope,
+        &child.namespace,
+    )?;
+    if lookup_off {
+        prompt_lookup_off(&mut request);
+    }
+    if let Some(rules) = child.rules {
+        rules.bind(Stage::Extraction, &mut request);
+    }
+    let mut request = vault
+        .authorize_model_role(DREAMER_EXTRACTION_ROLE, request, &child.call.inference)?
+        .into_request();
+    super::roles::bind_reasoning(vault, child.call.backend, &mut request)?;
+    Ok(request)
+}
+
+/// `step` asked once more with prompt lookup off when its reply failed the
+/// JSON parse (the lead, 21 Nov 11:5x): the house server's lookup draft can
+/// break a reply's JSON where the same request without it parses. It runs
+/// before the refused slice's normal Retry park. The retry's params, so its
+/// request hash, differ: it is a durable step of its own, a new call and
+/// never a replay of the refused reply (a refused reply is never memoized),
+/// and it takes the slice's place with the refused reply's spend to charge.
+/// A cut reply, a contract or citation fault, any other outcome, or a retry
+/// request that cannot be built leaves `step` as it was.
+async fn retry_without_prompt_lookup(
+    child: &NeighbourhoodExtraction<'_>,
+    slice: &SliceCall<'_>,
+    backend: &dyn LlmBackend,
+    check: &ReplyCheck,
+    step: SliceStep,
+) -> SliceStep {
+    let refused_usage = match &step.outcome {
+        Err(DurableStepError::SpentSchemaValidation { errors, usage, .. })
+            if failed_json_parse(errors) =>
+        {
+            LlmUsage::clone(usage)
+        }
+        _ => return step,
+    };
+    let Ok((step_hash, request)) = slice_request(child, slice, true)
+        .and_then(|request| Ok((request.canonical_hash()?, request)))
+    else {
+        return step;
+    };
+    let (outcome, unsaved_usage) =
+        call_as_step_checked_with_unsaved_usage(child.step, backend, child.guard, request, check)
+            .await;
+    SliceStep {
+        step_hash,
+        outcome,
+        unsaved_usage,
+        parse_retry_usage: Some(refused_usage),
+    }
 }
 
 /// Poll at most `width` children together. A ready error is just a slot
