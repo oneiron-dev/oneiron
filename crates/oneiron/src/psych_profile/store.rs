@@ -27,7 +27,10 @@ impl crate::Vault {
     /// it was read from is refused (FIX 11766), with
     /// `InvalidPsychProfileBody("every source revision needs a source
     /// carrying the exact words it was read from")`. The worlds each
-    /// source's record lies in are added in the same write (FIX 11149).
+    /// source's record lies in are added in the same write (FIX 11149). A
+    /// profile read from a foreign copy is refused with the gate's
+    /// `SOURCE_FOREIGN_COPY` (L7-02): a foreign copy is never a source for
+    /// a write.
     pub fn put_psych_profile(&self, id: &EntityId, profile: &PsychProfile) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
         self.put_psych_profile_in_txn(&mut wtxn, id, profile)?;
@@ -49,6 +52,9 @@ impl crate::Vault {
         profile: &PsychProfile,
     ) -> Result<()> {
         profile.validate_source_words()?;
+        if self.psych_profile_reads_foreign_copy_in_txn(wtxn, profile)? {
+            return Err(crate::claim::foreign_copy_source_refusal());
+        }
         let learned_at = self.store.clock.now_recorded_at();
         let data = encode_psych_profile_body(&self.psych_profile_placed_in(wtxn, profile)?)?;
         apply_ops(
@@ -75,6 +81,26 @@ impl crate::Vault {
             true,
         )?;
         Ok(())
+    }
+
+    /// Whether `profile` was read from a foreign copy as `rtxn` holds it: a
+    /// source's record or revision is a claim in a received foreign WORLD
+    /// ([`Self::claim_is_foreign_copy_in_txn`]).
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub(crate) fn psych_profile_reads_foreign_copy_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        profile: &PsychProfile,
+    ) -> Result<bool> {
+        let named: Vec<EntityId> = profile
+            .sources
+            .iter()
+            .flat_map(|source| [source.document_ref, source.revision_ref])
+            .collect();
+        self.any_foreign_copy_in_txn(rtxn, &named)
     }
 
     /// Reads and decodes a PsychProfile snapshot record. A row of an earlier

@@ -186,6 +186,7 @@ pub mod gate_receipt_unclear;
 pub mod gpu_job;
 pub mod grant_roles;
 pub mod graph_ask_centre;
+pub mod guest_ask_disclosure;
 #[cfg(feature = "sync")]
 pub mod guest_turn_counterparty;
 pub mod held_answer_confirm;
