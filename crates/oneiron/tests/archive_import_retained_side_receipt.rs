@@ -2,25 +2,30 @@
 //! The whole-vault import receipt's retained-rows summary (SIDE-2a).
 //!
 //! The owner import of the retained-rows fixture installs the snapshot bounds
-//! live and reports three inert inserted rows (the standing grant, the
-//! grant's gate receipt, and the source root's birth row of `test.born_depth`,
-//! whose scope this vault maps onto its own root) plus one installed row; it
-//! names each table's counts and the manifest's 22 omitted tables. A repeat
-//! import reports nothing inserted, three inert unchanged rows and one
-//! unchanged live row. The fixture
-//! is shared from `archive_import_retained_side_rows.rs`, whose tests also
-//! run in this binary.
+//! and the standing grant live (2 installed rows) and keeps the grant's gate
+//! receipt inert. The setting rows the source wrote when it opened (the
+//! `engine` pack's default layer and its root's birth row of
+//! `test.born_depth`, which lands at this vault's root) are kept live: this
+//! vault holds its own (SETTING-ARCHIVE-SOURCE-ROOT-SCOPE-HELD-BACK). Each
+//! kept row stays an inert copy, so the import reports one inserted row more
+//! per open row, and it holds back no row. It names each table's counts and
+//! the manifest's 22 omitted tables. A repeat import reports nothing inserted,
+//! the same rows inert unchanged and kept live, and two unchanged live rows.
+//! The fixture is shared from `archive_import_retained_side_rows.rs`, whose
+//! tests also run in this binary.
 //!
-//! New live counts are read through `serde_json::to_value`, so this file
-//! still compiles on df2ecf9d4376; an absent field fails its assertion.
-//! `cargo test --locked -p oneiron --all-features --test archive_import_retained_side_receipt`.
+//! Live counts are read through `serde_json::to_value`; an absent field fails
+//! its assertion. Before this change the test is red: the 21 Nov nightly at
+//! main 0aedc807c526 fails it at the grant's inserted count (0, not 1), and
+//! the lander held the open setting rows back.
+//! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test archive_import_retained_side_receipt`.
 
 #[path = "archive_import_retained_side_rows.rs"]
 mod retained_side_rows;
 
 use std::io::Cursor;
 
-use retained_side_rows::{open_later_vault, owner_proof, source_with_rows};
+use retained_side_rows::{open_later_vault, open_setting_row_count, owner_proof, source_with_rows};
 
 /// The `field` count for `table` in a `retained_side_rows` JSON summary, when
 /// the table entry and the field are both present.
@@ -43,11 +48,13 @@ fn the_import_receipt_counts_retained_rows_and_names_omitted_tables() {
         .import_whole_vault_archive_from_as_owner(Cursor::new(&source.archive), &dest_owner)
         .expect("the owner import succeeds");
     let summary = &receipt.retained_side_rows;
-    // Per-table inert counts: the snapshot bounds now install live, so only the
-    // standing grant and its gate receipt stay inert.
+    let open_rows = open_setting_row_count(&source.archive);
+    let open_inert = usize::try_from(open_rows).expect("a row count fits in usize");
+    // Per-table inert counts: the snapshot bounds and the standing grant
+    // install live, so of the fixture's rows only the gate receipt stays inert.
     for (table, inserted, unchanged) in [
         ("SNAPSHOT_READ_SETTINGS", 0, 0),
-        ("CONSENT_STANDING_GRANT", 1, 0),
+        ("CONSENT_STANDING_GRANT", 0, 0),
         ("GATE_DECISION_LEDGER", 1, 0),
     ] {
         let entry = summary
@@ -65,31 +72,46 @@ fn the_import_receipt_counts_retained_rows_and_names_omitted_tables() {
         );
     }
     // Full inert accounting: every admitted retained row, not just the two
-    // targets. The third is the source root's birth row of `test.born_depth`
-    // (setting stage 7c-2): its scope names the source root, which this vault
-    // maps onto its own, so it stays inert as missing_live_entity.
+    // targets. Beside the gate receipt, each open setting row stays an inert
+    // copy of a row this vault kept live.
     assert_eq!(
-        summary.inserted_rows, 3,
-        "the summary counts three inert inserted rows: {summary:?}"
+        summary.inserted_rows,
+        1 + open_inert,
+        "the summary counts the gate receipt and {open_inert} open setting rows as inert inserted rows: {summary:?}"
     );
     assert_eq!(
         summary.unchanged_rows, 0,
         "the summary counts no inert unchanged rows: {summary:?}"
     );
-    // New live counts through JSON, so this still compiles on SIDE-1.
     let summary_json =
         serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
-    assert_eq!(
-        table_count(&summary_json, "SNAPSHOT_READ_SETTINGS", "installed_rows"),
-        Some(1),
-        "the summary counts one installed SNAPSHOT_READ_SETTINGS row; an absent field means it installed nothing: {summary_json}"
-    );
+    for table in ["SNAPSHOT_READ_SETTINGS", "CONSENT_STANDING_GRANT"] {
+        assert_eq!(
+            table_count(&summary_json, table, "installed_rows"),
+            Some(1),
+            "the summary counts one installed {table} row; an absent field means it installed nothing: {summary_json}"
+        );
+    }
     assert_eq!(
         summary_json
             .get("installed_rows")
             .and_then(|count| count.as_u64()),
-        Some(1),
-        "the summary counts one installed row in all; an absent field means it installed nothing: {summary_json}"
+        Some(2),
+        "the summary counts two installed rows in all; an absent field means it installed nothing: {summary_json}"
+    );
+    assert_eq!(
+        table_count(&summary_json, "SETTING", "kept_live_rows"),
+        Some(open_rows),
+        "the summary counts every open setting row as kept live: this vault holds its own; an absent field means it counted no live outcome: {summary_json}"
+    );
+    let setting = summary
+        .tables
+        .iter()
+        .find(|entry| entry.source_table == "SETTING")
+        .unwrap_or_else(|| panic!("the summary counts SETTING: {summary:?}"));
+    assert!(
+        setting.held_back.is_empty(),
+        "the summary holds back no SETTING row: {summary:?}"
     );
     // The receipt names the manifest's omissions.
     let document = dest
@@ -126,8 +148,9 @@ fn the_import_receipt_counts_retained_rows_and_names_omitted_tables() {
         repeat.retained_side_rows
     );
     assert_eq!(
-        repeat.retained_side_rows.unchanged_rows, 3,
-        "a repeat import leaves three inert rows unchanged: {:?}",
+        repeat.retained_side_rows.unchanged_rows,
+        1 + open_inert,
+        "a repeat import leaves the gate receipt and {open_inert} open setting rows inert and unchanged: {:?}",
         repeat.retained_side_rows
     );
     let repeat_json =
@@ -145,7 +168,12 @@ fn the_import_receipt_counts_retained_rows_and_names_omitted_tables() {
         repeat_json
             .get("unchanged_live_rows")
             .and_then(|count| count.as_u64()),
-        Some(1),
-        "a repeat import leaves one row unchanged live in all; an absent field means it counted no live outcome: {repeat_json}"
+        Some(2),
+        "a repeat import leaves the snapshot bounds and the grant unchanged live; an absent field means it counted no live outcome: {repeat_json}"
+    );
+    assert_eq!(
+        table_count(&repeat_json, "SETTING", "kept_live_rows"),
+        Some(open_rows),
+        "a repeat import keeps every open setting row live again; an absent field means it counted no live outcome: {repeat_json}"
     );
 }
