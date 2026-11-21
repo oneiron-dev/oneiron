@@ -35,7 +35,7 @@ use oneiron::test_doors::root_recovery::{recover_owner_root_waiting, released_au
 use oneiron::test_support::bind_host_owner;
 use oneiron::world_keys::{
     NoRecoveryBox, RecoveryBoxCanceller, RecoveryBoxHold, RecoveryBoxHoldPending,
-    RecoveryBoxKitOnlyFact, RecoveryPreset, RecoveryRootSeed,
+    RecoveryBoxKitOnlyFact, RecoveryBoxRelease, RecoveryPreset, RecoveryRootSeed,
 };
 use oneiron::{EntityId, ErrorKind, HostingPrivacyPosture, Vault, VaultConfig};
 use oneiron_authority::authority::{
@@ -830,7 +830,7 @@ impl RecoveryBoxHold for RecordingBoxHold<'_> {
     fn cancel_pending_box_release(
         &self,
         _cancelled_by: &RecoveryBoxCanceller,
-        _release_receipt: Option<u64>,
+        _release: Option<RecoveryBoxRelease>,
     ) -> oneiron::Result<bool> {
         Ok(false)
     }

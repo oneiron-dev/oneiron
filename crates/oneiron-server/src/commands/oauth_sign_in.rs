@@ -228,13 +228,38 @@ impl OAuthSignIn {
         if let Ok(sign_in) = Self::read(path) {
             revoke(&sign_in);
         }
-        if let Err(error) = std::fs::remove_file(path)
-            && error.kind() != std::io::ErrorKind::NotFound
-        {
-            anyhow::bail!("remove {}: {error}", path.display());
-        }
-        Ok(())
+        remove_file_if_present(path)
     }
+
+    /// Removes the sign-in at `path` under its refresh lock when it reads
+    /// and `matches` holds for it, once `revoke` has confirmed it revoked
+    /// at its vault. One that `revoke` refuses stays, and the refusal is
+    /// answered: its file is what a later sign-out revokes it from.
+    pub(crate) fn remove_if(
+        path: &Path,
+        matches: impl FnOnce(&Self) -> bool,
+        revoke: impl FnOnce(&Self) -> anyhow::Result<()>,
+    ) -> anyhow::Result<()> {
+        let _lock = RefreshLock::take(path)?;
+        let Ok(sign_in) = Self::read(path) else {
+            return Ok(());
+        };
+        if !matches(&sign_in) {
+            return Ok(());
+        }
+        revoke(&sign_in)?;
+        remove_file_if_present(path)
+    }
+}
+
+/// Removes `path`; one already gone is no error.
+fn remove_file_if_present(path: &Path) -> anyhow::Result<()> {
+    if let Err(error) = std::fs::remove_file(path)
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        anyhow::bail!("remove {}: {error}", path.display());
+    }
+    Ok(())
 }
 
 /// Whether an OAuth code, bearer or refresh token may be sent to `url`:

@@ -341,6 +341,8 @@ mod uncertain_send;
 
 use enumeration::enumerate_with_refusals;
 pub use enumeration::{AffectedBooking, enumerate_affected_bookings};
+#[cfg(oneiron_test_support)]
+pub(crate) use execution::deliver_emergency_effects;
 pub use execution::{
     EMERGENCY_REPEAT_NOTICE, EmergencyExecution, EmergencyRepeatNotice, execute_emergency_plan,
 };

@@ -2,10 +2,10 @@
 //! Engine ANSWER BK-EMERGENCY-UNCERTAIN-SEND-RECEIPT = A, 21 Nov 09:14): the owed effects of one
 //! checkpoint whose send ended uncertain on an earlier home, as a home move carried them
 //! (`super::home_rows`). The new home sends each again under the same idempotency key, so the
-//! booker may receive it twice; the owner's run that has delivered it says so once
-//! ([`super::execution::EmergencyRepeatNotice`]), and its mark goes. Until that answer the mark
-//! stays, and every later move carries it, even once its send was delivered again (review
-//! round 1 of #10125).
+//! booker may receive it twice; each owner's run over the checkpoint once it is delivered says so
+//! ([`super::execution::EmergencyRepeatNotice`]). The mark stays, and every later move carries
+//! it, even once its send was delivered again (review round 1 of #10125): the answer replays, so
+//! one that never reached the owner is given again (review round 2 of #10166).
 //!
 //! A side row beside the checkpoint, under the checkpoint's own key: the checkpoint's stored
 //! shape stays as it was (stored change: keep).
@@ -63,10 +63,9 @@ fn still_owed(lanes: impl IntoIterator<Item = String>, item: &EmergencyItem) -> 
         .collect()
 }
 
-/// The lanes among `lanes` a move carries for `item`: a calendar or apology mark until the
-/// owner's run answers it ([`answer_delivered`]), delivered or not, since a run that sent it
-/// again and then stopped on a later effect answered nothing (review round 1 of #10125); a
-/// pick's mark, which no run answers, while the pick is owed.
+/// The lanes among `lanes` a move carries for `item`: a calendar or apology mark always,
+/// delivered or not, since every owner's run over the checkpoint answers it ([`repeat_notices`];
+/// review round 1 of #10125); a pick's mark, which no run answers, while the pick is owed.
 fn carried_lanes(
     lanes: impl IntoIterator<Item = String>,
     item: &EmergencyItem,
@@ -118,11 +117,14 @@ pub(super) fn land_in(
 }
 
 /// The owner's answer of a run over `item` (`super::execute_emergency_plan`): one notice for
-/// each marked effect delivered now, and its mark dropped, in one writer. A marked effect still
-/// owed keeps its mark for the run that delivers it, so when a run sent it and then failed on a
-/// later effect, the next run that succeeds still answers it. A pick's mark stays: the
-/// counterparty's press resends a pick, and that press is not the owner's resume.
-pub(super) fn answer_delivered(
+/// each marked effect the checkpoint holds delivered, read with no writer. Every later run over
+/// the checkpoint answers it again and its mark stays, so a run whose answer never reached the
+/// owner (it stopped after its last delivery, or its reply was lost) loses no notice (review
+/// round 2 of #10166); no act acknowledges one (BK-EMERGENCY-UNCERTAIN-SEND-RECEIPT = A: no
+/// verb). A marked effect still owed is answered by the run that delivers it. A pick's mark is
+/// not answered: the counterparty's press resends a pick, and that press is not the owner's
+/// resume.
+pub(super) fn repeat_notices(
     vault: &Vault,
     item: &EmergencyItem,
 ) -> Result<Vec<EmergencyRepeatNotice>, BookingError> {
@@ -130,50 +132,27 @@ pub(super) fn answer_delivered(
     let hex = hex_suffix(&key, EMERGENCY_ITEM_META_PREFIX)
         .ok_or_else(|| refused("emergency checkpoint key is malformed"))?
         .to_owned();
-    {
-        // A run with no mark takes no writer.
-        let txn = vault.store.env.read_txn().map_err(storage_failure)?;
-        if !UNCERTAIN_SEND
-            .contains(&vault.store, &txn, &hex)
-            .map_err(storage_failure)?
-        {
-            return Ok(Vec::new());
-        }
-    }
-    booking_writer(vault, |txn| {
-        verify_owner_home_in(vault, txn, item.plan.request.owner_ref)?;
-        let Some(mut row) = UNCERTAIN_SEND
-            .get_lenient(&vault.store, txn, &hex)
-            .map_err(storage_failure)?
-        else {
-            return Ok(Vec::new());
-        };
-        let owed = still_owed(row.lanes.iter().cloned(), item);
-        let mut notices = Vec::new();
-        row.lanes.retain(|lane| {
-            let effect = match lane.as_str() {
-                "calendar" => "calendar",
-                "apology" => "apology",
-                _ => return true,
-            };
-            if owed.contains(lane) {
-                return true;
-            }
-            notices.push(EmergencyRepeatNotice {
-                effect,
-                message: EMERGENCY_REPEAT_NOTICE,
-            });
-            false
-        });
-        if row.lanes.is_empty() {
-            UNCERTAIN_SEND
-                .delete(&vault.store, txn, &hex)
-                .map_err(storage_failure)?;
-        } else {
-            UNCERTAIN_SEND
-                .put(&vault.store, txn, &hex, &row)
-                .map_err(storage_failure)?;
-        }
-        Ok(notices)
-    })
+    let txn = vault.store.env.read_txn().map_err(storage_failure)?;
+    let Some(row) = UNCERTAIN_SEND
+        .get_lenient(&vault.store, &txn, &hex)
+        .map_err(storage_failure)?
+    else {
+        return Ok(Vec::new());
+    };
+    verify_owner_home_in(vault, &txn, item.plan.request.owner_ref)?;
+    let owed = still_owed(row.lanes.iter().cloned(), item);
+    Ok(row
+        .lanes
+        .iter()
+        .filter(|lane| !owed.contains(*lane))
+        .filter_map(|lane| match lane.as_str() {
+            "calendar" => Some("calendar"),
+            "apology" => Some("apology"),
+            _ => None,
+        })
+        .map(|effect| EmergencyRepeatNotice {
+            effect,
+            message: EMERGENCY_REPEAT_NOTICE,
+        })
+        .collect())
 }
