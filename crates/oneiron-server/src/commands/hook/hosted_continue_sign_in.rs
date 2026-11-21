@@ -20,7 +20,7 @@
 //! It is kept in a file of its own beside the recall sign-in
 //! ([`super::hosted_selection::oauth_continue_sign_in_file`]); a logout of the
 //! vault signs it out too ([`StepUp::sign_out`]), and so does a new `hosted
-//! login`, which registers another client ([`StepUp::sign_out_other_client`]).
+//! login`, which registers another client ([`StepUp::sign_out_replaced_client`]).
 
 use std::io::Write as _;
 use std::time::{Duration, Instant};

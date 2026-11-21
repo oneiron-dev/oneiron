@@ -298,11 +298,13 @@ pub(super) fn staged_file(token_file: &Path) -> PathBuf {
 
 /// Puts the admitted sign-in at `staged` in `token_file`'s place, and
 /// revokes the sign-in it replaced, best effort: no file holds that one now.
-pub(super) fn take_place(staged: &Path, token_file: &Path) -> anyhow::Result<()> {
-    if let Some(replaced) = OAuthSignIn::take_place(staged, token_file)? {
-        revoke(&replaced);
+/// Answers the client of the sign-in it replaced, when one read there.
+pub(super) fn take_place(staged: &Path, token_file: &Path) -> anyhow::Result<Option<String>> {
+    let replaced = OAuthSignIn::take_place(staged, token_file)?;
+    if let Some(replaced) = &replaced {
+        revoke(replaced);
     }
-    Ok(())
+    Ok(replaced.map(|replaced| replaced.client_id))
 }
 
 /// A step-up of an OAuth selection's recall sign-in: a second sign-in as
@@ -451,19 +453,36 @@ impl StepUp {
         }
     }
 
-    /// Signs out its sign-in kept for `vault`'s origin, as
-    /// [`StepUp::sign_out`] does, unless it is of the client of `vault`'s
-    /// recall sign-in: one made by a client that a new `hosted login`
-    /// replaced is never [`StepUp::held`] again, so it is not left live at
-    /// the vault.
-    pub(super) fn sign_out_other_client(self, vault: &HostedVault) -> anyhow::Result<()> {
-        let recall = OAuthSignIn::read(&vault.credential_file)?;
-        match self.file(&vault.origin) {
-            Some(file) if file.parent().is_some_and(Path::is_dir) => {
-                OAuthSignIn::remove_unless(&file, |held| held.client_id == recall.client_id, revoke)
-            }
-            _ => Ok(()),
-        }
+    /// Signs out its sign-in kept for `origin` when it is of the client
+    /// `replaced`, whose recall sign-in a new `hosted login` replaced: that
+    /// sign-in is never [`StepUp::held`] again, so it is not left live at
+    /// the vault. One of any other client stays (a later login's, made
+    /// before this sign-out ran). Refused when the vault does not confirm
+    /// the revocation: the file then stays, for a logout to sign it out.
+    pub(super) fn sign_out_replaced_client(
+        self,
+        origin: &str,
+        replaced: &str,
+    ) -> anyhow::Result<()> {
+        let Some(file) = self
+            .file(origin)
+            .filter(|file| file.parent().is_some_and(Path::is_dir))
+        else {
+            return Ok(());
+        };
+        OAuthSignIn::remove_if(
+            &file,
+            |held| held.client_id == replaced,
+            |held| {
+                revoke_at_vault(held).map_err(|error| {
+                    anyhow::anyhow!(
+                        "the vault did not confirm the sign-out of {} ({error}); it stays until \
+                         `oneiron hosted logout`",
+                        file.display()
+                    )
+                })
+            },
+        )
     }
 }
 
@@ -507,19 +526,22 @@ pub(super) fn sign_out(token_file: &Path) -> anyhow::Result<()> {
 /// Revokes `sign_in` at its vault, best effort. A vault that does not
 /// answer is named on stderr.
 fn revoke(sign_in: &OAuthSignIn) {
-    let revoked = tokio::runtime::Handle::try_current()
-        .map_err(|_| anyhow::anyhow!("no runtime"))
-        .and_then(|runtime| {
-            let client = oauth_sign_in::endpoint_client()?;
-            runtime.block_on(oauth_sign_in::revoke(&client, sign_in))
-        });
-    if let Err(error) = revoked {
+    if let Err(error) = revoke_at_vault(sign_in) {
         let _ = writeln!(
             std::io::stderr().lock(),
             "the vault did not confirm the sign-out ({error}); the owner can revoke it in his \
              consent registry"
         );
     }
+}
+
+/// Revokes `sign_in` at its vault: refused when the vault does not confirm
+/// it.
+fn revoke_at_vault(sign_in: &OAuthSignIn) -> anyhow::Result<()> {
+    let runtime =
+        tokio::runtime::Handle::try_current().map_err(|_| anyhow::anyhow!("no runtime"))?;
+    let client = oauth_sign_in::endpoint_client()?;
+    runtime.block_on(oauth_sign_in::revoke(&client, sign_in))
 }
 
 /// GETs `url` and reads its JSON answer.
