@@ -507,10 +507,13 @@ fn a_selector_update_queued_before_its_grant_is_deleted_never_leaves() {
         let fx = fixture().await;
         let vault = Arc::clone(&fx.vault);
         let grant = fx.grant_id;
-        arm(grant, move || {
+        arm(&fx.vault, grant, move || {
             vault.delete_entity(&grant).unwrap();
         });
-        assert!(armed(&grant), "the hook is armed before the fetch");
+        assert!(
+            armed(&fx.vault, &grant),
+            "the hook is armed before the fetch"
+        );
         let mut socket = bound(&fx, transport::PROTOCOL_VERSION).await;
         send_window(
             &mut socket,
@@ -520,7 +523,10 @@ fn a_selector_update_queued_before_its_grant_is_deleted_never_leaves() {
         )
         .await;
         assert_no_update(&mut socket, &fx.window).await;
-        assert!(!armed(&grant), "the hook ran as the answer was queued");
+        assert!(
+            !armed(&fx.vault, &grant),
+            "the hook ran as the answer was queued"
+        );
     });
 }
 
@@ -531,13 +537,16 @@ fn a_selector_update_queued_before_its_grant_narrows_never_leaves() {
         let vault = Arc::clone(&fx.vault);
         let grant = fx.grant_id;
         let before = fx.grant.clone();
-        arm(grant, move || {
+        arm(&fx.vault, grant, move || {
             let mut narrow = before.clone();
             narrow.authority_scope.bands = ScopeAxis::Some(BTreeSet::from([ENTITY_TYPE_CLAIM]));
             put_selector_test_federation_grant(&vault, &grant, &narrow, vault.now_recorded_at())
                 .unwrap();
         });
-        assert!(armed(&grant), "the hook is armed before the fetch");
+        assert!(
+            armed(&fx.vault, &grant),
+            "the hook is armed before the fetch"
+        );
         let mut socket = bound(&fx, transport::PROTOCOL_VERSION).await;
         send_window(
             &mut socket,
@@ -547,7 +556,10 @@ fn a_selector_update_queued_before_its_grant_narrows_never_leaves() {
         )
         .await;
         assert_no_update(&mut socket, &fx.window).await;
-        assert!(!armed(&grant), "the hook ran as the answer was queued");
+        assert!(
+            !armed(&fx.vault, &grant),
+            "the hook ran as the answer was queued"
+        );
     });
 }
 
@@ -557,10 +569,13 @@ fn a_residence_reply_queued_before_its_grant_is_deleted_is_refused() {
         let fx = fixture().await;
         let vault = Arc::clone(&fx.vault);
         let grant = fx.grant_id;
-        arm(grant, move || {
+        arm(&fx.vault, grant, move || {
             vault.delete_entity(&grant).unwrap();
         });
-        assert!(armed(&grant), "the hook is armed before the call");
+        assert!(
+            armed(&fx.vault, &grant),
+            "the hook is armed before the call"
+        );
         let mut socket = bound(&fx, transport::RESIDENCE_PROTOCOL_VERSION).await;
         send_rpc(
             &mut socket,
@@ -577,7 +592,10 @@ fn a_residence_reply_queued_before_its_grant_is_deleted_is_refused() {
             .await
             .expect_err("a reply queued before its grant was deleted is refused, never a result");
         assert_eq!(error["code"], "RESULT_CHANGED", "{error}");
-        assert!(!armed(&grant), "the hook ran as the answer was queued");
+        assert!(
+            !armed(&fx.vault, &grant),
+            "the hook ran as the answer was queued"
+        );
     });
 }
 
@@ -628,7 +646,7 @@ fn a_selector_update_queued_before_its_delegate_grant_expires_never_leaves() {
         let held = Arc::new(AtomicBool::new(false));
         let vault = Arc::clone(&fx.vault);
         let done = Arc::clone(&held);
-        arm(delegate_id, move || {
+        arm(&fx.vault, delegate_id, move || {
             // Holds the answer in its queue until the expiry second has come.
             let deadline = std::time::Instant::now() + Duration::from_secs(2 * DELEGATE_LEAD_SECS);
             while vault.now_recorded_at() < expires_at && std::time::Instant::now() < deadline {
@@ -827,8 +845,13 @@ async fn forwarded_search_reply(
         },
     );
     let vault = Arc::clone(&fx.vault);
-    arm(grant_id, move || hook(&vault, access, caller_expires_at));
-    assert!(armed(&grant_id), "the hook is armed before the call");
+    arm(&fx.vault, grant_id, move || {
+        hook(&vault, access, caller_expires_at)
+    });
+    assert!(
+        armed(&fx.vault, &grant_id),
+        "the hook is armed before the call"
+    );
     let mut socket = bound_as(fx, transport::RESIDENCE_PROTOCOL_VERSION, &owner_caller).await;
     let mut params = json!({
         "query": "harbor",
@@ -845,7 +868,10 @@ async fn forwarded_search_reply(
         REPLY_WAIT + Duration::from_secs(2 * DELEGATE_LEAD_SECS),
     )
     .await;
-    assert!(!armed(&grant_id), "the hook ran as the answer was queued");
+    assert!(
+        !armed(&fx.vault, &grant_id),
+        "the hook ran as the answer was queued"
+    );
     reply
 }
 
@@ -981,12 +1007,15 @@ fn a_selector_update_carrying_a_message_its_members_revoked_grant_admits_never_l
         );
         let vault = Arc::clone(&fx.vault);
         let grant = fx.grant_id;
-        arm(grant, move || {
+        arm(&fx.vault, grant, move || {
             vault
                 .revoke_access_grant(&access, vault.now_recorded_at())
                 .unwrap();
         });
-        assert!(armed(&grant), "the hook is armed before the fetch");
+        assert!(
+            armed(&fx.vault, &grant),
+            "the hook is armed before the fetch"
+        );
         let mut socket = bound(&fx, transport::PROTOCOL_VERSION).await;
         send_window(
             &mut socket,
@@ -996,7 +1025,10 @@ fn a_selector_update_carrying_a_message_its_members_revoked_grant_admits_never_l
         )
         .await;
         assert_no_update(&mut socket, &fx.window).await;
-        assert!(!armed(&grant), "the hook ran as the answer was queued");
+        assert!(
+            !armed(&fx.vault, &grant),
+            "the hook ran as the answer was queued"
+        );
     });
 }
 
@@ -1140,10 +1172,13 @@ fn a_selector_update_carrying_a_coreference_link_its_owner_unlinks_never_leaves(
         let vault = Arc::clone(&fx.vault);
         let grant = fx.grant_id;
         let (person_a, person_b) = (case.person_a, case.person_b);
-        arm(grant, move || {
+        arm(&fx.vault, grant, move || {
             unlink_coreference_link(&vault, &owner, person_a, person_b).unwrap();
         });
-        assert!(armed(&grant), "the hook is armed before the fetch");
+        assert!(
+            armed(&fx.vault, &grant),
+            "the hook is armed before the fetch"
+        );
         let mut socket = bound(fx, transport::PROTOCOL_VERSION).await;
         send_window(
             &mut socket,
@@ -1153,7 +1188,10 @@ fn a_selector_update_carrying_a_coreference_link_its_owner_unlinks_never_leaves(
         )
         .await;
         assert_no_update(&mut socket, &fx.window).await;
-        assert!(!armed(&grant), "the hook ran as the answer was queued");
+        assert!(
+            !armed(&fx.vault, &grant),
+            "the hook ran as the answer was queued"
+        );
     });
 }
 
@@ -1166,12 +1204,15 @@ fn a_selector_update_carrying_a_coreference_link_whose_share_consent_is_retracte
         let vault = Arc::clone(&fx.vault);
         let grant = fx.grant_id;
         let consent = case.consent;
-        arm(grant, move || {
+        arm(&fx.vault, grant, move || {
             vault
                 .retract_claim(&consent, vault.now_recorded_at())
                 .unwrap();
         });
-        assert!(armed(&grant), "the hook is armed before the fetch");
+        assert!(
+            armed(&fx.vault, &grant),
+            "the hook is armed before the fetch"
+        );
         let mut socket = bound(fx, transport::PROTOCOL_VERSION).await;
         send_window(
             &mut socket,
@@ -1181,7 +1222,10 @@ fn a_selector_update_carrying_a_coreference_link_whose_share_consent_is_retracte
         )
         .await;
         assert_no_update(&mut socket, &fx.window).await;
-        assert!(!armed(&grant), "the hook ran as the answer was queued");
+        assert!(
+            !armed(&fx.vault, &grant),
+            "the hook ran as the answer was queued"
+        );
     });
 }
 
@@ -1195,10 +1239,13 @@ fn a_residence_index_carrying_a_coreference_link_its_owner_unlinks_is_refused() 
         let vault = Arc::clone(&fx.vault);
         let grant = fx.grant_id;
         let (person_a, person_b) = (case.person_a, case.person_b);
-        arm(grant, move || {
+        arm(&fx.vault, grant, move || {
             unlink_coreference_link(&vault, &owner, person_a, person_b).unwrap();
         });
-        assert!(armed(&grant), "the hook is armed before the call");
+        assert!(
+            armed(&fx.vault, &grant),
+            "the hook is armed before the call"
+        );
         let mut socket = bound(fx, transport::RESIDENCE_PROTOCOL_VERSION).await;
         send_rpc(
             &mut socket,
@@ -1215,7 +1262,10 @@ fn a_residence_index_carrying_a_coreference_link_its_owner_unlinks_is_refused() 
             .await
             .expect_err("a reply queued before its link was unlinked is refused, never a result");
         assert_eq!(error["code"], "RESULT_CHANGED", "{error}");
-        assert!(!armed(&grant), "the hook ran as the answer was queued");
+        assert!(
+            !armed(&fx.vault, &grant),
+            "the hook ran as the answer was queued"
+        );
     });
 }
 
@@ -1229,12 +1279,15 @@ fn a_selector_update_carrying_no_coreference_link_leaves_when_an_omitted_link_is
         let vault = Arc::clone(&fx.vault);
         let grant = fx.grant_id;
         let consent = case.consent;
-        arm(grant, move || {
+        arm(&fx.vault, grant, move || {
             vault
                 .retract_claim(&consent, vault.now_recorded_at())
                 .unwrap();
         });
-        assert!(armed(&grant), "the hook is armed before the fetch");
+        assert!(
+            armed(&fx.vault, &grant),
+            "the hook is armed before the fetch"
+        );
         let mut socket = bound(fx, transport::PROTOCOL_VERSION).await;
         // The facet-only selector: the people, their link and its claims are in no facet it reads.
         send_window(
@@ -1245,7 +1298,10 @@ fn a_selector_update_carrying_no_coreference_link_leaves_when_an_omitted_link_is
         )
         .await;
         let update = wait_update(&mut socket, &fx.window).await;
-        assert!(!armed(&grant), "the hook ran as the answer was queued");
+        assert!(
+            !armed(&fx.vault, &grant),
+            "the hook ran as the answer was queued"
+        );
         assert!(
             !carries_link(&fx.window, &update, case.person_a, case.person_b),
             "the facet-only UPDATE carries no same_as link"
@@ -1459,16 +1515,22 @@ fn an_asset_body_queued_before_its_grant_is_deleted_never_leaves() {
         .await;
         let update = wait_update(&mut socket, &fx.window).await;
         // The UPDATE is an answer under the grant too: arm only after it arrived.
-        arm(grant, move || {
+        arm(&fx.vault, grant, move || {
             vault.delete_entity(&grant).unwrap();
         });
-        assert!(armed(&grant), "the hook is armed before the Want");
+        assert!(
+            armed(&fx.vault, &grant),
+            "the hook is armed before the Want"
+        );
         let attempt = send_asset_want(&mut socket, fx, case.asset, &case.body, &update).await;
         let (data_frames, _, _) = body_frames_until_end(&mut socket, attempt).await;
         assert_eq!(
             data_frames, 0,
             "a body's bytes left after its grant was deleted"
         );
-        assert!(!armed(&grant), "the hook ran as the body was queued");
+        assert!(
+            !armed(&fx.vault, &grant),
+            "the hook ran as the body was queued"
+        );
     });
 }

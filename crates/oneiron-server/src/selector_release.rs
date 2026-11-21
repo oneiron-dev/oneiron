@@ -133,7 +133,7 @@ impl SelectorAnswers {
         // queue and its release.
         #[cfg(oneiron_test_support)]
         for basis in &bases {
-            crate::test_doors::selector_release::run(basis.grant_id());
+            crate::test_doors::selector_release::run(basis);
         }
         self.queued.insert(token, Judged::Waiting(bases));
         let count = frames.len();
