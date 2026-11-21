@@ -113,8 +113,10 @@ impl Fixture {
             .expect("the claim remains stored")
     }
 
-    /// `agent`'s `profile.name` proposal about the subject: its id.
-    fn proposes(&self, agent: EntityId, value: &str) -> EntityId {
+    /// `agent`'s `profile.name` proposal about the subject, under the
+    /// opaque `scope` (none: born in the vault's current default facet):
+    /// its id.
+    fn proposes(&self, agent: EntityId, value: &str, scope: Option<serde_json::Value>) -> EntityId {
         let input = ClaimInput {
             id: None,
             predicate: PREDICATE.to_owned(),
@@ -125,7 +127,7 @@ impl Fixture {
             source: "inferred".to_owned(),
             world_ref: None,
             relationship_ref: None,
-            scope: Some(json!({ "facet": self.facet.to_hex() })),
+            scope,
             valid_from: Some(100),
             valid_to: None,
             occurred_at: None,
@@ -178,16 +180,30 @@ impl Fixture {
     /// The author's claim about the subject, which the owner approved;
     /// when `declared_critical`, a trusted policy then declares its
     /// predicate critical. The subject proposes a correction and raises a
-    /// private dispute over the claim.
+    /// private dispute over the claim. Both claims name the fixture's facet
+    /// in their opaque scope.
     fn dispute_over_an_approved_claim(&self, declared_critical: bool) -> Dispute {
-        let disputed = self.proposes(self.author, "Yuki");
+        self.dispute_in_scope(
+            declared_critical,
+            Some(json!({ "facet": self.facet.to_hex() })),
+        )
+    }
+
+    /// [`Self::dispute_over_an_approved_claim`] with both claims under the
+    /// opaque `scope`.
+    fn dispute_in_scope(
+        &self,
+        declared_critical: bool,
+        scope: Option<serde_json::Value>,
+    ) -> Dispute {
+        let disputed = self.proposes(self.author, "Yuki", scope.clone());
         self.owner_approves(disputed);
         self.assert_standing(disputed, "FIXTURE: the approved claim is active");
         if declared_critical {
             declare_predicate_critical(&self.vault, PREDICATE)
                 .expect("FIXTURE: the policy declares the claim's predicate critical");
         }
-        let proposal = self.proposes(self.subject, "Yuki Tanaka");
+        let proposal = self.proposes(self.subject, "Yuki Tanaka", scope);
         let bundle = self
             .vault
             .memory(self.subject, EdgeActorClass::Agent)
@@ -286,4 +302,47 @@ fn the_owners_ruling_closes_an_approved_claim_on_an_ordinary_predicate() {
     let receipt = ruled
         .unwrap_or_else(|error| panic!("the owner's ruling on an ordinary class lands: {error:?}"));
     f.assert_ruled(&dispute, &receipt);
+}
+
+/// The ruling's row replaces the disputed claim for that claim's audience
+/// (review P1 of #10305): it is born at the disputed claim's facet and
+/// project, which the read of it is judged by, never at the vault's default
+/// when the ruling lands. Both claims land in the first facet with no opaque
+/// scope; the owner makes a second facet the default before ruling.
+#[test]
+fn the_owners_ruling_lands_in_the_disputed_claims_facet() {
+    let f = Fixture::new();
+    let dispute = f.dispute_in_scope(false, None);
+    let disputed = f.body(dispute.disputed);
+    assert_eq!(
+        disputed.scope_facet, f.facet,
+        "FIXTURE: the disputed claim is born in the first facet"
+    );
+    let other = f
+        .vault
+        .create_facet(
+            &f.owner_proof,
+            f.owner,
+            "conflict-ruling-second-facet",
+            f.vault.now_recorded_at(),
+        )
+        .expect("FIXTURE: a second facet");
+    f.vault
+        .set_default_facet(
+            other,
+            oneiron::WriteActor::new(f.owner, EdgeActorClass::Human),
+        )
+        .expect("FIXTURE: the second facet is the default");
+
+    let ruled = f.owner_rules(&dispute);
+
+    let receipt = ruled
+        .unwrap_or_else(|error| panic!("the owner's ruling on an ordinary class lands: {error:?}"));
+    f.assert_ruled(&dispute, &receipt);
+    let ruling = f.body(receipt.ruling_claim);
+    assert_eq!(
+        (ruling.scope_facet, ruling.scope_project),
+        (disputed.scope_facet, disputed.scope_project),
+        "the ruling's row keeps the disputed claim's facet and project, not the new default"
+    );
 }
