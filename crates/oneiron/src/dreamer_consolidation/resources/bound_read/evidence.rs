@@ -294,10 +294,10 @@ impl BoundBranchRead {
         let observed = meet == ClaimSource::Generated
             && crate::claim::is_preference_predicate(&fresh.predicate)
             && match fresh.subject {
-                ClaimSubject::Entity(subject) => crate::claim::observed_preference_support_in_txn(
+                ClaimSubject::Entity(_) => crate::claim::observed_preference_support_in_txn(
                     vault,
                     txn,
-                    &subject,
+                    &candidate.claim_id,
                     &candidate.evidence.refs(),
                 )?,
                 ClaimSubject::Edge { .. } => false,
