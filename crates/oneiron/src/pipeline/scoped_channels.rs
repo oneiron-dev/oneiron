@@ -737,11 +737,11 @@ impl PipelineBuilder<'_> {
     /// Whether the call's scope narrows what a bounded result channel may
     /// fetch: the vector walk then asks it inside its window, the text scan
     /// scores only the postings it admits, and the temporal window widens
-    /// and is cut to it. That holds for every check the post-blend filters
-    /// make of each row, the manifest's criticality tier and the stale
-    /// federated worlds the run read under [`WorldScope::All`]
-    /// (`filters.stale_worlds`) among them: a row either keeps out takes no
-    /// rank in the first blend and counts as no candidate in scope
+    /// and is cut to it. It covers the call's own filters, the manifest's
+    /// criticality tier and the stale federated worlds the run read under
+    /// [`WorldScope::All`] (`filters.stale_worlds`) among them; each caller
+    /// adds the further checks its own channel asks. A row either keeps out
+    /// takes no rank in the first blend and counts as no candidate in scope
     /// (BOUNDED-CHANNEL-NARROWING-OMITS-CRITICALITY-STALE-DISCLOSURE). A
     /// pack's disclosure clamp is asked apart, at each fetch and by
     /// [`Self::retain_rows_the_clamp_admits`].
