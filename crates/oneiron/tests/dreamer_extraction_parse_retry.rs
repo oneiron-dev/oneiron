@@ -7,14 +7,21 @@
 //! 3. JSON that parses but breaks the extraction contract parks without a retry.
 //! 4. The retry's prompt lookup switch goes to an own server, not a third-party API.
 //! 5. A reply cut short by the output limit parks without a retry.
+//! 6. A run of the try that replays the slice (a thing branch's fan-out after its agent, a try
+//!    resumed after a cut pass) takes the retry's saved reply and asks the model no third time.
+//! 7. A retry the finalize window refuses before it goes out is not counted on the stage line,
+//!    and the refused first reply is still charged.
 //!
 //! Red on main 1b32efa6512: the first parse failure parks the try Retry after one call
-//! (cases 1, 2, 4 fail). Doors: `oneiron::test_doors::seat_park_model_step`, built only under
+//! (cases 1, 2, 4, 6 fail). Red at 025c8df5887 (review round 1 of #10269, P1 1 and P1 2): the
+//! replay sends the original request a third time (case 6), and the stage line counts the
+//! refused retry (case 7). Doors: `oneiron::test_doors::seat_park_model_step`, built only under
 //! `--cfg oneiron_test_support`.
 #![cfg(oneiron_test_support)]
 
 use std::future::Future;
 use std::pin::{Pin, pin};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
 
@@ -25,26 +32,35 @@ use oneiron::llm::OWN_SERVER_ONLY_PARAM;
 use oneiron::test_doors::seat_park_model_step as doors;
 use oneiron::test_doors::wake_d1_park_release as release_doors;
 use oneiron::{
-    BudgetExhaustionPolicy, BudgetGuard, BudgetLease, ContentPart, DreamerConsolidationScope,
-    DreamerParkCause, DreamerRunnerStore, DreamerWakeDriver, FinishReason, LlmBackend,
-    LlmGenerateFuture, LlmInputUsage, LlmMessage, LlmMessageRole, LlmOutputUsage, LlmRequest,
-    LlmResponse, LlmResult, LlmStream, LlmStreamEvent, LlmStreamResult, LlmUsage, ModelLocality,
-    RunWakePass, Vault, VaultConfig, WakeCancellation, WakePassDeadline, WakePassReport,
-    WakeTrigger,
+    BudgetExhaustionPolicy, BudgetGuard, BudgetLease, ContentPart, DREAMER_GRACEFUL_WRAP_WINDOW_MS,
+    DreamerAdmittedAttempt, DreamerAttemptExecution, DreamerAttemptExecutor,
+    DreamerConsolidationScope, DreamerParkCause, DreamerRunnerStore, DreamerWakeDriver,
+    FinishReason, LlmBackend, LlmGenerateFuture, LlmInputUsage, LlmMessage, LlmMessageRole,
+    LlmOutputUsage, LlmRequest, LlmResponse, LlmResult, LlmStream, LlmStreamEvent, LlmStreamResult,
+    LlmUsage, ModelLocality, RunWakePass, Vault, VaultConfig, WakeAttemptContext, WakeCancellation,
+    WakePassDeadline, WakePassReport, WakeTrigger,
 };
 use serde_json::Value;
+use tracing::field::{Field, Visit};
+use tracing::span::{Attributes, Id, Record};
+use tracing::{Event, Metadata, Subscriber};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 type Reply = (&'static str, FinishReason);
 
 const PASS_T: u64 = 1_000;
 const PASS_CEILING_MS: u64 = 180_000;
+/// Inside the pass's finalize window, before its ceiling: a new step is refused.
+const FINALIZE_WINDOW_MS: u64 = PASS_CEILING_MS - 1_000;
+/// Past the ceiling and the landing window after it: a finished partition checkpoints.
+const LANDING_CLOSED_MS: u64 = PASS_CEILING_MS + DREAMER_GRACEFUL_WRAP_WINDOW_MS;
 const WAKE_LINE: &str = "wake";
 const BUDGET_TOTAL_UNITS: u64 = 10_000;
 const RESERVE_UNITS: u64 = 100;
 const READER: &str = "extraction-retry-reader";
 const RUN_ID: &str = "extraction-retry-run";
 const PROMPT_LOOKUP_PARAM: &str = "oneiron_prompt_lookup";
+const STAGE_TARGET: &str = "oneiron::dreamer::stages";
 const BAD_JSON: Reply = ("this is not JSON", FinishReason::Stop);
 const NO_CANDIDATES: Reply = (r#"{"candidates": []}"#, FinishReason::Stop);
 
@@ -59,14 +75,30 @@ fn block_on_ready<F: Future>(future: F) -> F::Output {
     panic!("the wake pass is pending on something other than an attempt-boundary yield");
 }
 
-fn frozen_deadline() -> WakePassDeadline {
-    WakePassDeadline::with_clock(PASS_CEILING_MS, Arc::new(|| 0))
+/// A pass deadline on a test clock, and that clock's elapsed milliseconds.
+fn test_deadline() -> (WakePassDeadline, Arc<AtomicU64>) {
+    let elapsed = Arc::new(AtomicU64::new(0));
+    let clock = Arc::clone(&elapsed);
+    let deadline = WakePassDeadline::with_clock(
+        PASS_CEILING_MS,
+        Arc::new(move || clock.load(Ordering::SeqCst)),
+    );
+    (deadline, elapsed)
+}
+
+/// Moves the pass clock to `ms` once the backend has answered `calls` calls.
+#[derive(Clone, Copy)]
+struct ClockStep {
+    calls: usize,
+    ms: u64,
 }
 
 /// An immediate backend that repeats its last reply if asked again.
 struct ScriptedBackend {
     replies: Vec<Reply>,
     requests: Mutex<Vec<LlmRequest>>,
+    elapsed: Arc<AtomicU64>,
+    clock_step: Option<ClockStep>,
 }
 
 impl ScriptedBackend {
@@ -85,6 +117,11 @@ impl ScriptedBackend {
             requests.push(request.clone());
             index
         };
+        if let Some(step) = self.clock_step
+            && step.calls == index + 1
+        {
+            self.elapsed.store(step.ms, Ordering::SeqCst);
+        }
         let (text, finish_reason) = &self.replies[index.min(self.replies.len() - 1)];
         LlmResponse {
             message: LlmMessage {
@@ -146,12 +183,103 @@ impl LlmBackend for ScriptedBackend {
     }
 }
 
+/// The fields of every stage-line event, as text.
+#[derive(Clone, Default)]
+struct StageLines(Arc<Mutex<Vec<Vec<(String, String)>>>>);
+
+/// Collects one event's fields.
+struct FieldText<'a>(&'a mut Vec<(String, String)>);
+
+impl Visit for FieldText<'_> {
+    fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+        self.0.push((field.name().to_owned(), format!("{value:?}")));
+    }
+
+    fn record_u64(&mut self, field: &Field, value: u64) {
+        self.0.push((field.name().to_owned(), value.to_string()));
+    }
+
+    fn record_str(&mut self, field: &Field, value: &str) {
+        self.0.push((field.name().to_owned(), value.to_owned()));
+    }
+}
+
+impl Subscriber for StageLines {
+    fn enabled(&self, _: &Metadata<'_>) -> bool {
+        true
+    }
+
+    fn new_span(&self, _: &Attributes<'_>) -> Id {
+        Id::from_u64(1)
+    }
+
+    fn record(&self, _: &Id, _: &Record<'_>) {}
+
+    fn record_follows_from(&self, _: &Id, _: &Id) {}
+
+    fn event(&self, event: &Event<'_>) {
+        if event.metadata().target() != STAGE_TARGET {
+            return;
+        }
+        let mut fields = Vec::new();
+        event.record(&mut FieldText(&mut fields));
+        self.0.lock().expect("stage lines").push(fields);
+    }
+
+    fn enter(&self, _: &Id) {}
+
+    fn exit(&self, _: &Id) {}
+}
+
+/// The host's partition executor over each admitted try. With `replay` (the pass clock), it
+/// runs the try twice, as a thing branch's fan-out replays the steps its agent ran and a
+/// resumed try replays its cut pass: the first run's landing window has closed once its calls
+/// answered, so it checkpoints with nothing landed; the clock then goes back inside the pass
+/// for the second run, whose result the pass settles.
+struct PassExecutor<'a> {
+    inner: doors::PartitionPassExecutor<'a>,
+    replay: Option<Arc<AtomicU64>>,
+    /// Whether the first of two runs checkpointed.
+    cut_checkpointed: Option<bool>,
+}
+
+impl DreamerAttemptExecutor for PassExecutor<'_> {
+    async fn execute(
+        &mut self,
+        attempt: &DreamerAdmittedAttempt,
+        ctx: &mut WakeAttemptContext<'_>,
+    ) -> oneiron::Result<DreamerAttemptExecution> {
+        let Some(elapsed) = self.replay.clone() else {
+            return self.inner.execute(attempt, ctx).await;
+        };
+        let cut = self.inner.execute(attempt, ctx).await?;
+        let checkpointed = matches!(
+            cut,
+            DreamerAttemptExecution::Park {
+                cause: DreamerParkCause::Checkpoint,
+                ..
+            } | DreamerAttemptExecution::ParkWithSpend {
+                cause: DreamerParkCause::Checkpoint,
+                ..
+            }
+        );
+        self.cut_checkpointed = Some(checkpointed);
+        if !checkpointed {
+            return Ok(cut);
+        }
+        elapsed.store(0, Ordering::SeqCst);
+        self.inner.execute(attempt, ctx).await
+    }
+}
+
 struct ExtractionPass {
     vault: Vault,
     _dir: tempfile::TempDir,
     attempt: AttemptId,
     backend: ScriptedBackend,
     report: WakePassReport,
+    stage_lines: Vec<Vec<(String, String)>>,
+    cut_checkpointed: Option<bool>,
 }
 
 impl ExtractionPass {
@@ -165,20 +293,36 @@ impl ExtractionPass {
         Ok(())
     }
 
-    fn assert_retry(&self, reason: &str) -> TestResult {
+    fn assert_parked(&self, cause: DreamerParkCause) -> TestResult<String> {
         assert_eq!(self.report.completed, 0);
         assert_eq!(self.report.parked, 1);
         let park = DreamerRunnerStore::new(&self.vault)
             .parked_attempt(self.attempt)?
             .expect("the try's park");
-        assert_eq!(park.cause, DreamerParkCause::Retry);
+        assert_eq!(park.cause, cause, "park reason {:?}", park.reason);
         assert_eq!(park.wait, None);
+        Ok(park.reason)
+    }
+
+    fn assert_retry(&self, reason: &str) -> TestResult {
+        let parked = self.assert_parked(DreamerParkCause::Retry)?;
         assert!(
-            park.reason.contains(reason),
-            "expected park reason to contain {reason:?}, got {:?}",
-            park.reason
+            parked.contains(reason),
+            "expected park reason to contain {reason:?}, got {parked:?}"
         );
         Ok(())
+    }
+
+    /// `name` on every stage line the pass logged, in order.
+    fn stage_field(&self, name: &str) -> Vec<String> {
+        self.stage_lines
+            .iter()
+            .filter_map(|line| {
+                line.iter()
+                    .find(|(key, _)| key == name)
+                    .map(|(_, value)| value.clone())
+            })
+            .collect()
     }
 
     // This fresh budget line served only this try. No units remain reserved after settlement.
@@ -192,6 +336,16 @@ impl ExtractionPass {
 }
 
 fn run_extraction_pass(replies: &[Reply]) -> TestResult<ExtractionPass> {
+    run_scripted_pass(replies, None, false)
+}
+
+/// One wake pass over one witnessed TURN's try, its calls answered by `replies` in order. The
+/// pass clock moves at `clock_step`; with `replay`, the try runs twice (see [`PassExecutor`]).
+fn run_scripted_pass(
+    replies: &[Reply],
+    clock_step: Option<ClockStep>,
+    replay: bool,
+) -> TestResult<ExtractionPass> {
     assert!(!replies.is_empty(), "the backend needs at least one reply");
     let clock = oneiron_store::ports::manual_clock::ManualClock::new(PASS_T);
     let mut config = VaultConfig::device();
@@ -207,10 +361,12 @@ fn run_extraction_pass(replies: &[Reply]) -> TestResult<ExtractionPass> {
     assert_eq!(enqueued.len(), 1, "one TURN enqueues one partition try");
     let attempt = enqueued[0];
 
-    let deadline = frozen_deadline();
+    let (deadline, elapsed) = test_deadline();
     let backend = ScriptedBackend {
         replies: replies.to_vec(),
         requests: Mutex::new(Vec::new()),
+        elapsed: Arc::clone(&elapsed),
+        clock_step,
     };
     let guard = BudgetGuard::with_reserve_units(
         WAKE_LINE,
@@ -218,30 +374,42 @@ fn run_extraction_pass(replies: &[Reply]) -> TestResult<ExtractionPass> {
         RESERVE_UNITS,
         BudgetExhaustionPolicy::Suspend,
     );
-    let mut executor = doors::PartitionPassExecutor::new(&vault, &backend, &guard, RUN_ID);
+    let mut executor = PassExecutor {
+        inner: doors::PartitionPassExecutor::new(&vault, &backend, &guard, RUN_ID),
+        replay: replay.then_some(elapsed),
+        cut_checkpointed: None,
+    };
     let node_id = release_doors::load_or_mint_client_id(&vault)?;
     let mut driver = DreamerWakeDriver::new(&vault, WAKE_LINE, deadline);
-    let report = block_on_ready(driver.run_wake_pass(
-        RunWakePass {
-            trigger: WakeTrigger::Compaction,
-            scope: DreamerConsolidationScope::Micro,
-            local_node_id: node_id,
-            lease_owner: DREAMER_SERVER_PARK_OWNER.to_owned(),
-            budget_total_units: BUDGET_TOTAL_UNITS,
-            reserve_units: RESERVE_UNITS,
-            now: PASS_T,
-            host_scope: None,
-            destination_bound: None,
-        },
-        &mut executor,
-        &WakeCancellation::new(),
-    ))?;
+    let lines = StageLines::default();
+    let report = tracing::subscriber::with_default(lines.clone(), || {
+        block_on_ready(driver.run_wake_pass(
+            RunWakePass {
+                trigger: WakeTrigger::Compaction,
+                scope: DreamerConsolidationScope::Micro,
+                local_node_id: node_id,
+                lease_owner: DREAMER_SERVER_PARK_OWNER.to_owned(),
+                budget_total_units: BUDGET_TOTAL_UNITS,
+                reserve_units: RESERVE_UNITS,
+                now: PASS_T,
+                host_scope: None,
+                destination_bound: None,
+            },
+            &mut executor,
+            &WakeCancellation::new(),
+        ))
+    })?;
+    let cut_checkpointed = executor.cut_checkpointed;
+    drop(executor);
+    let stage_lines = lines.0.lock().expect("stage lines").clone();
     Ok(ExtractionPass {
         vault,
         _dir: dir,
         attempt,
         backend,
         report,
+        stage_lines,
+        cut_checkpointed,
     })
 }
 
@@ -343,4 +511,66 @@ fn a_cut_reply_is_not_retried() -> TestResult {
     let pass = run_extraction_pass(&[(r#"{"candidates": ["#, FinishReason::Length)])?;
     assert_eq!(pass.backend.calls(), 1, "a cut reply is not retried");
     pass.assert_retry("did not finish whole")
+}
+
+#[test]
+fn a_replayed_slice_takes_its_saved_retry_reply_and_asks_the_model_no_third_time() -> TestResult {
+    let pass = run_scripted_pass(
+        &[BAD_JSON, NO_CANDIDATES],
+        Some(ClockStep {
+            calls: 2,
+            ms: LANDING_CLOSED_MS,
+        }),
+        true,
+    )?;
+    assert_eq!(
+        pass.cut_checkpointed,
+        Some(true),
+        "the first run checkpoints once its landing window closed"
+    );
+    let hashes = pass
+        .backend
+        .requests()
+        .iter()
+        .map(LlmRequest::canonical_hash)
+        .collect::<Result<Vec<_>, _>>()?;
+    assert_eq!(
+        pass.backend.calls(),
+        2,
+        "the replay answers from the retry's saved reply; requests sent: {hashes:x?}"
+    );
+    pass.assert_completed()
+}
+
+#[test]
+fn a_retry_the_finalize_window_refuses_is_not_counted_but_charged() -> TestResult {
+    let pass = run_scripted_pass(
+        &[BAD_JSON],
+        Some(ClockStep {
+            calls: 1,
+            ms: FINALIZE_WINDOW_MS,
+        }),
+        false,
+    )?;
+    assert_eq!(
+        pass.backend.calls(),
+        1,
+        "the finalize window refuses the retry before it goes out"
+    );
+    pass.assert_parked(DreamerParkCause::Checkpoint)?;
+    assert_eq!(
+        pass.stage_field("parse_retries"),
+        ["0"],
+        "no retry went out; stage lines: {:?}",
+        pass.stage_lines
+    );
+
+    let control = run_extraction_pass(&[NO_CANDIDATES])?;
+    assert_eq!(control.backend.calls(), 1);
+    assert_eq!(
+        pass.charged_units()?,
+        control.charged_units()?,
+        "the refused first reply is charged once"
+    );
+    Ok(())
 }
