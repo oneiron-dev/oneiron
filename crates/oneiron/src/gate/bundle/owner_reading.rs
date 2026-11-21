@@ -21,7 +21,8 @@ impl Vault {
         dreamer_run_id: &str,
         action: GateConsentBundleAction,
     ) -> Result<bool> {
-        let (actor, _) = self.bundle_owner_in_txn(txn, owner)?;
+        let actor = owner.actor();
+        let _ = owner.owner_answer_in_txn(self, txn)?;
         let members = self.live_bundle_group_in_txn(txn, dreamer_run_id, expected_bundle_id)?;
         let _ = resolve_policy_manifest(&self.store, txn)?;
         // The first member's replay starts the write. Its read checks run first.
