@@ -60,6 +60,11 @@ if [ -n "$ONEIRON_HOUSE_EXL3_EXT_DIR" ]; then
   fi
   export PYTHONPATH="$ONEIRON_HOUSE_EXL3_EXT_DIR${PYTHONPATH:+:$PYTHONPATH}"
 fi
+# The key of the digest of the inherited EXL3_* variables (README,
+# "exllamav3's own variables"): a file of at least 32 random bytes that the
+# workers exchanging session snapshots share; unset, a key of the process's
+# own.
+: "${ONEIRON_HOUSE_EXL3_ENV_KEY_FILE:=}"
 : "${ONEIRON_HOUSE_EXL3_GPU:=0}"
 : "${ONEIRON_HOUSE_EXL3_PORT:=18091}"
 : "${ONEIRON_HOUSE_PYTHON:=/opt/oneiron-house/.venv/bin/python}"
@@ -80,6 +85,7 @@ exec "$ONEIRON_HOUSE_PYTHON" "$(dirname "$0")/exl3_server.py" \
   ${ONEIRON_HOUSE_EXL3_DRAFT_RING_PAGES:+--draft-ring-pages "$ONEIRON_HOUSE_EXL3_DRAFT_RING_PAGES"} \
   ${speed_parts[@]+"${speed_parts[@]}"} \
   ${ONEIRON_HOUSE_EXL3_EXT_DIR:+--exllamav3-ext-dir "$ONEIRON_HOUSE_EXL3_EXT_DIR"} \
+  ${ONEIRON_HOUSE_EXL3_ENV_KEY_FILE:+--exllamav3-env-key-file "$ONEIRON_HOUSE_EXL3_ENV_KEY_FILE"} \
   ${ONEIRON_HOUSE_EXL3_NATIVE_SOCKET:+--native-socket "$ONEIRON_HOUSE_EXL3_NATIVE_SOCKET"} \
   --model-id qwen3.8-27b \
   --host 127.0.0.1 --port "$ONEIRON_HOUSE_EXL3_PORT"

@@ -89,10 +89,12 @@ import argparse
 import base64
 import collections
 import hashlib
+import hmac
 import importlib.metadata
 import json
 import os
 import queue
+import secrets
 import socket
 import sys
 import threading
@@ -188,6 +190,10 @@ PROJECTION_FUSION_ENV = ("EXL3_MGEMM_K_THRESHOLD", "EXL3_MGEMM_N_THRESHOLD")
 # (`exllamav3_environment`), not a list of known ones: a variable that changes
 # nothing costs a cache or snapshot miss, never a wrong reuse.
 EXLLAMAV3_ENV_PREFIX = "EXL3_"
+# The least key the inherited variables' digest takes, in bytes: a key file
+# shorter than this is refused, and a process without one draws this many
+# random bytes (`environment_key`).
+ENV_DIGEST_KEY_BYTES = 32
 # FP16 accumulation runs in a reconstructed prefill GEMM of at least this many
 # rows into an FP16 output (`install_fp16_prefill`).
 FP16_PREFILL_MIN_ROWS = 384
@@ -627,14 +633,32 @@ def exllamav3_environment(environ=None):
             if name.startswith(EXLLAMAV3_ENV_PREFIX) and name not in PROJECTION_FUSION_ENV}
 
 
-def environment_digest(variables):
-    """The SHA-256 of `variables` (`exllamav3_environment`) as canonical JSON (names sorted, compact separators),
-    or None when there are none. The JSON is ASCII-escaped: a POSIX environment entry may hold bytes that are not
-    UTF-8, which `os.environ` decodes to lone surrogates that a strict UTF-8 encoding refuses."""
+def environment_key(path=None):
+    """The key of the inherited exllamav3 variables' digest (`environment_digest`): the bytes of the file at `path`
+    (`--exllamav3-env-key-file`; at least ENV_DIGEST_KEY_BYTES), which workers that exchange session snapshots
+    share, or, without one, ENV_DIGEST_KEY_BYTES random bytes of this process's own, so its digest matches no
+    other process's (a refused import or a cache miss, never a wrong reuse)."""
+    if path is None:
+        return secrets.token_bytes(ENV_DIGEST_KEY_BYTES)
+    with open(path, "rb") as f:
+        key = f.read()
+    if len(key) < ENV_DIGEST_KEY_BYTES:
+        raise ValueError(f"--exllamav3-env-key-file {path} holds {len(key)} bytes; "
+                         f"the key needs at least {ENV_DIGEST_KEY_BYTES}")
+    return key
+
+
+def environment_digest(variables, key):
+    """The HMAC-SHA-256 under `key` (`environment_key`) of `variables` (`exllamav3_environment`) as canonical JSON
+    (names sorted, compact separators), or None when there are none. Keyed, because the digest reaches the service
+    journal, every reply's execution mode and the snapshots' compatibility: a plain hash of a short value (a
+    six-digit pin) is found by hashing every candidate. The JSON is ASCII-escaped: a POSIX environment entry may
+    hold bytes that are not UTF-8, which `os.environ` decodes to lone surrogates that a strict UTF-8 encoding
+    refuses."""
     if not variables:
         return None
     text = json.dumps(variables, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
-    return cache_usage.sha256_hex(text.encode("ascii"))
+    return hmac.new(key, text.encode("ascii"), hashlib.sha256).hexdigest()
 
 
 def ascii_escaped(text):
@@ -785,14 +809,16 @@ def load(args):
                                                  for name, value in sorted(replaced.items())), flush=True)
     # The exllamav3 variables this server inherited, taken before it sets any
     # of its own (the draft ring sets EXL3_DEBUG_NO_DRAFT_DEFRAG): its
-    # identity and its snapshots' compatibility name their digest. The log
-    # line names them without their values: an EnvironmentFile can hold a
+    # identity and its snapshots' compatibility name their keyed digest. The
+    # log line names them without their values: an EnvironmentFile can hold a
     # secret under the prefix, and stdout goes to the service journal.
     inherited_env = exllamav3_environment()
-    env_digest = environment_digest(inherited_env)
+    env_key_file = getattr(args, "exllamav3_env_key_file", None)
+    env_digest = environment_digest(inherited_env, environment_key(env_key_file))
     if env_digest:
         print("EXL3_ENV " + " ".join(ascii_escaped(name) for name in inherited_env)
-              + f" sha256={env_digest}", flush=True)
+              + f" hmac_sha256={env_digest} key={ascii_escaped(env_key_file) if env_key_file else 'process'}",
+              flush=True)
     # A rebuilt exllamav3 extension (README, "GEMM FP16 accumulators"): None with the installed one.
     ext_digest = rebuilt_extension_digest(getattr(args, "exllamav3_ext_dir", None))
     print("SPEED_PARTS " + " ".join(f"{name}={int(on)}" for name, on in parts.items())
@@ -2406,6 +2432,11 @@ def main():
                    help="the directory of a rebuilt exllamav3_ext (build-exl3-ext.sh: FP16 GEMM accumulators on "
                         "sm_89), which must be first on PYTHONPATH; its SHA-256 joins the identity and the "
                         "snapshot compatibility (default: the extension installed with exllamav3)")
+    p.add_argument("--exllamav3-env-key-file", default=None,
+                   help=f"a file of at least {ENV_DIGEST_KEY_BYTES} random bytes, shared by the workers that "
+                        "exchange session snapshots: the key of the digest of the inherited EXL3_* variables in "
+                        "the identity and the snapshot compatibility (default: a random key of this process's "
+                        "own, so with such variables set its snapshots match no other process's)")
     p.add_argument("--default-max-tokens", type=int, default=4096,
                    help="the reply cap when a request names none; a request with a reasoning budget "
                         "gets that budget on top, so its answer keeps this room")

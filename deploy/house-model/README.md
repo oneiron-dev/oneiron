@@ -519,10 +519,17 @@ pair (`EXL3_MGEMM_K_THRESHOLD`, `EXL3_MGEMM_N_THRESHOLD`) is the exception:
 the `fuse_projections` switch sets or clears it and names itself in
 `speed_parts`. An `EXL3_ENV` line at load names the variables and the digest,
 never their values: an `EnvironmentFile` can hold a secret under the prefix,
-and the server's stdout goes to the service journal. The digest hashes the
-names and values as ASCII-escaped JSON, so a value that is not UTF-8 is
-named like any other. With none set, the identity and the compatibility are
-as before.
+and the server's stdout goes to the service journal. The digest is an
+HMAC-SHA-256 of the names and values as ASCII-escaped JSON, so a value that
+is not UTF-8 is named like any other. It is keyed because it reaches the
+journal, every reply's execution mode and the snapshots' compatibility, where
+a plain hash of a short value (a six-digit pin) is found by hashing every
+candidate. The key is the file `ONEIRON_HOUSE_EXL3_ENV_KEY_FILE`
+(`--exllamav3-env-key-file`) names: at least 32 random bytes, readable by the
+service only, the same file on every worker that exchanges session snapshots.
+Unset, each process draws a key of its own, so a server with `EXL3_*`
+variables set shares no snapshot or cached answer with any other process. With
+none set, the identity and the compatibility are as before.
 
 ### Solo admission
 
