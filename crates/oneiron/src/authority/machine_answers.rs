@@ -640,7 +640,6 @@ impl Vault {
         profile: MachineProfile,
     ) -> Result<(MachineAnswerLanding, Vec<EndedOwnerKey>)> {
         let checks = self.owner_answer_checks_in_txn(txn, fold, &answer, &profile)?;
-        ground.refuse_risen_importance(checks.importance)?;
         let profile =
             self.checked_owner_answer_profile_in_txn(txn, fold, &answer, profile, &checks)?;
         let carrier = checks.carrier;

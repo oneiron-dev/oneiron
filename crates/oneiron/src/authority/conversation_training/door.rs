@@ -133,7 +133,6 @@ impl Vault {
         between();
         let mut txn = self.store.env.write_txn()?;
         let checks = self.conversation_training_checks_in_txn(&txn, owner, leave_out, seen)?;
-        ground.refuse_risen_importance(checks.importance)?;
         let ConversationTrainingChecks {
             person,
             fold,

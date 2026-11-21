@@ -399,7 +399,6 @@ impl Vault {
     ) -> Result<(AuthorityEntryHash, ConversationLearningView, u64)> {
         let checks =
             self.conversation_learning_checks_in_txn(txn, owner, on, allow_opt_out, seen)?;
-        ground.refuse_risen_importance(checks.importance)?;
         let ConversationLearningChecks {
             person,
             fold,
