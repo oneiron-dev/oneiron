@@ -109,6 +109,8 @@ const PREDECESSOR_SEED: u8 = 67;
 const JOINING_SEED: u8 = 68;
 /// The seed of a vault root that is a P-256 key.
 const P256_ROOT_SEED: u8 = 60;
+/// The seed of the owner's second laptop in the crossing removal tests.
+const SECOND_LAPTOP_SEED: u8 = 69;
 
 fn signing(seed: u8) -> SigningKey {
     SigningKey::from_bytes(&[seed; 32])
@@ -1606,6 +1608,177 @@ fn a_held_machines_own_later_answer_is_refused_not_held() {
         fold.issues.len() > issues_before,
         "the held machine's own answer is an invalid entry: {:?}",
         fold.issues
+    );
+}
+
+/// The rows of the crossing removal tests (FIX
+/// MACHINE-CROSSING-REMOVALS-UNMAKE-CARRIED-OWNER-ACTS), on
+/// [`LaptopBesideNode`]: the root registers the owner's second laptop (a
+/// root-signed roster revision, so it is mine with no carried act); the
+/// node carries the owner's pairing of a new machine with the owner key's
+/// proof; then each laptop removes the node at revision 2, on the pairing,
+/// neither having seen the other. The first removal saw the pairing; the
+/// second saw it when `second_saw`.
+struct CrossingRemovals {
+    beside: LaptopBesideNode,
+    paired_machine: EntityId,
+    paired_key: [u8; 32],
+    pairing: AuthorityLogEntry,
+    removals: [AuthorityLogEntry; 2],
+}
+
+impl CrossingRemovals {
+    fn new(second_saw: bool) -> Self {
+        let mut beside = LaptopBesideNode::new();
+        let vault_id = beside.node.vault_id();
+        let second = signing(SECOND_LAPTOP_SEED);
+        let second_machine = EntityId::from_bytes([0x77; 16]).expect("an id");
+        let second_registration = signed(
+            Some(vault_id),
+            3,
+            vec![hash(&beside.node.rows[2])],
+            AuthorityOp::MachineProfile(node_profile(
+                vault_id,
+                second_machine,
+                &second,
+                MachineRole::Owned(MachineOwnership::Yours),
+                1,
+                None,
+            )),
+            &beside.node.root,
+            &[],
+        );
+        let paired = signing(PAIRED_SEED);
+        let paired_machine = EntityId::from_bytes([0x74; 16]).expect("an id");
+        let pairing = signed(
+            Some(vault_id),
+            1,
+            vec![hash(&second_registration)],
+            AuthorityOp::MachineProfile(node_profile(
+                vault_id,
+                paired_machine,
+                &paired,
+                MachineRole::Owned(MachineOwnership::Yours),
+                1,
+                Some((
+                    beside.node.machine,
+                    OwnerAct::by_owner(
+                        owner(),
+                        OwnerActKind::Pairing,
+                        paired_machine,
+                        ActSurface::ThisInstall,
+                        [0; 32],
+                    ),
+                )),
+            )),
+            &beside.node.node,
+            &[&beside.node.root],
+        );
+        let pairing_entry = hash(&pairing);
+        let node_registration = hash(&beside.node.rows[1]);
+        let removal = |carrier: EntityId, carrier_key: &SigningKey, saw: bool| {
+            let mut profile = node_profile(
+                vault_id,
+                beside.node.machine,
+                &beside.node.node,
+                MachineRole::Removed,
+                2,
+                Some((
+                    carrier,
+                    OwnerAct::by_owner(
+                        owner(),
+                        OwnerActKind::MachineRemoval,
+                        beside.node.machine,
+                        ActSurface::ThisInstall,
+                        machine_answer_revision([node_registration]),
+                    ),
+                )),
+            );
+            if saw {
+                profile.seen_world_edits.insert(pairing_entry);
+            }
+            signed(
+                Some(vault_id),
+                1,
+                vec![pairing_entry],
+                AuthorityOp::MachineProfile(profile),
+                carrier_key,
+                &[],
+            )
+        };
+        let removals = [
+            removal(beside.laptop_machine, &beside.laptop, true),
+            removal(second_machine, &second, second_saw),
+        ];
+        beside.node.rows.push(second_registration);
+        Self {
+            beside,
+            paired_machine,
+            paired_key: paired.verifying_key().to_bytes(),
+            pairing,
+            removals,
+        }
+    }
+
+    /// The fold with both removals, with the paired machine and its key,
+    /// after asserting what the fixture needs: the pairing alone makes the
+    /// machine mine, and both removals land and cross at the node's roster
+    /// head, which is removed and conflicted.
+    fn removed_fold(self) -> (AuthorityFold, EntityId, [u8; 32]) {
+        let Self {
+            mut beside,
+            paired_machine,
+            paired_key,
+            pairing,
+            removals,
+        } = self;
+        beside.node.rows.push(pairing);
+        let paired = beside.node.fold();
+        assert!(
+            mine(&paired, paired_machine, &paired_key),
+            "FIXTURE: the proven pairing makes the machine mine: {:?}",
+            paired.issues
+        );
+        beside.node.rows.extend(removals);
+        let removed = beside.node.fold();
+        assert!(
+            removed
+                .machine(beside.node.machine)
+                .and_then(|folded| folded.roster.as_ref())
+                .is_some_and(|head| head.removed && head.conflicted),
+            "FIXTURE: both removals land and cross at the node's roster head: {:?}",
+            removed.issues
+        );
+        (removed, paired_machine, paired_key)
+    }
+}
+
+/// Two of the owner's laptops remove the node at once, and both removals
+/// saw the pairing it carried. Their crossing leaves the node's roster head
+/// conflicted in what each names beside the key (its carrier and act), and
+/// the node removed whichever wins: that conflict takes nothing away, so the
+/// pairing stands and the machine stays mine. On main 864ee0cf3cd5 the
+/// conflict unmade the pairing.
+#[test]
+fn a_pairing_both_crossing_removals_saw_keeps_the_machine_mine() {
+    let (removed, paired_machine, paired_key) = CrossingRemovals::new(true).removed_fold();
+    assert!(
+        mine(&removed, paired_machine, &paired_key),
+        "both removals saw the pairing, so their crossing unmakes nothing: {:?}",
+        removed.issues
+    );
+}
+
+/// The control: the second laptop's removal never saw the pairing, so the
+/// pairing's carrier lost its removal race and the machine is not mine,
+/// crossing or not.
+#[test]
+fn a_pairing_one_crossing_removal_did_not_see_is_not_mine() {
+    let (removed, paired_machine, paired_key) = CrossingRemovals::new(false).removed_fold();
+    assert!(
+        !mine(&removed, paired_machine, &paired_key),
+        "a removal that never saw the pairing takes it away: {:?}",
+        removed.issues
     );
 }
 
