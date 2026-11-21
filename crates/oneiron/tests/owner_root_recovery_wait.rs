@@ -73,7 +73,10 @@
 //! three fail on main `2c56ee802949`. Beside them,
 //! `a_vouch_for_this_install_with_a_revoked_key_enrols_the_slots_fresh_key`
 //! covers the vouch arm's fresh key, made in memory and taken by the slot
-//! just before the commit (it passes on main too).
+//! just before the commit (it passes on main too). The review's round 2
+//! pins: `a_hold_the_log_refuses_leaves_this_installs_slot_as_it_was` and
+//! `a_removed_owners_hold_never_holds_the_successor_key_against_another_owner`,
+//! both failing on `a7a9486fe5f7`.
 //!
 //! Red on the kit-only rotation head `5adc0295753f`: the file does not
 //! compile there (no `RecoveryHold` ops, no hold view, no answer doors, no
@@ -3784,4 +3787,147 @@ fn another_owners_hold_for_the_successor_key_is_never_the_owners() {
     assert_eq!(view.owner, fixture.person, "the hold is the co-Owner's");
     assert_eq!(view.state, RecoveryHoldState::Landed, "the due hold landed");
     assert!(fixture.live(&new), "the successor is enrolled");
+}
+
+/// A hold the log would refuse leaves this install's owner signing slot as
+/// it was (REVIEW-10327 round 2 P1 1): a box that gives R out at second 0
+/// makes a hold that lands at 0, which no hold row carries. The slot's key
+/// is revoked, so the attempt would make a fresh key; the call is refused
+/// before the slot takes it, writes no row and no hold, and the slot keeps
+/// its old key. It fails on `a7a9486fe5f7`, where the first write renewed
+/// the slot and only the hold row's own check refused the zero second.
+#[test]
+fn a_hold_the_log_refuses_leaves_this_installs_slot_as_it_was() {
+    let fixture = fixture();
+    let install_key = revoke_this_installs_key(&fixture);
+    let rows = fixture.history().len();
+
+    fixture
+        .recover_wait(
+            WAIT,
+            fixture.released_after_box_wait(0, 0),
+            RootSuccessor::ThisInstall,
+            &[],
+        )
+        .expect_err("a hold that lands at second 0 is no hold row");
+    assert_eq!(fixture.history().len(), rows, "the refusal writes no row");
+    assert!(fixture.holds().is_empty(), "no hold was written");
+    assert_eq!(
+        slot_key(&fixture),
+        install_key,
+        "the slot keeps its old key"
+    );
+}
+
+impl CoOwner {
+    /// The first owner enrols the kit root's authority key, so the
+    /// co-Owner's removal, which ends the co-Owner's owner keys, leaves it
+    /// live.
+    fn enrol_root_key_as_first_owner(&self) -> AuthorityKey {
+        let receipt = self
+            .vault
+            .enrol_recovery_authority_key_as_host(
+                &self.first_owner_authority(),
+                self.machine,
+                &self.seed,
+                &self.issuer,
+            )
+            .expect("the first owner enrols the root's authority key");
+        AuthorityKey::Ed25519(receipt.public_key)
+    }
+
+    /// The first owner removes the co-Owner, at once.
+    fn remove_co_owner(&self) {
+        let first_owner = proof(&self.vault, self.first_owner);
+        let act = self
+            .vault
+            .propose_remove_owner(&first_owner, SHARED, self.person, None, None, false)
+            .expect("the first owner starts remove_owner");
+        self.vault
+            .execute_completed_shared_act(&first_owner, &act.id, Some(&self.issuer))
+            .expect("remove_owner runs at once");
+    }
+
+    /// `key`'s enrolment input for this vault and the first owner, with its
+    /// proof of possession.
+    fn first_owners_enrollment(&self, key: &SigningKey) -> OwnerKeyEnrollment {
+        let public_key = key.verifying_key().to_bytes();
+        let challenge = self
+            .vault
+            .owner_key_enrollment_challenge_as(
+                &self.first_owner_authority(),
+                self.machine,
+                &public_key,
+            )
+            .expect("the first owner's challenge");
+        OwnerKeyEnrollment {
+            machine: self.machine,
+            public_key,
+            proof: key.sign(&challenge).to_bytes().to_vec(),
+        }
+    }
+}
+
+/// A hold whose owner is no Owner now holds no successor key against
+/// another owner (REVIEW-10327 round 2 P1 2): the co-Owner's hold for a
+/// device key waits under the root's key, which the first owner enrolled,
+/// and the first owner then removes the co-Owner. The root's key stays
+/// live; at the end of the wait the landing voids the hold and enrols
+/// nothing. The first owner's box call for the same device key then holds
+/// for the first owner. It fails on `a7a9486fe5f7`, where the voided hold
+/// still read as due and refused the first owner's call as another
+/// owner's.
+#[test]
+fn a_removed_owners_hold_never_holds_the_successor_key_against_another_owner() {
+    let fixture = co_owner_wait_fixture();
+    let root_key = fixture.enrol_root_key_as_first_owner();
+    let new_key = SigningKey::from_bytes(&[NEW_KEY_SEED; 32]);
+    let new = key_of(&new_key);
+    let (hold, lands_at) = held(
+        fixture
+            .recover_wait(
+                WAIT,
+                fixture.released(),
+                RootSuccessor::Device(fixture.enrollment(&new_key)),
+                &[],
+            )
+            .expect("the co-Owner's box recovery holds"),
+    );
+    fixture.remove_co_owner();
+    assert!(fixture.live(&root_key), "the root's key stays live");
+
+    fixture.at(lands_at + 60);
+    let voided = fixture
+        .land()
+        .into_iter()
+        .find(|landing| landing.hold == hold)
+        .expect("the landing reads the co-Owner's hold");
+    assert_eq!(
+        voided.state,
+        RecoveryHoldState::Void,
+        "its owner is no Owner now"
+    );
+    assert!(voided.enrollment.is_none(), "a void hold enrols nothing");
+    assert!(!fixture.live(&new), "the successor is not enrolled");
+
+    let first_owner = proof(&fixture.vault, fixture.first_owner);
+    let (own, _) = held(
+        recover_owner_root_waiting(
+            &fixture.vault,
+            &first_owner,
+            ActSurface::ThisInstall,
+            fixture.released(),
+            RootSuccessor::Device(fixture.first_owners_enrollment(&new_key)),
+            &[],
+            WAIT,
+        )
+        .expect("the removed co-Owner's hold is no live hold"),
+    );
+    assert_ne!(own, hold, "a new hold");
+    let view = fixture.hold_view(&own);
+    assert_eq!(
+        view.owner, fixture.first_owner,
+        "the hold is the first owner's"
+    );
+    assert_eq!(view.state, RecoveryHoldState::Waiting);
 }
