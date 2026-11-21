@@ -974,6 +974,10 @@ impl ConsolidationExecutor<'_> {
                         }
                     }
                 };
+                // A slot the window stopped parks unsettled: its line still
+                // counts the parse retries its slices sent (#10269 review,
+                // round 2).
+                stages.parse_retries = charges.parse_retries;
                 stages.log(attempt, turns, &executed);
                 executed
             }

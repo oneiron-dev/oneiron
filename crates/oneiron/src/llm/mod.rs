@@ -89,8 +89,13 @@ pub(crate) use step::{
     trap_consume_precheck_in_txn, verified_step_consolidation_eligible_in_txn,
     verified_step_effector_eligible_in_txn, wake_trap_in_txn,
 };
-// The parse retry's replay reads a step's saved work alone (review of #10269).
-pub(crate) use step::recover_saved_step;
+// The parse retry's replay reads a step's saved work alone, its count reads
+// the sends the retry made, and its pending mark outlives a held-back retry
+// (reviews of #10269).
+pub(crate) use step::{
+    call_as_step_checked_counting_sends, follow_up_pending, mark_follow_up_pending,
+    recover_saved_step,
+};
 pub(crate) use step::{
     wake_budget_trap_of_park_in_txn, wake_budget_traps_in_txn, wake_pass_budget_traps,
     wake_resident_share_traps_in_txn,
