@@ -1016,48 +1016,6 @@ fn pipeline_candidate_matches_relationship_filter(
     ) || matches!(mode, RelMode::Demote))
 }
 
-/// Whether `id` meets the call's criticality tier and belongs to no stale
-/// federated world the run reads past under [`WorldScope::All`]: the checks
-/// of the call's scope the temporal window's reader asks beside its
-/// candidate filter, so a row either keeps out stops no adaptive round and
-/// takes no place under a scan's cap or in the bound (REVIEW-10311 round 2).
-/// It records no refusal; the window's cut asks the whole scope after.
-pub(super) fn candidate_matches_criticality_and_stale_worlds(
-    store: &StoreRead<'_>,
-    rtxn: &RoTxn<'_>,
-    id: &EntityId,
-    filters: PipelineFilterConfig<'_>,
-    metadata_cache: &mut EntityMetadataCache,
-) -> Result<bool> {
-    if filters.criticality.is_some() {
-        let Some(meta) = metadata_cache.get(store, rtxn, id)? else {
-            return Ok(false);
-        };
-        if !candidate_matches_criticality(store, rtxn, id, meta.entity_type, filters.criticality)? {
-            return Ok(false);
-        }
-    }
-    if filters.stale_worlds.is_none() {
-        return Ok(true);
-    }
-    // A claim whose stored body does not decode is out of the scope: every
-    // other read's claim status gate drops it before the world filter, whose
-    // decode would fail the run on it.
-    if let Some(raw) = store.port_entity_record(rtxn, id)?
-        && raw.entity_type == ENTITY_TYPE_CLAIM
-        && crate::claim::decode_claim_body(&raw.body, true).is_err()
-    {
-        return Ok(false);
-    }
-    pipeline_candidate_matches_world_filter(
-        store,
-        rtxn,
-        id,
-        filters.world_scope,
-        (filters.world_active_set, filters.stale_worlds),
-    )
-}
-
 pub(super) fn pipeline_candidate_matches_world_filter(
     store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,

@@ -13,8 +13,8 @@ use super::channels::{
     truncate_widened_channel_results_to_scope,
 };
 use super::filters::{
-    candidate_matches_criticality_and_stale_worlds, claim_status_gate_allows, clamp_hides_row,
-    clamp_hides_row_or_word_sources, import_claim_gate_decisions_for_scores, made_by_admits,
+    claim_status_gate_allows, clamp_hides_row, clamp_hides_row_or_word_sources,
+    import_claim_gate_decisions_for_scores, made_by_admits,
     pipeline_candidate_matches_filters_and_gate,
 };
 use super::temporal_bound::{
@@ -437,17 +437,17 @@ impl PipelineBuilder<'_> {
                 || self.memory_category,
             &self.params,
         )?);
-        // A made_by slice joins the reader's predicate, after the call's own:
-        // only rows it admits count toward the rounds' stops and take places
-        // in the window's bound, so rows it drops cannot fill the window
-        // ahead of the rows it keeps (REVIEW-9842). The window's scans ask
+        // A call the window is cut to a scope for reads through a reader that
+        // asks that scope: only rows it admits count toward the rounds' stops
+        // and take places in the window's bound, so rows it refuses cannot
+        // fill the window ahead of the rows it keeps (REVIEW-9842,
+        // TEMPORAL-READER-OMITS-STRICT-SCOPE-CHECKS). The window's scans ask
         // that reader too, so neither can they fill a scan's cap or the
-        // spanner buffer (round 2).
-        let slice_caches = RefCell::new((
-            EntityMetadataCache::default(),
-            claim_gate.fresh(filters.authority_filter.include_stale),
-        ));
-        let sliced = self.made_by != crate::provenance::made_by::MadeByPredicate::All;
+        // spanner buffer (REVIEW-9842 round 2).
+        let narrowed = self.has_codebase_scope_filter()
+            || self.has_strict_scope_filter(filters)
+            || filters.corpus_scope != &CorpusScope::All
+            || filters.candidate_filter.is_some();
         // A clamped pack's audience joins the reader too: a row it could not
         // read whatever its status, or one whose words come from a row it may
         // not read, counts toward no stop and takes no place under a scan's
@@ -469,40 +469,49 @@ impl PipelineBuilder<'_> {
                 &mut clamp_metadata.borrow_mut(),
             )
         };
-        // The call's scope, asked before the clamp, and its slice, after: a
-        // call without the clamp reads through these two alone. The scope
-        // asks the tier and the stale worlds too, so a row either keeps out
-        // stops no round (REVIEW-10311 round 2).
-        let scope_metadata = RefCell::new(EntityMetadataCache::default());
+        // The call's scope, asked before the clamp: a call without the clamp
+        // reads through it alone. It is every check the window's cut asks but
+        // the clamp, in the order the cut asks them: the candidate filter;
+        // the type, time, codebase and tier checks; the claim status gate
+        // before the checks that decode a claim's body, so a claim whose body
+        // does not decode is out of the scope and fails no read (REVIEW-10311
+        // round 2's own review); then the facet, world, corpus and
+        // relationship checks, and the made_by slice last. A row any of them
+        // refuses stops no round (TEMPORAL-READER-OMITS-STRICT-SCOPE-CHECKS).
+        // Its caches are its own: a row the reader asks about leaves no gate
+        // decision and no `read_suppressed` entry in the run, as at a
+        // narrowed vector walk.
+        let scope = PipelineFilterConfig {
+            candidate_filter: None,
+            deadline: None,
+            disclosure: None,
+            ..filters
+        };
+        let scope_caches = RefCell::new((
+            EntityMetadataCache::default(),
+            claim_gate.fresh(filters.authority_filter.include_stale),
+        ));
         let in_scope = |store: &crate::store::StoreRead<'_>,
                         txn: &RoTxn<'_>,
                         id: &crate::EntityId|
          -> Result<bool> {
-            if let Some(scope) = filters.candidate_filter
-                && !scope(store, txn, id)?
+            if !narrowed {
+                return Ok(true);
+            }
+            if let Some(admits) = filters.candidate_filter
+                && !admits(store, txn, id)?
             {
                 return Ok(false);
             }
-            let metadata = &mut scope_metadata.borrow_mut();
-            candidate_matches_criticality_and_stale_worlds(store, txn, id, filters, metadata)
-        };
-        let in_slice = |txn: &RoTxn<'_>, id: &crate::EntityId| -> Result<bool> {
-            if !sliced {
-                return Ok(true);
-            }
-            let (metadata, gate) = &mut *slice_caches.borrow_mut();
-            self.made_by_slice_admits(txn, id, metadata, gate)
+            let (metadata, gate) = &mut *scope_caches.borrow_mut();
+            pipeline_candidate_matches_filters_and_gate(store, txn, id, scope, metadata, gate)
         };
         let in_reader = |store: &crate::store::StoreRead<'_>,
                          txn: &RoTxn<'_>,
                          id: &crate::EntityId|
          -> Result<bool> {
-            Ok(in_scope(store, txn, id)? && !hides(store, txn, id)? && in_slice(txn, id)?)
+            Ok(in_scope(store, txn, id)? && !hides(store, txn, id)?)
         };
-        let narrowed = filters.candidate_filter.is_some()
-            || filters.criticality.is_some()
-            || filters.stale_worlds.is_some()
-            || sliced;
         // Widen the collector's window, scan caps and score truncation, not
         // the request sigma settles on.
         if !narrowed && clamp.is_none() {
@@ -580,17 +589,15 @@ impl PipelineBuilder<'_> {
             )?;
             return Ok((readable, withheld));
         }
-        // A clamped pack's narrowed list: a hidden row the call's scope and
-        // slice admit takes a place in the bound a reader without the clamp
+        // A clamped pack's narrowed list: a hidden row the call's scope
+        // admits takes a place in the bound a reader without the clamp
         // gives, and the pack counts it as the unnarrowed list's
         // (REVIEW-9980 round 2). Inside that bound, a row the reader does
         // not read is a hidden one.
         let withheld = if clamp.is_some() {
             let held = cut.rows_inside_bound_where(|id| {
                 Ok(reader.reads(&self.read, rtxn, id)?
-                    || (in_scope(&self.read, rtxn, id)?
-                        && hides(&self.read, rtxn, id)?
-                        && in_slice(rtxn, id)?))
+                    || (in_scope(&self.read, rtxn, id)? && hides(&self.read, rtxn, id)?))
             })?;
             let mut held_before = Vec::new();
             for scored in &scores {
