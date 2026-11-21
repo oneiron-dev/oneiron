@@ -380,9 +380,13 @@ impl ConsolidationExecutor<'_> {
                 spend_scope: None,
                 wake_pass_bound: true,
             };
+            // The call sends under the rows its text was read from: each
+            // proposal and each subject its labels name
+            // ([DREAMER-UNSOURCED-ROLE-CALLS-SEND-UNFENCED]).
+            let backend = call.call_backend(Some(labels.rows().collect()));
             let (response, binding) = match call_as_step_checked(
                 &step,
-                call.backend,
+                backend.get(),
                 self.guard,
                 request,
                 &check_narrative_reply,
