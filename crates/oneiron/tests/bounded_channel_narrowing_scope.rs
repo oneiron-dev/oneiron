@@ -16,7 +16,7 @@
 //! A narrowed text scan keeps what the unnarrowed scan gave (REVIEW-10311
 //! round 1): a clamped pack's scan still counts a hidden claim of its tier
 //! among the rows its clamp withheld, and a HyDE retry's widened bound
-//! still holds.
+//! still holds, for the main query and for each subquery the retry asks.
 //!
 //! Run with `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p
 //! oneiron --all-features --test bounded_channel_narrowing_scope` (the
@@ -55,6 +55,8 @@ const NOW: u64 = ANCHOR + DAY;
 const DIMENSIONS: usize = 4;
 /// The text runs' query word; the claim's indexed body holds it alone.
 const WORD: &str = "quokka";
+/// A word no claim holding [`WORD`] holds: only a HyDE retry's subquery asks it.
+const SUBQUERY_WORD: &str = "numbat";
 /// No rule of the shipped manifest names this predicate, so it resolves
 /// critical by fallback (`tests/owner_approval_criticality_floor.rs`).
 const UNDECLARED_PREDICATE: &str = "loop.alpha";
@@ -182,6 +184,12 @@ impl Fixture {
 
     /// As [`Self::claim`], with no vector: only the text scan finds it.
     fn text_claim(&self, world: Option<ForeignWorldId>) -> EntityId {
+        self.text_claim_holding(world, WORD)
+    }
+
+    /// A claim as [`Self::text_claim`] writes it, whose indexed body holds
+    /// `word` alone.
+    fn text_claim_holding(&self, world: Option<ForeignWorldId>, word: &str) -> EntityId {
         let vault = &self.vault;
         let actor = WriteActor::new(EntityId::now(), EdgeActorClass::Human);
         let subject = EntityId::now();
@@ -229,7 +237,7 @@ impl Fixture {
             .expect("FIXTURE: write the claim");
         vault
             .batch()
-            .text(&claim, &[("body", WORD)])
+            .text(&claim, &[("body", word)])
             .commit()
             .expect("FIXTURE: index the claim's text");
         claim
@@ -445,10 +453,11 @@ fn a_tier_narrowed_clamped_text_pack_counts_a_hidden_claim_of_its_tier() {
 }
 
 /// A host that finds the evidence short until the run hands it `needed`
-/// candidates. Its expansion asks [`WORD`] and the query vector, which no
-/// claim of the HyDE test holds.
+/// candidates. Its expansion asks [`WORD`], `subquery` on a retry, and the
+/// query vector, which no claim of the HyDE tests holds.
 struct NeedsCandidates {
     needed: usize,
+    subquery: Option<&'static str>,
 }
 
 impl HydeExpander for NeedsCandidates {
@@ -461,7 +470,7 @@ impl HydeExpander for NeedsCandidates {
             grounded_query: WORD.to_owned(),
             hypothetical_answer: WORD.to_owned(),
             embedding: query_vector(),
-            subqueries: Vec::new(),
+            subqueries: self.subquery.map(str::to_owned).into_iter().collect(),
         })
     }
 
@@ -488,6 +497,7 @@ fn a_tier_narrowed_text_run_keeps_the_hyde_retry_bound() {
         .collect();
     let host = NeedsCandidates {
         needed: claims.len(),
+        subquery: None,
     };
     let run = |tier: Option<bool>| -> (BTreeSet<EntityId>, Option<String>) {
         let query = in_tier(
@@ -520,5 +530,55 @@ fn a_tier_narrowed_text_run_keeps_the_hyde_retry_bound() {
         "FAILBEFORE REVIEW-10311 round 1: the narrowed scan cut the retry's widened read back \
          to the first bound, so the host found the evidence short twice and the run read \
          BelowThreshold"
+    );
+}
+
+/// REVIEW-10311 round 2: a HyDE retry's subquery reads past the first
+/// attempt's bound as the main query does, and a tier-narrowed scan keeps
+/// that bound for the subquery too. One claim holds the query's [`WORD`];
+/// one claim more than the text bound holds [`SUBQUERY_WORD`], which only
+/// the retry's subquery asks; the host needs every claim.
+#[test]
+fn a_tier_narrowed_hyde_subquery_keeps_the_retry_bound() {
+    let fixture = fixture();
+    let mut claims: BTreeSet<EntityId> = (0..=FUSION_LIST_LENGTH)
+        .map(|_| fixture.text_claim_holding(None, SUBQUERY_WORD))
+        .collect();
+    claims.insert(fixture.text_claim(None));
+    let host = NeedsCandidates {
+        needed: claims.len(),
+        subquery: Some(SUBQUERY_WORD),
+    };
+    let run = |tier: Option<bool>| -> (BTreeSet<EntityId>, Option<String>) {
+        let query = in_tier(
+            fixture
+                .vault
+                .query()
+                .search_text(WORD, FUSION_LIST_LENGTH)
+                .boost_recency(0.0),
+            tier,
+        )
+        .hyde(
+            &host,
+            GroundingContext::default(),
+            HydeOptions {
+                channel_limit: 10,
+                retry_once: true,
+            },
+        );
+        let run = fixture.recorded_at_limit(query, claims.len());
+        (run.ids.into_iter().collect(), run.empty_reason)
+    };
+    assert_eq!(
+        run(None),
+        (claims.clone(), None),
+        "GUARD: the unnarrowed run's retry subquery hands the host every claim it holds"
+    );
+    assert_eq!(
+        run(Some(true)),
+        (claims.clone(), None),
+        "FAILBEFORE REVIEW-10311 round 2: the narrowed scan cut the retry subquery's widened \
+         read back to the first bound, so the host found the evidence short twice and the run \
+         read BelowThreshold"
     );
 }
