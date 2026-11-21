@@ -52,7 +52,7 @@ impl PollAdmission<'_> {
             .as_ref()
             .is_some_and(|passport| cancel_moves_deposit(self.system, passport))
         {
-            self.refund_host_cancelled_deposit(event_ref, seen_at)?;
+            self.settle_host_cancelled_deposit(event_ref, seen_at)?;
         }
         self.admit_imported_cancel_status(event_ref, event, seen_at)
     }
@@ -104,7 +104,7 @@ impl PollAdmission<'_> {
         basis: CalendarStatusBasis,
     ) -> Result<(), CalendarError> {
         if let Some(seen_at) = self.written_cancel_seen_at(event_ref)? {
-            self.refund_host_cancelled_deposit(event_ref, seen_at)?;
+            self.settle_host_cancelled_deposit(event_ref, seen_at)?;
         }
         let status_ref = self.admit_status_if_changed(
             event_ref,
@@ -208,7 +208,7 @@ impl PollAdmission<'_> {
         }
         let seen_at = passport.cancelled_since.unwrap_or(passport.last_seen_at);
         if cancel_moves_deposit(self.system, &passport) {
-            self.refund_host_cancelled_deposit(event_ref, seen_at)?;
+            self.settle_host_cancelled_deposit(event_ref, seen_at)?;
         }
         if self.explicit_status_admitted_after(event_ref, passport_ref)? {
             self.repair_cancel_outcome(event_ref, seen_at)
@@ -293,6 +293,33 @@ impl PollAdmission<'_> {
             }
         }
         Ok(None)
+    }
+
+    /// The deposit step of a host cancel of the EVENT in a calendar it was
+    /// written to: its refund ([`Self::refund_host_cancelled_deposit`]), or,
+    /// while the owner's release of a calendar hold of the booking stands
+    /// (`released_hold_sequence`), the owner's line "a cancel we can't
+    /// attribute: refund by hand?" in its place, which moves no money: a
+    /// released row's write may be what came back, and no refund is paid on
+    /// a fault path (CAL-OUTBOX-ROW-OF-REMOVED-SEAT-HOLDS-PULLS = C, the lead
+    /// 21 Nov 09:15). The note is marked once and names the SEQUENCE the
+    /// released row staged.
+    fn settle_host_cancelled_deposit(
+        &self,
+        event_ref: EntityId,
+        seen_at: u64,
+    ) -> Result<(), CalendarError> {
+        let Some(sequence) =
+            crate::calendar::connectors::released_hold_sequence(self.vault, &event_ref)?
+        else {
+            return self.refund_host_cancelled_deposit(event_ref, seen_at);
+        };
+        self.vault.with_write_txn_grouped(|wtxn| {
+            crate::booking::lifecycle::note_unattributed_cancel_in_txn(
+                self.vault, wtxn, &event_ref, sequence, self.now,
+            )
+        })?;
+        Ok(())
     }
 
     /// The host cancelled the EVENT explicitly, in a calendar it was written

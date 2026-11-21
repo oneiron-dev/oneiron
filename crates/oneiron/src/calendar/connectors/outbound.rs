@@ -2,6 +2,7 @@
 
 mod archived;
 mod collection;
+mod release;
 
 pub(crate) use self::archived::{plan_archived_calendar_rows, read_back_archived_calendar_rows};
 pub use self::collection::{
@@ -11,6 +12,9 @@ pub use self::collection::{
 pub(super) use self::collection::{
     UnprovenReplaysBeforeRead, cancelled_members_in_flight, first_write_unsettled,
     omission_observed, unproven_replays_before_read, unsettled_writes_of,
+};
+pub(crate) use self::release::{
+    calendar_holds_in_txn, release_calendar_holds_as_owner, released_hold_sequence,
 };
 
 use serde::{Deserialize, Serialize};

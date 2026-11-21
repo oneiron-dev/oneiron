@@ -15,12 +15,15 @@
 //! settled
 //! ([`first_write_unsettled`]). A provider's report of a resource gone stays
 //! held while an upsert of its UID on any seat of the calendar is unsettled
-//! ([`unsettled_writes_of`]).
+//! ([`unsettled_writes_of`]). A row the owner released while its writing seat
+//! was out of service holds none of them as long as it stands as released
+//! ([`super::release`]; CAL-OUTBOX-ROW-OF-REMOVED-SEAT-HOLDS-PULLS).
 
 use super::super::door::CalendarConnectorOperation;
 use super::super::remote::ics_content_hash;
 use super::super::resource::read_blob_ref;
 use super::super::seat::CalendarConnectorError;
+use super::release::OutboxReleases;
 use super::{
     CalendarWriteAction, CalendarWriteOutboxState, LOCAL_UID_DOMAIN, OUTBOX, OUTBOX_ROW_TAG,
     OutboxKey, REMOTE_OBJECT, REMOTE_OBJECT_TAG, RemoteObjectKey, StoredWriteMarker,
@@ -165,13 +168,16 @@ pub(crate) fn unsettled_writes_of(
     let seat = &operation.registration().seat;
     let system = seat.config.system.as_str();
     let calendar_ref = seat.config.calendar_ref.as_str();
-    let rows = {
+    let (rows, releases) = {
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-        OUTBOX.scan_from(&vault.store, &txn, OUTBOX_ROW_TAG)?
+        (
+            OUTBOX.scan_from(&vault.store, &txn, OUTBOX_ROW_TAG)?,
+            OutboxReleases::read_in_txn(vault, &txn)?,
+        )
     };
     let mut writes = UnsettledWrites::default();
     for (_, row) in rows {
-        if !upsert_row_of(&row, system, calendar_ref, uid) {
+        if !upsert_row_of(&row, system, calendar_ref, uid) || releases.released(&row) {
             continue;
         }
         match row.state {
@@ -288,12 +294,18 @@ pub(crate) fn cancelled_members_in_flight(
     let copy_marker = super::stored_write_marker(ics, uid);
     // Drop the table reader before a row staged without its RECURRENCE-IDs
     // reads its members' claims.
-    let rows = {
+    let (rows, releases) = {
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-        OUTBOX.scan_from(&vault.store, &txn, OUTBOX_ROW_TAG)?
+        (
+            OUTBOX.scan_from(&vault.store, &txn, OUTBOX_ROW_TAG)?,
+            OutboxReleases::read_in_txn(vault, &txn)?,
+        )
     };
     let mut members = Vec::new();
     for (_, stored) in rows {
+        if releases.released(&stored) {
+            continue;
+        }
         let may_be_own = lowest_sequence >= stored.sequence
             && match (stored.write_marker, &copy_marker) {
                 (Some(staged), StoredWriteMarker::One(marker)) => *marker == staged,
@@ -394,13 +406,19 @@ pub(crate) fn first_write_unsettled(
     let seat = &operation.registration().seat;
     let system = seat.config.system.as_str();
     let calendar_ref = seat.config.calendar_ref.as_str();
-    let rows = {
+    let (rows, releases) = {
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-        OUTBOX.scan_from(&vault.store, &txn, OUTBOX_ROW_TAG)?
+        (
+            OUTBOX.scan_from(&vault.store, &txn, OUTBOX_ROW_TAG)?,
+            OutboxReleases::read_in_txn(vault, &txn)?,
+        )
     };
     let base_known = || vault.known_values_now();
     let known = CompareKnown::new(Some(&base_known));
     for (_, row) in rows {
+        if releases.released(&row) {
+            continue;
+        }
         let unsettled = match row.state {
             CalendarWriteOutboxState::Prepared | CalendarWriteOutboxState::RemoteApplied => true,
             CalendarWriteOutboxState::ReconcileRequired => row.stored_copy_unproven,
@@ -533,12 +551,13 @@ fn upsert_in_flight(
         uid,
         CalendarWriteAction::Upsert,
     );
+    let releases = OutboxReleases::read_in_txn(vault, txn)?;
     Ok(OUTBOX
         .get(&vault.store, txn, &OutboxKey(outbox_id))?
         .filter(|row| {
             matches!(
                 row.state,
                 CalendarWriteOutboxState::Prepared | CalendarWriteOutboxState::RemoteApplied
-            )
+            ) && !releases.released(row)
         }))
 }
