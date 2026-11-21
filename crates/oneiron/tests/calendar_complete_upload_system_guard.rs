@@ -18,12 +18,31 @@
 
 use std::sync::Arc;
 
+use oneiron::authority::MachineRole;
+use oneiron::calendar::CalendarError;
+use oneiron::calendar::claims::{
+    CalendarPassportPresence, CalendarPassportValue, CalendarStatus, PREDICATE_CALENDAR_STATUS,
+};
 use oneiron::calendar::ingest::door::{CalendarIcsImportRequest, import_ics_as_owner};
+use oneiron::calendar::ingest::feed_door::{
+    self as feed, CalendarIcsFeedConsent, CalendarIcsFeedRequest, CalendarIcsFeedReviewDecision,
+    CalendarIcsFeedReviewRequest, CalendarIcsPollResult,
+};
+use oneiron::calendar::ingest::{IcsFeedFetcher, IcsFeedPollConfig, IcsFetchResponse};
+use oneiron::calendar::passport::{live_passports_for_event, resolve_event_by_uid};
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::mail_pack::{
+    ICS_CALENDAR_CONNECTOR_EFFECTOR, MailCalendarFeed, MailCalendarRead, MailCalendarWire,
+    MailProvider, MailSourceConnectRequest, MailSourceKind, MailSourceStatus, MailSyncSource,
+    install_mail_calendar_pack_embedded,
+};
+use oneiron::memory::hook_regen_doors::PackPutOutcome;
 use oneiron::memory::{BlobArtifactInput, BlobVersionAppendOutcome, Memory};
+use oneiron::registry::ENTITY_TYPE_EVENT;
+use oneiron::secret_custody::{CustodyTier, SECRET_SCOPE_READ, SecretBinding};
 use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
 use oneiron::test_doors::label_writers::embedded_owner;
-use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
+use oneiron::{ClaimLifecycleStatus, EdgeActorClass, EntityId, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
 use serde_json::{Value, json};
 
@@ -37,6 +56,8 @@ const PACK: &str = "names a pack calendar source";
 const PACK_SYSTEM: &str = "mail_pack:00000000000000000000000000000000";
 /// 2026-03-02 09:00 UTC.
 const NOW: u64 = 1_772_442_000;
+/// The UID in the one-VEVENT test calendar below.
+const ICS_UID: &str = "export-1@example.test";
 /// One complete VCALENDAR with one VEVENT.
 const ICS: &str = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//oneiron//test//EN\r\n\
 BEGIN:VEVENT\r\nUID:export-1@example.test\r\nDTSTAMP:20260302T070000Z\r\n\
@@ -216,5 +237,300 @@ fn no_upload_seat_or_feed_takes_a_pack_calendar_system() {
         fx.upload(PACK_SYSTEM),
         PACK,
         "an upload on a pack calendar system",
+    );
+}
+
+const EMPTY_ICS: &str =
+    "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//oneiron//test//EN\r\nEND:VCALENDAR\r\n";
+
+struct CompleteFeed<'a> {
+    body: &'a str,
+    etag: &'a str,
+}
+
+impl IcsFeedFetcher for CompleteFeed<'_> {
+    fn fetch(
+        &self,
+        _secret_ref: &str,
+        _if_none_match: Option<&str>,
+    ) -> Result<IcsFetchResponse, CalendarError> {
+        Ok(IcsFetchResponse::Complete {
+            etag: Some(self.etag.to_owned()),
+            body: self.body.as_bytes().to_vec(),
+        })
+    }
+}
+
+fn poll_feed(
+    fx: &Fixture,
+    config: &IcsFeedPollConfig,
+    body: &str,
+    etag: &str,
+) -> CalendarIcsPollResult {
+    feed::run_installed_poll(
+        &fx.memory(),
+        &fx.proof,
+        &CompleteFeed { body, etag },
+        None,
+        config,
+        EntityId::now().to_hex(),
+    )
+    .expect("FIXTURE: the installed feed runs a complete poll")
+    .result
+}
+
+fn sole_passport(vault: &Vault, event: &EntityId) -> CalendarPassportValue {
+    let mut passports = live_passports_for_event(vault, event).expect("read the EVENT's passports");
+    assert_eq!(
+        passports.len(),
+        1,
+        "FIXTURE: the EVENT has one passport head: {passports:?}"
+    );
+    passports.pop().expect("the one passport").1
+}
+
+fn has_cancelled_status(vault: &Vault, event: &EntityId) -> bool {
+    vault
+        .claims_for_subject(event)
+        .expect("read the EVENT's claims")
+        .into_iter()
+        .filter_map(|id| vault.get_claim(&id).expect("read the claim"))
+        .filter(|claim| {
+            claim.predicate == PREDICATE_CALENDAR_STATUS
+                && claim.lifecycle == ClaimLifecycleStatus::Active
+        })
+        .any(|claim| {
+            let fields = claim.value.as_map().expect("a status is a map");
+            fields.iter().any(|(key, value)| {
+                key.as_str() == Some("status")
+                    && value.as_str() == Some(CalendarStatus::Cancelled.as_str())
+            })
+        })
+}
+
+// blind review round 1 of #10312: a custody rotation must not let a feed sweep another source.
+#[test]
+fn a_feed_poll_never_sweeps_an_upload_passport_whose_system_record_rotated_to_the_feed() {
+    const UPLOAD_SYSTEM: &str = "owner-calendar-export";
+    const FEED_SYSTEM: &str = "installed-calendar-feed";
+    const SYSTEM_RECORD: &str = "rotated-calendar-system";
+
+    let fx = Fixture::open();
+    fx.vault
+        .register_test_secret(SYSTEM_RECORD, UPLOAD_SYSTEM.as_bytes(), Vec::new(), NOW)
+        .expect("FIXTURE: custody registers the upload system");
+    fx.upload(UPLOAD_SYSTEM)
+        .expect("FIXTURE: the owner's complete upload lands");
+    let event = resolve_event_by_uid(&fx.vault, ICS_UID)
+        .expect("resolve the upload's UID")
+        .expect("FIXTURE: the upload's UID resolves to its EVENT");
+    let uploaded = sole_passport(&fx.vault, &event);
+    assert!(
+        uploaded.system != UPLOAD_SYSTEM && uploaded.system.contains("[secret sc"),
+        "FIXTURE: the upload passport stored the system as a custody handle: {uploaded:?}"
+    );
+
+    let installed = fx.install_feed(FEED_SYSTEM).expect("install the feed");
+    assert!(
+        matches!(installed, SetSettingOutcome::Applied { .. }),
+        "FIXTURE: the owner installs the feed"
+    );
+    let config = IcsFeedPollConfig {
+        secret_ref: format!("ics-feed:{FEED_SYSTEM}"),
+        system: FEED_SYSTEM.to_owned(),
+        cadence_min_seconds: 300,
+        cadence_max_seconds: 900,
+    };
+    let first_body = ICS.replace(ICS_UID, "feed-only@example.test");
+    let first = poll_feed(&fx, &config, &first_body, "v1");
+    assert!(
+        matches!(first, CalendarIcsPollResult::AwaitingReview { .. }),
+        "FIXTURE: the first poll opens the feed's review: {first:?}"
+    );
+    let status = feed::status(
+        &fx.memory(),
+        &fx.proof,
+        &CalendarIcsFeedRequest {
+            system: FEED_SYSTEM.to_owned(),
+        },
+    )
+    .expect("read feed status")
+    .expect("FIXTURE: the feed is installed");
+    let CalendarIcsFeedConsent::AwaitingReview { review_ref, .. } = status.consent else {
+        panic!("FIXTURE: the installed feed has an open review");
+    };
+    let consent = feed::review(
+        &fx.memory(),
+        &fx.proof,
+        &CalendarIcsFeedReviewRequest {
+            system: FEED_SYSTEM.to_owned(),
+            review_ref,
+            decision: CalendarIcsFeedReviewDecision::Approve,
+        },
+    )
+    .expect("approve the feed's first poll");
+    assert!(
+        matches!(consent, CalendarIcsFeedConsent::Granted { .. }),
+        "FIXTURE: the feed holds standing consent: {consent:?}"
+    );
+
+    let rotated = fx
+        .vault
+        .rotate_secret_as_owner(&fx.proof, SYSTEM_RECORD, FEED_SYSTEM.as_bytes(), NOW + 1)
+        .expect("FIXTURE: the owner rotates the upload system record to the feed system");
+    assert_eq!(
+        (rotated.from_generation, rotated.to_generation),
+        (0, 1),
+        "FIXTURE: the same custody record now has a second value"
+    );
+    let before = sole_passport(&fx.vault, &event);
+    assert_eq!(
+        before.system, uploaded.system,
+        "FIXTURE: the rotation leaves the stored passport handle in place"
+    );
+    assert!(
+        before.uid == ICS_UID && before.direction.is_inbound_bearing(),
+        "FIXTURE: the upload is the EVENT's sole inbound passport: {before:?}"
+    );
+    assert_eq!(
+        before.presence,
+        CalendarPassportPresence::Live,
+        "FIXTURE: the upload passport starts live"
+    );
+    assert!(
+        !has_cancelled_status(&fx.vault, &event),
+        "FIXTURE: the uploaded EVENT starts uncancelled"
+    );
+
+    let completed = poll_feed(&fx, &config, EMPTY_ICS, "v2");
+    assert!(
+        matches!(completed, CalendarIcsPollResult::Reenqueued { .. }),
+        "FIXTURE: the feed completes its empty listing: {completed:?}"
+    );
+    assert_eq!(
+        sole_passport(&fx.vault, &event).presence,
+        CalendarPassportPresence::Live,
+        "the feed's empty listing cannot mark the upload passport absent"
+    );
+    assert!(
+        !has_cancelled_status(&fx.vault, &event),
+        "the feed's empty listing cannot cancel the uploaded EVENT"
+    );
+}
+
+struct CompletePackFeed;
+
+impl MailCalendarWire for CompletePackFeed {
+    fn pull(
+        &self,
+        _source: &MailSyncSource,
+        _cursor: Option<&str>,
+    ) -> oneiron::Result<MailCalendarRead> {
+        Ok(MailCalendarRead::Feed(MailCalendarFeed {
+            ics: ICS.as_bytes().to_vec(),
+            next_cursor: None,
+        }))
+    }
+}
+
+// blind review round 1 of #10312: a complete pack listing must keep its carried masked UID live.
+#[test]
+fn a_pack_source_keeps_a_masked_uid_live_when_its_complete_listing_carries_it() {
+    const CREDENTIAL: &str = "pack-ics-credential";
+    let dir = tempfile::tempdir().expect("FIXTURE: a fresh vault directory");
+    let mut config = VaultConfig::device();
+    config.dimensions = 4;
+    config.embedding_model = None;
+    let vault = Vault::open_owned(dir.path(), config).expect("FIXTURE: an owned vault");
+    vault.install_device_keystore(Arc::new(MemoryKeystore::new()));
+    let issuer = oneiron::test_support::provision_engine_machines(&vault);
+    vault
+        .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+        .expect("FIXTURE: the install has its serving profile");
+    let (owner, _) = embedded_owner(&vault).expect("FIXTURE: the authenticated embedded owner");
+    let memory = vault.memory(owner, EdgeActorClass::Human);
+    let pack = install_mail_calendar_pack_embedded(&memory).expect("install the pack");
+    assert_eq!(
+        pack.outcome,
+        PackPutOutcome::Installed,
+        "FIXTURE: the owner installs the pack"
+    );
+
+    vault
+        .register_test_secret(
+            CREDENTIAL,
+            b"https://pack-calendar.example.test/calendar.ics",
+            vec![SecretBinding {
+                effector: ICS_CALENDAR_CONNECTOR_EFFECTOR.to_owned(),
+                tier_ceiling: CustodyTier::T0Doored,
+                scopes: vec![SECRET_SCOPE_READ.to_owned()],
+            }],
+            NOW,
+        )
+        .expect("FIXTURE: custody holds the owner's ICS credential");
+    let connected = memory
+        .mail_sources_connect(&MailSourceConnectRequest {
+            provider: MailProvider::Ics,
+            kind: MailSourceKind::Calendar,
+            address: "pack-calendar".to_owned(),
+            provider_account: "pack-calendar".to_owned(),
+            custody_ref: CREDENTIAL.to_owned(),
+            members: Vec::new(),
+            for_person: None,
+            channel_identity_ref: None,
+            copy: None,
+            on_provider_delete: None,
+            calendar_details: None,
+        })
+        .expect("FIXTURE: the owner connects an ICS calendar source");
+    assert_eq!(
+        connected.source.status,
+        MailSourceStatus::Active,
+        "FIXTURE: the pack calendar source is active"
+    );
+    let source = EntityId::from_hex(&connected.source.source_ref).expect("FIXTURE: the source id");
+    vault
+        .register_test_secret("pack-masked-uid", ICS_UID.as_bytes(), Vec::new(), NOW)
+        .expect("FIXTURE: custody holds the VEVENT's UID before it is pulled");
+
+    let first = vault
+        .mail_calendar_sync_step(source, &CompletePackFeed, 1)
+        .expect("FIXTURE: the first pack calendar pull succeeds");
+    assert!(
+        first.copy_done && first.landed == 1,
+        "FIXTURE: the first pull finishes a listing carrying one VEVENT: {first:?}"
+    );
+    let events = vault
+        .entities_by_type(ENTITY_TYPE_EVENT)
+        .expect("read the EVENT ids");
+    assert_eq!(events.len(), 1, "FIXTURE: the first pull mints one EVENT");
+    let event = events[0];
+    let passport = sole_passport(&vault, &event);
+    assert!(
+        passport.system == format!("mail_pack:{}", source.to_hex())
+            && passport.direction.is_inbound_bearing(),
+        "FIXTURE: the EVENT has the pack source's inbound passport: {passport:?}"
+    );
+    assert!(
+        passport.uid != ICS_UID && passport.uid.contains("[secret sc"),
+        "FIXTURE: the passport stored the carried UID as a custody handle: {passport:?}"
+    );
+    assert_eq!(
+        passport.presence,
+        CalendarPassportPresence::Live,
+        "the first complete pack listing cannot sweep the masked UID it carries"
+    );
+
+    let second = vault
+        .mail_calendar_sync_step(source, &CompletePackFeed, 1)
+        .expect("FIXTURE: the second pack calendar pull succeeds");
+    assert!(
+        second.copy_done && second.landed == 1,
+        "FIXTURE: the second pull finishes the same listing: {second:?}"
+    );
+    assert_eq!(
+        sole_passport(&vault, &event).presence,
+        CalendarPassportPresence::Live,
+        "the same complete pack listing still cannot sweep its carried masked UID"
     );
 }
