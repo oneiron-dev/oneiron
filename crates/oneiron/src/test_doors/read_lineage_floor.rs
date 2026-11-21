@@ -96,6 +96,86 @@ pub fn forget_floor_state(vault: &Vault) -> Result<()> {
     Ok(())
 }
 
+/// Ends the floor backfill's pass as a build before the backfill raised
+/// archived rows (FLOOR-BACKFILL-SKIPS-ARCHIVED-ROWS) ends it: the backfill
+/// is done, its raised marks are cleared, and each row keeps the floor it
+/// has.
+///
+/// # Errors
+///
+/// Storage failures.
+pub fn end_backfill_without_archived_rows(vault: &Vault) -> Result<()> {
+    let mut txn = vault.store.env.write_txn()?;
+    crate::source_audience::end_backfill_without_archived_rows_in_txn(vault, &mut txn)?;
+    txn.commit()?;
+    Ok(())
+}
+
+/// Marks the floor backfill done as the last page of a pass of a build
+/// before this one commits it, before its clearing pages run: the raised
+/// marks stay (#10265 review 2 P1-2).
+///
+/// # Errors
+///
+/// Storage failures.
+pub fn mark_backfill_done(vault: &Vault) -> Result<()> {
+    let mut txn = vault.store.env.write_txn()?;
+    crate::source_audience::mark_backfill_done_in_txn(vault, &mut txn)?;
+    txn.commit()?;
+    Ok(())
+}
+
+/// Runs the floor backfill to the end of its run from the cursor a pass of
+/// a build before this one saved after the page that ended at `after`, as
+/// the sweep does when the scheduler kept that cursor though the pass's
+/// last page had ended it (#10265 review 2 P1-1).
+///
+/// # Errors
+///
+/// Storage failures.
+pub fn backfill_from_an_older_pass_cursor(vault: &Vault, after: EntityId) -> Result<()> {
+    crate::source_audience::sweep_floors_from_raising_cursor(vault, &after)
+}
+
+/// Runs the first write of a floor backfill pass in this build, as the
+/// housekeeping sweep does when a pass begins, and drops where the pass
+/// would go on.
+///
+/// # Errors
+///
+/// Storage failures.
+pub fn backfill_first_page(vault: &Vault) -> Result<()> {
+    crate::source_audience::sweep_floors(vault, None, || true).map(|_| ())
+}
+
+/// Marks `row` raised as a write of a build before the backfill raised
+/// archived rows marked a row it raised while the backfill ran, without the
+/// archived rows it was written from (#10265 Opus review P2-2).
+///
+/// # Errors
+///
+/// Storage failures.
+pub fn mark_raised(vault: &Vault, row: EntityId) -> Result<()> {
+    let mut txn = vault.store.env.write_txn()?;
+    crate::source_audience::mark_raised_in_txn(vault, &mut txn, &row)?;
+    txn.commit()?;
+    Ok(())
+}
+
+/// Leaves `row` waiting on `source`, with its mark, as the backfill of a
+/// build before #10222 left a row learnt from an archived row it read as
+/// erased (#10265 Opus review P2-3).
+///
+/// # Errors
+///
+/// Storage failures.
+pub fn mark_waiting_on(vault: &Vault, row: EntityId, source: EntityId) -> Result<()> {
+    let mut txn = vault.store.env.write_txn()?;
+    crate::source_audience::mark_waiting_in_txn(vault, &mut txn, &row, &source)?;
+    txn.commit()?;
+    Ok(())
+}
+
 /// Lands the binding of `row` here as a replicated binding does once its
 /// policy resolves (`bind_replicated_in_txn`): the rows waiting on `row`
 /// take its floor if it is bound and whole now (#9289 Opus review 3 P1-B).

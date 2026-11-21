@@ -74,6 +74,11 @@ pub(crate) use replica::{
     publishable_in, published_closure_in, redacted_successor_in, thread_source_in,
 };
 #[cfg(any(test, feature = "test-support", oneiron_test_support))]
+pub(crate) use floor_migration::{
+    end_backfill_without_archived_rows_in_txn, mark_backfill_done_in_txn, mark_raised_in_txn,
+    mark_waiting_in_txn, sweep_floors_from_raising_cursor,
+};
+#[cfg(any(test, feature = "test-support", oneiron_test_support))]
 pub(crate) use source_state::forget_floor_state_in_txn;
 pub(crate) use source_state::{
     DeleteLevel, FloorRead, Fresh, LinksBefore, StateReader, Verdict, before_erase_in_store_txn,
