@@ -472,6 +472,19 @@ pub(crate) fn erase_actor_programs(vault: &Vault, actor: EntityId) -> Result<()>
     })
 }
 
+/// Marks `actor` hard-deleted here and erases its turn programs, in one
+/// writer and in that order, as a hard delete of its row does: the permanent
+/// marker a torn actor row takes, then the sweep. The row itself stays and
+/// nothing is staged for sync. Answers whether the actor then reads as erased
+/// here: only a PERSON or MACHINE row stored here takes the marker.
+pub(crate) fn erase_hard_deleted_actor_programs(vault: &Vault, actor: EntityId) -> Result<bool> {
+    vault.with_write_txn_grouped(|txn| {
+        crate::deletion::mark_torn_actor_row_in_txn(&vault.store, txn, &actor)?;
+        super::arm::erase_turn_program_actor_in_txn(vault, txn, &actor)?;
+        vault.carrier_actor_erased_in_txn(&*txn, &actor)
+    })
+}
+
 /// Each idle or feed row one of `actor`'s programs keeps: its kind tag and registration.
 pub(crate) fn trigger_rows_for_actor(
     vault: &Vault,
