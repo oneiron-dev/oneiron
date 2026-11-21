@@ -107,7 +107,7 @@ pub(super) fn revokes_roster_key(op: &AuthorityOp) -> bool {
 /// clearance, or a machine standing short of a removal that names no owner
 /// act. An owner answer rests on its carrier's act, never on a roster key,
 /// so no roster revocation expires it (C3).
-fn is_window_approval(op: &AuthorityOp) -> bool {
+pub(super) fn is_window_approval(op: &AuthorityOp) -> bool {
     match op {
         AuthorityOp::BindActor { .. } | AuthorityOp::RebindActor { .. } => true,
         AuthorityOp::FederationConfirm(action) => action.kind != AuthorityConfirmKind::Revoke,
@@ -117,6 +117,81 @@ fn is_window_approval(op: &AuthorityOp) -> bool {
         op => filed_machine_profile(op)
             .is_some_and(|profile| profile.role != MachineRole::Removed && profile.act.is_none()),
     }
+}
+
+/// The keys `op` revokes that `fold` holds revoked: a revoked device's, a
+/// rotation's old key, or every roster key a re-root or a successor root's
+/// appointment leaves behind.
+fn revoked_keys(op: &AuthorityOp, fold: &AuthorityFold) -> Vec<AuthorityKey> {
+    let keys = match op {
+        AuthorityOp::RevokeDevice { revoked_key } => vec![revoked_key.clone()],
+        AuthorityOp::RotateKey { old_key, .. } => vec![old_key.clone()],
+        AuthorityOp::ReRoot { new_device }
+        | AuthorityOp::RootAppointment(RootAppointment {
+            successor: new_device,
+            ..
+        }) => fold
+            .roster
+            .keys()
+            .filter(|key| **key != new_device.key)
+            .cloned()
+            .collect(),
+        _ => Vec::new(),
+    };
+    keys.into_iter()
+        .filter(|key| fold.roster.get(key).is_some_and(|device| device.revoked))
+        .collect()
+}
+
+/// Whether the window reads a row of `op`'s kind by its first-seen second:
+/// an approval the window weighs, or a row that revokes a roster key. An
+/// adopting install keeps a receipt of its own first sight of each such
+/// covered row (FOLDPAST-COVERED-APPROVAL-CLOCK, Engine 16 Nov 00:48).
+pub(super) fn window_reads(op: &AuthorityOp) -> bool {
+    is_window_approval(op) || revokes_roster_key(op)
+}
+
+/// Whether `first_seen` holds every second the window times over `entries`:
+/// each valid approval resting on a key `fold` holds revoked, and each valid
+/// row or verified device revocation (Sol review F1 on #8608) revoking a key
+/// such an approval rests on. A row with none never
+/// starts its window, so an approval on it would never expire, or would
+/// expire later than the whole history's: a caller missing one asks for the
+/// history instead (FOLDPAST-COVERED-APPROVAL-CLOCK).
+pub(super) fn stale_roster_clocks_complete<E: LogRow>(
+    entries: &[E],
+    fold: &AuthorityFold,
+    first_seen: &dyn FirstSeenMap,
+) -> bool {
+    let subjects = stale_roster_subject_approvals(entries, fold);
+    if subjects.is_empty() {
+        return true;
+    }
+    let mut rested_on = BTreeSet::new();
+    for row in entries {
+        if row
+            .entry_hash()
+            .is_some_and(|hash| subjects.contains(&hash))
+        {
+            let entry = row.entry();
+            rested_on.extend(
+                std::iter::once(&entry.signer)
+                    .chain(&entry.cosigns)
+                    .map(|signature| &signature.public_key),
+            );
+        }
+    }
+    subjects.iter().all(|hash| first_seen.get(hash).is_some())
+        && entries.iter().all(|row| {
+            row.entry_hash().is_none_or(|hash| {
+                (!fold.valid_entries.contains(&hash)
+                    && !fold.verified_device_revocations.contains(&hash))
+                    || !revoked_keys(&row.entry().op, fold)
+                        .iter()
+                        .any(|key| rested_on.contains(key))
+                    || first_seen.get(&hash).is_some()
+            })
+        })
 }
 
 /// Earliest second at which each currently valid approval becomes stale.
@@ -143,28 +218,11 @@ fn stale_roster_approval_deadlines<E: LogRow>(
         let Some(seen) = first_seen.get(&hash).copied() else {
             continue;
         };
-        let keys = match &entry.op {
-            AuthorityOp::RevokeDevice { revoked_key } => vec![revoked_key.clone()],
-            AuthorityOp::RotateKey { old_key, .. } => vec![old_key.clone()],
-            AuthorityOp::ReRoot { new_device }
-            | AuthorityOp::RootAppointment(RootAppointment {
-                successor: new_device,
-                ..
-            }) => fold
-                .roster
-                .keys()
-                .filter(|key| **key != new_device.key)
-                .cloned()
-                .collect(),
-            _ => Vec::new(),
-        };
-        for key in keys {
-            if fold.roster.get(&key).is_some_and(|device| device.revoked) {
-                revoked_at
-                    .entry(key)
-                    .and_modify(|at| *at = (*at).min(seen))
-                    .or_insert(seen);
-            }
+        for key in revoked_keys(&entry.op, fold) {
+            revoked_at
+                .entry(key)
+                .and_modify(|at| *at = (*at).min(seen))
+                .or_insert(seen);
         }
     }
     entries

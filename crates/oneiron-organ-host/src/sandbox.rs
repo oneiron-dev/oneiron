@@ -77,6 +77,9 @@ mod syscall_trace;
 pub(crate) use fence::Cell;
 pub(crate) use scratch::Scratch;
 
+/// The descriptor the organ's socket takes in the child.
+const ORGAN_FD: RawFd = 3;
+
 /// Limits as the kernel takes them, worked out before the fork.
 #[derive(Debug)]
 struct Plan {
@@ -87,7 +90,8 @@ struct Plan {
     file_size: libc::rlim_t,
     /// The hard data and file-size limits.
     hard: libc::rlim_t,
-    /// Where the child writes its outcomes, before exec.
+    /// Where the child writes its outcomes, before exec: above
+    /// [`ORGAN_FD`] (`above_organ_fd`), as is every descriptor it uses.
     #[cfg(target_os = "linux")]
     status: Option<i32>,
     /// The `cgroup.procs` of the organ's cell, which the child joins first.
@@ -138,7 +142,7 @@ pub(crate) fn command(spec: &OrganSpec, socket: RawFd) -> io::Result<(Command, C
         Some(Scratch::new()?)
     };
     let (program, args) = argv(spec, scratch.as_ref());
-    let mut command = oneiron_spawn::command_with_fds(&program, &[(socket, 3)]);
+    let mut command = oneiron_spawn::command_with_fds(&program, &[(socket, ORGAN_FD)]);
     command.args(&args);
     let confined = confine(&mut command, spec, scratch)?;
     Ok((command, confined))
@@ -156,16 +160,21 @@ fn confine(
     let first_party = spec.tier == OrganTier::FirstParty;
     let cell = fence::cell();
     #[cfg(target_os = "linux")]
-    let status = Some(io::pipe()?);
+    let status = {
+        let (reader, writer) = io::pipe()?;
+        Some((reader, above_organ_fd(writer)?))
+    };
     #[cfg(target_os = "linux")]
-    let landlock = landlock::fence(spec, scratch.as_ref().map(Scratch::path))?;
+    let landlock = landlock::fence(spec, scratch.as_ref().map(Scratch::path))?
+        .map(above_organ_fd)
+        .transpose()?;
     #[cfg(target_os = "linux")]
     let syscalls = syscall_filter::SyscallFilter::for_organ(spec)?;
     // A trace run records the organ's calls in place of filtering them.
     #[cfg(all(target_os = "linux", oneiron_test_support))]
     let (syscalls, trace_bootstrap) = match syscall_trace::trace_file() {
         Some(file) => {
-            let theirs = syscall_trace::start(&spec.name, file)?;
+            let theirs = above_organ_fd(syscall_trace::start(&spec.name, file)?)?;
             let recording =
                 syscall_filter::SyscallFilter::recording(std::os::fd::AsRawFd::as_raw_fd(&theirs))?;
             (recording, Some(theirs))
@@ -224,6 +233,36 @@ fn confine(
         #[cfg(all(target_os = "linux", oneiron_test_support))]
         _trace_bootstrap: trace_bootstrap,
     })
+}
+
+/// `fd`, renumbered above [`ORGAN_FD`] where it sits on or below it. The
+/// child has its standard streams (std, before any `pre_exec` step) and
+/// then the organ socket on fd 3 (`oneiron_spawn::command_with_fds`, the
+/// first step) before [`Plan::apply`] runs, so a descriptor the plan uses
+/// that was numbered 0 to 3 here is by then one of those. The engine's
+/// other threads open and close descriptors while an organ starts, so
+/// fd 3 can be free when one is made: a status writer made there sent the
+/// child's eight status bytes down the organ socket, where the host read
+/// them as an empty frame and refused the handshake ("the encoding is cut
+/// short", FIX [MESH-ASK-CARRIED-HANDSHAKE-CUT-SHORT]).
+#[cfg(target_os = "linux")]
+fn above_organ_fd<F>(fd: F) -> io::Result<F>
+where
+    F: From<std::os::fd::OwnedFd> + Into<std::os::fd::OwnedFd>,
+{
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    let fd: OwnedFd = fd.into();
+    if fd.as_raw_fd() > ORGAN_FD {
+        return Ok(fd.into());
+    }
+    // SAFETY: fcntl on a descriptor this process holds; F_DUPFD_CLOEXEC
+    // makes a new one, the lowest free number above ORGAN_FD.
+    let moved = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_DUPFD_CLOEXEC, ORGAN_FD + 1) };
+    if moved < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: `moved` was just made by fcntl, and nothing else holds it.
+    Ok(unsafe { OwnedFd::from_raw_fd(moved) }.into())
 }
 
 /// A byte count as the kernel's limit: none past what it can say.

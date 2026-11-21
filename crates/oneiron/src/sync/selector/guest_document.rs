@@ -138,12 +138,14 @@ fn export(
         return Err(refused());
     }
     let window = manager.open_window(&key)?;
+    // A guest document carries no tombstone (CROSS-VAULT-DELETE-NEVER-ADMITTED).
     let (body, rows, travelled) = super::codec::guest_share_envelope_body_listing(
         vault,
         &window.doc,
         &key,
         grant.scope,
         &selector,
+        super::GuestTombstones::Omitted,
     )?;
     // A narrower credential never exports bytes around its own read lane.
     // If any selected row is withheld for this caller, the whole export refuses.

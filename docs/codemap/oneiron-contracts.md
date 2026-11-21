@@ -13,7 +13,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 |---|---|---|---|---|---|
 | `src/affect.rs` | src | s | 1 re-export | — | Core VAD value types |
 | `src/affect/vad.rs` | src | s | 3 struct · 2 enum · 5 fn · 1 const | DerivationFreshness, Vad, VadAnnotation, VadAnnotationSource, VadComponent | Core VAD value types: ranges, validation, and annotation records shared by every affect child |
-| `src/authority.rs` | src | s | 1 type · 1 const | — | Authority-log hash vocabulary the write path shares |
+| `src/authority.rs` | src | s | 1 enum · 1 type · 1 const | AuthorityHistoryReason | Authority-log vocabulary the write path and the error share: the entry hash, and why a fold needs history |
 | `src/claim.rs` | src | s | 1 fn · 3 re-export | — | Claim status axes and the scoped-read receipt |
 | `src/claim/confidence.rs` | src | s | 1 struct · 2 enum · 6 fn | ConfidenceBand, ConfidenceDetails, VerdictBasis | What a claim's confidence means beyond its number (ARCH-0003, FIX 7761): the hedge band it is read in and… |
 | `src/claim/receipt.rs` | src | s | 2 struct · 6 fn | ReadScope, ScopedReadReceipt | Mandatory read receipts: the requested / actor-ceiling / applied scope triple and the axes a read narrowed |
@@ -27,7 +27,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/cursor_text.rs` | src | s | 4 fn | — | Cursor text that a paged list hands its client and reads back (UC-13) |
 | `src/edge.rs` | src | s | 1 enum · 2 fn | EdgeActorClass | Edge vocabulary the write path shares |
 | `src/entity_id.rs` | src | m | 4 struct · 20 fn · 3 const · 2 mod · 1 re-export | EntityId, ForeignWorldId, LocalWorldId, ParsedPresentationId | `EntityId` + world-id newtypes + id parsing/hex |
-| `src/entity_id/derived_domains.rs` | src | m | 110 const · 1 crate-vis | — | Every domain string `EntityId::derive` is called with |
+| `src/entity_id/derived_domains.rs` | src | m | 111 const · 1 crate-vis | — | Every domain string `EntityId::derive` is called with |
 | `src/entity_id/serde_hex.rs` | src | s | 4 fn · 1 mod | — | Validated entity-id representation for opt-in domain records |
 | `src/error/artifact.rs` | src | m | 2 enum · 1 fn · 1 crate-vis | ArtifactError, LiveDeckRefusal | Artifact-domain errors: code and blob artifacts, anchors, edit proposals, skills, agent definitions… |
 | `src/error/claim.rs` | src | s | 1 enum · 1 crate-vis | ClaimError | Claim-domain errors: predicate and actor-authority refusals, claim lifecycle transitions, and the… |
@@ -38,7 +38,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/error/maintenance.rs` | src | s | 2 enum · 1 crate-vis | CompactionPacketError, MaintenanceError | Maintenance-domain errors: the compaction handoff refusal with its per-axis taxonomy, and the vault-cleanup… |
 | `src/error/mod.rs` | src | L | 2 enum · 7 fn · 1 type · 1 const · 15 re-export | Error, ErrorKind | — |
 | `src/error/off_record.rs` | src | s | 1 enum · 1 crate-vis | OffRecordError | Off-record-domain errors: the kill switch, off-record session lifecycle, the overlay and its leases, and the… |
-| `src/error/record.rs` | src | m | 1 struct · 3 enum · 4 fn · 17 const · 2 crate-vis | ErasedHoldTarget, OwnerKeyMoveStep, RecordError, RoomLiveSpeakersHold | Record-domain errors: body validation and identity-collision refusals for the stored record families —… |
+| `src/error/record.rs` | src | m | 1 struct · 3 enum · 2 fn · 5 const · 1 re-export · 2 crate-vis | ErasedHoldTarget, OwnerPresenceRefusal, RecordError, RoomLiveSpeakersHold | Record-domain errors: body validation and identity-collision refusals for the stored record families —… |
+| `src/error/record/owner_key_move.rs` | src | s | 1 enum · 3 fn · 14 const | OwnerKeyMoveStep | The reason codes, words and next steps of an owner-key refusal of a membership move… |
 | `src/error/registry.rs` | src | s | 1 enum · 1 crate-vis | RegistryError | Registry-domain errors: structural-kind registration, entity-type and edge-kind refusals raised by the… |
 | `src/error/relay.rs` | src | s | 1 enum · 1 crate-vis | RelayError | Relay-domain errors: relay attestation refusals, vault-receipt trust, and the hosted policy manifest and… |
 | `src/error/secret.rs` | src | m | 3 enum · 1 crate-vis | DevicePinRefusal, KitRecord, SecretError | Secret-domain errors: secret custody, binding and tier refusals, and the secret-lease doors with their… |

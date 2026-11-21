@@ -130,6 +130,10 @@ pub(crate) struct HolderExportBasis<'a> {
     /// The export's act, as its door authenticated it; `None` for a door
     /// that records none.
     pub(crate) act: Option<OwnerAct>,
+    /// The owner's own write, when the door's proof of him revalidated in
+    /// the audit write: each request carries the owner key's proof this
+    /// install holds.
+    pub(crate) owner_authored: Option<&'a crate::consent::OwnerAuthoredWrite>,
     /// The export's id, as its audit row names it.
     pub(crate) export: EntityId,
     /// BLAKE3 of the archive, where its door read it back.
@@ -198,7 +202,8 @@ impl Vault {
     /// export's audit write `txn`, each in a savepoint of its own, best
     /// effort: a fault is logged, leaves `txn` as it was and reads as
     /// unrecorded. Each carries the export's act exactly as its door made
-    /// it, its owner checked a live vault owner here first. Nothing here
+    /// it, its owner checked a live vault owner here first, and the owner
+    /// key's proof when the export is the owner's own write. Nothing here
     /// reaches the copy, which has left.
     pub(crate) fn record_holder_export_requests_in_txn(
         &self,
@@ -263,7 +268,7 @@ impl Vault {
                     export_act: basis.export_act,
                     recipient: permit,
                 });
-                match self.record_export_secret_in_savepoint(txn, act, work) {
+                match self.record_export_secret_in_savepoint(txn, act, basis.owner_authored, work) {
                     Ok(receipt) => HolderExportRequest::of_receipt(*need, &receipt),
                     Err(error) => {
                         tracing::warn!(
@@ -282,10 +287,12 @@ impl Vault {
         &self,
         txn: &mut heed::RwTxn<'_>,
         act: OwnerAct,
+        owner_authored: Option<&crate::consent::OwnerAuthoredWrite>,
         work: OwnerWorkBody,
     ) -> crate::Result<OwnerWorkReceipt> {
         let mut savepoint = self.store.env.nested_write_txn(txn)?;
-        let receipt = self.record_owner_work_with_act_in_txn(&mut savepoint, act, work)?;
+        let receipt =
+            self.record_owner_work_with_act_in_txn(&mut savepoint, act, owner_authored, work)?;
         savepoint.commit()?;
         Ok(receipt)
     }

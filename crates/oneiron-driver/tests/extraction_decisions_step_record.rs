@@ -296,7 +296,7 @@ fn bound_step() -> support::TestResult<BoundStepRun> {
         .get(DREAMER_VERDICT_ROLE)
         .ok_or("the fixture routes its verdict role")?;
     let (_, extraction_model, extraction_binding) = verdict_fixture.extraction_route();
-    let step_route: Arc<dyn LlmBackend> = Arc::clone(&step_backend);
+    let step_route: Arc<dyn LlmBackend> = step_backend.clone();
     let roles = pass.roles.clone().with(
         DREAMER_EXTRACTION_ROLE,
         RoleBackend {

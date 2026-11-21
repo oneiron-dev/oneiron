@@ -9,6 +9,11 @@ use crate::workspace_roster::project::extra_room_redaction;
 /// export door withholds; promotion authority asks only what the grant
 /// covers. `reach` says where the shipped rows' births may go.
 /// Live rows and their text sources honor current use limits; tombstones still propagate.
+/// `tombstones` says whether a copy to another vault carries the record
+/// deletes released to its grant's peer (a Connect delivery) or none (a
+/// selector answer, a guest document, an endpoint read); a copy to the
+/// owner's own machines judges its tombstones by the selection alone.
+#[expect(clippy::too_many_arguments)]
 pub(in crate::sync::selector) fn filter_window_doc(
     vault: &Vault,
     source: &LoroDoc,
@@ -17,6 +22,7 @@ pub(in crate::sync::selector) fn filter_window_doc(
     position: &Position,
     withhold: Withhold<'_>,
     reach: BirthReach<'_>,
+    tombstones: GuestTombstones,
 ) -> Result<LoroDoc> {
     let scope_position = position.as_scope();
     // A selector must not trigger Observer A with unselected NOTE sidecars.
@@ -86,6 +92,16 @@ pub(in crate::sync::selector) fn filter_window_doc(
             claims_withheld.insert(*id);
         }
     }
+    // A purged row's `InWorld` edges and sources went with its delete, so
+    // the capture bound to that delete says where its words sat
+    // (REVIEW-10024).
+    map_for_each_tombstone_value(&source_tombstones, |raw_key, value| {
+        if let Ok(id) = EntityId::from_hex(raw_key)
+            && super::super::tombstones::device_only_by_capture(vault, &rtxn, &flagged, &id, value)
+        {
+            claims_withheld.insert(id);
+        }
+    });
 
     let facets = facet_filter(scope_position);
     let facet_scope = facet_scope_by_source(
@@ -602,14 +618,20 @@ pub(in crate::sync::selector) fn filter_window_doc(
     });
 
     let out_tombstones = out.get_map("tombstones");
-    let open = facets.is_none() && band_filter(scope_position).is_none();
-    // A selector narrowed to some worlds takes the tombstone of a row it does
-    // not keep where its delete's captured position lies in them (blind
-    // review 2 of #9592): a hard delete took the row's carrier with it.
+    // A selector narrowed to some facets, worlds or bands takes the tombstone
+    // of a row it does not keep where its delete's captured position lies in
+    // them (blind review 2 of #9592; SELECTOR-FACET-BAND-EXPORT-DROPS-
+    // BODYLESS-TOMBSTONES; SELECTOR-FACET-EXPORT-DROPS-BODYLESS-TOMBSTONES):
+    // a hard delete took the row's carrier and its edges with it.
     let worlds =
         (!matches!(selector.world, SyncSelectorWorld::All)).then_some(&scope_position.worlds);
-    let export =
-        super::super::tombstones::TombstoneExport::new(&grant.authority_scope, open, worlds);
+    let export = super::super::tombstones::TombstoneExport::new(
+        &grant.authority_scope,
+        facets,
+        band_filter(scope_position),
+        worlds,
+        selector.world,
+    );
     let ttxn = vault.store.env.read_txn()?;
     // The window's bodies of each tombstoned row, under every hex casing of
     // its key: a case-shifted alias still names the row (ONE-1158), so the
@@ -625,14 +647,29 @@ pub(in crate::sync::selector) fn filter_window_doc(
             }
         });
     }
+    // A copy to another vault carries a record's delete only on a Connect
+    // delivery, and only of a row this vault released to the grant's peer
+    // (CROSS-VAULT-DELETE-NEVER-ADMITTED = A): that release, not this export's
+    // selection, decides it, so a delete reaches every copy the peer was sent.
+    // The peer's admission lands it only where its own delivery ledger proves
+    // the copy. Every other copy to another vault carries none.
+    let mut peer_release = (other_vault && tombstones == GuestTombstones::Released)
+        .then(|| super::peer_tombstone_release::PeerTombstoneRelease::new(&selector.grant_id));
     map_for_each_tombstone_value(&source_tombstones, |raw_key, value| {
+        if other_vault && peer_release.is_none() {
+            return;
+        }
         let Ok(id) = EntityId::from_hex(raw_key) else {
             return;
         };
         if claims_withheld.contains(&id) {
             return;
         }
-        if !kept.contains(&id) && !export.admits(vault, &ttxn, &id, value) {
+        let selected = match peer_release.as_mut() {
+            Some(release) => release.releases(vault, &ttxn, raw_key, &id, value),
+            None => kept.contains(&id) || export.admits(vault, &ttxn, &id, value),
+        };
+        if !selected {
             return;
         }
         // FIX SELECTOR-TOMBSTONE-LABEL (OPUS-LEAKS): a tombstone names the

@@ -5,6 +5,7 @@ use crate::error::ApiErrorDetails;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::rejection::QueryRejection;
 use oneiron::ErrorKind;
+use oneiron::error::{OWNER_PRESENCE_REQUIRED, RecordError};
 
 pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) -> ApiError {
     // FIX 2222: the owner refusal a read key or a host action carries (a
@@ -131,6 +132,19 @@ pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) ->
             },
             ["Make this choice on an owner device: a machine that holds the vault's owner key."],
         ),
+        ErrorKind::OwnerPresenceRequired => {
+            let oneiron::Error::Record(RecordError::OwnerPresenceRequired { here }) = &error else {
+                return ApiError::internal_server_error(message);
+            };
+            ApiError::new(
+                error.to_string(),
+                ApiErrorDetails::InvalidState {
+                    // The envelope has one state string, so it carries the reason and its name.
+                    state: Some(format!("{OWNER_PRESENCE_REQUIRED}:{}", here.as_str())),
+                },
+                [here.suggestion()],
+            )
+        }
         // FIX 2222: a host credential where no host acts as a person, under
         // the engine's own code (FIX 6032).
         ErrorKind::HostActionRequiresSupportGrant => {

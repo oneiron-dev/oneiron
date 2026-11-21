@@ -115,10 +115,11 @@ opened through no symbolic link:
 | Copilot in VS Code | `transcripts/<session id>.jsonl` | `User/workspaceStorage` of VS Code or VS Code Insiders, in `~/Library/Application Support` on macOS, else `$XDG_CONFIG_HOME` (`~/.config`) |
 
 The vault must read the log's source: a hosted vault that does not yet
-refuses the call, and a later hand-over sends the whole log again. A log
-longer than one call carries (64 MiB inflated, or the sign-in's carrier) is
-not sent; import it on the machine it ran on (`oneiron import codex <log>`,
-`oneiron import hook-transcript <log>`).
+refuses the call, and a later hand-over sends the whole log again. Over
+the owner's socket, a log longer than one call goes in parts, up to 64 MiB
+encoded, as a Claude Code log does. A log longer than that (64 MiB inflated,
+or the sign-in's carrier) is not sent; import it on the machine it ran on
+(`oneiron import codex <log>`, `oneiron import hook-transcript <log>`).
 
 ## Timeouts
 

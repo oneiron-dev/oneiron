@@ -282,7 +282,8 @@ pub(super) fn apply_put_arm(
                 transition: transition.as_ref(),
                 posture: config.privacy.posture,
                 // A raw Put reads the owner's proof only as the one approval
-                // its door bound it to (`ApplyOpsGateMode::owner_approval`).
+                // or owner's close its door bound it to
+                // (`ApplyOpsGateMode::owner_approval`).
                 owner_authored: gate_mode
                     .owner_approval
                     .as_ref()

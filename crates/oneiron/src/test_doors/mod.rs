@@ -39,6 +39,8 @@ pub mod blend_component_work;
 pub mod board_child_done;
 pub mod board_task_wakes;
 pub mod booking_anti_abuse_manifest;
+#[cfg(feature = "sync")]
+pub mod booking_home_move;
 pub mod booking_side_table_rows;
 pub mod bootstrap_skills;
 pub mod builtin_pack_seed;
@@ -128,10 +130,12 @@ pub mod extra_room_index;
 pub mod extraction_decisions;
 pub mod extraction_inputs;
 pub mod extraction_probe;
+pub mod extraction_project_bound;
 pub mod extraction_routing;
 pub mod extraction_single_valued;
 pub mod extraction_steps;
 pub mod extraction_verdict;
+pub mod extraction_wake;
 pub mod fanout_admission;
 pub mod feed_prune;
 pub mod feeds;
@@ -165,13 +169,17 @@ pub mod fingerprint_keep_store_digests;
 pub mod fingerprint_keep_sync_digests;
 pub mod fingerprint_keep_synced_keys;
 pub mod fingerprint_keep_typed_feeds;
+pub mod foldpast;
 pub mod free_time_cycle_writer;
 #[cfg(feature = "sync")]
 pub mod free_time_handoff;
 pub mod frontier_walk;
 #[cfg(feature = "sync")]
 pub mod full_copy_mark;
+pub mod gate_amendment_attribution;
 pub mod gate_receipt_rows;
+#[cfg(feature = "sync")]
+pub mod gate_receipt_unclear;
 pub mod gpu_job;
 pub mod grant_roles;
 pub mod graph_ask_centre;
@@ -182,6 +190,7 @@ pub mod held_program;
 pub mod hex_input_policy;
 pub mod hex_sign_digit;
 pub mod history_import_rows;
+pub mod holder_export_requests;
 pub mod holder_slip_revoke;
 #[cfg(feature = "sync")]
 pub mod home_handoff_retire;
@@ -217,6 +226,7 @@ pub mod live_task;
 pub mod live_window_import;
 #[cfg(feature = "sync")]
 pub mod live_window_note_scrub;
+pub mod loop_kept_position;
 pub mod machine_history;
 pub mod machine_names;
 pub mod mail_counterparty;
@@ -247,6 +257,7 @@ pub mod nightly_arc_summary;
 pub mod note_bm25f_repair;
 #[cfg(feature = "sync")]
 pub mod note_fork_upload;
+pub mod off_record_reply_body;
 pub mod off_record_shell;
 pub mod off_record_side_row;
 pub mod open_conflict_marker;

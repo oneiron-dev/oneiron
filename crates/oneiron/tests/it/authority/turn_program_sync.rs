@@ -25,6 +25,7 @@ use oneiron::authority::holder_proof_challenge;
 use oneiron::dreamer_runner::{DreamerHomeNodeCandidate, DreamerRunnerStore};
 use oneiron::federation::ScopeAxis;
 use oneiron::registry::ENTITY_TYPE_TURN;
+use oneiron::schedule::JobOutcome;
 use oneiron::store::housekeeping_schedule::HousekeepingBudget;
 use oneiron::sync::bridge::Materializer;
 use oneiron::sync::manager::WindowManager;
@@ -176,6 +177,20 @@ fn put_row(machine: &Machine, id: EntityId) {
             &body,
         )
         .unwrap();
+}
+
+/// Runs `machine`'s due jobs, as its host's tick does, and answers how many
+/// runs of the job an actor's timer programs arm ended done: with one timer
+/// armed and due, the release that records its wake.
+fn timer_runs(machine: &Machine) -> usize {
+    machine
+        .vault
+        .run_due(HousekeepingBudget::unbounded())
+        .unwrap()
+        .runs
+        .iter()
+        .filter(|run| run.job == "dreamer_runner.program_timer" && run.outcome == JobOutcome::Done)
+        .count()
 }
 
 #[test]
@@ -552,14 +567,45 @@ fn a_timer_arming_stays_on_the_machine_that_armed_it() {
     let doc_a = a.doc();
     let doc_b = b.doc();
     exchange(&doc_a, &doc_b);
+
+    // A due time is released on the machine that holds the arming, here A,
+    // whatever the elected home is, here B (FIX
+    // TURNPROGRAM-NON-TURN-ARMING-STAYS-ON-ITS-MACHINE, ruled B): A's due
+    // jobs record the one occurrence and A's drain decides it.
+    assert_eq!(timer_runs(&a), 1);
+    let (occurrence, _, _) = doors::admitted_row_bytes(&a.vault, actor, registration).unwrap();
+    assert!(doors::wake_owed_here(&a.vault, occurrence, registration).unwrap());
+    let decided = a
+        .vault
+        .wake_turn_programs(a.vault.now_recorded_at())
+        .unwrap();
+    assert_eq!(
+        (decided.admitted + decided.refused, decided.held),
+        (1, 0),
+        "{decided:?}"
+    );
+    assert!(!doors::wake_owed_here(&a.vault, occurrence, registration).unwrap());
+
+    // B, the home, holds no arming: it releases nothing, and no pass of
+    // either machine, before or after the window is exchanged again, gives
+    // it a wake or a decision of that occurrence. The program wakes once.
+    assert_eq!(timer_runs(&b), 0);
+    exchange(&doc_a, &doc_b);
     a.housekeeping();
     b.housekeeping();
+    assert_eq!(
+        doors::wake_decisions_here(&a.vault, occurrence, registration).unwrap(),
+        1
+    );
+    assert!(!doors::wake_owed_here(&b.vault, occurrence, registration).unwrap());
+    assert_eq!(
+        doors::wake_decisions_here(&b.vault, occurrence, registration).unwrap(),
+        0
+    );
+    assert!(!doors::decision_kept_here(&b.vault, occurrence, registration).unwrap());
     assert!(doors::program_armed_here(&a.vault, actor, registration).unwrap());
     assert!(!doors::program_armed_here(&b.vault, actor, registration).unwrap());
 
-    // A due time is released on the elected home alone, here B, and B holds
-    // no arming: this timer fires nowhere, as on main. Which machine should
-    // release it is an open design question, so no occurrence is asserted.
     doors::disarm_program(&a.vault, actor, registration).unwrap();
     exchange(&doc_a, &doc_b);
     // The disarm's recording clock can put it in a different month.

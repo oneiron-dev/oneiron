@@ -22,7 +22,9 @@ pub struct FederationDeliveryRecord {
     pub consent_epoch: u64,
     pub grant_ref: EntityId,
     pub source_vault: [u8; 32],
-    /// BLAKE3 of the full landed row, including its metadata header.
+    /// BLAKE3 of the full landed row, including its metadata header. After
+    /// the delivering lane's own soft delete of the row, of the shell that
+    /// delete left (`sync::ingest::ShellDelivery`).
     pub delivered_row_hash: [u8; 32],
     pub world: Option<EntityId>,
 }

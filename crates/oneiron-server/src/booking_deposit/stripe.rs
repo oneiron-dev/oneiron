@@ -650,8 +650,11 @@ impl<'v> StripeClient<'v> {
     }
 }
 
-/// The PaymentIntent states in which a refused capture stands done.
-const CAPTURE_DONE: &[&str] = &["succeeded"];
+/// The PaymentIntent states in which a refused capture stands done: captured,
+/// or cancelled, which captured nothing (a cancellation whose event the
+/// deposit's home never applied, as during a home move), so the deposit
+/// stands voided.
+const CAPTURE_DONE: &[&str] = &["succeeded", "canceled"];
 
 /// The PaymentIntent states in which a refused void stands settled: cancelled,
 /// or captured before the void, whose capture the deposit then owes back.

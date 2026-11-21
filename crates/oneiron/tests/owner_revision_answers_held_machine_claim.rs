@@ -10,6 +10,13 @@
 //! approve-with-edit records. On main the owner's Allow write redeemed the
 //! row against its own body and was refused `Gate(GateConsentStale)`.
 //!
+//! The amended approval also records its Δ, from the body the row showed to
+//! the owner's revision, as the inbox's does (FIX
+//! [OWNER-REVISION-AMEND-DELTA-UNCAPTURED]). An erase of T takes that Δ
+//! with the decision's content: the decision stays as its retention
+//! skeleton, with its receipt id and its `approved_amended` outcome, and no
+//! Δ of the erased bodies is left to attach to it.
+//!
 //! Only the owner's own write answers. A human the host key binds who is not
 //! the vault's owner, and an agent, still land nothing, and the machine's
 //! question stays open.
@@ -19,14 +26,16 @@
 // `bind_host_owner` and `bind_host_actor` exist only under `test-support`.
 #![cfg(feature = "test-support")]
 
+use std::sync::Arc;
+
 use ed25519_dalek::{Signer as _, SigningKey};
 use oneiron::authority::HostSlipIssuer;
 use oneiron::registry::{ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON};
 use oneiron::test_support::{bind_host_actor, bind_host_owner};
 use oneiron::write_envelope::MachineWriteSignature;
 use oneiron::{
-    ClaimApprovalStatus, ClaimCandidate, ClaimSource, ClaimSubject, EdgeActorClass, EntityId,
-    TimeRange, Vault, VaultConfig, WriteActor, WriteEnvelope, WriteProvenance,
+    ClaimApprovalStatus, ClaimCandidate, ClaimSource, ClaimSubject, DeleteReason, EdgeActorClass,
+    EntityId, TimeRange, Vault, VaultConfig, WriteActor, WriteEnvelope, WriteProvenance,
 };
 
 const SECRET: &[u8] = b"owner-revision-answers-held-machine-claim-test-owner";
@@ -50,8 +59,8 @@ fn person(vault: &Vault, now: u64) -> EntityId {
     id
 }
 
-/// A rooted vault whose enrolled MACHINE wrote T Proposed: the gate holds
-/// T for its owner.
+/// A rooted vault with this install's keystore, whose enrolled MACHINE wrote
+/// T Proposed: the gate holds T for its owner.
 struct Seeded {
     _dir: tempfile::TempDir,
     vault: Vault,
@@ -64,6 +73,13 @@ struct Seeded {
 fn seed() -> Seeded {
     let dir = tempfile::tempdir().expect("temporary vault directory");
     let vault = Vault::open(dir.path(), VaultConfig::device()).expect("fresh vault");
+    // The owner's hard delete signs its receipt with this install's key, so
+    // the keystore goes in as a host installs it after each open. Without it
+    // the erase test was refused at setup, red and green alike (proof9967).
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    vault
+        .prepare_install_signing()
+        .expect("FIXTURE: this install's signing keys");
     let now = vault.now_recorded_at();
     let issuer = HostSlipIssuer::from_secret(SECRET).expect("host issuer");
     vault.ensure_host_root_slip(&issuer).expect("host root");
@@ -233,6 +249,72 @@ fn an_owner_revision_of_a_held_machine_claim_lands_as_the_owners_amended_approva
     assert_eq!(
         amended[0].diff_handle, held,
         "the amended approval answers the row the machine's birth held"
+    );
+    let receipt_id = format!("gate:{}", amended[0].decision_id.to_hex());
+    let delta = oneiron::edit_distance::delta::amendment_delta(&seeded.vault, &receipt_id)
+        .expect("amendment delta read")
+        .expect("the amended approval records its Δ to the owner's revision");
+    assert_ne!(
+        delta.proposed_ref, delta.final_ref,
+        "the Δ runs from the revision the row showed to the owner's revision"
+    );
+    assert!(delta.d_norm > 0.0, "the owner rewrote the note: {delta:?}");
+}
+
+#[test]
+fn an_erase_of_an_owner_amended_claim_leaves_no_amendment_delta() {
+    let seeded = seed();
+    let owner = seeded
+        .vault
+        .ensure_embedded_owner_actor()
+        .expect("vault owner");
+    bind_host_owner(&seeded.vault, &seeded.issuer, owner).expect("FIXTURE: owner binding");
+    revise(
+        &seeded,
+        WriteActor::new(owner, EdgeActorClass::Human),
+        ClaimSource::UserStated,
+    )
+    .expect("FIXTURE: the owner's own revision of the held machine claim lands");
+    let amended = seeded
+        .vault
+        .gate_decisions(1_000)
+        .expect("ledger read")
+        .into_iter()
+        .find(|record| {
+            record.claim_id == Some(*seeded.target.as_bytes())
+                && record.outcome == "approved_amended"
+        })
+        .expect("FIXTURE: the owner's revision records its amended approval");
+    let receipt_id = format!("gate:{}", amended.decision_id.to_hex());
+    assert!(
+        oneiron::edit_distance::delta::amendment_delta(&seeded.vault, &receipt_id)
+            .expect("amendment delta read")
+            .is_some(),
+        "FIXTURE: the amended approval records its Δ before the erase"
+    );
+
+    seeded
+        .vault
+        .delete_entity_with_reason(&seeded.target, DeleteReason::UserHardDelete)
+        .expect("the owner's erase of T");
+
+    let skeleton = seeded
+        .vault
+        .gate_decisions(1_000)
+        .expect("ledger read after the erase")
+        .into_iter()
+        .find(|record| record.decision_id == amended.decision_id)
+        .expect("the erase keeps the amended approval as its retention skeleton");
+    assert!(
+        skeleton.redacted_at.is_some() && skeleton.diff_handle.is_empty(),
+        "the erase redacts the amended approval: {skeleton:?}"
+    );
+    assert_eq!(skeleton.outcome, "approved_amended");
+    let delta = oneiron::edit_distance::delta::amendment_delta(&seeded.vault, &receipt_id)
+        .expect("amendment delta read after the erase");
+    assert!(
+        delta.is_none(),
+        "the erase leaves no Δ of T's erased bodies on the skeleton's receipt: {delta:?}"
     );
 }
 
