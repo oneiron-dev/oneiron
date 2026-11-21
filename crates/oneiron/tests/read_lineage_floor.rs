@@ -14,6 +14,7 @@ use oneiron::memory::SafeDeleteReason;
 use oneiron::provenance::made_by::{
     MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByProcess,
 };
+use oneiron::store::GateDecisionId;
 use oneiron::test_doors::house_link::{put_claim_made_by, stamp_stated_birth};
 use oneiron::test_doors::read_lineage_floor::{
     floor_of, floor_waits, forget_floor_state, travels_restricted, walked_policies_of,
@@ -354,6 +355,51 @@ fn doctor_counts_the_facts_a_source_unknown_hides() {
             .facts_hidden_source_unknown,
         1,
         "doctor counts the one CLAIM its unknown source hides",
+    );
+}
+
+/// READ-LINEAGE L1-B (design pass 30, section 4.7): a sealed CLAIM a later
+/// CLAIM closed is history, so doctor no longer counts it as a fact hidden,
+/// though it still reads to no one. Before L1-B every stored floor naming an
+/// unknown source counted, so the count never fell.
+#[test]
+fn a_superseded_sealed_claim_leaves_the_doctor_count() {
+    let mailbox = mailbox();
+    let middle = claim_born_from(&mailbox, &[mailbox.row], "learnt from the mailbox");
+    mailbox
+        .vault
+        .memory(mailbox.owner, EdgeActorClass::Human)
+        .safe_delete(&middle.to_hex(), SafeDeleteReason::UserDelete)
+        .expect("the owner deletes the CLAIM middle");
+    let sealed = claim_born_with(&mailbox, &[middle], MadeByInputRole::Prompt, "the fact");
+    let restated = claim_born_from(&mailbox, &[mailbox.row], "the fact");
+    let hidden = |vault: &Vault| vault.doctor().expect("doctor").facts_hidden_source_unknown;
+    assert_eq!(
+        hidden(&mailbox.vault),
+        1,
+        "precondition: doctor counts the sealed CLAIM",
+    );
+    let owner = mailbox
+        .vault
+        .authenticate_owner(
+            mailbox.owner,
+            &mailbox.owner.to_hex(),
+            true,
+            GateDecisionId::now(),
+        )
+        .expect("FIXTURE: the owner's proof");
+    mailbox
+        .vault
+        .supersede_claim_as_owner(&owner, &restated, &sealed, mailbox.vault.now_recorded_at())
+        .expect("the owner closes the sealed CLAIM by its restatement");
+    assert!(
+        !reads(&mailbox.vault, sealed, &[mailbox.reader]).expect("the reader's read"),
+        "a closed sealed CLAIM still reads to no one",
+    );
+    assert_eq!(
+        hidden(&mailbox.vault),
+        0,
+        "doctor counts a sealed CLAIM a later CLAIM closed as a fact hidden",
     );
 }
 
