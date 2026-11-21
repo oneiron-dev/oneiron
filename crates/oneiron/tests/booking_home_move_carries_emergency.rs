@@ -46,7 +46,15 @@
 //!   it delivered, so it is never sent again (review round 2 of #10220);
 //! - once that apology's first send is delivered after all (its remote task
 //!   completes), neither the former home's resume nor the next home's sends
-//!   it again (review round 1 of #10220).
+//!   it again (review round 1 of #10220);
+//! - the owner's copy of the apology, the blob sync carries to every machine,
+//!   names each pick link by its token's digest, labelled as sent to the
+//!   booker; the raw links are filled in from the home's checkpoint only when
+//!   the apology's own send goes, and stored nowhere (FIX
+//!   [BK-EMERGENCY-APOLOGY-BLOB-HOLDS-RAW-PICK-TOKENS]; lead ruling
+//!   BK-EMERGENCY-APOLOGY-BLOB-TOKENS-SEALED = B, 21 Nov 15:1x). A blob an
+//!   earlier build wrote with the raw links is released at the home's next
+//!   open and at the ack, so no machine keeps it.
 //!
 //! The emergency fixture is `tests/booking_feed_move_held.rs`'s: an
 //! owner-logged RequestUpdate instruction over a booked slot, planned and
@@ -95,6 +103,10 @@
 //! The door `emergency_effect_ledger_rows` names a node's ledger rows of an
 //! effect under each of its ledger generations.
 //!
+//! The two blob cases are red on main 2c56ee802949: the apology blob names
+//! each raw token on both machines and on the old home after the ack, and no
+//! blob labels a link as sent to the booker.
+//!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test booking_home_move_carries_emergency`.
 #![cfg(all(oneiron_test_support, feature = "sync"))]
 
@@ -119,7 +131,7 @@ use oneiron::outbound::{
     OutboundExecutionOutcome, OutboundExecutionRequest, OutboundExecutionSink,
 };
 use oneiron::outbound_intent_ledger::{DeliveryReadBack, RemoteTaskHandle, RemoteTaskObservation};
-use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON};
+use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_PERSON};
 use oneiron::test_doors::booking_home_move::{
     acknowledge_booking_home_move, booking_rows_hold, deliver_emergency_without_answer,
     drop_node_local_booking_rows, drop_node_local_outbound_rows, emergency_effect_ledger_rows,
@@ -770,6 +782,46 @@ fn delivered(emergency: &Emergency) -> &EmergencyItem {
     emergency.item.as_ref().expect("delivered on the seed")
 }
 
+/// Whether any blob body `vault` holds has `needle` among its bytes: each version of every blob
+/// artifact in its chain, and each ASSET row, the row that carries a version's body to every
+/// machine of the owner (`sync::asset_body`).
+fn blob_bodies_hold(vault: &Vault, needle: &[u8]) -> bool {
+    let holds = |bytes: &[u8]| bytes.windows(needle.len()).any(|window| window == needle);
+    let in_versions = vault
+        .entities_by_type(ENTITY_TYPE_BLOB_ARTIFACT)
+        .expect("list the blob artifacts")
+        .into_iter()
+        .any(|artifact| {
+            vault
+                .blob_artifact_versions(&artifact)
+                .expect("list the artifact's versions")
+                .into_iter()
+                .any(|version| {
+                    vault
+                        .read_blob_artifact_version(&artifact, version.version)
+                        .ok()
+                        .flatten()
+                        .is_some_and(|bytes| holds(&bytes))
+                })
+        });
+    in_versions
+        || vault
+            .entities_by_type(ENTITY_TYPE_ASSET)
+            .expect("list the ASSET rows")
+            .into_iter()
+            .any(|asset| {
+                vault
+                    .get(&asset)
+                    .expect("read the ASSET row")
+                    .is_some_and(|bytes| holds(&bytes))
+            })
+}
+
+/// The label the owner's copy of the apology gives each pick link sent to `machine`'s booker.
+fn link_sent_label(machine: &Machine) -> String {
+    format!("link sent to {}", machine.booker.to_hex())
+}
+
 #[test]
 fn the_counterpartys_pick_on_the_new_home_moves_the_booking_the_old_home_planned() {
     let (old_home, new_home, emergency) = delivered_emergency();
@@ -868,6 +920,45 @@ fn the_old_home_holds_no_raw_action_token_once_the_new_home_acknowledged_the_mov
     new_home
         .pick(delivered(&emergency))
         .expect("the new home's copy still resolves the pick");
+}
+
+#[test]
+fn no_blob_of_the_owners_run_holds_a_raw_pick_link_on_either_machine() {
+    let (old_home, new_home, emergency) = delivered_emergency();
+    let item = delivered(&emergency);
+    for (machine, which) in [(&old_home, "the home"), (&new_home, "a second machine")] {
+        for token in &item.actions {
+            assert!(
+                !blob_bodies_hold(&machine.vault, token.0.as_bytes()),
+                "{which}'s blob store holds no raw pick link (main: the apology blob names \
+                 each raw token)"
+            );
+        }
+        assert!(
+            blob_bodies_hold(&machine.vault, link_sent_label(machine).as_bytes()),
+            "{which} keeps the owner's readable copy of the apology, each link labelled as \
+             sent to the booker (main: no such copy)"
+        );
+    }
+}
+
+#[test]
+fn the_old_home_holds_no_raw_pick_link_in_any_blob_once_the_new_home_acknowledged_the_move() {
+    let (old_home, new_home, emergency) = delivered_emergency();
+    let token = delivered(&emergency).actions[0].0.clone();
+    assert!(
+        move_booking_home(&old_home.vault, &new_home.vault, &[]).expect("move the booking home"),
+        "every section applies"
+    );
+    acknowledge_booking_home_move(&old_home.vault).expect("the old home's writer on the ack");
+    assert!(
+        !blob_bodies_hold(&old_home.vault, token.as_bytes()),
+        "once the new home acknowledged the move the old home's blob store holds no raw pick \
+         link (main: its apology blob keeps every raw token)"
+    );
+    new_home
+        .pick(delivered(&emergency))
+        .expect("the new home's checkpoint still resolves the pick");
 }
 
 #[test]
