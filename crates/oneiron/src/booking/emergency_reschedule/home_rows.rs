@@ -35,11 +35,14 @@
 //! home drops its copy once the new home acknowledged the move
 //! ([`HomeTable::scrub_after_ack`]).
 //!
-//! An item whose delivery is still owed travels owed (ASK BK-EMERGENCY-PENDING-ITEM-MOVE): the
-//! old home sends no emergency effect once its election names another node home (outbound's
-//! gate and its last transport door verify the effect through `verify_owner_home_in`), so the
-//! new home is the one node that sends it, under the same idempotency key. An effect the old
-//! home's own outbound ledger resolves as delivered travels delivered.
+//! An item whose delivery is still owed travels owed (Engine ANSWER
+//! BK-EMERGENCY-PENDING-ITEM-MOVE = A, 21 Nov 08:52): the old home sends no emergency effect
+//! once its election names another node home (outbound's gate and its last transport door
+//! verify the effect through `verify_owner_home_in`), so the new home is the one node that sends
+//! it, under the same idempotency key. An effect the old home's own outbound ledger resolves as
+//! delivered travels delivered. The freeze waits only for a send mid-call on the old home,
+//! bounded by the transport's call timeout, so only a send that ended uncertain there can reach
+//! the booker twice: each item names those sends, and the adopting writer reports their count.
 
 use std::collections::{BTreeMap, BTreeSet};
 
