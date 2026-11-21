@@ -282,7 +282,11 @@ pub(in crate::authority) fn apply_owner_answer(
 /// (RULING FOREIGN-ANCHOR-ADMIT-SIDE-P1 = B; Astra T1 and T5 on #8673). Read
 /// off the raw chain, so judging one machine never folds another's answers. A
 /// role change between linked roles takes nothing away: only a removal or a
-/// new key does.
+/// new key does. Removals that cross leave the head conflicted in what each
+/// names beside the key, and the machine removed whichever wins, so that
+/// conflict alone takes nothing away: the takers decide, as they do for one
+/// removal ([`removals_cross_only`]; FIX
+/// MACHINE-CROSSING-REMOVALS-UNMAKE-CARRIED-OWNER-ACTS).
 pub(in crate::authority) fn act_stands(
     state: &FoldState,
     proof: &ActProof,
@@ -315,7 +319,25 @@ pub(in crate::authority) fn act_stands(
     let taken = takers.peek().is_some();
     let every_taker_saw =
         takers.all(|(_, revision)| revision.profile().seen_world_edits.contains(act));
-    every_taker_saw && (names_key || (taken && !chain.head.conflicted))
+    every_taker_saw
+        && (names_key || (taken && (!chain.head.conflicted || removals_cross_only(chain))))
+}
+
+/// Whether `chain`'s head is conflicted only by removals that cross: the
+/// head is removed, every revision the chain holds at the head's number
+/// removes the machine (so the merge's tie is between removals), and the
+/// chain holds neither of the conflicts its merge adds whatever the numbers
+/// say: a say-so another contests, origins that disagree. A tie with a
+/// revision that keeps the machine keeps the head conflicted.
+fn removals_cross_only(chain: &MachineChain) -> bool {
+    chain.head.removed
+        && chain
+            .revisions
+            .values()
+            .filter(|revision| revision.profile().revision == chain.head.profile.revision)
+            .all(|revision| revision.profile().role == MachineRole::Removed)
+        && !say_so_contested(&chain.head, &chain.revisions)
+        && !crate::authority::restored_join::origins_disagree(&chain.revisions)
 }
 
 /// The heads of `T(X)` that count for the owner's say-so: each head another
