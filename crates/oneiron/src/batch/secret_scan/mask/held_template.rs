@@ -75,6 +75,15 @@ pub(crate) fn held_row_meets(
     .meets(held, offered, None)
 }
 
+/// Whether `text` holds a handle a held row's compare reads as a slot
+/// ([`held_row_meets`]): a bracketed custody or room handle, or the whole
+/// text when it is a bare one (`sc12`). Such text meets its record's values
+/// once custody knows the record, whether a mask on write placed the handle
+/// or a writer typed it.
+pub(crate) fn holds_handle_slot(text: &str) -> bool {
+    !handle_slots(text).is_empty()
+}
+
 /// Whether `held`, a live row the side-row wall stored, holds a handle that
 /// names a record custody knows (`known`): a row that holds none meets an
 /// offer only as written ([`held_row_meets`]).
