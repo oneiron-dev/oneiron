@@ -18,20 +18,31 @@
 //! FOLD B): the state is resolved afresh, installed as the next epoch, and
 //! its prefix staged. The backend's successful answer is the delivery
 //! (Engine call DELIVERED C). A brief that does not prepare keeps the run's
-//! request as it was: the prefix last handed out goes again, and nothing is
-//! staged.
+//! request as it was: the prefix last handed out goes again while its rows
+//! stand, and nothing is staged.
+//!
+//! A prefix goes again only while every row it shows stands
+//! ([BRIEF-PREFIX-STALE-PAST-REVOKE]): before the executor sends a held
+//! prefix again, and before a birth carries the prefix delivered before a
+//! wait, the port judges its rows under the call's credential read, the
+//! reader its PEOPLE were read under. Once one was deleted, erased or
+//! withdrawn, or a person its roster holds no longer reads, the
+//! installation's prefix is withdrawn and its boundary staged afresh from
+//! what the run holds now; when that does not prepare, the request carries
+//! no brief.
 //!
 //! The executor calls the port on the run's worker thread. Each call runs
 //! on one of the server runtime's blocking threads, which blocks on that
 //! runtime, and the worker waits for it. No standard mutex is held across
 //! that wait.
 
+use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use oneiron::EntityId;
 use oneiron::engine_executor::{
-    BriefBoundary, BriefCandidateToken, BriefPrefix, FoldBoundary, SelfBriefPort,
+    BriefBoundary, BriefCandidateToken, BriefPrefix, BriefRecheck, FoldBoundary, SelfBriefPort,
 };
 
 use super::{McpCallContext, McpGatewayError};
@@ -58,11 +69,24 @@ pub(crate) struct CodeModeSelfBrief {
     /// token acknowledges; `None` while the prefix the run carries needs no
     /// acknowledgment or no prefix was prepared.
     staged: Mutex<Option<StagedCandidate>>,
-    /// The prefix last handed out, sent again when a later boundary's brief
-    /// does not prepare.
-    last: Mutex<Option<(String, Vec<EntityId>)>>,
+    /// The prefix last handed out, sent again while its rows stand when a
+    /// later boundary's brief does not prepare.
+    last: Mutex<Option<HandedPrefix>>,
+    /// Rows a prefix staged afresh still showed although they no longer
+    /// stood before it was rendered: the brief's own preparation keeps them,
+    /// so a recheck judges them no more.
+    settled: Mutex<BTreeSet<EntityId>>,
     /// The token the next prepared prefix is named by.
     next_token: AtomicU64,
+}
+
+/// The prefix the port handed out last: its text, the rows it was derived
+/// from and the persons its roster holds, which a recheck judges.
+#[derive(Clone)]
+struct HandedPrefix {
+    text: String,
+    sources: Vec<EntityId>,
+    resident: BTreeSet<EntityId>,
 }
 
 /// A staged candidate and the token its prefix went to the executor with.
@@ -71,11 +95,13 @@ struct StagedCandidate {
     candidate: BriefCandidate,
 }
 
-/// One prepared prefix: its text and source rows, and the candidate a
-/// delivery acknowledges, `None` for a prefix already delivered.
+/// One prepared prefix: its text and source rows, the persons its roster
+/// holds, and the candidate a delivery acknowledges, `None` for a prefix
+/// already delivered.
 struct PreparedPrefix {
     text: String,
     sources: Vec<EntityId>,
+    resident: BTreeSet<EntityId>,
     candidate: Option<BriefCandidate>,
 }
 
@@ -92,8 +118,134 @@ impl CodeModeSelfBrief {
             owner: Mutex::new(None),
             staged: Mutex::new(None),
             last: Mutex::new(None),
+            settled: Mutex::new(BTreeSet::new()),
             next_token: AtomicU64::default(),
         }
+    }
+
+    /// [`prepare_prefix`] for `owner`'s installation, on the server's
+    /// runtime.
+    fn prepare_on_server(
+        &self,
+        owner: BriefOwner,
+        restate: bool,
+        withdraw: bool,
+    ) -> oneiron::Result<Option<PreparedPrefix>> {
+        let (server, actor, key, run_id) = (
+            Arc::clone(&self.server),
+            self.actor.clone(),
+            self.key.clone(),
+            self.run_id,
+        );
+        on_server(&self.runtime, move |handle| {
+            handle.block_on(prepare_prefix(
+                &server, &actor, &key, run_id, owner, restate, withdraw,
+            ))
+        })
+        .and_then(|prepared| prepared)
+    }
+
+    /// The rows of a prefix, `sources` and the persons its roster holds,
+    /// `resident`, that no longer stand for the call's credential read,
+    /// past the settled ones.
+    fn fallen_rows(
+        &self,
+        sources: &[EntityId],
+        resident: &BTreeSet<EntityId>,
+    ) -> oneiron::Result<BTreeSet<EntityId>> {
+        let read = super::mcp_scoped_read(&self.server.vault, &self.actor).map_err(unresolved)?;
+        let mut fallen = crate::api::fallen_brief_rows(&self.server, &read, sources, resident)
+            .map_err(|error| unresolved(super::mcp_facade_error(error)))?;
+        let settled = self.settled.lock().unwrap_or_else(PoisonError::into_inner);
+        fallen.retain(|row| !settled.contains(row));
+        Ok(fallen)
+    }
+
+    /// `prefix`, the delivered prefix a birth carries again, while every row
+    /// it shows stands; else the brief staged afresh in its place.
+    fn standing(
+        &self,
+        owner: BriefOwner,
+        prefix: PreparedPrefix,
+    ) -> oneiron::Result<Option<PreparedPrefix>> {
+        let fallen = self.fallen_rows(&prefix.sources, &prefix.resident)?;
+        if fallen.is_empty() {
+            return Ok(Some(prefix));
+        }
+        self.restage(owner, &fallen)
+    }
+
+    /// `owner`'s prefix withdrawn, `fallen` naming the rows that no longer
+    /// stood, and its boundary staged afresh from what the run holds now. A
+    /// row `fallen` names that the fresh prefix still shows is its own
+    /// preparation's, and is settled.
+    fn restage(
+        &self,
+        owner: BriefOwner,
+        fallen: &BTreeSet<EntityId>,
+    ) -> oneiron::Result<Option<PreparedPrefix>> {
+        let prepared = self.prepare_on_server(owner, true, true)?;
+        if let Some(prefix) = &prepared {
+            self.settled
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .extend(prefix.sources.iter().filter(|row| fallen.contains(row)));
+        }
+        Ok(prepared)
+    }
+
+    /// Keeps `prefix` as the prefix last handed out, its candidate staged
+    /// under a new token, and answers it; with none, nothing is kept.
+    fn hand_out(&self, prefix: Option<PreparedPrefix>) -> Option<BriefPrefix> {
+        let mut staged = self.staged.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut last = self.last.lock().unwrap_or_else(PoisonError::into_inner);
+        let Some(PreparedPrefix {
+            text,
+            sources,
+            resident,
+            candidate,
+        }) = prefix
+        else {
+            *staged = None;
+            *last = None;
+            return None;
+        };
+        let token = BriefCandidateToken(self.next_token.fetch_add(1, Ordering::Relaxed));
+        *staged = candidate.map(|candidate| StagedCandidate { token, candidate });
+        *last = Some(HandedPrefix {
+            text: text.clone(),
+            sources: sources.clone(),
+            resident,
+        });
+        Some(BriefPrefix {
+            text,
+            sources,
+            token,
+        })
+    }
+
+    /// The prefix last handed out, again under a new token with nothing
+    /// staged, while every row it shows stands; else none, and none is kept.
+    fn hand_out_again(&self) -> Option<BriefPrefix> {
+        *self.staged.lock().unwrap_or_else(PoisonError::into_inner) = None;
+        let last = self
+            .last
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        let kept = last.filter(|handed| {
+            self.fallen_rows(&handed.sources, &handed.resident)
+                .is_ok_and(|fallen| fallen.is_empty())
+        });
+        let Some(HandedPrefix { text, sources, .. }) = kept else {
+            *self.last.lock().unwrap_or_else(PoisonError::into_inner) = None;
+            return None;
+        };
+        Some(BriefPrefix {
+            text,
+            sources,
+            token: BriefCandidateToken(self.next_token.fetch_add(1, Ordering::Relaxed)),
+        })
     }
 }
 
@@ -151,50 +303,25 @@ impl crate::mcp::McpCodeRunSelfBrief for CodeModeSelfBrief {
 
 impl SelfBriefPort for CodeModeSelfBrief {
     /// A birth stages turn one from the state the entry installed, or
-    /// carries the delivered prefix of the installed epoch again. A fold
-    /// batch resolves the state afresh and installs it as the next epoch
-    /// first. `None` when the installation no longer holds the key.
+    /// carries the delivered prefix of the installed epoch again while its
+    /// rows stand. A fold batch resolves the state afresh and installs it as
+    /// the next epoch first. `None` when the installation no longer holds
+    /// the key.
     fn prepare(&self, boundary: BriefBoundary) -> oneiron::Result<Option<BriefPrefix>> {
         let Some(owner) = *self.owner.lock().unwrap_or_else(PoisonError::into_inner) else {
             return Ok(None);
         };
         let fold = matches!(boundary, BriefBoundary::Fold(_));
-        let (server, actor, key, run_id) = (
-            Arc::clone(&self.server),
-            self.actor.clone(),
-            self.key.clone(),
-            self.run_id,
-        );
-        let prepared = on_server(&self.runtime, move |handle| {
-            handle.block_on(prepare_prefix(&server, &actor, &key, run_id, owner, fold))
-        })
-        .and_then(|prepared| prepared);
-        let mut staged = self.staged.lock().unwrap_or_else(PoisonError::into_inner);
-        let mut last = self.last.lock().unwrap_or_else(PoisonError::into_inner);
-        let token = BriefCandidateToken(self.next_token.fetch_add(1, Ordering::Relaxed));
+        let prepared = match self.prepare_on_server(owner, fold, false) {
+            Ok(Some(prefix)) if prefix.candidate.is_none() => self.standing(owner, prefix),
+            prepared => prepared,
+        };
         match prepared {
-            Ok(Some(PreparedPrefix {
-                text,
-                sources,
-                candidate,
-            })) => {
-                *staged = candidate.map(|candidate| StagedCandidate { token, candidate });
-                *last = Some((text.clone(), sources.clone()));
-                Ok(Some(BriefPrefix {
-                    text,
-                    sources,
-                    token,
-                }))
-            }
-            Ok(None) => {
-                *staged = None;
-                *last = None;
-                Ok(None)
-            }
+            Ok(prefix) => Ok(self.hand_out(prefix)),
             // A brief that does not prepare never fails the run's request,
             // which ran before it carried a brief: the prefix last handed out
-            // goes again unchanged (none before the first), and nothing is
-            // staged to acknowledge.
+            // goes again unchanged while its rows stand (none before the
+            // first), and nothing is staged to acknowledge.
             Err(error) => {
                 tracing::warn!(
                     kind = ?error.kind(),
@@ -202,14 +329,45 @@ impl SelfBriefPort for CodeModeSelfBrief {
                     run = %self.run_id.to_hex(),
                     "a code-mode run's self brief did not prepare; its request keeps the last prefix"
                 );
-                *staged = None;
-                Ok(last.clone().map(|(text, sources)| BriefPrefix {
-                    text,
-                    sources,
-                    token,
-                }))
+                Ok(self.hand_out_again())
             }
         }
+    }
+
+    /// The held prefix goes again while every row it shows stands for the
+    /// call's credential read. Else the installation's prefix is withdrawn
+    /// and its boundary staged afresh from what the run holds now, and the
+    /// request carries that, or none when it does not prepare or the rows
+    /// could not be judged.
+    fn recheck(&self, held: &BriefPrefix) -> oneiron::Result<BriefRecheck> {
+        let Some(owner) = *self.owner.lock().unwrap_or_else(PoisonError::into_inner) else {
+            return Ok(BriefRecheck::Replaced(self.hand_out(None)));
+        };
+        let handed = self
+            .last
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+            .filter(|handed| handed.text == held.text && handed.sources == held.sources);
+        let fallen = match &handed {
+            Some(handed) => match self.fallen_rows(&handed.sources, &handed.resident) {
+                Ok(fallen) if fallen.is_empty() => return Ok(BriefRecheck::Holds),
+                fallen => fallen,
+            },
+            // Not the prefix this port handed out: nothing here vouches for
+            // its rows.
+            None => Ok(held.sources.iter().copied().collect()),
+        };
+        let restaged = fallen.and_then(|fallen| self.restage(owner, &fallen));
+        let restaged = restaged.unwrap_or_else(|error| {
+            tracing::warn!(
+                kind = ?error.kind(),
+                run = %self.run_id.to_hex(),
+                "a code-mode run's self brief no longer stands; its request carries none"
+            );
+            None
+        });
+        Ok(BriefRecheck::Replaced(self.hand_out(restaged)))
     }
 
     /// Acknowledges the staged candidate `token` names. A prefix with no
@@ -344,14 +502,15 @@ async fn prepare_prefix(
     key: &BriefKey,
     run_id: EntityId,
     owner: BriefOwner,
-    fold: bool,
+    restate: bool,
+    withdraw: bool,
 ) -> oneiron::Result<Option<PreparedPrefix>> {
     let ConnectionBriefReads { reads, people } = crate::api::connection_brief_reads(server, actor)
         .await
         .map_err(unresolved)?;
     let people_budget_tok =
         super::board_setup::mcp_brief_people_budget(server, actor.actor_ref, false)?;
-    let state = if fold {
+    let state = if restate {
         let line = super::code_mode_line(server, run_id);
         Some(
             crate::api::connection_brief_state(server, actor, &reads, Some(run_id), line.as_ref())
@@ -360,8 +519,9 @@ async fn prepare_prefix(
     } else {
         None
     };
-    // The fold's epoch moved as the batch landed (`folded`); a fold here
-    // only restates what the run holds now at that epoch.
+    // The fold's epoch moved as the batch landed (`folded`); a fold here,
+    // like a prefix staged afresh, only restates what the run holds now at
+    // that epoch.
     let mut briefs = server.self_brief_sessions.lock().await;
     let held = match state {
         Some(state) => briefs.holds(key, owner) && briefs.restate(key, state)?,
@@ -370,17 +530,24 @@ async fn prepare_prefix(
     if !held {
         return Ok(None);
     }
+    // A row the prefix shows no longer stands: its boundary is due again.
+    if withdraw {
+        briefs.withdraw(key, owner);
+    }
+    let acknowledged = briefs.acknowledged_residence(key);
     let preparation =
         briefs.prepare(key, &server.vault, &reads, Some(&people), people_budget_tok)?;
     Ok(preparation.map(|preparation| match preparation {
         BriefPreparation::Staged { candidate, .. } => PreparedPrefix {
             text: candidate.prefix().to_owned(),
             sources: candidate.sources().to_vec(),
+            resident: candidate.resident_people().clone(),
             candidate: Some(candidate),
         },
         BriefPreparation::Emitted { prefix, sources } => PreparedPrefix {
             text: prefix.to_owned(),
             sources: sources.to_vec(),
+            resident: acknowledged,
             candidate: None,
         },
     }))

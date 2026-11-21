@@ -1,12 +1,20 @@
-//! Shared BM25F scoring. Scoped reads restrict admitted ids, not corpus statistics.
+//! Shared BM25F scoring. Scoped reads restrict admitted ids, not corpus
+//! statistics; a clamped read's hidden rows count in no term's document
+//! frequency.
 use super::*;
 
+/// Scores every posting of `query_terms` that `accept` admits. Under a
+/// clamp (`hidden_row`, see [`Bm25SearchOptions::hidden_row`]) a term's
+/// document frequency counts only the postings of rows the audience could
+/// read; the document count and the fields' average lengths stay the
+/// vault's.
 pub(super) fn score_query_terms(
     store: &impl ManifestDbs,
     rtxn: &RoTxn<'_>,
     config: &Bm25Config,
     query_terms: &[QueryTerm],
     recency: Option<Bm25RecencyConfig>,
+    mut hidden_row: Option<&mut (dyn FnMut(&EntityId) -> Result<bool> + '_)>,
     mut accept: impl FnMut(&EntityId) -> Result<bool>,
 ) -> Result<Vec<(EntityId, f64)>> {
     let diagnostics = &store.diagnostics().bm25;
@@ -34,6 +42,10 @@ pub(super) fn score_query_terms(
     // A vault with no limit asks no posting.
     let limited = crate::store::legal_hold::any_record_use_limit_in_txn(store, rtxn)?;
     let mut use_limited: HashMap<EntityId, bool> = HashMap::new();
+    // Under a clamp, or a world that keeps rows from the reader, whether
+    // each posting scores for a row the reader may not read, asked once per
+    // posting across the query's terms.
+    let mut hidden_postings: HashMap<EntityId, bool> = HashMap::new();
 
     for query_term in query_terms {
         let Some(dups) = store
@@ -65,15 +77,36 @@ pub(super) fn score_query_terms(
         if entries.is_empty() {
             continue;
         }
-        let df = entries.len() as f64;
-        if df > n && !union {
+        let counted = match hidden_row.as_deref_mut() {
+            None => entries.len(),
+            Some(hidden_row) => {
+                let mut counted = 0_usize;
+                for entry in &entries {
+                    let hidden = match hidden_postings.entry(entry.id) {
+                        Entry::Occupied(known) => *known.get(),
+                        Entry::Vacant(unknown) => *unknown.insert(posting_scores_for_hidden_row(
+                            store, rtxn, &entry.id, hidden_row,
+                        )?),
+                    };
+                    if !hidden {
+                        counted += 1;
+                    }
+                }
+                counted
+            }
+        };
+        // The list's own length checks the index and floors a union's count,
+        // clamp or none; only the IDF takes the audience's count.
+        let postings = entries.len() as f64;
+        if postings > n && !union {
             return Err(corrupted_with_diagnostic(
                 diagnostics,
                 "posting list length exceeds total_docs",
                 Bm25DiagnosticKind::MalformedPostingAlignment,
             ));
         }
-        let n = n.max(df);
+        let n = n.max(postings);
+        let df = counted as f64;
         let idf = ((n - df + 0.5) / (df + 0.5) + 1.0).ln();
         'entries: for entry in entries {
             let id = entry.id;

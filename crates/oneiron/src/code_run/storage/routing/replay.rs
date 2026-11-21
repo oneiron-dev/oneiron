@@ -7,7 +7,9 @@
 //! owned path. An overlay row stays the room's own: it takes the fold-answer
 //! fence through the room's composed view before its put (FIX 18924), on
 //! the owned put as on the append, and lands erased in that writer when the
-//! actor of its run is gone in the vault (FIX 7366).
+//! actor of its run is gone in the vault (FIX 7366). A record bound for base
+//! that names a room handle is refused (REVIEW-10003 round 2): see
+//! `refuse_room_bound_record`.
 
 use std::borrow::Cow;
 
@@ -20,6 +22,7 @@ use super::super::replay_rows::{self, REPLAY_RECORDS};
 use super::super::response_erase::fence_replay_in_txn;
 use super::super::response_owners::stamp_response_owner_in_txn;
 use super::*;
+use crate::error::OffRecordError;
 use crate::side_table::RoutedDbs;
 
 impl SessionBinding<'_> {
@@ -155,6 +158,7 @@ impl SessionBinding<'_> {
                         RoutedDbs::Base(vault) => {
                             stamp_response_owner_in_txn(vault, wtxn, record.run_id, run, actor)?;
                             let record = fence_replay_in_txn(vault, wtxn, Cow::Borrowed(record))?;
+                            refuse_room_bound_record(&record)?;
                             replay_rows::put_fenced(vault, wtxn, &record)
                         }
                         RoutedDbs::Session(_) => {
@@ -212,12 +216,36 @@ fn put_base_replay_in_txn(
     };
     prepare(txn, read, write)?;
     let record = fence_replay_in_txn(vault, txn, Cow::Borrowed(record))?;
+    refuse_room_bound_record(&record)?;
     replay_rows::put_fenced(vault, txn, &record)?;
     if let Some(model) = healed_model {
         let key = model.as_str().to_owned();
         let base = MODEL_HEAL_COUNTS.get(&vault.store, txn, &key)?;
         let (next, _) = next_additive_heal_count(base, None, RouteTarget::Base)?;
         MODEL_HEAL_COUNTS.put(&vault.store, txn, &key, &next)?;
+    }
+    Ok(())
+}
+
+/// Refuses `record`, about to land in base on an on-record stretch, when its
+/// bytes hold text shaped like a room handle (REVIEW-10003 round 2; the
+/// check never asks the room for a value, REVIEW-10041 round 2). A run the
+/// room began holds the room's handles, and base holds no custody of the
+/// values they name: the record would land unreplayable once the room's
+/// close wipes them, and a later scrub would keep only the handle's
+/// stand-in. Only a save of the room moves its secrets into base custody, so
+/// the writer commits nothing, consumes nothing, and a wait stays; the run
+/// ends with the room, and its end message says what the record holds and
+/// that a save of the room keeps only the secrets its saved talk names
+/// (ROOM-CUSTODY-ON-RECORD-CARRY = A, the Engine 21 Nov 06:19; REVIEW-10041).
+fn refuse_room_bound_record(record: &CodeRunReplayRecord) -> Result<()> {
+    let encoded = zeroize::Zeroizing::new(REPLAY_RECORDS.encode_value(record)?);
+    if crate::session_overlay::holds_room_secret_handle(&encoded) {
+        return Err(crate::Error::OffRecord(
+            OffRecordError::OffRecordRoomSecretsUnsaved {
+                run_ref: record.run_id.to_hex(),
+            },
+        ));
     }
     Ok(())
 }

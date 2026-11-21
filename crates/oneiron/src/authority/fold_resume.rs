@@ -42,6 +42,8 @@ pub(super) use capture::{
 pub(super) use image::ImageFold;
 use receipts::BaseReceipts;
 pub(super) use resumed::Resumed;
+#[cfg(oneiron_test_support)]
+pub(super) use scope_tops::scope_tops_tails_taken_for_door;
 
 /// The inputs besides the log a base folded under.
 #[derive(Clone, PartialEq)]
@@ -243,7 +245,7 @@ impl FoldBase {
                 pinned: im::OrdSet::new(),
                 unpinned: rows.iter().map(|(hash, _)| *hash).collect(),
             },
-            scope_tops: scope_tops::ScopeTops::of(rows),
+            scope_tops: scope_tops::ScopeTops::of(rows, |hash| once.frontier.contains_key(hash)),
             once,
             heads: heads::LogHeads::of(view, expired),
         }
@@ -672,6 +674,7 @@ impl FoldBase {
                 .map(|(hash, state)| (*hash, state))
                 .collect(),
             writers: &writers,
+            base_writers: &once.writers,
             missed: Cell::new(false),
         };
         let (mut fold, final_merged) = super::fold_project::project_once(

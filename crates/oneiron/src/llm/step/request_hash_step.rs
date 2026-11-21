@@ -7,15 +7,16 @@
 //! read from, and the terminal record keeps them, so a receipt answers only while each of
 //! them still reads for its caller at that version. The request also names what its call
 //! showed (the row behind each call label, the range of each cited TURN, every row read),
-//! and the terminal record keeps each, so a saved reply can be read back through them.
+//! and the terminal record keeps each, so a saved reply can be read back through them:
+//! [`request_hash_step_record_in_txn`] serves the record so, under the receipt's own gate.
 
 use std::collections::BTreeMap;
 #[cfg(oneiron_test_support)]
 use std::ops::Bound;
 
-use super::super::{LlmRequest, ResponseFormat};
+use super::super::{LlmRequest, LlmResponse, ModelId, ResponseFormat};
 use super::public::ModelStepReceipt;
-use super::step_claim::{decode_step_claim_value, load_step_response_in_txn};
+use super::step_claim::{DecodedStepClaim, decode_step_claim_value, load_step_response_in_txn};
 #[cfg(oneiron_test_support)]
 use super::step_index::{STEP_INDEX_FORWARD, StepIndexKey};
 use super::step_index::{
@@ -26,7 +27,9 @@ use super::step_result::step_result;
 #[cfg(oneiron_test_support)]
 use super::step_state::STEP_STATE;
 use super::step_state::{step_state_erased, step_state_read};
-use super::types::{KEY_INPUT_LABELS, KEY_INPUT_RANGES, KEY_INPUT_SOURCES, KEY_INPUT_VERSIONS};
+use super::types::{
+    KEY_INPUT_LABELS, KEY_INPUT_RANGES, KEY_INPUT_SLICE, KEY_INPUT_SOURCES, KEY_INPUT_VERSIONS,
+};
 use super::{DurableStepError, DurableStepResult, StepOutcome, StepProgression};
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
@@ -68,6 +71,9 @@ pub(crate) struct StepCallInputs {
     pub(crate) ranges: Vec<StepInputRange>,
     /// Every row the call was read from, in id order, each once.
     pub(crate) sources: Vec<EntityId>,
+    /// The listed entities of the native slice the cited TURNs lie in, in id order: the
+    /// step's scope keeps the heads the listing shows of these, and of the branch's thing.
+    pub(crate) slice: Vec<EntityId>,
 }
 
 /// Names `versions` in `request`'s host provider options, the versions of every source row
@@ -116,6 +122,12 @@ pub(crate) fn bind_step_call_inputs(
         KEY_INPUT_SOURCES,
         &inputs.sources,
         "dreamer step input sources did not encode",
+    )?;
+    bind_host_option(
+        request,
+        KEY_INPUT_SLICE,
+        &inputs.slice,
+        "dreamer step input slice did not encode",
     )
 }
 
@@ -143,8 +155,8 @@ fn bind_host_option<T: Serialize + ?Sized>(
 
 /// The input facts `request` names in its host provider options, each as the record key it
 /// is kept under with the one JSON string the terminal record keeps there, in pinned key
-/// order: the source versions, then the call labels, the TURN ranges and the source rows. A
-/// fact the request does not name is left out.
+/// order: the source versions, then the call labels, the TURN ranges, the source rows and the
+/// slice's entities. A fact the request does not name is left out.
 ///
 /// # Errors
 ///
@@ -174,11 +186,18 @@ pub(super) fn step_input_records(request: &LlmRequest) -> Result<Vec<(&'static s
         "dreamer step input sources did not decode",
         "dreamer step input sources did not encode",
     )?;
+    let slice = host_option_record::<Vec<EntityId>>(
+        request,
+        KEY_INPUT_SLICE,
+        "dreamer step input slice did not decode",
+        "dreamer step input slice did not encode",
+    )?;
     Ok([
         (KEY_INPUT_VERSIONS, versions),
         (KEY_INPUT_LABELS, labels),
         (KEY_INPUT_RANGES, ranges),
         (KEY_INPUT_SOURCES, sources),
+        (KEY_INPUT_SLICE, slice),
     ]
     .into_iter()
     .filter_map(|(key, record)| record.map(|record| (key, record)))
@@ -266,20 +285,38 @@ pub(crate) fn request_hash_submit_receipt_keeping_erased(
     })
 }
 
-/// Reads the finished receipt of one request-hash step in the caller's snapshot. Terminal
-/// records only; anything else is not found.
+/// A finished request-hash step as its terminal record keeps it, for a reader that reads the
+/// saved reply back: the response with the facts its labels and quotes are read through.
+pub(crate) struct StepRecord {
+    /// The saved response.
+    pub(crate) response: LlmResponse,
+    /// The version of every source row the request was read from.
+    pub(crate) versions: Vec<SourceVersion>,
+    /// The row behind each call label; `None` for a record that keeps no label table.
+    pub(crate) labels: Option<StepInputLabels>,
+    /// The shown range of each cited TURN, in request order; `None` for a record that keeps
+    /// none.
+    pub(crate) ranges: Option<Vec<StepInputRange>>,
+    /// Every row the step's call was read from; `None` for a record that keeps none.
+    pub(crate) sources: Option<Vec<EntityId>>,
+    /// The listed entities of the step's native slice; `None` for a record that keeps none.
+    pub(crate) slice: Option<Vec<EntityId>>,
+}
+
+/// The terminal record of one request-hash step in the caller's snapshot, when the caller
+/// may be served its saved response: the record's claim, its decoded value and its model.
 ///
 /// The saved response may quote any row the request was read from, so the record must name
 /// the version of each, and `still_reads` must hold for every one of them: the caller's live
 /// read serves that row at that version. A record that names none, or a row that no longer
 /// reads at its version, answers as an unknown hash does, before the response is loaded.
-pub(crate) fn request_hash_step_receipt_in_txn(
+fn served_terminal_step_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     attempt: AttemptId,
     step_hash: &[u8; 32],
     still_reads: impl Fn(&SourceVersion) -> Result<bool>,
-) -> Result<ModelStepReceipt> {
+) -> Result<(EntityId, DecodedStepClaim, ModelId)> {
     let Some(claim_id) = step_index_lookup_in_txn(vault, txn, attempt, step_hash)? else {
         return Err(Error::EntityNotFound);
     };
@@ -304,11 +341,37 @@ pub(crate) fn request_hash_step_receipt_in_txn(
             return Err(Error::EntityNotFound);
         }
     }
-    let response =
-        load_step_response_in_txn(vault, txn, &decoded).map_err(|error| match error {
-            DurableStepError::Engine(error) => error,
-            _ => Error::InvalidClaimBody("dreamer step response did not decode"),
-        })?;
+    Ok((claim_id, decoded, model))
+}
+
+/// The saved response of a served terminal step.
+fn served_step_response_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    decoded: &DecodedStepClaim,
+) -> Result<LlmResponse> {
+    load_step_response_in_txn(vault, txn, decoded).map_err(|error| match error {
+        DurableStepError::Engine(error) => error,
+        _ => Error::InvalidClaimBody("dreamer step response did not decode"),
+    })
+}
+
+/// Reads the finished receipt of one request-hash step in the caller's snapshot. Terminal
+/// records only; anything else is not found.
+///
+/// The record is served under the gate of [`served_terminal_step_in_txn`]: every row the
+/// request was read from must still read for the caller at its recorded version, by
+/// `still_reads`, or the hash answers as an unknown one does.
+pub(crate) fn request_hash_step_receipt_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    attempt: AttemptId,
+    step_hash: &[u8; 32],
+    still_reads: impl Fn(&SourceVersion) -> Result<bool>,
+) -> Result<ModelStepReceipt> {
+    let (claim_id, decoded, model) =
+        served_terminal_step_in_txn(vault, txn, attempt, step_hash, still_reads)?;
+    let response = served_step_response_in_txn(vault, txn, &decoded)?;
     let outcome = Ok(StepOutcome::Finished {
         binding: StepEffectBinding {
             attempt_id: attempt,
@@ -330,6 +393,29 @@ pub(crate) fn request_hash_step_receipt_in_txn(
         retry: ModelStepRetryPolicy::default(),
         progression: Some(StepProgression::Finished),
         result: Some(result),
+    })
+}
+
+/// Reads the terminal record of one request-hash step in the caller's snapshot, with what its
+/// saved reply is read back through. It is served under the receipt's own gate
+/// ([`served_terminal_step_in_txn`]), so a step whose receipt would answer as an unknown hash
+/// answers so here.
+pub(crate) fn request_hash_step_record_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    attempt: AttemptId,
+    step_hash: &[u8; 32],
+    still_reads: impl Fn(&SourceVersion) -> Result<bool>,
+) -> Result<StepRecord> {
+    let (_, decoded, _) = served_terminal_step_in_txn(vault, txn, attempt, step_hash, still_reads)?;
+    let response = served_step_response_in_txn(vault, txn, &decoded)?;
+    Ok(StepRecord {
+        response,
+        versions: decoded.input_versions.unwrap_or_default(),
+        labels: decoded.input_labels,
+        ranges: decoded.input_ranges,
+        sources: decoded.input_sources,
+        slice: decoded.input_slice,
     })
 }
 

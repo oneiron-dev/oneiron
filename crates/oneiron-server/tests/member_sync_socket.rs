@@ -30,7 +30,7 @@ use oneiron::sync::{
     put_selector_test_federation_grant,
 };
 use oneiron::write_envelope::claim_body::encode_claim_body;
-use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
+use oneiron::{DeleteReason, EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_contracts::record_layout::ENTITY_METADATA_HEADER_LEN;
 use oneiron_keystore::MemoryKeystore;
 use oneiron_server::{
@@ -1486,5 +1486,114 @@ fn a_members_sealed_pad_capsule_installs_nothing_in_the_homes_custody() {
                 .expect("custody reads"),
             "the sealed capsule installed nothing into the home's custody"
         );
+    });
+}
+
+/// Review round 1 of #8364 (P1-2, server): a member lane's refused promotion
+/// is answered `FOLLOW_REFUSED` and the socket stays open. `other_window`
+/// holds a row the lane's selector does not select, so its promotion is
+/// refused, while the selected window's promotion is granted on the same
+/// socket right after, proving the socket is still open.
+/// red at 40cf5d7d8818: the refused promotion closes the socket with
+/// DECODE_ERROR instead of answering `FOLLOW_REFUSED`.
+#[test]
+fn a_refused_member_promotion_answers_follow_refused_and_keeps_the_socket() {
+    run_on_engine_stack(|| async {
+        let fx = fixture(WindowFixture::Selected).await;
+        let before = durable_rows(&fx);
+        let mut socket = bound_member(&fx, transport::RESIDENCE_PROTOCOL_VERSION).await;
+        send_window(
+            &mut socket,
+            &fx.other_window,
+            window_sub_tags::PROMOTION_REQUEST,
+            &encode_sync_selector(&fx.selector).unwrap(),
+        )
+        .await;
+        let refused = next_member_binary(&mut socket).await;
+        assert_eq!(refused[0], transport::TAG_WINDOW_SYNC);
+        let (key, tag, payload) = transport::decode_window_sync(&refused[1..]).unwrap();
+        assert_eq!(key, fx.other_window.as_str());
+        assert_eq!(tag, window_sub_tags::FOLLOW_REFUSED);
+        assert!(payload.is_empty());
+        // The socket is still open: the selected window's promotion is
+        // granted on it.
+        send_window(
+            &mut socket,
+            &fx.window,
+            window_sub_tags::PROMOTION_REQUEST,
+            &encode_sync_selector(&fx.selector).unwrap(),
+        )
+        .await;
+        let granted = next_member_binary(&mut socket).await;
+        assert_eq!(granted[0], transport::TAG_WINDOW_SYNC);
+        let (key, tag, payload) = transport::decode_window_sync(&granted[1..]).unwrap();
+        assert_eq!(key, fx.window.as_str());
+        assert_eq!(tag, window_sub_tags::PROMOTION_GRANTED);
+        assert!(payload.is_empty());
+        assert_eq!(durable_rows(&fx), before);
+    });
+}
+
+/// Review round 1 of #8364 (P1-3, server): a member lane reads its window's
+/// tombstone id set. After HOME hard-deletes the selected item,
+/// `residence.tombstones` answers a page that lists its id with the hard
+/// delete's value.
+/// red at 40cf5d7d8818: the method is not on the member lane's RPC
+/// allow-list, so the call closes the socket with DECODE_ERROR instead of
+/// answering a page.
+#[test]
+fn a_member_lane_reads_its_windows_tombstones() {
+    run_on_engine_stack(|| async {
+        let fx = fixture(WindowFixture::Selected).await;
+        let mut socket = bound_member(&fx, transport::PROTOCOL_VERSION).await;
+        let selector = encoded_selector(&fx.selector);
+        let index = rpc(
+            &mut socket,
+            2,
+            "residence.index",
+            json!({
+                "window": fx.window.as_str(), "selector": selector, "limit": 16
+            }),
+        )
+        .await;
+        assert_eq!(index["items"][0]["entity_id"], fx.item.to_hex());
+        assert!(
+            fx.vault
+                .delete_entity_with_reason(&fx.item, DeleteReason::UserHardDelete)
+                .unwrap()
+                .existed,
+            "HOME hard-deletes the selected item"
+        );
+        // The client's own call shape (`SyncClient::fetch_tombstones_of`):
+        // window, selector, id cursor and limit, exactly as the server reads
+        // them.
+        let cursor: Option<String> = None;
+        let page = rpc(
+            &mut socket,
+            3,
+            "residence.tombstones",
+            json!({
+                "window": fx.window.as_str(), "selector": selector,
+                "after": cursor, "limit": 16
+            }),
+        )
+        .await;
+        assert_eq!(page["window"], json!(fx.window.as_str()));
+        let items = page["items"].as_array().unwrap();
+        assert!(
+            items
+                .iter()
+                .any(|entry| entry["entityId"] == fx.item.to_hex()),
+            "the hard-deleted id is listed: {page}"
+        );
+        let listed = items
+            .iter()
+            .find(|entry| entry["entityId"] == fx.item.to_hex())
+            .unwrap();
+        let value = base64::engine::general_purpose::STANDARD
+            .decode(listed["value"].as_str().unwrap())
+            .unwrap();
+        assert_eq!(value.first(), Some(&2), "the hard delete's reason byte");
+        assert_eq!(value.len(), 25, "the whole tombstone value");
     });
 }

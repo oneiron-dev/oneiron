@@ -73,6 +73,10 @@ pub(super) const KEY_INPUT_RANGES: &str = "input_ranges";
 /// order, each once; carried and kept as the labels are.
 pub(super) const KEY_INPUT_SOURCES: &str = "input_sources";
 
+/// The listed entities of the native slice a bound step's TURNs lie in, as one
+/// JSON string, in id order; carried and kept as the labels are.
+pub(super) const KEY_INPUT_SLICE: &str = "input_slice";
+
 pub(super) const KEY_TRAP_KIND: &str = "trap_kind";
 
 pub(super) const KEY_STATE: &str = "state";

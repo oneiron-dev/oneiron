@@ -493,8 +493,15 @@ impl Vault {
         };
         AUTHORITY.put(&self.store, &mut txn, &id, &row)?;
         let appended = match (actor, owner) {
-            (Some(actor), Some((_, surface))) => {
-                self.sign_origin_cuts_in_txn(&mut txn, actor, surface, &portables, (epoch, writer))?
+            (Some(actor), Some((owner, surface))) => {
+                let proves_joins = owner.proves_joins_in_txn(self, &txn)?;
+                self.sign_origin_cuts_in_txn(
+                    &mut txn,
+                    (actor, proves_joins),
+                    surface,
+                    &portables,
+                    (epoch, writer),
+                )?
             }
             _ => std::collections::BTreeSet::new(),
         };
