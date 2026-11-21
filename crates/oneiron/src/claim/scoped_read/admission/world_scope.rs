@@ -95,11 +95,12 @@ impl ScopedRead<'_> {
     /// (FIX GRANT-READER-BM25-DF-COUNTS-HIDDEN-WORLDS). `None` when A
     /// stands for no reader here, when its reader holds no live Grant (B
     /// alone then judges its rows, worlds included), or when one of its
-    /// Grants reaches every world. `authority` holds the Grants A reads.
-    pub(super) fn grant_reader_worlds_in(
+    /// Grants reaches every world. `authority` is the serving txn's held
+    /// authority, if any, whose Grants A reads.
+    fn grant_reader_worlds_in(
         &self,
         txn: &heed::RoTxn<'_>,
-        authority: &super::super::access_gate::HeldAuthority,
+        authority: Option<&super::super::access_gate::HeldAuthority>,
     ) -> Option<ScopeAxis<ScopeId>> {
         let grants = self.own_live_grants_in(txn, authority)?;
         if grants.is_empty() {
@@ -111,6 +112,27 @@ impl ScopedRead<'_> {
                 join_worlds(&reached, &grant.worlds)
             });
         (!matches!(reached, ScopeAxis::All)).then_some(reached)
+    }
+
+    /// Whether the stored row `row` of `id` sits outside every world this
+    /// read's own live Grants reach ([`Self::grant_reader_worlds_in`],
+    /// [`outside_reached_worlds_in`], through this read's own store). Such a
+    /// row, refused, is read in no world of the reader's: it has no name and
+    /// no count (DEC-0005: hidden worlds stay hidden, no name, no count; FIX
+    /// GRANT-READER-BM25-DF-COUNTS-HIDDEN-WORLDS). False when no such worlds
+    /// bound the read. `authority` is the serving txn's held authority, if
+    /// any, whose Grants A reads.
+    pub(super) fn outside_grant_reader_worlds_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        row: &EntityRecord,
+        authority: Option<&super::super::access_gate::HeldAuthority>,
+    ) -> Result<bool> {
+        let Some(reached) = self.grant_reader_worlds_in(txn, authority) else {
+            return Ok(false);
+        };
+        outside_reached_worlds_in(&self.store_read(), txn, id, row, &reached)
     }
 }
 

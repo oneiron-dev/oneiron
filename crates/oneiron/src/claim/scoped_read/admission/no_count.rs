@@ -32,7 +32,9 @@ impl ScopedRead<'_> {
     /// or a private thread keep from them. A row in a world the credential
     /// cannot read, or one a device-local world keeps from a caller off
     /// this device, has no name and no count (DEC-0005), and neither has a
-    /// TASK outside the credential's worlds or facets, nor any row outside
+    /// row outside every world the live Grants of a key that reads through
+    /// them reach ([`Self::outside_grant_reader_worlds_in`]), nor a TASK
+    /// outside the credential's worlds or facets, nor any row outside
     /// the facets it is limited to, nor any row its channel or records
     /// caveat does not reach. A room's row or turn the room keeps from this
     /// reader is a missing row at every door (L9-52), and so is one whose
@@ -60,6 +62,7 @@ impl ScopedRead<'_> {
             && !self.stretch_staged_in(txn, id, row)?
             && (count == CountFor::Statistics || !self.outside_asked_worlds_in(txn, id, row)?)
             && !self.outside_credential_worlds_in(txn, id, row)?
+            && !self.outside_grant_reader_worlds_in(txn, id, row, authority)?
             && !self.device_withholds_in(txn, id, None)?
             && !self.outside_credential_task_position_in(txn, id, row)?
             && !self.outside_credential_facets_in(txn, id, row, authority)?
@@ -87,13 +90,11 @@ impl ScopedRead<'_> {
     /// refuses and counts (one its status or its band keeps out) still
     /// counts, as in its receipt, and so does a row the floor admits that
     /// only the run's request or the lane's bound caller filter leaves out:
-    /// what a read selects is no refusal. For a key whose actor reads
-    /// through its own live Grants (A), a row outside every world they reach
-    /// ([`Self::grant_reader_worlds_in`]) that its row gate refuses is hidden,
-    /// counted or not: it lies in no world the reader reads, as a row outside
-    /// a credential's worlds lies (FIX
-    /// GRANT-READER-BM25-DF-COUNTS-HIDDEN-WORLDS). Such a row the key's own
-    /// floor admits is served, and counts. The worlds the read asked for sit
+    /// what a read selects is no refusal. A row outside every world a grant
+    /// reader's live Grants reach is one the read counts nowhere, so it is
+    /// hidden once its row gate refuses it (FIX
+    /// GRANT-READER-BM25-DF-COUNTS-HIDDEN-WORLDS); one the key's own floor
+    /// admits there is served, and counts. The worlds the read asked for sit
     /// on its key, so the floor holds them: a row with no count whatever its
     /// worlds (every NOTE, any row of a room turn) outside them is hidden
     /// too. That only ever hides more, so it moves ranking alone. A CLAIM
@@ -101,9 +102,8 @@ impl ScopedRead<'_> {
     /// is hidden unjudged, so one such row never ends the scan.
     ///
     /// The row's count is judged first, so the row gate runs only for a row
-    /// the read would not count, or one outside every world a grant reader's
-    /// Grants reach. The test records nothing: no receipt or exclusion count
-    /// sees the rows it judges.
+    /// the read would not count. The test records nothing: no receipt or
+    /// exclusion count sees the rows it judges.
     ///
     /// # Errors
     /// A store, fold or clock failure reading the policy, the holder's
@@ -118,7 +118,6 @@ impl ScopedRead<'_> {
         let policy = crate::gate::resolve_policy_manifest(&self.vault.store, txn)?;
         let floor = self.filter_under(&policy, None)?;
         let authority = HeldAuthority::for_request(None);
-        let grant_worlds = self.grant_reader_worlds_in(txn, &authority);
         Ok(Box::new(move |id: &EntityId| {
             if let Some(worlds) = &worlds
                 && worlds.withholds_in(&store, txn, id)?
@@ -132,13 +131,6 @@ impl ScopedRead<'_> {
                 && crate::claim::decode_claim_body(&row.body, true).is_err()
             {
                 return Ok(true);
-            }
-            if let Some(reached) = &grant_worlds
-                && super::world_scope::outside_reached_worlds_in(&store, txn, id, &row, reached)?
-            {
-                return Ok(
-                    !self.is_entity_retrievable_held_in(txn, &policy, &floor, id, &authority)?
-                );
             }
             if self.refused_row_counts_in(
                 txn,
