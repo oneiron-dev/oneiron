@@ -1215,7 +1215,12 @@ merges, nothing is confirmed), leaves the ask open in `/v1/owner/identity/asks` 
 it there. An agent about to send, pay, invite or share on that name is still stopped and shown the
 choice card first. When a saved hint, or the host's decision on an ask, settles a name on its own,
 the settle applies at once (an agent waiting on the name acts on it at once) and lists here as
-`identity_settle` under the mention's `ask` key.
+`identity_settle` under the mention's `ask` key. A name said in a source you cannot read, such as a
+member's own mailbox, is asked of that member instead, and you get a notice that names no one:
+"a member has a pending question about identity". When the member answers that it is someone new,
+nothing changes yet: you get an Ask carrying only the ids it is about (no name, no words), and its
+one tap accepts that proposal, while it stands, as your own answer. If the question changes first
+(an option is erased, or the member answers again), the old tap accepts nothing.
 
 - `GET /v1/owner/dreamer/maintenance/applied` (optionally `?limit=<n>`): every applied write,
   reverted ones too, newest first, with its finding (or, for a name kept separate or settled, its

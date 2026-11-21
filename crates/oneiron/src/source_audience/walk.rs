@@ -641,6 +641,14 @@ pub(crate) fn readable_with_read_in(
 /// its own binding and carried policies and nothing more. A vault that
 /// holds no policy answers none.
 ///
+/// A row it walks whose floor is not known whole here (it reads waiting,
+/// [`super::floor_read_in`]) was read only because every one of `viewers`
+/// reads every source policy this vault holds
+/// ([`super::waiting_floor_readable_in`]): that read met each of them, and
+/// a row derived from it waits too and reads under them, so each is named
+/// (FLOOR-PREFLIGHT-AUDIENCE-IGNORES-WAIT). Once its floor settles, its
+/// floor names its policies as for any other row.
+///
 /// The caller names every row its read met: a witnessed TURN and each
 /// MESSAGE row its projected text was read from (review of #6985, round 2);
 /// the TURN's own lineage reaches the rows `PartOf` it as well. It names the
@@ -673,7 +681,16 @@ pub(crate) fn read_audience_in(
     };
     let mut seen: BTreeSet<EntityId> = roots.iter().copied().collect();
     let mut pending: Vec<EntityId> = seen.iter().copied().collect();
+    let mut every_policy_named = false;
     while let Some(row) = pending.pop() {
+        // A row whose floor waits read only to viewers who read every
+        // source policy here, whatever its floor will name once whole.
+        if !every_policy_named
+            && super::floor_read_in(vault, txn, &row)? == super::FloorRead::Waiting
+        {
+            policies.extend(super::POLICIES.scan_keys(&vault.store, txn, &[])?);
+            every_policy_named = true;
+        }
         if let Some(carried) = super::derived_policies_in(vault, txn, &row)? {
             // A phone thread on a floor is no policy a read meets here.
             for source in carried {

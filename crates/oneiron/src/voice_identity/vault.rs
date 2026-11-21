@@ -74,6 +74,24 @@ pub(crate) enum HumanCredentialReach {
     Ordinary,
 }
 
+/// Whether the slip `claims` is a human-class credential that counts at
+/// `reach`.
+fn human_slip_of_reach(claims: &crate::authority::SlipClaims, reach: HumanCredentialReach) -> bool {
+    claims.actor_class.as_deref() == Some(ACTOR_CLASS_HUMAN)
+        && match reach {
+            HumanCredentialReach::Any => true,
+            HumanCredentialReach::Ordinary => {
+                !claims.single_use
+                    && claims.org_ref.is_none()
+                    && claims.invitation_ref.is_none()
+                    && claims.share_ref.is_none()
+                    && claims.delegation.is_none()
+                    && claims.trusted_contact.is_none()
+                    && claims.seat_claim.is_none()
+            }
+        }
+}
+
 /// Whether `left` and `right` name the same purposes, in any order.
 fn same_purposes(left: &[VoicePrintPurpose], right: &[VoicePrintPurpose]) -> bool {
     let names = |purposes: &[VoicePrintPurpose]| {
@@ -865,19 +883,7 @@ impl Vault {
                 .filter(|(_, mint)| {
                     let claims = &mint.action.claims;
                     EntityId::from_hex(&claims.holder_ref).ok() == Some(person)
-                        && claims.actor_class.as_deref() == Some(ACTOR_CLASS_HUMAN)
-                        && match reach {
-                            HumanCredentialReach::Any => true,
-                            HumanCredentialReach::Ordinary => {
-                                !claims.single_use
-                                    && claims.org_ref.is_none()
-                                    && claims.invitation_ref.is_none()
-                                    && claims.share_ref.is_none()
-                                    && claims.delegation.is_none()
-                                    && claims.trusted_contact.is_none()
-                                    && claims.seat_claim.is_none()
-                            }
-                        }
+                        && human_slip_of_reach(claims, reach)
                 })
                 .map(|(id, _)| *id)
                 .collect();
@@ -892,6 +898,46 @@ impl Vault {
             }
         }
         Ok(false)
+    }
+
+    /// Every person who holds a live credential in this vault of `reach`:
+    /// each one [`Self::holds_live_human_credential_in_txn`] answers yes
+    /// for, in one snapshot. The identity ask route reads it as the census
+    /// of the people an ask may go to (RECIPIENT-NOTICE-READ-BY-ANY-READER).
+    pub(crate) fn live_human_credential_holders_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        reach: HumanCredentialReach,
+    ) -> Result<BTreeSet<EntityId>> {
+        let (mut holders, slips) = {
+            let fold = self.authority_view_readonly_in_txn(txn)?;
+            let bound: BTreeSet<EntityId> = fold
+                .actor_bindings
+                .values()
+                .filter(|binding| {
+                    binding.actor_class == ACTOR_CLASS_HUMAN
+                        && binding.status == ActorBindingStatus::Active
+                })
+                .map(|binding| binding.actor_ref)
+                .collect();
+            let slips: Vec<(EntityId, [u8; 32])> = fold
+                .slips
+                .mints
+                .iter()
+                .filter_map(|(id, mint)| {
+                    let claims = &mint.action.claims;
+                    let holder = EntityId::from_hex(&claims.holder_ref).ok()?;
+                    human_slip_of_reach(claims, reach).then_some((holder, *id))
+                })
+                .collect();
+            (bound, slips)
+        };
+        for (holder, id) in slips {
+            if !holders.contains(&holder) && self.capability_slip_id_is_live_in_txn(txn, &id)? {
+                holders.insert(holder);
+            }
+        }
+        Ok(holders)
     }
 
     /// `subject`'s withdrawal `event_id` while they may still disown it
@@ -1270,8 +1316,9 @@ impl Vault {
 ///
 /// Test-only seam for the ILD-3 interlocutor gates, which need a roster of a
 /// given SHAPE (owner print, contact print, invite elimination, residual) far
-/// more cheaply than a full enrollment fixture would supply one.
-#[cfg(test)]
+/// more cheaply than a full enrollment fixture would supply one, and for the
+/// room-call door (`test_doors::voice_roster`, UNBUILT-02 PR 4).
+#[cfg(any(test, oneiron_test_support))]
 pub(crate) fn put_voice_roster_for_test(
     vault: &Vault,
     roster: &VoiceSessionRosterV1,

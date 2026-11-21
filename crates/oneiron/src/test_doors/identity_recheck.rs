@@ -46,6 +46,14 @@ pub fn keep_identity_asks_separate(vault: &Vault, now: u64) -> Result<usize> {
     crate::dreamer_runner::maintenance::identity::keep_asks_separate_for_test(vault, now)
 }
 
+/// Sends every open identity ask not sent yet to the person at `now`
+/// (seconds), as an act-now decision that abstains sends one: an inbox Ask
+/// to each person the route finds can open it, a stub to each owner who
+/// cannot. Returns how many asks went.
+pub fn escalate_identity_asks(vault: &Vault, now: u64) -> Result<usize> {
+    crate::dreamer_runner::maintenance::identity::escalate_asks_for_test(vault, now)
+}
+
 /// Opens `claim`'s owner-answer obligation (ARCH-0026 §G3), as a replica's
 /// revision of a held critical claim leaves it: the claim keeps its stored
 /// approval, and every effect reader holds it until its owner answers.

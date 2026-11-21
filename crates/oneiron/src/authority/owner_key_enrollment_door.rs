@@ -379,9 +379,10 @@ fn passkey_enrollment_device(input: &OwnerPasskeyEnrollment) -> Result<(Vec<u8>,
     Ok((public_key.clone(), enrolled_passkey(public_key, evidence)))
 }
 
-/// An unsigned entry as [`Vault::prepare_owner_key_enrollment_as`] encoded
-/// it: one MessagePack value, and exactly its canonical encoding.
-fn decode_unsigned_entry(bytes: &[u8]) -> Option<AuthorityLogEntry> {
+/// An unsigned entry as [`Vault::prepare_owner_key_enrollment_as`] (or the
+/// passkey Cancel's prepare, `Vault::prepare_recovery_hold_cancel_as`)
+/// encoded it: one MessagePack value, and exactly its canonical encoding.
+pub(super) fn decode_unsigned_entry(bytes: &[u8]) -> Option<AuthorityLogEntry> {
     let mut cursor = std::io::Cursor::new(bytes);
     let value = rmpv::decode::read_value(&mut cursor).ok()?;
     if usize::try_from(cursor.position()).ok()? != bytes.len() {
@@ -632,6 +633,63 @@ impl Vault {
         })
     }
 
+    /// [`Self::enrol_owner_signing_key_in_txn`] for `actor`, an owner the
+    /// caller judged live in `txn`, with `surface` as the act's audit-only
+    /// surface: the recovery wait's landing seam, which runs with no owner
+    /// proof (OPUS-WAYBACK): the hold authorized the act, and the landing
+    /// rechecks the owner's liveness itself. Every other caller takes the
+    /// authority door above.
+    ///
+    /// # Errors
+    /// As [`Self::enrol_owner_signing_key_as`].
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the enrollment's actor, surface, input, kind, predecessor and signer"
+    )]
+    pub(super) fn enrol_owner_signing_key_for_actor_in_txn<S>(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        actor: EntityId,
+        surface: ActSurface,
+        input: OwnerKeyEnrollment,
+        kind: EnrolledOwnerKeyKind,
+        predecessor: AuthorityKey,
+        sign_predecessor: &mut S,
+    ) -> Result<OwnerKeyEnrollmentReceipt>
+    where
+        S: FnMut(&AuthorityFold, &[u8]) -> Result<Vec<u8>>,
+    {
+        let device = enrolled_device(input.public_key, input.proof, kind);
+        let (entry, machine) = self.write_owner_key_enroll_for_actor_in_txn(
+            txn,
+            (actor, surface),
+            Some(input.machine),
+            device,
+            predecessor,
+            sign_predecessor,
+            false,
+        )?;
+        Ok(OwnerKeyEnrollmentReceipt {
+            entry,
+            machine,
+            public_key: input.public_key,
+        })
+    }
+
+    /// The owner who acts under `authority`, revalidated in `txn`, and the
+    /// act's surface; an agent never enrols an owner key.
+    fn enrolling_owner_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        authority: &ActAuthority,
+    ) -> Result<(EntityId, ActSurface)> {
+        let (owner, surface) = match authority {
+            ActAuthority::Owner(owner, surface) => (owner, *surface),
+            ActAuthority::Agent(_) => return Err(authority_refused(OWNER_ONLY)),
+        };
+        Ok((owner.revalidate_as_vault_owner_in_txn(self, txn)?, surface))
+    }
+
     /// [`Self::write_owner_key_enroll_as`] in the caller's write
     /// transaction, which commits it or not.
     #[expect(
@@ -651,9 +709,40 @@ impl Vault {
     where
         S: FnMut(&AuthorityFold, &[u8]) -> Result<Vec<u8>>,
     {
-        let (mut entry, carrier_key, built_on) = self.unsigned_owner_key_enroll_in_txn(
+        let actor = self.enrolling_owner_in_txn(txn, authority)?;
+        self.write_owner_key_enroll_for_actor_in_txn(
             txn,
-            authority,
+            actor,
+            holder,
+            device,
+            predecessor,
+            sign_predecessor,
+            confirming,
+        )
+    }
+
+    /// [`Self::write_owner_key_enroll_in_txn`] for `actor`, the owner who
+    /// acts and the act's surface, as the caller judged them in `txn`.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the enrollment's actor, holder, device, predecessor, signer and confirming vouch"
+    )]
+    fn write_owner_key_enroll_for_actor_in_txn<S>(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        actor: (EntityId, ActSurface),
+        holder: Option<EntityId>,
+        device: DeviceAuthority,
+        predecessor: AuthorityKey,
+        sign_predecessor: &mut S,
+        confirming: bool,
+    ) -> Result<(AuthorityEntryHash, EntityId)>
+    where
+        S: FnMut(&AuthorityFold, &[u8]) -> Result<Vec<u8>>,
+    {
+        let (mut entry, carrier_key, built_on) = self.unsigned_owner_key_enroll_for_actor_in_txn(
+            txn,
+            actor,
             holder,
             device,
             predecessor.clone(),
@@ -743,11 +832,28 @@ impl Vault {
         predecessor: AuthorityKey,
         confirming: bool,
     ) -> Result<(AuthorityLogEntry, ed25519_dalek::SigningKey, AuthorityView)> {
-        let (owner, surface) = match authority {
-            ActAuthority::Owner(owner, surface) => (owner, *surface),
-            ActAuthority::Agent(_) => return Err(authority_refused(OWNER_ONLY)),
-        };
-        let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+        let actor = self.enrolling_owner_in_txn(txn, authority)?;
+        self.unsigned_owner_key_enroll_for_actor_in_txn(
+            txn,
+            actor,
+            holder,
+            device,
+            predecessor,
+            confirming,
+        )
+    }
+
+    /// [`Self::unsigned_owner_key_enroll_in_txn`] for `actor`, the owner who
+    /// acts and the act's surface, as the caller judged them in `txn`.
+    fn unsigned_owner_key_enroll_for_actor_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        (actor, surface): (EntityId, ActSurface),
+        holder: Option<EntityId>,
+        device: DeviceAuthority,
+        predecessor: AuthorityKey,
+        confirming: bool,
+    ) -> Result<(AuthorityLogEntry, ed25519_dalek::SigningKey, AuthorityView)> {
         let fold = self.authority_view_readonly_in_txn(txn)?;
         let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
         let (carrier, carrier_key) = self
@@ -1639,6 +1745,30 @@ impl Vault {
         Ok(self.owner_authority_closure_in_txn(txn, person)?.keys)
     }
 
+    /// [`owner_move_bindings`] at this log's heads in `txn`: the live `human`
+    /// bindings a move that ends `person`'s owner authority ends with a
+    /// `RevokeActor`, on a key outside `revoked`. The device-confirmed move's
+    /// plan, its device's check and its land read it
+    /// ([`Vault::owner_key_move_plan_in_txn`]).
+    ///
+    /// # Errors
+    /// The log's read errors.
+    pub(super) fn owner_move_bindings_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        person: EntityId,
+        revoked: &[AuthorityKey],
+    ) -> Result<Vec<(AuthorityKey, u64)>> {
+        let closure = self.owner_authority_closure_in_txn(txn, person)?;
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        Ok(owner_move_bindings(
+            &fold,
+            person,
+            &closure.signed_bindings,
+            revoked,
+        ))
+    }
+
     /// Ends the owner authority `person` holds on this vault's log, in the
     /// transaction of the membership move that ends their standing
     /// (OWNER-ENROL): under `issuer`, a `RevokeDevice` for each live owner
@@ -1670,14 +1800,18 @@ impl Vault {
     /// `RevokeActor` carries the same cosign where this install holds such
     /// a key, before the proof key's own `RevokeDevice`. Where it holds
     /// none, the root's revoke counts only where the fold takes the root as
-    /// the owner's (a self-host root folded as hosted), and the move
-    /// otherwise refuses with the uncounted entry: the device-confirmed move
-    /// signs no `RevokeActor` (row HOSTED-MOVE-REVOKE-ACTOR-MIGRATED-BINDING).
+    /// the owner's (a self-host root folded as hosted). Elsewhere a binding
+    /// the move ends waits for a device as an owner key does: the move
+    /// refuses before it writes, and the executing Owner's device signs each
+    /// such `RevokeActor` with the plan's `RevokeDevice` rows, so the
+    /// confirmed move finds none left (row
+    /// HOSTED-MOVE-REVOKE-ACTOR-MIGRATED-BINDING; [`owner_move_bindings`]).
     ///
     /// # Errors
     /// An `issuer` that is not this vault's live host root, as the log
     /// refuses it; [`RecordError::OwnerKeyMoveRefused`], before this writes
-    /// any authority entry, when the member holds a live owner key and
+    /// any authority entry, when the member holds a live owner key, or a
+    /// binding the move ends that the root's revoke does not end, and
     /// neither `issuer` nor any key this install holds proves for the owner
     /// (the caller's writer, which holds the move's other changes, drops with
     /// it); an entry the fold does not count.
@@ -1706,7 +1840,12 @@ impl Vault {
         } else {
             self.owner_proof_signer(&fold, ground)
         };
-        if !keys.is_empty() {
+        // A binding the root's revoke would not end waits for a device too.
+        let root_ends_bindings = !hosted || fold.proves_owner_acts(&root, hosted);
+        let bindings_wait = proof.is_none()
+            && !root_ends_bindings
+            && !owner_move_bindings(&fold, person, &closure.signed_bindings, &keys).is_empty();
+        if !keys.is_empty() || bindings_wait {
             super::slip_vault::require_host(&fold, issuer)?;
             if !offers && proof.is_none() {
                 return Err(Error::Record(RecordError::OwnerKeyMoveRefused {
@@ -1731,17 +1870,7 @@ impl Vault {
         }
         let fold = self.authority_view_readonly_in_txn(txn)?;
         // A binding on the proof key the move ends ends with its revoke.
-        let bindings: Vec<(AuthorityKey, u64)> = fold
-            .actor_bindings
-            .iter()
-            .filter(|(key, binding)| {
-                binding.status == ActorBindingStatus::Active
-                    && (binding.actor_ref == person || closure.signed_bindings.contains(*key))
-                    && binding.actor_class == ACTOR_CLASS_HUMAN
-                    && !last.contains(*key)
-            })
-            .map(|(key, binding)| (key.clone(), binding.epoch))
-            .collect();
+        let bindings = owner_move_bindings(&fold, person, &closure.signed_bindings, &last);
         for (authority_key, epoch) in bindings {
             let op = AuthorityOp::RevokeActor {
                 authority_key,
@@ -1852,6 +1981,32 @@ impl Vault {
         }
         Ok(())
     }
+}
+
+/// The live `human` bindings on `fold` a move that ends `person`'s owner
+/// authority ends with a `RevokeActor` ([`Vault::revoke_owner_authority_in_txn`]):
+/// each that names them, and each a key of theirs signed, whomever it names
+/// (`signed_bindings`; row OWNER-REVOKE-BY-NAMED-ATTRIBUTION), on a key
+/// outside `revoked` (a key's `RevokeDevice` ends a binding on it). Each
+/// with its epoch, in key order. The one-writer move and the
+/// device-confirmed move's plan, device check and land all read this one
+/// set, so they end the same bindings.
+fn owner_move_bindings(
+    fold: &AuthorityFold,
+    person: EntityId,
+    signed_bindings: &BTreeSet<AuthorityKey>,
+    revoked: &[AuthorityKey],
+) -> Vec<(AuthorityKey, u64)> {
+    fold.actor_bindings
+        .iter()
+        .filter(|(key, binding)| {
+            binding.status == ActorBindingStatus::Active
+                && (binding.actor_ref == person || signed_bindings.contains(*key))
+                && binding.actor_class == ACTOR_CLASS_HUMAN
+                && !revoked.contains(*key)
+        })
+        .map(|(key, binding)| (key.clone(), binding.epoch))
+        .collect()
 }
 
 /// Keeps `entry`, at `hash`, in `keys` when it is a valid passkey

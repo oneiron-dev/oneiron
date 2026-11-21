@@ -67,6 +67,8 @@ pub(crate) const RETAINED_SUBJECT_RULES: &[(&str, RetainedSubjectRule)] = &[
     ("BUDGET_RSI_LINE", NoRecord),
     ("CALL_RECEIPT", NoRecord),
     ("CAMPAIGN_COMPLIANCE_RECEIPT", NoRecord),
+    // Vault-wide: the house voice guide marker travels even when its NOTE was deleted.
+    ("CAMPAIGN_HOUSE_VOICE_GUIDE", NoRecord),
     ("CHECK_IN_RECEIPT", NoRecord),
     ("COMPACTION_CONVERSATION_RECEIPT", ONE_ID),
     ("CONNECTOR_GRANT_SLATE", NoRecord),
@@ -146,6 +148,7 @@ pub(crate) const RETAINED_SUBJECT_RULES: &[(&str, RetainedSubjectRule)] = &[
     ("PROJECT_HISTORY_POLICY", NoRecord),
     // The actor, a colon, then its big-endian submission count.
     ("PROPOSAL_RECEIPT_HISTORY", RawIds { len: 25, ids: &[0] }),
+    ("READ_SHAPE_PINS", NoRecord),
     ("RETRIEVAL_POLICY_PINS", NoRecord),
     ("ROOM_THREADS_ADMIN_DELETE", NoRecord),
     ("ROOM_THREADS_ADMIN_WALK_IN", NoRecord),

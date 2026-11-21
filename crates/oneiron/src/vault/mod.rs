@@ -123,6 +123,11 @@ pub struct Vault {
     /// Orders a trusted-contact notice's last consent read and send against
     /// revocation and re-naming.
     pub(crate) trusted_contact_send_order: std::sync::RwLock<()>,
+    /// Lets one history import at a time own its second
+    /// ([`Vault::own_import_second`]), so two imports that start in the same
+    /// second own different seconds. A vault path opens once per process, so
+    /// this is the vault's one import-second lock.
+    pub(crate) import_second_order: std::sync::Mutex<()>,
     /// The owner's agent-pack share receipts whose write failed, each tried
     /// again on this handle's next travel receipt (FIX 5523). In memory
     /// only: a close or a crash drops them.
@@ -363,6 +368,10 @@ pub struct Vault {
     #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) slow_retrieval_stage:
         std::sync::Mutex<Option<crate::store::retrieval_deadline::SlowRetrievalStage>>,
+    /// What the integration tests' doors arm and read on this vault, never
+    /// process-global. In memory only.
+    #[cfg(oneiron_test_support)]
+    pub(crate) test_door_state: crate::test_doors::vault_state::VaultTestDoorState,
 }
 
 /// A vault's detached writes run before it closes (FIX 12023): those queued

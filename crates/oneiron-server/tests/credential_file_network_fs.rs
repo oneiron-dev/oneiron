@@ -5,10 +5,12 @@
 //! but its owner (and, for a group-shared relay token, its group) read or
 //! write of its data or a change of its list or owner; the refusal names the
 //! entry. A file whose server's list is not read here, on an SMB mount or on
-//! an NFS mount that reports no NFSv4 list (REVIEW-10143), is refused unless
-//! the host owner trusts the server's list. The mount's type is read from the
-//! kernel's mount table, which sends no request to a server, never by
-//! `fstatfs`, which on a hard NFS mount waits forever for a silent server
+//! an NFSv4 mount that reports no list (REVIEW-10143), is refused unless the
+//! host owner trusts the server's list. On an NFSv2 or NFSv3 mount, as on a
+//! local file system, the mode decides (Engine ANSWER 21 Nov 11:29; FIX
+//! CREDENTIAL-FILE-NFSV3-REFUSED-NOT-MODE-JUDGED). The mount's type is read
+//! from the kernel's mount table, which sends no request to a server, never
+//! by `fstatfs`, which on a hard NFS mount waits forever for a silent server
 //! (REVIEW-10143 round 2).
 //!
 //! The fleet has no NFS or SMB mount, so the lists are handed to the judge
@@ -287,13 +289,17 @@ fn a_list_that_does_not_read_to_its_end_is_refused() {
 /// client and its `smb3` name, and the old SMB1 client.
 const SMB_TYPES: [&str; 3] = ["cifs", "smb3", "smbfs"];
 
-/// The `mountinfo` types of NFS mounts, of any version.
-const NFS_TYPES: [&str; 2] = ["nfs", "nfs4"];
+/// The `mountinfo` type of an NFSv4 mount.
+const NFS4_TYPE: &str = "nfs4";
 
-/// The `mountinfo` types of file systems that are neither, among them the
-/// NFS server's and the RPC client's own pseudo file systems, a FUSE network
-/// mount, and none.
-const OTHER_TYPES: [&str; 9] = [
+/// The `mountinfo` type of an NFSv2 or NFSv3 mount.
+const NFS3_TYPE: &str = "nfs";
+
+/// The `mountinfo` types of file systems that are neither SMB nor NFSv4,
+/// among them NFSv2 and NFSv3, the NFS server's and the RPC client's own
+/// pseudo file systems, a FUSE network mount, and none.
+const OTHER_TYPES: [&str; 10] = [
+    NFS3_TYPE,
     "ext4",
     "tmpfs",
     "btrfs",
@@ -307,20 +313,17 @@ const OTHER_TYPES: [&str; 9] = [
 
 /// A file whose server's list this host does not read is refused, naming
 /// the mount, the one opt-out and the risk it takes: on an SMB mount, and on
-/// an NFS mount that reports no NFSv4 list, as an NFSv3 mount or an NFSv4
-/// server without list support does (REVIEW-10143). The host owner's trust
-/// admits it.
+/// an NFSv4 mount that reports no list, as an NFSv4 server without list
+/// support does (REVIEW-10143). The host owner's trust admits it.
 #[test]
 fn a_file_whose_server_list_is_not_read_is_refused_unless_trusted() {
     let mounts = SMB_TYPES
         .iter()
         .map(|&kind| (kind, "is on an SMB (CIFS) mount"))
-        .chain(NFS_TYPES.iter().map(|&kind| {
-            (
-                kind,
-                "is on an NFS mount that reports no NFSv4 access control list",
-            )
-        }));
+        .chain([(
+            NFS4_TYPE,
+            "is on an NFSv4 mount that reports no access control list",
+        )]);
     for (kind, mount) in mounts {
         let refusal = door::judge_mount_for_owner(kind, None, false)
             .expect("nothing to read")
@@ -346,17 +349,17 @@ fn a_file_whose_server_list_is_not_read_is_refused_unless_trusted() {
     }
 }
 
-/// A list the mount reports is judged on NFS and on any other file system,
+/// A list the mount reports is judged on NFSv4 and on any other file system,
 /// and the host owner's trust in a server's list does not admit an entry
-/// this host reads; with no list, a file system that is neither SMB nor NFS
-/// leaves the file to its mode.
+/// this host reads; with no list, a file system that is neither SMB nor
+/// NFSv4 leaves the file to its mode.
 #[test]
 fn a_list_that_is_read_is_judged_and_no_list_leaves_the_mode() {
     let granted = nfs4_list(&[
         (ALLOW, 0, OWNER_READ_WRITE, "OWNER@"),
         (ALLOW, 0, READ_DATA, "EVERYONE@"),
     ]);
-    for kind in OTHER_TYPES.into_iter().chain(NFS_TYPES) {
+    for kind in OTHER_TYPES.into_iter().chain([NFS4_TYPE]) {
         for trusted in [false, true] {
             assert_eq!(
                 door::judge_mount_for_owner(kind, Some(&KNFSD_LIST_MODE_0600), trusted),
@@ -379,6 +382,37 @@ fn a_list_that_is_read_is_judged_and_no_list_leaves_the_mode() {
             "{kind}"
         );
     }
+}
+
+/// An NFSv2 or NFSv3 mount carries no NFSv4 list, and its server enforces
+/// the mode bits for AUTH_SYS clients, so a file there is judged by its mode
+/// as on a local file system, with no opt-out needed (Engine ANSWER 21 Nov
+/// 11:29). An NFSv4 mount that reports no list is still refused, and a list
+/// an NFSv3 mount reports is still judged.
+#[test]
+fn a_file_on_an_nfsv3_mount_is_left_to_its_mode() {
+    assert_eq!(
+        door::judge_mount_for_owner(NFS3_TYPE, None, false),
+        Ok(None),
+        "an NFSv3 mount with no list"
+    );
+    let refusal = door::judge_mount_for_owner(NFS4_TYPE, None, false)
+        .expect("nothing to read")
+        .expect("an NFSv4 mount with no list is refused");
+    assert!(
+        refusal.starts_with("is on an NFSv4 mount that reports no access control list"),
+        "{refusal}"
+    );
+    let granted = nfs4_list(&[
+        (ALLOW, 0, OWNER_READ_WRITE, "OWNER@"),
+        (ALLOW, 0, READ_DATA, "EVERYONE@"),
+    ]);
+    assert!(
+        door::judge_mount_for_owner(NFS3_TYPE, Some(&granted), false)
+            .expect("the list reads")
+            .is_some(),
+        "a list an NFSv3 mount reports is judged"
+    );
 }
 
 /// A mount table in the kernel's format (`proc_pid_mountinfo(5)`): an NFSv4

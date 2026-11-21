@@ -9,8 +9,9 @@ use oneiron::attempt_queue::{AttemptQueue, CleanupAttemptLeases};
 use oneiron::booking::SessionKey;
 use oneiron::booking::lifecycle::{
     BOOKING_DEPOSIT_SETTLE_ATTEMPT_KIND, BookingDepositSettlementDrain, DepositProviderEvent,
-    DepositProviderEventKind, DepositSettleStep, DepositState, booking_deposit_for_session_hold,
-    record_deposit_provider_event, run_booking_deposit_settlement, settle_booking_deposit,
+    DepositProviderEventKind, DepositProviderEventOutcome, DepositSettleStep, DepositState,
+    booking_deposit_for_session_hold, record_deposit_provider_event,
+    run_booking_deposit_settlement, settle_booking_deposit,
 };
 use oneiron::{EntityId, Vault};
 
@@ -47,11 +48,14 @@ const CANCELED: &str = "canceled";
 /// deposit whose payment Stripe has since cancelled. A cancelled payment is
 /// recorded as Stripe's cancellation, and the confirm writer refuses it.
 ///
-/// Whether the confirm may run: no only for an authorized deposit Stripe did
-/// not answer still waits for capture (no answer, another status, or a
-/// cancellation that was not recorded), since the confirm writer would take
-/// its stale Authorized row (review round 1 of #10109). An unauthorized
-/// deposit is left to the writer's own refusal.
+/// Whether the confirm may run: no for an authorized deposit Stripe did not
+/// answer still waits for capture (no answer, or another status), since the
+/// confirm writer would take its stale Authorized row (review round 1 of
+/// #10109); no for any deposit whose payment Stripe says is cancelled unless
+/// this node recorded that, since a home move that defers or moved the write
+/// can land a hold that still reads authorized before the writer runs (review
+/// round 1 of #10125). Any other unauthorized deposit is left to the writer's
+/// own refusal.
 pub(crate) fn sync_hold_authorization(
     vault: &Vault,
     stripe_base: &str,
@@ -96,16 +100,27 @@ pub(crate) fn sync_hold_authorization(
         ),
         _ => return !authorized,
     };
+    let canceled = matches!(kind, DepositProviderEventKind::Canceled);
     let event = DepositProviderEvent {
         event_id,
         payment_id: intent.id,
         kind,
     };
-    if let Err(error) = record_deposit_provider_event(vault, &event, now) {
+    let recorded = record_deposit_provider_event(vault, &event, now);
+    if let Err(error) = &recorded {
         tracing::warn!(%error, "a deposit's authorization read from Stripe was not recorded");
-        return !authorized;
     }
-    true
+    match recorded {
+        // The row stands as Stripe said, or past it: the writer reads it.
+        Ok(
+            DepositProviderEventOutcome::Applied(_)
+            | DepositProviderEventOutcome::Unchanged(_)
+            | DepositProviderEventOutcome::Replayed,
+        ) => true,
+        _ if canceled => false,
+        Ok(_) => true,
+        Err(_) => !authorized,
+    }
 }
 
 /// Right after a confirm committed: capture the booking's deposit. A

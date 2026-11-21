@@ -193,6 +193,24 @@ pub(crate) fn note_explicit_only_in_txn(
     )
 }
 
+/// A digest of NOTE `id`'s overrides in `txn`, `None` when it has none. An
+/// override moves who reads a NOTE (its context) with no new version of its
+/// document, so a judgement of the NOTE's text a reader read stands for a
+/// later act only while this digest is the one it was made under (campaign
+/// copy review).
+pub(crate) fn note_overrides_digest_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<[u8; 32]>> {
+    let Some(overrides) = overrides::note_overrides_in_txn(store, txn, id)? else {
+        return Ok(None);
+    };
+    let encoded = serde_json::to_vec(&overrides)
+        .map_err(|_| crate::Error::InvariantViolation("NOTE overrides encode"))?;
+    Ok(Some(*blake3::hash(&encoded).as_bytes()))
+}
+
 /// A refused private row must not disclose its existence through a receipt.
 /// All NOTE kinds are omitted from denial counts: without admission, a reader
 /// cannot safely distinguish a public NOTE from an owner-only one. Diary-pair

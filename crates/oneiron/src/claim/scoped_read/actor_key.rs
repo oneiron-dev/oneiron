@@ -545,8 +545,10 @@ impl ScopedReadActorKey {
     /// proves by the live-owner census in its own snapshot (`owner` a live
     /// Owner of this vault, his PERSON live) instead of an owner actor
     /// binding, so a live co-Owner with none reads as his own Owner lane and
-    /// no wider. Only a schedule's recorded-Owner binding builds one; it is
-    /// no owner proof and authorizes no act.
+    /// no wider. Only a schedule's recorded-Owner binding builds one, and
+    /// the identity ask route, which judges whether each live owner's lane
+    /// opens an ask before it sends one; it is no owner proof and authorizes
+    /// no act.
     #[must_use]
     pub(crate) fn vault_owner_by_census(owner: EntityId) -> Self {
         Self {

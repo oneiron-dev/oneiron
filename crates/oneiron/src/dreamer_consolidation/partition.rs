@@ -18,8 +18,8 @@ use super::watermark::{
 use crate::Vault;
 use crate::attempt_queue::{EnqueueAttempt, EnqueueOutcome};
 use crate::dreamer_prefilter::{
-    PrefilterScreen, prefilter_partition_input, prefilter_partition_input_in_txn,
-    write_prefilter_receipts_in_txn,
+    PrefilterScreen, observe_grant_clock_for_message_screen_in_txn, prefilter_partition_input,
+    prefilter_partition_input_in_txn, write_prefilter_receipts_in_txn,
 };
 use crate::dreamer_runner::{
     DreamerAttemptPayload, DreamerConsolidationScope, DreamerRunnerStore,
@@ -273,15 +273,18 @@ fn without_excluded_conversations(
 ///
 /// The OF-361 screen composes the same way: same policy row, same pure
 /// arithmetic, only the read transaction differs, so the two twins keep or
-/// skip the same turns.
+/// skip the same turns. A screen that reads MESSAGE rows judges the Dreamer's
+/// grants at a clock floor this writer persists first, as the committed
+/// plan's snapshot opens behind one.
 pub(crate) fn plan_partitions_in_txn(
     vault: &Vault,
     scope: DreamerConsolidationScope,
-    txn: &heed::RwTxn<'_>,
+    txn: &mut heed::RwTxn<'_>,
     dirty_turns: &[WorkingSetTurn],
     watermark: &ConsolidationWatermark,
 ) -> Result<Vec<ConsolidationPartitionPlan>> {
     let _ = scope;
+    observe_grant_clock_for_message_screen_in_txn(vault, txn)?;
     let eligible = without_excluded_conversations(vault, txn, dirty_turns)?;
     let screened = prefilter_partition_input_in_txn(vault, txn, &eligible)?;
     partition_screened_turns_in_txn(vault, txn, &screened.kept, watermark)
@@ -560,6 +563,11 @@ pub(crate) fn enqueue_partition_plans_in_txn(
     run_id: Option<&str>,
     now: u64,
 ) -> Result<Vec<(ConsolidationPartitionKey, EnqueueDreamerAttemptOutcome)>> {
+    if !planned_turn_ids.is_empty() {
+        // The screen may read MESSAGE rows under the Dreamer's grants in
+        // this writer: they are judged at a clock floor persisted here.
+        observe_grant_clock_for_message_screen_in_txn(vault, wtxn)?;
+    }
     let Some(prepared) =
         prepare_partition_plans_in_txn(vault, wtxn, scope, planned_turn_ids, watermark)?
     else {

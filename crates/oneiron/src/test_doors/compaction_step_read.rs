@@ -5,6 +5,8 @@
 //! bound to a live off-record session stages them in its room's overlay
 //! instead (STEPREAD-OVERLAY-RESPONSE-ASSET).
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use crate::code_run::ExecutorStorage;
 use crate::compaction::{CompactionCall, CompactionStepRef};
 use crate::error::{Error, Result};
@@ -85,7 +87,7 @@ pub fn file_compaction_step_in_session(
 ) -> Result<StagedCompactionStep> {
     let call = compaction_call(sources, answer)?;
     let content = crate::blob_artifact::blob_artifact_asset_entity_id(
-        blake3::hash(&call.response).as_bytes(),
+        ContentHash::of(&call.response).as_bytes(),
     )?;
     let session = vault.off_record_session_vault().bind(session_ref)?;
     let storage = ExecutorStorage::for_session(&session, writer)?;

@@ -22,8 +22,9 @@ const STATES: SideTable<String, CalendarConnectorSeatRecord, Named> =
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::calendar::connectors::door::{
-    CalendarConnectorKillRequest, CalendarConnectorRequest, CalendarConnectorWriteRequest,
-    CalendarImipTransportConfig,
+    CalendarConnectorKillRequest, CalendarConnectorReleaseHoldReceipt,
+    CalendarConnectorReleaseHoldRequest, CalendarConnectorRequest, CalendarConnectorWriteRequest,
+    CalendarHoldRow, CalendarHoldSeat, CalendarImipTransportConfig,
 };
 
 /// One seat's setup, the value of `calendar.connector_seat` at the seat's ref: the CalDAV
@@ -137,6 +138,31 @@ pub(crate) fn seat_of_system_in_txn(
         .into_iter()
         .find(|(_, record)| record.retired_system.as_deref() == Some(system))
         .map(|(seat_ref, _)| seat_ref))
+}
+
+/// The system of every seat, installed or taken out of service, as `txn` reads it: each
+/// system whose passports a seat's pulls and writes key ([`seat_of_system_in_txn`]). A seat
+/// taken out of service keeps its system in its record as its installed setup held it.
+pub(crate) fn seat_systems_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> crate::Result<Vec<String>> {
+    let mut systems = Vec::new();
+    for seat_ref in CONNECTOR_SEAT.items_in_txn(vault, txn)? {
+        if let Some(setup) = CONNECTOR_SEAT
+            .read_in_txn(vault, txn, &[], Some(&seat_ref))?
+            .value
+        {
+            systems.push(setup.config.system);
+        }
+    }
+    systems.extend(
+        STATES
+            .scan(&vault.store, txn)?
+            .into_iter()
+            .filter_map(|(_, record)| record.retired_system),
+    );
+    Ok(systems)
 }
 
 /// Keeps the system of the installed seat at `seat_ref` its own once the setting projection
@@ -330,12 +356,48 @@ impl CalendarConnectorOperation {
     }
 
     pub(super) fn literal_scope(&self) -> crate::Result<[u8; 32]> {
-        let mut config = self.row.seat.config.clone();
-        // Only the installed-seat label differs for the same logical operation.
         // Live admission above still uses this operation's unmodified registration.
-        config.seat_ref.clear();
-        super::literal::digest(&(&self.row.endpoint, &config))
+        registration_scope(&self.row)
     }
+}
+
+/// The outbox scope of the seat `row` installs: its endpoint and configuration with the
+/// installed-seat label cleared, since only that label differs for the same logical operation.
+/// A same-config re-install therefore writes the same scope and resumes the seat's rows.
+fn registration_scope(row: &CalendarConnectorRegistration) -> crate::Result<[u8; 32]> {
+    let mut config = row.seat.config.clone();
+    config.seat_ref.clear();
+    super::literal::digest(&(&row.endpoint, &config))
+}
+
+/// One installed seat's outbox scope, read in a txn: whether its kill switch is engaged, and
+/// the calendar it names.
+pub(super) struct InstalledSeatScope {
+    pub(super) scope: [u8; 32],
+    pub(super) killed: bool,
+    pub(super) system: String,
+    pub(super) calendar_ref: String,
+}
+
+/// Every installed seat's outbox scope, read in `txn`. A setup row that does not read is no
+/// seat.
+pub(super) fn installed_seat_scopes_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> crate::Result<Vec<InstalledSeatScope>> {
+    let mut seats = Vec::new();
+    for seat_ref in CONNECTOR_SEAT.items_in_txn(vault, txn)? {
+        let Some(row) = registration_in_txn(vault, txn, &seat_ref)? else {
+            continue;
+        };
+        seats.push(InstalledSeatScope {
+            scope: registration_scope(&row)?,
+            killed: row.seat.kill_switch_engaged(),
+            system: row.seat.config.system.clone(),
+            calendar_ref: row.seat.config.calendar_ref.clone(),
+        });
+    }
+    Ok(seats)
 }
 
 pub fn validate_endpoint(endpoint: &str) -> MemoryResult<()> {

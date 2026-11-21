@@ -18,6 +18,10 @@
 //! that predicate under (else the first listed entity). An extracted claim
 //! therefore reads as a turn's words, never as an authored claim's value.
 //!
+//! It also answers the discovery arms' first call, known by the discovery
+//! prompt: shown an index, it fetches every handle the index lists and
+//! searches nothing; with none, it searches the prompt's own words.
+//!
 //! `cargo test --locked -p oneiron-bench --test action_bench_cli`.
 #![allow(
     clippy::disallowed_methods,
@@ -52,6 +56,8 @@ const EXTRACTION_ARMS: [&str; 4] = [
 ];
 /// The shipped extraction prompt's opening words.
 const EXTRACTION_SYSTEM: &str = "Extract durable memory claims";
+const DISCOVERY_PROMPT: &str = "You choose what to read. Reply with one JSON read request.";
+const DISCOVERY_ARMS: [&str; 3] = ["none", "index_first", "search_only"];
 
 fn shipped_tasks_path() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/action_bench.tasks.v1.json")
@@ -103,12 +109,21 @@ fn follow_up_mut<'a>(tasks: &'a mut Value, id: &str) -> &'a mut Value {
         .unwrap()
 }
 
-/// The loopback reader, every request body the reader was sent, and every
-/// Dreamer call the extraction arms made.
+/// The loopback reader, every request body the reader was sent, every
+/// Dreamer call the extraction arms made and every discovery call.
 struct Reader {
     endpoint: String,
     requests: Arc<Mutex<Vec<Value>>>,
     dreamer: Arc<Mutex<Vec<DreamerCall>>>,
+    discovery: Arc<Mutex<Vec<DiscoveryCall>>>,
+}
+
+/// One discovery call the loopback answered, and the usage it reported.
+#[derive(Clone)]
+struct DiscoveryCall {
+    request: Value,
+    prompt_tokens: u64,
+    completion_tokens: u64,
 }
 
 /// One Dreamer call the loopback answered, and the usage it reported.
@@ -119,13 +134,16 @@ struct DreamerCall {
     completion_tokens: u64,
 }
 
-/// What the loopback holds: the forced reader replies and the extractor's
-/// answer key, each user turn's words to the predicates said at its time.
+/// What the loopback holds: the forced reader and discovery replies, and
+/// the extractor's answer key, each user turn's words to the predicates
+/// said at its time.
 struct Loopback {
     forced: BTreeMap<String, String>,
+    forced_discovery: BTreeMap<String, String>,
     said: BTreeMap<String, Vec<String>>,
     requests: Arc<Mutex<Vec<Value>>>,
     dreamer: Arc<Mutex<Vec<DreamerCall>>>,
+    discovery: Arc<Mutex<Vec<DiscoveryCall>>>,
 }
 
 /// Each user turn of the shipped tasks, and the predicates of the claims
@@ -154,6 +172,17 @@ fn said_in_turns(tasks: &Value) -> BTreeMap<String, Vec<String>> {
 /// Starts the loopback reader. `forced` maps a follow-up prompt to the reply
 /// the reader gives it, whatever the context.
 fn start_reader(forced: BTreeMap<String, String>) -> Reader {
+    start_reader_with(forced, BTreeMap::new())
+}
+
+/// As [`start_reader`]; `forced_discovery` maps a follow-up prompt to its
+/// discovery reply under every discovery arm, each `@<predicate>` in it
+/// read as the handle the index lists that predicate under (it stays as
+/// written where no index lists it).
+fn start_reader_with(
+    forced: BTreeMap<String, String>,
+    forced_discovery: BTreeMap<String, String>,
+) -> Reader {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let endpoint = format!(
         "http://{}/v1/chat/completions",
@@ -161,12 +190,15 @@ fn start_reader(forced: BTreeMap<String, String>) -> Reader {
     );
     let loopback = Loopback {
         forced,
+        forced_discovery,
         said: said_in_turns(&shipped_tasks()),
         requests: Arc::new(Mutex::new(Vec::new())),
         dreamer: Arc::new(Mutex::new(Vec::new())),
+        discovery: Arc::new(Mutex::new(Vec::new())),
     };
     let requests = Arc::clone(&loopback.requests);
     let dreamer = Arc::clone(&loopback.dreamer);
+    let discovery = Arc::clone(&loopback.discovery);
     std::thread::spawn(move || {
         for stream in listener.incoming().flatten() {
             serve(stream, &loopback);
@@ -176,6 +208,7 @@ fn start_reader(forced: BTreeMap<String, String>) -> Reader {
         endpoint,
         requests,
         dreamer,
+        discovery,
     }
 }
 
@@ -200,7 +233,9 @@ fn serve(mut stream: TcpStream, loopback: &Loopback) {
     let mut body = vec![0; length];
     reader.read_exact(&mut body).unwrap();
     let request: Value = serde_json::from_slice(&body).unwrap();
-    let reader = system_text(&request) == READER_PROMPT;
+    let system = system_text(&request);
+    let reader = system == READER_PROMPT;
+    let discovering = system == DISCOVERY_PROMPT;
     let reply = if reader {
         let input: Value = serde_json::from_str(&message(&request, "user")).unwrap();
         let question = input["question"].as_str().unwrap();
@@ -211,6 +246,18 @@ fn serve(mut stream: TcpStream, loopback: &Loopback) {
             .get(prompt)
             .cloned()
             .unwrap_or_else(|| act(question, context))
+    } else if discovering {
+        let input: Value = serde_json::from_str(&message(&request, "user")).unwrap();
+        let prompt = input["question"]
+            .as_str()
+            .unwrap()
+            .split("\n\nTools:")
+            .next()
+            .unwrap();
+        match loopback.forced_discovery.get(prompt) {
+            Some(forced) => resolve_handles(forced, input["index"].as_str().unwrap_or("")),
+            None => discover(&input),
+        }
     } else {
         dreamer_reply(&request, &loopback.said)
     };
@@ -234,6 +281,12 @@ fn serve(mut stream: TcpStream, loopback: &Loopback) {
     .to_string();
     if reader {
         loopback.requests.lock().unwrap().push(request);
+    } else if discovering {
+        loopback.discovery.lock().unwrap().push(DiscoveryCall {
+            request,
+            prompt_tokens,
+            completion_tokens,
+        });
     } else {
         loopback.dreamer.lock().unwrap().push(DreamerCall {
             request,
@@ -530,6 +583,47 @@ fn act(question: &str, context: &str) -> String {
     json!({"action": action, "fields": fields}).to_string()
 }
 
+/// The loopback's discovery rule: shown an index, fetch every handle it
+/// lists and search nothing; shown none, search the prompt's own words.
+fn discover(input: &Value) -> String {
+    match input.get("index") {
+        Some(index) => json!({"fetch": index_handles(index.as_str().unwrap())}).to_string(),
+        None => {
+            let question = input["question"].as_str().unwrap();
+            json!({"search": question.split("\n\nTools:").next().unwrap()}).to_string()
+        }
+    }
+}
+
+/// An index's handles, in its order: each line is `- <handle> CLAIM
+/// <predicate>`.
+fn index_handles(index: &str) -> Vec<String> {
+    index.lines().map(|line| index_line(line).0).collect()
+}
+
+/// One index line's handle and predicate.
+fn index_line(line: &str) -> (String, String) {
+    let parts: Vec<&str> = line.split(' ').collect();
+    assert_eq!(parts.len(), 4, "an index line: {line}");
+    assert_eq!(
+        (parts[0], parts[2]),
+        ("-", "CLAIM"),
+        "an index line: {line}"
+    );
+    (parts[1].to_owned(), parts[3].to_owned())
+}
+
+/// A forced discovery reply, each `"@<predicate>"` replaced by the handle
+/// the index lists that predicate under.
+fn resolve_handles(forced: &str, index: &str) -> String {
+    index
+        .lines()
+        .map(index_line)
+        .fold(forced.to_owned(), |reply, (handle, predicate)| {
+            reply.replace(&format!("\"@{predicate}\""), &format!("\"{handle}\""))
+        })
+}
+
 fn write_plan(dir: &Path, endpoint: &str, tasks: &Path) -> PathBuf {
     write_plan_with(dir, endpoint, tasks, &ARMS, false)
 }
@@ -543,10 +637,12 @@ fn write_plan_with(
     arms: &[&str],
     extraction: bool,
 ) -> PathBuf {
-    let sha256: String = Sha256::digest(READER_PROMPT.as_bytes())
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
+    let sha256 = |prompt: &str| -> String {
+        Sha256::digest(prompt.as_bytes())
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    };
     let mut models = Map::new();
     models.insert(
         READER_MODEL.to_owned(),
@@ -580,10 +676,14 @@ fn write_plan_with(
             "max_tokens": 64,
             "temperature": 0.0,
         },
-        "reader_prompt": {"content": READER_PROMPT, "sha256": sha256},
+        "reader_prompt": {"content": READER_PROMPT, "sha256": sha256(READER_PROMPT)},
         "arms": arms,
         "recall_limit": 10,
     });
+    if arms.iter().any(|arm| DISCOVERY_ARMS[1..].contains(arm)) {
+        plan["discovery_prompt"] =
+            json!({"content": DISCOVERY_PROMPT, "sha256": sha256(DISCOVERY_PROMPT)});
+    }
     if extraction {
         plan["extraction"] = json!({
             "model_id": EXTRACTION_MODEL,
@@ -606,11 +706,12 @@ fn run_bench(plan: &Path) -> Output {
 }
 
 /// One run over the shipped tasks: its report, the requests the reader was
-/// sent and the Dreamer calls the extraction arms made.
+/// sent, the Dreamer calls the extraction arms made and the discovery calls.
 struct Run {
     report: Value,
     requests: Vec<Value>,
     dreamer: Vec<DreamerCall>,
+    discovery: Vec<DiscoveryCall>,
 }
 
 fn run(forced: BTreeMap<String, String>) -> Run {
@@ -618,7 +719,10 @@ fn run(forced: BTreeMap<String, String>) -> Run {
 }
 
 fn run_arms(forced: BTreeMap<String, String>, arms: &[&str], extraction: bool) -> Run {
-    let reader = start_reader(forced);
+    run_with(start_reader(forced), arms, extraction)
+}
+
+fn run_with(reader: Reader, arms: &[&str], extraction: bool) -> Run {
     let dir = tempfile::tempdir().unwrap();
     let output = run_bench(&write_plan_with(
         dir.path(),
@@ -635,10 +739,12 @@ fn run_arms(forced: BTreeMap<String, String>, arms: &[&str], extraction: bool) -
     let report = serde_json::from_slice(&output.stdout).unwrap();
     let requests = reader.requests.lock().unwrap().clone();
     let dreamer = reader.dreamer.lock().unwrap().clone();
+    let discovery = reader.discovery.lock().unwrap().clone();
     Run {
         report,
         requests,
         dreamer,
+        discovery,
     }
 }
 
@@ -651,6 +757,19 @@ fn shipped_run() -> &'static Run {
 fn extraction_run() -> &'static Run {
     static RUN: OnceLock<Run> = OnceLock::new();
     RUN.get_or_init(|| run_arms(BTreeMap::new(), &EXTRACTION_ARMS, true))
+}
+
+/// One run of the two discovery arms beside no memory, under the loopback's
+/// discovery rule.
+fn discovery_run() -> &'static Run {
+    static RUN: OnceLock<Run> = OnceLock::new();
+    RUN.get_or_init(|| {
+        run_with(
+            start_reader_with(BTreeMap::new(), BTreeMap::new()),
+            &DISCOVERY_ARMS,
+            false,
+        )
+    })
 }
 
 /// One extraction arm's row for one follow-up at one probe.
@@ -1623,4 +1742,525 @@ fn the_extraction_arms_extract_each_turn_in_its_own_world() {
             }
         }
     }
+}
+
+/// The predicate prefix of every authored claim in the shipped tasks; a
+/// claim the engine itself wrote into a bench vault, if any, has another.
+const AUTHORED_PREFIX: &str = "profile.";
+
+/// The claims a follow-up may read at its history's freeze, as
+/// `(predicate, value)`: made before the freeze and not deleted, the latest
+/// of each predicate in each world (a later one supersedes it), in base
+/// reality or the follow-up's world.
+fn standing_claims(tasks: &Value, follow_up: &Value) -> Vec<(String, String)> {
+    let shipped = history(tasks, follow_up["history"].as_str().unwrap());
+    let frozen_at = shipped["frozen_at"].as_u64().unwrap();
+    let mut standing: BTreeMap<(String, Option<String>), (u64, String)> = BTreeMap::new();
+    for claim in shipped["claims"].as_array().unwrap() {
+        let at = claim["at"].as_u64().unwrap();
+        if at >= frozen_at || claim.get("deleted_at").is_some() {
+            continue;
+        }
+        let slot = (
+            claim["predicate"].as_str().unwrap().to_owned(),
+            claim["world"].as_str().map(str::to_owned),
+        );
+        let value = claim["value"].as_str().unwrap().to_owned();
+        if standing.get(&slot).is_none_or(|(held, _)| *held < at) {
+            standing.insert(slot, (at, value));
+        }
+    }
+    let world = follow_up["world"].as_str();
+    standing
+        .into_iter()
+        .filter(|((_, claim_world), _)| claim_world.is_none() || claim_world.as_deref() == world)
+        .map(|((predicate, _), (_, value))| (predicate, value))
+        .collect()
+}
+
+fn sorted(mut lines: Vec<String>) -> Vec<String> {
+    lines.sort();
+    lines
+}
+
+/// A row's context lines that state an authored claim; every line of the
+/// context is a claim.
+fn authored_lines(row: &Value) -> Vec<String> {
+    let lines = context_lines(row);
+    for line in &lines {
+        assert!(line.starts_with("- CLAIM "), "{line}");
+    }
+    let authored = format!("- CLAIM {AUTHORED_PREFIX}");
+    lines
+        .into_iter()
+        .filter(|line| line.starts_with(&authored))
+        .collect()
+}
+
+fn context_lines(row: &Value) -> Vec<String> {
+    row["context"]
+        .as_str()
+        .unwrap()
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
+fn strings(list: &Value) -> Vec<String> {
+    list.as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item.as_str().unwrap().to_owned())
+        .collect()
+}
+
+/// The index lists every authored claim the follow-up may read, and only
+/// those: no superseded, deleted, other-world or after-freeze claim. It
+/// names each by a handle and its predicate, never by its value.
+#[test]
+fn the_index_lists_each_claim_the_follow_up_may_read_and_no_value() {
+    let run = discovery_run();
+    let tasks = shipped_tasks();
+    for task in tasks["follow_ups"].as_array().unwrap() {
+        let id = task["id"].as_str().unwrap();
+        let step = &row(run, "index_first", id)["discovery"];
+        let index = step["index"].as_str().unwrap();
+        let listed: Vec<(String, String)> = index.lines().map(index_line).collect();
+        let handles: Vec<String> = listed.iter().map(|(handle, _)| handle.clone()).collect();
+        let numbered: Vec<String> = (1..=listed.len()).map(|n| format!("m{n}")).collect();
+        assert_eq!(handles, numbered, "{id}: {index}");
+        assert_eq!(step["index_lines"], listed.len(), "{id}");
+        let predicates = sorted(
+            listed
+                .into_iter()
+                .map(|(_, predicate)| predicate)
+                .filter(|predicate| predicate.starts_with(AUTHORED_PREFIX))
+                .collect(),
+        );
+        let standing = standing_claims(&tasks, task);
+        assert_eq!(
+            predicates,
+            sorted(
+                standing
+                    .iter()
+                    .map(|(predicate, _)| predicate.clone())
+                    .collect()
+            ),
+            "{id}: {index}"
+        );
+        assert_eq!(step["index_truncated"], false, "{id}");
+        let shipped = history(&tasks, task["history"].as_str().unwrap());
+        for claim in shipped["claims"].as_array().unwrap() {
+            let value = claim["value"].as_str().unwrap();
+            assert!(!index.contains(value), "{id}: the index holds {value:?}");
+        }
+        let search = &row(run, "search_only", id)["discovery"];
+        assert_eq!(search["index"], "", "{id}");
+        assert_eq!(search["index_lines"], 0, "{id}");
+    }
+}
+
+/// Under the loopback's rule `index_first` fetches every listed handle and
+/// acts on exactly those claims, so it acts on every follow-up; `search_only`
+/// searches the prompt and reads only claims the follow-up may read.
+#[test]
+fn the_index_first_arm_acts_on_what_it_fetched_and_the_search_only_arm_on_its_hits() {
+    let run = discovery_run();
+    let tasks = shipped_tasks();
+    for task in tasks["follow_ups"].as_array().unwrap() {
+        let id = task["id"].as_str().unwrap();
+        let standing = standing_claims(&tasks, task);
+        let served: Vec<String> = standing
+            .iter()
+            .map(|(predicate, value)| format!("- CLAIM {predicate}: {value}"))
+            .collect();
+        let row_index = row(run, "index_first", id);
+        let step = &row_index["discovery"];
+        assert_eq!(
+            strings(&step["fetched"]),
+            index_handles(step["index"].as_str().unwrap()),
+            "{id}"
+        );
+        assert_eq!(step["unknown_handles"], json!([]), "{id}");
+        assert_eq!(step["query"], Value::Null, "{id}");
+        assert_eq!(step["invalid"], false, "{id}");
+        assert_eq!(
+            sorted(authored_lines(row_index)),
+            sorted(served.clone()),
+            "{id}"
+        );
+        assert_eq!(
+            row_index["context_lines"],
+            context_lines(row_index).len(),
+            "{id}"
+        );
+        assert_eq!(row_index["score"]["action_correct"], true, "{row_index}");
+        let row_search = row(run, "search_only", id);
+        let step = &row_search["discovery"];
+        assert_eq!(step["query"], task["prompt"], "{id}");
+        assert_eq!(step["fetched"], json!([]), "{id}");
+        for line in authored_lines(row_search) {
+            assert!(
+                served.contains(&line),
+                "{id}: {line:?} is no claim it may read"
+            );
+        }
+    }
+    let summary = run.report["summary"].as_array().unwrap();
+    let search_only = summary
+        .iter()
+        .find(|arm| arm["arm"] == "search_only")
+        .unwrap();
+    assert!(
+        search_only["context_lines"].as_u64().unwrap() > 0,
+        "the searches read nothing: {search_only}"
+    );
+    let index_first = summary
+        .iter()
+        .find(|arm| arm["arm"] == "index_first")
+        .unwrap();
+    assert_eq!(index_first["action_correct"], 1.0);
+    assert_eq!(index_first["correction_persisted"], 1.0);
+    assert_eq!(index_first["leaked"], 0.0);
+    assert_eq!(index_first["reappeared"], 0.0);
+}
+
+/// The discovery reply alone decides what the act step reads: a fetch reads
+/// only its listed handles, each once; a handle no index listed reads
+/// nothing; a reply that is no read request reads nothing; a fetch and a
+/// search together serve each claim once.
+#[test]
+fn a_discovery_reply_decides_what_reaches_the_act_step() {
+    let tasks = shipped_tasks();
+    let prompt = |id: &str| follow_up(&tasks, id)["prompt"].as_str().unwrap().to_owned();
+    let forced_discovery = BTreeMap::from([
+        (
+            prompt("owen-dentist"),
+            json!({"fetch": ["@profile.usual_order"]}).to_string(),
+        ),
+        (prompt("owen-usual"), json!({"fetch": ["m999"]}).to_string()),
+        (prompt("owen-report"), "I would rather not.".to_owned()),
+        (
+            prompt("yuki-locker"),
+            json!({
+                "fetch": ["@profile.parcel_locker", "@profile.parcel_locker"],
+                "search": "parcel locker code",
+            })
+            .to_string(),
+        ),
+    ]);
+    let run = run_with(
+        start_reader_with(BTreeMap::new(), forced_discovery),
+        &DISCOVERY_ARMS,
+        false,
+    );
+    let dentist = row(&run, "index_first", "owen-dentist");
+    assert_eq!(dentist["discovery"]["fetched"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        dentist["context"],
+        "- CLAIM profile.usual_order: the usual at the cafe: oat flat white"
+    );
+    assert_eq!(dentist["score"]["action_correct"], false, "{dentist}");
+    assert_eq!(dentist["score"]["correction_persisted"], false, "{dentist}");
+    // Shown no index, the same fetch names no handle it was shown.
+    let dentist = row(&run, "search_only", "owen-dentist");
+    assert_eq!(
+        dentist["discovery"]["unknown_handles"],
+        json!(["@profile.usual_order"])
+    );
+    assert_eq!(dentist["discovery"]["fetched"], json!([]));
+    assert_eq!(dentist["context"], "", "{dentist}");
+    let usual = row(&run, "index_first", "owen-usual");
+    assert_eq!(usual["discovery"]["unknown_handles"], json!(["m999"]));
+    assert_eq!(usual["discovery"]["invalid"], false);
+    assert_eq!(usual["context"], "", "{usual}");
+    assert_eq!(usual["score"]["action_correct"], false, "{usual}");
+    for arm in &DISCOVERY_ARMS[1..] {
+        let report = row(&run, arm, "owen-report");
+        assert_eq!(report["discovery"]["invalid"], true, "{report}");
+        assert_eq!(report["context"], "", "{report}");
+        assert_eq!(report["context_lines"], 0, "{report}");
+        let summary = run.report["summary"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|summary| summary["arm"] == *arm)
+            .unwrap();
+        assert_eq!(summary["discovery"]["invalid"], 1, "{summary}");
+    }
+    let expected = follow_up(&tasks, "yuki-locker")["rubric"]["expect"]["locker_code"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let locker = row(&run, "index_first", "yuki-locker");
+    assert_eq!(locker["discovery"]["fetched"].as_array().unwrap().len(), 1);
+    assert_eq!(locker["discovery"]["query"], "parcel locker code");
+    let lines = context_lines(locker);
+    assert_eq!(
+        lines.iter().collect::<BTreeSet<_>>().len(),
+        lines.len(),
+        "{locker}"
+    );
+    assert_eq!(
+        lines.iter().filter(|line| line.contains(&expected)).count(),
+        1,
+        "{locker}"
+    );
+    assert_eq!(locker["score"]["action_correct"], true, "{locker}");
+    let locker = row(&run, "search_only", "yuki-locker");
+    assert_eq!(
+        locker["discovery"]["unknown_handles"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(locker["discovery"]["query"], "parcel locker code");
+}
+
+/// The discovery step sends the question, and the index under
+/// `index_first`, and nothing else: no rubric, gold memory or task id. The
+/// act step after it is the memory arms' call.
+#[test]
+fn the_discovery_step_never_sees_a_rubric_or_a_held_out_follow_up() {
+    let run = discovery_run();
+    let tasks = shipped_tasks();
+    let follow_ups = follow_up_count(&tasks);
+    assert_eq!(run.discovery.len(), follow_ups * 2);
+    assert_eq!(run.requests.len(), follow_ups * DISCOVERY_ARMS.len());
+    let prompts: Vec<String> = tasks["follow_ups"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|task| task["prompt"].as_str().unwrap().to_owned())
+        .collect();
+    let markers: Vec<String> = tasks["follow_ups"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["id"].as_str().unwrap().to_owned())
+        .chain(
+            [
+                "rubric",
+                "gold_memory",
+                "expect",
+                "stale",
+                "keep",
+                "other_scope",
+                "deleted",
+            ]
+            .map(str::to_owned),
+        )
+        .collect();
+    let mut indexed = 0;
+    for call in &run.discovery {
+        assert_eq!(message(&call.request, "system"), DISCOVERY_PROMPT);
+        let input: Value = serde_json::from_str(&message(&call.request, "user")).unwrap();
+        let keys: BTreeSet<&str> = input
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        if keys.contains("index") {
+            indexed += 1;
+            assert_eq!(keys, BTreeSet::from(["question", "index"]));
+        } else {
+            assert_eq!(keys, BTreeSet::from(["question"]));
+        }
+        let question = input["question"].as_str().unwrap();
+        let own: Vec<&String> = prompts
+            .iter()
+            .filter(|prompt| question.contains(prompt.as_str()))
+            .collect();
+        assert_eq!(own.len(), 1, "{question}");
+        assert!(question.starts_with(own[0].as_str()), "{question}");
+        let text = call.request.to_string();
+        for marker in &markers {
+            assert!(
+                !text.contains(marker.as_str()),
+                "a discovery call carries {marker}: {text}"
+            );
+        }
+    }
+    assert_eq!(indexed, follow_ups);
+    for request in &run.requests {
+        assert_eq!(message(request, "system"), READER_PROMPT);
+        let input: Value = serde_json::from_str(&message(request, "user")).unwrap();
+        let keys: BTreeSet<&str> = input
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(keys, BTreeSet::from(["question", "context"]));
+    }
+}
+
+/// The discovery stage adds up: the summary's discovery reader tokens are
+/// the rows' sum and the loopback's count, and `index_first` pairs against
+/// `search_only` by history as every arm pairs against no memory.
+#[test]
+fn discovery_stage_costs_add_up() {
+    let run = discovery_run();
+    let tasks = shipped_tasks();
+    let follow_ups = follow_up_count(&tasks);
+    let digest: String = Sha256::digest(DISCOVERY_PROMPT.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    assert_eq!(run.report["discovery_prompt_sha256"], digest);
+    let summary = run.report["summary"].as_array().unwrap();
+    for arm in &DISCOVERY_ARMS[1..] {
+        let mine = rows(run, arm);
+        assert_eq!(mine.len(), follow_ups);
+        let stage = &summary
+            .iter()
+            .find(|summary| summary["arm"] == *arm)
+            .unwrap()["discovery"];
+        let calls: Vec<&DiscoveryCall> = run
+            .discovery
+            .iter()
+            .filter(|call| {
+                let input: Value = serde_json::from_str(&message(&call.request, "user")).unwrap();
+                input.get("index").is_some() == (*arm == "index_first")
+            })
+            .collect();
+        assert_eq!(calls.len(), follow_ups, "{arm}");
+        let row_sum = |key: &str| -> u64 {
+            mine.iter()
+                .map(|row| row["discovery"]["reader"][key].as_u64().unwrap())
+                .sum()
+        };
+        assert_eq!(
+            stage["reader"]["inputTokens"],
+            row_sum("inputTokens"),
+            "{arm}"
+        );
+        assert_eq!(
+            stage["reader"]["outputTokens"],
+            row_sum("outputTokens"),
+            "{arm}"
+        );
+        assert_eq!(
+            row_sum("inputTokens"),
+            calls.iter().map(|call| call.prompt_tokens).sum::<u64>(),
+            "{arm}"
+        );
+        assert_eq!(
+            row_sum("outputTokens"),
+            calls.iter().map(|call| call.completion_tokens).sum::<u64>(),
+            "{arm}"
+        );
+        let count = |key: &str| -> u64 {
+            mine.iter()
+                .map(|row| match &row["discovery"][key] {
+                    Value::Array(items) => items.len() as u64,
+                    other => other.as_u64().unwrap(),
+                })
+                .sum()
+        };
+        assert_eq!(stage["index_lines"], count("index_lines"), "{arm}");
+        assert_eq!(stage["fetched"], count("fetched"), "{arm}");
+        assert_eq!(stage["unknown_handles"], 0, "{arm}");
+        assert_eq!(stage["invalid"], 0, "{arm}");
+        let searches = if *arm == "index_first" { 0 } else { follow_ups };
+        assert_eq!(stage["searches"], searches, "{arm}");
+    }
+    let none = summary
+        .iter()
+        .find(|summary| summary["arm"] == "none")
+        .unwrap();
+    assert!(none.get("discovery").is_none(), "{none}");
+    let paired = run.report["paired"].as_array().unwrap();
+    for pair in paired {
+        let baseline = if pair["baseline"] == "search_only" {
+            assert_eq!(pair["arm"], "index_first", "{pair}");
+            "search_only"
+        } else {
+            assert_eq!(pair["baseline"], "none", "{pair}");
+            "none"
+        };
+        assert_ne!(pair["arm"], baseline, "{pair}");
+    }
+    let pair = paired
+        .iter()
+        .find(|pair| pair["baseline"] == "search_only" && pair["metric"] == "action_correct")
+        .unwrap();
+    assert_eq!(pair["histories"], 3, "{pair}");
+    let mean_of = |arm: &str, history: &str| -> f64 {
+        let scores: Vec<f64> = rows(run, arm)
+            .into_iter()
+            .filter(|row| row["history"] == history)
+            .map(|row| {
+                if row["score"]["action_correct"] == true {
+                    1.0
+                } else {
+                    0.0
+                }
+            })
+            .collect();
+        scores.iter().sum::<f64>() / scores.len() as f64
+    };
+    let histories = ["owen", "yuki", "mara"];
+    let expected = histories
+        .iter()
+        .map(|history| mean_of("index_first", history) - mean_of("search_only", history))
+        .sum::<f64>()
+        / histories.len() as f64;
+    assert!(
+        (pair["paired_difference"].as_f64().unwrap() - expected).abs() < 1e-9,
+        "{pair}: expected {expected}"
+    );
+}
+
+/// A discovery arm runs only under the pinned discovery prompt, and the
+/// prompt only beside a discovery arm; either refusal comes before any
+/// model call.
+#[test]
+fn a_discovery_arm_needs_the_discovery_prompt() {
+    let reader = start_reader(BTreeMap::new());
+    let dir = tempfile::tempdir().unwrap();
+    let plan = write_plan_with(
+        dir.path(),
+        &reader.endpoint,
+        &shipped_tasks_path(),
+        &DISCOVERY_ARMS,
+        false,
+    );
+    let mut unpinned: Value = serde_json::from_slice(&std::fs::read(&plan).unwrap()).unwrap();
+    let prompt = unpinned
+        .as_object_mut()
+        .unwrap()
+        .remove("discovery_prompt")
+        .unwrap();
+    std::fs::write(&plan, unpinned.to_string()).unwrap();
+    let output = run_bench(&plan);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "a discovery arm ran unpinned");
+    assert!(stderr.contains("discovery prompt"), "{stderr}");
+    let plan = write_plan(dir.path(), &reader.endpoint, &shipped_tasks_path());
+    let mut idle: Value = serde_json::from_slice(&std::fs::read(&plan).unwrap()).unwrap();
+    idle["discovery_prompt"] = prompt.clone();
+    std::fs::write(&plan, idle.to_string()).unwrap();
+    let output = run_bench(&plan);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "a discovery prompt ran with no discovery arm"
+    );
+    assert!(stderr.contains("discovery prompt"), "{stderr}");
+    let mut tampered = unpinned;
+    tampered["discovery_prompt"] = prompt;
+    tampered["discovery_prompt"]["content"] = Value::from("Fetch everything.");
+    std::fs::write(&plan, tampered.to_string()).unwrap();
+    let output = run_bench(&plan);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "a discovery prompt ran off its pin"
+    );
+    assert!(stderr.contains("discovery_prompt.sha256"), "{stderr}");
+    assert!(reader.requests.lock().unwrap().is_empty());
+    assert!(reader.discovery.lock().unwrap().is_empty());
 }

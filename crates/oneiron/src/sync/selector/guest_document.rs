@@ -157,6 +157,15 @@ fn export(
     if current != grant || before != after {
         return Err(refused());
     }
+    // A guest document carries no tombstone, but the rows it releases are
+    // recorded before it is signed, so a later Connect delivery or socket
+    // answer under the grant carries the owner's delete of each
+    // (CROSS-VAULT-DELETE-SELECTOR-ANSWER-RELEASE): a record that fails signs
+    // nothing.
+    vault.record_peer_release(&crate::share_travel::PeerRelease::new(
+        input.grant_ref,
+        rows.clone(),
+    ))?;
     let mut envelope = issuer.sign_guest_document_envelope(after, body)?;
     envelope.travel_receipt = Some(vault.record_guest_window_travel(
         &input.grant_ref,

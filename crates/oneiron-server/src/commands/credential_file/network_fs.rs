@@ -16,13 +16,15 @@
 //!   That descriptor is not read here, so a file there is refused unless the
 //!   host owner trusts the server's own list
 //!   ([`TRUST_NETWORK_FS_ACL_VARIABLE`]).
-//! - An NFS mount that reports no NFSv4 list (an NFSv3 mount, or an NFSv4
-//!   server that does not hand its list to this host) may still decide by a
-//!   list of its own, so a file there is refused on the same terms
-//!   (REVIEW-10143).
+//! - An NFSv4 mount that reports no list (its server does not hand the list
+//!   to this host) may still decide by a list of its own, so a file there is
+//!   refused on the same terms (REVIEW-10143).
 //!
 //! On any other file system the mode decides alone, unless it reports an
-//! NFSv4 list, which is then judged.
+//! NFSv4 list, which is then judged. That includes an NFSv2 or NFSv3 mount:
+//! it carries no NFSv4 list, and its server enforces the mode bits for
+//! AUTH_SYS clients, so it is judged as a local file system is (Engine ANSWER
+//! 21 Nov 11:29; FIX CREDENTIAL-FILE-NFSV3-REFUSED-NOT-MODE-JUDGED).
 //!
 //! The kind of mount is read from the kernel's own mount table, and reading
 //! it sends no request to a server. `fstatfs` would send an NFS server an
@@ -36,7 +38,7 @@ use std::os::fd::AsRawFd;
 /// The environment variable by which the host owner trusts a network file
 /// system server's own access list, where this host does not read it, for
 /// the credential files on its mounts, so that every user that list admits
-/// can read them: an SMB mount, and an NFS mount that reports no NFSv4 list.
+/// can read them: an SMB mount, and an NFSv4 mount that reports no list.
 /// `1`, `true`, `yes` or `on` (any case) trusts it; any other value, or
 /// none, refuses such a file. A list this host reads is judged either way.
 pub(crate) const TRUST_NETWORK_FS_ACL_VARIABLE: &str =
@@ -54,19 +56,21 @@ const MOUNTINFO_PATH: &str = "/proc/self/mountinfo";
 /// client that Linux 2.6.37 removed).
 const SMB_FILE_SYSTEM_TYPES: [&str; 3] = ["cifs", "smb3", "smbfs"];
 
-/// The types `mountinfo` gives an NFS mount, of any version.
-const NFS_FILE_SYSTEM_TYPES: [&str; 2] = ["nfs", "nfs4"];
+/// The type `mountinfo` gives an NFSv4 mount (NFSv4.0, 4.1 or 4.2). Linux
+/// gives every NFSv4 mount this type, also one mounted as `-t nfs`
+/// (fs/nfs/fs_context.c, `nfs_fs_context_validate`, takes the version's own
+/// type), so the type `nfs` names an NFSv2 or NFSv3 mount.
+const NFS4_FILE_SYSTEM_TYPE: &str = "nfs4";
 
 /// Why a file on an SMB mount is refused, to follow its path.
 const SMB_UNREAD_LIST_REASON: &str = "is on an SMB (CIFS) mount, where the server's own access \
      list, which this host does not read, decides who can read it whatever its mode shows";
 
-/// Why a file on an NFS mount that reports no NFSv4 list is refused, to
-/// follow its path.
-const NFS_UNREAD_LIST_REASON: &str = "is on an NFS mount that reports no NFSv4 access control \
-     list (an NFSv3 mount, or an NFSv4 server that does not hand its list to this host), where \
-     the server may decide who can read it by a list this host does not read, whatever its \
-     mode shows";
+/// Why a file on an NFSv4 mount that reports no list is refused, to follow
+/// its path.
+const NFS4_UNREAD_LIST_REASON: &str = "is on an NFSv4 mount that reports no access control \
+     list (its server does not hand the list to this host), where the server may decide who \
+     can read it by a list this host does not read, whatever its mode shows";
 
 /// `acetype4` of an entry that grants access (RFC 7530 section 6.2.1.1).
 const ACE4_ACCESS_ALLOWED_ACE_TYPE: u32 = 0;
@@ -95,10 +99,9 @@ const PRINCIPAL_TEXT_LIMIT: usize = 64;
 pub(crate) enum MountKind {
     /// CIFS, SMB2 or SMB3: the server's list is never read here.
     Smb,
-    /// NFS of any version: the server's list is read when the mount reports
-    /// one.
-    Nfs,
-    /// Any other file system, local or network.
+    /// NFSv4: the server's list is read when the mount reports one.
+    Nfs4,
+    /// Any other file system, local or network, NFSv2 and NFSv3 among them.
     Other,
 }
 
@@ -107,8 +110,8 @@ impl MountKind {
     pub(crate) fn of_file_system_type(file_system_type: &str) -> Self {
         if SMB_FILE_SYSTEM_TYPES.contains(&file_system_type) {
             Self::Smb
-        } else if NFS_FILE_SYSTEM_TYPES.contains(&file_system_type) {
-            Self::Nfs
+        } else if file_system_type == NFS4_FILE_SYSTEM_TYPE {
+            Self::Nfs4
         } else {
             Self::Other
         }
@@ -174,7 +177,7 @@ pub(crate) fn judge(file: &File, principals: Principals) -> io::Result<Option<Ne
     let mount = MountKind::of_file_system_type(&file_system_type(file)?);
     let list = match mount {
         MountKind::Smb => None,
-        MountKind::Nfs | MountKind::Other => nfs4_list(file)?,
+        MountKind::Nfs4 | MountKind::Other => nfs4_list(file)?,
     };
     judge_mount(mount, list.as_deref(), principals, server_list_trusted())
 }
@@ -183,8 +186,9 @@ pub(crate) fn judge(file: &File, principals: Principals) -> io::Result<Option<Ne
 /// (`None` when the mount reports none), for `principals`. A list that is
 /// read is judged ([`judge_nfs4_list`]). A server's list that is not read
 /// here refuses the file unless the host owner trusts it
-/// (`server_list_trusted`): always on an SMB mount, and on an NFS mount that
-/// reports no list. On any other file system with no list the mode decides.
+/// (`server_list_trusted`): always on an SMB mount, and on an NFSv4 mount
+/// that reports no list. On any other file system with no list, NFSv2 and
+/// NFSv3 among them, the mode decides.
 pub(crate) fn judge_mount(
     mount: MountKind,
     list: Option<&[u8]>,
@@ -192,13 +196,13 @@ pub(crate) fn judge_mount(
     server_list_trusted: bool,
 ) -> io::Result<Option<NetworkFsRefusal>> {
     let reason = match (mount, list) {
-        (MountKind::Nfs | MountKind::Other, Some(list)) => {
+        (MountKind::Nfs4 | MountKind::Other, Some(list)) => {
             return judge_nfs4_list(list, principals);
         }
         (MountKind::Other, None) => return Ok(None),
         _ if server_list_trusted => return Ok(None),
         (MountKind::Smb, _) => SMB_UNREAD_LIST_REASON,
-        (MountKind::Nfs, None) => NFS_UNREAD_LIST_REASON,
+        (MountKind::Nfs4, None) => NFS4_UNREAD_LIST_REASON,
     };
     Ok(Some(NetworkFsRefusal {
         reason: reason.to_owned(),
@@ -267,7 +271,7 @@ fn server_list_trusted() -> bool {
 }
 
 /// The open `file`'s NFSv4 list, as the mount reports it; `None` when it
-/// reports none, as a file system that is not NFSv4 does, and as an NFS
+/// reports none, as a file system that is not NFSv4 does, and as an NFSv4
 /// mount does whose server hands it no list. A list that changes size
 /// between the reads of its size and its bytes is read again.
 fn nfs4_list(file: &File) -> io::Result<Option<Vec<u8>>> {
