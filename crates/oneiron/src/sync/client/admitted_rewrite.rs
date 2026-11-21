@@ -9,13 +9,18 @@
 //! after its soft one, never landed. After a part imports, each such key is
 //! written again over the window, above every operation the window holds. A
 //! key whose value any other writer set (this vault, one of its machines)
-//! keeps that value, as before.
+//! keeps that value, as before. An admission is known by the message its
+//! changes carry ([`FEDERATION_ADMISSION_MESSAGE`]), never by where its ops
+//! start: a machine's first write in an empty window starts at Lamport 0 too.
+//! An admission made before its changes carried the message is not known as
+//! one, so a key it set keeps its value, as before.
 
 use super::base::SyncClient;
 use super::federated::map_federated_admission_err;
 use crate::deletion::decode_tombstone_value;
 use crate::error::{Error, Result, SyncEngineContext, SyncError};
 use crate::sync::loro_support::map_insert_bytes;
+use crate::sync::selector::FEDERATION_ADMISSION_MESSAGE;
 use crate::sync::transport::TransportError;
 use crate::sync::window::LoadedWindow;
 use loro::{
@@ -147,13 +152,16 @@ fn lost_to_admission(
         .is_some_and(|editor| admission_authored(window, editor))
 }
 
-/// Whether `peer`'s operations in `window` are an admission's: a fresh
-/// admission document's, which depend on nothing and start at Lamport 0, or a
-/// write over the window this module made.
+/// Whether `peer`'s operations in `window` are an admission's, or a write over
+/// the window this module made: its first change carries that writer's
+/// message. A machine's own first write in an empty window depends on nothing
+/// at Lamport 0 as an admission's does, so the message alone tells them apart.
 fn admission_authored(window: &LoroDoc, peer: PeerID) -> bool {
     window.get_change(ID::new(peer, 0)).is_some_and(|change| {
-        (change.deps.is_empty() && change.lamport == 0)
-            || change.message.as_deref() == Some(REWRITE_MESSAGE)
+        matches!(
+            change.message.as_deref(),
+            Some(FEDERATION_ADMISSION_MESSAGE | REWRITE_MESSAGE)
+        )
     })
 }
 

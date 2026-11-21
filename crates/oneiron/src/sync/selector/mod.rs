@@ -75,6 +75,7 @@ mod tests;
 use super::bridge;
 use super::loro_support;
 
+pub(in crate::sync) use self::admission::FEDERATION_ADMISSION_MESSAGE;
 #[cfg(test)]
 pub(in crate::sync) use self::admission::admit_peer_window_update;
 #[cfg(feature = "sync")]
