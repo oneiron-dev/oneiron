@@ -503,6 +503,23 @@ held-out pack with its own body, x1.031, JSON 18 against 19 of 20 (M02_en10's
 json fence is left open), graded -0.035 [-0.107, +0.003]. Worst-case VRAM
 23712 MiB, 852 MiB spare. Rollback: unset `ONEIRON_HOUSE_EXL3_EXT_DIR`.
 
+### exllamav3's own variables
+
+exllamav3 reads many `EXL3_*` environment variables that pick the target's
+kernels or arithmetic, in Python (`EXL3_FUSED_SAMPLER`, `EXL3_BC_ATTN`, ...)
+and in its extension (`EXL3_INT8_GEMV`, `EXL3_GEMV`, `EXL3_GRAPHS`, ...). The
+server takes every `EXL3_*` variable it inherits (from the unit's
+`EnvironmentFile` or the shell) at load, before it sets any of its own, and
+names their digest in its server settings (`exllamav3_env`) and in its
+session snapshots' compatibility, so answers, cached prefixes and KV computed
+under them are never taken for the stock server's. Every inherited one is
+named, not a list of known ones: one that changes nothing costs a cache miss
+or a refused import (`snapshot_incompatible`), never a wrong reuse. The fusion
+pair (`EXL3_MGEMM_K_THRESHOLD`, `EXL3_MGEMM_N_THRESHOLD`) is the exception:
+the `fuse_projections` switch sets or clears it and names itself in
+`speed_parts`. An `EXL3_ENV` line at load lists the variables and the digest.
+With none set, the identity and the compatibility are as before.
+
 ### Solo admission
 
 A request body that sets top-level `"oneiron_solo": true` runs alone. When it

@@ -181,6 +181,13 @@ KV_ARITHMETIC_PARTS = ("fuse_projections", "fp16_prefill")
 # EnvironmentFile, would fuse projections that the identity and the snapshot
 # compatibility do not name.
 PROJECTION_FUSION_ENV = ("EXL3_MGEMM_K_THRESHOLD", "EXL3_MGEMM_N_THRESHOLD")
+# The prefix of exllamav3's own environment variables. exllamav3 reads many
+# that pick the target's kernels or arithmetic, in Python (EXL3_FUSED_SAMPLER,
+# EXL3_BC_ATTN, ...) and in the extension (EXL3_INT8_GEMV, EXL3_GEMV,
+# EXL3_GRAPHS, ...). The server names every one it inherits in its identity
+# (`exllamav3_environment`), not a list of known ones: a variable that changes
+# nothing costs a cache or snapshot miss, never a wrong reuse.
+EXLLAMAV3_ENV_PREFIX = "EXL3_"
 # FP16 accumulation runs in a reconstructed prefill GEMM of at least this many
 # rows into an FP16 output (`install_fp16_prefill`).
 FP16_PREFILL_MIN_ROWS = 384
@@ -611,6 +618,41 @@ def set_projection_fusion(on):
     return replaced
 
 
+def exllamav3_environment(environ=None):
+    """The exllamav3 variables (EXLLAMAV3_ENV_PREFIX) in `environ` (the process environment by default) that no
+    switch owns, by name, sorted: every one but the fusion pair, which the fuse_projections switch sets or clears
+    (`set_projection_fusion`) and names in speed_parts. Taken at load, before the server sets any of its own."""
+    environ = os.environ if environ is None else environ
+    return {name: environ[name] for name in sorted(environ)
+            if name.startswith(EXLLAMAV3_ENV_PREFIX) and name not in PROJECTION_FUSION_ENV}
+
+
+def environment_digest(variables):
+    """The digest of `variables` (`exllamav3_environment`) as settings (`cache_usage.settings_digest`: names and
+    values as JSON, names sorted), or None when there are none."""
+    return cache_usage.settings_digest(variables) if variables else None
+
+
+def arithmetic_identity(parts, ext_digest=None, env_digest=None):
+    """What the server's identity names beyond the stock server's: the server-settings entries and the
+    kv_arithmetic list (session snapshot compatibility). The speed parts that are on are named in the settings
+    (`speed_parts`), and those in KV_ARITHMETIC_PARTS bind snapshots too. A rebuilt extension's digest
+    (`rebuilt_extension_digest`) and the digest of the inherited exllamav3 variables (`environment_digest`) can
+    change the target's arithmetic, so each binds both. Each is named only when present, so a server with none
+    keeps the identity and the snapshot compatibility it had before they existed."""
+    settings = {}
+    if any(parts.values()):
+        settings["speed_parts"] = sorted(name for name, on in parts.items() if on)
+    arithmetic = kv_arithmetic(parts)
+    if ext_digest:
+        settings["exllamav3_ext"] = ext_digest
+        arithmetic.append(f"exllamav3_ext={ext_digest}")
+    if env_digest:
+        settings["exllamav3_env"] = env_digest
+        arithmetic.append(f"exllamav3_env={env_digest}")
+    return settings, arithmetic
+
+
 def file_sha256(path):
     """The SHA-256 of the file at `path`, read in 16 MiB blocks (an extension module is about 230 MiB)."""
     digest = hashlib.sha256()
@@ -731,6 +773,14 @@ def load(args):
     if replaced:
         print("FUSION_ENV_REPLACED " + " ".join(f"{name}={value}" for name, value in sorted(replaced.items())),
               flush=True)
+    # The exllamav3 variables this server inherited, taken before it sets any
+    # of its own (the draft ring sets EXL3_DEBUG_NO_DRAFT_DEFRAG): its
+    # identity and its snapshots' compatibility name their digest.
+    inherited_env = exllamav3_environment()
+    env_digest = environment_digest(inherited_env)
+    if env_digest:
+        print("EXL3_ENV " + " ".join(f"{name}={value}" for name, value in inherited_env.items())
+              + f" sha256={env_digest}", flush=True)
     # A rebuilt exllamav3 extension (README, "GEMM FP16 accumulators"): None with the installed one.
     ext_digest = rebuilt_extension_digest(getattr(args, "exllamav3_ext_dir", None))
     print("SPEED_PARTS " + " ".join(f"{name}={int(on)}" for name, on in parts.items())
@@ -830,16 +880,11 @@ def load(args):
         cache_settings["draft_ring_pages"] = ring
     server_settings = {"context": args.context, "draft": draft is not None, "draft_tokens": depth,
                        "max_in_flight": batch}
-    if any(parts.values()):
-        # Only a server with a speed part on names them, so one with every part off keeps the identity it had
-        # before the parts existed.
-        server_settings["speed_parts"] = sorted(name for name, on in parts.items() if on)
-    arithmetic = kv_arithmetic(parts)
-    if ext_digest:
-        # A rebuilt extension changes the target's arithmetic (its GEMM accumulators): only a server that runs
-        # one names it, in its settings and in its snapshots' compatibility.
-        server_settings["exllamav3_ext"] = ext_digest
-        arithmetic.append(f"exllamav3_ext={ext_digest}")
+    # The speed parts on, a rebuilt extension (its GEMM accumulators) and the
+    # inherited exllamav3 variables: only a server that runs one names it, in
+    # its settings and in its snapshots' compatibility.
+    named, arithmetic = arithmetic_identity(parts, ext_digest, env_digest)
+    server_settings.update(named)
     identity = cache_usage.BackendIdentity(
         args.target_dir, template_source,
         cache_settings=cache_settings,

@@ -3,7 +3,9 @@
 projections on is refused `snapshot_incompatible` by a worker with them off,
 and a worker with both off keeps the compatibility it had before the parts
 existed. The fuse_projections switch owns exllamav3's fusion variables, so an
-inherited one cannot fuse projections the compatibility does not name. CPU only, with the stand-ins of `test_exl3_reply_limits` and
+inherited one cannot fuse projections the compatibility does not name. Every
+other inherited exllamav3 variable (EXL3_*) is named in the server's settings
+and its snapshots' compatibility. CPU only, with the stand-ins of `test_exl3_reply_limits` and
 stand-ins for the exllamav3 modules the session layer imports; no model is
 loaded. Run from this folder:
 `python3 -m unittest test_exl3_session_compatibility`."""
@@ -139,6 +141,126 @@ class ProjectionFusionSwitch(unittest.TestCase):
             before = dict(os.environ)
             self.assertEqual(exl3_server.set_projection_fusion(False), {})
             self.assertEqual(dict(os.environ), before)
+
+
+def execution_mode(server_settings):
+    """The execution digest of one plain request on a server with `server_settings`."""
+    with tempfile.TemporaryDirectory() as target:
+        (Path(target) / "tokenizer.json").write_text("{}", encoding="utf-8")
+        identity = cache_usage.BackendIdentity(
+            target, "template", cache_settings={}, server_settings=server_settings, model_digest="model",
+            launch=("launch-manifest", "runtime"))
+    return identity.execution_mode({}, False)
+
+
+class InheritedExllamav3Environment(unittest.TestCase):
+    # The FIX row's case (HOUSE-EXL3-ENV-IDENTITY): the host's EnvironmentFile turns exllamav3's int8 GEMV and
+    # its fused sampler off, which changes the target's kernels; the server must not answer, cache or export
+    # under the stock identity.
+    INHERITED = {"EXL3_INT8_GEMV": "0", "EXL3_FUSED_SAMPLER": "0"}
+    LOOKUP_ONLY = dict(dict.fromkeys(exl3_server.SPEED_PART_DEFAULTS, False), prompt_lookup=True)
+
+    def test_every_inherited_exllamav3_variable_but_the_fusion_pair_is_collected(self):
+        environ = dict(self.INHERITED, EXL3_MGEMM_K_THRESHOLD="0", EXL3_MGEMM_N_THRESHOLD="4096",
+                       PATH="/usr/bin", EXLLAMAV3_TUNE_CACHE="/var/cache/tune.bin")
+        collected = exl3_server.exllamav3_environment(environ)
+        self.assertEqual(list(collected.items()), [("EXL3_FUSED_SAMPLER", "0"), ("EXL3_INT8_GEMV", "0")])
+        with mock.patch.dict(os.environ, self.INHERITED):
+            self.assertEqual(exl3_server.exllamav3_environment()["EXL3_INT8_GEMV"], "0")
+
+    def test_the_digest_names_each_variable_and_its_value(self):
+        digest = exl3_server.environment_digest
+        self.assertIsNone(digest({}))
+        self.assertEqual(digest(self.INHERITED), digest(dict(reversed(self.INHERITED.items()))))
+        self.assertNotEqual(digest({"EXL3_INT8_GEMV": "0"}), digest({"EXL3_INT8_GEMV": "1"}))
+        self.assertNotEqual(digest({"EXL3_INT8_GEMV": "0"}), digest({"EXL3_GEMV": "0"}))
+        # A value with a line break never reads as a second variable.
+        self.assertNotEqual(digest({"EXL3_GEMV": "0\nEXL3_INT8_GEMV=0"}),
+                            digest({"EXL3_GEMV": "0", "EXL3_INT8_GEMV": "0"}))
+
+    def test_a_server_with_none_keeps_its_identity(self):
+        off = dict.fromkeys(exl3_server.SPEED_PART_DEFAULTS, False)
+        self.assertEqual(exl3_server.arithmetic_identity(off), ({}, []))
+        self.assertEqual(exl3_server.arithmetic_identity(off, None, exl3_server.environment_digest({})), ({}, []))
+        ext = "e" * 64
+        self.assertEqual(exl3_server.arithmetic_identity(dict(self.LOOKUP_ONLY, fp16_prefill=True), ext),
+                         ({"speed_parts": ["fp16_prefill", "prompt_lookup"], "exllamav3_ext": ext},
+                          ["fp16_prefill", f"exllamav3_ext={ext}"]))
+
+    def test_an_inherited_variable_changes_the_execution_mode(self):
+        env = exl3_server.environment_digest(self.INHERITED)
+        named, _ = exl3_server.arithmetic_identity(self.LOOKUP_ONLY, None, env)
+        stock, _ = exl3_server.arithmetic_identity(self.LOOKUP_ONLY)
+        self.assertEqual(named, dict(stock, exllamav3_env=env))
+        self.assertNotEqual(execution_mode(named), execution_mode(stock))
+        other, _ = exl3_server.arithmetic_identity(
+            self.LOOKUP_ONLY, None, exl3_server.environment_digest(dict(self.INHERITED, EXL3_INT8_GEMV="1")))
+        self.assertNotEqual(execution_mode(named), execution_mode(other))
+
+    def test_a_snapshot_is_refused_across_inherited_variables(self):
+        env = exl3_server.environment_digest(self.INHERITED)
+        _, arithmetic = exl3_server.arithmetic_identity(self.LOOKUP_ONLY, None, env)
+        _, stock = exl3_server.arithmetic_identity(self.LOOKUP_ONLY)
+        self.assertEqual(arithmetic, [f"exllamav3_env={env}"])
+        for exported, importing in ((arithmetic, stock), (stock, arithmetic)):
+            refusal = import_refusal(self, compatibility(exported), compatibility(importing))
+            self.assertEqual(refusal.code, layer.SNAPSHOT_INCOMPATIBLE)
+            self.assertEqual(str(refusal), INCOMPATIBLE_MESSAGE)
+        # The same variables on both workers: the import goes on to its checkpoint check.
+        refusal = import_refusal(self, compatibility(arithmetic), compatibility(arithmetic))
+        self.assertNotEqual(str(refusal), INCOMPATIBLE_MESSAGE)
+
+
+class IdentityBuilt(Exception):
+    """Raised by the stand-in BackendIdentity, with the arguments `load` built it from."""
+
+    def __init__(self, kwargs):
+        super().__init__("identity built")
+        self.kwargs = kwargs
+
+
+class LoadNamesInheritedVariables(unittest.TestCase):
+    """`load` itself, from its arguments to the identity it builds, with stand-ins for every model and cache it
+    touches (no draft, every speed part at its default, the installed extension); the stand-in identity stops it."""
+
+    def identity_kwargs(self, environ):
+        def build(*args, **kwargs):
+            raise IdentityBuilt(kwargs)
+
+        with tempfile.TemporaryDirectory() as target:
+            (Path(target) / "chat_template.jinja").write_text("template", encoding="utf-8")
+            args = types.SimpleNamespace(
+                context=4096, draft_tokens=1, max_in_flight=1, draft_ring_pages=None, draft_dir=None,
+                cache_tokens=None, target_dir=target, weights_manifest=None, launch_manifest=None,
+                recurrent_cache_gib=1, no_sessions=True, model_id="house", exllamav3_ext_dir=None)
+            stand_ins = {name: mock.MagicMock() for name in
+                         ("Config", "Model", "Tokenizer", "Cache", "Generator", "Environment", "exl3_executor",
+                          "exl3_stats", "check_placement", "warm_schema_tokenizer", "weights_digest",
+                          "launch_identity")}
+            inherited = {name: value for name, value in os.environ.items()
+                         if not name.startswith("EXL3_")}
+            with mock.patch.multiple(exl3_server, **stand_ins), \
+                    mock.patch.object(exl3_server, "rebuilt_extension_digest", return_value=None), \
+                    mock.patch.object(cache_usage, "BackendIdentity", side_effect=build), \
+                    mock.patch.dict(os.environ, dict(inherited, **environ), clear=True), \
+                    mock.patch("builtins.print"):
+                with self.assertRaises(IdentityBuilt) as built:
+                    exl3_server.load(args)
+        return built.exception.kwargs
+
+    def test_a_server_without_exllamav3_variables_builds_the_stock_identity(self):
+        kwargs = self.identity_kwargs({})
+        self.assertEqual(kwargs["server_settings"],
+                         {"context": 4096, "draft": False, "draft_tokens": 0, "max_in_flight": 1})
+        self.assertEqual(kwargs["kv_arithmetic"], [])
+
+    def test_an_inherited_variable_is_named_in_the_settings_and_the_compatibility(self):
+        # The fuse_projections switch (off by default) clears the inherited fusion variable, so it is not named.
+        kwargs = self.identity_kwargs({"EXL3_INT8_GEMV": "0", "EXL3_MGEMM_K_THRESHOLD": "6"})
+        self.assertIn("exllamav3_env", kwargs["server_settings"])
+        env = exl3_server.environment_digest({"EXL3_INT8_GEMV": "0"})
+        self.assertEqual(kwargs["server_settings"]["exllamav3_env"], env)
+        self.assertEqual(kwargs["kv_arithmetic"], [f"exllamav3_env={env}"])
 
 
 if __name__ == "__main__":
