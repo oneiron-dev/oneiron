@@ -366,7 +366,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/authority_history_doors.rs` | src | s | 2 crate-vis | — | Owner-authenticated signed authority history transfer |
 | `src/api/facade/blob_body.rs` | src | m | 7 crate-vis | — | A facade artifact write's `content_base64`, spooled and decoded into a file before the call (FIX 22074… |
 | `src/api/facade/board_stream_doors.rs` | src | s | 4 crate-vis | — | Public run-bound board STREAM doors: `self.focus.refresh`, `self.focus.subscribe`, `self.focus.unsubscribe`… |
-| `src/api/facade/booking_doors.rs` | src | s | 7 crate-vis | — | Typed booking-page discovery, published lifecycle and constraint front |
+| `src/api/facade/booking_doors.rs` | src | s | 8 crate-vis | — | Typed booking-page discovery, published lifecycle and constraint front |
 | `src/api/facade/browser_doors.rs` | src | m | 25 crate-vis | — | Typed browser calls on the caller's own attached run and existing guest door |
 | `src/api/facade/budget_doors.rs` | src | m | 15 crate-vis | — | Credential-backed budget controls, beside the owner's held-run routes |
 | `src/api/facade/calendar_doors.rs` | src | m | 13 crate-vis | — | Owner-authorized calendar file imports through the credential's own handle |
