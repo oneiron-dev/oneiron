@@ -25,6 +25,8 @@ use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
 use std::collections::BTreeSet;
 
+mod inquiry_edge;
+
 const INVITATION_PREFIX: &[u8] = b"shared-vault:invitation:v1:";
 /// `side_table::SHARED_VAULT_INVITATION_KEY`: the key an invitation's slips bind.
 const INVITATION_KEY_PREFIX: &[u8] = b"shared-vault:invitation-key:v1:";

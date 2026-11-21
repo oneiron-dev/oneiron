@@ -80,14 +80,13 @@ pub fn diff(base: &LiveDeck, head: &LiveDeck, proposal: &LiveDeck) -> DeckDiff {
             (Some(a), Some(b)) if a.plain() == b.plain() => out.formatting_changed.push(*id),
             _ => out.text_changed.push(*id),
         }
-        if moved
+        if (moved
             || rewritten
             || was.geometry != node.geometry
-            || base.texts.get(id) != proposal.texts.get(id)
+            || base.texts.get(id) != proposal.texts.get(id))
+            && let Some(slide) = slide_of(proposal, *id).or_else(|| slide_of(base, *id))
         {
-            if let Some(slide) = slide_of(proposal, *id).or_else(|| slide_of(base, *id)) {
-                affected.insert(slide);
-            }
+            affected.insert(slide);
         }
         // Conflicts: both sides changed the same unit incompatibly.
         let head_node = head.nodes.get(id);

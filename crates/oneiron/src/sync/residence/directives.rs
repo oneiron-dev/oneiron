@@ -18,10 +18,10 @@
 use std::collections::BTreeMap;
 
 use crate::authority::{
-    AuthorityEntryHash, AuthorityKey, AuthorityOp, HostSlipIssuer, RESIDENCE_REASON_MAX,
-    ResidenceAct, ResidenceDirective, ResidenceResult, ResidenceResultStatus, authority_entry_hash,
-    decode_authority_log_entry_body, invalid_authority, next_sequence, sign_side_entry,
-    standing_rows,
+    AuthorityEntryHash, AuthorityKey, AuthorityOp, HostSlipIssuer, OwnerProofSigner,
+    RESIDENCE_REASON_MAX, ResidenceAct, ResidenceDirective, ResidenceResult, ResidenceResultStatus,
+    authority_entry_hash, decode_authority_log_entry_body, invalid_authority, next_sequence,
+    sign_side_entry_with_owner_proof, standing_rows,
 };
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::consent::AuthenticatedOwner;
@@ -297,7 +297,10 @@ pub(crate) fn residence_refusal_reason(text: &str) -> String {
 
 /// Records this machine's result for `pending` in the caller's transaction,
 /// beside whatever the act committed there, signed by this install's machine
-/// key. Refused unless the fold accepts it.
+/// key. Refused unless the fold accepts it. The result carries the owner
+/// key's proof this install holds when the directive is the owner's own
+/// signed word ([`residence_result_proof_in_txn`], LIMIT-1), on each
+/// parent set the merge takes that proof at.
 pub(crate) fn finish_residence_directive_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -340,30 +343,69 @@ pub(crate) fn finish_residence_directive_in_txn(
     // that result does not stand, the explicit parents are tried, as before.
     let mut parents = standing_rows(&fold, machine);
     parents.insert(pending.entry);
+    let proven = crate::authority::proven_residence_result_parents_in_txn(
+        &vault.store,
+        txn,
+        &fold,
+        &parents,
+    );
+    // The rows a result names lie off the main frontier the proof key was
+    // picked on: each set takes the proof only where its own state does, so
+    // the merge never judges the cosign forged; a set that does not carries
+    // the result unproven, as before.
+    let proof = residence_result_proof_in_txn(vault, txn, &fold, pending)?;
+    let mut sets = vec![parents.clone()];
+    sets.extend(proven.iter().cloned());
+    let taken = match &proof {
+        Some(proof) => vault.owner_proof_taken_at_in_txn(txn, &proof.key(), &sets)?,
+        None => vec![false; sets.len()],
+    };
     let signer = AuthorityKey::Ed25519(key.verifying_key().to_bytes());
     let seq = next_sequence(&fold, &signer)?;
-    let signed = |parents| {
-        sign_side_entry(
+    let signed = |parents, proved: bool| {
+        sign_side_entry_with_owner_proof(
             &fold,
             &key,
             seq,
             parents,
             AuthorityOp::ResidenceResult(result.clone()),
             now,
+            proof.as_ref().filter(|_| proved),
         )
     };
-    if let Some(proven) =
-        crate::authority::proven_residence_result_parents_in_txn(&vault.store, txn, &fold, &parents)
-    {
+    if let Some(proven) = proven {
         let mut savepoint = vault.store.env.nested_write_txn(txn)?;
-        if let Ok(entry) = signed(proven)
+        if let Ok(entry) = signed(proven, taken.get(1).copied().unwrap_or(false))
             && let Ok(hash) = put_result_in_txn(vault, &mut savepoint, entry, now)
         {
             savepoint.commit()?;
             return Ok(hash);
         }
     }
-    put_result_in_txn(vault, txn, signed(parents)?, now)
+    let proved = taken.first().copied().unwrap_or(false);
+    put_result_in_txn(vault, txn, signed(parents, proved)?, now)
+}
+
+/// The owner key this install proves `pending`'s result with on `fold` (row
+/// OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS, LIMIT-1
+/// RESULT-NEEDS-EXECUTOR-KEY): the directive is the owner's own signed word
+/// and this install holds a key that proves now
+/// ([`Vault::result_proof_signer_in_txn`]). Never for the home's prediction
+/// ([`ResidenceAct::Predicted`]): the home signs it with the issuer the
+/// owner's directives carry, under the budget of the owner's
+/// [`ResidenceAct::SyncPredicted`] directive, as automatic upkeep, so its
+/// result is carried unproven, and so is the result of any directive that
+/// carries that act, whoever issued it.
+fn residence_result_proof_in_txn<'vault>(
+    vault: &'vault Vault,
+    txn: &heed::RoTxn<'_>,
+    fold: &crate::authority::AuthorityFold,
+    pending: &ResidenceDirectiveState,
+) -> Result<Option<OwnerProofSigner<'vault>>> {
+    if matches!(pending.directive.act, ResidenceAct::Predicted { .. }) {
+        return Ok(None);
+    }
+    vault.result_proof_signer_in_txn(txn, fold, &pending.entry)
 }
 
 /// Stores the signed result `entry` in `txn`. Refused unless the fold

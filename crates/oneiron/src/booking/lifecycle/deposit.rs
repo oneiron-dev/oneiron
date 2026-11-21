@@ -45,14 +45,20 @@ use crate::booking::{BookingError, DepositTerms, EventTypeKey};
 use crate::side_table::{self, SideTable, VersionedNamed};
 use crate::{EntityId, Vault};
 
+mod held;
 mod refund;
 mod settle;
 
-pub(crate) use self::refund::refund_deposit_on_host_cancel;
+pub(crate) use self::held::note_unattributed_cancel_in_txn;
+pub(super) use self::held::{
+    EmergencyReturn, HeldDeposit, HeldDepositKind, emergency_return_in_txn, held_deposit_in_txn,
+    unattributed_cancel_sequence_in_txn,
+};
 pub(super) use self::refund::{
     cap_refund_on_visitor_reschedule_in_writer, refund_on_host_cancel_in_writer,
     refund_on_visitor_cancel_in_writer,
 };
+pub(crate) use self::refund::{refund_booking_deposit_as_owner, refund_deposit_on_host_cancel};
 pub use self::settle::{
     BOOKING_DEPOSIT_SETTLE_ATTEMPT_KIND, BookingDepositSettlementDrain, DepositProviderFailure,
     DepositSettleMove, DepositSettleRequest, DepositSettleStep, DepositSettlementPort,
@@ -95,9 +101,10 @@ pub enum DepositState {
     VoidDue,
     /// The payment is cancelled; nothing was captured.
     Voided,
-    /// A visitor's cancel owes this refund.
+    /// This refund is owed: a cancel's, a capture's excess, or a return's
+    /// (all of it, or the balance after an earlier refund).
     RefundDue { amount_minor: u64 },
-    /// The provider refunded this amount.
+    /// The provider refunded this amount in all.
     Refunded { amount_minor: u64 },
 }
 
@@ -137,7 +144,51 @@ struct DepositRow {
     /// left. Unset until a visitor reschedule.
     #[serde(default)]
     refund_cap_minor: Option<u64>,
+    /// What the provider captured: recorded when a capture, or a void that
+    /// found one, answers, and when a cancel owes part of a capture back.
+    /// Unset on a row refunded before it was recorded; the owner's return
+    /// then owes no balance.
+    #[serde(default)]
+    captured_minor: Option<u64>,
+    /// What the provider refunded before the refund owed now: 0 for a first
+    /// refund. A later refund names it in its idempotency key, so a balance
+    /// equal to the earlier refund is a new request, not its replay.
+    #[serde(default)]
+    refunded_minor: u64,
+    /// The owner asked the whole capture back while a smaller refund was
+    /// owed: once that refund settles, the balance is owed as well.
+    #[serde(default)]
+    balance_owed_after_refund: bool,
+    /// The owner's cancelled calendar write whose replay read a stored copy
+    /// with no write marker as the owner's own while this deposit was held
+    /// (BK-ECHO-UNMARKED-SAME-SHAPE-COPY = C): a host's cancel at its
+    /// SEQUENCE would read the same, so the owner's line names it as a
+    /// cancel Oneiron cannot attribute. Unset on every other row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    unattributed_cancel: Option<UnattributedCancel>,
+    /// The SEQUENCE of the owner's BK-09 emergency cancel that gave this
+    /// deposit back whole (released a capture still due, or owed a captured
+    /// one back), in that cancel's own commit: the booking the visitor picks
+    /// again from its proposals carries no deposit, and the owner's card
+    /// says where this deposit's return stands (RULING
+    /// DEPOSIT-PICK-AFTER-EMERGENCY-CANCEL = A). Unset on every other row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    emergency_return_sequence: Option<u32>,
     updated_at: u64,
+}
+
+/// The first replay that read an unmarked stored copy as the owner's
+/// cancelled write while a deposit was held
+/// ([`note_unattributed_cancel_in_txn`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UnattributedCancel {
+    /// The write's staged SEQUENCE.
+    sequence: u32,
+    /// When the replay's proof was written. The owner's held-deposit row
+    /// dates the unattributed cancel by it, so a row marked done before
+    /// then comes back (review round 1 of #10028).
+    noted_at: u64,
 }
 
 /// A booking's deposit. Key: hash32 (the booking digest).
@@ -297,6 +348,11 @@ pub fn begin_deposit_checkout(
                 event_ref: None,
                 failure: None,
                 refund_cap_minor: None,
+                captured_minor: None,
+                refunded_minor: 0,
+                balance_owed_after_refund: false,
+                unattributed_cancel: None,
+                emergency_return_sequence: None,
                 updated_at: now_utc,
             },
         };

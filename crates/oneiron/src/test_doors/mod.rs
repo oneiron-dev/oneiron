@@ -7,6 +7,7 @@
 pub mod access_request_seed;
 pub mod action_mode_pass;
 pub mod action_replay_custody;
+pub mod adopted_owner_work;
 pub mod advisory_rate_window;
 pub mod affect_state_signals;
 pub mod agent_authoring;
@@ -46,6 +47,7 @@ pub mod call_receipt_damage;
 pub mod callable_skill;
 pub mod campaign_member_index;
 pub mod campaign_opt_out_line;
+pub mod candidate_scope;
 #[cfg(feature = "sync")]
 pub mod carrier_proof;
 pub mod check_in;
@@ -109,6 +111,7 @@ pub mod disclosure_word_sources;
 pub mod do_not_contact_subject_reads;
 pub mod dreamer_attempt_binding;
 pub mod dreamer_exclusion_forgets;
+pub mod dreamer_extraction_room;
 pub mod dreamer_partition_window;
 pub mod dreamer_promotion_seconds;
 pub mod dreamer_signed_claim_recall;
@@ -125,10 +128,12 @@ pub mod extra_room_index;
 pub mod extraction_decisions;
 pub mod extraction_inputs;
 pub mod extraction_probe;
+pub mod extraction_project_bound;
 pub mod extraction_routing;
 pub mod extraction_single_valued;
 pub mod extraction_steps;
 pub mod extraction_verdict;
+pub mod extraction_wake;
 pub mod fanout_admission;
 pub mod feed_prune;
 pub mod feeds;
@@ -162,13 +167,17 @@ pub mod fingerprint_keep_store_digests;
 pub mod fingerprint_keep_sync_digests;
 pub mod fingerprint_keep_synced_keys;
 pub mod fingerprint_keep_typed_feeds;
+pub mod foldpast;
 pub mod free_time_cycle_writer;
 #[cfg(feature = "sync")]
 pub mod free_time_handoff;
 pub mod frontier_walk;
 #[cfg(feature = "sync")]
 pub mod full_copy_mark;
+pub mod gate_amendment_attribution;
 pub mod gate_receipt_rows;
+#[cfg(feature = "sync")]
+pub mod gate_receipt_unclear;
 pub mod gpu_job;
 pub mod grant_roles;
 pub mod graph_ask_centre;
@@ -179,6 +188,7 @@ pub mod held_program;
 pub mod hex_input_policy;
 pub mod hex_sign_digit;
 pub mod history_import_rows;
+pub mod holder_export_requests;
 pub mod holder_slip_revoke;
 #[cfg(feature = "sync")]
 pub mod home_handoff_retire;
@@ -214,6 +224,7 @@ pub mod live_task;
 pub mod live_window_import;
 #[cfg(feature = "sync")]
 pub mod live_window_note_scrub;
+pub mod loop_kept_position;
 pub mod machine_history;
 pub mod machine_names;
 pub mod mail_counterparty;
@@ -240,9 +251,11 @@ pub mod msgpack_duplicate_key;
 pub mod msgpack_trailing;
 pub mod native_person_mint;
 pub mod nightly;
+pub mod nightly_arc_summary;
 pub mod note_bm25f_repair;
 #[cfg(feature = "sync")]
 pub mod note_fork_upload;
+pub mod off_record_reply_body;
 pub mod off_record_shell;
 pub mod off_record_side_row;
 pub mod open_conflict_marker;
@@ -251,6 +264,7 @@ pub mod outbound_wait_setting_keys;
 pub mod own_device_grant;
 pub mod own_device_message_replay;
 pub mod owner_device_answer;
+pub mod owner_exemption_judgements;
 pub mod owner_key_enrolment_read;
 pub mod owner_key_line;
 pub mod owner_key_release;
@@ -273,12 +287,15 @@ pub mod pending_write_tray;
 #[cfg(feature = "sync")]
 pub mod predicted_residence;
 pub mod profiles_other_machine;
+#[cfg(feature = "sync")]
+pub mod project_replicated_revision;
 pub mod provenance_body_checkpoint;
 pub mod psych_profile;
 pub mod question_saved_lane;
 pub mod question_teardown;
 pub mod re_root_stale_sweep;
 pub mod read_exposure;
+pub mod read_lineage_floor;
 pub mod recall_gate_judgements;
 pub mod removal_import_passes;
 pub mod repeated_key_lib_rows;
@@ -301,6 +318,7 @@ pub mod room_facet_set;
 pub mod room_fact_marks;
 pub mod room_speaker_entries;
 pub mod room_turn_backfill;
+pub mod room_turn_claims;
 pub mod root_appointment;
 pub mod root_recovery;
 pub mod roster_slot_reservation;
@@ -312,6 +330,7 @@ pub mod scope_summary;
 pub mod scoped_read_liveness;
 pub mod scratchpad_wake;
 pub mod scrub_keeps_hint_and_name_rows;
+pub mod sealed_pad_capsule;
 pub mod seat_park_model_step;
 #[cfg(feature = "sync")]
 pub mod secret_same_value;
@@ -332,6 +351,8 @@ pub mod skill_package;
 pub mod skill_read_hold;
 pub mod slack_install_rows;
 pub mod slate_scope_signals;
+#[cfg(feature = "sync")]
+pub mod slim_drop_note_scrub;
 pub mod slip_store_fault;
 pub mod snapshot_page_accounting;
 pub mod sound_match_birth;
@@ -344,6 +365,7 @@ pub mod split_phrase_carrier;
 #[cfg(feature = "sync")]
 pub mod staged_vault_import;
 pub mod steward;
+pub mod stored_workspace_roster_rows;
 pub mod stretch_pack_finalize;
 pub mod substrate_reads;
 pub mod summarize_note_set;
@@ -370,12 +392,17 @@ pub mod wake_d1_park_release;
 pub mod wake_envelope_ack;
 pub mod weave_arc_rederive;
 pub mod witness_project;
+#[cfg(feature = "sync")]
+pub mod work_talk_replay;
 pub mod workaround_skills;
+pub mod workspace_onboarding_halt;
 pub mod workspace_token;
 pub mod world_access;
 #[cfg(feature = "sync")]
 pub mod world_follow;
 pub mod world_key_record_signature;
+#[cfg(feature = "sync")]
+pub use crate::sync::connection::home_probe;
 #[cfg(feature = "sync")]
 pub use crate::sync::connection::sync_outbox;
 #[cfg(feature = "sync")]

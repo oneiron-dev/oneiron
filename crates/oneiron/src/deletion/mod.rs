@@ -60,10 +60,16 @@ pub use coop_delivery::{
     CooperativeDeletionDelivery, CooperativeDeletionDeliveryStatus, CooperativeDeletionDisposition,
     CooperativeDeletionDispositionKind, CooperativeDeletionIngress, CooperativeDeletionNotice,
     CooperativeDeletionRetention, CooperativeDeletionTry, CooperativeLocalRedaction,
-    CooperativeRestrictionLiftAttestation, IncomingCooperativeDeletion,
+    CooperativeRestrictionLiftAttestation, ERASE_REQUEST_REPLY_ROW_VERSION,
+    ERASE_REQUEST_SETTING_DECLINE_CODE, ERASE_REQUEST_SETTING_DECLINE_REVIEW_SECS,
+    ERASE_REQUEST_SETTING_HONOUR_CODE, EraseRequestReply, EraseRequestReplyPolicy,
+    EraseRequestReplySetting, EraseRequestReplySource, IncomingCooperativeDeletion,
     cooperative_deletion_recipient_id, parse_hex,
 };
-pub(crate) use coop_delivery::{MAX_REASON_CODE_LEN, courtesy_retained_pacts_in};
+pub(crate) use coop_delivery::{
+    ERASE_REQUEST_REPLY_ROW_KEY, EraseRequestReplyRead, MAX_REASON_CODE_LEN,
+    courtesy_retained_pacts_in,
+};
 pub use coop_reply::{
     COOP_DELETION_REPLY_BODY_KEYS, COOP_DELETION_REPLY_DOMAIN, COOP_DELETION_REPLY_SCHEMA_VERSION,
     CooperativeDeletionReply, CooperativeDeletionReplyOutcome, SignedCooperativeDeletionReply,

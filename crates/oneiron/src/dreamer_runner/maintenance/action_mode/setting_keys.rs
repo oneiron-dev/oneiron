@@ -6,7 +6,7 @@
 //! the owner's revert of that finding puts the ceiling back.
 
 use crate::check_in::ActClass;
-use crate::setting::{Kind, lower_is_tighter};
+use crate::setting::Kind;
 
 /// Off: only the owner's apply puts a frozen patch on an agent's definition.
 fn owner_applies() -> bool {
@@ -22,7 +22,7 @@ crate::setting::setting_keys! {
     pub(crate) AUTO_APPLY_PATCH: bool = "dreamer.action_mode.auto_apply_patch" {
         kind: Kind::new(owner_applies)
             .strictest(owner_applies)
-            .tighter(lower_is_tighter::<bool>),
+            .lower(),
         act: ActClass::GrantWiden,
     };
 }

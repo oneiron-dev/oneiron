@@ -107,6 +107,9 @@ pub(crate) struct HousekeepingPasses {
     /// The checkpoint upkeep's last failure, `None` once a pass ends `Ok`.
     /// In RAM only: a restarted host warns again.
     checkpoint_failure: std::sync::Mutex<Option<CheckpointFailure>>,
+    /// The own devices' burst batches whose landing a socket or the device
+    /// burst drain's pass claimed (FIX DEVICE-BURST-ALLOW-DRAIN-OVERLAP).
+    pub(super) device_burst_landings: super::device_burst_drain::DeviceBurstLandings,
     /// The lifecycle tick's steps, in the order it took them.
     #[cfg(test)]
     pub(super) tick_steps: std::sync::Mutex<Vec<&'static str>>,
@@ -309,6 +312,17 @@ impl SyncServer {
                 tracing::warn!(
                     panicked = error.is_panic(),
                     "courtesy delete delivery failed"
+                );
+            }
+            // L7-09: the owner's standing erase_request_reply row answers
+            // each filed courtesy ask that has no answer yet.
+            let answers = Arc::clone(&server);
+            if let Err(error) =
+                tokio::task::spawn_blocking(move || answers.answer_filed_asks_by_setting()).await
+            {
+                tracing::warn!(
+                    panicked = error.is_panic(),
+                    "courtesy ask setting answer failed"
                 );
             }
             // Lapsed host orders, ended silences, owner erases no hold blocks

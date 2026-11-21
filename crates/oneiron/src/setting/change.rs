@@ -5,10 +5,11 @@ use std::ops::Bound;
 
 use serde::{Deserialize, Serialize};
 
-use oneiron_setting_contract::RowKey;
+use oneiron_authority::authority::{ActSurface, AuthorityEntryHash};
+use oneiron_setting_contract::{ChangeStanding, RowKey};
 
 use super::read::{CONTENT_ROWS, ROWS, StoredRow};
-use super::{EncodedValue, Setter, SettingMode, SettingScope};
+use super::{ChangeDirection, EncodedValue, Setter, SettingMode, SettingScope};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -48,6 +49,28 @@ pub struct SettingChange {
     /// change, whose bytes it leaves as they were.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub weight_runs: Option<f64>,
+    /// Which way the change moved its row, by the key's order (DESIGN 1.5): `Looser` and
+    /// `Unordered` are the receipts of a widening. Absent on a change written before stage 6.0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direction: Option<ChangeDirection>,
+    /// Where the owner said so, on an owner's change whose host named it (audit only: no rule
+    /// reads it). Absent on every other change.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub surface: Option<ActSurface>,
+    /// The main-log entry that signed the change, a `PolicySettingSet` (stage 7a-1), or the owner's
+    /// yes to a pack's defaults whose landing the change is (stage 7c-3c). Absent where
+    /// none was appended: the change named no act surface, or its record could not be signed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signed: Option<AuthorityEntryHash>,
+    /// The other live heads the value in force was met with on the machine that wrote the
+    /// change (stage 7b-3; DESIGN 1.6, "Receipts"). Empty on every other change, whose bytes it
+    /// leaves as they were.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub with: Vec<AuthorityEntryHash>,
+    /// How the signed acts the value came from stood there (stage 7b-3). Absent on a change no
+    /// projection of signed acts wrote or receipted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub standing: Option<ChangeStanding>,
 }
 
 /// Writes `change` under the next sequence, in the caller's write; returns its sequence.
@@ -67,16 +90,61 @@ pub(super) fn record_change_in_txn(
     Ok(change)
 }
 
+/// Names `signed`, the main-log entry that signed `change`, on its change row, in the caller's
+/// write (the signed act's savepoint, [`super::signed_act`]).
+pub(super) fn record_signed_entry_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    change: &SettingChange,
+    signed: AuthorityEntryHash,
+) -> Result<()> {
+    CHANGES.put(
+        store,
+        txn,
+        &change.sequence,
+        &SettingChange {
+            signed: Some(signed),
+            ..change.clone()
+        },
+    )
+}
+
+/// Names how the acts behind the change of sequence `sequence` stood and the other heads its
+/// value was met with, on its change row, in the caller's write (stage 7b-3): the receipt of a
+/// door's own change whose row the projection of its act left as the door wrote it. A change no
+/// longer stored is left as it is.
+///
+/// # Errors
+///
+/// A change row that does not decode; storage errors.
+pub(super) fn record_receipt_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    sequence: u64,
+    standing: ChangeStanding,
+    with: Vec<AuthorityEntryHash>,
+) -> Result<()> {
+    let Some(change) = CHANGES.get(store, txn, &sequence)? else {
+        return Ok(());
+    };
+    CHANGES.put(
+        store,
+        txn,
+        &sequence,
+        &SettingChange {
+            with,
+            standing: Some(standing),
+            ..change
+        },
+    )
+}
+
 /// The change of sequence `sequence`, while it stands: the record of the act that wrote the row a
 /// read's `revision` names, for a reader that cites the row it read.
 ///
 /// # Errors
 ///
 /// A change row that does not decode; storage errors.
-#[cfg_attr(
-    not(all(oneiron_test_support, feature = "test-support")),
-    allow(dead_code)
-)]
 pub(crate) fn change_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -131,7 +199,7 @@ fn mention_bytes(change: &SettingChange) -> impl Iterator<Item = &[u8]> {
 
 /// Every id whose lower-case hex [`holds`] finds in `bytes`: each run of 32 lower-case hex
 /// characters, at every offset.
-fn hex_id_mentions(bytes: &[u8]) -> impl Iterator<Item = EntityId> + '_ {
+pub(super) fn hex_id_mentions(bytes: &[u8]) -> impl Iterator<Item = EntityId> + '_ {
     bytes
         .windows(32)
         .filter_map(|window| EntityId::from_lower_hex(std::str::from_utf8(window).ok()?).ok())
@@ -158,13 +226,16 @@ fn scrub_rows_in_txn(
         {
             gone.push(key);
         } else if let Ok(stored) = rmp_serde::from_slice::<StoredRow>(&bytes) {
-            let erased = row_key
-                .and_then(|row_key| super::spec_named(&row_key.name).ok())
-                .and_then(|spec| spec.kind.erase_mentions_in(&stored.value, *id));
-            if stored.by == Some(*id) || erased.is_some() {
+            let spec = row_key.and_then(|row_key| super::spec_named(&row_key.name).ok());
+            let erased = spec.and_then(|spec| spec.kind.erase_mentions_in(&stored.value, *id));
+            let erased_local = spec
+                .zip(stored.local.as_ref())
+                .and_then(|(spec, local)| spec.kind.erase_mentions_in(local, *id));
+            if stored.by == Some(*id) || erased.is_some() || erased_local.is_some() {
                 let row = StoredRow {
                     by: stored.by.filter(|by| by != id),
                     value: erased.unwrap_or(stored.value),
+                    local: erased_local.or(stored.local),
                     ..stored
                 };
                 unnamed.push((key, row));
@@ -256,7 +327,9 @@ pub(crate) fn setting_change_records(value: &[u8]) -> Option<Vec<EntityId>> {
 
 /// The per-entity eraser: an erased world, project, thread, goal or repository takes every
 /// setting row at its scope, and every change that names it, with it; a value that names it is
-/// rewritten where its key says how.
+/// rewritten where its key says how. An erased row beside a setting act takes its value out of
+/// the change rows ([`scrub_beside_value_in_txn`]), and notes the projection pass, which reads
+/// the row again once the erase commits (stage 7c-1).
 pub(crate) fn erase_setting_entity_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -264,5 +337,66 @@ pub(crate) fn erase_setting_entity_in_txn(
 ) -> Result<()> {
     scrub_rows_in_txn(store, txn, ROWS, id)?;
     scrub_rows_in_txn(store, txn, CONTENT_ROWS, id)?;
-    scrub_changes_in_txn(store, txn, id)
+    scrub_changes_in_txn(store, txn, id)?;
+    scrub_beside_value_in_txn(store, txn, id)
+}
+
+/// The change rows an erase of `id`, a row beside a setting act that a projection reads, changes
+/// (stage 7c-1): the value that row held goes from the history of the key's row, as its bytes go
+/// from the vault. A change of that row whose value is the row's value as stored, where it came
+/// from `id`, or the value of a change credited to the act `id` is beside, goes; a change whose
+/// prior value is one of them stays and names no prior value. A no-op for any other `id`.
+fn scrub_beside_value_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let Some(source) = super::project::beside_source_in_txn(store, txn, id)? else {
+        return Ok(());
+    };
+    crate::federation::note_authority_row();
+    let slot = &source.slot;
+    let on_slot = |change: &SettingChange| {
+        change.key == slot.name
+            && change.item == slot.item
+            && change.scope == slot.scope
+            && change.mode == slot.mode
+    };
+    let changes: Vec<(u64, SettingChange)> = CHANGES
+        .iter_from(store, txn, &[])?
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .filter(|(_, change)| on_slot(change))
+        .collect();
+    let mut erased: Vec<EncodedValue> = source.stored.into_iter().collect();
+    for (_, change) in &changes {
+        if let (Some(act), Some(value)) = (&change.signed, &change.value)
+            && super::beside::beside_row_id(slot, &source.digest, act)? == *id
+        {
+            erased.push(value.clone());
+        }
+    }
+    if erased.is_empty() {
+        return Ok(());
+    }
+    for (sequence, change) in changes {
+        if change
+            .value
+            .as_ref()
+            .is_some_and(|value| erased.contains(value))
+        {
+            CHANGES.delete(store, txn, &sequence)?;
+        } else if change
+            .prior
+            .as_ref()
+            .is_some_and(|prior| erased.contains(prior))
+        {
+            let change = SettingChange {
+                prior: None,
+                ..change
+            };
+            CHANGES.put(store, txn, &sequence, &change)?;
+        }
+    }
+    Ok(())
 }

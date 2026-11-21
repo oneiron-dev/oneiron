@@ -2,12 +2,15 @@
 //! the kit's Cancel through R (WAYBACK-RECOVERY-HOLD-WIRE = A, ANCHORS-E6).
 
 use super::*;
+use crate::world_keys::{OwnerActImportance, owner_presence_reasons};
 
 impl Vault {
     /// Answers the live recovery hold `hold` with `answer`, signed by this
-    /// install's held live owner key: the device unlock is the confirm
-    /// sheet, and the surface stays audit-only. The key is any key this
-    /// install holds that may answer ([`answers_recovery_holds`]: a live
+    /// install's held live owner key. Either answer is an important owner
+    /// act: the door asks for the person at the device
+    /// ([`Vault::owner_presence`]) before its write, and the owner proof is
+    /// signed on that confirm; the surface stays audit-only. The key is any
+    /// key this install holds that may answer ([`answers_recovery_holds`]: a live
     /// owner device key, never an admin's or a host's), is the acting
     /// owner's own (`key_is_the_owners`: a co-owner's key this install
     /// holds never answers for the actor), is not the hold's successor and
@@ -26,7 +29,8 @@ impl Vault {
     /// hold that is not live, another owner's `ItIsMe`, a held key that is
     /// the successor or the root's key, and this install holding no live
     /// owner key of the actor's; an answer the fold does not count; the
-    /// store's, the clock's and the keystore's.
+    /// presence check's refusal (a declined prompt; a device PIN whose
+    /// window is closed); the store's, the clock's and the keystore's.
     pub fn answer_recovery_hold_as(
         &self,
         authority: &ActAuthority,
@@ -37,6 +41,12 @@ impl Vault {
             ActAuthority::Owner(owner, _) => owner,
             ActAuthority::Agent(_) => return Err(authority_refused(ANSWER_OWNER_ONLY)),
         };
+        let reason = match answer {
+            RecoveryHoldAnswerKind::ItIsMe => owner_presence_reasons::CONFIRM_RECOVERY_HOLD,
+            RecoveryHoldAnswerKind::Cancel => owner_presence_reasons::CANCEL_RECOVERY_HOLD,
+        };
+        let witness = self.owner_presence(OwnerActImportance::Important, reason)?;
+        let ground = OwnerProofGround::witnessed(&witness);
         let machine = self.prepare_install_signing()?;
         // Each held signer's root as the hold recorded it: no held signer
         // is asked its root here (REVIEW-9678 P1).
@@ -105,7 +115,9 @@ impl Vault {
             return Err(authority_refused(HOLD_NOT_LIVE));
         }
         let now = self.instant_in_txn(&txn)?.secs();
-        let sign = |fold: &AuthorityFold, transcript: &[u8]| answered.sign(self, fold, transcript);
+        let sign = |fold: &AuthorityFold, transcript: &[u8]| {
+            answered.sign(self, fold, &ground, transcript)
+        };
         self.append_recovery_hold_answer_in_txn(
             &mut txn,
             key,

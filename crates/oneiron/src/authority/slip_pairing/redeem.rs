@@ -7,6 +7,7 @@ use super::code::pairing_row_key;
 use super::principal::canonical_id;
 use super::re_pairing::{held_machine_possession, re_paired_standing};
 use super::*;
+use crate::authority::OwnerProofGround;
 use crate::authority::machine_answers::AnswerAct;
 use crate::authority::slip_vault::{random_slip_id, require_host};
 
@@ -502,9 +503,14 @@ impl Vault {
                 kind: answer.kind,
                 seen: None,
                 last_device_key: crate::authority::LastDeviceKeyConfirmation::NotGiven,
+                // The answer the owner gave on making the link, not the
+                // owner's own write here: its join carries no owner key's
+                // proof (REVIEW-9962 P1); the answer keeps the one its judge
+                // needs.
+                proves_joins: false,
             };
             return self
-                .enroll_machine_in_txn(txn, act, request, role)
+                .enroll_machine_in_txn(txn, &OwnerProofGround::pairing_slip(), act, request, role)
                 .map(|landing| (landing, false));
         }
         Err(crate::authority::machine_answers::no_carrier())

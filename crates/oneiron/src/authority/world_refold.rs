@@ -36,6 +36,8 @@ pub(super) fn refolds(
                 | AuthorityOp::ConversationTrainingSet(_)
                 | AuthorityOp::ConversationTrainingVaultSet(_)
                 | AuthorityOp::PolicySettingSet(_)
+                | AuthorityOp::SettingCopy(_)
+                | AuthorityOp::SettingPackHead(_)
         )
 }
 

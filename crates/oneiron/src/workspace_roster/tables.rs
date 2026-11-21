@@ -175,6 +175,12 @@ crate::side_table::side_tables! {
     /// (THREAD-TASK-EVERY-ROOM P2). Key: id16 (room).
     ROOMS_TURN_BACKFILL: VaultMeta b"rooms.turn_backfill.v1/" Raw
         [restore: not_imaged] [family: not_imaged] [tier: derived];
+    /// Registers one work-talk conversation's immutable binding under one-vault mode: the
+    /// binding's msgpack bytes, which the conversation body's `work_talk.v1` field must equal
+    /// before it admits a writer or opens a read. Written once by the open door, as a leader
+    /// chat registers its own binding. Key: id16 (conversation).
+    WORK_TALK_REGISTRATION: VaultMeta b"work_talk.v1/" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
     /// Guards a companion PERSON against being claimed by a second principal's onboarding. Key: id16
     /// (companion person id).
     WORKSPACE_ROSTER_COMPANION_PRINCIPAL: VaultMeta b"workspace_roster:companion_principal:v1:" Raw

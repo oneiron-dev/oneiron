@@ -278,7 +278,9 @@ fn land_profile_in_txn(
             crate::ports::record_dependency_in_txn(&vault.store, txn, *span, id)?;
         }
     }
-    Ok(())
+    // The profile's floor takes its sources' (READ-LINEAGE L1; #9289 review
+    // 3 P2-3): neither the put nor these registrations raise it.
+    crate::source_audience::raise_floors_in_txn(vault, txn, [*id])
 }
 
 fn landed(

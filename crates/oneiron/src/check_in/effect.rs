@@ -12,7 +12,10 @@
 //! act that always asks waits (Q3). Then:
 //!
 //! * go: the door runs the effect, and its family receipt records the
-//!   decision ([`CheckInDecision`], Q9; never a pending row);
+//!   decision ([`CheckInDecision`], Q9; never a pending row). An act that
+//!   goes at once spends no check-in, so a `check_in_ref` it names is
+//!   refused ([`named_check_in_at_once`]), never left unspent while the act
+//!   runs;
 //! * wait, with no `check_in_ref`: the pending check-in for this exact
 //!   effect is opened in the door's writer, or the open one found; the door
 //!   commits it, runs nothing and answers `CHECK_IN_PENDING` naming it (Q4);
@@ -31,8 +34,8 @@ use super::act_class::ActClass;
 use super::chain::{NoAgentVerdict, VerifiedChain};
 use super::mode::CheckInMode;
 use super::pending::{
-    OpenPendingCheckIn, consume_pending_check_in_in_txn, open_keyed_pending_check_in_in_txn,
-    pending_check_in_in_txn,
+    OpenPendingCheckIn, check_pending_check_in_spendable_in_txn, consume_pending_check_in_in_txn,
+    open_keyed_pending_check_in_in_txn, pending_check_in_in_txn,
 };
 use super::policy::CheckInScope;
 use super::resolve::{CheckInRequest, ResolvedMode, WaitReason, resolve_mode};
@@ -82,9 +85,10 @@ pub(crate) enum DoorCheckIn {
 ///
 /// # Errors
 ///
-/// A role that does not hold the power; a `check_in_ref` that names no row,
-/// another person's ask or another act, another effect, or an ask that is
-/// not eligible or already spent; a refused open; storage errors.
+/// A role that does not hold the power; a `check_in_ref` for an act that
+/// goes at once ([`named_check_in_at_once`]); a `check_in_ref` that names no
+/// row, another person's ask or another act, another effect, or an ask that
+/// is not eligible or already spent; a refused open; storage errors.
 pub(crate) fn person_door_check_in_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -100,9 +104,7 @@ pub(crate) fn person_door_check_in_in_txn(
         standing_row: None,
     };
     let mode = match resolve_mode(&request) {
-        ResolvedMode::OwnProof => {
-            return Ok(DoorCheckIn::Go(decision(act, None, "own_proof", None)));
-        }
+        ResolvedMode::OwnProof => return go_at_once(act, check_in_ref, None, "own_proof"),
         ResolvedMode::Propose | ResolvedMode::Absent => {
             return Err(refuse(
                 "the person's role does not hold the power for this act",
@@ -111,19 +113,12 @@ pub(crate) fn person_door_check_in_in_txn(
         ResolvedMode::Mode {
             mode: mode @ CheckInMode::NeverAsk,
             ..
-        } => {
-            return Ok(DoorCheckIn::Go(decision(
-                act,
-                Some(mode),
-                "never_ask",
-                None,
-            )));
-        }
+        } => return go_at_once(act, check_in_ref, Some(mode), "never_ask"),
         // The person's own act is their judgment: they are sure.
         ResolvedMode::Mode {
             mode: mode @ CheckInMode::AskWhenUnsure,
             ..
-        } => return Ok(DoorCheckIn::Go(decision(act, Some(mode), "sure", None))),
+        } => return go_at_once(act, check_in_ref, Some(mode), "sure"),
         ResolvedMode::Mode {
             mode: mode @ CheckInMode::AlwaysAsk,
             ..
@@ -156,6 +151,27 @@ pub(crate) fn person_door_check_in_in_txn(
             Ok(DoorCheckIn::Wait(row.id))
         }
     }
+}
+
+/// `act` goes at once in `mode` on `basis`, spending no check-in: a
+/// `check_in_ref` the call names is refused.
+fn go_at_once(
+    act: &DoorAct<'_>,
+    check_in_ref: Option<&EntityId>,
+    mode: Option<CheckInMode>,
+    basis: &str,
+) -> Result<DoorCheckIn> {
+    if check_in_ref.is_some() {
+        return Err(named_check_in_at_once());
+    }
+    Ok(DoorCheckIn::Go(decision(act, mode, basis, None)))
+}
+
+/// The refusal (`BAD_REQUEST`) of a `check_in_ref` named for a person's act
+/// that goes at once: it spends no check-in, so the one it names would stay
+/// unspent while the act runs (as REVIEW-9810 P1 found at the delete doors).
+pub(crate) fn named_check_in_at_once() -> Error {
+    refuse("check_in_ref names a waiting act; this act goes at once and spends none")
 }
 
 /// Spends the settled ask `id` for `act`, in the door's writer.
@@ -344,12 +360,44 @@ pub(crate) fn spend_applied_check_in_in_txn(
     effect_digest: &[u8; 32],
     now: u64,
 ) -> Result<EntityId> {
+    let asker = applied_check_in_asker_in_txn(vault, txn, id, verb, act)?;
+    consume_pending_check_in_in_txn(vault, txn, id, effect_digest, now)?;
+    Ok(asker)
+}
+
+/// The asker of `id`, read in `txn`, when it is an ask for `verb`'s `act`.
+fn applied_check_in_asker_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    verb: &str,
+    act: ActClass,
+) -> Result<EntityId> {
     let row = pending_check_in_in_txn(&vault.store, txn, id)?.ok_or(Error::EntityNotFound)?;
     if row.verb != verb || row.act != act {
         return Err(refuse("the check-in is another act's ask"));
     }
-    consume_pending_check_in_in_txn(vault, txn, id, effect_digest, now)?;
     Ok(row.asker)
+}
+
+/// Checks in `txn`, writing nothing, that [`owner_act_decision_in_txn`]
+/// would spend `applied` for an act of class `act` now: for an Owner's act
+/// whose spend lands in a later writer of its own (the record erase's
+/// linearizing write, or the write after a custody journal act lands,
+/// [`run_owner_act_outside_vault_writer`]), so a check-in it could not
+/// spend refuses it before its first write.
+///
+/// # Errors
+///
+/// As [`spend_applied_check_in_in_txn`].
+pub(crate) fn check_applied_check_in_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    applied: &AppliedCheckIn<'_>,
+    act: ActClass,
+) -> Result<()> {
+    applied_check_in_asker_in_txn(vault, txn, &applied.id, applied.verb, act)?;
+    check_pending_check_in_spendable_in_txn(&vault.store, txn, &applied.id, &applied.effect_digest)
 }
 
 /// Another asker's approved check-in an Owner applies to their own act on a
@@ -508,29 +556,47 @@ pub fn step_up_reset_effect_digest(person: &EntityId, factor: StepUpFactor) -> [
     *hasher.finalize().as_bytes()
 }
 
-/// The decision an Owner's own act on a catastrophe row runs on when its
-/// effect lands outside the vault's writer (a custody journal; 2k3,
-/// P25-SHAPE Q1 = A): the Owner on their own proof, and with `applied` the
-/// asker's approved check-in, spent in a writer of its own on the Owner's
-/// live proof before the act runs, as the NOTE history purge spends it
-/// (2k2). A refusal after it leaves the approval spent.
+/// Runs `run`, an Owner's own act on a catastrophe row whose effect lands
+/// outside the vault's writer (a custody journal; 2k3, P25-SHAPE Q1 = A),
+/// and answers its result with the decision it ran on: the Owner on their
+/// own proof, and with `applied` the asker's approved check-in. That
+/// check-in is checked on the Owner's live proof before `run`, writing
+/// nothing, and spent in a writer of its own after `run` lands, so an act
+/// that refuses leaves it unspent for the Owner to apply again. The spend
+/// records the act that landed on that proof and grants nothing, so it does
+/// not recheck the proof: an Owner credential that expires or is revoked
+/// after the act lands refuses no landed act. An act that lands in the
+/// vault's writer spends it there instead ([`owner_act_decision_in_txn`]),
+/// as the NOTE history purge does (2k2).
+///
+/// Two calls that apply one check-in at once can both pass the check and
+/// both act: the later spend then refuses, after its act landed on the
+/// Owner's own proof, which no check-in gates.
 ///
 /// # Errors
 ///
-/// The Owner's proof no longer holds; as [`spend_applied_check_in_in_txn`].
-pub(crate) fn owner_act_decision_in_own_writer(
+/// The Owner's proof no longer holds before `run`; as
+/// [`check_applied_check_in_in_txn`] before `run`; `run`'s refusal; as
+/// [`spend_applied_check_in_in_txn`] after it.
+pub(crate) fn run_owner_act_outside_vault_writer<T>(
     vault: &Vault,
     owner: &crate::consent::AuthenticatedOwner,
     act: ActClass,
     applied: Option<&AppliedCheckIn<'_>>,
-) -> Result<CheckInDecision> {
-    match applied {
-        Some(applied) => vault.with_write_txn_grouped(|txn| {
-            owner.revalidate_in_txn(vault, txn)?;
-            owner_act_decision_in_txn(vault, txn, act, Some(applied))
-        }),
-        None => Ok(owner_own_proof_decision(act)),
+    run: impl FnOnce() -> Result<T>,
+) -> Result<(T, CheckInDecision)> {
+    let Some(applied) = applied else {
+        return Ok((run()?, owner_own_proof_decision(act)));
+    };
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        owner.revalidate_in_txn(vault, &rtxn)?;
+        check_applied_check_in_in_txn(vault, &rtxn, applied, act)?;
     }
+    let done = run()?;
+    let decision = vault
+        .with_write_txn_grouped(|txn| owner_act_decision_in_txn(vault, txn, act, Some(applied)))?;
+    Ok((done, decision))
 }
 
 /// The digest of draining custody member `target_id` out of the required

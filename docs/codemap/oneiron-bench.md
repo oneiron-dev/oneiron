@@ -22,6 +22,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `fixtures/edit_path/repo/src/lib.rs` | src | s | 2 fn · 1 mod | — | — |
 | `fixtures/edit_path/repo/src/math.rs` | src | s | 2 fn | — | — |
 | `src/beam/ablations.rs` | src | s | 2 crate-vis | — | Two explicit cost controls: uncapped context and neutralized OF-095 decay |
+| `src/beam/action_bench/arms.rs` | src | m | 13 crate-vis | — | The memory arms (ARCH-0042 #action-bench): no memory, raw-history retrieval, derived only, raw plus derived… |
+| `src/beam/action_bench/extraction.rs` | src | m | 18 crate-vis | — | The extraction arms (ARCH-0042 #action-bench: "online-only, background-only, combined; each probed right… |
+| `src/beam/action_bench/extraction/executor.rs` | src | s | 6 crate-vis | — | The extraction arms' model side: the shipped adapter on the reader's host, recording each call it makes, and… |
+| `src/beam/action_bench/mod.rs` | src | m | 3 crate-vis | — | The in-house action bench (ARCH-0042 #action-bench, owner ruling 2026-10-21): does memory change what a… |
+| `src/beam/action_bench/score.rs` | src | m | 7 crate-vis | — | The deterministic scorer, the per-arm summary and the pairing by history |
+| `src/beam/action_bench/tasks.rs` | src | m | 14 crate-vis | — | The tasks file (v1) and the trace check every follow-up passes before a run starts (ARCH-0053… |
 | `src/beam/arms.rs` | src | m | 17 crate-vis | — | Deterministic and vanilla arms plus adapter dispatch |
 | `src/beam/chroma.rs` | src | s | 5 crate-vis | — | Independent vanilla-RAG arm |
 | `src/beam/chroma/tests.rs` | test | s | 1 crate-vis | — | — |
@@ -31,7 +37,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/beam/code_bench/manifest.rs` | src | m | 18 crate-vis | — | The CODE-BENCH task manifest (`fixtures/code_bench.tasks.v1.json`): three merged PRs of our repo, each with… |
 | `src/beam/code_bench/mcp_probe.rs` | src | s | 1 crate-vis | — | Probes each MCP server a run plan declares before any cell that needs it is ready |
 | `src/beam/code_bench/mod.rs` | src | s | 1 crate-vis | — | CODE-BENCH (ARCH-0042 #code-bench, owner intent 2026-10-21, cut by 90%): a small dogfood check of Oneiron… |
-| `src/beam/code_bench/pack.rs` | src | L | 5 crate-vis | — | `beam code-bench-pack <plan.json>`: materialize every ready cell for the run's driver, and list every cell… |
+| `src/beam/code_bench/pack.rs` | src | m | 5 crate-vis | — | `beam code-bench-pack <plan.json>`: materialize every ready cell for the run's driver, and list every cell… |
+| `src/beam/code_bench/pack/cell_files.rs` | src | s | 1 crate-vis | — | The files of one cell beside its world: the prompt, the MCP server config and the Claude Code settings |
+| `src/beam/code_bench/pack/git.rs` | src | s | 4 crate-vis | — | Git in a folder, reading no stdin |
+| `src/beam/code_bench/pack/world.rs` | src | s | 2 crate-vis | — | A cell's world: a fresh repository of the task's base, one commit, the sealed paths removed |
 | `src/beam/code_bench/profile.rs` | src | m | 24 crate-vis | — | Each CODE-BENCH arm is a fixed tool profile plus the pieces it needs |
 | `src/beam/code_bench/transcript.rs` | src | m | 2 crate-vis | — | Reads one writer's transcript in Claude Code's `--output-format stream-json`: one JSON object per line… |
 | `src/beam/community.rs` | src | m | 9 crate-vis | — | Community-beam run, timing loop, and aggregate gating |
@@ -42,7 +51,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/beam/fixture_protocol.rs` | src | s | 4 crate-vis | — | Retrieval-only gold-span protocol |
 | `src/beam/infra.rs` | src | s | 5 crate-vis | — | Vector-database cost framing |
 | `src/beam/judge.rs` | src | s | 13 crate-vis | — | Pinned majority-judge substrate |
-| `src/beam/llm_host.rs` | src | m | 11 crate-vis | — | Host-owned HTTP transport for the shipped LlmBackend adapter |
+| `src/beam/llm_host.rs` | src | m | 13 crate-vis | — | Host-owned HTTP transport for the shipped LlmBackend adapter |
 | `src/beam/llm_judge.rs` | src | s | 9 crate-vis | — | The production model-scored BEAM door: pin validation, three votes, no reward feedback |
 | `src/beam/llm_judge/tests.rs` | test | s | — | — | — |
 | `src/beam/load.rs` | src | m | 17 crate-vis | — | Dataset and contract loading |
@@ -210,8 +219,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/scorecard/params.rs` | src | s | 4 crate-vis | — | The `oneiron.retrieval_eval_params.v1` eval params file: blend weights for one run |
 | `src/scorecard/profile.rs` | src | s | 6 crate-vis | — | The `oneiron.bm25_rank_profile.v1` rank profile file: BM25F weights for one keyword run |
 | `src/scorecard/record.rs` | src | s | 2 crate-vis | — | `scorecard proposals` and `scorecard stamp`: list proposals, record the owner's stamp |
-| `src/scorecard/run.rs` | src | L | 6 crate-vis | — | `scorecard run`: replay one pack slice through fresh throwaway vaults, grade the run |
+| `src/scorecard/run.rs` | src | L | 7 crate-vis | — | `scorecard run`: replay one pack slice through fresh throwaway vaults, grade the run |
 | `src/scorecard/tune.rs` | src | m | 1 crate-vis | — | `scorecard tune-bm25f`: coordinate ascent over the BM25F rank profile on the search slice |
+| `src/scorecard/world_scoped/fixture.rs` | src | m | 6 crate-vis | — | The world-scoped arm's pack vault: a rooted vault with a second world, a corpus's records written as the… |
+| `src/scorecard/world_scoped/mod.rs` | src | s | 2 crate-vis | — | `scorecard run --arm world-scoped`: the retrieval ruler as a world-scoped reader… |
+| `src/scorecard/world_scoped/partition.rs` | src | s | 3 crate-vis | — | The world-scoped arm's partition: which records the agent's Grant leaves out, and the grading view of the… |
 | `src/swarm.rs` | src | m | 1 crate-vis | — | Seeded single-vault, in-process agent-swarm baseline |
 | `src/teacher_probe.rs` | src | s | 1 crate-vis | — | Offline extraction-teacher admission over the fixed CoNLL BIO probe |
 | `src/teacher_probe_tests.rs` | test | s | — | — | — |
@@ -220,6 +232,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/vector/vector_report.rs` | src | s | 1 crate-vis | — | Vector bench text report rendering |
 | `src/vector/vector_run.rs` | src | m | 15 crate-vis | — | Vector bench execution, measurement, and gate evaluation |
 | `src/vector/vector_tests.rs` | test | s | — | — | Vector bench contract and end-to-end tests |
+| `tests/action_bench_cli.rs` | test | XL | — | — | `oneiron-bench beam action-bench` (census L9-34; ARCH-0042 #action-bench, owner ruling 2026-10-21): the… |
 | `tests/beam_picks_for_cli.rs` | test | s | — | — | `oneiron-bench beam measure --picks-for` (census L9-32; Engine ruling L9-32-PICK-WRITER, Sat 14 Nov 07:43)… |
 | `tests/cleanup_retrieval.rs` | test | s | — | — | ANN recall corpus `ann_seed42.v1` (source: ec9cbdec92e7dbcc865b9958dd1ff8652714d6c7). rand 0.8.8 StdRng seed… |
 | `tests/code_bench_cli.rs` | test | L | — | — | `oneiron-bench beam code-bench-pack` (plan L4-02, CODE-BENCH; ARCH-0042 #code-bench; Engine ruling… |
@@ -228,4 +241,5 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/retrieval_matrix_cli.rs` | test | m | — | — | The retrieval matrix CLI end to end: the mini pack converts, the keyword arm grades it to hand-counted… |
 | `tests/scorecard_cli.rs` | test | L | — | — | Drive the shipped `scorecard` CLI end to end: fixtures in, JSON out |
 | `tests/scorecard_compare.rs` | test | L | — | — | Drive `scorecard compare`, `proposals` and `stamp` end to end: fixtures in, JSON out |
+| `tests/scorecard_world_scoped.rs` | test | m | — | — | [SCORECARD-WORLD-SCOPED-ARM]: `scorecard run --arm world-scoped` replays a slice as an agent whose one Grant… |
 | `tests/teacher_probe_cli.rs` | test | s | — | — | Run the shipped binary, not only its Rust scoring function, against CI fixtures |

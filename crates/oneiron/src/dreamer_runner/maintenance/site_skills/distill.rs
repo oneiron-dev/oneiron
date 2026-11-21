@@ -601,6 +601,7 @@ fn gap_token(gap: &DraftGapKind) -> String {
         DraftGapKind::ForeignOrigin { .. } => "gap:foreign_origin".to_owned(),
         DraftGapKind::TabChange => "gap:tab_change".to_owned(),
         DraftGapKind::GeneratedFill => "gap:generated_fill".to_owned(),
+        DraftGapKind::LiteralOpensSlot => "gap:literal_opens_slot".to_owned(),
         DraftGapKind::UnrecordedNavigation => "gap:unrecorded_navigation".to_owned(),
         DraftGapKind::MissingContext => "gap:missing_context".to_owned(),
         DraftGapKind::CheckUnknownRef { .. } => "gap:check_unknown_ref".to_owned(),

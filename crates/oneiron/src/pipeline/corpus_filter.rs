@@ -90,6 +90,8 @@ impl CorpusFilter {
             device_local: None,
             deadline: builder.deadline,
             disclosure: builder.disclosure_preselect.as_ref(),
+            // Only a bounded result channel's own copy takes the call's slice.
+            made_by: crate::provenance::made_by::MadeByPredicate::All,
         }
     }
 

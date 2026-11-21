@@ -9,6 +9,12 @@
 //! - A system whose feed the owner uninstalled is open to a seat: no poll of
 //!   that feed runs again.
 //! - Feeds and seats on different systems both install.
+//! - A seat of another calendar (another collection, or another account's
+//!   credential) on the system of an installed seat is refused: a passport
+//!   names its calendar by system, so the two calendars' copies, deletes and
+//!   echoes of one booking would read as one calendar's
+//!   (CAL-SEAT-DELETE-OF-WRITTEN-ONLY-EVENT-CANCELS-NOTHING review). A new
+//!   seat of the same calendar on that system installs.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test calendar_system_shared_install`.
@@ -93,15 +99,28 @@ impl Fixture {
 
     /// The owner installs the CalDAV seat `seat_ref` importing under `system`.
     fn install_seat(&self, seat_ref: &str, system: &str) -> Result<SetSettingOutcome, String> {
+        self.install_seat_of(seat_ref, system, &format!("caldav:{seat_ref}"), "personal")
+    }
+
+    /// The owner installs the CalDAV seat `seat_ref` of the collection
+    /// `calendar_ref` that the credential named `secret_ref` reads, importing
+    /// under `system`.
+    fn install_seat_of(
+        &self,
+        seat_ref: &str,
+        system: &str,
+        secret_ref: &str,
+        calendar_ref: &str,
+    ) -> Result<SetSettingOutcome, String> {
         self.set(
             SEAT,
             seat_ref,
             Some(json!({
                 "config": {
                     "seat_ref": seat_ref,
-                    "secret_ref": format!("caldav:{seat_ref}"),
+                    "secret_ref": secret_ref,
                     "system": system,
-                    "calendar_ref": "personal",
+                    "calendar_ref": calendar_ref,
                     "cadence_jitter_min_seconds": 300,
                     "cadence_jitter_max_seconds": 900,
                 },
@@ -193,4 +212,32 @@ fn a_seat_installs_on_the_system_of_an_uninstalled_feed() {
         "a seat on a retired feed system, which no poll sweeps again",
     );
     assert!(fx.seat_installed("work"));
+}
+
+#[test]
+fn a_seat_of_another_calendar_never_installs_on_the_system_of_a_seat() {
+    let fx = Fixture::open();
+    applied(fx.install_seat("work", "shared"), "the seat install");
+
+    refused_as_held(
+        fx.install_seat_of("family", "shared", "caldav:work", "family"),
+        "a seat of another collection on the seat's system",
+    );
+    refused_as_held(
+        fx.install_seat_of("partner", "shared", "caldav:partner", "personal"),
+        "a seat of another account's calendar on the seat's system",
+    );
+    assert!(
+        !fx.seat_installed("family") && !fx.seat_installed("partner"),
+        "the refused writes install no seat"
+    );
+
+    applied(
+        fx.install_seat_of("work-renewed", "shared", "caldav:work", "personal"),
+        "a new seat of the same calendar on its system",
+    );
+    applied(
+        fx.install_seat_of("family", "other", "caldav:work", "family"),
+        "a seat of another calendar on another system",
+    );
 }

@@ -1,4 +1,4 @@
-//! The engine's 20 sweeps as jobs of the one runner (DESIGN 15-setting-primitive, stage 5a).
+//! The engine's 21 sweeps as jobs of the one runner (DESIGN 15-setting-primitive, stage 5a).
 //!
 //! Each engine sweep is one [`JobSpec`] whose trigger is its cadence key
 //! ([`super::setting_keys`]): the engine arms it at a handle's first pass and in the write that
@@ -156,6 +156,8 @@ sweep_jobs! {
     OAUTH_EXPIRY_JOB = "housekeeping.oauth_expiry", SWEEP_OAUTH_EXPIRY, at_open: false;
     /// Signing links past their hard expiry (ARCH-0064 SGN-09).
     ESIGN_TOKEN_EXPIRY_JOB = "housekeeping.esign_token_expiry", SWEEP_ESIGN_TOKEN_EXPIRY, at_open: false;
+    /// The floor backfill of the rows a vault held before floors; also at each start.
+    SOURCE_FLOOR_BACKFILL_JOB = "housekeeping.source_floor_backfill", SWEEP_SOURCE_FLOOR_BACKFILL, at_open: true;
 }
 
 /// The code of `sweep`'s job.

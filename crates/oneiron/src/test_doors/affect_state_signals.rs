@@ -7,9 +7,10 @@
 
 use rmpv::Value;
 
+use crate::claim::ClaimLifecycleStatus;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::memory::state_index::StateWindow;
+use crate::memory::state_index::{ENGAGEMENT, GOAL_VELOCITY, StateWindow};
 use crate::vault::Vault;
 
 /// The claims one refresh left: the composite index and the two signal
@@ -24,14 +25,15 @@ pub struct RefreshedStateSignals {
 
 /// Measures `subject`'s window ending at `at` and refreshes its composite
 /// index in one write (`Vault::refresh_state_index_in_txn`). `None` when a
-/// source family is missing. The signal ids are read from the composite's
-/// evidence, which lists the annotated turns, then the goal-velocity signal,
-/// then the engagement signal.
+/// source family is missing. The composite names neither signal claim
+/// (REVIEW-9905 P1 round 2), so each signal is the one active claim about
+/// `subject` of its predicate that the refresh wrote: valid from `at`, with
+/// the number the composite carries for it.
 ///
 /// # Errors
 ///
-/// The vault's and the refresh's; a composite whose evidence does not end in
-/// two claim ids.
+/// The vault's and the refresh's; a predicate with no such claim, or more
+/// than one.
 pub fn refresh_state_signals(
     vault: &Vault,
     subject: &EntityId,
@@ -44,22 +46,38 @@ pub fn refresh_state_signals(
         return Ok(None);
     };
     let body = vault.get_claim(&composite)?.ok_or(Error::EntityNotFound)?;
-    let malformed = || Error::InvalidClaimBody("state index evidence names no signal pair");
-    let Some(Value::Array(refs)) = body.evidence else {
-        return Err(malformed());
+    let unmatched = || Error::InvalidClaimBody("no single signal claim the refresh wrote");
+    let Value::Map(fields) = &body.value else {
+        return Err(unmatched());
     };
-    let [.., goal_velocity, engagement] = refs.as_slice() else {
-        return Err(malformed());
-    };
-    let id = |value: &Value| {
-        value
-            .as_str()
-            .ok_or_else(malformed)
-            .and_then(EntityId::from_hex)
+    let claims = vault.claims_for_subject(subject)?;
+    let signal = |predicate: &str, field: &str| -> Result<EntityId> {
+        let number = fields
+            .iter()
+            .find(|(name, _)| name.as_str() == Some(field))
+            .map(|(_, value)| value.clone())
+            .ok_or_else(unmatched)?;
+        let mut found = None;
+        for id in &claims {
+            let Some(claim) = vault.get_claim(id)? else {
+                continue;
+            };
+            if claim.predicate == predicate
+                && claim.lifecycle == ClaimLifecycleStatus::Active
+                && claim.valid_from == Some(at)
+                && claim.value == number
+            {
+                if found.is_some() {
+                    return Err(unmatched());
+                }
+                found = Some(*id);
+            }
+        }
+        found.ok_or_else(unmatched)
     };
     Ok(Some(RefreshedStateSignals {
         composite,
-        goal_velocity: id(goal_velocity)?,
-        engagement: id(engagement)?,
+        goal_velocity: signal(GOAL_VELOCITY, "goal_velocity")?,
+        engagement: signal(ENGAGEMENT, "engagement")?,
     }))
 }

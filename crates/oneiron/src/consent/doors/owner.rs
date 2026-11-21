@@ -170,7 +170,7 @@ impl Vault {
         let (fold, signer) = {
             let txn = self.store.env.read_txn()?;
             let fold = self.authority_view_readonly_in_txn(&txn)?;
-            let signer = self.owner_proof_signer(&fold);
+            let signer = self.ask_word_proof_signer(&fold);
             (fold, signer)
         };
         let signer = signer.ok_or(Error::Record(crate::error::RecordError::OwnerKeyRequired))?;
@@ -186,7 +186,7 @@ impl Vault {
         let signature = crate::authority::AuthoritySignature {
             suite: key.suite(),
             public_key: key.clone(),
-            signature: signer.sign_ask_word(&fold, &transcript)?,
+            signature: signer.sign(&fold, &transcript)?,
         };
         if !crate::authority::verify_authority_signature(&signature, &transcript) {
             return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(

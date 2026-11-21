@@ -19,6 +19,7 @@ use crate::{EntityId, Error, Result};
 
 use super::super::VerbArgsCheck;
 use super::projection::{HookView, merge_withheld};
+use super::view::ResultView;
 use super::{Chain, run_key, session};
 
 /// One run, as its receipt tells it, and what its saved copy keeps.
@@ -101,7 +102,7 @@ impl<'c> Chain<'c> {
         id: EntityId,
         binding: &'c PackHookBinding,
         args: &Value,
-        result: Option<&Value>,
+        result: Option<ResultView<'_>>,
         check: Option<VerbArgsCheck<'_>>,
     ) -> Result<Option<HookOutcome>> {
         let key = run_key(self.call.invocation, id, self.phase);

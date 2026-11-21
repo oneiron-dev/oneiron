@@ -83,7 +83,10 @@ use oneiron::test_doors::passkey_vouch_limits::{
     revoke_owner_key_signed_by, sign_as_host_root,
 };
 use oneiron::{HostingPrivacyPosture, Vault, VaultConfig};
-use oneiron_authority::authority::machine_answer_revision;
+use oneiron_authority::authority::{
+    AuthorityLogEntry, authority_transcript, decode_entry_value, encode_value, entry_value,
+    machine_answer_revision,
+};
 use p256::ecdsa::signature::Signer as _;
 use p256::ecdsa::{Signature as P256Signature, SigningKey as P256SigningKey};
 use sha2::{Digest as _, Sha256};
@@ -1024,6 +1027,7 @@ impl oneiron::authority::CheckpointRootSigner for HeldOwnerKey {
         &self,
         _vault: &Vault,
         _fold: &AuthorityFold,
+        _ground: &oneiron::authority::OwnerProofGround,
         transcript: &[u8],
     ) -> oneiron::Result<Vec<u8>> {
         Ok(self.0.sign(transcript).to_bytes().to_vec())
@@ -1658,6 +1662,75 @@ fn a_prepared_enrollment_changed_in_hand_lands_nothing() {
         "an entry that is not the one prepared is refused"
     );
     assert!(!hosted.live_owner_key(&device_key), "nothing was enrolled");
+}
+
+/// The unsigned entry `bytes` encode, as prepare answered it.
+fn entry_of(bytes: &[u8]) -> AuthorityLogEntry {
+    let value = rmpv::decode::read_value(&mut &bytes[..]).expect("one MessagePack value");
+    decode_entry_value(&value).expect("the prepared entry decodes")
+}
+
+/// `prepared`'s entry at `seq` in its one encoding, with the challenge the
+/// passkey's assertion of it names.
+fn at_sequence(
+    prepared: &oneiron::authority::PreparedOwnerKeyEnrollment,
+    seq: u64,
+) -> oneiron::authority::PreparedOwnerKeyEnrollment {
+    let mut entry = entry_of(&prepared.entry);
+    entry.seq = seq;
+    oneiron::authority::PreparedOwnerKeyEnrollment {
+        entry: encode_value(&entry_value(&entry, true)).expect("the entry encodes"),
+        challenge: webauthn_challenge(&authority_transcript(&entry).expect("its transcript")),
+    }
+}
+
+/// Blind review #10043 P1 (the passkey's binding door; this door is its
+/// sibling): prepare names the passkey's next sequence, and an enrollment
+/// the passkey signs above it is none prepare built. Landed, it would move
+/// the passkey's next sequence to its own; at `u64::MAX` the passkey would
+/// have no sequence left to sign at.
+#[test]
+fn an_enrollment_signed_above_the_prepared_sequence_lands_nothing() {
+    let hosted = HostedVault::open();
+    let receipt = enrol_passkey(&hosted);
+    let input = device_enrollment(&hosted, receipt.machine);
+    let device_key = AuthorityKey::Ed25519(input.public_key);
+    let prepared = hosted
+        .vault
+        .prepare_owner_key_enrollment_as(&hosted.owner(), input, passkey_roster_key())
+        .expect("the engine prepares the enrollment");
+    let prepared_seq = entry_of(&prepared.entry).seq;
+    for seq in [prepared_seq + 1, u64::MAX] {
+        let raised = at_sequence(&prepared, seq);
+        let landed = hosted.vault.land_owner_key_enrollment_as(
+            &hosted.owner(),
+            &raised.entry,
+            passkey_assertion_over(&raised),
+        );
+        assert!(
+            matches!(
+                landed,
+                Err(oneiron::Error::Record(
+                    RecordError::InvalidAuthorityLogBody(_)
+                ))
+            ),
+            "an enrollment signed at sequence {seq}, above the prepared {prepared_seq}, is \
+             refused: {landed:?}"
+        );
+    }
+    assert!(!hosted.live_owner_key(&device_key), "nothing was enrolled");
+    hosted
+        .vault
+        .land_owner_key_enrollment_as(
+            &hosted.owner(),
+            &prepared.entry,
+            passkey_assertion_over(&prepared),
+        )
+        .expect("the prepared enrollment still lands at its own sequence");
+    assert!(
+        hosted.live_owner_key(&device_key),
+        "the device key is a live owner root"
+    );
 }
 
 #[test]

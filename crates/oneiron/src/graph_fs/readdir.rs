@@ -59,6 +59,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             options,
             snapshot: None,
             repo_masked: false,
+            dispatch_attempt: None,
         }
     }
 

@@ -193,6 +193,7 @@ fn run_parity_with_values(
         attempt: &bound.attempt,
         now_ms: bound.now_ms,
         reply: &reply,
+        step: None,
         config: &bound.config,
         policy_pin: &bound.policy_pin,
     })?;
