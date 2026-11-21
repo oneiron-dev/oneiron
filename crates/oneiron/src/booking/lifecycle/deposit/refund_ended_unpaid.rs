@@ -135,7 +135,7 @@ pub(super) fn note_refund_ended_unpaid(
             .filter(|ended| ended.retry == asked.retry);
         row.refund_ended_unpaid = match (noted, standing) {
             (None, None) => return Ok(()),
-            (None, Some(_)) => None,
+            (None, Some(_)) => return Ok(()),
             (Some((part_refunded_by_hand, no_keyed_refund)), Some(ended))
                 if ended.part_refunded_by_hand == part_refunded_by_hand
                     && ended.no_keyed_refund == no_keyed_refund =>

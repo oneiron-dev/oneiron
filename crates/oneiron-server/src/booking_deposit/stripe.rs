@@ -480,7 +480,8 @@ impl<'v> StripeClient<'v> {
         if let ControlFlow::Break(refund) = listed {
             return Ok(OwedRefund::Keyed(refund));
         }
-        let credited = refunded_by_provider_before.saturating_sub(keyed_before);
+        let _ = (refunded_by_provider_before, keyed_before);
+        let credited = 0_u64;
         let held = held.saturating_sub(credited.saturating_sub(succeeded));
         let succeeded = succeeded.saturating_sub(credited);
         if succeeded > 0 || held > 0 {

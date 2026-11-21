@@ -215,7 +215,11 @@ pub(crate) fn mark_booking_deposit_refunded_outside(
         let repeated = row
             .refund_marked_outside
             .as_ref()
-            .filter(|mark| mark.idempotency_key == idempotency_key);
+            .filter(|mark| {
+                mark.amount_minor == amount_minor
+                    && (row.marks_owed_refund()
+                        || matches!(row.state, DepositState::Refunded { .. }))
+            });
         if let Some(mark) = repeated {
             return Ok(receipt(event_ref, &row, mark, false));
         }
