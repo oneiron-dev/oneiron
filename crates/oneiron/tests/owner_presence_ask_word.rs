@@ -6,11 +6,14 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use oneiron::WriteActor;
 use oneiron::attempt_queue::AttemptId;
 use oneiron::counterparty_contact::CounterpartyContactRecord;
 use oneiron::disclosure::{AttendeeIdentityChoice, UnknownAttendeeAsk};
+use oneiron::disclosure::{PREDICATE_DISCLOSURE_ATTENDEE_ASK, attendee_ask_ref};
 use oneiron::dreamer_runner::{AdmitDreamerAttempt, DreamerAdmissionOutcome, DreamerRunnerStore};
 use oneiron::error::{OWNER_PRESENCE_REQUIRED, RecordError};
+use oneiron::federation::{FederationGrantRole, InitialSharedMember};
 use oneiron::llm::manifest::{ModelManifest, TeacherProbeApproval};
 use oneiron::llm::registry::{
     ModelBackendPin, ModelRegistryRow, ModelWireFormat, PricedModelBackend,
@@ -22,6 +25,7 @@ use oneiron::memory::{
 };
 use oneiron::model_binding::{MODEL_ROLES, ModelBinding, ModelRole, ModelSlot};
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK, ENTITY_TYPE_TURN};
+use oneiron::runtime_hooks::InvocationId;
 use oneiron::skill_optimize::offer_doors::{OfferPassRequest, trigger as trigger_offer_pass};
 use oneiron::skill_optimize::{
     ComputeDestination, EvalSeat, OfferCandidate, OfferCost, OfferEvidence, OfferModelPin,
@@ -33,9 +37,11 @@ use oneiron::task_verb::{
     TaskAskQuestion, TaskAskSettlementReason, TaskAskSpec, TaskAskStatus, TaskAskTarget,
     TaskAskWord,
 };
+use oneiron::task_verb::{TaskAskElectorate, TaskAskNeed};
 use oneiron::test_doors::ask_answer_proof::mint_code_consent_ask;
 use oneiron::test_doors::ask_word_presence::tasks_answer_asked_as;
 use oneiron::test_doors::owner_device_answer::{OwnerDeviceVault, open_owner_device_vault};
+use oneiron::test_doors::verb_hook_ask::{HookAsk, SavedAsk};
 use oneiron::verbs::{CanRequest, CanVerb, CanVerbRequest, TaskAnswerRequest};
 use oneiron::world_keys::OwnerActImportance;
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault};
@@ -813,4 +819,387 @@ fn an_approving_switch_word_for_a_seat_that_moved_raises_no_prompt() {
         .expect("The confirmed offer recorded a stock switch.");
     assert_eq!(switch.application, SwitchApplication::Bound);
     assert_eq!(switch.binding.model, fixture_model(STOCK_MODEL));
+}
+
+#[test]
+fn an_approving_word_on_an_ask_with_a_deleted_member_task_raises_no_prompt() {
+    let fx = Fixture::open();
+    fx.device
+        .enrol_owner_key()
+        .expect("The owner key is enrolled for signing.");
+    let vault = &fx.device.vault;
+    let holder = EntityId::now();
+    vault
+        .put_entity(
+            &holder,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 10, end: 10 },
+            10,
+            b"holder",
+        )
+        .expect("The holder is a live PERSON.");
+    let broken = mint_code_consent_ask(vault, fx.device.owner, &[holder])
+        .expect("The broken ask addresses the owner and the holder.");
+    let intact = mint_code_consent_ask(vault, fx.device.owner, &[holder])
+        .expect("The control ask addresses the owner and the holder.");
+    let other_task = EntityId::derive(
+        oneiron_contracts::entity_id::derived_domains::TASK_ASK_MEMBER,
+        &[broken.group_ref.as_bytes(), holder.as_bytes()],
+    )
+    .expect("The holder member TASK id derives.");
+    assert!(
+        vault
+            .delete_entity(&other_task)
+            .expect("The ordinary delete door runs."),
+        "The other member TASK existed."
+    );
+
+    let memory = fx.owner_device();
+    let presence = scripted_gate(vault, []);
+    let approve = option_word(put_turn(vault), "approve_once");
+    let refused = memory
+        .tasks_answer(&broken, &approve)
+        .expect_err("The deleted member TASK refuses the settlement scan.");
+    assert_eq!(
+        refused.code, MEMORY_CODE_BAD_REQUEST,
+        "The scan refusal is a bad request: {refused:?}"
+    );
+    assert_eq!(
+        refused.message, "invalid TASK body: tasks.ask.fact",
+        "The refusal is the settlement's invalid ask."
+    );
+    assert_eq!(
+        presence.prompts(),
+        0,
+        "The refused approval does not prompt."
+    );
+    assert!(
+        memory
+            .tasks_ask_evidence(broken)
+            .expect("the evidence can be read without attempting settlement")
+            .is_empty(),
+        "the refused approval records no evidence"
+    );
+
+    let presence = scripted_gate(vault, [Ok(())]);
+    memory
+        .tasks_answer(&intact, &approve)
+        .expect("The same word on the intact ask is admitted.");
+    assert_eq!(presence.prompts(), 1, "The intact approval prompts once.");
+}
+
+#[test]
+fn an_approving_word_on_an_ask_whose_waiter_lost_its_trap_raises_no_prompt() {
+    let fx = Fixture::open();
+    fx.device
+        .enrol_owner_key()
+        .expect("The owner key is enrolled for signing.");
+    let vault = &fx.device.vault;
+    let asker = vault.memory(fx.device.owner, EdgeActorClass::Human);
+    let contact = create_attendee_contact(vault, fx.device.owner, "speaker@contacts.example");
+    let ask_a = raise_attendee_ask(&asker, "t12-session-a", contact);
+    let ask_b = raise_attendee_ask(&asker, "t12-session-b", contact);
+    let trap_a = match asker
+        .tasks_wait(ask_a, Some("t12-waiter-a"))
+        .expect("The asker waits on the broken ask.")
+    {
+        oneiron::task_verb::TaskAskWait::Pending { trap_ref } => trap_ref,
+        other => panic!("A keyed wait on an open ask names its trap: {other:?}"),
+    };
+    match asker
+        .tasks_wait(ask_b, Some("t12-waiter-b"))
+        .expect("The asker waits on the control ask.")
+    {
+        oneiron::task_verb::TaskAskWait::Pending { .. } => {}
+        other => panic!("A keyed wait on an open ask names its trap: {other:?}"),
+    };
+    let trap = EntityId::from_hex(&trap_a).expect("The trap ref parses.");
+    assert!(
+        vault
+            .delete_entity(&trap)
+            .expect("The ordinary delete door runs."),
+        "The waiter trap CLAIM existed."
+    );
+
+    let memory = fx.owner_device();
+    let presence = scripted_gate(vault, []);
+    let approve = attendee_word(vault, AttendeeIdentityChoice::Contact(contact));
+    let refused = memory
+        .tasks_answer(&ask_a, &approve)
+        .expect_err("The deleted trap refuses the settlement signal.");
+    assert_eq!(
+        refused.code, MEMORY_CODE_BAD_REQUEST,
+        "The trap refusal is a bad request: {refused:?}"
+    );
+    assert_eq!(
+        refused.message, "invalid TASK body: tasks.ask.fact",
+        "The refusal is the settlement's invalid ask."
+    );
+    assert_eq!(
+        presence.prompts(),
+        0,
+        "The refused approval does not prompt."
+    );
+    assert_ask_waits_without_evidence(&memory, ask_a);
+
+    let presence = scripted_gate(vault, [Ok(())]);
+    memory
+        .tasks_answer(&ask_b, &approve)
+        .expect("The same word on the intact ask is admitted.");
+    assert_eq!(presence.prompts(), 1, "The intact approval prompts once.");
+    assert_eq!(presence.reasons(), ["confirm who a speaker is"]);
+    let status = memory
+        .tasks_ask_status(ask_b)
+        .expect("The control ask reads.");
+    let TaskAskStatus::Settled(result) = &status else {
+        panic!("The intact word settles the ask: {status:?}");
+    };
+    assert_eq!(result.settlement.reason, TaskAskSettlementReason::FirstWord);
+}
+
+#[test]
+fn a_proceed_word_on_a_verb_hook_ask_asks_for_the_person_once() {
+    let fx = Fixture::open();
+    fx.device
+        .enrol_owner_key()
+        .expect("the owner key is enrolled");
+    let vault = &fx.device.vault;
+    let owner = fx.device.owner;
+    let decision = vault.new_entity_id().expect("a fresh decision id");
+    let proof = vault
+        .authenticate_owner(
+            owner,
+            &owner.to_hex(),
+            true,
+            GateDecisionId::from_bytes(*decision.as_bytes()),
+        )
+        .expect("the owner can bind the hook");
+    let hook = HookAsk::on_verb(vault, owner, &proof, "self.use")
+        .expect("the owner binds a pre-hook that asks");
+    let actor = WriteActor::new(owner, EdgeActorClass::Human);
+    let open = |seq| {
+        let invocation = InvocationId::of_run_step(b"owner-device-verb-hook", seq);
+        let group_ref = hook
+            .ask(vault, &actor, invocation)
+            .expect("the hook parks its call");
+        (invocation, TaskAskHandle { group_ref })
+    };
+    let (invocation, handle) = open(1);
+    let memory = fx.owner_device();
+    let presence = scripted_gate(vault, [Ok(())]);
+    let unit = put_turn(vault);
+    memory
+        .tasks_answer(&handle, &option_word(unit, "proceed"))
+        .expect("a confirmed proceed is admitted");
+    assert_eq!(presence.prompts(), 1, "proceed prompts once");
+    assert_eq!(
+        presence.reasons(),
+        ["let an action that waits for your approval go ahead"]
+    );
+    assert_eq!(
+        hook.retry(vault, &actor, invocation)
+            .expect("the hook wait is readable"),
+        SavedAsk::Resume {
+            ask: handle.group_ref
+        },
+    );
+
+    let (_, handle) = open(2);
+    let presence = scripted_gate(vault, []);
+    memory
+        .tasks_answer(&handle, &option_word(unit, "hold"))
+        .expect("hold is admitted without confirmation");
+    assert_eq!(presence.prompts(), 0, "hold does not prompt");
+}
+
+#[test]
+fn an_approving_word_on_an_ask_that_has_its_result_raises_no_prompt() {
+    let fx = Fixture::open();
+    fx.device
+        .enrol_owner_key()
+        .expect("The owner key is enrolled for signing.");
+    let vault = &fx.device.vault;
+    let asker = vault.memory(fx.device.owner, EdgeActorClass::Human);
+    let contact_a = create_attendee_contact(vault, fx.device.owner, "speaker-a@contacts.example");
+    let contact_b = create_attendee_contact(vault, fx.device.owner, "speaker-b@contacts.example");
+    let handle = asker
+        .raise_unknown_attendee_ask(&UnknownAttendeeAsk {
+            session_key: "t14-session".to_owned(),
+            speaker_key: "speaker-1".to_owned(),
+            roster_revision: 1,
+            trigger_turn: None,
+            candidates: vec![contact_a, contact_b],
+            until: 4_102_444_800,
+        })
+        .expect("The owner raises an ask with two live candidates.")
+        .handle;
+    let presence = Arc::new(ScriptedPresence::new([Ok(())]));
+    let gate = Arc::new(PresenceGate::new(
+        presence.clone(),
+        PresenceWindow::new(ManualPresenceClock::new(1_000_000, 1_000_000)),
+    ));
+    vault.install_presence_gate(gate.clone());
+
+    let memory = fx.owner_device();
+    let first = attendee_word(vault, AttendeeIdentityChoice::Contact(contact_a));
+    memory
+        .tasks_answer(&handle, &first)
+        .expect("The live contact's word is admitted.");
+    assert_eq!(presence.prompts(), 1, "The first approval prompts once.");
+    assert_eq!(presence.reasons(), ["confirm who a speaker is"]);
+    let status = memory
+        .tasks_ask_status(handle)
+        .expect("The settled ask reads.");
+    let TaskAskStatus::Settled(result) = &status else {
+        panic!("The first word settles the ask: {status:?}");
+    };
+    assert_eq!(result.settlement.reason, TaskAskSettlementReason::FirstWord);
+    gate.end_window();
+
+    memory
+        .tasks_answer(&handle, &first)
+        .expect("The repeated word is admitted after the cut.");
+    assert_eq!(
+        presence.prompts(),
+        1,
+        "The repeat asks nobody after the cut."
+    );
+    let second = attendee_word(vault, AttendeeIdentityChoice::Contact(contact_b));
+    memory
+        .tasks_answer(&handle, &second)
+        .expect("The second contact's word is admitted after the cut.");
+    assert_eq!(
+        presence.prompts(),
+        1,
+        "The late approval asks nobody after the cut."
+    );
+}
+
+#[test]
+fn a_repeated_attendee_word_is_judged_by_the_selected_word() {
+    let fx = Fixture::open();
+    fx.device
+        .enrol_owner_key()
+        .expect("the device has the owner's key");
+    let vault = &fx.device.vault;
+    let (owner, other) = (fx.device.owner, EntityId::now());
+    let authenticate = |actor: EntityId| {
+        let decision = vault.new_entity_id().expect("a fresh decision id");
+        vault
+            .authenticate_owner(
+                actor,
+                &actor.to_hex(),
+                true,
+                GateDecisionId::from_bytes(*decision.as_bytes()),
+            )
+            .expect("a live person has a native proof")
+    };
+    vault
+        .put_entity(
+            &other,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"owner B",
+        )
+        .expect("the second owner exists as a person");
+    let members = [owner, other].map(|member_ref| InitialSharedMember {
+        member_ref,
+        role: Some(FederationGrantRole::Owner),
+    });
+    vault
+        .initialize_shared_vault(&authenticate(owner), 46, None, &members, 1)
+        .expect("the owner shares the vault and invites a co-owner");
+    let other_proof = authenticate(other);
+    let invitations = vault
+        .shared_invitations(&other_proof, 46)
+        .expect("read the invitation");
+    vault
+        .accept_shared_invitation(&other_proof, 46, &invitations[0].id)
+        .expect("the second owner accepts the invitation");
+    let other_memory = vault.memory(other, EdgeActorClass::Human);
+    let old = create_attendee_contact(vault, owner, "old@contacts.example");
+    let latest = create_attendee_contact(vault, owner, "latest@contacts.example");
+    let control = vault
+        .memory(owner, EdgeActorClass::Human)
+        .raise_unknown_attendee_ask(&UnknownAttendeeAsk {
+            session_key: "repeated-attendee-word".to_owned(),
+            speaker_key: "speaker-1".to_owned(),
+            roster_revision: 1,
+            trigger_turn: None,
+            candidates: vec![old, latest],
+            until: 4_102_444_800,
+        })
+        .expect("the control freezes both contacts")
+        .handle;
+    let claim = attendee_ask_ref("repeated-attendee-word", "speaker-1", 1)
+        .expect("the frozen question claim has a stable id");
+    let mut question = TaskAskQuestion::new(ConsultPayloadRef::Claim(claim));
+    for choice in [
+        AttendeeIdentityChoice::Contact(old),
+        AttendeeIdentityChoice::Contact(latest),
+        AttendeeIdentityChoice::Unknown,
+    ] {
+        question
+            .options
+            .insert(choice.option().unwrap(), TaskAskOption::new("Candidate"));
+    }
+    let mut spec = TaskAskSpec::shorthand(
+        Some(TaskAskTarget::People(BTreeSet::from([owner, other]))),
+        question,
+        Some(4_102_444_800),
+        TaskAskDefault::Hold,
+    );
+    spec.intent_key = format!("{PREDICATE_DISCLOSURE_ATTENDEE_ASK}/{}", claim.to_hex());
+    spec.need = TaskAskNeed {
+        count: 1,
+        of: TaskAskElectorate::People(BTreeSet::from([other])),
+    };
+    let handle = other_memory
+        .tasks_ask(&spec)
+        .expect("the second owner opens the coverage ask")
+        .handle;
+    let memory = fx.owner_device();
+    let repeated = attendee_word(vault, AttendeeIdentityChoice::Contact(old));
+    let selected = attendee_word(vault, AttendeeIdentityChoice::Contact(latest));
+    scripted_gate(vault, [Ok(())]);
+    memory
+        .tasks_answer(&handle, &repeated)
+        .expect("the old word waits for coverage");
+    memory
+        .tasks_answer(&handle, &selected)
+        .expect("the latest word waits for coverage");
+    other_memory
+        .with_owner_authorship(&other_proof)
+        .tasks_answer(
+            &handle,
+            &attendee_word(vault, AttendeeIdentityChoice::Unknown),
+        )
+        .expect("the second owner supplies coverage but cannot cut on the first owner's word");
+    assert!(matches!(
+        memory.tasks_ask_status(handle).unwrap(),
+        TaskAskStatus::Pending { .. }
+    ));
+    vault
+        .revoke_counterparty_contact(&latest, 12)
+        .expect("the latest contact is revoked");
+    let presence = scripted_gate(vault, []);
+    let refused = memory
+        .tasks_answer(&handle, &repeated)
+        .expect_err("the selected contact is revoked");
+    assert_eq!(
+        presence.prompts(),
+        0,
+        "the old word would cut on the revoked contact"
+    );
+    assert_eq!(
+        refused.message,
+        "invalid claim body: disclosure.attendee_ask value invalid"
+    );
+
+    let presence = scripted_gate(vault, [Ok(())]);
+    memory
+        .tasks_answer(&control, &repeated)
+        .expect("the same word approves a live contact on the control");
+    assert_eq!(presence.prompts(), 1);
 }
