@@ -75,9 +75,7 @@ impl Memory<'_> {
     /// change is reverted (FIX 5369). An applied stock switch offers the
     /// owner's undo while its binding still holds (FIX 4663). A GPU job's
     /// stop at its maximum offers its one-click resume while the stop stands
-    /// (CROSS-ARCH-0023 C2 05). A setting row this install's projection
-    /// refused offers the owner's set of it while the refusal stands (row
-    /// SETTING-PROJECTED-ROW-REFUSING-HOOKS). Any other row,
+    /// (CROSS-ARCH-0023 C2 05). Any other row,
     /// and a target that no longer reads or has settled, offers none.
     fn notification_actions(&self, row: &NotificationRow) -> Vec<NotificationAction> {
         let producer = row.source.producer.as_str();
@@ -110,16 +108,16 @@ impl Memory<'_> {
             {
                 self.model_pack_revert_actions(row)
             }
+            NotificationKind::Ask
+                if producer == crate::setting::SETTING_REFUSAL_NOTIFICATION_PRODUCER =>
+            {
+                self.setting_refusal_actions(row)
+            }
             NotificationKind::Ask if producer == crate::mail_pack::MAIL_REPLY_ASK_PRODUCER => {
                 self.mail_reply_ask_actions(row)
             }
             NotificationKind::Ask if producer == crate::gpu_job::GPU_JOB_STOPPED_PRODUCER => {
                 self.gpu_job_resume_actions(row)
-            }
-            NotificationKind::Ask
-                if producer == crate::setting::SETTING_REFUSAL_NOTIFICATION_PRODUCER =>
-            {
-                self.setting_refusal_actions(row)
             }
             NotificationKind::VoiceRecognitionWithdrawalLoggedForSubject
                 if producer == crate::voice_identity::VOICE_RECOGNITION_NOTIFICATION_PRODUCER =>
