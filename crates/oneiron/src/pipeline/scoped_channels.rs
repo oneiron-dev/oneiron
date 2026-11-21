@@ -123,9 +123,13 @@ impl PipelineBuilder<'_> {
     /// admits `id` to them: the call's filters and gate, its memory lane,
     /// and its made_by predicate, which the post-blend filter applies after
     /// the cut. A row it refuses sets no nearest distance and takes no place
-    /// under the cap (review #8107, both rounds). An unborn claim's class is
-    /// its admitted body's source; under a candidate filter the gate judged
-    /// the row in a cache of its own, so the body is read into `gate` here.
+    /// under the cap (review #8107, both rounds). Under a clamp it asks the
+    /// sources of the row's words too, as a bounded result channel's
+    /// admission does (`disclosure_word_sources`;
+    /// PACK-PRESELECT-CLAMP-ROW-ONLY-DISPLACES-READABLE-HIT). An unborn
+    /// claim's class is its admitted body's source; under a candidate filter
+    /// the gate judged the row in a cache of its own, so the body is read
+    /// into `gate` here.
     pub(super) fn phonetic_candidate_admits(
         &self,
         rtxn: &RoTxn<'_>,
@@ -134,6 +138,10 @@ impl PipelineBuilder<'_> {
         metadata: &mut EntityMetadataCache,
         gate: &mut ClaimStatusGateCache,
     ) -> Result<bool> {
+        let filters = PipelineFilterConfig {
+            disclosure_word_sources: Some(self.vault),
+            ..filters
+        };
         let scoped = pipeline_candidate_matches_filters_and_gate(
             &self.read, rtxn, id, filters, metadata, gate,
         )? && (!self.memory_category

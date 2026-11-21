@@ -31,9 +31,11 @@ pub(crate) fn clamp_admits(
 /// [`clamp_admits`] for a pre-filter that holds only the store: the row's
 /// own test, without the sources of a summary's words
 /// (`DisclosureContext::admits_from`), on the content the pack reads. A
-/// run's shared filter config asks it for reads that judge rows that are
-/// not results, and the phonetic code rung's hits before the blend; a
-/// bounded result channel's admission asks [`clamp_admits`]
+/// run's shared filter config asks it (PPR visibility, the TURN fold, the
+/// reranker's words, L2 evidence, the trace), as does the rank pass over the
+/// phonetic code rung's exact hits; a bounded window's admission (vector,
+/// text, temporal, typed media, the phonetic sound match and learned walk)
+/// asks [`clamp_admits`]
 /// (PACK-PRESELECT-CLAMP-ROW-ONLY-DISPLACES-READABLE-HIT). The pack's
 /// candidate sweep still asks [`clamp_admits`] of every row it keeps.
 pub(crate) fn clamp_prefilter_admits(
