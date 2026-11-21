@@ -2,6 +2,7 @@
 //! emergency revisions. Lifecycle owns all booking and passport mutations;
 //! CAL owns payloads and outcomes; outbound owns freezing, gates, and effects.
 
+use oneiron_contracts::fingerprint::purposes;
 use serde::{Deserialize, Serialize};
 
 #[cfg(test)]
@@ -97,7 +98,10 @@ pub fn canonical_emergency_request_hash(
     reason: &str,
     action_policy: EmergencyActionPolicy,
 ) -> Result<[u8; 32], BookingError> {
-    content_hash(&request_fields(window, reason, action_policy)?)
+    content_hash(
+        purposes::booking::EMERGENCY_REQUEST_HASH,
+        &request_fields(window, reason, action_policy)?,
+    )
 }
 
 fn instruction_key(
@@ -107,14 +111,29 @@ fn instruction_key(
     action_policy: EmergencyActionPolicy,
     recorded_at: u64,
 ) -> Result<Vec<u8>, BookingError> {
-    let digest = content_hash(&InstructionFields {
-        owner_ref: owner_ref.to_hex(),
-        request: request_fields(window, reason, action_policy)?,
-        recorded_at,
-    })?;
+    let digest = content_hash(
+        purposes::booking::EMERGENCY_INSTRUCTION_KEY,
+        &InstructionFields {
+            owner_ref: owner_ref.to_hex(),
+            request: request_fields(window, reason, action_policy)?,
+            recorded_at,
+        },
+    )?;
     let mut key = EMERGENCY_INSTRUCTION_META_PREFIX.to_vec();
     key.extend_from_slice(hex_lower(&digest).as_bytes());
     Ok(key)
+}
+
+/// An instruction's full raw row key.
+#[cfg(oneiron_test_support)]
+pub(crate) fn instruction_key_for_test(
+    owner_ref: EntityId,
+    window: TimeRange,
+    reason: &str,
+    action_policy: EmergencyActionPolicy,
+    recorded_at: u64,
+) -> Result<Vec<u8>, BookingError> {
+    instruction_key(owner_ref, window, reason, action_policy, recorded_at)
 }
 
 /// Appends an explicit, authenticated owner instruction and reads it back.
@@ -301,8 +320,18 @@ pub(super) fn calendar_failure(error: crate::calendar::CalendarError) -> Booking
     }
 }
 
+// FIX [BK-EMERGENCY-APOLOGY-BLOB-HOLDS-RAW-PICK-TOKENS]: the owner's copy and the booker's text.
+mod apology;
+#[cfg(oneiron_test_support)]
+pub(crate) use apology::write_raw_apology_for_doors;
+pub(crate) use apology::{emergency_apology_send_text, release_raw_apologies_on_open};
+// FIX [BK-EMERGENCY-ROWS-NOT-CARRIED-BY-HOME-MOVE]: the rows a home move carries.
+#[cfg(feature = "sync")]
+pub(crate) mod home_rows;
 mod lookup;
 mod state;
+#[cfg(oneiron_test_support)]
+pub(crate) use lookup::request_plan_hash_for_test;
 pub(crate) use state::{
     ensure_no_pending_effect_in, pending_effect_fences_in, verify_frozen_effect_in,
 };
@@ -313,10 +342,15 @@ mod execution;
 mod pick;
 mod planning;
 pub(crate) mod setting_keys;
+mod uncertain_send;
 
 use enumeration::enumerate_with_refusals;
 pub use enumeration::{AffectedBooking, enumerate_affected_bookings};
-pub use execution::execute_emergency_plan;
+#[cfg(oneiron_test_support)]
+pub(crate) use execution::deliver_emergency_effects;
+pub use execution::{
+    EMERGENCY_REPEAT_NOTICE, EmergencyExecution, EmergencyRepeatNotice, execute_emergency_plan,
+};
 pub use pick::{EmergencyPick, counterparty_pick};
 pub(crate) use pick::{verify_pick_blob, verify_pick_invite_in};
 use planning::blob_id;

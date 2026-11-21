@@ -171,7 +171,19 @@ pub(crate) fn verify_signature_value(
     signature: &[u8],
 ) -> Result<(), SealError> {
     let cert = x509_cert::Certificate::from_der(signer_cert_der).map_err(|_| cms_err())?;
-    let spki = &cert.tbs_certificate.subject_public_key_info;
+    verify_signature_value_for_cert(alg, &cert, signing_input, signature)
+}
+
+/// [`verify_signature_value`] over an already-decoded signer
+/// certificate: the same prehash verification without decoding its DER
+/// again, for a caller that verifies under the key repeatedly.
+pub(crate) fn verify_signature_value_for_cert(
+    alg: SignatureAlgorithm,
+    signer_cert: &x509_cert::Certificate,
+    signing_input: &[u8],
+    signature: &[u8],
+) -> Result<(), SealError> {
+    let spki = &signer_cert.tbs_certificate.subject_public_key_info;
     let digest = sha256(signing_input);
     let ok = match alg {
         SignatureAlgorithm::RsaPkcs1v15Sha256 => {

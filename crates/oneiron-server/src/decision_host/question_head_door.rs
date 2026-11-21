@@ -27,6 +27,7 @@ impl DecisionHost {
             DecisionRung::Rule => &mut self.ladder.rule,
             DecisionRung::Local => &mut self.ladder.local,
             DecisionRung::SystemOne => &mut self.ladder.system_one,
+            DecisionRung::Precision => &mut self.ladder.precision,
             DecisionRung::Escalation => &mut self.ladder.escalation,
             DecisionRung::Big => &mut self.ladder.big,
             DecisionRung::Human => {

@@ -15,6 +15,7 @@ use crate::Vault;
 use crate::batch::secret_scan::{Lifted, Part};
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 /// The envelope's first byte: its layout.
 const ENVELOPE_V1: u8 = 1;
@@ -34,9 +35,12 @@ pub(crate) struct PendingNoteRequest<'a> {
 }
 
 impl<'a> PendingNoteRequest<'a> {
-    /// The digest a retry of `operation`, as its caller gives it, matches.
+    /// The digest a retry of `operation`, as its caller gives it, matches. The
+    /// queue envelope holds it, so it keeps its bytes (K, PLAN-UC-04 4.1).
     pub(crate) fn input_digest(operation: &NoteOperation) -> Result<[u8; 32]> {
-        Ok(*blake3::hash(&operation.encode()?).as_bytes())
+        Ok(LegacyDigest::new(purposes::note::PENDING_REQUEST_INPUT)
+            .raw(&operation.encode()?)
+            .finish())
     }
 
     pub(crate) fn encode(&self) -> Vec<u8> {

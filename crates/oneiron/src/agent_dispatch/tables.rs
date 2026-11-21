@@ -11,9 +11,9 @@ crate::side_table::side_tables! {
     AGENT_DISPATCH_CHILD_WAIT: VaultMeta b"agent.dispatch.child_wait.v1\0" Raw Authored [accepts: crate::agent_dispatch::agent_dispatch_child_wait_accepts_masked]
         [restore: content] [family: unclassified] [tier: canonical];
     /// The index rows of the waits over AGENT children, by a one-byte tag: `w` id16(child
-    /// attempt) + id16(wait) (a child's unsettled waits; a presence marker); `d` u64be(until
-    /// ms) + id16(wait) (an unsettled wait's deadline, read by the due sweep; a presence
-    /// marker).
+    /// attempt) + id16(wait) (a child's unsettled waits; a presence marker). The `d` rows an
+    /// older build kept for each wait's `until` are not read: the wait's row of the
+    /// `agent_dispatch.child_wait_until` job holds its due time.
     AGENT_DISPATCH_CHILD_WAIT_INDEX: VaultMeta b"agent.dispatch.child_wait_index.v1\0" Raw
         [restore: content] [family: unclassified] [tier: canonical];
     /// FIX 1380: one running child's comm widening, its per-reach asks to its parent and the

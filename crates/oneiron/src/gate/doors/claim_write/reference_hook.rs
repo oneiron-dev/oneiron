@@ -45,6 +45,7 @@ pub(crate) fn check_claim_policy_for_write_with_record_with_reader_reference_pro
         policy,
         mode,
         recorded_decision,
+        &mut None,
         None,
         false,
         // Only this probe skips the precommit, in its rolled-back savepoint.

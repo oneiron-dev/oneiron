@@ -11,7 +11,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::ancestor_index::AncestorIndex;
-use super::fold_engine::{FoldContext, OnceFloors};
+use super::fold_engine::{FoldContext, JudgedRows, OnceFloors};
 use super::{AuthorityEntryHash, AuthorityFold, AuthorityKey, AuthorityLogEntry, AuthorityVaultId};
 
 static NO_PEERS: BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>> = BTreeMap::new();
@@ -60,11 +60,9 @@ pub fn fold_both_ways(entries: &[AuthorityLogEntry], arrival: &[usize]) -> Floor
         .map(|entry| super::authority_entry_hash(entry).expect("row hash"))
         .collect();
     let floors = arrival_floors(entries, &hashes, arrival);
-    let by_hash: BTreeMap<AuthorityEntryHash, AuthorityLogEntry> = hashes
-        .iter()
-        .copied()
-        .zip(entries.iter().cloned())
-        .collect();
+    // The rows both folds judge (`fold_engine::judged_entries`): the lift's
+    // probe reads their signature verdicts.
+    let (by_hash, _) = super::fold_engine::judged_entries(entries);
     let (ancestors, _) = super::ancestor_index::entry_ancestor_index(&by_hash, u64::MAX)
         .expect("no memory floor refuses");
     let rows_floored = effective(
@@ -107,7 +105,9 @@ pub fn fold_both_ways(entries: &[AuthorityLogEntry], arrival: &[usize]) -> Floor
     }
 }
 
-fn context(floors: Option<&BTreeMap<AuthorityEntryHash, u64>>) -> FoldContext<'_> {
+/// The one context both folds run under: no handoff, no peer, every
+/// machine chain counted, no memory floor; `floors` as given.
+pub(super) fn context(floors: Option<&BTreeMap<AuthorityEntryHash, u64>>) -> FoldContext<'_> {
     FoldContext {
         sequence_floors: floors,
         floor_vouched: None,
@@ -121,6 +121,8 @@ fn context(floors: Option<&BTreeMap<AuthorityEntryHash, u64>>) -> FoldContext<'_
         pre_handoff_entries: Some(&NO_HANDOFFS),
         memory_floor_bytes: u64::MAX,
         pin: None,
+        owner_key_lines: None,
+        appointments: None,
     }
 }
 
@@ -193,7 +195,7 @@ fn single_chain(
 /// voucher folds on its own complete ancestry. This is the lift
 /// `sequence_ancestry` ran on arrival floors, kept here alone.
 fn arrival_lifted_floors(
-    by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    by_hash: &JudgedRows,
     ancestors: &AncestorIndex,
     context: FoldContext<'_>,
 ) -> OnceFloors {
@@ -201,7 +203,7 @@ fn arrival_lifted_floors(
     let mut floors = original.clone();
     loop {
         let before = floors.len();
-        for (tip_hash, tip) in by_hash {
+        for (tip_hash, tip) in by_hash.iter() {
             let tip_floor = original.get(tip_hash).copied();
             let rollback_tip = tip_floor.is_some_and(|floor| tip.seq < floor);
             let roster_tip = super::entry_transition::changes_roster(&tip.op);
@@ -253,4 +255,23 @@ fn arrival_lifted_floors(
             };
         }
     }
+}
+
+/// Whether a fold past a base takes each of `tails` in turn on its signers'
+/// top rows per sequence scope (`fold_resume::scope_tops`, FIX
+/// [ADOPTED-FOLD-TAIL-WALK-SIGNER-COST]): it takes a tail none of whose rows
+/// would move a row's floor or sit past its own. `base` is every row the
+/// first base folded, each tail the rows past the one before it. Past a tail
+/// it declines, the next base is every row so far, as a full fold captures
+/// it. A base's frontier side rows are its side rows no row names. Only each
+/// row's signer, sequence, op scope and parents are read: no signature,
+/// state or tail shape is checked, so a test gives tails whose side rows
+/// stand on tail rows, main rows and frontier side rows of their own world
+/// alone, as `side_tail::shape` admits them.
+#[must_use]
+pub fn scope_tops_tails_taken(
+    base: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    tails: &[BTreeMap<AuthorityEntryHash, AuthorityLogEntry>],
+) -> Vec<bool> {
+    super::fold_resume::scope_tops_tails_taken_for_door(base, tails)
 }

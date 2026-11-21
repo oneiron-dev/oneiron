@@ -13,7 +13,7 @@ mod codec;
 mod generated;
 pub use generated::{
     DecisionWireLabels, GENERATED_SETTLEMENT_INVARIANT, GeneratedDecisions, GeneratedMiss,
-    GeneratedRung, GeneratedStep,
+    GeneratedRung, GeneratedStep, SUBMITTED_READ_INVARIANT, SubmittedRead,
 };
 mod held;
 pub use held::HeldLadder;
@@ -37,6 +37,8 @@ mod read;
 pub use read::{
     DecisionReadGate, DecisionReadObserver, DecisionReadOutcome, DecisionReadProvider, GatedRead,
 };
+mod role_bound;
+pub use role_bound::ManifestBoundRung;
 mod routine;
 pub use routine::*;
 mod rules;

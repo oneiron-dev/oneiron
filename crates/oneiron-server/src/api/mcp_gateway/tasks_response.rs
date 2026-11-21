@@ -697,6 +697,12 @@ pub(crate) fn mcp_error_response(id: Value, error: McpGatewayError) -> Value {
     {
         object.insert("pending".to_owned(), json!(*pending));
     }
+    if let Some(pause) = error.reap_pause
+        && let Some(object) = data.as_object_mut()
+    {
+        object.insert("bound".to_owned(), json!(pause.bound));
+        object.insert("self_hosted".to_owned(), json!(pause.self_hosted));
+    }
     if let Some(retry_after) = error.retry_after
         && let Some(object) = data.as_object_mut()
     {
@@ -926,8 +932,9 @@ async fn mcp_task_row<T: Send + 'static>(
 /// result, a refusal's too. The rebuilt surface keeps the row's credential
 /// and write context. Rows needing direct authorship must not take this
 /// hop: the listing's bind is not
-/// re-applied inside (today only `vault.workspace.work_companion.set` and
-/// `tasks.answer`, neither a blocking row).
+/// re-applied inside (today only `vault.workspace.work_companion.set`,
+/// `vault.workspace.work_talk.open`, `vault.workspace.one_vault.acknowledge`
+/// and `tasks.answer`, none a blocking row).
 async fn mcp_off_runtime_row<T: Send + 'static>(
     server: &Arc<SyncServer>,
     tool: &str,
@@ -964,8 +971,9 @@ async fn mcp_off_runtime_row<T: Send + 'static>(
 }
 
 /// The proof a direct MCP caller's own request binds for `tool`, as the
-/// HTTP facade binds it outside a room turn: the work-companion setting
-/// takes the person's own proof (OF-417), an ask's answer the owner's own
+/// HTTP facade binds it outside a room turn: the work-companion setting and
+/// a member's own work-talk open and one-vault acknowledge take the
+/// person's own proof (OF-417, L7-05), an ask's answer the owner's own
 /// authorship (OF-365) or else the answering person's person-tier proof
 /// (UC-05), and the owner's own `vault.delete` his
 /// authorship and this host's slip issuer, so deleting a Connect guest's
@@ -980,7 +988,11 @@ fn mcp_direct_authorship<'a>(
 ) -> Result<oneiron::Memory<'a>, McpGatewayError> {
     if !matches!(
         tool,
-        "vault.workspace.work_companion.set" | "tasks.answer" | "vault.delete"
+        "vault.workspace.work_companion.set"
+            | "vault.workspace.work_talk.open"
+            | "vault.workspace.one_vault.acknowledge"
+            | "tasks.answer"
+            | "vault.delete"
     ) {
         return Ok(memory);
     }
@@ -1007,6 +1019,7 @@ mod agent_verb_dispatch {
     include!(concat!(env!("OUT_DIR"), "/agent_verb_dispatch.rs"));
 }
 pub(super) mod native_read;
+mod transport_rows;
 use agent_verb_dispatch::execute_mcp_agent_verb;
 pub(crate) use agent_verb_dispatch::{
     execute_agent_verb_input, mcp_agent_verb_arguments, mcp_agent_verb_input,
@@ -1031,5 +1044,50 @@ mod tests {
         assert_eq!(output["count"], 2);
         // Only the list the producer names is its page.
         assert_eq!(output["rows"], json!([1, 2, 3]));
+    }
+
+    /// A reap pause's MCP refusal names its capacity bound and the
+    /// self-host route in `error.data`, in the shape the managed HTTP body
+    /// carries, and keeps its kind (L9-61).
+    #[test]
+    fn a_reap_pause_mcp_refusal_names_its_capacity_bound_and_the_self_host_route() {
+        let refusal = super::super::mcp_facade_error(oneiron::MemoryError::new(
+            crate::managed::WRITES_FROZEN_TAG,
+            crate::managed::ManagedError::WritesFrozen.to_string(),
+            &[],
+        ));
+        let response = mcp_error_response(json!(7), refusal);
+        let error = &response["error"];
+        assert_eq!(error["code"], -32020);
+        let data = &error["data"];
+        assert_eq!(data["kind"], "writes_frozen");
+        assert_eq!(
+            data["bound"],
+            json!({
+                "kind": "capacity",
+                "resource": "vault_lifecycle_allocation",
+                "phase": "reap_prepare",
+            })
+        );
+        assert_eq!(
+            data["self_hosted"],
+            json!({"supported": true, "condition": "no_service_reap_limit"})
+        );
+        let message = data["human_message"].as_str().expect("human_message");
+        assert!(message.contains("a capacity bound"), "{message}");
+    }
+
+    /// Any other MCP refusal's `error.data` carries no bound.
+    #[test]
+    fn another_mcp_refusal_carries_no_bound() {
+        let refusal = super::super::mcp_facade_error(oneiron::MemoryError::new(
+            oneiron::MEMORY_CODE_FORBIDDEN,
+            "refused",
+            &[],
+        ));
+        let response = mcp_error_response(json!(8), refusal);
+        let data = &response["error"]["data"];
+        assert!(data.get("bound").is_none(), "{data}");
+        assert!(data.get("self_hosted").is_none(), "{data}");
     }
 }

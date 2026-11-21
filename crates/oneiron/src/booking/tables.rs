@@ -47,4 +47,8 @@ crate::side_table::side_tables! {
     /// Plans under one instruction. Key: hash32 + id16.
     EMERGENCY_REQUEST_PLAN_INDEX: VaultMeta b"booking:emergency_request_plan:v1:" Raw
         [restore: content] [family: unclassified] [tier: canonical];
+    /// A checkpoint's owed effects whose send ended uncertain on an earlier home, as a home
+    /// move carried them. Key: hex64 (the checkpoint's).
+    EMERGENCY_UNCERTAIN_SEND: VaultMeta b"booking:emergency_uncertain_send:v1:" VersionedNamed
+        [restore: content] [family: unclassified] [tier: canonical];
 }

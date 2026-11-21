@@ -14,12 +14,16 @@ its pages fit in the shared cache beside the pages the admitted ones hold. A
 request that does not fit waits; none is refused for its size, cut short or
 evicted. A request whose body sets `"oneiron_solo": true` runs alone: it
 waits its turn in arrival order, the scheduler lets what is in flight finish,
-runs it by itself, then admits again.
+runs it by itself, then admits again. A request whose body sets
+`"oneiron_prompt_lookup": false` takes no prompt-lookup proposal (the speed
+part prompt_lookup): every proposal it is offered is the draft's.
 
 A thinking reply is split as llama.cpp's `--reasoning-format deepseek` splits
 it: the text before `</think>` comes back as `reasoning_content`, the answer as
 `content`. `reasoning_budget_tokens` caps the thinking part; at the cap the
 server closes the thought itself and the answer gets the rest of `max_tokens`.
+A request that sets a budget and no `max_tokens` gets the budget plus
+`--default-max-tokens`, so the answer keeps that room after a full thought.
 A `response_format` schema constrains the answer only, never the thought.
 
 A request body may come gzip- or zstd-encoded (`body_codec.py`); one in a
@@ -82,9 +86,15 @@ admitted Job every round, as before R4. A Job the Generator cannot cancel
 keeps its call's pages, place and reservation charged until it ends.
 """
 import argparse
+import base64
 import collections
+import hashlib
+import hmac
+import importlib.metadata
 import json
+import os
 import queue
+import secrets
 import socket
 import sys
 import threading
@@ -102,6 +112,7 @@ import weights_manifest
 from body_codec import UnsupportedEncoding, decode_body
 from jinja2 import Environment
 from exllamav3 import Cache, CacheLayer_quant, Config, Generator, Job, LLGuidanceFilter, Model, Tokenizer
+from exllamav3.ext import exllamav3_ext
 from exllamav3.generator.sampler import ComboSampler
 
 try:
@@ -127,11 +138,75 @@ DEFAULT_IN_FLIGHT = 4
 # The request body's field that asks for solo admission: true runs the request
 # with nothing else in flight.
 SOLO_FIELD = "oneiron_solo"
+# The request body's field that turns prompt lookup off for one request: false
+# gives its Jobs no lookup proposal, so the draft proposes every block; true or
+# absent keeps the server's setting (a server with lookup off offers none).
+# The engine sends false on its one retry of a reply that failed its JSON parse.
+PROMPT_LOOKUP_FIELD = "oneiron_prompt_lookup"
+# The draft's KV ring, in pages per in-flight slot, when the launcher names
+# none (`install_draft_ring`). Every layer of the DFlash2 draft slides over
+# 2048 tokens, and a ring covers the window plus 3 pages, so 11 is the least
+# this draft takes. 0 turns the ring off.
+DEFAULT_DRAFT_RING_PAGES = 12
 # The shared KV pool, in tokens, when the launcher names none; never less than
-# one full request (`full_request_pool`).
-# INF 1 (FIX 6974): the largest pool measured at four in flight whose peak
-# leaves 2 GiB of the card's 24564 MiB, at a 22488 MiB peak.
-DEFAULT_CACHE_TOKENS = 40192
+# one full request (`full_request_pool`). Beside the draft KV ring: 85504, 334
+# pages, the VRAM the draft's full-pool copy took given to the target's pool
+# (QWEN-EVAL-1 arm opus-plain A-0005; the referee on mel at 400 W read 233.9
+# against 158.0 packets per hour on the Dreamer's own nightly call, JSON valid
+# as often as stock on both packs, at a 23756 MiB peak against 22528).
+DEFAULT_CACHE_TOKENS = 85504
+# The pool when the draft cache is as large as the pool (the ring off) or
+# there is no draft: INF 1's 40192 (FIX 6974), the largest pool measured at
+# four in flight whose peak left 2 GiB of the card's 24564 MiB.
+DEFAULT_CACHE_TOKENS_WITHOUT_RING = 40192
+# The speed parts (README, "Speed parts"; QWEN-EVAL-1 arm astra-skill), each
+# its own switch, `--<part>` or `--no-<part>`, and whether it is on when the
+# launcher names neither. A part is on by default only when its measurement on
+# the Dreamer's nightly call keeps it (prompt lookup so far); with every part
+# off, the server runs as without them.
+SPEED_PART_DEFAULTS = {
+    "fuse_projections": False,     # A-0026: fused same-input projections at every bitrate
+    "fp16_prefill": False,         # A-0028: FP16 accumulation in reconstructed prefill GEMMs
+    "prompt_lookup": True,         # A-0009 + A-0012: proposals from the request's own history
+    "draft_window_tables": False,  # A-0016: the draft's block tables cut to its live window
+}
+# The speed parts that change the arithmetic of the target's own forward, and
+# so the KV a prefill writes. A session snapshot names those that were on, and
+# a worker imports only a snapshot whose list is its own
+# (`exl3_session.layer.compatibility`), so KV computed one way is never
+# installed, unreplayed, on a worker that computes it the other way. Prompt
+# lookup and the window tables change only what is proposed and verified.
+KV_ARITHMETIC_PARTS = ("fuse_projections", "fp16_prefill")
+# The exllamav3 variables that decide which same-input projections fuse
+# (each Config reads them when it is built). The fuse_projections switch owns
+# them (`set_projection_fusion`): an inherited value, say from a systemd
+# EnvironmentFile, would fuse projections that the identity and the snapshot
+# compatibility do not name.
+PROJECTION_FUSION_ENV = ("EXL3_MGEMM_K_THRESHOLD", "EXL3_MGEMM_N_THRESHOLD")
+# The prefix of exllamav3's own environment variables. exllamav3 reads many
+# that pick the target's kernels or arithmetic, in Python (EXL3_FUSED_SAMPLER,
+# EXL3_BC_ATTN, ...) and in the extension (EXL3_INT8_GEMV, EXL3_GEMV,
+# EXL3_GRAPHS, ...). The server names every one it inherits in its identity
+# (`exllamav3_environment`), not a list of known ones: a variable that changes
+# nothing costs a cache or snapshot miss, never a wrong reuse.
+EXLLAMAV3_ENV_PREFIX = "EXL3_"
+# The least key the inherited variables' digest takes, in bytes: a key file
+# shorter than this is refused, and a process without one draws this many
+# random bytes (`environment_key`).
+ENV_DIGEST_KEY_BYTES = 32
+# FP16 accumulation runs in a reconstructed prefill GEMM of at least this many
+# rows into an FP16 output (`install_fp16_prefill`).
+FP16_PREFILL_MIN_ROWS = 384
+# Prompt lookup (`install_prompt_lookup`): the shortest match of a job's own
+# history that is a candidate; the match lengths that open the second and
+# third bucket; each bucket's starting (accepted, proposed) count; the
+# verified acceptance a bucket needs; and how often a bucket under it is
+# tried anyway, in candidates.
+LOOKUP_MIN_MATCH = 4
+LOOKUP_BUCKET_MATCHES = (8, 16)
+LOOKUP_PRIOR = (8, 14)
+LOOKUP_MIN_ACCEPTANCE = 0.60
+LOOKUP_RETRY_EVERY = 12
 # Submitted requests that wait for admission. Past it a request waits in its
 # own handler for a place; it is never refused.
 INGRESS_CAPACITY = 4
@@ -278,6 +353,426 @@ def launch_draft_identity(manifest_path):
     return value if isinstance(value, str) and value else None
 
 
+def install_draft_ring(generator, draft, ring, window_tables=False):
+    """Routes every DFlash draft-cache access through a ring of `ring` pages per in-flight slot (`--draft-ring-pages`,
+    DEFAULT_DRAFT_RING_PAGES by default). The DFlash2 draft's layers all slide over 2048 tokens, so a slot's draft KV
+    never needs more than its window plus the pages in flight, and the VRAM a full-pool draft copy takes goes to the
+    target pool (DEFAULT_CACHE_TOKENS; QWEN-EVAL-1 A-0005: a 12-page ring with an 85504-token pool read +32.0 %
+    normalised packets per hour over stock on mel). The slot of each batch row is set around the three Generator paths that touch the draft
+    cache (the draft forward, the post-verify KV update, a Job's prefill hand-off); any other access fails loudly
+    rather than index the small cache with target page numbers. Defragmentation leaves the draft cache alone
+    (exllamav3's EXL3_DEBUG_NO_DRAFT_DEFRAG): its pages are not the target's. No exllamav3 file is edited.
+
+    With `window_tables` (the speed part draft_window_tables, QWEN-EVAL-1 arm astra-skill A-0016), the draft
+    forward of a draft round reads only the pages its window can see: each row's table starts at the page that holds
+    its first visible key, its sequence length counts from there, and its positions stay absolute, so every key the
+    window shows is read as before and its rotary position is unchanged. The attention kernels size their work from
+    the table's width, which without the cut grows with the whole sequence. Only a draft whose every attention layer
+    slides, with no sink key, qualifies. The post-verify KV update and the prefill hand-off keep the full table."""
+    import torch
+    from exllamav3.generator import job as job_module
+    os.environ["EXL3_DEBUG_NO_DRAFT_DEFRAG"] = "1"
+    tables = {}
+    state = {"slots": None, "window": False}
+    keep = width = 0
+    if window_tables:
+        layers = list(getattr(draft, "attn_modules", None) or [])
+        if not layers or any(int(m.sliding_window) <= 0 or m.sink_key0 for m in layers):
+            raise RuntimeError("--draft-window-tables needs a draft whose every attention layer slides, with no sink key")
+        keep = max(int(m.sliding_window) for m in layers)
+        # The visible keys, the page the first of them may start inside, and the drafted block, in whole pages,
+        # rounded up to 16 as exllamav3 rounds its own draft tables.
+        width = (-(-(keep + PAGE + int(draft.config.block_size)) // PAGE) + 15) // 16 * 16
+        if keep + 2 * PAGE + int(draft.config.block_size) > ring * PAGE:
+            raise RuntimeError(f"--draft-window-tables: a {ring}-page ring cannot hold a {keep}-token window")
+    columns = torch.arange(max(width, 1), dtype=torch.int64)
+
+    def slot_of(job):
+        if len(job.sequences) != 1 or job.recurrent_state is None:
+            raise RuntimeError("draft ring: a draft-cache access from a job without one sequence and a recurrent slot")
+        return int(job.recurrent_state.slot)
+
+    def ring_table(bt):
+        slots = state["slots"]
+        if slots is None or bt.shape[0] != len(slots):
+            raise RuntimeError(f"draft ring: {bt.shape[0]} block-table rows against slots {slots}")
+        key = (tuple(slots), int(bt.shape[-1]), bt.dtype, str(bt.device))
+        t = tables.get(key)
+        if t is None:
+            cols = torch.arange(int(bt.shape[-1]), dtype=torch.int64) % ring
+            t = torch.stack([cols + s * ring for s in slots]).to(dtype=bt.dtype)
+            t = t.to(bt.device) if bt.device.type != "cpu" else (t.pin_memory() if bt.is_pinned() else t)
+            tables[key] = t
+        return t
+
+    def remapped(params):
+        if params is None or params.get("block_table") is None:
+            raise RuntimeError("draft ring: a draft-cache access without a block table")
+        if "dev_cache" in params:
+            raise RuntimeError("draft ring: params already hold device copies")
+        out = dict(params)
+        out["block_table"] = ring_table(params["block_table"])
+        return out
+
+    def windowed(params):
+        """The draft round's params with each row's table, length and positions cut to its window."""
+        bt, seqlens = params.get("block_table"), params.get("cache_seqlens")
+        if bt is None or not isinstance(seqlens, torch.Tensor) or seqlens.device.type != "cpu":
+            raise RuntimeError("draft ring: a windowed draft forward without a host block table and lengths")
+        if "dev_cache" in params or "positions" in params or "position_ids" in params:
+            raise RuntimeError("draft ring: a windowed draft forward whose params already hold positions")
+        slots = state["slots"]
+        rows = int(bt.shape[0])
+        if slots is None or rows != len(slots):
+            raise RuntimeError(f"draft ring: {rows} block-table rows against slots {slots}")
+        cols = min(int(bt.shape[-1]), width)
+        table = generator._staging("draft_ring_window_table", rows, cols, dtype=bt.dtype)
+        lengths = generator._staging("draft_ring_window_seqlens", rows, dtype=seqlens.dtype)
+        positions = generator._staging("draft_ring_window_positions", rows, dtype=seqlens.dtype)
+        for row, slot in enumerate(slots):
+            kv = int(seqlens[row])
+            first = max(0, kv - keep) // PAGE
+            table[row].copy_((columns[:cols] + first) % ring + slot * ring)
+            lengths[row] = kv - first * PAGE
+            positions[row] = kv
+        out = dict(params)
+        out["block_table"], out["cache_seqlens"], out["positions"] = table, lengths, positions
+        return out
+
+    base_forward = draft.forward
+    base_update = draft.update_kv_from_target
+
+    def forward(*args, **kwargs):
+        if "params" in kwargs:
+            params = kwargs["params"]
+            new = windowed(params) if state["window"] else remapped(params)
+            kwargs["params"] = new
+            try:
+                return base_forward(*args, **kwargs)
+            finally:
+                # Callers read what forward wrote into params (sample_from_state); keep them on the caller's dict,
+                # with the caller's own table and lengths
+                for k, v in new.items():
+                    if k not in ("block_table", "dev_cache", "cache_seqlens"):
+                        params[k] = v
+                params["dev_cache"] = None
+        raise RuntimeError("draft ring: draft forward without params=")
+
+    def update_kv_from_target(target_hidden, cache, params, lengths=None):
+        return base_update(target_hidden, cache, remapped(params), lengths)
+
+    draft.forward = forward
+    draft.update_kv_from_target = update_kv_from_target
+
+    def with_slots(fn, rows, window=False):
+        def run(*args, **kwargs):
+            state["slots"] = rows()
+            state["window"] = window
+            try:
+                return fn(*args, **kwargs)
+            finally:
+                state["slots"] = None
+                state["window"] = False
+        return run
+
+    def batch_rows():
+        return [slot_of(job) for job in generator.active_jobs if job.is_prefill_done()]
+
+    generator.iterate_draftmodel_dflash_gen = with_slots(generator.iterate_draftmodel_dflash_gen, batch_rows,
+                                                         window=keep > 0)
+    generator.iterate_gen = with_slots(generator.iterate_gen, batch_rows)
+
+    base_prefill = job_module.Job.prefill
+
+    def prefill(self, results):
+        if getattr(self, "generator", None) is not generator:
+            return base_prefill(self, results)
+        state["slots"] = [slot_of(self)]
+        try:
+            return base_prefill(self, results)
+        finally:
+            state["slots"] = None
+
+    job_module.Job.prefill = prefill
+    print(f"DRAFT_RING pages_per_slot={ring} slots={generator.cache.num_slots if hasattr(generator.cache, 'num_slots') else '?'}"
+          f" draft_tokens={draft_cache_tokens(generator)} window_tables={width if keep else 0}", flush=True)
+
+
+def install_fp16_prefill():
+    """Runs the reconstructed-weight prefill GEMMs of the EXL3 layers with FP16 accumulation (the speed part
+    fp16_prefill, QWEN-EVAL-1 arm astra-skill A-0028): where a layer has rebuilt its weight in FP16 and multiplies
+    at least FP16_PREFILL_MIN_ROWS rows into an FP16 output, the product is torch.mm under
+    torch.backends.cuda.matmul.allow_fp16_accumulation in place of exllamav3's hgemm_recon, which accumulates in
+    FP32. Decode, where few rows go through exllamav3's own EXL3 kernels, and every other call are unchanged. It
+    changes the arithmetic of prefill, so answers drift from the FP32-accumulated ones as under any numerics
+    change: it is kept only with its measured output check. exllamav3's module global `ext` in
+    modules/quant/exl3.py is replaced by a proxy that forwards every other name; no exllamav3 file is edited."""
+    import torch
+    from exllamav3.modules.quant import exl3 as exl3_quant
+    matmul = torch.backends.cuda.matmul
+    if not hasattr(matmul, "allow_fp16_accumulation"):
+        raise RuntimeError("--fp16-prefill needs torch.backends.cuda.matmul.allow_fp16_accumulation (torch 2.7 or later)")
+    base = exl3_quant.ext
+
+    class PrefillExt:
+        def __getattr__(self, name):
+            return getattr(base, name)
+
+        @staticmethod
+        def hgemm_recon(x, weight, out):
+            if out.dtype != torch.float16 or x.shape[0] < FP16_PREFILL_MIN_ROWS or x.device.type != "cuda":
+                return base.hgemm_recon(x, weight, out)
+            previous = matmul.allow_fp16_accumulation
+            matmul.allow_fp16_accumulation = True
+            try:
+                torch.mm(x, weight, out=out)
+            finally:
+                matmul.allow_fp16_accumulation = previous
+
+    exl3_quant.ext = PrefillExt()
+
+
+def install_prompt_lookup(generator):
+    """Proposes, for a job in a draft round, the continuation of the longest earlier match of its own sequence's
+    suffix (its prompt and output; exllamav3's suffix automaton BC_SAM) in place of the DFlash2 draft's block, when
+    that job's own verified lookups have done well (the speed part prompt_lookup, QWEN-EVAL-1 arm astra-skill A-0009
+    with A-0012's per-request choice). Every proposal, from either source, is verified by the target position by
+    position as a DFlash2 draft is: a token is kept only where the target's own sample equals it, so the output
+    distribution stays the target's; a proposal changes which samples are drawn, not the model. A match of at least
+    LOOKUP_MIN_MATCH tokens with a full draft-depth continuation is a candidate. Candidates fall in three buckets by
+    match length (LOOKUP_BUCKET_MATCHES), and a job takes one when its bucket's verified acceptance, counted from
+    LOOKUP_PRIOR on this job's own rounds only, is at least LOOKUP_MIN_ACCEPTANCE, or on every LOOKUP_RETRY_EVERY-th
+    candidate of the bucket. When every job in the round takes one, the draft model does not run that round. A Job
+    whose request set PROMPT_LOOKUP_FIELD false (`prompt_lookup` False) is never offered one."""
+    import torch
+    from exllamav3.ext import exllamav3_ext as ext
+    depth = generator.num_draft_tokens
+    base = generator.iterate_draftmodel_dflash_gen
+
+    def candidate(job):
+        if not getattr(job, "prompt_lookup", True):
+            return None
+        ids = job.sequences[0].sequence_ids.torch()
+        if getattr(job, "lookup_matcher", None) is None:
+            job.lookup_matcher = ext.BC_SAM()
+            job.lookup_counts = [list(LOOKUP_PRIOR) + [0] for _ in range(len(LOOKUP_BUCKET_MATCHES) + 1)]
+            job.lookup_last = None
+        if job.lookup_last is not None:
+            # The last proposal's verification is the one draft_stats row appended since it was made
+            bucket, stats_index = job.lookup_last
+            job.lookup_last = None
+            if len(job.draft_stats) == stats_index + 1:
+                _, proposed, accepted = job.draft_stats[-1]
+                job.lookup_counts[bucket][0] += accepted
+                job.lookup_counts[bucket][1] += proposed
+        begin, end = job.lookup_matcher.accept_tensor(ids)
+        span = ids[:, end:end + depth]
+        if end - begin < LOOKUP_MIN_MATCH or span.shape[1] != depth:
+            return None
+        bucket = sum(end - begin >= n for n in LOOKUP_BUCKET_MATCHES)
+        counts = job.lookup_counts[bucket]
+        good, total, seen = counts
+        counts[2] += 1
+        if good / total < LOOKUP_MIN_ACCEPTANCE and seen % LOOKUP_RETRY_EVERY:
+            return None
+        job.lookup_last = (bucket, len(job.draft_stats))
+        return span
+
+    def iterate_draftmodel_dflash_gen(results):
+        spans = [candidate(job) for job in generator.active_jobs if job.is_prefill_done()]
+        if spans and all(span is not None for span in spans):
+            return torch.cat(spans, dim=0)
+        drafted = base(results)
+        if drafted is not None:
+            window = drafted.shape[-1]
+            for row, span in enumerate(spans):
+                if span is not None:
+                    drafted[row:row + 1, :window].copy_(span[:, :window])
+        return drafted
+
+    generator.iterate_draftmodel_dflash_gen = iterate_draftmodel_dflash_gen
+
+
+def speed_parts(args, ring, draft_dir):
+    """Each speed part's state: the launcher's `--<part>` or `--no-<part>`, else SPEED_PART_DEFAULTS. Prompt lookup
+    needs the draft, and the window tables the draft ring; without them each stays off, whatever was asked."""
+    parts = {}
+    for name, default in SPEED_PART_DEFAULTS.items():
+        asked = getattr(args, name, None)
+        parts[name] = default if asked is None else bool(asked)
+    if not draft_dir:
+        parts["prompt_lookup"] = False
+    if not ring:
+        parts["draft_window_tables"] = False
+    return parts
+
+
+def kv_arithmetic(parts):
+    """The parts that are on in `parts` (`speed_parts`) and change the KV the target writes, sorted."""
+    return sorted(name for name in KV_ARITHMETIC_PARTS if parts.get(name))
+
+
+def set_projection_fusion(on):
+    """Sets exllamav3's fusion variables (PROJECTION_FUSION_ENV) for the fuse_projections switch, before any
+    Config reads them. On: every same-input pair stays one fused GEMM (K threshold 0; QWEN-EVAL-1 arm
+    astra-skill A-0026), where by default a low-bitrate pair runs as separate int8 GEMVs. Off: both are
+    cleared, so exllamav3's defaults apply whatever the environment held. Returns the inherited values it
+    replaced, by name."""
+    replaced = {name: os.environ.pop(name) for name in PROJECTION_FUSION_ENV if name in os.environ}
+    if on:
+        os.environ["EXL3_MGEMM_K_THRESHOLD"] = "0"
+    return replaced
+
+
+def exllamav3_environment(environ=None):
+    """The exllamav3 variables (EXLLAMAV3_ENV_PREFIX) in `environ` (the process environment by default) that no
+    switch owns, by name, sorted: every one but the fusion pair, which the fuse_projections switch sets or clears
+    (`set_projection_fusion`) and names in speed_parts. Taken at load, before the server sets any of its own."""
+    environ = os.environ if environ is None else environ
+    return {name: environ[name] for name in sorted(environ)
+            if name.startswith(EXLLAMAV3_ENV_PREFIX) and name not in PROJECTION_FUSION_ENV}
+
+
+def environment_key(path=None):
+    """The key of the inherited exllamav3 variables' digest (`environment_digest`): the bytes of the file at `path`
+    (`--exllamav3-env-key-file`; at least ENV_DIGEST_KEY_BYTES), which workers that exchange session snapshots
+    share, or, without one, ENV_DIGEST_KEY_BYTES random bytes of this process's own, so its digest matches no
+    other process's (a refused import or a cache miss, never a wrong reuse)."""
+    if path is None:
+        return secrets.token_bytes(ENV_DIGEST_KEY_BYTES)
+    with open(path, "rb") as f:
+        key = f.read()
+    if len(key) < ENV_DIGEST_KEY_BYTES:
+        raise ValueError(f"--exllamav3-env-key-file {path} holds {len(key)} bytes; "
+                         f"the key needs at least {ENV_DIGEST_KEY_BYTES}")
+    return key
+
+
+def environment_digest(variables, key):
+    """The HMAC-SHA-256 under `key` (`environment_key`) of `variables` (`exllamav3_environment`) as canonical JSON
+    (names sorted, compact separators), or None when there are none. Keyed, because the digest reaches the service
+    journal, every reply's execution mode and the snapshots' compatibility: a plain hash of a short value (a
+    six-digit pin) is found by hashing every candidate. The JSON is ASCII-escaped: a POSIX environment entry may
+    hold bytes that are not UTF-8, which `os.environ` decodes to lone surrogates that a strict UTF-8 encoding
+    refuses."""
+    if not variables:
+        return None
+    text = json.dumps(variables, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hmac.new(key, text.encode("ascii"), hashlib.sha256).hexdigest()
+
+
+def ascii_escaped(text):
+    """`text` with every character outside ASCII as a backslash escape, lone surrogates included, so a log line
+    prints under any stdout encoding."""
+    return text.encode("ascii", "backslashreplace").decode("ascii")
+
+
+def arithmetic_identity(parts, ext_digest=None, env_digest=None):
+    """What the server's identity names beyond the stock server's: the server-settings entries and the
+    kv_arithmetic list (session snapshot compatibility). The speed parts that are on are named in the settings
+    (`speed_parts`), and those in KV_ARITHMETIC_PARTS bind snapshots too. A rebuilt extension's digest
+    (`rebuilt_extension_digest`) and the digest of the inherited exllamav3 variables (`environment_digest`) can
+    change the target's arithmetic, so each binds both. Each is named only when present, so a server with none
+    keeps the identity and the snapshot compatibility it had before they existed."""
+    settings = {}
+    if any(parts.values()):
+        settings["speed_parts"] = sorted(name for name, on in parts.items() if on)
+    arithmetic = kv_arithmetic(parts)
+    if ext_digest:
+        settings["exllamav3_ext"] = ext_digest
+        arithmetic.append(f"exllamav3_ext={ext_digest}")
+    if env_digest:
+        settings["exllamav3_env"] = env_digest
+        arithmetic.append(f"exllamav3_env={env_digest}")
+    return settings, arithmetic
+
+
+def file_sha256(path):
+    """The SHA-256 of the file at `path`, read in 16 MiB blocks (an extension module is about 230 MiB)."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 24), b""):
+            digest.update(block)
+    return digest
+
+
+def jit_extension_dir():
+    """The directory exllamav3's JIT build of exllamav3_ext loads from (exllamav3/ext.py builds it through
+    torch.utils.cpp_extension.load when no precompiled module is importable, as with the PyPI wheel), or None
+    when torch cannot name it."""
+    try:
+        from torch.utils import cpp_extension
+        return Path(cpp_extension._get_build_directory("exllamav3_ext", False)).resolve()
+    except Exception:
+        return None
+
+
+def installed_extension(loaded):
+    """Whether `loaded`, the file exllamav3_ext came from, is the installed extension: the module an installed
+    distribution's RECORD lists, with the SHA-256 the RECORD gives (a binary exllamav3 wheel), or exllamav3's
+    own JIT build (`jit_extension_dir`). A copy or hard link elsewhere is neither, and an installed file that
+    was overwritten fails its RECORD digest."""
+    path = Path(loaded).resolve()
+    for dist in importlib.metadata.distributions():
+        for entry in dist.files or ():
+            if entry.name != path.name or Path(dist.locate_file(entry)).resolve() != path:
+                continue
+            if entry.hash is None or entry.hash.mode != "sha256":
+                return False
+            recorded = base64.urlsafe_b64encode(file_sha256(path).digest()).rstrip(b"=").decode()
+            return recorded == entry.hash.value
+    return path.parent == jit_extension_dir()
+
+
+def rebuilt_extension_digest(ext_dir):
+    """The SHA-256 of the exllamav3_ext this process loaded from `ext_dir` (`--exllamav3-ext-dir`: a rebuilt
+    extension, build-exl3-ext.sh, that the launcher put first on PYTHONPATH), or None with no such directory.
+
+    `ext_dir` must be a resolved absolute path and the module must have been loaded from it by that literal path,
+    with no link on the way, so the import and the digest read one directory; build-exl3-ext.sh never rewrites a
+    directory it published. A module loaded from anywhere else refuses the launch, so the identity never names a
+    build that does not run. With no directory, a module that is not the installed extension (`installed_extension`)
+    refuses it too, so a rebuilt extension never runs under the installed one's identity."""
+    loaded = getattr(exllamav3_ext, "__file__", None)
+    if not ext_dir:
+        if loaded and not installed_extension(loaded):
+            raise RuntimeError(f"exllamav3_ext was loaded from {loaded}, which is not the installed extension (no "
+                               "installed distribution's RECORD lists it with that SHA-256, and it is not "
+                               "exllamav3's JIT build); a rebuilt extension runs only with --exllamav3-ext-dir "
+                               "(ONEIRON_HOUSE_EXL3_EXT_DIR)")
+        return None
+    directory = Path(ext_dir)
+    if not directory.is_absolute() or Path(os.path.realpath(directory)) != directory:
+        raise RuntimeError(f"--exllamav3-ext-dir {ext_dir}: name the directory by its resolved absolute path "
+                           f"({os.path.realpath(directory)}; serve-exl3.sh resolves it), so the import and the "
+                           "digest read one directory")
+    if not loaded or Path(loaded).parent != directory or Path(os.path.realpath(loaded)) != Path(loaded):
+        raise RuntimeError(f"--exllamav3-ext-dir {ext_dir}: exllamav3_ext was loaded from {loaded or 'nowhere'}; "
+                           "put the directory itself, not a link to it, first on PYTHONPATH (serve-exl3.sh does)")
+    return file_sha256(loaded).hexdigest()
+
+
+SPEED_PART_HELP = {
+    "fuse_projections": "keep same-input projections fused at every bitrate (EXL3_MGEMM_K_THRESHOLD=0)",
+    "fp16_prefill": f"FP16 accumulation in reconstructed prefill GEMMs of at least {FP16_PREFILL_MIN_ROWS} rows",
+    "prompt_lookup": "propose a request's own earlier continuations, per request where they verify well; "
+                     f"a request that sets {PROMPT_LOOKUP_FIELD} false takes none",
+    "draft_window_tables": "cut the draft's block tables to its sliding window (needs the draft KV ring)",
+}
+
+
+def add_speed_part_flags(parser):
+    """`--<part>` and `--no-<part>` for each speed part; neither keeps SPEED_PART_DEFAULTS (the bench shares them)."""
+    for name, default in SPEED_PART_DEFAULTS.items():
+        parser.add_argument("--" + name.replace("_", "-"), dest=name, action=argparse.BooleanOptionalAction,
+                            default=None, help=f"{SPEED_PART_HELP[name]} (default {'on' if default else 'off'})")
+
+
+def draft_cache_tokens(generator):
+    cache = getattr(generator, "draft_cache", None)
+    return None if cache is None else int(cache.max_num_tokens)
+
+
 def load(args):
     if args.context % PAGE:
         raise ValueError(f"--context must be a multiple of the cache page, {PAGE}")
@@ -285,15 +780,50 @@ def load(args):
         raise ValueError("--draft-tokens must be at least 1")
     if not 1 <= args.max_in_flight <= MAX_IN_FLIGHT:
         raise ValueError(f"--max-in-flight must be 1 to {MAX_IN_FLIGHT}")
-    # The shared pool every request in flight draws on: DEFAULT_CACHE_TOKENS
-    # unless the launcher names one, and never less than one full request (the
-    # context plus its draft and close room, page-rounded).
+    # The draft's KV ring, in pages per in-flight slot (`install_draft_ring`):
+    # DEFAULT_DRAFT_RING_PAGES unless the launcher names one. 0 turns it off,
+    # and the draft cache is then as large as the target's pool; a server
+    # without a draft has none.
+    ring = getattr(args, "draft_ring_pages", None)
+    ring = DEFAULT_DRAFT_RING_PAGES if ring is None else int(ring)
+    if ring < 0:
+        raise ValueError("--draft-ring-pages must be 0 (off) or a page count")
+    if not args.draft_dir:
+        ring = 0
+    # The shared pool every request in flight draws on: unless the launcher
+    # names one, DEFAULT_CACHE_TOKENS beside a ring and
+    # DEFAULT_CACHE_TOKENS_WITHOUT_RING without one; never less than one full
+    # request (the context plus its draft and close room, page-rounded).
     floor = full_request_pool(args.context, args.draft_tokens if args.draft_dir else 0)
-    cache_tokens = max(DEFAULT_CACHE_TOKENS, floor) if args.cache_tokens is None else args.cache_tokens
+    pool = DEFAULT_CACHE_TOKENS if ring else DEFAULT_CACHE_TOKENS_WITHOUT_RING
+    cache_tokens = max(pool, floor) if args.cache_tokens is None else args.cache_tokens
     if cache_tokens % PAGE:
         raise ValueError(f"--cache-tokens must be a multiple of the cache page, {PAGE}")
     if cache_tokens < floor:
         raise ValueError(f"--cache-tokens must be at least {floor}, so a request the context admits fits alone")
+
+    parts = speed_parts(args, ring, args.draft_dir)
+    replaced = set_projection_fusion(parts["fuse_projections"])
+    if replaced:
+        print("FUSION_ENV_REPLACED " + " ".join(f"{name}={ascii_escaped(value)}"
+                                                 for name, value in sorted(replaced.items())), flush=True)
+    # The exllamav3 variables this server inherited, taken before it sets any
+    # of its own (the draft ring sets EXL3_DEBUG_NO_DRAFT_DEFRAG): its
+    # identity and its snapshots' compatibility name their keyed digest. The
+    # log line names them without their values: an EnvironmentFile can hold a
+    # secret under the prefix, and stdout goes to the service journal.
+    inherited_env = exllamav3_environment()
+    env_key_file = getattr(args, "exllamav3_env_key_file", None)
+    env_digest = environment_digest(inherited_env, environment_key(env_key_file))
+    if env_digest:
+        print("EXL3_ENV " + " ".join(ascii_escaped(name) for name in inherited_env)
+              + f" hmac_sha256={env_digest} key={ascii_escaped(env_key_file) if env_key_file else 'process'}",
+              flush=True)
+    # A rebuilt exllamav3 extension (README, "GEMM FP16 accumulators"): None with the installed one.
+    ext_digest = rebuilt_extension_digest(getattr(args, "exllamav3_ext_dir", None))
+    print("SPEED_PARTS " + " ".join(f"{name}={int(on)}" for name, on in parts.items())
+          + f" ext={getattr(exllamav3_ext, '__file__', '?')}"
+          + (f" ext_sha256={ext_digest}" if ext_digest else ""), flush=True)
 
     # The shards are checked before anything loads them.
     model_digest = weights_digest(args.target_dir, args.weights_manifest)
@@ -323,8 +853,15 @@ def load(args):
     batch = args.max_in_flight
     target_cache = Cache(target, max_num_tokens=cache_tokens, layer_type=CacheLayer_quant,
                          k_bits=8, v_bits=8, max_batch_size=batch, max_history=depth)
+    if ring and draft is not None:
+        window = int(getattr(draft.config, "sliding_window", 0) or 0)
+        types = set(getattr(draft.config, "layer_types", []) or [])
+        if not window or types != {"sliding_attention"} or ring * PAGE < window + 3 * PAGE:
+            raise RuntimeError(f"--draft-ring-pages {ring} needs a draft whose every layer slides over at most "
+                               f"{(ring - 3) * PAGE} tokens (window {window}, layers {sorted(types)})")
     if draft is not None:
-        draft_cache = Cache(draft, max_num_tokens=cache_tokens, layer_type=CacheLayer_quant,
+        draft_cache = Cache(draft, max_num_tokens=(batch * ring * PAGE if ring else cache_tokens),
+                            layer_type=CacheLayer_quant,
                             k_bits=8, v_bits=8, max_batch_size=batch, max_history=depth)
 
     print(f"MODEL_LOAD_START target={args.target_dir} draft={args.draft_dir or 'none'} "
@@ -353,24 +890,46 @@ def load(args):
     if executor.prioritized:
         generator_class = exl3_executor.scheduled_generator(generator_class)
     print(f"SCHEDULING policy={executor.policy} minor={exl3_executor.SCHEDULING_MINOR}", flush=True)
+    if ring and draft is not None:
+        # The Generator asserts equal cache sizes because it shares block tables; the ring gives the draft its own.
+        ring_tokens, draft_cache.max_num_tokens = draft_cache.max_num_tokens, target_cache.max_num_tokens
     generator = generator_class(target, target_cache, tokenizer, max_batch_size=batch,
                                 draft_model=draft, draft_cache=draft_cache,
                                 num_draft_tokens=depth or None,
                                 cpu_cache_size=0, recurrent_cache_size=args.recurrent_cache_gib * 1024**3,
                                 record_draft_stats=True)
+    if ring and draft is not None:
+        draft_cache.max_num_tokens = ring_tokens
+        install_draft_ring(generator, draft, ring, window_tables=parts["draft_window_tables"])
+    if parts["fp16_prefill"]:
+        install_fp16_prefill()
+    if parts["prompt_lookup"] and draft is not None:
+        install_prompt_lookup(generator)
     # What answers every request from here on, its epoch minted with the
     # Generator: the caches and Generator as built above, and the server's
     # settings (FIX 6567).
+    cache_settings = {"layer": "quant", "k_bits": 8, "v_bits": 8, "page_tokens": PAGE,
+                      "cache_tokens": cache_tokens, "max_batch_size": batch, "max_history": depth,
+                      "draft_cache": draft is not None, "cpu_cache_size": 0,
+                      "recurrent_cache_size": args.recurrent_cache_gib * 1024**3}
+    if ring and draft is not None:
+        # Only a ring names itself, so a server without one keeps the cache
+        # identity it had before the ring existed.
+        cache_settings["draft_ring_pages"] = ring
+    server_settings = {"context": args.context, "draft": draft is not None, "draft_tokens": depth,
+                       "max_in_flight": batch}
+    # The speed parts on, a rebuilt extension (its GEMM accumulators) and the
+    # inherited exllamav3 variables: only a server that runs one names it, in
+    # its settings and in its snapshots' compatibility.
+    named, arithmetic = arithmetic_identity(parts, ext_digest, env_digest)
+    server_settings.update(named)
     identity = cache_usage.BackendIdentity(
         args.target_dir, template_source,
-        cache_settings={"layer": "quant", "k_bits": 8, "v_bits": 8, "page_tokens": PAGE,
-                        "cache_tokens": cache_tokens, "max_batch_size": batch, "max_history": depth,
-                        "draft_cache": draft is not None, "cpu_cache_size": 0,
-                        "recurrent_cache_size": args.recurrent_cache_gib * 1024**3},
-        server_settings={"context": args.context, "draft": draft is not None, "draft_tokens": depth,
-                         "max_in_flight": batch},
+        cache_settings=cache_settings,
+        server_settings=server_settings,
         model_digest=model_digest, launch=launch,
-        draft_digest=launch_draft_identity(args.launch_manifest) if draft is not None else None)
+        draft_digest=launch_draft_identity(args.launch_manifest) if draft is not None else None,
+        kv_arithmetic=arithmetic)
     stop_ids = set()
     eos = getattr(target_config, "eos_token_id", None)
     for token in eos if isinstance(eos, list) else [eos]:
@@ -435,6 +994,24 @@ def optional_int(body, key):
     if isinstance(value, bool) or not isinstance(value, (int, float)) or int(value) != value:
         raise RequestError(f"{key} must be an integer")
     return int(value)
+
+
+def reply_limits(body, default_max_tokens, room):
+    """The request's output cap and thinking budget. A request that names no
+    cap gets `default_max_tokens`, and one that also sets
+    `reasoning_budget_tokens` gets that budget on top, so a thought that
+    spends its whole budget still leaves the answer `default_max_tokens`
+    (FIX DREAMER-EXTRACTION-THOUGHT-EATS-ANSWER-CAP: with the budget inside
+    the default, a 4,096-token thought took a 4,096-token cap whole). The cap
+    is cut to the context's `room` either way."""
+    budget = optional_int(body, "reasoning_budget_tokens")
+    if budget is not None and budget < 0:
+        raise RequestError("reasoning_budget_tokens must not be negative")
+    max_tokens = optional_int(body, "max_completion_tokens") or optional_int(body, "max_tokens") \
+        or default_max_tokens + (budget or 0)
+    if max_tokens < 1:
+        raise RequestError("max_tokens must be positive")
+    return min(max_tokens, room), budget
 
 
 def answer_schema(body):
@@ -508,7 +1085,7 @@ class Request:
     `final_stats`, both set before its terminal event."""
 
     def __init__(self, request_id, prompt, ids, max_tokens, budget, schema, stops, seed, samplers, solo,
-                 accepted_ns=None, tools=None):
+                 accepted_ns=None, tools=None, prompt_lookup=True):
         # Inputs.
         self.request_id = request_id
         # When the worker accepted the request, before it was rendered
@@ -519,6 +1096,9 @@ class Request:
         # Runs alone: admitted once nothing else is in flight, with nothing
         # admitted beside it until it ends.
         self.solo = solo
+        # False when the request turned prompt lookup off (PROMPT_LOOKUP_FIELD):
+        # its Jobs then take no lookup proposal.
+        self.prompt_lookup = prompt_lookup
         self.prompt = prompt
         self.ids = ids
         self.prompt_tokens = int(ids.numel())
@@ -1289,6 +1869,8 @@ class Scheduler:
                 job = evaluation.job(PlainJob, fields, phase)
             else:
                 job = PlainJob(**fields)
+            # Prompt lookup (`install_prompt_lookup`) reads it on the Job.
+            job.prompt_lookup = req.prompt_lookup
             serial = self.generator.enqueue(job)
             if evaluation is not None:
                 evaluation.enqueued(job, phase)
@@ -1629,28 +2211,24 @@ class Server:
         if room < 1:
             raise RequestError(f"the prompt's {prompt_tokens} tokens fill the {self.context}-token context",
                                code="context_length_exceeded")
-        max_tokens = optional_int(body, "max_completion_tokens") or optional_int(body, "max_tokens") \
-            or self.default_max_tokens
-        if max_tokens < 1:
-            raise RequestError("max_tokens must be positive")
-        max_tokens = min(max_tokens, room)
-        budget = optional_int(body, "reasoning_budget_tokens")
-        if budget is not None and budget < 0:
-            raise RequestError("reasoning_budget_tokens must not be negative")
+        max_tokens, budget = reply_limits(body, self.default_max_tokens, room)
         schema = answer_schema(body)
         stops = stop_strings(body)
         seed = optional_int(body, "seed")
         solo = body.get(SOLO_FIELD, False)
         if not isinstance(solo, bool):
             raise RequestError(f"{SOLO_FIELD} must be true or false")
+        prompt_lookup = body.get(PROMPT_LOOKUP_FIELD, True)
+        if not isinstance(prompt_lookup, bool):
+            raise RequestError(f"{PROMPT_LOOKUP_FIELD} must be true or false")
         samplers = {"reason": make_sampler(body), "answer": make_sampler(body)}
         req = Request(request_id, prompt, ids, max_tokens, budget, schema, stops, seed, samplers, solo,
-                      accepted_ns=accepted_ns, tools=tools)
+                      accepted_ns=accepted_ns, tools=tools, prompt_lookup=prompt_lookup)
         if work is None:
             work = exl3_executor.http_context(body, time.monotonic_ns())
             self.scheduler.executor.open_grant(work)
         req.work = work
-        req.execution_mode = self.identity.execution_mode(template_kwargs, solo)
+        req.execution_mode = self.identity.execution_mode(template_kwargs, solo, prompt_lookup)
         if not req.thinking:
             req.answer_prompt = prompt
             req.answer_ids = ids
@@ -1837,14 +2415,31 @@ def main():
                    help="each request's context, in tokens; a multiple of 256")
     p.add_argument("--cache-tokens", type=int, default=None,
                    help="the KV pool every request in flight shares, in tokens; a multiple of 256, at least "
-                        f"one full request (default: {DEFAULT_CACHE_TOKENS}, or that floor when it is larger: "
+                        f"one full request (default: {DEFAULT_CACHE_TOKENS} beside the draft KV ring, "
+                        f"{DEFAULT_CACHE_TOKENS_WITHOUT_RING} without one, or that floor when it is larger: "
                         "--context + 1 + the draft depth + 16, rounded up to 256)")
     p.add_argument("--max-in-flight", type=int, default=DEFAULT_IN_FLIGHT,
                    help=f"requests the scheduler runs at once, 1 to {MAX_IN_FLIGHT} (default {DEFAULT_IN_FLIGHT}); "
                         f"a request that sets {SOLO_FIELD} runs alone")
     p.add_argument("--recurrent-cache-gib", type=int, default=4)
+    p.add_argument("--draft-ring-pages", type=int, default=None,
+                   help="give the sliding-window DFlash draft a KV ring of this many pages per in-flight slot "
+                        f"instead of a full-pool copy (default {DEFAULT_DRAFT_RING_PAGES}; 0 turns it off: the draft "
+                        f"cache is then as large as the target's, and the pool defaults to "
+                        f"{DEFAULT_CACHE_TOKENS_WITHOUT_RING})")
+    add_speed_part_flags(p)
+    p.add_argument("--exllamav3-ext-dir", default=None,
+                   help="the directory of a rebuilt exllamav3_ext (build-exl3-ext.sh: FP16 GEMM accumulators on "
+                        "sm_89), which must be first on PYTHONPATH; its SHA-256 joins the identity and the "
+                        "snapshot compatibility (default: the extension installed with exllamav3)")
+    p.add_argument("--exllamav3-env-key-file", default=None,
+                   help=f"a file of at least {ENV_DIGEST_KEY_BYTES} random bytes, shared by the workers that "
+                        "exchange session snapshots: the key of the digest of the inherited EXL3_* variables in "
+                        "the identity and the snapshot compatibility (default: a random key of this process's "
+                        "own, so with such variables set its snapshots match no other process's)")
     p.add_argument("--default-max-tokens", type=int, default=4096,
-                   help="the reply cap when a request names none")
+                   help="the reply cap when a request names none; a request with a reasoning budget "
+                        "gets that budget on top, so its answer keeps this room")
     p.add_argument("--model-id", default="qwen3.8-27b", help="the id /v1/models reports")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=18091)

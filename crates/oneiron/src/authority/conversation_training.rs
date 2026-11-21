@@ -83,6 +83,17 @@ impl FoldedConversationTraining {
         })
     }
 
+    /// Which way `person`'s choice moves when it becomes `leave_out`:
+    /// letting their messages back in while they are left out widens their
+    /// own row, and every other choice narrows it or moves nothing.
+    pub(crate) fn direction_of(&self, person: EntityId, leave_out: bool) -> Direction {
+        if !leave_out && self.leaves_out(person) {
+            Direction::Widens
+        } else {
+            Direction::Narrows
+        }
+    }
+
     /// Whether `person`'s live choices conflict.
     pub(crate) fn conflicted(&self, person: EntityId) -> bool {
         self.persons
@@ -121,6 +132,7 @@ pub(super) fn apply_conversation_training(
     hash: AuthorityEntryHash,
     counting: (Option<&PinnedRoot>, InstallCounted<'_>),
     restriction_only: bool,
+    needs_proof_off_the_line: bool,
 ) -> std::result::Result<(), AuthorityFoldIssue> {
     let op = OwnerChoiceOp {
         act: &set.act,
@@ -129,6 +141,7 @@ pub(super) fn apply_conversation_training(
         context: CONVERSATION_TRAINING_REVISION_CONTEXT,
         // Leaving their own messages out narrows the person's own row;
         // letting them back in widens it, and a carrier proves only itself.
+        needs_proof_off_the_line,
         persons_own_narrowing: set.act.target == set.act.owner && set.leave_out,
     };
     let landing = owner_choice_landing(
@@ -153,6 +166,6 @@ pub(super) fn folded_conversation_training(
 ) -> FoldedConversationTraining {
     FoldedConversationTraining {
         persons: folded_owner_choices(state, &state.conversation_training, pin, counted),
-        refused: refused_owner_choices(&state.conversation_training).clone(),
+        refused: refused_owner_choices(&state.conversation_training).to_btree_set(),
     }
 }

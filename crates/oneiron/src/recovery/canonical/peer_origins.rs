@@ -4,6 +4,7 @@
 //! names keeps that origin.
 
 use loro::LoroDoc;
+use oneiron_contracts::fingerprint::ContentHash;
 use serde::{Deserialize, Serialize};
 
 use super::{ByteBudget, CanonicalSnapshot, binary_rows_within, id, insert, invalid, parse_id};
@@ -40,7 +41,7 @@ pub(super) fn capture(
             .entity_blobs
             .binary_search_by_key(&entity, |row| row.id)
             .ok()
-            .map(|at| *blake3::hash(&snapshot.entity_blobs[at].blob).as_bytes());
+            .map(|at| *ContentHash::of(&snapshot.entity_blobs[at].blob).as_bytes());
         if held == Some(digest) {
             snapshot
                 .peer_origins

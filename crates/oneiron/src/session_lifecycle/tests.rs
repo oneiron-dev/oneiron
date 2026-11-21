@@ -24,6 +24,10 @@ fn minted(outcome: SessionMintOutcome) -> EntityId {
 fn decode_session_record_rejects_an_unsupported_version() {
     let record = SessionLifecycleRecord {
         version: SESSION_LIFECYCLE_RECORD_VERSION + 1,
+        key: SessionKey {
+            actor: EntityId::from_bytes([0xA1; 16]).expect("actor"),
+            machine: EntityId::from_bytes([0xA2; 16]).expect("machine"),
+        },
         started_at: 1_000,
         last_activity: 1_000,
         ended_at: None,
@@ -38,6 +42,8 @@ fn decode_session_record_rejects_an_unsupported_version() {
         activity_periods: Vec::new(),
         explicit_end_hint: None,
         close_hook_stop: None,
+        speakers: SessionSpeakers::default(),
+        summary_attempt: None,
     };
     // The `Named` codec has no opinion on `version`: an unsupported version
     // still round-trips through encode/decode cleanly. The rejection is
@@ -110,7 +116,7 @@ fn seed_dirty_turn(vault: &Vault, conversation: &EntityId, learned_at: u64) -> E
 }
 
 /// The production planning trio, exactly as the driver's close runs it.
-fn meso_wake(vault: &Vault) -> SessionEndWake {
+fn meso_wake(vault: &Vault, session: EntityId) -> SessionEndWake {
     let scope = DreamerConsolidationScope::Meso;
     let watermark = read_watermark(vault, scope).expect("watermark");
     let dirty = scan_dirty_turns(vault, scope, &watermark, usize::MAX).expect("scan");
@@ -118,6 +124,7 @@ fn meso_wake(vault: &Vault) -> SessionEndWake {
     let planned_turn_ids = dirty.iter().map(|turn| turn.turn_id).collect();
     let plans = plan_partitions(vault, scope, &dirty, &watermark).expect("plan");
     SessionEndWake {
+        session,
         plans,
         planned_watermark: watermark.last_learned_at,
         planned_turn_ids,
@@ -162,11 +169,13 @@ fn meso_attempt_count(vault: &Vault) -> usize {
 #[test]
 fn end_session_with_wake_closes_and_enqueues_the_production_round_atomically() {
     let (_dir, vault) = open_vault();
+    let actor = EntityId::now();
+    let key = vault.local_session_key(actor).expect("session key");
     let conversation = seed_conversation(&vault, 0x51);
     let turn = seed_dirty_turn(&vault, &conversation, 900);
-    let id = minted(vault.mint_session(1_000).expect("mint"));
+    let id = minted(vault.mint_session(key, 1_000).expect("mint"));
 
-    let wake = meso_wake(&vault);
+    let wake = meso_wake(&vault, id);
     assert_eq!(wake.plans.len(), 1, "one dirty conversation, one partition");
     assert_eq!(
         wake.planned_turn_ids,
@@ -179,7 +188,7 @@ fn end_session_with_wake_closes_and_enqueues_the_production_round_atomically() {
         .expect("session ended");
     assert_eq!(ended.session, id);
     assert_eq!(ended.reason, SessionEndReason::Explicit);
-    assert_eq!(vault.open_session().expect("open"), None);
+    assert_eq!(vault.open_session(key).expect("open"), None);
 
     // Exactly one meso partition attempt, and it decodes on the PRODUCTION
     // executor path (attempt payload → partition payload), not a bespoke string.
@@ -207,11 +216,14 @@ fn end_session_with_wake_closes_and_enqueues_the_production_round_atomically() {
             .expect("executor authority"),
         vault.dreamer_authority().expect("principal")
     );
-    let (partition, turn_ids, watermark) =
+    let branch =
         decode_partition_payload(&partitions[0].input).expect("production partition decode");
-    assert_eq!(partition.conversation_ref, conversation);
-    assert_eq!(turn_ids, vec![turn]);
-    assert_eq!(watermark, 0, "planned against the bootstrap watermark");
+    assert_eq!(branch.parts[0].conversation_ref, conversation);
+    assert_eq!(branch.parts[0].turns, vec![turn]);
+    assert_eq!(
+        branch.parts[0].watermark_last_learned_at, 0,
+        "planned against the bootstrap watermark"
+    );
 
     // The watermark settled in the SAME commit as the enqueue.
     assert_eq!(
@@ -229,7 +241,7 @@ fn end_session_with_wake_closes_and_enqueues_the_production_round_atomically() {
                 &id,
                 SessionClosePredicate::Explicit,
                 1_200,
-                &meso_wake(&vault)
+                &meso_wake(&vault, id)
             )
             .expect("re-end"),
         None
@@ -240,12 +252,14 @@ fn end_session_with_wake_closes_and_enqueues_the_production_round_atomically() {
 #[test]
 fn a_same_count_delete_and_insert_race_defers_the_whole_round_by_identity() {
     let (_dir, vault) = open_vault();
+    let actor = EntityId::now();
+    let key = vault.local_session_key(actor).expect("session key");
     let conversation = seed_conversation(&vault, 0x56);
     seed_dirty_turn(&vault, &conversation, 900);
     seed_dirty_turn(&vault, &conversation, 900);
-    let id = minted(vault.mint_session(1_000).expect("mint"));
+    let id = minted(vault.mint_session(key, 1_000).expect("mint"));
 
-    let wake = meso_wake(&vault);
+    let wake = meso_wake(&vault, id);
     assert_eq!(
         wake.planned_turn_ids.len(),
         2,
@@ -303,15 +317,17 @@ fn a_same_count_delete_and_insert_race_defers_the_whole_round_by_identity() {
 #[test]
 fn a_stale_closer_holding_a_replaced_sessions_id_no_ops() {
     let (_dir, vault) = open_vault();
+    let actor = EntityId::now();
+    let key = vault.local_session_key(actor).expect("session key");
     let conversation = seed_conversation(&vault, 0x52);
     seed_dirty_turn(&vault, &conversation, 900);
-    let a = minted(vault.mint_session(1_000).expect("mint a"));
+    let a = minted(vault.mint_session(key, 1_000).expect("mint a"));
     vault
         .end_session_with_wake(
             &a,
             SessionClosePredicate::Explicit,
             1_100,
-            &meso_wake(&vault),
+            &meso_wake(&vault, a),
         )
         .expect("end a")
         .expect("a ended");
@@ -320,13 +336,13 @@ fn a_stale_closer_holding_a_replaced_sessions_id_no_ops() {
         1,
         "A's close planned exactly one attempt"
     );
-    let b = minted(vault.mint_session(1_200).expect("mint b"));
+    let b = minted(vault.mint_session(key, 1_200).expect("mint b"));
 
     // Fresh dirty work exists, so the stale closer arrives with a REAL
     // non-empty plan: the identity check must refuse before anything
     // enqueues — atomicity, not luck.
     seed_dirty_turn(&vault, &conversation, 1_150);
-    let stale_wake = meso_wake(&vault);
+    let stale_wake = meso_wake(&vault, a);
     assert_eq!(stale_wake.plans.len(), 1);
     assert_eq!(
         vault
@@ -336,7 +352,10 @@ fn a_stale_closer_holding_a_replaced_sessions_id_no_ops() {
         "a stale closer holding A's id must no-op"
     );
 
-    let open = vault.open_session().expect("open").expect("B unaffected");
+    let open = vault
+        .open_session(key)
+        .expect("open")
+        .expect("B unaffected");
     assert_eq!(open.session, b);
     assert_eq!(open.started_at, 1_200);
     assert_eq!(
@@ -357,22 +376,24 @@ fn a_stale_closer_holding_a_replaced_sessions_id_no_ops() {
 #[test]
 fn an_activity_bump_that_raced_the_close_wins_inside_the_end_txn() {
     let (_dir, vault) = open_vault();
+    let actor = EntityId::now();
+    let key = vault.local_session_key(actor).expect("session key");
     let conversation = seed_conversation(&vault, 0x53);
     seed_dirty_turn(&vault, &conversation, 900);
-    let id = minted(vault.mint_session(1_000).expect("mint"));
+    let id = minted(vault.mint_session(key, 1_000).expect("mint"));
 
     // The closer computed "idle due at 1_600" from a pre-bump snapshot;
     // the bump lands durably before the close transaction begins.
-    vault.bump_session_activity(1_599).expect("bump");
-    let wake = meso_wake(&vault);
+    vault.bump_session_activity(key, 1_599).expect("bump");
+    let wake = meso_wake(&vault, id);
     assert_eq!(wake.plans.len(), 1, "the racing closer carries a real plan");
     assert_eq!(
         vault
             .end_session_with_wake(
                 &id,
                 SessionClosePredicate::Expiry {
-                    idle_floor_secs: 600,
-                    lifetime_ceiling_secs: 10_000,
+                    idle_floor_secs: Some(600),
+                    lifetime_ceiling_secs: Some(10_000),
                 },
                 1_600,
                 &wake,
@@ -382,7 +403,7 @@ fn an_activity_bump_that_raced_the_close_wins_inside_the_end_txn() {
         "the predicate re-read inside the txn sees the bump: the close no-ops"
     );
 
-    let open = vault.open_session().expect("open").expect("still open");
+    let open = vault.open_session(key).expect("open").expect("still open");
     assert_eq!(open.session, id);
     assert_eq!(open.last_activity, 1_599);
     assert_eq!(
@@ -395,10 +416,12 @@ fn an_activity_bump_that_raced_the_close_wins_inside_the_end_txn() {
 #[test]
 fn a_moved_watermark_skips_the_stale_planned_round_but_still_closes() {
     let (_dir, vault) = open_vault();
+    let actor = EntityId::now();
+    let key = vault.local_session_key(actor).expect("session key");
     let conversation = seed_conversation(&vault, 0x54);
     seed_dirty_turn(&vault, &conversation, 900);
-    let id = minted(vault.mint_session(1_000).expect("mint"));
-    let wake = meso_wake(&vault); // planned against watermark 0
+    let id = minted(vault.mint_session(key, 1_000).expect("mint"));
+    let wake = meso_wake(&vault, id); // planned against watermark 0
 
     // Another planner runs its round and advances the watermark first.
     advance_watermark(&vault, DreamerConsolidationScope::Meso, 950, &[])
@@ -481,20 +504,22 @@ fn in_txn_planner_parks_an_edgeless_turn_and_plans_every_other_turn() {
     let tie = seed_dirty_turn(&vault, &conversation, 910);
     let edgeless = seed_edgeless_dirty_turn(&vault, 910);
     let after = seed_dirty_turn(&vault, &conversation, 920);
-    let session = minted(vault.mint_session(1_000).expect("mint session"));
+    let actor = EntityId::now();
+    let key = vault.local_session_key(actor).expect("session key");
+    let session = minted(vault.mint_session(key, 1_000).expect("mint session"));
 
-    let wake = vault.plan_session_end_wake().expect("plan");
+    let wake = vault.plan_session_end_wake(&session).expect("plan");
     let ended = vault
         .end_session_with_wake(&session, SessionClosePredicate::Explicit, 1_001, &wake)
         .expect("close session")
         .expect("session ended");
     assert_eq!(ended.session, session);
-    assert!(vault.open_session().expect("open session").is_none());
+    assert!(vault.open_session(key).expect("open session").is_none());
 
     let payloads = meso_partition_payloads(&vault);
     assert_eq!(payloads.len(), 1);
-    let (_, turns, _) = decode_partition_payload(&payloads[0].input).expect("decode partition");
-    assert_eq!(turns, vec![a, tie, after]);
+    let branch = decode_partition_payload(&payloads[0].input).expect("decode partition");
+    assert_eq!(branch.parts[0].turns, vec![a, tie, after]);
     assert!(
         meso_remaining(&vault).is_empty(),
         "the edge-less turn waits parked"
@@ -514,9 +539,11 @@ fn in_txn_planner_plans_an_admissible_turn_sharing_an_edgeless_turns_second() {
     let conversation = seed_conversation(&vault, 0x61);
     let a = seed_dirty_turn(&vault, &conversation, 900);
     let edgeless = seed_edgeless_dirty_turn(&vault, 900);
-    let session = minted(vault.mint_session(1_000).expect("mint session"));
+    let actor = EntityId::now();
+    let key = vault.local_session_key(actor).expect("session key");
+    let session = minted(vault.mint_session(key, 1_000).expect("mint session"));
 
-    let wake = vault.plan_session_end_wake().expect("plan");
+    let wake = vault.plan_session_end_wake(&session).expect("plan");
     let ended = vault
         .end_session_with_wake(&session, SessionClosePredicate::Explicit, 1_001, &wake)
         .expect("close session")
@@ -524,14 +551,14 @@ fn in_txn_planner_plans_an_admissible_turn_sharing_an_edgeless_turns_second() {
     assert_eq!(ended.session, session);
     assert_eq!(meso_attempt_count(&vault), 1);
     let payloads = meso_partition_payloads(&vault);
-    let (_, turns, _) = decode_partition_payload(&payloads[0].input).expect("decode partition");
-    assert_eq!(turns, vec![a]);
+    let branch = decode_partition_payload(&payloads[0].input).expect("decode partition");
+    assert_eq!(branch.parts[0].turns, vec![a]);
     assert!(meso_remaining(&vault).is_empty());
 
     // A second close with nothing new plans nothing: the parked turn stays
     // out of every round until its edge lands.
-    let session = minted(vault.mint_session(1_002).expect("mint session"));
-    let wake = vault.plan_session_end_wake().expect("plan");
+    let session = minted(vault.mint_session(key, 1_002).expect("mint session"));
+    let wake = vault.plan_session_end_wake(&session).expect("plan");
     vault
         .end_session_with_wake(&session, SessionClosePredicate::Explicit, 1_003, &wake)
         .expect("close session")
