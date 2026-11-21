@@ -430,6 +430,30 @@ fn a_newer_table_beside_a_yes_that_is_not_the_named_table_reads_strictest() {
 }
 
 #[test]
+fn a_key_a_yes_left_strictest_is_weighed_from_its_row_when_this_build_ships_a_newer_table() {
+    let fx = Fixture::rooted();
+    let owner = fx.as_owner();
+    let other = fx.second_machine(7);
+    fx.update_at("1.0.0", &[(CAP, json!(10))])
+        .expect("this build's defaults");
+    let (yes, table, _) = fx.sign_yes_from(&other, ("2.0.0", &[(CAP, json!(20))]), &[CAP]);
+    let (_, other_bytes) = pack_table_of(ENGINE_PACK, &[(CAP, json!(30))]).expect("encodes");
+    fx.table_arrives((&yes, &table), &other_bytes);
+    assert!(fx.land_yes(&yes), "counted");
+    assert_eq!(value(&owner, CAP), json!(0), "the key's strictest value");
+
+    // This build now ships a table newer than the yes's, which changes nothing here any more: the
+    // door weighs the key from the row the yes found, and its looser default waits for a holder.
+    let applied = fx
+        .update_at("3.0.0", &[(CAP, json!(30))])
+        .expect("this build's defaults");
+    assert!(applied.lost.is_empty(), "{applied:?}");
+    assert_eq!(value(&owner, CAP), json!(10), "the row before the yes");
+    assert_eq!(fx.version(), "3.0.0");
+    assert_eq!(entry(&owner, CAP)["proposed_default"]["value"], json!(30));
+}
+
+#[test]
 fn a_peers_yes_to_an_older_table_changes_nothing_here() {
     let fx = Fixture::rooted();
     let owner = fx.as_owner();

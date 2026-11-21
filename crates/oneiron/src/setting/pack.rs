@@ -26,8 +26,9 @@
 //! door's later head replaces it; it is appended in the yes's own write, and the act is the
 //! write, so a yes this install cannot carry, or one that would wait for his proof, is refused.
 //! The table's bytes travel beside each act that carries them, the door's head and the owner's yes,
-//! in a row per act ([`super::beside::pack_table_row_id`]), and a reader takes any copy here that
-//! is the table ([`table_acts_in_txn`]). Each machine reads a yes that counts in full there
+//! in a row per act ([`super::beside::pack_table_row_id`]), and a reader takes a copy that is the
+//! table beside the act it reads or beside a live act that names the table
+//! ([`table_acts_in_txn`]). Each machine reads a yes that counts in full there
 //! ([`project_pack_in_txn`]): where its head names the yes's table, the keys its waiting proposal
 //! holds land as the owner's; where the yes names a newer table of the `engine` pack, the yes
 //! proves that table, and the door weighs it from the bytes beside it first, as a build that ships
@@ -35,7 +36,9 @@
 //! nothing: that machine's own proposal waits for a holder. A door that weighs a table lands the
 //! yeses to it that came first. A row a yes landed stands while a yes that counts in full here
 //! names its key; once none does (a later entry held it back), the row it replaced stands again
-//! ([`revert_landings_in_txn`]).
+//! ([`revert_landings_in_txn`]). A yes whose table is not here, or erased here, leaves each key
+//! it accepts at its strictest value until a weigh of a table that names the key, which starts
+//! from the row the yes found ([`lift_quarantines_in_txn`]).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -720,10 +723,11 @@ fn weigh_in_txn(
     (layer, append): (Option<&[&str]>, bool),
 ) -> Result<Option<PackApplied>> {
     let digest = oneiron_hex::encode(&digest_bytes);
-    let head = head_in_txn(&vault.store, txn, pack)?.unwrap_or_default();
+    let mut head = head_in_txn(&vault.store, txn, pack)?.unwrap_or_default();
     if !door_acts(&head, version, &digest) {
         return Ok(None);
     }
+    lift_quarantines_in_txn(vault, txn, pack, &mut head, defaults)?;
     let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
     let mut accepted: BTreeSet<String> = head.accepted.iter().cloned().collect();
     let mut applied = PackApplied::default();
@@ -881,6 +885,51 @@ fn weigh_in_txn(
         );
     }
     Ok(Some(applied))
+}
+
+/// Puts back, before a weigh of `defaults` in `pack`'s layer, the row each quarantine on one of
+/// their keys replaced ([`quarantine_in_txn`]), and drops its landing from `head` (FIX
+/// SETTING-PACK-TABLE-ERASED-ROW-BLOCKS-SAME-TABLE review): a table this install weighs is one
+/// it reads, so the key is weighed from the row the unreadable yes found, never lost to the
+/// unreadable row. A key's latest landing is lifted while its row is still the unreadable one
+/// that landing wrote, so stacked quarantines lift down to the first readable row; a key the pack
+/// held no row of before leaves `head`'s accepted keys. A quarantine wrote no change row, so the
+/// lift writes none: the weigh's own change row runs from that row.
+///
+/// # Errors
+///
+/// Storage errors.
+fn lift_quarantines_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    pack: &str,
+    head: &mut PackHead,
+    defaults: &[(&'static SettingSpec, EncodedValue)],
+) -> Result<()> {
+    for (spec, _) in defaults {
+        let at = pack_row_key(spec.name, pack);
+        while let Some(current) = table_of(spec).get_bytes(&vault.store, txn, &at)? {
+            let unreadable = rmp_serde::from_slice::<StoredRow>(&current)
+                .is_ok_and(|row| row.value.0 == [UNREADABLE_VALUE]);
+            let wrote = row_digest(&current);
+            let Some(index) = head
+                .landed
+                .iter()
+                .rposition(|landing| landing.key == spec.name)
+                .filter(|index| unreadable && head.landed[*index].wrote == wrote)
+            else {
+                break;
+            };
+            match head.landed.remove(index).prior {
+                Some(row) => table_of(spec).put(&vault.store, txn, &at, &row)?,
+                None => {
+                    table_of(spec).delete(&vault.store, txn, &at)?;
+                    head.accepted.retain(|name| name != spec.name);
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// One write of a layer row by the door.
