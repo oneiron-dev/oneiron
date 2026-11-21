@@ -165,20 +165,6 @@ pub(crate) fn pending_effect_fences_in(
     Ok(false)
 }
 
-pub(super) fn effect_ref(
-    item: &EmergencyItem,
-    lane: &str,
-    hash: [u8; 32],
-) -> Result<String, BookingError> {
-    Ok(format!(
-        "intent:booking_emergency:{}:{lane}",
-        hex_lower(&content_hash(
-            purposes::booking::EMERGENCY_EFFECT_REF,
-            &(item_key(&item.plan.request, item.calendar.event_ref)?, hash),
-        )?)
-    ))
-}
-
 /// The local outbound ledger identity of `item`'s effect on `lane`, whose idempotency key is
 /// [`effect_ref`]: that key itself at ledger generation 0, else the key with its generation
 /// appended (`EmergencyItem::ledger_generations`). The send's attempt id derives from it
@@ -193,6 +179,20 @@ pub(super) fn effect_ledger_ref(
         None | Some(0) => reference,
         Some(generation) => format!("{reference}:ledger-generation:{generation}"),
     })
+}
+
+pub(super) fn effect_ref(
+    item: &EmergencyItem,
+    lane: &str,
+    hash: [u8; 32],
+) -> Result<String, BookingError> {
+    Ok(format!(
+        "intent:booking_emergency:{}:{lane}",
+        hex_lower(&content_hash(
+            purposes::booking::EMERGENCY_EFFECT_REF,
+            &(item_key(&item.plan.request, item.calendar.event_ref)?, hash),
+        )?)
+    ))
 }
 
 pub(super) fn apology_bytes(item: &EmergencyItem) -> Result<Vec<u8>, BookingError> {
