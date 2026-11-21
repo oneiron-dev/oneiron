@@ -13,8 +13,11 @@
 //! * `a_fork_opened_before_the_use_limit_does_not_land_after_it`: a rewrite fork the owner
 //!   opened before the hold does not switch in after it, and a fork made before the hold is not
 //!   opened after it; the NOTE's text stays.
+//! * `a_facet_fork_of_a_use_limited_note_answers_not_found`: a fork of the held NOTE to another
+//!   facet, with or without superseding it, answers not found and copies nothing; the same fork
+//!   of a second NOTE lands.
 //!
-//! All three run red at main 864ee0cf3cd, whose NOTE writers ask no use limit, and green at the
+//! All four run red at main 864ee0cf3cd, whose NOTE writers ask no use limit, and green at the
 //! fix.
 //! `cargo test --locked -p oneiron --all-features --test note_change_refuses_use_limited_note`.
 
@@ -22,8 +25,11 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::deletion::LegalHoldTarget;
 use oneiron::memory::{EraseOptions, EraseReason, MEMORY_CODE_NOT_FOUND, MemoryError};
 use oneiron::note::{NoteProgramEdit, NoteProgramEditOutcome, NoteVerdict};
+use oneiron::registry::ENTITY_TYPE_FACET;
 use oneiron::store::GateDecisionId;
-use oneiron::{EdgeActorClass, EntityId, HostingPrivacyPosture, Vault, VaultConfig, WriteActor};
+use oneiron::{
+    EdgeActorClass, EntityId, HostingPrivacyPosture, TimeRange, Vault, VaultConfig, WriteActor,
+};
 
 const TEXT: &str = "The lighthouse keeper logs the tide at dawn.";
 
@@ -229,5 +235,56 @@ fn a_fork_opened_before_the_use_limit_does_not_land_after_it() {
         text(&vault, held),
         TEXT,
         "the use-limited NOTE keeps its text"
+    );
+}
+
+#[test]
+fn a_facet_fork_of_a_use_limited_note_answers_not_found() {
+    let (_dir, vault) = open_hosted_vault();
+    let held = write_note(&vault);
+    let control = write_note(&vault);
+    let facet = EntityId::from_bytes([0x53; 16]).expect("facet id");
+    vault
+        .put_entity(
+            &facet,
+            ENTITY_TYPE_FACET,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"facet",
+        )
+        .expect("FIXTURE: a facet to fork into");
+    use_limit(&vault, held);
+    let held_edges = vault
+        .edges_in(&held)
+        .expect("read the edges into the held NOTE")
+        .len();
+
+    for supersede in [false, true] {
+        assert_not_found(
+            vault.fork_to_facet(held, facet, supersede, owner_writer(&vault)),
+            "a facet fork",
+        );
+    }
+    assert_eq!(
+        text(&vault, held),
+        TEXT,
+        "the use-limited NOTE keeps its text"
+    );
+    assert_eq!(
+        vault
+            .edges_in(&held)
+            .expect("read the edges into the held NOTE")
+            .len(),
+        held_edges,
+        "no fork links to or supersedes the use-limited NOTE"
+    );
+
+    let fork = vault
+        .fork_to_facet(control, facet, true, owner_writer(&vault))
+        .expect("the same fork of a NOTE no hold keeps is taken");
+    assert_eq!(
+        text(&vault, fork),
+        TEXT,
+        "the fork of a NOTE no hold keeps carries its text"
     );
 }
