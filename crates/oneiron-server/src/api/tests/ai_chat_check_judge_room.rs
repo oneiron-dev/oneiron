@@ -264,7 +264,7 @@ async fn landed_check() -> LandedCheck {
         let outcome = store
             .admit_next_maintenance(AdmitDreamerAttempt {
                 lease_owner: "compaction-check-judge-room-test".to_owned(),
-                now: vault_seconds(&server) + 1,
+                now: vault_seconds(&server),
                 budget_id: "wake".to_owned(),
                 budget_total_units: 100_000,
                 reserve_units: 100,
