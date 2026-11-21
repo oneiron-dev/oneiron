@@ -367,7 +367,7 @@ impl Vault {
                 // opened its window, so the read cannot tell whether the
                 // door will sign: it asks as an important act, and the
                 // write answers.
-                None => OwnerActImportance::Important,
+                None => return Err(Error::Record(RecordError::OwnerKeyRequired)),
                 Some((actor, fold, proves_joins)) => {
                     let mut importance = OwnerActImportance::Ordinary;
                     for (entry, held) in named_held_answers(&fold, entries)?.into_values() {
