@@ -44,10 +44,10 @@ impl Memory<'_> {
         now: u64,
     ) -> MemoryResult<crate::memory::campaign_records::CampaignRecord> {
         verify_actor_binding(self.vault, self.actor, self.actor_class)?;
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
         Ok(self.vault.store.record_hooks.launch_campaign(
             self.vault,
-            self.actor,
-            self.actor_class,
+            self.write_actor(),
             campaign_ref,
             expected_definition_version,
             now,

@@ -91,6 +91,14 @@ impl Memory<'_> {
     /// The authority a turn this surface lands seals for its actor's armed
     /// programs, or `None` when it seals none.
     pub(super) fn turn_program_authority(&self) -> Option<TurnProgramAuthority> {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        self.unmarked_turn_program_authority().map(|authority| {
+            authority.with_handed_on_credential(self.carries_handed_on_credential())
+        })
+    }
+
+    /// [`Self::turn_program_authority`] before this surface's handed-on mark.
+    fn unmarked_turn_program_authority(&self) -> Option<TurnProgramAuthority> {
         if self.host_origin.is_some() || self.machine_signer.is_some() {
             return None;
         }

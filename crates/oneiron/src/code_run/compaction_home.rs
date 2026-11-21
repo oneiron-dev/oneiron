@@ -117,7 +117,14 @@ fn owns_scenario(vault: &Vault, host: &CompactionHostBinding, facet: EntityId) -
 /// The agent's own memory a home is read through: its Grant, at the place
 /// its caller sits, under the credential it proved, when it proved one.
 fn home_memory<'v>(vault: &'v Vault, host: &CompactionHostBinding, agent: EntityId) -> Memory<'v> {
-    let memory = vault.memory(agent, EdgeActorClass::Agent).at(host.locality);
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    let writer = WriteActor::new(agent, EdgeActorClass::Agent);
+    let writer = if host.actor.carries_handed_on_credential() {
+        writer.with_handed_on_credential()
+    } else {
+        writer
+    };
+    let memory = vault.memory_for_writer(writer).at(host.locality);
     match &host.read_proof {
         Some(proof) => memory.with_read_proof(proof),
         None => memory,

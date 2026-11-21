@@ -426,7 +426,8 @@ impl Memory<'_> {
                 == Some(person);
         let entering = !thread.folded.current().contains(&person);
         // The verified class of this write's actor, never a caller's flag.
-        let human = self.actor_class() == EdgeActorClass::Human;
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        let human = self.acts_as_own_person();
         // An agent walks in only as the role its PERSON holds (OF-529).
         if own && entering && !human && !thread.privileged {
             return Err(agent_walk_in_forbidden());

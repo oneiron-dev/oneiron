@@ -6,7 +6,6 @@
 
 use crate::Vault;
 use crate::access_grant::{AccessGrantStatus, encode_access_grant_body};
-use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
 use crate::write_envelope::WriteActor;
@@ -30,7 +29,8 @@ pub(crate) fn owner_revokes_every_share_in_txn(
     actor: &WriteActor,
 ) -> Result<bool> {
     let fold = vault.authority_fold_readonly_in_txn(txn)?;
-    Ok(actor.actor_class() == EdgeActorClass::Human
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    Ok(actor.acts_as_own_person()
         && !fold.vault_root_is_conflicted()
         && crate::authority::actor_binding_is_live_in(
             &vault.store,

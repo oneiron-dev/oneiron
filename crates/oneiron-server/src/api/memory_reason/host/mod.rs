@@ -51,7 +51,8 @@ pub(super) fn production_host(
         return Err(ApiError::deep_retrieval_unavailable());
     }
     let memory = super::answer_admission::answer_memory(&server.vault, auth)?;
-    let actor = oneiron::WriteActor::new(memory.actor(), memory.actor_class());
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    let actor = auth.write_actor(memory.actor(), memory.actor_class());
     let run_id = format!("memory-reason:{}", EntityId::now().to_hex());
     let reserve = DEFAULT_BUDGET_RESERVE_UNITS.min(token_budget);
     let meter = server

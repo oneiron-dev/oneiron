@@ -22,7 +22,6 @@ use super::{
 };
 use crate::batch::secret_scan::LiftedKeys;
 use crate::claim::ClaimReadStatus;
-use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::provenance::made_by::{MadeBy, MadeByClass, MadeByProcess};
@@ -311,11 +310,12 @@ impl Memory<'_> {
                 .map_err(|_| invalid("made_by is not a valid envelope"));
         }
         let actor = self.body_actor();
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
         Ok(MadeBy {
             inputs: Vec::new(),
             process: MadeByProcess {
                 actor: actor.entity_ref(),
-                class: if actor.actor_class() == EdgeActorClass::Human {
+                class: if actor.acts_as_own_person() {
                     MadeByClass::Stated
                 } else {
                     MadeByClass::Concluded
@@ -546,9 +546,10 @@ impl Memory<'_> {
                 .vault()
                 .edit_pptx_body(&artifact, base, ops, actor, &made_by),
         };
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
         match edit {
             Ok(edit) => Ok(edit),
-            Err(error) if gated && actor.actor_class() == EdgeActorClass::Human => {
+            Err(error) if gated && actor.acts_as_own_person() => {
                 self.live_edit_or_ask(&artifact, &actor.entity_ref(), error)
             }
             Err(error) => Err(error.into()),

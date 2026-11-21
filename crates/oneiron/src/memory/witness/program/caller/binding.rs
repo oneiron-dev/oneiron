@@ -21,6 +21,7 @@ struct Caller {
     actor: EntityId,
     actor_class: crate::edge::EdgeActorClass,
     authority: CallerAuthority,
+    handed_on_credential: bool,
 }
 
 /// The same priority as verify_caller_in_txn, captured only after admission.
@@ -36,6 +37,7 @@ impl SessionWitnessContext<'_> {
     /// Releases the Vault borrow while retaining this exact caller, session and
     /// mode generation. This does not open a stream or create any stored state.
     pub fn into_binding(self) -> MemoryResult<SessionWitnessBinding> {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
         let txn = self
             .caller
             .vault
@@ -60,6 +62,7 @@ impl SessionWitnessContext<'_> {
                 actor: self.caller.actor,
                 actor_class: self.caller.actor_class,
                 authority,
+                handed_on_credential: self.caller.handed_on_credential,
             },
             session_ref: self.session.session_ref().to_owned(),
             route: self.route,
@@ -264,6 +267,7 @@ impl SessionWitnessBinding {
     }
 
     fn context<'v>(&self, vault: &'v crate::Vault) -> MemoryResult<SessionWitnessContext<'v>> {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
         self.route.revalidate()?;
         let session = vault.off_record_session_vault().bind(&self.session_ref)?;
         // A session name or even a copied vault id cannot move this authority
@@ -272,6 +276,7 @@ impl SessionWitnessBinding {
             return Err(caller_refused());
         }
         let mut caller = vault.memory(self.caller.actor, self.caller.actor_class);
+        caller.handed_on_credential = self.caller.handed_on_credential;
         match &self.caller.authority {
             CallerAuthority::Slip(proof) => caller.read_proof = Some(proof.clone()),
             CallerAuthority::HostAction(action) => caller.host_action = Some(action.clone()),

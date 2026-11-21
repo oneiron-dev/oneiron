@@ -5,7 +5,7 @@
 
 use super::ask_settlement;
 use super::ask_types::*;
-use crate::EdgeActorClass;
+use crate::WriteActor;
 use crate::entity_id::{
     EntityId,
     derived_domains::{TASK_ASK_INTENT, TASK_ASK_ORIGIN},
@@ -98,14 +98,14 @@ impl SessionAskRecord {
     /// No member TASK, notification, launch or durable background work runs.
     pub(crate) fn answer(
         &mut self,
-        actor: EntityId,
-        actor_class: EdgeActorClass,
+        writer: WriteActor,
         actor_kind: u8,
         result_kind: u8,
         word: &TaskAskWord,
         word_ref: EntityId,
         now: u64,
     ) -> MemoryResult<TaskAskAnswer> {
+        let actor = writer.entity_ref();
         if !self.parts.holders.contains(&actor) {
             return Err(MemoryError::bad_request(
                 "ask handle is not addressed to this actor",
@@ -136,7 +136,8 @@ impl SessionAskRecord {
             actor_kind,
             result_kind,
         );
-        let source = if actor_class == EdgeActorClass::Human {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        let source = if writer.acts_as_own_person() {
             TaskAskSource::Human
         } else {
             TaskAskSource::ForeignStated

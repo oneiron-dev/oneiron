@@ -87,6 +87,8 @@ impl Memory<'_> {
     /// must be the bound actor; a read refuses otherwise.
     #[must_use]
     pub fn with_read_proof(mut self, proof: &crate::authority::VerifiedSlip) -> Self {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        self.handed_on_credential |= proof.is_transferred();
         self.read_proof = Some(proof.clone());
         self
     }

@@ -48,12 +48,20 @@ impl SuccessionWriter {
         declared: ClaimSource,
         surface: &'static str,
     ) -> Self {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
         Self {
             // The stamp must re-derive from the actor a ledger event records,
             // so it carries no authority frontier.
-            actor: actor.map(|actor| WriteActor::new(actor.entity_ref(), actor.actor_class())),
+            actor: actor.map(|actor| {
+                let stripped = WriteActor::new(actor.entity_ref(), actor.actor_class());
+                if actor.carries_handed_on_credential() {
+                    stripped.with_handed_on_credential()
+                } else {
+                    stripped
+                }
+            }),
             generated: declared == ClaimSource::Generated
-                || actor.is_some_and(|actor| actor.actor_class() != EdgeActorClass::Human),
+                || actor.is_some_and(|actor| !actor.acts_as_own_person()),
             surface,
         }
     }

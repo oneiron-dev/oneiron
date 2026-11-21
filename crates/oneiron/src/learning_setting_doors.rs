@@ -357,13 +357,10 @@ pub fn learning_settings_embedded(
     memory: &crate::memory::Memory<'_>,
     input: &LearningSettingsRequest,
 ) -> crate::memory::MemoryResult<LearningSettingsView> {
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
     match memory.embedded_owner("vault.settings.learning") {
         Ok(owner) => Ok(learning_settings_as_owner(memory.vault(), &owner, input)?),
-        Err(_) => learning_settings_as_holder(
-            memory.vault(),
-            WriteActor::new(memory.actor(), memory.actor_class()),
-            input,
-        ),
+        Err(_) => learning_settings_as_holder(memory.vault(), memory.bound_write_actor(), input),
     }
 }
 
@@ -603,17 +600,14 @@ pub fn put_learning_setting_embedded(
     memory: &crate::memory::Memory<'_>,
     input: LearningSettingPut,
 ) -> crate::memory::MemoryResult<LearningSettingsView> {
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
     match memory.embedded_owner("vault.settings.learning.put") {
         Ok(owner) => Ok(put_learning_setting_as_owner(
             memory.vault(),
             &owner,
             input,
         )?),
-        Err(_) => put_learning_setting_as_holder(
-            memory.vault(),
-            WriteActor::new(memory.actor(), memory.actor_class()),
-            input,
-        ),
+        Err(_) => put_learning_setting_as_holder(memory.vault(), memory.bound_write_actor(), input),
     }
 }
 
@@ -628,16 +622,15 @@ pub fn clear_learning_setting_embedded(
     memory: &crate::memory::Memory<'_>,
     input: LearningSettingClear,
 ) -> crate::memory::MemoryResult<LearningSettingsView> {
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
     match memory.embedded_owner("vault.settings.learning.clear") {
         Ok(owner) => Ok(clear_learning_setting_as_owner(
             memory.vault(),
             &owner,
             input,
         )?),
-        Err(_) => clear_learning_setting_as_holder(
-            memory.vault(),
-            WriteActor::new(memory.actor(), memory.actor_class()),
-            input,
-        ),
+        Err(_) => {
+            clear_learning_setting_as_holder(memory.vault(), memory.bound_write_actor(), input)
+        }
     }
 }

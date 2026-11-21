@@ -451,7 +451,8 @@ pub(crate) fn unlinked_prose_links<T: serde::Serialize>(
     input: &T,
     pointers: &[&str],
 ) -> MemoryResult<Vec<ReferenceRefusalFacts>> {
-    let writer_is_ai = memory.actor_class() != crate::EdgeActorClass::Human;
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    let writer_is_ai = !memory.acts_as_own_person();
     if !writer_is_ai && !pointers.iter().any(|pointer| pointer.contains("*[")) {
         return Ok(Vec::new());
     }

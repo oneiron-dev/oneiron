@@ -632,7 +632,8 @@ pub(in crate::api::facade) fn asker(
         Some("system") => EdgeActorClass::System,
         _ => EdgeActorClass::Human,
     };
-    Ok(WriteActor::new(principal, class))
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    Ok(auth.write_actor(principal, class))
 }
 
 /// The caller's own read lane, the one `ai.verdict` reads an image under:

@@ -51,6 +51,13 @@ pub struct Memory<'v> {
     /// The verified credential this actor presented, when a host bound one:
     /// every read verb then reads under the key that proof builds.
     pub(super) read_proof: Option<crate::authority::VerifiedSlip>,
+    /// Whether this handle acts as a handed-on credential's key holder, not as the person it
+    /// names, though it bound no proof: set from a marked [`crate::WriteActor`]
+    /// ([`crate::Vault::memory_for_writer`], [`Self::with_host_origin`]) or a handed-on proof
+    /// ([`Self::with_read_proof`]), and copied by every rebinder. Its person acts are refused
+    /// ([`Self::acts_as_own_person`]); its reads still land
+    /// ([`Self::reads_as_vault_owner_in_txn`]).
+    pub(super) handed_on_credential: bool,
     /// The host verified an account API key that names this handle's actor,
     /// a person, and grants `core:read` (OF-448; the lead's ruling
     /// DEL2-ROOTLESS-MEMBER-KEY-READ = B, 21 Nov): with no proof bound, its

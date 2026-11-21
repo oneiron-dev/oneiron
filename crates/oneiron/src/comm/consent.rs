@@ -175,7 +175,8 @@ pub fn approve_pending_opt_out_clear(
             .and_then(|raw| EntityMetadataHeader::parse(&raw).map(|header| header.entity_type))
             .ok_or(CommError::Engine(Error::EntityNotFound))?;
         validate_actor_class(actor_entity_type, actor.actor_class())?;
-        if actor.actor_class() != EdgeActorClass::Human {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        if !actor.acts_as_own_person() {
             return Err(CommError::HumanApprovalRequired);
         }
         let subjects = opt_out_subjects_in_txn(vault, &*wtxn, party_ref)?;
@@ -520,7 +521,8 @@ pub fn mint_send_override(
             .and_then(|raw| EntityMetadataHeader::parse(&raw).map(|header| header.entity_type))
             .ok_or(CommError::Engine(Error::EntityNotFound))?;
         validate_actor_class(actor_entity_type, actor.actor_class())?;
-        if actor.actor_class() != EdgeActorClass::Human {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        if !actor.acts_as_own_person() {
             return Err(CommError::HumanApprovalRequired);
         }
         let party_ref = resolve_or_create_party_in_txn(vault, wtxn, party)?;

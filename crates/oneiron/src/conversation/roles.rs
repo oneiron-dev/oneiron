@@ -25,13 +25,8 @@ pub(super) fn role_in(
     authorize(vault, txn, actor)?;
     let id = actor.entity_ref();
     require_kind(vault, txn, id, ENTITY_TYPE_PERSON)?;
-    person_role_in(
-        vault,
-        txn,
-        room,
-        id,
-        actor.actor_class() == crate::EdgeActorClass::Human,
-    )
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    person_role_in(vault, txn, room, id, actor.acts_as_own_person())
 }
 
 /// The role PERSON `id` holds in ordinary room `room`, read as [`role_in`]

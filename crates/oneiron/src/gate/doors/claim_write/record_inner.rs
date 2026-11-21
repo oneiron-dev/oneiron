@@ -281,11 +281,9 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
         // owner, as a human. An approval, gated with no envelope
         // (`ClaimMaterialization::gate_envelope`), gets the proof for its one Approved Put alone
         // (`ops_put`), as does the owner's supersede door's exact close of an Approved claim.
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
         let owner_write = owner_authored.filter(|write| match writing {
-            Some(actor) => {
-                actor.entity_ref() == write.actor()
-                    && actor.actor_class() == crate::edge::EdgeActorClass::Human
-            }
+            Some(actor) => actor.entity_ref() == write.actor() && actor.acts_as_own_person(),
             None => body.approval == ClaimApprovalStatus::Approved,
         });
         // The owner's own approval is the same in-person confirmation: a human ruling on their own

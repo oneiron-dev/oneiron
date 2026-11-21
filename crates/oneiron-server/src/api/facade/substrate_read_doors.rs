@@ -39,7 +39,8 @@ pub(super) async fn as_reader<T: Send + 'static>(
 ) -> MemoryResult<T> {
     let (actor, class) =
         super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
-    let reader = WriteActor::new(actor, class);
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    let reader = auth.write_actor(actor, class);
     let server = Arc::clone(server);
     super::clock_ingress::run_blocking(move || act(&server, reader))
         .await

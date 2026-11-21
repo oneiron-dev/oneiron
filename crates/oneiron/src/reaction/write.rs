@@ -5,7 +5,6 @@ use super::value::{PREDICATE_CONVERSATION_REACTION, ReactionValue};
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
 use crate::conversation::{AudienceCache, room_for_record_in, room_person_write_allowed};
 use crate::conversation_dag::{actor_in_txn, require_type};
-use crate::edge::EdgeActorClass;
 use crate::error::{Error, RecordError, Result};
 use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
@@ -119,9 +118,11 @@ fn require_current_occurrence(vault: &Vault, occurred_at: u64) -> Result<u64> {
 }
 
 fn first_party_envelope(actor: WriteActor) -> Result<WriteEnvelope> {
-    let source = match actor.actor_class() {
-        EdgeActorClass::Human => ClaimSource::UserStated,
-        EdgeActorClass::Agent | EdgeActorClass::System => ClaimSource::Observed,
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    let source = if actor.acts_as_own_person() {
+        ClaimSource::UserStated
+    } else {
+        ClaimSource::Observed
     };
     Ok(WriteEnvelope::new(
         actor,

@@ -189,6 +189,7 @@ impl Vault {
         request: &TextUpdateRequest,
         authorization: &DocAuthorization<'_>,
     ) -> Result<TextUpdateOutcome> {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
         let mut registry = self
             .entity_docs
             .lock()
@@ -257,7 +258,7 @@ impl Vault {
                 // then store the complete output under the author's own stamp.
                 fork = live.fork(&request.base)?;
                 super::forks::bind_actor(self, txn, &fork, request.actor, request.at)?;
-                fork.edit_as(stamp, request.at, |body| {
+                fork.edit_as(stamp, request.actor, request.at, |body| {
                     body.delete(0, body.len_unicode())
                         .map_err(|_| invalid("rewrite delete"))?;
                     body.insert(0, text).map_err(|_| invalid("rewrite insert"))
@@ -289,7 +290,7 @@ impl Vault {
                 };
                 return Ok((outcome, landed));
             }
-            super::document::stamp(&fork.doc, stamp, request.at, "update")?;
+            super::document::stamp(&fork.doc, stamp, request.actor, request.at, "update")?;
             if !permitted {
                 let id = EntityId::now();
                 let req = ForkRequest {
@@ -561,9 +562,10 @@ pub(super) fn apply(
     sources: &[EntityId],
     lifted: &LiftedKeys,
 ) -> Result<Option<usize>> {
-    if edit.actor.is_none() {
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    let Some(actor) = edit.actor else {
         return Err(invalid("text operation requires an actor"));
-    }
+    };
     let anchor = verb_parts(edit).0;
     let (start, end) = resolve(doc, entity, anchor)?;
     let replacing = matches!(edit.verb, EditVerb::ReplaceQuotedSpan { .. });
@@ -576,7 +578,7 @@ pub(super) fn apply(
         same = current == replacement;
     }
     let place = if replacing { start } else { end };
-    doc.edit_with(stamp, at, sources, |body| {
+    doc.edit_with(stamp, actor, at, sources, |body| {
         if replacing {
             body.delete(start, end - start)
                 .map_err(|_| invalid("anchored delete"))?;

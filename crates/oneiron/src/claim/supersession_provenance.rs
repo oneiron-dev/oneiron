@@ -253,8 +253,8 @@ pub(super) fn settle_coaching_in_txn(
     if !crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, txn, new)? {
         return Ok(None);
     }
-    let person =
-        closer.is_some_and(|actor| actor.actor_class() == crate::edge::EdgeActorClass::Human);
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    let person = closer.is_some_and(WriteActor::acts_as_own_person);
     let source = if person {
         ClaimSource::UserStated
     } else {

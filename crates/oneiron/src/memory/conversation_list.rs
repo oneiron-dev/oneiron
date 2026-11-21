@@ -347,7 +347,8 @@ impl Memory<'_> {
         body: &[u8],
         grants: &mut Option<crate::access_grant::AccessContext<'v>>,
     ) -> MemoryResult<Option<Sight>> {
-        if self.is_vault_owner_in_txn(txn)? {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        if self.reads_as_vault_owner_in_txn(txn)? {
             return Ok(Some(Sight::Whole));
         }
         let Ok(decoded) = ConversationBody::from_bytes(body) else {
@@ -428,7 +429,8 @@ impl Memory<'_> {
         if !room {
             return self.sight_in(txn, id, &stored.body, &mut None);
         }
-        if self.is_vault_owner_in_txn(txn)? {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        if self.reads_as_vault_owner_in_txn(txn)? {
             return Ok(Some(Sight::Whole));
         }
         let Ok(decoded) = ConversationBody::from_bytes(&stored.body) else {

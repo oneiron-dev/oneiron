@@ -443,7 +443,7 @@ fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)> {
                 .expect("document");
                 let proposed_ref = crate::edit_distance::LoroOpRef::from_bytes(document.frontier());
                 document
-                    .edit_as(stamp, 2, |text| {
+                    .edit_as(stamp, actor, 2, |text| {
                         text.delete(0, text.len_unicode()).expect("clear draft");
                         text.insert(0, &format!("final {index}"))
                             .expect("final text");

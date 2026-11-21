@@ -22,6 +22,8 @@ impl Vault {
             session_key: None,
             machine_signer: None,
             read_proof: None,
+            // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+            handed_on_credential: false,
             account_key_read: false,
             phone_reads: Vec::new(),
             host_action: None,
@@ -61,6 +63,17 @@ impl Vault {
         }
     }
 
+    /// Binds this vault's [`Memory`] surface to a writer's actor, keeping the mark of a
+    /// credential handed on to another key
+    /// ([`crate::WriteActor::carries_handed_on_credential`]).
+    #[must_use]
+    pub fn memory_for_writer(&self, actor: crate::WriteActor) -> Memory<'_> {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        let mut memory = self.memory(actor.entity_ref(), actor.actor_class());
+        memory.handed_on_credential = actor.carries_handed_on_credential();
+        memory
+    }
+
     /// Binds a MACHINE's claim writes to its enrolled software signing key.
     /// Transport authentication alone cannot supply this proof. Other memory
     /// verbs remain subject to their own authorization and write doors.
@@ -84,6 +97,8 @@ impl Vault {
             session_key: None,
             machine_signer: Some((public_key, sign)),
             read_proof: None,
+            // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+            handed_on_credential: false,
             account_key_read: false,
             phone_reads: Vec::new(),
             host_action: None,
@@ -152,6 +167,8 @@ impl<'v> Memory<'v> {
                 session_key: self.session_key,
                 machine_signer: self.machine_signer,
                 read_proof: self.read_proof.clone(),
+                // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+                handed_on_credential: self.handed_on_credential,
                 account_key_read: self.account_key_read,
                 phone_reads: self.phone_reads.clone(),
                 host_action: self.host_action.clone(),

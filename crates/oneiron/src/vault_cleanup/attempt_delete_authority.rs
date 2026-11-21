@@ -54,6 +54,10 @@ pub(super) fn require_delete_in_txn(
     if memory.actor_class() != EdgeActorClass::Human {
         return agent_in_txn(memory, txn);
     }
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    if !memory.acts_as_own_person() {
+        return Err(forbidden("attempt_delete_no_standing"));
+    }
     vault.verify_write_actor_in_txn(txn, &memory.write_actor())?;
     if !credential_reaches(memory, txn, true)? {
         return Err(forbidden("attempt_delete_credential_bounds"));

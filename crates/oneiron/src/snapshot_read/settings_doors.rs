@@ -37,12 +37,10 @@ pub fn snapshot_read_settings_as_holder(
 ///
 /// As [`snapshot_read_settings_as_holder`], and storage errors.
 pub fn read_snapshot_read_settings(memory: &Memory<'_>) -> MemoryResult<SnapshotReadSettings> {
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
     match memory.embedded_owner("vault.settings.snapshot_read") {
         Ok(owner) => Ok(memory.vault().snapshot_read_settings_as_owner(&owner)?),
-        Err(_) => snapshot_read_settings_as_holder(
-            memory.vault(),
-            WriteActor::new(memory.actor(), memory.actor_class()),
-        ),
+        Err(_) => snapshot_read_settings_as_holder(memory.vault(), memory.bound_write_actor()),
     }
 }
 

@@ -10,7 +10,6 @@ use serde::{Deserialize, Serialize};
 
 use super::{PptxBody, PptxReview};
 use crate::blob_artifact::{BlobVersionProvenance, VersionReconciliation};
-use crate::edge::EdgeActorClass;
 use crate::edit_settle::PendingProposalView;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::office_body::OfficeBodyExportRecord;
@@ -207,7 +206,8 @@ impl Memory<'_> {
         input: &DeckForkMergeRequest,
     ) -> MemoryResult<LandingReceipt> {
         let actor = self.body_actor();
-        if actor.actor_class() != EdgeActorClass::Human {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        if !actor.acts_as_own_person() {
             return Err(MemoryError::new(
                 crate::memory::MEMORY_CODE_FORBIDDEN,
                 "a person merges an office body fork",
@@ -253,7 +253,8 @@ impl Memory<'_> {
         let record = if lands {
             let actor = self.body_actor();
             let made_by = self.body_made_by(input.made_by.as_ref(), "office_body.deck_export")?;
-            let provenance = if actor.actor_class() == EdgeActorClass::Human {
+            // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+            let provenance = if actor.acts_as_own_person() {
                 BlobVersionProvenance::UserUpload
             } else {
                 BlobVersionProvenance::AgentRun {

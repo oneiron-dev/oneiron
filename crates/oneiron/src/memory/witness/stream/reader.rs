@@ -11,7 +11,9 @@ use crate::memory::Memory;
 /// no bound proof reads as its actor, as before. It witnesses into the
 /// sitting its opener answered in (L10-33), so the reply's TURN joins it.
 pub(super) fn terminal_memory<'v>(vault: &'v Vault, seed: &Seed) -> Result<Memory<'v>> {
-    let memory = vault.memory(seed.actor, seed.class()?);
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    let mut memory = vault.memory(seed.actor, seed.class()?);
+    memory.handed_on_credential = seed.handed_on_credential;
     let memory = match seed.session_key {
         Some(key) => memory.with_session(key),
         None => memory,

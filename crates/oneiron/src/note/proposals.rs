@@ -12,7 +12,6 @@ use crate::batch::export::archive_side_install::{
 use crate::batch::export::{
     ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
 };
-use crate::edge::EdgeActorClass;
 use crate::error::Result;
 use crate::memory::MemoryResult;
 use crate::ports::{DocumentRow, DocumentRowStore, DocumentSlot, UpdateSeq};
@@ -419,7 +418,8 @@ fn owner_or_automatic_grant(
     note: EntityId,
     actor: WriteActor,
 ) -> Result<bool> {
-    if actor.actor_class() == EdgeActorClass::Human
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    if actor.acts_as_own_person()
         && crate::memory::verify_owner_actor_binding_in_txn(vault, txn, actor.entity_ref()).is_ok()
     {
         return Ok(true);
@@ -844,10 +844,11 @@ pub(super) fn land(
             &fork.note,
         )?;
     }
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
     let native_receipt = if verdict == NoteVerdict::Merge && fork.recovery_merge.is_none() {
         Some(
             vault
-                .memory(actor.entity_ref(), actor.actor_class())
+                .memory_for_writer(actor)
                 .apply_native_note_fork_in_txn(txn, fork.fork)
                 .map_err(|_| invalid("canonical NOTE proposal admission failed"))?,
         )
@@ -868,7 +869,7 @@ pub(super) fn land(
             },
         };
         let receipt = vault
-            .memory(actor.entity_ref(), actor.actor_class())
+            .memory_for_writer(actor)
             .apply_fork_merge_text_in_txn(txn, fork.note, fork.fork, &operation)
             .map_err(|_| invalid("canonical NOTE proposal admission failed"))?;
         if matches!(receipt.outcome, super::NoteScalarEditOutcome::Proposed(_)) {

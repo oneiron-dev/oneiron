@@ -224,6 +224,7 @@ impl Memory<'_> {
         owner_ref: EntityId,
         now: u64,
     ) -> MemoryResult<()> {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
         if validated.kind == TaskKind::Standard
             && validated.assignee.is_some_and(|assignee| {
                 matches!(
@@ -233,7 +234,7 @@ impl Memory<'_> {
                         | TaskAssignee::Child { .. }
                 )
             })
-            && self.actor_class() == crate::EdgeActorClass::Human
+            && self.acts_as_own_person()
             && !self.writes_generated()
             && owner_ref == self.actor()
             && crate::memory::verify_owner_actor_binding_in_txn(self.vault(), wtxn, owner_ref)

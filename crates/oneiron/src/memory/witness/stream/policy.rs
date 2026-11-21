@@ -6,7 +6,6 @@ use crate::batch::export::archive_side_install::{
 use crate::batch::export::{
     ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
 };
-use crate::edge::EdgeActorClass;
 use crate::error::Result;
 use crate::memory::support::verify_owner_actor_binding_in_txn;
 use crate::side_table::{self, Named, SideTable};
@@ -59,7 +58,8 @@ impl Memory<'_> {
         policy: &MessageStreamPolicy,
     ) -> MessageStreamResult<()> {
         policy.validate()?;
-        if self.actor_class != EdgeActorClass::Human {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        if !self.acts_as_own_person() {
             return Err(MessageStreamError::WrongActor);
         }
         POLICY.encode_value(policy)?;

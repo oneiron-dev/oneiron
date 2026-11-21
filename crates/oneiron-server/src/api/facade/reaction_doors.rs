@@ -66,7 +66,8 @@ async fn vault_messages_react_answer(
                     &["Name the credential's own principal as `by`."],
                 ));
             }
-            Some(WriteActor::new(actor, class))
+            // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+            Some(auth.write_actor(actor, class))
         }
     };
     react_message(server, auth, actor, input).await

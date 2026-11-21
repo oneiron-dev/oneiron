@@ -61,7 +61,8 @@ impl DagActor {
         {
             return Err(ApiError::forbidden_scope("actor_binding"));
         }
-        Ok(WriteActor::new(id, class))
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        Ok(auth.write_actor(id, class))
     }
 }
 

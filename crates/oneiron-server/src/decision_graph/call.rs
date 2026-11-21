@@ -41,6 +41,7 @@ pub(crate) struct LadderCall<'a> {
 /// rung the call reads its state alone. A call with clips starts at the
 /// first rung in the dial reading every medium it carries (FIX 11481c).
 pub(crate) fn ladder_decide(server: &SyncServer, call: LadderCall<'_>) -> Result<TypedDecision> {
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
     let host = server.decision_host();
     let mut dial = call.dial;
     let sees = !call.images.is_empty()
@@ -50,8 +51,13 @@ pub(crate) fn ladder_decide(server: &SyncServer, call: LadderCall<'_>) -> Result
     let local = if sees {
         dial.first = DecisionRung::Local;
         Some(
-            vision_rung(server, call.principal, call.class, call.images, call.label)
-                .map_err(|error| Error::InvalidConfig(error.to_string()))?,
+            vision_rung(
+                server,
+                oneiron::WriteActor::new(call.principal, call.class),
+                call.images,
+                call.label,
+            )
+            .map_err(|error| Error::InvalidConfig(error.to_string()))?,
         )
     } else {
         None
@@ -97,6 +103,7 @@ pub(crate) fn ladder_decide(server: &SyncServer, call: LadderCall<'_>) -> Result
 /// seats it: the host's presence question first, then the coordinates
 /// ([`oneiron::llm::decision::DecisionLadder::run_located`]).
 pub(crate) fn ladder_located(server: &SyncServer, call: LadderCall<'_>) -> Result<LocatedDecision> {
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
     let host = server.decision_host();
     let mut dial = call.dial;
     let sees = !call.images.is_empty()
@@ -106,8 +113,13 @@ pub(crate) fn ladder_located(server: &SyncServer, call: LadderCall<'_>) -> Resul
     let local = if sees {
         dial.first = DecisionRung::Local;
         Some(
-            vision_rung(server, call.principal, call.class, call.images, call.label)
-                .map_err(|error| Error::InvalidConfig(error.to_string()))?,
+            vision_rung(
+                server,
+                oneiron::WriteActor::new(call.principal, call.class),
+                call.images,
+                call.label,
+            )
+            .map_err(|error| Error::InvalidConfig(error.to_string()))?,
         )
     } else {
         None

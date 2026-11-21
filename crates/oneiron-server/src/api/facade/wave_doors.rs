@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::{TaskWaveReceipt, TaskWaveRequest};
-use oneiron::{EdgeActorClass, EntityId, WriteActor};
+use oneiron::{EdgeActorClass, EntityId};
 
 use super::host_doors::support::{Listed, hex_rows, internal, naming};
 use crate::auth::CoreAuth;
@@ -73,9 +73,10 @@ async fn tasks_wave_answer(
     let server = Arc::clone(server);
     let auth = auth.clone();
     super::clock_ingress::run_blocking(move || {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
         let (epic, constraints) = wave_plan(
             &server,
-            WriteActor::new(actor, class),
+            auth.write_actor(actor, class),
             |id| auth.can_read_entity(server.vault(), id),
             &input,
         )?;

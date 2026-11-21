@@ -27,7 +27,7 @@ use oneiron::task_verb::sdk::{
     self, LiveRunRequest, SecretGrantMintRequest, SecretGrantRenewRequest,
     SecretGrantTeardownRequest, SecretGrantUseRequest, SecretGrantView, SecretUseAnswer,
 };
-use oneiron::{AttemptId, EdgeActorClass, EntityId, WriteActor};
+use oneiron::{AttemptId, EdgeActorClass, EntityId};
 
 use super::host_doors::support::{Listed, credential_listing, refused};
 use crate::auth::CoreAuth;
@@ -222,12 +222,13 @@ async fn hold_live_run(
         .vault()
         .credential_read_key(proof)?
         .ok_or_else(unbound)?;
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
     let resolved = server
         .live_runs
         .resolve(
             handle,
             LiveRunCaller {
-                actor: WriteActor::new(actor, class),
+                actor: auth.write_actor(actor, class),
                 credential: LiveRunCredential::of(&auth.idempotency_principal(), auth.locality()),
             },
         )

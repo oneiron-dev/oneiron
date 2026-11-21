@@ -38,7 +38,7 @@ use oneiron::task_verb::sdk::{AskImageAnswer, AskImageReceipt, AskImageRequest};
 use oneiron::{
     BudgetExhaustionPolicy, CallClass, CallEnvelope, CallPurpose, ContentPart, EdgeActorClass,
     EntityId, ImageContent, LlmMessage, LlmMessageRole, LlmRequest, ModelTierRef, ResponseFormat,
-    TierPrecedence, WriteActor,
+    TierPrecedence,
 };
 use serde_json::json;
 
@@ -162,6 +162,8 @@ pub(crate) async fn asked(
         ));
     };
     let run_id = format!("ask_image:{}:{}", pulled.asset_ref, vault.now_recorded_at());
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    let writer = auth.write_actor(actor, class);
     // A caller verified in an off-record session that keeps no model-call
     // record names no rows on its runs, the text answer's and a Box or
     // Point's alike, so no run receipt names the asset's worlds (census
@@ -178,7 +180,7 @@ pub(crate) async fn asked(
                 settings.turn_budget_units,
                 oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS.min(settings.turn_budget_units),
                 BudgetExhaustionPolicy::Suspend,
-                WriteActor::new(actor, class),
+                writer,
             )
             .map_err(|error| {
                 refusal(

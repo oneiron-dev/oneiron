@@ -7,6 +7,7 @@
 
 use super::authorship::*;
 use super::{Memory, MemoryResult};
+use crate::EntityId;
 use crate::consent::AuthenticatedOwner;
 use crate::dreamer_consolidation::{
     DreamerChange, DreamerChangeKind, DreamerChanges, DreamerRevertReceipt, RevertedDreamerChange,
@@ -16,7 +17,6 @@ use crate::dreamer_runner::maintenance::MaintenanceTarget;
 use crate::edge::EdgeActorClass;
 use crate::error::Error;
 use crate::store::gate_reason::GateReceiptOutcome;
-use crate::{EntityId, WriteActor};
 
 const REVERT_KIND: &str = "dreamer_change_revert";
 const REVERT_REASON: &str = "gate.memory.dreamer_change_revert";
@@ -104,7 +104,8 @@ impl Memory<'_> {
         }
         self.with_verified_actor_write_txn(|txn| {
             self.dreamer_change_owner(txn, owner)?;
-            let actor = WriteActor::new(self.actor, self.actor_class);
+            // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+            let actor = self.bound_write_actor();
             let reverted = revert_dreamer_change_in_txn(self.vault, txn, change, actor, now)?;
             let receipt = decision(
                 actor,

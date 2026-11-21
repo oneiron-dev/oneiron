@@ -52,7 +52,8 @@ pub(super) fn is_owner_row(verb: AgentVerb) -> bool {
 /// person this vault records as its owner, while that owner is live, as a
 /// managed owner's request is proved. `None` for anyone else.
 fn program_owner(server: &SyncServer, actor: WriteActor) -> Option<AuthenticatedOwner> {
-    if actor.actor_class() != EdgeActorClass::Human {
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    if actor.actor_class() != EdgeActorClass::Human || actor.carries_handed_on_credential() {
         return None;
     }
     crate::api::managed_owner_proof(server, actor.entity_ref())

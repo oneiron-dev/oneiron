@@ -147,6 +147,8 @@ where
         surface,
         live_run,
     } = bound;
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    let writer = replay_auth.write_actor(actor, class);
     let door = Arc::new(FacadeRowDoor::new(
         server,
         headers,
@@ -156,8 +158,7 @@ where
         replay_auth,
     ));
     let bound = Unbound {
-        actor,
-        class,
+        writer,
         owner,
         surface,
         live_run,
@@ -168,8 +169,7 @@ where
 
 /// What an action runs under once its read key went to its verb door.
 struct Unbound {
-    actor: oneiron::EntityId,
-    class: EdgeActorClass,
+    writer: WriteActor,
     owner: Option<oneiron::consent::AuthenticatedOwner>,
     surface: Option<oneiron::authority::ActSurface>,
     live_run: Option<ResolvedLiveRun>,
@@ -191,9 +191,9 @@ where
         + Send
         + 'static,
 {
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
     let Unbound {
-        actor,
-        class,
+        writer,
         owner,
         surface,
         live_run,
@@ -226,7 +226,8 @@ where
                 &vault,
                 settings,
                 model,
-                host.decision_host().host_planner_decisions(actor),
+                host.decision_host()
+                    .host_planner_decisions(writer.entity_ref()),
             )
             .map_err(oneiron::Error::InvalidConfig)?,
             _ => None,
@@ -244,7 +245,7 @@ where
             planner,
             slip_issuer: held.as_ref().and_then(|_| host.host_issuer()),
         };
-        run(executor, &vault, WriteActor::new(actor, class), binding)
+        run(executor, &vault, writer, binding)
     })
     .await?
     .map_err(engine)

@@ -15,7 +15,6 @@ use super::audience_doors::{EditedThread, put_audience_event_in, receipt_in};
 use super::audience_events::{AudienceEvent, AudienceOp, AudiencePerson};
 use super::audience_notices::{ThreadNotice, tell_thread_members};
 use super::*;
-use crate::EdgeActorClass;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE};
 use crate::workspace_roster::RosterActor;
 
@@ -39,7 +38,8 @@ impl Memory<'_> {
             let EditedThread {
                 binding, folded, ..
             } = self.edited_thread_in(txn, root)?;
-            if self.actor_class() != EdgeActorClass::Human
+            // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+            if !self.acts_as_own_person()
                 || !crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &actor)?
             {
                 return Err(MemoryError::new(

@@ -372,14 +372,15 @@ pub(crate) fn settle_skill_tradeoff_ask_as_in_txn(
 ) -> Result<HeldOutVerdict> {
     vault.verify_write_actor_in_txn(txn, by)?;
     let actor = by.entity_ref();
-    let (authentication, rung) = match by.actor_class() {
-        crate::edge::EdgeActorClass::Human => {
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    let (authentication, rung) = match (by.actor_class(), by.acts_as_own_person()) {
+        (crate::edge::EdgeActorClass::Human, true) => {
             if !crate::consent::person_is_live_in_txn(vault, txn, &actor)? {
                 return Err(invalid("a person's tradeoff pick requires a live person"));
             }
             (format!("person:{}", actor.to_hex()), TradeoffRung::Person)
         }
-        crate::edge::EdgeActorClass::Agent => {
+        (crate::edge::EdgeActorClass::Agent, _) | (crate::edge::EdgeActorClass::Human, false) => {
             (format!("agent:{}", actor.to_hex()), TradeoffRung::Role)
         }
         _ => return Err(invalid("a tradeoff pick comes from a person or an agent")),

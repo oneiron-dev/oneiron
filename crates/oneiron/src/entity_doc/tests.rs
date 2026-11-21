@@ -91,6 +91,7 @@ fn edit_request(
 
 #[test]
 fn birth_and_actor_timestamp_survive_snapshot_and_edits() -> Result<()> {
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
     let actor = WriteActor::new(EntityId::now(), EdgeActorClass::Human);
     let stamp = ActorStamp {
         token: EntityId::now(),
@@ -99,7 +100,7 @@ fn birth_and_actor_timestamp_survive_snapshot_and_edits() -> Result<()> {
     let id = EntityId::now();
     let mut doc = EntityDoc::open(id, "birth α", (actor, stamp), 123)?;
     let born = doc.frontier();
-    doc.edit_as(stamp, 200, |text| {
+    doc.edit_as(stamp, actor, 200, |text| {
         text.insert(text.len_unicode(), " and later")
             .map_err(|_| invalid("fixture insert"))
     })?;

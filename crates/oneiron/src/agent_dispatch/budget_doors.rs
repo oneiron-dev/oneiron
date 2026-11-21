@@ -192,7 +192,8 @@ fn in_own_scope_tree_in_txn(
     scope: &SpendScopeId,
 ) -> MemoryResult<bool> {
     let vault = memory.vault();
-    let caller = crate::WriteActor::new(memory.actor(), memory.actor_class());
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    let caller = memory.bound_write_actor();
     let mut seen = std::collections::HashSet::new();
     let mut next = Some(scope.clone());
     while let Some(id) = next {

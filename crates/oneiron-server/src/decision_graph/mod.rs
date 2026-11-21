@@ -285,6 +285,7 @@ impl GraphAnswerer for LadderGraphAnswerer<'_> {
         images: &[DecisionImage],
         audio: &[DecisionAudio],
     ) -> Result<Option<GraphDecision>> {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
         let host = self.server.decision_host();
         let state = context.state_under(images, audio, &self.criteria);
         let evidence: Vec<EntityId> = context.sources.iter().map(|source| source.id).collect();
@@ -294,14 +295,8 @@ impl GraphAnswerer for LadderGraphAnswerer<'_> {
             None
         } else {
             Some(
-                vision_rung(
-                    self.server,
-                    self.runner.entity_ref(),
-                    self.runner.actor_class(),
-                    images,
-                    "graph.ask",
-                )
-                .map_err(|error| Error::InvalidConfig(error.to_string()))?,
+                vision_rung(self.server, self.runner, images, "graph.ask")
+                    .map_err(|error| Error::InvalidConfig(error.to_string()))?,
             )
         };
         let mut ladder = host.ladder().ladder();

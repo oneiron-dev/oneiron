@@ -22,7 +22,6 @@ use std::ops::Range;
 
 use super::EntityDoc;
 use super::verbs::Admitted;
-use crate::EdgeActorClass;
 use crate::Vault;
 use crate::batch::secret_scan::LiftedKeys;
 use crate::gate::record_references::validate_record_references;
@@ -88,7 +87,8 @@ impl LandedProse {
 
 /// Only an AI writer's prose is read (OF-063).
 fn reads(actor: WriteActor) -> bool {
-    actor.actor_class() != EdgeActorClass::Human
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    !actor.acts_as_own_person()
 }
 
 /// The refs `text` authored at `place` in `body`, the document's stored
@@ -154,7 +154,8 @@ pub(super) fn admit_landed_as(memory: &Memory<'_>, row: &'static str, landed: &[
 /// One slot's links resolved under `memory`'s own scoped read: a link that
 /// does not resolve earns the slot one `unlinked` receipt.
 fn admit(memory: &Memory<'_>, row: &'static str, prose: &LandedProse) {
-    if prose.refs.is_empty() || memory.actor_class() == EdgeActorClass::Human {
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    if prose.refs.is_empty() || prose.actor.acts_as_own_person() {
         return;
     }
     let refs: Vec<NamedRecordRef> = prose
