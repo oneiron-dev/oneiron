@@ -533,9 +533,13 @@ fn a_temporal_window_under_a_stale_world_reads_past_an_undecodable_claim() {
         .expect("FIXTURE: damage the claim's stored body");
     assert_eq!(
         fixture.try_temporal(None),
-        Ok(found(live)),
-        "GUARD: with no world stale, the temporal run serves the live claim and counts the \
-         damaged one as no candidate"
+        Ok(Run {
+            ids: vec![live],
+            total_in_scope: 2,
+            empty_reason: None,
+        }),
+        "GUARD: with no world stale, the unnarrowed temporal run serves the live claim; it \
+         counts the damaged one among its candidates before the claim status gate drops it"
     );
     stamp_world_stale(&fixture.vault, foreign_world(OTHER_WORLD))
         .expect("FIXTURE: stamp another world stale");
