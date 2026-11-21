@@ -83,8 +83,10 @@ pub(crate) use replica::{
 #[cfg(any(test, feature = "test-support", oneiron_test_support))]
 pub(crate) use source_state::forget_floor_state_in_txn;
 pub(crate) use source_state::{
-    FloorRead, Fresh, LinksBefore, Verdict, floor_read_in, fold_waiters_in_txn, judge_rows_in_txn,
-    sweep_floors, verdict_in, waiting_floor_readable_in,
+    DeleteLevel, FloorRead, Fresh, LinksBefore, Verdict, before_erase_in_store_txn,
+    before_erase_in_txn, floor_read_in, fold_waiters_in_txn, judge_rows_in_txn,
+    note_shell_erased_in_txn, seal_waiters_in_txn, sweep_floors, verdict_in,
+    waiting_floor_readable_in,
 };
 #[cfg(feature = "sync")]
 pub(crate) use wake::{
@@ -279,18 +281,31 @@ pub(crate) fn add_derived_policies_in_txn(
     row: &EntityId,
     policies: &BTreeSet<EntityId>,
 ) -> Result<bool> {
-    let mut held = DERIVED.get(&vault.store, txn, row)?.unwrap_or_default();
+    add_derived_policies_in_store_txn(&vault.store, txn, row, policies)
+}
+
+/// [`add_derived_policies_in_txn`] for a write that holds only the store.
+pub(crate) fn add_derived_policies_in_store_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    row: &EntityId,
+    policies: &BTreeSet<EntityId>,
+) -> Result<bool> {
+    let mut held = DERIVED.get(store, txn, row)?.unwrap_or_default();
     let before = held.len();
     held.extend(policies.iter().copied());
     if held.len() == before {
         return Ok(false);
     }
-    DERIVED.put(&vault.store, txn, row, &held)?;
+    DERIVED.put(store, txn, row, &held)?;
     Ok(true)
 }
 
-/// Drops the derived row `row`'s carried policies with the row: the
-/// entity erase's (fix list row 17207).
+/// Drops the derived row `row`'s carried policies with the row, and the
+/// inputs it still waits on: the entity erase's (fix list row 17207; Fable
+/// design pass 31, section 2). A blob release is no erase: a released ASSET
+/// keeps its floor and what it still waits on, so it comes back as it left
+/// when the same bytes return.
 ///
 /// # Errors
 ///
@@ -300,7 +315,11 @@ pub(crate) fn erase_derived_policies_in_txn(
     txn: &mut heed::RwTxn<'_>,
     row: &EntityId,
 ) -> Result<()> {
-    DERIVED.delete(store, txn, row).map(drop)
+    if crate::blob_artifact::release_fenced_only(store, txn, row)? {
+        return Ok(());
+    }
+    DERIVED.delete(store, txn, row)?;
+    source_state::erase_open_entries_in_txn(store, txn, row)
 }
 
 /// The policy the row `record` was born under, if it was bound.

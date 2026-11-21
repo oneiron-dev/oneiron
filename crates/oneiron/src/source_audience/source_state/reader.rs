@@ -92,13 +92,14 @@ impl<'a, 't> StateReader<'a, 't> {
     ///
     /// Storage failures.
     pub(crate) fn reader(vault: &'a Vault, txn: &'a RoTxn<'t>) -> Result<Self> {
-        let migrated = migrated_in(vault, txn)?;
+        let migrated = migrated_in(&vault.store, txn)?;
         Ok(Self {
             vault,
             txn,
             floors_possible: crate::source_audience::floor::floors_possible_in(vault, txn)?,
             migrated,
-            old_backfill_done: migrated || floor_migration::old_backfill_done_in(vault, txn)?,
+            old_backfill_done: migrated
+                || floor_migration::old_backfill_done_in(&vault.store, txn)?,
             verdicts: BTreeMap::new(),
             judging: Vec::new(),
             cuts: 0,
@@ -108,7 +109,7 @@ impl<'a, 't> StateReader<'a, 't> {
     /// Whether `row` was judged here: the migration has ended, the old
     /// backfill raised every row, or a judgement since marked it.
     fn judged(&self, row: &EntityId) -> Result<bool> {
-        Ok(self.old_backfill_done || floor_migration::raised_in(self.vault, self.txn, row)?)
+        Ok(self.old_backfill_done || floor_migration::raised_in(&self.vault.store, self.txn, row)?)
     }
 
     /// What `input` is now (section 1.3).
@@ -130,8 +131,13 @@ impl<'a, 't> StateReader<'a, 't> {
         {
             return Ok(SourceState::Pending { held: true });
         }
-        if !has_open_in(self.vault, self.txn, input)?
-            && !floor_migration::has_old_marks_in(self.vault, self.txn, input, self.migrated)?
+        if !has_open_in(&self.vault.store, self.txn, input)?
+            && !floor_migration::has_old_marks_in(
+                &self.vault.store,
+                self.txn,
+                input,
+                self.migrated,
+            )?
             && self.judged(input)?
         {
             return Ok(SourceState::Bound(crate::source_audience::floor::floor_in(
@@ -190,8 +196,9 @@ impl<'a, 't> StateReader<'a, 't> {
                 .unwrap_or_default(),
         };
         let mut waits = false;
-        let mut entries = open_of_in(self.vault, self.txn, row)?;
-        let old = floor_migration::old_marks_of_in(self.vault, self.txn, row, self.migrated)?;
+        let mut entries = open_of_in(&self.vault.store, self.txn, row)?;
+        let old =
+            floor_migration::old_marks_of_in(&self.vault.store, self.txn, row, self.migrated)?;
         waits |= old.pending;
         for (input, flags) in old.entries {
             if !entries.iter().any(|(held, _)| *held == input) {
@@ -219,7 +226,9 @@ impl<'a, 't> StateReader<'a, 't> {
                 continue;
             }
             match flags.before_floors_level() {
-                Some(DeleteLevel::Soft) if later_owner_erase_in(self.vault, self.txn, &input)? => {
+                Some(DeleteLevel::Soft)
+                    if later_owner_erase_in(&self.vault.store, self.txn, &input)? =>
+                {
                     return Ok(Verdict::Sealed);
                 }
                 Some(_) => waits = true,
@@ -331,7 +340,7 @@ impl<'a, 't> StateReader<'a, 't> {
                     {
                         continue;
                     }
-                    if delete_level_in(self.vault, self.txn, input)? == DeleteLevel::Soft
+                    if delete_level_in(&self.vault.store, self.txn, input)? == DeleteLevel::Soft
                         && SHELL_ERASED.contains(&self.vault.store, self.txn, input)?
                     {
                         return Ok(OldFact::Sealed);
