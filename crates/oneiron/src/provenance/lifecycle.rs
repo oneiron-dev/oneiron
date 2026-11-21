@@ -1,7 +1,5 @@
 //! Claim lifecycle primitives: precedence, close/retract, stamps, and loading shapes.
 
-use std::collections::BTreeSet;
-
 use super::{
     EdgeProvenanceClaimBody, EdgeRef, PREDICATE_EDGE_PROVENANCE, decode_edge_provenance_body,
     encode_edge_provenance_value, resolve_persisted_actor_class,
@@ -103,17 +101,15 @@ pub(crate) fn restamp_edge_flags(
     subject: &EdgeRef,
     flags: EdgeProvenanceFlags,
 ) -> Result<()> {
-    let result = crate::ports::EdgeStoreMaintenance::port_edge_stamp_provenance(
-        store, &mut *wtxn, subject, flags,
+    crate::ports::EdgeStoreMaintenance::port_edge_stamp_provenance(store, wtxn, subject, flags)?;
+    // The live windows exist only with sync; a featureless build stamps alone.
+    #[cfg(feature = "sync")]
+    crate::batch::queue_committed_rows_in_txn(
+        store,
+        wtxn,
+        std::collections::BTreeSet::from([subject.source, subject.target]),
     );
-    if result.is_ok() {
-        crate::batch::queue_committed_rows_in_txn(
-            store,
-            wtxn,
-            BTreeSet::from([subject.source, subject.target]),
-        );
-    }
-    result
+    Ok(())
 }
 
 /// The D16 downgrade primitive: when deleting / SoftErasing an
