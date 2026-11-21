@@ -114,9 +114,10 @@ pub(crate) fn revert_run_note_in_txn(
     let vault = memory.vault();
     let note = EntityId::from_hex(&undo.note)?;
     // Its compensation is a named change too: a NOTE kept from use takes none
-    // (OF-470 C6).
-    if let Some(refusal) = vault.store.use_restricted_in_txn(txn, &note)? {
-        return Err(refusal.into());
+    // (OF-470 C6). It answers no compensation, as a later edit does, so the
+    // run's other selected changes are still undone; a failed read fails.
+    if vault.store.use_restricted_in_txn(txn, &note)?.is_some() {
+        return Ok(None);
     }
     let current = live_doc(vault, txn, note)?;
     if current.version() != undo.after {
