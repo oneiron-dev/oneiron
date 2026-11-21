@@ -9,6 +9,8 @@
 mod lender;
 mod sourced_route;
 
+pub(super) use sourced_route::RecordingSourcedRoute;
+
 pub use lender::{
     ExtractionVerdictFixture, ExtractionVerdictNativePack, ExtractionVerdictPassResources,
     NativePackAnswer, NativePackSpent, attach_extraction_verdict_lender,

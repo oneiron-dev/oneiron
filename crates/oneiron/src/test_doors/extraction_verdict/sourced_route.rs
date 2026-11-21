@@ -1,10 +1,10 @@
 //! Records the rows each fixture model call is sent under.
 //!
 //! A host lends each Dreamer role a route that can send one call bound to the rows its
-//! input was read from. The parity fixture lends this one beside its scripted backend: a
-//! bound call goes to the same backend, and the route keeps the rows it was bound to, so a
-//! test reads what each read named. A call that names no complete set never reaches the
-//! route and leaves no entry.
+//! input was read from. The parity fixture and the NOTE review door lend this one beside
+//! their scripted backend: a bound call goes to the same backend, and the route keeps the
+//! rows it was bound to, so a test reads what each read named. A call that names no
+//! complete set never reaches the route and leaves no entry.
 
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -16,7 +16,7 @@ use crate::{
 
 /// Holds the fixture's sourced route: the scripted backend with the rows of every call it
 /// was asked to bind, in call order.
-pub(super) struct RecordingSourcedRoute {
+pub(in crate::test_doors) struct RecordingSourcedRoute {
     /// Answers every bound call, as it answers the unbound ones.
     backend: Arc<dyn LlmBackend>,
     /// Holds the rows of each bound call since the last take, in call order.
@@ -25,7 +25,7 @@ pub(super) struct RecordingSourcedRoute {
 
 impl RecordingSourcedRoute {
     /// Builds the route over `backend` with no bound call recorded.
-    pub(super) fn new(backend: Arc<dyn LlmBackend>) -> Self {
+    pub(in crate::test_doors) fn new(backend: Arc<dyn LlmBackend>) -> Self {
         Self {
             backend,
             bound: Mutex::new(Vec::new()),
@@ -34,7 +34,7 @@ impl RecordingSourcedRoute {
 
     /// Returns the rows of every call bound since the last take, in call order, and
     /// forgets them.
-    pub(super) fn take(&self) -> Vec<Vec<EntityId>> {
+    pub(in crate::test_doors) fn take(&self) -> Vec<Vec<EntityId>> {
         std::mem::take(&mut *self.bound.lock().unwrap_or_else(PoisonError::into_inner))
     }
 }
