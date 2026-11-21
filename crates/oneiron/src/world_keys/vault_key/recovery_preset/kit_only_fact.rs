@@ -160,7 +160,6 @@ impl Vault {
         if before.is_some_and(|fact| fact.kit_only == kit_only) {
             return Ok(None);
         }
-        let ground = asked_ground(ground)?;
         let fold = self.authority_view_readonly_in_txn(txn)?;
         if !self.holds_proving_owner_key(&fold) {
             tracing::info!(
@@ -169,6 +168,9 @@ impl Vault {
             );
             return Ok(None);
         }
+        let Some(ground) = ground else {
+            return Ok(None);
+        };
         let target = kit_only_target()?;
         let seen = self.policy_setting_revision_in_txn(txn, target)?;
         let prior = before.is_some_and(|fact| fact.kit_only);
