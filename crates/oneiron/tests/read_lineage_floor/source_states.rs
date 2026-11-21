@@ -3,16 +3,26 @@
 //! moves an input's floor onto the rows waiting on it once that input is
 //! bound and whole, and every door that writes a link judges it (L-S6: the
 //! floor holds what the walk finds, whichever door wrote the link).
+//!
+//! #10315 review 1 (oracle cases 70 to 73): a support that becomes a
+//! required input waits as one; an input whose stored floor names the seal
+//! reads sealed, so the migration's heal leaves it alone; an old build's mark
+//! on a support is a support's entry; and an erase at the end of a chain
+//! longer than one judgement's depth seals the chain's first fact.
 
 use oneiron::EdgeKind;
 use oneiron::EntityId;
+use oneiron::deletion::TombstoneReason;
+use oneiron::provenance::made_by::MadeByInputRole;
+use oneiron::test_doors::claim_refinement_erase::apply_replayed_tombstone;
 use oneiron::test_doors::read_lineage_floor::{
-    floor_of, floor_sealed, floor_waits, walked_policies_of,
+    backfill_first_page, floor_of, floor_sealed, floor_waits, forget_floor_state, mark_raised,
+    mark_waiting_on, register_dependency_source, store_floor_seal, walked_policies_of,
 };
 use oneiron::test_doors::source_audience_binding::{bound_row_read_by, reads};
 
 use super::erased_sources::{erase, housekeeping_pass};
-use super::{claim_born_from, mailbox, owners_mailbox};
+use super::{Mailbox, claim_born_from, claim_of_predicate_born_with, mailbox, owners_mailbox};
 
 /// Sections 1.5 and 2: `fact` waits on `middle`, which waits on `late`, a
 /// row not here yet. `late` lands bound to the mailbox: `middle` takes its
@@ -86,5 +96,201 @@ fn a_link_the_batch_commit_path_writes_is_judged() {
     assert!(
         !reads(&mailbox.vault, derived, &[mailbox.stranger]).expect("the stranger's read"),
         "LEAK: a stranger reads a row derived from a mailbox fact",
+    );
+}
+
+/// A CLAIM under `predicate` with no input of its own.
+fn claim_of(mailbox: &Mailbox, predicate: &str, value: &str) -> EntityId {
+    claim_of_predicate_born_with(mailbox, &[], MadeByInputRole::Input, predicate, value)
+}
+
+/// `support` supports `claim`, by an edge.
+fn supports(mailbox: &Mailbox, support: EntityId, claim: EntityId) {
+    mailbox
+        .vault
+        .put_edge(&support, EdgeKind::Supports, &claim, 1.0)
+        .expect("FIXTURE: the support supports the claim");
+}
+
+/// #10315 review 1 P1-1 (oracle case 70): `claim` waits on its one support,
+/// `support`, whose own floor waits for a row not here yet. `support` is
+/// then registered as a source `claim` is derived from: a support that
+/// becomes a required input is a new link, judged as one, so `claim` waits
+/// on it as on any required input. A free support then frees the supports
+/// and nothing else, so the mailbox's reader does not read `claim` while
+/// `support` waits. Before the fix the write judged the links by id alone,
+/// the entry stayed a support's, and the free support freed it.
+#[test]
+fn a_support_registered_as_a_required_source_is_not_freed_by_a_free_support() {
+    let mailbox = mailbox();
+    let late = EntityId::now();
+    let support = claim_of_predicate_born_with(
+        &mailbox,
+        &[late],
+        MadeByInputRole::Input,
+        "fact.support_waiting",
+        "learnt from a row on its way",
+    );
+    let claim = claim_of(&mailbox, "fact.supported", "held by its supports");
+    supports(&mailbox, support, claim);
+    housekeeping_pass(&mailbox);
+    assert!(
+        floor_waits(&mailbox.vault, claim).expect("the floor's state"),
+        "precondition: a claim whose one support waits waits too",
+    );
+    register_dependency_source(&mailbox.vault, claim, support)
+        .expect("FIXTURE: the support is registered as a source of the claim");
+    let free = claim_of(&mailbox, "fact.support_free", "a free support");
+    supports(&mailbox, free, claim);
+    assert!(
+        floor_waits(&mailbox.vault, claim).expect("the floor's state"),
+        "a free support freed a claim whose required source still waits",
+    );
+    assert!(
+        !reads(&mailbox.vault, claim, &[mailbox.reader]).expect("the reader's read"),
+        "LEAK: the mailbox's reader reads a claim whose required source still waits",
+    );
+}
+
+/// #10315 review 1 P1-2 (oracle case 71): an older build raised `fact`,
+/// born from `input`, while `input` was whole and bound to no source, so
+/// `fact`'s floor is empty. `input` then stored the seal (an older build's
+/// seal at a tear). The migration visits `input` first, then heals `fact`:
+/// an input whose floor names the seal reads sealed, and the heal leaves a
+/// sealed input alone (section 5, M2, limit 3), so `fact` keeps its floor
+/// and reads to the mailbox's reader, as a read before the pass found it.
+/// Before the fix the visited input read bound with the seal on its floor,
+/// and the heal stored the seal on `fact` for good.
+#[test]
+fn the_heal_leaves_alone_an_input_whose_stored_floor_names_the_seal() {
+    let mailbox = owners_mailbox();
+    let input = claim_born_from(&mailbox, &[], "whole, bound to no source");
+    let fact = claim_born_from(&mailbox, &[input], "learnt from input");
+    forget_floor_state(&mailbox.vault).expect("FIXTURE: the vault reads as written before floors");
+    mark_raised(&mailbox.vault, input).expect("FIXTURE: an older build raised input");
+    mark_raised(&mailbox.vault, fact).expect("FIXTURE: an older build raised fact");
+    store_floor_seal(&mailbox.vault, input).expect("FIXTURE: input stores the seal");
+    assert!(
+        !floor_sealed(&mailbox.vault, fact).expect("the floor's state"),
+        "precondition: a read before the migration leaves a sealed input alone",
+    );
+    housekeeping_pass(&mailbox);
+    assert!(
+        !floor_sealed(&mailbox.vault, fact).expect("the floor's state"),
+        "SEALED: the heal stored the seal of an input it leaves alone",
+    );
+    assert!(
+        reads(&mailbox.vault, fact, &[mailbox.reader]).expect("the reader's read"),
+        "the mailbox's reader does not read a fact whose floor is whole",
+    );
+}
+
+/// #10315 review 1 P1-3 (oracle case 72): an older build left `claim`
+/// waiting on its one support, `support`, which waits for a row not here
+/// yet. M1 makes each mark an entry, and a mark on a link that is a support
+/// only is a support's entry. A free support then frees `claim`, whether it
+/// comes after M1 or before it (`free_first`): the mailbox's reader reads
+/// `claim`, after a housekeeping pass too. Before the fix M1 made the mark an
+/// ordinary entry, and the free support freed nothing.
+fn an_old_mark_on_a_support_is_freed_by_a_free_support(free_first: bool) {
+    let mailbox = mailbox();
+    let late = EntityId::now();
+    let support = claim_of_predicate_born_with(
+        &mailbox,
+        &[late],
+        MadeByInputRole::Input,
+        "fact.support_waiting",
+        "learnt from a row on its way",
+    );
+    let claim = claim_of(&mailbox, "fact.supported", "held by its supports");
+    supports(&mailbox, support, claim);
+    forget_floor_state(&mailbox.vault).expect("FIXTURE: the vault reads as written before floors");
+    mark_waiting_on(&mailbox.vault, support, late).expect("FIXTURE: support waits for late");
+    mark_waiting_on(&mailbox.vault, claim, support).expect("FIXTURE: claim waits on its support");
+    assert!(
+        floor_waits(&mailbox.vault, claim).expect("the floor's state"),
+        "precondition: an older build's mark keeps the claim waiting on its support",
+    );
+    let free_support = || {
+        let free = claim_of(&mailbox, "fact.support_free", "a free support");
+        supports(&mailbox, free, claim);
+    };
+    if free_first {
+        free_support();
+        assert!(
+            reads(&mailbox.vault, claim, &[mailbox.reader]).expect("the reader's read"),
+            "STUCK: an old build's mark on a support outlived a free support at a read",
+        );
+        backfill_first_page(&mailbox.vault).expect("FIXTURE: M1 converts the marks");
+    } else {
+        backfill_first_page(&mailbox.vault).expect("FIXTURE: M1 converts the marks");
+        free_support();
+    }
+    assert!(
+        reads(&mailbox.vault, claim, &[mailbox.reader]).expect("the reader's read"),
+        "STUCK: a free support did not free a claim an older build left waiting on a support",
+    );
+    housekeeping_pass(&mailbox);
+    assert!(
+        reads(&mailbox.vault, claim, &[mailbox.reader]).expect("the reader's read"),
+        "STUCK: the migration left a claim a free support freed waiting on its support",
+    );
+}
+
+#[test]
+fn an_old_mark_on_a_support_is_freed_by_a_free_support_after_the_marks_become_entries() {
+    an_old_mark_on_a_support_is_freed_by_a_free_support(false);
+}
+
+#[test]
+fn an_old_mark_on_a_support_is_freed_by_a_free_support_before_the_marks_become_entries() {
+    an_old_mark_on_a_support_is_freed_by_a_free_support(true);
+}
+
+/// #10315 review 1 P1-4 (oracle case 73): a chain of facts, each born from
+/// the next and the last from `late`, a row not here yet, longer than the
+/// depth one judgement recurses (8). A peer's tombstone of `late` replays
+/// here: what `late` would have added can no longer be known, so the whole
+/// chain is sealed, its first fact included, and the owner reads none of
+/// it, after a housekeeping pass too. Before the fix a read stopped at the
+/// depth bound and read the rest of the chain as pending, so the first fact
+/// waited and the owner read it.
+#[test]
+fn a_tombstone_at_the_end_of_a_chain_longer_than_the_depth_bound_seals_its_first_fact() {
+    let mailbox = owners_mailbox();
+    let late = EntityId::now();
+    let mut first = late;
+    for link in 0..12 {
+        first = claim_of_predicate_born_with(
+            &mailbox,
+            &[first],
+            MadeByInputRole::Input,
+            &format!("fact.chain_{link}"),
+            "learnt down a chain",
+        );
+    }
+    assert!(
+        floor_waits(&mailbox.vault, first).expect("the floor's state"),
+        "precondition: the chain's first fact waits for late",
+    );
+    apply_replayed_tombstone(
+        &mailbox.vault,
+        &late,
+        TombstoneReason::UserHardDelete,
+        super::AT,
+    )
+    .expect("the peer's tombstone replays");
+    assert!(
+        floor_sealed(&mailbox.vault, first).expect("the floor's state"),
+        "the erase at the end of a long chain left its first fact unsealed",
+    );
+    assert!(
+        !reads(&mailbox.vault, first, &[mailbox.owner]).expect("the owner's read"),
+        "the owner reads a fact at the head of a chain whose last input was erased",
+    );
+    housekeeping_pass(&mailbox);
+    assert!(
+        floor_sealed(&mailbox.vault, first).expect("the floor's state"),
+        "a housekeeping pass unsealed the chain's first fact",
     );
 }

@@ -254,3 +254,53 @@ pub fn replicated_birth_lands(
     txn.commit()?;
     Ok(())
 }
+
+/// Registers `source` as a source `dependent` is derived from through the
+/// vault's dependency put, which judges each link the write creates (Fable
+/// design pass 31, section 1.5; #10315 review 1 P1-1).
+///
+/// # Errors
+///
+/// A `source` the vault does not hold, or the write's error.
+pub fn register_dependency_source(
+    vault: &Vault,
+    dependent: EntityId,
+    source: EntityId,
+) -> Result<()> {
+    let mut txn = vault.store.env.write_txn()?;
+    let raw = vault
+        .get_raw_in(&txn, &source)?
+        .ok_or(crate::error::Error::EntityNotFound)?;
+    let header = crate::batch::EntityMetadataHeader::parse(&raw).ok_or(
+        crate::error::Error::CorruptedIndex("dependency source header"),
+    )?;
+    crate::ports::DependencyIndex::port_dependency_put(
+        vault,
+        &mut txn,
+        crate::ports::SourceSpan {
+            document: source,
+            frontier: header.learned_at,
+        },
+        &dependent,
+    )?;
+    txn.commit()?;
+    Ok(())
+}
+
+/// Stores the seal on the floor of `row`, as an older build's seal at the
+/// erase of an input `row` waited on stored it (#10315 review 1 P1-2).
+///
+/// # Errors
+///
+/// Storage failures.
+pub fn store_floor_seal(vault: &Vault, row: EntityId) -> Result<()> {
+    let mut txn = vault.store.env.write_txn()?;
+    crate::source_audience::add_derived_policies_in_txn(
+        vault,
+        &mut txn,
+        &row,
+        &BTreeSet::from([crate::source_audience::floor::sealed_source()]),
+    )?;
+    txn.commit()?;
+    Ok(())
+}
