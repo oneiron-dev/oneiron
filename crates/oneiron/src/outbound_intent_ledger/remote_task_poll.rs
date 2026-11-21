@@ -448,10 +448,13 @@ impl Vault {
         Ok(due)
     }
 
-    /// The MCP sessions owed their end, at most `limit` (FIX 16028).
+    /// The MCP sessions owed their end, at most `limit` (FIX 16028). A copy
+    /// restored and not joined lists none (row RESTORED-UNJOINED-STARTS-NO-WORK):
+    /// ending a session is a send, and the owed ends wait for the first pass
+    /// after the join.
     ///
     /// # Errors
-    /// Storage and row-codec faults.
+    /// The restored-copy check; storage and row-codec faults.
     pub fn remote_task_sessions_to_end(
         &self,
         limit: usize,
@@ -461,6 +464,9 @@ impl Vault {
             .env
             .read_txn()
             .map_err(crate::error::Error::from)?;
+        if crate::setting::restored::restored_unjoined_in_txn(self, &txn)? {
+            return Ok(Vec::new());
+        }
         SESSION_ENDS
             .iter_from(&self.store, &txn, &[])?
             .take(limit)
@@ -477,6 +483,21 @@ impl Vault {
         self.with_write_txn_grouped(|txn| {
             SESSION_ENDS.delete(&self.store, txn, intent).map(|_| ())
         })?;
+        Ok(())
+    }
+
+    /// Files `end` as owed to row `intent`'s session, as an erase of that
+    /// row keeps one (`test_doors::schedule::owe_remote_task_session_end`).
+    ///
+    /// # Errors
+    /// Storage faults.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn owe_remote_task_session_end_for_test(
+        &self,
+        intent: &[u8; 32],
+        end: &RemoteTaskSessionEnd,
+    ) -> IntentLedgerResult<()> {
+        self.with_write_txn_grouped(|txn| SESSION_ENDS.put(&self.store, txn, intent, end))?;
         Ok(())
     }
 

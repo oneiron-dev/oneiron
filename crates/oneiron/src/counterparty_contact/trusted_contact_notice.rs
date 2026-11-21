@@ -401,6 +401,14 @@ impl Vault {
         request: OutboundDispatchRequest,
         sink: &mut S,
     ) -> std::result::Result<OutboundDispatchResult, OutboundDispatchError> {
+        // A copy restored and not joined sends no notice, one whose lease its
+        // image kept included (row RESTORED-UNJOINED-STARTS-NO-WORK): refused
+        // before the lease check and the consent preflight, so its row stays
+        // as the image left it.
+        {
+            let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
+            self.refuse_work_while_restored_unjoined_in_txn(&txn)?;
+        }
         let attempt = self.leased_trusted_contact_notice(attempt)?;
         let attempt = &attempt;
         let notice = decode(attempt)?;

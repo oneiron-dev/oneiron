@@ -7,10 +7,13 @@
 //! - The e-sign worker idles, its principal sees the join answer, and each can dispatch after join.
 //! - Remote polls are not listed, and the trusted notice sender's claim stamps no clock. The
 //!   existing reply-kind claim hold still offers no job to its worker.
+//! - Owed MCP session ends are not listed, and a notice lease the image kept is refused before
+//!   its lease check and consent preflight (review of #10339, round 1).
 //!
 //! On base 47b5f60c15c7, recovery errors, the connector flows expire the call, and the e-sign
 //! doors return a nonempty view and no join refusal, respectively. The poll list includes the
-//! due task. The trusted notice sender's claim writes the clock floor. The reply-kind claim check is already green on that base.
+//! due task, and the session list the owed end. The trusted notice sender's claim writes the clock
+//! floor, and the kept lease's dispatch fails the notice. The reply-kind claim check is already green on that base.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test restored_unjoined_sends`.
 
@@ -22,7 +25,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use oneiron::attempt_queue::{
-    AttemptId, AttemptQueue, AttemptState, EnqueueAttempt, EnqueueOutcome,
+    AttemptId, AttemptQueue, AttemptState, ClaimAttempt, ClaimOutcome, EnqueueAttempt,
+    EnqueueOutcome,
 };
 use oneiron::authority::{HostSlipIssuer, MachineRole};
 use oneiron::blob_artifact::esign::{
@@ -48,8 +52,10 @@ use oneiron::counterparty_contact::{
     TRUSTED_CONTACT_NOTICE_ATTEMPT_KIND, TrustedContactNotice, TrustedContactNoticeAuthorization,
 };
 use oneiron::outbound::{
-    ConnectorReplyJob, ConnectorReplyJobResult, ConnectorReplyStage, OutboundExecutionOutcome,
-    OutboundExecutionRequest, OutboundExecutionSink,
+    ConnectorReplyJob, ConnectorReplyJobResult, ConnectorReplyStage,
+    OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchGate,
+    OutboundDispatchRequest, OutboundExecutionOutcome, OutboundExecutionRequest,
+    OutboundExecutionSink, OutboundIntent, OutboundIntentDraft, OutboundIntentTrigger,
 };
 use oneiron::outbound_consent::tool_call::{
     ConnectorToolCallPreparation, MutationIntent, ToolCallDescriptor,
@@ -71,7 +77,8 @@ use oneiron::test_doors::outbound_wait_setting_keys::{
     held_connector_call_settled, put_held_connector_call,
 };
 use oneiron::test_doors::schedule::{
-    REMOTE_TASK_POLL, defer_pollable_remote_task, due_at, remote_task_polls_due_now,
+    REMOTE_TASK_POLL, defer_pollable_remote_task, due_at, owe_remote_task_session_end,
+    remote_task_polls_due_now,
 };
 use oneiron::test_support::test_host_issuer;
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
@@ -872,4 +879,116 @@ fn an_unjoined_copy_claims_no_connector_reply_job() {
             now,
         )
         .unwrap();
+}
+
+/// The owed MCP session ends wait for the join: ending a session is a send (review of #10339,
+/// round 1).
+#[test]
+fn an_unjoined_copy_lists_no_session_to_end() {
+    let host = rooted_host();
+    let intent = [0x5e; 32];
+    owe_remote_task_session_end(&host.vault, intent);
+    let backups = oneiron::test_support::restore_tempdir();
+    let copy = restored_copy(&host, backups.path());
+    let committed = last_committed_txn_id(&copy.vault);
+
+    assert!(
+        copy.vault
+            .remote_task_sessions_to_end(32)
+            .unwrap()
+            .is_empty(),
+        "the host gets no session to end before the join"
+    );
+    assert_eq!(last_committed_txn_id(&copy.vault), committed);
+
+    owner_joins(&host, &copy);
+    let ends = copy.vault.remote_task_sessions_to_end(32).unwrap();
+    assert_eq!(ends.len(), 1, "the owed end waited in the copy");
+    assert_eq!(ends[0].0, intent);
+}
+
+/// The host's request for `notice`, bound as its dispatch requires.
+fn notice_request(notice: &TrustedContactNotice, sender: EntityId) -> OutboundDispatchRequest {
+    OutboundDispatchRequest::new(
+        format!("receipt:{}", notice.fire),
+        format!("trusted-contact-notice:{}", notice.fire),
+        OutboundIntent::from_trigger(
+            OutboundIntentDraft::new(
+                notice.sender.as_str(),
+                notice.verb.as_str(),
+                notice.channel.as_str(),
+                notice.target.as_str(),
+            ),
+            OutboundIntentTrigger::record_transition(notice.fire.as_str()),
+        ),
+        OutboundDispatchActor::agent(sender),
+        OutboundDispatchGate::allow_when_policy_grants(),
+        1_000,
+        OutboundDeliveryWindowDecision::DeliverNow,
+    )
+}
+
+/// A notice lease the image kept is refused before its lease check and consent preflight, so
+/// the copy fails no notice before the join (review of #10339, round 1).
+#[test]
+fn an_unjoined_copy_dispatches_no_notice_its_image_kept_leased() {
+    let host = rooted_host();
+    let owner = host.vault.ensure_embedded_owner_actor().unwrap();
+    let (notice, id) = stage_notice_without_live_consent(&host.vault, owner);
+    let ClaimOutcome::Claimed(_) = AttemptQueue::new(&host.vault)
+        .claim_kind(
+            TRUSTED_CONTACT_NOTICE_ATTEMPT_KIND,
+            ClaimAttempt {
+                lease_owner: "notice-sender".into(),
+                now: host.vault.now_recorded_at(),
+            },
+        )
+        .unwrap()
+    else {
+        panic!("FIXTURE: the host leases the notice before the image");
+    };
+    let backups = oneiron::test_support::restore_tempdir();
+    let copy = restored_copy(&host, backups.path());
+    let attempt = AttemptQueue::new(&copy.vault).get(id).unwrap().unwrap();
+    assert_eq!(
+        attempt.state,
+        AttemptState::Leased,
+        "FIXTURE: the image kept the lease"
+    );
+    let mut sink = CountingSink::default();
+    let before = row(&copy.vault, id);
+    let committed = last_committed_txn_id(&copy.vault);
+
+    let refused = copy
+        .vault
+        .dispatch_trusted_contact_notice(&attempt, notice_request(&notice, owner), &mut sink)
+        .err()
+        .expect("the copy dispatches no notice before the join")
+        .to_string();
+    assert!(
+        refused.contains(NOT_JOINED),
+        "the refusal names the copy's state: {refused}"
+    );
+    assert_eq!(sink.calls, 0);
+    assert_eq!(
+        row(&copy.vault, id),
+        before,
+        "the kept lease stays as the image left it"
+    );
+    assert_eq!(last_committed_txn_id(&copy.vault), committed);
+
+    owner_joins(&host, &copy);
+    assert!(
+        copy.vault
+            .dispatch_trusted_contact_notice(&attempt, notice_request(&notice, owner), &mut sink)
+            .is_err(),
+        "the notice's consent is not live"
+    );
+    let after = AttemptQueue::new(&copy.vault).get(id).unwrap().unwrap();
+    assert_eq!(
+        after.state,
+        AttemptState::Failed,
+        "after the join the preflight fails the dead notice"
+    );
+    assert_eq!(sink.calls, 0);
 }
