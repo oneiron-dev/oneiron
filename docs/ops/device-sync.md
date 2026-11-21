@@ -82,10 +82,11 @@ primary = false
     `v2.slip.` prefix, then the 64-hex seed of the key the slip is bound to. This is the form the
     MCP bridge's `--credential-file` reads. The file must be mode 600; on macOS it must also carry
     no ACL entry (`chmod -N`), and on an NFSv4 mount no list entry may grant anyone but its owner
-    (`OWNER@`) read or write (`nfs4_getfacl`). On an SMB mount, or an NFS mount that reports no
-    NFSv4 list (NFSv3, or a server without list support), it is refused unless the host owner sets
+    (`OWNER@`) read or write (`nfs4_getfacl`). On an SMB mount, or an NFSv4 mount that reports no
+    list (a server without list support), it is refused unless the host owner sets
     `ONEIRON_CREDENTIAL_FILES_TRUST_NETWORK_FS_ACL=1`, which trusts every user the server's list
-    admits. `/ws` admits only a logged, holder-bound owner-grade slip, so it
+    admits. On an NFSv3 mount the mode decides, as on a local file system. `/ws` admits only a
+    logged, holder-bound owner-grade slip, so it
     refuses the scoped slips that `token agent` and `token read` mint.
 - `home_node_id`: the home's sync node id, which `oneiron whoami` prints on the home as
   `sync_node_id`. This is not its MACHINE id. Absent, the enrolled home's. Named (or enrolled),

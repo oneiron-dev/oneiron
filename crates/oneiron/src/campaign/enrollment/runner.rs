@@ -733,7 +733,7 @@ pub fn derive_enrollment_outbound_request(
         step.channel.clone(),
         outbound.verb.clone(),
         request_payload,
-        now_ms,
+        now_ms / 1_000,
     )))
 }
 

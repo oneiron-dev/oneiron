@@ -81,7 +81,7 @@ fn is_compaction_call(body: &Value) -> bool {
 
 /// The fake model's reply: a compaction call's summary over the span it
 /// names, with every pin, or else a long chat answer that fills the window.
-fn reply(body: &Value) -> String {
+pub(super) fn reply(body: &Value) -> String {
     if is_compaction_call(body) {
         let messages = body["messages"].as_array().cloned().unwrap_or_default();
         let input: Value = messages
@@ -113,7 +113,7 @@ fn reply(body: &Value) -> String {
 /// model at `base_url`, a 1500-token window with one hot turn, and whose
 /// self row reads `source` with the widest locality ceiling and names that
 /// served model as its cheap writer.
-async fn self_row_server(
+pub(super) async fn self_row_server(
     base_url: &str,
     source: oneiron::llm::SelfCompactionSource,
 ) -> (
@@ -220,7 +220,7 @@ fn seen_report(fake: &FakeLlm) -> Vec<String> {
 
 /// Each compaction call's span, pin count and input size, for a failure's
 /// report: which windows went out, and how often.
-fn compaction_calls_report(fake: &FakeLlm) -> Vec<String> {
+pub(super) fn compaction_calls_report(fake: &FakeLlm) -> Vec<String> {
     fake.seen()
         .iter()
         .filter(|seen| is_compaction_call(&seen.body))
@@ -274,7 +274,11 @@ fn stored_children(vault: &oneiron::Vault, conversation: &oneiron::EntityId) -> 
 /// The chat log the turns' own reader, the owner, reads now, as a self
 /// turn reads it before its user turn, the transcript under it, and the
 /// rows stored under the conversation, for a failure's report.
-fn log_report(server: &SyncServer, owner: oneiron::EntityId, conversation: &str) -> String {
+pub(super) fn log_report(
+    server: &SyncServer,
+    owner: oneiron::EntityId,
+    conversation: &str,
+) -> String {
     let Ok(id) = oneiron::EntityId::from_hex(conversation) else {
         return format!("conversation ref {conversation} names no id");
     };
@@ -323,7 +327,7 @@ fn log_report(server: &SyncServer, owner: oneiron::EntityId, conversation: &str)
 /// Opens the owner's sitting on this machine, then sends chat turns until a
 /// compaction call reaches the fake, at most six. Returns the owner and the
 /// next turn's number.
-async fn turns_until_compaction(
+pub(super) async fn turns_until_compaction(
     server: &Arc<SyncServer>,
     fake: &FakeLlm,
     conversation: &str,

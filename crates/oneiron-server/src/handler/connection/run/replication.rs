@@ -538,11 +538,7 @@ pub(super) async fn handle_connection(
                         // A federation UPDATE: not sent. A selector socket is
                         // sent no ready notice, so its next fetch asks again,
                         // judged under the grant as it is then.
-                        if let Some(key) = frame
-                            .get(1..)
-                            .and_then(|payload| protocol::decode_window_sync(payload).ok())
-                            .and_then(|(key, _, _)| oneiron::sync::WindowKey::try_new(key))
-                        {
+                        if let Some(key) = window_sync_key(&frame) {
                             ready_windows.retry(&key);
                         }
                         continue;
@@ -676,6 +672,24 @@ pub(super) async fn handle_connection(
                         ))
                 {
                     if let Some(key) = uninspectable {
+                        ready_windows.retry(&key);
+                    }
+                    transport.app_jti = None;
+                    continue;
+                }
+                // The rows a selector answer releases to another vault are
+                // recorded once it passed its last door and before its bytes
+                // leave, so the owner's later delete of each follows them
+                // (CROSS-VAULT-DELETE-SELECTOR-ANSWER-RELEASE). An answer
+                // whose record fails is not sent, and its window's ready
+                // request is owed again.
+                if let Some(release) = released_answer
+                    .as_mut()
+                    .and_then(crate::selector_release::ReleasedAnswer::take_peer_release)
+                    && let Err(error) = server.vault().record_peer_release(&release)
+                {
+                    tracing::warn!(%error, "selector answer not sent: its release record failed");
+                    if let Some(key) = window_sync_key(&data) {
                         ready_windows.retry(&key);
                     }
                     transport.app_jti = None;
@@ -933,4 +947,12 @@ pub(super) async fn handle_connection(
         peer_serve.close(server.vault());
     }
     tracing::info!(conn_id, "connection closed");
+}
+
+/// The window a window sync frame names, when it decodes as one.
+fn window_sync_key(frame: &[u8]) -> Option<oneiron::sync::WindowKey> {
+    frame
+        .get(1..)
+        .and_then(|payload| protocol::decode_window_sync(payload).ok())
+        .and_then(|(key, _, _)| oneiron::sync::WindowKey::try_new(key))
 }

@@ -12,11 +12,14 @@
 //!
 //! The extraction arms (`extraction.rs`) hold the derived memory's maker
 //! apart instead: each reads claims its own vault's Dreamer extracted from
-//! the raw turns, right after the correction and again at the freeze.
+//! the raw turns, right after the correction and again at the freeze. The
+//! discovery arms (`discovery.rs`) hold the stored memory fixed instead and
+//! vary how the reader finds it: an index first, or its own search only.
 //!
 //! `oneiron-bench beam action-bench <plan.json>`.
 
 mod arms;
+mod discovery;
 mod extraction;
 mod score;
 mod tasks;
@@ -32,6 +35,7 @@ use serde::{Deserialize, Serialize};
 
 use self::{
     arms::{ArmContext, HistoryVault, MemoryArm},
+    discovery::{Discovery, DiscoveryStep},
     extraction::{
         EXTRACTION_ARMS_MAPPING, ExtractionHost, ExtractionPin, ExtractionRow, ExtractionVault,
         Probe,
@@ -68,6 +72,11 @@ struct ActionBenchPlan {
     /// extraction arm runs, and refused without one.
     #[serde(default)]
     extraction: Option<ExtractionPin>,
+    /// The reader's system prompt for a discovery arm's first call, pinned
+    /// as `reader_prompt` is; required when a discovery arm runs, and
+    /// refused without one.
+    #[serde(default)]
+    discovery_prompt: Option<AnswerPromptPin>,
 }
 
 impl ActionBenchPlan {
@@ -94,6 +103,20 @@ impl ActionBenchPlan {
                 "an extraction arm needs the extraction pin, and the pin needs an extraction arm",
             ));
         }
+        if self.arms.iter().any(|arm| arm.discovers()) != self.discovery_prompt.is_some() {
+            return Err(refusal(
+                "a discovery arm needs the discovery prompt, and the prompt needs a discovery arm",
+            ));
+        }
+        if self
+            .discovery_prompt
+            .as_ref()
+            .is_some_and(|prompt| !prompt.matches_exact_text(&prompt.content))
+        {
+            return Err(refusal(
+                "discovery_prompt.sha256 is not the SHA-256 of its content",
+            ));
+        }
         Ok(())
     }
 }
@@ -117,6 +140,9 @@ pub(super) struct ActionBenchReport {
     /// updates).
     #[serde(skip_serializing_if = "Option::is_none")]
     extraction_arms_mapping: Option<&'static str>,
+    /// The discovery prompt's pin, when a discovery arm ran.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    discovery_prompt_sha256: Option<String>,
     histories: Vec<HistoryRow>,
     /// One row per history and extraction arm.
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -163,6 +189,10 @@ pub(super) struct ActionRow {
     reader: CostComponentReport,
     score: FollowUpScore,
     score_elapsed_us: u64,
+    /// A discovery arm's first call and the reads it chose; none for any
+    /// other arm.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    discovery: Option<DiscoveryStep>,
 }
 
 pub(super) fn run(path: &Path) -> BeamResult<ActionBenchReport> {
@@ -181,6 +211,7 @@ pub(super) fn run(path: &Path) -> BeamResult<ActionBenchReport> {
         arms,
         recall_limit,
         extraction,
+        discovery_prompt,
         ..
     } = plan;
     let extraction = extraction
@@ -194,6 +225,7 @@ pub(super) fn run(path: &Path) -> BeamResult<ActionBenchReport> {
         arms: &arms,
         recall_limit,
         extraction: extraction.as_ref(),
+        discovery_prompt: discovery_prompt.as_ref(),
     };
     run_with_session(&settings, &tasks, &session)
 }
@@ -204,6 +236,7 @@ struct RunSettings<'a> {
     arms: &'a [MemoryArm],
     recall_limit: usize,
     extraction: Option<&'a ExtractionHost>,
+    discovery_prompt: Option<&'a AnswerPromptPin>,
 }
 
 fn run_with_session(
@@ -214,6 +247,12 @@ fn run_with_session(
     let mut histories = Vec::new();
     let mut rows = Vec::new();
     let mut extraction = Vec::new();
+    let discovery_call = settings.discovery_prompt.map(|prompt| Discovery {
+        session,
+        reader: settings.reader,
+        prompt,
+        recall_limit: settings.recall_limit,
+    });
     // Every history's correcting turn, before any vault opens: an
     // extraction arm needs one, and a history without one fails the trace
     // check's world part.
@@ -240,7 +279,12 @@ fn run_with_session(
         for follow_up in tasks.follow_ups_of(&history.id) {
             let question = tasks::question(follow_up);
             for &arm in settings.arms.iter().filter(|arm| !arm.extracts()) {
-                let context = arms::context(&seeded.view(), arm, follow_up, settings.recall_limit)?;
+                let context = match discovery_call.as_ref().filter(|_| arm.discovers()) {
+                    Some(call) => {
+                        discovery::discover(call, &seeded.view(), arm, follow_up, &question)?
+                    }
+                    None => arms::context(&seeded.view(), arm, follow_up, settings.recall_limit)?,
+                };
                 rows.push(act(
                     settings, session, follow_up, &question, arm, None, context,
                 )?);
@@ -275,6 +319,9 @@ fn run_with_session(
         extraction_model: settings.extraction.map(|host| host.model().clone()),
         extraction_locality: settings.extraction.map(ExtractionHost::locality),
         extraction_arms_mapping: settings.extraction.map(|_| EXTRACTION_ARMS_MAPPING),
+        discovery_prompt_sha256: settings
+            .discovery_prompt
+            .map(|prompt| prompt.sha256.clone()),
         histories,
         extraction,
         rows,
@@ -373,6 +420,7 @@ fn act(
         reader,
         score,
         score_elapsed_us,
+        discovery: context.discovery,
     })
 }
 

@@ -9,6 +9,11 @@ crate::side_table::side_tables! {
     /// seat ref.
     CALENDAR_CONNECTOR_SEAT_STATE: VaultMeta b"calendar.connector-seat-state.v1:" Named
         [restore: live] [family: unclassified] [tier: canonical];
+    /// CAL-OUTBOX-ROW-OF-REMOVED-SEAT-HOLDS-PULLS: the owner's release of a calendar hold, one
+    /// mark per write-outbox row of an out-of-service seat, as the release read the row (its
+    /// carrier instance and last move). Key: outbox id (bytes32).
+    CALENDAR_CONNECTOR_RELEASE: VaultMeta b"calendar.connector-release.v1:" Named
+        [restore: live] [family: unclassified] [tier: canonical];
     CALENDAR_CONNECTOR_WRITE: VaultMeta b"calendar.connector-write.v1:" LegacyJson Authored [accepts: crate::calendar::calendar_connector_write_accepts_masked]
         [restore: content] [family: unclassified] [tier: canonical];
     /// An installed ICS feed's last public poll completion. The feed's configuration is the

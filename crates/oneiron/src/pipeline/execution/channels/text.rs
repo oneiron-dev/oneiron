@@ -11,7 +11,8 @@ use crate::pipeline::channels::{fusion_fetch_limit, truncate_widened_channel_res
 use crate::pipeline::execution::types::HydeAttemptOverrides;
 use crate::pipeline::filters::{
     allowed_set_withholds_row, claim_status_gate_allows, clamp_hides_row,
-    import_claim_gate_decisions_for_scores, pipeline_candidate_matches_filters_and_gate,
+    clamp_hides_row_or_word_sources, import_claim_gate_decisions_for_scores,
+    pipeline_candidate_matches_filters_and_gate,
 };
 use crate::pipeline::types::{
     ClaimStatusGateCache, EntityMetadataCache, PER_SCAN_CAP_FACTOR, PipelineFilterConfig,
@@ -684,7 +685,9 @@ impl PipelineBuilder<'_> {
             // prefix/widening probes remain reusable by fusion and projection.
             // Hidden rows that outrank a readable one would fill the window
             // and leave it only before the blend, cutting the readable row
-            // out of the run (REVIEW-9980 round 1), so the clamp asks first.
+            // out of the run (REVIEW-9980 round 1), so the clamp asks first:
+            // of the row, and of the rows its words came from
+            // (PACK-PRESELECT-CLAMP-ROW-ONLY-DISPLACES-READABLE-HIT).
             // Read best first, a hidden row among the first `limit` lane rows
             // it judges held a place the window gave it before, and the pack
             // counts it as it did then. The read scores with the audience's
@@ -708,7 +711,14 @@ impl PipelineBuilder<'_> {
                 {
                     deadline.checkpoint()?;
                 }
-                let hidden = clamp_hides_row(&self.read, rtxn, id, clamp, &mut clamp_metadata)?;
+                let hidden = clamp_hides_row_or_word_sources(
+                    self.vault,
+                    &self.read,
+                    rtxn,
+                    id,
+                    clamp,
+                    &mut clamp_metadata,
+                )?;
                 if hidden && places < limit {
                     withheld.push(*id);
                 }

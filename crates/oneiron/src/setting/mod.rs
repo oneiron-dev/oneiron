@@ -49,6 +49,7 @@ mod project;
 mod proposal;
 mod publish;
 mod read;
+pub(crate) mod restored;
 mod set;
 mod signed_act;
 pub(crate) mod tables;
@@ -106,6 +107,9 @@ pub(crate) use self::read::put_stored_bytes;
 pub use self::read::{Requested, SettingCatalogueEntry, SettingRowView, SettingView};
 pub(crate) use self::read::{
     SettingListFilter, SettingReadCaller, SettingReader, reader_reads_key_in_txn,
+};
+pub(crate) use self::restored::{
+    drop_install_rows_in_txn, live_install_rows_in, restore_drops_row,
 };
 pub(crate) use self::set::run_after_commit;
 pub use self::set::{EngineSetting, SetSetting, SetSettingOutcome, SettingCaller};

@@ -57,6 +57,7 @@ use oneiron_model::llm::{
 };
 
 mod conversation;
+mod judge_room;
 mod support;
 pub(crate) use conversation::{ConversationCheckDeclaration, declare_conversation_check_in_txn};
 pub use support::CompactionCheckDecisions;
@@ -247,6 +248,9 @@ pub struct CompactionCheckModel<'a> {
     pub role: ModelRole,
     /// The host's rubric: prompt data, never engine prose.
     pub rubric: &'a str,
+    /// The input the judge's model holds, as the host lends it: a judge input
+    /// past it settles unjudged (`span_past_judge_room`); `None` sends it whole.
+    pub window_tokens: Option<u64>,
     /// The host's decision path for the typed support verdict (FIX 8713);
     /// `None` before the host staffs one, when the judge's own verdict
     /// stands, recorded as untyped.
@@ -300,12 +304,6 @@ pub async fn run_compaction_check(
     let keyless = model.inference.selected_keyless();
     let paid = model.inference.selected_paid();
     let request = judge_request(&model, &declaration, &read, locality, keyless, paid)?;
-    let judging = match ask_judge(attempt, ctx, &model, request, declaration.writer).await? {
-        Ok(judging) => judging,
-        Err(parked) => return Ok(parked),
-    };
-    let judged = judgment(&judging.response, &declaration);
-    let diagnostic = judged.as_ref().map(|judged| judged.verdict);
     let (cited, state) = (declaration.cited(true), judge_input(&declaration, &read));
     let ask = support::Ask {
         kind: declaration.landing_kind(),
@@ -316,6 +314,18 @@ pub async fn run_compaction_check(
         keyless,
         paid,
     };
+    if let Some(settled) =
+        judge_room::exceeded(&model, &request, &ask, &declaration.evidence_revision)?
+    {
+        record(ctx.vault, attempt_id, &declaration, &settled, now)?;
+        return Ok(judge_room::completed_without_judge());
+    }
+    let judging = match ask_judge(attempt, ctx, &model, request, declaration.writer).await? {
+        Ok(judging) => judging,
+        Err(parked) => return Ok(parked),
+    };
+    let judged = judgment(&judging.response, &declaration);
+    let diagnostic = judged.as_ref().map(|judged| judged.verdict);
     let verdict = match support::verdict(attempt, ctx, &model, &judging, diagnostic, &ask).await? {
         Ok(verdict) => verdict,
         Err(parked) => return Ok(parked),

@@ -14,8 +14,9 @@ use crate::Vault;
 use crate::booking::CalendarRevision;
 use crate::booking::emergency_reschedule::lookup::{self, EFFECT, PENDING_EVENT};
 use crate::booking::emergency_reschedule::planning::{
-    EMERGENCY_ITEM_META_PREFIX, EmergencyItem, ITEM,
+    EMERGENCY_ITEM_META_PREFIX, EmergencyItem, ITEM, ReadoptedSend,
 };
+use crate::booking::emergency_reschedule::uncertain_send::{self, UNCERTAIN_SEND, owed_effects};
 use crate::booking::emergency_reschedule::{EmergencyLocalBasis, EmergencyPick, state};
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -46,13 +47,23 @@ struct CarriedItem {
     calendar_delivered: bool,
     apology_delivered: bool,
     picked: Option<PickFacts>,
-    /// The owed effects whose send ended uncertain on the old home: it may have reached the
-    /// booker, so the new home's send may repeat it (Engine ANSWER
-    /// BK-EMERGENCY-PENDING-ITEM-MOVE = A: the move names that case).
+    /// The effects whose send ended uncertain on the old home, or on a home before it, and that
+    /// no run has answered the owner for yet, whether a later home sent them again or they are
+    /// still owed (review round 1 of #10125): such a send may have reached the booker, so the
+    /// next one may repeat it (Engine ANSWER BK-EMERGENCY-PENDING-ITEM-MOVE = A: the move names
+    /// that case). The new home keeps them as the checkpoint's side row, and the owner's run
+    /// that delivers one says so (`super::super::uncertain_send`; ANSWER
+    /// BK-EMERGENCY-UNCERTAIN-SEND-RECEIPT = A).
     uncertain_lanes: Vec<String>,
     /// Whether the old home's pending-event lookup names this item: the one whose revision its
     /// fence holds (`state::pending_effect_fences_in`), which the new home's lookup names again.
     pending_pointer: bool,
+    /// The ledger generation of each owed effect whose local ledger identity is not its
+    /// idempotency key (`EmergencyItem::ledger_generations`), so every later home's ledger reads
+    /// and sends follow that identity. Not written when there is none, so a section that
+    /// carries none encodes as before and a section encoded before decodes.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    ledger_generations: BTreeMap<String, u32>,
 }
 
 /// A pick without the owner's address or the booker's.
@@ -67,11 +78,13 @@ struct PickFacts {
     content_hash: [u8; 32],
 }
 
-/// The checkpoint table and the pending-event and effect lookups its rows rebuild.
-const ITEM_DECLS: [&SideTableDecl; 3] = [
+/// The checkpoint table, the pending-event and effect lookups its rows rebuild, and the
+/// checkpoints' uncertain-send marks.
+const ITEM_DECLS: [&SideTableDecl; 4] = [
     &side_table::EMERGENCY_ITEM,
     &side_table::EMERGENCY_PENDING_EVENT_LOOKUP,
     &side_table::EMERGENCY_EFFECT_LOOKUP,
+    &side_table::EMERGENCY_UNCERTAIN_SEND,
 ];
 
 /// The longest one outbound transport call runs before its sink answers: the served sink's
@@ -84,36 +97,19 @@ const ITEM_DECLS: [&SideTableDecl; 3] = [
 /// keeps as the row's `updated_ms` (review round 2 of #10109).
 const MID_CALL_BOUND_SECS: u64 = 60;
 
-/// The effects `item` still owes, each as its lane and the content hash its intent is keyed by
-/// (`super::super::lookup`'s `index_item_in` spells the same three).
-fn owed_effects(item: &EmergencyItem) -> Vec<(&'static str, [u8; 32])> {
-    let mut owed = Vec::new();
-    if !item.calendar_delivered && item.plan.payload.is_some() {
-        owed.push(("calendar", item.plan.content_hash));
-    }
-    if !item.apology_delivered {
-        owed.push(("apology", item.plan.content_hash));
-    }
-    if let Some(picked) = item
-        .picked
-        .as_ref()
-        .filter(|picked| !picked.calendar_delivered)
-    {
-        owed.push(("pick", picked.content_hash));
-    }
-    owed
-}
-
-/// This node's outbound ledger row of `item`'s effect on `lane`, if any. A row that does not
-/// read as a ledger row is none: only a store failure is an error.
-fn ledger_record(
+/// This node's outbound ledger row of `item`'s effect on `lane` at ledger `generation`
+/// (`state::effect_generation_ref`), if any. A row that does not read as a ledger row is none:
+/// only a store failure is an error.
+fn ledger_record_at(
     vault: &Vault,
     txn: &RoTxn<'_>,
     item: &EmergencyItem,
     lane: &str,
     hash: [u8; 32],
+    generation: u32,
 ) -> Result<Option<IntentLedgerRecord>> {
-    let reference = state::effect_ref(item, lane, hash).map_err(booking_failure)?;
+    let reference =
+        state::effect_generation_ref(item, lane, hash, generation).map_err(booking_failure)?;
     let attempt = crate::outbound::outbound_dispatch_attempt_id(&reference)
         .map_err(|_| invalid("an emergency effect has no outbound attempt id"))?;
     match read_intent_for_attempt_in_txn(vault, txn, attempt, 0) {
@@ -121,6 +117,24 @@ fn ledger_record(
         Err(IntentLedgerError::Engine(error)) => Err(error),
         Err(_) => Ok(None),
     }
+}
+
+/// This node's outbound ledger rows of `item`'s effect on `lane` under every ledger generation
+/// the effect has had, the earliest first. A send an earlier generation made can still settle
+/// after this home took a fresh attempt (its remote task completes, FIX 7960), so the move's
+/// reads take each one (review round 1 of #10220).
+fn ledger_records(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    item: &EmergencyItem,
+    lane: &str,
+    hash: [u8; 32],
+) -> Result<Vec<IntentLedgerRecord>> {
+    let mut records = Vec::new();
+    for generation in 0..=state::ledger_generation(item, lane) {
+        records.extend(ledger_record_at(vault, txn, item, lane, hash, generation)?);
+    }
+    Ok(records)
 }
 
 /// Whether `record` is a send whose transport call may still be running at `now`, in this
@@ -134,54 +148,92 @@ fn mid_call(record: &IntentLedgerRecord, now: u64) -> bool {
         && now - record.updated_ms < MID_CALL_BOUND_SECS
 }
 
-/// The owed effects of `item` whose send ended uncertain in this node's outbound ledger: no
-/// longer mid-call, and neither delivered nor known undelivered. A send the provider accepted
-/// as a remote task (`IntentResolution::Deferred`, never sent again here) is one: its delivery
-/// is not known, and the new home's send may repeat it (review round 2 of #10109).
+/// Whether `record`'s send ended uncertain by `now`: no longer mid-call, and neither delivered
+/// nor known undelivered. A send the provider accepted as a remote task
+/// (`IntentResolution::Deferred`, never sent again here) is one: its delivery is not known, and
+/// the new home's send may repeat it (review round 2 of #10109).
+fn ended_uncertain(record: &IntentLedgerRecord, now: u64) -> bool {
+    !mid_call(record, now)
+        && matches!(
+            IntentResolution::from_record(record),
+            Ok(IntentResolution::Pending {
+                delivery: UnconfirmedDelivery::Unresolved,
+                ..
+            } | IntentResolution::Stopped {
+                delivery: UnconfirmedDelivery::Unresolved,
+                ..
+            } | IntentResolution::Deferred)
+        )
+}
+
+/// The owed effects of `item` whose send ended uncertain in this node's outbound ledger under
+/// any of the effect's ledger generations ([`ended_uncertain`]).
 fn uncertain_lanes(
     vault: &Vault,
     txn: &RoTxn<'_>,
     item: &EmergencyItem,
     now: u64,
-) -> Result<Vec<String>> {
-    let mut uncertain = Vec::new();
+) -> Result<BTreeSet<String>> {
+    let mut uncertain = BTreeSet::new();
     for (lane, hash) in owed_effects(item) {
-        let Some(record) = ledger_record(vault, txn, item, lane, hash)? else {
-            continue;
-        };
-        if !mid_call(&record, now)
-            && matches!(
-                IntentResolution::from_record(&record),
-                Ok(IntentResolution::Pending {
-                    delivery: UnconfirmedDelivery::Unresolved,
-                    ..
-                } | IntentResolution::Stopped {
-                    delivery: UnconfirmedDelivery::Unresolved,
-                    ..
-                } | IntentResolution::Deferred)
-            )
+        if ledger_records(vault, txn, item, lane, hash)?
+            .iter()
+            .any(|record| ended_uncertain(record, now))
         {
-            uncertain.push(lane.to_owned());
+            uncertain.insert(lane.to_owned());
         }
     }
     Ok(uncertain)
 }
 
-/// `item` with each owed effect this node's outbound ledger resolves as delivered marked
-/// delivered: the send went, and only its checkpoint write did not (an election that moved the
-/// home between the two refuses that write here), so the new home must not send it again.
+/// Marks each effect `item` owes whose send this node's own outbound ledger holds, undelivered,
+/// under the effect's current ledger identity: this home adopts the checkpoint back over that
+/// send (`EmergencyItem::readopted_sends`; FIX
+/// [BK-EMERGENCY-DEFERRED-SEND-STRANDED-ON-FORMER-HOME]). The owner's resume here decides from
+/// that row as it then reads whether the effect takes a fresh ledger attempt
+/// (`state::readopted_send_takes_fresh_attempt`; review round 2 of #10220): the row can settle
+/// after the move (its remote task completes or fails, FIX 7960), and its replay reads a send
+/// with no provider key and no outcome back before anything goes (FIX 9379).
+fn mark_readopted_sends(vault: &Vault, txn: &RoTxn<'_>, item: &mut EmergencyItem) -> Result<()> {
+    for (lane, hash) in owed_effects(item) {
+        let generation = state::ledger_generation(item, lane);
+        if ledger_record_at(vault, txn, item, lane, hash, generation)?.is_some_and(|record| {
+            !matches!(
+                IntentResolution::from_record(&record),
+                Ok(IntentResolution::Delivered)
+            )
+        }) {
+            item.readopted_sends.insert(
+                lane.to_owned(),
+                ReadoptedSend {
+                    generation,
+                    replayed: false,
+                },
+            );
+        }
+    }
+    Ok(())
+}
+
+/// `item` with each owed effect this node's outbound ledger resolves as delivered, under any of
+/// the effect's ledger generations, marked delivered: the send went, and only its checkpoint
+/// write did not (an election that moved the home between the two refuses that write here), or
+/// an earlier generation's remote task completed after this home took a fresh attempt (review
+/// round 1 of #10220). The new home must not send it again.
 fn with_ledger_deliveries(
     vault: &Vault,
     txn: &RoTxn<'_>,
     mut item: EmergencyItem,
 ) -> Result<EmergencyItem> {
     for (lane, hash) in owed_effects(&item) {
-        let delivered = ledger_record(vault, txn, &item, lane, hash)?.is_some_and(|record| {
-            matches!(
-                IntentResolution::from_record(&record),
-                Ok(IntentResolution::Delivered)
-            )
-        });
+        let delivered = ledger_records(vault, txn, &item, lane, hash)?
+            .iter()
+            .any(|record| {
+                matches!(
+                    IntentResolution::from_record(record),
+                    Ok(IntentResolution::Delivered)
+                )
+            });
         if !delivered {
             continue;
         }
@@ -196,6 +248,29 @@ fn with_ledger_deliveries(
         }
     }
     Ok(item)
+}
+
+/// The ids of this node's outbound ledger rows for the `lane` effect (`"calendar"`,
+/// `"apology"` or `"pick"`) of every emergency checkpoint it holds, under each ledger generation
+/// the effect has had, the earliest first: the test door
+/// `test_doors::booking_home_move::emergency_effect_ledger_rows` (review round 1 of #10220).
+#[cfg(oneiron_test_support)]
+pub(crate) fn effect_ledger_rows_for_doors(vault: &Vault, lane: &str) -> Result<Vec<[u8; 32]>> {
+    let txn = vault.store.custody_snapshot()?;
+    let mut rows = Vec::new();
+    for (_, item) in ITEM.scan(&vault.store, &txn)? {
+        let hash = match (lane, &item.picked) {
+            ("pick", Some(picked)) => picked.content_hash,
+            ("pick", None) => continue,
+            _ => item.plan.content_hash,
+        };
+        rows.extend(
+            ledger_records(vault, &txn, &item, lane, hash)?
+                .into_iter()
+                .map(|record| record.id),
+        );
+    }
+    Ok(rows)
 }
 
 impl HomeTable for EmergencyItemRows {
@@ -217,8 +292,9 @@ impl HomeTable for EmergencyItemRows {
                 continue;
             };
             for (lane, hash) in owed_effects(&item) {
-                if ledger_record(vault, txn, &item, lane, hash)?
-                    .is_some_and(|record| mid_call(&record, now))
+                if ledger_records(vault, txn, &item, lane, hash)?
+                    .iter()
+                    .any(|record| mid_call(record, now))
                 {
                     return Ok(false);
                 }
@@ -237,7 +313,11 @@ impl HomeTable for EmergencyItemRows {
         let mut actors = Vec::new();
         for (key, item) in ITEM.scan(&vault.store, txn)? {
             let item = with_ledger_deliveries(vault, txn, item)?;
-            let uncertain = uncertain_lanes(vault, txn, &item, now)?;
+            // This node's own uncertain sends, and the marks an earlier move carried here that no
+            // run here has answered the owner for since, delivered or not (review round 1 of
+            // #10125).
+            let mut uncertain = uncertain_lanes(vault, txn, &item, now)?;
+            uncertain.extend(uncertain_send::carried_lanes_in(vault, txn, &key, &item)?);
             let pending_pointer = PENDING_EVENT
                 .get(&vault.store, txn, &item.calendar.event_ref)?
                 .is_some_and(|target| target == full_key(EMERGENCY_ITEM_META_PREFIX, &key));
@@ -250,6 +330,9 @@ impl HomeTable for EmergencyItemRows {
                 calendar_delivered,
                 apology_delivered,
                 picked,
+                ledger_generations,
+                // This home's own: the next home reads its own ledger.
+                readopted_sends: _,
             } = item;
             let (plan, mut owner, mut booker) = split_plan(&key, plan)?;
             booker.actions = actions;
@@ -286,8 +369,9 @@ impl HomeTable for EmergencyItemRows {
                 calendar_delivered,
                 apology_delivered,
                 picked,
-                uncertain_lanes: uncertain,
+                uncertain_lanes: uncertain.into_iter().collect(),
                 pending_pointer,
+                ledger_generations,
             });
         }
         Ok(Partitioned {
@@ -297,11 +381,12 @@ impl HomeTable for EmergencyItemRows {
     }
 
     /// Lands each whole item as the module doc says and indexes its pending event and its
-    /// effects. On a node whose rows are history both lookups are rebuilt from the landed items
-    /// alone. Each EVENT's pending lookup names one landed item that still owes a delivery: the
-    /// one the old home's names, else the one owed at the highest revision. Landing order
-    /// never decides it, so an older owed item cannot take the fence from a later one (review
-    /// round 1 of #10109).
+    /// effects, each owed effect whose send this node's own ledger holds undelivered marked as a
+    /// readopted send ([`mark_readopted_sends`]). On a node whose
+    /// rows are history both lookups are rebuilt from the landed items alone. Each EVENT's
+    /// pending lookup names one landed item that still owes a delivery: the one the old home's
+    /// names, else the one owed at the highest revision. Landing order never decides it, so an
+    /// older owed item cannot take the fence from a later one (review round 1 of #10109).
     fn adopt(
         vault: &Vault,
         txn: &mut RwTxn<'_>,
@@ -341,8 +426,8 @@ impl HomeTable for EmergencyItemRows {
                 picked,
                 uncertain_lanes,
                 pending_pointer,
+                ledger_generations,
             } = carried;
-            uncertain += uncertain_lanes.len();
             let plan = join_plan(plan, &owner, &booker)?;
             check_key(&key, &plan.request, calendar.event_ref)?;
             let picked = match (picked, &owner.pick_organizer, &booker.pick_recipient) {
@@ -360,7 +445,7 @@ impl HomeTable for EmergencyItemRows {
                     return Err(invalid("a carried emergency pick and its parties disagree"));
                 }
             };
-            let item = EmergencyItem {
+            let mut item = EmergencyItem {
                 plan,
                 calendar,
                 basis,
@@ -369,7 +454,10 @@ impl HomeTable for EmergencyItemRows {
                 calendar_delivered,
                 apology_delivered,
                 picked,
+                ledger_generations,
+                readopted_sends: BTreeMap::new(),
             };
+            mark_readopted_sends(vault, txn, &mut item)?;
             match ITEM.get_lenient(&vault.store, txn, &key)? {
                 Some(here) if here == item => {}
                 Some(_) if !history => return Ok(TableAdopt::Conflict),
@@ -377,6 +465,7 @@ impl HomeTable for EmergencyItemRows {
             }
             let item_key = full_key(EMERGENCY_ITEM_META_PREFIX, &key);
             lookup::index_item_in(vault, txn, &item, &item_key).map_err(booking_failure)?;
+            uncertain += uncertain_send::land_in(vault, txn, &key, &item, uncertain_lanes)?;
             if let Some(revision) = lookup::pending_revision(&item) {
                 let rank = (pending_pointer, revision.sequence);
                 let event = item.calendar.event_ref;
@@ -393,6 +482,11 @@ impl HomeTable for EmergencyItemRows {
             for key in ITEM.scan_keys(&vault.store, txn, &[])? {
                 if !landed.contains(&key) {
                     ITEM.delete(&vault.store, txn, &key)?;
+                }
+            }
+            for key in UNCERTAIN_SEND.scan_keys(&vault.store, txn, &[])? {
+                if !landed.contains(&key) {
+                    UNCERTAIN_SEND.delete(&vault.store, txn, &key)?;
                 }
             }
         }

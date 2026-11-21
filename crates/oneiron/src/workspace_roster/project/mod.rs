@@ -1042,18 +1042,17 @@ impl Vault {
                 None,
                 signed_at,
             )?;
-            self.batch_in()
-                .put_engine_history(
-                    &id,
-                    self.project_type_byte()?,
-                    TimeRange {
-                        start: now,
-                        end: now,
-                    },
-                    now,
-                    &encode(&body)?,
-                )
-                .apply(txn)?;
+            self.land_owner_project_birth_in_txn(
+                txn,
+                id,
+                self.project_type_byte()?,
+                TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+                &body,
+            )?;
             crate::setting::write_born_rows_in_txn(self, txn, id)?;
             self.require_owner_head_in_txn(txn, id, &body)?;
             Ok(())
@@ -1246,6 +1245,13 @@ impl Vault {
                 claims_scope_ref: effective.claims_scope_ref,
                 ..room
             }))
+    }
+    /// Whether `room` is a project room: it has an owner in the project-room
+    /// index. A room call keeps nothing in one yet (UNBUILT-02 PR 4), the
+    /// same check its witness makes.
+    pub fn room_is_project_room(&self, room: EntityId) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        Ok(ROOM_PROJECT.contains(&self.store, &txn, &room)?)
     }
     /// Owner view of stored project rows the fold hides, each with its reason.
     /// They stay in storage and become visible when their authorization does.

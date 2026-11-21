@@ -776,7 +776,7 @@ impl<E> PersonAboutExecutor<'_, E> {
                     return spent_or_deferred(error, ctx, &charges);
                 }
                 Err(other) => {
-                    return Ok(charges.end_on_step_error(&other.to_string(), &other));
+                    return Ok(charges.end_on_step_error_with_spend(&other.to_string(), &other));
                 }
             };
             let text = match about_line(&response) {

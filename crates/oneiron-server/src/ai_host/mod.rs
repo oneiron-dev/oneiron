@@ -52,6 +52,8 @@ mod contribution;
 mod drafter;
 mod dreamer;
 pub(crate) use dreamer::DreamerControl;
+#[cfg(oneiron_test_support)]
+pub(crate) use dreamer::sourced_route_door;
 mod dreamer_thing;
 mod eval_authoring;
 pub(crate) use eval_authoring::execute as execute_eval_authoring;

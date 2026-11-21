@@ -60,19 +60,21 @@ pub fn witness_extraction_turns(vault: &Vault, words: &[&str]) -> Result<Extract
     })
 }
 
-/// Disables the Dreamer prefilter screen, so the production partition planner
-/// keeps every planned turn. The policy is the setting `dreamer.prefilter`;
-/// the door stores it as the engine's own value row, which needs no owner
-/// proof and no check-in.
+/// Stores `policy` as the Dreamer prefilter's screening policy (the setting
+/// `dreamer.prefilter`), so the production partition planner screens under
+/// it. The door stores it as the engine's own value row, which needs no
+/// owner proof and no check-in.
 ///
 /// # Errors
 ///
-/// The vault's, a policy that does not encode, or a change that would wait.
-pub fn disable_extraction_prefilter(vault: &Vault) -> Result<()> {
+/// The vault's, a policy that does not encode or is out of range, or a
+/// change that would wait.
+pub fn set_extraction_prefilter(
+    vault: &Vault,
+    policy: &crate::dreamer_prefilter::PrefilterConfig,
+) -> Result<()> {
     use crate::setting::{EngineSetting, SetSetting, SetSettingOutcome, SettingCaller};
-    let mut config = vault.prefilter_config()?;
-    config.enabled = false;
-    let value = serde_json::to_value(config)
+    let value = serde_json::to_value(policy)
         .map_err(|error| Error::InvalidConfig(format!("the prefilter policy: {error}")))?;
     let request = SetSetting::vault_value("dreamer.prefilter", value);
     match vault.set_setting(SettingCaller::Engine(EngineSetting::own()), request)? {
@@ -81,6 +83,18 @@ pub fn disable_extraction_prefilter(vault: &Vault) -> Result<()> {
             "the prefilter change waits on a check-in".into(),
         )),
     }
+}
+
+/// Disables the Dreamer prefilter screen, so the production partition planner
+/// keeps every planned turn ([`set_extraction_prefilter`]).
+///
+/// # Errors
+///
+/// As [`set_extraction_prefilter`].
+pub fn disable_extraction_prefilter(vault: &Vault) -> Result<()> {
+    let mut policy = vault.prefilter_config()?;
+    policy.enabled = false;
+    set_extraction_prefilter(vault, &policy)
 }
 
 /// Enqueues one Meso partition attempt over `turns` through the production

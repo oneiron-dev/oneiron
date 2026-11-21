@@ -164,15 +164,9 @@ const OUTSIDE: &[Pin] = &[
     ),
     pin(
         "crates/oneiron-server/src/models/run_backend.rs",
-        "generate",
-        "Box::pin(self.ladder.generate(&self.run, request, None))",
-        "run backend forwarding to the ladder",
-    ),
-    pin(
-        "crates/oneiron-server/src/models/run_backend.rs",
-        "generate",
-        "self.ladder.generate(&run, request, None).await",
-        "run backend: a sourced call forwarding to the ladder on its rows",
+        "generate_while",
+        ".generate_while(run, request, None, &may_send)",
+        "run backend forwarding to the ladder, on its rows when sourced, asking its source fence",
     ),
     pin(
         "crates/oneiron-server/src/models/run_backend.rs",
@@ -759,7 +753,7 @@ const OUTSIDE: &[Pin] = &[
     pin(
         "crates/oneiron/src/dreamer_consolidation/follower_attempt/mod.rs",
         "call_as_step_checked",
-        "match call_as_step_checked(&step, leg.call.backend, self.guard, request, &check).await {",
+        "match call_as_step_checked(&step, call_backend.get(), self.guard, request, &check).await {",
         "follower keyframe fold: one partial summary over a group of parts (generation)",
     ),
     pin(
