@@ -53,8 +53,10 @@ use oneiron::sync::replay::{ReplicatedEntity, replay_entity};
 use oneiron::world_keys::RecoveryRootSeed;
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_authority::authority::{
-    HomeCandidacy, PolicyRevision, WorldKeyId, WorldKeyWrapsRecord, WrapRecipient,
+    HomeCandidacy, PolicyRevision, WORLD_KEY_EPOCH, WORLD_KEY_PAYLOAD_LEN, WorldKeyId,
+    WorldKeyWrapsRecord, WrapRecipient,
 };
+use oneiron_crypto::{HybridSecretKey, Purpose, SealKey, SealParams, SuiteId};
 
 /// The seed of the joining machine's machine key.
 const JOINING_SEED: u8 = 68;
@@ -104,6 +106,39 @@ fn signed(
 
 fn hash(row: &AuthorityLogEntry) -> AuthorityEntryHash {
     authority_entry_hash(row).expect("a row hashes")
+}
+
+/// A world key wrap envelope for `to` whose header is made for exactly `key`
+/// and `vault_id`, around a blank payload of the world key's length: the
+/// header is what a `WorldKeyWraps` row's shape checks, and neither the store
+/// door nor the fold opens the envelope. Sealed to a key of its own, since the
+/// fixture machine's encryption key is placeholder bytes.
+fn world_key_wrap_envelope(
+    vault_id: AuthorityVaultId,
+    key: WorldKeyId,
+    to: &WrapRecipient,
+) -> Vec<u8> {
+    let sealer =
+        HybridSecretKey::from_seed(&[0x7A; 32], b"stranger_adopted_tail_gap/world-key-wrap")
+            .expect("setup: the wrap key derives");
+    oneiron_crypto::seal(
+        &SealParams {
+            suite: SuiteId::XCHACHA20POLY1305_V1,
+            purpose: Purpose::WorldDek,
+            epoch: WORLD_KEY_EPOCH,
+            key_id: &key.envelope_key_id(),
+            recipient: &to.envelope_recipient(),
+            vault_id: &vault_id,
+        },
+        SealKey::Hybrid {
+            recipient: sealer.public_key(),
+            kem_suite: SuiteId::KEM_X25519_MLKEM1024_V1,
+        },
+        &[0; WORLD_KEY_PAYLOAD_LEN],
+        &mut getrandom::SysRng,
+    )
+    .expect("setup: W's wrap seals")
+    .to_bytes()
 }
 
 /// The stranger root's owner person, distinct from the vault's owner.
@@ -687,17 +722,21 @@ fn adopted_dropped_row_with_scope_fault_keeps_invalid_entry() {
     let world = EntityId::from_bytes([0x77; 16]).expect("setup: W's world id parses");
     let machine = request.machine;
     let recipient = WrapRecipient::Machine(machine);
+    let key = WorldKeyId {
+        world,
+        generation: 1,
+        mint: [0x78; 16],
+    };
+    // A wrap envelope whose header names W's key, vault and recipient: W's
+    // shape refuses any other bytes ("body failed validation").
+    let envelope = world_key_wrap_envelope(vault_id, key, &recipient);
     let record = WorldKeyWrapsRecord {
-        key: WorldKeyId {
-            world,
-            generation: 1,
-            mint: [0x78; 16],
-        },
+        key,
         commitment: [0x79; 32],
         owner: owner_person,
         policy: PolicyRevision([0; 32]),
         machine,
-        wraps: vec![(recipient.clone(), vec![0xAA; 32])],
+        wraps: vec![(recipient.clone(), envelope)],
         request: None,
         permitted: vec![recipient],
     };
