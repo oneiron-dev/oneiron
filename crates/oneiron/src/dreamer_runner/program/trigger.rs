@@ -3,9 +3,23 @@
 //! wake, as a landed turn does, carrying the authority its arming sealed; the one drain admits it
 //! and judges that authority again. No loop of its own runs: an actor's timer programs are one
 //! armed job of the schedule's runner, due at the earliest of their due times (DESIGN
-//! 15-setting-primitive, stage 5b-3), run where due watcher ticks are (each fact-hook runner pass
-//! and each housekeeping pass, on the node that releases ticks); feed programs are released beside
-//! them, and idle programs where the host's idle check asks for the idle curator.
+//! 15-setting-primitive, stage 5b-3), run beside the due watcher ticks (each fact-hook runner pass
+//! and each housekeeping pass); feed programs are released beside them, and idle programs where
+//! the host's idle check asks for the idle curator.
+//!
+//! Each of the three is released on the machine that holds its arming, whatever the vault's
+//! elected home is, and with none elected (FIX TURNPROGRAM-NON-TURN-ARMING-STAYS-ON-ITS-MACHINE,
+//! ruled B). The sync window carries such an arming to no other machine
+//! (`replica::arming_rides`) and its wake is admitted where it was recorded, so among a vault's
+//! linked machines one alone releases an occurrence; the watcher ticks' rule, one releasing node
+//! for a TASK every device holds, is not theirs. The program runs only while that machine runs.
+//! A vault copy restored or activated beside its source holds the source's armings as its own
+//! (their tables restore as the live vault holds them), and nothing dedupes an occurrence
+//! between two such copies. So the write that makes a copy beside its source pauses each of
+//! them in the copy ([`pause_occurrence_armings_in_txn`], FIX
+//! TURNPROGRAM-OCCURRENCE-ARMINGS-LIVE-ON-A-VAULT-COPY): a paused arming stands, and no release
+//! below records a wake for it or moves its due time or its feed scan. A restore that takes its
+//! source's place pauses nothing.
 
 use crate::Vault;
 use crate::dreamer_wake::WakeIdleState;
@@ -13,6 +27,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::schedule::{ArmBy, Armed, JobPass, JobResult, JobSpec, Late, Ran, Trigger, When};
 use crate::side_table::{self, Named, SideTable};
+use crate::store::Store;
 
 use super::types::{
     LandedTurnRef, OccurrenceKind, ProgramTrigger, TurnProgramArming, TurnProgramWake,
@@ -27,7 +42,9 @@ const TIMER_RETRY_FIRST_SECS: u64 = 1;
 /// An actor's timer programs: one row about the actor, armed at the earliest due time of its
 /// timer armings, re-armed in the write that arms, moves or disarms one, and disarmed when it has
 /// none left. One run records the wake each of its timers due by then owes and moves each to its
-/// next due time, in one write. Only the node that releases the vault's ticks runs it.
+/// next due time, in one write. Every machine runs its own row, the elected home or not: the row
+/// is about the armings this machine holds, and the sync window carries a timer's arming to no
+/// other. It wakes its host, so a stopped machine wakes for the next due time of its own timers.
 pub(crate) static PROGRAM_TIMER_JOB: JobSpec = JobSpec {
     code: "dreamer_runner.program_timer",
     when: When::PerArming,
@@ -38,7 +55,7 @@ pub(crate) static PROGRAM_TIMER_JOB: JobSpec = JobSpec {
     wakes_host: true,
     at_open: false,
     once_per_pass: true,
-    runs_here: crate::runtime_hooks::releases_ticks_here,
+    runs_here: |_vault, _txn| Ok(true),
     drive: crate::schedule::Drive::Runner,
     run: run_program_timer,
 };
@@ -186,6 +203,7 @@ pub(super) fn trigger_rows_for_actor(
 /// write, or disarms it when none is left; answers that time. The armings are read from the arming
 /// table, but the one registered as `registration`, whose next due time is `next_due` (it is being
 /// armed, moved or disarmed in this write), so the caller may write its arming before or after.
+/// A paused timer is not counted: the row is never due for a timer no run would release.
 fn arm_actor_timers_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -196,7 +214,10 @@ fn arm_actor_timers_in_txn(
     let mut earliest = next_due;
     for row in ARM.iter_from(vault, &*txn, actor.as_bytes())? {
         let ((_, armed), arming) = row?;
-        if Some(armed) == registration || !matches!(arming.trigger, ProgramTrigger::Timer { .. }) {
+        if Some(armed) == registration
+            || arming.paused_at.is_some()
+            || !matches!(arming.trigger, ProgramTrigger::Timer { .. })
+        {
             continue;
         }
         earliest = match (earliest, arming.next_due) {
@@ -258,17 +279,19 @@ fn record_occurrence_in_txn(
 
 /// A timer's next due time after it woke at `due_at`, read at `now`: `None` for a timer that
 /// wakes once; past `now` otherwise, so due times missed while no node released wake it once.
-fn next_due_after(due_at: u64, every_secs: u64, now: u64) -> Result<Option<u64>> {
+/// A repeat so long that the next due time fits no `u64` is `None` too: the timer woke at
+/// `due_at` and wakes no more. It is never an error (review #10113): the release of an actor's
+/// due timers is one write, and failing it there took back the wakes of the actor's other due
+/// timers and left its row failing at every retry.
+fn next_due_after(due_at: u64, every_secs: u64, now: u64) -> Option<u64> {
     if every_secs == 0 {
-        return Ok(None);
+        return None;
     }
     let missed = now.saturating_sub(due_at) / every_secs;
     missed
         .checked_add(1)
         .and_then(|steps| steps.checked_mul(every_secs))
         .and_then(|step| due_at.checked_add(step))
-        .map(Some)
-        .ok_or(Error::ArithmeticOverflow("turn program timer due time"))
 }
 
 /// The keys of the programs indexed under `kind`, read in `txn`.
@@ -321,6 +344,9 @@ impl Vault {
                 let ProgramTrigger::Idle { quiet_secs } = arming.trigger else {
                     continue;
                 };
+                if arming.paused_at.is_some() {
+                    continue;
+                }
                 if now < idle.last_inbound_at.saturating_add(quiet_secs) {
                     continue;
                 }
@@ -340,11 +366,11 @@ impl Vault {
     }
 
     /// Records the wake each feed program owes while its subscription holds an entry its own lane
-    /// shows (untangle slice 6.8c, lead call K), on the node that releases due watcher ticks:
-    /// once per first entry it can see, so a feed that shows it nothing new wakes it once, and a
-    /// change its lane does not show never wakes it. The wake is judged under the authority its
-    /// arming sealed, as the program's own reads are. Answers how many wakes it recorded;
-    /// [`Vault::wake_turn_programs`] admits them.
+    /// shows (untangle slice 6.8c, lead call K), on the machine that holds its arming, the
+    /// elected home or not: once per first entry it can see, so a feed that shows it nothing new
+    /// wakes it once, and a change its lane does not show never wakes it. The wake is judged
+    /// under the authority its arming sealed, as the program's own reads are. Answers how many
+    /// wakes it recorded; [`Vault::wake_turn_programs`] admits them.
     ///
     /// # Errors
     ///
@@ -352,9 +378,6 @@ impl Vault {
     pub fn release_feed_program_wakes(&self, now: u64) -> Result<usize> {
         let armed = {
             let txn = self.store.env.read_txn()?;
-            if !crate::runtime_hooks::releases_ticks_here(self, &txn)? {
-                return Ok(0);
-            }
             let mut armed = Vec::new();
             for (actor, registration) in indexed_in_txn(self, &txn, OccurrenceKind::Feed)? {
                 let Some(arming) = ARM.get(self, &txn, &(actor, registration))? else {
@@ -364,6 +387,10 @@ impl Vault {
                 let ProgramTrigger::Feed { subscription } = arming.trigger else {
                     continue;
                 };
+                // A paused program is not scanned: its scan position stays where it stood.
+                if arming.paused_at.is_some() {
+                    continue;
+                }
                 let key = match &arming.sealed {
                     Some(authority) => authority.reader_key_in_txn(self, &txn)?,
                     None => None,
@@ -413,6 +440,10 @@ impl Vault {
                     TRIGGER.delete(self, txn, &key)?;
                     continue;
                 };
+                // The row as this write reads it decides: a paused program stores no scan.
+                if arming.paused_at.is_some() {
+                    continue;
+                }
                 // A program whose authority no longer stands, or whose lane is shown nothing new,
                 // owes nothing; a subscription gone since arming is refused at admission.
                 let Some((mark, feed_scan)) = scanned else {
@@ -458,8 +489,9 @@ fn run_program_timer(vault: &Vault, armed: &Armed, _pass: &JobPass<'_>) -> Resul
 /// Records the wake each timer program of `actor` due at or before `now` owes (untangle slice
 /// 6.8c), moves each to its next due time and re-arms the actor's timer row, in the caller's write.
 /// One due time wakes a program once: its arming moves past it in the write that records it, and a
-/// wake owed or admitted already is not recorded again. Answers the actor's earliest next due
-/// time. [`Vault::wake_turn_programs`] admits the wakes, as it admits a turn's.
+/// wake owed or admitted already is not recorded again. A paused timer is passed over whole: it
+/// keeps its due time. Answers the actor's earliest next due time.
+/// [`Vault::wake_turn_programs`] admits the wakes, as it admits a turn's.
 fn release_actor_timers_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -472,6 +504,7 @@ fn release_actor_timers_in_txn(
         if let (ProgramTrigger::Timer { every_secs, .. }, Some(due_at)) =
             (arming.trigger, arming.next_due)
             && due_at <= now
+            && arming.paused_at.is_none()
         {
             due.push((registration, arming, every_secs, due_at));
         }
@@ -485,10 +518,52 @@ fn release_actor_timers_in_txn(
             &due_at.to_be_bytes(),
             due_at,
         )?;
-        arming.next_due = next_due_after(due_at, every_secs, now)?;
+        arming.next_due = next_due_after(due_at, every_secs, now);
         ARM.put(vault, txn, &(actor, registration), &arming)?;
     }
     arm_actor_timers_in_txn(vault, txn, actor, None, None)
+}
+
+/// Pauses every arming of `store` that a turn does not wake (a timer, a feed, an idle stretch),
+/// at `at`, in the write that makes the store a copy served beside its source: the landing of a
+/// restore beside (`recovery::checkpoint`, its forked custody) and the activation of an archived
+/// vault as a side vault (FIX TURNPROGRAM-OCCURRENCE-ARMINGS-LIVE-ON-A-VAULT-COPY, lead ruling
+/// 21 Nov). The source keeps releasing its own; the copy holds each arming as it stood, with its
+/// due time and feed scan, and releases nothing for it. The timer row of each actor it pauses a
+/// timer of goes in the same write: every timer that actor holds is paused now, and the row is
+/// armed over unpaused timers only ([`arm_actor_timers_in_txn`]). An arming paused already
+/// keeps the time it was paused at; a row that does not decode is left as it is and fails
+/// nothing here, since no release reads it either. Answers how many it paused.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn pause_occurrence_armings_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    at: u64,
+) -> Result<usize> {
+    let mut standing = Vec::new();
+    for row in ARM.iter_from(store, &*txn, &[])? {
+        let Ok((key, arming)) = row else {
+            continue;
+        };
+        if !arming.trigger.is_turn() && arming.paused_at.is_none() {
+            standing.push((key, arming));
+        }
+    }
+    let mut timer_actors = std::collections::BTreeSet::new();
+    for ((actor, registration), arming) in &mut standing {
+        arming.paused_at = Some(at);
+        ARM.put(store, txn, &(*actor, *registration), arming)?;
+        if matches!(arming.trigger, ProgramTrigger::Timer { .. }) {
+            timer_actors.insert(*actor);
+        }
+    }
+    for actor in timer_actors {
+        crate::schedule::disarm_in_txn(store, txn, PROGRAM_TIMER_JOB.code, Some(actor))?;
+    }
+    Ok(standing.len())
 }
 
 /// The release step each fact-hook runner pass and each housekeeping pass takes after the due

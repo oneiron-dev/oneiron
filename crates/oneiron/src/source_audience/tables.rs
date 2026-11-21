@@ -49,6 +49,11 @@ crate::side_table::side_tables! {
     /// backfill clears them once it has raised every row. Key: id16(row).
     SOURCE_AUDIENCE_FLOOR_RAISED: VaultMeta b"source_audience:floor_raised:v1:" Named
         [restore: not_imaged] [family: not_imaged] [tier: derived];
+    /// What a row whose floor waits waits on, by row (READ-LINEAGE L1; #10108 reviews): the
+    /// marks of SOURCE_AUDIENCE_FLOOR_AWAITED, so a raise takes every mark the row no longer
+    /// waits on. Key: id16(waiting row) + id16(awaited).
+    SOURCE_AUDIENCE_FLOOR_WAITS: VaultMeta b"source_audience:floor_waits:v1:" Named
+        [restore: not_imaged] [family: not_imaged] [tier: derived];
     /// A row this vault reads to no one meanwhile (FIX 12559 follow-up): its carried binding
     /// waits for its policy, or the vault it came from withheld it after it travelled. Key:
     /// id16(row).

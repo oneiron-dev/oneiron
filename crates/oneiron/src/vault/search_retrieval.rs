@@ -190,6 +190,7 @@ impl Vault {
     /// that scored them; the caller still admits each hit again in a fresh
     /// read. `dispatch_attempt` is the leased attempt its telemetry row
     /// names, as [`Self::search_text_observed_for_attempt`] records it.
+    /// Unlike [`Self::search_text_observed`], it blends no recency.
     pub(crate) fn search_text_scoped_observed(
         &self,
         lane: &crate::claim::ScopedRead<'_>,
@@ -198,28 +199,74 @@ impl Vault {
         observe: impl FnOnce(&heed::RoTxn<'_>, &[ScoredEntity]),
         dispatch_attempt: Option<AttemptId>,
     ) -> Result<Vec<ScoredEntity>> {
+        let plan = lane.recall_plan()?;
+        let scores = self
+            .search_text_scoped_scored(lane, &plan, query, limit, None, observe)
+            .map(|results| {
+                results.map_or_else(Vec::new, |results| {
+                    self.text_search_telemetry(results, limit, dispatch_attempt)
+                        .value
+                })
+            });
+        lane.end_recall_plan()?;
+        scores
+    }
+
+    /// A recall's seed lookup on `lane` under `plan`, the recall plan its
+    /// caller holds open (its principal retrieval goes on to use it): the
+    /// scan neither opens nor ends one. It blends the default recency, as
+    /// the direct keyword search it stands in for does
+    /// ([`Self::search_text`], FIX 7781), so a fresh match keeps its seed
+    /// place among equal lexical matches.
+    pub(crate) fn search_text_scoped_planned(
+        &self,
+        lane: &crate::claim::ScopedRead<'_>,
+        plan: &crate::claim::SearchPlan,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<ScoredEntity>> {
+        let recency = crate::config::bm25::Bm25RecencyConfig::table_default(
+            self.store.clock.peek_recorded_at(),
+        );
+        let results =
+            self.search_text_scoped_scored(lane, plan, query, limit, Some(recency), |_, _| {})?;
+        Ok(results.map_or_else(Vec::new, |results| {
+            self.text_search_telemetry(results, limit, None).value
+        }))
+    }
+
+    /// One scoped scan on `lane` under `plan`, blending `recency` when the
+    /// caller asks one, with `observe` run over its hits in the read that
+    /// scored them; `None` when the plan reads nothing. Each posting is a
+    /// candidate only as [`crate::claim::ScopedRead::scan_candidates_in`]
+    /// admits it, and its words count in no statistic when the lane keeps it
+    /// with no count ([`crate::claim::ScopedRead::withheld_row_test_in`]).
+    fn search_text_scoped_scored(
+        &self,
+        lane: &crate::claim::ScopedRead<'_>,
+        plan: &crate::claim::SearchPlan,
+        query: &str,
+        limit: usize,
+        recency: Option<crate::config::bm25::Bm25RecencyConfig>,
+        observe: impl FnOnce(&heed::RoTxn<'_>, &[ScoredEntity]),
+    ) -> Result<Option<TimedSearch>> {
         let config = crate::config::Bm25RankProfile::default().to_bm25_config()?;
-        let crate::claim::SearchPlan {
-            filter,
-            candidates,
-            policy,
-        } = lane.recall_plan()?;
         // A key that reads nothing by itself still searches the rows its own
         // live Grants read (FIX 7528).
-        if candidates.deny_all {
-            lane.end_recall_plan()?;
-            return Ok(Vec::new());
+        if plan.candidates.deny_all {
+            return Ok(None);
         }
         let started_at = self.store.clock.now_recorded_at();
         let started = Instant::now();
         // The count this search serves, asked before the read opens. Best
         // effort: the search serves its rows either way.
         let _ = self.measure_limit(EngineLimit::RequestedResultRows, limit as u64);
-        let scores = (|| {
+        // The read ends before the telemetry row is written.
+        let scores = {
             let txn = self.store.env.read_txn()?;
-            let admit = lane.recall_candidates_in(&txn, &policy, &filter, None);
+            let admit = lane.scan_candidates_in(&txn, &plan.policy, &plan.filter);
             let mut admits = |id: &crate::EntityId| admit(id);
-            let mut withheld = lane.world_withheld_row_test_in(&txn)?;
+            let mut withheld = lane.withheld_row_test_in(&txn)?;
             let scores = self.text_scoped_in_txn(
                 &self.store,
                 &txn,
@@ -230,24 +277,20 @@ impl Vault {
                     filter_all: true,
                     matches_scope: &mut admits,
                     private_note_ids: None,
-                    recency: None,
-                    hidden_row: withheld.as_deref_mut().map(|withheld| {
-                        withheld as &mut dyn FnMut(&crate::EntityId) -> Result<bool>
-                    }),
+                    recency,
+                    hidden_row: Some(
+                        &mut *withheld as &mut dyn FnMut(&crate::EntityId) -> Result<bool>,
+                    ),
                 },
             )?;
             observe(&txn, scores.as_slice());
-            Ok::<_, Error>(scores)
-        })();
-        lane.end_recall_plan()?;
-        let results = TimedSearch {
-            scores: scores?,
+            scores
+        };
+        Ok(Some(TimedSearch {
+            scores,
             started_at,
             started,
-        };
-        Ok(self
-            .text_search_telemetry(results, limit, dispatch_attempt)
-            .value)
+        }))
     }
 
     /// One BM25 search under the contract-default rank profile, `observe`

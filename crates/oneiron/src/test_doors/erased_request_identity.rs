@@ -348,6 +348,33 @@ pub fn custody_handle(vault: &Vault, record: EntityId) -> Result<Option<String>>
     )
 }
 
+/// Writes `value` as the custody record `record`'s value at the generation
+/// it holds, as the owner's re-entry of a found key's kept value writes it
+/// (`Vault::reenter_found_key_value`): custody keeps the value it held and
+/// takes `value` at a new slot of that same generation (FIX
+/// ERASED-IDENTITY-ROTATION-GENERATION, blind review round 1 of #10138).
+///
+/// # Errors
+///
+/// No such record, and the custody write's own.
+pub fn write_custody_value_at_its_generation(
+    vault: &Vault,
+    record: EntityId,
+    value: &[u8],
+) -> Result<()> {
+    vault.with_write_txn_grouped(|txn| {
+        let mut held =
+            crate::secret_custody::read_secret_custody_meta_in_txn(&vault.store, txn, &record)?
+                .ok_or(Error::EntityNotFound)?;
+        held.value_bytes = value.to_vec();
+        let at = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+        let written =
+            crate::secret_custody::put_secret_custody_in_txn(vault, txn, &record, &held, at);
+        zeroize::Zeroize::zeroize(&mut held.value_bytes);
+        written
+    })
+}
+
 /// Stores, for a new agent, the replay record of a run whose one call writes
 /// `words` as the agent's note, through the vault's side-row wall; deletes
 /// the agent, which erases that call with the agent's replies; then puts the

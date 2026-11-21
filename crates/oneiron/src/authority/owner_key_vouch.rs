@@ -444,7 +444,7 @@ impl Vault {
         between();
         let witness = self.owner_presence(
             OwnerActImportance::Important,
-            owner_presence_reasons::ENROL_VOUCHED_OWNER_SIGNING_KEY,
+            owner_presence_reasons::ENROL_OWNER_SIGNING_KEY,
         )?;
         let ground = OwnerProofGround::witnessed(&witness);
         // The caller's owner proof was revalidated in the read above; that
@@ -460,6 +460,7 @@ impl Vault {
         // the read would still enrol the key.
         match self.enrol_owner_signing_key_on_entry_fold_as(
             authority,
+            &witness,
             request.enrollment(),
             signer.root.clone(),
             |entry_fold, transcript| {

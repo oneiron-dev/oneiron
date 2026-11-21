@@ -21,9 +21,9 @@
 //! and hard-deletes all three. P's selector narrowed to F then carries the
 //! stamped CLAIM's tombstone and neither other one; its selector narrowed to
 //! G carries the G-stamped CLAIM's tombstone. The same window copied to
-//! another vault's machine carries no tombstone at all: that vault's
-//! federation admission refuses every one, so a single tombstone failed the
-//! whole answer (REVIEW-10024).
+//! another vault's machine by a selector answer carries no tombstone at all:
+//! only a Connect delivery carries the owner's delete of a row this vault
+//! sent that vault (CROSS-VAULT-DELETE-NEVER-ADMITTED).
 //!
 //! Each `FIXTURE:` assertion checks the setup, never the export rule.
 //!
@@ -360,8 +360,8 @@ fn a_window_copied_to_another_vault_carries_no_tombstone() {
     let none = |carried: Carried| !carried.stamped && !carried.unstamped && !carried.other_stamped;
     assert!(
         none(exports.other_vault_open) && none(exports.other_vault_facet),
-        "REFUSED-ANSWER: the window copied to another vault's machine carries a tombstone, which \
-         that vault's federation admission refuses with the whole answer: open {:?}, F {:?}",
+        "LEAK: a selector answer to another vault's machine carries a tombstone: open {:?}, \
+         F {:?}",
         exports.other_vault_open,
         exports.other_vault_facet
     );

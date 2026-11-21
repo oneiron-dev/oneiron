@@ -3,32 +3,27 @@
 
 use std::collections::BTreeSet;
 
+use oneiron_contracts::fingerprint::purposes::bench_scorecard::WORLD_SCOPED_PARTITION;
+use oneiron_contracts::fingerprint::{ContentHash, Fingerprint};
 use oneiron_ruler::pack::PackSlice;
-use sha2::Digest;
 
 use crate::scorecard::ScorecardFailure;
-
-/// The domain of the partition hash, so no other digest of the bench can
-/// stand in for it.
-const PARTITION_DOMAIN: &[u8] = b"oneiron-bench.scorecard.world-scoped.partition.v1\0";
 
 /// The hidden share's denominator: the share is per mille.
 const SHARE_SCALE: u64 = 1000;
 
-/// Whether `record_id` sits in the second world: the first 8 bytes of
-/// sha256(domain || `seed` as 4 little-endian bytes || record id), read
-/// big-endian, modulo 1000, fall below `hidden_share` (per mille). The rule
-/// reads the record id alone, so a record lands in the same world in every
-/// corpus, every build and every pack order, and the qrels play no part.
+/// Whether `record_id` sits in the second world: the first 8 bytes of the
+/// fingerprint [`WORLD_SCOPED_PARTITION`] of (`seed` as 4 little-endian bytes,
+/// record id), read big-endian, modulo 1000, fall below `hidden_share` (per
+/// mille). The rule reads the record id alone, so a record lands in the same
+/// world in every corpus, every build and every pack order, and the qrels play
+/// no part.
 pub(super) fn is_hidden(record_id: &str, seed: u32, hidden_share: u32) -> bool {
-    let mut hasher = sha2::Sha256::new();
-    hasher.update(PARTITION_DOMAIN);
-    hasher.update(seed.to_le_bytes());
-    hasher.update(record_id.as_bytes());
-    let digest = hasher.finalize();
-    let mut head = [0u8; 8];
-    head.copy_from_slice(&digest[..8]);
-    u64::from_be_bytes(head) % SHARE_SCALE < u64::from(hidden_share)
+    let draw = Fingerprint::of_parts(
+        WORLD_SCOPED_PARTITION,
+        &[&seed.to_le_bytes(), record_id.as_bytes()],
+    );
+    u64::from_be_bytes(draw.prefix::<8>()) % SHARE_SCALE < u64::from(hidden_share)
 }
 
 /// The slice as the agent is graded on it.
@@ -45,9 +40,9 @@ pub(super) struct GradingView {
     pub(super) readable_count: usize,
     /// How many source queries were dropped: each graded hidden records only.
     pub(super) dropped_queries: usize,
-    /// sha256 (hex) over the sorted hidden record ids as one JSON array: the
-    /// pin of the partition. JSON quotes each id, so no id (one holding a
-    /// newline included) can make two partitions hash alike.
+    /// The content hash (hex, plain BLAKE3) of the sorted hidden record ids as
+    /// one JSON array: the pin of the partition. JSON quotes each id, so no id
+    /// (one holding a newline included) can make two partitions hash alike.
     pub(super) partition_digest: String,
 }
 
@@ -132,7 +127,7 @@ pub(super) fn grading_view(
         .map_err(|error| ScorecardFailure::Run(error.to_string()))?;
     let listing = serde_json::to_vec(&hidden)
         .map_err(|error| ScorecardFailure::Run(format!("hidden id listing: {error}")))?;
-    let partition_digest = oneiron_hex::encode(&sha2::Sha256::digest(&listing));
+    let partition_digest = ContentHash::of(&listing).to_hex();
     Ok(GradingView {
         slice,
         pack_digest,
