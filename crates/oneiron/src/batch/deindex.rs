@@ -372,6 +372,15 @@ fn capture_entity_deindex(
     crate::embed::delete_media_vectors_in_txn(store, wtxn, id)?;
     // FIX 9398: and every room's staged copies of them.
     crate::embed::drop_room_media_copies_in_txn(store, wtxn, id);
+    // The rows waiting on the row take its floor before its lineage goes
+    // (Fable design pass 31, section 2): a purge with no earlier fence, or a
+    // blob release, whose fence alone erases nothing.
+    let level = if crate::blob_artifact::release_fenced_only(store, wtxn, id)? {
+        None
+    } else {
+        Some(crate::source_audience::DeleteLevel::Hard)
+    };
+    crate::source_audience::before_erase_in_store_txn(store, wtxn, id, level)?;
     crate::deletion::tear_derived_rows_in_txn(write, wtxn, id, true)?;
     crate::store::pending_comm_stop::clear_pending_stop_for_delete(store, wtxn, id)?;
     crate::hnsw::hnsw_deindex(store, wtxn, id)?;

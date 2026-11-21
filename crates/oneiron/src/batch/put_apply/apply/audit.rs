@@ -137,6 +137,10 @@ pub(super) fn audit_and_stage_body(
         && crate::ports::EntityStoreRead::port_entity_raw_wiped(store, wtxn, &fixed.id)?
             .is_none_or(|old| old.len() == ENTITY_METADATA_HEADER_LEN)
     {
+        // The row a floor waited on is gone, and this body is another row's:
+        // what still waited on it is sealed before the fence goes (Fable
+        // design pass 31, section 2, limit 6).
+        crate::source_audience::seal_waiters_in_txn(store, wtxn, &fixed.id)?;
         crate::deletion::ROW_DELETION_FENCE.delete(store, wtxn, &HexId(fixed.id))?;
     }
     let row_version = crate::ports::claim_order::for_put_in_txn(

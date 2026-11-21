@@ -514,7 +514,12 @@ impl Vault {
         // 31, section 2). A row that reads erased already (a soft tombstone
         // replayed over a scrub applied here) hands over nothing, and a row
         // that still waits on it reads sealed from this write on.
-        crate::source_audience::fold_waiters_in_txn(self, wtxn, id)?;
+        crate::source_audience::before_erase_in_txn(
+            self,
+            wtxn,
+            id,
+            crate::source_audience::DeleteLevel::Soft,
+        )?;
         crate::deletion::tear_derived_rows_in_txn(&write, wtxn, id, false)?;
         // Soft-erase truncates the body in place, so unlike the hard-purge path it
         // does not route through `deindex_entity`; drop any content-hash index row

@@ -145,7 +145,18 @@ pub(super) fn own_source_in(
     row: &EntityId,
     raw: &[u8],
 ) -> Result<OwnSource> {
-    if let Some(policy) = super::binding_in(vault, txn, row)? {
+    own_source_of_in(&vault.store, txn, row, raw)
+}
+
+/// [`own_source_in`] for a write that holds only the store (a purge's
+/// deindex, a blob release).
+pub(super) fn own_source_of_in(
+    store: &crate::store::Store,
+    txn: &RoTxn<'_>,
+    row: &EntityId,
+    raw: &[u8],
+) -> Result<OwnSource> {
+    if let Some(policy) = super::RECORDS.get(store, txn, row)? {
         return Ok(OwnSource::Source(policy));
     }
     if super::obligation::row_obligation(raw).is_present() {
@@ -181,10 +192,18 @@ pub(crate) fn floor_in(
     row: &EntityId,
     raw: &[u8],
 ) -> Result<BTreeSet<EntityId>> {
-    let mut floor = super::DERIVED
-        .get(&vault.store, txn, row)?
-        .unwrap_or_default();
-    if let OwnSource::Source(own) = own_source_in(vault, txn, row, raw)? {
+    floor_of_in(&vault.store, txn, row, raw)
+}
+
+/// [`floor_in`] for a write that holds only the store.
+pub(super) fn floor_of_in(
+    store: &crate::store::Store,
+    txn: &RoTxn<'_>,
+    row: &EntityId,
+    raw: &[u8],
+) -> Result<BTreeSet<EntityId>> {
+    let mut floor = super::DERIVED.get(store, txn, row)?.unwrap_or_default();
+    if let OwnSource::Source(own) = own_source_of_in(store, txn, row, raw)? {
         floor.insert(own);
     }
     Ok(floor)
@@ -272,6 +291,13 @@ pub(crate) fn row_sources_in(
 /// Storage failures.
 pub(crate) fn floors_possible_in(vault: &Vault, txn: &RoTxn<'_>) -> Result<bool> {
     Ok(super::any_policy_in(vault, txn)? || super::any_landed_in(vault, txn)?)
+}
+
+/// [`floors_possible_in`] for a write that holds only the store.
+pub(super) fn floors_possible_of_in(store: &crate::store::Store, txn: &RoTxn<'_>) -> Result<bool> {
+    Ok(super::POLICIES.iter_from(store, txn, &[])?.next().is_some()
+        || super::DERIVED.iter_from(store, txn, &[])?.next().is_some()
+        || super::LANDED.get(store, txn, &())?.unwrap_or(false))
 }
 
 /// The threads on the stored floor of `row` that a read must hold, or
