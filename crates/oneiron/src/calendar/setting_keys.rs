@@ -4,12 +4,17 @@
 
 use serde::{Deserialize, Serialize};
 
+use oneiron_setting_contract::RowKey;
+
 use super::connectors::door::{
-    CalendarImipTransportConfig, CalendarSeatSetup, is_seat_ref, seat_setup_changed_in_txn,
-    validate_endpoint,
+    CalendarImipTransportConfig, CalendarSeatSetup, is_seat_ref, seat_of_system_in_txn,
+    seat_setup_changed_in_txn, validate_endpoint,
 };
-use super::ingest::feed_door::{ics_feed_changed_in_txn, ics_feed_committed, is_feed_system};
+use super::ingest::feed_door::{
+    ics_feed_changed_in_txn, ics_feed_committed, is_feed_system, registration_in_txn,
+};
 use super::ingest::{ADMISSION_WRITE_TURN, IcsFeedPollConfig};
+use crate::Vault;
 use crate::error::{Error, Result};
 use crate::setting::{ItemDomain, Kind, SettingValue};
 
@@ -53,6 +58,63 @@ fn no_feed() -> Option<IcsFeedPollConfig> {
     None
 }
 
+/// The rows a feed's hook judges the feed of the system `slot` names against: the seat that
+/// imports under that system, installed or taken out of service, so the owner's notice of a
+/// refused projection of either names both acts, on every machine, as the seat's notice does
+/// ([`seat_system_peers`]; row SETTING-PROJECTED-ROW-REFUSING-HOOKS).
+fn feed_system_peers(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    slot: &RowKey,
+    _value: Option<&serde_json::Value>,
+) -> Result<Vec<RowKey>> {
+    let Some(system) = slot.item.as_deref() else {
+        return Ok(Vec::new());
+    };
+    match seat_of_system_in_txn(vault, txn, system)? {
+        Some(seat_ref) => Ok(vec![CONNECTOR_SEAT.deciding_slot_in_txn(
+            vault,
+            txn,
+            Some(&seat_ref),
+        )?]),
+        None => Ok(Vec::new()),
+    }
+}
+
+/// The rows a seat's hook judges the seat `value` against: the installed feed of its system and
+/// every other installed seat of its system ([`feed_system_peers`]). A seat whose value is not
+/// here (a clear, or a value beside its act that did not arrive) names none.
+fn seat_system_peers(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    slot: &RowKey,
+    value: Option<&serde_json::Value>,
+) -> Result<Vec<RowKey>> {
+    let Some(setup) = value
+        .and_then(|value| serde_json::from_value::<Option<CalendarSeatSetup>>(value.clone()).ok())
+        .flatten()
+    else {
+        return Ok(Vec::new());
+    };
+    let system = setup.config.system.as_str();
+    let mut peers = Vec::new();
+    if registration_in_txn(vault, txn, system)?.is_some() {
+        peers.push(ICS_FEED.deciding_slot_in_txn(vault, txn, Some(system))?);
+    }
+    for installed_ref in CONNECTOR_SEAT.items_in_txn(vault, txn)? {
+        if slot.item.as_deref() == Some(installed_ref.as_str()) {
+            continue;
+        }
+        let installed = CONNECTOR_SEAT
+            .read_in_txn(vault, txn, &[], Some(&installed_ref))?
+            .value;
+        if installed.is_some_and(|installed| installed.config.system == system) {
+            peers.push(CONNECTOR_SEAT.deciding_slot_in_txn(vault, txn, Some(&installed_ref))?);
+        }
+    }
+    Ok(peers)
+}
+
 crate::setting::setting_keys! {
     /// The host's iMIP mail submission endpoint and the custody name of its credential. It
     /// grants no invite consent and no sending identity. None until the owner installs one.
@@ -69,6 +131,7 @@ crate::setting::setting_keys! {
         kind: Kind::new(no_seat).strictest(no_seat),
         item: Some(ItemDomain { name: "calendar seat refs", admits: is_seat_ref }),
         on_change: Some(seat_setup_changed_in_txn),
+        refusal_peers: Some(seat_system_peers),
         refusal_offers_clear: false,
         write_turn: Some(ADMISSION_WRITE_TURN),
     };
@@ -83,6 +146,7 @@ crate::setting::setting_keys! {
         kind: Kind::new(no_feed).strictest(no_feed),
         item: Some(ItemDomain { name: "ICS feed systems", admits: is_feed_system }),
         on_change: Some(ics_feed_changed_in_txn),
+        refusal_peers: Some(feed_system_peers),
         after_commit: Some(ics_feed_committed),
         write_turn: Some(ADMISSION_WRITE_TURN),
     };

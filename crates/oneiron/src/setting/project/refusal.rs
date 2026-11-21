@@ -12,8 +12,10 @@
 //! ([`super::super::RefusalPeers`]) it names the acts behind those rows too: each act by its row,
 //! its value where the key's value type is closed (an open value, such as free text, is not
 //! quoted), and the machine whose install signed it. Its event is every act it names, in hash
-//! order, and the owner it is for: a machine that refuses the other side of the same pair raises
-//! the same row, and a later pass that refuses again adds nothing. The row travels as an entity,
+//! order, every row it names, in id order, and the owner it is for: a machine that refuses the
+//! other side of the same pair raises the same row, a later pass that refuses again adds nothing,
+//! and the refusals of two rows one act heads, each judged against its own rows, raise a notice
+//! each (REVIEW-10306 round 2). The row travels as an entity,
 //! so a machine that refused nothing shows it too; a copy another machine raised alone lands with
 //! the seen and acknowledged marks of both copies (`sync::ingest::notification_marks`).
 //! `source.detail` holds the owner's words, `source.result` the log entry of the act the refused
@@ -132,6 +134,13 @@ pub(super) fn raise_refusal_notice_in_txn(
         .map(|act| oneiron_hex::encode(act))
         .collect::<Vec<_>>()
         .join("+");
+    let event_rows = targets
+        .iter()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .map(EntityId::to_hex)
+        .collect::<Vec<_>>()
+        .join("+");
     let subject_refs = acts
         .iter()
         .map(authority_log_entity_id_from_hash)
@@ -145,7 +154,7 @@ pub(super) fn raise_refusal_notice_in_txn(
                 kind: NotificationKind::Ask,
                 source: NotificationSource {
                     producer: SETTING_REFUSAL_NOTIFICATION_PRODUCER.to_owned(),
-                    event: format!("{event_acts}:{}", owner.to_hex()),
+                    event: format!("{event_acts}:{event_rows}:{}", owner.to_hex()),
                     result: Some(result.clone()),
                     detail: Some(detail.clone()),
                     ..NotificationSource::default()
@@ -403,8 +412,8 @@ pub(in crate::setting) fn slot_refused_here_in_txn(
     Ok(refused_slot_in_txn(vault, txn, target, None)?.is_some_and(|refused| refused == *slot))
 }
 
-/// The tap the owner's notice of a refused projection offers on this install now, from its
-/// `event` (module doc): the input of one `vault.settings.set` of each row an act it names heads
+/// The tap the owner's notice of a refused projection offers on this install now, from the acts
+/// its `event` names (module doc): the input of one `vault.settings.set` of each row an act heads
 /// and this install still refuses ([`refused_slot_in_txn`]), then of each row the key's hook
 /// judges such a row against ([`super::super::RefusalPeers`]), each named once, to the value it
 /// holds here, which the owner may edit before he taps. Every row past the first is a further

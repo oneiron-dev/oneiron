@@ -314,7 +314,8 @@ impl Vault {
         request: &SetSetting,
     ) -> Result<SetSettingOutcome> {
         let mut written = Vec::with_capacity(1);
-        let outcome = self.write_setting_row_in_txn(txn, ground, caller, request, &mut written)?;
+        let outcome =
+            self.write_setting_row_in_txn(txn, ground, caller, request, &mut written, false)?;
         finish_written_in_txn(self, txn, ground, written)?;
         Ok(outcome)
     }
@@ -324,7 +325,8 @@ impl Vault {
     /// is checked, judged and written as [`Self::set_setting`] does it, in one write, on the
     /// owner's proof; every row is in the write before any key's hook runs, so a hook that judges
     /// one row against another reads both as the change leaves them; the rows that travel sign
-    /// ONE act, so every machine projects them from it; and the change is all or none. It is
+    /// ONE act, so every machine projects them from it, a row that holds its value here already
+    /// among them where the change names several rows; and the change is all or none. It is
     /// asked as an important act. It takes each key's write turn before the write opens, once per
     /// turn, in name order, as a projection pass does. The outcomes are in the order of
     /// `requests`; once the write commits, each applied change runs its key's `after_commit`.
@@ -399,6 +401,7 @@ impl Vault {
             }
         }
         let caller = SettingCaller::Owner(owner);
+        let several = requests.len() > 1;
         let mut written = Vec::with_capacity(requests.len());
         let mut outcomes = Vec::with_capacity(requests.len());
         for request in requests {
@@ -408,6 +411,7 @@ impl Vault {
                 caller,
                 request,
                 &mut written,
+                several,
             )?);
         }
         finish_written_in_txn(self, txn, ground, written)?;
@@ -417,7 +421,8 @@ impl Vault {
     /// Checks `request` and writes its row ([`set_in_txn`]); the key's hook and the act wait in
     /// `written` until every row of the caller's request is written ([`finish_written_in_txn`]).
     /// A `ground` witnessed as ordinary refuses the row, before the wall and before its write,
-    /// where the change became more important since the person was asked.
+    /// where the change became more important since the person was asked. `act_of_several_rows`:
+    /// the row is one of the owner's change of several rows ([`Change::act_of_several_rows`]).
     fn write_setting_row_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -425,6 +430,7 @@ impl Vault {
         caller: SettingCaller<'_>,
         request: &SetSetting,
         written: &mut Vec<Written>,
+        act_of_several_rows: bool,
     ) -> Result<SetSettingOutcome> {
         let (spec, key) = checked_slot(request)?;
         let value = match request.value.clone() {
@@ -458,6 +464,7 @@ impl Vault {
             key: &key,
             value: value.as_ref(),
             weight_runs: checked_weight(spec, request)?,
+            act_of_several_rows,
         };
         set_in_txn(self, txn, ground, &change, caller, request, written)
     }
@@ -613,6 +620,10 @@ struct Change<'a> {
     value: Option<&'a EncodedValue>,
     /// A learned key's seed weight ([`checked_weight`]).
     weight_runs: Option<f64>,
+    /// Whether the change is one row of the owner's change of several rows as one act
+    /// ([`Vault::set_settings`]): its act heads each row that travels, one that holds the value
+    /// already among them (`judged_change`).
+    act_of_several_rows: bool,
 }
 
 fn set_in_txn(
