@@ -8,8 +8,10 @@
 //! in-person confirmation that floor asks for, as on the owner's supersede
 //! door (#10099): through `Vault::retract_claim_as_owner`, through the
 //! owner's `Memory::claim_retract`, and through the owner's settle of a
-//! proposal whose approval supersedes the claim. A close with no owner proof
-//! stays held.
+//! proposal whose approval supersedes the claim. An exact close writes no
+//! `comm.*` projector output, so the owner's close of an Approved `comm.*`
+//! claim lands on the proof as well (review 10161 P1). A close with no owner
+//! proof stays held.
 //!
 //! Needs the doors:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
@@ -17,20 +19,26 @@
 #![cfg(oneiron_test_support)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use oneiron::comm::CommClaimValue;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::{
     ClaimInput, ClaimProposalReviewRequest, ClaimSettleDecision, ClaimSettleRequest,
     ClaimSettlementVerdict, resolve_entity_ref,
 };
+use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
+use oneiron::test_doors::comm_claim_rows::put_comm_claim_row;
 use oneiron::test_doors::consolidation::declare_predicate_critical;
 use oneiron::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, EdgeActorClass, EntityId, Vault,
-    VaultConfig,
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, EdgeActorClass, EntityId, TimeRange,
+    Vault, VaultConfig,
 };
 use serde_json::json;
 
 const PREDICATE: &str = "profile.name";
+
+/// When the `comm.*` fixture row and its person were learned.
+const COMM_LEARNED_AT: u64 = 100;
 
 struct Fixture {
     vault: Vault,
@@ -170,6 +178,45 @@ impl Fixture {
         id
     }
 
+    /// An Approved, Active `comm.reachable_via` claim about a new person,
+    /// after which a trusted policy declares its predicate critical. No
+    /// projector or typed door writes this predicate, so the cfg door lands
+    /// the row as written. Its id.
+    fn approved_comm_claim_on_a_declared_critical_predicate(&self) -> EntityId {
+        let learned = TimeRange {
+            start: COMM_LEARNED_AT,
+            end: COMM_LEARNED_AT,
+        };
+        let party = EntityId::now();
+        self.vault
+            .put_entity(
+                &party,
+                ENTITY_TYPE_PERSON,
+                learned,
+                COMM_LEARNED_AT,
+                b"human",
+            )
+            .expect("FIXTURE: a live person");
+        let mut body = CommClaimValue::ReachableVia {
+            party_ref: party,
+            channel_class: "email".to_owned(),
+            reachable: true,
+        }
+        .claim_body()
+        .expect("FIXTURE: a comm.reachable_via body");
+        body.source = None;
+        body.scope = None;
+        body.approval = ClaimApprovalStatus::Approved;
+        body.scope_facet = self.facet;
+        let id = EntityId::now();
+        put_comm_claim_row(&self.vault, &id, &body, learned, COMM_LEARNED_AT)
+            .expect("FIXTURE: the approved comm.reachable_via claim lands");
+        self.assert_standing(id, "FIXTURE: the approved comm claim is active");
+        declare_predicate_critical(&self.vault, &body.predicate)
+            .expect("FIXTURE: the policy declares the comm claim's predicate critical");
+        id
+    }
+
     /// The claim `id` was closed as `lifecycle` says.
     fn assert_closed(&self, id: EntityId, lifecycle: ClaimLifecycleStatus, why: &str) {
         let body = self.body(id);
@@ -262,6 +309,31 @@ fn the_owners_settle_supersedes_an_approved_head_on_a_declared_critical_predicat
         (replaced.approval, replaced.lifecycle),
         (ClaimApprovalStatus::Approved, ClaimLifecycleStatus::Active),
         "the replacement stands approved"
+    );
+}
+
+/// Review 10161 P1: the `comm.*` exclusion keeps a new `comm.*` write or
+/// approval at its floor, but an exact close writes no projector output, so
+/// the owner's retract of an Approved `comm.*` claim on a declared critical
+/// predicate lands on the owner's proof, as any other close does.
+#[test]
+fn the_owners_vault_retract_closes_an_approved_comm_claim_on_a_declared_critical_predicate() {
+    let f = Fixture::new();
+    let id = f.approved_comm_claim_on_a_declared_critical_predicate();
+
+    let retract = f
+        .vault
+        .retract_claim_as_owner(&f.owner_proof, &id, f.vault.now_recorded_at());
+
+    assert!(
+        retract.is_ok(),
+        "the owner's retract through the vault owner door closes the approved comm claim, \
+         confirmed by the owner's proof: {retract:?}"
+    );
+    f.assert_closed(
+        id,
+        ClaimLifecycleStatus::Retracted,
+        "the owner's vault retract closes the comm claim",
     );
 }
 
