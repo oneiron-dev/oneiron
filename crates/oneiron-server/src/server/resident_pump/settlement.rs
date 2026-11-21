@@ -12,9 +12,10 @@ use super::{
     FailureScope, FailureScopePolicy, HandleAttemptFailure, HealerSlot, LEASE_OWNER, LlmError,
     OutputContextEntry, ParkDreamerAttempt, PayerFault, RUN_RETRY_BACKOFF_SECS, RetryableLlmError,
     SetAttemptResult, SpentKind, TypeRef, TypedFailureEvidence, TypedFailureVerdict, Vault,
-    WAITING_PARK_REASON, agent_dispatch_run_actor, browser_workflow, open_trap, outage_park_reason,
-    park_and_bind_wait_trap, park_for_payer, parks_on_outage, parse_confession, register_wait,
-    restore_output, run_continuation, trap_for_durable_wait, trap_park_owner, unix_seconds_now,
+    WAITING_PARK_REASON, agent_dispatch_run_actor, browser_workflow, open_trap, open_wait_trap,
+    outage_park_reason, park_and_bind_wait_trap, park_for_payer, parks_on_outage, parse_confession,
+    register_wait, restore_output, run_continuation, trap_for_durable_wait, trap_park_owner,
+    unix_seconds_now,
 };
 
 /// Settles the run's attempt: complete, parked on its wait or on a provider
@@ -490,7 +491,10 @@ fn run_confession(
 /// trap opens and waits, then the attempt parks under the trap's owner and
 /// the trap is bound to the wait in one commit, so a wake always finds the
 /// park and no park is left unbound. The woken attempt is ready again, and
-/// the next pass enters the run, which goes on from the reply.
+/// the next pass enters the run, which goes on from the reply. A run that
+/// re-enters a wait whose trap still waits for it, as one a person's pause
+/// took off its park, parks again under that trap; a reply that consumes
+/// that trap before the park lands queues the run in the park's commit.
 fn park_on_wait(
     vault: &Vault,
     status: &AgentDispatchStatus,
@@ -505,24 +509,38 @@ fn park_on_wait(
         ))?;
     let now_ms = now.saturating_mul(1000);
     let actor = agent_dispatch_run_actor(&status.input, attempt.id)?;
-    let trap = open_trap(
-        vault,
-        &DurableStepContext {
-            vault,
-            attempt_id: attempt.id,
-            run_id: attempt.run_id.clone(),
-            envelope_actor: actor,
-            subject: parked.wait.wait_id,
-            deadline: None,
-            now_ms,
-            spend_scope: None,
-            wake_pass_bound: false,
-        },
-        trap_for_durable_wait(&parked.wait, parked.step_hash),
-        parked.step_hash,
-        "code-run wait",
-    )?;
-    let registered = register_wait(vault, &trap, now_ms)?;
+    let kind = trap_for_durable_wait(&parked.wait, parked.step_hash);
+    // A run a person's pause took off this same wait parks again under the
+    // trap still bound to it (FIX PAUSE-BOUNDARY-PARKED-RUN). That trap
+    // registered its wait when the run first parked, and a reply may consume
+    // it before the park below commits: the park writer then queues the run,
+    // so no second registration runs here (one would refuse the spent trap).
+    let bound = open_wait_trap(vault, &parked.key, attempt.id)?
+        .filter(|trap| trap.kind == kind && trap.step_hash == parked.step_hash);
+    let (trap, registered) = match bound {
+        Some(trap) => (trap, oneiron::llm::DreamerTrapState::Waiting),
+        None => {
+            let trap = open_trap(
+                vault,
+                &DurableStepContext {
+                    vault,
+                    attempt_id: attempt.id,
+                    run_id: attempt.run_id.clone(),
+                    envelope_actor: actor,
+                    subject: parked.wait.wait_id,
+                    deadline: None,
+                    now_ms,
+                    spend_scope: None,
+                    wake_pass_bound: false,
+                },
+                kind,
+                parked.step_hash,
+                "code-run wait",
+            )?;
+            let registered = register_wait(vault, &trap, now_ms)?;
+            (trap, registered)
+        }
+    };
     // The park and its wake binding commit together: a stop between them
     // would leave a park no delivery wakes.
     park_and_bind_wait_trap(
