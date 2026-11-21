@@ -4007,3 +4007,78 @@ fn a_released_hold_holds_again_once_the_owner_reconnects_its_seat() {
         "the held pull lands no cancel: {card}"
     );
 }
+
+/// A native EVENT the owner made in the vault, seeded `seed`, on the fixture
+/// Monday at 11:00 for 30 minutes: no source carries it, so its first write
+/// to a seat mints its UID.
+fn mint_native_event(fixture: &Fixture, seed: u8) -> EntityId {
+    let id = fixture::test_id(seed);
+    let mut data = Vec::new();
+    rmpv::encode::write_value(
+        &mut data,
+        &rmpv::Value::Map(vec![(
+            rmpv::Value::from("name"),
+            rmpv::Value::from("planning-session"),
+        )]),
+    )
+    .expect("encode the EVENT body");
+    let start = MONDAY + 11 * 3_600;
+    fixture
+        .vault
+        .put_entity(
+            &id,
+            oneiron::registry::ENTITY_TYPE_EVENT,
+            oneiron::TimeRange {
+                start,
+                end: start + 30 * 60,
+            },
+            NOW,
+            &data,
+        )
+        .expect("put the native EVENT");
+    id
+}
+
+#[test]
+fn a_killed_seat_s_later_write_of_a_native_event_is_released_like_any_other() {
+    // Blind review round 1 of #10130 (P1, release.rs stages_first_write): a
+    // native EVENT's first write mints its UID, and every later write of the
+    // EVENT keeps it. Once the first write settled, a passport carries the
+    // UID, so a later write's row stages no first write, and its hold is the
+    // owner's to release. Control: an EVENT whose first write never settled
+    // stays unreleasable. Red before the fix: the later write's hold reads as
+    // a first write's, and the preview refuses with INVALID_STATE.
+    let fixture = Fixture::open(None);
+    let seat = Seat::install(&fixture.vault, HOST_SEAT_SYSTEM);
+    let written = mint_native_event(&fixture, 0x72);
+    let unwritten = mint_native_event(&fixture, 0x73);
+    let first = seat.write(&fixture.vault, written, NOW + 10);
+    assert!(
+        first.uid.ends_with("@calendar.invalid"),
+        "FIXTURE: the first write mints the native EVENT's UID: {}",
+        first.uid
+    );
+    seat.write_unsent(&fixture.vault, written, NOW + 20);
+    seat.write_unsent(&fixture.vault, unwritten, NOW + 30);
+    seat.kill(&fixture.vault);
+
+    let refused = preview_calendar_hold_release(&fixture, &unwritten)
+        .err()
+        .expect("control: a first write that never settled is not released");
+    assert_eq!(refused.code, "INVALID_STATE", "{refused:?}");
+
+    let preview = preview_calendar_hold_release(&fixture, &written).unwrap_or_else(|error| {
+        panic!("the owner previews the release of the later write's hold: {error:?}")
+    });
+    let released = release_calendar_hold_with(&fixture, &written, Some(preview.confirm))
+        .unwrap_or_else(|error| panic!("the owner releases the later write's hold: {error:?}"));
+    assert_eq!(
+        released["released"].as_array().map(Vec::len),
+        Some(1),
+        "the release ends the later write's one hold: {released}"
+    );
+    let after = preview_calendar_hold_release(&fixture, &written)
+        .err()
+        .expect("the released row holds nothing more");
+    assert_eq!(after.code, "NOT_FOUND", "{after:?}");
+}
