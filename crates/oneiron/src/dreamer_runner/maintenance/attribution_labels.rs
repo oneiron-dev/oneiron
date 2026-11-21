@@ -886,7 +886,8 @@ impl Vault {
 /// [GATE-RECEIPT-UNCLEAR-ROW-OUTLIVES-RECORD-REMOVAL]). A proposal that quoted
 /// one and waits on its owner is withdrawn with them (FIX 21885), as
 /// [`withdraw_pending_in_txn`] does; one the owner approved or declined, or
-/// one a legal hold or a cooperative restriction keeps, stands.
+/// one whose erase a legal hold or a cooperative restriction would refuse,
+/// stands.
 ///
 /// # Errors
 ///
@@ -1081,9 +1082,10 @@ fn withdraw_pending_quoting_in_txn(
 /// Withdraws `pattern`'s filed proposal as an erase does, while it waits on
 /// its owner: Active and Proposed (FIX 21885). Its pattern keeps its notes and
 /// files afresh at the next pass. A proposal the owner approved or declined,
-/// or one gone, stands as it is. So does one a legal hold or a cooperative
-/// restriction keeps: the erase would refuse it, and with it the write of the
-/// re-judgment, sweep or restore that asked, on every retry (FIX
+/// or one gone, stands as it is. So does one whose erase a legal hold or a
+/// cooperative restriction would refuse, on the proposal, a signed history
+/// control of it, or a lexical hint of either: the refusal would fail the
+/// write of the re-judgment, sweep or restore that asked, on every retry (FIX
 /// [UNCLEAR-REJUDGE-REFUSED-BY-HELD-LABEL-PROPOSAL]).
 fn withdraw_pending_in_txn(
     write: &crate::secret_custody::CustodyWrite<'_>,
@@ -1094,8 +1096,9 @@ fn withdraw_pending_in_txn(
     let Some(proposal) = pattern.proposal else {
         return Ok(());
     };
-    if !crate::store::legal_hold::held_in_txn(write.store, &*txn, &proposal)?
-        && waits_on_owner_in_txn(write.store, &*txn, &EntityId::from_bytes(proposal)?)?
+    let proposal = EntityId::from_bytes(proposal)?;
+    if waits_on_owner_in_txn(write.store, &*txn, &proposal)?
+        && !crate::batch::deindex_with_machine_history_held_in_txn(write.store, &*txn, &proposal)?
     {
         withdraw_filed_in_txn(write, txn, held, pattern)?;
     }
