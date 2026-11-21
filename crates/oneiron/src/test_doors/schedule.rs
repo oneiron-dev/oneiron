@@ -642,14 +642,15 @@ pub fn remote_tasks_due_now(vault: &Vault) -> Vec<[u8; 32]> {
         .collect()
 }
 
-/// A poll that found `intent`'s task still running, as the served host records it now.
+/// A poll that found `intent`'s task still running, as the served host records it now, from a
+/// pass that saw no stop of the task asked (L8-29).
 ///
 /// # Panics
 ///
 /// When it cannot be recorded.
 pub fn remote_task_polled_now(vault: &Vault, intent: &[u8; 32], poll_after_ms: Option<u64>) {
     vault
-        .remote_task_polled(intent, poll_after_ms, "working")
+        .remote_task_polled(intent, poll_after_ms, "working", false)
         .expect("record the poll");
 }
 
