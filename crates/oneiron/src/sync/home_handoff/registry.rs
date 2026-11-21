@@ -10,10 +10,12 @@
 //! landed before them in the one adopting transaction, and last the
 //! leave-notice delegations the home answers removed people with (FIX 7932),
 //! the Coach's topology-audit section (FIX 7817), the owner's narrowing
-//! history of the base agents' grants (STEWARD-NARROWING-RECEIPT-LOCAL) and
-//! the booking lifecycle's tokens, deposits, holds and receipts (FIX
+//! history of the base agents' grants (STEWARD-NARROWING-RECEIPT-LOCAL), the
+//! booking lifecycle's tokens, deposits, holds and receipts (FIX
 //! [BK-LIFECYCLE-ROWS-NOT-CARRIED-BY-HOME-MOVE]), which stand on no other
-//! table.
+//! table, and the emergency reschedule's instructions, plans and checkpoints
+//! (FIX [BK-EMERGENCY-ROWS-NOT-CARRIED-BY-HOME-MOVE]), whose picks the token
+//! section carries.
 
 use heed::RoTxn;
 
@@ -25,7 +27,7 @@ use crate::side_table::SideTableDbs;
 /// Every table a home move carries in this build, in the order the carrier
 /// exports and adopts them (CALLS: home tables). C2's drain, its adoption
 /// and restore's live keys all walk this one list.
-pub(crate) fn home_tables() -> [HomeTableRegistration; 12] {
+pub(crate) fn home_tables() -> [HomeTableRegistration; 15] {
     [
         HomeTableRegistration::of::<crate::dreamer_runner::FreeTimePolicyRows>(),
         HomeTableRegistration::of::<crate::dreamer_runner::FreeTimeClockRows>(),
@@ -48,6 +50,18 @@ pub(crate) fn home_tables() -> [HomeTableRegistration; 12] {
         HomeTableRegistration::of::<crate::booking::lifecycle::home_rows::BookingTokenRows>(),
         HomeTableRegistration::of::<crate::booking::lifecycle::home_rows::BookingHoldRows>(),
         HomeTableRegistration::of::<crate::booking::lifecycle::home_rows::BookingReceiptRows>(),
+        // Engine ANSWER BK-EMERGENCY-ROWS-CARRY-SCOPE = B: the emergency
+        // reschedule's rows, each section standing alone; the adopting writer
+        // rebuilds their lookups.
+        HomeTableRegistration::of::<
+            crate::booking::emergency_reschedule::home_rows::EmergencyInstructionRows,
+        >(),
+        HomeTableRegistration::of::<
+            crate::booking::emergency_reschedule::home_rows::EmergencyPlanRows,
+        >(),
+        HomeTableRegistration::of::<
+            crate::booking::emergency_reschedule::home_rows::EmergencyItemRows,
+        >(),
     ]
 }
 

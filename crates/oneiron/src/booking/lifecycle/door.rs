@@ -371,7 +371,7 @@ fn holds_booking_rows(vault: &Vault) -> Result<bool, BookingError> {
 
 /// [`holds_booking_rows`] in a caller's transaction.
 #[cfg(feature = "sync")]
-pub(super) fn holds_booking_rows_in_txn(
+pub(in crate::booking) fn holds_booking_rows_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
 ) -> Result<bool, BookingError> {
@@ -384,7 +384,7 @@ pub(super) fn holds_booking_rows_in_txn(
 
 /// Without the home handoff no move ever freezes or carries booking rows.
 #[cfg(not(feature = "sync"))]
-pub(super) fn holds_booking_rows_in_txn(
+pub(in crate::booking) fn holds_booking_rows_in_txn(
     _vault: &Vault,
     _txn: &heed::RoTxn<'_>,
 ) -> Result<bool, BookingError> {

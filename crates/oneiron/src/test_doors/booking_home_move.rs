@@ -1,21 +1,32 @@
 //! Doors to the booking rows a home move carries (FIX
-//! [BK-LIFECYCLE-ROWS-NOT-CARRIED-BY-HOME-MOVE]), for the booking home-move
-//! test: a machine that holds none of the old home's node-local booking rows,
-//! and a move of the booking sections from one vault to another as the
-//! carrier runs it.
+//! [BK-LIFECYCLE-ROWS-NOT-CARRIED-BY-HOME-MOVE], FIX
+//! [BK-EMERGENCY-ROWS-NOT-CARRIED-BY-HOME-MOVE]), for the booking home-move
+//! tests: a machine that holds none of the old home's node-local booking
+//! rows, a move of the booking sections from one vault to another as the
+//! carrier runs it, the old home's writer once the new home acknowledged that
+//! move, and a read of whether a node-local booking row holds some bytes.
 
 use crate::side_table::{self, SideTableDbs, SideTableDecl};
 use crate::sync::home_handoff::{
-    carry_section_for_doors, freeze_home_state_for_doors, registers_section_for_doors,
+    acknowledge_home_move_for_doors, carry_section_for_doors, freeze_home_state_for_doors,
+    registers_section_for_doors,
 };
 use crate::{EntityId, Result, Vault};
 
 /// The node-local booking declarations: the tokens, leases, deposits,
-/// provider events and emergency picks; the holds; the receipts.
-const BOOKING_ROWS: [&SideTableDecl; 3] = [
+/// provider events and emergency picks; the holds; the receipts; the
+/// emergency instructions, plans and checkpoints, and the three lookups those
+/// rows rebuild (no section of their own).
+const BOOKING_ROWS: [&SideTableDecl; 9] = [
     &side_table::BOOKING_TOKEN,
     &side_table::BOOKING_HOLD,
     &side_table::BOOKING_LIFECYCLE_RECEIPT,
+    &side_table::EMERGENCY_INSTRUCTION,
+    &side_table::EMERGENCY_PLAN,
+    &side_table::EMERGENCY_ITEM,
+    &side_table::EMERGENCY_REQUEST_PLAN_INDEX,
+    &side_table::EMERGENCY_PENDING_EVENT_LOOKUP,
+    &side_table::EMERGENCY_EFFECT_LOOKUP,
 ];
 
 /// Deletes every row of the node-local booking declarations in `vault`: a
@@ -67,4 +78,34 @@ pub fn move_booking_home(
         }
     }
     Ok(applied)
+}
+
+/// Runs on `old_home` what its writer runs once the new home acknowledged the
+/// move `old_home` froze its rows for: every carried table's scrub of what
+/// must not outlast the move (the emergency checkpoints' raw action tokens).
+///
+/// # Errors
+///
+/// Store errors; a table's own scrub errors.
+pub fn acknowledge_booking_home_move(old_home: &Vault) -> Result<()> {
+    acknowledge_home_move_for_doors(old_home)
+}
+
+/// Whether any stored row of the node-local booking declarations in `vault`
+/// holds `needle` among its value's bytes.
+///
+/// # Errors
+///
+/// Store errors.
+pub fn booking_rows_hold(vault: &Vault, needle: &[u8]) -> Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    for decl in BOOKING_ROWS {
+        for row in decl.iter_raw(vault, &txn)? {
+            let (_, value) = row?;
+            if value.windows(needle.len()).any(|window| window == needle) {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
 }
