@@ -50,6 +50,17 @@
 //! Test 4, a rate wait's resend: as test 2, for a compaction pass. On main
 //! the pass is sent again after the wait and answered (RED).
 //!
+//! Test 5, a spent window's wait (review round 2 on #10301): the model
+//! refuses a send for a spent usage window, back in one second. A child
+//! lent the kept row waits for the reset and is answered, and the owner is
+//! asked nothing (guard). For a child lent both rows the model holds its
+//! refusal until the owner's erase has committed: nothing more reaches the
+//! model (guard), and the step ends as the invalid request a withdrawn
+//! input is, which no step retries, with no quota question kept for the
+//! owner. On the fence before this fix the walk ended as an unanswered
+//! call: a rate refusal a step retries, after asking the owner about the
+//! window (RED).
+//!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p
 //! oneiron-server --all-features --test
 //! thing_child_fences_lent_source_rows`.
@@ -72,6 +83,7 @@ use oneiron::code_run::ScopedChildGeneration;
 use oneiron::compaction::CompactionRequest;
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::MemoryReceipts;
+use oneiron::llm::{FatalLlmError, LlmError};
 use oneiron::memory::{EraseOptions, EraseReason};
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::{
@@ -252,6 +264,28 @@ fn rate_limited() -> Reply {
         headers: vec![("retry-after".into(), COOLDOWN_SECS.to_string())],
         body: json!({"error": {"message": "rate limit", "type": "rate_limit_error"}}),
     }
+}
+
+/// The model's refusal for a spent usage window, back in
+/// [`COOLDOWN_SECS`]: its offer parks until then, and a call that ends
+/// unanswered on it asks the owner about the window.
+fn window_spent() -> Reply {
+    Reply::Error {
+        status: 429,
+        headers: vec![("retry-after".into(), COOLDOWN_SECS.to_string())],
+        body: json!({"error": {"message": "usage limit reached", "type": "usage_limit_reached"}}),
+    }
+}
+
+/// Where the runtime keeps each quota question for the owner
+/// (`models/cooldown.rs` `QUESTION_PREFIX`).
+const QUOTA_QUESTION_PREFIX: &str = "models:offer-cooldown:v1:ask:";
+
+/// The keys of the quota questions `vault` keeps for its owner.
+fn quota_questions(vault: &Vault) -> Vec<String> {
+    vault
+        .sync_state_keys_with_prefix(QUOTA_QUESTION_PREFIX)
+        .expect("FIXTURE: the quota questions read")
 }
 
 /// The text of one request message: a string, or its text parts joined.
@@ -579,6 +613,72 @@ fn a_compaction_rate_wait_resend_sends_nothing_once_a_lent_row_is_erased() {
             compaction_calls(&model).len(),
             3,
             "the rate wait's resend of a pass of a child lent a row erased since reached the model"
+        );
+    });
+}
+
+#[test]
+fn a_window_wait_withdrawn_by_an_erase_ends_unretried_and_asks_the_owner_nothing() {
+    run_on_engine_stack("thing-child-erased-window-wait", || async {
+        let model = FakeLlm::start(Vec::new(), Some(Reply::text("read"))).await;
+        let dir = tempfile::tempdir().unwrap();
+        let vault = opened(dir.path());
+        let person = stored_person(&vault);
+        let erased = stored_claim(&vault, person, ERASED_WORDS);
+        let kept = stored_claim(&vault, person, KEPT_WORDS);
+        let both = child(&model, &vault, vec![erased, kept]);
+        let alone = child(&model, &vault, vec![kept]);
+        let carrier = budget();
+        let lease = carrier
+            .admit()
+            .expect("FIXTURE: the carrier admits a lease")
+            .lease;
+
+        // Guard: a step of a child lent the kept row, refused for a spent
+        // window, waits for its reset and is answered by its resend; an
+        // answered call asks the owner nothing.
+        model.push(window_spent());
+        let clean = request(alone.model(), KEPT_WORDS);
+        ended(alone.backend().generate_sourced(clean, &lease, None))
+            .await
+            .expect("FIXTURE: a window-refused step of a live row is answered after the reset");
+        assert_eq!(
+            model.seen().len(),
+            2,
+            "FIXTURE: the reset's resend went out and was answered"
+        );
+        assert_eq!(
+            quota_questions(&vault),
+            Vec::<String>::new(),
+            "FIXTURE: an answered call keeps no quota question"
+        );
+
+        // The same refusal for a step of a child lent both rows, held by the
+        // model until the owner's erase has committed.
+        model.push(Reply::HoldThen(Box::new(window_spent())));
+        let stale = request(both.model(), &format!("{ERASED_WORDS}\n{KEPT_WORDS}"));
+        let sent = ended(both.backend().generate_sourced(stale, &lease, None));
+        let erase = async {
+            model.wait_holding().await;
+            privacy_erase(&vault, erased);
+            model.release();
+        };
+        let (outcome, ()) = tokio::join!(sent, erase);
+        let error = outcome.expect_err("FIXTURE: a step whose lent row was erased is not answered");
+        assert_eq!(
+            model.seen().len(),
+            3,
+            "FIXTURE: nothing more reached the model after the erase"
+        );
+        assert_eq!(
+            error,
+            LlmError::from(FatalLlmError::InvalidRequest),
+            "a step whose lent row was erased in its window wait ended as a refusal a step retries"
+        );
+        assert_eq!(
+            quota_questions(&vault),
+            Vec::<String>::new(),
+            "a step whose lent row was erased in its window wait asked the owner about the window"
         );
     });
 }
