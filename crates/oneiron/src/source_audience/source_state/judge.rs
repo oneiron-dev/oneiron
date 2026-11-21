@@ -286,9 +286,13 @@ fn apply_acts_in_txn(
     acts: Vec<(EntityId, Act)>,
 ) -> Result<bool> {
     let mut grew = false;
+    let mut took = false;
     for (input, act) in acts {
         grew |= match act {
-            Act::Take(floor) => take_floor_in_txn(vault, txn, row, raw, &floor)?,
+            Act::Take(floor) => {
+                took = true;
+                take_floor_in_txn(vault, txn, row, raw, &floor)?
+            }
             Act::Open(flags) => open_entry_in_txn(&vault.store, txn, row, &input, flags)?,
             Act::OpenSelf => open_entry_in_txn(&vault.store, txn, row, row, OpenFlags::ORDINARY)?,
             Act::Seal => crate::source_audience::add_derived_policies_in_txn(
@@ -302,6 +306,13 @@ fn apply_acts_in_txn(
                 false
             }
         };
+    }
+    // A row born under no source (a peer's phone mark that names no thread)
+    // stores the seal even when no link of it takes a floor: doctor's count
+    // of facts hidden with their source unknown reads the stored floors
+    // (SOURCE-STATE-NO-LINK-SEAL-NOT-STORED; pass 31 oracle case 69).
+    if !took {
+        grew |= take_floor_in_txn(vault, txn, row, raw, &BTreeSet::new())?;
     }
     Ok(grew)
 }
