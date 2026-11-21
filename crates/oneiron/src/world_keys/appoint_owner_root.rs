@@ -129,7 +129,7 @@ impl Vault {
         // (REVIEW-10128 P1 1).
         self.device_keystore()?;
         let _asked = self.owner_presence(
-            OwnerActImportance::Important,
+            OwnerActImportance::Ordinary,
             owner_presence_reasons::RECOVER_OWNER_ROOT,
         )?;
         let slot = self.device_owner_signing_slot()?;

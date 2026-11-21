@@ -622,12 +622,13 @@ impl Vault {
         authority: &ActAuthority,
         issuer: &HostSlipIssuer,
     ) -> Result<OwnerKeyEnrollmentReceipt> {
+        let enrollment = self.enrol_device_owner_signing_key(authority, issuer);
         if self.privacy_posture() == crate::HostingPrivacyPosture::Hosted {
             return Err(Error::Record(RecordError::AuthorityRefused(
                 MANAGED_HOST_HOLDS_NO_OWNER_KEY,
             )));
         }
-        self.enrol_device_owner_signing_key(authority, issuer)
+        enrollment
     }
 
     /// Holds this install's owner signing key as a checkpoint root signer

@@ -373,9 +373,6 @@ fn passkey_enrollment_device(input: &OwnerPasskeyEnrollment) -> Result<(Vec<u8>,
     .map_err(|_| not_valid(NOT_VALID))?;
     let evidence = owner_passkey_possession_evidence(&input.credential_id, &envelope)
         .map_err(|_| not_valid(NOT_VALID))?;
-    if decode_owner_passkey_possession(&evidence).is_none() {
-        return Err(not_valid(NOT_VALID));
-    }
     Ok((public_key.clone(), enrolled_passkey(public_key, evidence)))
 }
 
@@ -470,11 +467,11 @@ impl Vault {
     where
         S: FnMut(&[u8]) -> Result<Vec<u8>>,
     {
-        self.owner_key_act_owner(authority)?;
         let witness = self.owner_presence(
             OwnerActImportance::Important,
             owner_presence_reasons::ENROL_OWNER_SIGNING_KEY,
         )?;
+        self.owner_key_act_owner(authority)?;
         self.enrol_owner_signing_key_on_entry_fold_as(
             authority,
             &witness,
@@ -894,6 +891,10 @@ impl Vault {
         input: OwnerKeyEnrollment,
         issuer: &HostSlipIssuer,
     ) -> Result<OwnerKeyEnrollmentReceipt> {
+        let _asked_again = self.owner_presence(
+            OwnerActImportance::Important,
+            owner_presence_reasons::ENROL_OWNER_SIGNING_KEY,
+        )?;
         self.enrol_owner_signing_key_on_entry_fold_as(
             authority,
             asked,
@@ -970,7 +971,7 @@ impl Vault {
         let (public_key, device) = passkey_enrollment_device(input)?;
         self.owner_key_act_owner(authority)?;
         let witness = self.owner_presence(
-            OwnerActImportance::Important,
+            OwnerActImportance::Ordinary,
             owner_presence_reasons::ENROL_OWNER_PASSKEY,
         )?;
         let (entry, machine) = self.enrol_owner_device_as(
@@ -1211,7 +1212,7 @@ impl Vault {
         let mut entry = decode_unsigned_entry(entry).ok_or_else(|| not_valid(NOT_PREPARED))?;
         self.owner_key_act_owner(authority)?;
         let _asked = self.owner_presence(
-            OwnerActImportance::Important,
+            OwnerActImportance::Ordinary,
             owner_presence_reasons::ENROL_OWNER_SIGNING_KEY,
         )?;
         let mut txn = self.store.env.write_txn()?;

@@ -234,10 +234,6 @@ impl Vault {
         if matches!(successor, RootSuccessor::ThisInstall) {
             self.device_keystore()?;
         }
-        let _asked = self.owner_presence(
-            OwnerActImportance::Important,
-            owner_presence_reasons::RECOVER_OWNER_ROOT,
-        )?;
         // Preparing this install's signing keys writes, so its slot is made
         // ready before the writer opens.
         let install = match successor {
@@ -247,6 +243,10 @@ impl Vault {
             )),
             RootSuccessor::Device(_) => None,
         };
+        let _asked = self.owner_presence(
+            OwnerActImportance::Important,
+            owner_presence_reasons::RECOVER_OWNER_ROOT,
+        )?;
         let root_key = signer.authority_key();
         let mut sign_enrolment =
             |_: &AuthorityFold, transcript: &[u8]| signer.sign_authority_transcript(transcript);
