@@ -16,11 +16,13 @@
 //! the owner's words, `source.result` the log entry of the act this install refused, and
 //! `subject_refs` the log entry of every act it names.
 //!
-//! Its taps are read when the row is read ([`setting_refusal_taps_in_txn`]): for each row this
-//! install still refuses an act of, one `vault.settings.set` of that row to the value it holds
-//! here, which the owner may edit. The owner's set signs its act even where this install's row
-//! already holds the value ([`slot_refused_here_in_txn`]), so the act replaces the refused one
-//! on every machine, and each machine's next pass projects the row again.
+//! Its tap is read when the row is read ([`setting_refusal_tap_in_txn`]): one `vault.settings.set`
+//! of every row this install still refuses an act of and of every row its key's hook judges such
+//! a row against, each to the value it holds here, which the owner may edit. The owner's change
+//! of them is ONE act ([`Vault::set_settings`]), whose rows are all written before any hook runs.
+//! It signs a refused row even where this install's row already holds the value
+//! ([`slot_refused_here_in_txn`]), so the act replaces the refused one on every machine, and each
+//! machine's pass projects every row of it, whichever it reads first.
 
 use super::*;
 
@@ -323,29 +325,32 @@ pub(in crate::setting) fn slot_refused_here_in_txn(
     Ok(refused_slot_in_txn(vault, txn, target, None)?.is_some_and(|refused| refused == *slot))
 }
 
-/// The taps the owner's notice of a refused projection offers on this install now, from its
-/// `event` (module doc): for each row an act it names heads and this install still refuses
-/// ([`refused_slot_in_txn`]), the input of one `vault.settings.set` of that row to the value it
-/// holds here, which the owner may edit before he taps. A carried row offers none, since only a
-/// move writes one; an event of another shape offers none.
+/// The tap the owner's notice of a refused projection offers on this install now, from its
+/// `event` (module doc): the input of one `vault.settings.set` of each row an act it names heads
+/// and this install still refuses ([`refused_slot_in_txn`]), then of each row the key's hook
+/// judges such a row against ([`super::super::RefusalPeers`]), each named once, to the value it
+/// holds here, which the owner may edit before he taps. Every row past the first is a further
+/// row of the same change, so the owner's tap is one act. A carried row is left out, since only
+/// a move writes one. `None` where no refusal stands here, and for an event of another shape.
 ///
 /// # Errors
 ///
-/// Storage errors.
-pub(crate) fn setting_refusal_taps_in_txn(
+/// Storage errors; the key's peers' read.
+pub(crate) fn setting_refusal_tap_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     event: &str,
-) -> Result<Vec<serde_json::Value>> {
+) -> Result<Option<serde_json::Value>> {
     let Some((acts, _owner)) = event.split_once(':') else {
-        return Ok(Vec::new());
+        return Ok(None);
     };
     let acts: BTreeSet<AuthorityEntryHash> = acts
         .split('+')
         .filter_map(oneiron_hex::decode::<32>)
         .collect();
     let mut targets = BTreeSet::new();
-    let mut taps = Vec::new();
+    let mut refused = Vec::new();
+    let mut peers = Vec::new();
     for act in &acts {
         let id = authority_log_entity_id_from_hash(act)?;
         let Some(entry) = vault.get_authority_log_entry_in_txn(txn, &id)? else {
@@ -354,32 +359,65 @@ pub(crate) fn setting_refusal_taps_in_txn(
         let AuthorityOp::PolicySettingSet(set) = entry.op else {
             continue;
         };
-        let slot = set.slot.unwrap_or_else(|| RowKey {
-            name: set.setting.clone(),
-            item: None,
-            mode: SettingMode::Value,
-            scope: SettingScope::Vault,
-        });
-        let target = setting_slot_target(&slot)?;
-        if !targets.insert(target) {
-            continue;
+        // Every row the act names: its first, and each further row of a batch or of the owner's
+        // change of several rows.
+        let rows = std::iter::once((set.setting, set.slot))
+            .chain(set.more.into_iter().map(|row| (row.setting, row.slot)));
+        for (setting, slot) in rows {
+            let slot = slot.unwrap_or_else(|| RowKey {
+                name: setting,
+                item: None,
+                mode: SettingMode::Value,
+                scope: SettingScope::Vault,
+            });
+            let target = setting_slot_target(&slot)?;
+            if !targets.insert(target) {
+                continue;
+            }
+            let Some(row) = refused_slot_in_txn(vault, txn, target, Some(&acts))? else {
+                continue;
+            };
+            if let Ok(spec) = spec_named(&row.name)
+                && let Some(peers_of) = spec.refusal_peers
+            {
+                let value = match vault.setting_slot_fold_in_txn(txn, target)? {
+                    Some(fold) => named_acts_in_txn(vault, txn, &fold)?
+                        .into_iter()
+                        .next()
+                        .and_then(|named| named.value),
+                    None => None,
+                };
+                peers.extend(peers_of(vault, txn, &row, value.as_ref())?);
+            }
+            refused.push(row);
         }
-        let Some(refused) = refused_slot_in_txn(vault, txn, target, Some(&acts))? else {
-            continue;
-        };
-        let Ok(spec) = spec_named(&refused.name) else {
-            continue;
-        };
-        if refused.mode == SettingMode::Carried {
-            continue;
-        }
-        taps.push(serde_json::json!({
-            "key": refused.name,
-            "item": refused.item,
-            "scope": refused.scope,
-            "pin": refused.mode == SettingMode::Pin,
-            "value": value_here_in_txn(vault, txn, spec, &refused)?,
-        }));
     }
-    Ok(taps)
+    let mut rows = Vec::new();
+    for slot in refused.into_iter().chain(peers) {
+        if slot.mode == SettingMode::Carried || rows.iter().any(|(listed, _)| *listed == slot) {
+            continue;
+        }
+        let Ok(spec) = spec_named(&slot.name) else {
+            continue;
+        };
+        let value = value_here_in_txn(vault, txn, spec, &slot)?;
+        rows.push((slot, value));
+    }
+    let mut rows = rows.into_iter().map(|(slot, value)| {
+        serde_json::json!({
+            "key": slot.name,
+            "item": slot.item,
+            "scope": slot.scope,
+            "pin": slot.mode == SettingMode::Pin,
+            "value": value,
+        })
+    });
+    let Some(mut tap) = rows.next() else {
+        return Ok(None);
+    };
+    let further: Vec<serde_json::Value> = rows.collect();
+    if !further.is_empty() {
+        tap["further"] = serde_json::Value::Array(further);
+    }
+    Ok(Some(tap))
 }

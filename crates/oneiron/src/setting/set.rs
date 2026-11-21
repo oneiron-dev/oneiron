@@ -1,4 +1,7 @@
-//! The one door that changes a setting row: [`Vault::set_setting`].
+//! The one door that changes a setting row: [`Vault::set_setting`]; and the owner's change of
+//! several rows as one act, [`Vault::set_settings`].
+
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
@@ -17,8 +20,8 @@ use super::read::{
 };
 use super::signed_act::sign_owner_change_in_txn;
 use super::{
-    EncodedValue, SetBy, Setter, SettingChange, SettingMode, SettingScope, SettingSpec, set_line,
-    spec_named, widen_line, widen_line_at, widen_scope_line,
+    EncodedValue, SetBy, Setter, SettingChange, SettingMode, SettingScope, SettingSpec, WriteTurn,
+    set_line, spec_named, widen_line, widen_line_at, widen_scope_line,
 };
 use crate::Vault;
 use crate::authority::OwnerProofGround;
@@ -282,6 +285,110 @@ impl Vault {
         caller: SettingCaller<'_>,
         request: &SetSetting,
     ) -> Result<SetSettingOutcome> {
+        let mut written = Vec::with_capacity(1);
+        let outcome = self.write_setting_row_in_txn(txn, caller, request, &mut written)?;
+        finish_written_in_txn(self, txn, ground, written)?;
+        Ok(outcome)
+    }
+
+    /// The owner's change of several setting rows as one act (row
+    /// SETTING-PROJECTED-ROW-REFUSING-HOOKS: the one-step fix of a refused projection). Each row
+    /// is checked, judged and written as [`Self::set_setting`] does it, in one write, on the
+    /// owner's proof; every row is in the write before any key's hook runs, so a hook that judges
+    /// one row against another reads both as the change leaves them; the rows that travel sign
+    /// ONE act, so every machine projects them from it; and the change is all or none. It is
+    /// asked as an important act. It takes each key's write turn before the write opens, once per
+    /// turn, in name order, as a projection pass does. The outcomes are in the order of
+    /// `requests`; once the write commits, each applied change runs its key's `after_commit`.
+    ///
+    /// # Errors
+    ///
+    /// `InvalidConfig` for no row, a row named twice, or rows that name different act surfaces;
+    /// as [`Self::set_setting`] for each row.
+    pub fn set_settings(
+        &self,
+        owner: &AuthenticatedOwner,
+        requests: Vec<SetSetting>,
+    ) -> Result<Vec<SetSettingOutcome>> {
+        let ground = if requests.iter().any(owner_change_signs) {
+            let witness = self.owner_presence(
+                OwnerActImportance::Important,
+                owner_presence_reasons::SETTING_CHANGE,
+            )?;
+            Some(OwnerProofGround::witnessed(&witness))
+        } else {
+            None
+        };
+        let turns: BTreeMap<&str, WriteTurn> = requests
+            .iter()
+            .filter_map(|request| spec_named(&request.key).ok()?.write_turn)
+            .map(|turn| (turn.name, turn))
+            .collect();
+        let mut held = Vec::with_capacity(turns.len());
+        for turn in turns.values() {
+            held.push((turn.take)(self)?);
+        }
+        let outcomes = self.with_write_txn_grouped_after_commit(
+            |txn| self.set_settings_in_txn(txn, ground.as_ref(), owner, &requests),
+            |outcomes| {
+                let changes: Vec<_> = requests.iter().zip(&outcomes).collect();
+                run_after_commit(self, &changes);
+                Ok(outcomes)
+            },
+        );
+        drop(held);
+        super::project::project_deferred_settings(self);
+        outcomes
+    }
+
+    /// [`Self::set_settings`] in the caller's write.
+    fn set_settings_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        ground: Option<&OwnerProofGround>,
+        owner: &AuthenticatedOwner,
+        requests: &[SetSetting],
+    ) -> Result<Vec<SetSettingOutcome>> {
+        let Some(first) = requests.first() else {
+            return Err(Error::InvalidConfig(
+                "a setting change names at least one row".into(),
+            ));
+        };
+        for (at, request) in requests.iter().enumerate() {
+            if request.surface != first.surface {
+                return Err(Error::InvalidConfig(
+                    "the rows of one setting change name one act surface".into(),
+                ));
+            }
+            if requests[..at].iter().any(|before| {
+                (&before.key, &before.item, before.mode, &before.scope)
+                    == (&request.key, &request.item, request.mode, &request.scope)
+            }) {
+                return Err(Error::InvalidConfig(format!(
+                    "a setting change names each row once: a row of `{}` is named twice",
+                    request.key
+                )));
+            }
+        }
+        let caller = SettingCaller::Owner(owner);
+        let mut written = Vec::with_capacity(requests.len());
+        let mut outcomes = Vec::with_capacity(requests.len());
+        for request in requests {
+            outcomes.push(self.write_setting_row_in_txn(txn, caller, request, &mut written)?);
+        }
+        finish_written_in_txn(self, txn, ground, written)?;
+        Ok(outcomes)
+    }
+
+    /// Checks `request` and writes its row ([`set_in_txn`]); the key's hook and the act wait in
+    /// `written` until every row of the caller's request is written ([`finish_written_in_txn`]).
+    fn write_setting_row_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        caller: SettingCaller<'_>,
+        request: &SetSetting,
+        written: &mut Vec<Written>,
+    ) -> Result<SetSettingOutcome> {
         let spec = spec_named(&request.key)?;
         spec.check_item(request.item.as_deref())?;
         if !spec.admits_scope(request.scope.kind()) {
@@ -339,7 +446,7 @@ impl Vault {
             value: value.as_ref(),
             weight_runs: checked_weight(spec, request)?,
         };
-        set_in_txn(self, txn, ground, &change, caller, request)
+        set_in_txn(self, txn, &change, caller, request, written)
     }
 }
 
@@ -386,6 +493,67 @@ pub(crate) fn run_after_commit(vault: &Vault, changes: &[(&SetSetting, &SetSetti
     }
 }
 
+/// A change written to its row, whose key's hook and act wait until every row of its request is
+/// written ([`finish_written_in_txn`]).
+struct Written {
+    spec: &'static SettingSpec,
+    recorded: SettingChange,
+    signing: Signing,
+}
+
+/// How a written change is signed, by the owner who made it from the surface named.
+enum Signing {
+    /// Its row travels: it is a row of the request's one act, mandatory.
+    Act(EntityId, ActSurface),
+    /// Another owner's change that names its surface: a signed record, last and best effort.
+    Record(EntityId, ActSurface),
+    /// No owner's act signs it.
+    Unsigned,
+}
+
+/// Runs each key's hook of `written`, the rows of one request in `txn`, once every row is
+/// written: a hook that reads another row of the request reads it as the request leaves it. Then
+/// appends ONE act for every row that travels, mandatory (stage 7a-2: it fails the change when
+/// this install cannot append it; each value rides inside it or beside it, stage 7c-1), and last
+/// signs the record of each other owner's change that names its surface, best effort, after every
+/// mandatory write (FIX 4624).
+fn finish_written_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    ground: Option<&OwnerProofGround>,
+    written: Vec<Written>,
+) -> Result<()> {
+    for row in &written {
+        if let Some(on_change) = row.spec.on_change {
+            on_change(vault, txn, &row.recorded)?;
+        }
+    }
+    let mut act: Option<(
+        (EntityId, ActSurface),
+        Vec<(&'static SettingSpec, &SettingChange)>,
+    )> = None;
+    for row in &written {
+        if let Signing::Act(owner, surface) = row.signing {
+            let (signer, rows) = act.get_or_insert_with(|| ((owner, surface), Vec::new()));
+            if *signer != (owner, surface) {
+                return Err(Error::InvariantViolation(
+                    "the rows of one setting change sign one act",
+                ));
+            }
+            rows.push((row.spec, &row.recorded));
+        }
+    }
+    if let Some((signer, rows)) = act {
+        append_act_in_txn(vault, txn, ground, signer, &rows)?;
+    }
+    for row in &written {
+        if let Signing::Record(owner, surface) = row.signing {
+            sign_owner_change_in_txn(vault, txn, ground, row.spec, owner, surface, &row.recorded);
+        }
+    }
+    Ok(())
+}
+
 /// One asked change, checked against the catalogue.
 struct Change<'a> {
     spec: &'static SettingSpec,
@@ -398,10 +566,10 @@ struct Change<'a> {
 fn set_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
-    ground: Option<&OwnerProofGround>,
     change: &Change<'_>,
     caller: SettingCaller<'_>,
     request: &SetSetting,
+    written: &mut Vec<Written>,
 ) -> Result<SetSettingOutcome> {
     let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
     if request.surface.is_some() && !matches!(caller, SettingCaller::Owner(_)) {
@@ -620,27 +788,24 @@ fn set_in_txn(
             0
         }
     };
-    if let Some(on_change) = change.spec.on_change {
-        on_change(vault, txn, &recorded)?;
-    }
-    // The act of a row that travels is mandatory: it fails the change when this install cannot
-    // append it. Its value rides inside it or beside it (stage 7c-1).
-    let appended = match (travelling, by, surface) {
-        (true, Some(owner), Some(surface)) => {
-            append_act_in_txn(vault, txn, ground, change.spec, (owner, surface), &recorded)?;
-            true
+    // The key's hook, the act of a row that travels, and the signed record of any other owner's
+    // change that names its surface wait until every row of the request is written
+    // ([`finish_written_in_txn`]).
+    let signing = match (travelling, caller, by, surface) {
+        (true, _, Some(owner), Some(surface)) => Signing::Act(owner, surface),
+        (false, SettingCaller::Owner(_), Some(owner), Some(surface)) => {
+            Signing::Record(owner, surface)
         }
-        _ => false,
+        _ => Signing::Unsigned,
     };
-    // Any other owner's change that names its surface: the signed record goes last, best effort,
-    // after every mandatory write (FIX 4624).
-    if !appended
-        && let (SettingCaller::Owner(_), Some(owner), Some(surface)) = (caller, by, surface)
-    {
-        sign_owner_change_in_txn(vault, txn, ground, change.spec, owner, surface, &recorded);
-    }
+    let sequence = recorded.sequence;
+    written.push(Written {
+        spec: change.spec,
+        recorded,
+        signing,
+    });
     Ok(SetSettingOutcome::Applied {
-        sequence: Some(recorded.sequence),
+        sequence: Some(sequence),
         revision,
         value: json(change.value),
     })
