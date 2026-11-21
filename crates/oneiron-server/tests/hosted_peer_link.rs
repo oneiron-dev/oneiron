@@ -682,8 +682,10 @@ fn a_link_keeps_its_origins_path_and_refuses_one_no_hosted_peer_reaches() {
             "https://laptop.example#pair",
             "https://laptop.example/?via=mail",
             "http://laptop.example",
+            // testkit-lint: allow(fixed-port) a refused origin: the link refuses it before any dial
             "http://127.0.0.1:8080",
             "https://localhost",
+            // testkit-lint: allow(network) a refused origin: the link refuses it before any dial
             "https://10.0.0.5",
             "https://[::1]",
         ] {

@@ -1,13 +1,14 @@
 //! `oneiron link`, `oneiron link status` and `oneiron unlink` (L10-16;
 //! canon cross-arch-0024 M4.25): thin clients of a running server's
 //! `/v1/owner/link`, with the owner's credential as `oneiron api` reads it.
-//! Each prints the server's JSON answers; a refusal's body goes to stderr as
-//! the server sent it, and the command fails.
+//! Each prints the server's JSON answers; a refusal fails the command with
+//! the server's body as it sent it.
 //!
 //! `oneiron link` asks for the peer, then reads where it stands every few
 //! seconds until its machine is live here, the control plane says it
 //! failed, or `--wait-secs` pass.
 
+use std::io::{self, Write as _};
 use std::time::{Duration, Instant};
 
 use reqwest::Method;
@@ -76,9 +77,15 @@ pub fn unlink(args: UnlinkArgs) -> anyhow::Result<()> {
     print(&call(&args.server, Method::DELETE, None)?)
 }
 
+/// Writes `value` to stdout; a reader that closed the pipe early is no
+/// failure.
 fn print(value: &Value) -> anyhow::Result<()> {
-    println!("{}", serde_json::to_string_pretty(value)?);
-    Ok(())
+    let rendered = serde_json::to_string_pretty(value)?;
+    match writeln!(io::stdout().lock(), "{rendered}") {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::BrokenPipe => Ok(()),
+        Err(error) => Err(error.into()),
+    }
 }
 
 /// One call of `method` on the server's `/v1/owner/link`, with `body` as
@@ -118,8 +125,7 @@ fn call(server: &RunningServerArgs, method: Method, body: Option<Value>) -> anyh
     let status = response.status();
     let text = response.text().unwrap_or_default();
     if !status.is_success() {
-        eprintln!("{text}");
-        anyhow::bail!("{url} answered {status}");
+        anyhow::bail!("{url} answered {status}: {text}");
     }
     serde_json::from_str(&text).map_err(|_| anyhow::anyhow!("{url} answered {status} with no JSON"))
 }
