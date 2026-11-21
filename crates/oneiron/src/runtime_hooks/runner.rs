@@ -79,9 +79,9 @@ impl std::fmt::Debug for FactHookRunner {
 pub struct HookPassReport {
     /// `hooks.enabled` is off; the pass released due ticks and read nothing.
     pub disabled: bool,
-    /// The install is a copy restored and not joined (row RESTORED-UNJOINED-STARTS-NO-WORK): the
-    /// pass ran no hook, drained no settled verb ask and applied no pending intent. The join's
-    /// proactivity notice wakes the next pass, which runs them.
+    /// The install is a copy restored and not joined (row RESTORED-UNJOINED-STARTS-NO-WORK), with
+    /// hooks on or off: the pass ran no hook, drained no settled verb ask and applied no pending
+    /// intent. The join's proactivity notice wakes the next pass, which runs them.
     pub unjoined: bool,
     pub entries_read: usize,
     pub runs: usize,
@@ -231,6 +231,11 @@ impl FactHookRunner {
         crate::dreamer_runner::release_program_wakes(vault, now);
         if !vault.hooks_enabled()? {
             report.disabled = true;
+            // The report names a copy restored and not joined with hooks off
+            // as with hooks on; the prune is local and runs either way. An
+            // unreadable answer is left to the next pass with hooks on, which
+            // fails on it.
+            report.unjoined = matches!(vault.restored_unjoined(), Ok(true));
             return hook_feeds::prune_hook_feeds(vault, max_entries).map(|()| report);
         }
         // A copy restored and not joined starts none of the image's hooks or
