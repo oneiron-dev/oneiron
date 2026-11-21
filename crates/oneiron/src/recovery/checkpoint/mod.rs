@@ -627,7 +627,10 @@ impl Vault {
     /// admitted an agent request, or recovered its proof clock, after the
     /// replacement was made refuses it, and nothing moves: the replacement
     /// would not know those proofs; so does one that holds an agent id looser
-    /// than this vault now does (H215). Under the same writer, before the
+    /// than this vault now does (H215), and one whose `sync: install` setting
+    /// or residence choice moved since: the replacement is this machine from
+    /// then on, and this vault drops those choices when it is activated (row
+    /// SETTING-ACTIVATE-ARCHIVED-INSTALL-ROWS). Under the same writer, before the
     /// exchange, the replacement carries this vault's authorization time:
     /// its committed floor and lease, its journaled bound, the times this
     /// handle judged and its clock now, journaled in the replacement's own
@@ -690,6 +693,13 @@ impl Vault {
             |txn| {
                 crate::authority::refuse_moved_proof_freshness(self, txn, replacement)?;
                 crate::agent_def::refuse_loosened_agent_id_pins(
+                    &self.store,
+                    txn,
+                    &replacement.store,
+                )?;
+                // The choices about this install it carried still stand: this
+                // vault drops its own when it is activated.
+                crate::identity::refuse_moved_install_choices(
                     &self.store,
                     txn,
                     &replacement.store,
