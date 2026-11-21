@@ -11,7 +11,9 @@
 //! import, while the vault was open) gets it at its first copy review: the
 //! host's review seeds it when a governed campaign finds none. A vault that
 //! never runs a campaign gets none, so the guide's text never reaches its
-//! reads and context. Its row in `CAMPAIGN_HOUSE_VOICE_GUIDE` names the
+//! reads and context; in one that does, the guide is explicit-only
+//! ([`HOUSE_VOICE_GUIDE_NOTE_KIND`]), so no search or context pack returns
+//! it either. Its row in `CAMPAIGN_HOUSE_VOICE_GUIDE` names the
 //! NOTE and is the seed's marker: written in the NOTE's birth commit, it makes
 //! the seed run once. Each replica seeds its own, as the root project is
 //! seeded. A guide the owner deletes is not seeded again: a campaign with no
@@ -36,10 +38,18 @@ use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Vault, WriteActor};
 
-/// The kind the guide is born as: a vault-readable NOTE, so a campaign's
-/// owner, the vault's owner or an agent that reads the vault, reads it
-/// through the scoped NOTE read the copy review uses.
-pub const HOUSE_VOICE_GUIDE_NOTE_KIND: &str = "research";
+/// The kind the guide is born as: explicit-only, with extraction off, as a
+/// lens's intent is (FIX VOICE-GUIDE-NOTES-REACH-CONTEXT-PACKS). No ordinary
+/// retrieval returns it, for any reader, the owner included: no search,
+/// context pack or graph walk brings its lines into unrelated work, and no
+/// claim is extracted from it. The copy review reads it by ref through the
+/// scoped NOTE read, which admits an explicit-only NOTE to every reader its
+/// policy admits: a campaign's owner, the vault's owner or an agent whose
+/// grants cover it. A guide seeded before this kind keeps `research`, which
+/// reads as before (Stored change: keep); the owner moves either one by its
+/// overrides (`vault.notes.set_overrides`).
+pub const HOUSE_VOICE_GUIDE_NOTE_KIND: &str =
+    crate::store::note_kind::CAMPAIGN_VOICE_GUIDE_NOTE_KIND;
 
 /// The guide's first text, for the owner to rewrite in their own voice.
 pub const HOUSE_VOICE_GUIDE_MARKDOWN: &str = "# House voice guide

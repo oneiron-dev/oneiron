@@ -33,6 +33,11 @@ pub const COMPACTION_INTENT_NOTE_KIND: &str = "compaction/intent";
 /// kind=lens row's birth names it as the prompt. Readable on an explicit
 /// read, kept out of default context and out of extraction.
 pub const LENS_INTENT_NOTE_KIND: &str = "lens/intent";
+/// The house voice guide a campaign's copy review checks each body against
+/// (ARCH-0059 #copy-review): an authored instruction for the judge, as a
+/// lens's intent is. Readable on an explicit read, kept out of default
+/// context and out of extraction (FIX VOICE-GUIDE-NOTES-REACH-CONTEXT-PACKS).
+pub const CAMPAIGN_VOICE_GUIDE_NOTE_KIND: &str = "campaign/voice-guide";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RetentionDefault {
@@ -124,6 +129,13 @@ pub const SHIPPED: &[(
     ),
     (
         LENS_INTENT_NOTE_KIND,
+        ExtractionDefault::Disabled,
+        ContextDefault::ExplicitOnly,
+        RetentionDefault::Durable,
+        None,
+    ),
+    (
+        CAMPAIGN_VOICE_GUIDE_NOTE_KIND,
         ExtractionDefault::Disabled,
         ContextDefault::ExplicitOnly,
         RetentionDefault::Durable,
