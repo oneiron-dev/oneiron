@@ -576,9 +576,11 @@ impl Vault {
     ///
     /// The revert of a proactivity policy request puts the digest's rows
     /// back as the owner's change. Those rows travel (stage 7c-1), so in a
-    /// rooted vault their acts can carry an owner key's proof: for that
-    /// kind the door asks for the person at this device before its write
-    /// ([`Vault::owner_presence`]) and refuses with that check's refusal.
+    /// rooted vault their acts can carry an owner key's proof. The door makes
+    /// its pre-write refusals in a read transaction and returns a failed read
+    /// as its answer. For that kind the door drops the read and asks for the
+    /// person at this device while holding nothing ([`Vault::owner_presence`])
+    /// and refuses with that check's refusal. The write makes the checks again.
     /// Every other kind signs no owner proof here and is not asked.
     pub fn revert_dreamer_maintenance(
         &self,
@@ -586,12 +588,15 @@ impl Vault {
         target: MaintenanceTarget,
         now: u64,
     ) -> Result<MaintenanceRevert> {
-        // The confirm is for an owner proof, so it stands before the write
-        // opens, while the door holds nothing: the prompt can block.
-        let ground = if self
-            .standing_inverse_is_proactivity_policy(target)
-            .unwrap_or(false)
-        {
+        let asks = {
+            let txn = self.store.env.read_txn()?;
+            let (_, row) = self.read_maintenance_revert_in_txn(&txn, owner, target)?;
+            row.reverted.is_none()
+                && matches!(row.inverse, MaintenanceInverse::ProactivityPolicy(_))
+        };
+        // The read drops before the confirm for the owner proof. The write
+        // has not opened, so the door holds nothing while the prompt can block.
+        let ground = if asks {
             let witness = self.owner_presence(
                 crate::world_keys::OwnerActImportance::Important,
                 crate::world_keys::owner_presence_reasons::PROACTIVITY_POLICY,
@@ -601,10 +606,7 @@ impl Vault {
             None
         };
         let reverted = self.with_write_txn_grouped(|txn| {
-            let actor = super::validate_owner_in_txn(self, &*txn, owner)?;
-            let mut row = APPLIED
-                .get(&self.store, &*txn, &target)?
-                .ok_or(Error::EntityNotFound)?;
+            let (actor, mut row) = self.read_maintenance_revert_in_txn(txn, owner, target)?;
             if let Some(done) = &row.reverted {
                 return Ok(done.clone());
             }
@@ -657,16 +659,20 @@ impl Vault {
         Ok(reverted)
     }
 
-    /// Whether the applied write `target` names stands unreverted with a
-    /// proactivity policy's inverse, read before the revert's write so its
-    /// door knows to ask. The door reads a failure here as "no": the write
-    /// then answers with its own reason, and a policy's rows it met after
-    /// all would sign no owner proof.
-    fn standing_inverse_is_proactivity_policy(&self, target: MaintenanceTarget) -> Result<bool> {
-        let txn = self.store.env.read_txn()?;
-        Ok(APPLIED.get(&self.store, &txn, &target)?.is_some_and(|row| {
-            row.reverted.is_none()
-                && matches!(row.inverse, MaintenanceInverse::ProactivityPolicy(_))
-        }))
+    /// The refusals a revert of `target` makes before its first write, on
+    /// `txn`: the owner's proof and person, and a target no applied write
+    /// names. The door runs them on a read before it asks and again in its
+    /// write. Answers the acting owner and the applied row.
+    fn read_maintenance_revert_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        owner: &AuthenticatedOwner,
+        target: MaintenanceTarget,
+    ) -> Result<(EntityId, AppliedRow)> {
+        let actor = super::validate_owner_in_txn(self, txn, owner)?;
+        let row = APPLIED
+            .get(&self.store, txn, &target)?
+            .ok_or(Error::EntityNotFound)?;
+        Ok((actor, row))
     }
 }
