@@ -33,6 +33,7 @@ use std::{
 };
 
 use oneiron_container::{GuestSeccomp, SessionManifest, image_release::ImageReleaseObservation};
+use oneiron_contracts::fingerprint::ContentHash;
 use oneiron_sandbox_contract::{GUEST_PROTOCOL_VERSION, MAX_COMPONENT_BYTES, MAX_FRAME_BYTES};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -267,7 +268,7 @@ impl VendorBatchBackend {
             backend: self.name().into(),
             runtime: self.client.vendor().as_str().into(),
             image: guest_image.into(),
-            argv_digest: blake3::hash(&argv).to_hex().to_string(),
+            argv_digest: ContentHash::of(&argv).to_hex(),
             network: "vendor; no engine egress".into(),
             seccomp: GuestSeccomp::Unfiltered,
             generation: vm.id().into(),
