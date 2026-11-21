@@ -90,7 +90,7 @@ pub use self::machine::{existing_machine_secret, machine_encryption_key, machine
 pub(crate) use self::machine::{keystore_error, slot_seed};
 pub use self::owner_presence::{OwnerActImportance, OwnerPresenceBasis, OwnerPresenceWitness};
 pub use self::owner_signing::OwnerRootSigner;
-pub(crate) use self::owner_signing::{OwnerSigningSlot, SlotRenewal};
+pub(crate) use self::owner_signing::{FreshOwnerKey, OwnerSigningSlot, SlotRenewal};
 pub use self::owner_work::{
     BundleHomeWarning, CapsuleRead, DeviceSyncStart, EnsureDiagnostics, EnsureView,
     ExecutorObservation, LatestRead, OwnerWorkCancelNote, OwnerWorkCancelState,
