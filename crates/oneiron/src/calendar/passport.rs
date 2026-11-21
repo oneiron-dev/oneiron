@@ -49,6 +49,7 @@ use crate::vault::Vault;
 mod masked_key;
 
 use masked_key::MaskedKey;
+pub(in crate::calendar) use masked_key::{CalendarSystems, passport_uid_among};
 
 /// The reason code on the tray resolution of a waiting passport revision
 /// that a later revision replaced.
@@ -293,6 +294,23 @@ pub fn live_passport_for(
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
         live_passports_for_event_in_txn(vault, &txn, event_ref)?
     };
+    live_passport_keyed(vault, event_ref, passports, system, uid)
+}
+
+/// The passport of `passports`, the live ones of `event_ref`, keyed exactly
+/// `(system, uid)` as the vault reads it now ([`passport_keyed`]), for a
+/// scan that read them already.
+///
+/// # Errors
+///
+/// As [`live_passport_for`].
+pub(in crate::calendar) fn live_passport_keyed(
+    vault: &Vault,
+    event_ref: &EntityId,
+    passports: Vec<(EntityId, CalendarPassportValue)>,
+    system: &str,
+    uid: &str,
+) -> Result<Option<(EntityId, CalendarPassportValue)>, CalendarError> {
     let base_known = || vault.known_values_now();
     let known = CompareKnown::new(Some(&base_known));
     passport_keyed(

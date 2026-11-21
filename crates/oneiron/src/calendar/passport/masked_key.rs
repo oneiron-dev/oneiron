@@ -2,7 +2,10 @@
 //! carrying its `(system, uid)` as written: a stored system name or UID
 //! that holds a custody handle is read as the value the handle stands for,
 //! each only where something else pins it
-//! (CAL-PASSPORT-SYSTEM-UID-LOOKUP-MISSES-MASKED-PASSPORT).
+//! (CAL-PASSPORT-SYSTEM-UID-LOOKUP-MISSES-MASKED-PASSPORT). The scans that
+//! pick a source's passports without a key read them the same way: a pull's
+//! absence sweep and its written-only tombstone check
+//! (CAL-MASKED-SYSTEM-LITERAL-COMPARES-OUTSIDE-KEYED-LOOKUP).
 
 use super::{
     CalendarError, CalendarPassportValue, exception_head_counts_for_ingest, passport_uid_is,
@@ -24,8 +27,7 @@ use crate::vault::Vault;
 pub(super) struct MaskedKey<'k> {
     system: &'k str,
     uid: &'k str,
-    /// The vault's calendar systems ([`calendar_systems_in_txn`]).
-    systems: Vec<String>,
+    systems: CalendarSystems,
     /// Whether `uid` is pinned to the EVENT whose passports are read.
     uid_pinned: bool,
 }
@@ -42,7 +44,7 @@ impl<'k> MaskedKey<'k> {
         Ok(Self {
             system,
             uid,
-            systems: calendar_systems_in_txn(vault, txn)?,
+            systems: CalendarSystems::read_in_txn(vault, txn)?,
             uid_pinned: uid_pinned_to_event_in_txn(vault, txn, event_ref, uid)?,
         })
     }
@@ -54,11 +56,91 @@ impl<'k> MaskedKey<'k> {
         value: &CalendarPassportValue,
         known: &CompareKnown<'_>,
     ) -> Result<bool, CalendarError> {
-        Ok(
-            passport_system_is(&value.system, self.system, &self.systems, known)?
-                && passport_uid_pinned_is(&value.uid, self.uid, self.uid_pinned, known)?,
-        )
+        Ok(self.systems.carries(&value.system, self.system, known)?
+            && passport_uid_pinned_is(&value.uid, self.uid, self.uid_pinned, known)?)
     }
+}
+
+/// The vault's calendar systems ([`calendar_systems_in_txn`]), read once,
+/// which a system name a passport stored is read against
+/// ([`Self::carries`]).
+pub(in crate::calendar) struct CalendarSystems(Vec<String>);
+
+impl CalendarSystems {
+    /// The calendar systems as `txn` reads them.
+    ///
+    /// # Errors
+    ///
+    /// Store failures, and a seat or feed row that does not decode.
+    pub(in crate::calendar) fn read_in_txn(
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Self, CalendarError> {
+        calendar_systems_in_txn(vault, txn).map(Self)
+    }
+
+    /// The calendar systems as the vault reads them now.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::read_in_txn`].
+    pub(in crate::calendar) fn read(vault: &Vault) -> Result<Self, CalendarError> {
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        Self::read_in_txn(vault, &txn)
+    }
+
+    /// Whether `held`, the system name a passport stored, is `system`
+    /// ([`passport_system_is`]).
+    ///
+    /// # Errors
+    ///
+    /// The custody read's, or a value the wall cannot read.
+    pub(in crate::calendar) fn carries(
+        &self,
+        held: &str,
+        system: &str,
+        known: &CompareKnown<'_>,
+    ) -> Result<bool, CalendarError> {
+        passport_system_is(held, system, &self.0, known)
+    }
+}
+
+/// Whether `held`, the UID a passport on `event_ref` stored, is one of
+/// `uids`: as written, or as custody reads it where `event_ref` pins that
+/// UID ([`uid_pinned_to_event_in_txn`]), as the vault reads it now. A handle
+/// meets every value its custody record ever held, so only the pin makes one
+/// of `uids` the passport's own.
+///
+/// # Errors
+///
+/// Store failures, the custody read's, and an exception claim that does not
+/// decode.
+pub(in crate::calendar) fn passport_uid_among(
+    vault: &Vault,
+    event_ref: &EntityId,
+    held: &str,
+    uids: &[&str],
+    known: &CompareKnown<'_>,
+) -> Result<bool, CalendarError> {
+    if uids.contains(&held) {
+        return Ok(true);
+    }
+    let mut carried = Vec::new();
+    for uid in uids {
+        if passport_uid_is(held, uid, known)? {
+            carried.push(*uid);
+        }
+    }
+    if carried.is_empty() {
+        return Ok(false);
+    }
+    let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+    for uid in carried {
+        if uid_pinned_to_event_in_txn(vault, &txn, event_ref, uid)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Whether `held`, the system name a passport stored, is `system`: as
