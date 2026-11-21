@@ -179,6 +179,17 @@ pub struct CalendarSeriesExceptionValue {
     pub original_start_utc: u64,
 }
 
+/// Value of a `calendar.replay_cancel_evidence` claim: a seat's replay
+/// proof of the owner's cancelled write that read an unmarked stored copy as
+/// the owner's own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CalendarReplayCancelEvidenceValue {
+    /// The write's staged SEQUENCE.
+    pub(crate) sequence: u32,
+    /// When the replay's proof was written.
+    pub(crate) proved_at: u64,
+}
+
 /// Value of a `calendar.successor` claim.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CalendarSuccessorValue {

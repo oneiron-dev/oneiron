@@ -1746,6 +1746,287 @@ fn reply_revision_raises_ask_to_mailbox_person() {
     });
 }
 
+/// The id of the `mail.reply` Ask of revision `revision` of `draft` in `page`, `caller`'s
+/// inbox.
+fn ask_id(page: &Value, draft: &str, revision: u64, caller: &str) -> String {
+    ask_row(page, draft, revision)
+        .unwrap_or_else(|| panic!("the revision's Ask lists to the {caller}: {page}"))["id"]
+        .as_str()
+        .expect("an inbox row names its id")
+        .to_owned()
+}
+
+/// A member's own mailbox: the member shares one thread with another person, who drafts a
+/// reply there, and the Ask goes to the member. Its birth names the thread and the message
+/// it answers, so it reads to a reader of both: the member reads it by id, and the vault's
+/// owner, who reads no member's mailbox, reads none of its body
+/// (RECIPIENT-NOTICE-READ-BY-ANY-READER, owner half; Engine ANSWER 21 Nov 06:28: "the
+/// owner reads a member's notice body exactly when he can read the sources it came from").
+/// He sees that it exists: his `vault.get` by id answers a withheld stub, its id, kind,
+/// recipient and created_at and `body_withheld: true`, with no source, subjects, actions or
+/// origin, and his inbox list stays his own (Engine ANSWER OWNER-NOTICE-EXISTENCE Q1 = A,
+/// 21 Nov 11:25). Red on main: the owner's `vault.get` answers no value.
+#[test]
+fn member_mailbox_reply_ask_reads_to_its_person_and_to_the_owner_as_a_withheld_stub() {
+    run_on_engine_stack("mail-ask-owner-floor", || async {
+        let fixture = setup().await;
+        install_pack(&fixture).await;
+        let member_source = member_mailbox(&fixture).await;
+        let received = fixture.vault.now_recorded_at();
+        land_seeds(
+            &fixture,
+            &member_source,
+            vec![seed_message(
+                "member-msg-1",
+                "member-thread-1",
+                "Thursday rota",
+                "The Thursday rota is posted.",
+                "member@imap.example",
+                received,
+            )],
+        );
+        let (status, member_page) =
+            post_as_member(&fixture, "/v1/core/facade/vault.mail.inbox", json!({})).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the member reads the inbox: {member_page}"
+        );
+        let thread = thread_ref_by_subject(&member_page, "Thursday rota");
+        let (status, owner_page) =
+            post_as_owner(&fixture, "/v1/core/facade/vault.mail.inbox", json!({})).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the owner reads the inbox: {owner_page}"
+        );
+        assert!(
+            owner_page["items"]
+                .as_array()
+                .expect("the inbox answers items")
+                .iter()
+                .all(|item| item["thread_ref"].as_str() != Some(thread.as_str())),
+            "setup: the owner does not read the member's thread: {owner_page}"
+        );
+        let (status, receipt) = post_as_member(
+            &fixture,
+            "/v1/core/facade/vault.mail.threads.share",
+            json!({"record_ref": thread.clone(), "person_ref": fixture.stranger.to_hex()}),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the member shares their thread: {receipt}"
+        );
+
+        let (status, drafted) = post_as_stranger(
+            &fixture,
+            "/v1/core/facade/vault.mail.reply.draft",
+            json!({
+                "thread_ref": thread.clone(),
+                "body": "I can take the Thursday slot.",
+                "request_key": "owner-floor-member",
+            }),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the person it was shared with drafts on the thread: {drafted}"
+        );
+        let draft = drafted["draft_ref"]
+            .as_str()
+            .expect("a draft answers its ref")
+            .to_owned();
+        let (status, asked) =
+            post_as_member(&fixture, "/v1/core/facade/self.inbox.list", json!({})).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the member reads the inbox: {asked}"
+        );
+        let ask = ask_id(&asked, &draft, 1, "member");
+
+        let (status, body) = post_as_member(
+            &fixture,
+            "/v1/core/facade/vault.get",
+            json!({"entity_ref": ask.clone()}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            body["value"]["id_hex"].as_str(),
+            Some(ask.as_str()),
+            "the member reads their own Ask by id: {body}"
+        );
+        let notice = &body["value"]["body"];
+        let created_at = notice["created_at"]
+            .as_u64()
+            .expect("the member's Ask says when it was created");
+        assert!(
+            notice["source"].is_object(),
+            "setup: the member reads the Ask's body: {body}"
+        );
+        let stub = json!({
+            "id": ask.clone(),
+            "kind": notice["kind"].clone(),
+            "recipient": notice["recipient"].clone(),
+            "created_at": created_at,
+            "body_withheld": true,
+        });
+        assert_eq!(
+            notice["recipient"].as_str(),
+            Some(fixture.member.to_hex().as_str()),
+            "setup: the Ask is addressed to the member: {body}"
+        );
+
+        let (status, body) = post_as_owner(
+            &fixture,
+            "/v1/core/facade/vault.get",
+            json!({"entity_ref": ask.clone()}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let view = &body["value"];
+        assert_eq!(
+            view["id_hex"].as_str(),
+            Some(ask.as_str()),
+            "the owner sees that the member's Ask exists: {body}"
+        );
+        assert_eq!(view["kind"], "NOTIFICATION", "{body}");
+        assert_eq!(
+            view["body"], stub,
+            "the owner's stub is the Ask's id, kind, recipient and created_at, its body \
+             withheld: {body}"
+        );
+        assert!(
+            view["made_by"].is_null() && view["short_ref"].is_null(),
+            "the stub names no birth and no short ref: {body}"
+        );
+        for at in ["occurred_start", "occurred_end", "learned_at"] {
+            assert_eq!(
+                view[at].as_u64(),
+                Some(created_at),
+                "the stub's {at} is the Ask's created_at, never a mark's time: {body}"
+            );
+        }
+        let served = view.to_string();
+        for words in [
+            draft.as_str(),
+            thread.as_str(),
+            "I can take the Thursday slot.",
+            "Thursday rota",
+            "mail.reply",
+        ] {
+            assert!(
+                !served.contains(words),
+                "the stub carries nothing of the Ask's words or source ({words}): {body}"
+            );
+        }
+        let (status, owner_inbox) =
+            post_as_owner(&fixture, "/v1/core/facade/self.inbox.list", json!({})).await;
+        assert_eq!(status, StatusCode::OK, "{owner_inbox}");
+        assert!(
+            inbox_rows(&owner_inbox)
+                .iter()
+                .all(|row| row["id"].as_str() != Some(ask.as_str())),
+            "the owner's inbox list stays his own: {owner_inbox}"
+        );
+    });
+}
+
+/// The owner's own mailbox, one thread shared with the member, who drafts there: the Ask
+/// goes to the owner, a reader of the thread, and he reads it by id. The control of
+/// [`member_mailbox_reply_ask_reads_to_its_person_and_to_the_owner_as_a_withheld_stub`]:
+/// a floor over the Ask's sources keeps it from no reader of them.
+#[test]
+fn owner_mailbox_reply_ask_reads_to_the_owner_by_id() {
+    run_on_engine_stack("mail-ask-owner-reads", || async {
+        let fixture = setup().await;
+        install_pack(&fixture).await;
+        register_custody(&fixture, "owner-imap", "connector:imap", Vec::new());
+        let token = fixture.owner_token.clone();
+        let source = connect_source(
+            &fixture,
+            &token,
+            owner_binding(&fixture),
+            "imap",
+            "personal_mailbox",
+            "owner@imap.example",
+            "owner-imap-acct",
+            "owner-imap",
+            Vec::new(),
+        )
+        .await;
+        let received = fixture.vault.now_recorded_at();
+        land_seeds(
+            &fixture,
+            &source,
+            vec![seed_message(
+                "owner-msg-1",
+                "owner-thread-1",
+                "Quarterly plan",
+                "Can we move the review to Thursday?",
+                "owner@imap.example",
+                received,
+            )],
+        );
+        let (status, page) =
+            post_as_owner(&fixture, "/v1/core/facade/vault.mail.inbox", json!({})).await;
+        assert_eq!(status, StatusCode::OK, "the owner reads the inbox: {page}");
+        let thread = thread_ref_by_subject(&page, "Quarterly plan");
+        let (status, receipt) = post_as_owner(
+            &fixture,
+            "/v1/core/facade/vault.mail.threads.share",
+            json!({"record_ref": thread.clone(), "person_ref": fixture.member.to_hex()}),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the owner shares the thread: {receipt}"
+        );
+
+        let (status, drafted) = post_as_member(
+            &fixture,
+            "/v1/core/facade/vault.mail.reply.draft",
+            json!({
+                "thread_ref": thread,
+                "body": "Friday works for me.",
+                "request_key": "owner-floor-owner",
+            }),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the member drafts on the shared thread: {drafted}"
+        );
+        let draft = drafted["draft_ref"]
+            .as_str()
+            .expect("a draft answers its ref")
+            .to_owned();
+        let (status, asked) =
+            post_as_owner(&fixture, "/v1/core/facade/self.inbox.list", json!({})).await;
+        assert_eq!(status, StatusCode::OK, "the owner reads the inbox: {asked}");
+        let ask = ask_id(&asked, &draft, 1, "owner");
+
+        let (status, body) = post_as_owner(
+            &fixture,
+            "/v1/core/facade/vault.get",
+            json!({"entity_ref": ask.clone()}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            body["value"]["id_hex"].as_str(),
+            Some(ask.as_str()),
+            "the owner reads the Ask of his own mailbox by id: {body}"
+        );
+    });
+}
+
 /// Approving refuses the wrong mailbox, a stale revision, and a discarded draft: an
 /// agent's approve is refused, the owner approving the member's mailbox meets the
 /// handler's own-person gate, and a wrong revision or a discarded draft is refused. No

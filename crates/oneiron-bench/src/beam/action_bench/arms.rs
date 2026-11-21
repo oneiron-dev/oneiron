@@ -1,7 +1,8 @@
 //! The memory arms (ARCH-0042 #action-bench): no memory, raw-history
 //! retrieval, derived only, raw plus derived, and gold-memory injection; and
 //! the extraction arms, which read claims the vault's own Dreamer extracted
-//! from the raw turns (`extraction.rs`).
+//! from the raw turns (`extraction.rs`); and the discovery arms, which let
+//! the reader choose what to read before it acts (`discovery.rs`).
 //!
 //! The vault arms read through the agent's own read, `Memory::recall` (the
 //! `vault.recall` verb), with `RecallScope::kinds` naming what the arm may
@@ -21,6 +22,7 @@ use oneiron_keystore::MemoryKeystore;
 use serde::{Deserialize, Serialize};
 
 use super::super::{BeamError, BeamResult};
+use super::discovery::DiscoveryStep;
 use super::elapsed_us;
 use super::tasks::{DerivedClaim, FollowUp, History, Turn, TurnAuthor};
 
@@ -54,6 +56,12 @@ pub(super) enum MemoryArm {
     ExtractBackground,
     /// Both, the shipped schedule.
     ExtractCombined,
+    /// Index-first discovery over the claims: the reader sees an index of
+    /// every claim it may read, then fetches handles or searches.
+    IndexFirst,
+    /// Search-only discovery over the claims: the reader writes its own
+    /// search.
+    SearchOnly,
 }
 
 impl MemoryArm {
@@ -66,7 +74,9 @@ impl MemoryArm {
             Self::Derived
             | Self::ExtractOnline
             | Self::ExtractBackground
-            | Self::ExtractCombined => Some(DERIVED_KINDS.to_vec()),
+            | Self::ExtractCombined
+            | Self::IndexFirst
+            | Self::SearchOnly => Some(DERIVED_KINDS.to_vec()),
             Self::RawPlusDerived => Some(RAW_KINDS.iter().chain(&DERIVED_KINDS).copied().collect()),
         }
     }
@@ -79,6 +89,12 @@ impl MemoryArm {
             Self::ExtractOnline | Self::ExtractBackground | Self::ExtractCombined
         )
     }
+
+    /// Whether the reader chooses what to read in a discovery step of its
+    /// own before it acts.
+    pub(super) fn discovers(self) -> bool {
+        matches!(self, Self::IndexFirst | Self::SearchOnly)
+    }
 }
 
 /// What an arm's recall reads: one vault, its owner and its worlds.
@@ -89,12 +105,12 @@ pub(super) struct VaultView<'v> {
 }
 
 impl VaultView<'_> {
-    fn memory(&self) -> Memory<'_> {
+    pub(super) fn memory(&self) -> Memory<'_> {
         self.vault.memory(self.owner, EdgeActorClass::Human)
     }
 
     /// The follow-up's world as a recall names it; none for base reality.
-    fn world_ref(&self, follow_up: &FollowUp) -> BeamResult<Option<String>> {
+    pub(super) fn world_ref(&self, follow_up: &FollowUp) -> BeamResult<Option<String>> {
         follow_up
             .world
             .as_ref()
@@ -449,6 +465,17 @@ pub(super) struct ArmContext {
     pub(super) lines: usize,
     pub(super) items_off_arm: usize,
     pub(super) recall_elapsed_us: u64,
+    /// A discovery arm's step that chose this context.
+    pub(super) discovery: Option<DiscoveryStep>,
+}
+
+/// One memory item's context line: its kind, its predicate when it has one,
+/// and its value.
+pub(super) fn item_line(kind: &str, predicate: Option<&str>, value: &str) -> String {
+    match predicate {
+        Some(predicate) => format!("- {kind} {predicate}: {value}"),
+        None => format!("- {kind}: {value}"),
+    }
 }
 
 pub(super) fn context(
@@ -471,6 +498,7 @@ pub(super) fn context(
             text: lines.join("\n"),
             items_off_arm: 0,
             recall_elapsed_us: 0,
+            discovery: None,
         });
     };
     // A follow-up in a world reads that world and base reality, as an agent
@@ -502,15 +530,13 @@ pub(super) fn context(
         .partition(|item| kinds.iter().any(|kind| *kind == item.kind));
     let lines: Vec<String> = on_arm
         .iter()
-        .map(|item| match &item.predicate {
-            Some(predicate) => format!("- {} {predicate}: {}", item.kind, item.value_text),
-            None => format!("- {}: {}", item.kind, item.value_text),
-        })
+        .map(|item| item_line(&item.kind, item.predicate.as_deref(), &item.value_text))
         .collect();
     Ok(ArmContext {
         lines: lines.len(),
         text: lines.join("\n"),
         items_off_arm: off_arm.len(),
         recall_elapsed_us,
+        discovery: None,
     })
 }

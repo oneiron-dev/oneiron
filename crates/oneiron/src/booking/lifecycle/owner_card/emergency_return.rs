@@ -12,7 +12,9 @@
 //! does it say which act refunded or released the deposit, or when: the
 //! settle takes a refund made by hand in the Stripe dashboard, before the
 //! emergency cancel or after it, as the deposit's refund (review round 2 of
-//! #10073). The note offers no act. Only the pick reopens an
+//! #10073). The note offers no act: where the provider ended that refund
+//! unpaid, it says so, and the card's deposit line offers Return deposit
+//! (review round 1 of #10149). Only the pick reopens an
 //! emergency-cancelled booking, so the note stands while the booking stands
 //! confirmed and its deposit row carries the emergency cancel's mark; it
 //! reads committed facts each time and stores nothing.
@@ -46,6 +48,13 @@ pub enum BookingDepositReturned {
     ReleasePending,
     /// The provider voided the authorization: nothing was captured.
     Released,
+    /// The provider ended the refund of the captured deposit with nothing
+    /// paid back, and it is owed still.
+    RefundEndedUnpaid,
+    /// Refunds made by hand in the Stripe dashboard cover only a part of the
+    /// refund of the captured deposit, and the rest is owed still
+    /// (FIX [BK-DEPOSIT-SHORT-HAND-REFUND-NO-OWNER-LINE]).
+    PartRefundedByHand,
 }
 
 /// The note on the card of a booking that starts at `start`, whose deposit
@@ -77,6 +86,20 @@ pub(super) fn emergency_return_note(
             format!(
                 "{booking}: no new deposit held; the release of the deposit from before the \
                  emergency cancel is pending."
+            ),
+        ),
+        EmergencyReturn::RefundEndedUnpaid => (
+            BookingDepositReturned::RefundEndedUnpaid,
+            format!(
+                "{booking}: no new deposit held; the refund of the deposit from before the \
+                 emergency cancel did not go through at Stripe."
+            ),
+        ),
+        EmergencyReturn::PartRefundedByHand => (
+            BookingDepositReturned::PartRefundedByHand,
+            format!(
+                "{booking}: no new deposit held; refunds made by hand in the Stripe dashboard \
+                 cover only part of the refund of the deposit from before the emergency cancel."
             ),
         ),
         EmergencyReturn::Voided => (

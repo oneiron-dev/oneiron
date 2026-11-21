@@ -51,6 +51,7 @@ mod release;
 #[cfg(feature = "sync")]
 pub(crate) mod replica;
 mod resume;
+mod resume_paused;
 #[cfg(feature = "sync")]
 mod retraction;
 mod run;
@@ -91,6 +92,10 @@ pub use self::read::{
     TurnProgramAdmissionRequest, TurnProgramAdmissionView, TurnProgramOwedWakeItem,
     program_checkpoint, program_run, settled_program_step, turn_program_admission,
 };
+// FIX TURNPROGRAM-OCCURRENCE-ARMINGS-LIVE-ON-A-VAULT-COPY: the paused programs of a vault copy.
+pub use self::read::{
+    PausedTurnProgramItem, PausedTurnProgramsRequest, PausedTurnProgramsView, paused_turn_programs,
+};
 pub use self::rebind::{TurnProgramRebindReceipt, TurnProgramRebindRequest, rebind_turn_program};
 pub use self::release::{
     PROGRAM_HOLD_RELEASE_VERB, ProgramHoldReleaseAction, ProgramHoldReleaseView,
@@ -98,6 +103,12 @@ pub use self::release::{
     release_turn_program_hold_as_owner,
 };
 pub(crate) use self::resume::ProgramHold;
+// FIX TURNPROGRAM-OCCURRENCE-ARMINGS-LIVE-ON-A-VAULT-COPY: the owner's resume of paused programs.
+pub use self::resume_paused::{
+    ResumePausedTurnProgramItem, ResumePausedTurnProgramsPreview, ResumePausedTurnProgramsRequest,
+    ResumedTurnPrograms,
+};
+pub(crate) use self::resume_paused::{resume_chosen_in_txn, resume_paused_in_txn};
 pub(crate) use self::run::{
     ProgramWrite, TurnProgramEntered, bind_program_write_in_txn, join_program_checkpoint_in_txn,
     note_program_write_uncertain, settle_program_outbound_in_txn, settle_program_write_in_txn,

@@ -111,6 +111,9 @@ pub enum RetainedSideHeldBackReason {
     InconsistentCompanion,
     /// An operational reference has no portable local binding.
     NonPortableReference,
+    /// The source row is a choice about the install that exported it (a `sync: install`
+    /// setting row), and the archive is not this install's own export.
+    InstallChoice,
     /// The existing archive credential predicate withholds the source bytes.
     Credential,
 }

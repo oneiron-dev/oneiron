@@ -2,6 +2,7 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::dreamer_runner::program::types::ProgramRecipePin;
+use crate::dreamer_runner::program::types::ProgramTrigger;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_store::model_step_record::SettledStepView;
 use serde::Deserialize;
@@ -111,6 +112,63 @@ pub struct OwedWakeHoldView {
     /// Whether the hold expired (`now >= expires_at`, FIX 12287); withheld
     /// (`held.expired`) unless the turn reads on the caller's lane.
     pub expired: Option<bool>,
+}
+
+/// The armed programs this store holds paused, one page at a time (FIX
+/// TURNPROGRAM-OCCURRENCE-ARMINGS-LIVE-ON-A-VAULT-COPY).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PausedTurnProgramsRequest {
+    /// The previous page's `next_cursor`: the list goes on after it.
+    #[serde(default)]
+    pub cursor: Option<String>,
+    /// Programs in this page: 64 when absent, at most 64. Must be positive.
+    #[serde(default)]
+    pub limit: Option<u32>,
+}
+
+/// One page of the paused programs the caller reads, in actor order, then
+/// registration order.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PausedTurnProgramsView {
+    pub programs: Vec<PausedTurnProgramItem>,
+    /// How many paused programs the caller reads, on every page together:
+    /// all of the store's for the verified owner, its own for any other
+    /// caller.
+    pub paused: u64,
+    /// 64 hex characters the next page's request passes as `cursor`; none
+    /// once the list is at its end.
+    pub next_cursor: Option<String>,
+}
+
+/// One armed program a turn does not wake, paused when the store that holds
+/// it was made a copy served beside its source: nothing wakes it there until
+/// the owner resumes it on that copy.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PausedTurnProgramItem {
+    pub registration: EntityId,
+    /// The actor that armed the program and that it runs as, and its class.
+    pub actor: EntityId,
+    pub actor_class: String,
+    /// What wakes it: a timer with its first due time and its repeat, the
+    /// host turning idle, or a change feed subscription.
+    pub trigger: ProgramTrigger,
+    /// A timer's next due time, kept as it stood when the program was
+    /// paused; none for an idle or a feed program, and for a timer that
+    /// wakes once and has woken.
+    pub next_due: Option<u64>,
+    /// When the program was paused.
+    pub paused_at: u64,
+    /// The pinned executable; withheld unless its SKILL reads on the
+    /// caller's lane.
+    pub definition: Option<ProgramRecipePin>,
+    /// The pinned SKILL's name and description as they read now, which a
+    /// revision after the pin may have changed; each withheld with
+    /// `definition`, and none for a SKILL whose record does not read.
+    pub skill_name: Option<String>,
+    pub skill_description: Option<String>,
+    /// The fields withheld from this caller, by name.
+    pub withheld: Vec<String>,
 }
 
 /// Whether an admission queued the program or refused it.

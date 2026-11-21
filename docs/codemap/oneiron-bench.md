@@ -22,7 +22,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `fixtures/edit_path/repo/src/lib.rs` | src | s | 2 fn · 1 mod | — | — |
 | `fixtures/edit_path/repo/src/math.rs` | src | s | 2 fn | — | — |
 | `src/beam/ablations.rs` | src | s | 2 crate-vis | — | Two explicit cost controls: uncapped context and neutralized OF-095 decay |
-| `src/beam/action_bench/arms.rs` | src | m | 13 crate-vis | — | The memory arms (ARCH-0042 #action-bench): no memory, raw-history retrieval, derived only, raw plus derived… |
+| `src/beam/action_bench/arms.rs` | src | m | 17 crate-vis | — | The memory arms (ARCH-0042 #action-bench): no memory, raw-history retrieval, derived only, raw plus derived… |
+| `src/beam/action_bench/discovery.rs` | src | m | 5 crate-vis | — | The discovery arms (ARCH-0042 #action-bench): index-first against search-only discovery, with stored memory… |
 | `src/beam/action_bench/extraction.rs` | src | m | 18 crate-vis | — | The extraction arms (ARCH-0042 #action-bench: "online-only, background-only, combined; each probed right… |
 | `src/beam/action_bench/extraction/executor.rs` | src | s | 6 crate-vis | — | The extraction arms' model side: the shipped adapter on the reader's host, recording each call it makes, and… |
 | `src/beam/action_bench/mod.rs` | src | m | 3 crate-vis | — | The in-house action bench (ARCH-0042 #action-bench, owner ruling 2026-10-21): does memory change what a… |
@@ -57,12 +58,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/beam/load.rs` | src | m | 17 crate-vis | — | Dataset and contract loading |
 | `src/beam/mod.rs` | src | s | 6 crate-vis | — | BEAM scaffold and fixed scorer for EVAL-001/EVAL-002 |
 | `src/beam/model.rs` | src | s | 21 crate-vis | — | Fixture, manifest, and arm input types |
-| `src/beam/model_scaffold.rs` | src | L | 13 crate-vis | — | Shared measured answerer scaffold |
+| `src/beam/model_scaffold.rs` | src | m | 10 crate-vis | — | Shared measured answerer scaffold |
 | `src/beam/model_scaffold/context.rs` | src | s | 6 crate-vis | — | Context each answerer arm hands the shared answer call, apart from packs |
 | `src/beam/model_scaffold/offline.rs` | src | s | 4 crate-vis | — | Stage-aware offline accounting for the measured scaffold |
 | `src/beam/model_scaffold/paired.rs` | src | s | 8 crate-vis | — | Paired no-memory rows (ARCH-0042 scour:G12, ZERO-RETRIEVAL = A) |
 | `src/beam/model_scaffold/pick_argument.rs` | src | s | 3 crate-vis | — | `beam measure --picks-for` (census L9-32; Engine ruling L9-32-PICK-WRITER, Sat 14 Nov 07:43): the argument… |
 | `src/beam/model_scaffold/provenance.rs` | src | s | 4 crate-vis | — | Resolved-pin family disclosures; uncertainty and in-family results stay out of the frontier |
+| `src/beam/model_scaffold/run_plan.rs` | src | s | 4 crate-vis | — | Measured run plan: answerer arms, efforts and plan validation |
 | `src/beam/model_scaffold/tests.rs` | test | m | — | — | — |
 | `src/beam/model_usage.rs` | src | s | 4 crate-vis | — | Provider usage, priced by an explicit model-and-revision price table |
 | `src/beam/nuggets.rs` | src | s | 8 crate-vis | — | D9 dual-column scorer |

@@ -36,6 +36,8 @@ pub(crate) use approval::retained_request_digest_for_test;
 mod audience;
 mod copy_arms;
 mod copy_review;
+#[cfg(oneiron_test_support)]
+pub(crate) use copy_review::store_passing_copy_review_verdict;
 mod detection;
 mod held;
 mod home_node;

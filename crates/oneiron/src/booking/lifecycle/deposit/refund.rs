@@ -211,6 +211,11 @@ enum OwnerReturn {
     /// The refund owed now settles first, and its record owes the balance
     /// (its settle row is queued already).
     AfterOwedRefund,
+    /// The refund owed now, which the provider ended unpaid, is asked again
+    /// under the deposit's next retry count; its settle row is to be queued
+    /// under a cause of its own, so a row of the ended ask, waiting an hour,
+    /// does not stand for it.
+    Retried,
 }
 
 /// The owner's return of `row`'s deposit, whole: a capture still due is
@@ -219,8 +224,11 @@ enum OwnerReturn {
 /// of a capture a cancel overtook) gains the balance (review round 2 of
 /// #9977): owed at once after that refund settled, or once it settles while
 /// it is owed, so the provider refunds the earlier part once. A row
-/// refunded before its capture was recorded gains nothing. What it moves is
-/// what the owner's line shows held ([`held_of`]).
+/// refunded before its capture was recorded gains nothing. A refund owed
+/// whose ask the provider ended unpaid is asked again, and nothing more: a
+/// balance the owner kept stays kept; where refunds made by hand cover a
+/// part of it, nothing is asked, since only a hand refund pays the rest.
+/// What it moves is what the owner's line shows held ([`held_of`]).
 fn owner_return(row: &mut DepositRow) -> OwnerReturn {
     let Some((kind, amount_minor)) = held_of(row) else {
         return OwnerReturn::Nothing;
@@ -244,6 +252,16 @@ fn owner_return(row: &mut DepositRow) -> OwnerReturn {
             row.state = DepositState::RefundDue { amount_minor };
             OwnerReturn::Queued
         }
+        HeldDepositKind::RefundEndedUnpaid {
+            part_refunded_by_hand: true,
+        }
+        | HeldDepositKind::PartRefundedByHand => OwnerReturn::Nothing,
+        HeldDepositKind::RefundEndedUnpaid {
+            part_refunded_by_hand: false,
+        } => {
+            row.refund_retry = row.refund_retry.saturating_add(1);
+            OwnerReturn::Retried
+        }
     }
 }
 
@@ -253,24 +271,37 @@ fn owner_return(row: &mut DepositRow) -> OwnerReturn {
 /// the vault owner's own unattenuated, undelegated one, revalidated in this
 /// writer; only a host selected at the booking's confirmation may use it,
 /// once the booking is effectively cancelled (its own cancel or a calendar's)
-/// or has started. It runs on the node that holds the deposit: the one whose
-/// booking writer confirmed it, which keeps it, with its settle rows, after a
-/// MACRO home move (a move carries no deposit row). A
-/// capture still due is released and a captured deposit owed back whole, as
+/// or has started, or, for a refund the provider ended unpaid, at any time:
+/// the visitor may have picked an emergency-cancelled booking again, which
+/// owes that cancel's return (review round 1 of #10149). It may also while
+/// that refund is asked again, and a second press then changes nothing, as
+/// on a cancelled booking (review round 2 of #10149). It runs on the node
+/// that holds the deposit, the vault's booking home: a MACRO home move
+/// carries the deposit to the new home, which queues its settle row (FIX
+/// [BK-LIFECYCLE-ROWS-NOT-CARRIED-BY-HOME-MOVE]), and the old home's fence
+/// refuses its deposit writes once it froze them. A capture still due is
+/// released and a captured deposit owed back whole, as
 /// a host cancel does, with its settle row queued "owner-refund"; the
 /// booking's status and revision stay as they are. After a refund of part of
 /// the capture (a visitor's late cancel) the balance is owed: at once when
-/// that refund has settled, and once it settles while it is owed. A deposit
-/// that already owes or has settled its whole return is left as it stands,
-/// so a retry queues nothing. The receipt's amount is the whole return:
-/// what was refunded before and what is owed now.
+/// that refund has settled, and once it settles while it is owed. A refund
+/// owed whose ask the provider ended unpaid (failed or cancelled at Stripe)
+/// is asked again under a new key, for the same amount (FIX
+/// [BK-DEPOSIT-FAILED-REFUND-SURFACE]), unless refunds made by hand in the
+/// Stripe dashboard cover a part of it. A deposit that already owes or has
+/// settled its whole return, whose ended refund is asked again already,
+/// whose rest only a hand refund pays, or whose refund owed the owner marked
+/// refunded outside the provider (on a live booking too), is left as it
+/// stands, so a retry queues nothing. The receipt's amount is
+/// the whole return: what was refunded before and what is owed now.
 ///
 /// # Errors
 ///
 /// [`BookingError::Boundary`] for a proof that no longer holds or a caller
 /// who was not a selected host; [`BookingError::InvalidConstraint`] for an
 /// EVENT that is no booking; [`BookingError::InvalidConfig`] for a live
-/// booking that has not started, or one this node holds no deposit for;
+/// booking that has not started and owes no refund the provider ended
+/// unpaid, or one this node holds no deposit for;
 /// [`BookingError::SlotOracle`] on a store failure.
 pub(crate) fn refund_booking_deposit_as_owner(
     vault: &Vault,
@@ -295,24 +326,33 @@ pub(crate) fn refund_booking_deposit_as_owner(
             ))));
         }
         let now_utc = vault.now_recorded_at();
-        if booking.effective_status() != BookingStatus::Cancelled && now_utc < booking.slot.start {
+        let link = DEPOSIT_BOOKING
+            .get(&vault.store, &*wtxn, &booking_key(event_ref))
+            .map_err(|error| engine_failure("meta read", error))?;
+        let row = match &link {
+            Some(link) => DEPOSIT
+                .get(&vault.store, &*wtxn, &link.deposit_key)
+                .map_err(|error| engine_failure("meta read", error))?,
+            None => None,
+        };
+        // A refund owed that the provider ended unpaid, whether the owner
+        // may ask for it again or has asked and it runs (the noted end goes
+        // once a refund settles), or that the owner marked refunded outside
+        // the provider: a press then changes nothing.
+        let ended_refund_owed = row.as_ref().is_some_and(|row| {
+            matches!(row.state, DepositState::RefundDue { .. })
+                && (row.refund_ended_unpaid.is_some() || row.marks_owed_refund())
+        });
+        if booking.effective_status() != BookingStatus::Cancelled
+            && now_utc < booking.slot.start
+            && !ended_refund_owed
+        {
             return Err(BookingError::InvalidConfig(
                 "a live booking that has not started keeps its deposit: cancel it to refund"
                     .to_owned(),
             ));
         }
-        let Some(link) = DEPOSIT_BOOKING
-            .get(&vault.store, &*wtxn, &booking_key(event_ref))
-            .map_err(|error| engine_failure("meta read", error))?
-        else {
-            return Err(BookingError::InvalidConfig(
-                "this node holds no deposit for the booking".to_owned(),
-            ));
-        };
-        let Some(mut row) = DEPOSIT
-            .get(&vault.store, &*wtxn, &link.deposit_key)
-            .map_err(|error| engine_failure("meta read", error))?
-        else {
+        let (Some(link), Some(mut row)) = (link, row) else {
             return Err(BookingError::InvalidConfig(
                 "this node holds no deposit for the booking".to_owned(),
             ));
@@ -322,8 +362,15 @@ pub(crate) fn refund_booking_deposit_as_owner(
             row.updated_at = now_utc;
             put_deposit(vault, wtxn, &link.deposit_key, &row)?;
         }
-        if matches!(returned, OwnerReturn::Queued) {
-            enqueue_settle(vault, wtxn, &link.deposit_key, "owner-refund", now_utc)?;
+        match returned {
+            OwnerReturn::Queued => {
+                enqueue_settle(vault, wtxn, &link.deposit_key, "owner-refund", now_utc)?;
+            }
+            OwnerReturn::Retried => {
+                let cause = format!("owner-refund-retry-{}", row.refund_retry);
+                enqueue_settle(vault, wtxn, &link.deposit_key, &cause, now_utc)?;
+            }
+            OwnerReturn::Nothing | OwnerReturn::AfterOwedRefund => {}
         }
         let queued = !matches!(returned, OwnerReturn::Nothing);
         let (state, amount_minor) = match row.state {

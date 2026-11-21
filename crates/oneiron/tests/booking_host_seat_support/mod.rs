@@ -21,7 +21,7 @@ use std::sync::Mutex;
 
 use oneiron::calendar::caldav::CALDAV_PROVIDER_KEY;
 use oneiron::calendar::connectors::door::{
-    self, CalendarConnectorOperation, CalendarConnectorRequest,
+    self, CalendarConnectorKillRequest, CalendarConnectorOperation, CalendarConnectorRequest,
 };
 use oneiron::calendar::connectors::{
     CalendarConnectorError, CalendarConnectorSeatConfig, CalendarRemoteTransport,
@@ -666,6 +666,37 @@ impl Seat {
         );
     }
 
+    /// Pulls one batch of `changes` through a read that began before the
+    /// seat's prepared write of one booking was sent again at `refusal_now`
+    /// and refused on its precondition, with its reconciliation read failing
+    /// ([`Self::replay_refused_unread`]): the batch answers after that
+    /// refusal.
+    pub(crate) fn pull_read_before_replay_refused_unread(
+        &self,
+        vault: &Vault,
+        changes: &[SeatChange],
+        event_ref: EntityId,
+        refusal_now: u64,
+        now: u64,
+    ) -> Result<CalendarSyncOutcome, CalendarConnectorError> {
+        let changes = self.remote_changes(vault, changes);
+        self.transport
+            .batches
+            .lock()
+            .expect("scripted batches")
+            .push_back(RemoteSyncBatch {
+                next_cursor: None,
+                changes,
+            });
+        let wire = ReplayRefusedDuringPull {
+            seat: self,
+            vault,
+            event_ref,
+            refusal_now,
+        };
+        run_calendar_connector_sync(vault, &self.operation(vault), &wire, now, 7)
+    }
+
     /// Sends the seat's prepared write of one booking again, and the provider
     /// refuses it on its precondition. The write's reconciliation reads
     /// `stored`, but before the write takes it in, a pull at `restore_now`
@@ -836,6 +867,35 @@ impl Seat {
                 changes,
             });
         run_calendar_connector_sync(vault, &self.operation(vault), &self.transport, now, 7)
+    }
+
+    /// The owner kills the seat (`calendar.connector.kill`): its verbs are
+    /// revoked and its polling stops, and its outbox rows stay as they are.
+    pub(crate) fn kill(&self, vault: &Vault) {
+        let (id, owner) = seat_owner(vault);
+        door::kill(
+            &vault.memory(id, EdgeActorClass::Human),
+            &owner,
+            &CalendarConnectorKillRequest {
+                seat_ref: self.config.seat_ref.clone(),
+                reason_ref: "ops:seat-out-of-service".to_owned(),
+            },
+        )
+        .expect("the owner kills the seat");
+    }
+
+    /// The owner's "Reconnect it": installs this seat's configuration again
+    /// under a new seat ref (`<seat ref>-reconnected`), whose setup reads
+    /// after this seat's. The same configuration writes the same outbox
+    /// scope, so the new seat resumes the old seat's rows.
+    pub(crate) fn reconnect(&self, vault: &Vault) -> Self {
+        Self::install_config(
+            vault,
+            CalendarConnectorSeatConfig {
+                seat_ref: format!("{}-reconnected", self.config.seat_ref),
+                ..self.config.clone()
+            },
+        )
     }
 
     /// The calendar operation on the installed seat: this re-reads the
@@ -1059,6 +1119,59 @@ impl CalendarRemoteTransport for PullDuringReconcile<'_> {
         self.seat
             .pull(self.vault, std::slice::from_ref(self.change), self.pull_now)
             .expect("the pull during the reconciliation");
+        Ok(batch)
+    }
+
+    fn upsert(
+        &self,
+        secret_ref: &str,
+        calendar_ref: &str,
+        request: &RemoteWriteRequest,
+    ) -> Result<RemoteWriteReceipt, CalendarConnectorError> {
+        self.seat
+            .transport
+            .upsert(secret_ref, calendar_ref, request)
+    }
+
+    fn delete(
+        &self,
+        _secret_ref: &str,
+        _calendar_ref: &str,
+        _href: &str,
+        _expected_etag: Option<&str>,
+        _uid: &str,
+        _sequence: u32,
+    ) -> Result<RemoteWriteReceipt, CalendarConnectorError> {
+        panic!("delete is not used by the host-seat fixture")
+    }
+}
+
+/// The seat's scripted wire, whose pull, after it took the scripted batch
+/// and before it answers, sends the seat's prepared write of `event_ref`
+/// again at `refusal_now`, which the provider refuses on its precondition
+/// while the write's reconciliation read fails: a seat read that began
+/// before a replay's refusal.
+struct ReplayRefusedDuringPull<'a> {
+    seat: &'a Seat,
+    vault: &'a Vault,
+    event_ref: EntityId,
+    refusal_now: u64,
+}
+
+impl CalendarRemoteTransport for ReplayRefusedDuringPull<'_> {
+    fn provider_key(&self) -> &'static str {
+        self.seat.transport.provider_key()
+    }
+
+    fn pull(
+        &self,
+        secret_ref: &str,
+        calendar_ref: &str,
+        cursor: Option<&str>,
+    ) -> Result<RemoteSyncBatch, CalendarConnectorError> {
+        let batch = self.seat.transport.pull(secret_ref, calendar_ref, cursor)?;
+        self.seat
+            .replay_refused_unread(self.vault, self.event_ref, self.refusal_now);
         Ok(batch)
     }
 

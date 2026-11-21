@@ -15,7 +15,9 @@
 //! [BK-LIFECYCLE-ROWS-NOT-CARRIED-BY-HOME-MOVE]), which stand on no other
 //! table, and the emergency reschedule's instructions, plans and checkpoints
 //! (FIX [BK-EMERGENCY-ROWS-NOT-CARRIED-BY-HOME-MOVE]), whose picks the token
-//! section carries.
+//! section carries, and the booking pages' publications (FIX
+//! [BK-HOME-MOVE-PUBLIC-PAGE-INDEX-NOT-CARRIED]), which stand on no other
+//! table.
 
 use heed::RoTxn;
 
@@ -27,7 +29,7 @@ use crate::side_table::SideTableDbs;
 /// Every table a home move carries in this build, in the order the carrier
 /// exports and adopts them (CALLS: home tables). C2's drain, its adoption
 /// and restore's live keys all walk this one list.
-pub(crate) fn home_tables() -> [HomeTableRegistration; 15] {
+pub(crate) fn home_tables() -> [HomeTableRegistration; 16] {
     [
         HomeTableRegistration::of::<crate::dreamer_runner::FreeTimePolicyRows>(),
         HomeTableRegistration::of::<crate::dreamer_runner::FreeTimeClockRows>(),
@@ -62,6 +64,12 @@ pub(crate) fn home_tables() -> [HomeTableRegistration; 15] {
         HomeTableRegistration::of::<
             crate::booking::emergency_reschedule::home_rows::EmergencyItemRows,
         >(),
+        // FIX [BK-HOME-MOVE-PUBLIC-PAGE-INDEX-NOT-CARRIED] (same ruling: "a
+        // move must never silently strand a visitor's link"): each page's
+        // token index row, its publication claim and the deny-only markers;
+        // independent of every other section.
+        HomeTableRegistration::of::<crate::booking::publication::home_rows::BookingPublicationRows>(
+        ),
     ]
 }
 

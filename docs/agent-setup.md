@@ -253,10 +253,11 @@ oneiron mcp --url https://<vault-host> --auth-mode owner \
   On an NFSv4 home the server's list counts too: an entry that grants anyone
   but `OWNER@` read or write refuses the file, and the refusal names it
   (`nfs4_getfacl` lists the entries). A credential on an SMB mount, or on an
-  NFS mount that reports no NFSv4 list (NFSv3, or a server without list
-  support), is refused, because this host does not read the server's list,
-  unless the host owner sets `ONEIRON_CREDENTIAL_FILES_TRUST_NETWORK_FS_ACL=1`:
-  every user that list admits can then read the credential.
+  NFSv4 mount that reports no list (a server without list support), is
+  refused, because this host does not read the server's list, unless the host
+  owner sets `ONEIRON_CREDENTIAL_FILES_TRUST_NETWORK_FS_ACL=1`: every user that
+  list admits can then read the credential. On an NFSv3 mount the mode decides,
+  as on a local file system, because its server enforces the mode bits.
 
 No running user service, browser, or third-party model is required. This path
 creates one isolated vault; production hosting, service managers, private

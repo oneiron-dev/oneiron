@@ -238,6 +238,15 @@ impl Memory<'_> {
                 RawOp::Edge { .. } | RawOp::Vector { .. } => None,
             })
             .collect();
+        // A staged vector replaces the row's vector and device mark in the
+        // room's reads: judged as on base (review of #10218).
+        let vector_ids: Vec<EntityId> = ops
+            .iter()
+            .filter_map(|op| match op {
+                RawOp::Vector { id, .. } => Some(*id),
+                RawOp::Put(_) | RawOp::Edge { .. } => None,
+            })
+            .collect();
         let mut refusal = None;
         let staged = session.overlay_write_routed(&route, |wtxn, apply| {
             let proven = self
@@ -247,7 +256,9 @@ impl Memory<'_> {
                 refusal = Some(error);
                 return Err(Error::InvariantViolation("a bound raw write was refused"));
             }
-            if !lane.admits_puts_in(wtxn, &put_ids)? {
+            if !lane.admits_puts_in(wtxn, &put_ids)?
+                || !lane.admits_vectors_in(wtxn, &vector_ids)?
+            {
                 return Err(Error::EntityNotFound);
             }
             // A put that changes or drops the source audience an identity

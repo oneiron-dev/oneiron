@@ -465,7 +465,6 @@ impl ConsolidationExecutor<'_> {
             .authorize_model_role(DREAMER_VERDICT_ROLE, request, &call.inference)?
             .into_request();
         super::super::roles::bind_reasoning(step_ctx.vault, call.backend, &mut request)?;
-        let step_hash = request.canonical_hash()?;
         let outcome = call_as_step(step_ctx, call.backend, self.guard, request).await;
         let (response, binding) = match outcome? {
             StepOutcome::Finished {

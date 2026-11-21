@@ -620,7 +620,7 @@ impl Memory<'_> {
     ) -> MemoryResult<(PurgeReceipt, crate::check_in::CheckInDecision)> {
         let bound = requested.or(confirmed);
         self.with_actor_content_write_txn(|content| {
-            content.update_note(note, |txn, _lane| {
+            content.note_history_purge(note, |txn, _lane| {
                 if let Some(owner) = owner
                     && owner.revalidate_in_txn(self.vault(), txn)? != self.actor()
                 {

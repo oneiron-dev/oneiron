@@ -138,8 +138,9 @@ pub(super) fn index_item_in(
     if let Some(picked) = &item.picked {
         effects.push(("pick", picked.content_hash));
     }
+    // Each under its current ledger identity, the attempt its send is admitted by.
     for (lane, hash) in effects {
-        let reference = state::effect_ref(item, lane, hash)?;
+        let reference = state::effect_ledger_ref(item, lane, hash)?;
         let attempt =
             crate::outbound::outbound_dispatch_attempt_id(&reference).map_err(storage_failure)?;
         EFFECT
