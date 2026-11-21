@@ -12,7 +12,7 @@ use oneiron::policy_model::SecretScanMode;
 use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON, ENTITY_TYPE_SECRET_CUSTODY};
 use oneiron::secret_custody::SecretSight;
 use oneiron::store::GateDecisionId;
-use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
+use oneiron::{EntityId, ErrorKind, TimeRange, Vault, VaultConfig};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -404,38 +404,49 @@ fn a_phrase_nested_in_an_array_that_holds_one_is_marked_too() -> TestResult {
     Ok(())
 }
 
-/// A token the door's field walk reads in a file's parts, beside a phrase
-/// split over its other parts, keeps the write refused. Each word's mark
-/// covers the separators between its byte values, so the plan's filled
-/// copy is no JSON; the door still reads the leaf's parts with each mark
-/// filled in place, finds the token no span places, and leaves the phrase
-/// unplaced (REVIEW-7059 P1).
+/// A token the door's field walk reads in a file's parts, alone and beside
+/// a phrase split over its other parts: neither write is refused any more
+/// (L6-03; ARCH-0038 #secret-scan-target, ARCH-0069 #binary-secrets). Each
+/// word's mark covers the separators between its byte values, so the plan
+/// still reads the leaf's parts with each mark filled in place (REVIEW-7059
+/// P1): it marks the token's array, and a file whose hit then only its
+/// whole tree holds is sealed whole. A masked reader is served no word and
+/// no token, as a copy that holds neither or as none of the file.
 #[test]
-fn a_split_phrase_beside_an_unplaced_token_keeps_the_write_refused() -> TestResult {
+fn a_split_phrase_beside_an_unplaced_token_lands_marked() -> TestResult {
     let (_dir, vault) = open_vault()?;
     let token: &[u8] = b"TOKEN=ghp_0123456789abcdefghijklmnopqrstuvwxyz";
     let notes = serde_json::json!({ "notes": token });
-    assert!(
-        put_asset(&vault, &serde_json::to_vec(&notes)?).is_err(),
-        "the door refuses the token alone as byte values: no span places it"
-    );
+    let alone = put_asset(&vault, &serde_json::to_vec(&notes)?)
+        .unwrap_or_else(|error| panic!("the token alone as byte values lands marked: {error:?}"));
     let mut items: Vec<serde_json::Value> = PHRASE
         .split(' ')
         .map(|word| serde_json::json!(word.as_bytes()))
         .collect();
     items.push(notes);
-    let body = serde_json::to_vec(&items)?;
-    let before = vault.count_entities_by_type(ENTITY_TYPE_SECRET_CUSTODY)?;
-    let refused = put_asset(&vault, &body);
-    assert!(
-        refused.is_err(),
-        "the unplaced token keeps the write refused: {refused:?}"
-    );
-    assert_eq!(
-        vault.count_entities_by_type(ENTITY_TYPE_SECRET_CUSTODY)?,
-        before,
-        "a refused write mints no record"
-    );
+    let beside = put_asset(&vault, &serde_json::to_vec(&items)?)
+        .unwrap_or_else(|error| panic!("the token beside the phrase lands marked: {error:?}"));
+    for id in [alone, beside] {
+        let stored = vault.get(&id)?.expect("stored file");
+        match vault.sighted_asset_bytes(stored, SecretSight::Masked) {
+            Ok(served) => {
+                assert!(
+                    !carries_a_word(&served),
+                    "a masked reader is served no word: {}",
+                    String::from_utf8_lossy(&served)
+                );
+                assert!(
+                    !carries_a_word_of(&served, "ghp_0123456789abcdefghijklmnopqrstuvwxyz"),
+                    "a masked reader is served no token: {}",
+                    String::from_utf8_lossy(&served)
+                );
+            }
+            Err(error) => assert!(
+                matches!(error.kind(), ErrorKind::SealedFileWithheld),
+                "a file the door cannot serve masked is sealed whole: {error:?}"
+            ),
+        }
+    }
     Ok(())
 }
 

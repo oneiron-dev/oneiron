@@ -8,7 +8,8 @@
 //! clearance asks it of each held file. Only a standing grant answers it;
 //! an approve-once answer is a single read's, never a plan's or a hold's.
 //! Every class the file's keys hold must be covered, and its opaque residue
-//! by the sealed class, exactly as the read groups them.
+//! by the sealed class, exactly as the read groups them. A file the write
+//! door sealed whole is never covered: it goes to the owner only.
 
 use heed::RoTxn;
 
@@ -22,8 +23,9 @@ use crate::vault::Vault;
 impl Vault {
     /// Whether a standing grant covers `asker`'s read of the marked repo
     /// file `target` names, whose keys are `keys`, for every group the
-    /// read would ask in, in `txn`. A key that no longer admits, or a file
-    /// with no key and no residue, is not covered.
+    /// read would ask in, in `txn`. A key that no longer admits, a file
+    /// with no key and no residue, or a file the write door sealed whole
+    /// (`keys.sealed`), is not covered.
     ///
     /// # Errors
     /// A store failure, or a selector the consent bound refuses.
@@ -34,6 +36,11 @@ impl Vault {
         target: &RepoFileRevealTarget,
         keys: &RepoFileKeys,
     ) -> Result<bool> {
+        // A file sealed whole goes to the owner only (REVIEW-7708 P1): no
+        // standing grant releases it.
+        if keys.sealed {
+            return Ok(false);
+        }
         let mut classes = Vec::new();
         if !keys.custody.is_empty() {
             let custody = keys.custody.iter().copied();
