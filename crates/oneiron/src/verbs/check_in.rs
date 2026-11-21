@@ -38,10 +38,10 @@
 use serde::{Deserialize, Serialize};
 
 use crate::check_in::{
-    AskVerdict, CheckInScope, HolderAnswer, HolderReply, NoAgentVerdict, OpenPendingCheckIn,
-    PendingCheckIn, PendingState, ProofKind, VerifiedChain, answer_pending_check_in_in_txn,
-    judge_ask_in_txn, keyed_pending_check_in_in_txn, open_keyed_pending_check_in_in_txn,
-    pending_check_in_in_txn,
+    AgentHolderVerdict, AskVerdict, CheckInScope, HolderAnswer, HolderReply, NoAgentVerdict,
+    OpenPendingCheckIn, PendingCheckIn, PendingState, ProofKind, VerifiedChain,
+    answer_pending_check_in_in_txn, caller_spawn_parent_in_txn, judge_ask_in_txn,
+    keyed_pending_check_in_in_txn, open_keyed_pending_check_in_in_txn, pending_check_in_in_txn,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
@@ -148,8 +148,8 @@ pub struct CheckInHandleView {
     pub answer: Option<String>,
     /// Who answered, while the record names them.
     pub answered_by: Option<String>,
-    /// The rung the ask entered last: `grantor`, `chain_holders` or
-    /// `owner`.
+    /// The rung the ask entered last: `grantor`, `chain_holders`, `owner`,
+    /// or `room_owner` for a closed room's ask.
     pub rung: Option<String>,
     /// The next instant a transition is due (Unix seconds); none once the
     /// ask is settled.
@@ -214,6 +214,21 @@ pub fn check_in_open(
     memory: &Memory<'_>,
     input: CheckInOpenRequest,
 ) -> MemoryResult<CheckInVerdict> {
+    check_in_open_with(memory, input, &NoAgentVerdict)
+}
+
+/// [`check_in_open`], with the agent holders' `verdicts`: the verb gives
+/// none until 2e's host does (every agent holder passes the ask up); the
+/// check-in test door gives the test's.
+///
+/// # Errors
+///
+/// As [`check_in_open`].
+pub(crate) fn check_in_open_with(
+    memory: &Memory<'_>,
+    input: CheckInOpenRequest,
+    verdicts: &dyn AgentHolderVerdict,
+) -> MemoryResult<CheckInVerdict> {
     let effect_digest = digest_of(&input.effect_digest)?;
     let scope = CheckInScope {
         world_ref: input.world_ref,
@@ -233,6 +248,10 @@ pub fn check_in_open(
             return Ok(verdict_view(verdict, None));
         };
         let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+        // A spawned child's run asks the agent that spawned it on rung 2
+        // (FIX CHECK-IN-SPAWN-PARENT-PRINCIPAL), read from the run's own
+        // leased attempt, never from the input.
+        let spawn_parent = caller_spawn_parent_in_txn(memory, txn)?;
         let (row, opened) = open_keyed_pending_check_in_in_txn(
             vault,
             txn,
@@ -251,7 +270,7 @@ pub fn check_in_open(
                 delay_window: None,
             },
             memory.invocation().map(|invocation| invocation.0),
-            &VerifiedChain::new(&NoAgentVerdict),
+            &VerifiedChain::new(verdicts).with_spawn_parent(spawn_parent),
             now,
         )?;
         Ok(verdict_view(verdict, Some(handle_view(&row, !opened))))
@@ -308,8 +327,8 @@ pub struct CheckInSettlement {
     pub answer: CheckInAnswerWord,
     /// Who answered, while the record names them.
     pub answered_by: Option<String>,
-    /// The rung the answer was given on: `grantor`, `chain_holders` or
-    /// `owner`.
+    /// The rung the answer was given on: `grantor`, `chain_holders`, `owner`,
+    /// or `room_owner` for a closed room's ask.
     pub rung: String,
     /// When the answer landed (Unix seconds).
     pub answered_at: u64,

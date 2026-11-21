@@ -6,9 +6,12 @@
 //! the conversation DAG migration, a text-index rebuild and the audited
 //! repair of the corrupt CLAIMs `--reclassify-corrupt-claim` names.
 //! `--lift-secrets` queues a historical secret lift run first, which the pass
-//! works to its end. A running `serve` runs the same pass on its own tick and
-//! answers `POST /v1/owner/maintain`. The report is JSON on stdout; a sweep
-//! that failed makes the exit nonzero.
+//! works to its end. `--rederive-sealed` is the owner's re-derive of the
+//! facts doctor counts as hidden because their source is unknown
+//! (READ-LINEAGE L1-B), on the stopped vault only, reported in counts. A
+//! running `serve` runs the same pass on its own tick and answers
+//! `POST /v1/owner/maintain`. The report is JSON on stdout; a sweep that
+//! failed makes the exit nonzero.
 //!
 //! The model pack retirement sweep resolves the active pack's roles against
 //! the access the router `serve` builds would hold, so the pass sends a
@@ -24,6 +27,7 @@
 use oneiron::housekeeping::{HousekeepingBudget, HousekeepingReport};
 use oneiron::maintain::CorruptClaimRepair;
 use oneiron::policy_model::SecretLiftStatus;
+use oneiron::source_audience::SealedRowsRederived;
 use serde::Serialize;
 
 use super::owner::{emit, open_stopped_vault_with, vault_config};
@@ -39,6 +43,10 @@ struct MaintainReport {
     /// The lift sweep's state after the pass, when the owner queued a run.
     #[serde(skip_serializing_if = "Option::is_none")]
     secret_lift: Option<SecretLiftStatus>,
+    /// What the re-derive of sealed rows did, in counts, when the owner
+    /// named it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sealed_rows: Option<SealedRowsRederived>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     training_inputs: Vec<crate::ai_host::training_pack::TrainingInputCleanup>,
 }
@@ -150,6 +158,12 @@ pub fn maintain(args: MaintainArgs) -> anyhow::Result<()> {
         &args.cleanup_training_inputs,
     )?;
     let repairs = repair(&vault, &args)?;
+    let sealed_rows = if args.rederive_sealed {
+        let owner = crate::owner::local_owner(&vault)?;
+        Some(vault.rederive_sealed_rows(&owner)?)
+    } else {
+        None
+    };
     if args.lift_secrets {
         let owner = crate::owner::local_owner(&vault)?;
         vault.start_secret_lift(&owner, vault.now_recorded_at())?;
@@ -166,6 +180,7 @@ pub fn maintain(args: MaintainArgs) -> anyhow::Result<()> {
         housekeeping,
         repairs,
         secret_lift,
+        sealed_rows,
         training_inputs,
     })?;
     anyhow::ensure!(

@@ -480,6 +480,7 @@ fn a_scoped_member_still_steps_back_from_its_own_standing_grant() {
             crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
             crate::temporal::TimeRange { start: 1, end: 1 },
             1,
+            None,
             &encode_federation_grant_body(&grant).expect("encode grant"),
         )
         .commit()

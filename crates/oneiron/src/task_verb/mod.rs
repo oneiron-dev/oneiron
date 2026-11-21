@@ -7,7 +7,10 @@ mod ask_band;
 mod ask_effect;
 mod ask_facade;
 mod ask_forward;
+mod ask_guard;
 mod ask_guest;
+pub(crate) mod ask_intent;
+mod ask_label_guard;
 mod ask_limits;
 mod ask_option_link;
 mod ask_policy;
@@ -65,6 +68,8 @@ mod highway;
 mod highway_accept;
 mod highway_block;
 mod highway_post;
+#[cfg(oneiron_test_support)]
+pub(crate) use highway_post::post_request_digest_for_test;
 mod highway_redo;
 mod highway_report;
 pub(crate) mod highway_runner;
@@ -78,7 +83,8 @@ mod lifecycle_receipt;
 pub(crate) use lifecycle_receipt::{
     discard_payload_in_txn as discard_lifecycle_receipt_payload_in_txn,
     erase_in_txn as erase_lifecycle_receipts_in_txn, erase_lifecycle_actor_in_txn,
-    lifecycle_field_holds_words, settled_receipt_in, task_lifecycle_receipts,
+    lifecycle_field_holds_words, lifecycle_receipt_records, settled_receipt_in,
+    task_lifecycle_receipts,
 };
 mod linear_store;
 mod mirror_edit;
@@ -86,6 +92,8 @@ mod office_origin;
 pub(crate) use office_origin::office_fork_origin_in_txn;
 mod owner_index;
 mod policy_change_followup;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::policy_change_followup::policy_change_followup_index_key_for_test;
 mod presence_diagnostics;
 mod presence_jobs;
 mod presence_pages;
@@ -94,6 +102,10 @@ mod project_ask;
 mod project_tradeoff;
 mod proposal_create;
 mod query_facade;
+#[cfg(test)]
+pub(crate) use query_facade::set_before_ack_writer_hook;
+#[cfg(test)]
+pub(crate) use query_facade::set_between_ack_reads_hook;
 mod rate_limit;
 mod reconciliation;
 pub(crate) use reconciliation::REPO_RECONCILIATION_TASK_HELD;
@@ -111,9 +123,12 @@ pub mod run_cancel;
 pub mod run_control;
 pub mod run_doors;
 pub(crate) mod run_rows;
+mod runner_continue;
 mod runner_done;
 mod scheduling;
+pub(crate) mod setting_keys;
 pub(crate) mod settlement_anchor;
+pub(crate) mod speaker_entry_index;
 mod subproject;
 mod symbol_lease;
 mod task_actor;
@@ -124,10 +139,14 @@ mod task_continuation;
 mod terminal_state;
 mod training_offer_ask;
 mod training_swap_ask;
+#[cfg(oneiron_test_support)]
+pub(crate) use training_swap_ask::swap_question_digest_for_test;
 mod verb_kind;
 mod watch_task;
 pub(crate) use watch_task::{settle_watch_task_in_txn, tick_due_at_in_txn};
 mod wave_port;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::wave_port::{wave_plan_index_key_for_test, wave_plan_statement_key_for_test};
 mod wire_decode;
 pub(crate) use contribution_pair::{
     CONTRIBUTION_PAIR_QUESTION_TYPE, ask_contribution_pair, coach_owner_conversation_in,
@@ -188,9 +207,9 @@ pub(crate) use room_thread::{
     task_roster_in as room_thread_task_roster_in, thread_tasks as room_thread_tasks,
 };
 pub use route_receipts::{
-    DEFAULT_TASK_CANCEL_MODE, TaskCancelMode, TaskCancelReceipt, TaskCancelTarget,
-    TaskCreateReceipt, TaskDescription, TaskResultInput, TaskRouteLane, TaskRouteOutcome,
-    TaskStartedReceipt, TaskUpdateReceipt,
+    DEFAULT_TASK_CANCEL_MODE, TaskCancelReceipt, TaskCancelTarget, TaskCreateReceipt,
+    TaskDescription, TaskResultInput, TaskRouteLane, TaskRouteOutcome, TaskStartedReceipt,
+    TaskUpdateReceipt,
 };
 pub use terminal_state::{
     ConsultResultPresence, ConsultResultSummary, TaskExecutionState, TaskTerminalDisposition,
@@ -228,7 +247,7 @@ pub(crate) use create_validation::{
 pub(crate) use rate_limit::task_create_owner;
 pub(crate) use task_continuation::{
     FailedTaskContinuation, TaskContinuationOutcome, continue_failed_task_in_txn,
-    task_settled_at_in,
+    task_settlement_in,
 };
 
 /// The objectives a run realizing `task` confesses against (OF-544): its
@@ -403,15 +422,33 @@ pub(crate) use symbol_lease::{
 pub(crate) use scheduling::terminal_success_from_body;
 pub(crate) use scheduling::{acquire_task_symbols, task_dispatch_ready, terminal_success_in_store};
 
-// FIX [LIBTEST-QUARANTINE-TASK-VERB-SYMBOL-LEASE-TESTS]: the lib test target's type check fails here (1 errors: E0639 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod symbol_lease_tests;
 
+#[cfg(oneiron_test_support)]
+pub(crate) use ask_record::ask_group_route;
+#[cfg(oneiron_test_support)]
+pub(crate) use code_consent_word::{
+    intent_key as code_consent_intent_key, intent_wait as code_consent_intent_wait,
+};
+#[cfg(oneiron_test_support)]
+pub(crate) use comm_widen::{
+    intent_key as comm_widen_intent_key, intent_parts as comm_widen_intent_parts,
+};
+#[cfg(oneiron_test_support)]
+pub(crate) use consult_ladder_facade::{
+    case_ask_anchor as consult_case_ask_anchor, case_intent as consult_case_intent,
+};
+#[cfg(oneiron_test_support)]
+pub(crate) use contribution_pair::{pair_handle, pair_intent_key};
 pub(crate) use fanout_launch::follow_fanout_hold_override_in_txn;
 #[cfg(oneiron_test_support)]
 pub(crate) use fanout_launch::launch_override_actors_in_txn;
 pub use fanout_launch::{FanoutCheckChoice, FanoutLaunchReceipt};
+#[cfg(oneiron_test_support)]
+pub(crate) use training_offer_ask::intent_key as training_offer_intent_key;
+#[cfg(oneiron_test_support)]
+pub(crate) use training_swap_ask::intent_key as training_swap_intent_key;
 pub use wave_port::{VaultWaveTaskPort, WaveDispatchGeneration, WaveDispatchPage};
 
 pub use linear_store::VaultLinearTaskStore;
@@ -441,12 +478,8 @@ pub(crate) use rate_limit::task_create_owner_in;
 
 pub mod verb_hook_boundary;
 
-// FIX [LIBTEST-QUARANTINE-TASK-VERB-ASK-OUTCOME-TESTS]: the lib test target's type check fails here (2 errors: E0061 x1, E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod ask_outcome_tests;
-// FIX [LIBTEST-QUARANTINE-TASK-VERB-ASK-TESTS]: the lib test target's type check fails here (23 errors: E0277 x9, E0063 x6, E0061 x5, E0507 x3); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod ask_tests;
 pub(crate) mod tables;
@@ -471,7 +504,7 @@ pub(crate) use ask_record::{
     ask_notice_at_in, attendee_entry_id, guard_ask_fact_put, read_attendee_entry_in,
 };
 pub(crate) use ask_settlement::{
-    AskStanding, ask_settlement_in, ask_standing_in, settle_ask_if_due,
+    AskStanding, ask_settlement_id, ask_settlement_in, ask_standing_in, settle_ask_if_due,
 };
 pub(crate) use fact_link_wake::{scoped_to_sources, wake_linked_facts_in_txn};
 pub(crate) use lifecycle_facade::deliver_task_result_in_txn;
@@ -565,3 +598,9 @@ pub struct TaskUpdateRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attempt: Option<crate::task_verb::AttemptHandle>,
 }
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::{
+    ask_band::{band_key_pin_for_test, marker_key_pin_for_test},
+    follow_up::task_follow_up_key_pin_for_test,
+};

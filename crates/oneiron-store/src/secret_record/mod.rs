@@ -4,6 +4,7 @@
 use std::collections::BTreeMap;
 
 use oneiron_base::error::Result;
+use oneiron_contracts::register::Register;
 pub use oneiron_contracts::secret_custody::{CustodyClass, CustodyTier};
 use serde::{Deserialize, Serialize};
 
@@ -96,9 +97,13 @@ impl Default for SecretCustodyFloor {
 /// What one API call does, as a per-API verb-class table classes it
 /// (ARCH-0069 #door-reads-action): the table, shipped as pack data, maps a
 /// call's host, protocol, verb and target to one of these, and the door
-/// resolves the owner's lending against it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+/// resolves the owner's lending against it. A table row spells it by its
+/// Register name (`as_str`), the name serde writes.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, Register,
+)]
 #[serde(rename_all = "snake_case")]
+#[register("api.verb_class")]
 pub enum ApiVerbClass {
     /// Reads and changes nothing.
     Read,
@@ -112,30 +117,17 @@ pub enum ApiVerbClass {
     Pay,
 }
 
-impl ApiVerbClass {
-    /// The class as a table row spells it.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Read => "read",
-            Self::Write => "write",
-            Self::Destructive => "destructive",
-            Self::Send => "send",
-            Self::Pay => "pay",
-        }
-    }
+/// The namespace of the API classes in the door's class registry, beside
+/// `door`: [`ApiVerbClass::registry_class`] is `api.<the class's name>`.
+pub const API_CLASS_NAMESPACE: &str = "api";
 
+impl ApiVerbClass {
     /// The class's name in the door's class registry, beside `door.*`: the
-    /// action class a standing consent grant names.
+    /// action class a standing consent grant names, `api.` and the class's
+    /// Register name (`api.read` .. `api.pay`).
     #[must_use]
-    pub const fn registry_class(self) -> &'static str {
-        match self {
-            Self::Read => "api.read",
-            Self::Write => "api.write",
-            Self::Destructive => "api.destructive",
-            Self::Send => "api.send",
-            Self::Pay => "api.pay",
-        }
+    pub fn registry_class(self) -> String {
+        format!("{API_CLASS_NAMESPACE}.{}", self.as_str())
     }
 }
 

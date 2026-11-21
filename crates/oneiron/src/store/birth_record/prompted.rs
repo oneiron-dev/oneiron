@@ -6,9 +6,11 @@
 //! A copy masks the ones its destination may not see as handles
 //! ([`RowBirth::masked`]), as it masks any input.
 
+use std::collections::BTreeMap;
+
 use heed::RoTxn;
 
-use super::{RowBirth, row_birth_in_txn};
+use super::{ROW_BIRTH, RowBirth, row_birth_in_txn};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::store::ManifestDbs;
@@ -26,6 +28,24 @@ pub(crate) fn prompt_sources_in_txn(
     Ok(row_birth_in_txn(store, txn, row)?
         .map(|birth| prompt_sources_of_birth(&birth))
         .unwrap_or_default())
+}
+
+/// Every row whose stamped birth names a prompt input, keyed by that input:
+/// [`prompt_sources_in_txn`] read the other way, over every birth this vault
+/// holds. A writer that moves a row between worlds reads it to find the rows
+/// that carry the moved row's words (pipeline review round 2 of #8280).
+pub(crate) fn rows_prompted_by_input_in_txn(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+) -> Result<BTreeMap<EntityId, Vec<EntityId>>> {
+    let mut prompted: BTreeMap<EntityId, Vec<EntityId>> = BTreeMap::new();
+    for stamped in ROW_BIRTH.iter_from(store, txn, &[])? {
+        let (row, birth) = stamped?;
+        for input in prompt_sources_of_birth(&birth) {
+            prompted.entry(input).or_default().push(row);
+        }
+    }
+    Ok(prompted)
 }
 
 /// Prompt inputs named by `birth` itself, with no store read: for a pending

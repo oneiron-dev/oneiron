@@ -32,7 +32,9 @@ pub struct SupportGrantMintRequest {
     /// only when named here. Empty: every record inside `scope`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub records: Vec<EntityId>,
-    /// Lifetime in seconds, 1..=86400; one hour when omitted. More time is
+    /// Lifetime in seconds, from 1 to the owner's cap
+    /// (`support.grant.max_ttl_secs`, 86400 until the owner sets another);
+    /// one hour when omitted, or the cap when that is shorter. More time is
     /// a fresh mint.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ttl_secs: Option<u64>,
@@ -104,7 +106,8 @@ pub struct SupportGrantListRequest {
     /// Also list expired, revoked and ended grants.
     #[serde(default)]
     pub include_inactive: bool,
-    /// At most this many, newest first; 500 when omitted, and never more.
+    /// At most this many, newest first; when omitted, and never more, the
+    /// owner's `support_grants.list.page_max` (500 by default).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
 }

@@ -59,6 +59,12 @@ pub(super) fn civil_from_days(days: i64) -> (i32, u8, u8) {
     )
 }
 
+/// A day since the epoch as its calendar date, `YYYY-MM-DD`.
+pub(super) fn civil_date_text(days: i64) -> String {
+    let (year, month, day) = civil_from_days(days);
+    format!("{year:04}-{month:02}-{day:02}")
+}
+
 /// `0 = Monday ..= 6 = Sunday`.
 pub(super) const fn weekday_of(days: i64) -> u8 {
     ((days + EPOCH_WEEKDAY_OFFSET).rem_euclid(DAYS_PER_WEEK as i64)) as u8

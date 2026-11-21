@@ -1,11 +1,9 @@
-use std::collections::BTreeMap;
-
 use serde_json::{Map as JsonMap, Value};
-use sha2::{Digest, Sha256};
 
 use oneiron_base::edge::EdgeKind;
 use oneiron_base::error::{Error, Result};
 use oneiron_contracts::entity_id::EntityId;
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 /// Version token stamped into every [`SavedQueryDerivationEnvelope`]. It names
 /// the EVALUATOR, not the definition — the definition's own movement is carried
@@ -17,22 +15,6 @@ pub const MAX_TEXT_BYTES: usize = 512;
 
 /// One unit of cosine similarity expressed in the micros scale.
 pub const MICROS_PER_UNIT: u32 = 1_000_000;
-
-/// Domain separator for the evidence hash. Version 2 also covers each claim
-/// value's lossless canonical bytes (FIX 10090); a v1 memo is never read
-/// again, and no legacy reader exists.
-pub const EVIDENCE_HASH_DOMAIN: &[u8] = b"oneiron.saved_query.evidence.v2";
-
-/// Length-prefixes every variable-length field so no two distinct evidence sets
-/// can serialize to the same byte stream.
-pub fn hash_bytes(hasher: &mut Sha256, bytes: &[u8]) {
-    hash_len(hasher, bytes.len());
-    hasher.update(bytes);
-}
-
-pub fn hash_len(hasher: &mut Sha256, len: usize) {
-    hasher.update((len as u64).to_be_bytes());
-}
 
 /// Canonical-hex entity reference, mirroring CA-01's one-wire-form-per-identity
 /// rule: a non-canonical spelling is rejected rather than normalized.
@@ -52,24 +34,12 @@ pub fn parse_entity_ref(value: &Value) -> Result<EntityId> {
 ///
 /// The crate builds `serde_json` with `preserve_order`, so its maps are
 /// insertion-ordered and `to_vec` alone is NOT canonical. Anything hashed or
-/// compared byte-wise has to come through here.
+/// compared byte-wise has to come through here. The bytes are the one kept
+/// sorted-JSON encoder's (`oneiron_model::llm::canonical_json_bytes`): the same
+/// recursive key sort, so stored rows and memo keys keep their bytes.
 pub fn canonical_json_bytes(value: &Value) -> Result<Vec<u8>> {
-    serde_json::to_vec(&canonicalize_json(value))
+    oneiron_model::llm::canonical_json_bytes(value)
         .map_err(|_| Error::InvariantViolation("saved query canonical JSON encode failed"))
-}
-
-fn canonicalize_json(value: &Value) -> Value {
-    match value {
-        Value::Array(values) => Value::Array(values.iter().map(canonicalize_json).collect()),
-        Value::Object(entries) => {
-            let sorted = entries
-                .iter()
-                .map(|(key, value)| (key.clone(), canonicalize_json(value)))
-                .collect::<BTreeMap<String, Value>>();
-            Value::Object(sorted.into_iter().collect())
-        }
-        scalar => scalar.clone(),
-    }
 }
 
 /// Projects a MessagePack claim value into JSON, INJECTIVELY.
@@ -180,21 +150,27 @@ pub fn cosine_similarity_micros(left: &[f32], right: &[f32]) -> u32 {
 }
 
 /// Fingerprint that moves when EITHER vector moves.
+///
+/// Its hex is evidence (`RelevantEvidence::semantic_inputs`), hashed into the
+/// stored memo key, so it keeps its bytes through the K door
+/// (`purposes::saved_query::VECTOR_PAIR`): per vector a presence byte, then the
+/// count as a u64 big-endian and each value's big-endian bits.
 pub fn vector_pair_fingerprint(subject: &Option<Vec<f32>>, exemplar: &Option<Vec<f32>>) -> String {
-    let mut hasher = Sha256::new();
+    let mut digest = LegacyDigest::new(purposes::saved_query::VECTOR_PAIR);
     for vector in [subject, exemplar] {
         match vector {
-            None => hasher.update([0u8]),
+            None => {
+                digest.raw(&[0]);
+            }
             Some(values) => {
-                hasher.update([1u8]);
-                hash_len(&mut hasher, values.len());
+                digest.raw(&[1]).len_u64_be(values.len());
                 for value in values {
-                    hasher.update(value.to_be_bytes());
+                    digest.raw(&value.to_be_bytes());
                 }
             }
         }
     }
-    hex_lower(&hasher.finalize())
+    hex_lower(&digest.finish())
 }
 
 pub fn hex_lower(bytes: &[u8]) -> String {

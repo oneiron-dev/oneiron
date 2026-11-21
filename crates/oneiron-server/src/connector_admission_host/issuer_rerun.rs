@@ -107,14 +107,19 @@ fn rerun_connector(server: &SyncServer, binding: &ConnectorCredentialBinding) ->
         }
     };
     let name = binding.connector.as_str();
-    let Some(endpoint) = server
+    let Some(installed) = server
         .config
         .connectors
         .iter()
         .find(|(section, _)| normalize_name(section) == name)
-        .map(|(_, installed)| installed.endpoint.clone())
+        .map(|(_, installed)| installed)
     else {
         return Some(Rerun::failed(Stage::NotInstalled));
+    };
+    // A stdio connector presents no credential until the broker path (B2),
+    // so no issuer binds it (row L8-27).
+    let Some(endpoint) = installed.http_endpoint().map(str::to_owned) else {
+        return Some(Rerun::failed(Stage::Credential));
     };
     let Some(revision) = catalog.protocol_revision.clone() else {
         return Some(Rerun::failed(Stage::Unpinned));

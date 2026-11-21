@@ -791,6 +791,36 @@ async fn quickjs_code_mode_applies_the_tool_argument_rules() {
     );
 }
 
+/// One TURN the owner witnesses, for a code run's claim to cite: the run
+/// binds a generated origin, so its claim is concluded, and a concluded
+/// claim names the TURN it was concluded from (claim_admission's RowBirth).
+fn witness_evidence_turn(vault: &oneiron::Vault) -> oneiron::EntityId {
+    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    vault
+        .memory(owner, oneiron::EdgeActorClass::Human)
+        .witness(&oneiron::memory::WitnessTurn {
+            conversation_ref: oneiron::EntityId::now().to_hex(),
+            turn_ref: None,
+            thread_audience: None,
+            project: None,
+            messages: vec![oneiron::memory::WitnessMessage {
+                id: None,
+                author: oneiron::memory::WitnessAuthor::User,
+                message_type: "dialogue".to_owned(),
+                content: "I drink sencha".to_owned(),
+                parts: None,
+                metadata: None,
+                is_visible: true,
+                order: 0,
+                quote: None,
+            }],
+            occurred_at: 1_772_400_000,
+            assertions: oneiron::memory::WitnessAssertions::default(),
+        })
+        .expect("the evidence turn")
+        .turn_id
+}
+
 /// The four-axis position `vault.claims.upsert` takes: `world`, the vault's
 /// default facet, every relationship and the default project.
 fn upsert_scope(vault: &oneiron::Vault, world: oneiron::EntityId) -> serde_json::Value {
@@ -812,12 +842,14 @@ async fn quickjs_code_mode_claims_carry_the_runs_generated_source() {
     let subject = seeded_test_entity_id(0x0024_6542);
     let claim = seeded_test_entity_id(0x0024_6543);
     let mode = code_mode_server(Vec::new());
+    let evidence = witness_evidence_turn(&mode.vault);
     mode.backend.scripts.lock().unwrap().push_back(format!(
         "await vault.claims.upsert({{id: '{}', predicate: 'profile.favorite_drink', \
-         subject_ref: '{}', value: 'sencha', confidence: 1, source: 'user_stated', \
-         scope: {}}}); finish('stated');",
+         subject_ref: '{}', evidence_turn_refs: ['{}'], value: 'sencha', confidence: 1, \
+         source: 'user_stated', scope: {}}}); finish('stated');",
         claim.to_hex(),
         subject.to_hex(),
+        evidence.to_hex(),
         upsert_scope(&mode.vault, oneiron::claim::base_world_id())
     ));
     mode.vault
@@ -836,6 +868,9 @@ async fn quickjs_code_mode_claims_carry_the_runs_generated_source() {
         oneiron::EdgeActorClass::Human,
     )
     .await;
+    // The upsert's writer reads the PERSON it is about (FIX 1218): else the
+    // run's upsert fails INVENTED_REFERENCE and the step reports facade_error.
+    put_actor_read_grant(&mode.vault, actor, None);
     let args = mcp_merge_args(
         mcp_endpoint_envelope(actor, "write_memory"),
         json!({"run_ref": "quickjs-claim", "task": "state a favorite drink"}),
@@ -1225,7 +1260,11 @@ async fn quickjs_code_mode_cannot_witness_a_users_words() {
 
 /// `[models]` filling the generative seat as `seat` says, on the local fake
 /// model at `base_url`, and serving code mode from the workspace's test
-/// prompt package on a meter of `budget_units`.
+/// prompt package on a meter of `budget_units`. The run's window and the
+/// model's context are sized past the step-zero request (about 284K tokens:
+/// the taught verb catalog dominates it, as in
+/// `tests/it/code_mode_compaction.rs`); at the 128K default context a run
+/// parks `window_full` before its first model call.
 fn code_mode_models(
     base_url: &str,
     seat: &str,
@@ -1235,7 +1274,9 @@ fn code_mode_models(
     crate::ai_host::test_support::models_toml(&format!(
         "{seat}\n[dreamer]\nenabled = false\n[workflows]\nenabled = false\n\
          [code_mode]\nprompt_package = {:?}\nbudget_units = {budget_units}\n\
-         [providers.local]\nkind = \"local-openai-compat\"\nbase_url = \"{base_url}\"\n",
+         [code_mode.compaction]\nwindow_tokens = 350000\n\
+         [providers.local]\nkind = \"local-openai-compat\"\nbase_url = \"{base_url}\"\n\
+         context_tokens = 500000\n",
         prompts.display().to_string(),
     ))
 }
@@ -1355,19 +1396,21 @@ const CODE_MODE_DONE: &str = "finish('done');";
 
 /// Runs `execute_code` twice on fresh runs against a fake model scripted with
 /// `replies`, code mode's meter `budget_units` and the generative seat's
-/// ladder `rungs`. Returns how many provider requests the fake saw after the
-/// first run and after the second.
+/// ladder `rungs`. The fake's calls are metered as account work: a keyless
+/// own-server provider is free work (FIX 9482), an unmetered lease no meter
+/// can deny. Returns how many provider requests the fake saw after the first
+/// run and after the second.
 async fn provider_requests_across_two_runs(
     replies: Vec<crate::fake_llm::Reply>,
     budget_units: u64,
     rungs: &str,
 ) -> (usize, usize) {
     let fake = crate::fake_llm::FakeLlm::start(replies, None).await;
-    let models = code_mode_models(
+    let models = crate::ai_host::test_support::metered_models(code_mode_models(
         &fake.base_url,
         &format!("[roles.generative_reasoner]\nrungs = [{rungs}]"),
         budget_units,
-    );
+    ));
     let actor = seeded_test_entity_id(0x0024_6591);
     let credential = "metered-code-mode";
     let (_dir, _vault, server, _host) = serve_with_models(&models, credential, actor).await;

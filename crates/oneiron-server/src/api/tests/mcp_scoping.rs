@@ -44,7 +44,9 @@ async fn mcp_legacy_catalog_is_unknown_tool_on_both_endpoints() {
             )
             .await;
             // 0bf27d24b8f (#1564): a name under a stray root whose leaf is one
-            // served verb is refused with its correction, before any effect.
+            // served verb is refused with its correction, before any caller
+            // resolves (FIX 298), so with no scope to state; any other
+            // retired name stays unknown under the resolved credential.
             if *name == "oneiron.ask" {
                 assert_mcp_structured_error(&body, "wrong_root");
                 assert_eq!(
@@ -52,10 +54,14 @@ async fn mcp_legacy_catalog_is_unknown_tool_on_both_endpoints() {
                     json!("`oneiron.ask` is not an SDK verb; the verb is `ask`"),
                     "{name} on {path}: {body}"
                 );
+                assert!(
+                    body["error"]["data"].get("effective_scope").is_none(),
+                    "{name} on {path}: a pre-resolution refusal states no scope: {body:?}"
+                );
             } else {
                 assert_mcp_structured_error(&body, "unknown_tool");
+                assert_scoped_refusal(&body, &scope, &format!("{name} on {path}"));
             }
-            assert_scoped_refusal(&body, &scope, &format!("{name} on {path}"));
         }
     }
 
@@ -89,10 +95,10 @@ async fn mcp_actor_derived_errors_all_carry_effective_scope() {
             MCP_TOOL_FIRST_PATH,
             wide,
             "scope-args",
-            "board.expand",
+            "self.focus.refresh",
             mcp_merge_args(
                 mcp_endpoint_envelope(wide_actor, "read_board"),
-                json!({ "arguments": { "frame_epoch": 3 } }),
+                json!({ "arguments": { "key": "VERBS", "frame_epoch": 3 } }),
             ),
         ),
     )
@@ -134,7 +140,7 @@ async fn mcp_actor_derived_errors_all_carry_effective_scope() {
                 MCP_TOOL_FIRST_PATH,
                 wide,
                 id,
-                "board.expand",
+                "describe",
                 mcp_merge_args(mcp_endpoint_envelope(wide_actor, "read_board"), arguments),
             ),
         )
@@ -184,7 +190,7 @@ async fn mcp_actor_derived_errors_all_carry_effective_scope() {
             MCP_TOOL_FIRST_PATH,
             bound,
             "scope-unbound",
-            "board.refresh",
+            "self.focus.refresh",
             mcp_endpoint_envelope(bound_actor, "read_board"),
         ),
     )
@@ -204,7 +210,7 @@ async fn mcp_actor_derived_errors_all_carry_effective_scope() {
             MCP_TOOL_FIRST_PATH,
             narrow,
             "scope-stream",
-            "board.subscribe",
+            "self.focus.subscribe",
             mcp_merge_args(
                 mcp_scoped_envelope(narrow_actor, "read_board", &narrow_scope_value),
                 json!({ "arguments": { "scopes": ["memories"] } }),
@@ -403,7 +409,12 @@ async fn mcp_narrow_credential_cannot_cross_world_or_facet() {
             "tasks.update",
             mcp_merge_args(
                 mcp_scoped_envelope(actor_ref, "ack_task", &facet_only_b),
-                json!({ "arguments": { "task_ref": owned.to_hex() } }),
+                json!({
+                    "arguments": {
+                        "task_ref": owned.to_hex(),
+                        "spec": { "task_ref": owned.to_hex() },
+                    },
+                }),
             ),
         ),
     )
@@ -575,7 +586,7 @@ async fn mcp_board_epoch_is_state_monotonic() {
             MCP_TOOL_FIRST_PATH,
             credential,
             "epoch-expand",
-            "board.expand",
+            "describe",
             mcp_merge_args(
                 mcp_endpoint_envelope(actor_ref, "read_board"),
                 json!({ "arguments": { "key": "VERBS", "frame_epoch": epoch } }),
@@ -595,7 +606,7 @@ async fn mcp_board_epoch_is_state_monotonic() {
             MCP_TOOL_FIRST_PATH,
             credential,
             "epoch-stale",
-            "board.expand",
+            "describe",
             mcp_merge_args(
                 mcp_endpoint_envelope(actor_ref, "read_board"),
                 json!({ "arguments": { "key": "VERBS", "frame_epoch": epoch + 1 } }),
@@ -685,4 +696,70 @@ async fn mcp_registry_cannot_lend_host_authority_or_replace_the_paired_holder() 
     )
     .await;
     assert_mcp_structured_error(&denied, "mcp_credential_revoked");
+}
+
+/// The agent slot doors run outside any connector ceiling (`mcp_scope`
+/// unrestricted): a facet-narrowed registration is refused both before either
+/// reaches the slot, while a vault-wide one passes this gate (fix e7d99021,
+/// FIX W9-LENS-RUN-LINEAGE-REGRESSION-TESTS (4)).
+#[tokio::test]
+async fn mcp_facet_narrowed_credential_is_refused_the_lens_slot_agent_doors() {
+    let (_dir, server) = auth_test_server();
+    let actor_ref = seeded_test_entity_id(0x51f0_0001);
+    let facet_only =
+        crate::mcp::McpConnectorScope::scoped(None, Some(seeded_test_entity_id(0x51f0_0002)));
+    let vault_wide = crate::mcp::McpConnectorScope::vault_wide();
+    register_scoped_mcp_actor(&server, "lens-slot-narrow", actor_ref, facet_only.clone()).await;
+    register_mcp_actor(
+        &server,
+        "lens-slot-wide",
+        actor_ref,
+        oneiron::EdgeActorClass::Human,
+    )
+    .await;
+    let lens_ref = seeded_test_entity_id(0x51f0_0003).to_hex();
+    let select = json!({ "lens_ref": lens_ref, "compiled_hash": "00".repeat(32) });
+    let clear = json!({
+        "slot": {
+            "pack_name": "oneiron.weave",
+            "skill_id": seeded_test_entity_id(0x51f0_0004).to_hex(),
+        },
+        "expected_active_ref": lens_ref,
+    });
+    for (tool, spec) in [
+        ("vault.lenses.activate_as", select),
+        ("vault.lenses.deactivate_as", clear),
+    ] {
+        let call = |credential: &str, scope: &crate::mcp::McpConnectorScope| {
+            mcp_endpoint_call_request(
+                MCP_TOOL_FIRST_PATH,
+                credential,
+                tool,
+                tool,
+                mcp_merge_args(
+                    mcp_scoped_envelope(actor_ref, "write_tasks", scope),
+                    json!({ "arguments": { "spec": spec } }),
+                ),
+            )
+        };
+        let (_, refused) = route_json(server.clone(), call("lens-slot-narrow", &facet_only)).await;
+        assert_mcp_structured_error(&refused, "mcp_scope_refused");
+        assert_eq!(
+            refused["error"]["data"]["field"],
+            json!("arguments.spec"),
+            "{tool}: refused as an unscoped execution: {refused:?}"
+        );
+        assert!(
+            refused["error"]["data"]["human_message"]
+                .as_str()
+                .is_some_and(|message| message.contains(tool) && message.contains("facet ceiling")),
+            "{tool}: the refusal names the tool and the facet ceiling: {refused:?}"
+        );
+        let (_, answered) = route_json(server.clone(), call("lens-slot-wide", &vault_wide)).await;
+        assert_ne!(
+            answered["error"]["data"]["error_code"],
+            json!("mcp_scope_refused"),
+            "{tool}: a vault-wide registration passes the scope gate: {answered:?}"
+        );
+    }
 }

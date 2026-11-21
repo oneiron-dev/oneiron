@@ -530,6 +530,19 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn dss_crl_without_next_update_fails() {
+        // FIX SEAL-REVOCATION-NO-NEXT-UPDATE-MAX-FRESHNESS: no maximum
+        // freshness is set, so a genuine CRL without nextUpdate is not fresh
+        // (EN 319 102-1 V1.4.1 §5.2.5.4 step 1) and fails as a stale one does.
+        let ca = test_ca("dss-ca");
+        let crl = build_crl(&ca, AT_UNIX - 60, None, None, vec![]);
+        let doc = dss_doc(std::slice::from_ref(&ca.cert_der), &[crl], &[]);
+        let covered = covered_of(&[&ca.cert_der]);
+        let checks = dss_check(&doc, &covered);
+        assert_material_fails(&checks);
+    }
+
+    #[test]
     fn dss_crl_listing_in_scope_serial_fails() {
         // A covered leaf revoked by its CA's CRL: the evidence asserts a
         // revocation and can never support validity.
@@ -599,6 +612,24 @@ pub(crate) mod tests {
             ca.cert.tbs_certificate.serial_number.clone(),
             AT_UNIX - 7200,
             Some(AT_UNIX - 60),
+            x509_ocsp::CertStatus::good(),
+        );
+        let doc = dss_doc(std::slice::from_ref(&ca.cert_der), &[], &[ocsp]);
+        let covered = covered_of(&[&ca.cert_der]);
+        let checks = dss_check(&doc, &covered);
+        assert_material_fails(&checks);
+    }
+
+    #[test]
+    fn dss_ocsp_without_next_update_fails() {
+        // FIX SEAL-REVOCATION-NO-NEXT-UPDATE-MAX-FRESHNESS: a genuine `good`
+        // response without nextUpdate is not fresh, as a stale one is not.
+        let ca = test_ca("dss-ca");
+        let ocsp = build_ocsp(
+            &ca,
+            ca.cert.tbs_certificate.serial_number.clone(),
+            AT_UNIX - 60,
+            None,
             x509_ocsp::CertStatus::good(),
         );
         let doc = dss_doc(std::slice::from_ref(&ca.cert_der), &[], &[ocsp]);

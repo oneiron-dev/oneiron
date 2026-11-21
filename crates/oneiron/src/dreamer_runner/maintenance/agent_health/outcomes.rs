@@ -24,12 +24,14 @@
 
 use std::collections::BTreeSet;
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use serde::{Deserialize, Serialize};
 
 use super::{AgentHealthCard, AgentHealthOutcome, CARDS, HealthBriefPin, card_key, settle};
 use crate::learning::{
     Anchor, LearningCell, LearningEvidence, LearningPredicate, Observation, TypeRef,
 };
+use crate::store::diagnostic_record::AgentHealthSignal;
 use crate::{EntityId, Result, Vault};
 
 mod float_setting_fit;
@@ -39,7 +41,6 @@ mod setting_fit;
 /// The reviewer cell's axis: a card outcome scores the evaluator's diagnosis.
 const HEALTH_REVIEW_AXIS: &str = "health_review";
 pub use crate::skill::health_review::HEALTH_REVIEW_RECEIPT_PREFIX;
-const REVIEW_STATE_DOMAIN: &[u8] = b"oneiron.coach.agent_health.review_state.v1";
 
 /// One outcome set on a card, with what it judged frozen as it stood then.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -115,36 +116,56 @@ const fn review_effect(outcome: AgentHealthOutcome, by_owner: bool) -> Effect {
 /// revision and digest. The pin's observation time is left out: every
 /// review restamps it on the same brief.
 fn review_state_id(card: &AgentHealthCard) -> String {
-    let (subject, signal, task) = card_key(card.subject, card.signal, card.task);
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(REVIEW_STATE_DOMAIN);
-    hasher.update(&subject);
-    hasher.update(&signal);
-    hasher.update(&task);
-    hasher.update(&(card.reviewer.len() as u64).to_le_bytes());
-    hasher.update(card.reviewer.as_bytes());
-    for ids in [&card.diagnostics, &card.evidence] {
+    review_state_of(
+        card.subject,
+        card.signal,
+        card.task,
+        &card.reviewer,
+        &card.diagnostics,
+        &card.evidence,
+        card.observed_brief.as_ref(),
+    )
+}
+
+/// [`review_state_id`] over the card fields it reads (K, PLAN-UC-04 stage 7).
+fn review_state_of(
+    subject: EntityId,
+    signal: AgentHealthSignal,
+    task: Option<EntityId>,
+    reviewer: &str,
+    diagnostics: &[EntityId],
+    evidence: &[EntityId],
+    observed_brief: Option<&HealthBriefPin>,
+) -> String {
+    let (subject, signal, task) = card_key(subject, signal, task);
+    let mut hasher = LegacyDigest::new(purposes::dreamer_runner::AGENT_HEALTH_REVIEW_STATE);
+    hasher.raw(&subject);
+    hasher.raw(&signal);
+    hasher.raw(&task);
+    hasher.len_u64_le(reviewer.len());
+    hasher.raw(reviewer.as_bytes());
+    for ids in [diagnostics, evidence] {
         let mut sorted: Vec<&EntityId> = ids.iter().collect();
         sorted.sort_unstable();
-        hasher.update(&(sorted.len() as u64).to_le_bytes());
+        hasher.len_u64_le(sorted.len());
         for id in sorted {
-            hasher.update(id.as_bytes());
+            hasher.raw(id.as_bytes());
         }
     }
-    match &card.observed_brief {
+    match observed_brief {
         Some(pin) => {
-            hasher.update(&[1_u8]);
-            hasher.update(pin.task.as_bytes());
-            hasher.update(&pin.rev.to_le_bytes());
-            hasher.update(pin.digest.as_bytes());
+            hasher.raw(&[1_u8]);
+            hasher.raw(pin.task.as_bytes());
+            hasher.raw(&pin.rev.to_le_bytes());
+            hasher.raw(pin.digest.as_bytes());
         }
         None => {
-            hasher.update(&[0_u8]);
+            hasher.raw(&[0_u8]);
         }
     }
     format!(
         "{HEALTH_REVIEW_RECEIPT_PREFIX}{}",
-        hasher.finalize().to_hex()
+        oneiron_hex::encode(&hasher.finish())
     )
 }
 
@@ -416,4 +437,25 @@ impl Vault {
         }
         Ok(None)
     }
+}
+
+#[cfg(oneiron_test_support)]
+pub(crate) fn review_state_of_for_test(
+    subject: EntityId,
+    signal: AgentHealthSignal,
+    task: Option<EntityId>,
+    reviewer: &str,
+    diagnostics: &[EntityId],
+    evidence: &[EntityId],
+    observed_brief: Option<&HealthBriefPin>,
+) -> String {
+    review_state_of(
+        subject,
+        signal,
+        task,
+        reviewer,
+        diagnostics,
+        evidence,
+        observed_brief,
+    )
 }
