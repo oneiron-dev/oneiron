@@ -339,6 +339,11 @@ mod tests {
         .expect("a system_one gate route")
     }
 
+    /// The System One endpoint a seat names to send through `route`'s gate.
+    fn gate_endpoint(route: &Route) -> String {
+        format!("{}/v1/systemone", route.local_url())
+    }
+
     #[test]
     fn two_seats_on_one_wire_model_each_take_their_own_gate_route() {
         let routes = [
@@ -349,14 +354,14 @@ mod tests {
             &routes,
             "system_one",
             "d3-flash-r1",
-            "http://127.0.0.1:9101/v1/systemone",
+            &gate_endpoint(&routes[0]),
         )
         .expect("the head's route");
         let precision = system_one_seat_route(
             &routes,
             "precision",
             "d3-flash-r1",
-            "http://127.0.0.1:9102/v1/systemone",
+            &gate_endpoint(&routes[1]),
         )
         .expect("the precision seat's route");
         assert_eq!(head.listen_port, 9101);
@@ -366,12 +371,13 @@ mod tests {
     #[test]
     fn a_seat_past_every_gate_of_its_wire_model_is_a_bypass() {
         let routes = [system_one_route("head-gate", 9101)];
+        let unlisted_gate = system_one_route("unlisted-gate", 9199);
         assert_eq!(
             system_one_seat_route(
                 &routes,
                 "precision",
                 "d3-flash-r1",
-                "http://127.0.0.1:9199/v1/systemone",
+                &gate_endpoint(&unlisted_gate),
             )
             .err(),
             Some("precision_gate_bypass".to_owned())
@@ -381,7 +387,7 @@ mod tests {
                 &routes,
                 "precision",
                 "d3-other-r1",
-                "http://127.0.0.1:9101/v1/systemone",
+                &gate_endpoint(&routes[0]),
             )
             .err(),
             Some("precision_gate_unavailable".to_owned())

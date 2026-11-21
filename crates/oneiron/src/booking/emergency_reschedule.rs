@@ -320,6 +320,9 @@ pub(super) fn calendar_failure(error: crate::calendar::CalendarError) -> Booking
     }
 }
 
+// FIX [BK-EMERGENCY-ROWS-NOT-CARRIED-BY-HOME-MOVE]: the rows a home move carries.
+#[cfg(feature = "sync")]
+pub(crate) mod home_rows;
 mod lookup;
 mod state;
 #[cfg(oneiron_test_support)]

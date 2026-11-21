@@ -625,7 +625,7 @@ async fn execute_confirm(
     let booker_contact =
         resolve_booker_contact(server, &input.booker_email, now, public_authority.as_ref())?;
     // The visitor's card may be authorized before Stripe's webhook says so.
-    self::deposit::before_confirm(server, session_key, now).await;
+    self::deposit::before_confirm(server, session_key, now).await?;
     let (receipt, unkept) = run_booking_verb(
         server,
         BookingVerbRequest::Confirm(ConfirmSpec {
