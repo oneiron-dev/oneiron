@@ -27,6 +27,15 @@
 //! lesson retracted. On main both stood until some later amendment settled.
 //! A sweep over a lapse nothing dropped leaves both as they were.
 //!
+//! The sweep's reliability half lands every amended attempt's verdict in one
+//! write, so one attempt it cannot reproject must not hold the others
+//! (REVIEW-10104 P1). A `skill_defect` judgment on the MACHINE's typed attempt
+//! charges the skill, and is then withdrawn; a second judgment charges an
+//! attempt whose pack receipt has no task typeRef and no learning anchor, or
+//! no executor stamp. The sweep after both lands the withdrawal and the second
+//! charge. On the PR's first head the second attempt failed the pass, so the
+//! first attempt still read as a loss after every sweep.
+//!
 //! The cause rows have no public read that shows a row whose judgment is
 //! gone, so they are counted through a test door:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
@@ -36,15 +45,24 @@
 
 use ed25519_dalek::{Signer as _, SigningKey};
 use oneiron::actor_claims::PREDICATE_ACTOR_LESSON;
+use oneiron::agent_dispatch::{AgentDispatchOutcome, AgentDispatcher};
+use oneiron::attempt_queue::{
+    AttemptQueue, ClaimAttempt, ClaimOutcome, CompleteAttempt, CompleteOutcome, EnqueueAttempt,
+    EnqueueOutcome, ManifestEntry, ManifestKind,
+};
 use oneiron::authority::HostSlipIssuer;
+use oneiron::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
 use oneiron::edit_distance::attribution::{
     AmendmentCause, AmendmentClass, AmendmentEvidence, AmendmentJudgment, amendment_evidence,
     amendment_judgments, edit_cost_for, judge_amendment, pending_preference_proposals,
-    project_amendment_lessons, project_edit_cost_claims, record_amendment_evidence,
+    project_amendment_lessons, project_amendment_reliability, project_edit_cost_claims,
+    record_amendment_evidence,
 };
 use oneiron::housekeeping::HousekeepingBudget;
+use oneiron::receipt::attempt_pack_receipt_id;
 use oneiron::registry::{ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON};
 use oneiron::skill::{SkillLifecycle, SkillRecord, canonical_skill_tree_hash};
+use oneiron::skill_reliability::effective_skill_outcome;
 use oneiron::test_doors::gate_amendment_attribution as door;
 use oneiron::test_support::bind_host_owner;
 use oneiron::write_envelope::MachineWriteSignature;
@@ -58,6 +76,15 @@ const SECRET: &[u8] = b"gate-amendment-attribution-erase-test-owner";
 const MACHINE_NOTE: &str = "a machine note";
 const REVISED_NOTE: &str = "the owner's revised note";
 const SCOPE: &str = "outbound";
+/// The skill [`active_skill`] holds, as an attempt's pack manifest names it.
+const SKILL_ID: &str = "gate-amendment.lapse";
+const SKILL_VERSION: &str = "1.0.0";
+/// The executor revision an attempt fixture stamps.
+const MODEL: &str = "fixture/model@1";
+/// The lease owner of an attempt fixture.
+const LEASE: &str = "fixture";
+/// The kind of the plain queue row an untyped attempt fixture runs as.
+const UNTYPED_KIND: &str = "test.gate_amendment.untyped";
 
 fn at(time: u64) -> TimeRange {
     TimeRange {
@@ -341,9 +368,9 @@ fn active_skill(vault: &Vault) -> EntityId {
     let tree = canonical_skill_tree_hash([("SKILL.md", b"# lapse fixture\n".as_slice())])
         .expect("FIXTURE: the skill tree hash");
     let candidate = SkillRecord::new(
-        "gate-amendment.lapse",
+        SKILL_ID,
         "a skill the machine did not follow",
-        "1.0.0",
+        SKILL_VERSION,
         ClaimApprovalStatus::Approved,
         SkillLifecycle::Candidate,
         ClaimSource::UserStated,
@@ -535,5 +562,188 @@ fn a_gate_decision_sweep_keeps_a_standing_lapses_charge_and_lesson() {
         active_lessons(&seeded),
         vec![format!("execution_lapse:{receipt}")],
         "a sweep over a judgment nothing dropped leaves its lesson standing"
+    );
+}
+
+/// A completed attempt the MACHINE ran with [`active_skill`]'s pack loaded,
+/// returning its pack receipt; neither kind stamps a learning anchor.
+/// `typed`: an agent dispatch, whose receipt carries the task typeRef;
+/// otherwise a plain queue row, whose receipt carries none. `stamped`: its
+/// executor revision is stamped.
+fn completed_attempt(seeded: &Seeded, typed: bool, stamped: bool) -> String {
+    let vault = &seeded.vault;
+    let queue = AttemptQueue::new(vault);
+    let now = vault.now_recorded_at();
+    let (row, kind) = if typed {
+        let AgentDispatchOutcome::Dispatched(dispatched) = AgentDispatcher::new(vault)
+            .dispatch_default_base(None, None, None, now)
+            .expect("FIXTURE: the agent dispatch")
+        else {
+            panic!("FIXTURE: a fresh agent dispatch");
+        };
+        (dispatched.attempt, DREAMER_RUNNER_ATTEMPT_KIND)
+    } else {
+        let EnqueueOutcome::Enqueued(row) = queue
+            .enqueue(EnqueueAttempt {
+                kind: UNTYPED_KIND.to_owned(),
+                payload: b"untyped".to_vec(),
+                dedupe_key: None,
+                run_id: None,
+                now,
+            })
+            .expect("FIXTURE: the queue row")
+        else {
+            panic!("FIXTURE: a fresh queue row");
+        };
+        (row, UNTYPED_KIND)
+    };
+    vault
+        .bind_actor_attempt(row.id, &seeded.machine)
+        .expect("FIXTURE: the MACHINE runs the attempt");
+    queue
+        .append_manifest_entry(
+            row.id,
+            ManifestEntry::new(ManifestKind::Skill, SKILL_ID, SKILL_VERSION, now),
+        )
+        .expect("FIXTURE: the pack loads the skill");
+    let ClaimOutcome::Claimed(leased) = queue
+        .claim_kind(
+            kind,
+            ClaimAttempt {
+                lease_owner: LEASE.to_owned(),
+                now: vault.now_recorded_at(),
+            },
+        )
+        .expect("FIXTURE: the claim")
+    else {
+        panic!("FIXTURE: the attempt leases");
+    };
+    assert_eq!(leased.id, row.id, "FIXTURE: the claim leases this attempt");
+    if stamped {
+        queue
+            .set_executor_model(row.id, LEASE, leased.attempt_count, MODEL)
+            .expect("FIXTURE: the executor stamp");
+    }
+    let completed = queue
+        .complete(CompleteAttempt {
+            id: row.id,
+            lease_owner: LEASE.to_owned(),
+            attempt_count: leased.attempt_count,
+            now: vault.now_recorded_at(),
+        })
+        .expect("FIXTURE: the completion");
+    assert!(
+        matches!(completed, CompleteOutcome::Completed(_)),
+        "FIXTURE: the attempt completes"
+    );
+    attempt_pack_receipt_id(&row.id)
+}
+
+/// The routing facts for the amendment under `receipt`, joined with
+/// `attempt`: the MACHINE followed the skill and the skill covered the step,
+/// so the judge charges the skill one `skill_defect` share. With `settled`
+/// false the facts are unset and the judge abstains.
+fn defect_evidence(
+    seeded: &Seeded,
+    receipt: &str,
+    skill: EntityId,
+    attempt: &str,
+    settled: bool,
+) -> AmendmentEvidence {
+    lapse_evidence(seeded, receipt, skill, settled.then_some(true)).with_attempt(attempt)
+}
+
+/// An owner-amended claim whose amendment the judge settles as one
+/// `skill_defect` of `skill` on `attempt`; returns its receipt.
+fn judged_defect(seeded: &Seeded, skill: EntityId, attempt: &str) -> String {
+    let (_, receipt) = owner_amended_claim(seeded);
+    record_amendment_evidence(
+        &seeded.vault,
+        &defect_evidence(seeded, &receipt, skill, attempt, true),
+    )
+    .expect("FIXTURE: the defect evidence");
+    let judgment = judge_amendment(&seeded.vault, &receipt)
+        .expect("FIXTURE: the judging pass")
+        .expect("FIXTURE: a followed, covered step is the skill's defect");
+    assert_eq!(
+        judgment.sole_class(),
+        Some(AmendmentClass::SkillDefect),
+        "FIXTURE: the judgment is one skill defect"
+    );
+    receipt
+}
+
+/// The attempt's outcome as the skill's attributed ledger reads it.
+fn attempt_outcome(seeded: &Seeded, skill: &EntityId, attempt: &str) -> Option<bool> {
+    effective_skill_outcome(&seeded.vault, skill, attempt).expect("attributed outcome read")
+}
+
+/// A defect on the MACHINE's typed attempt projected and then withdrawn,
+/// and a second defect judged on an attempt `stamped` as given, which only
+/// the next sweep lands; then the sweep. Returns the skill and both attempts.
+fn withdrawal_beside_second_defect(seeded: &Seeded, stamped: bool) -> (EntityId, String, String) {
+    let vault = &seeded.vault;
+    let skill = active_skill(vault);
+    let typed = completed_attempt(seeded, true, true);
+    let first = judged_defect(seeded, skill, &typed);
+    assert_eq!(
+        project_amendment_reliability(vault).expect("FIXTURE: the reliability pass"),
+        vec![skill],
+        "FIXTURE: the defect moves the skill's record"
+    );
+    assert_eq!(
+        attempt_outcome(seeded, &skill, &typed),
+        Some(false),
+        "FIXTURE: the typed attempt reads as the defect's loss"
+    );
+
+    let untyped = completed_attempt(seeded, false, stamped);
+    judged_defect(seeded, skill, &untyped);
+    record_amendment_evidence(
+        vault,
+        &defect_evidence(seeded, &first, skill, &typed, false),
+    )
+    .expect("FIXTURE: the first amendment's routing facts recorded again, unset");
+    assert!(
+        judge_amendment(vault, &first)
+            .expect("the re-judging pass")
+            .is_none(),
+        "FIXTURE: a judge with the facts unset abstains, which withdraws the first defect"
+    );
+
+    housekeeping(seeded);
+    (skill, typed, untyped)
+}
+
+#[test]
+fn a_sweep_lands_a_withdrawal_beside_an_untyped_attempts_defect() {
+    let seeded = seed();
+    let (skill, typed, untyped) = withdrawal_beside_second_defect(&seeded, true);
+    assert_eq!(
+        attempt_outcome(&seeded, &skill, &typed),
+        None,
+        "the sweep withdraws the first defect: an attempt with no typeRef beside it holds nothing"
+    );
+    assert_eq!(
+        attempt_outcome(&seeded, &skill, &untyped),
+        Some(false),
+        "the same sweep lands the untyped attempt's defect"
+    );
+}
+
+#[test]
+fn a_sweep_lands_a_withdrawal_beside_an_unstamped_attempts_defect() {
+    let seeded = seed();
+    let (skill, typed, unstamped) = withdrawal_beside_second_defect(&seeded, false);
+    assert_eq!(
+        attempt_outcome(&seeded, &skill, &typed),
+        None,
+        "the sweep withdraws the first defect: an attempt with no executor stamp beside it \
+         holds nothing"
+    );
+    assert_eq!(
+        attempt_outcome(&seeded, &skill, &unstamped),
+        Some(false),
+        "the same sweep lands the unstamped attempt's defect"
     );
 }
