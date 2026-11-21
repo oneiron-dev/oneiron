@@ -213,24 +213,20 @@ fn refuse_floor_above_count(
     Ok(())
 }
 
-/// The row the count's and the floor's hook judges one of them against: the other of the pair,
-/// so the owner's notice of a refused projection of either names both acts, on every machine
-/// (row SETTING-PROJECTED-ROW-REFUSING-HOOKS).
+/// The row the count's and the floor's hook judges one of them against: the row that decides the
+/// other of the pair, its pin where a pin decides it, so the owner's notice of a refused
+/// projection of either names both acts, on every machine, and its tap edits the row the hook
+/// reads (row SETTING-PROJECTED-ROW-REFUSING-HOOKS).
 fn emergency_pair_peer(
-    _vault: &crate::Vault,
-    _txn: &heed::RoTxn<'_>,
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
     slot: &oneiron_setting_contract::RowKey,
     _value: Option<&serde_json::Value>,
 ) -> Result<Vec<oneiron_setting_contract::RowKey>> {
     let other = if slot.name == BOOKING_EMERGENCY_MAX_PROPOSALS.spec.name {
-        BOOKING_EMERGENCY_MIN_PROPOSALS.spec.name
+        &BOOKING_EMERGENCY_MIN_PROPOSALS
     } else {
-        BOOKING_EMERGENCY_MAX_PROPOSALS.spec.name
+        &BOOKING_EMERGENCY_MAX_PROPOSALS
     };
-    Ok(vec![oneiron_setting_contract::RowKey {
-        name: other.to_owned(),
-        item: None,
-        mode: crate::setting::SettingMode::Value,
-        scope: crate::setting::SettingScope::Vault,
-    }])
+    Ok(vec![other.deciding_slot_in_txn(vault, txn, None)?])
 }

@@ -19,11 +19,12 @@ pub(in crate::setting) fn rooted_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) ->
     Ok(view.vault_id.is_some() || view.vault_root_is_conflicted())
 }
 
-/// Appends the owner `owner`'s applied change `recorded` of a row of `spec` that travels as its
-/// signed act, in the change's write `txn`, from `surface`, with its value inside the act or
-/// beside it ([`slot_value`]); names the entry on the change row; and projects the row
-/// from the fold in the same write. It signs on `ground`, or with no owner proof where that is
-/// `None`.
+/// Appends the owner `owner`'s applied changes `changes`, each of a row of its key that travels,
+/// as ONE signed act, in the changes' write `txn`, from `surface`, with each value inside the act
+/// or beside it ([`slot_value`]); names the entry on each change row; and projects each row from
+/// the fold in the same write. It signs on `ground`, or with no owner proof where that is `None`.
+/// The owner's change of several rows is one act (row SETTING-PROJECTED-ROW-REFUSING-HOOKS), so
+/// every machine projects them from it.
 ///
 /// # Errors
 ///
@@ -33,38 +34,42 @@ pub(in crate::setting) fn append_act_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     ground: Option<&OwnerProofGround>,
-    spec: &'static SettingSpec,
     (owner, surface): (EntityId, ActSurface),
-    recorded: &SettingChange,
+    changes: &[(&'static SettingSpec, &SettingChange)],
 ) -> Result<()> {
-    let json = recorded
-        .value
-        .as_ref()
-        .map(|value| json_bytes(spec, value))
-        .transpose()?;
-    let slot = RowKey {
-        name: recorded.key.clone(),
-        item: recorded.item.clone(),
-        mode: recorded.mode,
-        scope: recorded.scope.clone(),
-    };
-    let target = setting_slot_target(&slot)?;
-    let prior = setting_value_digest(&match &recorded.prior {
-        Some(prior) => json_bytes(spec, prior)?,
-        None => b"null".to_vec(),
-    });
-    let (value, beside) = slot_value(spec, json);
+    let mut rows = Vec::with_capacity(changes.len());
+    let mut slots = Vec::with_capacity(changes.len());
+    let mut beside = Vec::new();
+    for (spec, recorded) in changes {
+        let json = recorded
+            .value
+            .as_ref()
+            .map(|value| json_bytes(spec, value))
+            .transpose()?;
+        let slot = RowKey {
+            name: recorded.key.clone(),
+            item: recorded.item.clone(),
+            mode: recorded.mode,
+            scope: recorded.scope.clone(),
+        };
+        let prior = setting_value_digest(&match &recorded.prior {
+            Some(prior) => json_bytes(spec, prior)?,
+            None => b"null".to_vec(),
+        });
+        let (value, json) = slot_value(spec, json);
+        if let Some(json) = json {
+            beside.push((slot.clone(), json));
+        }
+        slots.push(setting_slot_target(&slot)?);
+        rows.push(SettingSlotRow { slot, prior, value });
+    }
     let signed = vault.append_setting_slot_act_in_txn(
         txn,
         ground,
         SettingSlotAct {
             owner,
             surface,
-            rows: vec![SettingSlotRow {
-                slot: slot.clone(),
-                prior,
-                value,
-            }],
+            rows,
         },
     )?;
     // An act that waits for the owner's proof changes nothing, here as on every other machine:
@@ -72,16 +77,19 @@ pub(in crate::setting) fn append_act_in_txn(
     if vault.setting_act_waits_in_txn(txn, signed)? {
         return Err(Error::Record(RecordError::OwnerKeyRequired));
     }
-    if let Some(json) = beside {
-        put_beside_value_in_txn(vault, txn, (&slot, &signed), &json)?;
+    for (slot, json) in &beside {
+        put_beside_value_in_txn(vault, txn, (slot, &signed), json)?;
     }
-    record_signed_entry_in_txn(&vault.store, txn, recorded, signed)?;
-    let now = recorded.at;
-    let projected = project_target_in_txn(vault, txn, target, now)?;
-    if projected.changed.is_empty()
-        && let Some((standing, with)) = projected.receipt
-    {
-        record_receipt_in_txn(&vault.store, txn, recorded.sequence, standing, with)?;
+    for (_, recorded) in changes {
+        record_signed_entry_in_txn(&vault.store, txn, recorded, signed)?;
+    }
+    for ((_, recorded), target) in changes.iter().zip(slots) {
+        let projected = project_target_in_txn(vault, txn, target, recorded.at)?;
+        if projected.changed.is_empty()
+            && let Some((standing, with)) = projected.receipt
+        {
+            record_receipt_in_txn(&vault.store, txn, recorded.sequence, standing, with)?;
+        }
     }
     Ok(())
 }
@@ -558,7 +566,10 @@ impl Vault {
     /// Projects every setting row whose signed acts moved since it was last projected, in one
     /// write, and runs the `after_commit` of each key whose row changed (stage 7a-2). A vault
     /// with no authority root, or with no setting act, writes nothing. A row its key's hook
-    /// refuses here stays as it was, and raises the owner's notice of it (`refusal`).
+    /// refuses here stays as it was, and raises the owner's notice of it (`refusal`). A hook may
+    /// judge its row against another row the same pass lands (an act of several rows): the pass
+    /// reads each refused row again once a round of it landed another row, until a round lands
+    /// none, and only a refusal that stands then raises the notice.
     ///
     /// First, in its own write, the owner's rows no act backs are published as batch acts, once
     /// per vault (stage 7a-3, [`Self::publish_settings`]); a fault there is logged, and the
@@ -642,38 +653,56 @@ impl Vault {
         let changed = self.with_write_txn_grouped(|txn| {
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
             let mut changed: Vec<&'static SettingSpec> = Vec::new();
-            for (target, _) in &moved {
-                REFUSED_DECIDING_ACT.with(|refused| refused.set(None));
-                // Each row in a savepoint of its own: one a key's hook refuses on this install
-                // (its manifest, a seat installed here) stays as it was, and the others land.
-                // A savepoint that commits hands the work its writes queued for after the commit
-                // (the live sync mirror, the wakes) to the pass's write (`batch::savepoint_in_txn`).
-                match crate::batch::savepoint_in_txn(self, txn, |savepoint| {
-                    project_target_in_txn(self, savepoint, *target, now).map(Some)
-                }) {
-                    Ok(projected) => {
-                        changed.extend(projected.into_iter().flat_map(|projected| projected.changed));
-                    }
-                    Err(Error::InvalidConfig(reason)) => {
-                        tracing::warn!(
-                            reason = %reason,
-                            "the next pass reads again a setting row its key refused here"
-                        );
-                        record_refusal_in_txn(self, txn, *target)?;
-                        let deciding = REFUSED_DECIDING_ACT.with(Cell::take);
-                        // The owner's notice of it (`refusal`), in a savepoint of its own: a
-                        // fault there is logged, and the pass goes on.
-                        if let Err(error) = crate::batch::savepoint_in_txn(self, txn, |notice| {
-                            let refused = (*target, reason.as_str(), deciding);
-                            raise_refusal_notice_in_txn(self, notice, refused, now).map(Some)
-                        }) {
-                            tracing::warn!(
-                                kind = ?error.kind(),
-                                "the owner's notice of a setting row its key refused here was not raised; the next pass tries again"
-                            );
+            // Each row in a savepoint of its own: one a key's hook refuses on this install (its
+            // manifest, a seat installed here) stays as it was, and the others land. A round that
+            // landed a row reads the rows refused in it again, since a hook may judge one row
+            // against another (row SETTING-PROJECTED-ROW-REFUSING-HOOKS): an act of several rows
+            // then lands whichever row the pass reads first. Each further round reads fewer rows.
+            // A savepoint that commits hands the work its writes queued for after the commit (the
+            // live sync mirror, the wakes) to the pass's write (`batch::savepoint_in_txn`).
+            let mut round: Vec<EntityId> = moved.iter().map(|(target, _)| *target).collect();
+            // Each refused row with its hook's reason and the act the refused value came from.
+            let mut refused: Vec<(EntityId, String, Option<AuthorityEntryHash>)> = Vec::new();
+            loop {
+                let mut landed = false;
+                for target in round {
+                    REFUSED_DECIDING_ACT.with(|deciding| deciding.set(None));
+                    match crate::batch::savepoint_in_txn(self, txn, |savepoint| {
+                        project_target_in_txn(self, savepoint, target, now).map(Some)
+                    }) {
+                        Ok(projected) => {
+                            if let Some(projected) = projected {
+                                landed |= !projected.changed.is_empty();
+                                changed.extend(projected.changed);
+                            }
                         }
+                        Err(Error::InvalidConfig(reason)) => {
+                            refused.push((target, reason, REFUSED_DECIDING_ACT.with(Cell::take)));
+                        }
+                        Err(error) => return Err(error),
                     }
-                    Err(error) => return Err(error),
+                }
+                if refused.is_empty() || !landed {
+                    break;
+                }
+                round = refused.drain(..).map(|(target, _, _)| target).collect();
+            }
+            for (target, reason, deciding) in &refused {
+                tracing::warn!(
+                    reason = %reason,
+                    "the next pass reads again a setting row its key refused here"
+                );
+                record_refusal_in_txn(self, txn, *target)?;
+                // The owner's notice of it (`refusal`), in a savepoint of its own: a fault there
+                // is logged, and the pass goes on.
+                if let Err(error) = crate::batch::savepoint_in_txn(self, txn, |notice| {
+                    let refused = (*target, reason.as_str(), *deciding);
+                    raise_refusal_notice_in_txn(self, notice, refused, now).map(Some)
+                }) {
+                    tracing::warn!(
+                        kind = ?error.kind(),
+                        "the owner's notice of a setting row its key refused here was not raised; the next pass tries again"
+                    );
                 }
             }
             Ok(changed)

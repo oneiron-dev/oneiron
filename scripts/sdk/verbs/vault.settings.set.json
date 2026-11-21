@@ -1,6 +1,6 @@
 {
   "name": "vault.settings.set",
-  "description": "Set, pin or clear one catalogue setting row; the owner sets any key, a holder of its class or its subject sets within its power, and any other agent's change waits on a check-in.",
+  "description": "Set, pin or clear one catalogue setting row, or as the owner several rows in one act; the owner sets any key, a holder of its class or its subject sets within its power, and any other agent's change waits on a check-in.",
   "input": "crate::task_verb::sdk::SettingSetRequest",
   "output": "crate::setting::SetSettingOutcome",
   "call": "crate::task_verb::sdk::setting_set_embedded(memory, input)?",
