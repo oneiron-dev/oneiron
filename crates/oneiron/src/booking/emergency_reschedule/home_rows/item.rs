@@ -47,11 +47,13 @@ struct CarriedItem {
     calendar_delivered: bool,
     apology_delivered: bool,
     picked: Option<PickFacts>,
-    /// The owed effects whose send ended uncertain on the old home, or on a home before it: it
-    /// may have reached the booker, so the new home's send may repeat it (Engine ANSWER
-    /// BK-EMERGENCY-PENDING-ITEM-MOVE = A: the move names that case). The new home keeps them
-    /// as the checkpoint's side row, and the owner's run that delivers one says so
-    /// (`super::super::uncertain_send`; ANSWER BK-EMERGENCY-UNCERTAIN-SEND-RECEIPT = A).
+    /// The effects whose send ended uncertain on the old home, or on a home before it, and that
+    /// no run has answered the owner for yet, whether a later home sent them again or they are
+    /// still owed (review round 1 of #10125): such a send may have reached the booker, so the
+    /// next one may repeat it (Engine ANSWER BK-EMERGENCY-PENDING-ITEM-MOVE = A: the move names
+    /// that case). The new home keeps them as the checkpoint's side row, and the owner's run
+    /// that delivers one says so (`super::super::uncertain_send`; ANSWER
+    /// BK-EMERGENCY-UNCERTAIN-SEND-RECEIPT = A).
     uncertain_lanes: Vec<String>,
     /// Whether the old home's pending-event lookup names this item: the one whose revision its
     /// fence holds (`state::pending_effect_fences_in`), which the new home's lookup names again.
@@ -222,8 +224,9 @@ impl HomeTable for EmergencyItemRows {
         let mut actors = Vec::new();
         for (key, item) in ITEM.scan(&vault.store, txn)? {
             let item = with_ledger_deliveries(vault, txn, item)?;
-            // This node's own uncertain sends, and those an earlier move carried here that this
-            // node has not delivered since.
+            // This node's own uncertain sends, and the marks an earlier move carried here that no
+            // run here has answered the owner for since, delivered or not (review round 1 of
+            // #10125).
             let mut uncertain = uncertain_lanes(vault, txn, &item, now)?;
             uncertain.extend(uncertain_send::carried_lanes_in(vault, txn, &key, &item)?);
             let pending_pointer = PENDING_EVENT

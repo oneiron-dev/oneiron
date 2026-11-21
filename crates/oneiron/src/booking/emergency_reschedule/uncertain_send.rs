@@ -3,7 +3,9 @@
 //! checkpoint whose send ended uncertain on an earlier home, as a home move carried them
 //! (`super::home_rows`). The new home sends each again under the same idempotency key, so the
 //! booker may receive it twice; the owner's run that has delivered it says so once
-//! ([`super::execution::EmergencyRepeatNotice`]), and its mark goes.
+//! ([`super::execution::EmergencyRepeatNotice`]), and its mark goes. Until that answer the mark
+//! stays, and every later move carries it, even once its send was delivered again (review
+//! round 1 of #10125).
 //!
 //! A side row beside the checkpoint, under the checkpoint's own key: the checkpoint's stored
 //! shape stays as it was (stored change: keep).
@@ -49,8 +51,7 @@ pub(super) fn owed_effects(item: &EmergencyItem) -> Vec<(&'static str, [u8; 32])
     owed
 }
 
-/// The lanes among `lanes` that `item` still owes: a delivered effect's mark answers no later
-/// move.
+/// The lanes among `lanes` that `item` still owes.
 fn still_owed(lanes: impl IntoIterator<Item = String>, item: &EmergencyItem) -> BTreeSet<String> {
     let owed: BTreeSet<&str> = owed_effects(item)
         .into_iter()
@@ -62,8 +63,27 @@ fn still_owed(lanes: impl IntoIterator<Item = String>, item: &EmergencyItem) -> 
         .collect()
 }
 
-/// The marked lanes of the checkpoint at `key` that `item` still owes, which the next move
-/// carries on. A row that does not decode marks nothing: the move is never held by it.
+/// The lanes among `lanes` a move carries for `item`: a calendar or apology mark until the
+/// owner's run answers it ([`answer_delivered`]), delivered or not, since a run that sent it
+/// again and then stopped on a later effect answered nothing (review round 1 of #10125); a
+/// pick's mark, which no run answers, while the pick is owed.
+fn carried_lanes(
+    lanes: impl IntoIterator<Item = String>,
+    item: &EmergencyItem,
+) -> BTreeSet<String> {
+    let pick_owed = owed_effects(item).iter().any(|(lane, _)| *lane == "pick");
+    lanes
+        .into_iter()
+        .filter(|lane| match lane.as_str() {
+            "calendar" | "apology" => true,
+            "pick" => pick_owed,
+            _ => false,
+        })
+        .collect()
+}
+
+/// The marked lanes of the checkpoint at `key` that the next move carries on
+/// ([`carried_lanes`]). A row that does not decode marks nothing: the move is never held by it.
 pub(super) fn carried_lanes_in(
     vault: &Vault,
     txn: &RoTxn<'_>,
@@ -72,11 +92,11 @@ pub(super) fn carried_lanes_in(
 ) -> crate::error::Result<BTreeSet<String>> {
     Ok(UNCERTAIN_SEND
         .get_lenient(&vault.store, txn, &key.to_owned())?
-        .map(|row| still_owed(row.lanes, item))
+        .map(|row| carried_lanes(row.lanes, item))
         .unwrap_or_default())
 }
 
-/// Lands the carried marks of the checkpoint at `key` that `item` still owes, in the adopting
+/// Lands the carried marks of the checkpoint at `key` ([`carried_lanes`]) in the adopting
 /// writer, and answers how many it kept; with none the row goes, so a home that held the
 /// checkpoint before keeps no older mark.
 pub(super) fn land_in(
@@ -87,7 +107,7 @@ pub(super) fn land_in(
     carried: Vec<String>,
 ) -> crate::error::Result<usize> {
     let key = key.to_owned();
-    let lanes = still_owed(carried, item);
+    let lanes = carried_lanes(carried, item);
     let kept = lanes.len();
     if lanes.is_empty() {
         UNCERTAIN_SEND.delete(&vault.store, txn, &key)?;
