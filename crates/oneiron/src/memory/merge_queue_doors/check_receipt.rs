@@ -1,5 +1,6 @@
-//! `vault.code.checks.get` (FIX 6869, G4 PR2): the owner's read of the
-//! retained checker receipts behind one inputs reference of one work row.
+//! `vault.code.checks.get` (FIX 6869, G4 PR2): the owner's or a live
+//! audit_read holder's read of the retained checker receipts behind one
+//! inputs reference of one work row.
 //!
 //! CALL Q `code_check_receipt_view`: a reference names an inputs digest,
 //! not an attempt, and one work keeps every generation, so the read answers
@@ -10,6 +11,7 @@
 //! run. `check_status` is unchanged.
 
 use super::*;
+use crate::access_grant::AuditReader;
 use crate::contract_oracle::ContractOracle;
 use crate::merge_queue::{CheckPhase, QUEUE_CHECK_CANDIDATE_PREFIX, StoredQueueCheckReceipt};
 
@@ -22,16 +24,30 @@ pub use oneiron_records::memory::merge_queue_doors::check_receipt::{
 };
 
 impl Memory<'_> {
-    /// `vault.code.checks.get`: authenticates the owner before any lookup,
+    /// `vault.code.checks.get`: authenticates the reader before any lookup,
     /// resolves the stored repository and its work, and projects every
-    /// retained receipt of the named digest. `None` when no readable work
-    /// or receipt matches.
+    /// retained receipt of the named digest. The owner or a holder of a live
+    /// audit_read power reads (RULING AUDIT-READ-POWER-LIST = B). `None`
+    /// when no readable work or receipt matches.
     pub fn merge_queue_check_receipt_as(
         &self,
-        owner: &AuthenticatedOwner,
+        reader: &AuditReader,
         input: CodeCheckReceiptRequest,
     ) -> MemoryResult<Option<CodeCheckReceiptView>> {
-        self.merge_queue_owner(owner)?;
+        match reader {
+            AuditReader::Owner(owner) => {
+                self.merge_queue_owner(owner)?;
+            }
+            AuditReader::Holder(_) => {
+                let txn = self
+                    .vault
+                    .store
+                    .env
+                    .read_txn()
+                    .map_err(crate::Error::from)?;
+                reader.admit_in_txn(self.vault, &txn)?;
+            }
+        }
         let digest = input
             .receipt_ref
             .strip_prefix(QUEUE_CHECK_CANDIDATE_PREFIX)

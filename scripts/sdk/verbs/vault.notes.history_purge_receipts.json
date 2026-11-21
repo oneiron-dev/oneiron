@@ -1,9 +1,9 @@
 {
   "name": "vault.notes.history_purge_receipts",
-  "description": "The owner reads a NOTE's durable history-purge receipts, including each requested and retained causal frontier.",
+  "description": "The owner or a live audit_read holder reads a NOTE's durable history-purge receipts, including each requested and retained causal frontier.",
   "input": "crate::task_verb::sdk::NoteHistoryPurgeReceiptsRequest",
   "output": "Vec<crate::task_verb::sdk::NoteHistoryPurgeReceipt>",
-  "call": "crate::task_verb::sdk::note_history_purge_receipts_as_owner(memory.vault(), &memory.embedded_owner(\"vault.notes.history_purge_receipts\")?, input)?",
+  "call": "crate::task_verb::sdk::note_history_purge_receipts_as_reader(memory.vault(), &memory.audit_reader(\"vault.notes.history_purge_receipts\")?, input)?",
   "host_door": true,
   "host_door_lists": true,
   "scope": "Read",
@@ -13,5 +13,5 @@
   },
   "section": false,
   "openapi": true,
-  "host_door_proof": "owner"
+  "host_door_proof": "audit_reader"
 }

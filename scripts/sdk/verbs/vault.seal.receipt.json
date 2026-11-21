@@ -1,9 +1,9 @@
 {
   "name": "vault.seal.receipt",
-  "description": "Read a sealed attempt, its stamped audit draw, directed and random check completions, weighted findings and separate honesty reward.",
+  "description": "Read a sealed attempt, its stamped audit draw, check completions, findings and honesty reward, for the owner or an audit_read holder; a holder reads it only when its own lane reads every source row.",
   "input": "crate::self_heal::audit::doors::SealAttemptRequest",
   "output": "Option<crate::self_heal::audit::doors::SealReceiptView>",
-  "call": "crate::self_heal::audit::doors::receipt_as_owner(memory.vault(), &memory.embedded_owner(\"vault.seal.receipt\")?, &input).map_err(crate::memory::MemoryError::from)?",
+  "call": "crate::self_heal::audit::doors::receipt_embedded(memory, &input)?",
   "host_door": true,
   "host_door_lists": true,
   "scope": "Read",
@@ -13,5 +13,5 @@
   },
   "section": false,
   "openapi": true,
-  "host_door_proof": "owner"
+  "host_door_proof": "audit_reader"
 }

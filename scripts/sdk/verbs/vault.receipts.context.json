@@ -1,6 +1,6 @@
 {
   "name": "vault.receipts.context",
-  "description": "Read the frozen context of one actual reply emit, as its actor or the live vault owner; never rebuild the assembly.",
+  "description": "Read the frozen context of one actual reply emit, as its actor, the live vault owner or a live audit_read holder; never rebuild the assembly.",
   "input": "crate::receipt::CallReceiptRequest",
   "output": "Option<crate::receipt::ContextEmitReceipt>",
   "call": "memory.context_emit_receipt(&input.receipt_ref)?",

@@ -242,13 +242,19 @@ pub(crate) async fn vault_authority_audit(
 
 /// `vault.mesh.path_receipts`: the newest path receipts this machine's
 /// paired-machine mesh left, newest first and bounded, the owner's view
-/// under the proof `/v1/owner` takes from the request.
+/// under the proof `/v1/owner` takes from the request, or a live
+/// audit_read holder's on its own credential (RULING
+/// AUDIT-READ-POWER-LIST = B).
 pub(super) async fn vault_mesh_path_receipts_answer(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: oneiron::task_verb::sdk::MeshPathReceiptsRequest,
 ) -> MemoryResult<Vec<oneiron::sync::mesh_path::MeshPathReceipt>> {
-    let _owner = owner_proof(auth, server, "vault.mesh.path_receipts")?;
+    let _reader = crate::api::facade::audit_read_doors::audit_reader(
+        server,
+        auth,
+        "vault.mesh.path_receipts",
+    )?;
     let server = Arc::clone(server);
     crate::api::facade::clock_ingress::run_blocking(move || {
         server

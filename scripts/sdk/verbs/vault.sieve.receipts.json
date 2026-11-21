@@ -1,9 +1,9 @@
 {
   "name": "vault.sieve.receipts",
-  "description": "The owner reads consumed-span receipts: each span nightly spending consumed once, its source ref and the attempt that spent it.",
+  "description": "The owner or an audit_read holder reads consumed-span receipts: each span nightly spending consumed once, its source ref and the attempt that spent it.",
   "input": "crate::dreamer_wake::sieve_doors::SievePageRequest",
   "output": "crate::dreamer_wake::sieve_doors::SieveReceiptsPage",
-  "call": "crate::dreamer_wake::sieve_doors::sieve_receipts_as_owner(memory.vault(), &memory.embedded_owner(\"vault.sieve.receipts\")?, &input).map_err(crate::memory::MemoryError::from)?",
+  "call": "crate::dreamer_wake::sieve_doors::sieve_receipts_as_reader(memory.vault(), &memory.audit_reader(\"vault.sieve.receipts\")?, &input).map_err(crate::memory::MemoryError::from)?",
   "host_door": true,
   "host_door_lists": true,
   "scope": "Read",
@@ -13,5 +13,5 @@
   },
   "section": false,
   "openapi": true,
-  "host_door_proof": "owner"
+  "host_door_proof": "audit_reader"
 }

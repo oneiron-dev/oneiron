@@ -8,6 +8,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::owner_confirm;
+use crate::access_grant::AuditReader;
 use crate::authority::{AuthorityHandoffAlarm, HostSlipIssuer, OWNER_KEY_MOVE_NOT_PLANNED};
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
@@ -474,13 +475,15 @@ fn execute_shared_act_into(
     Ok(execution.into())
 }
 
-/// `vault.shared.receipt`: a receipt its reader was told about.
+/// `vault.shared.receipt` for `reader`: a told reader reads the receipt they
+/// were told about, or a live audit_read holder reads any receipt, told or
+/// not (RULING AUDIT-READ-POWER-LIST = B).
 pub fn read_shared_receipt(
     vault: &Vault,
-    reader: &AuthenticatedOwner,
+    reader: &AuditReader,
     input: SharedReceiptRequest,
 ) -> MemoryResult<SharedActExecutionReceipt> {
-    Ok(vault.shared_act_receipt(reader, &input.receipt_id)?)
+    Ok(vault.shared_act_receipt_as_reader(reader, &input.receipt_id)?)
 }
 
 /// `vault.shared.outcomes`: the reader's own outcome notices for the vault.

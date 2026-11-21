@@ -258,25 +258,33 @@ pub(crate) async fn vault_skills_proposal_settle(
     .await
 }
 
-/// `vault.skills.receipts`: Reads every hub source and import receipt of a skill, and its held-out admission ruling, as the owner.
+/// `vault.skills.receipts`: Reads every hub source and import receipt of a skill, and its held-out admission ruling, as the owner or an audit_read holder.
 pub(crate) async fn vault_skills_receipts(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: HubSkillRequest,
 ) -> Listed<HubSkillReceipts> {
-    owner_call(
+    let reader = match crate::api::facade::audit_read_doors::audit_reader(
         server,
         auth,
         "vault.skills.receipts",
-        move |server, owner| {
-            let answer = sdk::hub_skill_receipts_as_owner(server.vault(), owner, &input)?;
-            let rows = std::iter::once(input.entity)
-                .chain(answer.sources.iter().map(|source| source.hub_id))
-                .collect();
-            Ok((answer, rows))
-        },
-    )
+    ) {
+        Ok(reader) => reader,
+        Err(refusal) => return refused(refusal),
+    };
+    let server = Arc::clone(server);
+    clock_ingress::run_blocking(move || {
+        let answer = match sdk::hub_skill_receipts_as_reader(server.vault(), &reader, &input) {
+            Ok(answer) => answer,
+            Err(error) => return refused(error),
+        };
+        let rows = std::iter::once(input.entity)
+            .chain(answer.sources.iter().map(|source| source.hub_id))
+            .collect();
+        (Ok(answer), rows)
+    })
     .await
+    .unwrap_or_else(|_| refused(internal("vault.skills.receipts")))
 }
 
 /// `vault.skills.permissions.approve`: The owner answers one imported skill permission ask at its exact hub source.
