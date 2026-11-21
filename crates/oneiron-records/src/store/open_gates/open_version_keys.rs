@@ -3,6 +3,16 @@
 
 pub const MAX_DBS: u32 = 32;
 
+/// v44 (FIX ACT-STANDS-RAW-HEAD-SKIPS-KEY-ROTATION and FIX
+/// MACHINE-CROSSING-REMOVALS-UNMAKE-CARRIED-OWNER-ACTS): stored authority-log
+/// rows keep their bytes and change meaning. An owner act whose carrier the
+/// roster re-keyed by a revision that never saw it no longer stands under a
+/// raw roster head that names the old key again; and an owner act that every
+/// one of its carrier's crossing removals saw now stands, where their
+/// conflict at the head alone unmade it. The authority fold schema moves
+/// 58 -> 59 with it. No old-meaning reader or migration is provided (the
+/// lead's M-1 stored-change rule, path "loud").
+///
 /// v43 (FIX RETIRED-STANDING-REFUSAL-RECORDS-HANDOFF-ALARM-FOR-PLAIN-REVOKE;
 /// RULING REVOKED-KEY-ALARM-FIX-PATH = A): stored authority-log rows and
 /// saved handoff alarm rows keep their bytes and their meaning. A stored
@@ -286,7 +296,7 @@ pub const MAX_DBS: u32 = 32;
 /// `RECEIPT_FAMILY_INDEX_VERSION` requires bumping this version too.
 /// v27 hashes full run/group identifiers in their v2 secondary-index keys.
 /// v26 is reserved for the separately landing attempt-record v4 format.
-pub const STORAGE_ABI_VERSION: u16 = 43;
+pub const STORAGE_ABI_VERSION: u16 = 44;
 
 pub const STORAGE_SCHEMA_VERSION: u16 = 1;
 
