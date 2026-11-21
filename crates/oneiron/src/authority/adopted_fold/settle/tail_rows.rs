@@ -243,7 +243,9 @@ fn parents_first(
 /// covered revocation, which a vault adopted with no receipt for it never
 /// recorded: no clock is imported, so the whole history must decide it. A
 /// covered approval on a tail-revoked key is timed past the image instead
-/// ([`super::fold_adopted_checkpoint_tail`]).
+/// ([`super::fold_adopted_checkpoint_tail`]). An approval is a row the window
+/// weighs, by the window's own rule
+/// ([`crate::authority::stale_roster::is_window_approval`]).
 pub(super) fn approves_on_revoked_key(
     fold: &AuthorityFold,
     judged: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
@@ -253,16 +255,7 @@ pub(super) fn approves_on_revoked_key(
         let Some(entry) = judged.get(hash) else {
             return false;
         };
-        let approval = match &entry.op {
-            AuthorityOp::BindActor { .. } | AuthorityOp::RebindActor { .. } => true,
-            AuthorityOp::FederationConfirm(action) => action.kind != AuthorityConfirmKind::Revoke,
-            AuthorityOp::CriticalWriteConfirm(action) => {
-                action.disposition == CriticalWriteConfirmDisposition::Clear
-            }
-            AuthorityOp::MachineProfile(profile) => profile.role != MachineRole::Removed,
-            _ => false,
-        };
-        approval
+        crate::authority::stale_roster::is_window_approval(&entry.op)
             && std::iter::once(&entry.signer)
                 .chain(&entry.cosigns)
                 .any(|signature| {
