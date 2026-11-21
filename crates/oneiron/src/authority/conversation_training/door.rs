@@ -127,8 +127,9 @@ impl Vault {
             }
             checks.importance
         };
+        let _ = importance;
         let witness =
-            self.owner_presence(importance, owner_presence_reasons::CONVERSATION_TRAINING)?;
+            self.owner_presence(OwnerActImportance::Important, owner_presence_reasons::CONVERSATION_TRAINING)?;
         let ground = OwnerProofGround::witnessed(&witness);
         between();
         let mut txn = self.store.env.write_txn()?;

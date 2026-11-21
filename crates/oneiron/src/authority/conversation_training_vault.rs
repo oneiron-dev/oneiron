@@ -355,8 +355,9 @@ impl Vault {
             let txn = self.store.env.read_txn()?;
             self.conversation_learning_importance_in_txn(&txn, owner, on, allow_opt_out, seen)?
         };
+        let _ = importance;
         let witness =
-            self.owner_presence(importance, owner_presence_reasons::CONVERSATION_LEARNING)?;
+            self.owner_presence(OwnerActImportance::Important, owner_presence_reasons::CONVERSATION_LEARNING)?;
         let ground = OwnerProofGround::witnessed(&witness);
         between();
         let mut txn = self.store.env.write_txn()?;

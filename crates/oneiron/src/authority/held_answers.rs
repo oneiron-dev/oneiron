@@ -388,8 +388,9 @@ impl Vault {
                 }
             }
         };
+        let _ = importance;
         let witness = self.owner_presence(
-            importance,
+            OwnerActImportance::Important,
             owner_presence_reasons::CONFIRM_HELD_MACHINE_ANSWERS,
         )?;
         let ground = OwnerProofGround::witnessed(&witness);

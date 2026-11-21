@@ -201,8 +201,9 @@ impl Vault {
                 )?,
             }
         };
+        let _ = importance;
         let witness =
-            self.owner_presence(importance, owner_presence_reasons::SHARED_TRAINING_SETUP)?;
+            self.owner_presence(crate::world_keys::OwnerActImportance::Important, owner_presence_reasons::SHARED_TRAINING_SETUP)?;
         let ground = OwnerProofGround::witnessed(&witness);
         let mut txn = self.store.env.write_txn()?;
         let first = match self.shared_training_setup_checks_in_txn(&txn, owner, answer)? {
