@@ -90,6 +90,7 @@ pub mod compaction;
 pub mod compaction_request;
 pub mod compaction_step_read;
 pub mod companion_grant_index;
+pub mod composed_lens_world;
 pub mod connector_key_suspend;
 pub mod connector_thread_session;
 pub mod consent_graduation_demotion;
@@ -400,6 +401,7 @@ pub mod sync_parted_row_binding;
 #[cfg(feature = "sync")]
 pub mod sync_whole_row_binding;
 pub mod task_ask_role_routing;
+pub mod task_brief_compose;
 pub mod task_refusal_output;
 pub mod tombstone_replay;
 #[cfg(feature = "sync")]
