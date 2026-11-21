@@ -309,7 +309,9 @@ crate::side_table::side_tables! {
     DREAMER_TURN_PROGRAM_ATTEMPT: VaultMeta b"dreamer:turn_program:attempt:v1:" Named
         [restore: content] [family: unclassified] [tier: canonical];
     /// FIX 5266: a turn program wake the elected home decided on another machine: the admission's
-    /// identity, kept so no later landing of the turn wakes the program here again.
+    /// identity, kept so no later landing of the turn wakes the program here again. The ARM
+    /// entry's scrub clears each decision whose actor this machine learned
+    /// (DREAMER_TURN_PROGRAM_ACTOR_DECIDED; FIX TURNPROGRAM-ERASE-KEEPS-DECIDED).
     /// Key: id16(turn) + id16(registration).
     DREAMER_TURN_PROGRAM_DECIDED: VaultMeta b"dreamer:turn_program:decided:v1:" Named
         // Restore class: FIX 5266: a wake the home decided elsewhere stays decided, as its
