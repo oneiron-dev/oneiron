@@ -7,6 +7,7 @@
 
 use super::call_labels::{CallLabelMap, LabelKind};
 use super::note_text::NoteText;
+use super::request_sources::SourcedBackend;
 use super::residency::{residency_deferral, spent_or_deferred, waits_on_residency};
 use super::resources::document_version;
 use super::step_charge::StepChargeTally;
@@ -80,6 +81,10 @@ pub(crate) use arc_evidence::arc_evidence_in_txn;
 pub struct ScopeSummaryExecutor<'a, E> {
     inner: E,
     backend: &'a dyn LlmBackend,
+    /// The narrative route's per-call source binding, when the host lends
+    /// one: each call sends under the rows its input was read from
+    /// ([DREAMER-UNSOURCED-ROLE-CALLS-SEND-UNFENCED]).
+    sourced: Option<&'a dyn SourcedBackend>,
     guard: &'a BudgetGuard,
     actor: WriteActor,
     model: ModelId,

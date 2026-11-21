@@ -14,6 +14,7 @@ impl<'a, E> ScopeSummaryExecutor<'a, E> {
         Self {
             inner,
             backend,
+            sourced: None,
             guard,
             actor,
             model,
@@ -43,6 +44,15 @@ impl<'a, E> ScopeSummaryExecutor<'a, E> {
     #[must_use]
     pub fn with_window_tokens(mut self, window_tokens: Option<u64>) -> Self {
         self.window_tokens = window_tokens;
+        self
+    }
+
+    /// Lends the narrative route's per-call source binding: each summary
+    /// call then sends under the rows its input was read from
+    /// ([DREAMER-UNSOURCED-ROLE-CALLS-SEND-UNFENCED]).
+    #[must_use]
+    pub fn with_sourced(mut self, sourced: Option<&'a dyn SourcedBackend>) -> Self {
+        self.sourced = sourced;
         self
     }
 }
