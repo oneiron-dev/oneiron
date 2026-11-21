@@ -47,14 +47,16 @@ impl SyncConnection {
 
     /// The updates `machine`, this connection's machine, still owes its home,
     /// in queue order and grouped by window. A row's receipt is the home's
-    /// answer to the bytes it holds now, and `None` until one came.
+    /// answer to the bytes it holds now, and `None` until one came. The read
+    /// writes nothing: a row that does not decode is not listed, and it stays
+    /// queued until the next sync push's drain prunes it.
     pub fn outbox(&self, machine: EntityId) -> crate::error::Result<SyncOutbox> {
         let receipts = self
             .home_receipts
             .lock()
             .map(|receipts| receipts.clone())
             .unwrap_or_default();
-        let updates = self.queue.drain_updates()?;
+        let updates = self.queue.read_updates()?;
         let owed = updates.len() as u64;
         let mut windows: Vec<SyncOutboxWindow> = Vec::new();
         for queued in updates {

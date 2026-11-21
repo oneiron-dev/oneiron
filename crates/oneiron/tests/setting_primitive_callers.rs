@@ -1,17 +1,18 @@
 //! DESIGN 15-setting-primitive, stage 0.3: the Setting primitive's other callers and doors.
 //! - the engine sets a value row of any key with no ask and no bound, records the ask it
-//!   answers, never pins, and its row is the owner's to a holder;
-//! - a live person sets only their own row of a key set by its subject, and only tighter;
+//!   answers and never pins; a holder tightens the engine's row at once and asks to loosen it
+//!   (stage 6.0);
+//! - a live person sets their own row of a key set by its subject either way, and no other row;
 //! - a read below the vault answers what the vault's read answers;
 //! - the side-row wall reads every setting value before it is stored: a secret never lands raw;
 //! - a key's after-commit hook runs once per applied change, after the write commits;
 //! - a leave keeps the rows of a key about this machine and drops a vault key's;
-//! - an agent whose Grant lists a key's own line sets its value rows as a holder does, never a
-//!   pin, and asks to replace the owner's row or to widen; the key's read line reads it; a line
-//!   of another key asks;
+//! - an agent whose Grant lists a key's own line moves its value rows as a holder does: it
+//!   tightens at once, asks to widen, and on a key with no order asks for every move; never a
+//!   pin; the key's read line reads it; a line of another key asks;
 //! - a dials key reads for a whole-vault grant naming any `engine.controls` class, not for a
 //!   plain agent;
-//! - a holder never raises a key past its default where the owner set no row;
+//! - a holder's row below the vault only narrows what it meets, and raising it asks;
 //! - an erase takes the erased entity out of a value whose key says how.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test setting_primitive_callers`.
@@ -262,7 +263,7 @@ fn the_engine_sets_a_value_row_with_no_ask_and_never_a_pin() {
 }
 
 #[test]
-fn a_holder_asks_before_it_replaces_a_row_the_engine_set() {
+fn a_holder_tightens_a_row_the_engine_set_and_asks_to_loosen_it() {
     let fx = Fixture::rooted();
     let agent = fx.agent();
     fx.grant(agent, &[SET]);
@@ -278,17 +279,23 @@ fn a_holder_asks_before_it_replaces_a_row_the_engine_set() {
     let engine = set_setting_as_engine(&fx.vault, None, SetSetting::vault_value(key, json!(8)))
         .expect("the engine replaces the holder's row");
     assert!(applied(&engine), "{engine:?}");
-    let asked = call(&them, SET, set(key, vault_scope(), json!(5)));
+    let tighter = call(&them, SET, set(key, vault_scope(), json!(5)));
+    assert_eq!(
+        tighter["status"],
+        json!("applied"),
+        "a tighter value is a safe move over the engine's row: {tighter}"
+    );
+    let asked = call(&them, SET, set(key, vault_scope(), json!(9)));
     assert_eq!(
         asked["status"],
         json!("pending"),
-        "the engine's row is the owner's: the holder asks: {asked}"
+        "a looser value asks: {asked}"
     );
-    assert_eq!(get(&fx.as_owner(), key, json!([]))["value"], json!(8));
+    assert_eq!(get(&fx.as_owner(), key, json!([]))["value"], json!(5));
 }
 
 #[test]
-fn a_person_sets_only_their_own_row_of_a_subject_key_and_only_tighter() {
+fn a_person_sets_their_own_row_of_a_subject_key_either_way_and_no_other_row() {
     let fx = Fixture::rooted();
     let me = fx.as_owner();
     let key = "test.person_quiet";
@@ -312,9 +319,15 @@ fn a_person_sets_only_their_own_row_of_a_subject_key_and_only_tighter() {
     );
     assert_eq!(listed[0]["by"], json!(fx.owner.to_hex()), "{listed:?}");
 
+    let looser = set_setting_as_person(
+        &fx.vault,
+        &fx.owner_proof,
+        at(key, mine.clone(), json!(false)),
+    )
+    .expect("the row is the person's own choice: they loosen it too");
+    assert!(applied(&looser), "{looser:?}");
     let other = EntityId::now();
     for (what, request) in [
-        ("a looser value", at(key, mine.clone(), json!(false))),
         (
             "another person's row",
             at(key, SettingScope::Person(other), json!(true)),
@@ -341,7 +354,7 @@ fn a_person_sets_only_their_own_row_of_a_subject_key_and_only_tighter() {
     }
     assert_eq!(
         get(&me, key, json!([person(fx.owner)]))["value"],
-        json!(true)
+        json!(false)
     );
     assert_eq!(get(&me, key, json!([]))["value"], json!(false));
     assert_eq!(get(&me, "test.owner_number", json!([]))["value"], json!(7));
@@ -482,13 +495,10 @@ fn an_agent_whose_grant_lists_a_keys_line_sets_it_as_a_holder_and_its_read_line_
     let first = call(&them, SET, set(key, vault_scope(), json!(9)));
     assert_eq!(
         first["status"],
-        json!("applied"),
-        "an owner key with no row: {first}"
+        json!("pending"),
+        "a key with no order has no safe move: an agent holder asks (AUTH-1 = A): {first}"
     );
-    assert_eq!(get(&me, key, json!([]))["value"], json!(9));
-    let listed = rows(&me, key);
-    assert_eq!(listed[0]["setter"]["as"], json!("key_grant"), "{listed:?}");
-    assert_eq!(listed[0]["by"], json!(lined.to_hex()), "{listed:?}");
+    assert_eq!(get(&me, key, json!([]))["value"], json!(7), "nothing moved");
 
     call(&me, SET, set(key, vault_scope(), json!(3)));
     let replace = call(&them, SET, set(key, vault_scope(), json!(8)));
@@ -514,6 +524,9 @@ fn an_agent_whose_grant_lists_a_keys_line_sets_it_as_a_holder_and_its_read_line_
     let tighten = call(&them, SET, set(budget, vault_scope(), json!(5)));
     assert_eq!(tighten["status"], json!("applied"), "{tighten}");
     assert_eq!(get(&me, budget, json!([]))["value"], json!(5));
+    let listed = rows(&me, budget);
+    assert_eq!(listed[0]["setter"]["as"], json!("key_grant"), "{listed:?}");
+    assert_eq!(listed[0]["by"], json!(lined.to_hex()), "{listed:?}");
     read_refused(&them, GET, json!({ "key": key }));
 
     let reader = fx.agent();
@@ -557,7 +570,7 @@ fn a_dials_key_reads_for_a_whole_vault_engine_controls_grant_and_not_for_a_plain
 }
 
 #[test]
-fn a_holder_never_raises_a_key_past_its_default_where_the_owner_set_no_row() {
+fn a_holders_row_below_the_vault_only_narrows_and_raising_it_asks() {
     let fx = Fixture::rooted();
     let me = fx.as_owner();
     let holder = fx.agent();
@@ -571,32 +584,34 @@ fn a_holder_never_raises_a_key_past_its_default_where_the_owner_set_no_row() {
     let above = call(&them, SET, set(key, project(place), json!(12)));
     assert_eq!(
         above["status"],
-        json!("pending"),
-        "above the default: {above}"
+        json!("applied"),
+        "a row added below the vault only narrows: {above}"
     );
+    let unbound = get(&them, key, json!([project(place)]));
+    assert_eq!(unbound["value"], json!(10), "it does not bind: {unbound}");
+    assert_eq!(unbound["source"], json!({ "from": "default" }));
     let inside = call(&them, SET, set(key, project(place), json!(9)));
     assert_eq!(inside["status"], json!("applied"), "{inside}");
 
     call(&me, SET, set(key, vault_scope(), json!(20)));
+    assert_eq!(get(&them, key, json!([project(place)]))["value"], json!(9));
     let raised = call(&them, SET, set(key, project(place), json!(15)));
     assert_eq!(
         raised["status"],
-        json!("applied"),
-        "inside the owner's row: {raised}"
+        json!("pending"),
+        "raising a row is a loose move, also where the vault's value is looser: {raised}"
     );
-    assert_eq!(get(&them, key, json!([project(place)]))["value"], json!(15));
 
     call(&me, SET, json!({ "key": key, "scope": vault_scope() }));
-    let capped = get(&them, key, json!([project(place)]));
+    let narrowed = get(&them, key, json!([project(place)]));
+    assert_eq!(narrowed["value"], json!(9), "{narrowed}");
     assert_eq!(
-        capped["value"],
-        json!(10),
-        "the default caps the holder's row: {capped}"
+        narrowed["source"],
+        json!({ "from": "row", "scope": project(place) })
     );
-    assert_eq!(capped["source"], json!({ "from": "default" }));
     let stored = rows(&me, key);
-    assert_eq!(stored.len(), 1, "the holder's row stays stored: {stored:?}");
-    assert_eq!(stored[0]["value"], json!(15));
+    assert_eq!(stored.len(), 1, "{stored:?}");
+    assert_eq!(stored[0]["value"], json!(9));
 }
 
 #[test]

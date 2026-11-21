@@ -1,6 +1,7 @@
 //! Blob version chain: version record codec and the Vault version-chain API.
 
 use heed::{RoTxn, RwTxn};
+use oneiron_contracts::fingerprint::ContentHash;
 
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -50,6 +51,12 @@ pub(super) const HEAD: SideTable<EntityId, BlobArtifactVersion, Raw> =
 const HIGHWATER: SideTable<EntityId, [u8; 8], Raw> =
     SideTable::new(&side_table::BLOB_ARTIFACT_HIGHWATER);
 
+/// The content hash of a version whose body is held in memory.
+#[cfg(oneiron_test_support)]
+pub(crate) fn version_content_hash_for_test(bytes: &[u8]) -> [u8; BLOB_ARTIFACT_CONTENT_HASH_LEN] {
+    VersionBody::Bytes(bytes).content_hash()
+}
+
 /// The bytes one appended version holds: a slice, or a body staged from a
 /// reader before the append writes anything (FIX 12091).
 #[derive(Clone, Copy)]
@@ -62,7 +69,7 @@ impl<'b> VersionBody<'b> {
     /// The version's content hash: the body's BLAKE3.
     fn content_hash(self) -> [u8; BLOB_ARTIFACT_CONTENT_HASH_LEN] {
         match self {
-            Self::Bytes(bytes) => *blake3::hash(bytes).as_bytes(),
+            Self::Bytes(bytes) => *ContentHash::of(bytes).as_bytes(),
             Self::Staged(staged) => staged.facts().blake3,
         }
     }

@@ -5,7 +5,10 @@
 //! transaction that reserves the member's slot, and associated with her
 //! work facet later, at the companion step. Both writers run the same
 //! check in their own transaction, so no binding stands for a companion
-//! her member never brought.
+//! her member never brought. The reserve, and each door that publishes a
+//! workspace preset, keep a member's companion from running an org she
+//! belongs to, unless she is the sole owner (COMPANION-LEADER,
+//! #companion-split).
 
 use super::*;
 use crate::error::GateError;
@@ -55,7 +58,151 @@ pub(super) fn reserve_member_in_txn(
     }
     COMPANION_PRINCIPAL.put(&vault.store, txn, &companion, &intent.person_ref)?;
     MEMBER_INTENT.put(&vault.store, txn, &key, digest)?;
+    require_companion_split_in_txn(vault, txn, intent)
+}
+
+/// The refusal the companion split checks return.
+const COMPANION_SPLIT_REFUSAL: &str = "one agent is not both a person's companion and the companion of an org she belongs to; only a sole owner binds them both";
+
+/// COMPANION-LEADER (the owner, 11 Nov; ONEIRON-ARCH-0063 #companion-split):
+/// "One agent never serves as both a person's companion and their company's
+/// companion by default, because their loyalties can diverge. A sole owner
+/// may bind them on purpose."
+///
+/// A person's companion is the PERSON [`COMPANION_PRINCIPAL`] names her for.
+/// Her company's companion is the house of a workspace of an org she belongs
+/// to, known by its own model PERSON anchor: the company is the org, and a
+/// preset's `org_ref` is not unique per workspace (Engine RULING
+/// L3-19-ORG-SCOPE = A, 16 Nov). The reserve runs this after its own two
+/// rows, so it judges the roster as it would stand. Her orgs are the org of
+/// the workspace she joins and the org of each published workspace she has
+/// a slot in; her company's companions are the house of the workspace she
+/// joins and the house of every published workspace of those orgs. A slot
+/// whose workspace is not published yet hides its org from this scan, so
+/// the door that publishes it runs [`require_org_companion_split_in_txn`].
+/// A preset never changes its house or its org.
+pub(super) fn require_companion_split_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    intent: &MemberOnboardingIntent,
+) -> Result<()> {
+    let member = intent.person_ref;
+    let presets = PRESET.scan(&vault.store, txn)?;
+    let mut orgs = vec![intent.workspace.org_ref];
+    for (workspace_ref, row) in &presets {
+        if orgs.contains(&row.preset.org_ref) {
+            continue;
+        }
+        let key = MemberIntentKey {
+            workspace_ref: workspace_ref.clone(),
+            person_ref: member,
+        };
+        if MEMBER_INTENT.get(&vault.store, txn, &key)?.is_some() {
+            orgs.push(row.preset.org_ref);
+        }
+    }
+    let mut houses = vec![intent.workspace.house_actor_ref];
+    houses.extend(
+        presets
+            .iter()
+            .filter(|(_, row)| orgs.contains(&row.preset.org_ref))
+            .map(|(_, row)| row.preset.house_actor_ref),
+    );
+    require_houses_serve_no_member_in_txn(vault, txn, &houses, &[member])
+}
+
+/// The companion split at a door that publishes a preset of `org` (the
+/// onboarding's `establish_workspace` step and
+/// [`Vault::establish_workspace_preset`]), run in the publishing
+/// transaction after the put. A new preset brings a house into `org`, and
+/// the slots of its workspace into `org`'s roster, so every member with a
+/// slot in a published workspace of `org` is checked against every house of
+/// `org`. A refusal publishes nothing; an owner refused here is what
+/// L3-19-ON-PURPOSE accepts for this split.
+pub(super) fn require_org_companion_split_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    org: &EntityId,
+) -> Result<()> {
+    let mut workspaces = Vec::new();
+    let mut houses = Vec::new();
+    for (workspace_ref, row) in PRESET.scan(&vault.store, txn)? {
+        if row.preset.org_ref == *org {
+            workspaces.push(workspace_ref);
+            houses.push(row.preset.house_actor_ref);
+        }
+    }
+    let mut members = Vec::new();
+    for (key, _) in MEMBER_INTENT.scan(&vault.store, txn)? {
+        if workspaces.contains(&key.workspace_ref) && !members.contains(&key.person_ref) {
+            members.push(key.person_ref);
+        }
+    }
+    require_houses_serve_no_member_in_txn(vault, txn, &houses, &members)
+}
+
+/// Refuses when the model PERSON of one of `houses` is the companion of one
+/// of `members`, unless that member is the vault's one live owner: the sole
+/// owner's own act is the purpose (Engine RULING L3-19-ON-PURPOSE = A).
+///
+/// A house's PERSON is its actor's anchor, read through the identity
+/// redirects, while a [`COMPANION_PRINCIPAL`] row keeps the companion and
+/// the principal its onboarding named. A merge since then may have folded
+/// that companion into a house's PERSON, or her principal into another
+/// member, so each row is read through the redirects too (review round 2
+/// of #7656).
+fn require_houses_serve_no_member_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    houses: &[EntityId],
+    members: &[EntityId],
+) -> Result<()> {
+    let now = vault.store.clock.now_recorded_at();
+    let mut house_persons = Vec::new();
+    for house in houses {
+        let Some(anchor) =
+            crate::subject_model::actor_subject_anchor_in_txn(vault, txn, house, now)?
+        else {
+            continue;
+        };
+        if anchor.subject_kind == crate::write_envelope::subject_record::SubjectKind::Person {
+            house_persons.push(anchor.subject_ref);
+        }
+    }
+    if house_persons.is_empty() {
+        return Ok(());
+    }
+    let mut member_heads = members.to_vec();
+    for member in members {
+        member_heads.extend(vault.resolve_entity_in_txn(txn, member)?);
+    }
+    for (companion, principal) in COMPANION_PRINCIPAL.scan(&vault.store, txn)? {
+        if !names_one_of_in_txn(vault, txn, &companion, &house_persons)?
+            || !names_one_of_in_txn(vault, txn, &principal, &member_heads)?
+        {
+            continue;
+        }
+        let owners = crate::policy_model::owners_in_txn(vault, txn)?;
+        if owners.len() == 1 && names_one_of_in_txn(vault, txn, &principal, &owners)? {
+            continue;
+        }
+        return Err(invalid(COMPANION_SPLIT_REFUSAL));
+    }
     Ok(())
+}
+
+/// Whether `id` is one of `heads`, itself or through the identity redirects.
+fn names_one_of_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    heads: &[EntityId],
+) -> Result<bool> {
+    Ok(heads.contains(id)
+        || vault
+            .resolve_entity_in_txn(txn, id)?
+            .iter()
+            .any(|head| heads.contains(head)))
 }
 
 /// A brought companion, as her member brings her: a model-backed PERSON,

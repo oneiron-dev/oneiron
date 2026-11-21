@@ -8,6 +8,7 @@ use crate::side_table::{CodecError, RawValue};
 
 use super::types::{CodeRevision, CodeRevisionFork, CodeRevisionKind};
 use crate::error::ArtifactError;
+use oneiron_contracts::msgpack;
 
 /// The side table's declared codec is `Raw`: a code revision's on-disk shape is the hand-rolled
 /// MessagePack map [`encode_code_revision`]/[`decode_code_revision`] have always spelled.
@@ -456,10 +457,9 @@ pub(crate) fn validate_code_revision_fork_shape(fork: &CodeRevisionFork) -> Resu
     Ok(())
 }
 
-pub(crate) fn encode_value(value: &Value, context: &'static str) -> Result<Vec<u8>> {
-    let mut out = Vec::new();
-    rmpv::encode::write_value(&mut out, value).map_err(|_| Error::InvariantViolation(context))?;
-    Ok(out)
+/// The context named a write error, which writing into a Vec cannot raise; kept for the callers.
+pub(crate) fn encode_value(value: &Value, _context: &'static str) -> Result<Vec<u8>> {
+    Ok(msgpack::encode(value))
 }
 
 pub(crate) fn optional_entity_value(id: Option<EntityId>) -> Value {

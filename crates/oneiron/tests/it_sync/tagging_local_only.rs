@@ -57,6 +57,7 @@ impl ExtractionEncoder for FirstWord {
             context_links: Vec::new(),
             speaker_links: Vec::new(),
             mood_parts: Vec::new(),
+            relations: None,
             stack_sha16: None,
         };
         EncoderAttempt {
@@ -109,6 +110,7 @@ fn a_provisional_entity_stays_on_its_device_until_it_is_confirmed() {
             conversation_ref: "79797979797979797979797979797979".into(),
             turn_ref: Some(turn_ref.into()),
             thread_audience: None,
+            project: None,
             occurred_at: now,
             messages: vec![WitnessMessage {
                 id: None,

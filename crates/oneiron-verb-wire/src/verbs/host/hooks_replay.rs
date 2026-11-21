@@ -23,7 +23,8 @@ pub struct HooksReplayRequest {
     /// verb hook takes none.
     #[serde(default)]
     pub since: Option<String>,
-    /// Entries to return, 1 or more, [`HOOKS_REPLAY_PAGE_MAX`] a page;
+    /// Entries to return, 1 or more, a page of at most the owner's
+    /// `hooks.replay.page_max` (256 by default) at a time;
     /// [`HOOKS_REPLAY_LIMIT_DEFAULT`] when absent.
     #[serde(default)]
     pub limit: Option<usize>,

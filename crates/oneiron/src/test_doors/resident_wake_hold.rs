@@ -1,8 +1,8 @@
 //! Doors for `tests/agent_wake_hold.rs` (AGM-4 wake hold),
 //! `tests/agent_message_classes.rs` and `tests/agent_message_classifier.rs`
-//! (AGM-2 message classes): an inbound
-//! message to a resident's inbox, admitted as routing admits one, with no
-//! provider adapter in the loop.
+//! (AGM-2 message classes) and `tests/resident_human_messages_wake.rs`: an
+//! inbound message to a resident's inbox, admitted as routing admits one,
+//! with no provider adapter in the loop.
 
 use crate::error::Result;
 use crate::surface_event::{
@@ -55,6 +55,19 @@ pub fn admit_person_message(
         &sender.to_hex(),
         correlation_id,
     )
+}
+
+/// For `tests/resident_busy_wakes.rs`: files a pending review of `reader`'s
+/// read of `agent`'s diary, stating `reason`, as a person's read of a diary
+/// its agent reviews files one; the resident's inbox pass wakes `agent` for
+/// it. Returns its request.
+pub fn file_diary_review(
+    vault: &Vault,
+    agent: EntityId,
+    reader: EntityId,
+    reason: &str,
+) -> Result<EntityId> {
+    vault.file_pending_diary_review(agent, reader, reason)
 }
 
 /// The model PERSON custom agent `agent` was born with, which names it as a

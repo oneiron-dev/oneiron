@@ -404,6 +404,36 @@ pub(crate) fn machine_claim_needs_history_observing(
     names_machine_observing(store, txn, entries, observe)
 }
 
+/// [`machine_claim_read_admitted`] for `id`, a control of `kind` in the
+/// target history `history` reads: the stored bytes of `id` are `body`, and
+/// the verified history admits it as that kind
+/// ([`crate::claim::history_projection::TargetHistory::admits_control`]). A
+/// [`crate::claim::history_projection::MachineHistoryReadCache`] passes the
+/// history it resolves once for its whole read (FIX
+/// MACHINE-HISTORY-PAGE-PER-CONTROL-RESOLVE).
+pub(crate) fn history_control_read_admitted(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    fold: &super::AuthorityFold,
+    history: &crate::claim::history_projection::TargetHistory,
+    id: &EntityId,
+    body: &ClaimBody,
+    kind: crate::claim::history_store::MachineHistoryKind,
+) -> Result<bool> {
+    // Selector/guest export operates on RAW CRDT bytes. A control row
+    // travels only if these exact bytes match a locally verified row and
+    // its id belongs to the authenticated target closure.
+    let Some(raw) = EntityStoreRead::port_entity_raw(store, txn, id)? else {
+        return Ok(false);
+    };
+    if raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+        != Some(crate::claim::encode_claim_body(body)?.as_slice())
+    {
+        return Ok(false);
+    }
+    Ok(history.admits_control(store, txn, fold, kind, id))
+}
+
 /// Read-time machine identity is derived from the CURRENT entity kind and
 /// folded authority, not from a peer-supplied class or cached roster. A claim
 /// that arrived before its MACHINE row cannot become visible unsigned later.
@@ -418,61 +448,15 @@ pub(crate) fn machine_claim_read_admitted(
         let crate::claim::ClaimSubject::Entity(target) = body.subject else {
             return Ok(false);
         };
-        // Selector/guest export operates on RAW CRDT bytes. A control row
-        // travels only if these exact bytes match a locally verified row and
-        // its id belongs to the authenticated target closure.
-        let Some(raw) = EntityStoreRead::port_entity_raw(store, txn, id)? else {
-            return Ok(false);
-        };
-        if raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
-            != Some(crate::claim::encode_claim_body(body)?.as_slice())
-        {
-            return Ok(false);
-        }
-        let Ok(rows) = crate::claim::history_projection::machine_history_rows(store, txn, target)
-        else {
-            return Ok(false);
-        };
-        let Ok(packet) =
-            crate::claim::history_projection::trusted_machine_handoff(store, txn, target)
-        else {
-            return Ok(false);
-        };
-        if packet.births.len() != 1
-            || packet.births[0].digest != rows.birth.digest
-            || fold.vault_id != Some(rows.birth.vault_id)
-            || crate::claim::history_projection::resolved_machine_history(store, txn, fold, target)
-                .is_err()
-        {
-            return Ok(false);
-        }
-        return Ok(match kind {
-            crate::claim::history_store::MachineHistoryKind::Birth => {
-                rows.birth.event_id().is_ok_and(|birth_id| birth_id == *id)
-            }
-            // Membership in the whole history: the chain's union, not the
-            // tip's delta.
-            crate::claim::history_store::MachineHistoryKind::Transition => {
-                rows.transitions.keys().any(|listed| {
-                    rows.events.iter().any(|event| {
-                        crate::claim::transition::machine_claim_transition_event_hash(event)
-                            .is_ok_and(|hash| hash == *listed)
-                            && crate::claim::transition::machine_claim_transition_event_id(event)
-                                .is_ok_and(|event_id| event_id == *id)
-                    })
-                })
-            }
-            crate::claim::history_store::MachineHistoryKind::Handoff => {
-                crate::claim::history_projection::verified_handoff_chain(store, txn, &packet, fold)
-                    .is_ok_and(|chain| {
-                        chain.iter().any(|packet| {
-                            packet.content_hash().ok().and_then(|hash| {
-                                EntityId::from_bytes(hash[..16].try_into().ok()?).ok()
-                            }) == Some(*id)
-                        })
-                    })
-            }
-        });
+        return history_control_read_admitted(
+            store,
+            txn,
+            fold,
+            &crate::claim::history_projection::TargetHistory::new(target),
+            id,
+            body,
+            kind,
+        );
     }
     let mut verified_history: Option<crate::claim::transition::ClaimTransitionProjection> = None;
     // An id that already has machine history stays machine-owned even if an
@@ -635,30 +619,13 @@ pub(crate) fn machine_history_authority_descends_with_image(
     successor: &[u8; 32],
     image: Option<&super::checkpoint_image::AuthorityCheckpointV2>,
 ) -> Result<bool> {
-    let mut by_hash = std::collections::BTreeMap::new();
-    for id in
-        store.port_entity_ids_by_type(txn, crate::registry::ENTITY_TYPE_AUTHORITY_LOG, None)?
-    {
-        let id = id?;
-        let Some(raw) = EntityStoreRead::port_entity_raw(store, txn, &id)? else {
-            return Err(Error::CorruptedIndex("authority history row"));
-        };
-        let body = raw
-            .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
-            .ok_or(Error::CorruptedIndex("authority history header"))?;
-        let entry = super::decode_authority_log_entry_body(body)?;
-        let hash = super::authority_entry_hash(&entry)?;
-        if super::authority_log_entity_id_from_hash(&hash)? != id {
-            return Err(Error::CorruptedIndex("authority history key"));
-        }
-        by_hash.insert(hash, entry);
-    }
+    let by_hash = stored_authority_parents_by_hash(store, txn)?;
     let stands = |hash: &[u8; 32]| {
         by_hash.contains_key(hash)
             || image.is_some_and(|image| covered_endpoint_stands(image, hash))
     };
     let parents = |hash: &[u8; 32]| match by_hash.get(hash) {
-        Some(entry) => Some(entry.parent_hashes.as_slice()),
+        Some(parents) => Some(parents.as_slice()),
         None => image
             .and_then(|image| image.rows.get(hash))
             .map(|row| row.parents.as_slice()),
@@ -683,6 +650,106 @@ pub(crate) fn machine_history_authority_descends_with_image(
         }
     }
     Ok(false)
+}
+
+/// The signed parent hashes of every authority row this vault stores, by the row's hash, each
+/// row checked against the key it is stored under.
+fn stored_authority_parents_by_hash(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<std::collections::BTreeMap<[u8; 32], Vec<[u8; 32]>>> {
+    let mut by_hash = std::collections::BTreeMap::new();
+    for id in
+        store.port_entity_ids_by_type(txn, crate::registry::ENTITY_TYPE_AUTHORITY_LOG, None)?
+    {
+        let id = id?;
+        let Some(raw) = EntityStoreRead::port_entity_raw(store, txn, &id)? else {
+            return Err(Error::CorruptedIndex("authority history row"));
+        };
+        let body = raw
+            .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+            .ok_or(Error::CorruptedIndex("authority history header"))?;
+        let entry = super::decode_authority_log_entry_body(body)?;
+        let hash = super::authority_entry_hash(&entry)?;
+        if super::authority_log_entity_id_from_hash(&hash)? != id {
+            return Err(Error::CorruptedIndex("authority history key"));
+        }
+        by_hash.insert(hash, entry.parent_hashes);
+    }
+    Ok(by_hash)
+}
+
+/// The rows of `rows` that no other row of `rows` descends from, each with how many rows of `rows`
+/// it descends from, through the rows' signed parent hashes as
+/// [`machine_history_authority_descends`] judges one pair, with the log read once. A row that does
+/// not stand here descends from none and none descends from it; a walk that reaches a row whose
+/// parents this vault cannot read ends that path only: descent is shown only through parents it
+/// reads. No advisory timestamp or signed date takes part.
+pub(crate) fn authority_heads_with_ancestor_counts(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    rows: &[[u8; 32]],
+) -> Result<std::collections::BTreeMap<[u8; 32], usize>> {
+    if rows.len() < 2 {
+        return Ok(rows.iter().map(|row| (*row, 0)).collect());
+    }
+    let adopted = super::checkpoint_adopt::cached_adopted_authority_checkpoint_in_txn(store, txn)?;
+    let image = adopted
+        .as_deref()
+        .map(super::VerifiedAuthorityCheckpoint::image);
+    let by_hash = stored_authority_parents_by_hash(store, txn)?;
+    let stands = |hash: &[u8; 32]| {
+        by_hash.contains_key(hash)
+            || image.is_some_and(|image| covered_endpoint_stands(image, hash))
+    };
+    let parents = |hash: &[u8; 32]| match by_hash.get(hash) {
+        Some(parents) => Some(parents.as_slice()),
+        None => image
+            .and_then(|image| image.rows.get(hash))
+            .map(|row| row.parents.as_slice()),
+    };
+    let standing: std::collections::BTreeSet<[u8; 32]> =
+        rows.iter().copied().filter(stands).collect();
+    // The standing rows of `rows` that a row of `from` descends from: every hash one walk over the
+    // union of their ancestors reaches is an ancestor of one of them.
+    let ancestors_among = |from: &[[u8; 32]]| {
+        let mut stack = Vec::new();
+        for row in from {
+            if let Some(start) = parents(row) {
+                stack.extend_from_slice(start);
+            }
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        let mut reached = std::collections::BTreeSet::new();
+        while let Some(hash) = stack.pop() {
+            if !seen.insert(hash) {
+                continue;
+            }
+            if standing.contains(&hash) {
+                reached.insert(hash);
+            }
+            if let Some(next) = parents(&hash) {
+                stack.extend_from_slice(next);
+            }
+        }
+        reached
+    };
+    let starts: Vec<[u8; 32]> = standing.iter().copied().collect();
+    let followed = ancestors_among(&starts);
+    let mut heads = std::collections::BTreeMap::new();
+    for row in rows {
+        if followed.contains(row) {
+            continue;
+        }
+        // A head's own walk: what it descends from, which no row that comes later changes.
+        let ancestors = if standing.contains(row) {
+            ancestors_among(std::slice::from_ref(row)).len()
+        } else {
+            0
+        };
+        heads.insert(*row, ancestors);
+    }
+    Ok(heads)
 }
 
 /// Whether a covered row this vault does not store stands as an endpoint of

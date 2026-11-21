@@ -158,8 +158,9 @@ def attention_digest(cache):
 
 def compatibility(identity, generator):
     """What an imported snapshot must match on this worker, or None when it
-    cannot write or rebuild one: the identity less its epoch, the KV layout,
-    the recurrent state kind, and the attention digest."""
+    cannot write or rebuild one: the identity less its epoch, the speed parts
+    on that change the KV arithmetic, the KV layout, the recurrent state kind,
+    and the attention digest."""
     if identity is None or not snapshot.hostable():
         return None
     record = identity.record(None)
@@ -167,6 +168,12 @@ def compatibility(identity, generator):
     if kv is None or kind is None or any(record.get(field) is None for field in IDENTITY_FIELDS):
         return None
     compat = dict({field: record[field] for field in IDENTITY_FIELDS}, kv=kv, state=kind)
+    # The speed parts on that change the target's arithmetic, and so the KV
+    # a prefill writes. Only a worker with one on names them, so a worker
+    # with none keeps the compatibility it had before the parts existed.
+    arithmetic = list(getattr(identity, "kv_arithmetic", None) or ())
+    if arithmetic:
+        compat["kv_arithmetic"] = arithmetic
     # Unnameable position config advertises no snapshot capability: a worker
     # that cannot describe its positions must not export KV another worker
     # reads as its own.

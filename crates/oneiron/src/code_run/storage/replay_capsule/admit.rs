@@ -18,9 +18,11 @@
 
 mod refresh;
 mod start_publication;
+mod stored_spans;
 
 pub(crate) use refresh::refresh_staged_request;
 use start_publication::{publish_start_in_txn, start_estimate, start_lens_in_txn};
+use stored_spans::{stored_console, stored_slots, unstored_console};
 
 use std::borrow::Cow;
 use std::ops::Range;
@@ -37,7 +39,8 @@ use super::super::super::replay_capsule::{
 };
 use super::super::StartCompaction;
 use super::super::fold_answers::words_withdrawn;
-use super::super::records::{FinishedOutput, REPLAY_RECORDS, finish_output};
+use super::super::records::{FinishedOutput, finish_output};
+use super::super::replay_rows;
 use super::super::spawn_erase::fence_spawn_targets_in_txn;
 use super::declarations::stored_request_hash;
 use super::erase::actor_gone_in_txn;
@@ -489,7 +492,10 @@ fn admit_start_in_txn(
 /// prefix (FIX 4198). The body goes through the wall too, and the prefix it
 /// carries must come back as it went in. FIX 18924: a prefix that records a
 /// fold answer whose words are withdrawn keeps no start, and the start
-/// names the folds whose words its prefix records.
+/// names the folds whose words its prefix records. FIX
+/// ERASED-FORM-UNFENCED-REPLAY-PUTS: the wall reads the row, and the prefix
+/// in the body, as a fenced put has it read a row: without the erase's
+/// fixed words in each part held in its erased form.
 fn admitted_start(
     vault: &Vault,
     wtxn: &mut RwTxn<'_>,
@@ -497,7 +503,7 @@ fn admitted_start(
     capture: &StepCapture<'_>,
     start: &StepStartCapture<'_>,
 ) -> Result<Option<AdmittedStart>> {
-    let Some(stored) = REPLAY_RECORDS.get(&vault.store, wtxn, &capture.run)? else {
+    let Some(stored) = replay_rows::get(&vault.store, wtxn, &capture.run)? else {
         return Ok(None);
     };
     let generation = stored.generation()?;
@@ -505,7 +511,7 @@ fn admitted_start(
         return Ok(None);
     }
     let mut source = stored.clone();
-    REPLAY_RECORDS.admit(vault, wtxn, &capture.run, &mut source)?;
+    replay_rows::admit_fenced(vault, wtxn, &mut source)?;
     // A spawn whose target an erase took keeps no ask in the row or in the
     // prefix taken from it (FIX 9180).
     let source = fence_spawn_targets_in_txn(&vault.store, wtxn, Cow::Owned(source))?.into_owned();
@@ -513,7 +519,7 @@ fn admitted_start(
         if source.generation()? != generation {
             return Ok(None);
         }
-        REPLAY_RECORDS.put(vault, wtxn, &capture.run, &source)?;
+        replay_rows::put_fenced(vault, wtxn, &source)?;
     }
     let mut prefix = source;
     prefix.live_run = None;
@@ -522,8 +528,11 @@ fn admitted_start(
         return Ok(None);
     }
     let record = encode_code_run_replay_record(&prefix)?;
+    let erased = replay_rows::ErasedFormProjection::of(&prefix)?;
     let body = StepStartBody {
-        record: record.clone(),
+        record: erased
+            .as_ref()
+            .map_or_else(|| record.clone(), |erased| erased.bytes().to_vec()),
         task: capture.task.to_owned(),
         model: start.model.clone(),
         model_locality: start.model_locality,
@@ -536,18 +545,25 @@ fn admitted_start(
         compaction: StartCompaction::captured_in_txn(&vault.store, wtxn, &prefix)?,
     };
     let mut parts = [SidePart::Body(encode_start(&body)?)];
-    admit_side_parts(vault, wtxn, (START_PLACE, key), &mut parts, reads_start)?;
+    admit_side_parts(vault, wtxn, (START_PLACE, key), &mut parts, |parts| {
+        reads_start(parts, erased.as_ref())
+    })?;
     let [SidePart::Body(admitted)] = parts else {
         return Err(Error::InvariantViolation(
             "an admitted step start is no longer a body",
         ));
     };
-    let body = decode_start(&admitted)?;
-    if body.record != record {
+    let mut body = decode_start(&admitted)?;
+    let kept = match &erased {
+        Some(erased) => encode_code_run_replay_record(&erased.put_back(&body.record)?)?,
+        None => std::mem::take(&mut body.record),
+    };
+    if kept != record {
         return Err(Error::InvariantViolation(
             "the wall changed a step start's admitted prefix",
         ));
     }
+    body.record = record;
     let bytes = encode_start(&body)?;
     Ok(Some(AdmittedStart {
         pieces: StartPieces::of(&bytes)?,
@@ -567,145 +583,16 @@ fn decode_start(bytes: &[u8]) -> Result<StepStartBody> {
         .map_err(|error| Error::InvalidConfig(format!("capsule start: {error}")))
 }
 
-/// Whether an admitted copy still reads as a start, its prefix row too.
-fn reads_start(parts: &[SidePart]) -> bool {
+/// Whether an admitted copy still reads as a start, its prefix row too:
+/// with `erased`, the row's projection the wall read in its place.
+fn reads_start(parts: &[SidePart], erased: Option<&replay_rows::ErasedFormProjection>) -> bool {
     let [SidePart::Body(body)] = parts else {
         return false;
     };
-    rmp_serde::from_slice::<StepStartBody>(body)
-        .is_ok_and(|start| decode_code_run_replay_record(&start.record).is_ok())
-}
-
-/// `slots`, located in `sent`, moved to where they sit in the request as
-/// the wall admitted it.
-fn stored_slots(
-    slots: &[ExposureSlot],
-    sent: &LlmRequest,
-    admitted: &AdmittedRequest,
-) -> Vec<ExposureSlot> {
-    let Some(replaced) = &admitted.replaced else {
-        return slots.to_vec();
-    };
-    slots
-        .iter()
-        .map(|slot| ExposureSlot {
-            stored: stored_span(
-                (slot.message, slot.part),
-                slot.stored,
-                sent,
-                &admitted.request,
-                replaced,
-            ),
-            ..slot.clone()
-        })
-        .collect()
-}
-
-/// `console`, located in `sent`, moved to where it sits in the request as
-/// the wall admitted it (FIX 3608), as an exposure moves.
-fn stored_console(
-    console: Option<&ConsoleSlot>,
-    sent: &LlmRequest,
-    admitted: &AdmittedRequest,
-) -> Option<ConsoleSlot> {
-    let console = console?;
-    let stored = match &admitted.replaced {
-        Some(replaced) => {
-            let at = (console.message, console.part);
-            stored_span(at, console.stored, sent, &admitted.request, replaced)
-        }
-        None => console.stored,
-    };
-    Some(ConsoleSlot {
-        stored,
-        ..console.clone()
+    rmp_serde::from_slice::<StepStartBody>(body).is_ok_and(|start| match erased {
+        Some(erased) => erased.put_back(&start.record).is_ok(),
+        None => decode_code_run_replay_record(&start.record).is_ok(),
     })
-}
-
-/// `console` kept with no stored span: its request was withheld.
-fn unstored_console(console: Option<&ConsoleSlot>) -> Option<ConsoleSlot> {
-    console.map(|console| ConsoleSlot {
-        stored: None,
-        ..console.clone()
-    })
-}
-
-/// Where `span`, in part `at` (its message and part) of `sent`, sits in
-/// `stored`, the request as the wall admitted it: its bounds moved by the
-/// replacements the wall made in its text, and the hash of the masked bytes
-/// between them. `None` when a bound falls inside a replaced span, or the
-/// text changed by more than those replacements.
-fn stored_span(
-    at: (u32, u32),
-    span: Option<StoredSpan>,
-    sent: &LlmRequest,
-    stored: &LlmRequest,
-    replaced: &TextReplacements,
-) -> Option<StoredSpan> {
-    let span = span?;
-    let (sent_text, stored_text) = (text_part(sent, at)?, text_part(stored, at)?);
-    let Some(moves) = replaced.get(blake3::hash(sent_text.as_bytes()).as_bytes()) else {
-        // The wall left this text as it was.
-        return (sent_text == stored_text).then_some(span);
-    };
-    if !moved_only(sent_text, stored_text, moves) {
-        return None;
-    }
-    let start = remap_bound(usize::try_from(span.start).ok()?, moves)?;
-    let end = remap_bound(usize::try_from(span.end).ok()?, moves)?;
-    let bytes = stored_text.get(start..end)?;
-    Some(StoredSpan {
-        start: start as u64,
-        end: end as u64,
-        content_hash: *blake3::hash(bytes.as_bytes()).as_bytes(),
-    })
-}
-
-/// Where `bound`, a byte offset in a text as sent, is in the text as the
-/// wall masked it, by the replacements it made there in order (FIX 6144):
-/// moved past each one before it. `None` when it falls inside a replaced
-/// span, where a secret's handle now stands: an exposure cut there is
-/// unavailable, never guessed at.
-fn remap_bound(bound: usize, moves: &[(Range<usize>, Range<usize>)]) -> Option<usize> {
-    let mut moved = bound;
-    for (replaced, handle) in moves {
-        if bound <= replaced.start {
-            break;
-        }
-        if bound < replaced.end {
-            return None;
-        }
-        moved = handle.end + (bound - replaced.end);
-    }
-    Some(moved)
-}
-
-/// Whether `stored` is `sent` with exactly `moves` made: every byte outside
-/// the replaced spans where the moves put it.
-fn moved_only(sent: &str, stored: &str, moves: &[(Range<usize>, Range<usize>)]) -> bool {
-    let (sent, stored) = (sent.as_bytes(), stored.as_bytes());
-    let (mut from, mut to) = (0, 0);
-    for (cut, put) in moves {
-        if !same_bytes(sent.get(from..cut.start), stored.get(to..put.start)) {
-            return false;
-        }
-        (from, to) = (cut.end, put.end);
-    }
-    same_bytes(sent.get(from..), stored.get(to..))
-}
-
-/// Whether both are there and the same bytes.
-fn same_bytes(kept: Option<&[u8]>, held: Option<&[u8]>) -> bool {
-    kept.is_some() && kept == held
-}
-
-/// The text of part `at` (its message and part) in `request`.
-fn text_part(request: &LlmRequest, (message, part): (u32, u32)) -> Option<&str> {
-    let message = request.messages.get(usize::try_from(message).ok()?)?;
-    match message.content.get(usize::try_from(part).ok()?)? {
-        ContentPart::Text { text, .. } => Some(text.as_str()),
-        _ => None,
-    }
 }
 
 /// Stores a fork's answer as a body the original run owns, admitted as the

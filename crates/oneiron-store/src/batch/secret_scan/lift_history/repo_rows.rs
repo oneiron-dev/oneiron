@@ -35,10 +35,10 @@ pub fn texts_of(stored: &[u8]) -> Vec<String> {
 fn collect(value: &Value, texts: &mut Vec<String>) {
     match value {
         Value::String(text) => {
-            let text = text
-                .as_str()
-                .map(str::to_owned)
-                .unwrap_or_else(|| String::from_utf8_lossy(text.as_bytes()).into_owned());
+            let text = text.as_str().map_or_else(
+                || String::from_utf8_lossy(text.as_bytes()).into_owned(),
+                str::to_owned,
+            );
             if !text.is_empty() {
                 texts.push(text);
             }

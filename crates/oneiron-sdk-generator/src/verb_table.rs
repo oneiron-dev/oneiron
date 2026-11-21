@@ -131,7 +131,7 @@ mod tests {
 
     fn names(rows: &[Dict]) -> Vec<String> {
         rows.iter()
-            .map(|row| row.get("name").map(Value::str).unwrap_or_default())
+            .map(|row| row.get("name").map_or_default(Value::str))
             .collect()
     }
 

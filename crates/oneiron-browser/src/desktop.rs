@@ -408,6 +408,7 @@ impl DesktopSession {
     }
 
     fn guest_up(&mut self) -> Result<(), BrowserError> {
+        self.record_pressure();
         if self.guest.abandoned() {
             return Err(BrowserError::Abandoned);
         }

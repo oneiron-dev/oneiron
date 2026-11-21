@@ -1,5 +1,3 @@
-// FIX [LIBTEST-QUARANTINE-BOOKING-ANTI-ABUSE-SCOPE-TESTS]: the lib test target's type check fails here (3 errors: E0063 x2, E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[path = "scope_tests.rs"]
 mod scope_tests;
 
@@ -9,17 +7,24 @@ use crate::booking::config::{
     DEFAULT_INTRO_DURATION_MIN, DEFAULT_MIN_NOTICE_SECS, EventTypeConfig, HostAvailabilityConfig,
     RoutingMode, WeeklyWallWindow, encode_event_type_claim_value,
 };
-use crate::test_util::entity as id;
-
 const PAGE: u8 = 0x51;
 const OWNER: u8 = 0x52;
 const STAMP: u8 = 0x53;
 const OTHER_PAGE: u8 = 0x54;
 
+fn id(byte: u8) -> crate::EntityId {
+    if byte == OWNER {
+        // The fixture owner is the embedded owner, so the bound owner passes the live owner census.
+        return crate::vault::embedded_owner_actor_id().expect("owner");
+    }
+    crate::test_util::entity(byte)
+}
+
 fn open_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("temp dir");
     let vault =
         Vault::open(dir.path(), crate::VaultConfig::default()).expect("open anti-abuse vault");
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     (dir, vault)
 }
 
@@ -46,6 +51,7 @@ fn install_page_and_config(vault: &Vault, page: EntityId, event_type: &EventType
             booking_window_secs: 86_400,
             daily_cap: None,
             weekly_cap: None,
+            deposit: None,
             routing: RoutingMode::Either,
             hosts: vec![HostAvailabilityConfig {
                 host_ref: id(0x55),
@@ -60,6 +66,7 @@ fn install_page_and_config(vault: &Vault, page: EntityId, event_type: &EventType
             }],
             flex_with_ordinary: false,
             flex_windows: Vec::new(),
+            allowed_durations_min: Vec::new(),
         },
     };
     let mut body = ClaimBody::new(
@@ -281,6 +288,7 @@ fn owner_config_rows_cover_exact_ship_skip_reserve_stack() {
                 check_syntax,
                 check_mx,
                 check_disposable_domain,
+                ..
             } => {
                 email_prompt = true;
                 assert!(*check_syntax && *check_mx && *check_disposable_domain);
@@ -957,6 +965,8 @@ fn invalid_email_prompts_but_does_not_hard_block() {
             check_syntax: true,
             check_mx: true,
             check_disposable_domain: true,
+            prompt_at_failed_checks: email_prompt_at_failed_checks_default(),
+            quarantine_at_failed_checks: email_quarantine_at_failed_checks_default(),
         }),
         seed_rule(&BookingAntiAbuseRule::HoneypotAndSubmitFloor {
             min_submit_millis: nz64(1),
@@ -1030,6 +1040,8 @@ fn borderline_submission_builds_pending_review_inbox_group() {
             check_syntax: true,
             check_mx: true,
             check_disposable_domain: true,
+            prompt_at_failed_checks: email_prompt_at_failed_checks_default(),
+            quarantine_at_failed_checks: email_quarantine_at_failed_checks_default(),
         }),
         seed_rule(&BookingAntiAbuseRule::QuarantineBorderline),
     ];
@@ -1132,6 +1144,7 @@ fn borderline_submission_builds_pending_review_inbox_group() {
         .inbox_groups(crate::inbox::InboxQuery::new(10))
         .expect("inbox groups");
     let group = groups
+        .groups
         .iter()
         .find(|group| group.run_id == run_id)
         .expect("the quarantine run projects a pending-review inbox group");
@@ -1988,6 +2001,8 @@ fn a_restore_goes_ahead_past_a_submission_quarantined_since() {
             check_syntax: true,
             check_mx: true,
             check_disposable_domain: true,
+            prompt_at_failed_checks: email_prompt_at_failed_checks_default(),
+            quarantine_at_failed_checks: email_quarantine_at_failed_checks_default(),
         }),
         seed_rule(&BookingAntiAbuseRule::QuarantineBorderline),
     ];
@@ -2014,8 +2029,10 @@ fn a_restore_goes_ahead_past_a_submission_quarantined_since() {
         panic!("two live negatives route to quarantine");
     };
     quarantine_borderline_submission(&vault, &facts, &reason, 2).expect("quarantine");
+    let key = vault.checkpoint_key().expect("checkpoint key");
     let (restored, _) = Vault::restore_checkpoint_keeping_authority(
         &image,
+        &key,
         &backups.path().join("restored"),
         crate::VaultConfig::default(),
         &vault,

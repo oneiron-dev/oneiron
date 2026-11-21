@@ -246,7 +246,9 @@ pub fn discard_reviewed_repo_manifest_carrier_as(
             let delta = export_updates_from(&doc, &review.version)?;
             let state = export_snapshot(&doc)?;
             let vv = doc_version_vector(&doc);
-            persist_window_doc_in_txn(vault, wtxn, review.window(), &state, &vv)?;
+            // A plain export: a window pinned history-free owes a compaction
+            // for it (census L6-05).
+            persist_window_doc_in_txn(vault, wtxn, review.window(), &state, &vv, false)?;
             let mut subsumed = Vec::with_capacity(updates.len());
             for (row, _) in &updates {
                 subsumed.push(

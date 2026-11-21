@@ -46,8 +46,8 @@ mod response;
 use std::collections::BTreeSet;
 
 use super::super::consent_wait::code_consent_waits_bound_to_in_txn;
-use super::records::REPLAY_RECORDS;
 use super::replay_capsule::{actor_gone_in_store, actor_gone_in_txn, actor_hard_erased_in_store};
+use super::replay_rows;
 use super::response_erase::ResponseScrub;
 use super::response_owners::response_owner_in_txn;
 use super::wait_delivery::{DELIVERIES, SETTLED, SETTLED_TAG, WaitDelivery, WaitKey};
@@ -111,8 +111,7 @@ fn run_holder_in(
         Some(owner) => owner.actor(),
         None => match crate::dreamer_runner::program_run_actor_in_txn(dbs, txn, &run)? {
             Some(actor) => Some(actor),
-            None => REPLAY_RECORDS
-                .get_lenient(dbs, txn, &run)?
+            None => replay_rows::get_lenient(dbs, txn, &run)?
                 .and_then(|record| record.live_run.as_ref().map(|live| live.actor)),
         },
     };

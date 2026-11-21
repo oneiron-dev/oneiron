@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use loro::LoroMap;
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::claim::decode_claim_body;
+use crate::claim::{ClaimSubject, decode_claim_body};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::write_envelope::world_access_predicates::is_world_access_tier_predicate;
 use crate::{EntityId, Result, Vault};
@@ -45,6 +45,32 @@ pub(super) fn world_access_claim(data: &[u8]) -> bool {
 // Whether the row stored at `id` is a world-access grant or default: a
 // peer's row or tombstone under that id never replaces or deletes it.
 pub(super) use crate::claim::world_access::holds_world_access_claim_in;
+
+/// Whether `data` is a MACHINE claim history control row (a birth,
+/// transition or handoff) whose target is a world-access grant or default
+/// stored here. Such a row carries an id of its own, so
+/// [`holds_world_access_claim_in`] passes it, but landing it indexes the
+/// grant's id as machine-owned history, and the read predicate then
+/// quarantines the grant (`authority::machine_claim_read_admitted`): a
+/// narrower grant would drop out of the fold and widen the agent's reads.
+/// Every door that replays a peer's rows drops such a row, as it drops a row
+/// under the grant's own id.
+pub(super) fn targets_world_access_claim_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    data: &[u8],
+) -> Result<bool> {
+    let Ok(body) = decode_claim_body(data, true) else {
+        return Ok(false);
+    };
+    if crate::claim::history_store::machine_history_kind(&body.predicate).is_none() {
+        return Ok(false);
+    }
+    let ClaimSubject::Entity(target) = body.subject else {
+        return Ok(false);
+    };
+    holds_world_access_claim_in(vault, txn, &target)
+}
 
 pub(super) fn local_claim_sync_allowed(vault: &Vault, id: &EntityId) -> Result<bool> {
     Ok(vault
@@ -94,7 +120,5 @@ pub(super) fn withheld_claim_carriers(
     Ok((keys, ids))
 }
 
-// FIX [LIBTEST-QUARANTINE-SYNC-LOCAL-CLAIMS-TESTS]: the lib test target's type check fails here (3 errors: E0063 x2, E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;

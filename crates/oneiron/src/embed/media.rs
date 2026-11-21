@@ -14,7 +14,9 @@
 
 use std::collections::BTreeSet;
 
+mod documents;
 mod unbound;
+pub(super) use documents::{asset_text, is_text_document_type, media_egress_for, media_held_in};
 pub use unbound::UnboundMediaSample;
 
 use super::space::{
@@ -23,6 +25,7 @@ use super::space::{
     put_media_refusal_in_txn, put_media_vector_in_txn, text_hash,
 };
 use super::space_move::space_fill_kinds_in_txn;
+use super::world_space::{TextDocumentRoute, WorldTextSpaces};
 use super::{EgressDecision, EgressPredicate, EmbedderLocality, EmbeddingProvenance};
 use crate::Vault;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
@@ -31,7 +34,8 @@ use crate::error::{Error, Result};
 use crate::off_record::OffRecordSession;
 use crate::ports::EntityStoreRead;
 use crate::registry::{
-    ENTITY_TYPE_ASSET, ENTITY_TYPE_CLAIM, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
+    ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_NOTE,
+    ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
 };
 use crate::store::ManifestDbs;
 
@@ -45,6 +49,12 @@ const TEXT_DOCUMENT_TYPES: [u8; 4] = [
     ENTITY_TYPE_TURN,
     ENTITY_TYPE_ASSET,
 ];
+/// The records only a world's own text space holds as text documents: those the idle
+/// publisher embeds into the vault's index (a NOTE, a caption), which a world with its own text
+/// space keeps out of that index. Its space takes their published text
+/// ([`Vault::published_revision_text_in_txn`]); no space takes them for a row no such world
+/// carries.
+const WORLD_TEXT_DOCUMENT_TYPES: [u8; 2] = [ENTITY_TYPE_NOTE, ENTITY_TYPE_ASSET_TEXT];
 
 pub use crate::store::embedding::{
     MediaEmbedReport, MediaEmbedder, MediaEmbeddingInput, MediaOutcome,
@@ -178,7 +188,8 @@ impl Vault {
                     got: embedder.dimensions(),
                 });
             }
-            let kinds = space_fill_kinds_in_txn(&self.store, &rtxn, &space)?;
+            let mut kinds = space_fill_kinds_in_txn(&self.store, &rtxn, &space)?;
+            WorldTextSpaces::read_in(self, &rtxn)?.add_world_text(&space, &mut kinds);
             if kinds.is_empty() {
                 return Err(Error::InvalidConfig(format!(
                     "no kind slot is bound or moving to embedding space {space_id}"
@@ -214,27 +225,43 @@ impl Vault {
         }
 
         let mut wtxn = self.store.env.write_txn()?;
-        // The bindings and moves may have changed while the model ran; land only what this
-        // space still fills.
-        let fills = space_fill_kinds_in_txn(&self.store, &wtxn, &space)?;
+        // The bindings, moves and world orders may have changed while the model ran; land
+        // only what this space still fills, and a text only where its worlds still send it.
+        let text_route = TextDocumentRoute::read_in(self, &wtxn, &space)?;
+        let mut fills = space_fill_kinds_in_txn(&self.store, &wtxn, &space)?;
+        text_route.add_world_text(&space, &mut fills);
         let at = self.store.clock.now_recorded_at();
         for (item, outcome) in pending.iter().zip(outcomes) {
-            if !kinds.contains(&item.kind) || !fills.contains(&item.kind) {
+            if !kinds.contains(&item.kind)
+                || !fills.contains(&item.kind)
+                || (item.kind == InputKind::Text
+                    && !text_route.takes(&self.store, &wtxn, &item.id)?)
+            {
                 report.unbound += 1;
                 continue;
             }
-            if self.store.port_entity_record(&wtxn, &item.id)?.is_none() {
+            let Some(record) = self.store.port_entity_record(&wtxn, &item.id)? else {
                 report.vanished += 1;
+                continue;
+            };
+            // A NOTE or a caption lands only where a world still routes it.
+            let world_only = WORLD_TEXT_DOCUMENT_TYPES.contains(&record.entity_type);
+            if world_only && !text_route.takes_world_row(&self.store, &wtxn, &item.id)? {
+                report.unbound += 1;
                 continue;
             }
             // A text that moved, or was erased, while the model ran lands no vector of the
             // old words; the next pass embeds what it holds now.
-            if let Some(hash) = item.text_hash
-                && text_document_in_txn(self, &wtxn, &item.id)?
-                    .is_none_or(|text| text_hash(&text) != hash)
-            {
-                report.vanished += 1;
-                continue;
+            if let Some(hash) = item.text_hash {
+                let current = if world_only {
+                    self.published_revision_text_in_txn(&wtxn, &item.id)?
+                } else {
+                    text_document_in_txn(self, &wtxn, &item.id)?
+                };
+                if current.is_none_or(|text| text_hash(&text) != hash) {
+                    report.vanished += 1;
+                    continue;
+                }
             }
             // A media item lands only as the copy it was sent as (FIX 7608 slice 3).
             if item.text_hash.is_none()
@@ -306,9 +333,17 @@ impl Vault {
         let mut held = 0;
         let mut refused = 0;
         let mut withheld = 0;
-        self.scan_documents_in_txn(rtxn, kinds, report, |document| {
+        let text_route = TextDocumentRoute::read_in(self, rtxn, space)?;
+        let mut admit = |document: PendingMedia| -> Result<bool> {
             if pending.len() >= max_items {
                 return Ok(false);
+            }
+            // A text a world with its own text space carries goes to that space alone
+            // (DEC-0005 #private-world-vectors); any other text to the space its slot binds.
+            if document.kind == InputKind::Text
+                && !text_route.takes(&self.store, rtxn, &document.id)?
+            {
+                return Ok(true);
             }
             if media_held_in(&self.store, rtxn, space, &document)? {
                 held += 1;
@@ -323,7 +358,28 @@ impl Vault {
                 pending.push(document);
             }
             Ok(pending.len() < max_items)
-        })?;
+        };
+        self.scan_documents_in_txn(rtxn, kinds, report, &mut admit)?;
+        if kinds.contains(&InputKind::Text) && text_route.world_names_space() {
+            'types: for entity_type in WORLD_TEXT_DOCUMENT_TYPES {
+                for id in self
+                    .store
+                    .port_entity_ids_by_type(rtxn, entity_type, None)?
+                {
+                    let id = id?;
+                    if !text_route.takes_world_row(&self.store, rtxn, &id)? {
+                        continue;
+                    }
+                    report.scanned += 1;
+                    let Some(document) = world_text_document_of(self, rtxn, id, report)? else {
+                        continue;
+                    };
+                    if !admit(document)? {
+                        break 'types;
+                    }
+                }
+            }
+        }
         report.already_embedded += held;
         report.refused += refused;
         report.withheld += withheld;
@@ -383,63 +439,6 @@ impl Vault {
             }
         }
         Ok(outcomes)
-    }
-
-    /// Whether `input`'s bytes may go to `embedder` now, as the backfill sends a stored document
-    /// (FIX 382): to a model on this device, always; to one on the owner's server, always with
-    /// no gate and otherwise as a third party's (FIX 9830); to one at a third
-    /// party only with the host's gate `egress`, which must allow it, and only while no
-    /// device-local world keeps it (DEC-0005), read under the flag lock right before the bytes
-    /// go. A move's check asks it for each media query it encodes (FIX 1637); `false` sends
-    /// nothing, and that probe does not run.
-    ///
-    /// # Errors
-    ///
-    /// Storage errors reading the world flags or the row.
-    pub fn media_document_may_leave(
-        &self,
-        embedder: &dyn MediaEmbedder,
-        egress: Option<&dyn EgressPredicate>,
-        input: &MediaEmbeddingInput<'_>,
-    ) -> Result<bool> {
-        // One on the owner's server reads through the host's gate when it
-        // gives one, as its backfill does (FIX 9830), and leaves ungated with
-        // none.
-        let gate = match (embedder.locality(), egress) {
-            (EmbedderLocality::OnDevice, _) | (EmbedderLocality::OwnerServer, None) => {
-                return Ok(true);
-            }
-            (EmbedderLocality::ThirdParty, None) => return Ok(false),
-            (EmbedderLocality::OwnerServer | EmbedderLocality::ThirdParty, Some(egress)) => egress,
-        };
-        if gate.decide_media(input) != EgressDecision::Allow {
-            return Ok(false);
-        }
-        self.media_rows_may_leave(None, input.source_rows(), &embedder.endpoint())
-    }
-
-    /// Whether every row of `rows` may leave this device now, as `session`'s room reads them,
-    /// or base with none: none is one a device-local world keeps (DEC-0005), or whose world
-    /// cannot be read while one is flagged. Read under the flag lock right before the bytes
-    /// go, and held across no send.
-    pub(super) fn media_rows_may_leave(
-        &self,
-        session: Option<&OffRecordSession<'_>>,
-        rows: &[EntityId],
-        destination: &crate::settings::ReadDestination,
-    ) -> Result<bool> {
-        #[cfg(feature = "sync")]
-        let _acceptance = self.device_only_acceptance();
-        let rtxn = self.store.env.read_txn()?;
-        let flagged = crate::settings::device_local_worlds_for(self, &rtxn, destination)?;
-        if flagged.is_empty() {
-            return Ok(true);
-        }
-        let kept = match session {
-            None => any_kept_in(&self.store, &rtxn, &flagged, rows)?,
-            Some(session) => any_kept_in(&session.read_view()?, &rtxn, &flagged, rows)?,
-        };
-        Ok(!kept)
     }
 
     /// Visits every stored document of `kinds` in id order, image and audio ASSETs first, then
@@ -513,20 +512,6 @@ fn any_kept_in(
     Ok(false)
 }
 
-/// Whether `space`, as `store` reads it, holds `document`'s vector already, a text document's
-/// of its current text.
-pub(super) fn media_held_in(
-    store: &impl ManifestDbs,
-    txn: &heed::RoTxn<'_>,
-    space: &EmbeddingSpace,
-    document: &PendingMedia,
-) -> Result<bool> {
-    match document.text_hash {
-        Some(hash) => Ok(media_text_hash_in_txn(store, txn, space, &document.id)? == Some(hash)),
-        None => has_media_vector_in_txn(store, txn, space, &document.id),
-    }
-}
-
 /// The image or audio document ASSET `id` holds as `store` reads it, when its media kind is one
 /// of `kinds`. `report` counts an ASSET holding no inline image or audio, and one of another
 /// kind; a gone one is `None` uncounted.
@@ -597,28 +582,31 @@ pub(super) fn text_document_of(
     }))
 }
 
-/// Whether record type `entity_type` is one a text-bound space holds as a document.
-pub(super) fn is_text_document_type(entity_type: u8) -> bool {
-    TEXT_DOCUMENT_TYPES.contains(&entity_type)
-}
-
-/// The host's gate a pass with `embedder` reads through: a third-party embedder's must be
-/// there, or the pass is refused as it was before the gate; one on the owner's server reads
-/// through the gate the host gives, or ungated with none (FIX 9830); one on this device reads
-/// ungated.
-pub(super) fn media_egress_for<'a>(
-    embedder: &dyn MediaEmbedder,
-    egress: Option<&'a dyn EgressPredicate>,
-) -> Result<Option<&'a dyn EgressPredicate>> {
-    match embedder.locality() {
-        EmbedderLocality::OnDevice => Ok(None),
-        EmbedderLocality::OwnerServer => Ok(egress),
-        EmbedderLocality::ThirdParty => egress.map(Some).ok_or_else(|| {
-            Error::InvalidConfig(
-                "a third-party media embedder has no egress grant for stored media".into(),
-            )
-        }),
-    }
+/// The published text of the NOTE or caption `id` as a text document of a world's own text
+/// space ([`Vault::published_revision_text_in_txn`]); `report` counts one holding no text to
+/// embed.
+fn world_text_document_of(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    report: &mut MediaEmbedReport,
+) -> Result<Option<PendingMedia>> {
+    let (Some(text), Some(record)) = (
+        vault.published_revision_text_in_txn(txn, &id)?,
+        vault.store.port_entity_record(txn, &id)?,
+    ) else {
+        report.no_media += 1;
+        return Ok(None);
+    };
+    Ok(Some(PendingMedia {
+        id,
+        kind: InputKind::Text,
+        media_type: TEXT_MEDIA_TYPE.to_owned(),
+        text_hash: Some(text_hash(&text)),
+        bytes: text.into_bytes(),
+        learned_at: record.learned_at,
+        source_rows: Some(vec![id]),
+    }))
 }
 
 /// The text a text-bound space embeds for record `id`: what the text index would embed for it
@@ -634,7 +622,7 @@ pub(super) fn text_document_in_txn(
 
 /// The actual current text input and every native row it reads.
 #[cfg(feature = "sync")]
-pub(crate) fn text_vector_sources_in_txn(
+fn text_vector_sources_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
@@ -647,6 +635,56 @@ pub(crate) fn text_vector_sources_in_txn(
             (text_hash(&text), rows)
         }),
     )
+}
+
+/// The input a replicated media vector of record `id` is bound to (census L7-43; ARCH-0023b
+/// "cloud-produced f16 embeddings"): its kind, the hash of its text (zero for an image or
+/// audio, as the stored row keeps it), and every native row that input reads.
+/// - A claim, summary or turn: its current text ([`text_vector_sources_in_txn`]).
+/// - An image or audio ASSET: its own row, which names its bytes by hash, so the row's digest
+///   pins the bytes the vector was made from ([`asset_document_in`] reads them). The bytes must
+///   be held here and be the ones the row names.
+///
+/// `None` for any other record, a text ASSET, and an ASSET whose bytes a repo mark covers: the
+/// model reads that one's masked copy ([`super::repo_projection::asset_document_projected_in`]),
+/// which its row does not pin, so each device embeds its own.
+#[cfg(feature = "sync")]
+pub(crate) fn media_source_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<(InputKind, [u8; 32], Vec<EntityId>)>> {
+    let Some(row) = vault.store.port_entity_record(txn, id)? else {
+        return Ok(None);
+    };
+    match row.entity_type {
+        ENTITY_TYPE_CLAIM | ENTITY_TYPE_SUMMARY | ENTITY_TYPE_TURN => {
+            Ok(text_vector_sources_in_txn(vault, txn, id)?
+                .map(|(hash, rows)| (InputKind::Text, hash, rows)))
+        }
+        ENTITY_TYPE_ASSET => {
+            let mut report = MediaEmbedReport::default();
+            let Some(document) = asset_document_in(
+                vault,
+                &vault.store,
+                txn,
+                *id,
+                &BTreeSet::from(InputKind::ALL),
+                &mut report,
+            )?
+            else {
+                return Ok(None);
+            };
+            let input =
+                crate::origin::secret_projection::index::RepoIndexMarks::read_in_txn(vault, txn)?
+                    .input_in_txn(vault, txn, document.bytes)?;
+            if input.stamp().is_some() {
+                return Ok(None);
+            }
+            Ok(Some((document.kind, [0; 32], vec![*id])))
+        }
+        _ => Ok(None),
+    }
 }
 
 /// [`text_document_in_txn`] read through `store`: base, or a room's view, whose records and
@@ -692,35 +730,18 @@ fn text_row_in(
     )))
 }
 
-/// The UTF-8 content of a text ASSET, shared by both embedding workers: the
-/// bytes of the blob its body names (FIX 9949), `read` reading one stored
-/// row's body by id in the caller's own snapshot.
-pub(super) fn asset_text(
-    body: &[u8],
-    read: impl FnOnce(&EntityId) -> Result<Option<Vec<u8>>>,
-) -> Result<Option<String>> {
-    let Some((mime, bytes)) = crate::memory::asset_media_in(body, read)? else {
-        return Ok(None);
-    };
-    if !mime.starts_with("text/") {
-        return Ok(None);
-    }
-    Ok(String::from_utf8(bytes)
-        .ok()
-        .filter(|text| text.chars().any(|c| !c.is_whitespace() && !c.is_control())))
-}
-
 impl Vault {
-    /// Reuses one batch of the opened device's home's current text media vectors.
-    /// Missing home rows leave the existing local backfill unchanged.
-    pub async fn reuse_home_text_media_vectors(
+    /// Reuses one batch of the opened device's home's current media vectors, of every kind the
+    /// space fills: text, image and audio. Missing home rows leave the existing local backfill
+    /// unchanged.
+    pub async fn reuse_home_media_vectors(
         &self,
         space_id: &str,
         max_items: usize,
     ) -> Result<usize> {
         #[cfg(feature = "sync")]
         {
-            super::space::reuse_home_text_media_vectors(self, space_id, max_items).await
+            super::space::reuse_home_media_vectors(self, space_id, max_items).await
         }
         #[cfg(not(feature = "sync"))]
         {

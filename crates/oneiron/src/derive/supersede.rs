@@ -98,40 +98,41 @@ pub(super) fn stage_in_txn(
     {
         return refuse(vault, txn, context, old, &[SUPERSEDE_REPLACEMENT_UNSETTLED]);
     }
-    let mut savepoint = vault.store.env.nested_write_txn(txn)?;
-    match vault.supersede_claim_in_txn_as(
-        &mut savepoint,
-        &new,
-        &old,
-        context.now,
-        Some(context.stamp.actor),
-    ) {
-        Ok(()) => {
-            savepoint.commit()?;
-            let receipt = allowance_receipt_in_txn(
-                vault,
-                txn,
-                context,
-                Some(old),
-                &[SUPERSEDE_ALLOWED.to_owned()],
-                &allowance,
-            )?;
-            Ok(ItemOutcome::Landed {
-                rows: vec![new, old],
-                approval: None,
-                receipt: Some(receipt),
-            })
+    let mut refused = vec![SUPERSEDE_LIFECYCLE];
+    // Hand queued work to this write's owner (FIX DERIVE-COMMIT-ITEM-SAVEPOINTS-DROP-POSTCOMMIT-WORK).
+    let Some(()) = crate::batch::savepoint_in_txn(vault, txn, |savepoint| {
+        match vault.supersede_claim_in_txn_as(
+            savepoint,
+            &new,
+            &old,
+            context.now,
+            Some(context.stamp.actor),
+        ) {
+            Ok(()) => Ok(Some(())),
+            Err(Error::Gate(GateError::GateWriteRejected { reason_codes, .. })) => {
+                refused = reason_codes;
+                Ok(None)
+            }
+            Err(Error::Claim(_) | Error::InvalidClaimBody(_)) => Ok(None),
+            Err(error) => Err(error),
         }
-        Err(Error::Gate(GateError::GateWriteRejected { reason_codes, .. })) => {
-            savepoint.abort();
-            refuse(vault, txn, context, old, &reason_codes)
-        }
-        Err(Error::Claim(_) | Error::InvalidClaimBody(_)) => {
-            savepoint.abort();
-            refuse(vault, txn, context, old, &[SUPERSEDE_LIFECYCLE])
-        }
-        Err(error) => Err(error),
-    }
+    })?
+    else {
+        return refuse(vault, txn, context, old, &refused);
+    };
+    let receipt = allowance_receipt_in_txn(
+        vault,
+        txn,
+        context,
+        Some(old),
+        &[SUPERSEDE_ALLOWED.to_owned()],
+        &allowance,
+    )?;
+    Ok(ItemOutcome::Landed {
+        rows: vec![new, old],
+        approval: None,
+        receipt: Some(receipt),
+    })
 }
 
 fn refuse(

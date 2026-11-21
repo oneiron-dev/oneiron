@@ -12,10 +12,12 @@ use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
-use oneiron::deletion::{LIFT_AND_ERASE_PROMPT, LIFT_AND_ERASE_TITLE, LiftAndEraseShownState};
+use oneiron::EdgeActorClass;
+use oneiron::deletion::{LIFT_AND_ERASE_PROMPT, LIFT_AND_ERASE_TITLE};
 use oneiron::task_verb::sdk::{
-    EmptyRequest, LegalHoldLiftAndEraseRequest, LegalHoldLiftAndErased, LegalHoldPlaceRequest,
-    LegalHoldWidenRequest,
+    EmptyRequest, LegalHoldLiftAndEraseRequest, LegalHoldPlaceRequest, LegalHoldWidenRequest,
+    OwnerConfirmPreview, OwnerConfirmPreviewRequest, lift_legal_hold_and_erase_as,
+    preview_owner_confirm,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -24,7 +26,7 @@ use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, hooked_owner, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
-use crate::owner::{entity_id, hooked_row};
+use crate::owner::{OwnerError, entity_id, hooked_row, memory_refusal};
 use crate::server::SyncServer;
 
 pub(super) fn owner_table() -> OwnerTable {
@@ -93,7 +95,7 @@ pub(super) fn owner_table() -> OwnerTable {
             OwnerRoute {
                 method: "get",
                 path: "/legal-holds/lift-and-erase/shown-state",
-                summary: "What the one confirm over `records` (comma-separated 32-hex ids) shows now, with `claim_free_partition` when it also releases that partition (FIX 10400): its title and prompt, the records and each standing customer hold on them, read in one snapshot. A client sends it back as the confirm's `shown_state`.",
+                summary: "The shared preview of the one confirm over `records` (comma-separated 32-hex ids), with `claim_free_partition` when it also releases that partition (FIX 10400): what it takes, its classes, and the confirm the confirm call passes back.",
                 row: None,
                 shape: None,
             },
@@ -195,8 +197,9 @@ async fn log(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerRepl
     Ok(Json(events))
 }
 
-/// What a shown-state read names: the records, each as 32 hex, and
-/// whether the confirm also releases the claim-free partition.
+/// What a shown-state read names: the records, each as 32 hex, whether
+/// the confirm also releases the claim-free partition, and the asker's
+/// approved check-in the confirm applies, if any (the confirm binds it).
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ShownStateQuery {
@@ -205,18 +208,22 @@ struct ShownStateQuery {
     records: String,
     #[serde(default)]
     claim_free_partition: bool,
+    /// The `check_in_ref` the confirm call passes, 32 hex.
+    #[serde(default)]
+    check_in_ref: Option<String>,
 }
 
-/// `GET /v1/owner/legal-holds/lift-and-erase/shown-state`: what the one
-/// confirm over `records` shows now: its title and prompt, the records, and
-/// each standing customer hold on them, whole, read in one owner-checked
-/// snapshot (FIX 10400). A remote client confirms with this instead of
-/// building the echo from the hold list itself.
+/// `GET /v1/owner/legal-holds/lift-and-erase/shown-state`: the shared
+/// preview of the one confirm over `records`: what it takes (its title and
+/// prompt, the records, and each standing customer hold on them, whole, read
+/// in one owner-checked snapshot), its classes, and the confirm the confirm
+/// call passes back (FIX 10400). A remote client confirms with this instead
+/// of building the echo from the hold list itself.
 async fn shown_state(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     query: Result<Query<ShownStateQuery>, QueryRejection>,
-) -> OwnerReply<LiftAndEraseShownState> {
+) -> OwnerReply<OwnerConfirmPreview> {
     let owner = owner(&auth, &server)?;
     let query = query_params(query)?;
     let state = blocking(move || {
@@ -226,11 +233,26 @@ async fn shown_state(
             .filter(|record| !record.is_empty())
             .map(|record| entity_id("records", record))
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(server.vault().lift_and_erase_shown_state(
+        let vault = server.vault();
+        let memory = vault.memory(owner.actor_for_read(vault)?, EdgeActorClass::Human);
+        let input = serde_json::to_value(&LegalHoldLiftAndEraseRequest {
+            records,
+            claim_free_partition: query.claim_free_partition,
+            confirm: None,
+            check_in_ref: query.check_in_ref,
+        })
+        .map_err(|_| {
+            OwnerError::Invalid("the lift-and-erase preview input does not encode".to_owned())
+        })?;
+        Ok(preview_owner_confirm(
+            &memory,
             &owner,
-            &records,
-            query.claim_free_partition,
-        )?)
+            OwnerConfirmPreviewRequest {
+                verb: "vault.legal_holds.lift_and_erase".to_owned(),
+                input,
+            },
+        )
+        .map_err(memory_refusal)?)
     })
     .await?;
     Ok(Json(state))
@@ -253,10 +275,13 @@ async fn confirm_copy(
 /// lifts every customer hold on `records` (and on the claim-free partition
 /// with `claim_free_partition`) and erases them; a record a legal order
 /// keeps, or one whose erase waits on its receipt, says so and is not
-/// reported erased. The engine checks the `shown_state` the request carries,
-/// as received: a stale one changes nothing and answers with the current
-/// one, which this route never prepares itself (FIX 1462). A `check_in_ref`
-/// applies an asker's approved check-in for this confirm (2k2).
+/// reported erased. The engine admits the shared `confirm` the request
+/// carries, so a confirm of a state that no longer stands is refused, and
+/// then checks what the confirm shows again inside its own txn: a state that
+/// changed in between changes nothing and answers with the current one,
+/// which this route never prepares itself (FIX 1462). A `check_in_ref`
+/// applies an asker's approved check-in for this confirm (2k2); the preview
+/// names the same one.
 async fn lift_and_erase(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -272,20 +297,7 @@ async fn lift_and_erase(
             "vault.legal_holds.lift_and_erase",
             request,
             |request: LegalHoldLiftAndEraseRequest| {
-                let check_in_ref = request
-                    .check_in_ref
-                    .as_deref()
-                    .map(|id| entity_id("check_in_ref", id))
-                    .transpose()?;
-                Ok(LegalHoldLiftAndErased::from(
-                    vault.confirm_lift_legal_hold_and_erase_with_check_in(
-                        &owner,
-                        &request.records,
-                        request.claim_free_partition,
-                        &request.shown_state,
-                        check_in_ref,
-                    )?,
-                ))
+                lift_legal_hold_and_erase_as(vault, &owner, request).map_err(memory_refusal)
             },
         )
     })

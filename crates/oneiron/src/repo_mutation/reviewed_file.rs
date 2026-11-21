@@ -73,6 +73,7 @@ pub(super) fn require_candidate(
     row: &RepoProposal,
     candidate: &crate::merge_queue::MergeProposal,
     pre_snapshot: RepoForkHash,
+    enqueue_base: Option<&crate::merge_queue::EnqueueBase>,
     repo: &RepoRef,
     snapshot: &StoredRepoSnapshot,
 ) -> Result<()> {
@@ -83,11 +84,20 @@ pub(super) fn require_candidate(
     // a filter's bytes). It stands on the stage's base when the stage's HEAD
     // is its pinned commit; every path it touches is checked against the
     // stage's own entries below (FIX 7065).
-    let same_base = row.pre_action_fork_hash == pre_snapshot
-        || row
-            .run
-            .as_ref()
-            .is_some_and(|stamp| snapshot.head.as_deref() == Some(stamp.base_green.as_str()));
+    let stands_on = |base: RepoForkHash, head: Option<&str>| {
+        row.pre_action_fork_hash == base
+            || row
+                .run
+                .as_ref()
+                .is_some_and(|stamp| head == Some(stamp.base_green.as_str()))
+    };
+    // A later batch of a split enqueue stages on the head the batch it
+    // follows landed: its members stand on the base the enqueue's first
+    // batch staged on, the one they were reviewed on, and every path is
+    // still checked against this stage's entries below
+    // ([MERGE-QUEUE-ENQUEUE-SPLITS-LARGE-BATCH]).
+    let same_base = stands_on(pre_snapshot, snapshot.head.as_deref())
+        || enqueue_base.is_some_and(|base| stands_on(base.pre_snapshot, Some(base.head.as_str())));
     if canonical(&RepoRef::parse(&row.repo)?) != canonical(repo)
         || !same_base
         || row.id.to_hex() != candidate.id

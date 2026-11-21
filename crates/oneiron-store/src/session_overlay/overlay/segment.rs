@@ -85,6 +85,10 @@ impl TxnSegmentGuard {
             ));
         }
         let result = self.overlay.apply_segment(&segment);
+        // The room's values this write kept stay with its rows, or go with
+        // them (REVIEW-10003 round 2).
+        self.overlay
+            .settle_room_secrets(segment.nonce, result.is_ok());
         self.finished = true;
         result
     }
@@ -105,9 +109,11 @@ impl Drop for TxnSegmentGuard {
                     None
                 }
             });
-            // An aborted segment's copies are gone: the charge returns to
+            // An aborted segment's copies are gone, and the room's values it
+            // kept with them (REVIEW-10003 round 2): the charge returns to
             // what the overlay retains (FIX 10104).
-            if aborted.is_some() {
+            if let Some(aborted) = aborted {
+                self.overlay.settle_room_secrets(aborted.nonce, false);
                 drop(aborted);
                 self.overlay.charge_to(self.overlay.retained_with(None, 0));
             }
