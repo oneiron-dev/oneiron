@@ -46,6 +46,7 @@ use crate::world_keys::{WORLD_KIT_ESCROW, derive_guarded, os_fill};
 mod recovery_box_hold;
 pub use recovery_box_hold::{
     NoRecoveryBox, RecoveryBoxCanceller, RecoveryBoxHold, RecoveryBoxHoldPending,
+    RecoveryBoxRelease,
 };
 
 mod kit_only_switch;
