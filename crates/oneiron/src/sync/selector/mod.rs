@@ -62,6 +62,7 @@ pub(crate) const HELD_EDIT_CAUSALITY_KEY: &str = "0";
 mod text_egress;
 // FIX 10161: the tombstones a narrower grant's export carries.
 mod tombstones;
+pub(in crate::sync) use tombstones::device_only_by_capture;
 // FIX 10162: the admission validators that read in the caller's txn.
 #[cfg(feature = "sync")]
 mod validators;
