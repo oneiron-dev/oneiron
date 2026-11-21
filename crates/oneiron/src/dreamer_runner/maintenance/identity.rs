@@ -289,6 +289,24 @@ pub(crate) fn keep_asks_separate_for_test(vault: &Vault, now: u64) -> Result<usi
     })
 }
 
+/// Sends every open ask not sent yet to the person at `now`, as an act-now
+/// decision that abstains sends one: the test door's way to escalate an ask.
+/// Returns how many went.
+#[cfg(oneiron_test_support)]
+pub(crate) fn escalate_asks_for_test(vault: &Vault, now: u64) -> Result<usize> {
+    vault.with_write_txn(|txn| {
+        let open = ASKS.scan(&vault.store, txn)?;
+        let mut sent = 0;
+        for (key, ask) in open {
+            if ask.escalated_at.is_none() {
+                escalate_in_txn(vault, txn, &key, ask, now)?;
+                sent += 1;
+            }
+        }
+        Ok(sent)
+    })
+}
+
 /// The name of a mention an effect may not act on yet: its ask is open, or
 /// it is still uncertain and no saved hint settles it. Provenance that names
 /// no saved mention is unsettled too, with an empty name. Reads only, in the
