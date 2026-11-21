@@ -288,12 +288,6 @@ impl Vault {
     ) -> Result<bool> {
         let closure = self.owner_authority_closure_in_txn(txn, person)?;
         let holds_key = !closure.keys.is_empty();
-        let fold = self.authority_view_readonly_in_txn(txn)?;
-        let holds_binding = fold.actor_bindings.iter().any(|(key, binding)| {
-            binding.status == ActorBindingStatus::Active
-                && (binding.actor_ref == person || closure.signed_bindings.contains(key))
-                && binding.actor_class == ACTOR_CLASS_HUMAN
-        });
-        Ok(holds_key || holds_binding)
+        Ok(holds_key)
     }
 }
