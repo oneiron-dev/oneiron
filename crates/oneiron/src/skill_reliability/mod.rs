@@ -25,7 +25,8 @@ mod resident;
 mod rule_outcome;
 
 pub(crate) use self::amended::{
-    AmendedOutcome, amended_share_in_txn, reconcile_amended_outcomes_in_txn,
+    AmendedOutcome, amended_outcomes_settled_in_txn, amended_share_in_txn,
+    reconcile_amended_outcomes_in_txn,
 };
 pub(crate) use self::callable::{project_callable_receipt_outcome, record_callable_invocation};
 pub(crate) use self::equivalent::redirect_equivalent_subjects_in_txn;
@@ -72,8 +73,6 @@ pub(crate) use self::rule_outcome::{
     withdraw_rule_outcome_in_txn,
 };
 
-// FIX [LIBTEST-QUARANTINE-SKILL-RELIABILITY-TESTS]: the lib test target's type check fails here (37 errors: E0061 x16, E0308 x11, E0277 x8, E0063 x1, E0599 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 
@@ -103,3 +102,21 @@ use rmpv::Value;
 mod archive;
 pub(crate) mod tables;
 pub(crate) use archive::{imported_reliability_body, validate_imported_reliability};
+
+/// The outcome-row decoder (`codec::decode_value`) for the trailing-bytes test door. Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn outcome_value_decode_for_test(raw: &[u8]) -> crate::Result<rmpv::Value> {
+    codec::decode_value(raw)
+}
+
+/// Whether `raw` decodes as a skill-reliability outcome row, for the duplicate-key test door. Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn outcome_row_decodes_for_test(raw: &[u8]) -> bool {
+    <ledger::OutcomeRow as crate::side_table::RawValue>::from_raw(raw).is_ok()
+}
+
+/// The outcome-row schema version, for the duplicate-key test door. Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn outcome_row_schema_version_for_test() -> u64 {
+    SKILL_RELIABILITY_SCHEMA_VERSION
+}

@@ -39,6 +39,81 @@ pub enum BookingCancelRequest {
     },
 }
 
+/// `vault.booking.deposit.refund`'s input (BK-DEPOSIT-OWNER-RETURN-ACT = A):
+/// the booking, by its EVENT's hex entity id. No amount, actor or provider
+/// id: the refund is always the whole held deposit, and the act is the
+/// calling owner's.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BookingDepositRefundRequest {
+    pub event_ref: String,
+}
+
+/// Where a booking's deposit stands after the owner's refund.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BookingDepositRefundState {
+    /// The captured amount is owed back whole; settlement refunds it.
+    RefundDue,
+    /// Nothing was captured; settlement releases the card's authorization.
+    VoidDue,
+    /// The provider refunded the amount.
+    Refunded,
+    /// The authorization was released; nothing was captured.
+    Voided,
+}
+
+/// What `vault.booking.deposit.refund` left. `queued` is true when this call
+/// queued the refund or release, and false when the deposit already owed or
+/// had settled one: a retry queues nothing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BookingDepositRefundReceipt {
+    /// The booking's EVENT, lowercase hex.
+    pub event_ref: String,
+    pub state: BookingDepositRefundState,
+    /// The amount owed back or refunded, in minor units of `currency`; 0 for
+    /// a release.
+    pub amount_minor: u64,
+    /// The deposit terms' currency, frozen at checkout.
+    pub currency: String,
+    pub queued: bool,
+}
+
+/// `vault.booking.deposit.mark_refunded_outside`'s input
+/// (BK-DEPOSIT-FAILED-REFUND-MARK-PAID = B): the booking, by its EVENT's hex
+/// entity id, and the amount the calling host paid the visitor back outside
+/// Stripe, which must be the refund the deposit owes now.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BookingDepositMarkRefundedOutsideRequest {
+    pub event_ref: String,
+    /// The refund owed now, in minor units of the deposit's currency.
+    pub amount_minor: u64,
+    /// The caller's own key for this mark, 1 to 200 bytes: a repeat of the
+    /// call under the same key answers the first mark and records nothing,
+    /// whatever the deposit owes since, so a retried call never marks
+    /// another refund (review round 1 of #10267).
+    pub idempotency_key: String,
+}
+
+/// What `vault.booking.deposit.mark_refunded_outside` recorded: the amount
+/// marked refunded outside Stripe and when. `recorded` is false when the
+/// refund stood marked already: a retry records nothing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BookingDepositMarkRefundedOutsideReceipt {
+    /// The booking's EVENT, lowercase hex.
+    pub event_ref: String,
+    /// The amount marked, in minor units of `currency`.
+    pub amount_minor: u64,
+    /// The deposit terms' currency, frozen at checkout.
+    pub currency: String,
+    /// When the mark was recorded, Unix seconds.
+    pub marked_at: u64,
+    pub recorded: bool,
+}
+
 /// Source-redacted occupancy over an inclusive UTC-seconds window.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]

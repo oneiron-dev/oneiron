@@ -3,7 +3,7 @@
 //! every later turn too. Spans still index the input's own messages; a
 //! context link names one of these turns by id.
 
-use sha2::{Digest, Sha256};
+use oneiron_contracts::fingerprint::LegacyDigest;
 
 use super::types::{EncoderInput, EncoderMessage, EncoderRegister, EncoderTurn, SpeakerRole};
 
@@ -22,25 +22,24 @@ pub(crate) fn register_turn<'a>(input: &'a EncoderInput, turn: &str) -> Option<&
 /// A live input folds nothing here, so it digests as it did before the
 /// register existed.
 pub(super) fn fold_register(
-    hash: &mut Sha256,
+    hash: &mut LegacyDigest,
     input: &EncoderInput,
-    message: impl Fn(&mut Sha256, &EncoderMessage),
+    message: impl Fn(&mut LegacyDigest, &EncoderMessage),
 ) {
     if input.register.is_live() {
         return;
     }
-    hash.update(b"\0register");
-    hash.update((input.following.len() as u64).to_le_bytes());
+    hash.raw(b"\0register").len_u64_le(input.following.len());
     for turn in &input.following {
-        hash.update(turn.turn.as_bytes());
-        hash.update((turn.messages.len() as u64).to_le_bytes());
+        hash.raw(turn.turn.as_bytes())
+            .len_u64_le(turn.messages.len());
         for each in &turn.messages {
             message(hash, each);
         }
     }
-    hash.update(b"\0following-speaker");
+    hash.raw(b"\0following-speaker");
     for turn in &input.following {
-        hash.update(match turn.speaker {
+        hash.raw(match turn.speaker {
             None => b"-",
             Some(SpeakerRole::User) => b"A",
             Some(SpeakerRole::Companion) => b"B",
@@ -51,7 +50,7 @@ pub(super) fn fold_register(
     if let EncoderRegister::Conversation(reach) = input.register
         && !reach.is_whole()
     {
-        hash.update(b"\0reach");
-        hash.update([u8::from(reach.earlier_cut), u8::from(reach.later_cut)]);
+        hash.raw(b"\0reach")
+            .raw(&[u8::from(reach.earlier_cut), u8::from(reach.later_cut)]);
     }
 }

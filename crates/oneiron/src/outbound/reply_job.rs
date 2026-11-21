@@ -200,8 +200,14 @@ impl Vault {
     /// lease of its own.
     ///
     /// # Errors
-    /// The queue write fails.
+    /// The restored-copy check or queue write fails.
     pub fn reclaim_connector_reply_jobs(&self, now: u64) -> Result<()> {
+        // A copy restored and not joined keeps its reply leases (row
+        // RESTORED-UNJOINED-STARTS-NO-WORK). Reclaim waits; the first pass
+        // after the join returns expired leases to the queue.
+        if self.restored_unjoined()? {
+            return Ok(());
+        }
         AttemptQueue::new(self).cleanup_kind_leases(
             CONNECTOR_REPLY_JOB_KIND,
             CleanupAttemptLeases {

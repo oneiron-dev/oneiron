@@ -11,6 +11,9 @@
 //!   for that exact erase on their own proof: it is spent in the erase's
 //!   writer, the answer names the asker as requester, and it applies once. A
 //!   check-in for another effect erases nothing and stays unspent.
+//! - Each erase takes the owner's shared confirm (L8-49): the call passes
+//!   back the confirm `vault.owner_confirm.preview` returned for it, and the
+//!   preview names the same `check_in_ref`.
 //!
 //! The ask is opened here through the check-in test doors on a chain whose
 //! Owner rung is the vault owner; `check_in_destructive_effects` drives the
@@ -28,25 +31,56 @@
 #[path = "check_in/owner_apply_fixture.rs"]
 mod owner_apply_fixture;
 
-use oneiron::EntityId;
 use oneiron::check_in::{ActClass, outbound_call_request_erase_effect_digest};
-use oneiron::verbs::{OutboundCallRequestEraseRequest, erase_outbound_call_request_as_owner};
+use oneiron::consent::AuthenticatedOwner;
+use oneiron::memory::Memory;
+use oneiron::verbs::{
+    OutboundCallRequestEraseRequest, OwnerConfirmPreviewRequest,
+    erase_outbound_call_request_as_owner, preview_owner_confirm,
+};
+use oneiron::{EdgeActorClass, EntityId};
 use owner_apply_fixture::{approved, owner_decision, rooted, spent};
 
 const OUTBOUND_ERASE: &str = "vault.outbound_calls.request.erase";
 
+/// The confirm of the owner's shared preview of `verb` on `input` (L8-49).
+fn previewed(
+    memory: &Memory<'_>,
+    owner_proof: &AuthenticatedOwner,
+    verb: &str,
+    input: &impl serde::Serialize,
+) -> String {
+    preview_owner_confirm(
+        memory,
+        owner_proof,
+        OwnerConfirmPreviewRequest {
+            verb: verb.to_owned(),
+            input: serde_json::to_value(input).expect("the erase input encodes"),
+        },
+    )
+    .expect("the owner previews the erase")
+    .confirm
+}
+
 #[test]
 fn the_owner_applies_an_approved_outbound_request_erase_once() {
     let (_dir, vault, owner, owner_proof) = rooted();
+    let memory = vault.memory(owner, EdgeActorClass::Human);
     let attempt = EntityId::now();
     let erase = |call_seq, check_in_ref: Option<EntityId>| {
+        let input = OutboundCallRequestEraseRequest {
+            attempt,
+            call_seq,
+            confirm: None,
+            check_in_ref: check_in_ref.map(|id| id.to_hex()),
+        };
+        let confirm = previewed(&memory, &owner_proof, OUTBOUND_ERASE, &input);
         erase_outbound_call_request_as_owner(
             &vault,
             &owner_proof,
             OutboundCallRequestEraseRequest {
-                attempt,
-                call_seq,
-                check_in_ref: check_in_ref.map(|id| id.to_hex()),
+                confirm: Some(confirm),
+                ..input
             },
         )
     };

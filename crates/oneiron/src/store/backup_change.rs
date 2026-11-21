@@ -121,8 +121,8 @@ pub(crate) fn backup_content_txn_in_txn(dbs: &impl SideTableDbs, txn: &RoTxn<'_>
 /// The class of a host's `sync_state` write of `keys`: telemetry when there
 /// is at least one and every one is a declared telemetry row (a wire
 /// window's counters, a wire question, a `[limits]` question, the managed
-/// ledger's revision); content otherwise. An unsupported key makes the
-/// write content, never a refusal.
+/// ledger's revision, the owner key changes reported); content otherwise. An
+/// unsupported key makes the write content, never a refusal.
 #[cfg(feature = "sync")]
 pub(crate) fn telemetry_batch_class<K: AsRef<str>>(
     keys: impl IntoIterator<Item = K>,
@@ -135,6 +135,7 @@ pub(crate) fn telemetry_batch_class<K: AsRef<str>>(
     let telemetry = |key: &str| {
         let key = key.as_bytes();
         key == side_table::MANAGED_LEDGER_REV.prefix
+            || key == side_table::OWNER_KEY_CHANGE_REPORTED.prefix
             || families
                 .iter()
                 .any(|prefix| key.len() > prefix.len() && key.starts_with(prefix))

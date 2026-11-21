@@ -14,6 +14,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
+use crate::authority::OwnerProofGround;
 use crate::batch::export::archive_side_install::{
     ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
 };
@@ -26,6 +27,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
+use crate::world_keys::{OwnerActImportance, owner_presence_reasons};
 
 /// The owner's board layout settings. Absent reads empty.
 const BOARD_LAYOUT_SETTINGS: SideTable<(), BoardLayoutSettings, Named> =
@@ -222,6 +224,11 @@ impl Vault {
         override_layout: Option<BoardLayout>,
         agent_override: Option<(EntityId, Option<BoardLayout>)>,
     ) -> Result<BoardLayoutSettings> {
+        let witness = self.owner_presence(
+            OwnerActImportance::Ordinary,
+            owner_presence_reasons::BOARD_LAYOUT,
+        )?;
+        let ground = OwnerProofGround::witnessed(&witness);
         self.with_write_txn_grouped(|txn| {
             let actor = owner.revalidate_in_txn(self, txn)?;
             let prior = board_layout_settings_in_txn(self, txn)?;
@@ -272,7 +279,7 @@ impl Vault {
                 )?;
                 // The signed record goes last, best effort (FIX 4624).
                 if let Some(act) = signed {
-                    self.record_policy_setting_op_in_txn(txn, act);
+                    self.record_policy_setting_op_in_txn(txn, Some(&ground), act);
                 }
             }
             Ok(settings)

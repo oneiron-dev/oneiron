@@ -9,7 +9,8 @@ name: CI
 #     when `oneiron` changed); cargo-deny only when Cargo.lock or deny.toml changed; tooling tests only when scripts/ or
 #     .github/ changed. Every run prints the suite's test count; on a PR, growth needs a stated reason (L8-01).
 #   * `Test`: nextest for the touched packages; for `oneiron`, the lib tests of the touched modules, and the
-#     integration tests only when crates/oneiron/tests changed. No doctests on PRs.
+#     integration tests only when crates/oneiron/tests changed. No doctests on PRs. The vendored stemma fork's own
+#     unit tests (scripts/docedit/run_stemma_fork_unit_tests.sh) only when the fork changed.
 #   * `Test (featureless)`: the shared-process featureless lane (`cargo test`) for the touched modules.
 # The code map is never checked here: .github/workflows/codemap.yml regenerates it on main after every push.
 # The full gate runs once a night (schedule, 03:00 JST), on manual dispatch, and whenever a build file changes
@@ -73,6 +74,7 @@ jobs:
       it: ${{ steps.scope.outputs.it }}
       deny: ${{ steps.scope.outputs.deny }}
       pytools: ${{ steps.scope.outputs.pytools }}
+      stemma_fork: ${{ steps.scope.outputs.stemma_fork }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -275,6 +277,7 @@ jobs:
       SCOPE_ONEIRON: ${{ needs.changes.outputs.oneiron }}
       SCOPE_MODULES: ${{ needs.changes.outputs.modules }}
       SCOPE_IT: ${{ needs.changes.outputs.it }}
+      SCOPE_STEMMA_FORK: ${{ needs.changes.outputs.stemma_fork }}
     steps:
       - uses: actions/checkout@v4
         with:

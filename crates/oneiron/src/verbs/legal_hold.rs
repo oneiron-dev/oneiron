@@ -9,6 +9,7 @@ use base64::Engine as _;
 use oneiron_crypto::HybridPublicKey;
 use serde::{Deserialize, Serialize};
 
+use super::owner_confirm;
 use crate::consent::AuthenticatedOwner;
 use crate::deletion::{LegalHold, LegalHoldEvent, LegalHoldProduction};
 use crate::entity_id::bytes_to_hex_lower;
@@ -19,11 +20,16 @@ use crate::{EntityId, Vault};
 pub use oneiron_verb_wire::verbs::legal_hold::{LegalHoldPlaceRequest, LegalHoldWidenRequest};
 
 /// `vault.legal_holds.lift`'s input: the owner's customer hold to lift. The
-/// lift destroys its sealed copy; nothing in the vault is erased by it.
+/// lift destroys its sealed copy; nothing in the vault is erased by it. It
+/// is one-way, so it takes the owner's confirm of its preview (DEC-0006
+/// #undo-class).
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct LegalHoldLiftRequest {
     pub hold_id: EntityId,
+    /// The confirm `vault.owner_confirm.preview` returned for this call.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confirm: Option<String>,
 }
 
 /// `vault.legal_holds.produce`'s input: the standing customer hold to
@@ -101,13 +107,32 @@ pub fn widen_legal_hold_as(
     Ok(vault.widen_legal_hold(owner, input.hold_id, input.targets)?)
 }
 
+/// What `vault.legal_holds.lift` takes, as its owner confirm shows it: the
+/// standing customer hold `hold_id`, whole, as it stands now. A widen after
+/// the preview changes it, so that confirm no longer admits the lift.
+pub(crate) fn lift_legal_hold_view(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    hold_id: &EntityId,
+) -> MemoryResult<LegalHold> {
+    read_legal_holds(vault, owner)?
+        .into_iter()
+        .find(|hold| hold.hold_id == *hold_id && hold.stands())
+        .ok_or_else(|| MemoryError::bad_request("no standing legal hold has this hold_id"))
+}
+
 /// `vault.legal_holds.lift`: lifts the owner's customer hold and destroys
-/// its sealed copy. Nothing in the vault is erased by it.
+/// its sealed copy. Nothing in the vault is erased by it. The lift is
+/// one-way: it acts only on the owner's live confirm of the hold as it
+/// stands now (DEC-0006 #undo-class, ONEWAY-CONFIRM = A).
 pub fn lift_legal_hold_as(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: LegalHoldLiftRequest,
 ) -> MemoryResult<LegalHold> {
+    let ask = owner_confirm::asked("vault.legal_holds.lift", &input)?;
+    let shown = lift_legal_hold_view(vault, owner, &input.hold_id)?;
+    owner_confirm::admit(vault, owner, ask, &shown)?;
     Ok(vault.lift_legal_hold(owner, input.hold_id)?)
 }
 

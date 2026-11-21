@@ -121,6 +121,9 @@ const ERASERS: &[EntitySideRowEraser] = &[
     },
     // FIX 15414: every mail claim re-check naming an erased TURN, MESSAGE or claim.
     |write, txn, id| crate::mail_pack::erase_claim_recheck_ids_in_txn(write.store, txn, id),
+    // Fix list row 17645: a drafted reply with files, its retained message, plan and Ask,
+    // when a row it depends on is erased.
+    crate::mail_pack::erase_reply_attachment_dependents_in_txn,
     // FIX 11815: an agent hook's proposal, by the binding claim it widens.
     |write, txn, id| {
         crate::store::pack_hook_proposal::erase_hook_proposal_in_txn(write.store, txn, id)
@@ -132,9 +135,16 @@ const ERASERS: &[EntitySideRowEraser] = &[
     // FIX 12113: which machine wrote a MESSAGE row: a digest of its bytes.
     #[cfg(feature = "sync")]
     |write, txn, id| crate::sync::forget_message_writer_in_txn(write.store, txn, id),
+    // REVIEW-9881: the digests of the carriers a sync ingest dropped for a limited record.
+    #[cfg(feature = "sync")]
+    |write, txn, id| crate::sync::forget_dropped_carriers_in_txn(write.store, txn, id),
     // FIX 7998: retained federation and maintenance copies of the row.
     #[cfg(feature = "sync")]
     |write, txn, id| erase_retained_copies_in_txn(write.store, txn, id),
+    // PREDICTED-BOARD-SEED-SIGNAL: the home's touch-log rows naming the row, a board's report
+    // of it among them.
+    #[cfg(feature = "sync")]
+    |write, txn, id| crate::sync::residence::erase_machine_touches_in_txn(write.store, txn, id),
 ];
 
 fn erase_stream_seeds_in_txn(

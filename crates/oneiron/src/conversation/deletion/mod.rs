@@ -549,6 +549,7 @@ impl Vault {
                     actor,
                     DeleteReason::GdprDelete,
                     Some(person),
+                    None,
                 )?);
             }
             if ids.len() < ERASE_PAGE {
@@ -590,6 +591,7 @@ impl Vault {
                     actor,
                     DeleteReason::GdprDelete,
                     Some(person),
+                    None,
                 )?);
             }
             if ids.len() < ERASE_PAGE {

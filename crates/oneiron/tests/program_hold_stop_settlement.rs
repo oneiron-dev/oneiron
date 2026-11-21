@@ -13,7 +13,9 @@ use oneiron::dreamer_runner::{
     ArmTurnProgram, DreamerParkedAttemptRecord, ProgramHoldReleaseAction, ProgramTrigger,
     ReleaseTurnProgramHoldRequest, ReserveDreamerBudget,
 };
+use oneiron::housekeeping::HousekeepingBudget;
 use oneiron::llm;
+use oneiron::schedule::JobOutcome;
 use oneiron::skill::{
     SkillCallContract, SkillLifecycle, SkillRecord, SkillRole, canonical_skill_tree_hash,
 };
@@ -27,6 +29,9 @@ use oneiron_store::ports::manual_clock::ManualClock;
 
 /// The fixture's recording clock and the one-shot timer's due time.
 const T0: u64 = 4_000_000_000;
+
+/// The job an actor's timer programs arm (stage 5b-3).
+const TIMER_JOB: &str = "dreamer_runner.program_timer";
 
 fn block_on_ready<F: Future>(future: F) -> F::Output {
     let waker = Waker::noop();
@@ -161,7 +166,14 @@ fn held_program(vault: &Vault) -> Result<(AttemptId, DreamerParkedAttemptRecord)
             every_secs: 0,
         },
     );
-    assert_eq!(vault.release_timer_program_wakes(T0)?, 1);
+    // The clock stands at T0: one run of the actor's timer job records the wake it owes.
+    let timer_runs = vault
+        .run_due(HousekeepingBudget::unbounded())?
+        .runs
+        .iter()
+        .filter(|run| run.job == TIMER_JOB && run.outcome == JobOutcome::Done)
+        .count();
+    assert_eq!(timer_runs, 1);
     let drain = vault.wake_turn_programs(T0)?;
     assert_eq!((drain.admitted, drain.refused, drain.held), (1, 0, 0));
     let (attempt, parked) = program_doors::hold_admitted_program_try(vault, registration, T0)?;

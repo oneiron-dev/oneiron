@@ -32,6 +32,7 @@
 //! admits a granted send in production.
 //!
 //! `cargo test --locked -p oneiron --all-features --test outbound_undo_send`.
+//! A sender's ack dismisses an undone send (row CONNECTOR-OUTCOME-ACK-SETTLEMENT-UNSTAMPED).
 
 use std::path::Path;
 use std::sync::Arc;
@@ -398,6 +399,49 @@ fn a_set_length_holds_an_agent_send_and_undo_cancels_it() {
     assert_eq!(
         held[0]["first_send_hint"], false,
         "only the first send carries the hint"
+    );
+}
+
+/// An undone send has only a cancelled attempt, but its Failed TASK is still
+/// dismissed by the sending agent's acknowledgement.
+#[test]
+fn an_undone_send_is_dismissed_by_its_senders_ack() {
+    let fx = fixture();
+    fx.set(json!({"all_channels_secs": 60}));
+    let send = fx.agent_send(CHANNEL, "undone-ack:1");
+    let held = fx.held();
+    assert_eq!(held.len(), 1, "the owner sees the held send");
+    let task = task_ref(&held[0]["task_ref"]);
+
+    fx.clock.set(NOW + 30);
+    fx.owner_call(UNDO, json!({"task_ref": task.to_hex()}))
+        .expect("the owner takes the send back inside its window");
+    assert_eq!(
+        fx.attempt(send).state,
+        AttemptState::Cancelled,
+        "the attempt is cancelled"
+    );
+
+    fx.clock.set(NOW + 31);
+    let sender = fx.vault.memory(fx.agent, EdgeActorClass::Agent);
+    let rows = sender.describe_rows().expect("the sender reads its board");
+    let row = rows
+        .intents
+        .iter()
+        .find(|row| row.id == task.to_hex())
+        .expect("the undone TASK is listed before acknowledgement");
+    assert_eq!(row.status, oneiron::context_board::TaskBoardStatus::Failed);
+
+    let receipt = sender.tasks_update(task).expect("the sender acknowledges");
+    assert!(receipt.acked, "the undone send is dismissed: {receipt:?}");
+    assert!(
+        sender
+            .describe_rows()
+            .expect("the sender reads after acknowledgement")
+            .intents
+            .iter()
+            .all(|row| row.id != task.to_hex()),
+        "the undone TASK is no longer listed"
     );
 }
 

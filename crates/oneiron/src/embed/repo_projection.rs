@@ -19,6 +19,7 @@
 use std::collections::BTreeSet;
 
 use heed::{RoTxn, RwTxn};
+use oneiron_contracts::fingerprint::ContentHash;
 
 mod derived;
 mod session;
@@ -207,7 +208,7 @@ pub(super) fn media_copy_hash_in(
     // the placeholder's bytes.
     Ok(Some(match input.stamp() {
         Some(stamp) => stamp.copy_blake3,
-        None => *blake3::hash(&input.into_bytes()).as_bytes(),
+        None => *ContentHash::of(&input.into_bytes()).as_bytes(),
     }))
 }
 
@@ -357,7 +358,7 @@ pub(crate) fn repo_envelope_copies_in_txn(
             }
             _ => continue,
         };
-        if bytes.is_some_and(|bytes| sources.contains(blake3::hash(&bytes).as_bytes())) {
+        if bytes.is_some_and(|bytes| sources.contains(ContentHash::of(&bytes).as_bytes())) {
             copies.push(id);
         }
     }

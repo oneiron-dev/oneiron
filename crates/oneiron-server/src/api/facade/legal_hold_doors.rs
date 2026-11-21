@@ -10,6 +10,7 @@
 use std::sync::Arc;
 
 use oneiron::EntityId;
+use oneiron::authority::OwnerOrDelegate;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::deletion::{LegalHold, LegalHoldEvent, LegalHoldTarget};
 use oneiron::memory::{MemoryResult, ProducerRows};
@@ -20,6 +21,7 @@ use oneiron::task_verb::sdk::{
 
 use super::clock_ingress;
 use super::host_doors::support::{Listed, internal, off_runtime_listing, refused};
+use super::owner_binding::OwnerDoorCaller;
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
@@ -66,6 +68,43 @@ pub(super) async fn as_owner_listing<T: Send + 'static>(
     off_runtime_listing(verb, move |producers| act(&*server, &owner, producers)).await
 }
 
+/// `act` off the runtime, as the vault owner or as the owner's delegate:
+/// an owner-grade credential takes today's owner proof path, unchanged; an
+/// agent credential takes the delegate path once the host preflight, its
+/// actor binding and its credential's liveness pass. Any other caller gets
+/// today's owner refusal. The engine admits the delegate in the act's own
+/// transaction; members are never let in.
+pub(super) async fn as_owner_or_delegate<T: Send + 'static>(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    verb: &'static str,
+    act: impl FnOnce(&SyncServer, OwnerOrDelegate<'_>) -> MemoryResult<T> + Send + 'static,
+) -> MemoryResult<T> {
+    let caller = super::owner_binding::owner_door_caller(server, auth, verb)?;
+    let server = Arc::clone(server);
+    clock_ingress::run_blocking(move || match caller {
+        OwnerDoorCaller::Owner(owner) => act(&*server, OwnerOrDelegate::Owner(&owner)),
+        OwnerDoorCaller::Delegate(agent) => act(&*server, OwnerOrDelegate::Delegate(agent)),
+    })
+    .await
+    .map_err(|_| internal(verb))?
+}
+
+/// [`as_owner_or_delegate`] for a door whose answer derives from no row but
+/// those it names (`host_door_lists`): beside its answer come the rows
+/// `named` reads off it, as the owner door names them; a refusal lists none.
+pub(super) async fn as_owner_or_delegate_naming<T: Send + 'static>(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    verb: &'static str,
+    act: impl FnOnce(&SyncServer, OwnerOrDelegate<'_>) -> MemoryResult<T> + Send + 'static,
+    named: impl FnOnce(&T) -> Vec<EntityId>,
+) -> Listed<T> {
+    let answer = as_owner_or_delegate(server, auth, verb, act).await;
+    let rows = answer.as_ref().map_or_else(|_| Vec::new(), named);
+    (answer, rows)
+}
+
 /// [`as_owner`] for a door whose answer derives from no row but those it
 /// names (`host_door_lists`): its proof, its input, side tables and the
 /// authority log, which hold no row. Beside its answer come the rows
@@ -84,7 +123,7 @@ pub(super) async fn as_owner_naming<T: Send + 'static>(
 
 /// The records a hold's targets name: a claim's partition names its claim,
 /// the claim-free partition none.
-fn hold_targets(targets: &[LegalHoldTarget]) -> impl Iterator<Item = EntityId> + '_ {
+pub(super) fn hold_targets(targets: &[LegalHoldTarget]) -> impl Iterator<Item = EntityId> + '_ {
     targets.iter().filter_map(LegalHoldTarget::id)
 }
 

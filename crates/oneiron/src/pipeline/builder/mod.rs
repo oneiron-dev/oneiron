@@ -72,6 +72,10 @@ pub struct PipelineBuilder<'a> {
     pub(super) authority_filter: Option<crate::gate::ResolvedRetrievalFilter>,
     /// Only actor-scoped callers may nominate private diary NOTEs in a text channel.
     pub(super) scoped_note_reader: Option<crate::claim::ScopedReadActorKey>,
+    /// The scoped read whose refusals with no count the run's BM25
+    /// statistics honour, in place of its reader key's world refusals
+    /// ([`Self::statistics_read`]).
+    pub(super) statistics_read: Option<&'a crate::claim::ScopedRead<'a>>,
     /// Where the run's rows go: off this device or not, and each machine a
     /// scoped reader's connection proved (mesh PR2b); see
     /// [`Self::for_destination`].
@@ -182,6 +186,7 @@ impl<'a> PipelineBuilder<'a> {
             criticality: None,
             authority_filter: None,
             scoped_note_reader: None,
+            statistics_read: None,
             destination: crate::settings::ReadDestination::on_device(),
             since_filter: None,
             occurred_range: None,
@@ -323,6 +328,25 @@ impl<'a> PipelineBuilder<'a> {
         self.destination.meet(key.destination());
         self.scoped_note_reader = Some(key);
         self
+    }
+
+    /// Scores for `read`, whose admission the caller installs: no row
+    /// `read` refuses and counts nowhere counts in the run's BM25
+    /// statistics, a world's refusal included
+    /// ([`crate::claim::ScopedRead::withheld_row_test_in`]; FIX
+    /// SCOPED-BM25-DF-COUNTS-NON-WORLD-REFUSED-POSTINGS). It changes no
+    /// candidate the run admits, and it takes the place of the reader key's
+    /// world refusals ([`Self::statistics_reader_key`]).
+    pub(crate) fn statistics_read(mut self, read: &'a crate::claim::ScopedRead<'a>) -> Self {
+        self.statistics_read = Some(read);
+        self
+    }
+
+    /// The reader whose world refusals the run's BM25 statistics honour
+    /// when no [`Self::statistics_read`] is set: its scoped note reader
+    /// (FIX WORLD-SCOPE-BM25-DF-COUNTS-HIDDEN-POSTINGS).
+    pub(super) fn statistics_reader_key(&self) -> Option<&crate::claim::ScopedReadActorKey> {
+        self.scoped_note_reader.as_ref()
     }
 
     /// Reads for a caller whose rows go to `destination`: no candidate a

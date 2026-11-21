@@ -146,10 +146,13 @@ fn v3_bytes() -> Vec<u8> {
 fn reattach_fixture(vault: &Vault) -> (EntityId, EntityId) {
     let (_, actor) = put_actor(vault, 10);
     let artifact = put_artifact(vault, "notes.txt", TEXT_MIME, &v1_bytes(), actor);
+    // Version 2 lands before the thread opens. A text/plain append re-anchors
+    // the live threads itself (FIX 7905), so a thread opened first would be
+    // drifted by the append and the 1 -> 2 sweep below would find nothing.
+    assert_eq!(upload(vault, &artifact, actor, &v2_bytes(), 11), 2);
     let locator = Locator::text(7, 19).expect("text locator");
     let thread = open_thread(vault, artifact, 1, &locator, actor);
     let thread_id = thread.thread_id;
-    assert_eq!(upload(vault, &artifact, actor, &v2_bytes(), 12), 2);
     let summary = sweep(vault, &artifact, 1, 2, &[], actor, 13);
     assert_eq!(summary.drifted.len(), 1, "{summary:?}");
     assert!(summary.remapped.is_empty(), "{summary:?}");

@@ -234,6 +234,7 @@ impl Vault {
         self.load_signing_for_revoke()?;
         let (settled, carried) = self.with_write_txn_grouped(|txn| {
             let actor = live_owner_in_txn(self, owner, txn, "only the vault owner rules on it")?;
+            let owner_authored = owner.owner_answer_in_txn(self, txn)?;
             let mut found = Located::find_in_txn(&self.store, txn, handle)?;
             found.refuse_ruled()?;
             let place = found.key().place.clone();
@@ -278,13 +279,22 @@ impl Vault {
             } else if place == "claim" {
                 restore_claim_in_txn(self, txn, &found.record, &found.handle, &value)?;
             } else if let Some(field) = field {
-                restore_text_in_txn(self, txn, &found.record, field, &found.handle, &value)?;
+                restore_text_in_txn(
+                    self,
+                    txn,
+                    &found.record,
+                    field,
+                    &found.handle,
+                    &value,
+                    actor,
+                )?;
             } else if place == "body" {
                 restore_body_in_txn(self, txn, &found.record, &found.handle, &value)?;
             }
             // The ruling's surface is where the request reached this
             // install: audit only.
-            let carried = self.carry_custody_revoke_in_txn(txn, actor, surface, &rec.name, at)?;
+            let author = (actor, owner_authored.as_ref());
+            let carried = self.carry_custody_revoke_in_txn(txn, author, surface, &rec.name, at)?;
             Ok((settled, carried))
         })?;
         self.mirror_custody_change(&carried);
@@ -663,8 +673,11 @@ fn restore_body_in_txn(
 /// back where the mask left `handle`, through the batch door's text op as the
 /// lift sweep writes it: the text its live revision staged for idle
 /// publication when there is one, else the text it was indexed with (FIX
-/// 2649). The ruling already stands, so the write door reads the value as no
-/// hit.
+/// 2649). A NOTE's body and title live in its document, which every NOTE
+/// read serves: the value goes back there as an edit by `actor`, the person
+/// whose ruling it is, and the document's persist indexes it again (FIX
+/// L6-03-NOTE-RULING-KEEPS-DOC-HANDLE). The ruling already stands, so the
+/// write door reads the value as no hit.
 fn restore_text_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
@@ -672,7 +685,16 @@ fn restore_text_in_txn(
     field: &str,
     handle: &str,
     value: &[u8],
+    actor: EntityId,
 ) -> Result<()> {
+    let text_form = format!("{HANDLE_TEXT_OPEN}{handle}]");
+    // A NOTE's texts first: a pending fork's head, which a key found in the
+    // fork names, has no entity row (NOTE-PROPOSAL-FORK-RULING-KEEPS-HANDLE).
+    if crate::note::restore_found_key_text_in_txn(
+        vault, txn, *record, field, &text_form, value, actor,
+    )? {
+        return Ok(());
+    }
     if !live_entity_row_in_txn(&vault.store, txn, record)?.is_live() {
         return Ok(());
     }
@@ -682,7 +704,6 @@ fn restore_text_in_txn(
             .get_lenient(&vault.store, txn, record)?
             .unwrap_or_default(),
     };
-    let text_form = format!("{HANDLE_TEXT_OPEN}{handle}]");
     let Some((_, text)) = fields
         .iter_mut()
         .find(|(name, text)| name == field && text.contains(&text_form))

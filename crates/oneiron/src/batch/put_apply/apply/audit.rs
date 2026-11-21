@@ -169,6 +169,11 @@ pub(super) fn audit_and_stage_body(
         row_version,
         data,
     )?;
+    // The owner's revision of a held MACHINE claim is now the claim's live
+    // revision: the amended approval it recorded measures its Δ to it.
+    if let Some(amendment) = dispatch.owner_revision_amendment.as_ref() {
+        crate::gate::record_owner_revision_amendment_in_txn(store, wtxn, &fixed.id, amendment)?;
+    }
     // FIX 4817: the row's new revision withdraws, in this commit, each
     // self-written summary that wore the row as a home part at another one.
     crate::ports::withdraw_changed_home_dependents_in_txn(write, wtxn, &fixed.id)?;

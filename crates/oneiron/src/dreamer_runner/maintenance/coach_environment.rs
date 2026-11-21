@@ -13,6 +13,7 @@ use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_ACCESS_GRANT;
 use crate::self_heal::HealEvidenceContext;
 use crate::{EntityId, Error, Result, Vault, WriteEnvelope};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use serde_json::{Value, json};
 
 /// One real grant belonging to the failed case's agent, including terminal grants.
@@ -66,7 +67,7 @@ fn target_in_txn(
     let Some(grant) = decode_live_access_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])? else {
         return Ok(None);
     };
-    let terms_digest = *blake3::hash(&encode_access_grant_body(&grant)?).as_bytes();
+    let terms_digest = grant_terms_digest(&encode_access_grant_body(&grant)?);
     Ok(Some(EnvironmentGrantTarget {
         grant_ref,
         grant,
@@ -209,4 +210,17 @@ pub(super) fn land_in_txn(
         diagnosis_ref: case.evidence_ref.clone(),
     };
     Ok(json!({ "route": route }))
+}
+
+/// The digest of a grant's native terms, stored in the proposal and compared
+/// before landing (K, PLAN-UC-04 stage 7).
+fn grant_terms_digest(encoded: &[u8]) -> [u8; 32] {
+    let mut digest = LegacyDigest::new(purposes::dreamer_runner::ENVIRONMENT_GRANT_TERMS);
+    digest.raw(encoded);
+    digest.finish()
+}
+
+#[cfg(oneiron_test_support)]
+pub(crate) fn grant_terms_digest_for_test(encoded: &[u8]) -> [u8; 32] {
+    grant_terms_digest(encoded)
 }
