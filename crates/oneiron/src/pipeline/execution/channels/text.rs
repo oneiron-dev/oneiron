@@ -3,7 +3,6 @@
 use super::admit::{AdmitSignal, ChannelAccumulator};
 use super::turn_fold;
 use crate::bm25::{Bm25Config, HiddenRowTest};
-use crate::disclosure::DisclosureContext;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::pipeline::builder::PipelineBuilder;
@@ -442,11 +441,14 @@ impl PipelineBuilder<'_> {
         mut prefix_probe_claim_gate: ClaimStatusGateCache,
         (metadata_cache, claim_gate): (&mut EntityMetadataCache, &mut ClaimStatusGateCache),
     ) -> Result<(Vec<ScoredEntity>, bool, Vec<EntityId>)> {
-        let scoped_text_limit = self.text_channel_limit(if inputs.overrides.widen_channel_limits {
+        // A HyDE retry asks for more rows than the first attempt; a strict
+        // scope's cut below keeps that bound too (REVIEW-10311 round 1).
+        let requested = if inputs.overrides.widen_channel_limits {
             retry_channel_limit(limit)
         } else {
             limit
-        });
+        };
+        let scoped_text_limit = self.text_channel_limit(requested);
         let text_channel_limit = if inputs.recency.is_some() {
             self.text_channel_limit(
                 scoped_text_limit.max(limit.saturating_mul(PER_SCAN_CAP_FACTOR)),
@@ -458,6 +460,8 @@ impl PipelineBuilder<'_> {
         // The bound below admits turns as the fold does, in caches of its
         // own: the scan closure holds the run's.
         let mut fold_claim_gate =
+            prefix_probe_claim_gate.fresh(inputs.filter_config.authority_filter.include_stale);
+        let withheld_gate =
             prefix_probe_claim_gate.fresh(inputs.filter_config.authority_filter.include_stale);
         let mut scan_metadata = EntityMetadataCache::default();
         let stage_metadata = inputs.scan_metadata(self, metadata_cache, &mut scan_metadata);
@@ -513,7 +517,7 @@ impl PipelineBuilder<'_> {
                             .as_deref_mut()
                             .map(|hidden| hidden as &mut dyn FnMut(&EntityId) -> Result<bool>),
                     },
-                    (inputs.filter_config.disclosure, &mut withheld),
+                    ((inputs.filter_config, &withheld_gate), &mut withheld),
                 )?
             } else {
                 self.vault.text_scoped_in_txn(
@@ -560,13 +564,13 @@ impl PipelineBuilder<'_> {
             fetch_limit = fetch_limit.saturating_mul(2).min(fold_cap);
         };
         if self.candidate_filter.is_none()
-            && text_channel_limit > limit
+            && text_channel_limit > requested
             && inputs.text_scope_widening_active
         {
             let scoped_result_limit = if inputs.recency.is_some() {
-                limit.saturating_mul(PER_SCAN_CAP_FACTOR)
+                requested.max(limit.saturating_mul(PER_SCAN_CAP_FACTOR))
             } else {
-                limit
+                requested
             };
             let before_truncate = text_results.len();
             self.truncate_widened_text_results(
@@ -637,30 +641,41 @@ impl PipelineBuilder<'_> {
 
     /// The memory lane's text read: every posting through the lane's kinds
     /// and, when `filter_all`, through the run's whole scope as well, which
-    /// asks a clamp first. Read through the lane alone, a clamped pack's
-    /// read asks the clamp's own-row test too, so a row the audience could
-    /// not read whatever its status takes no place in the read's `limit`,
-    /// and hands such rows back in `withheld` while they rank inside the
-    /// places a read without the clamp gives the lane's rows.
+    /// asks a clamp first. A clamped pack's read asks the clamp's own-row
+    /// test too, so a row the audience could not read whatever its status
+    /// takes no place in the read's `limit`, and hands such rows back in
+    /// `withheld` while they rank inside the places a read without the clamp
+    /// gives the lane's rows. Through the whole scope, those are the rows the
+    /// scope admits, so a hidden row counts there only when it meets every
+    /// other check of the call ([`Self::clamp_withheld_row_counts`], judged
+    /// in caches of its own, as `gate` is): a narrowed scan counts the rows
+    /// the unnarrowed one did (REVIEW-10311 round 1).
     fn search_text_candidates<F>(
         &self,
         rtxn: &RoTxn<'_>,
         config: &Bm25Config,
         (query, limit, filter_all): (&str, usize, bool),
         options: crate::bm25::Bm25SearchOptions<'_, F>,
-        (clamp, withheld): (Option<&DisclosureContext>, &mut Vec<EntityId>),
+        ((filters, gate), withheld): (
+            (PipelineFilterConfig<'_>, &ClaimStatusGateCache),
+            &mut Vec<EntityId>,
+        ),
     ) -> Result<Vec<crate::pipeline::ScoredEntity>>
     where
         F: FnMut(&EntityId) -> Result<bool>,
     {
+        let clamp = filters.disclosure;
         let in_category = |id: &EntityId| {
             super::super::super::capabilities::CapabilityLane::Memory.admits(&self.read, rtxn, id)
         };
+        // The scope's test, asked by the read's prefix expansion and, in a
+        // clamped pack's scan through the whole scope, by the lane's read.
+        let in_scope = std::cell::RefCell::new(options.exact_posting_matches_scope);
         let mut matches_scope = |id: &EntityId| {
             if self.memory_category && !in_category(id)? {
                 return Ok(false);
             }
-            (options.exact_posting_matches_scope)(id)
+            (*in_scope.borrow_mut())(id)
         };
         let scope = crate::bm25::Bm25SearchOptions {
             recency: options.recency,
@@ -670,7 +685,7 @@ impl PipelineBuilder<'_> {
                 .hidden_row
                 .map(|hidden| hidden as &mut dyn FnMut(&EntityId) -> Result<bool>),
         };
-        if filter_all {
+        if filter_all && !(self.memory_category && clamp.is_some()) {
             crate::bm25::search_text_filtered_with_recency(
                 &self.read,
                 rtxn,
@@ -719,6 +734,21 @@ impl PipelineBuilder<'_> {
                     clamp,
                     &mut clamp_metadata,
                 )?;
+                // Through the whole scope, a place is a row the scope
+                // admits: a hidden row takes one when it meets every other
+                // check of the call.
+                if filter_all {
+                    if !hidden {
+                        let admitted = (*in_scope.borrow_mut())(id)?;
+                        places = places.saturating_add(usize::from(admitted));
+                        return Ok(admitted);
+                    }
+                    if places < limit && self.clamp_withheld_row_counts(rtxn, id, filters, gate)? {
+                        withheld.push(*id);
+                        places = places.saturating_add(1);
+                    }
+                    return Ok(false);
+                }
                 if hidden && places < limit {
                     withheld.push(*id);
                 }

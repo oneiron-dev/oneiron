@@ -386,7 +386,7 @@ impl PipelineBuilder<'_> {
     /// the rows it withheld: the call's candidate filter admits it, and it
     /// meets every other check of the call
     /// ([`meets_every_check_but_the_clamp`]).
-    fn clamp_withheld_row_counts(
+    pub(super) fn clamp_withheld_row_counts(
         &self,
         rtxn: &RoTxn<'_>,
         id: &crate::EntityId,
