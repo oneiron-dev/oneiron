@@ -10,15 +10,18 @@
 //! refuses, no automated apology goes out, and the owner handles the booking; a floor row that
 //! does not decode refuses every plan, whatever the solver finds. The floor never exceeds the
 //! count: a change that would put it above refuses, and a pair that arrives so by sync or a
-//! restore makes every plan refuse (the plan collects at most the count, which is fewer than the
-//! floor). The commit of a plan checks it against the floor in force then, so a floor raised
-//! after planning refuses the plan; the count has no order, so a plan made under a larger count
-//! still commits.
+//! restore makes every plan refuse, with words that name the floor above the count. So does a
+//! pair two machines set at once, each one side (SETTING-PROJECTED-EMERGENCY-PAIR = A): each
+//! machine's pass lands the other's act though the hook refuses it, so the pair reads alike
+//! everywhere, and the owner's notice of the refusal leads with "Emergency rescheduling is off"
+//! and offers both values in one act. The commit of a plan checks it against the floor in force
+//! then, so a floor raised after planning refuses the plan; the count has no order, so a plan made
+//! under a larger count still commits.
 
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
-use crate::setting::{Kind, SettingChange, SettingSource, SettingValue};
+use crate::setting::{Kind, RefusedProjection, SettingChange, SettingSource, SettingValue};
 
 /// The shipped count of replacement times one emergency plan offers.
 pub(crate) const DEFAULT_EMERGENCY_MAX_PROPOSALS: u8 = 3;
@@ -98,6 +101,7 @@ crate::setting::setting_keys! {
         kind: Kind::new(max_proposals).strictest(max_proposals),
         on_change: Some(refuse_floor_above_count),
         refusal_peers: Some(emergency_pair_peer),
+        refused_projection: RefusedProjection::Land { conflict: floor_above_count_words },
     };
     /// The fewest live replacement times an emergency reschedule plan may offer (default 2, at
     /// most `booking.emergency.max_proposals`). Higher is tighter: with fewer, the plan refuses,
@@ -109,6 +113,7 @@ crate::setting::setting_keys! {
             .higher(),
         on_change: Some(refuse_floor_above_count),
         refusal_peers: Some(emergency_pair_peer),
+        refused_projection: RefusedProjection::Land { conflict: floor_above_count_words },
     };
     /// Seconds past the affected window an emergency reschedule plan searches for replacement
     /// times (default 604,800: seven days; at least a day). No order: it changes which times one
@@ -132,12 +137,20 @@ pub(crate) struct EmergencyProposalPolicy {
 }
 
 impl EmergencyProposalPolicy {
+    /// The floor and the count where the floor is above the count: no plan collects enough times.
+    fn floor_above_count(&self) -> Option<(u8, u8)> {
+        self.min_proposals
+            .filter(|floor| *floor > self.max_proposals)
+            .map(|floor| (floor, self.max_proposals))
+    }
+
     /// Admits a plan of `count` live replacement times: at least the floor, and at least one.
     ///
     /// # Errors
     ///
-    /// The refusal's text when `count` is under the floor or the floor's row does not decode: no
-    /// automated apology goes out, and the owner handles the booking.
+    /// The refusal's text when `count` is under the floor, the floor is above the count, or the
+    /// floor's row does not decode: no automated apology goes out, and the owner handles the
+    /// booking.
     pub(crate) fn admit(&self, count: usize) -> std::result::Result<(), String> {
         let Some(floor) = self.min_proposals else {
             return Err(
@@ -146,6 +159,13 @@ impl EmergencyProposalPolicy {
                     .to_owned(),
             );
         };
+        if let Some((floor, max)) = self.floor_above_count() {
+            return Err(format!(
+                "emergency rescheduling is off: booking.emergency.min_proposals ({floor}) is \
+                 above booking.emergency.max_proposals ({max}), so no emergency plan goes out \
+                 until the owner fixes the pair"
+            ));
+        }
         let floor = floor.max(1);
         if count < usize::from(floor) {
             return Err(format!(
@@ -200,17 +220,28 @@ fn refuse_floor_above_count(
     txn: &mut heed::RwTxn<'_>,
     _change: &SettingChange,
 ) -> Result<()> {
-    let policy = emergency_proposal_policy_in_txn(vault, txn)?;
-    if let Some(floor) = policy.min_proposals
-        && floor > policy.max_proposals
-    {
+    if let Some((floor, max)) = emergency_proposal_policy_in_txn(vault, txn)?.floor_above_count() {
         return Err(Error::InvalidConfig(format!(
             "booking.emergency.min_proposals ({floor}) must not exceed \
-             booking.emergency.max_proposals ({})",
-            policy.max_proposals
+             booking.emergency.max_proposals ({max})"
         )));
     }
     Ok(())
+}
+
+/// The owner's words of a floor above the count in force, which the notice of a refused
+/// projection of either leads with (SETTING-PROJECTED-EMERGENCY-PAIR = A); `None` while the floor
+/// is at most the count.
+fn floor_above_count_words(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    _slot: &oneiron_setting_contract::RowKey,
+) -> Result<Option<String>> {
+    Ok(emergency_proposal_policy_in_txn(vault, txn)?
+        .floor_above_count()
+        .map(|(floor, max)| {
+            format!("Emergency rescheduling is off: you set min {floor} above max {max}. Fix it?")
+        }))
 }
 
 /// The row the count's and the floor's hook judges one of them against: the row that decides the

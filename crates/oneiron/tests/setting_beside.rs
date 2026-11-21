@@ -669,8 +669,9 @@ fn an_erased_value_on_a_key_with_no_strictest_value_reads_the_default() {
 fn a_row_a_keys_hook_refuses_here_keeps_no_other_row_of_the_pass_from_landing() {
     let fx = Fixture::rooted();
     let machine = fx.second_machine(7);
-    let floor = || vault_row("booking.emergency.min_proposals");
-    // A floor above this install's count of proposals: the key's hook refuses the row here.
+    let floor = || vault_row("test.pair_floor");
+    // A floor above this install's count of 3: the key's hook refuses the row here, and the next
+    // pass reads it again.
     let frontier = setting_frontier_of(&fx.vault, &[floor()]).expect("frontier");
     assert!(
         land_setting_batch_from(
@@ -701,7 +702,7 @@ fn a_row_a_keys_hook_refuses_here_keeps_no_other_row_of_the_pass_from_landing() 
     let read = invoke(
         &fx.as_owner(),
         "vault.settings.get",
-        json!({ "key": "booking.emergency.min_proposals" }),
+        json!({ "key": "test.pair_floor" }),
     )
     .expect("the owner reads the floor");
     assert_ne!(read["value"], json!(9), "the refused row stays as it was");

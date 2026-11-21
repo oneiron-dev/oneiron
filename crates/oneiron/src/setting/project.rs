@@ -93,7 +93,9 @@ use projection_rows::{
 mod refusal;
 pub(super) use refusal::slot_refused_here_in_txn;
 pub(crate) use refusal::{SETTING_REFUSAL_NOTIFICATION_PRODUCER, setting_refusal_tap_in_txn};
-use refusal::{raise_refusal_notice_in_txn, record_refusal_in_txn};
+use refusal::{
+    hook_waived, land_refused_row_in_txn, raise_refusal_notice_in_txn, record_refusal_in_txn,
+};
 
 use serde::{Deserialize, Serialize};
 
