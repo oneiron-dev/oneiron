@@ -26,6 +26,7 @@ use oneiron::{
     EdgeActorClass, EdgeKind, EntityId, TimeRange, Vault, VaultConfig,
 };
 
+#[path = "read_lineage_floor/erased_sources.rs"]
 mod erased_sources;
 
 const AT: u64 = 1_769_947_200;
