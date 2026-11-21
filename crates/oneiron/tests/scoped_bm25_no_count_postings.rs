@@ -430,10 +430,11 @@ fn paired_agent_slip(
             &signing_key.sign(&transcript).to_bytes(),
         )
         .expect("agent redeems its pairing link");
+    // The slip is bound to the agent's key, so the agent attenuates it (a
+    // host-key attenuation would not match its binding).
     if let Some(caveat) = caveat {
-        issuer
-            .attenuate(&mut slip, caveat)
-            .expect("attenuate the agent's credential");
+        slip.attenuate(caveat, &signing_key)
+            .expect("the agent attenuates its own credential");
     }
     let signature = signing_key
         .sign(
