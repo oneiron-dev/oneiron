@@ -243,18 +243,21 @@ impl EngineNativeExecutor<'_> {
         }
         // A pass that re-fired a call live parks where it would hold: committing nothing would
         // lose the record of an effect that fired (L8-23). No ask is raised here: the next entry
-        // meets the refired row free and asks about the drift left.
-        if !slice.cancelled
-            && !parks_at_deadline
-            && !host.pending_replay_left()
-            && !host.refired_seqs().is_empty()
-            && let Some(report) = host.preflight_report_for_park()
-        {
-            let status = self.park_pending_step(config, record, expected, host, slice)?;
-            return Ok(Some(DeadlineSliceEnd {
-                status,
-                resume_preflight: Some(report),
-            }));
+        // meets the refired row free and asks about the drift left. A cancelled pass parks too,
+        // with its live rows and the recorded calls it did not reach, and its entry still fails
+        // on the cancel.
+        if !parks_at_deadline && !host.pending_replay_left() && !host.refired_seqs().is_empty() {
+            if slice.cancelled {
+                self.park_pending_step(config, record, expected, host, slice)?;
+                return Err(cancelled().into());
+            }
+            if let Some(report) = host.preflight_report_for_park() {
+                let status = self.park_pending_step(config, record, expected, host, slice)?;
+                return Ok(Some(DeadlineSliceEnd {
+                    status,
+                    resume_preflight: Some(report),
+                }));
+            }
         }
         if let Some(report) = host.dry_preflight_report() {
             if slice.cancelled {
