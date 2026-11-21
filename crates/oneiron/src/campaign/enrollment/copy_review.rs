@@ -18,9 +18,10 @@
 //! guide is checked against the vault's house voice guide
 //! ([`crate::campaign::house_voice_guide`]), and one whose vault has none holds
 //! its sends. On a host with no judge seat the judge abstains, nothing is
-//! stored, and each send holds for the owner's press. The owner can turn copy
-//! review off for one campaign (`campaign.copy_review.skip`): its sends then
-//! go out unreviewed.
+//! stored, and each send holds for the owner's press: the review drops a pass
+//! stored for the body before, as it does once the campaign's owner cannot
+//! read the guide. The owner can turn copy review off for one campaign
+//! (`campaign.copy_review.skip`): its sends then go out unreviewed.
 
 use std::time::{Duration, Instant};
 
@@ -37,8 +38,8 @@ use crate::gate::{ApprovalTarget, ExternalEffectGateInput};
 use crate::llm::decision::DecisionLadder;
 use crate::model_decision::catalogue::CAMPAIGN_COPY_REVIEW;
 use crate::model_decision::{
-    AnswerContract, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionDial, DecisionRung,
-    ProviderPin, Reversibility,
+    AnswerContract, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionDial,
+    DecisionQuestion, DecisionRung, ProviderPin, Reversibility,
 };
 use crate::note::{NoteReadRequest, NoteReadView, NoteVersion};
 use crate::retrieval_depth::RetrievalDeadline;
@@ -126,12 +127,15 @@ pub enum CopyReviewOutcome {
     Cached(CopyReviewVerdict),
     /// The judge reviewed the body now, and its verdict is stored.
     Reviewed(CopyReviewVerdict),
-    /// The judge gave no answer; nothing is stored and the send holds.
+    /// The judge gave no answer, or the host seats no judge; nothing is
+    /// stored and the send holds. With no judge seat, a verdict stored for
+    /// the body before is dropped, a pass among them.
     Abstained,
     /// The campaign's owner cannot read the voice guide through the scoped
     /// NOTE read (its grants, the diary gate, an erased or missing NOTE), or
     /// the campaign names none and no house voice guide could be seeded: no
-    /// judge is asked, nothing is stored, and the send holds.
+    /// judge is asked, nothing is stored, a verdict stored for the body while
+    /// the owner read the guide is dropped, and the send holds.
     GuideUnreadable,
 }
 
@@ -213,7 +217,9 @@ impl Vault {
     /// grants and the diary gate); a guide the owner cannot read asks no
     /// judge. A verdict stored for this body at the guide's current version
     /// is reused; otherwise the judge is asked and its verdict stored. The
-    /// Gate's copy-review stage reads that verdict when the leg runs.
+    /// Gate's copy-review stage reads that verdict when the leg runs. A host
+    /// with no judge seat, or an owner who cannot read the guide, drops the
+    /// body's stored verdict, so the Gate holds the send for the owner.
     ///
     /// # Errors
     ///
@@ -264,13 +270,24 @@ impl Vault {
                 }
             },
         };
-        let Some(guide_view) = read_voice_guide(self, definition.owner_actor, guide)? else {
-            return Ok(CopyReviewOutcome::GuideUnreadable);
-        };
         let key = (
             event.campaign_ref,
             super::approval::outbound_payload_digest(outbound),
         );
+        // A host with no judge seat reviews no copy: each send holds for the
+        // owner's press, one whose body a judge passed before among them, so
+        // that pass goes. No scoped read of the guide runs.
+        if !judge_seated(decisions)? {
+            drop_verdict(self, &key)?;
+            return Ok(CopyReviewOutcome::Abstained);
+        }
+        // A pass stored while the owner read the guide covers no send once
+        // the owner cannot read it: the send holds, as one whose guide
+        // changed does.
+        let Some(guide_view) = read_voice_guide(self, definition.owner_actor, guide)? else {
+            drop_verdict(self, &key)?;
+            return Ok(CopyReviewOutcome::GuideUnreadable);
+        };
         let stored = {
             let txn = self.store.env.read_txn()?;
             VERDICTS.get(&self.store, &txn, &key)?
@@ -352,6 +369,38 @@ pub(crate) fn store_passing_copy_review_verdict(
     vault.with_write_txn_grouped(|wtxn| VERDICTS.put(vault, wtxn, &key, &verdict))
 }
 
+/// Whether the host seats a judge for copy review: a rung of the review's
+/// dial, short of the person, whose provider takes its first question.
+fn judge_seated(decisions: &CampaignCopyReviewDecisions<'_>) -> Result<bool> {
+    Ok(decisions
+        .ladder
+        .first_taking(&follows_voice_question(decisions)?, decisions.dial, &[])
+        .is_some())
+}
+
+/// The review's first question: does the body follow the voice guide?
+fn follows_voice_question(decisions: &CampaignCopyReviewDecisions<'_>) -> Result<DecisionQuestion> {
+    CAMPAIGN_COPY_REVIEW.question(
+        &[b"follows_voice"],
+        decisions.wording.follows_voice.clone(),
+        AnswerContract::Noul,
+    )
+}
+
+/// Drops the verdict stored under `key`, if one is, so the Gate finds no
+/// review covering that body and holds its send.
+fn drop_verdict(vault: &Vault, key: &VerdictKey) -> Result<()> {
+    let stored = {
+        let txn = vault.store.env.read_txn()?;
+        VERDICTS.contains(&vault.store, &txn, key)?
+    };
+    if stored {
+        vault
+            .with_write_txn_grouped(|wtxn| VERDICTS.delete(&vault.store, wtxn, key).map(|_| ()))?;
+    }
+    Ok(())
+}
+
 /// The voice guide `guide` as the campaign's `owner` reads it: the scoped
 /// NOTE read, with the NOTE's kind policy, the owner's current grants and the
 /// diary gate a private or diary NOTE needs. `None` when that read does not
@@ -395,11 +444,7 @@ fn judge_copy(
     outbound: &CampaignProgramOutbound,
     reviewed_at: u64,
 ) -> Result<Option<CopyReviewVerdict>> {
-    let follows_question = CAMPAIGN_COPY_REVIEW.question(
-        &[b"follows_voice"],
-        decisions.wording.follows_voice.clone(),
-        AnswerContract::Noul,
-    )?;
+    let follows_question = follows_voice_question(decisions)?;
     let reason_question = CAMPAIGN_COPY_REVIEW.question(
         &[b"reason"],
         decisions.wording.reason.clone(),
