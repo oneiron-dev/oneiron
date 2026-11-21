@@ -5,7 +5,8 @@
 
 use crate::Vault;
 use crate::authority::{
-    ActSurface, AuthorityEntryHash, OwnerAct, OwnerActKind, PolicySetting, PolicySettingAct,
+    ActSurface, AuthorityEntryHash, OwnerAct, OwnerActKind, OwnerProofGround, PolicySetting,
+    PolicySettingAct,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
@@ -18,7 +19,7 @@ const HOLDS_AN_OWNER_KEY: &str = "this handle holds an owner key that proves the
 
 /// Appends the kit-only fact `kit_only` as the owner's preset switch signs
 /// it, from this install: carried by its key, proved by the owner key this
-/// handle holds. The entry hash.
+/// handle holds, on the test door's ground. The entry hash.
 ///
 /// # Errors
 /// Refused when nothing was appended (the fact in force already says so, or
@@ -33,6 +34,7 @@ pub fn append_recovery_box_kit_only_fact(
         vault
             .append_recovery_box_kit_only_fact_in_txn(
                 txn,
+                Some(&OwnerProofGround::test_door()),
                 actor,
                 ActSurface::ThisInstall,
                 kit_only,
@@ -55,10 +57,7 @@ pub fn append_unproven_recovery_box_kit_only_fact(
 ) -> Result<AuthorityEntryHash> {
     vault.with_write_txn(|txn| {
         let actor = owner.revalidate_in_txn(vault, txn)?;
-        let proves = vault
-            .owner_proof_signer(&vault.authority_view_readonly_in_txn(txn)?)
-            .is_some();
-        if proves {
+        if vault.holds_proving_owner_key(&vault.authority_view_readonly_in_txn(txn)?) {
             return Err(crate::authority::authority_refused(HOLDS_AN_OWNER_KEY));
         }
         let target = PolicySetting::RecoveryBoxKitOnly
@@ -67,6 +66,7 @@ pub fn append_unproven_recovery_box_kit_only_fact(
         let seen = vault.policy_setting_revision_in_txn(txn, target)?;
         vault.append_policy_setting_op_in_txn(
             txn,
+            None,
             PolicySettingAct {
                 act: OwnerAct::by_owner(
                     actor,
@@ -75,7 +75,7 @@ pub fn append_unproven_recovery_box_kit_only_fact(
                     ActSurface::ThisInstall,
                     seen,
                 ),
-                setting: PolicySetting::RecoveryBoxKitOnly,
+                setting: PolicySetting::RecoveryBoxKitOnly.wire().to_owned(),
                 prior: crate::authority::recovery_box_kit_only_value(!kit_only),
                 value: Some(crate::authority::recovery_box_kit_only_value(kit_only)),
             },

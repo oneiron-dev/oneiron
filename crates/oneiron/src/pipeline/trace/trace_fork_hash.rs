@@ -241,6 +241,12 @@ fn fork_hash_authority_filter(
     fork_hash_bool(hasher, filter.include_stale);
     fork_hash_f32(hasher, filter.min_confidence);
     fork_hash_f32(hasher, filter.min_salience);
+    // A binding-only floor reads one talk's rows: its room keeps two talks
+    // with one envelope apart. Only a marked filter adds bytes.
+    if let Some(room) = filter.work_talk_room {
+        fork_hash_str(hasher, "work_talk_room");
+        fork_hash_bytes(hasher, room.as_bytes());
+    }
 }
 
 /// OF-370 typed media queries, in call order: each is its own list.

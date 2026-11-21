@@ -554,7 +554,7 @@ impl Memory<'_> {
     /// Discarding history is the ladder's erase (ARCH-0038): an Owner's own
     /// act, so writing the note is not enough.
     pub fn purge_note_history(&self, note: EntityId, through: &[u8]) -> MemoryResult<()> {
-        self.purge_note_history_with(None, note, Some(through), None, None)
+        self.purge_note_history_with(None, note, Some(through), None, None, None)
             .map(|_| ())
     }
 
@@ -571,7 +571,22 @@ impl Memory<'_> {
         note: EntityId,
         through: Option<&[u8]>,
     ) -> MemoryResult<PurgeReceipt> {
-        self.purge_note_history_with(Some(owner), note, through, None, None)
+        self.purge_note_history_with(Some(owner), note, through, None, None, None)
+            .map(|(receipt, _)| receipt)
+    }
+
+    /// [`Self::purge_note_history_as`], applying `check_in`, another asker's
+    /// approved check-in for this purge, on `owner`'s own proof: the purge's
+    /// writer spends it, so a purge that refuses leaves it unspent (2k2).
+    /// Returns the receipt and the decision the purge ran on.
+    pub(crate) fn purge_note_history_with_check_in(
+        &self,
+        owner: &AuthenticatedOwner,
+        note: EntityId,
+        through: Option<&[u8]>,
+        check_in: Option<&crate::check_in::AppliedCheckIn<'_>>,
+    ) -> MemoryResult<(PurgeReceipt, crate::check_in::CheckInDecision)> {
+        self.purge_note_history_with(Some(owner), note, through, None, None, check_in)
     }
 
     /// [`Self::purge_note_history_as`], claiming the completed `erase` act
@@ -586,12 +601,14 @@ impl Memory<'_> {
         act: &str,
         confirmed: Option<&[u8]>,
     ) -> MemoryResult<PurgeReceipt> {
-        self.purge_note_history_with(Some(owner), note, through, Some(act), confirmed)
+        self.purge_note_history_with(Some(owner), note, through, Some(act), confirmed, None)
+            .map(|(receipt, _)| receipt)
     }
 
     /// The purge. `requested` is the frontier the act or the caller names,
     /// which an act must match; the purge runs through it, or through
-    /// `confirmed` when it names none.
+    /// `confirmed` when it names none. `check_in`, an approved check-in
+    /// `owner` applies, is spent in the purge's writer.
     fn purge_note_history_with(
         &self,
         owner: Option<&AuthenticatedOwner>,
@@ -599,7 +616,8 @@ impl Memory<'_> {
         requested: Option<&[u8]>,
         act: Option<&str>,
         confirmed: Option<&[u8]>,
-    ) -> MemoryResult<PurgeReceipt> {
+        check_in: Option<&crate::check_in::AppliedCheckIn<'_>>,
+    ) -> MemoryResult<(PurgeReceipt, crate::check_in::CheckInDecision)> {
         let bound = requested.or(confirmed);
         self.with_actor_content_write_txn(|content| {
             content.update_note(note, |txn, _lane| {
@@ -612,6 +630,12 @@ impl Memory<'_> {
                         &[],
                     ));
                 }
+                let decision = crate::check_in::owner_act_decision_in_txn(
+                    self.vault(),
+                    txn,
+                    crate::check_in::ActClass::Erase,
+                    check_in,
+                )?;
                 require_note_writer(self, txn, note)?;
                 crate::memory::verify_deletion_authority_in_txn(
                     self.vault(),
@@ -677,7 +701,7 @@ impl Memory<'_> {
                 self.vault()
                     .store
                     .roll_checkpoint_payload_for_purge_in_txn(txn, &note)?;
-                Ok(receipt)
+                Ok((receipt, decision))
             })
         })
     }

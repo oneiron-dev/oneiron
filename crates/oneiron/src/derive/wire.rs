@@ -31,10 +31,10 @@ use crate::verbs::IdentityProposedOp;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::derive::wire::{
-    DeriveArchiveInput, DeriveClaimInput, DeriveCommitView, DeriveEvidenceInput, DeriveItemView,
-    DeriveLeftItemView, DerivePsychProfileInput, DeriveRef, DeriveRevertInput, DeriveRevertView,
-    DeriveSameAsInput, DeriveSettleInput, DeriveSettlementInput, DeriveStrengthSignals,
-    DeriveSupersedeInput,
+    DeriveArchiveInput, DeriveClaimInput, DeriveCommitView, DeriveCopiedClaimView,
+    DeriveEvidenceInput, DeriveItemView, DeriveLeftItemView, DerivePsychProfileInput, DeriveRef,
+    DeriveRevertInput, DeriveRevertView, DeriveSameAsInput, DeriveSettleInput,
+    DeriveSettlementInput, DeriveStrengthSignals, DeriveSupersedeInput,
 };
 
 impl From<DeriveRef> for ItemRef {
@@ -291,6 +291,15 @@ impl From<DeriveRevertReceipt> for DeriveRevertView {
                 .map(|(local, reason)| DeriveLeftItemView { local, reason })
                 .collect(),
             receipt: crate::entity_id::bytes_to_hex_lower(&receipt.receipt),
+            copied: receipt
+                .copied
+                .into_iter()
+                .map(|(item, replaced, copy)| DeriveCopiedClaimView {
+                    item,
+                    replaced,
+                    copy,
+                })
+                .collect(),
         }
     }
 }

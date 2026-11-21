@@ -15,6 +15,7 @@ use std::collections::BTreeMap;
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, RecordError, Result};
 use crate::side_table::{self, Raw, SideTable};
+use crate::world_keys::{OwnerActImportance, owner_presence_reasons};
 use crate::{EntityId, Vault};
 
 use super::machine_answers::AnswerAct;
@@ -307,7 +308,7 @@ impl Vault {
         Ok(HeldAnswerListing {
             answers,
             waiting_choices: fold.waiting_owner_choices().iter().copied().collect(),
-            can_confirm: self.owner_proof_signer(fold).is_some(),
+            can_confirm: self.holds_proving_owner_key(fold),
         })
     }
 
@@ -334,6 +335,9 @@ impl Vault {
     /// his list did not show. An entry with no revision in `seen` takes the
     /// machine's current one.
     ///
+    /// The door does not read the value in force before its write, so it asks for every
+    /// change it cannot tell from its arguments to be a narrowing.
+    ///
     /// # Errors
     /// [`RecordError::OwnerKeyRequired`] when this install holds no owner
     /// key; [`Error::ConcurrentWrite`] when an entry no longer asks, or when
@@ -350,12 +354,18 @@ impl Vault {
         entries: &[AuthorityEntryHash],
         seen: &BTreeMap<AuthorityEntryHash, [u8; 32]>,
     ) -> Result<ConfirmedHeldAnswers> {
+        let witness = self.owner_presence(
+            OwnerActImportance::Important,
+            owner_presence_reasons::CONFIRM_HELD_MACHINE_ANSWERS,
+        )?;
+        let ground = OwnerProofGround::witnessed(&witness);
         let mut txn = self.store.env.write_txn()?;
         let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
-        if self.owner_proof_signer(&fold).is_none() {
+        if !self.holds_proving_owner_key(&fold) {
             return Err(Error::Record(RecordError::OwnerKeyRequired));
         }
+        let proves_joins = owner.proves_joins_in_txn(self, &txn)?;
         if seen.keys().any(|entry| !entries.contains(entry)) {
             return Err(Error::InvalidConfig(UNNAMED_SEEN.to_owned()));
         }
@@ -365,12 +375,17 @@ impl Vault {
             let profile = confirming_profile(&fold, actor, &held)?;
             // The answer door compares it with the machine's revision in
             // this transaction, before it signs.
-            let answer =
-                AnswerAct::by_owner(actor, surface, profile.role, seen.get(&entry).copied());
+            let answer = AnswerAct::by_owner(
+                (actor, proves_joins),
+                surface,
+                profile.role,
+                seen.get(&entry).copied(),
+            );
             if profile.role == MachineRole::Removed {
                 removed.push(machine);
             }
-            let landing = self.append_owner_answer_in_txn(&mut txn, &fold, answer, profile)?;
+            let landing =
+                self.append_owner_answer_in_txn(&mut txn, &fold, &ground, answer, profile)?;
             if landing.held().is_some() {
                 return Err(invalid_authority());
             }

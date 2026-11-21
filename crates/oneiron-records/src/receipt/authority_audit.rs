@@ -89,11 +89,13 @@ pub struct AuthorityAuditRow {
 
 /// One entry the adopted checkpoint image covers and this vault does not
 /// store: a cold, checkpoint-attested row. It holds what the image's row
-/// summary holds and nothing more, so it names no clock, op kind or subject.
-/// It proves membership under the attested image only: not that the entry is
-/// valid or authorizes anything, that a custodian holding its signed bytes is
-/// online, that an archive was fetched, or that the covered history was
-/// replayed independently.
+/// summary holds and, where the image carries the entry's signed body, what
+/// that body says ([`CarriedAuthorityAuditBody`]). It names no stored clock,
+/// since this vault stored nothing, and a row whose body the image does not
+/// carry names no op kind or subject either. It proves membership under the
+/// attested image only: not that the entry is valid or authorizes anything,
+/// that a custodian holding its signed bytes is online, that an archive was
+/// fetched, or that the covered history was replayed independently.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ColdAuthorityAuditRow {
     /// The AUTHORITY_LOG entity id the entry hash derives; the page cursor.
@@ -110,6 +112,10 @@ pub struct ColdAuthorityAuditRow {
     pub seq: u64,
     /// The parent entry hashes (64 hex each), in the signed entry's order.
     pub parents: Vec<String>,
+    /// What the entry's signed body says, where the adopted image carries it;
+    /// `None`, and omitted, where it carries none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub carried_body: Option<CarriedAuthorityAuditBody>,
     /// Whether the fold of this snapshot holds the entry among its valid
     /// entries: the current fold's verdict, not the image's, and not "in
     /// effect".
@@ -118,6 +124,50 @@ pub struct ColdAuthorityAuditRow {
     /// row carries them (`held_back` among them, FIX 1104).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub issue_codes: Vec<String>,
+}
+
+/// What the signed body of a cold row's entry says, read from the body the
+/// adopted image carries (FIX [KEY-CHANGE-RECEIPT-COLD-ROWS]). The image id
+/// commits the body, and the image's decode checks it against the row's
+/// hash and summary, so it reports the signed entry, as a stored row of the
+/// same entry does: each field as [`AuthorityAuditRow`] names it. A key's
+/// enrolment and removal name their key and machine here as in the key
+/// changes list.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CarriedAuthorityAuditBody {
+    pub event_kind: AuthorityAuditEventKind,
+    /// The op the body holds, snake_case (`owner_key_enroll`, ...).
+    pub source_op: String,
+    /// The op's own sub-kind where it has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    /// The signer's advisory timestamp. The fold never reads it.
+    pub advisory_ts: u64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cosigner_keys: Vec<String>,
+    /// The vault id the entry binds (hex); `None` on genesis.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vault_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grant_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receipt_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub affected_grants: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claim_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub holder_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peer_vault_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub epoch: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<u64>,
 }
 
 /// One page of the audit.

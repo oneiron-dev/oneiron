@@ -43,6 +43,8 @@ const PREDICTED_BODY: SideTable<(HexId, String), Vec<u8>, Raw> =
 
 /// The most touches one prediction walks from.
 pub(crate) const PREDICT_SEEDS_MAX: usize = 64;
+/// The most items one board's report names: as many as one prediction walks from.
+pub const BOARD_SEEDS_MAX: usize = PREDICT_SEEDS_MAX;
 /// How long a touch seeds predictions, in recorded-clock seconds: thirty days.
 pub(crate) const PREDICT_SEED_AGE_SECS: u64 = 30 * 24 * 3600;
 /// How many hops a prediction walk runs from its seeds.
@@ -190,6 +192,13 @@ fn refused(reason: &str) -> Error {
 const NOT_A_STANDING_MACHINE: &str =
     "a prediction names one of the owner's machines, on the key it stands on here";
 
+/// The refusal of a board's report from a peer that is no standing machine.
+const NOT_A_STANDING_BOARD_MACHINE: &str =
+    "a board's report comes from a machine on the key it stands on here";
+
+/// The refusal of a board's report naming more items than [`BOARD_SEEDS_MAX`].
+const TOO_MANY_BOARD_SEEDS: &str = "a board's report names at most 64 items";
+
 /// The set body's key for the prediction `machine` holds under `digest` (the digest as 64
 /// lowercase hex characters).
 fn predicted_body_key(machine: EntityId, digest: &[u8; 32]) -> (HexId, String) {
@@ -228,6 +237,37 @@ fn live_predicted_parent(
         window_budget,
         document_budget,
     })
+}
+
+/// Erases every touch-log row that names `id`: a machine's whole log when `id` is that machine,
+/// and each machine's touch of `id` as the touched entity, so the signal of what a board or a
+/// touch showed goes with the item as any vault row does (lead ruling PREDICTED-BOARD-SEED-SIGNAL
+/// = A, 21 Nov). One of the delete doors' erasers (`deletion::derived_rows`). The log is read as
+/// stored, so a row that does not decode never holds an erase back; the scan is as long as the
+/// log, one row per machine and item touched within [`PREDICT_SEED_AGE_SECS`] of its last
+/// prediction.
+///
+/// # Errors
+///
+/// Storage.
+pub(crate) fn erase_machine_touches_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let hex = id.to_hex();
+    MACHINE_TOUCH.delete_from(store, txn, hex.as_bytes())?;
+    let mut touched = Vec::new();
+    for row in MACHINE_TOUCH.iter_raw_from(store, txn, b"")? {
+        let (key, _) = row?;
+        if key.get(32..) == Some(hex.as_bytes()) {
+            touched.push(key);
+        }
+    }
+    for key in touched {
+        MACHINE_TOUCH.delete_from(store, txn, &key)?;
+    }
+    Ok(())
 }
 
 /// The units one prediction keeps under `budget` with hysteresis toward the previous set: the
@@ -307,6 +347,64 @@ impl Vault {
             let now = self.instant_in_txn(txn)?.secs();
             MACHINE_TOUCH.put(&self.store, txn, &(HexId(machine), HexId(entity)), &now)
         })
+    }
+
+    /// Records the items one board showed on the machine `peer` proved as touches in its touch
+    /// log, prefetch seeds of its next prediction (lead ruling PREDICTED-BOARD-SEED-SIGNAL = A, 21
+    /// Nov): every item `admission` lets that machine hold, at one recorded-clock instant, in one
+    /// write transaction that also judges each item. An item the machine may not hold is left
+    /// out. Answers how many distinct items it recorded.
+    ///
+    /// # Errors
+    ///
+    /// A refusal (`InvalidConfig`) for more than [`BOARD_SEEDS_MAX`] items, for a peer whose proof
+    /// does not stand here on the key it proved, and for an admission that reads for any other
+    /// destination; storage.
+    pub fn record_board_seeds(
+        &self,
+        peer: PeerMachine,
+        admission: &ResidenceAdmission<'_>,
+        items: &[EntityId],
+    ) -> Result<usize> {
+        if items.len() > BOARD_SEEDS_MAX {
+            return Err(refused(TOO_MANY_BOARD_SEEDS));
+        }
+        let PeerMachine::Proven { machine, .. } = peer else {
+            return Err(refused(NOT_A_STANDING_BOARD_MACHINE));
+        };
+        if admission.destination() != Destination::Machine(machine) {
+            return Err(refused(NOT_A_STANDING_BOARD_MACHINE));
+        }
+        let items: BTreeSet<EntityId> = items.iter().copied().collect();
+        self.with_write_txn_grouped(|txn| {
+            if self.standing_machine(txn, peer)? != Some(machine) {
+                return Err(refused(NOT_A_STANDING_BOARD_MACHINE));
+            }
+            let now = self.instant_in_txn(txn)?.secs();
+            let mut recorded = 0;
+            for entity in items {
+                if admission.allows_item_in(txn, entity)? {
+                    MACHINE_TOUCH.put(&self.store, txn, &(HexId(machine), HexId(entity)), &now)?;
+                    recorded += 1;
+                }
+            }
+            Ok(recorded)
+        })
+    }
+
+    /// The items the touch log holds for `machine`, in key order, for integration tests.
+    ///
+    /// # Errors
+    ///
+    /// Storage.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn machine_touched_items(&self, machine: EntityId) -> Result<Vec<EntityId>> {
+        let txn = self.store.env.read_txn()?;
+        Ok(MACHINE_TOUCH
+            .scan_keys(&self.store, &txn, machine.to_hex().as_bytes())?
+            .into_iter()
+            .map(|(_, item)| item.0)
+            .collect())
     }
 
     /// The home's prediction for the machine `peer` proved, over what `admission` lets it read

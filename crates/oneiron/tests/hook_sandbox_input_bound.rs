@@ -244,3 +244,64 @@ fn an_object_heavy_input_under_the_bound_is_not_taken_never_trapped() {
         .expect_err("an input the guest cannot hold is not taken");
     assert_not_taken(&error, &context);
 }
+
+/// A hook input nesting a million arrays deep, about 2 MB, is not taken,
+/// never an ordinary failure ([SKILL-ANSWER-DEEP-JSON-STACK-SAFE]): the
+/// guest's JSON parse recurses once per level and runs out of stack before
+/// the body starts, so the guest's stack is the bound on how deep an input
+/// it judges. Whether QuickJS throws first or the wasm stack traps, the run
+/// reads as never taken, so a skill answer's blocking post hook refuses the
+/// call. Red where the trap reads as "hook body trapped", a failure a post
+/// chain records on an answer its body never judged.
+#[test]
+fn a_hook_input_nesting_past_the_guest_stack_is_not_taken() {
+    const LEVELS: usize = 1_000_000;
+    let sandbox = hook_sandbox();
+    let input = format!(
+        "{{\"now\":1700000000000,\"title\":\"t\",\"deep\":{}0{}}}",
+        "[".repeat(LEVELS),
+        "]".repeat(LEVELS),
+    );
+    assert!(
+        input.len() < sandbox.input_limit(),
+        "the input sits under the input limit: {} bytes",
+        input.len(),
+    );
+    let mut context = HookRunContext::new(5_000);
+    let error = sandbox
+        .run_hook(REDACT_TITLE_BODY, &input, &mut context, &mut refusing_read)
+        .expect_err("an input past the guest's stack is not taken");
+    let text = error.to_string();
+    assert!(
+        text.contains("hook input exceeds the guest memory")
+            || text.contains("hook guest stack exhausted before it judged the input"),
+        "the run ends typed as not taken: {text}",
+    );
+    assert!(
+        context.input_not_taken(),
+        "the untaken input is reported never taken",
+    );
+}
+
+/// A hook input nesting 150 arrays deep, past the host's whole-value parse,
+/// runs its body: the guest parses it on its own stack, and the Redact
+/// body judges it.
+#[test]
+fn a_hook_input_nesting_past_the_host_value_depth_runs_its_body() {
+    const LEVELS: usize = 150;
+    let sandbox = hook_sandbox();
+    let input = format!(
+        "{{\"now\":1700000000000,\"title\":\"t\",\"deep\":{}0{}}}",
+        "[".repeat(LEVELS),
+        "]".repeat(LEVELS),
+    );
+    let mut context = HookRunContext::new(5_000);
+    let run = sandbox
+        .run_hook(REDACT_TITLE_BODY, &input, &mut context, &mut refusing_read)
+        .expect("a 150-deep input runs its body");
+    assert_eq!(
+        run.outcome_json, r#"{"kind":"redact","paths":["/title"]}"#,
+        "the body redacts the title",
+    );
+    assert!(!context.input_not_taken(), "the guest took the input");
+}

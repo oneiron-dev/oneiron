@@ -245,7 +245,7 @@ fn top_level_evidence(evidence: &Value) -> CarriedEvidence {
 }
 
 /// `source` joined with every class the predecessor's history drew on.
-fn inherited_lineage(source: ClaimSource, prior: &ClaimBody) -> SourceLineage {
+pub(crate) fn inherited_lineage(source: ClaimSource, prior: &ClaimBody) -> SourceLineage {
     prior_lineage(prior)
         .into_iter()
         .fold(SourceLineage::of(source), SourceLineage::with)

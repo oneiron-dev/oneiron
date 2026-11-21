@@ -119,7 +119,8 @@ pub(crate) use self::esign::seal_worker::SealConfig as EsignSealConfig;
 #[cfg(unix)]
 pub(crate) use self::esign::seal_worker::spawn_admitted as spawn_esign_seal_worker_admitted;
 pub(crate) use self::oauth_server::{
-    AUTHORIZE_PATH, PROTECTED_RESOURCE_MCP_METADATA_PATH, REGISTER_PATH, REVOKE_PATH, TOKEN_PATH,
+    AUTHORIZE_PATH, PROTECTED_RESOURCE_GIT_METADATA_PATH, PROTECTED_RESOURCE_MCP_METADATA_PATH,
+    REGISTER_PATH, REVOKE_PATH, TOKEN_PATH,
 };
 pub(crate) mod off_record_rooms;
 mod one_click_unsubscribe;
@@ -206,6 +207,8 @@ pub(crate) use self::owner_routes::engine_refusal_statuses_for_test;
 #[cfg(oneiron_test_support)]
 pub(crate) use self::owner_routes::owner_route_refusals_for_test;
 pub(crate) use owner_routes::owner;
+#[cfg(oneiron_test_support)]
+pub(crate) use owner_routes::owner_check_failure;
 // FIX 5911: an owner's own program proves its waking person the live
 // recorded owner, and takes the owner's media and hook-replay doors; its
 // media spends on its run's line (FIX 6083).

@@ -131,6 +131,7 @@ impl Vault {
                 },
                 surface: ActSurface::ThisInstall,
                 answer: None,
+                owner_authored: None,
             };
             let receipt = self.write_world_privacy_in_txn(
                 txn,
@@ -140,7 +141,7 @@ impl Vault {
                 Some(current),
                 Some(granted.agent()),
             )?;
-            let receipt = self.finish_world_key_work_in_txn(txn, owner, receipt, secret)?;
+            let receipt = self.finish_world_key_work_in_txn(txn, owner, receipt, secret, None)?;
             let holders = world_holders_in_txn(self, txn, world)?;
             self.notify_world_holders_in_txn(
                 txn,

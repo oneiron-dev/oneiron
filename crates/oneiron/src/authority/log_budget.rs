@@ -57,12 +57,15 @@ use crate::store::Store;
 
 mod log_check;
 mod owner_reserve;
+mod owner_signed_work;
 mod policy_bounds;
 
 pub use log_check::AuthorityLogCheck;
 pub(crate) use log_check::authority_signer_label;
-pub(crate) use owner_reserve::OwnerReserveHold;
 use owner_reserve::*;
+pub(crate) use owner_reserve::{OwnerReserveHold, held_at_owner_reserve_in_txn};
+pub(crate) use owner_signed_work::answers_the_owners_signed_work_in_txn;
+use owner_signed_work::{an_owner_key_signs, answered_row};
 use policy_bounds::signer_bound;
 pub(super) use policy_bounds::{fold_memory_floor, memory_floor_fold};
 #[cfg(test)]
@@ -481,20 +484,7 @@ pub(crate) fn authority_door(
     // only the owner's work lands; every other row waits for the owner to
     // raise the floor. The door judges the log with the row in it (Astra
     // owner-reserve F1).
-    let hash = authority_entry_hash(entry)?;
-    let with_entry = view.projection.bytes_with(&hash, &entry.parent_hashes);
-    if with_entry > owner_reserve_start(store, txn)?
-        && !owner_work(store, txn, &view.structure, &fold, &hash, entry)?
-    {
-        hold_at_owner_reserve(
-            store,
-            &view.projection,
-            OwnerReserveHold {
-                entry: hash,
-                work: false,
-                projected: with_entry,
-            },
-        );
+    if held_at_owner_reserve(store, txn, &view, entry, &fold)? {
         return Ok(AuthorityDoor::AtBound);
     }
     // A self-signed root needs nothing but a fresh key, so an anchor this
@@ -591,14 +581,7 @@ fn signs_for_the_owner(
     fold: &AuthorityFold,
     entry: &AuthorityLogEntry,
 ) -> bool {
-    std::iter::once(&entry.signer)
-        .chain(&entry.cosigns)
-        .any(|signature| {
-            let key = &signature.public_key;
-            structure.issuers.contains(key)
-                && !fold.retired_keys.contains(key)
-                && roster_has_live_owner(&fold.roster, key)
-        })
+    an_owner_key_signs(structure, fold, entry)
         || (structure.is_own_anchor(entry.signer_key())
             && !fold.retired_keys.contains(entry.signer_key())
             && !fold
@@ -607,12 +590,16 @@ fn signs_for_the_owner(
                 .is_some_and(|device| device.revoked))
 }
 
-/// Whether the stored row `hash`, a request or a directive this install's
-/// pickup answers, is the owner's work at this door: a slip issuer signed or
+/// Whether the row `hash`, a request or a directive this install's pickup
+/// answers, is the owner's work at this door: a slip issuer signed or
 /// cosigned it, or an anchor this install takes as its own signed it, as
 /// [`signs_for_the_owner`] reads `fold`, or this install carries
-/// it ([`carries_own_will`]). A row no raw body of is stored, such as one an
-/// adopted checkpoint image covers, is not.
+/// it ([`carries_own_will`]). The row is the stored one, else, on a vault
+/// that adopted a checkpoint image, the body the image carries of that
+/// covered row, judged the same way: the pickup takes such a request or
+/// directive from the adopted fold, so its result is the owner's work when
+/// the owner signed what it answers (FIX [OWNER-RESERVE-ADOPTED-OWNER-WORK]).
+/// A row neither stored nor carried whole is not.
 fn asks_the_owners_work(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -621,7 +608,7 @@ fn asks_the_owners_work(
     arriving: &[(AuthorityEntryHash, &AuthorityLogEntry)],
     hash: &AuthorityEntryHash,
 ) -> crate::error::Result<bool> {
-    let Some(asked) = super::retired_signers::stored_authority_row(store, txn, hash)? else {
+    let Some(asked) = answered_row(store, txn, hash)? else {
         return Ok(false);
     };
     if names_an_owner_key(structure, &asked)
@@ -634,7 +621,7 @@ fn asks_the_owners_work(
     carries_own_will(store, txn, &asked)
 }
 
-/// Whether the stored request `request` this install's pickup answers is the
+/// Whether the request `request` this install's pickup answers is the
 /// owner's work at this door ([`asks_the_owners_work`], on this vault's
 /// snapshot fold). The key wraps and
 /// joins a pickup signs under this install's key land at the door as the
@@ -714,7 +701,8 @@ pub(crate) fn end_owner_reserve_work_hold(store: &Store, request: &AuthorityEntr
 /// record it signed for a change no host issuer signed (FIX 12335), or the
 /// world key wraps and residence results that work writes under this
 /// install's key ([AUTHORITY-LOG-SIGNER-FLOOD]: key delivery after an
-/// admission, a key minted in a world edit, a residence directive's end). Such a row leaves the lifetime signer bound, which still raises
+/// admission, a key minted in a world edit, a residence directive's end), or the
+/// setting copy a move it carried wrote (stage 7a-4). Such a row leaves the lifetime signer bound, which still raises
 /// its typed check, were the count not advisory; strangers, other installs' rows and a replica's retries
 /// keep their treatment. No local or replicated flag is read. An install
 /// whose key is not known yet keeps today's path
@@ -751,6 +739,8 @@ fn carries_own_will(
         | AuthorityOp::AgentGrantAct(_)
         | AuthorityOp::MembershipExecution(_)
         | AuthorityOp::PolicySettingSet(_)
+        | AuthorityOp::SettingCopy(_)
+        | AuthorityOp::SettingPackHead(_)
         | AuthorityOp::ExportAct(_)
         | AuthorityOp::FrontierJoin(_)
         | AuthorityOp::CustodyPermitPiece(_)

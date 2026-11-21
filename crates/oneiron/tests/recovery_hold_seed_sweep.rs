@@ -84,6 +84,7 @@ impl CheckpointRootSigner for KeySigner {
         &self,
         _vault: &Vault,
         _fold: &AuthorityFold,
+        _ground: &oneiron::authority::OwnerProofGround,
         transcript: &[u8],
     ) -> oneiron::Result<Vec<u8>> {
         assert!(transcript.starts_with(AUTHORITY_TRANSCRIPT_DOMAIN));

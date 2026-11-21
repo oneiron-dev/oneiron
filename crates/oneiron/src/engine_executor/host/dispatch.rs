@@ -3,6 +3,8 @@
 //! `RecordingJsHost` state is defined by `engine_executor::host`.
 
 use super::*;
+use crate::code_run::TextAnswerPost;
+use crate::engine_executor::{AdmittedSkillAnswer, AdmittedSkillText};
 
 /// What a pre-record spill stands for: the run's own result, or the view a
 /// verb hook left the caller in its place.
@@ -16,6 +18,15 @@ pub(super) enum Shown {
     /// row, never bound to a name, and its card carries no `name`, so no read
     /// gives the real result back.
     View,
+}
+
+/// A callable skill's checked answer as the host read it: a value (the
+/// answer itself, or the card of the body that holds it), or, for an answer
+/// a live post chain judges that nests past [`WHOLE_ANSWER_MAX_DEPTH`], its
+/// JSON text, which no value is built from (SKILL-ANSWER-DEEP-JSON-STACK-SAFE).
+pub(super) enum ReadAnswer {
+    Value(serde_json::Value),
+    Text(Box<serde_json::value::RawValue>),
 }
 
 impl RecordingJsHost<'_, '_> {
@@ -344,25 +355,52 @@ impl RecordingJsHost<'_, '_> {
     }
 
     /// A callable skill's checked answer as the guest gets it: its JSON up
-    /// to the inline reply size, else its card, the answer copied whole from
-    /// the call's spool into a body of the run; only the large-answer copy
-    /// here streams in frames without reading into one value. With `whole`
-    /// (a verb-hook post chain is live for the call, its own or the admitted
-    /// outer caller's) the answer is read into one value at any size, so
-    /// that chain reads the body itself, never its card; `dispatch_call`
-    /// then stores it for the record as it stores every large answer, a
-    /// hook's view leaving it record-only ([`Shown::View`]).
+    /// to the inline reply size and nesting, else its card, the answer
+    /// copied whole from the call's spool into a body of the run; only the
+    /// stored-body copy here streams in frames without reading into one
+    /// value. An answer nesting past [`WHOLE_ANSWER_MAX_DEPTH`] is stored
+    /// that way at any size, so no value the host builds or drops follows
+    /// its depth (SKILL-ANSWER-DEEP-JSON-STACK-SAFE); the guest reads its
+    /// body as text. With `whole` (a verb-hook post chain is live for the
+    /// call, its own or the admitted outer caller's) the answer is read
+    /// into one value at any size, so that chain reads the body itself,
+    /// never its card; `dispatch_call` then stores it for the record as it
+    /// stores every large answer, a hook's view leaving it record-only
+    /// ([`Shown::View`]). A whole answer nesting past that depth is read as
+    /// its JSON text instead ([`ReadAnswer::Text`]), which that chain judges
+    /// as text: the call's own here ([`Self::judge_text_answer`]), the
+    /// admitted outer caller's once its entry returns it
+    /// ([`Self::hold_admitted_text`]). Text a value could not hold but for
+    /// its nesting is refused as non-JSON, as the value read refuses it
+    /// ([`scalars_read_as_values`]).
     pub(super) fn skill_answer(
         &mut self,
         seq: u64,
         mut answer: crate::skill::CallableSkillAnswer,
         whole: bool,
-    ) -> Result<serde_json::Value> {
+    ) -> Result<ReadAnswer> {
+        let non_json =
+            || Error::InvalidConfig("callable skill returned non-JSON output".to_owned());
         if whole || answer.byte_len() <= RESULT_REPLY_INLINE_BYTES as u64 {
-            refuse_too_deep_answer(&mut answer, whole)?;
-            return serde_json::from_reader(std::io::BufReader::new(answer.reader()?)).map_err(
-                |_| Error::InvalidConfig("callable skill returned non-JSON output".to_owned()),
-            );
+            let nests_past = answer_nests_past_whole_depth(&mut answer)?;
+            if nests_past && whole {
+                let mut text = String::new();
+                std::io::Read::read_to_string(answer.reader()?, &mut text)
+                    .map_err(|_| non_json())?;
+                // The raw reader keeps its own frame stack and checks no
+                // depth, so no recursion follows the answer's.
+                let text =
+                    serde_json::value::RawValue::from_string(text).map_err(|_| non_json())?;
+                if !scalars_read_as_values(text.get()) {
+                    return Err(non_json());
+                }
+                return Ok(ReadAnswer::Text(text));
+            }
+            if !nests_past {
+                return serde_json::from_reader(std::io::BufReader::new(answer.reader()?))
+                    .map(ReadAnswer::Value)
+                    .map_err(|_| non_json());
+            }
         }
         // The spool-to-body copy holds its bytes on the run's own share
         // (FIX 10674), as the answer check does; past the share the watch
@@ -383,6 +421,106 @@ impl RecordingJsHost<'_, '_> {
                 sink.write(&frame[..read])?;
             }
         })
+        .map(ReadAnswer::Value)
+    }
+
+    /// The call's own post chain over skill answer `text`, held as JSON text
+    /// ([`ReadAnswer::Text`]), and the answer stored once it is done: the
+    /// output its row keeps. A chain that left the view as it was leaves the
+    /// guest the answer's body, bound to its name, as an answer no hook
+    /// reads arrives. A Redact that hid anything, or a hook that stopped the
+    /// call, leaves the body record-only ([`Shown::View`]) and serves what
+    /// the chain left in its place ([`Self::text_view_reply`] for a Redact),
+    /// as a value's view is served.
+    fn judge_text_answer(
+        &mut self,
+        seq: u64,
+        hooked: crate::code_run::HookedCall,
+        text: &serde_json::value::RawValue,
+    ) -> Result<serde_json::Value> {
+        // The answer's bytes are held on the run's share before the chain
+        // reads them, as the copy that stores them is (FIX 10674).
+        let bytes = text.get().as_bytes();
+        let _copy_hold = self
+            .result_share
+            .zip(self.storage)
+            .and_then(|(share, storage)| share.hold(bytes.len() as u64, storage.limit_watch()));
+        let post = self.gated_write.leave_verb_hooks_text(hooked, text)?;
+        // The answer first, then the view in its place, as a value's
+        // answer is stored before its view is served.
+        let shown = match &post {
+            TextAnswerPost::Unchanged => Shown::Result,
+            TextAnswerPost::Narrowed(_) | TextAnswerPost::Stopped(_) => Shown::View,
+        };
+        let output = self.store_sourced_answer(seq, &[], |sink| sink.write(bytes), shown)?;
+        let view = match post {
+            TextAnswerPost::Unchanged => None,
+            TextAnswerPost::Narrowed(view) => Some(self.text_view_reply(&view)?),
+            TextAnswerPost::Stopped(view) => Some(view),
+        };
+        if let Some(view) = view {
+            self.gated_write.serve_hook_view(view);
+        }
+        Ok(output)
+    }
+
+    /// Skill answer `text`, held as JSON text ([`ReadAnswer::Text`]), for
+    /// the admitted outer caller's post chain, which judges it as text once
+    /// the admitted entry returns it ([`AdmittedSkillAnswer::Text`]): the
+    /// answer is stored record-only, as an answer held whole for that chain
+    /// is (`dispatch_call`), and the output its row keeps is that body's
+    /// card. An answer the row's store withheld holds nothing: the caller
+    /// reads the row's withheld content, as for a value.
+    fn hold_admitted_text(
+        &mut self,
+        seq: u64,
+        text: Box<serde_json::value::RawValue>,
+    ) -> Result<serde_json::Value> {
+        let output = {
+            let bytes = text.get().as_bytes();
+            // Held on the run's share while the copy stores them (FIX 10674).
+            let _copy_hold = self
+                .result_share
+                .zip(self.storage)
+                .and_then(|(share, storage)| share.hold(bytes.len() as u64, storage.limit_watch()));
+            self.store_sourced_answer(seq, &[], |sink| sink.write(bytes), Shown::View)?
+        };
+        if !self.admitted_skill_withheld {
+            self.admitted_skill_answer = Some(AdmittedSkillAnswer::Text(AdmittedSkillText::new(
+                self.run_id,
+                text,
+            )));
+        }
+        Ok(output)
+    }
+
+    /// The reply a Redact's view held as text gives the guest, as a value's
+    /// view is served: read into a value when it nests no deeper than one
+    /// may hold, else its `output` stored as a body of the run, bound to its
+    /// name, and that body's card in its place. A view nesting that deep
+    /// still holds the answer under `output`: a Redact only removes.
+    fn text_view_reply(
+        &mut self,
+        view: &crate::runtime_hooks::verb::TextView,
+    ) -> Result<serde_json::Value> {
+        let unreadable = || Error::InvariantViolation("a redacted skill answer view does not read");
+        if !text_nests_past_whole_depth(view.text()) {
+            return serde_json::from_str(view.text()).map_err(|_| unreadable());
+        }
+        // One level: each member stays raw text, read with no depth.
+        let mut members: std::collections::BTreeMap<String, Box<serde_json::value::RawValue>> =
+            serde_json::from_str(view.text()).map_err(|_| unreadable())?;
+        let output = members.remove("output").ok_or_else(unreadable)?;
+        let storage = self.storage.ok_or(Error::InvalidConfig(
+            "executor result storage unavailable".into(),
+        ))?;
+        // The card stands for the view: no skill body it holds reaches the
+        // guest (FIX 3608), as `store_reply` keeps it.
+        self.held_delivery.clear();
+        let mut sink = storage.code_run_output_sink()?;
+        sink.write(output.get().as_bytes())?;
+        let card = self.bind_stored(storage, sink, None)?;
+        Ok(json!({"output": card}))
     }
 
     /// `self.skills.call` (OF-353): an agent-callable skill run as a step of
@@ -470,7 +608,7 @@ impl RecordingJsHost<'_, '_> {
         };
         // The call's verb hooks once it is admitted (ARCH-0080 §3): a rewrite
         // names the skill and the args it runs with.
-        let (skill, hooked) = if self.admitted_skill_seq == Some(seq) {
+        let (skill, mut hooked) = if self.admitted_skill_seq == Some(seq) {
             (skill, None)
         } else {
             match self.gated_write.enter_verb_hooks(
@@ -593,11 +731,26 @@ impl RecordingJsHost<'_, '_> {
         if self.declined.is_some() {
             return Ok(failed("task_declined".to_owned()));
         }
+        let rewritten = hooked.as_ref().and_then(|hooked| hooked.1.clone());
         let outcome = match ran {
-            Ok(answer) => SelfDispatchOutcome::SkillCall(SelfSkillCallResult {
-                skill: skill.skill,
-                output: self.skill_answer(seq, answer, whole_for_hooks)?,
-            }),
+            Ok(answer) => {
+                let output = match self.skill_answer(seq, answer, whole_for_hooks)? {
+                    ReadAnswer::Value(output) => output,
+                    // An answer nesting past what a value may hold meets the
+                    // live chain that reads it whole as text: the call's own
+                    // judges it here, and the answer is stored once it is
+                    // done; the admitted outer caller's takes it from the
+                    // admitted entry (`hooked` is `None` only there).
+                    ReadAnswer::Text(text) => match hooked.take() {
+                        Some(own) => self.judge_text_answer(seq, own, &text)?,
+                        None => self.hold_admitted_text(seq, text)?,
+                    },
+                };
+                SelfDispatchOutcome::SkillCall(SelfSkillCallResult {
+                    skill: skill.skill,
+                    output,
+                })
+            }
             // A cancelled skill is a failed call under its stable code, read
             // from the typed error the runtime raised, never from guest text.
             Err(Error::Code(CodeError::CodeStepCancelled)) => {
@@ -638,22 +791,27 @@ impl RecordingJsHost<'_, '_> {
         }
         // The admitted outer caller's post chain reads the whole answer
         // this host returns to it: hold it for that entry, while
-        // `dispatch_call` records the outcome itself record-only below.
-        if outer_hooks_live && let SelfDispatchOutcome::SkillCall(result) = &outcome {
-            self.admitted_skill_answer = Some(result.output.clone());
+        // `dispatch_call` records the outcome itself record-only below. An
+        // answer held as text was held, or withheld, as it was stored.
+        if outer_hooks_live
+            && self.admitted_skill_answer.is_none()
+            && !self.admitted_skill_withheld
+            && let SelfDispatchOutcome::SkillCall(result) = &outcome
+        {
+            self.admitted_skill_answer = Some(AdmittedSkillAnswer::Value(result.output.clone()));
         }
         // The post chain reads the answer itself: while one is live a large
         // answer came back whole above, never by its card. No spill runs
         // before it here: `dispatch_call` stores the outcome for its row
         // once the chain has left its view, record-only when a view stands
-        // in its place, as it does for every other call.
-        let rewritten = hooked.as_ref().and_then(|hooked| hooked.1.clone());
+        // in its place, as it does for every other call. An answer held as
+        // text met its own chain above, which took `hooked`.
         match hooked {
             Some(hooked) => Ok((
                 self.gated_write.leave_verb_hooks(hooked, outcome)?,
                 rewritten,
             )),
-            None => Ok((outcome, None)),
+            None => Ok((outcome, rewritten)),
         }
     }
 
@@ -896,7 +1054,8 @@ impl RecordingJsHost<'_, '_> {
         // The admitted skill call's whole answer is held for its outer
         // caller, whose post chain may still serve a view of it: its real
         // body records record-only here too, bound to no name, exactly as
-        // when this call's own chain left a view.
+        // when this call's own chain left a view. An answer held as text
+        // was stored record-only already.
         let admitted_answer = matches!(&call, SelfCall::SkillsCall(_))
             && self.admitted_skill_seq == Some(seq)
             && self.admitted_skill_answer.is_some();
@@ -1023,59 +1182,122 @@ pub(super) fn records_failed_effect(effect: SelfEffect) -> bool {
 /// (`serde_json` 1.0.151 `de.rs`, `remaining_depth: 128`, `check_recursion`
 /// failing at zero), so 127 nests. The spool check accepts any depth
 /// (`skill/call/json_tokens.rs` keeps its own stack); past this one the
-/// whole-answer parse below would fail a valid answer as non-JSON, so the
-/// call is refused with its cause instead, before any value is built.
+/// whole-answer parse would fail a valid answer as non-JSON, and a value
+/// built past it would be cloned, serialized and dropped by recursion
+/// that follows its depth on the host's stack. So no value is built:
+/// the answer is stored as a body (`RecordingJsHost::skill_answer`),
+/// or, when a live post chain must judge it, held as its JSON text
+/// (`RecordingJsHost::judge_text_answer`).
 const WHOLE_ANSWER_MAX_DEPTH: u32 = 127;
 
-/// Refuses a spooled answer that nests past [`WHOLE_ANSWER_MAX_DEPTH`]:
-/// the whole-answer parse cannot read it, however valid its JSON. With a
-/// live post chain the hook never judges half an answer; without one the
-/// answer still says why it cannot be read whole. Reads the spool from its
-/// first byte and leaves it rewound, as it found it.
-fn refuse_too_deep_answer(
-    answer: &mut crate::skill::CallableSkillAnswer,
-    whole_for_hooks: bool,
-) -> Result<()> {
+/// Whether a spooled answer nests past [`WHOLE_ANSWER_MAX_DEPTH`]: the
+/// whole-answer parse cannot read it, however valid its JSON. Reads the
+/// spool from its first byte; each [`crate::skill::CallableSkillAnswer::reader`]
+/// call rewinds it again.
+fn answer_nests_past_whole_depth(answer: &mut crate::skill::CallableSkillAnswer) -> Result<bool> {
     let reader = answer.reader()?;
-    let mut depth: u32 = 0;
-    let mut deepest: u32 = 0;
-    let mut string = false;
-    let mut escaped = false;
+    let mut scan = NestingScan::default();
     let mut chunk = vec![0; 8 * 1024];
     loop {
         let read = std::io::Read::read(reader, &mut chunk)?;
         if read == 0 {
-            break;
+            return Ok(false);
         }
-        for byte in &chunk[..read] {
-            if string {
-                if escaped {
-                    escaped = false;
+        if scan.passes_whole_depth(&chunk[..read]) {
+            return Ok(true);
+        }
+    }
+}
+
+/// Whether JSON `text` nests past [`WHOLE_ANSWER_MAX_DEPTH`], so no value
+/// may be read from it.
+pub(in crate::engine_executor) fn text_nests_past_whole_depth(text: &str) -> bool {
+    NestingScan::default().passes_whole_depth(text.as_bytes())
+}
+
+/// Whether each string and number JSON `text` holds reads as a value's
+/// does. `text` is JSON already (a [`serde_json::value::RawValue`]), but
+/// that reader takes a lone surrogate escape and a number past `f64`,
+/// which a value refuses. Each scalar is read on its own, so no recursion
+/// follows the nesting; a string with no escape reads as it is.
+fn scalars_read_as_values(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let mut at = 0;
+    while let Some(&byte) = bytes.get(at) {
+        match byte {
+            b'"' => {
+                let mut end = at + 1;
+                let mut escaped = false;
+                loop {
+                    match bytes.get(end) {
+                        None => return false,
+                        Some(b'\\') => {
+                            escaped = true;
+                            end += 2;
+                        }
+                        Some(b'"') => break,
+                        Some(_) => end += 1,
+                    }
+                }
+                if escaped && serde_json::from_str::<String>(&text[at..=end]).is_err() {
+                    return false;
+                }
+                at = end + 1;
+            }
+            b'-' | b'0'..=b'9' => {
+                let end = bytes[at..]
+                    .iter()
+                    .position(|byte| {
+                        !matches!(byte, b'-' | b'+' | b'.' | b'e' | b'E' | b'0'..=b'9')
+                    })
+                    .map_or(bytes.len(), |length| at + length);
+                if serde_json::from_str::<serde_json::Number>(&text[at..end]).is_err() {
+                    return false;
+                }
+                at = end;
+            }
+            _ => at += 1,
+        }
+    }
+    true
+}
+
+/// JSON nesting counted byte by byte, outside strings: it keeps no stack,
+/// so no depth limits it.
+#[derive(Default)]
+struct NestingScan {
+    depth: u32,
+    string: bool,
+    escaped: bool,
+}
+
+impl NestingScan {
+    /// Reads `bytes` on from where the scan stands: whether the nesting
+    /// passes [`WHOLE_ANSWER_MAX_DEPTH`] within them.
+    fn passes_whole_depth(&mut self, bytes: &[u8]) -> bool {
+        for byte in bytes {
+            if self.string {
+                if self.escaped {
+                    self.escaped = false;
                 } else if *byte == b'\\' {
-                    escaped = true;
+                    self.escaped = true;
                 } else if *byte == b'"' {
-                    string = false;
+                    self.string = false;
                 }
                 continue;
             }
             match *byte {
-                b'"' => string = true,
+                b'"' => self.string = true,
                 b'{' | b'[' => {
-                    depth = depth.saturating_add(1);
-                    deepest = deepest.max(depth);
-                    if deepest > WHOLE_ANSWER_MAX_DEPTH {
-                        let why = if whole_for_hooks {
-                            "the skill answer nests too deep for the live post hook to judge"
-                        } else {
-                            "the skill answer nests too deep to read whole"
-                        };
-                        return Err(Error::Refused(why.to_owned()));
+                    self.depth = self.depth.saturating_add(1);
+                    if self.depth > WHOLE_ANSWER_MAX_DEPTH {
+                        return true;
                     }
                 }
-                b'}' | b']' => depth = depth.saturating_sub(1),
+                b'}' | b']' => self.depth = self.depth.saturating_sub(1),
                 _ => {}
             }
         }
+        false
     }
-    Ok(())
 }

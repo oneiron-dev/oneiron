@@ -32,20 +32,26 @@ impl ScopedRead<'_> {
         applied: &ResolvedRetrievalFilter,
         suppressed_count: usize,
     ) -> ScopedReadReceipt {
-        let floor = policy.retrieval_floor_for_actor(Some(&self.actor_key));
+        // A binding-only floor reports its talk's kinds as the key's ceiling
+        // (WORK-TALK-BINDING-RECALL-FLOOR), the filter it read under.
+        let (floor, _) = self.own_retrieval_floor(policy);
         let grant_scope = floor.has_grant_scope_bound(self.actor_key.authority_scope())
             || policy.scoped_read_grants_all_bounded(&self.actor_key);
         self.receipt_under(requested, floor, grant_scope, applied, suppressed_count)
     }
 
     /// This lane reporting its live Grants in each receipt it builds in a
-    /// serving snapshot ([`Self::receipt_in`]). Set on a verb answer whose
-    /// receipt tells its caller what admitted its rows: vault.recall,
-    /// vault.search.bm25, vault.claims.list, vault.get and vault.hydrate.
-    /// The retrieval loop reports them on any lane
-    /// ([`Self::receipt_reporting_in`]).
+    /// serving snapshot (`receipt_in`). Set on an answer whose receipt tells
+    /// its caller what admitted its rows: vault.recall, vault.search.bm25,
+    /// vault.claims.list, vault.get and vault.hydrate, and the server's core
+    /// query and memory reason routes (FIX-LIST
+    /// GRANT-RECEIPT-OTHER-READ-LANES). The retrieval loop reports them on
+    /// any lane (`receipt_reporting_in`). It reports and never admits a row.
+    /// A lane whose receipt caps content no row gate judged must not take it
+    /// (the people roster's about lines, the core timeline's deleted
+    /// records): one envelope over two Grants' bands would widen that cap.
     #[must_use]
-    pub(crate) fn with_live_grant_receipts(mut self) -> Self {
+    pub fn with_live_grant_receipts(mut self) -> Self {
         self.receipts_include_live_grants = true;
         self
     }

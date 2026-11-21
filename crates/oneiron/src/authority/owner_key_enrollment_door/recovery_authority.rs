@@ -4,6 +4,7 @@
 mod generations;
 
 use super::*;
+use crate::authority::OwnerProofGround;
 
 /// A kit activation's predecessor for the root's authority key enrolment
 /// (pass 27 R4 PR 2, WAYBACK-R4-FIRST-KEY = B): this install's live owner
@@ -31,10 +32,20 @@ impl ActivationPredecessor {
         }
     }
 
-    /// The predecessor's signature over the enrolment's authority transcript.
-    fn sign(&self, vault: &Vault, fold: &AuthorityFold, transcript: &[u8]) -> Result<Vec<u8>> {
+    /// The predecessor's signature over the enrolment's authority transcript. The
+    /// owner-key predecessor signs its proof on `ground`; the host-root predecessor
+    /// signs a slip and reads no ground.
+    fn sign(
+        &self,
+        vault: &Vault,
+        fold: &AuthorityFold,
+        ground: &OwnerProofGround,
+        transcript: &[u8],
+    ) -> Result<Vec<u8>> {
         match self {
-            Self::OwnerKey(held) => held.signer.sign_owner_proof(vault, fold, transcript),
+            Self::OwnerKey(held) => held
+                .signer
+                .sign_owner_proof(vault, fold, ground, transcript),
             Self::HostRoot(issuer) => Ok(issuer.sign_slip(transcript)),
         }
     }
@@ -330,7 +341,8 @@ impl Vault {
     /// this install and `predecessor` from
     /// [`Self::load_activation_predecessor`]. Revalidates the owner, builds
     /// R's enrolment, and calls [`Self::enrol_owner_signing_key_in_txn`]
-    /// with kind `RecoveryAuthority`.
+    /// with kind `RecoveryAuthority`. `ground` is the ground the predecessor's
+    /// owner proof is signed on.
     ///
     /// # Errors
     /// As [`Self::enrol_owner_signing_key_as`].
@@ -341,6 +353,7 @@ impl Vault {
         machine: EntityId,
         seed: &crate::world_keys::RecoveryRootSeed,
         predecessor: &ActivationPredecessor,
+        ground: &OwnerProofGround,
     ) -> Result<OwnerKeyEnrollmentReceipt> {
         let owner = match authority {
             ActAuthority::Owner(owner, _) => owner,
@@ -351,8 +364,9 @@ impl Vault {
         let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
         let input = recovery_authority_enrollment(seed, &vault_id, 0, machine, actor)?;
         let predecessor_key = predecessor.predecessor_key();
-        let mut sign =
-            |fold: &AuthorityFold, transcript: &[u8]| predecessor.sign(self, fold, transcript);
+        let mut sign = |fold: &AuthorityFold, transcript: &[u8]| {
+            predecessor.sign(self, fold, ground, transcript)
+        };
         self.enrol_owner_signing_key_in_txn(
             txn,
             authority,
@@ -370,7 +384,8 @@ impl Vault {
     /// then acts as any owner root, the restored machine's roster row
     /// included (REVIEW-9488 P1 3). Nothing on the roster changes. An R the
     /// passkey limits do not hold needs no row (`None`). `signer` is R at
-    /// the kit's live generation, as the activation derived it.
+    /// the kit's live generation, as the activation derived it. `ground` is the
+    /// ground the predecessor's owner proof is signed on.
     ///
     /// # Errors
     /// As [`Self::confirm_owner_key_as`].
@@ -381,6 +396,7 @@ impl Vault {
         machine: EntityId,
         signer: &crate::world_keys::RecoveryAuthoritySigner,
         predecessor: &ActivationPredecessor,
+        ground: &OwnerProofGround,
     ) -> Result<Option<OwnerKeyEnrollmentReceipt>> {
         let owner = match authority {
             ActAuthority::Owner(owner, _) => owner,
@@ -397,8 +413,9 @@ impl Vault {
             input.proof,
             EnrolledOwnerKeyKind::RecoveryAuthority,
         );
-        let mut sign =
-            |fold: &AuthorityFold, transcript: &[u8]| predecessor.sign(self, fold, transcript);
+        let mut sign = |fold: &AuthorityFold, transcript: &[u8]| {
+            predecessor.sign(self, fold, ground, transcript)
+        };
         let (entry, machine) = self.write_owner_key_enroll_in_txn(
             txn,
             authority,
@@ -466,7 +483,8 @@ impl Vault {
     /// ([`Self::append_revoke_device_in_txn`]). Another owner's R stays: the
     /// filter is the enrolment's owner, as at the membership move. Answers
     /// what the activated R must carry, chosen before the first revocation
-    /// ([`Self::recovery_authority_carry_in_txn`]).
+    /// ([`Self::recovery_authority_carry_in_txn`]). `ground` is the ground the
+    /// predecessor's owner proof is signed on.
     ///
     /// # Errors
     /// The writer's: an entry the fold does not count.
@@ -476,6 +494,7 @@ impl Vault {
         actor: EntityId,
         kept: &AuthorityKey,
         predecessor: &ActivationPredecessor,
+        ground: &OwnerProofGround,
     ) -> Result<RecoveryAuthorityCarry> {
         let earlier: Vec<AuthorityKey> = self
             .enrolled_owner_keys_in_txn(txn)?
@@ -491,7 +510,7 @@ impl Vault {
         let carry = self.recovery_authority_carry_in_txn(txn, &earlier)?;
         let predecessor_key = predecessor.predecessor_key();
         let signing_fold = self.authority_view_readonly_in_txn(txn)?;
-        let sign = |transcript: &[u8]| predecessor.sign(self, &signing_fold, transcript);
+        let sign = |transcript: &[u8]| predecessor.sign(self, &signing_fold, ground, transcript);
         for revoked_key in &earlier {
             let signer = match predecessor {
                 ActivationPredecessor::OwnerKey(_) => EntrySigner::Key(&predecessor_key, &sign),
@@ -510,7 +529,8 @@ impl Vault {
     /// revocation, because the activation enrols R before it (the
     /// enrolment's carrier may stand on an approval only a revoked R gave,
     /// until the carry signs it again). Signed by `predecessor`, as the
-    /// enrolment's binding is.
+    /// enrolment's binding is. `ground` is the ground the predecessor's owner
+    /// proof is signed on.
     ///
     /// # Errors
     /// The binding's `BINDING_NOT_COUNTED`, as at the enrolment.
@@ -520,9 +540,11 @@ impl Vault {
         actor: EntityId,
         key: AuthorityKey,
         predecessor: &ActivationPredecessor,
+        ground: &OwnerProofGround,
     ) -> Result<()> {
-        let mut sign =
-            |fold: &AuthorityFold, transcript: &[u8]| predecessor.sign(self, fold, transcript);
+        let mut sign = |fold: &AuthorityFold, transcript: &[u8]| {
+            predecessor.sign(self, fold, ground, transcript)
+        };
         self.bind_unbound_owner_on_self_host_in_txn(
             txn,
             actor,

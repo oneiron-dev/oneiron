@@ -47,6 +47,7 @@ mod known_note;
 mod leaf_keys;
 mod promoted_message_parts;
 pub(super) mod retained_repo;
+mod room_carry;
 pub(super) mod side_row;
 mod split_phrase;
 pub(super) mod spool;
@@ -83,6 +84,7 @@ use crate::secret_record::{CustodyWrite, FoundNote};
 use crate::secret_record::{
     SECRET_CUSTODY_SCHEMA_VERSION, SecretCustodyFloor, SecretCustodyRecord, SecretCustodyStatus,
 };
+use crate::session_overlay::SessionOverlay;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 use crate::store::file_key_masks::{MASKED_FILE_BAND, MaskedFile};
@@ -91,6 +93,7 @@ use crate::store::known_value_index::KnownValues;
 use crate::write_envelope::ClaimCandidate;
 pub(in crate::batch) use batch_door::mask_batch_ops;
 pub(crate) use promoted_message_parts::seal_promoted_message_ops_in_txn;
+pub(crate) use room_carry::{RoomCarry, carry_room_secrets_in_txn};
 use split_phrase::Spread;
 pub(crate) use text_spans::{file_spans, span_placed_for};
 use text_spans::{merged, occurrences, secret_spans};
@@ -1091,6 +1094,19 @@ impl Masker {
         }
         // The owner hears of what was lifted, once per record.
         note_found_keys_in_txn(write.store, wtxn, &notes, at)?;
+        Ok(handles)
+    }
+
+    /// Keeps each found value in `room`'s own custody, in memory only
+    /// (ROOM-LOCAL-CUSTODY): no record, origin row, notice or fingerprint is
+    /// written anywhere. Each value maps to its room handle, the one the
+    /// room already holds it under, if any.
+    fn keep_in_room(self, room: &SessionOverlay) -> Result<PlanValues<String>> {
+        let mut handles = PlanValues::default();
+        for mut found in self.found {
+            let handle = room.keep_room_secret(&found.value, found.reason)?;
+            handles.insert(std::mem::take(&mut *found.value), handle);
+        }
         Ok(handles)
     }
 }

@@ -47,8 +47,8 @@ impl ExecutorStorage<'_> {
     /// vault's does, and its run's replay reads withhold a withdrawn fold's
     /// answer. `Err` holds the typed unavailable content that stands in for
     /// an answer with a secret the side-row wall cannot place, of which
-    /// nothing is stored. Off record, a reply that holds a fresh key is
-    /// withheld until room-local custody exists (FIX 5718 part 3).
+    /// nothing is stored. Off record, the room keeps a fresh key in its own
+    /// custody and the reply holds its room handle (ROOM-LOCAL-CUSTODY).
     pub(crate) fn publish_code_run_reply(
         &self,
         path: String,

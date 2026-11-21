@@ -72,6 +72,10 @@ pub struct PipelineBuilder<'a> {
     pub(super) authority_filter: Option<crate::gate::ResolvedRetrievalFilter>,
     /// Only actor-scoped callers may nominate private diary NOTEs in a text channel.
     pub(super) scoped_note_reader: Option<crate::claim::ScopedReadActorKey>,
+    /// The scoped reader whose world refusals the run's BM25 statistics
+    /// honour when no [`Self::scoped_note_reader`] is set
+    /// ([`Self::statistics_reader`]).
+    pub(super) statistics_reader: Option<crate::claim::ScopedReadActorKey>,
     /// Where the run's rows go: off this device or not, and each machine a
     /// scoped reader's connection proved (mesh PR2b); see
     /// [`Self::for_destination`].
@@ -182,6 +186,7 @@ impl<'a> PipelineBuilder<'a> {
             criticality: None,
             authority_filter: None,
             scoped_note_reader: None,
+            statistics_reader: None,
             destination: crate::settings::ReadDestination::on_device(),
             since_filter: None,
             occurred_range: None,
@@ -323,6 +328,23 @@ impl<'a> PipelineBuilder<'a> {
         self.destination.meet(key.destination());
         self.scoped_note_reader = Some(key);
         self
+    }
+
+    /// Scores for `key`'s read, whose admission the caller installs: no row
+    /// a world keeps from that reader counts in the run's BM25 statistics
+    /// (FIX WORLD-SCOPE-BM25-DF-COUNTS-HIDDEN-POSTINGS). It changes no
+    /// candidate the run admits, and it is what [`Self::scoped_note_reader`]
+    /// already gives a run.
+    pub(crate) fn statistics_reader(mut self, key: crate::claim::ScopedReadActorKey) -> Self {
+        self.statistics_reader = Some(key);
+        self
+    }
+
+    /// The reader whose world refusals the run's BM25 statistics honour.
+    pub(super) fn statistics_reader_key(&self) -> Option<&crate::claim::ScopedReadActorKey> {
+        self.scoped_note_reader
+            .as_ref()
+            .or(self.statistics_reader.as_ref())
     }
 
     /// Reads for a caller whose rows go to `destination`: no candidate a

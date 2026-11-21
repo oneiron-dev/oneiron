@@ -74,7 +74,7 @@ const MAX_IN_FLIGHT: usize = 8;
 /// typed envelope. A message too long for the server's socket goes over HTTP
 /// ([`link`]). What the bridge adds to a call's `_meta` never takes its body
 /// past this bound: such a call goes as the client wrote it.
-const MAX_FRAME_BYTES: usize = crate::config::REQUEST_BODY_FLOOR_MIN_BYTES as usize;
+pub(crate) const MAX_FRAME_BYTES: usize = crate::config::REQUEST_BODY_FLOOR_MIN_BYTES as usize;
 
 /// The longest request frame the bridge writes to the server's socket: the
 /// lesser of the server's default bound on an inbound socket frame and the
@@ -84,7 +84,7 @@ const MAX_FRAME_BYTES: usize = crate::config::REQUEST_BODY_FLOOR_MIN_BYTES as us
 /// HTTP instead, which reads bodies up to the request floor; the owner's,
 /// with no other carrier, is refused unsent. A server set to a lower frame
 /// bound still closes on a frame between the two.
-const SOCKET_MAX_OUTBOUND_FRAME: usize = {
+pub(crate) const SOCKET_MAX_OUTBOUND_FRAME: usize = {
     let frame = crate::config::server_config::DEFAULT_MAX_FRAME_SIZE;
     let tagged_payload = oneiron::sync::transport::MAX_DECODED_PAYLOAD_BYTES + 1;
     if tagged_payload < frame {
