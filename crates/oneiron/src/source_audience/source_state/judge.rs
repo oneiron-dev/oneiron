@@ -331,8 +331,10 @@ pub(super) fn take_floor_in_store_txn(
 ) -> Result<bool> {
     let mut add = floor.clone();
     match crate::source_audience::floor::own_source_of_in(store, txn, row, raw)? {
+        // An archived row is held, not an erased shell: it keeps the seal
+        // (#10265 Opus review 3 P2-1).
         OwnSource::Source(own) if own == crate::source_audience::floor::sealed_source() => {
-            if !crate::ports::TombstoneStoreRead::port_deletion_state(store, &**txn, row)?.deleted {
+            if !crate::ports::removed_in_txn(store, &**txn, row)? {
                 add.insert(own);
             }
         }
