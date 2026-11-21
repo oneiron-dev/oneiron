@@ -49,9 +49,10 @@ pub enum CompanionProfileAdmission {
     /// one of its sources lies in, from where the read goes, the reader's
     /// own credential keeps that world or the exact words of a source out,
     /// the profile's source audience does not read to the reader, the
-    /// grant's own delegated bounds leave this read outside it, or the
-    /// stored row is of an earlier schema whose sources name no exact words
-    /// (FIX 11766).
+    /// grant's own delegated bounds leave this read outside it, the profile
+    /// is kept from use (FIX COMPANION-USE-LIMITED-PROFILE-READS-AS-MISSING),
+    /// or the stored row is of an earlier schema whose sources name no exact
+    /// words (FIX 11766).
     Withheld { grant: EntityId },
 }
 
@@ -70,9 +71,15 @@ impl Vault {
     /// `principal_ref`'s read of the profile at `key` toward `destination`,
     /// judged in one snapshot: every live grant is tried, and the first that
     /// admits the read, its delegated bounds included, admits it. A read
-    /// only a grant's bounds keep out is withheld, not refused. `reader` is
-    /// the read lane of the request's authenticated caller, when one was
-    /// built; `selected` is the caller's source set for the freshness check.
+    /// only a grant's bounds keep out is withheld, not refused. So is a
+    /// profile kept from use, by its own C6 limit, a cooperative review
+    /// restriction, or as content about a PERSON a kept privacy erase limits
+    /// (FIX COMPANION-USE-LIMITED-PROFILE-READS-AS-MISSING; Engine ANSWER
+    /// COMPANION-USE-LIMITED-PROFILE-ANSWER = A): no regeneration makes it
+    /// readable while the limit stands, so it answers no next step, where a
+    /// missing profile answers a refresh. `reader` is the read lane of the
+    /// request's authenticated caller, when one was built; `selected` is the
+    /// caller's source set for the freshness check.
     pub fn companion_profile_snapshot_admitted(
         &self,
         principal_ref: &EntityId,
@@ -88,9 +95,11 @@ impl Vault {
             GrantMatch::Bounded(grant) => return Ok(CompanionProfileAdmission::Withheld { grant }),
             GrantMatch::None => return Ok(CompanionProfileAdmission::Denied),
         };
-        let Some(state) =
-            self.psych_profile_sealed_state_in_txn(&txn, &psych_profile_entity_id(key), selected)?
-        else {
+        let id = psych_profile_entity_id(key);
+        if crate::store::legal_hold::use_limit_in_txn(&self.store, &txn, &id)?.is_some() {
+            return Ok(CompanionProfileAdmission::Withheld { grant });
+        }
+        let Some(state) = self.psych_profile_sealed_state_in_txn(&txn, &id, selected)? else {
             return Ok(CompanionProfileAdmission::Withheld { grant });
         };
         if self.companion_profile_withheld_in(&txn, key, &state, destination, reader) {

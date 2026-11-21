@@ -130,7 +130,7 @@ impl OAuthSignIn {
     /// Refuses unless this sign-in, read from `path`, was made at `url`'s
     /// origin, which its token endpoint names: its tokens go to that vault
     /// alone.
-    fn made_at(&self, path: &Path, url: &reqwest::Url) -> anyhow::Result<()> {
+    pub(crate) fn made_at(&self, path: &Path, url: &reqwest::Url) -> anyhow::Result<()> {
         let made = reqwest::Url::parse(&self.token_endpoint).map_err(|_| {
             anyhow::anyhow!(
                 "{} names no token endpoint URL; sign in again with `oneiron hosted login \
@@ -194,7 +194,23 @@ impl OAuthSignIn {
     /// replaces back over it. Answers the replaced sign-in, when `path` held
     /// one that reads.
     pub(crate) fn take_place(staged: &Path, path: &Path) -> anyhow::Result<Option<Self>> {
+        Self::take_place_while(staged, path, || true)
+    }
+
+    /// [`Self::take_place`] when `admitted` still holds under `path`'s
+    /// refresh lock, which a sign-out of `path` takes too; refused when it
+    /// does not, `staged` left for its caller to revoke.
+    pub(crate) fn take_place_while(
+        staged: &Path,
+        path: &Path,
+        admitted: impl FnOnce() -> bool,
+    ) -> anyhow::Result<Option<Self>> {
         let _lock = RefreshLock::take(path)?;
+        anyhow::ensure!(
+            admitted(),
+            "the sign-in {} was made for is no longer recorded here; it was not kept",
+            path.display()
+        );
         let replaced = Self::read(path).ok();
         std::fs::rename(staged, path).map_err(|error| {
             anyhow::anyhow!("move {} to {}: {error}", staged.display(), path.display())

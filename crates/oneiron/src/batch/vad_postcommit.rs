@@ -96,7 +96,7 @@ pub(super) fn has_vad_postcommit_owner(vault: &Vault, txn: &RwTxn<'_>) -> bool {
     PENDING_VAD.with(|pending| pending.borrow().contains_key(&transaction_key(vault, txn)))
 }
 
-pub(super) fn queue_dreamer_vad_approvals(vault: &Vault, txn: &RwTxn<'_>, ids: Vec<EntityId>) {
+pub(crate) fn queue_dreamer_vad_approvals(vault: &Vault, txn: &RwTxn<'_>, ids: Vec<EntityId>) {
     PENDING_VAD.with(|pending| {
         if let Some(queued) = pending.borrow_mut().get_mut(&transaction_key(vault, txn)) {
             queued.vad_ids.extend(ids);

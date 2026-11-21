@@ -598,6 +598,11 @@ pub(super) struct HostStatus {
     /// The browser readiness a managed `Ping` carries, read from the same
     /// value: its section, its binding and its last guest start (FIX 7670).
     browser: oneiron_vault_contract::BrowserReadiness,
+    /// How many timer, feed and idle turn programs this store holds paused because it was made
+    /// a copy served beside its source (FIX TURNPROGRAM-OCCURRENCE-ARMINGS-LIVE-ON-A-VAULT-COPY):
+    /// the count a served copy shows beside its offer to resume them. `vault.turn_programs.paused`
+    /// lists them. A vault that is no such copy answers 0.
+    paused_turn_programs: u64,
 }
 
 /// The admission of a ROOT ADMIN command here (FIX 2222): status, backups,
@@ -637,6 +642,7 @@ pub(super) async fn host_status(server: Arc<SyncServer>) -> Result<HostStatus, A
             failure_signals: crate::owner::failure_signals::status(&server)?,
             link_bytes: oneiron::sync::transport::process_link_bytes(),
             browser: server.browser_readiness().snapshot(),
+            paused_turn_programs: server.vault().paused_turn_program_count()?,
         })
     })
     .await

@@ -25,12 +25,16 @@
 //! a relay room's locker token is root's, at 0440, and the room reads it
 //! through its own private group. So it is refused when any user outside its
 //! owner and its group can read or write it (FIX
-//! RELAY-ACCESS-TOKEN-FILE-NOT-ADMITTED), and when it carries an access
-//! control list: a list's entries let in users its mode does not show. On
-//! Linux a POSIX list's mask then shows as the group bits, not the group's
-//! reach, and an NFSv4 mount keeps a list on every file (REVIEW-9811). An
-//! owner-alone credential needs no POSIX list check off macOS, because its
-//! group bits of zero mask every POSIX entry.
+//! RELAY-ACCESS-TOKEN-FILE-NOT-ADMITTED), and when an access control list
+//! may let in users its mode does not show: any POSIX list, whose mask then
+//! shows as the group bits rather than the group's reach, any macOS entry,
+//! and an NFSv4 list with an entry that grants anyone outside its owner and
+//! group (REVIEW-9811; CREDENTIAL-FILE-NETWORK-FS-RULE = B). A token on an
+//! SMB mount, or on an NFSv4 mount that reports no list, is refused as a
+//! credential file there is (`credential_file::network_fs`). An owner-alone
+//! credential needs no POSIX list check off macOS, because its group bits of
+//! zero mask every POSIX entry; `credential_file::admit` judges a network
+//! file system's list for it too.
 //!
 //! Each is read from the open handle the text is then read from, so the
 //! file checked is the file read. A link is followed: its target is that
@@ -85,12 +89,6 @@ const READ_OR_WRITE_BY_ANY_USER: Reach = Reach {
 /// this attribute carries an entry its mode does not show.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 const POSIX_ACCESS_ACL_ATTRIBUTE: &str = "system.posix_acl_access";
-
-/// The extended attribute a Linux NFSv4 mount reports a file's ACL in. Its
-/// entries can name any user, whatever the mode the server reports, and the
-/// server keeps a list on every file (REVIEW-9811 round 2).
-#[cfg(any(target_os = "linux", target_os = "android"))]
-const NFS4_ACL_ATTRIBUTE: &str = "system.nfs4_acl";
 
 /// A file this server will not read because of who else can reach it. Its
 /// text names the file, its mode and the command that mends it, and never
@@ -158,8 +156,8 @@ pub(crate) fn read_host_placed_config_file(path: &Path) -> anyhow::Result<String
 /// The text of the credential file at `path` that its host shares with one
 /// group (a relay room's locker token), from one open handle, once no user
 /// outside that handle's file's owner and group can read or write it, by its
-/// mode and with no access control list. A refusal names the file, its mode
-/// and the command that mends it; it never repeats the file's text.
+/// mode and by any access control list. A refusal names the file, its mode
+/// or the list entry, and what mends it; it never repeats the file's text.
 pub(crate) fn read_group_shared_credential_file(path: &Path) -> anyhow::Result<String> {
     read_admitted(path, Role::GroupSharedCredential).map(|admitted| admitted.text)
 }
@@ -212,11 +210,11 @@ impl Role {
         }
     }
 
-    /// Whether a file that carries an access control list is refused: one
-    /// whose mode shuts out every user outside its owner and group says who
-    /// may reach it only without a list. A file any user may read is not
-    /// made safer by one, and a list that shares write is its owner's grant,
-    /// as a group's write is.
+    /// Whether a file whose access control list may let in users outside
+    /// its owner and group is refused: one whose mode shuts them out says
+    /// who may reach it only without such a list. A file any user may read
+    /// is not made safer by one, and a list that shares write is its owner's
+    /// grant, as a group's write is.
     #[cfg(unix)]
     fn refuses_access_control_list(self) -> bool {
         matches!(self, Self::GroupSharedCredential)
@@ -233,7 +231,8 @@ struct Admitted {
 
 /// The file at `path`, opened once and read from that handle when the
 /// handle's file keeps out what `role` refuses: any user's write, and for a
-/// group-shared credential any user's read too, and any access control list.
+/// group-shared credential any user's read too, and an access control list
+/// that may let in users outside its owner and group.
 fn read_admitted(path: &Path, role: Role) -> anyhow::Result<Admitted> {
     let mut file = File::open(path).with_context(|| unread(path, role))?;
     let metadata = file.metadata().with_context(|| unread(path, role))?;
@@ -256,17 +255,16 @@ fn read_admitted(path: &Path, role: Role) -> anyhow::Result<Admitted> {
             .into());
         }
         if role.refuses_access_control_list()
-            && let Some(mend) = access_control_list_mend(&file)
+            && let Some(refusal) = access_control_list_refusal(&file, mode & 0o777)
                 .with_context(|| format!("check who can read {} {}", role.noun(), path.display()))?
         {
             return Err(FileRefused(format!(
-                "{} {} has an access control list, whose entries can let in users its mode \
-                 ({:o}) does not show, and {}; {}",
+                "{} {} {}, and {}; {}",
                 role.noun(),
                 path.display(),
-                mode & 0o777,
+                refusal.reason,
                 role.stake(),
-                mend
+                refusal.mend
             ))
             .into());
         }
@@ -277,44 +275,65 @@ fn read_admitted(path: &Path, role: Role) -> anyhow::Result<Admitted> {
     Ok(Admitted { file, stored, text })
 }
 
-/// What mends the open `file`'s access control list, when it carries one: a
-/// POSIX access ACL is removed with `setfacl -b`, and a file on an NFSv4
-/// mount, which always carries a list, moves to a local file system. A file
-/// system that keeps no extended attributes keeps neither list; a probe that
-/// fails otherwise is an error, which refuses the file.
-#[cfg(any(target_os = "linux", target_os = "android"))]
-fn access_control_list_mend(file: &File) -> std::io::Result<Option<&'static str>> {
-    use rustix::io::Errno;
-    for (attribute, mend) in [
-        (POSIX_ACCESS_ACL_ATTRIBUTE, "run `setfacl -b` on it"),
-        (
-            NFS4_ACL_ATTRIBUTE,
-            "place it on a local file system: an NFSv4 mount keeps a list on every file",
+/// Why a file's access control list refuses it: what lets others in, which
+/// follows the file's path in a refusal, and what mends it.
+#[cfg(unix)]
+struct ListRefusal {
+    reason: String,
+    mend: String,
+}
+
+/// The refusal of a list whose entries the mode `mode` does not show,
+/// mended by `mend`.
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+fn extended_list_refusal(mode: u32, mend: &str) -> ListRefusal {
+    ListRefusal {
+        reason: format!(
+            "has an access control list, whose entries can let in users its mode ({mode:o}) \
+             does not show"
         ),
-    ] {
-        match rustix::fs::fgetxattr(file, attribute, &mut [0u8; 0]) {
-            Ok(_) => return Ok(Some(mend)),
-            Err(error) if error == Errno::NODATA || error == Errno::NOTSUP => {}
-            Err(error) => return Err(error.into()),
-        }
+        mend: mend.to_owned(),
     }
-    Ok(None)
 }
 
-/// What mends the open `file`'s ACL entries, which macOS never masks by the
-/// mode, when it carries one. A list that cannot be read counts as one.
+/// Why the open `file`, of mode `mode`, is refused by its access control
+/// list, when it is: a POSIX access ACL is removed with `setfacl -b`, and a
+/// list on a network file system is judged as a credential file's is, with
+/// the file's group admitted (`credential_file::network_fs`). A file system
+/// that keeps no extended attributes keeps no POSIX list; a probe that fails
+/// otherwise is an error, which refuses the file.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn access_control_list_refusal(file: &File, mode: u32) -> std::io::Result<Option<ListRefusal>> {
+    use credential_file::network_fs;
+    use rustix::io::Errno;
+    match rustix::fs::fgetxattr(file, POSIX_ACCESS_ACL_ATTRIBUTE, &mut [0u8; 0]) {
+        Ok(_) => return Ok(Some(extended_list_refusal(mode, "run `setfacl -b` on it"))),
+        Err(error) if error == Errno::NODATA || error == Errno::NOTSUP => {}
+        Err(error) => return Err(error.into()),
+    }
+    let judged = network_fs::judge(file, network_fs::Principals::OwnerAndGroup)?;
+    Ok(judged.map(|refusal| ListRefusal {
+        reason: refusal.reason().to_owned(),
+        mend: refusal.mend().to_owned(),
+    }))
+}
+
+/// Why the open `file`, of mode `mode`, is refused by its ACL entries, which
+/// macOS never masks by the mode, when it carries one. A list that cannot be
+/// read counts as one.
 #[cfg(target_os = "macos")]
-fn access_control_list_mend(file: &File) -> std::io::Result<Option<&'static str>> {
-    Ok(credential_file::has_extended_acl(file).then_some("run `chmod -N` on it"))
+fn access_control_list_refusal(file: &File, mode: u32) -> std::io::Result<Option<ListRefusal>> {
+    Ok(credential_file::has_extended_acl(file)
+        .then(|| extended_list_refusal(mode, "run `chmod -N` on it")))
 }
 
-/// What mends the open `file`'s access control list: none is read on this
-/// system, as for a credential file.
+/// Why the open `file` is refused by its access control list: never, since
+/// none is read on this system, as for a credential file.
 #[cfg(all(
     unix,
     not(any(target_os = "linux", target_os = "android", target_os = "macos"))
 ))]
-fn access_control_list_mend(_: &File) -> std::io::Result<Option<&'static str>> {
+fn access_control_list_refusal(_: &File, _: u32) -> std::io::Result<Option<ListRefusal>> {
     Ok(None)
 }
 

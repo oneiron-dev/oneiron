@@ -106,6 +106,63 @@ pub struct ChatLog {
     pub(crate) window: Option<ChatLogWindow>,
 }
 
+impl ChatLog {
+    /// A log whose window holds `words`, one turn each spoken as `role`,
+    /// numbered from 0 in `session`, with `uncompacted_tokens` held against
+    /// the profile's threshold: for a door that sizes a flight's window on
+    /// its writer's input room (FIX-LIST
+    /// COMPACTION-FIRST-TURN-PAST-INPUT-ROOM-STALLS). Nothing is read from
+    /// the vault, and no turn is pinned by a projection.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn for_test_window(
+        conversation: EntityId,
+        session: EntityId,
+        role: &str,
+        words: &[&str],
+        uncompacted_tokens: u64,
+    ) -> Self {
+        let mut messages = Vec::new();
+        let mut sources = Vec::new();
+        let mut spans = Vec::new();
+        for (turn, words) in (0_u64..).zip(words) {
+            let (turn_id, message_id) = (EntityId::now(), EntityId::now());
+            let content = format!("{role}: {words}");
+            messages.push(crate::compaction::CompactionWindowMessage {
+                message_id,
+                turn_id,
+                tokens: count_context_pack_tokens(&content) as u64,
+                content,
+                turn,
+            });
+            sources.extend([turn_id, message_id]);
+            spans.push(ConversationTurnSpan {
+                turn: turn_id,
+                role: role.to_owned(),
+                messages: vec![message_id],
+                fingerprint: String::new(),
+            });
+        }
+        Self {
+            conversation,
+            branch: None,
+            lines: Vec::new(),
+            message_ids: Vec::new(),
+            sources: spans.clone(),
+            summaries: Vec::new(),
+            pinned: true,
+            session: Some(session),
+            uncompacted_tokens,
+            room_projection: false,
+            window: Some(ChatLogWindow {
+                session,
+                messages,
+                sources,
+                spans,
+            }),
+        }
+    }
+}
+
 /// One retained turn as its reader read it.
 pub(super) struct ReadTurn {
     pub(super) id: EntityId,

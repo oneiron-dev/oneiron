@@ -74,6 +74,14 @@ pub(crate) trait SideTableDbs {
     fn side_decides(&self) -> Option<&Store> {
         self.side_custody().map(|door| door.store)
     }
+
+    /// The store these side databases are part of, whose authority log a reader below the vault
+    /// folds: a vault's, a bare store, a room's base (stage 7c-4, a setting read on an install
+    /// born of a restore). `None` for a target that holds no store: an open gate, a dry run's
+    /// ledger, a core's canonical accessors.
+    fn side_owning_store(&self) -> Option<&Store> {
+        None
+    }
 }
 
 impl<T: ManifestDbs> SideTableDbs for T {
@@ -91,6 +99,10 @@ impl<T: ManifestDbs> SideTableDbs for T {
 
     fn side_room(&self) -> Option<&SessionOverlay> {
         self.room_overlay()
+    }
+
+    fn side_owning_store(&self) -> Option<&Store> {
+        self.owning_store()
     }
 }
 
@@ -140,6 +152,13 @@ impl SideTableDbs for RoutedDbs<'_> {
             Self::Session(view) => view.side_decides(),
         }
     }
+
+    fn side_owning_store(&self) -> Option<&Store> {
+        match self {
+            Self::Base(vault) => vault.side_owning_store(),
+            Self::Session(view) => view.side_owning_store(),
+        }
+    }
 }
 
 /// A vault writes its own store's side tables, and holds the custody door the side-row wall
@@ -155,6 +174,10 @@ impl SideTableDbs for crate::Vault {
 
     fn side_custody(&self) -> Option<CustodyWrite<'_>> {
         Some(CustodyWrite::of(self))
+    }
+
+    fn side_owning_store(&self) -> Option<&Store> {
+        Some(&self.store)
     }
 }
 
