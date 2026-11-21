@@ -331,7 +331,11 @@ fn a_floor_holds_every_policy_the_walk_meets() {
 
 /// READ-LINEAGE-L3 = A, design section 4.7: a CLAIM whose floor names a
 /// source this vault can no longer read reads to no one, and doctor counts
-/// it as "N facts hidden: source unknown", naming nothing else.
+/// it as "N facts hidden: source unknown", naming nothing else. Pass 31 step
+/// L-S5 counts by verdict: the mailbox's row bound to that source reads to
+/// no one as well and is counted beside it. Before L-S5 doctor read the
+/// stored floors alone, and a row whose own binding names the source stores
+/// none.
 #[test]
 fn doctor_counts_the_facts_a_source_unknown_hides() {
     let mailbox = mailbox();
@@ -346,22 +350,24 @@ fn doctor_counts_the_facts_a_source_unknown_hides() {
         "precondition: every source on every floor resolves",
     );
     remove_policy_row(&mailbox.vault, mailbox.policy).expect("FIXTURE: remove the policy row");
-    assert!(
-        !reads(&mailbox.vault, learnt, &[mailbox.reader]).expect("the former reader's read"),
-        "a CLAIM whose source no longer resolves reads to no one",
-    );
-    assert!(
-        !reads(&mailbox.vault, learnt, &[mailbox.owner]).expect("the owner's read"),
-        "the owner does not read a CLAIM whose source no longer resolves",
-    );
+    for row in [learnt, mailbox.row] {
+        assert!(
+            !reads(&mailbox.vault, row, &[mailbox.reader]).expect("the former reader's read"),
+            "a row whose source no longer resolves reads to no one",
+        );
+        assert!(
+            !reads(&mailbox.vault, row, &[mailbox.owner]).expect("the owner's read"),
+            "the owner does not read a row whose source no longer resolves",
+        );
+    }
     assert_eq!(
         mailbox
             .vault
             .doctor()
             .expect("doctor")
             .facts_hidden_source_unknown,
-        1,
-        "doctor counts the one CLAIM its unknown source hides",
+        2,
+        "doctor counts the CLAIM its unknown source hides and the mailbox's row bound to it",
     );
 }
 

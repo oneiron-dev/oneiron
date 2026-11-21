@@ -10,12 +10,14 @@
 #![cfg(oneiron_test_support)]
 
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::deletion::TombstoneReason;
 use oneiron::memory::SafeDeleteReason;
 use oneiron::provenance::made_by::{
     MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByProcess,
 };
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
+use oneiron::test_doors::claim_refinement_erase::apply_replayed_tombstone;
 use oneiron::test_doors::house_link::put_claim_made_by;
 use oneiron::test_doors::source_audience_binding::{bound_row, reads};
 use oneiron::{
@@ -181,6 +183,48 @@ fn rederive_closes_a_sealed_claim_by_the_claim_that_restates_it() {
             "the re-derive's report names a row: {shown}",
         );
     }
+}
+
+/// Fable design pass 31, step L-S5 (the re-derive selects by verdict): a
+/// CLAIM that restates a sealed CLAIM's fact but was learnt from a row a
+/// peer erased before it landed here is sealed as well. Its stored floor
+/// names no unknown source; its verdict is sealed by the erased row it
+/// waits on. The re-derive does not close the sealed CLAIM by it: both stay
+/// open, sealed and counted. Before L-S5 a restatement was judged by its
+/// stored floor alone, so a sealed CLAIM took the sealed one's place.
+#[test]
+fn rederive_does_not_close_a_sealed_claim_by_a_restatement_its_verdict_seals() {
+    let mailbox = mailbox();
+    let sealed = sealed_claim(&mailbox, "the fact");
+    let late = EntityId::now();
+    let twin = claim_born_with(&mailbox, &[late], MadeByInputRole::Input, "the fact");
+    apply_replayed_tombstone(&mailbox.vault, &late, TombstoneReason::UserHardDelete, AT)
+        .expect("a peer's tombstone of the row the restatement waits on replays");
+    assert!(
+        !reads(&mailbox.vault, twin, &[mailbox.owner]).expect("the owner's read"),
+        "precondition: a restatement learnt from a row a peer erased reads to no one",
+    );
+    let report = mailbox
+        .vault
+        .rederive_sealed_rows(&owner_proof(&mailbox))
+        .expect("the owner's re-derive");
+    assert_eq!(
+        (report.sealed, report.superseded),
+        (2, 0),
+        "the re-derive closed a sealed CLAIM by a restatement that is sealed too",
+    );
+    for claim in [sealed, twin] {
+        assert_eq!(
+            lifecycle(&mailbox.vault, claim),
+            ClaimLifecycleStatus::Active,
+            "a sealed CLAIM no readable restatement closes stays open",
+        );
+    }
+    assert_eq!(
+        hidden(&mailbox.vault),
+        2,
+        "doctor counts both sealed CLAIMs",
+    );
 }
 
 /// A sealed CLAIM whose only evidence is gone and that no current CLAIM

@@ -6,13 +6,19 @@
 //! policies along the row's word lineage, which reaches no birth input:
 //! none for a fact learnt from a mailbox's row.
 //!
+//! Fable design pass 31, oracle case 23 (step L-S5): the preflight answers
+//! by the row's verdict. A fact that waits, for good on an input deleted
+//! before floors were written as for a row on its way, names every source
+//! policy; a sealed fact reads to no one, the owner included, so the
+//! preflight withholds it.
+//!
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test floor_preflight_audience`.
 #![cfg(oneiron_test_support)]
 
 use std::collections::BTreeSet;
 
 use oneiron::housekeeping::HousekeepingBudget;
-use oneiron::memory::Memory;
+use oneiron::memory::{Memory, SafeDeleteReason};
 use oneiron::provenance::made_by::{
     MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByProcess,
 };
@@ -133,13 +139,12 @@ fn claim_born_before_floors(
     id
 }
 
-/// The audience `vault.policy.preflight` names for the owner's read of
-/// `row`, which the owner reads.
-fn owners_preflight_audience(mailboxes: &Mailboxes, row: EntityId) -> BTreeSet<EntityId> {
+/// What `vault.policy.preflight` answers for the owner's read of `row`.
+fn owners_preflight(mailboxes: &Mailboxes, row: EntityId) -> Vec<PolicyPreflightRef> {
     let memory: Memory<'_> = mailboxes
         .vault
         .memory(mailboxes.owner, EdgeActorClass::Human);
-    let answer = oneiron::verbs::vault_policy_preflight(
+    oneiron::verbs::vault_policy_preflight(
         &memory,
         PolicyPreflightRequest {
             refs: vec![row],
@@ -147,8 +152,14 @@ fn owners_preflight_audience(mailboxes: &Mailboxes, row: EntityId) -> BTreeSet<E
         },
     )
     .expect("the owner's preflight")
-    .value;
-    match answer.refs.as_slice() {
+    .value
+    .refs
+}
+
+/// The audience `vault.policy.preflight` names for the owner's read of
+/// `row`, which the owner reads.
+fn owners_preflight_audience(mailboxes: &Mailboxes, row: EntityId) -> BTreeSet<EntityId> {
+    match owners_preflight(mailboxes, row).as_slice() {
         [
             PolicyPreflightRef::Readable {
                 entity, audience, ..
@@ -245,4 +256,63 @@ fn a_fact_born_from_a_row_not_yet_here_names_every_source_while_it_waits() {
         !audience.contains(&mailboxes.other_policy),
         "a whole floor's preflight names no policy its lineage misses: {audience:?}",
     );
+}
+
+/// The owner deletes `row`.
+fn erase(mailboxes: &Mailboxes, row: EntityId) {
+    mailboxes
+        .vault
+        .memory(mailboxes.owner, EdgeActorClass::Human)
+        .safe_delete(&row.to_hex(), SafeDeleteReason::UserDelete)
+        .expect("the owner deletes the row");
+}
+
+/// Case 23 for a fact that waits for good (FLOOR-OLD-FACT-ERASED-INPUT =
+/// A): a fact held before floors whose birth input the owner deleted before
+/// the migration judged it reads only to the owner, who reads every source
+/// here, so the owner's preflight names every source policy the vault holds.
+#[test]
+fn a_fact_waiting_for_good_on_an_input_deleted_before_tagging_names_every_source() {
+    let mailboxes = mailboxes();
+    let input = claim_born_before_floors(&mailboxes, &[mailboxes.row], "fact.erased_input");
+    let fact = claim_born_before_floors(&mailboxes, &[input], "fact.held_from_input");
+    erase(&mailboxes, input);
+    forget_floor_state(&mailboxes.vault).expect("FIXTURE: a vault written before floors");
+    mailboxes
+        .vault
+        .housekeeping_all(HousekeepingBudget::unbounded())
+        .expect("the migration judges the fact");
+    assert!(
+        floor_waits(&mailboxes.vault, fact).expect("the floor's state"),
+        "precondition: a fact whose input was erased before the migration waits for good",
+    );
+    assert!(
+        reads(&mailboxes.vault, fact, &[mailboxes.owner]).expect("the owner's read"),
+        "precondition: the owner reads a fact that waits for good",
+    );
+    assert_eq!(
+        owners_preflight_audience(&mailboxes, fact),
+        BTreeSet::from([mailboxes.policy, mailboxes.other_policy]),
+        "the preflight of a fact that waits for good names every source policy the owner's read met",
+    );
+}
+
+/// Case 23 for a sealed fact (READ-LINEAGE-L3 = A): a fact learnt from a
+/// row the owner deleted first is sealed at its birth and reads to no one,
+/// the owner included, so the owner's preflight withholds it and names no
+/// audience.
+#[test]
+fn a_sealed_fact_is_withheld_from_the_owners_preflight() {
+    let mailboxes = mailboxes();
+    let middle = claim_born_from(&mailboxes, &[mailboxes.row], "fact.middle");
+    erase(&mailboxes, middle);
+    let sealed = claim_born_from(&mailboxes, &[middle], "fact.learnt_from_an_erased_row");
+    assert!(
+        !reads(&mailboxes.vault, sealed, &[mailboxes.owner]).expect("the owner's read"),
+        "precondition: a fact born from an erased row reads to no one",
+    );
+    match owners_preflight(&mailboxes, sealed).as_slice() {
+        [PolicyPreflightRef::Withheld { entity }] if *entity == sealed => {}
+        refs => panic!("the owner's preflight of a sealed fact answered {refs:?}"),
+    }
 }
