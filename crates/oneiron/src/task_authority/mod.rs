@@ -1417,16 +1417,22 @@ impl FactCountRule {
 impl Vault {
     /// Adopts the facts this install's doors wrote unsigned, before the vault's root or with
     /// no signer loaded. Each gets a twin: the same fact on a new row, which this install's
-    /// carrier signs. The unsigned row leaves the written-here index. So the fact counts on
-    /// every device of the vault, and still counts here (Engine RULING 16 Nov 03:18,
+    /// carrier signs. The unsigned row keeps its written-here mark, and a fact whose twin
+    /// stands is not twinned again. So the fact counts on every device of the vault, and
+    /// still counts here, even after a restore that drops the twin (Engine RULING 16 Nov 03:18,
     /// TASK-FACT-RULING-CROSSED-OPTION-D = B). The fold absorbs a twin as a set duplicate of
     /// its fact, so no task changes meaning.
     ///
-    /// Each root door calls it once the root is minted with this install's signer loaded, and
-    /// every later open that profiles this install calls it again, so a root whose adoption
-    /// failed or was cut off adopts at the next start. With no root, no signer or nothing to
-    /// adopt it writes nothing. It runs in one transaction, so a failure leaves no twin, and a
-    /// second call finds nothing left to adopt. Returns how many twins it wrote.
+    /// Each root door calls it once the root is minted with this install's signer loaded,
+    /// every later open that profiles this install calls it again, and every start whose
+    /// keystore loads this install's signer calls it through
+    /// [`Self::adopt_unsigned_task_facts_logged`], once more after the start's own root and
+    /// profile stand. So a root whose adoption failed or was cut off adopts at the next start,
+    /// a start that roots the vault after its keystore loaded the signer adopts at once, and
+    /// so does a fact a door wrote while no signer was loaded at the next start that loads
+    /// one. With no root, no signer or nothing to adopt it writes nothing. It runs in one
+    /// transaction, so a failure leaves no twin, and a second call finds nothing left to
+    /// adopt. Returns how many twins it wrote.
     pub fn adopt_unsigned_task_facts(&self) -> Result<usize> {
         {
             let rtxn = self.store.env.read_txn()?;
@@ -1437,16 +1443,49 @@ impl Vault {
         self.with_write_txn(|wtxn| self.adopt_task_facts_in_txn(wtxn))
     }
 
+    /// [`Self::adopt_unsigned_task_facts`] for a start: once its keystore has loaded this
+    /// install's signer, and again once the start's own root and this install's profile
+    /// stand. A fact a door wrote unsigned while no signer was loaded is adopted at the next
+    /// start that loads one, and a fact written before the root at the start that roots the
+    /// vault. A vault no root roots yet adopts nothing here. It never fails the start: a
+    /// failure is warned, and the next start tries again. Returns how many twins it wrote,
+    /// or 0 on a failure.
+    pub fn adopt_unsigned_task_facts_logged(&self) -> usize {
+        match self.adopt_unsigned_task_facts() {
+            Ok(adopted) => {
+                if adopted > 0 {
+                    tracing::info!(
+                        adopted,
+                        "the task facts this install wrote unsigned were adopted"
+                    );
+                }
+                adopted
+            }
+            Err(error) => {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    reason = %error,
+                    "the task facts this install wrote unsigned were not adopted; \
+                     the next start tries again"
+                );
+                0
+            }
+        }
+    }
+
     /// [`Self::adopt_unsigned_task_facts`] in the caller's transaction: it twins each fact
-    /// [`Self::task_facts_to_adopt_in`] names. A twin carries this install's signature, so a
-    /// second call twins nothing.
+    /// [`Self::task_facts_to_adopt_in`] names. A twin stands under this install's signature,
+    /// so a second call twins nothing.
     pub(crate) fn adopt_task_facts_in_txn(&self, wtxn: &mut heed::RwTxn<'_>) -> Result<usize> {
         let mut adopted = 0;
-        for (fact_ref, fact) in self.task_facts_to_adopt_in(wtxn)? {
+        for fact in self.task_facts_to_adopt_in(wtxn)? {
             // The same fact on a new row: it counts exactly when the
-            // indexed row did, so it asks no door's rule again.
+            // indexed row did, so it asks no door's rule again. The
+            // indexed row keeps its written-here mark: a restore of a
+            // checkpoint taken before the twin drops the twin and keeps
+            // the mark, so the fact still counts here, and the next
+            // pass twins it again (blind review round 2 P1, REVIEW-9976).
             write_task_authority_fact_in_txn(self, wtxn, fact)?;
-            fact_proof::forget_written_fact_in_txn(&self.store, wtxn, &fact_ref)?;
             adopted += 1;
         }
         Ok(adopted)
@@ -1459,12 +1498,9 @@ impl Vault {
     /// under a carrier that names this install's machine without its verified signature
     /// (blind review round 2 P1, REVIEW-9365). Its task must still be a live TASK: a task's
     /// delete takes the fact's link to it and leaves the fact, so a twin would link the
-    /// deleted task again (blind review round 2 P1, REVIEW-8610). None when this install
-    /// signs nothing.
-    fn task_facts_to_adopt_in(
-        &self,
-        txn: &heed::RoTxn<'_>,
-    ) -> Result<Vec<(EntityId, TaskAuthorityFact)>> {
+    /// deleted task again (blind review round 2 P1, REVIEW-8610). And its twin must not
+    /// stand yet ([`Self::twinned_here_in`]). None when this install signs nothing.
+    fn task_facts_to_adopt_in(&self, txn: &heed::RoTxn<'_>) -> Result<Vec<TaskAuthorityFact>> {
         if !fact_proof::signs_in_txn(self, txn)? {
             return Ok(Vec::new());
         }
@@ -1499,9 +1535,78 @@ impl Vault {
             {
                 continue;
             }
-            facts.push((fact_ref, carried.fact));
+            if self.twinned_here_in(txn, &fact_ref, &carried.fact)? {
+                continue;
+            }
+            facts.push(carried.fact);
         }
         Ok(facts)
+    }
+
+    /// Whether `fact`, held on the row `fact_ref`, already has its twin: another fact row
+    /// linked to its task that holds the same fact under this install's own signature.
+    /// Adoption leaves the indexed row's written-here mark in place, so this is what tells a
+    /// later pass the fact was adopted. A restore that drops the twin leaves none, and the
+    /// next pass twins the fact again. Inbound `ScopedTo` is shared, so a row that is no
+    /// signed fact is skipped, as the fold skips it.
+    fn twinned_here_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        fact_ref: &EntityId,
+        fact: &TaskAuthorityFact,
+    ) -> Result<bool> {
+        let mut scanned = ScanCount::start(
+            &self.store,
+            txn,
+            EngineScan::TaskAuthorityFactEdges,
+            fact.task_ref.as_bytes(),
+        )?;
+        let mut twinned = false;
+        for entry in self.store.port_edges(
+            txn,
+            &fact.task_ref,
+            crate::ports::EdgeDirection::In,
+            Some(EdgeKind::ScopedTo),
+            None,
+        )? {
+            scanned.row();
+            let twin_ref = entry?.target;
+            if twin_ref == *fact_ref {
+                continue;
+            }
+            let Some(raw) = self.get_raw_in(txn, &twin_ref)? else {
+                continue;
+            };
+            if EntityMetadataHeader::parse(&raw)
+                .is_none_or(|header| header.entity_type != ENTITY_TYPE_TASK)
+            {
+                continue;
+            }
+            let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+            if !is_task_authority_fact_body(body) {
+                continue;
+            }
+            let Ok(carried) = decode_carried_task_authority_fact_body(body) else {
+                continue;
+            };
+            let Some(carrier) = &carried.carrier else {
+                continue;
+            };
+            if carried.fact == *fact
+                && fact_proof::signed_by_this_install_in_txn(
+                    self,
+                    txn,
+                    &twin_ref,
+                    &encode_task_authority_fact_body(&carried.fact),
+                    carrier,
+                )?
+            {
+                twinned = true;
+                break;
+            }
+        }
+        scanned.finish(self);
+        Ok(twinned)
     }
 
     /// The owner's restore of one archived TASK authority fact (FIX

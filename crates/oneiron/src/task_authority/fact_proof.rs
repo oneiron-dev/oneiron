@@ -64,18 +64,6 @@ pub(super) fn facts_written_here_in(
         .collect())
 }
 
-/// Forgets that this install wrote the fact row `fact_ref`: the row then counts here only as
-/// it proves itself, as on any other install.
-pub(super) fn forget_written_fact_in_txn(
-    store: &Store,
-    wtxn: &mut heed::RwTxn<'_>,
-    fact_ref: &EntityId,
-) -> Result<()> {
-    WRITTEN_HERE
-        .delete(store, wtxn, &HexId(*fact_ref))
-        .map(drop)
-}
-
 /// Whether a fact this install writes in `txn` gets a carrier signature: the vault is rooted
 /// and the host loaded this install's signer.
 pub(super) fn signs_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {

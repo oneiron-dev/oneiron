@@ -109,8 +109,12 @@ impl SyncServer {
         // so it carries the owner's acts from its first start (FIX 4648):
         // self-hosted and embedded serving alike. A start goes on without it.
         // The macOS app profiled its vault before its device link starts.
+        // Then the task facts written before the root are adopted (pass 28 R5):
+        // the keystore install found no root to adopt under when this start
+        // roots the vault above.
         if host {
             vault.ensure_serving_install_profile_at_start(issuer.as_deref(), "serve");
+            vault.adopt_unsigned_task_facts_logged();
         }
 
         let root_doc = match server_state::load_root_from_state(&vault)? {
