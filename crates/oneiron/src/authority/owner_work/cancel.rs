@@ -1,7 +1,7 @@
 //! What keeps a root request from running (FIX 4739): the owner's cancel of
 //! it, and a newer request on its target.
 //!
-//! A cancel is valid when some chain of its carrier names the key that
+//! A cancel is valid when its carrier's roster chain names the key that
 //! signed it and the request it names is in its causal past (the fold of its
 //! parents), a root request of the cancel's target. It has effect when the
 //! one carrier rule admits that carrier on the roster view and its owner is

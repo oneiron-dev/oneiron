@@ -48,7 +48,7 @@ pub fn put_world_access_row(
 /// No live binding of `owner` under the host root, and the authority log's.
 pub fn revoke_and_rebind_host_owner(vault: &Vault, owner: EntityId) -> Result<()> {
     use crate::authority::{ActorBindingStatus, AuthorityOp};
-    let issuer = crate::test_support::test_host_issuer();
+    let issuer = crate::test_fixtures::test_host_issuer();
     vault.bind_host_owner_for_test(&issuer, owner)?;
     let fold = vault.authority_fold()?;
     let epoch = fold

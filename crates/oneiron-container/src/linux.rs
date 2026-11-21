@@ -281,8 +281,10 @@ pub fn landlock_ruleset<R: AsRef<Path>, W: AsRef<Path>>(
         }
         // SAFETY: open returned a new owned descriptor.
         let parent = unsafe { OwnedFd::from_raw_fd(fd) };
-        let metadata = std::fs::metadata(path)?;
-        add_beneath(&ruleset, parent.as_fd(), writable, metadata.is_dir())?;
+        // The descriptor's own file, not the path's again: a rename between
+        // the open and a second lookup could make a file read as a dir.
+        let is_dir = descriptor_file(parent.as_fd())?.is_dir;
+        add_beneath(&ruleset, parent.as_fd(), writable, is_dir)?;
     }
     Ok(ruleset)
 }

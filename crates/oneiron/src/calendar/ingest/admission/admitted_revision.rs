@@ -12,7 +12,7 @@ use super::continuation::enqueue_property_continuation_in_txn;
 use super::*;
 use crate::calendar::claims::decode_passport_value;
 use crate::calendar::ics::parse_ics_feed;
-use crate::calendar::passport::admitted_passport_for_in_txn;
+use crate::calendar::passport::admitted_passport_keyed;
 use crate::claim::{ClaimBody, ClaimSubject};
 
 impl PollAdmission<'_> {
@@ -30,15 +30,9 @@ impl PollAdmission<'_> {
         event_ref: EntityId,
         event: &ParsedVEvent,
     ) -> Result<RevisionFiling, CalendarError> {
-        let head = {
-            let txn = self
-                .vault
-                .store
-                .env
-                .read_txn()
-                .map_err(crate::Error::from)?;
-            admitted_passport_for_in_txn(self.vault, &txn, &event_ref, self.system, &event.uid)?
-        };
+        // Keyed as the revision's filing keys it: as written, else as
+        // custody reads a masked system and UID.
+        let head = admitted_passport_keyed(self.vault, &event_ref, self.system, &event.uid)?;
         if head.is_none() {
             return Ok(RevisionFiling::Owed);
         }

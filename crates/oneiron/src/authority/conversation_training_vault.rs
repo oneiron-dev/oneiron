@@ -26,6 +26,8 @@
 //! a live member, delegate or guest of the vault, and shows them who set it;
 //! a read grants no transcript and no one's receipt.
 
+use ed25519_dalek::SigningKey;
+
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
@@ -34,6 +36,7 @@ use crate::error::{ClaimError, Error, Result};
 use crate::federation::SharedVaultWrite;
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
+use crate::world_keys::{OwnerActImportance, owner_presence_reasons};
 use crate::{TimeRange, Vault, WriteActor};
 
 use super::machine_standing::InstallCounted;
@@ -121,6 +124,17 @@ impl FoldedConversationTrainingVault {
             .is_some_and(|choice| choice.on && choice.allow_opt_out)
     }
 
+    /// Which way the setting moves when it becomes (`on`, `allow_opt_out`):
+    /// turning learning on widens it, and withdrawing the opt-out while it
+    /// is on widens it; every other choice narrows it or moves nothing.
+    pub(crate) fn direction_of(&self, on: bool, allow_opt_out: bool) -> Direction {
+        if on && (!self.on() || (self.allows_opt_out() && !allow_opt_out)) {
+            Direction::Widens
+        } else {
+            Direction::Narrows
+        }
+    }
+
     /// The setting revision: what a surface shows and passes back as
     /// `seen`, zero while no choice is live.
     pub(crate) fn revision(&self) -> PolicyRevision {
@@ -169,6 +183,7 @@ pub(super) fn apply_conversation_training_vault(
     hash: AuthorityEntryHash,
     counting: (Option<&PinnedRoot>, InstallCounted<'_>),
     restriction_only: bool,
+    needs_proof_off_the_line: bool,
 ) -> std::result::Result<(), AuthorityFoldIssue> {
     let choice = VaultTrainingChoice {
         on: set.on,
@@ -179,6 +194,7 @@ pub(super) fn apply_conversation_training_vault(
         machine: set.machine,
         choice: Some(&choice),
         context: CONVERSATION_TRAINING_VAULT_REVISION_CONTEXT,
+        needs_proof_off_the_line,
         persons_own_narrowing: false,
     };
     let landing = owner_choice_landing(
@@ -228,6 +244,19 @@ pub struct ConversationLearningView {
     /// The one read-only line a member's surface shows while it is on;
     /// `None` while off.
     pub line: Option<String>,
+}
+
+/// What the learning setting's checks establish before the signature, on one
+/// snapshot: the writer's person, fold, vault, revision and carrier, and the
+/// act's importance. The setup answer reads the importance alone.
+struct ConversationLearningChecks {
+    person: EntityId,
+    fold: AuthorityView,
+    vault_id: AuthorityVaultId,
+    current: PolicyRevision,
+    machine: EntityId,
+    key: SigningKey,
+    importance: OwnerActImportance,
 }
 
 impl Vault {
@@ -285,6 +314,12 @@ impl Vault {
     /// all. Turning it off stops new sharing; it withdraws nothing already
     /// shared.
     ///
+    /// The door makes its checks on a read before it asks: turning learning
+    /// on asks, withdrawing the opt-out while it is on asks, and every other
+    /// choice asks nothing. The write derives the importance again, and
+    /// answers [`Error::ConcurrentWrite`] when the act became more important
+    /// since the person was asked.
+    ///
     /// # Errors
     /// A refusal when the proof is no longer a live person of this vault, or
     /// is no admin of it; [`Error::ConcurrentWrite`] when `seen` is not the
@@ -300,9 +335,34 @@ impl Vault {
         allow_opt_out: bool,
         seen: Option<PolicyRevision>,
     ) -> Result<ConversationLearningView> {
+        self.set_conversation_learning_between(owner, surface, on, allow_opt_out, seen, || {})
+    }
+
+    /// [`Self::set_conversation_learning`], with `between` run after the
+    /// door asked and before its write opens: the gap in which another
+    /// writer can commit first (the test door
+    /// `test_doors::owner_presence_between`).
+    pub(crate) fn set_conversation_learning_between(
+        &self,
+        owner: &AuthenticatedOwner,
+        surface: ActSurface,
+        on: bool,
+        allow_opt_out: bool,
+        seen: Option<PolicyRevision>,
+        between: impl FnOnce(),
+    ) -> Result<ConversationLearningView> {
+        let importance = {
+            let txn = self.store.env.read_txn()?;
+            self.conversation_learning_importance_in_txn(&txn, owner, on, allow_opt_out, seen)?
+        };
+        let witness =
+            self.owner_presence(importance, owner_presence_reasons::CONVERSATION_LEARNING)?;
+        let ground = OwnerProofGround::witnessed(&witness);
+        between();
         let mut txn = self.store.env.write_txn()?;
         let (_, view, _) = self.set_conversation_learning_in_txn(
             &mut txn,
+            &ground,
             owner,
             surface,
             on,
@@ -330,30 +390,26 @@ impl Vault {
     pub(crate) fn set_conversation_learning_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
+        ground: &OwnerProofGround,
         owner: &AuthenticatedOwner,
         surface: ActSurface,
         on: bool,
         allow_opt_out: bool,
         seen: Option<PolicyRevision>,
     ) -> Result<(AuthorityEntryHash, ConversationLearningView, u64)> {
-        let person = owner.revalidate_person_in_txn(self, txn)?;
-        self.require_learning_admin_in_txn(txn, person)?;
-        let fold = self.authority_view_readonly_in_txn(txn)?;
-        let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
-        // Revision integrity (mesh contract §4): the admin chose on what the
-        // surface showed them.
-        let current = fold.conversation_training_vault.revision();
-        if seen.is_some_and(|seen| seen != current) {
-            return Err(Error::ConcurrentWrite(STALE));
-        }
-        let machine = crate::identity::read_machine_id_in_txn(self, txn)?
-            .ok_or_else(|| authority_refused(NO_CARRIER))?;
-        let key = crate::identity::read_machine_signing_key_in_txn(self, txn)?
-            .ok_or_else(|| authority_refused(NO_CARRIER))?;
+        let checks =
+            self.conversation_learning_checks_in_txn(txn, owner, on, allow_opt_out, seen)?;
+        ground.refuse_risen_importance(checks.importance)?;
+        let ConversationLearningChecks {
+            person,
+            fold,
+            vault_id,
+            current,
+            machine,
+            key,
+            ..
+        } = checks;
         let public_key = key.verifying_key().to_bytes();
-        if !owner_act_signer_admits(fold.machine(machine), &fold.roster, &public_key) {
-            return Err(authority_refused(NO_CARRIER));
-        }
         // FIX 7908: join a frontier wider than one entry names, else today's path.
         let joiner = FrontierSigner::Install(machine, &key);
         let fold = self
@@ -385,7 +441,7 @@ impl Vault {
                 allow_opt_out,
             }),
             now,
-            self.owner_proof_signer(&fold).as_deref(),
+            self.owner_proof_signer(&fold, ground).as_ref(),
         )?;
         let entry_hash = authority_entry_hash(&entry)?;
         let at = TimeRange {
@@ -405,7 +461,99 @@ impl Vault {
             return Err(authority_refused(NOT_COUNTED));
         }
         let view = self.setting_view_in_txn(txn, &after)?;
+        // In a shared vault the choice is an admin act: every live Owner,
+        // Admin and Deputy hears of it (UNBUILT06-SHAPE Q3 = A).
+        if let Some(creation) = self.shared_vault_creation_in_txn(txn)? {
+            let recorded = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+            self.record_admin_act_in_txn(
+                txn,
+                creation.vault_id,
+                person,
+                crate::federation::SharedVaultChange::ConversationLearningChanged {
+                    on,
+                    allow_opt_out,
+                },
+                recorded,
+            )?;
+        }
         Ok((entry_hash, view, now))
+    }
+
+    /// Checks the setting choice on a read before either door asks.
+    /// A frontier within the parent limit needs no join, so the read can
+    /// also check the sequence and target in the order the writer uses them.
+    pub(crate) fn conversation_learning_importance_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        owner: &AuthenticatedOwner,
+        on: bool,
+        allow_opt_out: bool,
+        seen: Option<PolicyRevision>,
+    ) -> Result<OwnerActImportance> {
+        let checks =
+            self.conversation_learning_checks_in_txn(txn, owner, on, allow_opt_out, seen)?;
+        if checks.fold.append_heads.len() <= MAX_PARENTS {
+            let signer = AuthorityKey::Ed25519(checks.key.verifying_key().to_bytes());
+            next_sequence(&checks.fold, &signer)?;
+            conversation_training_vault_target(&checks.vault_id)?;
+        }
+        Ok(checks.importance)
+    }
+
+    /// The admin's revalidation, the admin rule, the fold, the vault, `seen`,
+    /// the carrier and the act's importance, on one snapshot. Both doors
+    /// run these checks before they ask, and the writer runs them again.
+    ///
+    /// # Errors
+    /// A refusal when the proof is no longer a live person of this vault, or
+    /// is no admin of it; [`Error::ConcurrentWrite`] when `seen` is not the
+    /// current revision;
+    /// [`crate::error::RecordError::AuthorityRefused`] when this install
+    /// cannot carry the choice.
+    fn conversation_learning_checks_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        owner: &AuthenticatedOwner,
+        on: bool,
+        allow_opt_out: bool,
+        seen: Option<PolicyRevision>,
+    ) -> Result<ConversationLearningChecks> {
+        let person = owner.revalidate_person_in_txn(self, txn)?;
+        self.require_learning_admin_in_txn(txn, person)?;
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
+        // Revision integrity (mesh contract §4): the admin chose on what the
+        // surface showed them.
+        let current = fold.conversation_training_vault.revision();
+        if seen.is_some_and(|seen| seen != current) {
+            return Err(Error::ConcurrentWrite(STALE));
+        }
+        let machine = crate::identity::read_machine_id_in_txn(self, txn)?
+            .ok_or_else(|| authority_refused(NO_CARRIER))?;
+        let key = crate::identity::read_machine_signing_key_in_txn(self, txn)?
+            .ok_or_else(|| authority_refused(NO_CARRIER))?;
+        let public_key = key.verifying_key().to_bytes();
+        if !owner_act_signer_admits(
+            fold.machine(machine),
+            &fold.roster,
+            &public_key,
+            fold.pinned_root.as_ref(),
+        ) {
+            return Err(authority_refused(NO_CARRIER));
+        }
+        let importance = OwnerActImportance::of_direction(
+            fold.conversation_training_vault
+                .direction_of(on, allow_opt_out),
+        );
+        Ok(ConversationLearningChecks {
+            person,
+            fold,
+            vault_id,
+            current,
+            machine,
+            key,
+            importance,
+        })
     }
 
     /// The admin's PERSON whose act the setting choice in force on `fold` is,

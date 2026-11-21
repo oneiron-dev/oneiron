@@ -75,8 +75,11 @@ pub struct StagedRoomWake {
     pub wake: RoomWake,
 }
 
-/// What a live room wake's turn tells its consumer: whether a PERSON spoke
-/// it, which a resident's human-messages mode wakes on alone.
+/// What a live room wake's turn tells its consumer: whether a human PERSON
+/// spoke it, which a resident's human-messages mode wakes on alone. An agent
+/// speaks as its AGENT_DEF, a brought companion or a named agent as a PERSON
+/// that is an agent ([`crate::subject_model::person_is_agent_in_txn`]):
+/// neither is a human.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RoomWakeTurn {
     pub speaker_is_person: bool,
@@ -202,8 +205,9 @@ impl Vault {
     /// the turn's row is gone or is no longer the room's, once anyone holds
     /// its claim, or once the agent no longer takes part as an agent, is off
     /// the audience that reads the turn, or no longer stands in its room or
-    /// thread. The answer carries nothing of the turn but whether a PERSON
-    /// spoke it.
+    /// thread. The answer carries nothing of the turn but whether a human
+    /// PERSON spoke it; a speaker whose substrate does not read is no known
+    /// human.
     pub fn room_wake_turn(&self, wake: &RoomWake) -> Result<Option<RoomWakeTurn>> {
         let txn = self.store.env.read_txn()?;
         let Some(turn) = TURNS.get(&self.store, &txn, &wake.turn)? else {
@@ -231,7 +235,13 @@ impl Vault {
             return Ok(None);
         }
         let speaker_is_person = match EntityId::from_hex(&turn.actor) {
-            Ok(speaker) => self.get_entity_type_in_txn(&txn, &speaker)? == Some(ENTITY_TYPE_PERSON),
+            Ok(speaker) => {
+                self.get_entity_type_in_txn(&txn, &speaker)? == Some(ENTITY_TYPE_PERSON)
+                    && matches!(
+                        crate::subject_model::person_is_agent_in_txn(self, &txn, &speaker, at),
+                        Ok(false)
+                    )
+            }
             Err(_) => false,
         };
         Ok(Some(RoomWakeTurn { speaker_is_person }))

@@ -23,7 +23,7 @@ use super::*;
 use crate::attempt_queue::EnqueueAttempt;
 use crate::calendar::ics::parse_ics_feed;
 use crate::calendar::ingest::property_claims::CALENDAR_PROPERTY_ADMISSIONS_PER_PASS;
-use crate::calendar::passport::{admitted_passport_for_in_txn, live_passport_for_in_txn};
+use crate::calendar::passport::{admitted_passport_keyed, live_passport_for};
 
 /// Attempt kind for one event's queued property continuation.
 pub const ICS_PROPERTY_CONTINUATION_ATTEMPT_KIND: &str = "calendar.ics.property_continuation";
@@ -207,18 +207,14 @@ pub(in crate::calendar::ingest) fn run_ics_property_continuation_admitting(
     }) else {
         return Ok(Vec::new());
     };
-    // The governing passport is the admitted head, else the latest filing:
-    // a revision waiting over the head never steers the EVENT.
-    let governing = {
-        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-        match admitted_passport_for_in_txn(vault, &txn, &event_ref, &payload.system, &payload.uid)?
-        {
-            Some(head) => Some(head),
-            None if payload.admitted_revision => None,
-            None => {
-                live_passport_for_in_txn(vault, &txn, &event_ref, &payload.system, &payload.uid)?
-            }
-        }
+    // The governing passport is the admitted head, else the latest filing,
+    // each keyed as the vault reads a masked system and UID: a revision
+    // waiting over the head never steers the EVENT.
+    let governing = match admitted_passport_keyed(vault, &event_ref, &payload.system, &payload.uid)?
+    {
+        Some(head) => Some(head),
+        None if payload.admitted_revision => None,
+        None => live_passport_for(vault, &event_ref, &payload.system, &payload.uid)?,
     };
     if !governing.is_some_and(|(_, passport)| passport.content_hash == event.content_hash) {
         return Ok(Vec::new());

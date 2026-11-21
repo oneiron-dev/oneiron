@@ -41,6 +41,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/agent_verbs.rs` | test | s | — | — | Generated SDK calls preserve handles and durable C9 wait results |
 | `tests/call_json_boundary.rs` | test | s | — | — | The one language boundary (UC-02 B0): verb input and output as the engine's JSON text, and the engine error… |
 | `tests/dreamer_attempt_binding.rs` | test | m | — | — | A strength attempt's job client (untangle 6.9c PR 3, RULING S69C-DESIGN item 5)… |
+| `tests/dreamer_conflict_binding.rs` | test | L | — | — | A conflict-settlement attempt's job client (untangle 6.9d S69D3): `OneironClient::for_dreamer_attempt` over… |
 | `tests/error_mapping.rs` | test | s | — | — | ONE-1441 error-contract tests (blueprint §Test/Shared #5–#6, §Typed error contract) |
 | `tests/facade_contract.rs` | test | s | — | — | ONE-1441 shared-backend contract tests (blueprint §Test/Shared #1–#4) |
 | `tests/key_value_contract.rs` | test | s | — | — | The dispatcher exposes exact keyed memory, not recall reconstruction |

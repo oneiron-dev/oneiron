@@ -6,6 +6,9 @@
 //! sees a key or a PIN. It is a sibling of the 32-byte slots under names of
 //! its own, so no tier reads a sealed value as a slot, or a slot as a sealed
 //! value.
+//!
+//! It also keeps one value that is no secret: the engine's mark that a PIN
+//! of this device was forgotten ([`SealedBytesName::DevicePinForgotten`]).
 
 use crate::{KeystoreSlot, Result};
 
@@ -14,6 +17,7 @@ use crate::{KeystoreSlot, Result};
 pub const SEALED_BYTES_MAX: usize = 4096;
 
 const DEVICE_PIN_KEY_NAME: &str = "device-pin-key";
+const DEVICE_PIN_FORGOTTEN_NAME: &str = "device-pin-forgotten";
 
 /// Which sealed value: its name in the home.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -21,18 +25,24 @@ pub enum SealedBytesName {
     /// This device's PIN key, sealed under the device PIN. One per device,
     /// whatever vaults it holds.
     DevicePinKey,
+    /// The engine's mark that a PIN of this device was forgotten. It holds
+    /// no secret and is never removed: what a forgotten PIN lost stays lost,
+    /// whatever PIN the device takes later.
+    DevicePinForgotten,
     /// One slot's secret, sealed under the device PIN key. The slot itself
     /// stays empty while its secret rests here.
     Slot(KeystoreSlot),
 }
 
 impl SealedBytesName {
-    /// The backend's name for the value: `device-pin-key`, or the slot's
-    /// [`KeystoreSlot::name`], which never equals it. It carries no secret.
+    /// The backend's name for the value: `device-pin-key`,
+    /// `device-pin-forgotten`, or the slot's [`KeystoreSlot::name`], which
+    /// never equals either. It carries no secret.
     #[must_use]
     pub fn name(&self) -> String {
         match self {
             Self::DevicePinKey => DEVICE_PIN_KEY_NAME.to_owned(),
+            Self::DevicePinForgotten => DEVICE_PIN_FORGOTTEN_NAME.to_owned(),
             Self::Slot(slot) => slot.name(),
         }
     }

@@ -27,7 +27,7 @@ const BIRTH_TEXT_PLACE: &str = "text:markdown";
 ///
 /// # Errors
 ///
-/// A core that does not decode, a blank text, a hit no span places, and the
+/// A core that does not decode, a blank text, a hit no seal clears, and the
 /// storage and title-reservation refusals of an authoritative NOTE write.
 pub(crate) fn birth_document_in_txn(
     vault: &Vault,

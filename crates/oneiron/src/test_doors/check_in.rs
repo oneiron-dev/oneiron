@@ -9,26 +9,31 @@
 //! a member grant narrowed to some worlds in place. For
 //! `tests/check_in_waiter_resume.rs` (P2.3a, piece 2e): the due index, and
 //! the spend of a settled row in the act's own transaction, committed or
-//! aborted.
+//! aborted. For `tests/check_in_custody_drain_effects.rs` (FIX
+//! [CHECK-IN-SPEND-BEFORE-ERASE], custody drain doors): an Owner's
+//! key-recovery act outside the vault's writer, with the test's act.
 
 use std::collections::BTreeMap;
 
 use crate::batch::BatchOp;
 use crate::check_in::{
-    AgentHolderVerdict, CheckInTransition, EligibleBasis, HolderAnswer, HolderKind, HolderReply,
-    NoAgentVerdict, OpenPendingCheckIn, PendingCheckIn, Rung, RungHolder, RungMembers,
-    RungResolver, VerifiedChain, advance_pending_check_in_in_txn, answer_pending_check_in_in_txn,
+    ActClass, AgentHolderVerdict, AppliedCheckIn, CheckInDecision, CheckInTransition,
+    EligibleBasis, HolderAnswer, HolderKind, HolderReply, NoAgentVerdict, OpenPendingCheckIn,
+    PendingCheckIn, Rung, RungHolder, RungMembers, RungResolver, VerifiedChain,
+    advance_pending_check_in_in_txn, answer_pending_check_in_in_txn,
     consume_pending_check_in_in_txn, extend_pending_check_in_in_txn, open_pending_check_in_in_txn,
-    record_objection_in_txn,
+    record_objection_in_txn, run_owner_act_outside_vault_writer,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::federation::{
     ScopeAxis, ScopeId, decode_federation_grant_body, encode_federation_grant_body,
 };
+use crate::memory::{Memory, MemoryResult};
 use crate::receipt::ReceiptRecord;
 use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
+use crate::verbs::{CheckInOpenRequest, CheckInVerdict};
 use crate::{EntityId, TimeRange, Vault};
 
 /// A chain the test names: each rung's members. A rung it does not name is
@@ -213,6 +218,22 @@ pub fn open_verified(
         let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
         open_pending_check_in_in_txn(vault, txn, request, &VerifiedChain::new(verdicts), now)
     })
+}
+
+/// `vault.check_in.open` as `memory`'s caller calls it, with the test's agent
+/// verdicts in place of the verb's none: for
+/// `tests/check_in_spawn_parent.rs` (FIX CHECK-IN-SPAWN-PARENT-PRINCIPAL), a
+/// spawn parent's answer on rung 2.
+///
+/// # Errors
+///
+/// As `vault.check_in.open`.
+pub fn open_as_caller(
+    memory: &Memory<'_>,
+    input: CheckInOpenRequest,
+    verdicts: &FixedVerdicts,
+) -> MemoryResult<CheckInVerdict> {
+    crate::verbs::check_in_open_with(memory, input, verdicts)
 }
 
 /// [`advance`] on the ladder from verified records, with the test's agent
@@ -412,4 +433,29 @@ pub fn consume_then_abort(
         (None, Err(error)) => Err(error),
         (_, Ok(())) => Err(Error::InvariantViolation("the aborting write committed")),
     }
+}
+
+/// Runs `run` as an Owner's key-recovery act whose effect lands outside the
+/// vault's writer, as door `verb`'s custody journal act runs, applying the
+/// approved check-in `check_in` asked for `verb` over `effect_digest` when
+/// given ([`run_owner_act_outside_vault_writer`]): `run`'s result and the
+/// decision it ran on.
+///
+/// # Errors
+///
+/// As [`run_owner_act_outside_vault_writer`].
+pub fn run_owner_key_recovery_act<T>(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    verb: &'static str,
+    effect_digest: [u8; 32],
+    check_in: Option<EntityId>,
+    run: impl FnOnce() -> Result<T>,
+) -> Result<(T, CheckInDecision)> {
+    let applied = check_in.map(|id| AppliedCheckIn {
+        id,
+        verb,
+        effect_digest,
+    });
+    run_owner_act_outside_vault_writer(vault, owner, ActClass::KeyRecovery, applied.as_ref(), run)
 }

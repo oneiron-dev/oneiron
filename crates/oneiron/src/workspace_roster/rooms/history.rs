@@ -642,8 +642,12 @@ impl Memory<'_> {
         }
     }
 
-    /// Canonical HEAD is a room-local indexed read; branch turns are excluded.
-    /// A head this reader may not read is no head for it.
+    /// The room's head turn. A room that keeps DAG topology is headed by
+    /// its selected DAG HEAD, so a trunk turn appended without advancing
+    /// HEAD, or left behind by a HEAD move, is not the head even when it
+    /// is the newest trunk row. A room with no DAG topology is headed by
+    /// its newest trunk row. Branch turns are excluded. A head this
+    /// reader may not read is no head for it.
     pub fn room_head(&self, room: EntityId) -> MemoryResult<Option<RoomTurn>> {
         let worlds = self.room_read_worlds(room)?;
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
@@ -651,14 +655,27 @@ impl Memory<'_> {
         if !turns_readable(&worlds) {
             return Ok(None);
         }
-        let head = HEADS
-            .iter_rev_from(&self.vault().store, &txn, room.as_bytes())?
-            .next()
-            .map(|row| -> MemoryResult<RoomTurn> {
-                let (_, turn_id) = row?;
-                Ok(turn_in(self.vault(), &txn, turn_id)?)
-            })
-            .transpose()?;
+        let head = if crate::conversation_dag::keeps_dag_topology(&self.vault().store, &txn, &room)?
+        {
+            // A DAG HEAD whose room row is gone, or whose row is no trunk
+            // row of this room, is no room head: the room's rows were
+            // removed, or the TURN keeps no row.
+            match crate::conversation_dag::local_head_in(&self.vault().store, &txn, &room)? {
+                Some(turn_id) => TURNS
+                    .get(&self.vault().store, &txn, &turn_id)?
+                    .filter(|turn| turn.room_id == room.to_hex() && turn.thread_of.is_none()),
+                None => None,
+            }
+        } else {
+            HEADS
+                .iter_rev_from(&self.vault().store, &txn, room.as_bytes())?
+                .next()
+                .map(|row| -> MemoryResult<RoomTurn> {
+                    let (_, turn_id) = row?;
+                    Ok(turn_in(self.vault(), &txn, turn_id)?)
+                })
+                .transpose()?
+        };
         drop(txn);
         Ok(self.admitted_turns(head.into_iter().collect())?.pop())
     }

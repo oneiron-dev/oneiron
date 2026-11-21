@@ -195,6 +195,10 @@ pub(super) fn stage_kept_alternative_in_txn(
             .ok_or(Error::InvalidClaimBody(
                 "the kept alternative is missing inside its own write transaction",
             ))?;
+    // The kept words about a PERSON under a cleanup archive are a new
+    // mention of her: she is restored in the settlement's transaction
+    // (ARCH-0073 §6).
+    vault.restore_mentioned_subject_in_txn(txn, staged.subject)?;
     if staged.approval != ClaimApprovalStatus::Proposed
         || store_pending_group(vault, txn, &candidate.claim_id)?.is_none()
         || staged.predicate != probe.predicate

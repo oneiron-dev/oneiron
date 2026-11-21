@@ -20,7 +20,11 @@ impl Memory<'_> {
         self.run_witness_as(
             crate::store::Callback::Audited,
             turn,
-            WitnessTarget::Base { route: None },
+            WitnessTarget::Base {
+                route: None,
+                mint_conversation_body: None,
+                phone_birth: None,
+            },
             WitnessDoor::Guest,
             || {},
             |txn| prepare(txn).map(|()| None),

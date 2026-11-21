@@ -94,7 +94,10 @@ impl PollAdmission<'_> {
                 }
                 self.apply_imported_cancel(event_ref, event)?;
             }
-            PassportDecision::SkipUnchanged { .. } | PassportDecision::MarkSourceAbsent { .. } => {}
+            PassportDecision::SkipUnchanged { event_ref } => {
+                self.repeat_imported_cancel(event_ref, event)?;
+            }
+            PassportDecision::MarkSourceAbsent { .. } => {}
             PassportDecision::UpdateExisting { event_ref } => {
                 // The source's EVENT follows its admitted passport head as
                 // any imported EVENT does.
