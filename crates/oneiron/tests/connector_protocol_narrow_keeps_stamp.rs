@@ -63,6 +63,7 @@ fn tool(name: &str) -> SlateToolManifest {
         data_class: SlateDataClass::Personal,
         header_parameters: Vec::new(),
         resolved_input_schema: Some(json!({"type": "object"})),
+        resolved_output_schema: None,
         trigger: None,
         destroys: false,
         spends: false,

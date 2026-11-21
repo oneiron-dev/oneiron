@@ -199,6 +199,7 @@ fn grant_base_reach(fixture: &Fixture, writer: EntityId) {
 fn register_server(fixture: &Fixture) {
     let vault = &fixture.vault;
     let manifest = vec![SlateToolManifest {
+        resolved_output_schema: None,
         name: "read".to_owned(),
         data_class: SlateDataClass::Personal,
         header_parameters: Vec::new(),

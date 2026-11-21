@@ -35,6 +35,7 @@ mod slate_setting;
 mod tool_effect;
 mod tool_remember;
 mod txn;
+pub mod typescript;
 
 pub(crate) mod tables;
 #[cfg(test)]
