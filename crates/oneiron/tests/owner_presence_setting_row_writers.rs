@@ -57,16 +57,19 @@ const NEWER_PACK: &str = "setting-writer.pack-b";
 struct ServedVault {
     vault: Vault,
     owner: AuthenticatedOwner,
+    /// The owner's person, the actor the proof is for.
+    actor: EntityId,
     _dir: tempfile::TempDir,
 }
 
 impl ServedVault {
     fn hosted() -> Self {
         let (vault, dir) = open_vault(HostingPrivacyPosture::Hosted);
-        let (_, owner) = embedded_owner(&vault).expect("authenticated embedded owner");
+        let (actor, owner) = embedded_owner(&vault).expect("authenticated embedded owner");
         Self {
             vault,
             owner,
+            actor,
             _dir: dir,
         }
     }
@@ -85,6 +88,7 @@ impl ServedVault {
         Self {
             vault,
             owner,
+            actor,
             _dir: dir,
         }
     }
@@ -105,7 +109,7 @@ impl ServedVault {
 
     fn review_bundle(&self) -> oneiron::Result<GateConsentBundle> {
         self.vault.review_gate_consent_bundle(
-            &WriteActor::new(self.owner.actor(), EdgeActorClass::Human),
+            &WriteActor::new(self.actor, EdgeActorClass::Human),
             POLICY_RUN,
         )
     }
@@ -226,7 +230,7 @@ fn propose_policy(served: &ServedVault) -> EntityId {
     dispatcher
         .dispatch(SelfCall::MemoryPutClaim(SelfMemoryPutClaimCall::new(
             claim,
-            policy_candidate(served.owner.actor()),
+            policy_candidate(served.actor),
             AT,
             NOW,
         )))
@@ -284,7 +288,7 @@ fn park_policy_request(served: &ServedVault) -> (EntityId, [u8; 32]) {
         .batch()
         .claim_candidate(
             &claim_id,
-            policy_candidate(served.owner.actor()).with_evidence(evidence),
+            policy_candidate(served.actor).with_evidence(evidence),
             &envelope,
             AT,
             NOW,
@@ -375,7 +379,7 @@ fn apply_non_policy_maintenance(served: &ServedVault) -> MaintenanceTarget {
         let id = vault.new_entity_id().expect("signal id");
         let mut body = ClaimBody::new(
             predicate,
-            ClaimSubject::Entity(served.owner.actor()),
+            ClaimSubject::Entity(served.actor),
             RmpValue::F32(value),
             1.0,
             ClaimApprovalStatus::Auto,
@@ -393,7 +397,7 @@ fn apply_non_policy_maintenance(served: &ServedVault) -> MaintenanceTarget {
         engagement: signal(ENGAGEMENT, 0.8),
     };
     vault
-        .derive_state_index(&served.owner.actor(), &evidence, NOW)
+        .derive_state_index(&served.actor, &evidence, NOW)
         .expect("derive state index");
     let finding = run_action_mode_pass(vault, NOW + 60)
         .expect("action-mode pass")
