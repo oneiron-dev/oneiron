@@ -75,7 +75,7 @@ fn fixture() -> Fixture {
 }
 
 /// Lands one derived claim; its id.
-fn landed_claim(fixture: &Fixture, predicate: &str, value: &str) -> EntityId {
+fn landed_claim(fixture: &Fixture, predicate: &'static str, value: &str) -> EntityId {
     let committed = commit(
         &fixture.vault,
         fixture.dreamer,

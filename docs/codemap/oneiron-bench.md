@@ -219,7 +219,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/scorecard/params.rs` | src | s | 4 crate-vis | — | The `oneiron.retrieval_eval_params.v1` eval params file: blend weights for one run |
 | `src/scorecard/profile.rs` | src | s | 6 crate-vis | — | The `oneiron.bm25_rank_profile.v1` rank profile file: BM25F weights for one keyword run |
 | `src/scorecard/record.rs` | src | s | 2 crate-vis | — | `scorecard proposals` and `scorecard stamp`: list proposals, record the owner's stamp |
-| `src/scorecard/run.rs` | src | L | 7 crate-vis | — | `scorecard run`: replay one pack slice through fresh throwaway vaults, grade the run |
+| `src/scorecard/run.rs` | src | m | 7 crate-vis | — | `scorecard run`: replay one pack slice through fresh throwaway vaults, grade the run |
+| `src/scorecard/run/sealed.rs` | src | s | 1 crate-vis | — | The sealed once-run: which sealed run the flags ask for, its spent claim, and the load-and-replay under it |
 | `src/scorecard/tune.rs` | src | m | 1 crate-vis | — | `scorecard tune-bm25f`: coordinate ascent over the BM25F rank profile on the search slice |
 | `src/scorecard/world_scoped/fixture.rs` | src | m | 6 crate-vis | — | The world-scoped arm's pack vault: a rooted vault with a second world, a corpus's records written as the… |
 | `src/scorecard/world_scoped/mod.rs` | src | s | 2 crate-vis | — | `scorecard run --arm world-scoped`: the retrieval ruler as a world-scoped reader… |

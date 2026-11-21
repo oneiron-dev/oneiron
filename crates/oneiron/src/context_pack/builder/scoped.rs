@@ -8,10 +8,10 @@ impl<'a> ContextPackBuilder<'a> {
         self
     }
 
-    /// [`crate::pipeline::PipelineBuilder::statistics_reader`]: no row a world
-    /// keeps from `reader` counts in the pack's BM25 statistics.
-    pub(crate) fn statistics_reader(mut self, reader: crate::claim::ScopedReadActorKey) -> Self {
-        self.pipeline = self.pipeline.statistics_reader(reader);
+    /// [`crate::pipeline::PipelineBuilder::statistics_read`]: no row `read`
+    /// refuses and counts nowhere counts in the pack's BM25 statistics.
+    pub(crate) fn statistics_read(mut self, read: &'a crate::claim::ScopedRead<'a>) -> Self {
+        self.pipeline = self.pipeline.statistics_read(read);
         self
     }
 

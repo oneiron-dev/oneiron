@@ -203,6 +203,7 @@ pub use owned::OwnedScopedRead;
 mod admission;
 mod commitment_reminder_wording;
 mod edge_admission;
+mod egress_use_limit;
 pub(crate) use admission::ScopedDiaryCandidates;
 mod profile_sources;
 pub(crate) use profile_sources::CompanionProfileSourceJudgement;

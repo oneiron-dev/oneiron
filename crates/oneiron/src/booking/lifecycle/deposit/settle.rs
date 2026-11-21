@@ -260,6 +260,8 @@ enum SettleRecord {
     /// Recorded nothing: this node froze its booking rows for a home move its
     /// target has not acknowledged. Due again at this instant.
     HomeMoving { due_at: u64 },
+    /// Recorded a capture that captured nothing (the payment stands cancelled) as a void.
+    CaptureVoided,
 }
 
 /// One provider answer to record: the move asked, what the provider moved,
@@ -386,8 +388,10 @@ fn record_settled(
         else {
             return Ok(SettleRecord::Done);
         };
+        let mut recorded = SettleRecord::Done;
         let next = match (row.state, movement) {
             (DepositState::CaptureDue { .. }, DepositSettleMove::Capture { .. }) if moved == 0 => {
+                recorded = SettleRecord::CaptureVoided;
                 row.captured_minor = Some(0);
                 DepositState::Voided
             }
@@ -450,7 +454,7 @@ fn record_settled(
             };
             enqueue_settle(vault, wtxn, key, cause, now_utc)?;
         }
-        Ok(SettleRecord::Done)
+        Ok(recorded)
     })
 }
 
@@ -509,6 +513,7 @@ fn settle_deposit_key<P: DepositSettlementPort>(
                 now_utc,
             )? {
                 SettleRecord::Done => DepositSettleStep::Moved(movement),
+                SettleRecord::CaptureVoided => DepositSettleStep::Moved(DepositSettleMove::Void),
                 SettleRecord::HomeMoving { due_at } => DepositSettleStep::HomeMoving { due_at },
             },
         ),

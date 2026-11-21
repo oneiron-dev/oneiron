@@ -30,8 +30,8 @@ use super::owner_key_enrollment_door::EntrySigner;
 use super::*;
 use crate::consent::AuthenticatedOwner;
 use crate::world_keys::{
-    DevicePin, KitConfirmation, OwnerRootSigner, OwnerSigningSlot, RecoveryAuthoritySigner,
-    RecoveryRootSeed,
+    DevicePin, KitConfirmation, OwnerActImportance, OwnerRootSigner, OwnerSigningSlot,
+    RecoveryAuthoritySigner, RecoveryRootSeed, owner_presence_reasons,
 };
 use crate::{EntityId, Result, Vault};
 
@@ -116,7 +116,14 @@ impl Vault {
     /// possession. Each arm checks its own condition again in its writer
     /// transaction, and writes everything or nothing.
     ///
+    /// The door asks for the person at this device before its write (an
+    /// important act, [`Vault::owner_presence`]), in the chosen arm after its checks
+    /// and before taking the PIN step or slot lock.
+    ///
     /// # Errors
+    /// A refused confirm answers [`crate::error::RecordError::OwnerPresenceRequired`];
+    /// on a device with a PIN set, [`crate::error::SecretError::DevicePin`]
+    /// answers `Required` outside the PIN's window.
     /// [`crate::error::RecordError::AuthorityRefused`] when neither arm
     /// serves, for a lost key the root's key may not revoke, or for an entry
     /// the fold does not count; each arm's own refusals
@@ -189,6 +196,19 @@ impl Vault {
     /// the roster reads its slot's key revoked there, and is held as a
     /// checkpoint root signer once the transaction commits, as at the device
     /// door.
+    ///
+    /// The door asks for the person at this device before its write (an
+    /// important act, [`Vault::owner_presence`]), after it revalidated the
+    /// owner's proof on a read, before it readies this install's signing keys
+    /// and before taking the PIN step or slot lock. Readying those keys
+    /// writes ([`Vault::prepare_install_signing`]), so a refused confirm
+    /// leaves this install's machine as it was, and a proof that is not this
+    /// vault's owner raises no prompt.
+    ///
+    /// # Errors
+    /// A refused confirm answers [`crate::error::RecordError::OwnerPresenceRequired`];
+    /// on a device with a PIN set, [`crate::error::SecretError::DevicePin`]
+    /// answers `Required` outside the PIN's window.
     fn vouch_with_root_key(
         &self,
         (owner, authority): (&AuthenticatedOwner, &ActAuthority),
@@ -205,6 +225,19 @@ impl Vault {
         {
             return Err(authority_refused(PROVING_KEY_NAMED_LOST));
         }
+        // The proof is this vault's live owner before the door asks; the
+        // writer revalidates it in its transaction (REVIEW-10128 P1 2).
+        self.owner_key_act_owner(authority)?;
+        // The keystore is read before the door asks, and this install's
+        // signing keys are readied after it: readying them writes
+        // (REVIEW-10128 P1 1).
+        if matches!(successor, RootSuccessor::ThisInstall) {
+            self.device_keystore()?;
+        }
+        let _asked = self.owner_presence(
+            OwnerActImportance::Important,
+            owner_presence_reasons::RECOVER_OWNER_ROOT,
+        )?;
         // Preparing this install's signing keys writes, so its slot is made
         // ready before the writer opens.
         let install = match successor {
