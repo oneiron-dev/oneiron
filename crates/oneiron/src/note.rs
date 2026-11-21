@@ -3,6 +3,7 @@
 
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use oneiron_contracts::fingerprint::ContentHash;
 
 pub use crate::store::note_body::{
     NOTE_BODY_KEYS, NOTE_CORE_KEYS, NoteBody, NoteCore, NoteKind, NoteScope, NoteWriteEnvelope,
@@ -208,7 +209,7 @@ pub(crate) fn note_overrides_digest_in_txn(
     };
     let encoded = serde_json::to_vec(&overrides)
         .map_err(|_| crate::Error::InvariantViolation("NOTE overrides encode"))?;
-    Ok(Some(*blake3::hash(&encoded).as_bytes()))
+    Ok(Some(ContentHash::of(&encoded).into_bytes()))
 }
 
 /// A refused private row must not disclose its existence through a receipt.
