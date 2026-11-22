@@ -773,6 +773,7 @@ fn a_fact_learnt_from_a_caller_reads_only_to_that_callers_thread_readers() {
             ConnectorWitnessReadGrantRequest {
                 agent: reach.generic,
                 conversation,
+                check_in_ref: None,
             },
         )
         .expect("the owner grants G a caller's thread");
