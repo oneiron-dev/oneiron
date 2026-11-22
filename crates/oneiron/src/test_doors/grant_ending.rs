@@ -1,15 +1,22 @@
 //! Pass 28 R2c ends, for integration tests: a lapsed sign-in's withdrawal of the owner's
 //! agent Grant, a batch delete of a Grant row, the install carrier's load, the Grant
 //! standing read in any grant family, and a member row's giving that lands with no row.
+//! Pass 28 R3e adds the standing a carried act's judge reads, an in-place overwrite of a
+//! Grant row with an own-device shape, and a left shared vault's purge.
 //!
 //! Every door calls only items that also exist at the parent commit, so the red run can lay
 //! this file onto it: no R2c ending item (`end_grant_in_txn`, `carry_owed_grant_ends_logged`,
 //! `owe_torn_grant_end_in_txn`, ...) is called here.
 
-use crate::authority::{ActSurface, GrantActBy, GrantActChange, GrantFamily};
+use crate::authority::{
+    ActSurface, GrantActBy, GrantActChange, GrantFamily, GrantStanding, OwnerActKind,
+};
 use crate::batch::{BatchOp, apply_ops};
 use crate::error::{Error, Result};
-use crate::federation::{FederationGrant, GrantTermsKey, federation_grant_terms};
+use crate::federation::{
+    FederationGrant, FederationGrantPreset, FederationGrantRole, GrantTermsKey,
+    encode_federation_grant_body, federation_grant_terms, own_device_residence_scope,
+};
 use crate::{EntityId, Vault};
 
 /// Withdraws the owner's agent Grant `grant` naming `agent` for a sign-in that lapsed before
@@ -105,4 +112,83 @@ pub fn give_member_grant_act_alone(
             GrantActChange::Give { terms },
         )
     })
+}
+
+/// How the Grant `grant` stands for `agent`'s owner act `act` at `at`, as the judge of an act
+/// the agent carried reads it (the carried-act overlay, topology admission, the free-time
+/// handoff): `"names"`, `"absent"` (no counted act names the Grant here) or `"refused"`. It
+/// reads the counted acts and the ends this install owes, never the row.
+///
+/// # Errors
+///
+/// A store or authority-fold read failure.
+pub fn carried_act_grant_standing(
+    vault: &Vault,
+    grant: EntityId,
+    agent: EntityId,
+    act: OwnerActKind,
+    at: u64,
+) -> Result<&'static str> {
+    let txn = vault.store.env.read_txn()?;
+    let fold = vault.authority_view_readonly_in_txn(&txn)?;
+    let standing =
+        crate::authority::grant_standing_in_txn(&vault.store, &txn, &fold, grant, agent, act, at);
+    Ok(match standing {
+        GrantStanding::Names => "names",
+        GrantStanding::Absent => "absent",
+        GrantStanding::Refused => "refused",
+    })
+}
+
+/// Overwrites the live FEDERATION_GRANT row `id` in place with an own-device-shaped body for
+/// `holder` (an Owner-role grant under the own-device residence scope, neither delegated nor a
+/// guest's), as a newer replicated overwrite at a Grant's id can land. The counted acts naming
+/// `id` stay as they were.
+///
+/// # Errors
+///
+/// An invalid body or a store failure.
+pub fn put_own_device_shaped_row(vault: &Vault, id: EntityId, holder: EntityId) -> Result<()> {
+    let grant = FederationGrant::new(
+        own_device_residence_scope(),
+        holder,
+        FederationGrantRole::Owner,
+        FederationGrantPreset::Owner,
+    );
+    let body = encode_federation_grant_body(&grant)?;
+    vault.with_write_txn(|txn| super::grant_act::put_grant_row_in_txn(vault, txn, id, body))
+}
+
+/// Purges this vault's environment as a confirmed leave of a shared vault purges it, a pass a
+/// transaction until it completes: every row goes but what a leave keeps (the authority log,
+/// MACHINE rows and the declared kept side families).
+///
+/// # Errors
+///
+/// A store failure.
+pub fn purge_as_left_shared_env(vault: &Vault) -> Result<()> {
+    loop {
+        let pass = vault.with_write_txn(|txn| {
+            crate::store::local_replica::purge_left_shared_env_in_txn(vault, txn, 10_000)
+        })?;
+        if pass.complete {
+            return Ok(());
+        }
+    }
+}
+
+/// The ids of the owner's agent Grants that stand on his counted mint here: the list every
+/// agent Grant reader shares (the registry, the agent's ai operations, its principal standing).
+///
+/// # Errors
+///
+/// A store or authority-fold read failure.
+pub fn standing_agent_grant_ids(vault: &Vault) -> Result<Vec<EntityId>> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(
+        crate::federation::agent_grants_for_store_in_txn(&vault.store, &txn)?
+            .into_iter()
+            .map(|standing| standing.id)
+            .collect(),
+    )
 }

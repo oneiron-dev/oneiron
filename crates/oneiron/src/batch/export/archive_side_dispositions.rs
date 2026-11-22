@@ -22,10 +22,6 @@ pub(crate) const SIDE_TABLE_DISPOSITIONS: &[(&str, ArchiveSideDisposition)] = &[
         ArchiveSideDisposition::Retained,
     ),
     ("ATTEMPT_PACK_RECEIPT", ArchiveSideDisposition::Retained),
-    (
-        "AUTHORITY_WITHDRAWN_GRANT",
-        ArchiveSideDisposition::Retained,
-    ),
     ("BOARD_LAYOUT_SETTINGS", ArchiveSideDisposition::Retained),
     ("BUDGET_HOST_ACCOUNT", ArchiveSideDisposition::Retained),
     ("BUDGET_RESIDENT_SHARE", ArchiveSideDisposition::Retained),

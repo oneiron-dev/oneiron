@@ -211,7 +211,7 @@ pub(crate) fn rewritten_grant_data_in_txn(
     }
 }
 
-fn put_grant_row_in_txn(
+pub(super) fn put_grant_row_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     id: EntityId,

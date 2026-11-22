@@ -562,7 +562,8 @@ impl Vault {
     /// Whether a counted act ended the line of Grant `id` (pass 28 R3c): a guest's revoke
     /// (`SlipGrantRevoke`), a membership withdrawal or a grant act's end, on every replica that
     /// folded it. A Grant whose line ended confers nothing, whatever its row says, and an end
-    /// is forever. It replaces the local withdrawal marker each reader read.
+    /// is forever. Until it counts, a reader of a withdrawal asks the end this install owes
+    /// ([`super::grant_end_owed_in_txn`]); the two replace the local withdrawal marker.
     ///
     /// # Errors
     ///

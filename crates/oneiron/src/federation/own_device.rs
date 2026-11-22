@@ -140,8 +140,8 @@ impl Vault {
             }
         }
         if !ids.is_empty() {
-            // Each retirement stays known here and reaches its peers, in this
-            // writer (FIX-LIST 5107, 10772).
+            // Each retirement reaches its peers, in this writer (FIX-LIST
+            // 10772).
             for id in &ids {
                 crate::authority::withdraw_grant_row_in_txn(&self.store, txn, *id)?;
             }

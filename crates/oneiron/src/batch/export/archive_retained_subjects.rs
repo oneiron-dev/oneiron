@@ -60,7 +60,6 @@ pub(crate) const RETAINED_SUBJECT_RULES: &[(&str, RetainedSubjectRule)] = &[
     ("AGENT_DEF_POWER_GRANT", ParsedKey(power_grant_key_records)),
     ("ATTEMPT_HOLD_OVERRIDE_RECEIPT", NoRecord),
     ("ATTEMPT_PACK_RECEIPT", NoRecord),
-    ("AUTHORITY_WITHDRAWN_GRANT", Evidence),
     ("BOARD_LAYOUT_SETTINGS", NoRecord),
     ("BUDGET_HOST_ACCOUNT", NoRecord),
     ("BUDGET_RESIDENT_SHARE", ONE_ID),

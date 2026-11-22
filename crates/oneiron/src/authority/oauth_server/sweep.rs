@@ -37,7 +37,8 @@
 //! every writer, once a snapshot finds a sign-in end due, or a request or code that holds a grant
 //! or may hold one when the writer reads it: an unredeemed code, an allowed request, or a pending
 //! one, which an allow may settle between the snapshot and the writer (FIX 22188). With none, the
-//! grant's withdrawal marker alone keeps it on the record (`withdraw_lapsed_oauth_grant_in_txn`).
+//! grant's end by rule alone keeps it on the record, counted or owed until the install key loads
+//! (`withdraw_lapsed_oauth_grant_in_txn`, pass 28 R2b).
 
 use std::collections::BTreeSet;
 

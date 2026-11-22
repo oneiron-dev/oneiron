@@ -90,8 +90,6 @@ pub(crate) enum ArchivedSideGroup {
     WebConnector,
     /// Dependent walk bounds.
     Ports,
-    /// Protective grant withdrawal markers.
-    WithdrawnGrant,
     /// Project history budgets.
     ProjectHistory,
     /// Message-stream defaults for new sessions.
@@ -197,7 +195,6 @@ pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGrou
         }
         name if name == side_table::WEB_CONNECTOR_SETTING.name => Some(Group::WebConnector),
         name if name == side_table::PORTS_DEPENDENT_WALK_POLICY.name => Some(Group::Ports),
-        name if name == side_table::AUTHORITY_WITHDRAWN_GRANT.name => Some(Group::WithdrawnGrant),
         name if name == side_table::PROJECT_HISTORY_POLICY.name => Some(Group::ProjectHistory),
         name if name == side_table::MESSAGE_STREAM_POLICY.name
             || name == side_table::EXPORT_RECEIPT.name =>
@@ -332,9 +329,6 @@ pub(crate) fn land_archived_side_group_in_txn(
         }
         ArchivedSideGroup::Ports => {
             crate::ports::land_archived_ports_rows_in_txn(vault, txn, permit, rows)
-        }
-        ArchivedSideGroup::WithdrawnGrant => {
-            crate::authority::land_archived_withdrawn_grant_rows_in_txn(vault, txn, permit, rows)
         }
         ArchivedSideGroup::ProjectHistory => {
             crate::Vault::land_archived_project_history_rows_in_txn(vault, txn, permit, rows)
