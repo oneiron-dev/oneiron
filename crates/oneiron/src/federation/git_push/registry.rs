@@ -57,6 +57,9 @@ impl Vault {
     /// The GitPush grants as the registry reviews them: standing ones, or
     /// with `include_revoked` every live one (an expired grant shows as
     /// revoked) and every revoked one the authority log names, as revoked.
+    /// A live row whose Grant a revoke withdrew (a lapse's end among them,
+    /// pass 28 R2) does not stand: it shows as revoked, with its revoke
+    /// action, as an expired one does.
     pub(crate) fn git_push_registry_rows_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -64,11 +67,16 @@ impl Vault {
     ) -> Result<Vec<ConsentRegistryRow>> {
         let now = self.grant_judgement_secs_in_txn(txn)?;
         let live = self.git_push_grants_in_txn(txn)?;
+        let withdrawn = self.revoked_git_push_grants_in_txn(txn)?;
+        let withdrawn_ids: BTreeSet<EntityId> = withdrawn.iter().map(|grant| grant.id).collect();
+        let stands = |standing: &GitPushGrantStanding| {
+            standing.stands_at(now) && !withdrawn_ids.contains(&standing.id)
+        };
         let mut rows: Vec<ConsentRegistryRow> = live
             .iter()
-            .filter(|standing| include_revoked || standing.stands_at(now))
+            .filter(|standing| include_revoked || stands(standing))
             .map(|standing| {
-                let status = if standing.stands_at(now) {
+                let status = if stands(standing) {
                     ConsentGrantStatus::Active
                 } else {
                     ConsentGrantStatus::Revoked
@@ -79,7 +87,7 @@ impl Vault {
         if include_revoked {
             let shown: BTreeSet<EntityId> = live.iter().map(|standing| standing.id).collect();
             rows.extend(
-                self.revoked_git_push_grants_in_txn(txn)?
+                withdrawn
                     .iter()
                     .filter(|grant| !shown.contains(&grant.id))
                     .map(|grant| registry_row(grant, ConsentGrantStatus::Revoked)),
@@ -151,12 +159,24 @@ impl Vault {
                     AgentGrantChange::Revoke { .. } => Some((record.grant, None)),
                 },
                 AuthorityOp::SlipGrantRevoke { grant_ref, .. } => Some((*grant_ref, None)),
+                // A lapse's end of the owner's Grant (pass 28 R2).
+                AuthorityOp::GrantAct(record) => {
+                    record.ended_owner_agent_grant().map(|grant| (grant, None))
+                }
                 _ => None,
             };
             let Some((grant, mint)) = named else {
                 continue;
             };
-            if !fold.valid_entries.contains(&authority_entry_hash(&entry)?) {
+            let hash = authority_entry_hash(&entry)?;
+            if !fold.valid_entries.contains(&hash) {
+                continue;
+            }
+            // A lapse's end the fold holds without effect (a line of another family) ends
+            // nothing.
+            if matches!(entry.op, AuthorityOp::GrantAct(_))
+                && fold.held_back_entries().contains(&hash)
+            {
                 continue;
             }
             match mint {

@@ -324,9 +324,8 @@ pub(crate) fn sweep_scope_stamps(store: &Store) -> Result<()> {
                     crate::access_grant::decode_access_grant_body(old)?;
                     old.to_vec()
                 }
-                _ => crate::federation::encode_federation_grant_body(
-                    &crate::federation::decode_federation_grant_body(old)?,
-                )?,
+                // Its terms key stays: the act that gives the row opens with it (pass 28 R2).
+                _ => crate::federation::reencode_federation_grant_body(old)?,
             };
             super::put_apply::stage_entity_body_row(
                 store,

@@ -193,6 +193,7 @@ pub mod gate_receipt_rows;
 #[cfg(feature = "sync")]
 pub mod gate_receipt_unclear;
 pub mod gpu_job;
+pub mod grant_act;
 pub mod grant_roles;
 pub mod grant_sealed_file;
 pub mod grant_standing;
