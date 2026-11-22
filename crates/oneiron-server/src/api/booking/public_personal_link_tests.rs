@@ -14,9 +14,14 @@ use oneiron::booking::{
 const UNKNOWN_PERSONAL_TOKEN: &str =
     "bkr_0000000000000000000000000000000000000000000000000000000000000000";
 
+/// The vault's embedded owner mints, the actor the fixture publishes its
+/// page as (H149).
 fn mint(fixture: &Fixture, email: &str, name: &str) -> PersonalLinkMint {
     mint_personal_booking_link(
-        &fixture.server.vault.memory(id(0x77), EdgeActorClass::Human),
+        &fixture
+            .server
+            .vault
+            .memory(fixture.owner_actor(), EdgeActorClass::Human),
         fixture.page,
         &PersonalLinkRecipient {
             email: email.to_owned(),
@@ -185,7 +190,7 @@ async fn public_booking_personal_link_serves_only_its_recipient() {
     ));
 
     // "not you?" ends the link and tells its minter.
-    assert!(link_notices(&fixture, id(0x77)).is_empty());
+    assert!(link_notices(&fixture, fixture.owner_actor()).is_empty());
     let (status, body) = answer(
         &fixture,
         "POST",
@@ -198,7 +203,7 @@ async fn public_booking_personal_link_serves_only_its_recipient() {
         serde_json::from_slice::<Value>(&body).expect("void"),
         json!({"voided": true})
     );
-    let notices = link_notices(&fixture, id(0x77));
+    let notices = link_notices(&fixture, fixture.owner_actor());
     assert_eq!(notices.len(), 1);
     assert_eq!(notices[0].kind, oneiron::inbox::NotificationKind::Finding);
     assert_eq!(
@@ -251,7 +256,7 @@ async fn public_booking_personal_link_serves_only_its_recipient() {
     )
     .await;
     assert_eq!(again, unknown_page);
-    assert_eq!(link_notices(&fixture, id(0x77)).len(), 1);
+    assert_eq!(link_notices(&fixture, fixture.owner_actor()).len(), 1);
 
     // The page itself still serves.
     let _ = page_json(&fixture, &fixture.token).await;
@@ -260,7 +265,12 @@ async fn public_booking_personal_link_serves_only_its_recipient() {
 #[tokio::test]
 async fn a_personal_link_ends_with_its_revocation_and_its_page() {
     let fixture = Fixture::new();
-    let owner = || fixture.server.vault.memory(id(0x77), EdgeActorClass::Human);
+    let owner = || {
+        fixture
+            .server
+            .vault
+            .memory(fixture.owner_actor(), EdgeActorClass::Human)
+    };
     let first = mint(&fixture, "a@example.test", "Ada");
     let second = mint(&fixture, "c@example.test", "Cy");
     let unknown_page = answer(
@@ -305,7 +315,7 @@ async fn a_personal_link_ends_with_its_revocation_and_its_page() {
         Some(PersonalLinkEndReason::Revoked)
     );
     assert_eq!(ended(&second.link.link_ref), None);
-    assert!(link_notices(&fixture, id(0x77)).is_empty());
+    assert!(link_notices(&fixture, fixture.owner_actor()).is_empty());
 
     // "not you?" answers personal links only.
     let page_void = answer(
@@ -343,6 +353,155 @@ async fn a_personal_link_ends_with_its_revocation_and_its_page() {
     );
     fixture.publish_page(fixture.page, true, 1, until);
     let _ = page_json(&fixture, &second.token).await;
+}
+
+/// One owner verb through the facade, as `principal` holding an owner-grade
+/// human credential: status and JSON body (`null` for an empty one).
+async fn facade_verb(
+    fixture: &Fixture,
+    principal: EntityId,
+    verb: &str,
+    body: Value,
+) -> (StatusCode, Value) {
+    let credential = owner_credential(fixture, principal);
+    facade_verb_as(fixture, &credential, verb, body, None).await
+}
+
+/// An owner-grade human credential of `principal`.
+fn owner_credential(
+    fixture: &Fixture,
+    principal: EntityId,
+) -> (
+    oneiron::authority::CapabilitySlip,
+    ed25519_dalek::SigningKey,
+) {
+    let recipe = format!("principal_ref={};actor_class=human", principal.to_hex());
+    crate::test_credentials::credential(&fixture.server, &recipe)
+}
+
+/// [`facade_verb`] on one `credential`, naming `invocation` when given, its
+/// request polled on the engine's stack (`test_engine_stack`): the facade's
+/// generated dispatch does not fit a test thread's.
+async fn facade_verb_as(
+    fixture: &Fixture,
+    (slip, key): &(
+        oneiron::authority::CapabilitySlip,
+        ed25519_dalek::SigningKey,
+    ),
+    verb: &str,
+    body: Value,
+    invocation: Option<&str>,
+) -> (StatusCode, Value) {
+    let mut request = Request::builder()
+        .method("POST")
+        .uri(format!("/v1/core/facade/{verb}"))
+        .header(CONTENT_TYPE, "application/json")
+        .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 43123))));
+    if let Some(invocation) = invocation {
+        request = request.header("x-oneiron-invocation", invocation);
+    }
+    let request = crate::test_credentials::bind_slip_request(
+        &fixture.server,
+        slip,
+        key,
+        request.body(Body::from(body.to_string())).expect("request"),
+    );
+    let app = crate::build_app(fixture.server.clone());
+    let (status, body) = crate::test_engine_stack::on_engine_stack(async move {
+        let response = app.oneshot(request).await.expect("response");
+        let status = response.status();
+        (status, bytes(response).await)
+    })
+    .await;
+    (status, serde_json::from_slice(&body).unwrap_or(Value::Null))
+}
+
+/// The fixture with its page published by the vault's own owner, the actor
+/// an owner door's proof admits: the embedded owner the rooted server binds
+/// to the host key at genesis (H149), as the fixture publishes.
+fn fixture_of_the_vault_owner() -> (Fixture, EntityId) {
+    let fixture = Fixture::new();
+    let owner = fixture.owner_actor();
+    (fixture, owner)
+}
+
+#[tokio::test]
+async fn the_owner_mints_lists_and_revokes_personal_links_through_its_verbs() {
+    let (fixture, owner) = fixture_of_the_vault_owner();
+    let page_ref = fixture.page.to_hex();
+    let _ = page_json(&fixture, &fixture.token).await;
+
+    // Only the owner mints.
+    let (status, _) = facade_verb(
+        &fixture,
+        id(0x78),
+        "vault.booking.personal_link.mint",
+        json!({"page_ref": page_ref, "recipient_email": "a@example.test", "recipient_name": "Ada"}),
+    )
+    .await;
+    assert_ne!(status, StatusCode::OK, "a non-owner mints nothing");
+
+    let (status, minted) = facade_verb(
+        &fixture,
+        owner,
+        "vault.booking.personal_link.mint",
+        json!({"page_ref": page_ref, "recipient_email": "A@Example.test", "recipient_name": "Ada"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{minted}");
+    let token = minted["token"].as_str().expect("token").to_owned();
+    let link_ref = minted["link"]["link_ref"]
+        .as_str()
+        .expect("link_ref")
+        .to_owned();
+    assert!(token.starts_with("bkr_"));
+    assert_eq!(minted["link"]["recipient_email"], "a@example.test");
+    assert_eq!(minted["link"]["page_ref"], page_ref.as_str());
+    assert!(minted["link"]["ended_at"].is_null());
+
+    // The minted link serves its page, naming its recipient.
+    let page = page_json(&fixture, &token).await;
+    assert_eq!(page["recipient"]["name"], "Ada");
+
+    // The list names it without its token.
+    let (status, listed) = facade_verb(
+        &fixture,
+        owner,
+        "vault.booking.personal_link.list",
+        json!({"page_ref": page_ref}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{listed}");
+    assert_eq!(listed["links"].as_array().map(Vec::len), Some(1));
+    assert_eq!(listed["links"][0]["link_ref"], link_ref.as_str());
+    assert!(!listed.to_string().contains(&token));
+
+    // Revoked, it is a dead link, and the list says why.
+    let (status, revoked) = facade_verb(
+        &fixture,
+        owner,
+        "vault.booking.personal_link.revoke",
+        json!({"link_ref": link_ref}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{revoked}");
+    assert_eq!(revoked, json!({"revoked": true}));
+    let (status, _) = answer(
+        &fixture,
+        "GET",
+        &format!("/public/booking/{token}"),
+        Value::Null,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (_, listed) = facade_verb(
+        &fixture,
+        owner,
+        "vault.booking.personal_link.list",
+        json!({"page_ref": page_ref}),
+    )
+    .await;
+    assert_eq!(listed["links"][0]["ended_reason"], "revoked");
 }
 
 /// A confirm carries the personal link it came through to every writer
@@ -407,7 +566,10 @@ async fn a_personal_link_ended_mid_confirm_books_nothing() {
     // While the next confirm waits, the minter revokes the link.
     assert!(
         revoke_personal_booking_link(
-            &fixture.server.vault.memory(id(0x77), EdgeActorClass::Human),
+            &fixture
+                .server
+                .vault
+                .memory(fixture.owner_actor(), EdgeActorClass::Human),
             &link.link.link_ref,
             now_secs().expect("clock"),
         )
@@ -509,7 +671,7 @@ async fn a_personal_link_off_this_device_meets_no_kept_page() {
             true,
         )
         .expect("keep the world on this machine");
-    crate::test_credentials::bind_owner(vault, "owner-fixture-secret", id(0x77));
+    crate::test_credentials::bind_owner(vault, "owner-fixture-secret", fixture.owner_actor());
     assert!(
         vault
             .device_local_keeps_for(&kept, &oneiron::claim::CallerLocality::OffDevice.into())
@@ -549,4 +711,259 @@ async fn a_personal_link_off_this_device_meets_no_kept_page() {
             .is_some(),
         "a refused \"not you?\" ends no link"
     );
+}
+
+const MINT_VERB: &str = "vault.booking.personal_link.mint";
+
+/// Review round 2 of #8571 (P1, the one-time token): no invocation claim
+/// keeps a mint's reply. The same owner request again under the same
+/// invocation runs the mint again and is never answered the first reply's
+/// token: a fresh token and link, beside the first. A claim that kept the
+/// reply answers the first token twice.
+#[tokio::test]
+async fn a_minted_token_is_never_answered_again_under_its_invocation() {
+    let (fixture, owner) = fixture_of_the_vault_owner();
+    let credential = owner_credential(&fixture, owner);
+    let invocation = EntityId::now().to_hex();
+    let body = json!({
+        "page_ref": fixture.page.to_hex(),
+        "recipient_email": "a@example.test",
+        "recipient_name": "Ada",
+    });
+    let (status, first) = facade_verb_as(
+        &fixture,
+        &credential,
+        MINT_VERB,
+        body.clone(),
+        Some(&invocation),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    let (status, again) =
+        facade_verb_as(&fixture, &credential, MINT_VERB, body, Some(&invocation)).await;
+    assert_eq!(status, StatusCode::OK, "{again}");
+    let first_token = first["token"].as_str().expect("first token");
+    let again_token = again["token"].as_str().expect("second token");
+    assert_ne!(
+        first_token, again_token,
+        "the first mint's token was answered again under its invocation"
+    );
+    assert_ne!(first["link"]["link_ref"], again["link"]["link_ref"]);
+    let links = personal_booking_links(&fixture.server.vault, fixture.page).expect("links");
+    assert_eq!(links.len(), 2, "each run minted its own link: {links:?}");
+    for token in [first_token, again_token] {
+        assert_eq!(page_json(&fixture, token).await["recipient"]["name"], "Ada");
+    }
+}
+
+/// A hook sandbox whose first run asks and every later run does nothing.
+#[cfg(feature = "code-sandbox-wasmtime")]
+#[derive(Default)]
+struct AskOnceRuntime {
+    runs: std::sync::atomic::AtomicUsize,
+}
+
+#[cfg(feature = "code-sandbox-wasmtime")]
+impl oneiron::runtime_hooks::HookBodyRuntime for AskOnceRuntime {
+    fn run_hook(
+        &self,
+        _body: &str,
+        _input_json: &str,
+        _context: &mut oneiron::runtime_hooks::HookRunContext,
+        _read: &mut dyn FnMut(&str) -> std::result::Result<String, String>,
+    ) -> oneiron::Result<oneiron::runtime_hooks::HookBodyRun> {
+        let outcome = if self.runs.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+            json!({"kind": "ask", "question": "May this link be minted?"})
+        } else {
+            json!({"kind": "nothing"})
+        };
+        Ok(oneiron::runtime_hooks::HookBodyRun {
+            outcome_json: outcome.to_string(),
+            fuel_used: None,
+            host_calls: 1,
+        })
+    }
+}
+
+/// The owner puts a pack whose one pre-hook asks before every mint; answers
+/// the hook's binding claim.
+#[cfg(feature = "code-sandbox-wasmtime")]
+fn bind_mint_ask(vault: &oneiron::Vault, owner: EntityId) -> EntityId {
+    const PACK: &str = "example.mintask";
+    const HOOK: &str = "ask-before-mint";
+    vault
+        .prepare_install_signing()
+        .expect("install signing keys");
+    let proof = vault
+        .authenticate_owner(
+            owner,
+            &owner.to_hex(),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .expect("owner proof");
+    let files = vec![
+        oneiron::skill_hub::HubFile::new(
+            "PACK.md",
+            format!(
+                "---\nname: {PACK}\ndescription: Personal link mint ask fixture.\nversion: 1.0.0\nkind: capability\nhooks: [\"{HOOK}\"]\n---\nA pack whose one pre-hook asks before a personal link is minted.\n"
+            ),
+        ),
+        oneiron::skill_hub::HubFile::new(
+            format!("hooks/{HOOK}/HOOK.md"),
+            format!(
+                "---\nname: {HOOK}\nversion: 1.0.0\nverbs: [\"{MINT_VERB}\"]\nphase: pre\noutcomes: [\"ask\"]\n---\n{HOOK} asks before a personal link is minted.\n"
+            ),
+        ),
+        oneiron::skill_hub::HubFile::new(
+            format!("hooks/{HOOK}/body.js"),
+            "return { kind: \"ask\", question: \"May this link be minted?\" };\n",
+        ),
+    ];
+    match vault
+        .put_pack(&proof, files)
+        .expect("the owner puts the pack")
+    {
+        oneiron::skill_hub::pack_catalog::PackInstallDisposition::Installed(receipt) => {
+            assert_eq!(receipt.pack_name, PACK);
+        }
+        other => panic!("the owner's put installs the pack: {other:?}"),
+    }
+    let (binding, row) = vault
+        .pack_hook_bindings()
+        .expect("list bindings")
+        .into_iter()
+        .find(|(_, row)| row.pack == PACK && row.hook == HOOK)
+        .expect("the owner's hook binds");
+    assert!(row.enabled, "the new binding runs");
+    binding
+}
+
+/// Review round 2 of #8571 (P1, the one-time token, its hook leg): an
+/// owner's pre-hook that asks before a mint saves no credential to run the
+/// mint on. Once the owner answers proceed, settlement's drain runs nothing
+/// and mints nothing, so no ask row keeps a token; the caller's own retry
+/// under the same invocation mints, and its token goes to that retry alone.
+/// A drain that runs the mint saves its whole answer, the raw token in it,
+/// in the ask's row for the retry. The host's check runs in the hook
+/// sandbox's build alone, as serve installs it.
+#[cfg(feature = "code-sandbox-wasmtime")]
+#[tokio::test]
+async fn a_mint_a_hook_asked_runs_only_on_its_callers_retry() {
+    let (fixture, owner) = fixture_of_the_vault_owner();
+    let vault = Arc::clone(&fixture.server.vault);
+    vault
+        .install_hook_runtime(Arc::new(AskOnceRuntime::default()))
+        .expect("the vault runs its verb hooks on the test sandbox");
+    // The host's check for a settled ask, as serve installs it, on the
+    // engine-stack runtime whose blocking threads run the drain below.
+    let server = Arc::clone(&fixture.server);
+    crate::test_engine_stack::on_engine_stack(async move {
+        server.vault().install_verb_ask_credential_check(Arc::new(
+            crate::credential_resume::ServerVerbAskCredentialCheck::new(
+                &server,
+                tokio::runtime::Handle::current(),
+            ),
+        ));
+    })
+    .await;
+    let binding = bind_mint_ask(&vault, owner);
+    let credential = owner_credential(&fixture, owner);
+    let invocation = EntityId::now().to_hex();
+    let body = json!({
+        "page_ref": fixture.page.to_hex(),
+        "recipient_email": "a@example.test",
+        "recipient_name": "Ada",
+    });
+
+    let (status, held) = facade_verb_as(
+        &fixture,
+        &credential,
+        MINT_VERB,
+        body.clone(),
+        Some(&invocation),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "the hook asks first: {held}");
+    assert_eq!(held["error"]["code"], json!("verb_hook_pending"), "{held}");
+    let ask = EntityId::from_hex(held["error"]["hook"]["ask"].as_str().expect("ask handle"))
+        .expect("a 32-hex ask handle");
+    let mut word = oneiron::task_verb::TaskAskWord::new(binding);
+    word.option = Some(oneiron::task_verb::TaskAskOptionId::new("proceed").expect("option"));
+    vault
+        .memory(owner, EdgeActorClass::Human)
+        .tasks_answer(&oneiron::task_verb::TaskAskHandle { group_ref: ask }, &word)
+        .expect("the owner answers proceed");
+
+    let drained = {
+        let vault = Arc::clone(&vault);
+        crate::test_engine_stack::on_engine_stack(async move {
+            tokio::task::spawn_blocking(move || vault.drain_verb_asks())
+                .await
+                .expect("the drain pass ends")
+        })
+        .await
+        .expect("the drain pass")
+    };
+    assert_eq!(drained, 0, "settlement's drain ran the mint");
+    assert!(
+        personal_booking_links(&vault, fixture.page)
+            .expect("links")
+            .is_empty(),
+        "no link is minted before the caller's retry"
+    );
+
+    let (status, minted) =
+        facade_verb_as(&fixture, &credential, MINT_VERB, body, Some(&invocation)).await;
+    assert_eq!(status, StatusCode::OK, "the retry mints: {minted}");
+    let token = minted["token"].as_str().expect("token");
+    assert!(token.starts_with("bkr_"));
+    assert_eq!(
+        personal_booking_links(&vault, fixture.page)
+            .expect("links")
+            .len(),
+        1
+    );
+}
+
+/// Review round 2 of #8571 (P1, the slot read's final check): the check a
+/// slot answer ends in (on the cached and the solved path, and in a
+/// constraint turn, the public one and the facade's alike) needs the
+/// snapshot's personal link still live, as every writer's does. A link the
+/// owner revokes while its slots are read answers the one 404, with the page
+/// still published. A check that reads only the publication lets the slots
+/// through.
+#[tokio::test]
+async fn a_personal_link_revoked_mid_read_answers_no_slots() {
+    let fixture = Fixture::new();
+    let link = mint(&fixture, "ada@example.test", "Ada");
+    let (authority, _, _) =
+        public_attempt_authority(&fixture.server, &link.token, &ReadDestination::on_device())
+            .expect("live link");
+    assert_eq!(
+        authority.personal_link_ref.as_deref(),
+        Some(link.link.link_ref.as_str())
+    );
+    super::super::public_availability::recheck(&fixture.server, Some(&authority))
+        .expect("a live link's read stands");
+
+    assert!(
+        revoke_personal_booking_link(
+            &fixture
+                .server
+                .vault
+                .memory(fixture.owner_actor(), EdgeActorClass::Human),
+            &link.link.link_ref,
+            now_secs().expect("clock"),
+        )
+        .expect("revoke")
+    );
+    let Err(refused) =
+        super::super::public_availability::recheck(&fixture.server, Some(&authority))
+    else {
+        panic!("a read through a revoked link kept its slots")
+    };
+    assert_eq!(refused.into_response().status(), StatusCode::NOT_FOUND);
+    // The page itself still serves through its own token.
+    let _ = page_json(&fixture, &fixture.token).await;
 }
