@@ -63,9 +63,7 @@ use crate::store::legal_hold::HoldActor;
 use crate::store::world_pad_rows::{DELETED, DESTROYED};
 use crate::temporal::TimeRange;
 
-pub(crate) use crate::store::world_pad_rows::{
-    note_world_deleted_in_txn, pad_body_world, world_keys_destroyed_in_txn,
-};
+pub(crate) use crate::store::world_pad_rows::{pad_body_world, world_keys_destroyed_in_txn};
 pub(crate) use oneiron_store::world_pad_codec::{WorldKeyPad, pad_row_id, pad_world_in_body};
 
 /// How long after a soft delete a pin change still rewraps the world's keys:
