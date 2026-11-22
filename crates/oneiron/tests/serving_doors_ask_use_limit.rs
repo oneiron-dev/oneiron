@@ -1,23 +1,26 @@
-//! A row a kept privacy erase holds for storage only leaves by no serving door that asked no use
-//! limit (FIX USE-LIMIT-NOT-ASKED-BY-SERVING-DOORS).
+#![cfg(oneiron_test_support)]
+//! A row a cooperative review restriction holds for storage only leaves by no serving door that
+//! asked no use limit (FIX USE-LIMIT-NOT-ASKED-BY-SERVING-DOORS).
 //!
-//! Public doors only; neutral fixtures; vaults in tempdirs.
+//! Public doors beside the `oneiron::test_doors` cooperative restriction; neutral fixtures; vaults
+//! in tempdirs.
 //!
 //! * `bare_text_search_keeps_a_use_limited_row_out`: on a hosted vault two CLAIMs carry indexed
-//!   text. A customer hold refuses the privacy erase of one, which keeps it stored and
-//!   use-limited. The bare text search, under the default rank profile and under a caller's
-//!   BM25+ profile, then serves the other CLAIM and never the kept one.
+//!   text. A cooperative review restriction use-limits one. The bare text search, under the
+//!   default rank profile and under a caller's BM25+ profile, then serves the other CLAIM and
+//!   never the restricted one.
 //! * `bare_vector_search_keeps_a_use_limited_row_out`: the same, for two CLAIMs with vectors
 //!   and the bare vector search.
 //! * `a_use_limited_row_takes_no_place_among_the_text_hits`: two CLAIMs carry the same indexed
-//!   text. The one that leads a one-place text search is kept; the search then gives its one
-//!   place to the other CLAIM, under both rank profiles, rather than to the kept one or to none.
+//!   text. The one that leads a one-place text search is restricted; the search then gives its
+//!   one place to the other CLAIM, under both rank profiles, rather than to the restricted one or
+//!   to none.
 //! * `a_prebuilt_persona_snapshot_export_of_a_kept_subject_refuses`: a persona snapshot compiled
-//!   before its PERSON is kept carries the person's words; its export after the keep refuses as
-//!   a fresh compile of the kept PERSON does, and records nothing. Another PERSON's prebuilt
-//!   compile still exports.
+//!   before its PERSON is restricted carries the person's words; its export after the restriction
+//!   refuses as a fresh compile of the restricted PERSON does, and records nothing. Another
+//!   PERSON's prebuilt compile still exports.
 //! * `a_prebuilt_persona_snapshot_export_citing_a_kept_claim_refuses`: a compile whose identity
-//!   row cites a CLAIM that is then kept refuses to export.
+//!   row cites a CLAIM that is then restricted refuses to export.
 //!
 //! All five run red at main f75de13fe4c, whose bare hit lists check deletion and staleness only
 //! and whose export renders a prebuilt compile without asking any row's use limit, and green at
@@ -25,18 +28,15 @@
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test serving_doors_ask_use_limit`.
 
 use oneiron::config::Bm25RankProfile;
-use oneiron::consent::AuthenticatedOwner;
-use oneiron::deletion::LegalHoldTarget;
-use oneiron::memory::{EraseOptions, EraseReason};
 use oneiron::persona_snapshot::{
     PERSONA_SNAPSHOT_NAME_PREDICATE, PersonaSnapshotCompile, PersonaSnapshotCompileOptions,
     PersonaSnapshotExportConsent, PersonaSnapshotStrikeList,
 };
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT};
-use oneiron::store::GateDecisionId;
+use oneiron::test_doors::campaign_member_index::restrict_record;
 use oneiron::{
-    Bm25Formula, ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject,
-    EdgeActorClass, EntityId, Error, HostingPrivacyPosture, Memory, TimeRange, Vault, VaultConfig,
+    Bm25Formula, ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EntityId,
+    Error, HostingPrivacyPosture, TimeRange, Vault, VaultConfig,
 };
 use rmpv::Value;
 
@@ -50,73 +50,20 @@ fn range() -> TimeRange {
     TimeRange { start: AT, end: AT }
 }
 
-/// A hosted vault with a device keystore, so a held privacy erase keeps its record
-/// use-limited.
+/// A hosted vault.
 fn open_hosted_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("temp dir for the hosted vault");
     let mut config = VaultConfig::default();
     config.privacy.posture = HostingPrivacyPosture::Hosted;
     config.dimensions = DIMENSIONS;
     let vault = Vault::open_owned(dir.path(), config).expect("open the hosted vault");
-    vault.install_device_keystore(std::sync::Arc::new(
-        oneiron_keystore::MemoryKeystore::default(),
-    ));
     (dir, vault)
 }
 
-fn owner_proof(vault: &Vault) -> AuthenticatedOwner {
-    let owner = vault
-        .ensure_embedded_owner_actor()
-        .expect("FIXTURE: the vault names its embedded owner actor");
-    vault
-        .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
-        .expect("FIXTURE: owner proof")
-}
-
-fn owner_memory(vault: &Vault) -> Memory<'_> {
-    let actor = vault
-        .ensure_embedded_owner_actor()
-        .expect("FIXTURE: the vault names its embedded owner actor");
-    vault.memory(actor, EdgeActorClass::Human)
-}
-
-/// Places a customer hold on `record` and runs its privacy erase, which the hold refuses: the
-/// record stays stored and use-limited.
-fn keep_use_limited(vault: &Vault, record: EntityId) {
-    let hold = vault
-        .place_legal_hold(
-            &owner_proof(vault),
-            vec![LegalHoldTarget::Record(record)],
-            Some("matter-serving-doors".to_owned()),
-        )
-        .expect("FIXTURE: place the customer hold");
-    assert!(hold.stands(), "FIXTURE: the customer hold stands: {hold:?}");
-    let memory = owner_memory(vault);
-    let preview = memory
-        .preview_entity_delete(&record)
-        .expect("FIXTURE: preview the privacy erase");
-    let outcome = memory
-        .confirm_entity_erase(
-            &preview,
-            EraseOptions {
-                reason: EraseReason::GdprDelete,
-                also_same_bytes: false,
-                veto_starter: None,
-            },
-        )
-        .expect("FIXTURE: the privacy erase runs");
-    assert_eq!(
-        outcome.first.reason.as_str(),
-        "privacy_erase_kept",
-        "FIXTURE: the held privacy erase is kept: {outcome:?}"
-    );
-    assert!(
-        vault
-            .legal_hold_use_limit(&record)
-            .expect("FIXTURE: read the use limit")
-            .is_some(),
-        "FIXTURE: the kept erase use-limits the record"
-    );
+/// Restricts `record` under a cooperative review, in the row the cooperative-deletion answer
+/// writes: every use-limited read hides the record.
+fn restrict(vault: &Vault, record: EntityId) {
+    restrict_record(vault, record).expect("FIXTURE: restrict the record");
 }
 
 fn put_person(vault: &Vault, name: &[u8]) -> EntityId {
@@ -179,11 +126,12 @@ fn bare_text_search_keeps_a_use_limited_row_out() {
     for profile in [Bm25RankProfile::default(), plus_profile()] {
         assert!(
             text_hits(&vault, HELD_MARKER, &profile).contains(&held),
-            "FIXTURE: before the hold the text search serves the held CLAIM ({profile:?})"
+            "FIXTURE: before the restriction the text search serves the restricted CLAIM \
+             ({profile:?})"
         );
     }
 
-    keep_use_limited(&vault, held);
+    restrict(&vault, held);
 
     for profile in [Bm25RankProfile::default(), plus_profile()] {
         assert!(
@@ -235,10 +183,10 @@ fn bare_vector_search_keeps_a_use_limited_row_out() {
     let before = hits(&vault);
     assert!(
         before.contains(&held) && before.contains(&kept),
-        "FIXTURE: before the hold the vector search serves both CLAIMs: {before:?}"
+        "FIXTURE: before the restriction the vector search serves both CLAIMs: {before:?}"
     );
 
-    keep_use_limited(&vault, held);
+    restrict(&vault, held);
 
     let after = hits(&vault);
     assert!(
@@ -272,13 +220,13 @@ fn a_use_limited_row_takes_no_place_among_the_text_hits() {
         _ => panic!("FIXTURE: one of the two CLAIMs fills the one place: {leader:?}"),
     };
 
-    keep_use_limited(&vault, held);
+    restrict(&vault, held);
 
     for profile in [Bm25RankProfile::default(), plus_profile()] {
         assert_eq!(
             top(&vault, &profile),
             vec![other],
-            "the kept CLAIM gives its place to the other one ({profile:?})"
+            "the restricted CLAIM gives its place to the other one ({profile:?})"
         );
     }
     let bare: Vec<EntityId> = vault
@@ -290,7 +238,7 @@ fn a_use_limited_row_takes_no_place_among_the_text_hits() {
     assert_eq!(
         bare,
         vec![other],
-        "search_text gives the kept CLAIM's place to the other one"
+        "search_text gives the restricted CLAIM's place to the other one"
     );
 }
 
@@ -339,13 +287,13 @@ fn a_prebuilt_persona_snapshot_export_of_a_kept_subject_refuses() {
     let (held, _, held_compile) = compiled_person(&vault, "Wren Halloway");
     let (_, _, other_compile) = compiled_person(&vault, "Ines Marlow");
 
-    keep_use_limited(&vault, held);
+    restrict(&vault, held);
     assert!(
         matches!(
             vault.compile_persona_snapshot(&held, &PersonaSnapshotCompileOptions::default()),
             Err(Error::EntityNotFound)
         ),
-        "FIXTURE: a fresh compile of the kept PERSON refuses"
+        "FIXTURE: a fresh compile of the restricted PERSON refuses"
     );
     let before = export_count(&vault);
 
@@ -356,7 +304,7 @@ fn a_prebuilt_persona_snapshot_export_of_a_kept_subject_refuses() {
     );
     assert!(
         matches!(refused, Err(Error::EntityNotFound)),
-        "the export of a compile made before the keep refuses: {refused:?}"
+        "the export of a compile made before the restriction refuses: {refused:?}"
     );
     assert_eq!(
         export_count(&vault),
@@ -386,7 +334,7 @@ fn a_prebuilt_persona_snapshot_export_citing_a_kept_claim_refuses() {
     let (_dir, vault) = open_hosted_vault();
     let (_, name_claim, compile) = compiled_person(&vault, "Wren Halloway");
 
-    keep_use_limited(&vault, name_claim);
+    restrict(&vault, name_claim);
 
     let refused = vault.export_persona_snapshot(
         &compile,
@@ -395,6 +343,6 @@ fn a_prebuilt_persona_snapshot_export_citing_a_kept_claim_refuses() {
     );
     assert!(
         matches!(refused, Err(Error::EntityNotFound)),
-        "the export of a compile citing a kept CLAIM refuses: {refused:?}"
+        "the export of a compile citing a restricted CLAIM refuses: {refused:?}"
     );
 }
