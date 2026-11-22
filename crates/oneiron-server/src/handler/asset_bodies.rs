@@ -9,11 +9,18 @@
 //! landing runs on a blocking thread, off the socket's loop, which waits for
 //! it before it reads the socket's next frame: one landing at a time per
 //! socket, in frame order (FIX 12119).
+//!
+//! A federation lane's frames are a selector answer
+//! (SELECTOR-RELEASE-POINT = B): each batch leaves only while every grant
+//! whose windows it was served from stands as it did before they were judged
+//! for that batch ([`release_bases`], [`serving`]).
 
 use std::cell::RefCell;
+use std::collections::BTreeSet;
 use std::sync::{Arc, PoisonError};
 use std::time::{Duration, Instant};
 
+use oneiron::EntityId;
 use oneiron::authority::PeerMachine;
 use oneiron::sync::{
     ASSET_BODY_FRAMES_PER_POLL, AssetBodyLane, AssetBodyPeer, TransportError, WindowKey,
@@ -23,8 +30,8 @@ use oneiron::sync::{
 use super::admitted_windows::{AdmittedCopy, rebuild};
 use super::app_tier::require_bound_app_auth;
 use super::conn_state::{ConnState, WindowSyncMode};
-use super::window_sync::selector_grant_scope;
 use crate::protocol::{self, ProtocolError};
+use crate::selector_release::SelectorReleaseBasis;
 use crate::server::SyncServer;
 
 /// How often a socket's body transfers send and ask while its direct queue
@@ -45,7 +52,9 @@ pub(super) async fn handle(
     payload: Vec<u8>,
     direct_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
 ) -> Result<(), ProtocolError> {
+    let bases = release_bases(server, state);
     let followed = followed_windows(server, state);
+    let bases = serving(bases, &followed);
     // The session goes to the blocking thread and comes back with its frames.
     // A landing that panicked leaves the socket a fresh session: its transfers
     // start again from their first byte, as on a new connection.
@@ -85,7 +94,7 @@ pub(super) async fn handle(
         TransportError::UnknownTag(tag) => ProtocolError::UnknownTag(tag),
         error => ProtocolError::InvalidPayload(protocol::transport_err_msg(error)),
     })?;
-    queue(direct_tx, frames)
+    queue(state, bases, direct_tx, frames)
 }
 
 /// The socket's body upkeep: what its transfers owe now, queued on
@@ -95,7 +104,9 @@ pub(super) fn poll(
     state: &mut ConnState,
     direct_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
 ) {
+    let bases = release_bases(server, state);
     let followed = followed_windows(server, state);
+    let bases = serving(bases, &followed);
     let bodies = state
         .asset_bodies
         .get_mut()
@@ -119,7 +130,7 @@ pub(super) fn poll(
     hold_used(state, followed);
     match polled {
         Ok(frames) => {
-            let _ = queue(direct_tx, frames);
+            let _ = queue(state, bases, direct_tx, frames);
         }
         Err(error) => tracing::warn!(%error, "asset body poll failed"),
     }
@@ -142,6 +153,9 @@ struct AdmittedFollow {
     windows: Vec<(WindowKey, AdmittedCopy)>,
     /// The peer a dropped copy is filtered for; read only when one is.
     peer: Option<PeerMachine>,
+    /// The grant scope this socket's selectors are checked under
+    /// (MEMBER-SYNC D2).
+    scope: oneiron::FederationGrantScope,
     /// Each copy a use read, held or rebuilt, in use order: the socket holds
     /// them again as its latest uses once the read is done.
     used: RefCell<Vec<(WindowKey, loro::LoroDoc)>>,
@@ -161,7 +175,7 @@ impl AdmittedFollow {
         let copy = match (used.iter().rev().find(|(read, _)| read == key), admitted) {
             (Some((_, copy)), _) | (None, AdmittedCopy::Held { copy, .. }) => copy.clone(),
             (None, AdmittedCopy::Dropped(selector)) => {
-                rebuild(vault, manager, key, selector, self.peer?)?
+                rebuild(vault, manager, key, self.scope, selector, self.peer?)?
             }
         };
         used.push((key.clone(), copy.clone()));
@@ -246,6 +260,7 @@ fn followed_windows(server: &SyncServer, state: &ConnState) -> Followed {
                             server,
                             auth,
                             peer,
+                            &state.selector_lane,
                             key,
                             selector,
                             &window.doc,
@@ -262,8 +277,12 @@ fn followed_windows(server: &SyncServer, state: &ConnState) -> Followed {
         // only while the socket's credential is live.
         WindowSyncMode::Selector if require_bound_app_auth(server, state).is_ok() => {
             let windows = state.admitted_windows.read(|selector| {
-                authorize_sync_selector(server.vault.as_ref(), selector_grant_scope(), selector)
-                    .is_ok()
+                authorize_sync_selector(
+                    server.vault.as_ref(),
+                    state.selector_lane.grant_scope(),
+                    selector,
+                )
+                .is_ok()
             });
             // Rebuild held copies under today's grant, pact ceiling and
             // peer world settings. Reauthorizing a selector alone does not
@@ -278,6 +297,7 @@ fn followed_windows(server: &SyncServer, state: &ConnState) -> Followed {
                             server.vault.as_ref(),
                             &server.reassert_manager,
                             &key,
+                            state.selector_lane.grant_scope(),
                             &selector,
                             peer,
                         )?;
@@ -304,6 +324,7 @@ fn followed_windows(server: &SyncServer, state: &ConnState) -> Followed {
             Followed::Admitted(AdmittedFollow {
                 windows,
                 peer,
+                scope: state.selector_lane.grant_scope(),
                 used: RefCell::default(),
             })
         }
@@ -311,12 +332,62 @@ fn followed_windows(server: &SyncServer, state: &ConnState) -> Followed {
     }
 }
 
+/// What a federation socket's next body frames are made under: one basis per
+/// grant its fetched windows were admitted under, read before
+/// [`followed_windows`] judges those windows for the frames, so a change
+/// after that judgement stops them at their release. `None` on every other
+/// socket, whose body frames are no selector answer.
+fn release_bases(server: &SyncServer, state: &ConnState) -> Option<Vec<SelectorReleaseBasis>> {
+    matches!(state.window_sync_mode, WindowSyncMode::Selector).then(|| {
+        state
+            .admitted_windows
+            .grants()
+            .into_iter()
+            .map(|grant| SelectorReleaseBasis::take(server.vault(), grant))
+            .collect()
+    })
+}
+
+/// The bases of the grants whose windows `followed` still serves bodies of:
+/// a grant whose windows no longer authorize serves no frame, and its basis,
+/// which no longer stands, must not stop the frames served under the others.
+fn serving(
+    bases: Option<Vec<SelectorReleaseBasis>>,
+    followed: &Followed,
+) -> Option<Vec<SelectorReleaseBasis>> {
+    let grants: BTreeSet<EntityId> = match followed {
+        Followed::Admitted(admitted) => admitted
+            .windows
+            .iter()
+            .map(|(_, copy)| match copy {
+                AdmittedCopy::Held { selector, .. } | AdmittedCopy::Dropped(selector) => {
+                    selector.grant_id
+                }
+            })
+            .collect(),
+        Followed::Live(_) => BTreeSet::new(),
+    };
+    bases.map(|bases| {
+        bases
+            .into_iter()
+            .filter(|basis| grants.contains(basis.grant_id()))
+            .collect()
+    })
+}
+
 /// Queues `frames` on this socket's direct lane, whose sends take the guarded
-/// door every reply takes.
+/// door every reply takes; a federation socket's as one selector answer under
+/// `bases`.
 fn queue(
+    state: &mut ConnState,
+    bases: Option<Vec<SelectorReleaseBasis>>,
     direct_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
     frames: Vec<Vec<u8>>,
 ) -> Result<(), ProtocolError> {
+    let frames = match bases {
+        Some(bases) => state.selector_answers.queue_under(bases, frames),
+        None => frames,
+    };
     for frame in frames {
         direct_tx
             .send(frame)

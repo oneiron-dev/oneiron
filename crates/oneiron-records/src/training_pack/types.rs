@@ -23,7 +23,7 @@ use serde::Serialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ProbeCase {
     pub id: String,
     pub input: Value,
@@ -43,7 +43,7 @@ pub struct ProbeMeasurement {
     pub max_logit_difference: f64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SplitPolicy {
     /// OF-578 assigns source families before derivation and seals this cohort.
     pub held_out_cohort: EntityId,
@@ -109,7 +109,7 @@ pub struct TrainingTeachersPin {
 
 /// Why the host cannot advance an authorized or returned run yet, for the
 /// owner to read.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TrainingHold {
     pub code: String,
     pub detail: String,

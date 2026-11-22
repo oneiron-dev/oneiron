@@ -1252,8 +1252,9 @@ async fn persona_list_and_profile_get_keep_expired_grant_denied_after_clock_roll
     vault_config.store_clock = clock.bundle();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), vault_config).expect("vault"));
     assert_default_policy_manifest_fixture(vault.as_ref());
+    // The server roots the vault with this install's seed (FIX-LIST 3018).
     let server = Arc::new(
-        SyncServer::new(
+        crate::test_credentials::server_with_fixture_keystore(
             vault,
             SyncServerConfig {
                 auth_secret: Some("secret".to_owned()),
@@ -1400,19 +1401,178 @@ async fn a_refresh_naming_more_source_revisions_than_one_snapshot_holds_is_refus
             Some(&json!({ "sourceRevisionIds": ids })),
         )
     };
-    // oneiron's MAX_PSYCH_PROFILE_SOURCE_REVISIONS.
+    // Rule 5 (FIX 10054, #4040; the engine twin collection_bounds
+    // a_psych_profile_citing_more_sources_than_one_snapshot_holds_is_refused_at_every_door
+    // since 5dced0a082): 4096 is a codec page and a source-work batch, never
+    // a refusal. A refresh naming one id past it is read whole, as stale; the
+    // name keeps "refused" as the engine twin's does.
     let bound = 4096;
+    for count in [bound, bound + 1] {
+        let (status, body) = route_json(server.clone(), refresh(count)).await;
+        assert_eq!(status, StatusCode::OK, "{count}: {body}");
+        assert_eq!(body["state"], Value::from("stale"), "{count}");
+        assert_eq!(
+            body["stale_reason"]["expectedSourceRevisionIds"]
+                .as_array()
+                .map(Vec::len),
+            Some(count)
+        );
+    }
+}
 
-    let (status, _) = route_json(server.clone(), refresh(bound + 1)).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+/// A hosted server, so a privacy erase a customer hold refuses keeps its
+/// record stored and use-limited (C6 holds only on a hosted vault).
+fn hosted_companion_test_server() -> (tempfile::TempDir, Arc<SyncServer>) {
+    let dir = tempfile::tempdir().expect("temp vault dir");
+    let mut vault_config = oneiron::VaultConfig::device();
+    vault_config.privacy.posture = oneiron::HostingPrivacyPosture::Hosted;
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), vault_config).expect("hosted vault"));
+    crate::test_credentials::install_fixture_keystore(&vault, b"secret");
+    let config = SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    };
+    let server = Arc::new(SyncServer::new(vault, config).expect("sync server"));
+    (dir, server)
+}
 
-    let (status, body) = route_json(server.clone(), refresh(bound)).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["state"], Value::from("stale"));
+/// Places a customer hold on `record` and runs its privacy erase, which the
+/// hold refuses: the record stays stored and use-limited.
+fn keep_use_limited(vault: &oneiron::Vault, record: oneiron::EntityId) {
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("FIXTURE: the vault names its embedded owner actor");
+    let proof = vault
+        .authenticate_owner(
+            owner,
+            &owner.to_hex(),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .expect("FIXTURE: owner proof");
+    let hold = vault
+        .place_legal_hold(
+            &proof,
+            vec![oneiron::deletion::LegalHoldTarget::Record(record)],
+            Some("matter-companion-profile".to_owned()),
+        )
+        .expect("FIXTURE: place the customer hold");
+    assert!(hold.stands(), "FIXTURE: the customer hold stands: {hold:?}");
+    let memory = vault.memory(owner, oneiron::EdgeActorClass::Human);
+    let preview = memory
+        .preview_entity_delete(&record)
+        .expect("FIXTURE: preview the privacy erase");
+    let outcome = memory
+        .confirm_entity_erase(
+            &preview,
+            oneiron::memory::EraseOptions {
+                reason: oneiron::memory::EraseReason::GdprDelete,
+                also_same_bytes: false,
+                veto_starter: None,
+            },
+        )
+        .expect("FIXTURE: the privacy erase runs");
     assert_eq!(
-        body["stale_reason"]["expectedSourceRevisionIds"]
-            .as_array()
-            .map(Vec::len),
-        Some(bound)
+        outcome.first.reason.as_str(),
+        "privacy_erase_kept",
+        "FIXTURE: the held privacy erase is kept: {outcome:?}"
     );
+    assert!(
+        vault
+            .legal_hold_use_limit(&record)
+            .expect("FIXTURE: read the use limit")
+            .is_some(),
+        "FIXTURE: the kept erase use-limits the record"
+    );
+}
+
+/// A profile kept from use answers as withheld (FIX
+/// COMPANION-USE-LIMITED-PROFILE-READS-AS-MISSING; Engine ANSWER
+/// COMPANION-USE-LIMITED-PROFILE-ANSWER = A): state missing, with no next
+/// step and no drift anchors, on the read and on the refresh plan alike. A
+/// refresh cannot make it readable while the limit stands. Here the profile
+/// is content about a PERSON whose privacy erase a customer hold refused.
+#[tokio::test]
+async fn v1_companion_profile_of_a_use_limited_person_answers_no_next_step() {
+    let (_dir, server) = hosted_companion_test_server();
+    let grant_id = seeded_test_entity_id(0x1218_0E01);
+    let principal_ref = seeded_test_entity_id(0x1218_0E02);
+    let person_ref = seeded_test_entity_id(0x1218_0E03);
+    let persona_ref = seeded_test_entity_id(0x1218_0E04);
+    let source = seeded_test_entity_id(0x1218_0E05);
+    seed_companion_profile_access(&server, grant_id, principal_ref, person_ref, persona_ref);
+    let profile_key = oneiron::psych_profile::PsychProfileKey {
+        person: person_ref,
+        facet: Some(persona_ref),
+        world: None,
+    };
+    let profile_id = oneiron::psych_profile::psych_profile_entity_id(&profile_key);
+    let profile = oneiron::PsychProfile::new(
+        person_ref,
+        "kept compact",
+        "kept text",
+        "Kept narrative.",
+        vec![source],
+        oneiron::psych_profile::PsychProfileConfidence::new(0.8, 0.7, 0.6).expect("confidence"),
+    )
+    .expect("profile")
+    .with_sources(vec![seed_profile_source_record(&server, source)])
+    .expect("profile sources");
+    server
+        .vault
+        .put_psych_profile(&profile_id, &profile)
+        .expect("put psych profile");
+
+    let path = format!(
+        "/v1/companion/profiles/{}?facet_ref={}&sourceRevisionIds={}",
+        person_ref.to_hex(),
+        persona_ref.to_hex(),
+        source.to_hex()
+    );
+    let read = |method: &str, body: Option<&Value>| {
+        core_request_with_principal_ref(
+            method,
+            &path,
+            "companion:profile:read",
+            &principal_ref.to_hex(),
+            body,
+        )
+    };
+    let (status, body) = route_json(server.clone(), read("GET", None)).await;
+    assert_eq!(status, StatusCode::OK, "FIXTURE: {body}");
+    assert_eq!(
+        body["state"],
+        Value::from("fresh"),
+        "FIXTURE: the profile reads before the limit: {body}"
+    );
+
+    keep_use_limited(&server.vault, person_ref);
+
+    let withheld = json!({
+        "person_ref": person_ref.to_hex(),
+        "facet_ref": persona_ref.to_hex(),
+        "world_ref": null,
+        "profile_ref": profile_id.to_hex(),
+        "access": {
+            "grant_id": grant_id.to_hex(),
+            "principal_ref": principal_ref.to_hex(),
+            "scope": {
+                "kind": "companion_profile",
+                "person_ref": person_ref.to_hex(),
+                "facet_ref": persona_ref.to_hex(),
+            },
+        },
+        "state": "missing",
+        "profile": null,
+        "stale_reason": null,
+        "next_action": null,
+        "drift_anchors": [],
+    });
+    let (status, body) = route_json(server.clone(), read("GET", None)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body, withheld, "the read of a use-limited profile");
+    let refresh = json!({ "sourceRevisionIds": [source.to_hex()] });
+    let (status, body) = route_json(server, read("POST", Some(&refresh))).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body, withheld, "the refresh plan of a use-limited profile");
 }

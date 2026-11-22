@@ -24,6 +24,7 @@ impl MessageBirth {
             conversation_ref: self.conversation_ref.clone(),
             turn_ref: self.turn_ref.clone(),
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: Some(message.to_owned()),
                 author: self.author,

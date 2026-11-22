@@ -66,6 +66,13 @@ fn seed_read_authority(vault: &Vault, agents: usize) -> Result<()> {
         .collect::<Result<Vec<_>>>()?;
     vault.install_read_permits_for_test(&actors)?;
     for index in 0..agents {
+        vault.put_entity(
+            &id(0x35, index)?,
+            oneiron::registry::ENTITY_TYPE_RELATIONSHIP,
+            TimeRange { start: AT, end: AT },
+            AT,
+            b"relationship",
+        )?;
         vault.create_access_grant(
             &id(0x36, index)?,
             &AccessGrant {

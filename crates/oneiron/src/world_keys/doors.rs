@@ -28,7 +28,7 @@ use crate::authority::{
     AuthorityEntryHash, AuthorityFold, Destination, EffectiveRead, FoldedWorldKey, RecoveryRootId,
     invalid_authority, owner_root_record_in_txn,
 };
-use crate::consent::AuthenticatedOwner;
+use crate::consent::{AuthenticatedOwner, OwnerAuthoredWrite};
 use crate::error::Result;
 use crate::ports::TombstoneStoreRead;
 use crate::registry::ENTITY_TYPE_WORLD;
@@ -110,7 +110,9 @@ impl Vault {
     /// Mints the world's key if it has no current one, and wraps the current
     /// key to every machine mine here that may read the world and to this
     /// install's pinned root. This machine must be mine, may read the world,
-    /// and holds the world's live WORLD row.
+    /// and holds the world's live WORLD row. Asked by the owner in person,
+    /// under an undelegated owner proof, its records and joins carry the
+    /// owner key's proof this install holds ([`Vault::owner_act_proof_signer`]).
     pub fn ensure_world_key(
         &self,
         owner: &AuthenticatedOwner,
@@ -119,7 +121,8 @@ impl Vault {
         let secret = self.machine_secret_outside_txn()?;
         self.with_write_txn(|txn| {
             let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
-            self.ensure_world_key_in_txn(txn, actor, world, &secret)
+            let owner_authored = owner.owner_answer_in_txn(self, txn)?;
+            self.ensure_world_key_in_txn(txn, actor, world, &secret, owner_authored.as_ref())
         })
     }
 
@@ -157,15 +160,17 @@ impl Vault {
         })
     }
 
-    /// [`Vault::ensure_world_key`] in the caller's write transaction.
+    /// [`Vault::ensure_world_key`] in the caller's write transaction;
+    /// `owner_authored` when the owner asked it in person.
     pub(crate) fn ensure_world_key_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         owner: EntityId,
         world: EntityId,
         secret: &MachineSecret,
+        owner_authored: Option<&OwnerAuthoredWrite>,
     ) -> Result<WorldKeyStatus> {
-        self.ensure_world_key_or_wide_in_txn(txn, owner, world, secret, None)?
+        self.ensure_world_key_or_wide_in_txn(txn, owner, world, secret, None, owner_authored)?
             .map_err(FrontierWide::refused)
     }
 
@@ -182,12 +187,17 @@ impl Vault {
     ///   raised: the rate law refuses no edit for a count.
     /// - Otherwise a refusal leaves the edit standing, as before: another reader
     ///   mints, or the new recipients are wrapped on that reader's next ensure.
+    ///
+    /// `owner_authored` when the edit is the vault owner's own, made in person
+    /// ([`crate::authority::WorldEditAuthor`]): its key records carry the
+    /// owner key's proof the edit carries.
     pub(crate) fn world_key_for_edit_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         owner: EntityId,
         world: EntityId,
         secret: Result<&MachineSecret>,
+        owner_authored: Option<&OwnerAuthoredWrite>,
     ) -> Result<Option<WorldKeyStatus>> {
         let (private, reads, needs_key) = {
             let fold = self.authority_view_readonly_in_txn(txn)?;
@@ -211,7 +221,14 @@ impl Vault {
             return Ok(None);
         }
         let attempt = match secret {
-            Ok(secret) => self.ensure_world_key_or_wide_in_txn(txn, owner, world, secret, None),
+            Ok(secret) => self.ensure_world_key_or_wide_in_txn(
+                txn,
+                owner,
+                world,
+                secret,
+                None,
+                owner_authored,
+            ),
             Err(error) if needs_key => return Err(error),
             Err(_) => return Ok(None),
         };
@@ -227,7 +244,11 @@ impl Vault {
 
     /// [`Vault::ensure_world_key_in_txn`], with a world whose live edits outgrow one
     /// key record told apart from every other refusal. Each record names
-    /// `request` when an owner work request names this machine to do it.
+    /// `request` when an owner work request names this machine to do it, and
+    /// carries the owner key's proof this install holds when the work is the
+    /// owner's own, made in person (`owner_authored`,
+    /// [`Vault::owner_act_proof_signer`]). Delivery to newly joined machines,
+    /// a holder's work and an agent's edit carry none.
     pub(super) fn ensure_world_key_or_wide_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -235,6 +256,7 @@ impl Vault {
         world: EntityId,
         secret: &MachineSecret,
         request: Option<AuthorityEntryHash>,
+        owner_authored: Option<&OwnerAuthoredWrite>,
     ) -> Result<std::result::Result<WorldKeyStatus, FrontierWide>> {
         let signing = self.door_signing_key_in_txn(txn, secret.machine)?;
         if !self.world_row_live_in_txn(txn, world)? {
@@ -248,6 +270,7 @@ impl Vault {
         let root = self.pinned_root_recipient_in_txn(txn, &fold)?;
         let allowed = recipients(&fold, world, root.clone());
         let mut seq = SequenceCounter::new();
+        let proof = self.owner_act_proof_signer(&fold, owner_authored);
         let Some(current) = fold.current_world_key(world) else {
             let key = WorldKey::mint(world, FIRST_GENERATION)?;
             let id = *key.id();
@@ -264,6 +287,7 @@ impl Vault {
                 &allowed,
                 &mut seq,
                 request,
+                proof.as_ref(),
             )? {
                 Ok(records) => records,
                 // A first key never leaves the world keyless for a count (Docs
@@ -286,6 +310,7 @@ impl Vault {
                         own,
                         &mut seq,
                         request,
+                        proof.as_ref(),
                     )?]
                 }
             };
@@ -319,6 +344,7 @@ impl Vault {
             &missing,
             &mut seq,
             request,
+            proof.as_ref(),
         )? {
             Ok(records) => records,
             Err(wide) => return Ok(Err(wide)),
@@ -342,7 +368,7 @@ impl Vault {
         world: EntityId,
         secret: &MachineSecret,
     ) -> Result<Option<WorldKeyStatus>> {
-        match self.ensure_world_key_in_txn(txn, owner, world, secret) {
+        match self.ensure_world_key_in_txn(txn, owner, world, secret, None) {
             Ok(status) => Ok(Some(status)),
             // Refusals all come before the first write.
             Err(crate::error::Error::Secret(_)) => Ok(None),

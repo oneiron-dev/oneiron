@@ -20,6 +20,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use oneiron_persistent_collections::PersistentMap;
+
 use crate::entity_id::EntityId;
 
 use super::fold_project::RowsReadWhole;
@@ -155,12 +157,18 @@ fn counts(standing: &Standing<'_>, record: &DataKeyGenerationRecord, signer: &[u
 }
 
 /// Joins two histories' generations: a generation both hold keeps what both
-/// counted. Order-free.
+/// counted. Order-free. A generation both sides hold the same is not copied.
 pub(super) fn merge_data_key_generations(
-    merged: &mut BTreeMap<u32, Vec<CountedDataKeyGeneration>>,
-    right: &BTreeMap<u32, Vec<CountedDataKeyGeneration>>,
+    merged: &mut PersistentMap<u32, Vec<CountedDataKeyGeneration>>,
+    right: &PersistentMap<u32, Vec<CountedDataKeyGeneration>>,
 ) {
+    if merged.ptr_eq(right) {
+        return;
+    }
     for (generation, counted) in right {
+        if merged.get(generation) == Some(counted) {
+            continue;
+        }
         let held = merged.entry(*generation).or_default();
         held.extend(counted.iter().cloned());
         held.sort();

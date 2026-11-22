@@ -277,3 +277,12 @@ pub(crate) fn read_attendee_entry_in(
 ) -> Result<Option<AttendeeEntryFact>> {
     read(vault, txn, id, ATTENDEE_ENTRY)
 }
+
+/// The container TASK body `body` enters a voice speaker into, when it is a
+/// speaker's entry fact; `None` for any other body, for a PERSON's entry and
+/// for a body that does not decode, which the put door's ask-fact guard
+/// refuses before it lands.
+pub(crate) fn speaker_entry_container(body: &[u8]) -> Option<EntityId> {
+    let fact: AttendeeEntryFact = decode(body, ATTENDEE_ENTRY).ok().flatten()?;
+    matches!(fact.attendee, ContainerAttendee::Speaker { .. }).then_some(fact.container)
+}

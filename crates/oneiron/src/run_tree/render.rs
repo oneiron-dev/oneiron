@@ -133,6 +133,7 @@ fn flat_node(mut record: AttemptRecord) -> Result<FlatRunTreeNode> {
         worker_kind: metadata.worker_kind,
         worker: record.placement.and_then(|placement| placement.worker),
         agent_id: metadata.agent_id,
+        executor_model: record.executor_model,
         status,
         result_ref,
         timestamps: RunTreeTimestamps {

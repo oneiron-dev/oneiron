@@ -28,7 +28,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sealed_bytes.rs` | src | s | 1 enum · 1 trait · 1 fn · 1 const · 1 crate-vis | SealedBytesName, SealedBytesStore | A this-device-only home for bytes the caller sealed (row OCS-OWNER-PIN) |
 | `src/user_presence.rs` | src | m | 7 struct · 2 enum · 2 trait · 22 fn · 5 const · 3 re-export | ManualPresenceClock, NoPromptPresence, PendingPresenceConfirm, PresenceCapability, PresenceClock, PresenceError, PresenceInstant, PresenceWindow +3 | Confirming that this device's user is present now (row OWNER-CONFIRM-SHEET; owner ruling 15 Nov… |
 | `src/user_presence/gate.rs` | src | m | 1 struct · 1 enum · 11 fn | PresenceConfirmation, PresenceGate | One process's presence check: [`PresenceGate`] joins a device's prompt with the window one confirm opens… |
-| `src/user_presence/platform_codes.rs` | src | s | 1 enum · 4 fn | WindowsScreenSession | What each platform's result codes stand for: Apple's `LAError` codes, Windows' user consent values and… |
+| `src/user_presence/platform_codes.rs` | src | s | 1 enum · 5 fn | WindowsScreenSession | What each platform's result codes stand for: Apple's `LAError` codes, Windows' user consent values and… |
 | `src/windows.rs` | src | m | 1 struct · 1 fn | WindowsDpapiKeystore | Windows: one file per slot in a directory of its own, each sealed by DPAPI to this user on this machine… |
 | `src/windows_presence.rs` | src | s | 1 struct · 1 fn | WindowsUserPresence | Windows: the device's own unlock prompt (Windows Hello), and the session's word on the screen lock (row… |
 | `tests/linux_tpm_auth_bound.rs` | test | L | — | — | Row OCS-OWNER-PIN, the TPM tier: the device PIN key rests in the chip under an auth value |

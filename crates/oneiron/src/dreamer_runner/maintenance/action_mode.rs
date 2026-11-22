@@ -6,10 +6,13 @@
 //! finding notice tells the owner; one the Gate parks waits in the run tray.
 //! A mode is advice: it grants nothing and changes no consent, and a missing
 //! input selects no mode. A band may name one explicit agent-ceiling patch
-//! (FIX 1786); its finding freezes the patch, and only the owner's
+//! (FIX 1786); its finding freezes the patch, and the owner's
 //! [`Vault::apply_action_mode`] puts it on the agent's definition, with an
 //! inverse the owner's revert runs. A finding landing, even at Auto, applies
-//! no patch.
+//! no patch, unless the owner turned `dreamer.action_mode.auto_apply_patch`
+//! on (C22): then a fresh finding under the owner's own policy applies its
+//! frozen patch in the night's write, through the same fenced writer and
+//! with the same inverse.
 
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
@@ -25,6 +28,8 @@ use crate::store::agent_record::AgentCeiling;
 use crate::{
     ClaimApprovalStatus, ClaimLifecycleStatus, EntityId, Error, Result, Vault, WriteActor,
 };
+
+pub(crate) mod setting_keys;
 
 pub const ACTION_MODE_FACET: &str = "dreamer.action_mode";
 /// Predicate of an advisory action-mode finding.
@@ -314,18 +319,66 @@ fn frozen_effect_in_txn(
     vault: &Vault,
     txn: &heed::RwTxn<'_>,
     effect: &ActionModeEffect,
-) -> Result<serde_json::Value> {
+) -> Result<FrozenEffect> {
     let agent_version = match vault.read_agent_definition_in_txn(txn, &effect.agent) {
         Ok(definition) => Some(definition.version),
         Err(Error::EntityNotFound | Error::Artifact(_)) => None,
         Err(error) => return Err(error),
     };
-    serde_json::to_value(FrozenEffect {
+    Ok(FrozenEffect {
         agent: effect.agent,
         ceiling: effect.ceiling,
         agent_version,
     })
-    .map_err(|_| invalid())
+}
+
+/// Whether the night applies a fresh finding's frozen patch itself (C22):
+/// the owner's `dreamer.action_mode.auto_apply_patch` is on and the policy in
+/// force is the owner's own row, so the patch is one the owner wrote. A
+/// policy row an agent holding the key's Grant line wrote is not.
+fn auto_applies_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
+    Ok(setting_keys::AUTO_APPLY_PATCH
+        .read_in_txn(vault, txn, &[], None)?
+        .value
+        && super::setting_keys::ACTION_MODE_POLICY.decided_by_owner_in_txn(vault, txn, &[])?)
+}
+
+/// The night's apply of a fresh finding's frozen patch under the owner's
+/// `dreamer.action_mode.auto_apply_patch` (C22), in the finding's own write:
+/// the agent's ceiling moves to it through the fenced ceiling writer the
+/// owner's apply uses, at the version the finding froze, and the inverse the
+/// owner's revert runs is returned for the finding's applied row. A patch
+/// whose agent had no definition when it froze, or whose ceiling already
+/// stands, writes nothing: the finding is advice, and a second write would
+/// move the version an earlier apply's revert is fenced on.
+fn auto_apply_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    frozen: &FrozenEffect,
+    now: u64,
+) -> Result<MaintenanceInverse> {
+    let Some(version) = frozen.agent_version.as_deref() else {
+        return Ok(MaintenanceInverse::Finding);
+    };
+    let before = vault
+        .read_agent_definition_in_txn(txn, &frozen.agent)?
+        .ceiling;
+    if before == frozen.ceiling.agent_ceiling() {
+        return Ok(MaintenanceInverse::Finding);
+    }
+    let patched = vault.write_agent_ceiling_at_version_in_txn(
+        txn,
+        &frozen.agent,
+        version,
+        frozen.ceiling.agent_ceiling(),
+        now,
+    )?;
+    Ok(MaintenanceInverse::ActionMode {
+        agent: frozen.agent,
+        before_ceiling: ActionModeCeiling::of(before),
+        applied_ceiling: frozen.ceiling,
+        applied_version: patched.version,
+    })
 }
 
 /// Undoes the owner's apply of a ceiling patch (FIX 1786), as the owner,
@@ -374,7 +427,7 @@ pub(super) fn revert_in_txn(
 
 impl DreamerRunnerStore<'_> {
     /// One action-mode run per owner per wake key, while a policy is set.
-    pub(super) fn enqueue_action_mode_in_txn(
+    pub(crate) fn enqueue_action_mode_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         parent_attempt: Option<crate::attempt_queue::AttemptId>,
@@ -412,17 +465,31 @@ impl DreamerRunnerStore<'_> {
 /// Refreshes one owner's index and files the mode its band names. Returns
 /// the finding, or `None` when no policy is set, an input is missing or the
 /// index falls in no band. The finding applies at once; its revert retracts
-/// it, and the refreshed index stays, as a measurement.
+/// it, and the refreshed index stays, as a measurement. Under the owner's
+/// `dreamer.action_mode.auto_apply_patch` a fresh finding's frozen patch
+/// applies with it ([`auto_apply_in_txn`]), and its revert puts the ceiling
+/// back.
 pub(super) fn run(
     vault: &Vault,
     attempt: &DreamerAdmittedAttempt,
     now: u64,
 ) -> Result<Option<EntityId>> {
+    land_mode(vault, attempt, now, true)
+}
+
+/// [`run`] over the owner's index as it stands, unrefreshed, when `refresh`
+/// is false: the test door's pass over an index it derived itself.
+pub(crate) fn land_mode(
+    vault: &Vault,
+    attempt: &DreamerAdmittedAttempt,
+    now: u64,
+    refresh: bool,
+) -> Result<Option<EntityId>> {
     let subject = EntityId::from_hex(attempt.status.payload.input.as_str().ok_or_else(invalid)?)?;
     let attempt = attempt.status.attempt.id;
     proposals::land(vault, ACTION_MODE_FACET, attempt, |landing| {
         vault.with_write_txn_grouped(|txn| {
-            let projection = vault.project_action_mode_in_txn(txn, &subject, now, true)?;
+            let projection = vault.project_action_mode_in_txn(txn, &subject, now, refresh)?;
             let Some(rule) = projection.mode else {
                 return Ok(None);
             };
@@ -433,9 +500,14 @@ pub(super) fn run(
                 "band": [rule.min_index, rule.max_index],
                 "state_index": index,
             });
-            if let Some(effect) = &rule.effect {
-                value["effect"] = frozen_effect_in_txn(vault, txn, effect)?;
-            }
+            let frozen = match &rule.effect {
+                Some(effect) => {
+                    let frozen = frozen_effect_in_txn(vault, txn, effect)?;
+                    value["effect"] = serde_json::to_value(&frozen).map_err(|_| invalid())?;
+                    auto_applies_in_txn(vault, txn)?.then_some(frozen)
+                }
+                None => None,
+            };
             landing
                 .land_in_txn(
                     vault,
@@ -447,7 +519,10 @@ pub(super) fn run(
                         evidence: &[claim],
                     },
                     now,
-                    |_| Ok(MaintenanceInverse::Finding),
+                    |txn| match &frozen {
+                        Some(frozen) => auto_apply_in_txn(vault, txn, frozen, now),
+                        None => Ok(MaintenanceInverse::Finding),
+                    },
                 )
                 .map(Some)
         })

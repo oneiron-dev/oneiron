@@ -95,9 +95,10 @@ pub(super) fn fold_tail(
     let mut confirms = (once.confirm_ids.clone(), once.confirm_nonces.clone());
     for hash in &order {
         let entry = new_rows[hash];
-        let retired = std::iter::once(&entry.signer)
-            .chain(&entry.cosigns)
-            .any(|signature| settlement.retired_keys.contains(&signature.public_key));
+        // The fence's own signers, as the whole fold reads them
+        // (`retired_signers::entry_signer_keys`, REVIEW-9961 P1).
+        let retired = super::super::retired_signers::entry_signer_keys(entry)
+            .any(|key| settlement.retired_keys.contains(key));
         if settlement.missing_parents.contains(hash)
             || retired
             || !once.admits(entry, &mut confirms)
