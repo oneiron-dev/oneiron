@@ -21,7 +21,8 @@ use oneiron::test_doors::legal_hold::{
     OpenedHoldComponent, hold_dir, open_clone, prospective_standing,
 };
 use oneiron::verbs::{
-    RecordEraseConfirmRequest, RecordEraseRequest, confirm_record_erase, preview_record_erase,
+    OwnerConfirmPreviewRequest, RecordEraseConfirmRequest, confirm_record_erase,
+    preview_owner_confirm,
 };
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_store::witness_message_body::WitnessMessageEnvelope;
@@ -157,19 +158,25 @@ fn a_hold_that_names_future_messages_copies_a_new_message() -> TestResult {
         "the copy holds the second message's row from its own file"
     );
     let memory = vault.memory(fixture.actor, EdgeActorClass::Human);
-    let preview = preview_record_erase(&memory, RecordEraseRequest { record: message })
-        .map_err(at("erase preview"))?;
-    let outcome = confirm_record_erase(
+    // The erase takes the owner's confirm of its shared preview (DEC-0006).
+    let mut input = RecordEraseConfirmRequest {
+        record: message,
+        confirm: None,
+        also_same_bytes: false,
+        check_in_ref: None,
+    };
+    let preview = preview_owner_confirm(
         &memory,
         &fixture.owner,
-        RecordEraseConfirmRequest {
-            record: message,
-            preview_digest: preview.preview_digest,
-            also_same_bytes: false,
-            check_in_ref: None,
+        OwnerConfirmPreviewRequest {
+            verb: "vault.records.erase_confirm".to_owned(),
+            input: serde_json::to_value(&input).map_err(at("encode the erase input"))?,
         },
     )
-    .map_err(at("erase confirm"))?;
+    .map_err(at("erase preview"))?;
+    input.confirm = Some(preview.confirm);
+    let outcome =
+        confirm_record_erase(&memory, &fixture.owner, input).map_err(at("erase confirm"))?;
     assert!(
         outcome.first.receipt_ref.is_some(),
         "the confirmed erase wrote a receipt"
