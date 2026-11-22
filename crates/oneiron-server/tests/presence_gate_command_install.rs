@@ -13,22 +13,23 @@ use oneiron_keystore::PresenceGate;
 use oneiron_server::config::{KeystoreBackend, KeystoreConfig, KeystoreInstall};
 use tempfile::TempDir;
 
-/// A stopped vault, and a keystore config whose key directory is a fresh
-/// one outside the vault's.
+/// A stopped vault, and a keystore config whose key directory is outside
+/// the vault's and does not exist yet: the file keystore makes it, open to
+/// its owner alone, and refuses a directory that others can read.
 fn stopped_vault() -> (Vault, TempDir, KeystoreConfig, TempDir) {
     let vault_dir = tempfile::tempdir().expect("vault directory");
-    let key_dir = tempfile::tempdir().expect("key directory");
+    let key_home = tempfile::tempdir().expect("the key directory's parent");
     let vault = Vault::open(vault_dir.path(), VaultConfig::device()).expect("vault");
     let keystore = KeystoreConfig {
-        dir: Some(key_dir.path().to_path_buf()),
+        dir: Some(key_home.path().join("keys")),
         ..KeystoreConfig::default()
     };
-    (vault, vault_dir, keystore, key_dir)
+    (vault, vault_dir, keystore, key_home)
 }
 
 #[test]
 fn a_command_install_leaves_the_process_gate_beside_the_keystore() {
-    let (vault, vault_dir, keystore, _key_dir) = stopped_vault();
+    let (vault, vault_dir, keystore, _key_home) = stopped_vault();
     assert!(vault.presence_gate().is_none());
     assert!(keystore.install_for_command(&vault, vault_dir.path()));
     let gate = vault
@@ -39,14 +40,14 @@ fn a_command_install_leaves_the_process_gate_beside_the_keystore() {
 
 #[test]
 fn the_plain_install_leaves_no_gate() {
-    let (vault, vault_dir, keystore, _key_dir) = stopped_vault();
+    let (vault, vault_dir, keystore, _key_home) = stopped_vault();
     assert!(keystore.install_on(&vault, vault_dir.path()));
     assert!(vault.presence_gate().is_none());
 }
 
 #[test]
 fn the_install_of_a_serving_start_leaves_no_gate() {
-    let (vault, vault_dir, keystore, _key_dir) = stopped_vault();
+    let (vault, vault_dir, keystore, _key_home) = stopped_vault();
     let installed = keystore
         .install_on_boot(&vault, vault_dir.path())
         .expect("a plain vault needs no wrap");
@@ -56,7 +57,7 @@ fn the_install_of_a_serving_start_leaves_no_gate() {
 
 #[test]
 fn the_install_of_a_managed_start_leaves_no_gate() {
-    let (vault, vault_dir, keystore, _key_dir) = stopped_vault();
+    let (vault, vault_dir, keystore, _key_home) = stopped_vault();
     assert!(matches!(
         keystore.install(&vault, vault_dir.path()),
         KeystoreInstall::Installed { .. }
@@ -66,7 +67,7 @@ fn the_install_of_a_managed_start_leaves_no_gate() {
 
 #[test]
 fn a_keystore_that_is_off_installs_no_gate() {
-    let (vault, vault_dir, mut keystore, _key_dir) = stopped_vault();
+    let (vault, vault_dir, mut keystore, _key_home) = stopped_vault();
     keystore.backend = KeystoreBackend::Off;
     assert!(!keystore.install_for_command(&vault, vault_dir.path()));
     assert!(vault.device_keystore_assurance().is_none());

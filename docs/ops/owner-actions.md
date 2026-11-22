@@ -3159,33 +3159,41 @@ An important change to your vault asks you to confirm that it is you, with whate
 device: Touch ID, your watch or your account password on a Mac; Windows Hello (face, fingerprint
 or the Hello PIN) on Windows 11. A change is important when it widens what somebody may do, or
 touches your identity: adding a device that can approve changes, a recovery kit act, a setting
-that opens more than it closes. A change that narrows, or moves no authority, does not ask.
+that opens more than it closes. A change that narrows, or moves no authority, does not ask,
+unless it touches your identity: removing a device's key asks too.
 
-One confirm serves every important change of the next 15 minutes in the same program. Locking
-the screen ends that time.
+One confirm serves every important change of the next 15 minutes in the same program. A locked
+screen ends that time. The lock is read at each important change and once a second, so a lock
+shorter than a second that no change meets can go unseen.
 
 It asks today in a program that opens the vault itself (the embedded SDK clients for Rust, Node
-and Python, the C library, the macOS recorder) and in the `oneiron` commands that work on a
-stopped vault. A running server (`oneiron serve`, a managed vault) does not ask yet: whoever
-calls it is usually not at its screen.
+and Python, the C library) and in the `oneiron` commands that work on a stopped vault. A running
+server (`oneiron serve`, a managed vault) does not ask yet: whoever calls it is usually not at
+its screen. The macOS recorder does not ask yet either: its vault also answers your other
+devices.
 
 A device with no such prompt does not ask, and the change goes through: Linux, a process with
 no screen session, Windows before 11, Windows without Hello. Where the keystore is off
 (`[keystore] backend = "off"`) nothing asks either.
 
-When the confirm does not happen, nothing is changed and the refusal says why. A command prints
-the sentence. An SDK client gets `INVALID_STATE` with two reason codes,
+When the confirm does not happen, the change you asked for is not made, and the refusal says
+why. A command prints the sentence. An SDK client gets `INVALID_STATE` with two reason codes,
 `owner_presence_required` and one of these:
 
 | Reason code | What happened | What to do |
 | --- | --- | --- |
 | `here:declined` | The prompt was cancelled, or the unlock failed. | Stop. Start the change again if you meant it. |
-| `here:no_answer` | Nobody answered the prompt within 60 seconds. | Try again when you can answer. |
+| `here:no_answer` | The prompt ended with no answer: nobody answered for 60 seconds, or the system took the prompt down. | Try again when you can answer. |
 | `here:screen_locked` | The screen is locked, or it locked while the prompt was up. | Unlock this device, then try again here. |
 | `here:prompt_failed` | The device's prompt failed. | Try again when the device's unlock prompt works. |
 
 A command run over ssh on a Mac whose screen is locked gets `here:screen_locked`: unlock that
 Mac first.
+
+A refusal undoes nothing the same command did before the change. `oneiron init` asks when you
+agree to conversation learning on a new vault: after a refusal the vault is made and configured,
+with learning off, and a second `oneiron init` does not ask the question again. Turn learning
+on later with `PUT /v1/owner/conversation-learning`.
 
 ## Calling the owner routes
 

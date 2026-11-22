@@ -50,3 +50,14 @@ fn a_panic_after_the_recorder_opens_its_vault_prints_no_payload() {
     assert!(stderr.contains("recorder panic child: done"), "{stderr}");
     assert!(stderr.contains("payload withheld"), "{stderr}");
 }
+
+/// Row OWNER-CONFIRM-SHEET, PR 4b-5. The recorder's vault handle is also its
+/// device link's, which serves this vault's other machines, so the recorder
+/// installs its keystore with no presence gate: a verb call a peer sends
+/// must not raise this Mac's unlock prompt.
+#[test]
+fn the_recorders_vault_handle_takes_no_presence_gate() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = super::open_vault_at(&dir.path().join(super::VAULT_DIR)).expect("open vault");
+    assert!(vault.presence_gate().is_none());
+}

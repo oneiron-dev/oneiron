@@ -2,7 +2,9 @@
 //! puts the process's one presence gate on its vault handle, so an important
 //! owner act asks through the device's own unlock prompt. Every handle of
 //! the process takes the same gate, a gate installed before stays, and the
-//! default keystore install leaves the gate beside the keystore.
+//! default keystore install leaves the gate beside the keystore. A host
+//! whose handle also answers other machines installs the keystore with no
+//! gate.
 #![cfg(feature = "test-support")]
 
 use std::sync::Arc;
@@ -103,6 +105,20 @@ fn the_default_keystore_install_keeps_a_gate_installed_before() {
     let (gate, _presence) = install_scripted_gate(&vault);
     vault.install_default_keystore(dir.path());
     assert!(Arc::ptr_eq(&gate, &installed_gate(&vault)));
+}
+
+/// The call of a host whose handle also answers other machines (the macOS
+/// recorder's device link): the same keystore, and no gate, so a caller on
+/// another machine raises no prompt on this device.
+#[test]
+fn the_default_keystore_install_without_a_gate_leaves_none() {
+    let (vault, dir) = open_vault();
+    vault.install_default_keystore_without_presence_gate(dir.path());
+    assert!(
+        vault.device_keystore_assurance().is_some(),
+        "this test needs the platform's default keystore: on Linux, XDG_STATE_HOME or HOME"
+    );
+    assert!(vault.presence_gate().is_none());
 }
 
 /// On a platform with no prompt the process's gate answers as a device that

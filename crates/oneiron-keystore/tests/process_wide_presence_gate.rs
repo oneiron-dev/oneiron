@@ -14,14 +14,16 @@ fn every_call_answers_the_same_gate() {
     assert!(Arc::ptr_eq(&first, &second));
 }
 
+/// Four threads call at once, each started before any is joined.
 #[test]
 fn calls_on_other_threads_answer_the_same_gate() {
     let here = PresenceGate::process_wide();
-    let there = (0..4)
-        .map(|_| thread::spawn(PresenceGate::process_wide))
-        .map(|call| call.join().expect("the call ends"))
-        .collect::<Vec<_>>();
-    assert!(there.iter().all(|gate| Arc::ptr_eq(gate, &here)));
+    let calls: [thread::JoinHandle<Arc<PresenceGate>>; 4] =
+        std::array::from_fn(|_| thread::spawn(PresenceGate::process_wide));
+    for call in calls {
+        let there = call.join().expect("the call ends");
+        assert!(Arc::ptr_eq(&there, &here));
+    }
 }
 
 /// A platform with no prompt of its own answers as a device that cannot
