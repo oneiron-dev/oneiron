@@ -143,6 +143,7 @@ fn grant_extra(fixture: &Fixture, agent: EntityId, extra: &[&str]) {
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
             working_view_bounds: None,
+            check_in_ref: None,
         },
     )
     .expect("the owner grants the agent base reach");

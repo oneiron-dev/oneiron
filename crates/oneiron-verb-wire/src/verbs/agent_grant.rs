@@ -55,6 +55,11 @@ pub struct AgentGrantMintRequest {
     /// Omitted: no view bound.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub working_view_bounds: Option<WorkingViewEditBounds>,
+    /// Another asker's approved check-in for this exact mint, 32 hex: the
+    /// owner applies it on his own proof, and the mint's writer spends it
+    /// (ROLES-CHECKIN 2k7). Omitted: the owner's own mint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in_ref: Option<String>,
 }
 
 /// One owner's agent grant.
@@ -102,6 +107,11 @@ pub struct AgentGrantMinted {
     pub grant: AgentGrantView,
     /// The signed authority entry that records the owner's mint (64 hex).
     pub act_ref: String,
+    /// The decision the mint ran on: the owner's own proof, naming the
+    /// asker's approved check-in it applied (ROLES-CHECKIN 2k7). Absent
+    /// inside a `vault.agents.grants.from_slip` answer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<crate::check_in::CheckInDecision>,
 }
 
 /// `vault.agents.grants.revoke`'s input: the grant, by its id.

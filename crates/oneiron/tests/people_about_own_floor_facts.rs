@@ -321,6 +321,7 @@ fn mint_read_grant(
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
             working_view_bounds: None,
+            check_in_ref: None,
         },
     )
     .unwrap_or_else(|error| {

@@ -267,6 +267,7 @@ fn masked_asset_read_mint_lane_grant(
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
             working_view_bounds: None,
+            check_in_ref: None,
         },
     )
     .expect("owner mints the masked asset grant");

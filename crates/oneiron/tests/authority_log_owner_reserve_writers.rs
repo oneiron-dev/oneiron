@@ -91,6 +91,7 @@ fn mint_read_grant_on_a(rooted: &Rooted, agent: EntityId) {
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
             working_view_bounds: None,
+            check_in_ref: None,
         },
     )
     .expect("the owner mints the agent's Grant on A");

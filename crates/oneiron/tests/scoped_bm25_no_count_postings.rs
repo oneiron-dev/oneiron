@@ -111,6 +111,7 @@ fn reader_key(
                 verb_classes: BTreeSet::new(),
                 wallet_ref: None,
                 working_view_bounds: None,
+                check_in_ref: None,
             },
         )
         .expect("owner mints the agent's read Grant");
@@ -465,6 +466,7 @@ fn records_reader_proof(
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
             working_view_bounds: None,
+            check_in_ref: None,
         },
     )
     .expect("FIXTURE: owner mints the credential reader's Grant");

@@ -76,6 +76,7 @@ fn mint(fixture: &Fixture, verbs: &[&str]) -> oneiron::memory::MemoryResult<()> 
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
             working_view_bounds: None,
+            check_in_ref: None,
         },
     )
     .map(|_| ())

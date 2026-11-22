@@ -274,6 +274,7 @@ fn task_run() -> TestResult<TaskRun> {
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
             working_view_bounds: None,
+            check_in_ref: None,
         },
     )
     .map_err(at("owner mints the agent a base-world Grant"))?;

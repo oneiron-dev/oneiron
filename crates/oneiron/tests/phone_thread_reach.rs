@@ -390,6 +390,7 @@ fn mint_settings_grant(fixture: &Fixture, agent: EntityId) {
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
             working_view_bounds: None,
+            check_in_ref: None,
         },
     )
     .expect("owner mints the agent a settings Grant");
@@ -433,6 +434,7 @@ fn mint_read_grant(fixture: &Fixture, agent: EntityId) {
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
             working_view_bounds: None,
+            check_in_ref: None,
         },
     )
     .expect("owner mints the agent a read Grant");
@@ -3122,6 +3124,7 @@ fn mint_reach_key_line_grant(fixture: &Fixture, agent: EntityId) {
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
             working_view_bounds: None,
+            check_in_ref: None,
         },
     )
     .expect("owner mints the agent the reach key's Grant line");

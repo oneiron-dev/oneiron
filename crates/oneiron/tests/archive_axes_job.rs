@@ -887,6 +887,7 @@ fn grant_read(f: &Fixture, bands: ScopeAxis<u8>) -> EntityId {
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
             working_view_bounds: None,
+            check_in_ref: None,
         },
     )
     .expect("the owner mints the agent a read Grant");

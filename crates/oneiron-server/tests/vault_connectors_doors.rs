@@ -252,6 +252,7 @@ fn agent_with_grant(vault: &Vault, owner_actor: EntityId, agent_id: &str) -> Ent
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
             working_view_bounds: None,
+            check_in_ref: None,
         },
     )
     .expect("owner mints the agent a Grant");

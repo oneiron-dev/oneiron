@@ -226,6 +226,7 @@ fn vault_with_upserting_agent(dir: &std::path::Path) -> (Vault, EntityId) {
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
             working_view_bounds: None,
+            check_in_ref: None,
         },
     )
     .expect("the owner grants the agent its upsert");
