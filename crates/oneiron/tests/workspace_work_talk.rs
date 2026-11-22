@@ -101,6 +101,7 @@ fn definition(agent_id: &str) -> AgentDefinition {
 struct Fixture {
     _dir: tempfile::TempDir,
     vault: Vault,
+    _hold_dir: tempfile::TempDir,
     owner: EntityId,
     owner_proof: AuthenticatedOwner,
     org: EntityId,
@@ -109,7 +110,10 @@ struct Fixture {
 
 fn setup() -> TestResult<Fixture> {
     let dir = tempfile::tempdir()?;
-    let vault = Vault::open(dir.path(), VaultConfig::default())?;
+    let hold_dir = tempfile::tempdir()?;
+    let config = VaultConfig::default().with_legal_hold_store(hold_dir.path().to_path_buf());
+    let vault = Vault::open(dir.path(), config)?;
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let owner = vault.ensure_embedded_owner_actor()?;
     let owner_proof =
         vault.authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())?;
@@ -121,6 +125,7 @@ fn setup() -> TestResult<Fixture> {
     Ok(Fixture {
         _dir: dir,
         vault,
+        _hold_dir: hold_dir,
         owner,
         owner_proof,
         org,
@@ -1359,7 +1364,8 @@ fn work_talk_with_member_message(
 /// member's words is refused; his new text stays a proposal that changes
 /// nothing and that he cannot settle himself (ARCH-0002: editing someone
 /// else's message is a proposal). His erase and his legal hold work as
-/// before. Red on main: the Owner's rewrite lands.
+/// before; a hold keeps nothing in the vault (LEGAL-HOLD-USE = B). Red on
+/// main: the Owner's rewrite lands.
 #[test]
 fn the_owner_cannot_rewrite_a_work_talk_message_but_erases_and_holds() -> TestResult {
     let fixture = setup()?;
@@ -1434,22 +1440,27 @@ fn the_owner_cannot_rewrite_a_work_talk_message_but_erases_and_holds() -> TestRe
         "the Owner erases a work-talk message"
     );
 
-    // Hold: the Owner holds the first message, and a delete of it then fails.
+    // Hold: the Owner holds the first message, and a delete of it still
+    // erases it (LEGAL-HOLD-USE = B).
     fixture.vault.place_legal_hold(
         &fixture.owner_proof,
         vec![LegalHoldTarget::Record(message)],
         None,
     )?;
-    let held = fixture.vault.delete_entity_with_reason_as_owner(
+    let erased_while_held = fixture.vault.delete_entity_with_reason_as_owner(
         &fixture.owner_proof,
         &message,
         DeleteReason::UserHardDelete,
-    );
+    )?;
     assert!(
-        fixture.vault.get(&message)?.is_some(),
-        "the Owner's hold keeps the message: {held:?}"
+        erased_while_held.existed,
+        "the Owner's erase found the held message"
     );
-    assert_eq!(fixture.vault.entity_text(&message)?, said);
+    assert_eq!(
+        fixture.vault.get(&message)?,
+        None,
+        "the Owner's erase takes a held message"
+    );
     Ok(())
 }
 
