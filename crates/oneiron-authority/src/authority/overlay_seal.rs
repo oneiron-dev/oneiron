@@ -362,10 +362,12 @@ pub fn verify_authority_log_entry_scaffold(bytes: &[u8]) -> Result<AuthorityEntr
     ]);
     let mut transcript = AUTHORITY_TRANSCRIPT_DOMAIN.to_vec();
     transcript.extend_from_slice(&encode_value(&transcript_map)?);
-    if !verify_authority_signature(&signer, &transcript)
+    // Each signature as an entry's verifies: a passkey's WebAuthn envelope
+    // included, as the open path's `verify_entry_signatures` takes it.
+    if !verify_entry_signature(&signer, &transcript)
         || !cosigns
             .iter()
-            .all(|cosign| verify_authority_signature(cosign, &transcript))
+            .all(|cosign| verify_entry_signature(cosign, &transcript))
         || encode_value(&value)? != bytes
     {
         return Err(invalid_authority());
