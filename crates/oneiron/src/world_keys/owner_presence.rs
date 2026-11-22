@@ -106,9 +106,7 @@ impl Vault {
             .presence_gate
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        if installed.is_none() {
-            *installed = Some(PresenceGate::process_wide());
-        }
+        *installed = Some(PresenceGate::process_wide());
     }
 
     /// Returns a shared reference to the platform presence gate installed on this handle.
