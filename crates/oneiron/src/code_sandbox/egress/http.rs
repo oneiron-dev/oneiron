@@ -15,13 +15,42 @@ const FLOOR_WAIT_FIRST: Duration = Duration::from_millis(5);
 const FLOOR_WAIT_MAX: Duration = Duration::from_millis(250);
 
 pub(super) fn fetch(proxy: &OpenEgressProxy, request: HttpRequest) -> io::Result<HttpResponse> {
+    fetch_resolved(proxy, request, &|host, port| proxy.resolve(host, port))
+}
+
+/// [`fetch`] with each hop's host looked up by `resolve`: the proxy's own
+/// public-address lookup, or a test door's fixed address. Every redirect is
+/// followed, its policy run again, inside the request deadline, which alone
+/// ends a fetch that keeps redirecting (FIX 7945, Rule 5). The redirects one
+/// fetch followed are measured on `limits.sandbox_egress_redirects`, which
+/// asks past its row, whether the fetch then answered or failed.
+pub(crate) fn fetch_resolved(
+    proxy: &OpenEgressProxy,
+    request: HttpRequest,
+    resolve: &dyn Fn(&str, u16) -> io::Result<Vec<SocketAddr>>,
+) -> io::Result<HttpResponse> {
+    let mut followed = 0_u64;
+    let answer = follow(proxy, request, resolve, &mut followed);
+    proxy
+        .vault
+        .measure_limit(EngineLimit::SandboxEgressRedirects, followed);
+    answer
+}
+
+/// The hops of one fetch, counting each redirect it follows in `followed`.
+fn follow(
+    proxy: &OpenEgressProxy,
+    request: HttpRequest,
+    resolve: &dyn Fn(&str, u16) -> io::Result<Vec<SocketAddr>>,
+    followed: &mut u64,
+) -> io::Result<HttpResponse> {
     let mut url = Url::parse(&request.url).map_err(io::Error::other)?;
     let mut method =
         reqwest::Method::from_bytes(request.method.as_bytes()).map_err(io::Error::other)?;
     let mut body = request.body;
     let mut headers = request.headers;
     let start = std::time::Instant::now();
-    for hop in 0..=proxy.config.max_redirects {
+    loop {
         let attempt = (|| {
             if !matches!(url.scheme(), "http" | "https")
                 || !url.username().is_empty()
@@ -40,12 +69,14 @@ pub(super) fn fetch(proxy: &OpenEgressProxy, request: HttpRequest) -> io::Result
             let port = url
                 .port_or_known_default()
                 .ok_or_else(|| io::Error::other("HTTP port"))?;
-            let addresses = proxy.resolve(host, port)?;
+            // A hop starts only inside the deadline, so a fetch that keeps
+            // redirecting makes no lookup past it.
             let remaining = proxy
                 .config
                 .request_timeout
                 .checked_sub(start.elapsed())
                 .ok_or_else(|| io::Error::new(io::ErrorKind::TimedOut, "egress deadline"))?;
+            let addresses = resolve(host, port)?;
             let client = reqwest::blocking::Client::builder()
                 .no_proxy()
                 .redirect(reqwest::redirect::Policy::none())
@@ -76,7 +107,15 @@ pub(super) fn fetch(proxy: &OpenEgressProxy, request: HttpRequest) -> io::Result
                     "egress policy",
                 ));
             }
-            let response = builder.send().map_err(io::Error::other)?;
+            // A hop the request deadline cuts short ends as the deadline does
+            // for a hop that starts past it.
+            let response = builder.send().map_err(|error| {
+                if error.is_timeout() {
+                    io::Error::new(io::ErrorKind::TimedOut, error)
+                } else {
+                    io::Error::other(error)
+                }
+            })?;
             Ok(response)
         })();
         let response = match attempt {
@@ -100,9 +139,7 @@ pub(super) fn fetch(proxy: &OpenEgressProxy, request: HttpRequest) -> io::Result
                 .get(header::LOCATION)
                 .and_then(|v| v.to_str().ok())
                 .and_then(|v| url.join(v).ok());
-            let redirect = next
-                .filter(|_| hop < proxy.config.max_redirects)
-                .ok_or_else(|| io::Error::other("egress redirect bound or location"));
+            let redirect = next.ok_or_else(|| io::Error::other("egress redirect location"));
             proxy.record(
                 "http_redirect",
                 url.as_str(),
@@ -127,11 +164,11 @@ pub(super) fn fetch(proxy: &OpenEgressProxy, request: HttpRequest) -> io::Result
                 body.clear();
             }
             url = next;
+            *followed += 1;
             continue;
         }
         return deliver(proxy, &url, response, start + proxy.config.request_timeout);
     }
-    Err(io::Error::other("egress redirects exhausted"))
 }
 
 /// The fixture origin's forward (FIX 8061): `request`, made to the fixture

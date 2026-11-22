@@ -12,6 +12,10 @@ use crate::policy_model::{PolicyClassifyDecision, PolicyClassifyRequest, PolicyV
 use crate::{EntityId, Vault};
 pub use dns::{UnusableResolver, exchange_dns_query};
 pub use fixture::{FixtureForward, FixtureForwardError};
+// The redirect test's door (FIX 7945) drives the HTTP fetch with its own
+// address for each hop's host.
+#[cfg(oneiron_test_support)]
+pub(crate) use http::fetch_resolved;
 pub use name_gate::EgressNameRefusal;
 use oneiron_container::{EgressRelay, HostNetFloor, HttpRequest, HttpResponse};
 use oneiron_sandbox_contract::network::global_address;
@@ -43,7 +47,6 @@ pub struct EgressConfig {
     /// `limits.sandbox_egress_response_bytes`. A vault with no attached
     /// floor charges no bytes, so there a body past it still refuses.
     pub max_response_bytes: usize,
-    pub max_redirects: u8,
 }
 impl Default for EgressConfig {
     fn default() -> Self {
@@ -52,7 +55,6 @@ impl Default for EgressConfig {
             raw_endpoints: Vec::new(),
             request_timeout: Duration::from_secs(30),
             max_response_bytes: 32 * 1024 * 1024,
-            max_redirects: 3,
         }
     }
 }

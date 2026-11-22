@@ -467,6 +467,7 @@ impl LimitsConfig {
             organ_mesh_object_bytes,
             organ_mesh_staged_bytes,
             sandbox_egress_response_bytes,
+            sandbox_egress_redirects,
             deadline_jobs_per_caller,
             backup_handoff_pending_backups,
             backup_handoff_pending_bytes,
@@ -767,6 +768,10 @@ impl LimitsConfig {
             (
                 EngineLimit::SandboxEgressResponseBytes,
                 sandbox_egress_response_bytes,
+            ),
+            (
+                EngineLimit::SandboxEgressRedirects,
+                sandbox_egress_redirects,
             ),
             (EngineLimit::DeadlineJobsPerCaller, deadline_jobs_per_caller),
             (

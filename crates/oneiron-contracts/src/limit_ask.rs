@@ -532,6 +532,10 @@ pub enum EngineLimit {
     /// deadline. Past it the body is delivered whole and the row asks (FIX
     /// 7946).
     SandboxEgressResponseBytes,
+    /// Redirects one HTTP fetch of a code sandbox's egress follows for its
+    /// guest, each hop's policy run again, inside the request deadline.
+    /// Past it the fetch goes on and the row asks (FIX 7945).
+    SandboxEgressRedirects,
     /// Deadline jobs one caller has running at once: the recalls and searches
     /// a door answers at their deadline, each counted until its work ends,
     /// after its answer too (SCAN C030). Past it the job runs on and the row
