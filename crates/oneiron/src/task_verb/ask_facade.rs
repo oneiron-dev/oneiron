@@ -1,7 +1,7 @@
 //! Async scope-authority asks over existing consult TASKs.
 //!
 //! Entry: `Memory::tasks_ask`.
-//! Admission/read/wait operations live in children; ask records belong to `ask_record`.
+//! Admission/read/route/wait operations live in children; ask records belong to `ask_record`.
 use super::ask_effect::AskEffect;
 use super::ask_record::{self, AskGroup, AskMember};
 use super::ask_types::*;
@@ -22,6 +22,7 @@ use crate::side_table::{self, Named, SideTable};
 
 mod admission;
 mod read;
+mod route;
 mod wait;
 pub(crate) use self::wait::settle_waiting_asks;
 pub(super) use self::wait::{TASK_ASK_WAITS, signal_waiters};
@@ -46,6 +47,8 @@ type NoClosure = fn(&mut heed::RwTxn<'_>, EntityId) -> MemoryResult<()>;
 /// spec and one validated member TASK per recipient.
 pub(super) struct AskCensus {
     holders: Vec<EntityId>,
+    /// The role a role ask reached; `None` for every other target.
+    reached_role: Option<crate::llm::decision::AskRole>,
     context_class: Option<TaskAskClass>,
     governed_task: Option<EntityId>,
     effective: TaskAskSpec,
@@ -97,8 +100,11 @@ impl Memory<'_> {
     /// In `manual` mode the ask may be held for the owner's launch approval
     /// (ASK-3), and under `auto` when a host's learned ruling surfaces a
     /// multi-recipient ask to a person (FIX 10181): its receipt names the
-    /// hold and no member TASK exists yet.
+    /// hold and no member TASK exists yet. An ask whose text names a secret
+    /// value kind is refused first (`ask_label_guard`): this is the door of
+    /// caller-written asks, and engine-composed asks do not pass it.
     pub fn tasks_ask(&self, input: &TaskAskSpec) -> MemoryResult<TaskAskReceipt> {
+        input.check_secret_kinds()?;
         self.tasks_ask_composed(input, None)
     }
 
@@ -302,6 +308,7 @@ impl Memory<'_> {
                 txn,
                 &census.holders,
                 approval_project,
+                &check_scope,
             )? || match auto {
                 Some(auto) => {
                     auto.holds_in(self.vault(), txn, &census.holders, approval_project)?
@@ -481,94 +488,6 @@ impl Memory<'_> {
             .iter()
             .map(|member| ask_record::entity(&member.task))
             .collect::<crate::Result<_>>()?)
-    }
-
-    pub(super) fn ask_holders_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        input: &TaskAskSpec,
-    ) -> MemoryResult<Vec<EntityId>> {
-        Ok(match &input.who {
-            Some(TaskAskTarget::Authority(scope)) => {
-                self.vault()
-                    .ask_authority_holders_in_txn(txn, &scope.class, &scope.envelope)?
-            }
-            Some(TaskAskTarget::Responder(assignee)) => {
-                vec![assignee.entity_ref().unwrap_or(self.actor())]
-            }
-            Some(TaskAskTarget::People(people)) => people.iter().copied().collect(),
-            Some(TaskAskTarget::Guests(guests)) => guests.keys().copied().collect(),
-            None => vec![self.short_ask_principal_in_txn(txn)?],
-        })
-    }
-
-    /// A human can ask themselves. For an agent, an omitted target is the
-    /// unique verified human owner of its live assigned TASK, not the agent's
-    /// own actor id. The Owner fact is the binding; a caller-writable TASK
-    /// body by itself cannot nominate the principal.
-    fn short_ask_principal_in_txn(&self, txn: &heed::RoTxn<'_>) -> MemoryResult<EntityId> {
-        if self.actor_class() == crate::EdgeActorClass::Human {
-            crate::memory::verify_owner_actor_binding_in_txn(self.vault(), txn, self.actor())?;
-            return Ok(self.actor());
-        }
-        let tasks = super::presence_pages::all_admitted_tasks_in(
-            self.vault(),
-            txn,
-            self.destination(),
-            self.actor().as_bytes(),
-        )?;
-        // Before an authority root exists, only the seeded vault owner has
-        // an independently established human identity. A free-form PERSON
-        // owner fact cannot classify its writer as human rather than agent.
-        let rooted = self
-            .vault()
-            .authority_fold_readonly_in_txn(txn)?
-            .vault_id
-            .is_some();
-        let mut principal = None;
-        for task in tasks {
-            let Some(body) = super::wire_decode::task_verb_body_in(self.vault(), txn, task)? else {
-                continue;
-            };
-            if body.task_kind() != TaskKind::Standard
-                || body.terminal().is_some()
-                || body.assignee.and_then(TaskAssignee::entity_ref) != Some(self.actor())
-            {
-                continue;
-            }
-            let Some(proof) = self.vault().task_authority_state_in(txn, task)? else {
-                continue;
-            };
-            if proof.cancelled || proof.owner_ref.to_hex() != body.owner_ref {
-                continue;
-            }
-            let owner = proof.owner_ref;
-            // The Owner fact may be nominated by the creating agent. Only
-            // this independent human-authored witness can establish the
-            // principal relationship for an omitted recipient.
-            if self.vault().task_human_assigner_in(txn, task)? != Some((owner, self.actor())) {
-                continue;
-            }
-            if !rooted && owner != crate::vault::embedded_owner_actor_id()? {
-                continue;
-            }
-            if self.vault().get_entity_type_in_txn(txn, &owner)?
-                != Some(crate::registry::ENTITY_TYPE_PERSON)
-                || crate::memory::verify_owner_actor_binding_in_txn(self.vault(), txn, owner)
-                    .is_err()
-            {
-                continue;
-            }
-            // The principal is derived from this TASK, a refusal from two.
-            self.produced_from([task]);
-            if principal.is_some_and(|found| found != owner) {
-                return Err(MemoryError::bad_request(
-                    "agent has more than one human principal",
-                ));
-            }
-            principal = Some(owner);
-        }
-        principal.ok_or_else(|| MemoryError::bad_request("agent has no verified human principal"))
     }
 
     /// The class an ask naming `task` binds, with the TASK it came from:

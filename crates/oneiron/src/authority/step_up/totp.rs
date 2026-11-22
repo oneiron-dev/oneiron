@@ -8,10 +8,11 @@ use serde::{Deserialize, Serialize};
 use zeroize::{Zeroize, Zeroizing};
 
 use super::{
-    RECORDS, STEP_UP_CHALLENGE_TTL_SECS, STEP_UP_REQUIRED, StepUpDone, StepUpFactor, StepUpRecord,
-    VerifiedSlip, authority_refused, challenge_key, stale, webauthn,
+    RECORDS, STEP_UP_REQUIRED, StepUpDone, StepUpFactor, StepUpRecord, VerifiedSlip,
+    authority_refused, challenge_key, stale, webauthn,
 };
 use crate::Vault;
+use crate::authority::setting_keys::STEP_UP_CHALLENGE_TTL;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::side_table::{self, Named, SideTable};
@@ -156,7 +157,11 @@ impl Vault {
         crate::world_keys::os_fill(&mut *seed)?;
         let (key_ref, sealed_seed) =
             custody::seal(&self.store, &mut txn, person, &enrollment, &*seed)?;
-        let expires_at = now.saturating_add(STEP_UP_CHALLENGE_TTL_SECS);
+        let ttl = STEP_UP_CHALLENGE_TTL
+            .read_in_txn(self, &txn, &[], None)?
+            .value
+            .secs();
+        let expires_at = now.saturating_add(ttl);
         PENDING.put(
             &self.store,
             &mut txn,

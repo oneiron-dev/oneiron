@@ -37,9 +37,34 @@ impl Memory<'_> {
             birth,
         } = write;
         // An actor-capable PERSON is still an owner verb; the content
-        // transaction does not substitute for that domain authority.
+        // transaction does not substitute for that domain authority. A human
+        // proves the owner binding as today; an agent mints one only while
+        // the owner's setting `memory.person.agent_may_mint` is on and its
+        // own live Grant names this put's verb (restriction wave 7, C27),
+        // checked in this same write transaction. MACHINE stays refused for
+        // everyone at admission.
         if type_byte == ENTITY_TYPE_PERSON {
-            verify_owner_actor_binding_in_txn(self.vault, content.read(), self.actor)?;
+            match self.actor_class {
+                EdgeActorClass::Human => {
+                    verify_owner_actor_binding_in_txn(self.vault, content.read(), self.actor)?;
+                }
+                EdgeActorClass::Agent => {
+                    self.admit_person_mint_in_txn(content.read())?;
+                }
+                _ => {
+                    return Err(MemoryError::new(
+                        MEMORY_CODE_FORBIDDEN,
+                        format!(
+                            "actor class {} may not mint PERSON entities; PERSON is actor-capable",
+                            self.actor_class.gate_actor_class(),
+                        ),
+                        &[
+                            "PERSON entities rebind as human/agent actors; only the owner mints them.",
+                            "Bind a verified human-class owner actor key to create people.",
+                        ],
+                    ));
+                }
+            }
         }
         if self
             .vault
@@ -82,4 +107,70 @@ impl Memory<'_> {
         content.apply_batch(batch)?;
         Ok((false, written))
     }
+
+    /// The agent arm of the PERSON mint (restriction wave 7, C27), in the
+    /// put's own write transaction `txn`: the owner's setting
+    /// `memory.person.agent_may_mint` reads true, and one live Grant a live
+    /// owner gave this agent confers now and lists `vault.structural.put`
+    /// by name — the one verb row that calls `put_structural`
+    /// (`scripts/sdk/verbs/vault.structural.put.json`), so the standing
+    /// check names it directly. The credential the agent presented must
+    /// still be live. A key-off agent keeps today's refusal, with the key
+    /// that now opens it added to its hints.
+    fn admit_person_mint_in_txn(&self, txn: &heed::RoTxn<'_>) -> MemoryResult<()> {
+        crate::memory::verify_actor_binding_in_txn(self.vault, txn, self.actor, self.actor_class)?;
+        if let Some(slip) = self.presented_credential()
+            && !self.vault.capability_slip_is_live_in_txn(txn, slip)?
+        {
+            return Err(person_mint_refused(
+                "the caller's credential is no longer live",
+            ));
+        }
+        let key_on = crate::memory::structural::setting_keys::PERSON_AGENT_MAY_MINT
+            .read_in_txn(self.vault, txn, &[], None)?
+            .value;
+        if !key_on {
+            return Err(MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                format!(
+                    "actor class {} may not mint PERSON entities; PERSON is actor-capable",
+                    self.actor_class.gate_actor_class(),
+                ),
+                &[
+                    "PERSON entities rebind as human/agent actors; only the owner mints them.",
+                    "Bind a verified human-class owner actor key to create people.",
+                    "Or have the owner turn on memory.person.agent_may_mint and grant this agent vault.structural.put by name.",
+                ],
+            ));
+        }
+        let standing = crate::authority::principal_standing_or_lapse_in_txn(
+            self.vault,
+            txn,
+            self.actor,
+            self.actor_class,
+            "vault.structural.put",
+        )?;
+        match standing.map(|standing| standing.grant) {
+            Ok(Some(_)) => Ok(()),
+            Err(crate::authority::NoStanding::PactStandingLapsed) => {
+                Err(person_mint_refused(crate::authority::PACT_STANDING_LAPSED))
+            }
+            Ok(None) | Err(crate::authority::NoStanding::NotStanding) => Err(person_mint_refused(
+                "no live Grant from a live owner names this agent and lists the verb",
+            )),
+        }
+    }
+}
+
+/// The PERSON mint's refusal of an agent caller it does not admit.
+fn person_mint_refused(why: &str) -> MemoryError {
+    MemoryError::new(
+        MEMORY_CODE_FORBIDDEN,
+        format!(
+            "vault.structural.put takes the vault owner's own proof, or an agent's own Grant that names it while the owner's setting memory.person.agent_may_mint is on: {why}"
+        ),
+        &[
+            "Call with your own owner credential, or have the owner turn on memory.person.agent_may_mint and grant this agent the verb by name.",
+        ],
+    )
 }

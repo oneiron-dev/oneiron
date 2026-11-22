@@ -78,6 +78,18 @@ pub struct VaultHostFloor {
     attached: RwLock<Option<Arc<dyn HostNetFloor>>>,
 }
 
+impl VaultHostFloor {
+    /// Whether a host attached its floor, and with it its byte line: a
+    /// vault no host attached a floor to charges no bytes, so a body read
+    /// on it keeps its own byte bound (FIX 7946).
+    pub(crate) fn is_attached(&self) -> bool {
+        self.attached
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_some()
+    }
+}
+
 impl HostNetFloor for VaultHostFloor {
     fn acquire(&self, fds: usize, workers: usize) -> io::Result<HostNetPermit> {
         let attached = self.attached.read().unwrap_or_else(PoisonError::into_inner);

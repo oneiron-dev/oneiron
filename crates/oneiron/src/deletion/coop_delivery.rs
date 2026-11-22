@@ -32,10 +32,23 @@ use crate::{EntityId, Result, Vault};
 use oneiron_authority::authority::FederationPactStatus;
 
 mod answer;
+mod leave;
 mod redact;
 mod refresh;
+mod reply_setting;
 mod restrict;
+mod setting_answer;
 mod types;
+
+pub(crate) use reply_setting::{ERASE_REQUEST_REPLY_ROW_KEY, EraseRequestReplyRead};
+pub use reply_setting::{
+    ERASE_REQUEST_REPLY_ROW_VERSION, EraseRequestReply, EraseRequestReplyPolicy,
+    EraseRequestReplySetting, EraseRequestReplySource,
+};
+pub use setting_answer::{
+    ERASE_REQUEST_SETTING_DECLINE_CODE, ERASE_REQUEST_SETTING_DECLINE_REVIEW_SECS,
+    ERASE_REQUEST_SETTING_HONOUR_CODE,
+};
 
 pub use types::{
     CooperativeClaimValueRedaction, CooperativeDeleteOperation, CooperativeDeleteRecord,
@@ -50,7 +63,8 @@ pub const COOP_DELETION_DELIVERY_ATTEMPT_KIND: &str = "cooperative_deletion.deli
 pub const COOP_DELETION_PEER_PATH: &str = "/v1/federation/courtesy-delete";
 /// The requester's route an answer is POSTed to.
 pub const COOP_DELETION_REPLY_PEER_PATH: &str = "/v1/federation/courtesy-delete/reply";
-/// How long an undelivered leg keeps retrying before it is `unreachable`.
+/// How long an undelivered leg keeps retrying before it is `unreachable`, unless
+/// `deletion.coop_delivery.give_up_secs` is set (its default).
 pub const COOP_DELETION_GIVE_UP_SECS: u64 = 7 * 24 * 60 * 60;
 /// The retry wait grows with the leg's age, between these bounds.
 const MIN_BACKOFF_SECS: u64 = 60;
@@ -239,15 +253,42 @@ pub struct CooperativeDeletionDelivery {
     payload: DeliveryPayload,
 }
 
+/// What queuing an ask does when its nonce already names a queued ask.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum QueuedAsk {
+    /// Refuse: a hand-picked ask takes a fresh nonce.
+    Refuse,
+    /// Answer the queued ask as it stands: the leave action's nonce names
+    /// its one whole-pact ask per ended pact.
+    Answer,
+}
+
 impl Vault {
     /// Queues `signed` for `destination` and records it `queued`, in one
     /// transaction. The ask must be this vault's, about a pact it ended.
+    /// The leave action's nonce of the pact is that action's alone: a
+    /// hand-picked ask under it refuses, whatever its shape.
     pub fn queue_cooperative_deletion_request_as(
         &self,
         owner: &AuthenticatedOwner,
         signed: &SignedCooperativeDeletionRequest,
         destination: &str,
         now: u64,
+    ) -> Result<CooperativeDeletionNotice> {
+        self.queue_cooperative_deletion_request(owner, signed, destination, now, QueuedAsk::Refuse)
+    }
+
+    /// [`Self::queue_cooperative_deletion_request_as`], with `queued`
+    /// choosing the answer when the nonce already names a queued ask. The
+    /// lookup runs in the writer that queues, so two calls at once queue
+    /// one ask.
+    fn queue_cooperative_deletion_request(
+        &self,
+        owner: &AuthenticatedOwner,
+        signed: &SignedCooperativeDeletionRequest,
+        destination: &str,
+        now: u64,
+        queued: QueuedAsk,
     ) -> Result<CooperativeDeletionNotice> {
         self.recheck_owner(owner)?;
         let body = &signed.body;
@@ -265,10 +306,18 @@ impl Vault {
                 )
             })
             .ok_or(crate::error::RecordError::CooperativeDeletionRequiresTerminalPact)?;
-        if pact.peer_vault_id != body.peer_vault_id
-            || body.epoch_cutoff > pact.terminal_epoch.unwrap_or(pact.pact_epoch)
-        {
+        let terminal_epoch = pact.terminal_epoch.unwrap_or(pact.pact_epoch);
+        if pact.peer_vault_id != body.peer_vault_id || body.epoch_cutoff > terminal_epoch {
             return Err(invalid("the ask does not match its pact"));
+        }
+        // A repeated leave action answers whatever its nonce names, so no
+        // other ask may take that nonce (REVIEW L7-09 P2): a hand-picked ask
+        // under it refuses even in the leave ask's shape, since its signer
+        // may be a key the peer never pinned (review round 2 of #8379).
+        if body.nonce == leave::leave_ask_nonce(&body.pact_id, terminal_epoch)
+            && (queued == QueuedAsk::Refuse || !leave::is_leave_ask(body, terminal_epoch))
+        {
+            return Err(invalid("this nonce is the leave action's whole-pact ask"));
         }
         let bytes = encode_signed_cooperative_deletion_request(signed)?;
         let recipient = cooperative_deletion_recipient_id(&body.pact_id, &body.peer_vault_id);
@@ -292,8 +341,11 @@ impl Vault {
         self.with_write_txn_grouped(|txn| {
             // The owner still holds in the writer that queues (FIX 9784).
             owner.revalidate_in_txn(self, txn)?;
-            if NOTICES.contains(&self.store, txn, &key)? {
-                return Err(invalid("an ask under this nonce is already queued"));
+            if let Some(first) = NOTICES.get(&self.store, txn, &key)? {
+                return match queued {
+                    QueuedAsk::Refuse => Err(invalid("an ask under this nonce is already queued")),
+                    QueuedAsk::Answer => Ok(first),
+                };
             }
             stage(self, txn, &payload, now)?;
             NOTICES.put(&self.store, txn, &key, &notice)?;
@@ -555,7 +607,8 @@ impl Vault {
 
     /// Settles one claimed try: 2xx is `delivered`; a refusal is `unknown`;
     /// a failure retries with a wait that grows with the leg's age, until
-    /// [`COOP_DELETION_GIVE_UP_SECS`] makes it `unreachable`. The queue row
+    /// `deletion.coop_delivery.give_up_secs` (default
+    /// [`COOP_DELETION_GIVE_UP_SECS`]) makes it `unreachable`. The queue row
     /// and the ledger move in one transaction, fenced by the claim's lease.
     pub fn settle_cooperative_deletion_delivery(
         &self,
@@ -600,7 +653,28 @@ impl Vault {
                     )?;
                     CooperativeDeletionDeliveryStatus::Unknown
                 }
-                CooperativeDeletionTry::Failed(error) if age >= COOP_DELETION_GIVE_UP_SECS => {
+                CooperativeDeletionTry::Failed(error) => {
+                    // Read only on a failure, the one settle the give-up decides.
+                    let give_up = super::setting_keys::COOP_DELIVERY_GIVE_UP_SECS
+                        .read_in_txn(self, txn, &[], None)?
+                        .value;
+                    if age < give_up {
+                        self.store.attempt_operations.retry_in_txn(
+                            self,
+                            txn,
+                            RetryAttempt {
+                                id: attempt.id,
+                                lease_owner,
+                                attempt_count: attempt.attempt_count,
+                                backoff_until: now.saturating_add(
+                                    (age / 2).clamp(MIN_BACKOFF_SECS, MAX_BACKOFF_SECS),
+                                ),
+                                last_error: Some(error.clone()),
+                                now,
+                            },
+                        )?;
+                        return Ok(CooperativeDeletionDeliveryStatus::Sent);
+                    }
                     crate::ports::JobQueue::port_job_fail(
                         self,
                         txn,
@@ -613,23 +687,6 @@ impl Vault {
                         },
                     )?;
                     CooperativeDeletionDeliveryStatus::Unreachable
-                }
-                CooperativeDeletionTry::Failed(error) => {
-                    self.store.attempt_operations.retry_in_txn(
-                        self,
-                        txn,
-                        RetryAttempt {
-                            id: attempt.id,
-                            lease_owner,
-                            attempt_count: attempt.attempt_count,
-                            backoff_until: now.saturating_add(
-                                (age / 2).clamp(MIN_BACKOFF_SECS, MAX_BACKOFF_SECS),
-                            ),
-                            last_error: Some(error.clone()),
-                            now,
-                        },
-                    )?;
-                    return Ok(CooperativeDeletionDeliveryStatus::Sent);
                 }
             };
             move_leg(self, txn, payload, next, now)?;

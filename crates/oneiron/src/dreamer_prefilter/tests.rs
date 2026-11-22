@@ -1,7 +1,5 @@
 use super::*;
 
-// FIX [LIBTEST-QUARANTINE-DREAMER-PREFILTER-TESTS-REPAIR-REGRESSIONS]: the lib test target's type check fails here (6 errors: E0061 x5, E0609 x1); port it, then drop this gate
-#[cfg(any())]
 mod repair_regressions;
 
 use crate::config::VaultConfig;
@@ -213,21 +211,28 @@ fn extraction_receipts(vault: &Vault) -> Vec<ReceiptRecord> {
         .expect("receipt query")
 }
 
-// FIX [LIBTEST-QUARANTINE-DREAMER-PREFILTER-TESTS-ITEMS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[test]
 fn skipped_turns_advance_the_watermark_and_the_rescan_door_re_sweeps_them() {
     let (_dir, vault) = open_vault();
     let (_conversation, ids, _) = seed_fixture_corpus(&vault);
     vault
-        .set_prefilter_config(PrefilterConfig {
-            threshold: separating_threshold(),
-            ..PrefilterConfig::default()
-        })
+        .set_setting(
+            crate::setting::SettingCaller::Owner(&crate::test_util::embedded_owner_proof(&vault)),
+            crate::setting::SetSetting::vault_value(
+                "dreamer.prefilter",
+                serde_json::to_value(PrefilterConfig {
+                    threshold: separating_threshold(),
+                    ..PrefilterConfig::default()
+                })
+                .expect("prefilter setting value"),
+            ),
+        )
         .expect("tighten");
 
-    let session = minted(vault.mint_session(1_000).expect("mint"));
-    let wake = meso_wake(&vault);
+    let actor = EntityId::now();
+    let key = vault.local_session_key(actor).expect("session key");
+    let session = minted(vault.mint_session(key, 1_000).expect("mint"));
+    let wake = meso_wake(&vault, session);
     vault
         .end_session_with_wake(&session, SessionClosePredicate::Explicit, 5_000, &wake)
         .expect("close")
@@ -235,7 +240,13 @@ fn skipped_turns_advance_the_watermark_and_the_rescan_door_re_sweeps_them() {
 
     // Make skipped turns visible to planning if the close failed to consume them.
     vault
-        .set_prefilter_config(PrefilterConfig::default())
+        .set_setting(
+            crate::setting::SettingCaller::Owner(&crate::test_util::embedded_owner_proof(&vault)),
+            crate::setting::SetSetting::vault_value(
+                "dreamer.prefilter",
+                serde_json::to_value(PrefilterConfig::default()).expect("prefilter setting value"),
+            ),
+        )
         .expect("restore lossless policy");
     assert!(
         plan_now(&vault).is_empty(),

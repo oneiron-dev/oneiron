@@ -338,7 +338,5 @@ fn field<'v>(entries: &'v [(Value, Value)], name: &str) -> Option<Option<&'v Val
 }
 
 fn canonical_id(value: &Value) -> Option<EntityId> {
-    let hex = value.as_str()?;
-    let id = EntityId::from_hex(hex).ok()?;
-    (id.to_hex() == hex).then_some(id)
+    EntityId::from_lower_hex(value.as_str()?).ok()
 }

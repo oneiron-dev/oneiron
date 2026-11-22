@@ -81,6 +81,7 @@ async function start() {
           next={kind:"signature",value:{image_ref:image.image_ref}};
         } else next=presentation.control.kind==="checkbox"?{kind:"checked",value:input.checked}:{kind:"text",value:input.value};
         const saved=await action({action:"save_field",field:presentation.id,value:next});
+        reviewed=false;
         const actual=saved.data?.values?.[presentation.id]?.value;
         if (actual?.kind==="text") input.value=actual.value;
         await refreshPreview();
@@ -93,7 +94,25 @@ async function start() {
 }
 document.getElementById("item").onchange=()=>refreshPreview().catch(report);
 window.addEventListener("pagehide",()=>{for(const url of imageURLs.values())URL.revokeObjectURL(url);imageURLs.clear();});
-document.getElementById("complete").onclick = () => action({action: "complete", consent: document.getElementById("consent").checked, next: null}).catch(report);
+// UETA section 10 (ARCH-0064): Complete needs the signer's review of the
+// frozen PDFs and their own values, and a field saved after it voids it. The
+// first press records the review and lists what it bound; the next one signs.
+let reviewed = false;
+function shown(value) { if (!value) return "empty"; if (value.kind === "checked") return value.value ? "checked" : "not checked"; if (value.kind === "signature") return "signature image"; return JSON.stringify(value.value); }
+async function review() {
+  const result = await action({action: "review"});
+  if (result.outcome !== "page") return;
+  reviewed = true;
+  const values = result.data.presentations.map(p => `${p.control.kind} on page ${p.geometry.page}: ${shown(p.value)}`);
+  status.textContent = `Review what you sign: ${values.join("; ") || "no fields"}. Check each PDF in the preview, then press Complete again to sign.`;
+  await refreshPreview();
+}
+async function complete() {
+  if (!reviewed) return review();
+  const result = await action({action: "complete", consent: document.getElementById("consent").checked, next: null});
+  if (result.outcome === "review_required") { reviewed = false; await review(); }
+}
+document.getElementById("complete").onclick = () => complete().catch(report);
 document.getElementById("reject").onclick = () => { const reason = prompt("Reason for rejection"); if (reason !== null) { const text = reason.trim(); if (!text) { status.textContent = "Give a reason for the rejection."; return; } action({action: "reject", reason: text}).catch(report); } };
 document.getElementById("download").onclick = async () => { try { const response = await post("/sign/pdf", {item: Number(document.getElementById("item").value || 0)}); const url = URL.createObjectURL(await response.blob()); const link = document.createElement("a"); link.href = url; link.download = `document-${Number(document.getElementById("item").value || 0) + 1}.pdf`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); } catch (error) { report(error); } };
 // A link opens its session and comes back at its ceremony's address with no

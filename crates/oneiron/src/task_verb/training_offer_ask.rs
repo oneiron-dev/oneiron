@@ -22,6 +22,8 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use super::ask_guard::AskedParty;
+use super::ask_intent;
 use super::ask_record::{self, AskGroup};
 use super::ask_types::{
     TaskAskDecision, TaskAskDefault, TaskAskEvidenceReason, TaskAskOption, TaskAskOptionId,
@@ -30,7 +32,7 @@ use super::ask_types::{
 };
 use super::{ConsultPayloadRef, TaskAssignee};
 use crate::consent::AuthenticatedOwner;
-use crate::error::{Error, GateError, Result};
+use crate::error::Result;
 use crate::memory::{
     MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult, WitnessAuthor, WitnessMessage,
     WitnessTurn,
@@ -115,10 +117,6 @@ const ASKS: SideTable<OfferAskKey, Vec<OfferAskRoute>, Named> =
 const GROUPS: SideTable<EntityId, OfferAskKey, Named> =
     SideTable::new(&side_table::TASK_TRAINING_OFFER_ASK_GROUP);
 
-fn owner_not_authenticated(reason: &'static str) -> Error {
-    Error::Gate(GateError::ConsentOwnerNotAuthenticated(reason))
-}
-
 /// Who asks the owner about a training offer: the Coach, in its own name
 /// (Engine ruling 10-18). It never speaks or asks as the owner.
 fn offer_ask_issuer(vault: &Vault) -> Result<WriteActor> {
@@ -135,43 +133,28 @@ fn ask_key(offer: &TrainingOffer, owner: EntityId) -> OfferAskKey {
     (offer.id, owner, offer.digest.clone())
 }
 
-fn intent_key(key: &OfferAskKey, turn: &EntityId) -> String {
+pub(crate) fn intent_key(key: &OfferAskKey, turn: &EntityId) -> String {
     let (offer, owner, digest) = key;
-    format!(
-        "{INTENT_PREFIX}{}/{digest}/{}/{}",
-        offer.to_hex(),
-        owner.to_hex(),
-        turn.to_hex()
+    ask_intent::join(
+        INTENT_PREFIX,
+        &[
+            offer.to_hex().as_str(),
+            digest.as_str(),
+            owner.to_hex().as_str(),
+            turn.to_hex().as_str(),
+        ],
     )
-}
-
-pub(super) fn canonical_id(hex: &str) -> Option<EntityId> {
-    EntityId::from_hex(hex).ok().filter(|id| id.to_hex() == hex)
-}
-
-pub(super) fn canonical_digest(digest: &str) -> Option<String> {
-    let lower_hex = |byte: u8| matches!(byte, b'0'..=b'9' | b'a'..=b'f');
-    (digest.len() == 64 && digest.bytes().all(lower_hex)).then(|| digest.to_owned())
 }
 
 /// The offer question a training offer ask's intent key names, read whole and
 /// in canonical form; `None` for any other key.
 pub(crate) fn training_offer_ask_key(intent_key: &str) -> Option<OfferQuestionKey> {
-    let mut parts = intent_key.strip_prefix(INTENT_PREFIX)?.split('/');
-    let (Some(offer), Some(digest), Some(owner), Some(turn), None) = (
-        parts.next(),
-        parts.next(),
-        parts.next(),
-        parts.next(),
-        parts.next(),
-    ) else {
-        return None;
-    };
+    let [offer, digest, owner, turn] = ask_intent::split::<4>(intent_key, INTENT_PREFIX)?;
     Some((
-        canonical_id(offer)?,
-        canonical_id(owner)?,
-        canonical_digest(digest)?,
-        canonical_id(turn)?,
+        ask_intent::id(offer)?,
+        ask_intent::id(owner)?,
+        ask_intent::digest(digest)?,
+        ask_intent::id(turn)?,
     ))
 }
 
@@ -201,10 +184,10 @@ pub(crate) fn offer_question_key(metadata: &rmpv::Value) -> Option<OfferQuestion
         return None;
     }
     Some((
-        canonical_id(single_str(entries, META_OFFER)?)?,
-        canonical_id(single_str(entries, META_OWNER)?)?,
-        canonical_digest(single_str(entries, META_DIGEST)?)?,
-        canonical_id(single_str(entries, META_TURN)?)?,
+        ask_intent::id(single_str(entries, META_OFFER)?)?,
+        ask_intent::id(single_str(entries, META_OWNER)?)?,
+        ask_intent::digest(single_str(entries, META_DIGEST)?)?,
+        ask_intent::id(single_str(entries, META_TURN)?)?,
     ))
 }
 
@@ -533,6 +516,7 @@ fn issue_one(
             conversation_ref: route.conversation.to_hex(),
             turn_ref: Some(route.turn.to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: Some(route.message.to_hex()),
                 author: WitnessAuthor::Companion,
@@ -637,32 +621,31 @@ fn routed_in(
     Ok(Some(route))
 }
 
-/// Refuses a word on a training offer ask unless it is the asked owner's own
-/// act; any other ask passes untouched. Runs in shared word admission,
-/// before the word is recorded, beside `attendee_answer::guard_word`.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "one admission check over the word, its writer and the owner proof"
-)]
-pub(super) fn guard_word(
+/// Who a training offer ask asks: the owner its reservation names; `None`
+/// for every other ask ([`super::ask_guard`]).
+pub(super) fn asked_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
     group: &AskGroup,
-    source: TaskAskSource,
-    actor: EntityId,
+) -> Result<Option<AskedParty>> {
+    Ok(routed_in(vault, txn, id, group)?.map(|route| AskedParty::Owner(route.owner)))
+}
+
+/// [`asked_in`], once `word` names one option the ask offered while the
+/// offer still waits at the asked digest; any other word is refused. Shared
+/// word admission then asks the asked owner's own proof of it
+/// ([`super::ask_guard`]).
+pub(super) fn offered_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    group: &AskGroup,
     word: &TaskAskWord,
-    owner: Option<&AuthenticatedOwner>,
-) -> Result<()> {
+) -> Result<Option<AskedParty>> {
     let Some(route) = routed_in(vault, txn, id, group)? else {
-        return Ok(());
+        return Ok(None);
     };
-    // The owner's own tap, never a word given for them or a soft confirm.
-    if word.companion_for.is_some() || word.inform_for.is_some() || word.confirmation.is_some() {
-        return Err(ask_record::invalid());
-    }
-    // A definitive answer names one option the ask offered, while the offer
-    // still waits at the asked digest.
     let offer = crate::skill_optimize::pending_training_offer_in_txn(vault, txn, &route.offer)?
         .filter(|offer| offer.digest == route.digest)
         .ok_or_else(ask_record::invalid)?;
@@ -674,60 +657,7 @@ pub(super) fn guard_word(
     {
         return Err(ask_record::invalid());
     }
-    // Only the admission node settles the ask, so a word anywhere else
-    // could never settle under the proof that admitted it.
-    if !ask_record::owns_revision(vault, txn, id, group)? {
-        return Err(owner_not_authenticated(
-            "a training offer answer is given on the node that admitted the ask",
-        ));
-    }
-    let Some(owner) = owner else {
-        return Err(owner_not_authenticated(
-            "a training offer answer needs the owner's own authenticated word",
-        ));
-    };
-    let proven = owner.revalidate_in_txn(vault, txn)?;
-    if source != TaskAskSource::Human || proven != actor || proven != route.owner {
-        return Err(owner_not_authenticated(
-            "a training offer answer is the asked owner's own word",
-        ));
-    }
-    Ok(())
-}
-
-/// Whether settlement may cut the ask `id` for `reason` with `decision`
-/// under `owner`. A training offer ask's first word settles the offer only
-/// under the live proof of the owner it asked; without that proof the ask
-/// stays open, and only its deadline or staleness closes it, on the hold
-/// default.
-pub(super) fn may_cut(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    id: EntityId,
-    group: &AskGroup,
-    reason: TaskAskSettlementReason,
-    decision: &TaskAskDecision,
-    owner: Option<&AuthenticatedOwner>,
-) -> Result<bool> {
-    if matches!(
-        reason,
-        TaskAskSettlementReason::Deadline | TaskAskSettlementReason::Stale
-    ) {
-        return Ok(true);
-    }
-    let Some(route) = routed_in(vault, txn, id, group)? else {
-        return Ok(true);
-    };
-    let TaskAskDecision::First(answer) = decision else {
-        return Ok(true);
-    };
-    match owner {
-        Some(owner) => {
-            let proven = owner.revalidate_in_txn(vault, txn)?;
-            Ok(proven == answer.actor_ref && proven == route.owner)
-        }
-        None => Ok(false),
-    }
+    Ok(Some(AskedParty::Owner(route.owner)))
 }
 
 /// Settles the offer from the word `result` selected, in the ask's settling

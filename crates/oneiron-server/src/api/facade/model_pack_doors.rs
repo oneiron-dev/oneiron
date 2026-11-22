@@ -1,9 +1,9 @@
-//! Typed owner doors over the vault's model pack setting (FIX 5367) and the
-//! pack change revert (FIX 5369).
+//! Typed owner doors over the vault's model pack setting read (FIX 5367) and
+//! the pack change revert (FIX 5369). The owner sets the preference through
+//! `vault.settings.set` of `models.pack_preference`.
 use std::sync::Arc;
 
 use oneiron::llm::model_pack::{ModelPackRevert, ModelPackRevertRequest, ModelPackSetting};
-use oneiron::settings::model_pack::ModelPackPreference;
 use oneiron::task_verb::sdk::EmptyRequest;
 
 use super::host_doors::support::Listed;
@@ -21,25 +21,6 @@ pub(crate) async fn vault_settings_model_pack(
         auth,
         "vault.settings.model_pack",
         |server, owner| Ok(server.vault().model_pack_setting_as_owner(owner)?),
-        |_| Vec::new(),
-    )
-    .await
-}
-
-pub(crate) async fn vault_settings_model_pack_replace(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: ModelPackPreference,
-) -> Listed<ModelPackSetting> {
-    as_owner_naming(
-        server,
-        auth,
-        "vault.settings.model_pack.replace",
-        move |server, owner| {
-            Ok(server
-                .vault()
-                .replace_model_pack_preference_as_owner(owner, input)?)
-        },
         |_| Vec::new(),
     )
     .await

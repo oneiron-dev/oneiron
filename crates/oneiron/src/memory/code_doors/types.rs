@@ -4,8 +4,9 @@
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::memory::code_doors::types::{
-    CodeProposalRereviewRequest, CodeProposalSubmitRequest, CodeProposalSubmitted, CodeRepoRequest,
-    CodeSymbolsDeclareRequest, CodeSymbolsTaskRequest,
+    CodeProposalBundleFile, CodeProposalBundleSubmitRequest, CodeProposalRereviewRequest,
+    CodeProposalSubmitRequest, CodeProposalSubmitted, CodeRepoRequest, CodeSymbolsDeclareRequest,
+    CodeSymbolsTaskRequest,
 };
 
 #[doc(hidden)]

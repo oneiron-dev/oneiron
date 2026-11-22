@@ -16,18 +16,21 @@ mod embedding;
 mod failure_signals;
 mod feedback;
 pub mod gmail_push;
+pub mod gpu_jobs;
 pub mod import;
 mod keystore;
 mod limits;
 mod line;
 mod linear;
 mod lookup;
+mod mail;
 pub mod merge;
 pub mod merge_queue;
 pub mod models;
 pub mod native_mail;
 pub mod oneironer;
 mod page_seal;
+mod phonetic_embedder;
 mod policy;
 mod recall;
 pub mod remote_embedder;
@@ -61,13 +64,16 @@ pub use feedback::{
     CLOUD_FEEDBACK_ENDPOINT, FeedbackConfig, FeedbackInboxConfig, FeedbackTriageConfig,
 };
 pub use gmail_push::{GOOGLE_OIDC_JWKS_URI, GmailPushConfig};
+pub use gpu_jobs::{GpuJobsSettings, GpuOfferSettings};
 pub use import::ImportConfig;
 pub use keystore::{DEFAULT_KEYCHAIN_SERVICE, KeystoreBackend, KeystoreConfig, KeystoreInstall};
 pub use limits::LimitsConfig;
+pub(crate) use limits::REQUEST_BODY_FLOOR_MIN_BYTES;
 pub use line::LineConfig;
 pub(crate) use linear::LinearCredential;
 pub use linear::{LinearConfig, LinearMode};
 pub(crate) use lookup::normalize_list;
+pub use mail::{MailConfig, MailSmtpConfig};
 pub(crate) use merge::layer_serve_config;
 pub use merge::{
     EnvConfig, default_config_path, resolve_backup_config, resolve_serve_config,
@@ -78,6 +84,9 @@ pub use models::ModelsConfig;
 pub use native_mail::NativeMailConfig;
 pub use oneironer::{
     OneironerArgs, OneironerConfig, OneironerConfigOverride, OneironerMode, OneironerProvider,
+};
+pub use phonetic_embedder::{
+    PhoneticEmbedderConfig, PhoneticEmbedderProvider, PhoneticEndpointBinding,
 };
 pub use policy::PolicyConfig;
 pub use recall::RecallConfig;
@@ -92,6 +101,8 @@ pub use trusted_proxy::TrustedProxy;
 mod embedder_tests;
 #[cfg(test)]
 mod limits_tests;
+#[cfg(test)]
+mod phonetic_embedder_tests;
 #[cfg(test)]
 mod privacy_tests;
 #[cfg(all(test, unix))]

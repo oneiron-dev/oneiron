@@ -11,11 +11,11 @@ use crate::side_table::{self, Raw, SideTable};
 const REQUEST_PLAN_PREFIX: &[u8] = b"booking:emergency_request_plan:v1:";
 
 /// Pending-event pointer to a checkpoint's full raw key. Key: id16 (event).
-const PENDING_EVENT: SideTable<EntityId, Vec<u8>, Raw> =
+pub(super) const PENDING_EVENT: SideTable<EntityId, Vec<u8>, Raw> =
     SideTable::new(&side_table::EMERGENCY_PENDING_EVENT_LOOKUP);
 
 /// Effect-attempt pointer to a checkpoint's full raw key. Key: id16 (attempt).
-const EFFECT: SideTable<[u8; 16], Vec<u8>, Raw> =
+pub(super) const EFFECT: SideTable<[u8; 16], Vec<u8>, Raw> =
     SideTable::new(&side_table::EMERGENCY_EFFECT_LOOKUP);
 
 /// Instruction-to-plan posting-list row, value = the plan's full raw key. Key:
@@ -30,7 +30,10 @@ pub(super) fn request_plan_prefix(
     request: &EmergencyRescheduleRequest,
 ) -> Result<Vec<u8>, BookingError> {
     let mut key = REQUEST_PLAN_PREFIX.to_vec();
-    key.extend_from_slice(&content_hash(&request_instruction_key(request)?)?);
+    key.extend_from_slice(&content_hash(
+        purposes::booking::EMERGENCY_REQUEST_PLAN_INDEX_KEY,
+        &request_instruction_key(request)?,
+    )?);
     Ok(key)
 }
 
@@ -39,7 +42,18 @@ pub(super) fn request_plan_prefix(
 pub(super) fn request_plan_hash(
     request: &EmergencyRescheduleRequest,
 ) -> Result<[u8; 32], BookingError> {
-    content_hash(&request_instruction_key(request)?)
+    content_hash(
+        purposes::booking::EMERGENCY_REQUEST_PLAN_INDEX_KEY,
+        &request_instruction_key(request)?,
+    )
+}
+
+/// The instruction content hash the request-to-plan index is keyed by.
+#[cfg(oneiron_test_support)]
+pub(crate) fn request_plan_hash_for_test(
+    request: &EmergencyRescheduleRequest,
+) -> Result<[u8; 32], BookingError> {
+    request_plan_hash(request)
 }
 
 /// Scans every plan indexed for this instruction, in key (event) order. Key:
@@ -124,8 +138,9 @@ pub(super) fn index_item_in(
     if let Some(picked) = &item.picked {
         effects.push(("pick", picked.content_hash));
     }
+    // Each under its current ledger identity, the attempt its send is admitted by.
     for (lane, hash) in effects {
-        let reference = state::effect_ref(item, lane, hash)?;
+        let reference = state::effect_ledger_ref(item, lane, hash)?;
         let attempt =
             crate::outbound::outbound_dispatch_attempt_id(&reference).map_err(storage_failure)?;
         EFFECT

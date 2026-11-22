@@ -96,8 +96,9 @@ pub(super) fn booking_instructions_block_schema() -> Value {
 
 /// The closed response union.
 ///
-/// Availability projects UTC start/end, rank, and the flex flag and nothing
-/// else; mutations project only opaque action tokens. The ONE-1812 disclosure
+/// Availability projects UTC start/end, rank, the flex flag, and the days a
+/// meeting cap filled (visitor-local date and cap only) and nothing else;
+/// mutations project only opaque action tokens. The ONE-1812 disclosure
 /// ceiling is the shape of this schema, not a rule applied on top of it.
 pub(super) fn booking_operation_response_schema() -> Value {
     let ranked_slot = json!({
@@ -108,6 +109,20 @@ pub(super) fn booking_operation_response_schema() -> Value {
             "start_utc": { "description": "Inclusive UTC slot start.", "type": "integer", "minimum": 0 },
             "end_utc": { "description": "Exclusive UTC slot end.", "type": "integer", "minimum": 0 },
             "rank": { "description": "Oracle rank; higher is more preferred.", "type": "number" },
+        },
+    });
+    let full_day = json!({
+        "description": "A visitor-local day the event type's meeting cap filled; shown as full.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["date", "cap"],
+        "properties": {
+            "date": {
+                "description": "Visitor-local calendar date.",
+                "type": "string",
+                "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+            },
+            "cap": { "description": "The cap that filled the day.", "enum": ["daily", "weekly"] },
         },
     });
     let selected_slot = json!({
@@ -136,10 +151,11 @@ pub(super) fn booking_operation_response_schema() -> Value {
                     "result": {
                         "type": "object",
                         "additionalProperties": false,
-                        "required": ["slots", "flex_used"],
+                        "required": ["slots", "flex_used", "full_days"],
                         "properties": {
                             "slots": { "type": "array", "items": ranked_slot },
                             "flex_used": { "type": "boolean" },
+                            "full_days": { "type": "array", "items": full_day },
                         },
                     },
                 },

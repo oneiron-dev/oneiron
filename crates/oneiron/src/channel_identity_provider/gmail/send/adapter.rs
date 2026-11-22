@@ -3,6 +3,7 @@
 //! Entry: `GmailDelegatedAdapter::dispatch_send_recorded`. Defines its own items.
 
 use super::*;
+use crate::channel_identity_provider::mail_attachments::CompletedSendSink;
 
 impl GmailDelegatedAdapter {
     /// The SEND credential door: runs `apply` with the grant's token for a
@@ -26,6 +27,27 @@ impl GmailDelegatedAdapter {
         identity_id: EntityId,
         apply: &mut dyn FnMut(&[u8]) -> Result<()>,
     ) -> Result<DoorInjectionReceipt> {
+        self.with_send_token_at_door_admitting(vault, identity_id, None, apply)
+    }
+
+    /// [`Self::with_send_token_at_door`] for a send that may carry files
+    /// (fix list row 17645): `retained`, the holder of a frozen send with
+    /// files, judges that send once more in the door's own writer, after
+    /// the row and custody checks and before the token is copied out, so an
+    /// erase or a clearance revocation that commits first stops it here. The
+    /// writer is released before `apply` runs; an erase that commits after
+    /// it finds the send already under way.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::with_send_token_at_door`], and the holder's refusal.
+    pub(crate) fn with_send_token_at_door_admitting(
+        &self,
+        vault: &Vault,
+        identity_id: EntityId,
+        retained: Option<&dyn RetainedMailMessage>,
+        apply: &mut dyn FnMut(&[u8]) -> Result<()>,
+    ) -> Result<DoorInjectionReceipt> {
         self.require_send_grant()?;
         // The row check, the custody re-proof and the token copy share one
         // write transaction, so a release or scope removal cannot commit
@@ -34,6 +56,9 @@ impl GmailDelegatedAdapter {
         let wtxn = vault.store.env.write_txn()?;
         self.require_active_row_matches_adapter_in_txn(vault, &wtxn, &identity_id)?;
         self.verify_custody_grant_in_txn(vault, &wtxn)?;
+        if let Some(retained) = retained {
+            retained.admit_in(&wtxn)?;
+        }
         vault.inject_secret_at_door_in_txn(
             wtxn,
             &self.config.custody_record_ref,
@@ -201,7 +226,10 @@ impl GmailDelegatedAdapter {
                 .intent
                 .content_ref
                 .as_deref()
-                .is_some_and(|content_ref| content_ref.starts_with(GMAIL_SEND_PLAN_REF_PREFIX))
+                .is_some_and(|content_ref| {
+                    content_ref.starts_with(GMAIL_SEND_PLAN_REF_PREFIX)
+                        || content_ref.starts_with(GMAIL_ATTACHED_SEND_PLAN_REF_PREFIX)
+                })
             || !identity.may_send()
             || facts.binding.actor_ref() != Some(actor)
             || request.actor.actor_ref.as_deref() != Some(actor.to_hex().as_str())
@@ -210,6 +238,33 @@ impl GmailDelegatedAdapter {
         }
         Ok((identity_ref, actor))
     }
+}
+
+/// Replays one member send the recorded dispatch door already completed
+/// (fix list row 17645), as [`GmailDelegatedAdapter::dispatch_send_recorded`]
+/// replays it, but with no adapter: no live row, grant or send capability is
+/// needed, because nothing sends. The door validates `request` against the
+/// ledger's frozen request, whole, and answers with the outcome it recorded;
+/// a delivered send's thread record is projected again. A call the ledger has
+/// not completed is refused, never sent.
+///
+/// # Errors
+///
+/// An envelope that names no sender, the dispatch door's refusal (a request
+/// other than the frozen one among them), or a thread/comm projection failure
+/// after delivery (replay the same request to project it again).
+pub(crate) fn replay_completed_send_recorded(
+    vault: &Vault,
+    request: OutboundDispatchRequest,
+) -> std::result::Result<OutboundDispatchResult, OutboundDispatchError> {
+    let invalid = || Error::InvalidConfig("invalid gmail member send envelope".to_owned());
+    let identity_ref = request.channel_identity_ref.ok_or_else(invalid)?;
+    let actor = request.actor.actor_entity_ref.ok_or_else(invalid)?;
+    let result = vault.dispatch_outbound_intent_recorded(request, &mut CompletedSendSink)?;
+    if result.outcome == OutboundDispatchOutcome::DeliveredToChannel {
+        record_sent_thread(vault, identity_ref, actor, &result)?;
+    }
+    Ok(result)
 }
 
 /// Projects one delivered member send into the thread record: its

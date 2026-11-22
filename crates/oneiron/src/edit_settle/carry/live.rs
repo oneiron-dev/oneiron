@@ -26,6 +26,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::llm::decision::EvidenceVersion;
 use crate::office_body::{LiveChange, LivePin, LiveSheet};
+use oneiron_contracts::fingerprint::ContentHash;
 use oneiron_docedit::retained_opc::Limits;
 
 /// The live half of a sheet answer split: the workbook's sheet and each
@@ -271,7 +272,7 @@ impl Vault {
         }
         Ok(self
             .read_blob_artifact_version(&source.id, version)?
-            .is_none_or(|bytes| *blake3::hash(&bytes).as_bytes() != head_hash))
+            .is_none_or(|bytes| *ContentHash::of(&bytes).as_bytes() != head_hash))
     }
 
     /// The live half of splitting `bundle`, held on `artifact`.

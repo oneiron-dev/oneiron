@@ -10,6 +10,7 @@ use crate::{EdgeKind, ErrorKind, Vault};
 fn test_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), VaultConfig::default()).expect("open vault");
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     (dir, vault)
 }
 
@@ -160,7 +161,7 @@ fn ambiguous_sensitivity_band_fails_closed() {
         (Value::from("sensitivity"), Value::from(0_u64)),
         (Value::from("sensitivity"), Value::from(3_u64)),
     ]));
-    assert!(persona_snapshot_tier_a_clamped(&body));
+    assert!(persona_snapshot_tier_a_clamped(&body, true));
 }
 
 #[test]
@@ -297,6 +298,7 @@ fn persona_export_wire_fixture_is_persisted_and_malformed_rows_are_refused() -> 
                     entity_type: crate::registry::ENTITY_TYPE_PERSONA_SNAPSHOT_EXPORT,
                     occurred: TimeRange { start: 4, end: 4 },
                     learned_at: 4,
+                    row_version: None,
                     data: bytes,
                     allow_maintenance: true,
                     allow_reserved_predicate: false,
@@ -887,6 +889,7 @@ fn persona_snapshot_reads_keep_their_receipts() -> Result<()> {
                 crate::registry::ENTITY_TYPE_CLAIM,
                 TimeRange { start: 1, end: 1 },
                 1,
+                None,
                 &crate::claim::encode_claim_body(&body)?,
             )
             .edge(&id, crate::EdgeKind::ClaimOf, &agent, 1.0)

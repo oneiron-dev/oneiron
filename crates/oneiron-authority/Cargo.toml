@@ -10,6 +10,7 @@ repository.workspace = true
 [dependencies]
 oneiron-contracts = { version = "0.1.0", path = "../oneiron-contracts" }
 oneiron-crypto = { version = "0.1.0", path = "../oneiron-crypto" }
+oneiron-setting-contract = { version = "0.1.0", path = "../oneiron-setting-contract" }
 blake3 = { workspace = true }
 ed25519-dalek = { workspace = true }
 getrandom = { version = "=0.4.3", features = ["sys_rng"] }
@@ -19,6 +20,7 @@ rmpv = { workspace = true, features = ["with-serde"] }
 schemars = "=0.8.22"
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha2 = "0.10"
 zeroize = "1"
 
 [dev-dependencies]
