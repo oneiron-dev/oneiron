@@ -375,6 +375,8 @@ fn sign_in(carrier: &OAuthCarrier) -> SignedIn {
                 code_challenge: &challenge,
                 state: None,
                 resource: MCP_RESOURCE,
+                further_resources: &[],
+                purpose: None,
                 tier: AgentTier::ReadOnly,
             },
             now,
