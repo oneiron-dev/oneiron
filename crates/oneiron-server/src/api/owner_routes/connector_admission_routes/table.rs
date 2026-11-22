@@ -6,7 +6,7 @@ use axum::routing::{get, post};
 use super::super::{OwnerRoute, OwnerTable, RestShape};
 use super::schema::{
     accept_request_body_schema, admitted_slate_schema, approve_charter_body_schema,
-    attest_request_body_schema, charter_view_schema, connector_key_schema,
+    attest_request_body_schema, attested_schema, charter_view_schema, connector_key_schema,
     discard_charter_body_schema, enabled_request_body_schema, propose_charter_body_schema,
     qualify_request_body_schema, refresh_request_body_schema, refreshed_schema,
     register_request_body_schema, registered_schema,
@@ -86,10 +86,7 @@ pub(in super::super) fn owner_table() -> OwnerTable {
                 path: "/connectors/attest",
                 summary: "The owner attests a pending connector the probe suite cannot grade (CONNECTOR-QUALIFY = A): its tools must still match the stamped slate, and the key activates with an owner-attested receipt.",
                 row: None,
-                shape: Some(RestShape::json(
-                    attest_request_body_schema,
-                    connector_key_schema,
-                )),
+                shape: Some(RestShape::json(attest_request_body_schema, attested_schema)),
             },
             post(attest),
         ),

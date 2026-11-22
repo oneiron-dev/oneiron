@@ -3,6 +3,7 @@
 
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use oneiron_contracts::fingerprint::ContentHash;
 
 pub use crate::store::note_body::{
     NOTE_BODY_KEYS, NOTE_CORE_KEYS, NoteBody, NoteCore, NoteKind, NoteScope, NoteWriteEnvelope,
@@ -23,7 +24,7 @@ mod archive_import;
 #[cfg(feature = "sync")]
 mod residence_read;
 pub use archive_import::ImportedNoteRead;
-pub(crate) use archive_import::{ArchivedNoteAdmission, archived_note_body};
+pub(crate) use archive_import::{ArchivedNoteAdmission, archived_note_body, diary_author_in};
 #[cfg(feature = "sync")]
 pub(crate) use residence_read::opened_note_view;
 mod archive_read;
@@ -74,9 +75,11 @@ pub use proposals::{
 };
 pub(crate) use proposals::{
     NoteEditLanding, erase_fork_actor_in_txn, erase_proposal_actor_in_txn,
-    erase_receipt_actor_in_txn, recovery_fork_value,
+    erase_receipt_actor_in_txn, landing_receipt_note, recovery_fork_value,
 };
 pub use sync_rows::{ACTOR_ERASE_NOTE_REQUEST_RECEIPT, NoteRequestReceiptErase};
+#[cfg(oneiron_test_support)]
+pub(crate) use sync_rows::{put_pins_fork_authority_in_txn, put_pins_receipt_by_request_in_txn};
 pub use tombstone_review::NoteTombstoneProposal;
 pub(crate) use tombstone_review::{
     decline_tombstone, open_tombstone_proposals_in_txn, review_note_tombstones, tombstone_accepted,
@@ -191,13 +194,32 @@ pub(crate) fn note_explicit_only_in_txn(
     )
 }
 
+/// A digest of NOTE `id`'s overrides in `txn`, `None` when it has none. An
+/// override moves who reads a NOTE (its context) with no new version of its
+/// document, so a judgement of the NOTE's text a reader read stands for a
+/// later act only while this digest is the one it was made under (campaign
+/// copy review).
+pub(crate) fn note_overrides_digest_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<[u8; 32]>> {
+    let Some(overrides) = overrides::note_overrides_in_txn(store, txn, id)? else {
+        return Ok(None);
+    };
+    let encoded = serde_json::to_vec(&overrides)
+        .map_err(|_| crate::Error::InvariantViolation("NOTE overrides encode"))?;
+    Ok(Some(ContentHash::of(&encoded).into_bytes()))
+}
+
 /// A refused private row must not disclose its existence through a receipt.
 /// All NOTE kinds are omitted from denial counts: without admission, a reader
 /// cannot safely distinguish a public NOTE from an owner-only one. Diary-pair
-/// grants and malformed grant bodies are likewise opaque to ordinary readers.
+/// grants and malformed grant bodies are likewise opaque to ordinary readers,
+/// and so is sealed secret custody, which no retrieval returns (ARCH-0069:8).
 pub(crate) fn countable_read_suppression(entity_type: u8, body: &[u8]) -> bool {
     match entity_type {
-        crate::registry::ENTITY_TYPE_NOTE => false,
+        crate::registry::ENTITY_TYPE_NOTE | crate::registry::ENTITY_TYPE_SECRET_CUSTODY => false,
         crate::registry::ENTITY_TYPE_ACCESS_GRANT => {
             crate::access_grant::decode_access_grant_body(body).is_ok_and(|grant| {
                 !matches!(
@@ -263,6 +285,8 @@ pub(crate) use citation_erase::{
     erase_restored_citations_in_txn,
 };
 pub(crate) use pin_index::citation_delete_scope_exists;
+#[cfg(oneiron_test_support)]
+pub(crate) use pin_index::{put_pins_pin_in_txn, put_pins_request_in_txn};
 #[cfg(feature = "sync")]
 pub(crate) use pin_index::{remove_citation_request, track_citation_request};
 #[cfg(feature = "sync")]
@@ -291,12 +315,12 @@ pub(crate) use fork_downlink::{
 };
 #[cfg(feature = "sync")]
 mod fork_upload;
+#[cfg(all(feature = "sync", oneiron_test_support))]
+pub(crate) use fork_upload::fork_upload_refusal_in_txn;
 #[cfg(feature = "sync")]
 pub use fork_upload::{NoteForkUpload, NoteForkUploadOutcome, NoteForkUploadReceipt};
 #[cfg(feature = "sync")]
 pub(crate) use fork_upload::{fork_upload_frame_in_txn, uploadable_fork_in_txn};
-// FIX [LIBTEST-QUARANTINE-NOTE-ERASURE-TESTS]: the lib test target's type check fails here (2 errors: E0063 x1, E0308 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod erasure_tests;
 mod live_body;
@@ -400,6 +424,8 @@ pub(crate) fn note_side_text_in_txn(
 }
 
 mod document_store;
+mod found_key_restore;
+pub(crate) use found_key_restore::restore_found_key_text_in_txn;
 mod saved;
 pub(crate) use document_store::deck_outline_document_in_txn;
 pub(crate) use document_store::resolve_deck_pin_in_txn;
@@ -422,6 +448,8 @@ pub use folder_source::{
     FolderSourceFile, OriginalBytes,
 };
 mod import;
+#[cfg(oneiron_test_support)]
+pub(crate) use import::note_import_content_hash_for_test;
 pub use import::{
     ImportedFile, ImportedNote, ImportedNoteBatch, ImportedNoteBatchReceipt, ImportedNoteLink,
     ImportedNoteStanding, NOTES_IMPORT_SOURCE,
@@ -434,6 +462,8 @@ pub(crate) use birth::{birth_document_in_txn, room_birth_document_in_txn};
 mod room_reads;
 mod scan;
 pub(crate) use scan::measure as measure_note_document;
+#[cfg(oneiron_test_support)]
+pub(crate) use title_index::put_pins_title_in_txn;
 #[cfg(feature = "sync")]
 pub(crate) use title_index::replace_recovered_set_in_txn as replace_recovered_titles_in_txn;
 mod operations;
@@ -449,31 +479,30 @@ pub use brief_view::{BriefCitationView, BriefView};
 pub(crate) use replica::{
     import_note_from_authority, text_withheld_by_worlds, validate_note_export,
 };
-// FIX [LIBTEST-QUARANTINE-NOTE-DOCUMENT-TESTS]: the lib test target's type check fails here (8 errors: E0308 x7, E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(all(test, feature = "sync"))]
 mod document_tests;
-// FIX [LIBTEST-QUARANTINE-NOTE-SYNC-TESTS]: the lib test target's type check fails here (10 errors: E0061 x6, E0308 x3, E0063 x1); port it, then drop this gate
-#[cfg(any())]
+#[cfg(all(test, feature = "sync"))]
+mod mask_splice_tests;
 #[cfg(all(test, feature = "sync"))]
 mod sync_tests;
 pub(crate) use document::MAX_NOTE_BYTES;
+#[cfg(oneiron_test_support)]
+pub(crate) use document::pins_note_proposal_snapshot;
 pub use document::{
     NoteDocumentView, NotePin, NoteScalarEdit, NoteScalarEditOutcome, NoteSpanResolution,
 };
 pub use document::{NoteScalarEdit as NoteEdit, NoteScalarEditOutcome as NoteEditOutcome};
 
-// FIX [LIBTEST-QUARANTINE-NOTE-PROGRAM-TESTS]: the lib test target's type check fails here (2 errors: E0308 x1, E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod program_tests;
-// FIX [LIBTEST-QUARANTINE-NOTE-SHARED-MEMBERSHIP-TESTS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod shared_membership_tests;
 
-// FIX [LIBTEST-QUARANTINE-NOTE-ADAPTER-TESTS]: the lib test target's type check fails here (2 errors: E0308 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod adapter_tests;
 pub(crate) mod tables;
+
+#[cfg(oneiron_test_support)]
+pub(crate) use side_keys::{
+    hex_hex_hash_pin_for_test, hex_pair_pin_for_test, hex_triple_pin_for_test,
+};

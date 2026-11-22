@@ -15,6 +15,7 @@ pub(super) fn dimensions_to_engine(value: f64) -> Result<usize, MemoryError> {
             "Open the vault with the dimension count its embedding model produces.".to_owned(),
         ],
         successor_short_id: None,
+        extraction_layout: None,
         gate_denial: None,
         read_receipt: None,
         policy_denial: None,
@@ -25,6 +26,7 @@ pub(super) fn dimensions_to_engine(value: f64) -> Result<usize, MemoryError> {
         reason_codes: Vec::new(),
         legal_hold: None,
         room_join_hold: None,
+        pending: None,
     };
     if !value.is_finite()
         || value.fract() != 0.0
@@ -51,6 +53,7 @@ pub(super) fn limit_to_engine(value: f64) -> Result<usize, MemoryError> {
                 u32::MAX
             )],
             successor_short_id: None,
+            extraction_layout: None,
             gate_denial: None,
             read_receipt: None,
             policy_denial: None,
@@ -61,6 +64,7 @@ pub(super) fn limit_to_engine(value: f64) -> Result<usize, MemoryError> {
             reason_codes: Vec::new(),
             legal_hold: None,
             room_join_hold: None,
+            pending: None,
         });
     }
     // Positive whole u32 values are exact JS integers and fit usize on N-API targets.

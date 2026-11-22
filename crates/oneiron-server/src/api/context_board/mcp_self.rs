@@ -133,6 +133,8 @@ pub(crate) fn connection_brief_state(
     };
     let host = BriefHostFacts {
         run_ceiling: None,
+        // No pumped wake picked a read shape for a credential's call.
+        read_shape: None,
         replay_run,
         credential_ceiling: auth.verified_slip().map(|proof| {
             oneiron::context_board::brief_credential_ceiling(

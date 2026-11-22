@@ -35,6 +35,14 @@ const HELLO_OFF_BY_POLICY: &str = "Windows Hello is turned off by policy on this
 const HELLO_AVAILABILITY_UNKNOWN: &str =
     "Windows Hello gave an availability this build does not know";
 
+// Windows' `HRESULT`s for an interface a registered class does not have, and
+// for a class this Windows has not registered (winerror.h).
+const E_NOINTERFACE: i32 = 0x8000_4002_u32.cast_signed();
+const REGDB_E_CLASSNOTREG: i32 = 0x8004_0154_u32.cast_signed();
+
+const NO_DESKTOP_CONSENT_PROMPT: &str =
+    "this Windows has no unlock prompt a desktop process can show";
+
 impl PresenceError {
     /// The refusal one of Apple's LocalAuthentication error codes (`LAError`)
     /// stands for. It is here, and not with the macOS prompt, so that every
@@ -85,6 +93,25 @@ impl PresenceError {
                 "user consent verification result",
                 other as i64,
             )),
+        }
+    }
+
+    /// The refusal a failed activation of Windows' consent verifier for a
+    /// desktop window stands for, from the activation's `HRESULT`. It is
+    /// here, and not with the Windows prompt, so that every platform's tests
+    /// run it.
+    ///
+    /// - Windows has the class without the window interface (a Windows
+    ///   before build 22000), or has not registered the class: this Windows
+    ///   can never show the prompt, [`Self::NoPrompt`].
+    /// - Every other code (no memory, a runtime that did not start, a call
+    ///   that was refused): [`Self::Platform`]. A device whose prompt failed
+    ///   to come up this once is not a device that cannot ask.
+    #[must_use]
+    pub const fn from_consent_interop_activation(hresult: i32) -> Self {
+        match hresult {
+            E_NOINTERFACE | REGDB_E_CLASSNOTREG => Self::NoPrompt(NO_DESKTOP_CONSENT_PROMPT),
+            other => Self::Platform("user consent verifier activation", other as i64),
         }
     }
 }

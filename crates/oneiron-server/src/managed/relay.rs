@@ -83,6 +83,19 @@ fn hex_id(value: &str) -> bool {
 }
 
 impl RelayConfig {
+    /// The room file at `path`, read once it is admitted: its installer
+    /// places it root's, at mode 0440 for the room's group, and one any user
+    /// can write is refused, since it names the token file and the binary the
+    /// room runs (FIX RELAY-ACCESS-TOKEN-FILE-NOT-ADMITTED). One that does
+    /// not parse names itself and the place, never the parser's message (FIX
+    /// CONFIG-SIDE-FILE-PARSE-ERRORS-PRINT-PARSER-MESSAGE). Then validated.
+    fn from_file(path: &FsPath) -> anyhow::Result<Self> {
+        let raw = crate::config::merge::read_host_placed_config_file(path)?;
+        let config: Self = crate::config::merge::parse_json(path, &raw)?;
+        config.validate()?;
+        Ok(config)
+    }
+
     fn validate(&self) -> anyhow::Result<()> {
         anyhow::ensure!(
             hex_id(&self.vault_id),
@@ -357,10 +370,14 @@ pub(crate) async fn run_relay_with_hold_guard(
     hold_guard: Option<Arc<dyn RelayDeleteHoldGuard>>,
 ) -> anyhow::Result<()> {
     crate::commands::init_tracing("info");
-    let config: RelayConfig = serde_json::from_slice(&std::fs::read(config_path)?)?;
-    config.validate()?;
+    let config = RelayConfig::from_file(config_path)?;
     let cors = crate::web_client::cors_layer(&config.allowed_origins)?;
-    let token_file = Zeroizing::new(std::fs::read_to_string(&config.access_token_file)?);
+    // The installer places the token root's, at mode 0440 for the room's own
+    // group: one any user can read or write is refused before it is read
+    // (FIX RELAY-ACCESS-TOKEN-FILE-NOT-ADMITTED).
+    let token_file = Zeroizing::new(crate::config::merge::read_group_shared_credential_file(
+        &config.access_token_file,
+    )?);
     let token = Zeroizing::new(token_file.trim().to_owned());
     drop(token_file);
     anyhow::ensure!(

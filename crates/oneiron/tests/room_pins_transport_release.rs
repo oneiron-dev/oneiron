@@ -183,6 +183,7 @@ fn open_fixture() -> TestResult<Fixture> {
             conversation_ref: room.to_hex(),
             turn_ref: Some(EntityId::now().to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: Some(target.to_hex()),
                 author: WitnessAuthor::User,

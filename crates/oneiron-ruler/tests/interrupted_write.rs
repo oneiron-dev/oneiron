@@ -64,6 +64,8 @@ fn held_out(incumbent: &ExperimentIdentity, candidate: &ExperimentIdentity) -> H
         incumbent: incumbent.clone(),
         candidate: candidate.clone(),
         candidate_params: serde_json::json!({"budget_rows": 10}),
+        model_id: "model".to_owned(),
+        budget_rows: 10,
         incumbent_scorecard_sha256: "e".repeat(64),
         candidate_scorecard_sha256: "f".repeat(64),
         axes: vec![AxisComparison {

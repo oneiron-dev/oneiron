@@ -17,6 +17,11 @@ mod memory;
 mod native;
 #[cfg(all(unix, feature = "native"))]
 pub mod organ;
+/// Doors from the integration tests to crate-private items. Compiled only under
+/// `--cfg oneiron_test_support`, which only the test command sets. Not API.
+#[cfg(all(feature = "native", oneiron_test_support))]
+#[doc(hidden)]
+pub mod test_doors;
 
 pub use api::{
     ActiveContentFacts, Anomaly, BackendError, BackendRejectCode, BackendSignature,

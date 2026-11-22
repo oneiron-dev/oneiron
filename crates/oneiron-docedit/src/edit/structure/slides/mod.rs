@@ -90,14 +90,12 @@ impl Lists {
                 .collect()
         };
         let slides = ids(xml::child(&tree, 0, P, "sldIdLst"), P)?;
-        let lists: Vec<usize> = xml::child(&tree, 0, P, "extLst")
-            .map(|list| {
-                tree.children(list)
-                    .filter(|(_, node)| node.is(P, "ext") && node.attr("uri") == Some(SECTION_EXT))
-                    .filter_map(|(at, _)| xml::child(&tree, at, P14, "sectionLst"))
-                    .collect()
-            })
-            .unwrap_or_default();
+        let lists: Vec<usize> = xml::child(&tree, 0, P, "extLst").map_or_default(|list| {
+            tree.children(list)
+                .filter(|(_, node)| node.is(P, "ext") && node.attr("uri") == Some(SECTION_EXT))
+                .filter_map(|(at, _)| xml::child(&tree, at, P14, "sectionLst"))
+                .collect()
+        });
         let sections: Vec<Vec<(usize, u32)>> = match lists[..] {
             [] => Vec::new(),
             [list] => tree
@@ -619,8 +617,7 @@ pub(super) fn reorder(
             section
                 .iter()
                 .find(|&&(_, member)| member == id)
-                .map(|&(at, _)| lists.bytes[lists.tree.nodes[at].span.clone()].to_vec())
-                .unwrap_or_default()
+                .map_or_default(|&(at, _)| lists.bytes[lists.tree.nodes[at].span.clone()].to_vec())
         };
         let members = order
             .iter()

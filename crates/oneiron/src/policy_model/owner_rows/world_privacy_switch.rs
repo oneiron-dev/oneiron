@@ -21,7 +21,13 @@ use crate::authority::{
     ActSurface, EffectiveRead, EffectiveWorldPrivacy, KeyWork, PolicyRevision, WorldEditAuthor,
     WorldPrivacy,
 };
-use crate::consent::AuthenticatedOwner;
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
+use crate::batch::export::{
+    ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
+};
+use crate::consent::{AuthenticatedOwner, OwnerAuthoredWrite};
 use crate::error::{Error, Result};
 use crate::gate::PolicyRowScope;
 use crate::side_table::{self, Named, SideTable};
@@ -174,18 +180,22 @@ impl Vault {
     /// The key step after one edit and its honest settlement, in the edit's
     /// commit: `key_owner` is the live vault owner PERSON the world's key
     /// binds, whoever made the change (a holder, or an agent within its
-    /// Grant).
+    /// Grant). `owner_authored` when the edit is the vault owner's own, made
+    /// in person ([`WorldEditAuthor`]): the key records and the key work
+    /// request it writes carry the owner key's proof the edit carries.
     pub(super) fn finish_world_key_work_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         key_owner: EntityId,
         receipt: WorldPrivacyReceipt,
         secret: Result<&crate::world_keys::MachineSecret>,
+        owner_authored: Option<&OwnerAuthoredWrite>,
     ) -> Result<WorldPrivacyReceipt> {
         let world = EntityId::from_hex(&receipt.world)
             .map_err(|_| Error::InvariantViolation("world privacy receipt world"))?;
-        let status = self.world_key_for_edit_in_txn(txn, key_owner, world, secret)?;
-        self.settle_world_key_work_by_in_txn(txn, key_owner, receipt, status)
+        let status =
+            self.world_key_for_edit_in_txn(txn, key_owner, world, secret, owner_authored)?;
+        self.settle_world_key_work_by_in_txn(txn, key_owner, receipt, status, owner_authored)
     }
 
     /// The door's work in the caller's write transaction, for a door that
@@ -204,7 +214,8 @@ impl Vault {
         seen: Option<PolicyRevision>,
     ) -> Result<WorldPrivacyReceipt> {
         let actor = super::world_privacy_will::revalidate_holder_in_txn(self, txn, owner, world)?;
-        let author = WorldEditAuthor::holder(actor, surface);
+        let owner_authored = owner.owner_answer_in_txn(self, txn)?;
+        let author = WorldEditAuthor::holder(actor, surface, owner_authored.as_ref());
         self.write_world_privacy_in_txn(txn, author, world, settings, seen, None)
     }
 
@@ -214,7 +225,7 @@ impl Vault {
     pub(super) fn write_world_privacy_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
-        author: WorldEditAuthor,
+        author: WorldEditAuthor<'_>,
         world: EntityId,
         settings: WorldPrivacy,
         seen: Option<PolicyRevision>,
@@ -277,16 +288,18 @@ impl Vault {
     /// root, holds a wrap of the world's current key: a first key minted on
     /// a bridge record (Docs Q06) still awaits the holder's next wrap. Key
     /// work that awaits a holder names one in the same commit
-    /// ([`Self::settle_world_key_work_by_in_txn`]).
+    /// ([`Self::settle_world_key_work_by_in_txn`]). `owner_authored` as
+    /// the edit's door took it from `owner`.
     pub(crate) fn settle_world_key_work_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         owner: &AuthenticatedOwner,
         receipt: WorldPrivacyReceipt,
         status: Option<WorldKeyStatus>,
+        owner_authored: Option<&OwnerAuthoredWrite>,
     ) -> Result<WorldPrivacyReceipt> {
         let key_owner = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
-        self.settle_world_key_work_by_in_txn(txn, key_owner, receipt, status)
+        self.settle_world_key_work_by_in_txn(txn, key_owner, receipt, status, owner_authored)
     }
 
     /// [`Self::settle_world_key_work_in_txn`] for any author, the world's key
@@ -295,12 +308,16 @@ impl Vault {
     /// owns the vault or not, or an agent within its Grant; FIX 4704): an
     /// owner work request for the settings revision right after the edit,
     /// carrying the edit's own act, signed by this install as its carrier.
+    /// `owner_authored` when the edit is the vault owner's own, made in
+    /// person: the request then carries the owner key's proof the edit
+    /// carries.
     pub(super) fn settle_world_key_work_by_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         key_owner: EntityId,
         mut receipt: WorldPrivacyReceipt,
         status: Option<WorldKeyStatus>,
+        owner_authored: Option<&OwnerAuthoredWrite>,
     ) -> Result<WorldPrivacyReceipt> {
         let mut key_work = key_work_of(&receipt.next, status);
         let world = EntityId::from_hex(&receipt.world)
@@ -324,8 +341,13 @@ impl Vault {
             ))?;
             let after = parse_revision(&receipt.revision_after)
                 .ok_or(Error::InvariantViolation("world privacy receipt revision"))?;
-            receipt.owner_work =
-                Some(self.record_world_privacy_work_in_txn(txn, edit.0, key_owner, after.0)?);
+            receipt.owner_work = Some(self.record_world_privacy_work_in_txn(
+                txn,
+                edit.0,
+                key_owner,
+                after.0,
+                owner_authored,
+            )?);
         }
         RECEIPTS.put(&self.store, txn, &receipt.revision, &receipt)?;
         Ok(receipt)
@@ -383,4 +405,45 @@ impl Vault {
 /// 32 bytes as lowercase hex.
 pub(super) fn hex32(bytes: &[u8; 32]) -> String {
     oneiron_hex::encode(bytes)
+}
+
+/// Lands one archived `OWNER_POLICY_WORLD_PRIVACY_RECEIPT` envelope in `txn`: canonical
+/// outer decode and the credential predicate, then the writer's own receipt shape (keyed
+/// by its revision, first revision 1, hex ids, 64-hex revisions). Passive history: no
+/// liveness is checked, and no edit, event, key work or notification is written here.
+///
+/// # Errors
+/// Storage faults; validation stays in the returned outcome.
+pub(super) fn land_archived_world_privacy_receipt_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> Result<ArchivedSideRowOutcome> {
+    let (key, value) = match decode_archived_row(&RECEIPTS, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    if value.revision != key {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidEncoding,
+        ));
+    }
+    let hex_ok = |hex: &str| EntityId::from_hex(hex).is_ok();
+    if value.revision == 0
+        || !hex_ok(&value.receipt_id)
+        || !hex_ok(&value.world)
+        || !hex_ok(&value.author)
+        || value.agent.as_deref().is_some_and(|hex| !hex_ok(hex))
+        || value.answer.as_deref().is_some_and(|hex| !hex_ok(hex))
+        || !hex_ok(&value.machine)
+        || parse_revision(&value.revision_after).is_none()
+        || parse_revision(&value.entry_hash).is_none()
+        || value.orphaned_from.iter().any(|hex| !hex_ok(hex))
+    {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidValue,
+        ));
+    }
+    install_archived_row(&RECEIPTS, vault, txn, permit, &key, row)
 }

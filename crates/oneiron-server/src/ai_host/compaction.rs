@@ -49,6 +49,8 @@ use crate::wire_telemetry::{LimitQuestions, LimitRow};
 mod chat;
 mod chat_flights;
 mod live_fork;
+#[cfg(oneiron_test_support)]
+pub(crate) mod pass_door;
 mod profiled;
 mod self_writer;
 mod serve;
@@ -695,6 +697,9 @@ enum CompactionMeter {
     Chat {
         guard: BudgetGuard,
         payer: Option<PayerPerson>,
+        /// The turn keeps no model-call record: each call's run is off the
+        /// record and names no rows (census L5-25).
+        keeps_no_record: bool,
     },
 }
 

@@ -74,10 +74,11 @@ use super::{
     OwnerWorkReceipt, OwnerWorkUnassigned, RecoveryRootSeed, RootRestore, WorldKitRestore,
 };
 use crate::authority::{
-    ActSurface, AuthorityEntryHash, AuthorityFold, MachineEnrolmentRequest, OwnerWorkBody,
-    OwnerWorkKind, OwnerWorkOutcome, OwnerWorkRefusal, OwnerWorkRequest, RecoveryRootId,
-    RequestCode, RootBasisCheck, RootChange, check_root_basis, end_request_wait_in_txn,
-    ended_request_wait, invalid_authority, read_pin_row_in_txn, write_awaited_root_in_txn,
+    ActSurface, AuthorityEntryHash, AuthorityFold, CarrierReading, MachineEnrolmentRequest,
+    OwnerWorkBody, OwnerWorkKind, OwnerWorkOutcome, OwnerWorkRefusal, OwnerWorkRequest,
+    RecoveryRootId, RequestCode, RootBasisCheck, RootChange, check_root_basis,
+    end_request_wait_in_txn, ended_request_wait, invalid_authority, read_pin_row_in_txn,
+    write_awaited_root_in_txn,
 };
 use crate::check_in::{ActClass, AppliedCheckIn, CheckInDecision, owner_act_decision_in_txn};
 use crate::consent::AuthenticatedOwner;
@@ -169,6 +170,61 @@ pub(super) enum RootRecheck {
     Runs,
     /// Final: the refused result it signs closes the request.
     Refused(OwnerWorkRefusal),
+}
+
+/// One root request pending on this install, as its surface lists it for
+/// the owner.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListedRootRequest {
+    /// The request's signed entry: what a cancel names.
+    pub entry: AuthorityEntryHash,
+    pub change: RootChange,
+    pub receipt: OwnerWorkReceipt,
+    /// The machine the request names as its carrier, with this install's
+    /// reading of the key that signed it ([`AuthorityFold::carrier_reading`]).
+    /// A surface names the asker from the reading's role and `is_mine`; a
+    /// reading with no role ties the named machine to no key this install
+    /// reads, and a surface names no machine by its id. The owner the request
+    /// names and its surface are that carrier's word
+    /// (CARRIED-PIN-PROMPT-HOSTED-CARRIER = A).
+    pub carrier: CarrierReading,
+}
+
+impl ListedRootRequest {
+    /// The root a pending pin asks this install to trust; `None` for every
+    /// other change, which its target runs with the kit's own material.
+    #[must_use]
+    pub fn pin_root(&self) -> Option<RecoveryRootId> {
+        match self.change {
+            RootChange::Pin { root } => Some(root),
+            RootChange::Activate | RootChange::Restore { .. } | RootChange::Anchor { .. } => None,
+        }
+    }
+
+    /// The question a surface asks before the owner confirms a pending pin
+    /// ([`crate::authority::pin_request_prompt`]): three lines, the
+    /// question, the kit's code, then who asked by this install's reading
+    /// of the carrier. No name is held for the carrier here, so the last
+    /// line names it by its kind. `None` for every other change.
+    #[must_use]
+    pub fn prompt(&self) -> Option<String> {
+        self.pin_root().map(|root| {
+            crate::authority::pin_request_prompt(
+                &root,
+                &self.carrier,
+                crate::authority::PromptDeviceName::NotHeld,
+            )
+        })
+    }
+
+    /// The code of the root a pending pin names
+    /// ([`crate::authority::recovery_root_code`]): what the owner compares
+    /// with his kit. `None` for every other change.
+    #[must_use]
+    pub fn root_code(&self) -> Option<String> {
+        self.pin_root()
+            .map(|root| crate::authority::recovery_root_code(&root))
+    }
 }
 
 /// The cancel door's refusal for a request this install folds as no root
@@ -412,13 +468,21 @@ impl Vault {
     ) -> Result<OwnerWorkReceipt> {
         self.with_write_txn(|txn| {
             let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+            let owner_authored = owner.owner_answer_in_txn(self, txn)?;
             let fold = self.authority_view_readonly_in_txn(txn)?;
             let target = match fold.owner_work_request(&request) {
                 Some(asked) if asked.kind() == OwnerWorkKind::Root => asked.act.target,
                 _ => return Err(super::refused(NO_ROOT_REQUEST)),
             };
             if fold.owner_work_cancels(&request).next().is_none() {
-                self.record_owner_work_cancel_in_txn(txn, actor, surface, target, request)?;
+                self.record_owner_work_cancel_in_txn(
+                    txn,
+                    actor,
+                    owner_authored.as_ref(),
+                    surface,
+                    target,
+                    request,
+                )?;
             }
             let after = self.authority_view_readonly_in_txn(txn)?;
             OwnerWorkReceipt::of(&after, request).ok_or_else(invalid_authority)
@@ -435,21 +499,46 @@ impl Vault {
         &self,
         owner: &AuthenticatedOwner,
     ) -> Result<Vec<(AuthorityEntryHash, RootChange, OwnerWorkReceipt)>> {
+        Ok(self
+            .pending_root_request_listing(owner)?
+            .into_iter()
+            .map(|listed| (listed.entry, listed.change, listed.receipt))
+            .collect())
+    }
+
+    /// [`Self::pending_root_requests`] as the target's surface lists them
+    /// for the owner: each with the machine that carried it, read by the
+    /// key that signed its stored row, in one snapshot with the fold
+    /// (FIX [CARRIED-PIN-ASKER-UNSERVED]). A prompt names the asker from
+    /// this reading alone. An owner's read: the proof is revalidated.
+    pub fn pending_root_request_listing(
+        &self,
+        owner: &AuthenticatedOwner,
+    ) -> Result<Vec<ListedRootRequest>> {
         let txn = self.store.env.read_txn()?;
         owner.revalidate_in_txn(self, &txn)?;
         let Some(me) = crate::identity::read_machine_id_in_txn(self, &txn)? else {
             return Ok(Vec::new());
         };
         let fold = self.authority_view_readonly_in_txn(&txn)?;
-        Ok(fold
-            .pending_owner_work_for(me)
-            .filter_map(|(hash, request)| match request.work {
-                OwnerWorkBody::Root { change, .. } => {
-                    OwnerWorkReceipt::of(&fold, hash).map(|receipt| (hash, change, receipt))
-                }
-                _ => None,
-            })
-            .collect())
+        let mut listed = Vec::new();
+        for (entry, request) in fold.pending_owner_work_for(me) {
+            let OwnerWorkBody::Root { change, .. } = request.work else {
+                continue;
+            };
+            let Some(receipt) = OwnerWorkReceipt::of(&fold, entry) else {
+                continue;
+            };
+            let carrier =
+                self.stored_carrier_reading_in_txn(&txn, &fold, request.carrier, &entry)?;
+            listed.push(ListedRootRequest {
+                entry,
+                change,
+                receipt,
+                carrier,
+            });
+        }
+        Ok(listed)
     }
 
     /// The pickup's arm for the root request signed as entry `hash`, naming

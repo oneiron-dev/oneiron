@@ -17,6 +17,7 @@ use super::lifecycle::SkillLifecycle;
 use super::record::SkillRecord;
 use super::validate::validate_skill_update;
 use crate::error::ArtifactError;
+use crate::write_envelope::skill_record::SkillContentHash;
 
 impl Vault {
     /// Typed SKILL put door. New records are born `candidate` — all three
@@ -371,9 +372,20 @@ impl Vault {
         // A fork starts its own version line, so its label is no revision
         // of its parent's.
         if !replaces_parent && new.version == old.version {
-            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
-                "superseding revision must carry a new version",
-            )));
+            // The refusal names the member the owner must bump: a whole pack
+            // put funnels through here, and the bare sentence left the owner
+            // guessing which member kept its version. The owned-text sibling
+            // keeps the sentence, kind and code; only the text names the member.
+            let content = |hash: Option<SkillContentHash>| {
+                hash.map_or_else(|| "none".to_owned(), |hash| hash.to_hex())
+            };
+            return Err(Error::Artifact(ArtifactError::SkillVersionKept(format!(
+                "superseding revision must carry a new version: skill '{}' keeps version '{}' (content {} -> {})",
+                old.skill_id,
+                old.version,
+                content(old.content_hash),
+                content(new.content_hash),
+            ))));
         }
         // Canon (ARCH-0053 §6): superseded means "new version ADMITTED".
         // A non-active successor would leave the skillId with no admitted

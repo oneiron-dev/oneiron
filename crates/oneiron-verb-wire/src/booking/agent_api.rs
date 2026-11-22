@@ -2,6 +2,7 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::booking::constraint::{FullDay, RankedSlot};
+use crate::booking::disclosure_rung::BusyBlockRow;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -109,6 +110,11 @@ pub enum BookingBookResult {
         selected_slot: SelectedSlot,
         /// Server-capped expiry. The caller never chose it.
         expires_at: u64,
+        /// The deposit checkout this hold opened, when its event type asks
+        /// a deposit (BK-DEPOSITS). Absent otherwise, and on a hold that
+        /// presented an open checkout's lease.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        deposit: Option<BookingDepositCheckout>,
     },
     Confirmed {
         reschedule_token: String,
@@ -119,13 +125,48 @@ pub enum BookingBookResult {
     },
 }
 
+/// The deposit checkout a hold of a deposit event type opened (BK-DEPOSITS):
+/// the lease a later hold of the same checkout presents, and what the
+/// visitor's Stripe.js authorizes the card with. The deposit is paid to the
+/// page owner's own Stripe account.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BookingDepositCheckout {
+    /// The checkout lease: a hold that presents it lives to the checkout
+    /// window's end.
+    pub checkout_lease_token: String,
+    /// The PaymentIntent's client secret, for Stripe.js.
+    pub client_secret: String,
+    /// The owner's Stripe publishable key, for Stripe.js.
+    pub publishable_key: String,
+    /// The deposit, in the currency's smallest unit.
+    pub amount_minor: u64,
+    /// ISO 4217, lowercase.
+    pub currency: String,
+}
+
+/// The busy time one caller's live calendar grants show for one host on a
+/// booking page (ARCH-0062 #grant-view; owner ruling BOOKING-GRANT-VIEW = A,
+/// 2026-10-20). Opaque intervals at the `Busy` rung at most: no title, body,
+/// attendee or source EVENT can be expressed here.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct GrantedBusyView {
+    /// The calendars the host binds, each named by one of the caller's live
+    /// grants, as lower-case hex entity ids.
+    pub calendar_refs: Vec<String>,
+    /// Half-open `[start_utc, end_utc)` busy blocks, sorted and merged, inside
+    /// the host's working hours over the bookable part of the asked window.
+    pub busy: Vec<BusyBlockRow>,
+}
+
 /// The closed response union.
 ///
 /// Availability projects ranked public slots, the flex flag and the days a
-/// meeting cap filled (date and cap only) and nothing else — no titles,
-/// descriptions, attendees, busy sources, or free/busy internals can be
-/// expressed here. Mutations project only action-safe opaque
-/// tokens.
+/// meeting cap filled (date and cap only). Beside them it carries `busy` only
+/// for a caller whose live calendar grants name every calendar a host binds
+/// ([`GrantedBusyView`]); no titles, descriptions, attendees, busy sources, or
+/// other free/busy internals can be expressed here. Mutations project only
+/// action-safe opaque tokens.
 ///
 /// `Book` carries [`BookingBookResult`] directly, exactly as
 /// [`BookingOperationRequest::Book`] carries [`BookingBookInput`] directly: one
@@ -142,6 +183,11 @@ pub enum BookingOperationResponse {
         /// Visitor-local days in the asked window that a meeting cap filled,
         /// ascending by date.
         full_days: Vec<FullDay>,
+        /// The caller's own grant view, one entry per host it covers. Absent
+        /// for an anonymous caller, the owner and a caller with no such grant,
+        /// whose answer reads exactly as before.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        busy: Option<Vec<GrantedBusyView>>,
     },
     Book(BookingBookResult),
     Reschedule {

@@ -1,0 +1,17 @@
+{
+  "name": "vault.channel_identities.graduation.answer",
+  "description": "The owner answers a standing identity send offer by its id: auto mints the send grant over the offer's envelope and moves the rung; not-now and manual_pinned decline and restart the streak.",
+  "input": "crate::channel_identity_autonomy::api::ChannelIdentityGraduationAnswerRequest",
+  "output": "crate::channel_identity_autonomy::api::ChannelIdentityGraduationAnswerReceipt",
+  "call": "crate::channel_identity_autonomy::api::answer(memory.vault(), &memory.embedded_owner(\"vault.channel_identities.graduation.answer\")?, input)?",
+  "scope": "Write",
+  "act_class": "grant_widen",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

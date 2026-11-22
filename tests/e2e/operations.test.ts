@@ -177,8 +177,12 @@ interface SeededCase {
 }
 interface OperationsCases { cases: { "OPERATIONS-05": SeededCase } }
 interface Discovery {
-  feature_flags: { capabilities: string[] };
+  feature_flags: { groups: Record<string, { count: number; capabilities: string[] }> };
   predicate_namespaces: string[];
+}
+/** Every capability authenticated discovery advertises: it groups them by family. */
+function discoveredCapabilities(discovery: Discovery): string[] {
+  return Object.values(discovery.feature_flags.groups).flatMap(group => group.capabilities);
 }
 function witnessInput(turn: TurnFixture, at: number): FacadeInput<"vault.witness"> {
   return { conversation_ref: turn.conversation_ref, turn_ref: turn.turn_ref, occurred_at: at,
@@ -215,7 +219,7 @@ suite.test(test, "OPERATIONS-05", "Default seeded engine needs no product pack s
   const recallInput = (query: string): FacadeInput<"vault.recall"> => ({ query, effort: "light", limit: 20, as_of: data.occurred_at });
   assertRecalledTurn(await engine.client.call("vault.recall", recallInput(data.before.query)), data.before, first);
   const discovered = await engine.cli.json<Discovery>(["api", "discover"]);
-  expect(discovered.feature_flags.capabilities).toEqual(expect.arrayContaining(data.required_capabilities));
+  expect(discoveredCapabilities(discovered)).toEqual(expect.arrayContaining(data.required_capabilities));
 
   const put = await engine.client.call("vault.packs.put", { files: [{ path: "PACK.md", text: packText }] });
   expect(put.outcome).toBe("installed");
@@ -240,7 +244,7 @@ suite.test(test, "OPERATIONS-05", "Default seeded engine needs no product pack s
   expect(claim.approval).toBe("auto");
   await engine.awaitReceipt(claim.receipt_ref);
   const afterDiscovery = (await engine.client.request<Discovery>("GET", "/api/core/discover")).body;
-  expect(afterDiscovery.feature_flags.capabilities).toEqual(expect.arrayContaining(data.required_capabilities));
+  expect(discoveredCapabilities(afterDiscovery)).toEqual(expect.arrayContaining(data.required_capabilities));
   expect(afterDiscovery.predicate_namespaces).toContain(data.extension.predicate.split(".")[0]!);
 
   assertRecalledTurn(await engine.client.call("vault.recall", recallInput(data.before.query)), data.before, first);

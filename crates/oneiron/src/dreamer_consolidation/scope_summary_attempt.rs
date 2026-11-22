@@ -30,6 +30,7 @@ use crate::scope_summary::{
 };
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
+use oneiron_contracts::fingerprint::ContentHash;
 use oneiron_model::llm::{
     BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, LlmBackend, LlmMessage,
     LlmMessageRole, LlmRequest, LlmResponse, ModelId, ModelTierRef, ResponseFormat, ScopeResource,
@@ -57,7 +58,18 @@ mod chunks;
 mod durable_labels;
 mod host;
 mod output;
+mod reply_and_pins;
 mod window;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::{
+    arc_children::arc_parts_params_hash_for_test,
+    arc_compose::arc_composition_params_hash_for_test, chunks::session_pages_params_hash_for_test,
+    window::correction_overflow_for_test,
+};
+use reply_and_pins::{check_summary_reply, note_read_in, summary_output};
+pub(crate) use reply_and_pins::{
+    editor_source_pins_in_txn, note_source_pins_in_txn, scope_summary_evidence_in_txn,
+};
 
 use window::summary_input;
 
@@ -242,6 +254,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                     &evidence,
                     instruction,
                     window,
+                    None,
                     StepChargeTally::default(),
                 )
                 .await;
@@ -387,8 +400,24 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                     && let Some(window) = session_window.and_then(window::smaller_window)
                 {
                     return self
-                        .compose_pages(attempt, ctx, &plan, &evidence, instruction, window, charges)
+                        .compose_pages(
+                            attempt,
+                            ctx,
+                            &plan,
+                            &evidence,
+                            instruction,
+                            window,
+                            Some(other.to_string()),
+                            charges,
+                        )
                         .await;
+                }
+                if let Some(failed) = crate::dreamer_runner::dreamer_failed_on_refused_step(
+                    &other,
+                    charges.units,
+                    &charges.step_bindings,
+                ) {
+                    return Ok(failed);
                 }
                 ctx.note_spend_before_error(charges.units, &charges.step_bindings);
                 // A spent model seat refused the step: the try parks on that seat
@@ -551,32 +580,6 @@ fn compose_again(charges: &StepChargeTally, now_ms: u64) -> DreamerAttemptExecut
     }
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct SummaryOutput {
-    text: String,
-    keep: String,
-}
-
-/// The reply's summary, or the static reason it is none: its text parts
-/// parse as [`SummaryOutput`] and the summary text is not blank. The step's
-/// check and the landing both read the reply through this one parse.
-fn summary_output(response: &LlmResponse) -> std::result::Result<SummaryOutput, &'static str> {
-    let body = output::reply_text(response);
-    let output: SummaryOutput = serde_json::from_str(body.trim())
-        .map_err(|_| "the model wrote an invalid summary/keep result")?;
-    if output.text.trim().is_empty() {
-        return Err("the model wrote an empty summary");
-    }
-    Ok(output)
-}
-
-/// The summary step's reply check: a reply [`summary_output`] refuses is
-/// refused inside the step, paid and never memoized.
-fn check_summary_reply(response: &LlmResponse) -> std::result::Result<(), String> {
-    summary_output(response).map(drop).map_err(str::to_owned)
-}
-
 /// All evidence and authority-dependent text pins, collected in one snapshot.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) struct ScopeSummaryEvidence {
@@ -616,24 +619,6 @@ impl ScopeSummaryEvidence {
     }
 }
 
-/// The version pins of `sources` as the Dreamer reads them in `txn` (FIX
-/// 10092); `None` once one of them is gone or the Dreamer does not read it.
-pub(crate) fn editor_source_pins_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    sources: &[EntityId],
-) -> Result<Option<Vec<SummarySourceVersion>>> {
-    let rows = dreamer_read(vault)?.get_entities_parts_in_txn(txn, sources)?;
-    let mut pins = Vec::with_capacity(sources.len());
-    for (source, row) in sources.iter().zip(rows) {
-        let Some(row) = row else {
-            return Ok(None);
-        };
-        pins.push(source_pin(vault, txn, *source, Some(&row))?);
-    }
-    Ok(Some(pins))
-}
-
 fn source_pin(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -649,7 +634,7 @@ fn source_pin(
             vault
                 .store
                 .port_entity_raw(txn, &id)?
-                .map(|raw| *blake3::hash(&raw).as_bytes())
+                .map(|raw| *ContentHash::of(&raw).as_bytes())
         } else {
             None
         },
@@ -660,65 +645,6 @@ fn source_pin(
         },
         projected_text: None,
     })
-}
-
-/// A NOTE as a summary reads it (FIX 907, 6321): the Dreamer's one NOTE
-/// projection of `body`, and the pin of it a summary's body holds, its
-/// stored revision and the projection's fingerprint. `None` when the
-/// Dreamer does not read it as a source.
-fn note_read_in(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    id: &EntityId,
-    body: &[u8],
-) -> Result<Option<(SummarySourceNote, NoteText)>> {
-    Ok(
-        super::note_text::note_text_in(vault, txn, id, body)?.map(|note| {
-            let pin = SummarySourceNote {
-                id: *id,
-                revision: super::swarm_evidence_content_hash(body),
-                projected_text: note.fingerprint,
-            };
-            (pin, note)
-        }),
-    )
-}
-
-/// Each of `notes` as a summary's evidence would pin it now, through the
-/// Dreamer's own read and NOTE projection (FIX 6321): `None` for one the
-/// Dreamer does not read as a source. A NOTE set's summary is checked
-/// against these at every serve.
-pub(crate) fn note_source_pins_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    notes: &[EntityId],
-) -> Result<Vec<Option<SummarySourceNote>>> {
-    let read = dreamer_read(vault)?;
-    let rows = read.get_entities_parts_in_txn(txn, notes)?;
-    let mut pins = Vec::with_capacity(notes.len());
-    for (note, row) in notes.iter().zip(rows) {
-        pins.push(match row {
-            Some((ENTITY_TYPE_NOTE, _, body)) => {
-                note_read_in(vault, txn, note, &body)?.map(|(pin, _)| pin)
-            }
-            _ => None,
-        });
-    }
-    Ok(pins)
-}
-
-/// Reads through the Dreamer's own scoped read, including every child of a
-/// witnessed turn. It is also the landing fence, under the landing writer.
-/// Every record shows under a call-local label (FIX 7574), each TURN a `T`
-/// and each NOTE an `N`, in source order: a sitting's lines cite those.
-/// A sitting's TURNs (`keep_turns`, FIX 7509) are kept as read for paging.
-pub(crate) fn scope_summary_evidence_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    sources: &[EntityId],
-    keep_turns: bool,
-) -> Result<ScopeSummaryEvidence> {
-    evidence_in_txn(vault, txn, sources, keep_turns, false)
 }
 
 /// [`scope_summary_evidence_in_txn`]; with `arc`, a TURN whose MESSAGE the

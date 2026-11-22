@@ -8,12 +8,18 @@
 //! beside them the candidacy this node's host kept for itself. The owner's
 //! picked node wins outright when it is a live eligible candidate; without
 //! one, an attached cloud, then an always-on node, then a primary device;
-//! the lowest node id breaks a tie in a tier. A pick that is absent,
-//! cleared, in conflict, unknown here or not eligible now leaves the default
-//! order, and stays recorded until a matching declaration lands. Picks and
-//! declarations are signed rows of the vault's main authority log, so every
-//! linked machine folds the same ones; each elects on its own fold, and the
-//! designation it writes is its own.
+//! the lowest node id breaks a tie in a tier. Only a full copy can become
+//! home (CROSS-ARCH-0024 `#my-network` item 04): while any machine's
+//! declaration the election ranks holds a full copy (its signed full-copy
+//! mark says held, `authority::full_copy_mark`; a served home marks its own),
+//! a declaration whose machine holds none is no candidate. With none, the
+//! election ranks as before. A pick that is absent, cleared, in conflict,
+//! unknown here or not eligible now (a machine with no full copy included)
+//! leaves the default order, and stays recorded until a matching
+//! declaration or mark lands. Picks, declarations and marks are signed rows
+//! of the vault's main authority log, so every linked machine folds the same
+//! ones; each elects on its own fold, and the designation it writes is its
+//! own.
 //!
 //! This node keeps the host's own candidacy as the host last supplied it,
 //! never inferred from the winner or the pick, and reads the declarations
@@ -75,6 +81,19 @@ impl HomeCandidates {
     /// it cannot run MACRO now stands only while no other eligible candidate
     /// does: a vault no node has claimed is claimed there, as a host with its
     /// Dreamer off claims it for its standing questions.
+    ///
+    /// Only a full copy can become home (HOME-ELECTION-NEEDS-FULL-COPY;
+    /// CROSS-ARCH-0024 `#my-network` item 04). A declaration holds one when
+    /// its machine's newest full-copy mark says held under the key the
+    /// machine still proves: a fact of the folded log alone, so every
+    /// machine that folds the same rows filters the same declarations,
+    /// whatever its host's own candidacy. A served home marks its own copy
+    /// where it declares its candidacy; any other machine marks after its
+    /// first full round under sync all. While a declaration this election
+    /// ranks holds a full copy, every declaration that holds none is no
+    /// candidate. While none does, every declaration ranks as before, so the
+    /// filter never leaves the election without a candidate it had. The
+    /// host's own candidates are not filtered: they are this host's word.
     pub(super) fn of(declared: &[JudgedHomeCandidacy], local: &[DreamerHomeNodeCandidate]) -> Self {
         // Each declared node: how many standing machines declare it, and
         // whether one of them can run MACRO now.
@@ -93,13 +112,19 @@ impl HomeCandidates {
             .iter()
             .find(|(_, (machines, _))| *machines > 1)
             .map(|(node_id, _)| *node_id);
-        let mut candidates: Vec<_> = declared
+        let declared_candidates: Vec<_> = declared
             .iter()
-            .filter_map(declared_home_candidate)
+            .filter_map(|declaration| {
+                declared_home_candidate(declaration)
+                    .map(|candidate| (candidate, declaration.full_copy))
+            })
             .collect();
-        let named: BTreeSet<u64> = candidates
+        let full_copy_stands = declared_candidates
             .iter()
-            .map(|candidate| candidate.node_id)
+            .any(|(candidate, full_copy)| *full_copy && candidate.designation_class().is_some());
+        let named: BTreeSet<u64> = declared_candidates
+            .iter()
+            .map(|(candidate, _)| candidate.node_id)
             .collect();
         let (unready, ready): (Vec<_>, Vec<_>) = local
             .iter()
@@ -114,6 +139,11 @@ impl HomeCandidates {
                     .get(&candidate.node_id)
                     .is_some_and(|(_, ready)| !*ready)
             });
+        let mut candidates: Vec<_> = declared_candidates
+            .into_iter()
+            .filter(|(_, full_copy)| *full_copy || !full_copy_stands)
+            .map(|(candidate, _)| candidate)
+            .collect();
         candidates.extend(ready);
         if candidates
             .iter()

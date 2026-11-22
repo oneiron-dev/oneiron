@@ -15,12 +15,14 @@
 
 use std::path::Path;
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
+
 use super::mirror_plan_types::{
     MirrorBatchClaim, MirrorBatchProgress, MirrorObservedTip, MirrorPendingHead, MirrorPlanRef,
     MirrorPushPlan, MirrorRefOutcome,
 };
 use super::mirror_review::RefSection;
-use super::review::field;
+use super::review::digest_hex;
 use super::types::OriginPublishDestination;
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -28,12 +30,6 @@ use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitRefName, GitWire, GitWireRepo, MIRROR_PUSH_REFSPECS};
 use crate::origin::mirror::OriginMirrorTarget;
 use crate::origin::mirror_strategy::OriginMirrorSyncStrategy;
-
-/// A plan digest's BLAKE3 derive-key context.
-const ORIGIN_MIRROR_PLAN_DIGEST_CONTEXT: &str = "oneiron:origin-mirror-plan:v1";
-
-/// A vector digest's BLAKE3 derive-key context.
-const ORIGIN_MIRROR_VECTOR_DIGEST_CONTEXT: &str = "oneiron:origin-mirror-vector:v1";
 
 /// What one run would send: each `(ref, object)` pushed, in published order,
 /// each ref deleted, and each full-auto head held for checks with the green
@@ -46,18 +42,22 @@ pub(crate) struct MirrorSelection {
 
 impl MirrorSelection {
     /// The digest of what the selection sends, which a full-auto mirror
-    /// compares with the plan it settled last.
+    /// compares with the plan it settled last. Plans store it, so it keeps its
+    /// bytes (K, PLAN-UC-04 3.2): each field framed by its length as a u64
+    /// little-endian.
     pub(crate) fn vector_digest(&self) -> String {
-        let mut hasher = blake3::Hasher::new_derive_key(ORIGIN_MIRROR_VECTOR_DIGEST_CONTEXT);
+        let mut digest = LegacyDigest::new(purposes::origin::MIRROR_VECTOR);
         for (name, oid) in &self.vector {
-            field(&mut hasher, name.as_str().as_bytes());
-            field(&mut hasher, oid.as_str().as_bytes());
+            for field in [name.as_str(), oid.as_str()] {
+                digest.len_u64_le(field.len()).raw(field.as_bytes());
+            }
         }
-        hasher.update(b"d");
+        digest.raw(b"d");
         for name in &self.deletions {
-            field(&mut hasher, name.as_str().as_bytes());
+            let name = name.as_str();
+            digest.len_u64_le(name.len()).raw(name.as_bytes());
         }
-        hasher.finalize().to_hex().to_string()
+        digest_hex(&digest)
     }
 }
 
@@ -235,50 +235,99 @@ fn cut_batches(
 }
 
 /// One digest over a plan's destination (its audience included), strategy,
-/// refs, observations, batches, sections and held heads.
+/// refs, observations, batches, sections and held heads. Plans store it, so it
+/// keeps its bytes (K, PLAN-UC-04 3.2): each field framed by its length as a
+/// u64 little-endian.
 fn plan_digest(plan: &MirrorPushPlan) -> String {
-    let mut hasher = blake3::Hasher::new_derive_key(ORIGIN_MIRROR_PLAN_DIGEST_CONTEXT);
-    hasher.update(plan.repo_id.as_bytes());
+    let mut digest = LegacyDigest::new(purposes::origin::MIRROR_PLAN);
+    digest.raw(plan.repo_id.as_bytes());
     let destination = &plan.destination;
-    field(&mut hasher, destination.url.as_bytes());
-    field(&mut hasher, destination.user.as_bytes());
-    field(&mut hasher, destination.secret_ref.as_bytes());
-    let generation = destination.target_generation.map(|id| id.to_hex());
-    field(&mut hasher, generation.unwrap_or_default().as_bytes());
-    field(
-        &mut hasher,
-        destination.audience.visibility.as_str().as_bytes(),
-    );
-    field(&mut hasher, destination.audience.role.as_str().as_bytes());
-    field(&mut hasher, plan.strategy.as_str().as_bytes());
-    hasher.update(&plan.strategy_revision.to_le_bytes());
+    let generation = destination
+        .target_generation
+        .map(|id| id.to_hex())
+        .unwrap_or_default();
+    for field in [
+        destination.url.as_str(),
+        destination.user.as_str(),
+        destination.secret_ref.as_str(),
+        generation.as_str(),
+        destination.audience.visibility.as_str(),
+        destination.audience.role.as_str(),
+        plan.strategy.as_str(),
+    ] {
+        digest.len_u64_le(field.len()).raw(field.as_bytes());
+    }
+    digest.raw(&plan.strategy_revision.to_le_bytes());
     for plan_ref in &plan.refs {
-        field(&mut hasher, plan_ref.ref_name.as_bytes());
-        field(
-            &mut hasher,
-            plan_ref.new.as_deref().unwrap_or("").as_bytes(),
-        );
         let (state, value) = match &plan_ref.observed {
             MirrorObservedTip::Absent => ("absent", ""),
             MirrorObservedTip::At { oid } => ("at", oid.as_str()),
             MirrorObservedTip::Unknown { cause } => ("unknown", cause.as_str()),
         };
-        field(&mut hasher, state.as_bytes());
-        field(&mut hasher, value.as_bytes());
-        hasher.update(&plan_ref.batch.unwrap_or(u32::MAX).to_le_bytes());
+        for field in [
+            plan_ref.ref_name.as_str(),
+            plan_ref.new.as_deref().unwrap_or(""),
+            state,
+            value,
+        ] {
+            digest.len_u64_le(field.len()).raw(field.as_bytes());
+        }
+        digest.raw(&plan_ref.batch.unwrap_or(u32::MAX).to_le_bytes());
         let section = plan_ref
             .review
             .as_ref()
             .map_or("", |review| review.digest.as_str());
-        field(&mut hasher, section.as_bytes());
+        digest.len_u64_le(section.len()).raw(section.as_bytes());
     }
     for held in &plan.pending_checks {
-        field(&mut hasher, held.ref_name.as_bytes());
-        field(&mut hasher, held.head.as_bytes());
-        field(&mut hasher, held.sent.as_deref().unwrap_or("").as_bytes());
+        for field in [
+            held.ref_name.as_str(),
+            held.head.as_str(),
+            held.sent.as_deref().unwrap_or(""),
+        ] {
+            digest.len_u64_le(field.len()).raw(field.as_bytes());
+        }
     }
-    field(&mut hasher, plan.vector.as_bytes());
-    hasher.finalize().to_hex().to_string()
+    digest
+        .len_u64_le(plan.vector.len())
+        .raw(plan.vector.as_bytes());
+    digest_hex(&digest)
+}
+
+/// The digest of a plan with `fields` (every field it reads; the rest empty),
+/// for the K-proof door (`test_doors::fingerprint_keep_origin`).
+#[cfg(oneiron_test_support)]
+pub(crate) fn plan_digest_for_test(
+    fields: &crate::test_doors::fingerprint_keep_origin::MirrorPlanFields,
+) -> String {
+    let refs = fields
+        .refs
+        .iter()
+        .map(|plan_ref| MirrorPlanRef {
+            ref_name: plan_ref.ref_name.clone(),
+            new: plan_ref.new.clone(),
+            observed: plan_ref.observed.clone(),
+            review: plan_ref.review.clone(),
+            first_page: 0,
+            batch: plan_ref.batch,
+        })
+        .collect();
+    plan_digest(&MirrorPushPlan {
+        plan_id: fields.repo_id,
+        repo: String::new(),
+        repo_id: fields.repo_id,
+        destination: fields.destination.clone(),
+        strategy: fields.strategy,
+        strategy_revision: fields.strategy_revision,
+        requested_by: None,
+        refs,
+        batches: 0,
+        pending_checks: fields.pending_checks.clone(),
+        digest: String::new(),
+        vector: fields.vector.clone(),
+        pages: 0,
+        created_at: 0,
+    })
 }
 
 fn count(n: usize) -> u64 {

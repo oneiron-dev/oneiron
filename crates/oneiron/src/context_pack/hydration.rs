@@ -289,6 +289,7 @@ pub(super) fn hydrate_entity(
         && !super::retained_copies::clamp_admits(
             clamp,
             vault,
+            store,
             rtxn,
             &id,
             ENTITY_TYPE_CLAIM,

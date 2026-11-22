@@ -127,6 +127,12 @@ pub struct RepoRegistrationView {
     pub source: String,
     /// The editable whitelist, ascending. Empty: read-only.
     pub editable: Vec<String>,
+    /// The agent (32 hex) that registered the repo as the owner's delegate;
+    /// a later config update keeps it. Absent when the owner registered it.
+    /// A delegate's answer names it only when that delegate is the
+    /// registrant.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registrant: Option<EntityId>,
 }
 
 /// `vault.repo.anchor.bind`'s answer: the CODE anchor and PROJECT a
