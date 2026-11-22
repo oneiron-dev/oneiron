@@ -18,6 +18,7 @@ use std::io::Cursor;
 use std::time::{Duration, Instant};
 
 mod actor_binding;
+mod archive_custody_proof;
 mod basic_fold;
 mod cooperative_deletion;
 mod critical_confirm;

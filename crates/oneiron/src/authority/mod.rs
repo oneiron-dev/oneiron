@@ -51,6 +51,7 @@ pub(crate) mod ancestor_index_door;
 mod ancestry_evaluator;
 mod anchor_fold;
 mod anchor_marks;
+mod archive_custody;
 mod ask_forward_holder;
 mod attribution_erase;
 mod backup_signer_delegation;
@@ -348,6 +349,7 @@ pub use admission::{
 pub use agent_grant_act::{
     AGENT_GRANT_ACT_NO_CARRIER, AGENT_GRANT_ACT_NOT_COUNTED, AGENT_GRANT_ACT_TOO_MANY_HEADS,
 };
+pub use archive_custody::AuthorityArchiveCustodyProof;
 pub use backup_signer_delegation::{
     BACKUP_SIGNER_DELEGATION_DOMAIN, BackupModeRootPolicy, BackupModeRoots, BackupSignerDelegation,
     BackupSignerStatement,
