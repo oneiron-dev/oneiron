@@ -150,6 +150,11 @@ pub struct AgentGrantRevoked {
 pub struct AgentGrantFromSlipRequest {
     /// The slip's id (64 hex), as the registry row's `slip_ref` names it.
     pub slip_ref: String,
+    /// Another asker's approved check-in for converting this slip, 32 hex:
+    /// the owner applies it on his own proof, and the conversion's writer
+    /// spends it once the slip qualifies (ROLES-CHECKIN 2k7).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in_ref: Option<String>,
 }
 
 /// `vault.agents.grants.from_slip`'s answer.
@@ -158,8 +163,15 @@ pub struct AgentGrantFromSlipRequest {
 pub enum AgentGrantFromSlipOutcome {
     /// The holder's default read Grants as minted: the named slip's Scope
     /// first, then one for each other distinct Scope of its live slips.
-    Minted { grants: Vec<AgentGrantMinted> },
-    /// Nothing was minted, for `reason`.
+    Minted {
+        grants: Vec<AgentGrantMinted>,
+        /// The decision the conversion ran on: the owner's own proof,
+        /// naming the asker's approved check-in it applied (ROLES-CHECKIN
+        /// 2k7).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        check_in: Option<crate::check_in::CheckInDecision>,
+    },
+    /// Nothing was minted, for `reason`, and no check-in was spent.
     Unchanged {
         reason: AgentGrantFromSlipUnchangedReason,
     },
