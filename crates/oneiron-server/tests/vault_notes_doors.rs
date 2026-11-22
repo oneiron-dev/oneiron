@@ -73,6 +73,10 @@ const READ: &str = "vault.notes.read";
 const HISTORY: &str = "vault.notes.history";
 const HISTORY_PURGE: &str = "vault.notes.history_purge";
 const HISTORY_PURGE_EXECUTE: &str = "vault.notes.history_purge_execute";
+/// The shared preview a one-way call's confirm comes from (DEC-0006
+/// #undo-class; L8-49): a purge that erases at once and every execute take
+/// it.
+const OWNER_CONFIRM_PREVIEW: &str = "vault.owner_confirm.preview";
 const SEAL: &str = "vault.notes.seal";
 const FORK: &str = "vault.notes.fork";
 const PROPOSALS_OPEN: &str = "vault.notes.proposals.open";
@@ -395,13 +399,33 @@ impl Served {
         assert_eq!(status, StatusCode::OK, "{caller:?} at {verb}: {body}");
         body
     }
+
+    /// `input` for the one-way `verb` with `caller`'s own confirm: the
+    /// caller previews the call and passes the preview's confirm back, so
+    /// what the call answers is the engine's, not the confirm gate's.
+    async fn confirmed(&self, caller: Caller, verb: &str, mut input: Value) -> Value {
+        let preview = self
+            .ok(
+                caller,
+                OWNER_CONFIRM_PREVIEW,
+                json!({"verb": verb, "input": input.clone()}),
+            )
+            .await;
+        let confirm = preview["confirm"]
+            .as_str()
+            .expect("the preview names its confirm")
+            .to_owned();
+        input["confirm"] = Value::String(confirm);
+        input
+    }
 }
 
 /// A personal purge erases history at once and keeps the live text
 /// byte-identical: the receipt names the note and its hash matches the live
 /// markdown, the read is unchanged, and history turns shallow with no
 /// operations. (Removes vs keeps: ops below the floor go, the live text
-/// stays.)
+/// stays. The purge erases at once, so it passes the owner's confirm of
+/// its preview.)
 #[test]
 fn owner_purges_personal_note_history_at_once() {
     run_on_engine_stack("notes-purge-personal", || async {
@@ -460,13 +484,14 @@ fn owner_purges_personal_note_history_at_once() {
             "{pre}"
         );
 
-        let purged = served
-            .ok(
+        let purge = served
+            .confirmed(
                 Caller::Owner,
                 HISTORY_PURGE,
                 json!({"note_ref": note.clone()}),
             )
             .await;
+        let purged = served.ok(Caller::Owner, HISTORY_PURGE, purge).await;
         assert_eq!(purged["state"], "erased", "{purged}");
         let receipt = &purged["receipt"];
         assert_eq!(receipt["entity"], note, "{purged}");
@@ -496,7 +521,10 @@ fn owner_purges_personal_note_history_at_once() {
 
 /// A shared purge waits its veto window, refuses an early execute, then
 /// executes once and idempotently: the retry returns the same receipt.
-/// (The veto window: two live Owners, seven days on the store clock.)
+/// (The veto window: two live Owners, seven days on the store clock. The
+/// start erases nothing and takes no confirm; each execute passes the
+/// owner's confirm of its own preview, so the early one is refused by its
+/// open window, not by the confirm gate.)
 #[test]
 fn shared_purge_waits_veto_window_then_executes_once() {
     run_on_engine_stack("notes-purge-shared", || async {
@@ -522,12 +550,15 @@ fn shared_purge_waits_veto_window_then_executes_once() {
         assert_eq!(purged["note_ref"], note, "{purged}");
         let act = purged["act_id"].as_str().expect("act id").to_owned();
 
-        let (status, body) = served
-            .post(
+        let early = served
+            .confirmed(
                 Caller::Owner,
                 HISTORY_PURGE_EXECUTE,
                 json!({"act_id": act.clone()}),
             )
+            .await;
+        let (status, body) = served
+            .post(Caller::Owner, HISTORY_PURGE_EXECUTE, early)
             .await;
         assert_eq!(status, StatusCode::CONFLICT, "executing early: {body}");
         assert_eq!(error_code(&body), Some("INVALID_STATE"), "{body}");
@@ -542,22 +573,26 @@ fn shared_purge_waits_veto_window_then_executes_once() {
             .as_ref()
             .expect("manual clock")
             .set(T0 + ERASE_WAIT_SECS + 1);
-        let executed = served
-            .ok(
+        let execute = served
+            .confirmed(
                 Caller::Owner,
                 HISTORY_PURGE_EXECUTE,
                 json!({"act_id": act.clone()}),
             )
+            .await;
+        let executed = served
+            .ok(Caller::Owner, HISTORY_PURGE_EXECUTE, execute)
             .await;
         assert_eq!(executed["entity"], note, "{executed}");
 
-        let rerun = served
-            .ok(
+        let retry = served
+            .confirmed(
                 Caller::Owner,
                 HISTORY_PURGE_EXECUTE,
                 json!({"act_id": act.clone()}),
             )
             .await;
+        let rerun = served.ok(Caller::Owner, HISTORY_PURGE_EXECUTE, retry).await;
         assert_eq!(
             rerun, executed,
             "the retry returns the same receipt: {rerun}"
