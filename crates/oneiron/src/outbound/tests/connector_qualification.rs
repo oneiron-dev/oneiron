@@ -698,6 +698,7 @@ fn scheduled_cold_dm_projects_one_counterparty_touch_after_owner_grant()
         trigger_ref: "session:cold-dm".to_owned(),
         job_ref: None,
         occurred_at: Some(100),
+        mention: None,
     };
     vault
         .memory(actor, EdgeActorClass::Agent)
@@ -936,6 +937,7 @@ fn a_synced_projected_stop_holds_sends_before_the_replicas_pass()
                     end: header.occurred_end,
                 },
                 learned_at: header.learned_at,
+                row_version: header.row_version,
                 body: &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
             },
             crate::sync::client::ImportTier::OwnDevice,

@@ -48,7 +48,7 @@ pub fn mail_reply_draft_with_address_headers(
     input: &MailReplyDraftRequest,
     answered: MailAddressHeaders,
 ) -> MemoryResult<MailReplyDraftView> {
-    memory.mail_reply_draft_into(input, Some(answered))
+    memory.mail_reply_draft_into(input, answered)
 }
 
 /// `Memory::mail_reply_send` for a Google reply, its Gmail send made through

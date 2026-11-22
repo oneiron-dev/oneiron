@@ -22,10 +22,12 @@
 )]
 
 use std::collections::BTreeSet;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
 
 use axum::body::{Body, to_bytes};
+use axum::extract::ConnectInfo;
 use axum::http::{Request, StatusCode};
 use ed25519_dalek::SigningKey;
 use oneiron::artifact_hosting::ArtifactServeTier;
@@ -225,8 +227,14 @@ impl Served {
                 )
                 .header("x-oneiron-binding", binding.to_string());
         }
+        let mut request = request.body(Body::empty()).expect("request");
+        // A hatch server answers only callers on this device, so the request
+        // carries its loopback peer, as a served listener records it.
+        request
+            .extensions_mut()
+            .insert(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 0))));
         let response = build_artifact_app(Arc::clone(&self.server))
-            .oneshot(request.body(Body::empty()).expect("request"))
+            .oneshot(request)
             .await
             .expect("response");
         let status = response.status();

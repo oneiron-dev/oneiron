@@ -10,6 +10,7 @@
 use std::collections::BTreeSet;
 
 use heed::{RoTxn, RwTxn};
+use oneiron_contracts::fingerprint::ContentHash;
 
 use super::oplog::SNAPSHOT;
 use super::snapshot::StoredRepoSnapshotEntryKind;
@@ -84,7 +85,7 @@ pub(super) fn lifted_entries_in_txn(
         txn,
         &side_table::REPO_MUTATION_SNAPSHOT,
         key.as_bytes(),
-        blake3::hash(raw).as_bytes(),
+        ContentHash::of(raw).as_bytes(),
     )?
     .map(|mark| mark.withheld.into_iter().collect())
     .unwrap_or_default())
@@ -94,7 +95,7 @@ fn snapshot_hits_in_txn(vault: &Vault, txn: &RoTxn<'_>, key: &str) -> Result<Opt
     let Some(snapshot) = SNAPSHOT.get(&vault.store, txn, &key.to_owned())? else {
         return Ok(None);
     };
-    let version = *blake3::hash(&SNAPSHOT.encode_value(&snapshot)?).as_bytes();
+    let version = *ContentHash::of(&SNAPSHOT.encode_value(&snapshot)?).as_bytes();
     let mark = carrier_mark_in_txn(
         &vault.store,
         txn,

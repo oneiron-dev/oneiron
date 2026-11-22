@@ -1,0 +1,18 @@
+{
+  "name": "vault.turn_programs.paused",
+  "description": "Lists one page of the timer, feed and idle turn programs a vault copy made beside its source holds paused, the caller's own or all when the owner asks, each with its trigger and pinned SKILL, and counts them.",
+  "input": "crate::dreamer_runner::PausedTurnProgramsRequest",
+  "output": "crate::dreamer_runner::PausedTurnProgramsView",
+  "call": "crate::dreamer_runner::paused_turn_programs(memory, &input)?",
+  "host_door": true,
+  "host_door_precheck": false,
+  "host_door_lists": true,
+  "host_door_caller": true,
+  "scope": "Read",
+  "act_class": "read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

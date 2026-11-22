@@ -92,6 +92,9 @@ pub(super) struct Fairness {
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub(super) struct Run {
+    /// The narrowed PPR walk's hub cap the owner set (`--hub-cap`); absent: the default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) hub_cap: Option<u32>,
     pub(super) records: usize,
     pub(super) documents: usize,
     pub(super) secret_scan: String,

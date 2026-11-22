@@ -22,11 +22,38 @@ use heed::{RoTxn, RwTxn};
 
 use super::erase::erased_producer;
 use super::versions::{BlobArtifactVersion, HEAD, VERSIONS};
+use crate::artifact_hosting::checkpoint as hosting;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::store::ManifestDbs;
+use crate::store::Store;
+use crate::store::checkpoint_payload::rows::descriptor::{
+    Adapter, Capture, Check, Join, PlacedTable, Restore,
+};
 use crate::store::checkpoint_payload::rows::{
-    self, ActorPart, Captured, OpenedOwnerRows, OwnerRef, OwnerRows, Restored, RowLocator,
+    self, ActorPart, Captured, OpenedOwnerRows, OwnerRef, Restored, RowLocator, TypedRow,
+};
+
+/// Every head and version record by artifact, its process's actor split
+/// out, then the artifact's hosting rows.
+pub(crate) static ADAPTER: Adapter = Adapter {
+    tables: &[
+        &PlacedTable {
+            table: HEAD,
+            place: place_head,
+        },
+        &PlacedTable {
+            table: VERSIONS,
+            place: place_version,
+        },
+        hosting::POINTERS,
+        hosting::ADMISSIONS,
+        hosting::SERVING,
+    ],
+    capture: Capture::ByTable,
+    check: Check::ByTable,
+    row_owner: None,
+    join: Join::Row(join),
+    restore: Restore::Parts,
 };
 
 /// The field the MadeBy process's actor fills.
@@ -53,60 +80,31 @@ fn put_process(version: &mut BlobArtifactVersion, field: &str, actor: EntityId) 
     Ok(())
 }
 
-/// Every head and version record in `txn`, by artifact.
-pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Captured> {
+/// A head record under its artifact, its process's actor split out.
+fn place_head(out: &mut Captured, row: TypedRow<EntityId, BlobArtifactVersion>) -> Result<()> {
     let erased = erased_producer()?;
-    let mut out = Captured::default();
-    for row in rows::typed_rows(dbs, txn, HEAD, &mut out)? {
-        let artifact = row.key;
-        rows::split_actors(
-            &mut out,
-            OwnerRef::entity(&artifact),
-            HEAD,
-            row,
-            |version| take_process(version, artifact, erased),
-        )?;
-    }
-    for row in rows::typed_rows(dbs, txn, VERSIONS, &mut out)? {
-        let artifact = row.key.0;
-        rows::split_actors(
-            &mut out,
-            OwnerRef::entity(&artifact),
-            VERSIONS,
-            row,
-            |version| take_process(version, artifact, erased),
-        )?;
-    }
-    out.merge(crate::artifact_hosting::checkpoint::capture(dbs, txn)?);
-    Ok(out)
+    let artifact = row.key;
+    rows::split_actors(out, OwnerRef::entity(&artifact), HEAD, row, |version| {
+        take_process(version, artifact, erased)
+    })
 }
 
-fn owns(at: &RowLocator) -> bool {
-    at.in_table(HEAD.decl())
-        || at.in_table(VERSIONS.decl())
-        || crate::artifact_hosting::checkpoint::owns(at)
-}
-
-/// The bundle framing of `rows`' version parts.
-pub(crate) fn bytes_for_owner(rows: &OwnerRows) -> Result<Vec<u8>> {
-    rows::frame_owner(rows, owns)
-}
-
-fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
-    if at.in_table(HEAD.decl()) {
-        rows::check_row(HEAD, at, value)
-    } else if at.in_table(VERSIONS.decl()) {
-        rows::check_row(VERSIONS, at, value)
-    } else if crate::artifact_hosting::checkpoint::owns(at) {
-        crate::artifact_hosting::checkpoint::check(at, value)
-    } else {
-        Err(rows::bad_part())
-    }
+/// A version record under its artifact, its process's actor split out.
+fn place_version(
+    out: &mut Captured,
+    row: TypedRow<(EntityId, u64), BlobArtifactVersion>,
+) -> Result<()> {
+    let erased = erased_producer()?;
+    let artifact = row.key.0;
+    rows::split_actors(out, OwnerRef::entity(&artifact), VERSIONS, row, |version| {
+        take_process(version, artifact, erased)
+    })
 }
 
 /// A record with its actor back; `None` when the actor did not open.
 fn join(
-    txn: &RoTxn<'_>,
+    _: &Store,
+    _: &RoTxn<'_>,
     at: &RowLocator,
     value: &[u8],
     parts: &[&ActorPart],
@@ -136,25 +134,13 @@ fn join(
         let version = rows::join_actors(VERSIONS, value, parts, put_process)?;
         return VERSIONS.encode_value(&version).map(Some);
     }
-    if crate::artifact_hosting::checkpoint::owns(at) {
-        return crate::artifact_hosting::checkpoint::join(txn, at, value, parts);
-    }
-    Err(rows::bad_part())
-}
-
-/// Puts `opened`'s records back, each whose actor opened.
-pub(crate) fn restore_in_txn(
-    dbs: &impl ManifestDbs,
-    txn: &mut RwTxn<'_>,
-    opened: OpenedOwnerRows,
-) -> Result<Restored> {
-    rows::restore_parts(dbs, txn, &opened, check, join)
+    hosting::join(at, value, parts)
 }
 
 /// Leaves only absent-actor version joins for the authenticated continuation.
 /// All other version, head and hosting rows land in their original order.
 pub(crate) fn restore_or_defer_in_txn(
-    dbs: &impl ManifestDbs,
+    store: &Store,
     txn: &mut RwTxn<'_>,
     mut opened: OpenedOwnerRows,
 ) -> Result<Option<OpenedOwnerRows>> {
@@ -168,10 +154,10 @@ pub(crate) fn restore_or_defer_in_txn(
             (at.in_table(HEAD.decl()) || at.in_table(VERSIONS.decl()))
                 && !actor_parts.iter().any(|part| part.content_locator == *at)
                 // Failed and already-complete joins keep their original restore path.
-                && join(txn, at, value, &[]).is_ok_and(|joined| joined.is_none())
+                && join(store, txn, at, value, &[]).is_ok_and(|joined| joined.is_none())
         })
         .collect();
-    rows::restore_parts(dbs, txn, &opened, check, join)?;
+    ADAPTER.restore_parts(store, txn, &opened)?;
     if deferred.is_empty() {
         return Ok(None);
     }
@@ -191,9 +177,9 @@ pub(crate) fn restore_missing_process_in_txn(
         &vault.store,
         txn,
         &opened,
-        check,
+        |at, value| ADAPTER.check(at, value),
         |txn, at, value, parts| {
-            if let Some(joined) = join(txn, at, value, parts)? {
+            if let Some(joined) = join(&vault.store, txn, at, value, parts)? {
                 return Ok(Some(joined));
             }
             recover_retired_process(vault, txn, at, value, erased, &opened)

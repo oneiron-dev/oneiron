@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use oneiron::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN};
+use oneiron::store::ports::StoreClock;
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 use serde_json::{Value, json};
 
@@ -17,8 +18,16 @@ pub(crate) const TEST_SECRET: &str = "ai-host-test-host-secret";
 /// fixture keystore holds for [`TEST_SECRET`], so a server opened over it
 /// with that secret loads the same root.
 pub(crate) fn rooted_vault() -> (tempfile::TempDir, Arc<Vault>) {
+    rooted_vault_on(StoreClock::default())
+}
+
+/// [`rooted_vault`] on `store_clock`, the clock its writes and reads take
+/// their time from.
+pub(crate) fn rooted_vault_on(store_clock: StoreClock) -> (tempfile::TempDir, Arc<Vault>) {
     let dir = tempfile::tempdir().unwrap();
-    let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
+    let mut config = VaultConfig::device();
+    config.store_clock = store_clock;
+    let vault = Arc::new(Vault::open(dir.path(), config).unwrap());
     crate::test_credentials::install_fixture_keystore(&vault, TEST_SECRET.as_bytes());
     let issuer = vault.bootstrap_host_slip_issuer().unwrap();
     vault.ensure_host_root_slip(&issuer).unwrap();

@@ -13,3 +13,9 @@ pub use oneiron_verb_wire::dreamer_runner::program::read::views::{
     ProgramTryView, SettledProgramStepRequest, SettledProgramStepView, TurnProgramAdmissionItem,
     TurnProgramAdmissionRequest, TurnProgramAdmissionView, TurnProgramOwedWakeItem,
 };
+
+// FIX TURNPROGRAM-OCCURRENCE-ARMINGS-LIVE-ON-A-VAULT-COPY: the paused programs of a vault copy.
+#[doc(hidden)]
+pub use oneiron_verb_wire::dreamer_runner::program::read::views::{
+    PausedTurnProgramItem, PausedTurnProgramsRequest, PausedTurnProgramsView,
+};

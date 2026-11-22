@@ -102,6 +102,14 @@ pub(crate) fn booking_availability_input_schema() -> Value {
             "visitor_tz": nonblank_string_schema(),
             "constraint": { "oneOf": [{ "type": "null" }, booking_constraint_input_schema()] },
             "session_ref": nonblank_string_schema(),
+            // Optional: a length from the event card's allowed set
+            // (BK-VARIABLE-DURATION); absent, the event type's default.
+            "duration_min": {
+                "oneOf": [
+                    { "type": "null" },
+                    { "type": "integer", "minimum": 1, "maximum": u16::MAX },
+                ],
+            },
         }),
     )
 }
@@ -128,6 +136,11 @@ fn booking_hold_input_schema() -> Value {
             "checkout_lease_token": {
                 "oneOf": [{ "type": "null" }, booking_action_token_schema()]
             },
+            // Optional: the deposit terms the visitor read on the card,
+            // which a hold that opens a deposit checkout must carry.
+            "deposit_terms": {
+                "oneOf": [{ "type": "null" }, booking_deposit_terms_schema()]
+            },
             "idempotency_key": nonblank_string_schema(),
             // The vault owner's own hold past a meeting cap, and why; any
             // other caller that sends it is refused.
@@ -142,6 +155,25 @@ fn booking_hold_input_schema() -> Value {
                     }
                 ]
             },
+        }),
+    )
+}
+
+fn booking_deposit_terms_schema() -> Value {
+    closed_object_schema(
+        &["amount_minor", "currency"],
+        json!({
+            "amount_minor": { "type": "integer", "minimum": 1, "maximum": 99_999_999 },
+            "currency": { "type": "string", "pattern": "^[a-z]{3}$" },
+            "refund": closed_object_schema(
+                &[],
+                json!({
+                    "full_refund_notice_secs": { "type": "integer", "minimum": 0 },
+                    "late_cancel_refund_percent": {
+                        "type": "integer", "minimum": 0, "maximum": 100
+                    },
+                }),
+            ),
         }),
     )
 }

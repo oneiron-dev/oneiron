@@ -10,6 +10,7 @@
 
 use super::participation::{FACTS, FactKey};
 use crate::error::Result;
+use crate::side_table::{FixedSideKey, SideKey};
 use crate::workspace_roster::JoinSubject;
 use crate::workspace_roster::join_receipt::names_no_actor;
 use crate::{EntityId, Vault};
@@ -73,6 +74,24 @@ impl FactSubject {
             _ => return None,
         })
     }
+}
+
+/// A subject as a fact's key spells it: its kind byte, then its id or the
+/// erased digest.
+impl SideKey for FactSubject {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.push(self.kind());
+        out.extend_from_slice(&self.key_id());
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let (&kind, id) = bytes.split_first()?;
+        Self::decode(kind, id.try_into().ok()?)
+    }
+}
+
+impl FixedSideKey for FactSubject {
+    const WIDTH: usize = 17;
 }
 
 impl FactKey {

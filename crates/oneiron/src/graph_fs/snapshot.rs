@@ -18,7 +18,9 @@ pub use oneiron_verb_wire::graph_fs::snapshot::GraphFsReference;
 
 impl<'vault> ScopedRead<'vault> {
     /// Opens the file face under this read's own credential. Snapshot ids
-    /// resolve to a content-addressed fork before any operation can run.
+    /// resolve to a content-addressed fork before any operation can run. A
+    /// fork hash without a repository is a memory frontier this store handed
+    /// out (L3-39): every row then reads as it stood there.
     pub fn mount_graph_fs(
         &self,
         reference: &GraphFsReference,
@@ -26,7 +28,14 @@ impl<'vault> ScopedRead<'vault> {
     ) -> Result<GraphFsResolver<'_, 'vault>> {
         let (repo, expected) = match reference {
             GraphFsReference::LiveHead => return Ok(self.graph_fs(options)),
-            GraphFsReference::ForkHash { repo, hash } => (
+            GraphFsReference::ForkHash { repo: None, hash } => {
+                let frontier = self.handed_out_memory_frontier(hash)?;
+                return Ok(self.graph_fs(options.with_mount(GraphFsMount::MemoryFork(frontier))));
+            }
+            GraphFsReference::ForkHash {
+                repo: Some(repo),
+                hash,
+            } => (
                 *repo,
                 Some(crate::artifact_hosting::parse_codebase_fork_hash_hex(hash)?),
             ),
@@ -61,12 +70,16 @@ impl GraphFsResolver<'_, '_> {
     /// The reference an operation actually resolved. Return it to the caller
     /// so a snapshot id never silently re-resolves to different bytes.
     pub fn reference(&self) -> GraphFsReference {
-        match self.snapshot {
-            Some((repo, hash)) => GraphFsReference::ForkHash {
-                repo,
+        match (self.snapshot, self.memory_fork()) {
+            (Some((repo, hash)), _) => GraphFsReference::ForkHash {
+                repo: Some(repo),
                 hash: crate::entity_id::bytes_to_hex_lower(&hash),
             },
-            None => GraphFsReference::LiveHead,
+            (None, Some(frontier)) => GraphFsReference::ForkHash {
+                repo: None,
+                hash: frontier.to_hex(),
+            },
+            (None, None) => GraphFsReference::LiveHead,
         }
     }
 

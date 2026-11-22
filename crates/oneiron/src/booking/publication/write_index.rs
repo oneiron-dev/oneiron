@@ -55,17 +55,11 @@ pub(crate) fn index_publication_in_txn(
     page: EntityId,
     claim: EntityId,
 ) -> Result<()> {
-    let mut value = page.as_bytes().to_vec();
-    value.extend_from_slice(claim.as_bytes());
-    TOKEN_INDEX.put(
-        &vault.store,
-        txn,
-        &crate::booking::PublicBookingPageToken::for_page(page).0,
-        &value,
-    )?;
+    put_index_row_in_txn(vault, txn, page, claim)?;
     // Deny-only ownership of the claim id survives body erasure and head
     // changes. It is not a write permit or publication authority; only the
-    // owner transaction creates it, and generic writes/replay cannot clear it
+    // owner transaction creates it (a home move carries it from the node
+    // whose owner transaction did), and generic writes/replay cannot clear it
     // or use it as consent.
     PROTECTED_CLAIM.put(&vault.store, txn, &claim, &())?;
     // Publishing is the owner act that lets the page's confirmed bookings
@@ -85,6 +79,65 @@ pub(crate) fn index_publication_in_txn(
         )?;
     }
     Ok(())
+}
+
+/// The token index row of `page`, naming `claim` its publication.
+fn put_index_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    page: EntityId,
+    claim: EntityId,
+) -> Result<()> {
+    let mut value = page.as_bytes().to_vec();
+    value.extend_from_slice(claim.as_bytes());
+    TOKEN_INDEX.put(
+        &vault.store,
+        txn,
+        &crate::booking::PublicBookingPageToken::for_page(page).0,
+        &value,
+    )
+}
+
+/// FIX [BK-HOME-MOVE-PUBLIC-PAGE-INDEX-NOT-CARRIED]: each page this node
+/// indexes with the publication claim its token names, and each claim id the
+/// deny-only marker protects, the rows a home move carries.
+#[cfg(feature = "sync")]
+pub(super) fn indexed_pages_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<(Vec<(EntityId, EntityId)>, Vec<EntityId>)> {
+    let mut pages = Vec::new();
+    for token in TOKEN_INDEX.scan_keys(&vault.store, txn, &[])? {
+        if let Some(indexed) = indexed_publication(vault, txn, &token)? {
+            pages.push(indexed);
+        }
+    }
+    Ok((pages, PROTECTED_CLAIM.scan_keys(&vault.store, txn, &[])?))
+}
+
+/// Lands a page's index row and its claim's marker as a home move carried
+/// them from the old home, where the owner's transaction wrote them
+/// ([`index_publication_in_txn`]). It mints no invite grant: the grant is the
+/// owner's act, and one the owner revoked on the old home stays revoked.
+#[cfg(feature = "sync")]
+pub(super) fn put_carried_index_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    page: EntityId,
+    claim: EntityId,
+) -> Result<()> {
+    put_index_row_in_txn(vault, txn, page, claim)?;
+    put_carried_protection_in_txn(vault, txn, claim)
+}
+
+/// Lands one deny-only marker a home move carried from the old home.
+#[cfg(feature = "sync")]
+pub(super) fn put_carried_protection_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    claim: EntityId,
+) -> Result<()> {
+    PROTECTED_CLAIM.put(&vault.store, txn, &claim, &())
 }
 
 /// The owner's setting a page's invite grant carries out: the page's indexed

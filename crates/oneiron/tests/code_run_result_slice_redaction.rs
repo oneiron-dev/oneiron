@@ -446,3 +446,62 @@ fn a_credential_field_the_assignment_rule_places_reads_redacted() {
     let len = fixture.body.len();
     assert_redacted_slice(&fixture.slice(0, len), 0, len, &fixture.masked());
 }
+
+/// The owner's typed card of `fixture`'s occurrence, and its typed slice of
+/// the whole body, each as the JSON the typed door hands its caller.
+fn typed_replies(fixture: &ResultBodyFixture) -> (Value, Value) {
+    let actor = fixture
+        .owner
+        .revalidate(&fixture.vault)
+        .expect("owner actor");
+    let typed = fixture
+        .vault
+        .memory(actor, EdgeActorClass::Human)
+        .result_read_as_owner(
+            &fixture.owner,
+            ResultOccurrenceRequest {
+                run_id: fixture.run_id,
+                occurrence: fixture.occurrence,
+            },
+        )
+        .expect("read the typed owner card");
+    let ResultReadView::Available { card, .. } = typed else {
+        panic!("the owner's card must be available");
+    };
+    let ResultSliceView::Available { page, .. } = fixture.typed_slice() else {
+        panic!("the owner's slice must be available");
+    };
+    assert!(
+        matches!(page, ResultSlicePage::Content(_)),
+        "the slice must be a content page"
+    );
+    (
+        serde_json::to_value(&card).expect("encode the typed card"),
+        serde_json::to_value(&page).expect("encode the typed slice page"),
+    )
+}
+
+#[test]
+fn the_typed_owner_doors_say_redacted() {
+    let fixture = ResultBodyFixture::with_phrase("build output ready\n");
+    let (card, page) = typed_replies(&fixture);
+    assert_eq!(card["redacted"], true, "{card}");
+    assert_eq!(page["redacted"], true, "{page}");
+    assert_eq!(
+        page["text"].as_str().map(str::as_bytes),
+        Some(fixture.masked().as_slice())
+    );
+}
+
+#[test]
+fn a_clean_body_reads_with_no_redacted_mark_through_the_typed_doors() {
+    let fixture = ResultBodyFixture::new(clean_lines().into_bytes(), 0..0);
+    assert!(fixture.mark().is_none(), "a clean body takes no mark");
+    let (card, page) = typed_replies(&fixture);
+    assert!(card.get("redacted").is_none(), "{card}");
+    assert!(page.get("redacted").is_none(), "{page}");
+    assert_eq!(
+        page["text"].as_str().map(str::as_bytes),
+        Some(fixture.body.as_slice())
+    );
+}

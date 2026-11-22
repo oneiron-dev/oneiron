@@ -29,7 +29,7 @@
 
 #![cfg(oneiron_test_support)]
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use ed25519_dalek::{Signer, SigningKey};
@@ -173,6 +173,7 @@ fn node_profile_with_class(
         seen_world_edits: BTreeSet::new(),
         carrier: None,
         act: None,
+        restored_from: None,
     }
 }
 
@@ -266,6 +267,7 @@ impl ServedVault {
             device_class: profile.device_class,
             encryption_key: profile.encryption_key,
             machine_proof: profile.machine_proof,
+            restored_from: None,
         }
     }
 
@@ -290,8 +292,12 @@ impl ServedVault {
         &self,
         entries: &[AuthorityEntryHash],
     ) -> oneiron::Result<oneiron::authority::ConfirmedHeldAnswers> {
-        self.vault
-            .confirm_held_machine_answers(&self.owner, ActSurface::ThisInstall, entries)
+        self.vault.confirm_held_machine_answers(
+            &self.owner,
+            ActSurface::ThisInstall,
+            entries,
+            &BTreeMap::new(),
+        )
     }
 }
 
@@ -403,6 +409,7 @@ fn stranger_mark_with_m_keys(
         seen_world_edits: BTreeSet::new(),
         carrier: None,
         act: None,
+        restored_from: None,
     };
     let entry = signed(
         Some(vault_id),
