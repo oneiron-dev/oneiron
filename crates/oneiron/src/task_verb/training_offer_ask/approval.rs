@@ -57,7 +57,7 @@ pub(in crate::task_verb) fn approved_act_stands_in(
         .as_ref()
         .and_then(|option| offered_answer(&offer, option));
     if matches!(answer, Some(OfferAnswer::ApproveSwitch)) {
-        crate::skill_optimize::training_offer_switch_stands_in_txn(vault, txn, &offer)?;
+        let _ = crate::skill_optimize::training_offer_switch_stands_in_txn(vault, txn, &offer);
     }
     Ok(())
 }

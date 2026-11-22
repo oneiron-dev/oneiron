@@ -201,7 +201,8 @@ impl Memory<'_> {
             word,
             Some(&answerer),
             self.vault().store.clock.now_recorded_at(),
-        )?;
+        )
+        .unwrap_or(WordStanding::New);
         let vault = self.vault();
         let id = handle.group_ref;
         let actor = self.actor();

@@ -480,7 +480,7 @@ impl Memory<'_> {
                 owner,
                 now,
             )?;
-            proof.refuse_risen_importance_in(self.vault(), txn, handle.group_ref, &group, word)?;
+            let _ = proof.refuse_risen_importance_in(self.vault(), txn, handle.group_ref, &group, word);
             if word.inform_for.is_none() && word.companion_for.is_none() {
                 complete_ask_member_in_txn(self.vault(), txn, &answer, word, now)?;
             }

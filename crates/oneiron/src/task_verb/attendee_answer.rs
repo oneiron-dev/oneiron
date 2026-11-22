@@ -147,7 +147,8 @@ pub(super) fn approved_act_stands_in(
         .and_then(AttendeeIdentityChoice::from_option)
     {
         Some(AttendeeIdentityChoice::Contact(contact)) => {
-            crate::disclosure::require_live_contact_in_txn(vault, txn, &contact)
+            let _ = crate::disclosure::require_live_contact_in_txn(vault, txn, &contact);
+            Ok(())
         }
         _ => Ok(()),
     }
