@@ -386,7 +386,8 @@ impl SyncClient {
     /// errors. Where this runs is never asked. A generation the kit does not
     /// open, or whose offer the home refused, stays pending for an old
     /// reader. Nothing is pinned, anchored or restored, and nothing keeps the
-    /// kit. A federation lane grants nothing.
+    /// kit. A federation lane grants nothing, and a member lane grants nothing: the home
+    /// admits no bundle call on it (MEMBER-SYNC P5).
     pub async fn grant_sealed_bundle_pad_access_with_kit(
         &self,
         owner: &AuthenticatedOwner,
@@ -396,7 +397,7 @@ impl SyncClient {
         let vault = &self.vault;
         owner.revalidate(vault).map_err(storage)?;
         let mut report = PadAdmissionReport::default();
-        if self.config.federation_peer.is_some() {
+        if self.config.federation_peer.is_some() || self.config.member_lane {
             return Ok(report);
         }
         let budgets = residence_budgets(vault)?;

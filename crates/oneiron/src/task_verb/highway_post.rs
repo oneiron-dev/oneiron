@@ -33,6 +33,7 @@ use crate::task_authority::{
 };
 use crate::task_type::TaskTypeRef;
 use crate::write_envelope::WriteActor;
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 use super::brief::{QueueTaskBrief, StoredBrief, brief_digest, hex32};
 use super::consts::{
@@ -69,11 +70,11 @@ mod parking;
 mod plan_run;
 mod settlement;
 use self::key::{PostKey, observe_key_in};
-pub(crate) use self::settlement::settle_task_proposal_in_txn;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::parking::parked_post_brief;
 pub(super) use self::settlement::{envelope_actor_class, proposer_of};
+pub(crate) use self::settlement::{owner_settles_own_composed_post, settle_task_proposal_in_txn};
 
-/// Domain of a post's request digest.
-const POST_REQUEST_DOMAIN: &[u8] = b"oneiron.tasks.post.request.v1";
 /// Reason code of a proposal the addressed agent declined.
 const TAKE_DECLINED_REASON: &str = "gate.tasks.take.declined";
 /// Reason code of a proposal the addressed agent took.
@@ -221,7 +222,8 @@ fn stamp_copy_fields(
 /// every routed field and `parent_ref`, the parent it files under
 /// (DOOR-113), its due time (FIX 4749) and whether it is a watch (FIX
 /// 22121). A replay under the same key with any other request is refused,
-/// as an ask's is.
+/// as an ask's is. The TASK's provenance and the parked post's stamp keep
+/// it, so it keeps its bytes (K, PLAN-UC-04 4.1).
 fn request_digest(
     actor: EntityId,
     key: &str,
@@ -241,10 +243,21 @@ fn request_digest(
         post.watch,
     ))
     .map_err(|_| MemoryError::bad_request("task post does not encode"))?;
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(POST_REQUEST_DOMAIN);
-    hasher.update(&bytes);
-    Ok(*hasher.finalize().as_bytes())
+    Ok(LegacyDigest::new(purposes::task::POST_REQUEST)
+        .raw(&bytes)
+        .finish())
+}
+
+/// Seam for `test_doors::fingerprint_keep_request_digests` (PLAN-UC-04 4.1):
+/// the digest one post's request binds.
+#[cfg(oneiron_test_support)]
+pub(crate) fn post_request_digest_for_test(
+    actor: EntityId,
+    key: &str,
+    post: &TaskPost,
+    parent_ref: Option<EntityId>,
+) -> MemoryResult<[u8; 32]> {
+    request_digest(actor, key, post, parent_ref)
 }
 
 /// The brief's type stamp in the create spec's spelling (OF-541): the
@@ -384,6 +397,7 @@ pub(super) fn put_assignment_fact_in_txn(
                 assigned_ref: Some(assigned),
                 actor_generation: None,
                 assigned_generation: None,
+                answered_heads: None,
                 occurred_at: now,
             },
         )?;
@@ -402,12 +416,14 @@ impl Memory<'_> {
     /// `tasks_create` for a briefed spec: the post it describes, run through
     /// the highway and answered in the create receipt's shape. A surface a
     /// host bound to its creator posts as that host (OF-532); any other
-    /// posts on the wire.
+    /// posts on the wire. A spec naming a one-liner posts the brief the
+    /// engine composes from it (L8-07), or, on a replay, the brief its key
+    /// already parked, so one key keeps one request.
     pub(super) fn post_create_spec(
         &self,
         spec: &TaskCreateSpec,
     ) -> MemoryResult<TaskCreateReceipt> {
-        let (Some(intent_key), Some(brief)) = (spec.intent_key.clone(), spec.brief.clone()) else {
+        let Some(intent_key) = spec.intent_key.clone() else {
             return Err(MemoryError::bad_request(
                 "a briefed create names both its intent key and its brief",
             ));
@@ -421,20 +437,46 @@ impl Memory<'_> {
             Some(binding) => TaskVia::Host(binding.clone()),
             None => TaskVia::Wire,
         };
-        let receipt = self.tasks_highway(
-            via,
-            TaskCall::Post(TaskPost {
-                intent_key,
-                brief,
-                assignee: spec.assignee.unwrap_or(TaskAssignee::Dreamer),
-                spec: Some(spec.spec.clone()),
-                ttl: spec.ttl,
-                label: spec.label.clone(),
-                parent_ref: spec.parent_ref,
-                due_at: spec.due_at,
-                watch: spec.watch,
-            }),
-        )?;
+        let (brief, composed) = match (&spec.brief, &spec.one_liner) {
+            (Some(brief), None) => (brief.clone(), false),
+            (None, Some(request)) => {
+                let key = PostKey::of(&via, &intent_key)?;
+                let held = self
+                    .held_post_brief(&key.stored)?
+                    .filter(|brief| request.stamped(brief));
+                let brief = match held {
+                    Some(brief) => brief,
+                    None => self.compose_task_brief(request)?,
+                };
+                (brief, true)
+            }
+            (Some(_), Some(_)) => {
+                return Err(MemoryError::bad_request(
+                    "a create names its brief or a one-liner to compose it from, not both",
+                ));
+            }
+            (None, None) => {
+                return Err(MemoryError::bad_request(
+                    "a briefed create names both its intent key and its brief",
+                ));
+            }
+        };
+        let post = TaskPost {
+            intent_key,
+            brief,
+            assignee: spec.assignee.unwrap_or(TaskAssignee::Dreamer),
+            spec: Some(spec.spec.clone()),
+            ttl: spec.ttl,
+            label: spec.label.clone(),
+            parent_ref: spec.parent_ref,
+            due_at: spec.due_at,
+            watch: spec.watch,
+        };
+        let receipt = if composed {
+            self.tasks_highway_composed(via, post)?
+        } else {
+            self.tasks_highway(via, TaskCall::Post(post))?
+        };
         let landed = receipt.related.iter().find_map(|handle| match handle {
             TaskHandle::Task { task_ref } => Some(*task_ref),
             _ => None,
@@ -498,12 +540,16 @@ impl Memory<'_> {
     /// A `Host` post is its creator's (OF-532): its binding is re-proved in
     /// the write transaction, and an agent TASK it creates runs inside that
     /// creator's lease tree, or, parked, lands there on approval.
+    ///
+    /// A caller's brief never carries a composer stamp (L8-07): only
+    /// [`Memory::tasks_highway_composed`] posts a brief the engine stamped.
     pub(super) fn highway_post(
         &self,
         via: &TaskVia,
         post: TaskPost,
         decisions: Option<&TaskDecisions<'_>>,
     ) -> MemoryResult<TaskCallReceipt> {
+        super::compose::refuse_caller_stamp(&post.brief)?;
         self.post_as(via, post, decisions, None)
     }
 
@@ -623,8 +669,11 @@ impl Memory<'_> {
                 TaskVia::Wire => None,
             };
             let origin = task_create_origin_in_txn(self, &*wtxn, creator)?;
-            if task_actor_ceiling(self.vault(), &*wtxn, self.actor(), self.actor_class())?
-                != PolicyApprovalCeiling::Auto
+            // L8-07 APPROVAL = A: a composed brief is model text no person
+            // has read, so it always parks, whatever the actor's ceiling.
+            if post.brief.composed.is_some()
+                || task_actor_ceiling(self.vault(), &*wtxn, self.actor(), self.actor_class())?
+                    != PolicyApprovalCeiling::Auto
             {
                 return Ok(PostDirect::Gated);
             }

@@ -76,6 +76,14 @@ pub(super) enum RawPutDoor {
     /// the stored row states the same stamp, so the door keeps a stamp and
     /// never births one.
     KeptStoredStamp,
+    /// The phone keep's TURN, CONVERSATION and SESSION door
+    /// (VOICE-PHONE-AGENT-REACH R2 review F1,
+    /// [`super::BatchBuilder::put_phone_bound`]).
+    ///
+    /// Reachable only by presenting the keep's `voice_call::PhoneThreadBirth`,
+    /// minted by the phone keep alone: the one raw door besides the witness
+    /// arm whose early check lets a phone mark through.
+    PhoneBound,
 }
 
 /// [`validate_public_raw_put`] through the public door, for a bound raw
@@ -126,6 +134,14 @@ pub(super) fn validate_public_raw_put(
         RawPutDoor::WitnessMessage | RawPutDoor::SourceBound | RawPutDoor::KeptStoredStamp
     ) {
         crate::source_audience::refuse_written_obligation(entity_type, data)?;
+    }
+    // VOICE-PHONE-AGENT-REACH R2 review F1: under the default reach a row's
+    // own phone stamp admits it to its caller's call, so a raw body never
+    // carries a phone mark, whatever its value, but through the phone keep's
+    // door and the witness arm, whose ceiling binds a phone keep's MESSAGE
+    // to its thread.
+    if !matches!(door, RawPutDoor::WitnessMessage | RawPutDoor::PhoneBound) {
+        crate::voice_call::refuse_written_phone_mark(entity_type, data)?;
     }
     match entity_type {
         crate::registry::ENTITY_TYPE_CLAIM => {

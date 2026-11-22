@@ -9,6 +9,12 @@ use crate::side_table::{
 use crate::store::{ResponseFamily, ResponseRead};
 use crate::{EntityId, Result};
 
+mod fenced;
+
+pub(crate) use self::fenced::{
+    AdmittedFencedReplay, ErasedFormProjection, admit_fenced, put_fenced,
+};
+
 /// The replay record of one run, keyed by run id. Only this module's functions and three session-overlay
 /// sites take the table itself: `routing/replay.rs` (the routed compare-and-put), `read_worlds.rs` and
 /// `reader_jobs.rs` (overlay reads).

@@ -93,14 +93,23 @@ pub(super) use crate::write_envelope::provenance::edge_lifecycle::{
 ///
 /// `pub(crate)` by design — the only public door to provenance flags is the
 /// `edge.provenance` Claim lifecycle ([`crate::Vault::put_edge_provenance`]);
-/// a flag without its truth-Claim would be unauditable.
+/// a flag without its truth-Claim would be unauditable. On success it queues
+/// the subject edge's endpoints for the live-window mirror.
 pub(crate) fn restamp_edge_flags(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     subject: &EdgeRef,
     flags: EdgeProvenanceFlags,
 ) -> Result<()> {
-    crate::ports::EdgeStoreMaintenance::port_edge_stamp_provenance(store, wtxn, subject, flags)
+    crate::ports::EdgeStoreMaintenance::port_edge_stamp_provenance(store, wtxn, subject, flags)?;
+    // The live windows exist only with sync; a featureless build stamps alone.
+    #[cfg(feature = "sync")]
+    crate::batch::queue_committed_rows_in_txn(
+        store,
+        wtxn,
+        std::collections::BTreeSet::from([subject.source, subject.target]),
+    );
+    Ok(())
 }
 
 /// The D16 downgrade primitive: when deleting / SoftErasing an

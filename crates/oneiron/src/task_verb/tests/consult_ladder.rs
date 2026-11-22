@@ -771,8 +771,7 @@ fn the_deadline_sweep_leaves_an_escalated_consult_settled() {
     let escalated = escalate_consult(&vault, task_ref, ladder_id(0xC5), LADDER_NOW + 1);
 
     let report = vault
-        .memory(asker, EdgeActorClass::Agent)
-        .settle_due_consults(CONSULT_DEADLINE + 1, &digest_route())
+        .settle_due_consults(CONSULT_DEADLINE + 1, &|_| Ok(Some(digest_route())))
         .expect("the sweep runs past the deadline");
     let body = task_verb_body(&vault, task_ref)
         .expect("decode consult")

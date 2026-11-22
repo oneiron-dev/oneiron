@@ -22,6 +22,7 @@ use crate::store::attempt_id::AttemptId;
 use crate::store::receipt_row::{
     ReceiptKind, ReceiptQuery, ReceiptRecord, hex_lower, retain_newest_receipt,
 };
+use oneiron_contracts::msgpack;
 use rmpv::Value;
 use std::collections::BTreeMap;
 
@@ -40,26 +41,19 @@ pub(super) fn fresh_row_id(vault: &Vault) -> Result<EntityId> {
     vault.store.clock.entity_id()
 }
 
-pub(super) fn encode_row(row: &Value, label: &'static str) -> Result<Vec<u8>> {
-    let mut encoded = Vec::new();
-    rmpv::encode::write_value(&mut encoded, row).map_err(|_| Error::CorruptedIndex(label))?;
-    Ok(encoded)
-}
-
 pub(super) fn decode_row(raw: &[u8], label: &'static str) -> Result<Vec<(Value, Value)>> {
-    let value = rmpv::decode::read_value(&mut std::io::Cursor::new(raw))
-        .map_err(|_| Error::CorruptedIndex(label))?;
-    match value {
-        Value::Map(entries) => Ok(entries),
-        _ => Err(Error::CorruptedIndex(label)),
-    }
+    msgpack::decode_map(raw).map_err(|_| Error::CorruptedIndex(label))
 }
 
-pub(super) fn field<'a>(entries: &'a [(Value, Value)], name: &str) -> Option<&'a Value> {
-    entries
-        .iter()
-        .find(|(key, _)| key.as_str() == Some(name))
-        .map(|(_, value)| value)
+/// The member `name` of a stored map, `None` when it is absent. A member stored twice is refused as `CorruptedIndex(label)`.
+pub(super) fn field<'a>(
+    entries: &'a [(Value, Value)],
+    name: &str,
+    label: &'static str,
+) -> Result<Option<&'a Value>> {
+    msgpack::Entries::new(entries)
+        .get(name)
+        .map_err(|_| Error::CorruptedIndex(label))
 }
 
 /// A stored id list read back, slot by slot; nil is a slot an erase reached
@@ -69,7 +63,7 @@ pub(super) fn id_list(
     name: &str,
     label: &'static str,
 ) -> Result<Vec<Option<EntityId>>> {
-    let Some(Value::Array(items)) = field(entries, name) else {
+    let Some(Value::Array(items)) = field(entries, name, label)? else {
         return Err(Error::CorruptedIndex(label));
     };
     items
@@ -121,11 +115,11 @@ pub(super) fn candidate_slot(
         Value::Map(fields) => fields,
         _ => return Err(Error::CorruptedIndex(label)),
     };
-    let entity = field(fields, KEY_ENTITY)
+    let entity = field(fields, KEY_ENTITY, label)?
         .and_then(Value::as_str)
         .and_then(|hex| EntityId::from_hex(hex).ok())
         .ok_or(Error::CorruptedIndex(label))?;
-    let kind = field(fields, KEY_KIND)
+    let kind = field(fields, KEY_KIND, label)?
         .and_then(Value::as_str)
         .and_then(CleanupKind::parse)
         .ok_or(Error::CorruptedIndex(label))?;
@@ -161,7 +155,7 @@ pub(super) fn put_proposal_in_txn(
             ),
         ),
     ]);
-    let encoded = encode_row(&row, PROPOSAL_ROW_LABEL)?;
+    let encoded = msgpack::encode(&row);
     // Its candidates are indexed with it, so an erase finds it (FIX 7616).
     super::entity_rows::put_in_txn(
         &vault.store,
@@ -177,18 +171,19 @@ pub(super) fn put_proposal_in_txn(
 
 pub(super) fn decode_proposal(id: EntityId, raw: &[u8]) -> Result<CleanupProposal> {
     let entries = decode_row(raw, PROPOSAL_ROW_LABEL)?;
-    if field(&entries, KEY_SCHEMA_VERSION).and_then(Value::as_u64) != Some(PROPOSAL_SCHEMA_VERSION)
+    if field(&entries, KEY_SCHEMA_VERSION, PROPOSAL_ROW_LABEL)?.and_then(Value::as_u64)
+        != Some(PROPOSAL_SCHEMA_VERSION)
     {
         return Err(Error::CorruptedIndex(PROPOSAL_ROW_LABEL));
     }
-    let attempt = field(&entries, KEY_ATTEMPT)
+    let attempt = field(&entries, KEY_ATTEMPT, PROPOSAL_ROW_LABEL)?
         .and_then(Value::as_str)
         .and_then(hex_to_bytes_16)
         .ok_or(Error::CorruptedIndex(PROPOSAL_ROW_LABEL))?;
-    let created_at = field(&entries, KEY_CREATED_AT)
+    let created_at = field(&entries, KEY_CREATED_AT, PROPOSAL_ROW_LABEL)?
         .and_then(Value::as_u64)
         .ok_or(Error::CorruptedIndex(PROPOSAL_ROW_LABEL))?;
-    let Some(Value::Array(items)) = field(&entries, KEY_CANDIDATES) else {
+    let Some(Value::Array(items)) = field(&entries, KEY_CANDIDATES, PROPOSAL_ROW_LABEL)? else {
         return Err(Error::CorruptedIndex(PROPOSAL_ROW_LABEL));
     };
     let candidates = items
@@ -250,7 +245,7 @@ pub(super) fn put_digest_in_txn(
             integrity_teeth_value(teeth),
         ));
     }
-    let encoded = encode_row(&Value::Map(row), DIGEST_ROW_LABEL)?;
+    let encoded = msgpack::encode(&Value::Map(row));
     // Its slots are indexed with it, so an erase finds it (FIX 7616).
     super::entity_rows::put_in_txn(
         &vault.store,
@@ -266,10 +261,12 @@ pub(super) fn put_digest_in_txn(
 
 pub(super) fn decode_digest(id: EntityId, raw: &[u8]) -> Result<CleanupDigest> {
     let entries = decode_row(raw, DIGEST_ROW_LABEL)?;
-    if field(&entries, KEY_SCHEMA_VERSION).and_then(Value::as_u64) != Some(DIGEST_SCHEMA_VERSION) {
+    if field(&entries, KEY_SCHEMA_VERSION, DIGEST_ROW_LABEL)?.and_then(Value::as_u64)
+        != Some(DIGEST_SCHEMA_VERSION)
+    {
         return Err(Error::CorruptedIndex(DIGEST_ROW_LABEL));
     }
-    let attempt = match field(&entries, KEY_ATTEMPT) {
+    let attempt = match field(&entries, KEY_ATTEMPT, DIGEST_ROW_LABEL)? {
         Some(Value::Nil) | None => None,
         Some(value) => Some(AttemptId::from_bytes(
             &value
@@ -278,7 +275,7 @@ pub(super) fn decode_digest(id: EntityId, raw: &[u8]) -> Result<CleanupDigest> {
                 .ok_or(Error::CorruptedIndex(DIGEST_ROW_LABEL))?,
         )?),
     };
-    let proposal = match field(&entries, KEY_PROPOSAL) {
+    let proposal = match field(&entries, KEY_PROPOSAL, DIGEST_ROW_LABEL)? {
         Some(Value::Nil) | None => None,
         Some(value) => Some(
             value
@@ -291,24 +288,24 @@ pub(super) fn decode_digest(id: EntityId, raw: &[u8]) -> Result<CleanupDigest> {
         id,
         attempt,
         proposal,
-        decision: field(&entries, KEY_DECISION)
+        decision: field(&entries, KEY_DECISION, DIGEST_ROW_LABEL)?
             .and_then(Value::as_str)
             .and_then(CleanupDecision::parse)
             .ok_or(Error::CorruptedIndex(DIGEST_ROW_LABEL))?,
-        posture: field(&entries, KEY_POSTURE)
+        posture: field(&entries, KEY_POSTURE, DIGEST_ROW_LABEL)?
             .and_then(Value::as_str)
             .and_then(CleanupPosture::parse)
             .ok_or(Error::CorruptedIndex(DIGEST_ROW_LABEL))?,
-        at: field(&entries, KEY_AT)
+        at: field(&entries, KEY_AT, DIGEST_ROW_LABEL)?
             .and_then(Value::as_u64)
             .ok_or(Error::CorruptedIndex(DIGEST_ROW_LABEL))?,
         archived: id_list(&entries, KEY_ARCHIVED, DIGEST_ROW_LABEL)?,
         skipped: id_list(&entries, KEY_SKIPPED, DIGEST_ROW_LABEL)?,
-        rejected: match field(&entries, KEY_REJECTED) {
+        rejected: match field(&entries, KEY_REJECTED, DIGEST_ROW_LABEL)? {
             None => Vec::new(),
             Some(_) => id_list(&entries, KEY_REJECTED, DIGEST_ROW_LABEL)?,
         },
-        integrity_teeth: field(&entries, KEY_INTEGRITY_TEETH)
+        integrity_teeth: field(&entries, KEY_INTEGRITY_TEETH, DIGEST_ROW_LABEL)?
             .map(decode_integrity_teeth)
             .transpose()?,
     })
@@ -332,7 +329,7 @@ fn decode_integrity_teeth(value: &Value) -> Result<CleanupIntegrityTeeth> {
         return Err(Error::CorruptedIndex(DIGEST_ROW_LABEL));
     };
     let closed = |name: &str| {
-        field(entries, name)
+        field(entries, name, DIGEST_ROW_LABEL)?
             .and_then(Value::as_bool)
             .ok_or(Error::CorruptedIndex(DIGEST_ROW_LABEL))
     };

@@ -16,6 +16,7 @@ use crate::provenance::EdgeRef;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_NOTE, ENTITY_TYPE_TURN};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EdgeKind, EntityId, Result, Vault};
+use oneiron_contracts::fingerprint::ContentHash;
 use serde::{Deserialize, Serialize};
 
 const ROOTS: SideTable<EntityId, Root, Named> =
@@ -24,6 +25,8 @@ const ROOTS: SideTable<EntityId, Root, Named> =
 pub(super) mod bridge;
 pub(crate) use bridge::erase_source_bridges_in_txn;
 mod work;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::bridge::judgement_digest_for_test;
 pub(crate) use work::{frontier_frozen, pin_frozen};
 
 pub(crate) const ROOT_BRIDGE_ATTEMPT_TYPE: &str = bridge::ATTEMPT;
@@ -134,7 +137,7 @@ fn ancestors(
         if id != source {
             found.push(ConsolidationAncestor {
                 source_ref: id.to_hex(),
-                source_revision: *blake3::hash(&body).as_bytes(),
+                source_revision: *ContentHash::of(&body).as_bytes(),
                 trust_class: trust,
             });
         }
@@ -278,7 +281,7 @@ fn pin_reference(
         .collect();
     Ok(ConsolidationRootEvidence {
         reference: input.clone(),
-        source_revision: *blake3::hash(&body).as_bytes(),
+        source_revision: *ContentHash::of(&body).as_bytes(),
         content_hash: verified.content_hash,
         trust_class: verified.trust_class,
         corroborates,

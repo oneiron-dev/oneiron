@@ -307,11 +307,11 @@ fn pin_requests(calls: &[Value], shares: RetrievalBlendWeights) -> Vec<Retrieval
     assert_eq!(requests.len(), 2 * PIN_ORDER.len());
     let (clears, pins) = requests.split_at(PIN_ORDER.len());
     for (request, signal) in std::iter::zip(clears, PIN_ORDER) {
-        assert_eq!(request.signal, signal);
+        assert_eq!(request.signal, Some(signal));
         assert_eq!(request.value, None, "the first five calls clear every pin");
     }
     for (request, signal) in std::iter::zip(pins, PIN_ORDER) {
-        assert_eq!(request.signal, signal);
+        assert_eq!(request.signal, Some(signal));
         assert_eq!(request.value, Some(shares.weight(signal)));
     }
     requests
@@ -1235,8 +1235,9 @@ fn stamp_pins_the_normalized_shares_the_run_evaluated_over_earlier_pins() {
     for call in calls {
         let request: RetrievalPolicyPinRequest =
             serde_json::from_value(call["input"].clone()).expect("pin input is the verb's request");
+        let signal = request.signal.expect("a weight pin call names its signal");
         vault
-            .put_retrieval_policy_pin(request.signal, request.value)
+            .put_retrieval_policy_pin(signal, request.value)
             .unwrap_or_else(|error| panic!("pin call {request:?} refused: {error}"));
     }
     // The vault now serves the shares the run evaluated: five equal weights are 0.2 each.

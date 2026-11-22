@@ -20,6 +20,12 @@ pub enum EngineExecutorError {
     /// with the door's stable code.
     #[error("the run's host door refused its call: {code}")]
     HostRefused { code: String },
+    /// A resumed pending step's program drifted from its recorded calls, and an effect step
+    /// would re-fire: the entry holds with the walk's report (L8-23). The report is the
+    /// `oneiron` lib's `ResumePreflightReport`, boxed as an error so this crate need not name
+    /// it; a reader takes it back with `downcast_ref`.
+    #[error("{0}")]
+    ResumeDivergence(Box<dyn std::error::Error + Send + Sync>),
 }
 
 impl EngineExecutorError {
@@ -32,6 +38,7 @@ impl EngineExecutorError {
             Self::Llm(_) => "llm",
             Self::CanonicalRequest(_) => "canonical_request",
             Self::HostRefused { .. } => "host_refused",
+            Self::ResumeDivergence(_) => "resume_divergence",
         }
     }
 

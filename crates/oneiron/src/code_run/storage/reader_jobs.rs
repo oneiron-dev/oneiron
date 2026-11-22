@@ -359,9 +359,20 @@ impl ReaderTxn<'_, '_> {
         }
         self.delete_index(&due_key(job.binding.child_cutoff_unix_ms, job.task))?;
         if job.binding.spend.scope().is_some() {
-            self.spend
-                .spend()
-                .settle_child_in_txn(self.txn, &job.attempt, now_ms / 1000)?;
+            // An agent run's code-run id is its attempt's (census L9-37): the
+            // reader's tokens go to the read-shape stamp of the try that
+            // spawned it, which may have ended or been retried by now.
+            let spend = self.spend.spend();
+            if let Ok(spawner) = AttemptId::from_bytes(job.binding.parent_run.as_bytes()) {
+                spend.settle_spawned_child_in_txn(
+                    self.txn,
+                    &job.attempt,
+                    spawner,
+                    now_ms / 1000,
+                )?;
+            } else {
+                spend.settle_child_in_txn(self.txn, &job.attempt, now_ms / 1000)?;
+            }
         }
         job.state.transition_to(state)?;
         job.finding = finding;

@@ -1797,6 +1797,7 @@ fn test_lease(repo: &TestRepo, epoch: u64) -> CheckoutLeaseAct {
         claimed_at: 1,
         lease_expires_at: None,
         updated_at: 1,
+        bound_attempt: None,
     }
 }
 

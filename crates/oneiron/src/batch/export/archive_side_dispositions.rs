@@ -13,7 +13,7 @@ pub(crate) enum ArchiveSideDisposition {
     Omitted(ImportOmissionReason),
 }
 
-/// The 117 decided side tables in TSV order, 94 retained and 23 omitted.
+/// The decided side tables in TSV order, each retained or omitted.
 pub(crate) const SIDE_TABLE_DISPOSITIONS: &[(&str, ArchiveSideDisposition)] = &[
     ("ACCESS_GRANT_OWNER_ACT", ArchiveSideDisposition::Retained),
     ("AGENT_DEF_POWER_GRANT", ArchiveSideDisposition::Retained),
@@ -29,6 +29,10 @@ pub(crate) const SIDE_TABLE_DISPOSITIONS: &[(&str, ArchiveSideDisposition)] = &[
     ("CALL_RECEIPT", ArchiveSideDisposition::Retained),
     (
         "CAMPAIGN_COMPLIANCE_RECEIPT",
+        ArchiveSideDisposition::Retained,
+    ),
+    (
+        "CAMPAIGN_HOUSE_VOICE_GUIDE",
         ArchiveSideDisposition::Retained,
     ),
     ("CHECK_IN_RECEIPT", ArchiveSideDisposition::Retained),
@@ -59,6 +63,14 @@ pub(crate) const SIDE_TABLE_DISPOSITIONS: &[(&str, ArchiveSideDisposition)] = &[
     ),
     ("CONSENT_STANDING_GRANT", ArchiveSideDisposition::Retained),
     ("CONSENT_WIDEN_PROPOSAL", ArchiveSideDisposition::Retained),
+    (
+        "CONVERSATION_MEMBERSHIP_ROW",
+        ArchiveSideDisposition::Retained,
+    ),
+    (
+        "CONVERSATION_MEMBERSHIP_SEQ",
+        ArchiveSideDisposition::Retained,
+    ),
     ("CONVERSATION_ROLE_GRANT", ArchiveSideDisposition::Retained),
     ("DRAFTER_POLICY", ArchiveSideDisposition::Retained),
     (
@@ -115,11 +127,6 @@ pub(crate) const SIDE_TABLE_DISPOSITIONS: &[(&str, ArchiveSideDisposition)] = &[
     ("HOOKS_GRANT", ArchiveSideDisposition::Retained),
     ("HOOKS_RECEIPT", ArchiveSideDisposition::Retained),
     ("HOOKS_REGEN_RECEIPT", ArchiveSideDisposition::Retained),
-    (
-        "HOUSEKEEPING_SCHEDULE",
-        ArchiveSideDisposition::Omitted(ImportOmissionReason::LocalProjectionNotRestored),
-    ),
-    ("HOUSEKEEPING_WAKE", ArchiveSideDisposition::Retained),
     ("HOUSE_LINK_RECEIPT", ArchiveSideDisposition::Retained),
     ("INQUIRY_RECEIPT", ArchiveSideDisposition::Retained),
     ("LEARNING_SETTING", ArchiveSideDisposition::Retained),
@@ -131,10 +138,6 @@ pub(crate) const SIDE_TABLE_DISPOSITIONS: &[(&str, ArchiveSideDisposition)] = &[
     ("LEGAL_HOLD_USE_LIMIT", ArchiveSideDisposition::Retained),
     (
         "MAIL_PACK_COMPLIANCE_SETTING",
-        ArchiveSideDisposition::Retained,
-    ),
-    (
-        "MERGE_QUEUE_REVIEW_POLICY",
         ArchiveSideDisposition::Retained,
     ),
     ("MESSAGE_STREAM_POLICY", ArchiveSideDisposition::Retained),
@@ -195,6 +198,7 @@ pub(crate) const SIDE_TABLE_DISPOSITIONS: &[(&str, ArchiveSideDisposition)] = &[
     ),
     ("PROJECT_HISTORY_POLICY", ArchiveSideDisposition::Retained),
     ("PROPOSAL_RECEIPT_HISTORY", ArchiveSideDisposition::Retained),
+    ("READ_SHAPE_PINS", ArchiveSideDisposition::Retained),
     ("RETRIEVAL_POLICY_PINS", ArchiveSideDisposition::Retained),
     (
         "ROOM_THREADS_ADMIN_DELETE",
@@ -215,6 +219,10 @@ pub(crate) const SIDE_TABLE_DISPOSITIONS: &[(&str, ArchiveSideDisposition)] = &[
         ArchiveSideDisposition::Retained,
     ),
     ("SEND_RECEIPT_SUMMARY", ArchiveSideDisposition::Retained),
+    ("SETTING", ArchiveSideDisposition::Retained),
+    ("SETTING_CHANGE", ArchiveSideDisposition::Retained),
+    ("SETTING_CHANGE_NEXT", ArchiveSideDisposition::Retained),
+    ("SETTING_CONTENT", ArchiveSideDisposition::Retained),
     ("SHARED_ACT_POLICY_CHANGE", ArchiveSideDisposition::Retained),
     (
         "SKILL_ATTRIBUTION_AUDIT",
@@ -255,6 +263,12 @@ pub(crate) const SIDE_TABLE_DISPOSITIONS: &[(&str, ArchiveSideDisposition)] = &[
         "SYNC_RESIDENCE_BUNDLE_COMMIT_RECEIPT",
         ArchiveSideDisposition::Omitted(ImportOmissionReason::LocalProjectionNotRestored),
     ),
+    // PREDICTED-BOARD-SEED-SIGNAL: the home's touch log, a board's reports among it, travels as
+    // any vault row does; an import keeps it inert, so no prediction seeds from it there.
+    (
+        "SYNC_RESIDENCE_MACHINE_TOUCH",
+        ArchiveSideDisposition::Retained,
+    ),
     (
         "SYNC_SHARED_LEAVE_RECEIPT",
         ArchiveSideDisposition::Retained,
@@ -268,6 +282,14 @@ pub(crate) const SIDE_TABLE_DISPOSITIONS: &[(&str, ArchiveSideDisposition)] = &[
         ArchiveSideDisposition::Omitted(ImportOmissionReason::LocalHistoryNotRestored),
     ),
     ("VOICE_IDENTITY_CONSENT", ArchiveSideDisposition::Retained),
+    (
+        "VOICE_IDENTITY_CONSENT_VOID",
+        ArchiveSideDisposition::Retained,
+    ),
+    (
+        "VOICE_IDENTITY_WITHDRAWAL_REQUESTED_AT",
+        ArchiveSideDisposition::Retained,
+    ),
     ("VOICE_REF_RENDER_CONSENT", ArchiveSideDisposition::Retained),
     ("WEAVE_DIGEST_SCHEDULE", ArchiveSideDisposition::Retained),
     ("WEAVE_DIGEST_SETTINGS", ArchiveSideDisposition::Retained),

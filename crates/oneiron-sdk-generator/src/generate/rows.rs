@@ -193,6 +193,38 @@ fn check_doors(row: &Dict) -> Result<(), GenerateError> {
             "host_door_precheck is only a host door's, and only false",
         ));
     }
+    // A transport-only row (FIX HOOK-TRANSCRIPT-IMPORT-PAST-CARRIER) stages
+    // what it carries and runs it as a call of another verb, whose hooks
+    // judge it: it crosses no hook chain of its own, so its door takes its
+    // call and its input alone, and its proof is checked before it stages.
+    if let Some(transport) = row.get("host_door_transport_only") {
+        if !transport.is_true() || !host_door {
+            return Err(refuse(
+                row,
+                "host_door_transport_only is only a host door's, and only true",
+            ));
+        }
+        let chained = [
+            "host_door_caller",
+            "host_door_session",
+            "host_door_paced",
+            "host_door_lens_owner",
+            "host_door_client_surface",
+            "host_door_surface",
+            "lands_turn",
+        ]
+        .into_iter()
+        .any(|key| flag(row, key));
+        if chained
+            || !flag(row, "host_door_proof")
+            || row.get("host_door_precheck").is_some_and(Value::is_false)
+        {
+            return Err(refuse(
+                row,
+                "a transport-only row's door takes its call and its input alone, after its proof",
+            ));
+        }
+    }
     for (key, message) in [
         ("host_door_paced", "only a host door takes a paced context"),
         (

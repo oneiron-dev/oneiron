@@ -6,6 +6,7 @@ use oneiron_base::error::Result;
 use oneiron_contracts::claim::ClaimSource;
 use oneiron_contracts::entity_id::EntityId;
 use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -95,6 +96,12 @@ fn question(body: &ClaimBody) -> Option<Question> {
     })
 }
 
+/// Source ranking on the pack: scores each row by its claim source, then
+/// sorts each list by world section and score, highest first. Results of
+/// equal score keep the order they come in, the pipeline's: a tie can hold
+/// a placement no score shows, such as a reranked row the access factor
+/// took to zero ahead of an unscored row capped there (RERANK-GROUP-ORDER =
+/// A). Neighbors, which come in at one score, sort by id among ties.
 pub fn apply(
     results: &mut [ContextEntity],
     neighbors: &mut [ContextEntity],
@@ -115,8 +122,8 @@ pub fn apply(
     for (entity, score) in results.iter_mut().chain(neighbors.iter_mut()).zip(scores) {
         entity.score = score;
     }
-    sort_within_worlds(results, bodies);
-    sort_within_worlds(neighbors, bodies);
+    sort_within_worlds(results, bodies, |_, _| Ordering::Equal);
+    sort_within_worlds(neighbors, bodies, |a, b| a.id.cmp(&b.id));
     Ok(())
 }
 
@@ -306,7 +313,12 @@ pub fn clamp_scores(
     Ok(())
 }
 
-fn sort_within_worlds(rows: &mut [ContextEntity], bodies: &HashMap<EntityId, ClaimBody>) {
+/// A stable sort, so rows that `tie` holds equal keep their order.
+fn sort_within_worlds(
+    rows: &mut [ContextEntity],
+    bodies: &HashMap<EntityId, ClaimBody>,
+    tie: impl Fn(&ContextEntity, &ContextEntity) -> Ordering,
+) {
     let mut sections = HashMap::new();
     for row in rows.iter() {
         let world = bodies.get(&row.id).and_then(|b| b.world);
@@ -319,6 +331,6 @@ fn sort_within_worlds(rows: &mut [ContextEntity], bodies: &HashMap<EntityId, Cla
         sections[&aw]
             .cmp(&sections[&bw])
             .then_with(|| b.score.total_cmp(&a.score))
-            .then_with(|| a.id.cmp(&b.id))
+            .then_with(|| tie(a, b))
     });
 }

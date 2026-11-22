@@ -568,7 +568,8 @@ impl Vault {
 
     /// Called only by explicit local approval/authority settlement doors, never reads/replay.
     /// `closer` is the door's verified actor, whom a supersession's close
-    /// names (FIX 11039); `None` names no one, as before.
+    /// names (FIX 11039), and the terminal receipt of a tray row the
+    /// supersession closes with it; `None` names no one, as before.
     ///
     /// `critical_confirm` is the tray removal of the owner's Clear of the
     /// claim's critical confirm, when that Clear settles it: a supersession
@@ -657,7 +658,9 @@ impl Vault {
                 }
                 let decision = self
                     .supersede_granted_deferred_claim_in_txn(txn, id, &old, now, checker, closer)?;
-                self.store.close_pending_gate_consent_as_in_txn(
+                // A row still open here (the owner's critical Clear) closes as
+                // the door's verified closer, as the retract arm's does.
+                self.store.close_pending_gate_consent_closed_by_in_txn(
                     txn,
                     id,
                     GateReceiptOutcome::Superseded,
@@ -665,6 +668,7 @@ impl Vault {
                     None,
                     // Keep the outer Clear's existing obligation result.
                     critical_confirm.unwrap_or(crate::store::TrayRemoval::Unanswered),
+                    closer,
                 )?;
                 let envelope = super::supersession_provenance::envelope(&body)?;
                 super::supersession_provenance::write_companion(

@@ -7,6 +7,7 @@
 use super::{BodyFacts, BodyMeter, BodySink, SunkBody, body_file_name};
 use crate::store::BodyFile;
 use crate::{Error, Result};
+use oneiron_contracts::fingerprint::ContentHash;
 use zeroize::Zeroizing;
 
 /// The facts of `meter`, measured as its bytes streamed past, with `secret`,
@@ -69,7 +70,7 @@ pub(super) fn scanned_file_hit(
     let len_usize =
         usize::try_from(len).map_err(|_| Error::ArithmeticOverflow("result body spill length"))?;
     let raw = Zeroizing::new(file.read_range(0, len_usize)?);
-    if blake3::hash(&raw).as_bytes() != digest {
+    if ContentHash::of(&raw).as_bytes() != digest {
         return Err(Error::CorruptedIndex("result body spill readback digest"));
     }
     Ok(crate::batch::secret_scan::write_payload_hit(&raw))
