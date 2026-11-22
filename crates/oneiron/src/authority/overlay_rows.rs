@@ -70,6 +70,20 @@ pub(super) fn put_overlay_in_txn(
     AUTHORITY_OVERLAY.put(store, w, &overlay.hash, &sealed.to_bytes())
 }
 
+/// Deletes the overlay record kept under `hash`, if one is: a pending row's,
+/// once the evidence drops it.
+///
+/// # Errors
+/// Storage faults.
+pub(super) fn delete_overlay_in_txn(
+    store: &Store,
+    w: &mut RwTxn<'_>,
+    hash: &AuthorityEntryHash,
+) -> Result<()> {
+    AUTHORITY_OVERLAY.delete(store, w, hash)?;
+    Ok(())
+}
+
 /// What one signed AUTHORITY_LOG body of this vault reads as here.
 // A short-lived per-row read result, as `AuthorityEntryRead` is.
 #[allow(clippy::large_enum_variant)]
