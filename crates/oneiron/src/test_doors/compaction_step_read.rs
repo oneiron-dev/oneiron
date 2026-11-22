@@ -29,7 +29,7 @@ pub fn file_compaction_step(
     sources: Vec<EntityId>,
     answer: &str,
 ) -> Result<EntityId> {
-    file_compaction_step_at(
+    file_compaction_step_at_ms(
         vault,
         run_ref,
         job,
@@ -52,13 +52,34 @@ pub fn file_compaction_step_at(
     answer: &str,
     filed_at: u64,
 ) -> Result<EntityId> {
+    file_compaction_step_at_ms(
+        vault,
+        run_ref,
+        job,
+        writer,
+        sources,
+        answer,
+        filed_at.saturating_mul(1_000),
+    )
+}
+
+/// One step filed as a pass files it, its clock reading `now_ms`.
+fn file_compaction_step_at_ms(
+    vault: &Vault,
+    run_ref: &str,
+    job: EntityId,
+    writer: EntityId,
+    sources: Vec<EntityId>,
+    answer: &str,
+    now_ms: u64,
+) -> Result<EntityId> {
     let call = compaction_call(sources, answer)?;
     filed_claim(ExecutorStorage::Canonical(vault).file_compaction_steps(
         run_ref,
         job,
         WriteActor::new(writer, EdgeActorClass::Agent),
         &[call],
-        filed_at * 1_000,
+        now_ms,
     )?)
 }
 
