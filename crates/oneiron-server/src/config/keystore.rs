@@ -133,6 +133,7 @@ impl KeystoreConfig {
                     "this-device keystore installed"
                 );
                 vault.install_device_keystore(keystore);
+                vault.install_process_presence_gate();
                 let signing = vault.prepare_install_signing_logged();
                 if signing {
                     vault.prepare_host_issuer_custody_logged();
