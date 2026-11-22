@@ -61,6 +61,23 @@
 //! rebuilt over the device's own unattenuated proof of the same slip, and
 //! saved again from a rebuilt key, it reads nothing from then on. Red on
 //! #8105 (e59c71b9d44): each reads the owner's open claim past the end.
+//!
+//! The transferred credential's key is homed in no conversation of this
+//! vault (RULING SECREAD-HOME-READ-DOORS = B), and its lane still saves,
+//! keeping that home: the refusal of a narrowed guest credential's lane is
+//! for a bound only the grant's proof binds (FIX
+//! HOMED-GRANT-CREDENTIAL-LANE-NOT-SAVED). Red on main f8ebe0a0d6b: each
+//! transferred lane's freeze is refused as a narrowed guest credential's.
+//!
+//! A saved lane keeps its key's home when the owner's floor stands beside
+//! its rebuild (round 2 review P1 of #9590, frozen.rs:505). The owner's own
+//! key, homed in no conversation of this vault, refuses the owner's claim
+//! stamped sensitive. Its saved lane keeps no Scope and the floor's basis,
+//! so the saved question's owner alternative stands beside the rebuilt key,
+//! and that alternative read under the owner's key with no home. Each
+//! rebuild now refuses the stamped claim and still reads the unstamped one.
+//! Red at #9590's ff4db6e59d0: the asker and source readers read the stamped
+//! claim.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test saved_lane_owner_basis`.
 #![cfg(oneiron_test_support)]
@@ -113,6 +130,8 @@ struct Fixture {
     _dir: tempfile::TempDir,
     issuer: HostSlipIssuer,
     owner: EntityId,
+    /// The owner's proof the fixture's claims were written under.
+    owner_proof: AuthenticatedOwner,
     relationship: EntityId,
     open_claim: EntityId,
     relationship_claim: EntityId,
@@ -145,12 +164,14 @@ fn fixture() -> Fixture {
         owner,
         &owner_proof,
         ClaimRelationships::All(AllRelationships::All),
+        None,
     );
     let relationship_claim = write_owner_claim(
         &vault,
         owner,
         &owner_proof,
         ClaimRelationships::Relationships(vec![relationship.to_hex()]),
+        None,
     );
     let device_slip = paired_device_slip(&vault, &issuer, &owner_proof, owner);
     Fixture {
@@ -158,6 +179,7 @@ fn fixture() -> Fixture {
         _dir: dir,
         issuer,
         owner,
+        owner_proof,
         relationship,
         open_claim,
         relationship_claim,
@@ -165,11 +187,14 @@ fn fixture() -> Fixture {
     }
 }
 
+/// A base-world claim the owner writes about themselves, inside
+/// `relationships`, stamped with `sensitivity` when named.
 fn write_owner_claim(
     vault: &Vault,
     owner: EntityId,
     owner_proof: &AuthenticatedOwner,
     relationships: ClaimRelationships,
+    sensitivity: Option<u8>,
 ) -> EntityId {
     let id = EntityId::now();
     vault
@@ -187,8 +212,9 @@ fn write_owner_claim(
                 scope_facet_id: vault.default_facet().expect("owner default facet").to_hex(),
                 scope_relationship_id: relationships,
                 scope_project_id: default_project_id().to_hex(),
-            },
-            sensitivity: None,
+            }
+            .into(),
+            sensitivity,
             evidence_turn_refs: Vec::new(),
             valid_from: None,
             valid_to: None,
@@ -568,6 +594,12 @@ fn a_transferred_own_device_lane_freezes_with_its_scope() {
     assert!(
         !frozen.reads_as_principal(),
         "actor=a key the owner's device handed its credential to; expected its saved lane to keep its Scope, not to read as its holder's principal lane"
+    );
+    let stored = serde_json::to_value(&frozen).expect("frozen lane serializes");
+    assert_eq!(
+        stored["home_unnamed"],
+        json!(true),
+        "actor=a key the owner's device handed its credential to, homed in no conversation of this vault; expected its saved lane to keep that home; stored {stored}"
     );
 }
 
@@ -1104,5 +1136,66 @@ fn an_unbound_gated_owner_saved_lane_over_the_owners_key_reads_on_no_grant() {
     assert!(
         !read,
         "actor=the owner's floor under an access gate bound to no principal, held to the base world; expected its saved lane, rebuilt over the owner's own key, to read on no grant and refuse the relationship claim the owner's grant admits; seen {seen}"
+    );
+}
+
+/// The owner's claim about themselves, open to every relationship and
+/// stamped sensitive, which the owner's own key reads and the same key homed
+/// in no conversation of this vault refuses, and that homed key's saved
+/// lane, once its live lane reads the owner's unstamped open claim.
+fn homed_owner_saved_lane(fixture: &Fixture) -> (FrozenReadLane, EntityId) {
+    let stamped = write_owner_claim(
+        &fixture.vault,
+        fixture.owner,
+        &fixture.owner_proof,
+        ClaimRelationships::All(AllRelationships::All),
+        Some(2),
+    );
+    let owner = fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .read_key()
+        .expect("owner read key");
+    let (read, seen) = reads(&held_lane(fixture, owner.clone()), stamped);
+    assert!(
+        read,
+        "control: the owner's own key reads the owner's claim stamped sensitive; seen {seen}"
+    );
+    let homed = owner.homed_unnamed();
+    let lane = held_lane(fixture, homed.clone());
+    let (open, seen) = reads(&lane, fixture.open_claim);
+    assert!(
+        open,
+        "precondition: the owner's key homed in no conversation of this vault reads the owner's unstamped open claim; seen {seen}"
+    );
+    let (refused, seen) = reads(&lane, stamped);
+    assert!(
+        !refused,
+        "precondition: the owner's key homed in no conversation of this vault refuses the owner's claim stamped sensitive; seen {seen}"
+    );
+    (saved_lane(fixture, homed), stamped)
+}
+
+/// The homed owner lane's saved question reads no stamped claim through the
+/// owner alternative beside its rebuilt key (round 2 review P1 of #9590):
+/// the alternative keeps the rebuilt key's home.
+#[test]
+fn a_homed_owner_saved_question_reads_no_stamped_claim_its_live_lane_refused() {
+    let fixture = fixture();
+    let (frozen, stamped) = homed_owner_saved_lane(&fixture);
+    let (open, seen) = asker_reads(&fixture, &frozen, fixture.open_claim);
+    assert!(
+        open,
+        "actor=the owner's key homed in no conversation of this vault; expected its saved question's asker reader to read the unstamped open claim its live lane read; seen {seen}"
+    );
+    let (read, seen) = asker_reads(&fixture, &frozen, stamped);
+    assert!(
+        !read,
+        "actor=the owner's key homed in no conversation of this vault; expected its saved question's asker reader, and the owner alternative beside it, to refuse the claim stamped sensitive its live lane refused; seen {seen}"
+    );
+    let (read, seen) = source_reads(&fixture, &frozen, stamped);
+    assert!(
+        !read,
+        "actor=the owner's key homed in no conversation of this vault; expected its saved question's source reader, and the owner alternative beside it, to refuse the claim stamped sensitive its live lane refused; seen {seen}"
     );
 }

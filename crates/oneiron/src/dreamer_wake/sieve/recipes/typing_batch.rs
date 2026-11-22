@@ -9,6 +9,8 @@
 
 use std::collections::BTreeSet;
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
+
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_runner::{
     DreamerAttemptPayload, DreamerAttemptStatus, DreamerConsolidationScope, DreamerRunnerStore,
@@ -24,8 +26,6 @@ use super::{
 
 /// The carrier's attempt type: a Micro job, one queued per TURN.
 pub(crate) const TYPING_BATCH_ATTEMPT: &str = "dreamer.sieve.typing_batch";
-
-const MEMBER_DOMAIN: &[u8] = b"oneiron:dreamer-sieve:typing-member:v1";
 
 /// The carrier's input: the TURN whose typing-only spans it reads.
 #[derive(Serialize, Deserialize)]
@@ -143,11 +143,19 @@ pub(crate) fn typing_members(
 /// The key a member's reading is kept under in the audit table: its
 /// carrier and its span, never a queued attempt of its own. The carrier
 /// reads many spans, so each keeps its own receipt.
+/// Stored audit member keys keep their bytes (K, PLAN-UC-04 stage 7).
 pub(crate) fn typing_member_key(carrier: AttemptId, span: &SieveSpan) -> Result<AttemptId> {
-    let hash = blake3::Hasher::new()
-        .update(MEMBER_DOMAIN)
-        .update(carrier.as_bytes())
-        .update(&span.id)
-        .finalize();
-    Ok(AttemptId::from_bytes(&hash.as_bytes()[..16])?)
+    typing_member_key_for(carrier, &span.id)
 }
+
+/// The audit receipt key of a carrier/span pair.
+pub(crate) fn typing_member_key_for(carrier: AttemptId, span_id: &[u8; 32]) -> Result<AttemptId> {
+    let hash = LegacyDigest::new(purposes::dreamer_wake::TYPING_MEMBER_KEY)
+        .raw(carrier.as_bytes())
+        .raw(span_id)
+        .finish();
+    Ok(AttemptId::from_bytes(&hash[..16])?)
+}
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::typing_member_key_for as typing_member_key_for_test;

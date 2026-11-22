@@ -14,6 +14,7 @@
 //! the share-issuer check before its Gate decision.
 
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use oneiron::access_grant::AccessGrantStatus;
 use oneiron::registry::ENTITY_TYPE_PERSON;
@@ -25,6 +26,9 @@ const MISSING_WRITER: &str = "writer must name a live authority-bearing entity";
 fn open_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("temporary vault directory");
     let vault = Vault::open(dir.path(), VaultConfig::default()).expect("open vault");
+    // A plain delete reads the device keystore (`KeystoreUnavailable`
+    // without one), so the host installs one, as main's delete fixtures do.
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
     (dir, vault)
 }
 

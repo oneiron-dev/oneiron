@@ -527,6 +527,11 @@ pub enum EngineLimit {
     OrganMeshObjectBytes,
     /// Bytes one mesh connection holds staged at once; past it the row asks.
     OrganMeshStagedBytes,
+    /// Bytes of one HTTP or fixture response body a code sandbox's egress
+    /// reads for its guest, under the host byte floor and the request
+    /// deadline. Past it the body is delivered whole and the row asks (FIX
+    /// 7946).
+    SandboxEgressResponseBytes,
     /// Deadline jobs one caller has running at once: the recalls and searches
     /// a door answers at their deadline, each counted until its work ends,
     /// after its answer too (SCAN C030). Past it the job runs on and the row

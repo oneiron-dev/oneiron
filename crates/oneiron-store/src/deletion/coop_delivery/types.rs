@@ -127,11 +127,16 @@ impl CooperativeDeleteOperation {
             .collect()
     }
 
-    /// Saves what became of pending `record`. False when it is no pending
-    /// record of this operation.
+    /// Saves what became of `record`: a pending record takes `state`, and a
+    /// record read missing takes `Removed`, since the delete that erased it
+    /// outranks a concurrent one that found it gone (review round 1 of
+    /// #9902). False when it is no such record of this operation.
     pub fn settle(&mut self, record: EntityId, state: CooperativeDeleteRecordState) -> bool {
         match self.records.iter_mut().find(|saved| {
-            saved.record == record && saved.state == CooperativeDeleteRecordState::Pending
+            saved.record == record
+                && (saved.state == CooperativeDeleteRecordState::Pending
+                    || (saved.state == CooperativeDeleteRecordState::Missing
+                        && state == CooperativeDeleteRecordState::Removed))
         }) {
             Some(saved) => {
                 saved.state = state;

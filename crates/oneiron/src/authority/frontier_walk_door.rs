@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use oneiron_authority::share_travel::BornWithField;
+use oneiron_persistent_collections::PersistentMap;
 
 use super::grant_travel::{GrantFrontier, SignedChoice, travel_meet};
 use super::world_privacy::PrivacyMeet;
@@ -30,8 +31,8 @@ pub(crate) fn walk_order() -> Vec<String> {
         disputed,
     };
     let mut frontier = WorldFrontier {
-        live: BTreeMap::new(),
-        superseded: BTreeMap::new(),
+        live: PersistentMap::new(),
+        superseded: PersistentMap::new(),
     };
     for (label, replaced, disputed, live) in [
         (b'a', "", false, false),
@@ -95,7 +96,7 @@ pub(crate) fn travel_reads_match_before(seed: u64, cases: usize) -> Result<usize
 /// replaces up to three earlier ones, and now and then one this frontier does not hold; the live
 /// edits are those no later edit replaced. About one in ten is disputed and one in three counts
 /// at full strength.
-fn seeded_frontier<S>(
+fn seeded_frontier<S: PartialEq>(
     rng: &mut Rng,
     mut settings: impl FnMut(&mut Rng) -> S,
 ) -> (WorldFrontier<S>, BTreeSet<AuthorityEntryHash>) {
@@ -134,8 +135,8 @@ fn seeded_frontier<S>(
         made.push((*hash, Arc::new(edit)));
     }
     let mut frontier = WorldFrontier {
-        live: BTreeMap::new(),
-        superseded: BTreeMap::new(),
+        live: PersistentMap::new(),
+        superseded: PersistentMap::new(),
     };
     for (hash, edit) in made {
         if replaced_later.contains(&hash) {

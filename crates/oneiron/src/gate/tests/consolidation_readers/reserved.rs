@@ -73,7 +73,11 @@ pub(super) fn provider_confidence(
     check_transition(vault, claim, reader, |v, id| {
         match crate::provider_confidence::effective_confidence(v, id) {
             Ok(score) => {
-                assert_eq!(score, 0.8, "{reader:?}: reader output");
+                assert_eq!(
+                    score,
+                    crate::provider_confidence::EffectiveConfidence::Resolved(0.8),
+                    "{reader:?}: reader output"
+                );
                 Ok(true)
             }
             Err(Error::EntityNotFound) => Ok(false),

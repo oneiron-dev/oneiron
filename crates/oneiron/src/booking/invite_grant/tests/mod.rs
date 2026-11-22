@@ -220,6 +220,7 @@ fn put_booking_claims(
             ClaimLifecycleStatus::Active,
         )
         .unwrap();
+        crate::test_util::stamp_vault_default_facet(vault, &mut body);
         body.source = Some(ClaimSource::Observed);
         body.valid_from = Some(NOW);
         let seed = base_seed
@@ -833,6 +834,7 @@ fn a_held_cancellation_unbinds_and_a_held_booker_binds_nobody() {
             ClaimLifecycleStatus::Active,
         )
         .unwrap();
+        crate::test_util::stamp_vault_default_facet(vault, &mut body);
         body.source = Some(ClaimSource::Observed);
         body.valid_from = Some(NOW);
         vault

@@ -4,7 +4,7 @@
 use super::evidence_spans::EVIDENCE_SPANS_MAX_RANGES;
 use super::policy_preflight::POLICY_PREFLIGHT_MAX_REFS;
 use super::snapshot::SNAPSHOT_MAX_KINDS;
-use crate::setting::{Kind, lower_is_tighter};
+use crate::setting::Kind;
 
 /// 16: an open naming more kinds is refused.
 fn snapshot_max_kinds_default() -> u32 {
@@ -28,7 +28,7 @@ crate::setting::setting_keys! {
     pub(crate) SNAPSHOT_MAX_KINDS_SETTING: u32 = "snapshot_read.open.max_kinds" {
         kind: Kind::new(snapshot_max_kinds_default)
             .strictest(snapshot_max_kinds_default)
-            .tighter(lower_is_tighter::<u32>),
+            .lower(),
     };
     /// The most refs one policy preflight names. 100 by default: a preflight naming more is
     /// refused. A raise is the looser direction, so an agent's raise waits on the owner's
@@ -36,7 +36,7 @@ crate::setting::setting_keys! {
     pub(crate) POLICY_PREFLIGHT_MAX_REFS_SETTING: u32 = "snapshot_read.preflight.max_refs" {
         kind: Kind::new(policy_preflight_max_refs_default)
             .strictest(policy_preflight_max_refs_default)
-            .tighter(lower_is_tighter::<u32>),
+            .lower(),
     };
     /// The most byte ranges one evidence spans request names. 64 by default: a request naming
     /// more is refused. A raise is the looser direction, so an agent's raise waits on the
@@ -44,6 +44,6 @@ crate::setting::setting_keys! {
     pub(crate) EVIDENCE_SPANS_MAX_RANGES_SETTING: u32 = "snapshot_read.evidence.max_ranges" {
         kind: Kind::new(evidence_spans_max_ranges_default)
             .strictest(evidence_spans_max_ranges_default)
-            .tighter(lower_is_tighter::<u32>),
+            .lower(),
     };
 }

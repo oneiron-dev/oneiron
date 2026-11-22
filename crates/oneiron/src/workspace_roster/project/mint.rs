@@ -315,15 +315,16 @@ impl Vault {
         // it lands as history, and the tap commits only if it installs.
         let signed_at = owner_signed_at(self, txn)?;
         self.sign_owner_project_in_txn(txn, owner, signer, id, &mut project, None, signed_at)?;
-        self.batch_in()
-            .put_engine_history(
-                &id,
-                project_type(&self.store).ok_or_else(invalid)?,
-                period,
-                at,
-                &encode(&project)?,
-            )
-            .apply(txn)?;
+        self.land_owner_project_birth_in_txn(
+            txn,
+            id,
+            project_type(&self.store).ok_or_else(invalid)?,
+            period,
+            at,
+            &project,
+        )?;
+        // A new project starts with its row of each `born` setting key (stage 7c-2).
+        crate::setting::write_born_rows_in_txn(self, txn, id)?;
         self.require_owner_head_in_txn(txn, id, &project)?;
         // A house mind the roster seats joins the new home room through the
         // three consents, filed by the owner who tapped (OF-417).

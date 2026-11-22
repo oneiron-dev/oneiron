@@ -652,10 +652,11 @@ async fn mcp_endpoint_tool_args_are_gated_before_execution() {
             MCP_TOOL_FIRST_PATH,
             credential,
             "args-1",
-            "board.expand",
+            "self.focus.refresh",
             mcp_merge_args(
                 mcp_endpoint_envelope(actor_ref, "read_board"),
-                json!({ "arguments": { "frame_epoch": 3 } }),
+                // Refresh accepts an epoch, but no card key.
+                json!({ "arguments": { "key": "VERBS", "frame_epoch": 3 } }),
             ),
         ),
     )
@@ -790,8 +791,9 @@ async fn mcp_agent_rooms_return_typed_outputs_and_engine_exhaustion() {
             oneiron::EdgeActorClass::Human,
         ))
         .expect("read permit");
-    // The permit is class-bound; the member's class-less peer key reads only
-    // through a class-agnostic grant (FIX 9917, FIX 1218), written after it.
+    // The fixture permit is class-agnostic, as a production agent row is, so
+    // the member's class-less peer key matches it; the class-agnostic grant
+    // written after it (FIX 9917, FIX 1218) stays as belt-and-braces.
     put_actor_read_grant(&server.vault, other, None);
     let memory = server.vault.memory(owner, oneiron::EdgeActorClass::Human);
     let mut turns = Vec::new();

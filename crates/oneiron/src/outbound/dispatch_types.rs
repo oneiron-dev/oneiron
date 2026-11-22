@@ -171,6 +171,9 @@ pub struct OutboundDispatchRequest {
     /// chokepoint refuses this send's first admission while the sibling's
     /// call may have gone.
     pub exclusive_route_ref: Option<String>,
+    /// The logical send whose first ledger row names this send's provider key
+    /// (`IntentLedgerRecord::with_idempotency_attempt`); `None`: its own row.
+    pub idempotency_identity_ref: Option<String>,
     /// Set when the pipeline resolves this send's sender: its outbound send
     /// runs under the posture the default manifest ships, because the
     /// vault's manifests name no act row for its pairing. The dispatch
@@ -260,6 +263,7 @@ impl OutboundDispatchRequest {
             publisher_signature: None,
             ambient_alternative: None,
             exclusive_route_ref: None,
+            idempotency_identity_ref: None,
             sender_posture_fallback: false,
             send_executor_fence: None,
             agent_run_fence: None,

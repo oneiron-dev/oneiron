@@ -2,6 +2,7 @@
 
 use crate::entity_id::bytes_to_hex_lower;
 use crate::{Error, Result, Vault};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 mod work;
 pub(super) use work::MaintenanceOp;
@@ -17,7 +18,6 @@ const MAINTENANCE_INGEST_QUOTA_PREFIX: &[u8] = b"m:maintenance_ingest_quota:v1:"
 const MAINTENANCE_INGEST_QUOTA_CONFIG_KEY: &[u8] = b"m:maintenance_ingest_quota_config:v1";
 const MAINTENANCE_INGEST_QUOTA_VALUE_LEN: usize = 20;
 const MAINTENANCE_INGEST_QUOTA_CONFIG_LEN: usize = 21;
-const MAINTENANCE_INGEST_QUOTA_PEER_DOMAIN: &[u8] = b"oneiron/maintenance-ingest-quota/v1/peer";
 /// Default accepted maintenance-band replay ops per peer per quota window.
 ///
 /// This is a generous device-local share for signed maintenance records
@@ -297,13 +297,12 @@ pub(super) fn peer_key_from_identity_topology_stream(
 }
 
 fn peer_key_from_signature_key(suite: &[u8], public_key: &[u8]) -> MaintenanceIngestPeerKey {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(MAINTENANCE_INGEST_QUOTA_PEER_DOMAIN);
-    hasher.update(&[0]);
-    hasher.update(suite);
-    hasher.update(&[0]);
-    hasher.update(public_key);
-    MaintenanceIngestPeerKey(*hasher.finalize().as_bytes())
+    let mut hasher = LegacyDigest::new(purposes::sync::MAINTENANCE_INGEST_QUOTA_PEER);
+    hasher.raw(&[0]);
+    hasher.raw(suite);
+    hasher.raw(&[0]);
+    hasher.raw(public_key);
+    MaintenanceIngestPeerKey(hasher.finish())
 }
 
 fn maintenance_ingest_quota_key(peer_key: MaintenanceIngestPeerKey) -> Vec<u8> {
@@ -432,4 +431,19 @@ fn decode_maintenance_ingest_quota_config(value: &[u8]) -> Result<MaintenanceIng
     };
     validate_maintenance_ingest_quota_config(config)?;
     Ok(config)
+}
+
+#[cfg(oneiron_test_support)]
+pub(crate) fn peer_key_from_signature_key_for_test(suite: &[u8], public_key: &[u8]) -> [u8; 32] {
+    peer_key_from_signature_key(suite, public_key).0
+}
+
+#[cfg(oneiron_test_support)]
+pub(crate) fn peer_key_from_redaction_pubkey_for_test(public_key: &[u8; 32]) -> [u8; 32] {
+    peer_key_from_redaction_pubkey(public_key).0
+}
+
+#[cfg(oneiron_test_support)]
+pub(crate) fn peer_key_from_identity_topology_stream_for_test(lease_vault_id: u64) -> [u8; 32] {
+    peer_key_from_identity_topology_stream(lease_vault_id).0
 }

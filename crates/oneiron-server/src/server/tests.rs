@@ -286,6 +286,7 @@ async fn imported_update_vv_and_content_survive_server_recreation_without_commit
                 &oneiron::sync::window::UpdateInserts::default(),
                 &oneiron::sync::selector::RepoSyncLandings::default(),
                 None,
+                None,
             )
             .unwrap();
 

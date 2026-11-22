@@ -71,6 +71,7 @@ async fn list(
         visitor_tz: "UTC".to_owned(),
         constraint: None,
         session_ref: format!("client-address-{nth}"),
+        duration_min: None,
     };
     let (path, mut request) = if owner {
         let request = Request::builder().header(

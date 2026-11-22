@@ -55,6 +55,17 @@ use self::input::{
     keep_witnessed_input_in_txn, request_witness_in_txn, seal_leaf_input_in_txn,
     seal_leaf_parts_in_txn, surface_leaf_input, surface_retry_in_txn,
 };
+#[cfg(all(oneiron_test_support, feature = "sync"))]
+pub(crate) use self::input::{
+    KeptNumberedOpen, drop_kept_numbered_part_for_test, keep_numbered_input_for_test,
+    open_kept_numbered_for_test,
+};
+#[cfg(oneiron_test_support)]
+pub(crate) use self::input::{
+    frame_envelope_count_for_test, open_numbered_as_holder_for_test,
+    seal_numbered_register_for_test, tamper_drop_first_envelope_for_test,
+    tamper_rewrite_envelope_count_for_test, tamper_swap_first_two_envelopes_for_test,
+};
 pub use self::manifest::CustodyManifestCheck;
 pub(crate) use self::pending_revoke::erase_pending_revoke_actor_in_txn;
 pub(crate) use self::revoked::{
@@ -68,6 +79,7 @@ use crate::authority::{
     CustodyRecipientPermit, CustodyRequestAuthority, OwnerWorkBody, OwnerWorkOutcome,
     OwnerWorkRefusal, OwnerWorkRequest, invalid_authority,
 };
+use crate::consent::OwnerAuthoredWrite;
 use crate::error::{Error, Result, SecretError};
 use crate::secret_rotation::RotationReceipt;
 use crate::world_keys::{MachineSecret, OwnerWorkReceipt, OwnerWorkStatus, OwnerWorkUnassigned};
@@ -348,11 +360,14 @@ impl Vault {
     /// nothing is recorded and the result says the change stays here; the
     /// door then keeps it locally. While the carrier wire is on, an input
     /// that is kept or relayed is sealed under its own carrier key, minted
-    /// here first (FIX 7402, `input::carrier_seal`).
+    /// here first (FIX 7402, `input::carrier_seal`). `owner_authored` when
+    /// the change is the owner's own write, by an undelegated proof: its
+    /// request then carries the owner key's proof this install holds
+    /// ([`Vault::owner_act_proof_signer`]); automatic upkeep passes `None`.
     pub(crate) fn record_custody_change_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
-        actor: EntityId,
+        (actor, owner_authored): (EntityId, Option<&OwnerAuthoredWrite>),
         surface: ActSurface,
         change: ActiveChange<'_>,
         at: u64,
@@ -500,8 +515,9 @@ impl Vault {
             pieces: None,
             authority: CustodyRequestAuthority::Install,
         };
+        let author = (actor, owner_authored);
         let receipt =
-            self.record_owner_work_for_in_txn(txn, actor, surface, change.id, seen, work)?;
+            self.record_owner_work_for_in_txn(txn, author, surface, change.id, seen, work)?;
         let Some(hash) = receipt.request_entry() else {
             if let Some(door) = &door {
                 door.discard_in_txn(self, txn)?;

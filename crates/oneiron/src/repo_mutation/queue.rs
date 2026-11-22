@@ -5,6 +5,8 @@
 
 use std::path::{Path, PathBuf};
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use crate::Vault;
 use crate::codebase::RepoRef;
 use crate::entity_id::EntityId;
@@ -372,7 +374,7 @@ pub(super) fn expected_post_action_fork_hash(
     post_action_snapshot
         .entries
         .sort_by(|left, right| left.path.cmp(&right.path));
-    Ok(*blake3::hash(&encode_snapshot(&post_action_snapshot)?).as_bytes())
+    Ok(*ContentHash::of(&encode_snapshot(&post_action_snapshot)?).as_bytes())
 }
 
 pub(super) fn execute_repo_mutation(
