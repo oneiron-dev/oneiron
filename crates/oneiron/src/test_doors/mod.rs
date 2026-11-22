@@ -282,6 +282,7 @@ pub mod off_record_side_row;
 pub mod open_conflict_marker;
 pub mod outbound_grant_index;
 pub mod outbound_wait_setting_keys;
+pub mod owed_grant_end;
 pub mod own_device_grant;
 pub mod own_device_message_replay;
 pub mod owner_device_answer;
