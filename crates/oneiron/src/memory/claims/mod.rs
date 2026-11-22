@@ -156,6 +156,11 @@ const DECLARED_CARDINALITY: &[(&str, ClaimCardinality)] = &[
     // many relationships of one word, so a second `relationship.friend`
     // stands beside the first and never supersedes it.
     ("relationship.*", ClaimCardinality::Set),
+    // ARCH-0060 §3: passports stay per (system x UID), N on one EVENT. The
+    // calendar importer supersedes only the passport of its own (system,
+    // UID) (`calendar::passport::supersede_calendar_passport`), so the
+    // owner's approval of one system's passport never closes another's.
+    ("calendar.passport", ClaimCardinality::Set),
 ];
 
 /// Exact rows beat namespace wildcards regardless of table order. A wildcard
@@ -289,7 +294,9 @@ impl RecordRefusal {
 pub use crate::deletion::SafeDeleteReason;
 
 #[doc(hidden)]
-pub use oneiron_records::memory::claims::{DeleteReceipt, DeleteRequestState, PendingWrite};
+pub use oneiron_records::memory::claims::{
+    DELETE_RECEIPT_VERSION_RELEASE, DeleteReceipt, DeleteRequestState, PendingWrite,
+};
 
 /// One receipt: a gate decision, or, when `vault.receipts` names `kinds`,
 /// a receipt of the unified family in the same shape.

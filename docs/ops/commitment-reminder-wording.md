@@ -10,8 +10,10 @@ host reference, not a PERSON id and not permission to read that person.
 The consumer runs on the existing `generative_reasoner` model role. Each attempt
 uses `[models.chat].turn_budget_units` through the native budget policy. It uses
 `[models.workflows].retry_backoff_secs` for failed-wording retries and scheduled
-queue rechecks. Changing that existing setting also changes wording retry cadence.
-There is no separate role, budget default, retry cap, or delivery wait.
+queue rechecks: a failed wording's next try waits that setting times the tries so
+far, at most one hour, or the setting itself when it is longer. Changing that
+existing setting also changes wording retry cadence. There is no separate role,
+budget default, retry cutoff, or delivery wait.
 
 The host starts the consumer once for attached and standalone hosts. Without a
 configured generative seat, work stays queued. It does not require a running
@@ -90,8 +92,15 @@ unchanged.
 
 A model, source, configuration, budget, or filing error schedules a new try
 through the native retry door. `attempt_count` fences a lease; it is not a retry
-counter and does not impose a cutoff. Error stages are stored without prompt or
-reminder text in logs.
+counter and does not impose a cutoff. The tries so far are the attempt's retry
+lineage plus this one (`AttemptQueue::retry_chain_depth` + 1), and a lineage
+that does not read waits the cap: one hour, or the setting itself when it is
+longer. A hold that never clears, such as a persona the route names but the host
+does not configure, therefore adds one try per cap once the wait reaches it, not
+one per backoff. A payload that does not decode ends its
+attempt with a warning instead: its bytes never change, so a retry could only
+fail the same way, and the send reads the fixed wording. Error stages are stored
+without prompt or reminder text in logs.
 
 A soft cancellation lands the owned attempt with a restart cursor and no
 automatic successor. A forced cancellation or lost lease stops the old worker's

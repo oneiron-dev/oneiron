@@ -19,7 +19,7 @@ pub use desktop::prepare_for_sleep_line;
 #[cfg(unix)]
 pub use desktop::{
     ActivatedListener, AwakeGuard, AwakePolicy, DesktopHost, KeepAwake, LaunchdHost, SecretSource,
-    SleepHooks, SleepWatch, SystemdHost,
+    SleepHooks, SleepWatch, SystemdHost, on_mains_power,
 };
 #[cfg(target_os = "linux")]
 mod vsock;

@@ -11,11 +11,21 @@ use oneiron_authority::federation::{Scope, ScopeAxis, ScopeId};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::memory::claim_admission::{
-    AllRelationships, ClaimRelationships, ClaimScope,
+    AllRelationships, ClaimRelationships, ClaimScope, ClaimScopeInput,
 };
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::memory::claim_admission::{ScopedClaimInput, ScopedCommitRequest};
+
+/// A [`ClaimScopeInput`] with every omitted axis stamped, resolved to the
+/// four ids a scoped claim lands at (`Memory::stamp_claim_scope`).
+pub(super) struct StampedClaimScope {
+    pub(super) world: EntityId,
+    pub(super) facet: EntityId,
+    pub(super) project: EntityId,
+    /// `None` is `all` relationships.
+    pub(super) relationship: Option<crate::claim::RelationshipSet>,
+}
 
 /// One scoped claim resolved outside its writer (`Memory::prepare_scoped_claim`).
 struct PreparedScopedClaim {
@@ -155,17 +165,12 @@ impl Memory<'_> {
         input: &ScopedClaimInput,
         lane: &crate::claim::ScopedRead<'_>,
     ) -> MemoryResult<PreparedScopedClaim> {
-        let world = self.resolve_ref(&input.scope.world_id)?;
-        let facet = self.resolve_ref(&input.scope.scope_facet_id)?;
-        let project = self.resolve_ref(&input.scope.scope_project_id)?;
-        let relationship = match &input.scope.scope_relationship_id {
-            ClaimRelationships::All(AllRelationships::All) => None,
-            ClaimRelationships::Relationships(ids) => Some(
-                ids.iter()
-                    .map(|id| self.resolve_ref(id))
-                    .collect::<Result<crate::claim::RelationshipSet, _>>()?,
-            ),
-        };
+        let StampedClaimScope {
+            world,
+            facet,
+            project,
+            relationship,
+        } = self.stamp_claim_scope(&input.scope)?;
         if input.sensitivity.is_some_and(|band| band > 3) {
             return Err(MemoryError::bad_request("sensitivity must be in 0..=3"));
         }
@@ -240,6 +245,61 @@ impl Memory<'_> {
             sensitivity: input.sensitivity,
             evidence: inputs,
             birth,
+        })
+    }
+
+    /// Stamps each axis `scope` omits from the caller's authorised context,
+    /// then resolves all four (OF-464; canon cross-arch-0002a §5.8): the
+    /// world and facet this handle's credential is bound to
+    /// (`with_birth_position`), else the base WORLD and the vault default
+    /// FACET while it is a stored FACET; `all` relationships; the root's
+    /// default PROJECT. An omitted facet with no stored default is refused,
+    /// naming `scope_facet_id`. A stated axis resolves as sent. The writer
+    /// still judges the whole position under the caller's credential, so a
+    /// stamp never widens what the caller may write.
+    pub(super) fn stamp_claim_scope(
+        &self,
+        scope: &ClaimScopeInput,
+    ) -> MemoryResult<StampedClaimScope> {
+        let world = match &scope.world_id {
+            Some(reference) => self.resolve_ref(reference)?,
+            None => self
+                .birth_position
+                .world
+                .unwrap_or_else(crate::claim::base_world_id),
+        };
+        let facet = match (&scope.scope_facet_id, self.birth_position.facet) {
+            (Some(reference), _) => self.resolve_ref(reference)?,
+            (None, Some(bound)) => bound,
+            (None, None) => {
+                let default = self.vault.default_facet()?;
+                if self.vault.get_entity_type(&default)? != Some(crate::registry::ENTITY_TYPE_FACET)
+                {
+                    return Err(MemoryError::bad_request_with(
+                        "scope_facet_id is required: the vault default facet is not a stored FACET",
+                        &["Name scope_facet_id, a stored FACET."],
+                    ));
+                }
+                default
+            }
+        };
+        let project = match &scope.scope_project_id {
+            Some(reference) => self.resolve_ref(reference)?,
+            None => crate::claim::default_project_id(),
+        };
+        let relationship = match &scope.scope_relationship_id {
+            None | Some(ClaimRelationships::All(AllRelationships::All)) => None,
+            Some(ClaimRelationships::Relationships(ids)) => Some(
+                ids.iter()
+                    .map(|id| self.resolve_ref(id))
+                    .collect::<Result<crate::claim::RelationshipSet, _>>()?,
+            ),
+        };
+        Ok(StampedClaimScope {
+            world,
+            facet,
+            project,
+            relationship,
         })
     }
 

@@ -400,6 +400,10 @@ pub struct ApiError {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<room_join_hold_schema::RoomJoinHoldSchema>)]
     room_join_hold: Option<Box<oneiron::workspace_roster::RoomJoinHold>>,
+    /// What a pending refusal waits on, typed, when the engine supplied one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<memory_pending_schema::MemoryPendingSchema>)]
+    pending: Option<Box<oneiron::memory::MemoryPending>>,
 }
 
 /// The guidance a managed vault's attested holder gets at an owner door
@@ -422,6 +426,7 @@ impl ApiError {
             suggestions: suggestions.into_iter().map(Into::into).collect(),
             legal_hold: None,
             room_join_hold: None,
+            pending: None,
         }
     }
 
@@ -452,7 +457,8 @@ impl ApiError {
         Self::new(
             "request is not authorized",
             ApiErrorDetails::Unauthorized,
-            ["Send Authorization: Bearer credentials and retry."],
+            ["Send Authorization: Bearer credentials and a fresh \
+                 x-oneiron-binding holder proof, then retry."],
         )
     }
 
@@ -745,6 +751,8 @@ impl<'de> Deserialize<'de> for ApiError {
             legal_hold: Option<Box<oneiron::error::LegalHoldNotice>>,
             #[serde(default)]
             room_join_hold: Option<Box<oneiron::workspace_roster::RoomJoinHold>>,
+            #[serde(default)]
+            pending: Option<Box<oneiron::memory::MemoryPending>>,
         }
 
         let wire = Wire::deserialize(deserializer)?;
@@ -763,6 +771,7 @@ impl<'de> Deserialize<'de> for ApiError {
             suggestions: wire.suggestions,
             legal_hold: wire.legal_hold,
             room_join_hold: wire.room_join_hold,
+            pending: wire.pending,
         })
     }
 }
@@ -805,6 +814,9 @@ pub struct ApiErrorEnvelopeBody {
     )]
     #[schema(value_type = Option<room_join_hold_schema::RoomJoinHoldSchema>)]
     room_join_hold: Option<Box<oneiron::workspace_roster::RoomJoinHold>>,
+    #[serde(default, rename = "pending", skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<memory_pending_schema::MemoryPendingSchema>)]
+    pending: Option<Box<oneiron::memory::MemoryPending>>,
 }
 
 impl ApiErrorEnvelope {
@@ -819,6 +831,7 @@ impl ApiErrorEnvelope {
                 suggestions: error.suggestions,
                 legal_hold: error.legal_hold,
                 room_join_hold: error.room_join_hold,
+                pending: error.pending,
             },
         }
     }
@@ -871,6 +884,7 @@ fn next_request_id() -> String {
     format!("req-{id:016x}")
 }
 
+pub(crate) mod memory_pending_schema;
 pub(crate) mod room_join_hold_schema;
 mod schema;
 mod typed_refusal;

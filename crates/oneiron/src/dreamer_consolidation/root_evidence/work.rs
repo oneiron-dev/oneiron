@@ -119,13 +119,12 @@ fn child_receipts(
                 ));
             }
         }
-        let encoded = serde_json::to_vec(&child.judgement)
-            .map_err(|_| invalid_consolidation("child judgement does not encode"))?;
+        let judgement_hash = super::bridge::judgement_hash(&child.judgement)?;
         receipts.push((
             index,
             ConsolidationChildReceipt {
                 child_ref: child.child_ref.clone(),
-                judgement_hash: *blake3::hash(&encoded).as_bytes(),
+                judgement_hash,
                 evidence,
             },
         ));

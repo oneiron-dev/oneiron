@@ -639,19 +639,22 @@ async function roundtrip(plan: RoundtripPlan, state: RoundtripState): Promise<Ro
   //     one set, real reviewers (or the owner's Approve) settle it with the
   //     existing proposal doors, then one owner enqueue. Then the queue's own
   //     checks, landing and seal, read once per run.
-  const policy = await call(plan, owner, "vault.code.merge_queue.review_policy.get", {});
-  if (policy.mode === "held") throw pending("the vault's review policy does not read; an owner sets it again or clears it first", policy);
-  if (policy.mode === "land_on_green" && candidate.batch_refs.length === 0 && !state.candidate_batch) {
+  const policy = await call(plan, owner, "vault.settings.get", { key: "merge_queue.review_policy" });
+  // The value is "land_on_green", "held" (a row that does not read), or { review: { catalog, thresholds } }.
+  const value: unknown = policy.value;
+  const mode = typeof value === "string" ? value : value !== null && typeof value === "object" ? Object.keys(value)[0] : undefined;
+  if (mode === "held") throw pending("the vault's review policy does not read; an owner sets it again or clears it first", policy);
+  if (mode === "land_on_green" && candidate.batch_refs.length === 0 && !state.candidate_batch) {
     throw pending("no vault review policy: the queue's intake enqueues the received proposal on its next drain", candidate);
   }
-  if (policy.mode === "review") {
+  if (mode === "review") {
     const settlement = await call(plan, owner, "vault.code.proposal_settlement", { proposal: state.candidate_proposal });
     if (settlement.status === "Proposed") {
       throw pending("the received proposal awaits review under the vault's policy: vault.code.proposal_review, or vault.code.proposal_settle approve", settlement);
     }
     if (settlement.status !== "Approved" && settlement.status !== "Applied") throw stopped(`the received proposal is ${settlement.status}`, settlement);
   }
-  if (policy.mode === "review" && candidate.batch_refs.length === 0 && !state.candidate_batch) {
+  if (mode === "review" && candidate.batch_refs.length === 0 && !state.candidate_batch) {
     if (state.enqueue_started) throw stopped("the enqueue started earlier and never reported; read vault.code.repos.get batch_refs by hand");
     const repo = await call(plan, owner, "vault.code.repos.get", { repo: anchor.repo });
     if (!repo?.queue) throw pending("the queue is not readable yet", repo);

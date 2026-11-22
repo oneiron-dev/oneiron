@@ -357,6 +357,39 @@ impl People {
         Ok(())
     }
 
+    /// Sets each person's `about` line as `read` may see it, with its exact
+    /// contributors: the line of the highest band its own floor reads, or a
+    /// higher one a single live Grant of its shows where that Grant reads the
+    /// person and every fact of the line (FIX-LIST
+    /// GRANT-RECEIPT-OTHER-READ-LANES part 4). Only a read made for one
+    /// answer takes it: a staged brief (a run's, an MCP connection's) keeps
+    /// the line its own floor reads, since its bytes are sent again until its
+    /// next boundary, past a revoke or a world kept to this device since
+    /// (review round 2 of #9929).
+    ///
+    /// # Errors
+    /// The read's: a credential no longer live, or a store failure.
+    pub fn set_about_for_reader(&mut self, read: &crate::claim::ScopedRead<'_>) -> Result<()> {
+        read.with_about_lines(|about| self.set_about(about))
+    }
+
+    /// Sets each person's `about` line as a staged brief laid out from
+    /// `read` shows it: the line of the highest band the key's own floor
+    /// reads, shown only where that floor alone reads the PERSON and every
+    /// fact of the line under `read`, at its locality; never a line only a
+    /// Grant shows ([`Self::set_about_for_reader`]). A run's brief, read off
+    /// this device, so shows no line written from a world this device keeps
+    /// (RULING RUN-BRIEF-ROSTER-SHAPE = A).
+    ///
+    /// # Errors
+    /// The read's: a credential no longer live, or a store failure.
+    pub fn set_own_floor_about_for_reader(
+        &mut self,
+        read: &crate::claim::ScopedRead<'_>,
+    ) -> Result<()> {
+        read.with_own_floor_about_lines(|about| self.set_about(about))
+    }
+
     /// The exact contributors stored with this person's current `about` line.
     #[must_use]
     pub(crate) fn about_sources(&self, person: EntityId) -> &[EntityId] {

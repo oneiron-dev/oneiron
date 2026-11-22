@@ -14,6 +14,7 @@
 use std::collections::{BTreeMap, BTreeSet, btree_map::Entry};
 use std::path::Path;
 
+use oneiron_contracts::fingerprint::ContentHash;
 use serde::{Deserialize, Serialize};
 
 use super::proposal::{RepoProposal, RepoProposalOperation, invalid};
@@ -241,7 +242,7 @@ impl StepApplication {
         proof: &StackApplication,
     ) -> Result<Self> {
         let composed = read_tree_file(wire, repo, &proof.output_tree, &proof.path)?
-            .filter(|bytes| blake3::hash(bytes).as_bytes() == &proof.composed)
+            .filter(|bytes| ContentHash::of(bytes).as_bytes() == &proof.composed)
             .ok_or(Error::ConcurrentWrite(
                 "reviewed stack differs from tested tree",
             ))?;
@@ -268,7 +269,8 @@ impl StepApplication {
         else {
             return Err(invalid("stack step does not authorize this proposal"));
         };
-        if *path != self.proof.path || blake3::hash(content).as_bytes() != &self.proof.postimage {
+        if *path != self.proof.path || ContentHash::of(content).as_bytes() != &self.proof.postimage
+        {
             return Err(invalid("stack step does not authorize this proposal"));
         }
         let prefix_changed = || Error::ConcurrentWrite("reviewed stack prefix changed");
@@ -277,7 +279,7 @@ impl StepApplication {
         }
         super::git::validate_relative_repo_path(path)?;
         let staged = std::fs::read(super::git::repo_path_on_disk(repo_root, path)?)?;
-        if blake3::hash(&staged).as_bytes() != &self.proof.staged {
+        if ContentHash::of(&staged).as_bytes() != &self.proof.staged {
             return Err(prefix_changed());
         }
         let mut effective = request.clone();
@@ -313,7 +315,7 @@ impl StepApplication {
 }
 
 fn digest(bytes: &[u8]) -> [u8; 32] {
-    *blake3::hash(bytes).as_bytes()
+    *ContentHash::of(bytes).as_bytes()
 }
 
 fn utf8(bytes: &[u8]) -> Result<&str> {

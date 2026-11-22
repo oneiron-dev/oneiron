@@ -2,6 +2,78 @@
 use super::*;
 use crate::store::Store;
 
+/// Refuses a delete of the vault's root project, the one structural row
+/// every vault carries (ARCH-0067: the vault itself is the root project).
+/// The delete rail, its preflight and the delete preview call it before any
+/// writer, and the deindex door again, so every door refuses it alike.
+pub(crate) fn reject_root_project_delete(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    if ROOT.get(store, txn, &())? == Some(*id) {
+        return Err(
+            crate::error::RecordError::InvalidProjectBody("cannot delete root project").into(),
+        );
+    }
+    Ok(())
+}
+
+/// Refuses a delete of a project another live project names as its parent;
+/// any other id passes. The deindex door refuses it, and a hard delete's
+/// rail, its preflight and its publication writer refuse it too, before the
+/// publication commits the read fence of a purge that would then refuse.
+pub(crate) fn reject_project_with_live_children(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
+        return Ok(());
+    };
+    let Some(header) = EntityMetadataHeader::parse(&raw) else {
+        return Ok(());
+    };
+    if !is_project_type(store, header.entity_type) {
+        return Ok(());
+    }
+    reject_live_children_of(store, txn, id, header.entity_type)
+}
+
+fn reject_live_children_of(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    kind: u8,
+) -> Result<()> {
+    // Each child names its parents as its signed history folds them; a
+    // child whose history serves no authority keeps its stored claim.
+    let reader = super::read::ProjectReader::new(store, txn, store.privacy_posture)?;
+    for row in crate::ports::EntityStoreRead::port_entity_ids_by_type(store, txn, kind, None)? {
+        let child_id = row?;
+        if child_id == *id {
+            continue;
+        }
+        let effective = match &reader {
+            Some(reader) => reader.effective(child_id)?,
+            None => None,
+        };
+        let parents = match effective {
+            Some(view) => view.parents,
+            None => match record::<ProjectRecord>(store, txn, child_id, kind)? {
+                Some(child) => child.parents,
+                None => continue,
+            },
+        };
+        if parents.contains(&id.to_hex()) {
+            return Err(
+                crate::error::RecordError::InvalidProjectBody("project has live children").into(),
+            );
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn deindex_project_room(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -17,44 +89,8 @@ pub(crate) fn deindex_project_room(
     if !is_project_type(store, header.entity_type) {
         return Ok((false, false, Vec::new()));
     }
-    if ROOT.get(store, txn, &())? == Some(*id) {
-        return Err(
-            crate::error::RecordError::InvalidProjectBody("cannot delete root project").into(),
-        );
-    }
-    {
-        // Each child names its parents as its signed history folds them; a
-        // child whose history serves no authority keeps its stored claim.
-        let reader = super::read::ProjectReader::new(store, txn, store.privacy_posture)?;
-        for row in crate::ports::EntityStoreRead::port_entity_ids_by_type(
-            store,
-            txn,
-            header.entity_type,
-            None,
-        )? {
-            let child_id = row?;
-            if child_id == *id {
-                continue;
-            }
-            let effective = match &reader {
-                Some(reader) => reader.effective(child_id)?,
-                None => None,
-            };
-            let parents = match effective {
-                Some(view) => view.parents,
-                None => match record::<ProjectRecord>(store, txn, child_id, header.entity_type)? {
-                    Some(child) => child.parents,
-                    None => continue,
-                },
-            };
-            if parents.contains(&id.to_hex()) {
-                return Err(crate::error::RecordError::InvalidProjectBody(
-                    "project has live children",
-                )
-                .into());
-            }
-        }
-    }
+    reject_root_project_delete(store, txn, id)?;
+    reject_live_children_of(store, txn, id, header.entity_type)?;
     // The deleted project's extra-room links go with it: every index row naming it is removed.
     // The rooms stay, their bodies untouched; a stale body key reads as unlinked.
     let linked: Vec<EntityId> = EXTRA_ROOM_PROJECT
@@ -67,6 +103,9 @@ pub(crate) fn deindex_project_room(
     }
     origin::deindex_origin(store, txn, *id)?;
     let room_id = home_room_id(*id)?;
+    // The room's rows stop naming it below; a standing answer on one may
+    // sit in a facet only the room placed it in.
+    super::room_narrowing::queue_unbound_room_in(store, txn, room_id)?;
     super::super::rooms::delete_room_metadata(store, txn, room_id)?;
     let owner = ROOM_PROJECT.get(store, txn, &room_id)?;
     if owner.is_some_and(|owner| owner != *id) {

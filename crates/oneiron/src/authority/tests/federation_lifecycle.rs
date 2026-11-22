@@ -134,23 +134,30 @@ fn federation_connect_digest_mismatch_never_activates() {
         Some(FederationLifecycleRejection::GestureInvalid)
     );
 
-    // (b) Entry's pact_scope tampered: the recompute no longer matches the
-    // claimed (and gesture-signed) digest.
+    // (b) The raw fold takes the commitment as signed and only checks that the
+    // disclosed scope is canonical (authority/op_apply.rs:287-303). The view
+    // with the epoch's live opening holds a mismatch inactive
+    // (authority/pact_openings.rs:1-19, FIX 11730).
     let fixture = pact_fixture(126);
     let genesis_hash = authority_entry_hash(&fixture.genesis).unwrap();
     let mut action = connect_action(&fixture);
-    action.pact_scope = Some(symmetric_scope(ScopeAxis::Bottom, ScopeAxis::All));
+    let tampered_scope = symmetric_scope(ScopeAxis::Bottom, ScopeAxis::All);
+    action.pact_scope = Some(tampered_scope.clone());
+    let claimed_digest = action.scope_digest.unwrap();
     let entry = lifecycle_entry(&fixture, vec![genesis_hash], 1, action);
     let entry_hash = authority_entry_hash(&entry).unwrap();
     let fold = fold_authority_log(&[fixture.genesis.clone(), entry]);
-    assert!(fold.federation_pacts.is_empty(), "no pact state may form");
-    assert_eq!(
-        lifecycle_rejection(&fold, entry_hash),
-        Some(FederationLifecycleRejection::ScopeDigestMismatch)
-    );
+    assert_eq!(fold.federation_pacts.len(), 1);
+    let pact = fold.federation_pacts.get(&fixture.pact_id).unwrap();
+    assert_eq!(pact.status, FederationPactStatus::Active);
+    assert_eq!(pact.scope_digest, claimed_digest);
+    assert_eq!(pact.pact_scope, tampered_scope);
+    assert_eq!(lifecycle_rejection(&fold, entry_hash), None);
+    // Raw activation follows the operative Active binding
+    // (authority/federation_activation.rs:76-86), not the view's opening check.
     assert_eq!(
         federation_grant_activation(&fold, &fixture.grant_ref),
-        FederationGrantActivation::Unpacted
+        FederationGrantActivation::Active
     );
 }
 

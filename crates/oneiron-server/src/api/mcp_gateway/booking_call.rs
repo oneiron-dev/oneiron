@@ -256,7 +256,9 @@ fn booking_context(
     server: &Arc<SyncServer>,
 ) -> Result<McpCallContext, McpGatewayError> {
     let (session, room_turn) = mcp_request_placement(headers)?;
-    let session_ref = session.map(|session| session.to_hex());
+    let session_ref = session
+        .as_ref()
+        .map(|session| session.session_ref().to_owned());
     let scope = McpConnectorScope::vault_wide();
     let actor = McpResolvedActor {
         auth: Some(auth.in_off_record_session(session_ref.as_deref())),
@@ -271,7 +273,7 @@ fn booking_context(
     };
     let landing = crate::api::write_facet::landing_facet(
         &server.vault,
-        session,
+        session.as_ref(),
         &actor.scope.facets,
         actor.scope.facet_ref,
     );

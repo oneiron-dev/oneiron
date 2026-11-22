@@ -450,6 +450,56 @@ pub fn grant_derive_rows(vault: &Vault, agents: &[EntityId]) -> Result<()> {
     )
 }
 
+/// [`grant_derive_rows`], each agent's `core:read` grant also naming
+/// `actor_class` beside its actor ref: a read row only a key of that class
+/// matches (ARRIVAL-READER-KEY-CLASSLESS).
+///
+/// # Errors
+///
+/// The vault's, or a shipped policy body that does not decode as a map of
+/// scoped grant rows.
+pub fn grant_derive_rows_with_read_class(
+    vault: &Vault,
+    agents: &[EntityId],
+    actor_class: &str,
+) -> Result<()> {
+    use rmpv::Value;
+    let malformed = || crate::Error::InvariantViolation("shipped policy scoped grants");
+    let mut body = crate::gate::default_policy_manifest()?;
+    for agent in agents {
+        body = crate::gate::body_with_agent_derive_rows(&body, &agent.to_hex())?;
+    }
+    let mut policy = rmpv::decode::read_value(&mut body.as_slice()).map_err(|_| malformed())?;
+    let refs: Vec<String> = agents.iter().map(EntityId::to_hex).collect();
+    let Value::Map(entries) = &mut policy else {
+        return Err(malformed());
+    };
+    let Some((_, Value::Array(rows))) = entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("scoped_grants"))
+    else {
+        return Err(malformed());
+    };
+    for row in rows {
+        let Value::Map(fields) = row else {
+            return Err(malformed());
+        };
+        if fields.iter().any(|(key, value)| {
+            key.as_str() == Some("actor_ref")
+                && value.as_str().is_some_and(|r| refs.iter().any(|a| a == r))
+        }) {
+            fields.push((Value::from("actor_class"), Value::from(actor_class)));
+        }
+    }
+    let mut named = Vec::new();
+    rmpv::encode::write_value(&mut named, &policy).map_err(|_| malformed())?;
+    crate::test_fixtures::put_policy_manifest_bytes(
+        vault,
+        crate::gate::default_policy_manifest_id()?,
+        &named,
+    )
+}
+
 /// Holds the Steward grant `grant` to `project`, leaving its verbs and
 /// every other data axis unchanged.
 ///
@@ -465,6 +515,47 @@ pub fn narrow_steward_grant_to_project(
     let raw = vault.get(&grant)?.ok_or(crate::Error::EntityNotFound)?;
     let mut body = decode_federation_grant_body(&raw)?;
     body.authority_scope.audience = std::iter::once(ScopeId(project)).collect();
+    let now = vault.now_recorded_at();
+    vault.with_write_txn_grouped(|txn| {
+        crate::batch::apply_ops(
+            &vault.store,
+            &vault.config,
+            &vault.analyzer,
+            txn,
+            vec![crate::batch::BatchOp::Put {
+                id: grant,
+                entity_type: crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
+                occurred: crate::TimeRange {
+                    start: now,
+                    end: now,
+                },
+                learned_at: now,
+                row_version: None,
+                data: encode_federation_grant_body(&body)?,
+                allow_maintenance: true,
+                allow_reserved_predicate: false,
+                hub_sync_imported: false,
+            }],
+            vault
+                .text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            false,
+            true,
+        )
+    })
+}
+
+/// Expires the agent grant `grant` at second 1, as if the owner had minted
+/// it with an expiry long passed, leaving every other field unchanged.
+///
+/// # Errors
+///
+/// The vault's, or a missing or malformed grant row.
+pub fn expire_agent_grant(vault: &Vault, grant: EntityId) -> Result<()> {
+    use crate::federation::{decode_federation_grant_body, encode_federation_grant_body};
+    let raw = vault.get(&grant)?.ok_or(crate::Error::EntityNotFound)?;
+    let mut body = decode_federation_grant_body(&raw)?;
+    body.expires_at = Some(1);
     let now = vault.now_recorded_at();
     vault.with_write_txn_grouped(|txn| {
         crate::batch::apply_ops(
@@ -774,6 +865,7 @@ pub fn commit_in_attempt(
                             facet: None,
                             world: None,
                             profile: whole_record_profile(profile.subject, profile.document)?,
+                            cites: Vec::new(),
                         })
                     }
                 })
@@ -917,6 +1009,7 @@ pub fn witness_turn(vault: &Vault, words: &str) -> Result<EntityId> {
             conversation_ref: EntityId::now().to_hex(),
             turn_ref: Some(turn.to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: Some(EntityId::now().to_hex()),
                 author: WitnessAuthor::User,
@@ -1144,6 +1237,46 @@ pub fn open_conflict_with_alternative(
     member: EntityId,
     value: &str,
 ) -> Result<(EntityId, EntityId)> {
+    open_conflict_with_alternative_evidence(vault, member, value, member)
+}
+
+/// Opens a conflict over `member`, retaining `value` from imported words
+/// (FIX 5754). Its Keep stages in review, with the marker open. Returns the
+/// marker and the alternative's selector.
+///
+/// # Errors
+///
+/// The vault's, a member that is no claim, or inadmissible evidence.
+pub fn open_conflict_with_imported_alternative(
+    vault: &Vault,
+    member: EntityId,
+    value: &str,
+) -> Result<(EntityId, EntityId)> {
+    let words = rmp_serde::to_vec_named(&std::collections::BTreeMap::from([
+        ("speaker", "user"),
+        ("txt", value),
+        (crate::memory::IMPORTED_SOURCE_KEY, "transcript"),
+    ]))
+    .map_err(|_| crate::error::Error::InvalidClaimBody("an imported TURN body does not encode"))?;
+    let imported = EntityId::now();
+    let at = vault.now_recorded_at();
+    vault.put_entity(
+        &imported,
+        crate::registry::ENTITY_TYPE_TURN,
+        crate::TimeRange { start: at, end: at },
+        at,
+        &words,
+    )?;
+    open_conflict_with_alternative_evidence(vault, member, value, imported)
+}
+
+/// Opens a conflict over `member`, retaining `value` from `evidence_source`.
+fn open_conflict_with_alternative_evidence(
+    vault: &Vault,
+    member: EntityId,
+    value: &str,
+    evidence_source: EntityId,
+) -> Result<(EntityId, EntityId)> {
     use crate::dreamer_consolidation::evidence::{VerifiedCandidate, VerifiedEvidenceSet};
     use crate::dreamer_consolidation::{PromotionCandidate, retained_alternatives_entry_for_test};
     use crate::write_envelope::{ClaimCandidate, WriteEnvelope, WriteProvenance};
@@ -1163,7 +1296,7 @@ pub fn open_conflict_with_alternative(
             vault,
             &read,
             &txn,
-            &[member],
+            &[evidence_source],
             ClaimSource::Generated,
         )?
     };
@@ -1446,4 +1579,20 @@ pub fn derive_item_receipts(vault: &Vault, claim: &EntityId) -> Result<Vec<Deriv
 pub fn derive_frontier(vault: &Vault) -> Result<[u8; 32]> {
     let txn = vault.store.env.read_txn()?;
     crate::gate::resolve_policy_manifest(&vault.store, &txn)?.read_frontier_hash()
+}
+
+/// Whether the stored claim `claim` has live support in the vault's own read
+/// now: the read-time test (`claim::has_live_support_in_txn`) a scoped read,
+/// a recall and the model channel apply. `None` when no claim is stored
+/// under the id.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn claim_has_live_support(vault: &Vault, claim: &EntityId) -> Result<Option<bool>> {
+    let txn = vault.store.env.read_txn()?;
+    let Some(body) = vault.get_claim_in_txn(&txn, claim)? else {
+        return Ok(None);
+    };
+    crate::claim::has_live_support_in_txn(&vault.store, &txn, &body).map(Some)
 }

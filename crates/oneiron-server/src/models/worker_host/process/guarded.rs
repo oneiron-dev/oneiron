@@ -27,7 +27,7 @@ pub(crate) async fn spawn(
     args: &[String],
     dir: &Path,
     env: &[(String, String)],
-    health: &str,
+    health: &super::super::launcher::HealthRoute,
     native: Option<PathBuf>,
     stats: Option<StatsRoute>,
     llama_metrics: Option<super::super::llama_metrics::MetricsRoute>,
@@ -43,7 +43,7 @@ pub(crate) async fn spawn(
             .collect(),
     }
     .encode()?;
-    let client = client()?;
+    let client = client(health.socket.as_deref())?;
     let (control, worker_control) = sys::socket_pair()?;
     let (worker_peer, guardian_peer) = sys::socket_pair()?;
     let (status, worker_status) = sys::socket_pair()?;
@@ -87,7 +87,7 @@ pub(crate) async fn spawn(
         worker: Some(ProcessWorker {
             state,
             exit,
-            health: health.to_owned(),
+            health: health.url.clone(),
             client,
             native: None,
             stats,

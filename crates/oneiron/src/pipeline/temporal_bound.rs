@@ -28,7 +28,9 @@ use super::types::{
 /// other channels, but at most [`temporal_widening_bound`].
 /// Unbounded, every scoped recall reads, scores and sorts every row of the
 /// vault (ARCH-0004 #temporal-bound); bounded, its rankings may differ from
-/// that scan only past the bound.
+/// that scan only past the bound. The count itself stops at the bound: past
+/// it the limit is the bound whatever the count, and a room or session union
+/// counts by walking its merged rows.
 pub(super) fn scoped_temporal_channel_limit(
     store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
@@ -39,11 +41,11 @@ pub(super) fn scoped_temporal_channel_limit(
     if !scope_widening_active || requested == 0 {
         return Ok(requested);
     }
-    let entity_count = usize::try_from(store.port_entity_count(rtxn)?)
+    let bound = temporal_widening_bound(requested, params);
+    let cap = u64::try_from(bound).unwrap_or(u64::MAX);
+    let entity_count = usize::try_from(store.port_entity_count_at_most(rtxn, cap)?)
         .map_err(|_| Error::IndexOverflow("entity count"))?;
-    Ok(requested
-        .max(entity_count)
-        .min(temporal_widening_bound(requested, params)))
+    Ok(requested.max(entity_count).min(bound))
 }
 
 /// How far a scoped temporal channel asking for `requested` rows widens at
@@ -130,12 +132,15 @@ impl TemporalCandidates {
     }
 }
 
-/// The rows a scoped call's reader may read: the call's candidate predicate,
-/// asked at most once per row, by the channel's rounds and by the scope walk
-/// after them alike. A row it refuses never counts toward either of the
-/// channel's stops and never takes a place in its bounded rows, so whether
-/// such a row exists cannot move what the reader gets back (DEC-0005: no
-/// name, no count).
+/// The rows a scoped call's reader may read: the call's candidate predicate
+/// (its scope, then its made_by slice), asked at most once per row, by the
+/// window's scans, the channel's rounds and the scope walk after them alike.
+/// A row it refuses never counts toward either of the channel's stops and
+/// never takes a place in its bounded rows. Nor does it hold a place under a
+/// scan's cap that a row it reads is denied: an endpoint scan, the query
+/// range's scan and the spanner buffer ask it once their cap would leave a
+/// row behind (TEMPORAL-READER-SCAN-CAP-REFUSED-ROWS). So whether such a row
+/// exists cannot move what the reader gets back (DEC-0005: no name, no count).
 pub(super) struct ReadableRows<'p, 'f> {
     predicate: &'p SnapshotCandidateFilter<'f>,
     deadline: Option<&'p RetrievalDeadline>,
@@ -231,6 +236,35 @@ impl<'r, 'p, 'f> WindowCut<'r, 'p, 'f> {
             bound,
             scan: Mutex::new((0, 0, None)),
         }
+    }
+
+    /// Whether `id` ranks inside the bound in the window's order: a place
+    /// the bound gives a row with no reader asked, as a call with no reader
+    /// keeps it.
+    pub(super) fn ranks_inside_bound(&self, id: &EntityId) -> bool {
+        self.positions
+            .get(id)
+            .is_some_and(|&position| position < self.bound)
+    }
+
+    /// The first `bound` rows `held` admits, in the window's order: the
+    /// places the bound gives rows when its reader asks only `held`. With a
+    /// `held` that admits every row, these are the rows
+    /// [`Self::ranks_inside_bound`] names.
+    pub(super) fn rows_inside_bound_where(
+        &self,
+        mut held: impl FnMut(&EntityId) -> Result<bool>,
+    ) -> Result<HashSet<EntityId>> {
+        let mut inside = HashSet::new();
+        for id in &self.order {
+            if inside.len() == self.bound {
+                break;
+            }
+            if held(id)? {
+                inside.insert(*id);
+            }
+        }
+        Ok(inside)
     }
 
     pub(super) fn keeps(
