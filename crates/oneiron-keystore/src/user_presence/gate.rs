@@ -2,6 +2,7 @@
 //! with the window one confirm opens, counts wrong typed secrets, and
 //! watches the screen lock.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 use std::{io, thread};
@@ -29,8 +30,14 @@ pub struct PresenceGate {
     /// Shared with the screen-lock watch, which holds it weakly.
     window: Arc<PresenceWindow>,
     /// Held while a prompt shows or a typed secret is checked, so acts that
-    /// arrive together share one confirm.
-    prompting: Mutex<()>,
+    /// arrive together share one prompt. It keeps the refusal of the last
+    /// prompt, `None` after a confirm, for the acts that waited while that
+    /// prompt was up.
+    prompting: Mutex<Option<PresenceError>>,
+    /// How many prompts have been answered. An act reads it when it arrives;
+    /// a higher count once it holds `prompting` says that a prompt was
+    /// answered while it waited.
+    prompts_answered: AtomicU64,
     /// The wrong typed secrets counted, and the wait they started.
     tries: Mutex<TypedSecretTries>,
 }
@@ -75,7 +82,8 @@ impl PresenceGate {
         Self {
             presence,
             window: Arc::new(window),
-            prompting: Mutex::new(()),
+            prompting: Mutex::new(None),
+            prompts_answered: AtomicU64::new(0),
             tries: Mutex::new(TypedSecretTries::default()),
         }
     }
@@ -232,6 +240,12 @@ impl PresenceGate {
     /// A confirm opens the window; a refusal opens nothing. Never call it
     /// while holding a lock other work waits on.
     ///
+    /// Acts that arrive together share one prompt, whatever its answer: an
+    /// act that waited while another act's prompt was up takes that
+    /// prompt's refusal as its own and shows no second prompt, as it takes
+    /// the window a confirm opened. An act that comes after the refusal
+    /// asks again.
+    ///
     /// The answer is true when it is read. A screen lock after that is not
     /// seen here, so the caller signs at once.
     ///
@@ -242,10 +256,13 @@ impl PresenceGate {
     /// [`PresenceError::PinRequired`] outside a window: collect the PIN,
     /// call [`Self::confirm_with_secret`], and ask again.
     pub fn confirm(&self, reason: &str) -> Result<PresenceConfirmation, PresenceError> {
+        // Read before anything else: every prompt answered from here on was
+        // up, or came up, while this act was waiting.
+        let answered_at_arrival = self.prompts_answered.load(Ordering::Acquire);
         if self.earlier_confirm_holds()? {
             return Ok(PresenceConfirmation::WithinWindow);
         }
-        let _prompting = self
+        let mut last_refusal = self
             .prompting
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
@@ -254,6 +271,21 @@ impl PresenceGate {
         if self.earlier_confirm_holds()? {
             return Ok(PresenceConfirmation::WithinWindow);
         }
+        // A prompt refused while this act waited refused this act too.
+        if self.prompts_answered.load(Ordering::Acquire) != answered_at_arrival
+            && let Some(refusal) = *last_refusal
+        {
+            return Err(refusal);
+        }
+        let answer = self.prompt(reason);
+        *last_refusal = answer.err();
+        self.prompts_answered.fetch_add(1, Ordering::AcqRel);
+        answer.map(|()| PresenceConfirmation::Prompted)
+    }
+
+    /// Shows the device's prompt and opens the window on a confirm that no
+    /// lock outlasted. The caller holds `prompting`.
+    fn prompt(&self, reason: &str) -> Result<(), PresenceError> {
         let pending = self.window.begin_confirm();
         self.presence.confirm(reason)?;
         // A lock that came while the prompt was up outlasts its answer:
@@ -261,7 +293,7 @@ impl PresenceGate {
         if self.screen_lock_ends_window() || !self.window.open(pending) {
             return Err(PresenceError::ScreenLocked);
         }
-        Ok(PresenceConfirmation::Prompted)
+        Ok(())
     }
 
     /// Whether an earlier confirm serves an act that comes now. No act is

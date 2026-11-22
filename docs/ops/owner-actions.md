@@ -3166,6 +3166,10 @@ one running process: each `oneiron` command asks for itself. A locked screen end
 The lock is read at each important change and once a second, so a lock shorter than a second
 that no change meets can go unseen.
 
+Important changes that one program makes at the same moment show one prompt. Your answer is the
+answer for all of them: a confirm lets them all through, and a cancel refuses them all. A change
+that comes after a cancel asks again.
+
 It asks today on a Mac, in a program that opens the vault itself through an embedded SDK client
 (Rust, Node, Python, Swift) and in the `oneiron` commands that work on a stopped vault. What
 decides is who opened the vault, not the language: a client that works on a vault a server in
