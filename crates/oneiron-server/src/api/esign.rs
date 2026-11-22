@@ -697,6 +697,7 @@ mod tests {
             lifecycle: None,
             token_expires_at: None,
             project: None,
+            principal_ref: None,
             commitments: Vec::new(),
         };
         vault

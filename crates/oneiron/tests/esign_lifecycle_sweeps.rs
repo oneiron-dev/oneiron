@@ -205,6 +205,7 @@ fn signing_draft() -> TestResult<Signing> {
             token_cap_seconds: Some(HOUR),
         }),
         project: None,
+        principal_ref: None,
         commitments: Vec::new(),
     };
     vault

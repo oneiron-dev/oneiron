@@ -141,6 +141,7 @@ fn sent_with(automated: bool) -> TestResult<Sent> {
         full_trail_appendix: true,
         lifecycle: None,
         project: None,
+        principal_ref: None,
         commitments: Vec::new(),
     };
     let actor = EsignAuditActor {

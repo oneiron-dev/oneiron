@@ -32,6 +32,13 @@ pub struct EsignDocument {
     /// owner bind it ([`super::PROJECT_MEMBERS_ONLY`]).
     #[serde(default)]
     pub project: Option<EntityId>,
+    /// The signing principal the document is sent for (SGN06-WHO-MAY-SEND =
+    /// B): each send, reminder, extension and void acts for it, and an agent
+    /// drafts or acts for it only under the rung and Grant the owner gave it
+    /// for that principal. Absent on a draft that names none, whose acts name
+    /// their principal per call as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub principal_ref: Option<EntityId>,
     /// The obligations the document names (ARCH-0064 §3). Each is born an
     /// inert commitment with the draft, at
     /// [`super::esign_document_commitment_id`] of its index. An uploaded

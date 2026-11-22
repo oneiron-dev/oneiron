@@ -25,6 +25,10 @@ pub enum SigningAutonomy {
 #[serde(deny_unknown_fields)]
 pub struct SigningPrincipal {
     pub principal_ref: String,
+    /// The D6 sign dial's condition only: with `automated_sign_action`, at
+    /// `autonomous_in_envelope` an automated signer may sign for the
+    /// principal. Who may draft and send for it is each agent's own rung and
+    /// Grant ([`super::EsignAutonomy`]), never this row.
     pub autonomy: SigningAutonomy,
     /// Defaults closed. This is a legal-reality dial, not a fixed safety ban.
     pub automated_sign_action: bool,
@@ -119,33 +123,4 @@ pub(crate) fn automated_signing_allowed(
         && matches.iter().all(|p| {
             p.automated_sign_action && p.autonomy == SigningAutonomy::AutonomousInEnvelope
         }))
-}
-
-/// The send-with-approval rung requires the authenticated Human to dispatch
-/// the reviewed command on the normal rail. It is not autonomous agent send.
-pub(crate) fn automated_outbound_allowed(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    principal: Option<&str>,
-) -> Result<bool> {
-    let Some(principal) = principal else {
-        return Ok(false);
-    };
-    let heads = vault.resolve_entity_in_txn(txn, &EntityId::from_hex(principal)?)?;
-    let [canonical] = heads.as_slice() else {
-        return Ok(false);
-    };
-    let mut found = false;
-    for row in PRINCIPALS.iter_from(&vault.store, txn, &[])? {
-        let (_, policy) = row?;
-        if vault.resolve_entity_in_txn(txn, &EntityId::from_hex(&policy.principal_ref)?)?
-            == vec![*canonical]
-        {
-            found = true;
-            if policy.autonomy != SigningAutonomy::AutonomousInEnvelope {
-                return Ok(false);
-            }
-        }
-    }
-    Ok(found)
 }

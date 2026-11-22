@@ -113,6 +113,7 @@ fn draft(
         full_trail_appendix: true,
         lifecycle: None,
         project: None,
+        principal_ref: None,
         commitments: OBLIGATIONS
             .iter()
             .map(|text| EsignCommitmentTerm {

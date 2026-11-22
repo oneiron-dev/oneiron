@@ -13,6 +13,17 @@ crate::side_table::side_tables! {
         [restore: refuse_image_entities "e-sign ceremonies"]
         [family: unclassified]
         [tier: canonical];
+    /// The rung and envelope the owner chose for one agent acting for one signing principal, and
+    /// the standing Grant it holds (SGN06-WHO-MAY-SEND = B). Key: id16 (agent) + id16 (principal).
+    ESIGN_AUTONOMY: VaultMeta b"esign.autonomy.v1/" Named
+        // Restore class: the owner's choice of who may act for whom is authority, so it stays as
+        // the live vault holds it; no image restores one.
+        [restore: live] [family: unclassified] [tier: canonical]
+        => crate::blob_artifact::esign::erase_esign_autonomy_actor_in_txn;
+    /// The send window one autonomous e-sign Grant has spent: its start and the actions spent
+    /// in it. Key: string (the Grant's ref).
+    ESIGN_AUTONOMY_USAGE: VaultMeta b"esign.autonomy_usage.v1/" Named
+        [restore: live] [family: unclassified] [tier: canonical];
     /// Signing capability row. Key: bytes32.
     ESIGN_CAPABILITY_TOKEN: VaultMeta b"esign.capability.v1/" LegacyJson
         [restore: refuse "e-sign capabilities"] [family: unclassified] [tier: canonical];

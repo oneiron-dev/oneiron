@@ -240,16 +240,16 @@ impl Decision for BookingPublications {
     }
 }
 
-/// Whether an automated e-sign principal may sign, or send, on its own: the
-/// one identity it resolves to, and every principal policy that resolves to
-/// the same one, all of which must grant it (`automated_signing_allowed`,
-/// `automated_outbound_allowed`).
+/// Whether an automated e-sign principal may sign on its own: the one
+/// identity it resolves to, and every principal policy that resolves to the
+/// same one, all of which must grant it (`automated_signing_allowed`). Who
+/// may send for it is each agent's standing Grant, which lives in the
+/// unified grant table no image restores (SGN06-WHO-MAY-SEND = B).
 pub(super) struct PrincipalAutonomy;
 
 /// What a principal's automation may do without a human.
 pub(super) struct Autonomy {
     sign: bool,
-    send: bool,
 }
 
 impl Decision for PrincipalAutonomy {
@@ -297,14 +297,13 @@ impl Decision for PrincipalAutonomy {
                 let principal = Some(principal.as_str());
                 Some(Autonomy {
                     sign: esign::automated_signing_allowed(vault, &txn, principal).ok()?,
-                    send: esign::automated_outbound_allowed(vault, &txn, principal).ok()?,
                 })
             })
             .collect())
     }
 
     fn loosens(live: &Autonomy, restored: &Autonomy) -> bool {
-        (!live.sign && restored.sign) || (!live.send && restored.send)
+        !live.sign && restored.sign
     }
 }
 
