@@ -306,13 +306,15 @@ fn record_combined_person_evidence_in_txn(
 /// over PERSISTED judgments) and its citation resolves to a real pack receipt
 /// whose manifest loaded this skill — the same grounding
 /// [`record_skill_contributing_win`](crate::skill_reliability::record_skill_contributing_win) runs on the α side. Ungrounded rows are
-/// SKIPPED rather than fatal: one forged row must not deny a whole pass.
+/// SKIPPED rather than fatal: one forged row must not deny a whole pass. So
+/// is a row whose receipt can train no named cell: one with no valid executor
+/// stamp or no task placement, which the outcome ledger refuses.
 pub fn project_skill_reliability(
     vault: &Vault,
     judgments: &[AttributionJudgment],
 ) -> Result<Vec<EntityId>> {
     let persisted = persisted_judgments_by_sequence(vault)?;
-    let mut batches: Vec<(EntityId, Option<String>, Vec<&AttributionJudgment>)> = Vec::new();
+    let mut batches: Vec<(EntityId, String, Vec<&AttributionJudgment>)> = Vec::new();
     for judgment in judgments {
         if judgment.verdict != AttributionVerdict::SkillDefect {
             continue;
@@ -345,6 +347,17 @@ pub fn project_skill_reliability(
         if !receipt_manifest_names_skill(&receipt, &record) {
             continue;
         }
+        // The loss is filed under the receipt's executor revision and task
+        // placement. An unstamped receipt stays in the legacy bucket and an
+        // untyped one has no cell, so the ledger refuses both: skipped here,
+        // they cannot end the pass for every later batch.
+        let Some(executor) = receipt_executor(&receipt) else {
+            continue;
+        };
+        if validate_executor(executor).is_err() || receipt_query(&receipt).is_err() {
+            continue;
+        }
+        let executor = executor.to_owned();
         // Grounded — but grounding is not authorization. This row must also BE
         // the row ONE-1737's projector routed at this sequence.
         if persisted.get(&judgment.sequence) != Some(judgment)
@@ -352,7 +365,6 @@ pub fn project_skill_reliability(
         {
             continue;
         }
-        let executor = receipt_executor(&receipt).map(str::to_owned);
         match batches
             .iter_mut()
             .find(|(id, model, _)| *id == subject && *model == executor)
@@ -393,13 +405,13 @@ pub fn project_skill_reliability(
                     vault,
                     wtxn,
                     &skill,
-                    executor.as_deref(),
+                    Some(executor.as_str()),
                     receipt,
                     false,
                     row.at,
                 )?;
             }
-            project_in_txn(vault, wtxn, &skill, executor.as_deref(), prior, at)
+            project_in_txn(vault, wtxn, &skill, Some(executor.as_str()), prior, at)
         })?;
         projected.push(skill);
     }
@@ -530,13 +542,17 @@ pub(super) fn project_in_txn(
         }
         let receipt = crate::receipt::attempt_pack_receipt_in_txn(&vault.store, txn, receipt_ref)?
             .ok_or(invalid("skill reliability receipt disappeared"))?;
-        let query = receipt_query(&receipt)?;
-        let cell = query.cell(*skill, executor)?;
         // A routed failure or successful attempt alone is not an anchor.
         // Keep its attribution record, but mint no numerical claim from it.
+        // The anchor is read before the task placement: an unanchored
+        // attempt's receipt may carry no typeRef, and requiring one here
+        // failed the whole pass, and every other arm's write with it
+        // (REVIEW-10104 P1).
         let Some(raw_anchor) = receipt.fields.get(FIELD_SKILL_LEARNING_ANCHOR) else {
             continue;
         };
+        let query = receipt_query(&receipt)?;
+        let cell = query.cell(*skill, executor)?;
         let anchor: Anchor = serde_json::from_str(raw_anchor)
             .map_err(|_| invalid("invalid skill receipt learning anchor"))?;
         let source = EvidenceSource::Anchored(anchor);

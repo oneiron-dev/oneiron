@@ -147,8 +147,13 @@ fn provenance_trust_class(
 /// re-judging them would be this module second-guessing the provider.
 /// `governance` is the one axis on the row that is NOT the scanner's opinion.
 fn scan_verdict_cleared_the_bytes(body: &ClaimBody) -> bool {
-    map_str(&body.value, SCAN_VERDICT_KEY) == Some(SCAN_VERDICT_CLEAN)
-        && map_str(&body.value, SCAN_GOVERNANCE_KEY) != Some(SCAN_GOVERNANCE_PROHIBITED)
+    matches!(
+        map_str(&body.value, SCAN_VERDICT_KEY),
+        Ok(Some(verdict)) if verdict == SCAN_VERDICT_CLEAN
+    ) && matches!(
+        map_str(&body.value, SCAN_GOVERNANCE_KEY),
+        Ok(governance) if governance != Some(SCAN_GOVERNANCE_PROHIBITED)
+    )
 }
 
 /// The active `skill.hub_provenance` alias on this skill that names exactly
@@ -167,14 +172,15 @@ fn hub_alias_for_content(
     let (claims, rows) =
         active_claims_sourced_in_txn(vault, rtxn, skill, PREDICATE_SKILL_HUB_PROVENANCE)?;
     for (id, body, _) in claims {
-        if map_str(&body.value, HUB_PROVENANCE_CONTENT_HASH_KEY) == Some(hash_hex.as_str())
-            && claim_consolidation_eligible_in_txn(
-                &vault.store,
-                rtxn,
-                &id,
-                ConsolidationReader::SkillHubPrior,
-            )?
-        {
+        if matches!(
+            map_str(&body.value, HUB_PROVENANCE_CONTENT_HASH_KEY),
+            Ok(Some(found)) if found == hash_hex.as_str()
+        ) && claim_consolidation_eligible_in_txn(
+            &vault.store,
+            rtxn,
+            &id,
+            ConsolidationReader::SkillHubPrior,
+        )? {
             return Ok((Some(id), rows));
         }
     }

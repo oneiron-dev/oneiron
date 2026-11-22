@@ -76,7 +76,7 @@ fn door_answers_in_envelope(path: &str) -> bool {
 /// A refusal this middleware gives before any route runs, in the shape the
 /// door behind `path` gives its own: a revoked or replayed slip on the LFS
 /// batch door reads as the same envelope as that door's scope refusal.
-fn door_refusal(path: &str, error: ApiError) -> Response {
+pub(crate) fn door_refusal(path: &str, error: ApiError) -> Response {
     if door_answers_in_envelope(path) {
         crate::error::EnvelopedApiError::from(error).into_response()
     } else {

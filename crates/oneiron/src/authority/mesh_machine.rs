@@ -253,9 +253,9 @@ impl Vault {
             && pair.parent_id.is_none()
             && fold.vault_id == Some(pair.vault_id)
             // A removed MACHINE's binding admits nothing (FIX 3374).
-            && !fold
-                .machine(claims.machine)
-                .is_some_and(enrolment::machine_removed))
+            && !fold.machine(claims.machine).is_some_and(|folded| {
+                enrolment::machine_removed(folded, fold.pinned_root.as_ref())
+            }))
     }
     /// A fresh, single-snapshot check of signed grant, live pairing and current row.
     pub fn mesh_grant_permits(
@@ -375,7 +375,7 @@ impl Vault {
         // the owner's door, another door, or a sync (FIX 3374, L02 05:3x).
         if fold
             .machine(machine)
-            .is_some_and(enrolment::machine_removed)
+            .is_some_and(|folded| enrolment::machine_removed(folded, fold.pinned_root.as_ref()))
         {
             return Ok(false);
         }
@@ -434,6 +434,7 @@ mod tests {
     ) {
         let dir = tempfile::tempdir().unwrap();
         let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+        vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
         let host = HostSlipIssuer::from_secret(b"mesh grant host root").unwrap();
         vault.ensure_host_root_slip(&host).unwrap();
         let machine = EntityId::now();

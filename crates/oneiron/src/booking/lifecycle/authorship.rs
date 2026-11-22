@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 use super::claim::is_booking_lifecycle_claim_predicate;
 use crate::claim::{ClaimBody, ClaimSource};
 use crate::entity_id::EntityId;
-use crate::provenance::birth::{RowBirth, row_birth_in_txn, stamp_row_birth_in_txn};
+use crate::provenance::birth::{RowBirth, row_birth_in_txn, stamp_birth_with_floor_in_txn};
 use crate::provenance::made_by::{MadeBy, MadeByClass, MadeByProcess};
 use crate::vault::Vault;
 
@@ -45,7 +45,7 @@ pub(super) fn stamp_engine_head_in_txn(
         at,
         trigger: None,
     });
-    stamp_row_birth_in_txn(&vault.store, wtxn, claim, &birth)
+    stamp_birth_with_floor_in_txn(vault, wtxn, claim, &birth)
 }
 
 /// Whether `body`, a surfaceable claim about a booking, counts on a lifecycle

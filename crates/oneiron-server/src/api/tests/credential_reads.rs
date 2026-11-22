@@ -76,6 +76,16 @@ pub(super) fn room() -> Room {
     create_owned_project(&server, owner, project, &roster);
     let room = oneiron::EntityId::from_hex(&roster.home_room).unwrap();
     let space = seeded_test_entity_id(0x2401_0004);
+    server
+        .vault
+        .put_entity(
+            &space,
+            oneiron::registry::ENTITY_TYPE_RELATIONSHIP,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"fixture",
+        )
+        .unwrap();
     let (spaced, unscoped) = (oneiron::EntityId::now(), oneiron::EntityId::now());
     for (message, content, metadata, at) in [
         (spaced, SPACED, Some(json!({ "rel": space.to_hex() })), 2),

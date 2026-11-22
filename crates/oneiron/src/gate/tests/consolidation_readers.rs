@@ -14,6 +14,28 @@ fn reader_body() -> ClaimBody {
     public_stamped(source_trust_claim(ClaimSource::UserStated))
 }
 
+/// Stamps the birth position of raw row `id`, as the batch write door's
+/// `stamp_put` does for a row born through it.
+fn stamp_birth_position(vault: &Vault, id: EntityId) -> Result<()> {
+    use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+    use crate::ports::EntityStoreRead;
+    vault.with_write_txn(|wtxn| {
+        let raw = vault
+            .store
+            .port_entity_raw(wtxn, &id)?
+            .expect("raw fixture row");
+        let header = EntityMetadataHeader::parse(&raw).expect("fixture row header");
+        crate::federation::record_scope::stamp_put(
+            &vault.store,
+            wtxn,
+            id,
+            header.entity_type,
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+            crate::federation::record_scope::RowPut::Birth,
+        )
+    })
+}
+
 fn check_transition(
     vault: &Vault,
     id: EntityId,
@@ -133,6 +155,8 @@ fn seed_question_answer(
                     version: "one".into(),
                 }],
                 paired: Vec::new(),
+                rule: None,
+                cost_per_thousand: None,
             })
         },
     )?;
@@ -150,18 +174,18 @@ fn fixture_question(
     binding: Option<crate::llm::decision::questions::OutcomeBinding>,
 ) -> Result<EntityId> {
     use crate::llm::decision::questions::{
-        QuestionActivation, QuestionDefinition, RefreshPolicy, create_question,
+        QuestionActivation, QuestionAudience, QuestionCriteria, QuestionDefinition, QuestionMedia,
+        RefreshPolicy, create_question,
     };
     use crate::llm::decision::{
-        AnswerContract, DecisionBand, DecisionClass, DecisionDial, DecisionQuestion, DecisionRung,
+        AnswerContract, DecisionBand, DecisionClass, DecisionDial, DecisionQuestionInput,
+        DecisionRung,
     };
     let record = create_question(
         vault,
-        principal,
+        WriteActor::new(principal, EdgeActorClass::Human),
         QuestionDefinition {
-            question: DecisionQuestion {
-                id: EntityId::now(),
-                version: 1,
+            question: DecisionQuestionInput {
                 text: "fixture question".into(),
                 class: DecisionClass::Judgment,
                 contract: AnswerContract::Noul,
@@ -184,6 +208,12 @@ fn fixture_question(
             delivery: "now".into(),
             learning: binding.is_some(),
             binding,
+            criteria: QuestionCriteria::default(),
+            audience: QuestionAudience::Asker,
+            posture: None,
+            media: QuestionMedia::default(),
+            deadline_ms: None,
+            artifacts: Vec::new(),
         },
         1,
     )?;
@@ -231,7 +261,7 @@ fn every_consolidation_reader_holds_a_claim_awaiting_its_critical_confirm() -> R
         let control = test_id(0x41);
         let head = test_id(0x48);
         let principal = test_id(0x43);
-        put_raw_entity_row(&vault, &subject, ENTITY_TYPE_PERSON, b"subject")?;
+        vault.put_entity(&subject, ENTITY_TYPE_PERSON, test_time(1), 1, b"subject")?;
         put_raw_entity_row(&vault, &principal, ENTITY_TYPE_PERSON, b"reader")?;
         for id in [claim, control, head] {
             put_claim_body(&vault, &id, &reader_body())?;
@@ -252,11 +282,22 @@ fn every_consolidation_reader_holds_a_claim_awaiting_its_critical_confirm() -> R
                         vad,
                         source: VadAnnotationSource::UserSelfReport,
                         annotated_at: 2,
+                        freshness: None,
                     },
                 )?;
+                // A claim's VAD mean reads only the evidence turns no more
+                // private than the claim (FIX 11251): the claim stands at its
+                // turn's default Sensitive band, and both raw rows take the
+                // birth position the write door would have stamped.
                 let mut body = reader_body();
+                body.scope = Some(Value::Map(vec![(
+                    Value::from("sensitivity"),
+                    Value::from("sensitive"),
+                )]));
                 body.evidence = Some(Value::Array(vec![Value::Binary(turn.as_bytes().to_vec())]));
                 put_claim_body(&vault, &claim, &body)?;
+                stamp_birth_position(&vault, turn)?;
+                stamp_birth_position(&vault, claim)?;
                 check_transition(&vault, claim, reader, |v, id| {
                     match v.consolidate_claim_vad_now(id, 10) {
                         Ok(result) => {
@@ -305,6 +346,7 @@ fn every_consolidation_reader_holds_a_claim_awaiting_its_critical_confirm() -> R
                         vad,
                         source: VadAnnotationSource::UserSelfReport,
                         annotated_at: 2,
+                        freshness: None,
                     },
                 )?;
                 let annotation = crate::affect::vad_annotation_claim_id(ENTITY_TYPE_TURN, &turn)?;
@@ -334,6 +376,7 @@ fn every_consolidation_reader_holds_a_claim_awaiting_its_critical_confirm() -> R
                             },
                             source: VadAnnotationSource::UserSelfReport,
                             annotated_at: 2,
+                            freshness: None,
                         },
                     )?;
                 }
@@ -590,6 +633,7 @@ fn every_consolidation_reader_holds_a_claim_awaiting_its_critical_confirm() -> R
                         },
                         source: VadAnnotationSource::UserSelfReport,
                         annotated_at: 2,
+                        freshness: None,
                     },
                 )?;
                 for (id, predicate) in [(claim, GOAL_VELOCITY), (control, ENGAGEMENT)] {

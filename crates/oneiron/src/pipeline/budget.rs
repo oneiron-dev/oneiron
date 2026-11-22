@@ -267,11 +267,16 @@ pub(super) fn truncate_under_world_share(
 }
 
 /// Drops the scored rows a pack's disclosure clamp withholds before any
-/// selection, so a withheld row takes no slot (OF-365); the assembly's own
+/// selection, so a withheld row takes no slot (OF-365). It asks the pack's
+/// own candidate decision, the sources of a summary's words included
+/// (`retained_copies::clamp_admits`), so no row the assembly's sweep would
+/// remove after the budget and result cuts holds a slot a readable row
+/// could take (PACK-PRESELECT-CLAMP-ROW-ONLY-DISPLACES-READABLE-HIT); the
 /// sweep still checks every survivor. Returns the ids it dropped.
 pub(super) fn withhold_undisclosed(
     scores: &mut Vec<ScoredEntity>,
     clamp: &DisclosureContext,
+    vault: &crate::Vault,
     store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     metadata_cache: &mut EntityMetadataCache,
@@ -281,8 +286,9 @@ pub(super) fn withhold_undisclosed(
     let mut kept = Vec::with_capacity(scores.len());
     for scored in scores.drain(..) {
         let admitted = match metadata_cache.get(store, rtxn, &scored.id)? {
-            Some(meta) => crate::context_pack::retained_copies::clamp_prefilter_admits(
+            Some(meta) => crate::context_pack::retained_copies::clamp_admits(
                 clamp,
+                vault,
                 store,
                 rtxn,
                 &scored.id,

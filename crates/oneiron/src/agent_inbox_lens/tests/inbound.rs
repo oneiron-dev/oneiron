@@ -8,6 +8,10 @@ use crate::thread_passport::{ThreadPassportInput, canonical_message_id};
 #[test]
 fn unified_inbox_reads_identity_stamps_membership_drafts_and_updates() -> Result<()> {
     let (_dir, vault) = open_test_vault_with(embedding_test_config());
+    // This test covers inbox projection, not the built-in pack gate.
+    vault
+        .remove_builtin_pack_seed_marker_for_test()
+        .expect("FIXTURE: drop the built-in pack seed marker (OF-519 gate is not under test here)");
     let actor = EntityId::now();
     let identity = EntityId::now();
     let other = EntityId::now();

@@ -2,6 +2,9 @@
 //! the setting catalogue reads from this file. Each default is the fixed size these verbs had
 //! before; a larger value loosens, so an agent holding a key's set line asks the owner before it
 //! raises one.
+//!
+//! The lens slot's agent select is here too: off by default, so the owner alone selects a
+//! proposed lens for its slot.
 
 use std::num::NonZeroU32;
 
@@ -9,8 +12,9 @@ use serde::{Deserialize, Serialize};
 
 use super::{LensText, RECORD_LINKS_TURN_PAGE_MAX};
 use crate::Vault;
+use crate::check_in::ActClass;
 use crate::error::{Error, Result};
-use crate::setting::{Kind, Setting, SettingValue, lower_is_tighter};
+use crate::setting::{Kind, ScopeKind, Setting, SettingValue};
 
 /// A byte count one lens text holds whole: at most [`LensText::MAX_BYTES`], the wire's bound on a
 /// lens text, so a larger value is refused when it is set rather than cut when it is read.
@@ -92,13 +96,18 @@ fn no_bytes() -> LensTextBytes {
     LensTextBytes(0)
 }
 
+/// Off: the owner alone selects a proposed lens for its slot.
+fn owner_alone() -> bool {
+    false
+}
+
 crate::setting::setting_keys! {
     /// The most proposals one `vault.lenses.list` page returns; a longer inventory pages on
     /// through `after`. 200 by default; an unreadable row reads as 1.
     pub(crate) LENSES_LIST_PAGE_MAX: NonZeroU32 = "lenses.list.page_max" {
         kind: Kind::new(lenses_list_page_max)
             .strictest(one_proposal)
-            .tighter(lower_is_tighter::<NonZeroU32>),
+            .lower(),
     };
     /// The most messages one `vault.refs.links` page of a turn reads for links, and the page
     /// size when the caller names none; a longer turn pages on through `after`. 32 by default;
@@ -106,7 +115,7 @@ crate::setting::setting_keys! {
     pub(crate) REFS_LINKS_PAGE_MAX: NonZeroU32 = "refs.links.page_max" {
         kind: Kind::new(refs_links_page_max)
             .strictest(one_message)
-            .tighter(lower_is_tighter::<NonZeroU32>),
+            .lower(),
     };
     /// The most characters the snippet of a `vault.refs.resolve` preview carries, from the
     /// record's first text field; 0 shows no snippet. 280 by default; an unreadable row reads
@@ -114,14 +123,14 @@ crate::setting::setting_keys! {
     pub(crate) REFS_RESOLVE_SNIPPET_CHARS: u32 = "refs.resolve.snippet_chars" {
         kind: Kind::new(refs_resolve_snippet_chars)
             .strictest(nothing_shown)
-            .tighter(lower_is_tighter::<u32>),
+            .lower(),
     };
     /// The body lines one `vault.lenses.default` dossier section shows, blank lines skipped; the
     /// rest of the body is cut. 32 by default; an unreadable row reads as 0.
     pub(crate) LENSES_DEFAULT_DOSSIER_LINES: u32 = "lenses.default.dossier_lines" {
         kind: Kind::new(lenses_default_dossier_lines)
             .strictest(nothing_shown)
-            .tighter(lower_is_tighter::<u32>),
+            .lower(),
     };
     /// The bytes each line of a `vault.lenses.default` dossier section shows, cut on a character
     /// boundary. 512 by default; at most 16 KiB, the bound on one lens text. An unreadable row
@@ -130,7 +139,7 @@ crate::setting::setting_keys! {
         "lenses.default.dossier_line_bytes" {
         kind: Kind::new(lenses_default_dossier_line_bytes)
             .strictest(no_bytes)
-            .tighter(lower_is_tighter::<LensTextBytes>),
+            .lower(),
     };
     /// The bytes of a source's body a `vault.lenses.default` ledger row or thread entry shows,
     /// cut on a character boundary; at 0 a ledger row's value is empty and a thread entry is left
@@ -139,7 +148,20 @@ crate::setting::setting_keys! {
     pub(crate) LENSES_DEFAULT_EXCERPT_BYTES: LensTextBytes = "lenses.default.excerpt_bytes" {
         kind: Kind::new(lenses_default_excerpt_bytes)
             .strictest(no_bytes)
-            .tighter(lower_is_tighter::<LensTextBytes>),
+            .lower(),
+    };
+    /// Let this agent select a proposed lens revision for its slot, or clear the slot
+    /// (restriction census C33; Engine RULING RESTRICTION-WAVE-9-CANON C33 = A). Off by default:
+    /// the owner alone selects, as before. On for an agent, that agent selects a revision, never
+    /// one its own lineage proposed, which the engine refuses whatever this key says. An agent's
+    /// row decides before the vault row. On is the looser value, so only the owner turns it on;
+    /// an agent's change waits on the owner's answer.
+    pub(crate) LENS_SLOT_AGENT_SELECT: bool = "lens.slot.agent_select" {
+        kind: Kind::new(owner_alone)
+            .strictest(owner_alone)
+            .lower(),
+        scopes: &[ScopeKind::Agent],
+        act: ActClass::GrantWiden,
     };
 }
 

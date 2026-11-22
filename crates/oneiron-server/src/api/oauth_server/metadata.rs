@@ -10,7 +10,10 @@ use axum::http::header;
 use axum::response::{IntoResponse, Response};
 use oneiron::authority::oauth_scopes_supported;
 
-use super::{AUTHORIZE_PATH, OAuthIdentity, REGISTER_PATH, REVOKE_PATH, TOKEN_PATH, not_found};
+use super::{
+    AUTHORIZE_PATH, OAuthIdentity, ProtectedResource, REGISTER_PATH, REVOKE_PATH, TOKEN_PATH,
+    not_found,
+};
 use crate::server::SyncServer;
 
 /// How long a client may cache a metadata document (CALLS, FIX 4902: an engine call), as the
@@ -20,13 +23,24 @@ const METADATA_CACHE_CONTROL: &str = "public, max-age=300";
 /// `GET /.well-known/oauth-protected-resource` and `.../mcp`: the `/mcp` resource, its one
 /// authorization server, the bearer header as its only method, and its scopes.
 pub(super) async fn protected_resource(State(server): State<Arc<SyncServer>>) -> Response {
-    let Some(identity) = OAuthIdentity::of(&server) else {
+    resource_document(&server, ProtectedResource::Mcp)
+}
+
+/// `GET /.well-known/oauth-protected-resource/git`: the `/git` resource's document, as
+/// `/mcp`'s names it. A push needs the `full` tier, as every receive-pack needs `core:write`.
+pub(super) async fn git_protected_resource(State(server): State<Arc<SyncServer>>) -> Response {
+    resource_document(&server, ProtectedResource::Git)
+}
+
+/// `resource`'s protected-resource document (RFC 9728 §2).
+fn resource_document(server: &SyncServer, resource: ProtectedResource) -> Response {
+    let Some(identity) = OAuthIdentity::of(server) else {
         return not_found();
     };
     (
         [(header::CACHE_CONTROL, METADATA_CACHE_CONTROL)],
         Json(serde_json::json!({
-            "resource": identity.resource(),
+            "resource": identity.resource(resource),
             "authorization_servers": [identity.issuer()],
             "bearer_methods_supported": ["header"],
             "scopes_supported": oauth_scopes_supported(),

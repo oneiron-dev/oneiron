@@ -1,9 +1,11 @@
 //! Doors for the untangle regression tests (`tests/untangle_regressions.rs`;
 //! lead 19:05 9 Nov, TESTS-MUST-RUN): each is a thin door over one
 //! crate-private item, or a port of a seed helper of the `#[cfg(test)]`
-//! fixtures, so the ruled behaviour tests of X01, X02, CONSENT-RAMP and the
+//! fixtures, so the ruled behaviour tests of X01, CONSENT-RAMP and the
 //! repeat revoke (#6874) run from an integration target while the lib test
-//! target does not compile. UC-12's `tests/expiry_boundaries.rs` reaches the
+//! target does not compile. X02's test left with the native strength archive
+//! (#7677); of its doors `enqueue_micro` stays, which other test files queue
+//! through. UC-12's `tests/expiry_boundaries.rs` reaches the
 //! tagging trace history's age prune through the last two. Compiled only under `--cfg oneiron_test_support`
 //! (`test_doors`); the shared fixture writes they call are in `test_fixtures`
 //! and the process-memory keystore is `oneiron_keystore::MemoryKeystore`, both
@@ -11,10 +13,7 @@
 //! Hidden; never API.
 //! Every assertion stays in the test file: these return plain values.
 
-use std::collections::VecDeque;
-use std::future::Future;
-use std::sync::{Arc, Mutex};
-use std::task::{Context, Poll, Waker};
+use std::sync::Arc;
 
 use rmpv::Value;
 
@@ -24,7 +23,7 @@ use crate::entity_id::EntityId;
 use crate::error::GateError;
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
-use crate::{AttemptId, Error, Result};
+use crate::{Error, Result};
 
 // ─── vaults ─────────────────────────────────────────────────────────────
 
@@ -342,7 +341,7 @@ pub fn turn_text_for_shadow(vault: &Vault, turn: &EntityId) -> Result<String> {
     crate::dreamer_consolidation::turn_text_for_shadow(vault, turn)
 }
 
-// ─── X02: one Micro wake pass and the strength archive ──────────────────
+// ─── the Micro queue ────────────────────────────────────────────────────
 
 /// Queues the Micro partition attempts over the dirty TURNs, as the weave
 /// tests' `enqueue_micro` does.
@@ -359,206 +358,6 @@ pub fn enqueue_micro(vault: &Vault, run: &str, now: u64) -> Result<()> {
     let dirty = scan_dirty_turns(vault, scope, &watermark, 10)?;
     enqueue_partition_attempts(vault, scope, &dirty, &watermark, run, now)?;
     Ok(())
-}
-
-/// A backend that answers each call with the next scripted reply.
-struct ScriptedBackend {
-    script: Mutex<VecDeque<crate::LlmResult<crate::LlmResponse>>>,
-}
-
-impl crate::LlmBackend for ScriptedBackend {
-    fn generate<'a>(
-        &'a self,
-        _request: crate::LlmRequest,
-        _lease: &'a crate::BudgetLease,
-    ) -> crate::LlmGenerateFuture<'a> {
-        let next = self
-            .script
-            .lock()
-            .expect("script mutex")
-            .pop_front()
-            .expect("scripted backend exhausted");
-        Box::pin(async move { next })
-    }
-
-    fn stream<'a>(
-        &'a self,
-        _request: crate::LlmRequest,
-        _lease: &'a crate::BudgetLease,
-    ) -> crate::LlmStreamResult<'a> {
-        Err(crate::LlmError::Fatal(crate::FatalLlmError::InvalidRequest))
-    }
-}
-
-/// One extraction reply: the listed entity `P1` has `profile.name`
-/// `Owen`, quoted from the turn `T1`. The Dreamer tests'
-/// `extraction_response` named the subject by its 32-hex id and cited a
-/// byte range of the turn's id; since FIX 7506 (call-local labels) a model
-/// reply names only what its call listed, and that shape is refused at
-/// `executor/extraction/wire.rs` `contract_fault` ("breaks its contract at
-/// subject"), so the partition parks. This is the same reply in the labelled
-/// wire.
-fn extraction_response() -> crate::LlmResponse {
-    let json = "{\"candidates\": [{\"subject\": \"P1\", \"predicate\": \"profile.name\", \
-                \"value\": \"Owen\", \"confidence\": 0.8, \
-                \"evidence_refs\": [{\"source\": \"T1\", \"quote\": \"Owen\"}]}]}"
-        .to_owned();
-    crate::LlmResponse {
-        message: crate::LlmMessage {
-            role: crate::LlmMessageRole::Assistant,
-            content: vec![crate::ContentPart::Text {
-                text: json,
-                signature: None,
-            }],
-        },
-        usage: crate::LlmUsage {
-            input: crate::LlmInputUsage {
-                total: 90,
-                cache_read: 0,
-                cache_write: 0,
-            },
-            output: crate::LlmOutputUsage {
-                total: 30,
-                text: 30,
-                reasoning: 0,
-            },
-            raw_provider: serde_json::Value::Null,
-            call_metadata: None,
-        },
-        finish_reason: crate::FinishReason::Stop,
-        reply_assertions: Default::default(),
-        token_scores: None,
-    }
-}
-
-fn allow_fixture_extraction(_: &crate::LlmRequest) -> bool {
-    true
-}
-
-/// Polls a wake pass that never waits on I/O to its boundary.
-fn ready<F: Future>(future: F) -> F::Output {
-    let mut future = std::pin::pin!(future);
-    let mut cx = Context::from_waker(Waker::noop());
-    for _ in 0..128 {
-        if let Poll::Ready(value) = future.as_mut().poll(&mut cx) {
-            return value;
-        }
-    }
-    panic!("wake pass did not reach a boundary");
-}
-
-/// One Micro wake pass through the owned attempt sink, its one extraction
-/// call answered with the listed person `P1`'s `profile.name`, quoted from
-/// the turn `T1` (the weave tests' `pass` with their `extraction_response`
-/// script, in the labelled wire).
-///
-/// # Errors
-/// The pass's.
-#[doc(hidden)]
-pub fn micro_wake_pass_with_extraction(
-    vault: &Arc<Vault>,
-    node_id: u64,
-    now: u64,
-) -> Result<crate::WakePassReport> {
-    let backend = ScriptedBackend {
-        script: Mutex::new(VecDeque::from([Ok(extraction_response())])),
-    };
-    let guard = crate::BudgetGuard::with_reserve_units(
-        "wake",
-        10_000,
-        100,
-        crate::BudgetExhaustionPolicy::Suspend,
-    );
-    let mut sink = crate::dreamer_promotion::AttemptPromotionSink::new(Arc::clone(vault));
-    let model = crate::ModelId::new("test/model@r1").expect("model");
-    let mut executor = crate::dreamer_consolidation::ConsolidationExecutor {
-        roles: Default::default(),
-        backend: &backend,
-        guard: &guard,
-        strategy: crate::DreamerClaimAuthoringStrategy::SinglePass,
-        actor: vault.dreamer_authority()?,
-        model: model.clone(),
-        sink: &mut sink,
-        inference: crate::llm::HostInferenceContext {
-            binding: crate::llm::HostInferenceBinding::Advertised {
-                model,
-                locality: crate::ModelLocality::OwnServer,
-                keyless: false,
-            },
-            extraction_egress: Some(&allow_fixture_extraction),
-        },
-        scope: None,
-        decisions: crate::dreamer_consolidation::ConsolidationDecisions::shipped()?,
-    };
-    let mut driver =
-        crate::DreamerWakeDriver::new(vault, "wake", crate::WakePassDeadline::new(180_000));
-    ready(driver.run_wake_pass(
-        crate::RunWakePass {
-            trigger: crate::WakeTrigger::SessionEnd,
-            scope: crate::DreamerConsolidationScope::Micro,
-            local_node_id: node_id,
-            lease_owner: "grant-test".to_owned(),
-            budget_total_units: 10_000,
-            reserve_units: 500,
-            now,
-            host_scope: None,
-            destination_bound: None,
-        },
-        &mut executor,
-        &crate::WakeCancellation::new(),
-    ))
-}
-
-/// The first Micro attempt in the queue, if any.
-///
-/// # Errors
-/// The queue's.
-#[doc(hidden)]
-pub fn micro_attempt(vault: &Vault) -> Result<Option<AttemptId>> {
-    Ok(crate::attempt_queue::AttemptQueue::new(vault)
-        .list()?
-        .into_iter()
-        .find(|row| row.kind == crate::DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND)
-        .map(|row| row.id))
-}
-
-/// One gate decision the ledger holds for a claim, in plain values.
-#[doc(hidden)]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ClaimGateDecision {
-    /// What the decision was about.
-    pub content_kind: String,
-    /// The grant or rows it was judged by.
-    pub grant_ref: Option<String>,
-    /// The read frontier it was judged under.
-    pub read_frontier_hash: [u8; 32],
-}
-
-/// Every gate decision the ledger holds for `claim`.
-///
-/// # Errors
-/// The ledger's.
-#[doc(hidden)]
-pub fn gate_decisions_for_claim(vault: &Vault, claim: &EntityId) -> Result<Vec<ClaimGateDecision>> {
-    let txn = vault.store.env.read_txn()?;
-    Ok(vault
-        .store
-        .gate_decisions_for_claim_in_txn(&txn, claim.as_bytes())?
-        .into_iter()
-        .map(|record| ClaimGateDecision {
-            content_kind: record.content_kind,
-            grant_ref: record.grant_ref,
-            read_frontier_hash: record.read_frontier_hash,
-        })
-        .collect())
-}
-
-/// The rows a Dreamer write that takes back what it landed is judged by, as
-/// its receipt names them (`gate::DREAMER_LANDING_ROWS_REF`).
-#[doc(hidden)]
-#[must_use]
-pub fn dreamer_landing_rows_ref() -> &'static str {
-    crate::gate::DREAMER_LANDING_ROWS_REF
 }
 
 // ─── #6874: the owner's revoke of a standing grant ──────────────────────

@@ -76,8 +76,6 @@ fn critical_write_confirm_expiry_is_a_terminal_demotion_only() -> Result<()> {
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-GATE-TESTS-CRITICAL-CONFIRM-LIFECYCLE-ITEMS]: the lib test target's type check fails here (1 errors: E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[test]
 fn pending_critical_confirms_sweep_bounded_pages_and_demotes_every_expired_claim() -> Result<()> {
     let (_tmp, vault) = temp_vault();
@@ -115,6 +113,8 @@ fn pending_critical_confirms_sweep_bounded_pages_and_demotes_every_expired_claim
                 read_frontier_hash: [((ordinal + 1) & 0xff) as u8; 32],
                 reason_codes: vec!["gate.pending.ordinary".to_owned()],
                 dreamer_run_id: None,
+                predicate: None,
+                expires_at: None,
             };
             vault
                 .store
@@ -287,8 +287,6 @@ fn critical_auto_batch_write_attaches_pending_confirm_and_allow_receipt() -> Res
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-GATE-TESTS-CRITICAL-CONFIRM-LIFECYCLE-ITEMS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(feature = "sync")]
 #[test]
 fn rematerialized_critical_claim_overwrite_invalidates_attachment_and_rejects_stale_clear()
@@ -329,7 +327,7 @@ fn rematerialized_critical_claim_overwrite_invalidates_attachment_and_rejects_st
     map_insert_bytes(
         &doc.get_map("entities"),
         &claim.to_hex(),
-        &entity_record(ENTITY_TYPE_CLAIM, test_time(3), 3, &replacement_data),
+        &entity_record(ENTITY_TYPE_CLAIM, test_time(3), 3, 0, &replacement_data),
     )?;
     doc.commit();
     forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)?;
@@ -341,21 +339,34 @@ fn rematerialized_critical_claim_overwrite_invalidates_attachment_and_rejects_st
         binding.confirm_id,
         "changed replay must atomically invalidate the persisted attachment"
     );
+    // FIX 9603: a replica overwrite keeps the peer's bytes; the obligation stays open
     assert_eq!(
         vault.get_claim(&claim)?.expect("changed claim").approval,
-        ClaimApprovalStatus::Proposed,
-        "changed replay must not leave a critical claim Auto"
+        ClaimApprovalStatus::Auto,
+        "changed replay keeps the peer's Auto bytes; the obligation stays open"
+    );
+    assert!(
+        vault
+            .with_write_txn(|wtxn| vault.store.owner_answer_obligation_in_txn(wtxn, &claim))?
+            .is_some()
+    );
+    assert!(
+        !vault.claim_consolidation_eligible(
+            &claim,
+            crate::gate::ConsolidationReader::VadAnnotation
+        )?
     );
     // The CRDT continues to carry the peer's Auto bytes, so rematerializing it
-    // again must converge on the closed/tombstoned Proposed representation.
+    // again converges on the same Auto bytes; the open obligation still holds the claim.
     forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)?;
+    // FIX 9603: a replica overwrite keeps the peer's bytes; the obligation stays open
     assert_eq!(
         vault
             .get_claim(&claim)?
             .expect("replayed changed claim")
             .approval,
-        ClaimApprovalStatus::Proposed,
-        "replaying the same changed peer body must not re-promote Auto"
+        ClaimApprovalStatus::Auto,
+        "replaying the same changed peer body keeps the peer's Auto bytes"
     );
 
     let (genesis, clear) = critical_confirm_owner_entry(
@@ -369,9 +380,10 @@ fn rematerialized_critical_claim_overwrite_invalidates_attachment_and_rejects_st
         CriticalWriteConfirmResolution::AlreadySettled,
         "a stale Clear cannot consume a ceremony for the changed body"
     );
+    // FIX 9603: a replica overwrite keeps the peer's bytes; the obligation stays open
     assert_eq!(
         vault.get_claim(&claim)?.expect("changed claim").approval,
-        ClaimApprovalStatus::Proposed
+        ClaimApprovalStatus::Auto
     );
     assert_eq!(
         vault.with_write_txn(|wtxn| vault.store.pending_gate_consent_in_txn(wtxn, &claim))?,
@@ -381,8 +393,6 @@ fn rematerialized_critical_claim_overwrite_invalidates_attachment_and_rejects_st
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-GATE-TESTS-CRITICAL-CONFIRM-LIFECYCLE-ITEMS]: the lib test target's type check fails here (2 errors: E0061 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(feature = "sync")]
 #[test]
 fn replicated_critical_claim_overwrite_invalidates_attachment_before_stale_clear() -> Result<()> {
@@ -402,6 +412,7 @@ fn replicated_critical_claim_overwrite_invalidates_attachment_before_stale_clear
             ENTITY_TYPE_CLAIM,
             test_time(4),
             4,
+            None,
             &replacement_data,
         )
         .commit()?;
@@ -425,12 +436,24 @@ fn replicated_critical_claim_overwrite_invalidates_attachment_before_stale_clear
                 && row.reason_codes == [GATE_REASON_CRITICAL_CONFIRM_REPLICATED_OVERWRITE]),
         "invalidation leaves a distinct durable closure receipt"
     );
+    // FIX 9603: a replica overwrite keeps the peer's bytes; the obligation stays open
     assert_eq!(
         vault
             .get_claim(&claim)?
             .expect("replacement claim")
             .approval,
-        ClaimApprovalStatus::Proposed
+        ClaimApprovalStatus::Auto
+    );
+    assert!(
+        vault
+            .with_write_txn(|wtxn| vault.store.owner_answer_obligation_in_txn(wtxn, &claim))?
+            .is_some()
+    );
+    assert!(
+        !vault.claim_consolidation_eligible(
+            &claim,
+            crate::gate::ConsolidationReader::VadAnnotation
+        )?
     );
     vault
         .batch()
@@ -439,16 +462,18 @@ fn replicated_critical_claim_overwrite_invalidates_attachment_before_stale_clear
             ENTITY_TYPE_CLAIM,
             test_time(4),
             4,
+            None,
             &replacement_data,
         )
         .commit()?;
+    // FIX 9603: a replica overwrite keeps the peer's bytes; the obligation stays open
     assert_eq!(
         vault
             .get_claim(&claim)?
             .expect("replayed replacement claim")
             .approval,
-        ClaimApprovalStatus::Proposed,
-        "a repeated changed replication must remain demoted"
+        ClaimApprovalStatus::Auto,
+        "a repeated changed replication keeps the peer's Auto bytes"
     );
 
     // A new local ceremony is distinct from the invalidated one. The old Clear
@@ -479,8 +504,6 @@ fn replicated_critical_claim_overwrite_invalidates_attachment_before_stale_clear
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-GATE-TESTS-CRITICAL-CONFIRM-LIFECYCLE-ITEMS]: the lib test target's type check fails here (2 errors: E0061 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(feature = "sync")]
 #[test]
 fn replicated_changed_claim_duplicate_in_one_batch_stays_proposed() -> Result<()> {
@@ -493,15 +516,27 @@ fn replicated_changed_claim_duplicate_in_one_batch_stays_proposed() -> Result<()
     let data = crate::claim::encode_claim_body(&replacement)?;
     vault
         .batch()
-        .put_replicated(&claim, ENTITY_TYPE_CLAIM, test_time(5), 5, &data)
-        .put_replicated(&claim, ENTITY_TYPE_CLAIM, test_time(5), 5, &data)
+        .put_replicated(&claim, ENTITY_TYPE_CLAIM, test_time(5), 5, None, &data)
+        .put_replicated(&claim, ENTITY_TYPE_CLAIM, test_time(5), 5, None, &data)
         .commit()?;
+    // FIX 9603: a replica overwrite keeps the peer's bytes; the obligation stays open
     assert_eq!(
         vault
             .get_claim(&claim)?
             .expect("replacement claim")
             .approval,
-        ClaimApprovalStatus::Proposed
+        ClaimApprovalStatus::Auto
+    );
+    assert!(
+        vault
+            .with_write_txn(|wtxn| vault.store.owner_answer_obligation_in_txn(wtxn, &claim))?
+            .is_some()
+    );
+    assert!(
+        !vault.claim_consolidation_eligible(
+            &claim,
+            crate::gate::ConsolidationReader::VadAnnotation
+        )?
     );
     Ok(())
 }

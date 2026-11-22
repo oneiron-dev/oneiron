@@ -72,30 +72,93 @@ pub(super) fn rows_sequence_floors(
     floors
 }
 
-/// Whether `lower` is among the ancestors of a row with `parents`, along
-/// rows of `scope` alone: `row` gives a held row's parents and scope. A path
-/// through another scope's rows or a row not held is not followed, so a
-/// false answer only sends a fold past a base or an image to the whole log.
-pub(super) fn descends_within_scope<'a>(
-    lower: &AuthorityEntryHash,
-    parents: &'a [AuthorityEntryHash],
-    scope: Option<crate::EntityId>,
-    row: impl Fn(&AuthorityEntryHash) -> Option<(&'a [AuthorityEntryHash], Option<crate::EntityId>)>,
-) -> bool {
-    let mut stack: Vec<_> = parents.iter().collect();
-    let mut visited = BTreeSet::new();
-    while let Some(hash) = stack.pop() {
-        if hash == lower {
-            return true;
+/// A row as [`highest_key_row_below`] reads it: its parents, its sequence
+/// scope and sequence, and the index of its (signer, scope) where the pass
+/// tracks that key.
+pub(super) struct ScopeRow<'a> {
+    pub(super) parents: &'a [AuthorityEntryHash],
+    pub(super) scope: Option<crate::EntityId>,
+    pub(super) seq: u64,
+    pub(super) key: Option<usize>,
+}
+
+/// The highest row of each tracked key below each row, carried down a pass:
+/// the key's index to the highest (sequence, hash) among that key's rows.
+type HighestByKey = im::OrdMap<usize, (u64, AuthorityEntryHash)>;
+
+/// For each tracked row of `rows`, the highest-sequence row of its own key
+/// among its ancestors along rows of its scope: a parent outside `rows` or
+/// of another scope is not followed. A tracked row absent from the result
+/// has no row of its key below it.
+///
+/// One pass, each row after its parents (`parents_first_of` over the links
+/// within a scope), carrying the highest row of each tracked key below it in
+/// a persistent map: a row with one parent takes or shares that parent's map
+/// and adds itself, a join merges each smaller map into the largest, and a
+/// row's map is dropped once its last child has read it. None where a parent
+/// comes after its child in that order, as only a cycle puts it, which no
+/// hash-linked log holds.
+///
+/// Cost: the order over `rows` and their links, O((rows + links) log rows);
+/// then O(log K) per row for K tracked keys, and at a join O(m log K) for
+/// the m entries of each smaller map merged in, m at most K. No row is
+/// visited once per key (FIX [ADOPTED-FOLD-GATE-SIGNER-COST]).
+pub(super) fn highest_key_row_below(
+    rows: &BTreeMap<AuthorityEntryHash, ScopeRow<'_>>,
+) -> Option<BTreeMap<AuthorityEntryHash, AuthorityEntryHash>> {
+    let links: BTreeMap<_, Vec<_>> = rows
+        .iter()
+        .map(|(hash, row)| {
+            let parents: BTreeSet<_> = row
+                .parents
+                .iter()
+                .filter(|parent| {
+                    rows.get(*parent)
+                        .is_some_and(|parent| parent.scope == row.scope)
+                })
+                .copied()
+                .collect();
+            (*hash, parents.into_iter().collect())
+        })
+        .collect();
+    let mut readers = BTreeMap::<AuthorityEntryHash, usize>::new();
+    for parent in links.values().flatten() {
+        *readers.entry(*parent).or_default() += 1;
+    }
+    let mut carried = BTreeMap::<AuthorityEntryHash, HighestByKey>::new();
+    let mut below = BTreeMap::new();
+    for hash in super::checkpoint_image::parents_first_of(&links) {
+        let row = &rows[&hash];
+        let mut highest: Option<HighestByKey> = None;
+        for parent in &links[&hash] {
+            let left = readers.get_mut(parent)?;
+            *left -= 1;
+            let parent_highest = if *left == 0 {
+                carried.remove(parent)?
+            } else {
+                carried.get(parent)?.clone()
+            };
+            highest = Some(match highest {
+                Some(merged) if merged.ptr_eq(&parent_highest) => merged,
+                Some(merged) => merged.union_with(parent_highest, std::cmp::max),
+                None => parent_highest,
+            });
         }
-        if !visited.insert(*hash) {
-            continue;
-        }
-        if let Some((row_parents, row_scope)) = row(hash)
-            && row_scope == scope
+        let mut highest = highest.unwrap_or_default();
+        if let Some(key) = row.key
+            && let Some((_, lower)) = highest.get(&key)
         {
-            stack.extend(row_parents);
+            below.insert(hash, *lower);
+        }
+        if readers.get(&hash).is_some_and(|left| *left > 0) {
+            if let Some(key) = row.key {
+                let own = (row.seq, hash);
+                if highest.get(&key).is_none_or(|kept| *kept < own) {
+                    highest.insert(key, own);
+                }
+            }
+            carried.insert(hash, highest);
         }
     }
-    false
+    Some(below)
 }

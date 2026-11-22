@@ -30,6 +30,9 @@ impl<T: ManifestDbs> RetrievalIndexExecution for TextIndexView<'_, T> {
             recency: query.recency,
             exact_posting_matches_scope: &mut scope,
             private_note_ids: query.private_note_ids,
+            hidden_row: query
+                .hidden_row
+                .map(|hidden| hidden as &mut dyn FnMut(&crate::EntityId) -> Result<bool>),
         };
         let rows = if query.filter_all {
             crate::bm25::search_text_filtered_with_recency(
@@ -52,10 +55,15 @@ impl<T: ManifestDbs> RetrievalIndexExecution for TextIndexView<'_, T> {
                 options,
             )?
         };
+        // A use-limited row is kept for storage only: it is no hit, as a
+        // deleted or stale one is not (FIX USE-LIMIT-NOT-ASKED-BY-SERVING-DOORS).
         let mut visible = Vec::with_capacity(rows.len());
         for row in rows {
             let state = super::TombstoneStoreRead::port_deletion_state(self.target, txn, &row.id)?;
-            if !state.deleted && !state.stale {
+            if !state.deleted
+                && !state.stale
+                && crate::store::legal_hold::use_limit_in_txn(self.target, txn, &row.id)?.is_none()
+            {
                 visible.push(row);
             }
         }

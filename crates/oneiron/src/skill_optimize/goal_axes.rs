@@ -195,7 +195,7 @@ fn online_axis(axis: &str, cap: u32, bandit: &dyn GoalAxisBandit) -> Result<Onli
 
 fn replay_case<'a>(
     skill: EntityId,
-    record: &'a SkillRecord,
+    (record, instructions): (&'a SkillRecord, &'a str),
     receipts: &'a [String],
     goal: Option<&'a SkillEditGoal>,
 ) -> HeldOutReplayCase<'a> {
@@ -203,7 +203,7 @@ fn replay_case<'a>(
         skill,
         skill_id: &record.skill_id,
         version: &record.version,
-        instructions: &record.desc,
+        instructions,
         held_out_receipts: receipts,
         goal,
     }
@@ -211,9 +211,12 @@ fn replay_case<'a>(
 
 /// Score both versions on each offline axis over the held-out evidence: the
 /// offline part of [`measure_goal_axes`], and the preflight a proposal's
-/// floors pass before any live run is routed to it. Each case carries
-/// `goal`, the goal the gate resolved for the acting reader, so a host
-/// scorer reads it instead of the Coach's goal read (review round 2 of
+/// floors pass before any live run is routed to it. `arms` holds the
+/// incumbent and the candidate, each with its instructions as the gate's
+/// judge reads them, the files a draft replaced included, so a file-only
+/// draft is scored on the files it moves (review F3 of #7949). Each case
+/// carries `goal`, the goal the gate resolved for the acting reader, so a
+/// host scorer reads it instead of the Coach's goal read (review round 2 of
 /// #7614); `None` where no gate resolved one.
 ///
 /// # Errors
@@ -221,8 +224,7 @@ fn replay_case<'a>(
 /// Bad scores, or scorer errors.
 pub(super) fn score_offline_goal_axes(
     skill: EntityId,
-    incumbent: &SkillRecord,
-    candidate: &SkillRecord,
+    [incumbent, candidate]: [(&SkillRecord, &str); 2],
     axes: &[String],
     held_out: &[String],
     replay: &dyn super::HeldOutReplayNotes,
@@ -257,7 +259,9 @@ pub(super) fn score_offline_goal_axes(
 /// still rule there.
 ///
 /// `goal` is the goal the gate resolved for the acting reader; each offline
-/// case carries it to `replay`.
+/// case carries it to `replay`. `instructions` holds the incumbent's and the
+/// candidate's instructions as the gate's judge reads them, which the
+/// offline axes score (review F3 of #7949).
 ///
 /// # Errors
 ///
@@ -269,6 +273,7 @@ pub fn measure_goal_axes(
     skill: EntityId,
     incumbent: &SkillRecord,
     candidate: &SkillRecord,
+    instructions: [&str; 2],
     plan: &GoalAxisPlan,
     replay: &dyn super::HeldOutReplayNotes,
     bandit: &dyn GoalAxisBandit,
@@ -315,8 +320,7 @@ pub fn measure_goal_axes(
     }
     let offline = score_offline_goal_axes(
         skill,
-        incumbent,
-        candidate,
+        [(incumbent, instructions[0]), (candidate, instructions[1])],
         &plan.offline,
         &held_out,
         replay,

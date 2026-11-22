@@ -114,7 +114,7 @@ pub(super) fn parse_signature_value(value: &Value) -> Option<PolicyAuthorityMark
     }
 }
 
-pub(super) fn version_gt(left: &str, right: &str) -> Option<bool> {
+pub(crate) fn version_gt(left: &str, right: &str) -> Option<bool> {
     let left = parse_version(left)?;
     let right = parse_version(right)?;
     Some(left > right)
