@@ -240,7 +240,6 @@ impl FormData {
     }
 
     /// The content type, with its boundary, and the body.
-    #[must_use]
     pub fn finish(&self) -> io::Result<(String, Vec<u8>)> {
         let mut hasher = blake3::Hasher::new_derive_key(BOUNDARY_CONTEXT);
         for part in &self.parts {

@@ -4,6 +4,7 @@
 pub use crate::blob_artifact::esign::door::preview::EsignSigningPreviewRequest;
 pub use crate::blob_artifact::esign::door::preview::EsignSigningPreviewView;
 use crate::blob_artifact::esign::model::EsignDocument;
+use oneiron_store::blob_artifact::esign::model::EsignField;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -26,6 +27,20 @@ pub struct EsignCreateRequest {
     /// owner turns it on; the owner can turn it off again at any time.
     #[serde(default)]
     pub qr_pdf_download: bool,
+}
+
+/// The fields to place on a signing document still in draft
+/// (`vault.esign.fields.place`), in the shape the owner's field editor
+/// exports.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EsignFieldsPlaceRequest {
+    /// The artifact the signing overlay lives on.
+    pub document_ref: String,
+    /// Every field of the draft, in place of the fields it holds: each on an
+    /// item and page the draft pins, for one of its recipients, in percent of
+    /// the page as the editor shows it.
+    pub fields: Vec<EsignField>,
 }
 
 /// A signing document to read.

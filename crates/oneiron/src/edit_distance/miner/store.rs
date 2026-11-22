@@ -1,13 +1,12 @@
 //! ED-04 miner reads, watermark and row codec.
 
-use serde::Serialize;
-
 use super::config::{ROW_VERSION, SKILL_EDIT_ROW_LABEL, WATERMARK_ROW_LABEL};
 use super::model::{
     MinedSkillEditDecision, MinedSkillEditProposal, MinedSkillEditVerdict, MinerWatermark,
     StoredSkillEdit, StoredSkillEditDecision,
 };
 use crate::Vault;
+use crate::edit_distance::stored_row::versioned_row_codec;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
@@ -20,21 +19,7 @@ pub(super) const SKILL_EDIT: SideTable<EntityId, StoredSkillEdit, Raw> =
 const WATERMARK: SideTable<(), MinerWatermark, Raw> =
     SideTable::new(&side_table::EDIT_DISTANCE_MINER_WATERMARK);
 
-impl RawValue for StoredSkillEdit {
-    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        Ok(encode_row(self, SKILL_EDIT_ROW_LABEL)?)
-    }
-
-    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
-        let row: StoredSkillEdit = decode_row(bytes, SKILL_EDIT_ROW_LABEL)?;
-        if row.v != ROW_VERSION {
-            return Err(CodecError::Value(Error::CorruptedIndex(
-                SKILL_EDIT_ROW_LABEL,
-            )));
-        }
-        Ok(row)
-    }
-}
+versioned_row_codec!(StoredSkillEdit, SKILL_EDIT_ROW_LABEL, ROW_VERSION);
 
 impl RawValue for MinerWatermark {
     fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
@@ -200,13 +185,4 @@ pub(super) fn advance_watermark_in_txn(
 // Shared helpers
 // ---------------------------------------------------------------------------
 
-pub(super) fn encode_row<T: Serialize>(row: &T, label: &'static str) -> Result<Vec<u8>> {
-    rmp_serde::to_vec_named(row).map_err(|_| Error::InvariantViolation(label))
-}
-
-pub(super) fn decode_row<T: serde::de::DeserializeOwned>(
-    raw: &[u8],
-    label: &'static str,
-) -> Result<T> {
-    rmp_serde::from_slice(raw).map_err(|_| Error::CorruptedIndex(label))
-}
+pub(super) use crate::edit_distance::stored_row::{decode_row, encode_row};

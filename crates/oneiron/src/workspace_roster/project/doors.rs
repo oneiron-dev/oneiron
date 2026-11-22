@@ -215,6 +215,14 @@ impl Vault {
                 }
                 (record, anchor, supersedes)
             };
+            // A seal that adds a parent moves the project under it, so it
+            // takes the live put's fenced-parent refusal.
+            super::proof::reject_fenced_new_parents(
+                &self.store,
+                txn,
+                &record.parents,
+                &authority.parents,
+            )?;
             let mut next = record;
             next.parents = authority.parents.clone();
             next.parent_heads = authority.parent_heads.clone();
@@ -257,7 +265,10 @@ impl Vault {
                 end: signed_at,
             };
             // The sealed row passed the owner's door above; it lands as
-            // history does, and its chain is captured with it.
+            // history does, and its chain is captured with it. A seal that
+            // changes the parents moves the project, and its settings carry
+            // the rows of the lines it leaves (stage 6.0).
+            let lines_before = self.lines_before_move_in_txn(txn, id, &next.parents)?;
             self.batch_in()
                 .put_engine_history(&id, kind, at, signed_at, &encode(&next)?)
                 .put_engine_history(
@@ -268,6 +279,9 @@ impl Vault {
                     &envelope.canonical_bytes()?,
                 )
                 .apply(txn)?;
+            if let Some(before) = lines_before {
+                crate::setting::carry_settings_in_txn(self, txn, id, &before)?;
+            }
             // The owner's act commits only a seal the fold installs: a
             // signature or slip it refuses fails here, not on a later read.
             // The new state can install without its seal, so both must.

@@ -11,6 +11,12 @@ use crate::registry::ENTITY_TYPE_TASK_LIST;
 use crate::store::Store;
 use heed::RwTxn;
 
+mod seed_agent_definition_tests;
+mod seed_code_repo_tests;
+mod seed_project_tests;
+mod seed_room_thread_tests;
+mod seed_runtime_records_tests;
+
 /// The row each scan is lowered to; every fixture reads one row past it.
 const ROW: u64 = 2;
 const PAST: usize = 3;
@@ -61,6 +67,7 @@ fn gate_decision(index: usize) -> crate::store::GateDecisionRecord {
         grant_ref: None,
         diff_handle: vec![0xA5],
         read_frontier_hash: [0xB6; 32],
+        context: Default::default(),
         redacted_at: None,
     }
 }
@@ -145,6 +152,8 @@ const REMAT_MARKERS: crate::side_table::SideTable<String, (), crate::side_table:
 /// (`it_sync`'s `child_of_arbitration_walks_the_whole_map_past_its_threshold_row`)
 /// and a Dreamer selection retry (`dreamer_consolidation::tests::late_budget::
 /// manifest_retry_source_budget_truncates_and_holder_cannot_widen`).
+/// The scans main added later are seeded per family in the `seed_*_tests` child
+/// modules; a `NO-FIXTURE` comment there says why a scan has none yet.
 fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)> {
     let src = id(0x51, 0);
     match scan {
@@ -169,6 +178,117 @@ fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)> {
         | EngineScan::DreamerRetryPeers
         | EngineScan::PendingCommStops
         | EngineScan::PartyContactClaims => None,
+        // Scans main added after these fixtures were written: one child module
+        // per scan family seeds them (FIX LIBTEST-SCAN-CHECK-TABLE-UNSEEDED-SCANS).
+        // Each new scan still has to be named here or given a fixture.
+        EngineScan::OriginTreeEntries
+        | EngineScan::OriginTagPeelSteps
+        | EngineScan::GitWirePlanObjects
+        | EngineScan::GitWirePublications
+        | EngineScan::OriginPublicationObligations
+        | EngineScan::RepoProposalSnapshotRows
+        | EngineScan::RepoSnapshotFiles
+        | EngineScan::RepoProposalCritiques
+        | EngineScan::RepoConflictPaths
+        | EngineScan::SymbolManifestRows
+        | EngineScan::SymbolOperationChain
+        | EngineScan::CodebaseFileRows
+        | EngineScan::CodeMemorySlotValues
+        | EngineScan::CodeMemoryAlwaysOnContracts
+        | EngineScan::CodeMemoryPullSeeds
+        | EngineScan::CodeMemoryPullNotes
+        | EngineScan::CodeMemoryPullSymbols
+        | EngineScan::RepoDiffFiles
+        | EngineScan::DeclaredSymbols
+        | EngineScan::DeclaredSymbolBytes => seed_code_repo_tests::seed(vault, scan),
+        EngineScan::RoomThreadChildRows
+        | EngineScan::MessageOriginRows
+        | EngineScan::ThreadTaskCensus
+        | EngineScan::AskSoftConfirmDeliveryRows
+        | EngineScan::RoomRosterMembers
+        | EngineScan::OpenAskTaskRows
+        | EngineScan::AudienceEdgeRows
+        | EngineScan::RoomAncestryRecords
+        | EngineScan::PrivateThreadAncestryRecords
+        | EngineScan::WordSourceRecords
+        | EngineScan::RoomPolicyRows
+        | EngineScan::RoomThreadHolderRows
+        | EngineScan::CommWidenAncestorRows
+        | EngineScan::ReplyStripRequestedRows
+        | EngineScan::RoomRequestedPageRows
+        | EngineScan::RoomThreadListRows
+        | EngineScan::RoomLinkWalkRows
+        | EngineScan::RoomRetryLineageRows
+        | EngineScan::RoomMentions
+        | EngineScan::RoomThreadPolicyRows
+        | EngineScan::RoomThreadTokens
+        | EngineScan::RoomThreadWaitRows
+        | EngineScan::AudienceCoverDepth
+        | EngineScan::GuestDisclosureRefs
+        | EngineScan::GuestGrantDisclosedRefs
+        | EngineScan::AttendeeIdentityCandidates
+        | EngineScan::AttendeeIdentityKeyBytes
+        | EngineScan::TaskPostIntentKeyBytes => seed_room_thread_tests::seed(vault, scan),
+        EngineScan::ProjectTaskRows
+        | EngineScan::ProjectDepthDefaultRows
+        | EngineScan::ProjectDepthPolicyRows
+        | EngineScan::ProjectDepthSourceAncestors
+        | EngineScan::ProjectDepthPredecessors
+        | EngineScan::ProjectDepthContributionBytes
+        | EngineScan::ProjectGoalAxes
+        | EngineScan::ProjectGoalPreferences
+        | EngineScan::ProjectGoalTextBytes
+        | EngineScan::ProjectGoalAxisNameBytes
+        | EngineScan::ProjectGoalDetailBytes
+        | EngineScan::ProjectSideListEntries
+        | EngineScan::ProjectBodyGoalAxes
+        | EngineScan::ProjectAncestryRows
+        | EngineScan::ProjectOutstandingCards
+        | EngineScan::ProjectProposalEntries
+        | EngineScan::ProjectCycleWorlds
+        | EngineScan::ProjectCycleAssignments
+        | EngineScan::ProjectJointWork
+        | EngineScan::ProjectProposalTextBytes
+        | EngineScan::ResidentGoalAxes
+        | EngineScan::ProjectAnchorDepth
+        | EngineScan::ProjectFoldDepth => seed_project_tests::seed(vault, scan),
+        EngineScan::AgentDefinitionListEntries
+        | EngineScan::AgentBirthSkillRows
+        | EngineScan::AgentBirthClaimOfRows
+        | EngineScan::AgentDefinitionIdentityBytes
+        | EngineScan::AgentDefinitionDescriptionBytes
+        | EngineScan::AgentDefinitionVersionBytes
+        | EngineScan::AgentDefinitionInstructionBytes
+        | EngineScan::AgentDefinitionReferenceBytes
+        | EngineScan::AgentDefinitionVerbatimPinBytes
+        | EngineScan::AgentBirthSourceBytes
+        | EngineScan::NoteDocumentBytes
+        | EngineScan::NoteDocumentPinRows
+        | EngineScan::NoteDocumentAuthorshipRows => seed_agent_definition_tests::seed(vault, scan),
+        EngineScan::PredicateClaimRows
+        | EngineScan::VaultEdgeRows
+        | EngineScan::PrefilterReceiptRows
+        | EngineScan::MachineHandoffChain
+        | EngineScan::MachineHistoryTargetRows
+        | EngineScan::MachineTransitionFrontier
+        | EngineScan::ClaimVadIncidentEdges
+        | EngineScan::RetrievalRunRows
+        | EngineScan::CallReceiptRows
+        | EngineScan::BlockedRunReports
+        | EngineScan::SieveAuditRows
+        | EngineScan::DagWalkRecords
+        | EngineScan::TaskAuthorityFactEdges
+        | EngineScan::DispatchAncestorRows
+        | EngineScan::LinearProvenanceRows
+        | EngineScan::SpendAncestorScopes
+        | EngineScan::SpendRetryAttempts
+        | EngineScan::AttemptKindRows
+        | EngineScan::AttemptEventActorBytes
+        | EngineScan::AttemptEventNoteBytes
+        | EngineScan::ReceiptSourceRows
+        | EngineScan::SyncPrefixRows
+        | EngineScan::DependentWalkRows
+        | EngineScan::ResearchContinuationRoots => seed_runtime_records_tests::seed(vault, scan),
         EngineScan::MentionRows => {
             let seed = id(0x60, 0);
             // `Mentions` is semantic: the strict read refuses a structural value.
@@ -245,6 +365,11 @@ fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)> {
             ))
         }
         EngineScan::LexicalHintRows => {
+            // With no hint index (a vault older than it) the read walks
+            // every CLAIM row.
+            vault
+                .drop_lexical_query_hint_index_for_test()
+                .expect("drop the hint index");
             // Derived hint CLAIM ids of a stored CLAIM whose bodies are gone:
             // read, never served.
             let target = id(0x64, PAST);
@@ -300,20 +425,42 @@ fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)> {
         }
         EngineScan::MinerArtifactRows => {
             for index in 0..PAST {
-                let byte = u8::try_from(index).expect("fits");
-                crate::edit_distance::put_finalized_proposal_text(
-                    vault,
-                    &crate::edit_distance::FinalizedProposalText {
-                        artifact_ref: crate::edit_distance::ProposalArtifactRef::mint(),
-                        proposed_ref: crate::edit_distance::LoroOpRef::from_bytes(vec![1, byte]),
-                        final_ref: crate::edit_distance::LoroOpRef::from_bytes(vec![2, byte]),
-                        ops_by_actor: Vec::new(),
-                        proposed_text: format!("draft {index}"),
-                        final_text: format!("final {index}"),
-                        source_turn_ref: None,
-                    },
+                let artifact_ref = crate::edit_distance::ProposalArtifactRef::mint();
+                let actor = crate::write_envelope::WriteActor::new(
+                    EntityId::now(),
+                    crate::edge::EdgeActorClass::Human,
+                );
+                let stamp = crate::provenance::ActorStamp {
+                    token: EntityId::now(),
+                    class: crate::edge::EdgeActorClass::Human,
+                };
+                let mut document = crate::entity_doc::EntityDoc::open(
+                    artifact_ref.entity_id(),
+                    &format!("draft {index}"),
+                    (actor, stamp),
+                    1,
                 )
-                .expect("artifact");
+                .expect("document");
+                let proposed_ref = crate::edit_distance::LoroOpRef::from_bytes(document.frontier());
+                document
+                    .edit_as(stamp, 2, |text| {
+                        text.delete(0, text.len_unicode()).expect("clear draft");
+                        text.insert(0, &format!("final {index}"))
+                            .expect("final text");
+                        Ok(())
+                    })
+                    .expect("final endpoint");
+                let record = crate::edit_distance::FinalizedProposalText {
+                    artifact_ref,
+                    proposed_ref,
+                    final_ref: crate::edit_distance::LoroOpRef::from_bytes(document.frontier()),
+                    ops_by_actor: Vec::new(),
+                    source_turn_ref: None,
+                    birth_attempt: None,
+                    made_by_inputs: Vec::new(),
+                };
+                crate::edit_distance::put_finalized_proposal_text(vault, &record, &document)
+                    .expect("artifact");
             }
             // No judgment names them, so no cluster forms; each is indexed.
             Some((
@@ -481,6 +628,8 @@ fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)> {
                             read_frontier_hash: decision.read_frontier_hash,
                             reason_codes: decision.reason_codes.clone(),
                             dreamer_run_id: None,
+                            predicate: None,
+                            expires_at: None,
                         };
                         vault.store.append_gate_decision_in_txn(wtxn, &decision)?;
                         vault
@@ -538,32 +687,53 @@ fn seed(vault: &Vault, scan: EngineScan) -> Option<(usize, Read<'_>)> {
 
 #[test]
 fn no_engine_scan_refuses_for_its_row_count() {
-    let mut refused = Vec::new();
+    // Every scan runs, and the test names every scan that failed, so one run
+    // shows each broken fixture (a panicking fixture prints its own message).
+    let mut failed = Vec::new();
     for scan in EngineScan::ALL {
-        let dir = tempfile::tempdir().expect("vault dir");
-        let vault = Vault::open(dir.path(), crate::VaultConfig::default()).expect("open");
-        vault.set_scan_threshold(scan, ROW).expect("lower the row");
-        let Some((served, read)) = seed(&vault, scan) else {
-            continue;
-        };
-        for _ in 0..2 {
-            match read() {
-                Ok(rows) => assert_eq!(rows, served, "{} read every row", scan.code()),
-                Err(error) => refused.push(format!("{}: {:?}", scan.code(), error.kind())),
-            }
+        let run = std::panic::AssertUnwindSafe(|| scan_reads_past_its_row(scan));
+        match std::panic::catch_unwind(run) {
+            Ok(Ok(())) => {}
+            Ok(Err(failure)) => failed.push(format!("{}: {failure}", scan.code())),
+            Err(_) => failed.push(format!("{}: its fixture panicked", scan.code())),
         }
-        let checks = vault.scan_checks().expect("checks");
-        let raised: Vec<_> = checks
-            .iter()
-            .filter(|check| check.scan == scan.code())
-            .collect();
-        assert_eq!(raised.len(), 1, "{} raised its check once", scan.code());
-        assert_eq!(raised[0].threshold, ROW);
     }
     assert!(
-        refused.is_empty(),
-        "scans refused past their row: {refused:?}"
+        failed.is_empty(),
+        "{} scans failed: {failed:#?}",
+        failed.len()
     );
+}
+
+/// One scan on a fresh vault: its read serves every row past the lowered
+/// threshold row, twice, and raises the scan's check once.
+fn scan_reads_past_its_row(scan: EngineScan) -> std::result::Result<(), String> {
+    let dir = tempfile::tempdir().expect("vault dir");
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default()).expect("open");
+    vault.set_scan_threshold(scan, ROW).expect("lower the row");
+    let Some((served, read)) = seed(&vault, scan) else {
+        return Ok(());
+    };
+    for _ in 0..2 {
+        match read() {
+            Ok(rows) if rows == served => {}
+            Ok(rows) => return Err(format!("read {rows} items, not {served}")),
+            Err(error) => return Err(format!("refused past its row: {:?}", error.kind())),
+        }
+    }
+    let checks = vault.scan_checks().expect("checks");
+    let raised: Vec<_> = checks
+        .iter()
+        .filter(|check| check.scan == scan.code())
+        .collect();
+    match raised.as_slice() {
+        [check] if check.threshold == ROW => Ok(()),
+        [check] => Err(format!(
+            "raised its check at {}, not {ROW}",
+            check.threshold
+        )),
+        _ => Err(format!("raised its check {} times, not once", raised.len())),
+    }
 }
 
 /// Class-A row 49: a canonical window capture walks the whole local receipt
@@ -574,10 +744,7 @@ fn a_canonical_receipt_window_reads_past_the_old_cap() {
     const PAST_THE_OLD_CAP: usize = 100_001;
     const CHUNK: usize = 10_000;
     let dir = tempfile::tempdir().expect("vault dir");
-    let config = crate::VaultConfig {
-        map_size: 1024 * 1024 * 1024,
-        ..crate::VaultConfig::default()
-    };
+    let config = crate::VaultConfig::device();
     let vault = Vault::open(dir.path(), config).expect("open");
     for start in (0..PAST_THE_OLD_CAP).step_by(CHUNK) {
         vault
@@ -608,10 +775,8 @@ fn a_canonical_receipt_window_reads_past_the_old_cap() {
 fn a_memory_timeline_reads_past_the_old_cap() {
     const PAST_THE_OLD_CAP: usize = 10_001;
     let dir = tempfile::tempdir().expect("vault dir");
-    let config = crate::VaultConfig {
-        map_size: 256 * 1024 * 1024,
-        ..crate::VaultConfig::default()
-    };
+    let mut config = crate::VaultConfig::device();
+    config.map_size = 256 * 1024 * 1024;
     let vault = Vault::open(dir.path(), config).expect("open");
     vault
         .with_write_txn(|wtxn| supersession_chain(&vault, wtxn, 0x56, PAST_THE_OLD_CAP))

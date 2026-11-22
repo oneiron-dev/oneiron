@@ -42,6 +42,12 @@ struct PredictionAskReply {
     directive: Option<String>,
 }
 
+/// The home's answer to `residence.board_seeds`: how many of the board's items it recorded.
+#[derive(Deserialize)]
+struct BoardSeedsReply {
+    recorded: u64,
+}
+
 /// One page of the predicted set body `residence.predicted_set` serves.
 #[derive(Deserialize)]
 struct PredictedSetPartReply {
@@ -89,6 +95,44 @@ impl SyncClient {
             "unchanged" => Ok(PredictionAsk::Unchanged),
             _ => Err(refused()),
         }
+    }
+
+    /// Reports the items one board showed on this machine to the home, at most
+    /// [`crate::sync::residence::BOARD_SEEDS_MAX`] of them, as prefetch seeds of its next
+    /// prediction (lead ruling PREDICTED-BOARD-SEED-SIGNAL = A, 21 Nov). Answers how many the
+    /// home recorded: it leaves out each item this machine may not hold. An opened mode and a
+    /// residence selector are required, as for the other residence calls; a home no socket
+    /// reaches is [`TransportError::home_offline`].
+    pub(crate) async fn report_board_seeds(
+        &mut self,
+        items: &[EntityId],
+    ) -> Result<u64, TransportError> {
+        if self.config.residence_mode != SyncResidenceMode::Opened
+            || items.len() > crate::sync::residence::BOARD_SEEDS_MAX
+        {
+            return Err(refused());
+        }
+        let budgets = residence_budgets(&self.vault)?;
+        let selector = self
+            .config
+            .residence_selector
+            .as_ref()
+            .ok_or_else(refused)?;
+        let selector = base64::engine::general_purpose::STANDARD
+            .encode(encode_sync_selector(selector).map_err(|_| refused())?);
+        let Some(mut rpc) = ResidenceRpc::connect(&self.vault, &self.config, budgets).await? else {
+            return Err(TransportError::home_offline());
+        };
+        let items: Vec<String> = items.iter().map(EntityId::to_hex).collect();
+        let reply: BoardSeedsReply = serde_json::from_value(
+            rpc.request(
+                "residence.board_seeds",
+                json!({ "selector": selector, "items": items }),
+            )
+            .await?,
+        )
+        .map_err(|_| refused())?;
+        Ok(reply.recorded)
     }
 
     /// Fetches the predicted set body `digest` names from the home, part by part from offset 0

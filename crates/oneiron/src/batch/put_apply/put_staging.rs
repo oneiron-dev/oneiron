@@ -49,6 +49,7 @@ pub(in crate::batch) fn stage_entity_body_row(
         crate::note::validate_registered_kind(store, wtxn, data)?;
     }
     crate::access_grant::reindex_companion_grant(store, wtxn, id, Some((entity_type, data)))?;
+    crate::batch::reindex_lexical_query_hint(store, wtxn, id, Some((entity_type, data)))?;
     crate::store::identity_hints::reindex_identity_hints(
         store,
         wtxn,
@@ -67,6 +68,12 @@ pub(in crate::batch) fn stage_entity_body_row(
     crate::vault::entity_revision::capture_entity_revision(store, wtxn, id, &payload.0)?;
     // Reads the stored row's party keys, so it runs before the new row goes in.
     crate::store::person_party_keys::reindex_person_party_keys(
+        store,
+        wtxn,
+        id,
+        Some((entity_type, data)),
+    )?;
+    crate::task_verb::speaker_entry_index::reindex_speaker_entry(
         store,
         wtxn,
         id,
@@ -430,6 +437,15 @@ pub(super) fn validate_domain_carriers(
         crate::registry::ENTITY_TYPE_TURN | crate::registry::ENTITY_TYPE_CONVERSATION
     ) {
         crate::memory::guard_import_stamp(store, txn, id, data)?;
+    }
+    if matches!(
+        entity_type,
+        crate::registry::ENTITY_TYPE_CONVERSATION
+            | crate::registry::ENTITY_TYPE_TURN
+            | crate::registry::ENTITY_TYPE_MESSAGE
+            | crate::registry::ENTITY_TYPE_SESSION
+    ) {
+        crate::memory::guard_phone_thread_mark(store, txn, id, data)?;
     }
     if entity_type == crate::registry::ENTITY_TYPE_EVENT {
         crate::calendar::origin::validate_event_write(store, txn, id, data, replicated)?;

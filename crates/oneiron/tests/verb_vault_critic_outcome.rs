@@ -447,6 +447,7 @@ fn review(fixture: &Fixture, spec: &Review<'_>) -> ReviewResult {
             rule: None,
             local: Some(&script),
             system_one: None,
+            precision: None,
             escalation: None,
             big: None,
             human: &NoPerson,

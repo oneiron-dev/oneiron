@@ -136,8 +136,20 @@ impl ReviewerPolicy {
     }
 }
 
+#[cfg(oneiron_test_support)]
+impl Vault {
+    /// Test door body (`test_doors::bootstrap_skills`): the reviewer revision
+    /// the agent-health pass loads its policy from, if any.
+    pub(crate) fn agent_health_reviewer_revision_for_test(&self) -> Result<Option<EntityId>> {
+        let txn = self.store.env.read_txn()?;
+        Ok(in_force_policy_in_txn(self, &txn)?.map(|(revision, _)| revision))
+    }
+}
+
 /// The reviewer's in-force revision and its `policy.json` bytes: from the
-/// bootstrap `agent-health-review` skill, through admitted succession
+/// bootstrap `agent-health-review` skill (or, once its succession holds no
+/// loadable revision, the admitted restored default:
+/// `agent_dispatch::bootstrap_skill_root_in_txn`), through admitted succession
 /// (`Supersedes`, new to old) to its newest revision, when that revision is
 /// live, shared, active and approved (the judge rubric's walk). `None` when
 /// no such revision exists; the bytes are `None` when its package holds no
@@ -146,9 +158,10 @@ fn in_force_policy_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
 ) -> Result<Option<(EntityId, Option<Vec<u8>>)>> {
-    let mut head = EntityId::derive(
-        crate::entity_id::derived_domains::BOOTSTRAP_SKILL,
-        &[AGENT_HEALTH_REVIEW_SKILL_ID.as_bytes()],
+    let mut head = crate::agent_dispatch::bootstrap_skill_root_in_txn(
+        vault,
+        txn,
+        AGENT_HEALTH_REVIEW_SKILL_ID,
     )?;
     let mut seen = BTreeSet::from([head]);
     loop {
@@ -199,6 +212,19 @@ pub(crate) fn reviewer_policy_seeds(bytes: &[u8]) -> BTreeMap<&'static str, f64>
     decode(bytes).0
 }
 
+/// The seed T1 runs for every detector dial when `bytes` is a revision's
+/// `policy.json`: the file's valid seed, or the dial's compiled seed where
+/// the file leaves the dial out, holds it out of bounds, or falls back
+/// whole (review round 2 of #7949). An owner setting or a fit still
+/// overrides either at run time.
+pub(crate) fn reviewer_policy_effective_seeds(bytes: &[u8]) -> BTreeMap<&'static str, f64> {
+    let seeds = decode(bytes).0;
+    POLICY_DIALS
+        .iter()
+        .map(|spec| (spec.key, seeds.get(spec.key).copied().unwrap_or(spec.seed)))
+        .collect()
+}
+
 /// The typed seeds `bytes` carry (`TripwireBounds::decode`'s shape): one
 /// JSON object whose keys are detector dial keys, each a finite number
 /// inside its dial's bounds. A dial left out or out of bounds, and a key
@@ -231,7 +257,9 @@ fn decode(bytes: &[u8]) -> (BTreeMap<&'static str, f64>, Vec<PolicyFallback>) {
 /// write winning. `None` when `bytes` are not one JSON object, or any
 /// top-level key repeats. Keys nested inside a value are that value's own
 /// shape, as before.
-fn object_without_duplicates(bytes: &[u8]) -> Option<serde_json::Map<String, serde_json::Value>> {
+pub(crate) fn object_without_duplicates(
+    bytes: &[u8],
+) -> Option<serde_json::Map<String, serde_json::Value>> {
     struct Unique(serde_json::Map<String, serde_json::Value>);
 
     struct UniqueVisitor;

@@ -72,16 +72,16 @@ pub(super) use self::schema::u32_saturating;
 pub use self::schema::{AmendmentDelta, DeltaSource, MEASUREMENT_ENGINE_VERSION, OpsSummary};
 pub(crate) use self::store::{
     AMENDMENT_UNCAPTURED_INBOX, AMENDMENT_UNCAPTURED_STORE, OUTCOME_APPROVED_AMENDED,
-    amendment_uncaptured_count, attach_amendment_deltas, bump_amendment_uncaptured_in_txn,
-    put_amendment_delta_in_txn, put_amendment_uncaptured_in_txn,
+    amendment_uncaptured_count, approved_claim_body_bytes, attach_amendment_deltas,
+    bump_amendment_uncaptured_in_txn, forget_gate_amendment_delta_in_txn,
+    measured_claim_amendment_in_txn, put_amendment_delta_in_txn, put_amendment_measurement_in_txn,
+    put_amendment_uncaptured_in_txn,
 };
 pub use self::store::{amendment_delta, project_identity_amendment_deltas};
 pub(in crate::edit_distance) use self::store::{
     amendment_recorded_in_txn, captured_amendment_delta_in_txn,
 };
 
-// FIX [LIBTEST-QUARANTINE-EDIT-DISTANCE-DELTA-TESTS]: the lib test target's type check fails here (90 errors: E0308 x46, E0609 x38, E0560 x4, E0599 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

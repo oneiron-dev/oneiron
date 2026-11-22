@@ -210,8 +210,7 @@ impl CdpDriver {
             let quad: Vec<f64> = model
                 .pointer("/model/content")
                 .and_then(Value::as_array)
-                .map(|q| q.iter().filter_map(Value::as_f64).collect())
-                .unwrap_or_default();
+                .map_or_default(|q| q.iter().filter_map(Value::as_f64).collect());
             if quad.len() != 8 {
                 return None;
             }

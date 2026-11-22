@@ -23,14 +23,21 @@
 //!   another's, a bearer's call or an agent's, which keep the natural-person
 //!   refusal and the D6 dial.
 //!
+//! The check-in binds the recipient's field values the Complete signs (the
+//! values its standing review bound), so a value saved after the approval is
+//! another effect: the Complete that names the approved check-in is refused,
+//! and one that names none asks again.
+//!
 //! The signature's evidence records the decision.
 //!
 //! Known limit: the capability is the authority (ARCH-0064), so whoever
 //! holds a vault principal's signing link can complete it as a bearer,
 //! unjudged.
 
+use std::collections::BTreeMap;
+
 use super::SigningCaller;
-use super::model::{EsignCheckInDecision, EsignRecipient, invalid};
+use super::model::{EsignCheckInDecision, EsignRecipient, FieldValue, invalid};
 use crate::check_in::{
     self, ActClass, CheckInDecision, CheckInScope, DoorAct, DoorCheckIn, RolePreset,
 };
@@ -45,6 +52,8 @@ pub(super) struct SignAct<'a> {
     pub(super) verified_actor: Option<EntityId>,
     pub(super) document: EntityId,
     pub(super) recipient: &'a EsignRecipient,
+    /// The recipient's field values the Complete signs.
+    pub(super) values: &'a BTreeMap<String, FieldValue>,
     /// The check-in the Complete names, 32 hex.
     pub(super) check_in_ref: Option<&'a str>,
 }
@@ -146,7 +155,7 @@ fn judge_in_txn(
         verb: SIGN_VERB,
         act: ActClass::Sign,
         scope: CheckInScope::default(),
-        effect_digest: check_in::sign_effect_digest(&act.document, &act.recipient.id),
+        effect_digest: check_in::sign_effect_digest(&act.document, &act.recipient.id, act.values),
     };
     let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
     Ok(

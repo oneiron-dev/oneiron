@@ -8,6 +8,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use oneiron_contracts::fingerprint::ContentHash;
 use serde::{Deserialize, Serialize};
 
 use super::super::super::contribution::{
@@ -176,7 +177,10 @@ pub(crate) fn erase_contribution_forks_in_txn(
     }
     let mut moved = BTreeMap::new();
     for pair in affected {
-        moved.insert(pair, *blake3::hash(&vault.store.clock.ulid()?).as_bytes());
+        moved.insert(
+            pair,
+            *ContentHash::of(&vault.store.clock.ulid()?).as_bytes(),
+        );
     }
     let mut rebound = BTreeMap::new();
     let mut erased_outcomes = BTreeMap::new();
