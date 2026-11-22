@@ -12,6 +12,18 @@ type EntityParts = (u8, u64, Vec<u8>);
 
 pub use crate::ports::{PointRead, ReadRow, ReadTarget};
 
+/// The records `rows` served a body of: what a point read charges to its
+/// reader's read exposure (L8-65). A row with no body is an erased record's
+/// shell, which tells the reader only that the record is gone; charging it
+/// would put back the exposure row the erase took and count the record twice.
+pub(super) fn records_served<'a>(
+    rows: impl IntoIterator<Item = &'a ReadRow>,
+) -> impl Iterator<Item = EntityId> {
+    rows.into_iter()
+        .filter(|row| row.body.is_some())
+        .map(|row| row.id)
+}
+
 impl ScopedRead<'_> {
     /// Recheck a graph-ask source against the current write transaction's
     /// authority, deletion, NOTE privacy and live-body projection. It cannot
@@ -502,7 +514,7 @@ impl ScopedRead<'_> {
             suppressed,
             Some(&authority),
         );
-        self.charge_served(value.iter().flatten().map(|row| row.id));
+        self.charge_served(records_served(value.iter().flatten()));
         Ok(ScopedReadResult {
             value: project(txn, &authority, value)?,
             receipt,
@@ -556,7 +568,7 @@ impl ScopedRead<'_> {
                 suppressed += withheld;
                 rows.push(row);
             }
-            self.charge_served(rows.iter().flatten().map(|row| row.id));
+            self.charge_served(records_served(rows.iter().flatten()));
             project(&txn, frame_index * frame_size, rows, &mut state)?;
         }
         let receipt = self.receipt_in(
