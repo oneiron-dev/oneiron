@@ -13,6 +13,7 @@
 //! stay. A pass never adds a drained member back; only the owner's
 //! re-enrolment does, at a newer revision.
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use serde::{Deserialize, Serialize};
 use zeroize::{Zeroize, Zeroizing};
 
@@ -219,7 +220,7 @@ impl Journal {
             change: SetChange::Drained,
             evidence: Some(DrainEvidence {
                 operation_id: ack.operation_id.clone(),
-                ack_digest: hex(blake3::hash(&encode(ack)?).as_bytes()),
+                ack_digest: hex(&ack_digest(&encode(ack)?)),
                 inventory_digest: ack.evidence.inventory_digest.clone(),
                 superseded_removed: ack.evidence.superseded_removed,
             }),
@@ -308,4 +309,19 @@ impl Store {
     pub(crate) fn reenrol_custody_member(&self, spec: &TargetSpec) -> Result<u64> {
         self.drain_journal()?.reenrol(spec)
     }
+}
+
+/// A drained member's ack digest over the ack's encoded bytes
+/// (`purposes::store::CUSTODY_DRAIN_ACK`).
+fn ack_digest(encoded: &[u8]) -> [u8; 32] {
+    LegacyDigest::new(purposes::store::CUSTODY_DRAIN_ACK)
+        .raw(encoded)
+        .finish()
+}
+
+/// [`ack_digest`] for the K door
+/// (`test_doors::fingerprint_keep_store_digests`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn drain_ack_digest_for_test(encoded: &[u8]) -> [u8; 32] {
+    ack_digest(encoded)
 }

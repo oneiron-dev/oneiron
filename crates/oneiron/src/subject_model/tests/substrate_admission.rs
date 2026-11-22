@@ -26,13 +26,15 @@ pub(super) fn admit(
     id: &EntityId,
     body: &ClaimBody,
 ) -> Result<()> {
-    let data = encode_claim_body(body)?;
+    let mut stamped = body.clone();
+    crate::test_util::stamp_vault_default_facet(vault, &mut stamped);
+    let data = encode_claim_body(&stamped)?;
     let occurred = TimeRange {
         start: 100,
         end: 100,
     };
     match door {
-        AdmissionDoor::ReservedTyped => put_subject_fixture(vault, id, body),
+        AdmissionDoor::ReservedTyped => put_subject_fixture(vault, id, &stamped),
         AdmissionDoor::ReservedBatch => vault.with_write_txn(|txn| {
             vault
                 .batch_in()
@@ -41,13 +43,13 @@ pub(super) fn admit(
         }),
         AdmissionDoor::ReplicatedBatch => vault
             .batch()
-            .put_replicated(id, ENTITY_TYPE_CLAIM, occurred, 100, &data)
+            .put_replicated(id, ENTITY_TYPE_CLAIM, occurred, 100, None, &data)
             .commit(),
         #[cfg(feature = "sync")]
         AdmissionDoor::ReplicatedTxn => vault.with_write_txn(|txn| {
             vault
                 .batch_in()
-                .put_replicated(id, ENTITY_TYPE_CLAIM, occurred, 100, &data)
+                .put_replicated(id, ENTITY_TYPE_CLAIM, occurred, 100, None, &data)
                 .apply(txn)
         }),
     }
@@ -144,7 +146,12 @@ fn substrate_admission_rejects_non_person_and_edge_subjects() -> Result<()> {
             ENTITY_TYPE_AGENT_DEF,
         ] {
             let (_dir, vault) = test_vault();
-            let subject = seed(&vault, entity(0x91), kind);
+            // PEOPLE ARCH-0067 onboarding anchor; unanchored AGENT_DEF seed per 76cdfce0102.
+            let subject = if kind == ENTITY_TYPE_AGENT_DEF {
+                seed_unanchored_agent_definition(&vault, entity(0x91), "substrate_admission")
+            } else {
+                seed(&vault, entity(0x91), kind)
+            };
             let id = entity(0x92);
             let mut body = subject_fact(
                 PREDICATE_PERSON_SUBSTRATE,
@@ -192,7 +199,10 @@ fn substrate_missing_person_is_rejected_until_the_actual_row_arrives() -> Result
         assert!(vault.claims_for_subject(&person)?.is_empty());
         seed(&vault, person, ENTITY_TYPE_PERSON);
         admit(&vault, door, &id, &body)?;
-        assert_eq!(vault.get_claim(&id)?, Some(body));
+        // `admit` stamps the vault default facet before each door's put.
+        let mut stored = body.clone();
+        crate::test_util::stamp_vault_default_facet(&vault, &mut stored);
+        assert_eq!(vault.get_claim(&id)?, Some(stored));
     }
     Ok(())
 }
@@ -220,10 +230,10 @@ fn substrate_replicated_batch_checks_subject_at_the_applying_op_and_rolls_back()
             let batch = if person_first {
                 batch
                     .put(&person, ENTITY_TYPE_PERSON, occurred, 100, b"person")
-                    .put_replicated(&id, ENTITY_TYPE_CLAIM, occurred, 100, &data)
+                    .put_replicated(&id, ENTITY_TYPE_CLAIM, occurred, 100, None, &data)
             } else {
                 batch
-                    .put_replicated(&id, ENTITY_TYPE_CLAIM, occurred, 100, &data)
+                    .put_replicated(&id, ENTITY_TYPE_CLAIM, occurred, 100, None, &data)
                     .put(&person, ENTITY_TYPE_PERSON, occurred, 100, b"person")
             };
             let result = batch.edge(&id, EdgeKind::ClaimOf, &person, 1.0).commit();
@@ -282,6 +292,7 @@ fn substrate_session_batch_uses_the_same_value_and_person_admission() -> Result<
             role: JournalRole::TurnOwnedArtifact,
             learned_at: 100,
             occurred,
+            source_run: None,
             op: BatchOp::Put {
                 id,
                 entity_type: ENTITY_TYPE_CLAIM,
@@ -291,6 +302,7 @@ fn substrate_session_batch_uses_the_same_value_and_person_admission() -> Result<
                 allow_maintenance: false,
                 allow_reserved_predicate: true,
                 hub_sync_imported: false,
+                row_version: None,
             },
         };
         let route = session.write_route()?;

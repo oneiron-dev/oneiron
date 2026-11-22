@@ -293,7 +293,21 @@ pub(super) fn grant_member_bundle(
                 .load(std::sync::atomic::Ordering::Acquire),
             false,
             true,
-        )
+        )?;
+        // The grant is the onboarding's admin act; a retry that finds it
+        // written above logs nothing again.
+        let now = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
+        vault.record_admin_act_in_txn(
+            wtxn,
+            intent.workspace.workspace_vault_id,
+            writer.entity_ref(),
+            crate::federation::SharedVaultChange::MemberOnboarded {
+                member: intent.person_ref.to_hex(),
+                role: intent.grant_bundle.role,
+            },
+            now,
+        )?;
+        Ok(())
     })
 }
 
@@ -498,22 +512,47 @@ pub(super) fn record_roster_member(
 ) -> Result<()> {
     require_workspace_authority(vault, intent.workspace.workspace_vault_id, writer)?;
     let revision = verify_mailbox_revision(vault, intent, proofs)?;
-    let row = RosterMemberRow {
-        person_ref: intent.person_ref,
-        actor_ref: intent.actor_ref,
-        companion_person_ref: Some(intent.companion.person_ref()),
-        companion_actor_ref: Some(intent.companion.actor_ref()),
-        companion_facet_ref: Some(intent.companion.work_facet_ref()),
-        identity_ref: intent.delegated_mailbox.as_ref().map(|m| m.identity_ref),
-    };
     let key = RosterMemberKey {
         workspace_ref: intent.workspace.workspace_ref.clone(),
         person_ref: intent.person_ref,
     };
-    MEMBER.encode_value(&row)?;
     with_workspace_authority(vault, intent.workspace.workspace_vault_id, writer, |wtxn| {
         require_mailbox_revision(vault, revision)?;
-        if let Some(existing) = MEMBER.get(&vault.store, wtxn, &key)? {
+        let existing = MEMBER.get(&vault.store, wtxn, &key)?;
+        // The joining line is decided once, by the write that first stores
+        // this row: a resumed step keeps the stored told mark, so a mode
+        // change between a crash and the resume never makes the replay
+        // differ. A first write reads the row in this same transaction
+        // (fail closed): an unreadable row refuses before any write of this
+        // step, so the journal stays resumable at the prior step.
+        let one_vault_told = match &existing {
+            Some(stored) => stored.one_vault_told,
+            None => {
+                match crate::gate::resolve_policy_manifest(&vault.store, wtxn)?.one_vault_policy() {
+                    OneVaultRead::NoRow => None,
+                    OneVaultRead::Row(policy) => {
+                        matches!(policy.mode(), OneVaultMode::On).then_some(intent.occurred_at)
+                    }
+                    OneVaultRead::Unreadable => {
+                        return Err(Error::Record(
+                            crate::error::RecordError::OneVaultSettingUnreadable,
+                        ));
+                    }
+                }
+            }
+        };
+        let row = RosterMemberRow {
+            person_ref: intent.person_ref,
+            actor_ref: intent.actor_ref,
+            companion_person_ref: Some(intent.companion.person_ref()),
+            companion_actor_ref: Some(intent.companion.actor_ref()),
+            companion_facet_ref: Some(intent.companion.work_facet_ref()),
+            companion_brought: intent.companion.is_bring(),
+            identity_ref: intent.delegated_mailbox.as_ref().map(|m| m.identity_ref),
+            one_vault_told,
+        };
+        MEMBER.encode_value(&row)?;
+        if let Some(existing) = existing {
             if existing != row {
                 return Err(invalid(
                     "member already has a different workspace roster row",

@@ -131,7 +131,13 @@ impl Vault {
             return Ok(());
         };
         let invitee = EntityId::from_hex(&claims.holder_ref).map_err(|_| invalid_authority())?;
-        if !self.invitation_slip_stands_in_txn(txn, invitee, invitation, &claims.binding_key, now) {
+        if !self.invitation_slip_stands_in_txn(
+            txn,
+            invitee,
+            invitation,
+            &claims.binding_key,
+            now,
+        )? {
             return Err(invalid_authority());
         }
         Ok(())
@@ -173,11 +179,24 @@ impl Vault {
         now: u64,
     ) -> Result<()> {
         self.require_undeleted_slip_holder_in_txn(txn, claims)?;
+        self.require_live_slip_refs_but_holder_in_txn(txn, claims, now)
+    }
+
+    /// [`Self::require_live_slip_refs_in_txn`] without its holder's row:
+    /// every grant, invitation, share, delegation, contact naming and seat
+    /// claim the slip names still stands.
+    fn require_live_slip_refs_but_holder_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        claims: &SlipClaims,
+        now: u64,
+    ) -> Result<()> {
         self.require_live_slip_grant_in_txn(txn, claims, now)?;
         self.require_live_slip_invitation_in_txn(txn, claims, now)?;
         if let Some(share) = &claims.share_ref {
             let share = EntityId::from_hex(share).map_err(|_| invalid_authority())?;
             let holder = EntityId::from_hex(&claims.holder_ref).map_err(|_| invalid_authority())?;
+            crate::share::require_share_header_in_txn(&self.store, txn, &share)?;
             crate::share::live_share_for_holder_in_txn(self, txn, &share, &holder, now)?
                 .ok_or_else(invalid_authority)?;
         }
@@ -211,17 +230,45 @@ impl Vault {
     /// verified earlier and checked again (FIX 5952): `false` once its grant,
     /// invitation, delegation, contact naming or seat claim no longer stands,
     /// an error only when that cannot be judged.
-    pub(super) fn slip_refs_stand_in_txn(
+    pub(crate) fn slip_refs_stand_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         claims: &SlipClaims,
         now: u64,
     ) -> Result<bool> {
-        match self.require_live_slip_refs_in_txn(txn, claims, now) {
-            Ok(()) => Ok(true),
-            Err(Error::Record(RecordError::InvalidAuthorityLogBody(_))) => Ok(false),
-            Err(error) => Err(error),
-        }
+        slip_refs_judgment(self.require_live_slip_refs_in_txn(txn, claims, now))
+    }
+
+    /// [`Self::slip_refs_stand_in_txn`] at the publication of a delete whose
+    /// own scrub of `scrubbed` committed before it: a slip `scrubbed` holds,
+    /// the owner's own credential when that delete is the owner's delete of
+    /// their own PERSON, is judged with that PERSON's row read as undeleted
+    /// (the scrub is the delete being published); every reference it names
+    /// is judged as before, and so is a slip any other holder holds.
+    pub(crate) fn slip_refs_stand_after_own_scrub_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        claims: &SlipClaims,
+        now: u64,
+        scrubbed: &EntityId,
+    ) -> Result<bool> {
+        let held_by_scrubbed =
+            EntityId::from_hex(&claims.holder_ref).is_ok_and(|holder| holder == *scrubbed);
+        slip_refs_judgment(if held_by_scrubbed {
+            self.require_live_slip_refs_but_holder_in_txn(txn, claims, now)
+        } else {
+            self.require_live_slip_refs_in_txn(txn, claims, now)
+        })
+    }
+}
+
+/// A slip-reference check as a judgment: `false` when a reference no longer
+/// stands, an error only when that cannot be judged.
+fn slip_refs_judgment(refs: Result<()>) -> Result<bool> {
+    match refs {
+        Ok(()) => Ok(true),
+        Err(Error::Record(RecordError::InvalidAuthorityLogBody(_))) => Ok(false),
+        Err(error) => Err(error),
     }
 }
 

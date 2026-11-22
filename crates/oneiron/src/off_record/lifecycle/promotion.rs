@@ -256,7 +256,7 @@ impl OffRecordSession<'_> {
     ) -> Result<(Vec<(EntityId, PromoteOutcome)>, T)> {
         let floor = FloorWrites::new(&self.vault.store).saving(self.entry.overlay.clone());
         #[cfg(unix)]
-        let bodies = floor.import_result_bodies(self.vault, &self.session_ref, &plans)?;
+        let mut bodies = floor.import_result_bodies(self.vault, &self.session_ref, &plans)?;
         let saved = self.vault.with_write_txn_grouped(|wtxn| {
             let checked = check(wtxn)?;
             let promoted_at = self.vault.store.clock.now_recorded_at();
@@ -351,7 +351,11 @@ impl OffRecordSession<'_> {
         });
         // A copy no row of the save names, refused or skipped, leaves now.
         #[cfg(unix)]
-        self.vault.discard_unnamed_promoted_bodies(bodies);
+        {
+            // With each carried copy of a room's body (ROOM-CUSTODY-REPLY-BODIES).
+            bodies.extend(floor.carried_body_pins());
+            self.vault.discard_unnamed_promoted_bodies(bodies);
+        }
         let (landed, checked, queued) = saved?;
         if queued {
             self.vault.store.notify_attempt_observers();

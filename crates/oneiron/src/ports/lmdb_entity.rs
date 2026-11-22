@@ -293,6 +293,25 @@ pub(crate) fn reindex_named_entities(
     Ok(())
 }
 
+/// Doors for `tests/scrub_keeps_hint_and_name_rows.rs`.
+#[cfg(oneiron_test_support)]
+impl Vault {
+    /// Every named-entity index row's full `named_entity:v1:` key.
+    pub(crate) fn named_entity_index_rows_for_test(&self) -> Result<Vec<Vec<u8>>> {
+        let rtxn = self.store.env.read_txn()?;
+        let mut rows = Vec::new();
+        for row in self
+            .store
+            .vault_meta
+            .prefix_iter(&rtxn, b"named_entity:v1:")?
+        {
+            let (key, _) = row?;
+            rows.push(key.into_owned());
+        }
+        Ok(rows)
+    }
+}
+
 fn indexed_entities(
     vault: &Vault,
     txn: &RoTxn<'_>,

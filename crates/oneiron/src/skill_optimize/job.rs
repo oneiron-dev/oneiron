@@ -16,8 +16,10 @@ use crate::skill_reliability::SkillReliabilityPosterior;
 use crate::temporal::TimeRange;
 
 use super::brief::{
-    SKILL_OPTIMIZE_RATIONALE_MAX_BYTES, SkillEditDraft, SkillOptimizeAuthor, SkillOptimizeBrief,
-    optimize_brief, optimize_brief_bound_at,
+    SKILL_OPTIMIZE_MAX_DRAFT_FILE_BYTES, SKILL_OPTIMIZE_MAX_DRAFT_FILES,
+    SKILL_OPTIMIZE_MAX_DRAFT_FILES_BYTES, SKILL_OPTIMIZE_MAX_JUDGED_ARM_BYTES,
+    SKILL_OPTIMIZE_RATIONALE_MAX_BYTES, SkillEditDraft, SkillFileEdit, SkillOptimizeAuthor,
+    SkillOptimizeBrief, optimize_brief, optimize_brief_bound_at,
 };
 use super::dials::{invalid, validate_text};
 use super::gate::{SKILL_EDIT_CYCLE_MAX_BYTES, SkillEditCycle};
@@ -45,6 +47,11 @@ pub(super) const PROVENANCE_OPTIMIZE_PRINCIPAL_KEY: &str = "preferencePrincipal"
 
 /// Provenance key carrying the receipt ids the draft rests on.
 pub const PROVENANCE_OPTIMIZE_RECEIPTS_KEY: &str = "evidenceReceipts";
+
+/// Provenance key listing the paths of the files a draft replaced whole
+/// (census L9-02), so a reviewer sees what moved besides the instructions.
+/// Absent for an instructions-only draft.
+pub const PROVENANCE_OPTIMIZE_EDITED_FILES_KEY: &str = "editedFiles";
 
 /// Provenance key naming the Dreamer attempt that drafted the proposal.
 pub const PROVENANCE_OPTIMIZE_ATTEMPT_KEY: &str = "attempt";
@@ -217,7 +224,28 @@ fn run_skill_optimize_bound(
         owner.map(crate::write_envelope::WriteActor::entity_ref),
         learned_at,
     )?;
-    let (desc, rationale) = match author.draft(&brief)? {
+    draft_and_propose(
+        vault, attempt, author, &brief, occurred, learned_at, owner, resident,
+    )
+}
+
+/// Steps 3 to 5 of [`run_skill_optimize`] for the one target `brief` was read
+/// for: ask the author, validate its draft, and land the proposal.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the drafting door names every input the proposal is stamped with"
+)]
+pub(crate) fn draft_and_propose(
+    vault: &Vault,
+    attempt: AttemptId,
+    author: &dyn SkillOptimizeAuthor,
+    brief: &SkillOptimizeBrief,
+    occurred: TimeRange,
+    learned_at: u64,
+    owner: Option<crate::write_envelope::WriteActor>,
+    resident: Option<EntityId>,
+) -> Result<SkillOptimizeOutcome> {
+    let (desc, rationale, files) = match author.draft(brief)? {
         SkillEditDraft::Decline { rationale } => {
             validate_text(
                 &rationale,
@@ -225,15 +253,19 @@ fn run_skill_optimize_bound(
                 "author rationale must be a non-empty string at most 1024 bytes",
             )?;
             return Ok(SkillOptimizeOutcome {
-                skill: Some(candidate.skill),
+                skill: Some(brief.skill),
                 proposal: None,
                 rationale,
                 affirmed_receipts: Vec::new(),
             });
         }
-        SkillEditDraft::Edit { desc, rationale } => (desc, rationale),
+        SkillEditDraft::Edit {
+            desc,
+            rationale,
+            files,
+        } => (desc, rationale, files),
     };
-    validate_skill_draft(&brief, &desc, &rationale)?;
+    validate_skill_draft(brief, &desc, &rationale, &files)?;
 
     // Resolved BEFORE the write door and persisted with the proposal: the cap
     // this draft will be counted against is a birth fact, not something a later
@@ -254,9 +286,10 @@ fn run_skill_optimize_bound(
         propose_skill_repair_in_txn(
             vault,
             wtxn,
-            &brief,
+            brief,
             &desc,
             &rationale,
+            &files,
             &stamp,
             &proposal_id,
             occurred,
@@ -265,7 +298,7 @@ fn run_skill_optimize_bound(
     })?;
 
     Ok(SkillOptimizeOutcome {
-        skill: Some(candidate.skill),
+        skill: Some(brief.skill),
         proposal: Some(proposal_id),
         rationale,
         affirmed_receipts: Vec::new(),
@@ -290,12 +323,20 @@ pub(crate) fn skill_repair_brief(
     optimize_brief_bound_at(vault, &candidate, None, learned_at)
 }
 
-/// Refuses a draft the gate could not use: empty or oversized text, or a
-/// "replacement" identical to the instructions it replaces.
+/// Refuses a draft the gate could not use: empty or oversized text, a
+/// "replacement" identical to what it replaces, or a file edit past what the
+/// brief offered (census L9-02): a path the brief did not carry whole (a new
+/// path, a script or hook, or a file listed by path only), the same path
+/// twice, more files or bytes than the bounds allow, a file's own text, a
+/// text that reads as a graph workflow program
+/// ([`crate::skill_hub::reads_as_graph_program`]), a `policy.json` its
+/// instructions do not run ([`crate::skill_hub::validate_drafted_policy`]),
+/// or more than the gate's judge reads whole ([`validate_judged_arms`]).
 pub(crate) fn validate_skill_draft(
     brief: &SkillOptimizeBrief,
     desc: &str,
     rationale: &str,
+    files: &[SkillFileEdit],
 ) -> Result<()> {
     validate_text(
         desc,
@@ -309,11 +350,117 @@ pub(crate) fn validate_skill_draft(
     )?;
     // An "edit" that changes nothing would mint a revision whose version
     // (derived from the text) collides with the one it proposes to replace —
-    // and the supersede door would refuse it. Refuse earlier and say why.
-    if desc == brief.desc {
+    // and the supersede door would refuse it. Refuse earlier and say why. A
+    // file edit may keep the instructions: its version names the files.
+    if desc == brief.desc && files.is_empty() {
         return Err(invalid(
             "a drafted edit that restates the current instructions is not an edit",
         ));
+    }
+    validate_file_edits(brief, files)?;
+    for edit in files
+        .iter()
+        .filter(|edit| edit.path == crate::skill::health_review::REVIEWER_POLICY_FILE)
+    {
+        crate::skill_hub::validate_drafted_policy(edit.content.as_bytes(), desc)?;
+    }
+    validate_judged_arms(brief, desc, files)
+}
+
+/// Refuses a file draft the held-out gate's judge could not read whole
+/// (cold read N1 of #7949): either arm, the target's instructions with the
+/// replaced files' current text or the draft's with their new text, over
+/// [`SKILL_OPTIMIZE_MAX_JUDGED_ARM_BYTES`]. Past it the judgment's state is
+/// cut to fit, and the judge scores a prefix that may stop before the last
+/// file. An instructions-only draft stays within it by its own bound.
+fn validate_judged_arms(
+    brief: &SkillOptimizeBrief,
+    desc: &str,
+    files: &[SkillFileEdit],
+) -> Result<()> {
+    if files.is_empty() {
+        return Ok(());
+    }
+    let current = |path: &str| {
+        brief
+            .files
+            .iter()
+            .find(|file| file.path == path)
+            .and_then(|file| file.content.as_deref())
+            .unwrap_or_default()
+    };
+    let before: Vec<(&str, &str)> = files
+        .iter()
+        .map(|edit| (edit.path.as_str(), current(&edit.path)))
+        .collect();
+    let after: Vec<(&str, &str)> = files
+        .iter()
+        .map(|edit| (edit.path.as_str(), edit.content.as_str()))
+        .collect();
+    if judged_arm_bytes(&brief.desc, &before).max(judged_arm_bytes(desc, &after))
+        > SKILL_OPTIMIZE_MAX_JUDGED_ARM_BYTES
+    {
+        return Err(invalid(
+            "a draft's instructions with its replaced files, in their current or their new text, must fit the held-out judge whole: at most 32 KiB as the judge's state holds them",
+        ));
+    }
+    Ok(())
+}
+
+/// The bytes one arm of the gate's judgment holds for `instructions` and
+/// `files`, as the gate's instruction pair joins them (each file under a
+/// "File `path`:" line) and JSON-escaped as the decision state carries it.
+fn judged_arm_bytes(instructions: &str, files: &[(&str, &str)]) -> usize {
+    let mut arm = instructions.to_owned();
+    for (path, text) in files {
+        arm.push_str("\n\nFile `");
+        arm.push_str(path);
+        arm.push_str("`:\n");
+        arm.push_str(text);
+    }
+    serde_json::to_string(&arm).map_or(usize::MAX, |json| json.len())
+}
+
+/// The file half of [`validate_skill_draft`].
+fn validate_file_edits(brief: &SkillOptimizeBrief, files: &[SkillFileEdit]) -> Result<()> {
+    if files.len() > SKILL_OPTIMIZE_MAX_DRAFT_FILES {
+        return Err(invalid("a draft replaces at most 16 files"));
+    }
+    let mut seen = HashSet::new();
+    let mut total = 0_usize;
+    for edit in files {
+        if !seen.insert(edit.path.as_str()) {
+            return Err(invalid("a draft replaces each file at most once"));
+        }
+        let Some(current) = brief
+            .files
+            .iter()
+            .find(|file| file.path == edit.path)
+            .and_then(|file| file.content.as_deref())
+        else {
+            return Err(invalid(
+                "a draft replaces only an existing text or data file its brief carried whole: no new path, script or hook",
+            ));
+        };
+        validate_text(
+            &edit.content,
+            SKILL_OPTIMIZE_MAX_DRAFT_FILE_BYTES,
+            "a drafted file must be non-empty UTF-8 text of at most 16 KiB",
+        )?;
+        if crate::skill_hub::reads_as_graph_program(edit.content.as_bytes()) {
+            return Err(invalid(
+                "a drafted file never reads as a graph workflow program, which the engine runs stage by stage",
+            ));
+        }
+        if edit.content == current {
+            return Err(invalid(
+                "a drafted file that restates the current file is not an edit",
+            ));
+        }
+        total += edit.content.len();
+    }
+    if total > SKILL_OPTIMIZE_MAX_DRAFT_FILES_BYTES {
+        return Err(invalid("a draft's replacement files total at most 64 KiB"));
     }
     Ok(())
 }
@@ -352,6 +499,7 @@ pub(crate) fn propose_skill_repair_in_txn(
     brief: &SkillOptimizeBrief,
     desc: &str,
     rationale: &str,
+    files: &[SkillFileEdit],
     stamp: &SkillRepairStamp<'_>,
     proposal_id: &EntityId,
     occurred: TimeRange,
@@ -360,7 +508,7 @@ pub(crate) fn propose_skill_repair_in_txn(
     if let Some(owner) = stamp.owner {
         vault.verify_owner_write_actor_in_txn(wtxn, &owner)?;
     }
-    validate_skill_draft(brief, desc, rationale)?;
+    validate_skill_draft(brief, desc, rationale, files)?;
     // Resolved at the WRITE door, not carried from the ranking: the
     // author ran outside this transaction, so the target may have been
     // superseded, quarantined or re-proposed in that window. A proposal
@@ -415,9 +563,23 @@ pub(crate) fn propose_skill_repair_in_txn(
         stamp.cycle,
         tier_verdict_in_txn(vault, &*wtxn, &brief.skill, &target)?,
     )?;
+    if !files.is_empty() {
+        record.version = drafted_files_version(&target.version, desc, files);
+    }
     let Value::Map(provenance) = &mut record.provenance else {
         return Err(invalid("invalid optimizer provenance"));
     };
+    if !files.is_empty() {
+        provenance.push((
+            Value::from(PROVENANCE_OPTIMIZE_EDITED_FILES_KEY),
+            Value::Array(
+                files
+                    .iter()
+                    .map(|file| Value::from(file.path.as_str()))
+                    .collect(),
+            ),
+        ));
+    }
     let goal_id = SkillGoalId::of(&brief.skill, &target)?;
     provenance.push((
         Value::from(GOAL_ID_KEY),
@@ -440,7 +602,8 @@ pub(crate) fn propose_skill_repair_in_txn(
             Value::from(owner.entity_ref().to_hex()),
         ));
     }
-    let package = vault.optimized_skill_package_in_txn(wtxn, &brief.skill, &target, &mut record)?;
+    let package =
+        vault.optimized_skill_package_in_txn(wtxn, &brief.skill, &target, &mut record, files)?;
     vault.put_skill_record_in_txn(wtxn, proposal_id, &record, occurred, learned_at)?;
     if let Some(package) = package {
         vault.persist_hub_package_in_txn(wtxn, proposal_id, &package)?;
@@ -538,6 +701,7 @@ pub(crate) fn propose_skill_edit_as_owner(
             &brief,
             desc,
             rationale,
+            &[],
             &stamp,
             &proposal,
             TimeRange {
@@ -775,6 +939,32 @@ fn proposal_record(
 fn optimize_version(desc: &str) -> String {
     let digest = Sha256::digest(desc.as_bytes());
     let hex = bytes_to_hex_lower(&digest);
+    format!(
+        "{OPTIMIZE_VERSION_PREFIX}{}",
+        &hex[..OPTIMIZE_VERSION_HASH_HEX]
+    )
+}
+
+/// The version of a draft that also replaces `files` (census L9-02): named
+/// by its target's version `base`, then its instructions and each replaced
+/// file's path and text, each part length-prefixed. The draft names only the
+/// files it moves, so the target's version stands for the rest of the tree:
+/// a later draft that moves the same files to the same text from another
+/// tree never repeats this version, and no text re-splits into other parts
+/// (review F4 of #7949).
+fn drafted_files_version(base: &str, desc: &str, files: &[SkillFileEdit]) -> String {
+    let mut hasher = Sha256::new();
+    let mut part = |bytes: &[u8]| {
+        hasher.update((bytes.len() as u64).to_le_bytes());
+        hasher.update(bytes);
+    };
+    part(base.as_bytes());
+    part(desc.as_bytes());
+    for file in files {
+        part(file.path.as_bytes());
+        part(file.content.as_bytes());
+    }
+    let hex = bytes_to_hex_lower(&hasher.finalize());
     format!(
         "{OPTIMIZE_VERSION_PREFIX}{}",
         &hex[..OPTIMIZE_VERSION_HASH_HEX]

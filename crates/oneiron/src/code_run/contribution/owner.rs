@@ -28,6 +28,7 @@
 //! writer that records the owner's word asks it, and the owner's own
 //! admission, again before it reads each held answer.
 
+use oneiron_contracts::fingerprint::ContentHash;
 use serde::{Deserialize, Serialize};
 
 use super::super::storage::{
@@ -236,7 +237,7 @@ pub(crate) struct OwnerPairTexts {
 
 /// The digest a presented part keeps of the text it shows.
 fn text_digest(text: &str) -> [u8; 32] {
-    *blake3::hash(text.as_bytes()).as_bytes()
+    *ContentHash::of(text.as_bytes()).as_bytes()
 }
 
 impl OwnerPairTexts {
@@ -534,7 +535,7 @@ impl Runner<'_> {
             .map_err(|error| Error::InvalidConfig(format!("owner pair criterion: {error}")))?;
         // The mapping is drawn fresh, so neither answer's place tells which
         // fork had the target.
-        let shown_first = if blake3::hash(&clock.ulid()?).as_bytes()[0] & 1 == 0 {
+        let shown_first = if ContentHash::of(&clock.ulid()?).as_bytes()[0] & 1 == 0 {
             ForkTreatment::WithSkill
         } else {
             ForkTreatment::WithoutSkill

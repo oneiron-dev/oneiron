@@ -29,6 +29,12 @@ pub enum IntentLedgerError {
     Engine(#[from] Error),
     #[error("invalid outbound intent input: {0}")]
     InvalidInput(&'static str),
+    /// The calendar invite admission's own verdict on a `calendar.invite`
+    /// send: a hygiene refusal keeps the law that refused it, so the facade
+    /// answers it as a bad request naming that law, and a store failure as
+    /// an internal one (FIX CALENDAR-COLD-INVITE-INVALID-STATE).
+    #[error("calendar invite admission: {0}")]
+    Calendar(crate::calendar::CalendarError),
     #[error("the verified outbound actor is no longer valid")]
     InvalidBoundActor,
     #[error("the durable step failure is not eligible for an effect")]
@@ -39,6 +45,15 @@ pub enum IntentLedgerError {
     InvalidRecord(&'static str),
     #[error("invalid outbound intent transition: {from:?} -> {to:?}")]
     InvalidTransition { from: IntentState, to: IntentState },
+}
+
+impl From<oneiron_contracts::lifecycle::IllegalTransition<IntentState>> for IntentLedgerError {
+    fn from(illegal: oneiron_contracts::lifecycle::IllegalTransition<IntentState>) -> Self {
+        Self::InvalidTransition {
+            from: illegal.from,
+            to: illegal.to,
+        }
+    }
 }
 
 /// Durable state of one effectful outbound intent.
@@ -52,38 +67,29 @@ pub enum IntentState {
     Deferred,
 }
 
-impl IntentState {
-    /// Stable on-disk state spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Pending => "pending",
-            Self::Done => "done",
-            Self::Abandoned => "abandoned",
-            Self::Deferred => "deferred",
-        }
+impl oneiron_contracts::lifecycle::Lifecycle for IntentState {
+    type Kind = Self;
+
+    fn kind(&self) -> Self::Kind {
+        *self
     }
 
-    pub(super) fn parse(value: &str) -> Option<Self> {
-        match value {
-            "pending" => Some(Self::Pending),
-            "done" => Some(Self::Done),
-            "abandoned" => Some(Self::Abandoned),
-            "deferred" => Some(Self::Deferred),
-            _ => None,
+    fn next_kinds(kind: Self::Kind) -> &'static [Self::Kind] {
+        match kind {
+            Self::Pending => &[Self::Done, Self::Abandoned, Self::Deferred],
+            Self::Deferred => &[Self::Done, Self::Abandoned],
+            Self::Done | Self::Abandoned => &[],
         }
     }
+}
 
-    pub(super) const fn may_transition_to(self, next: Self) -> bool {
-        matches!(
-            (self, next),
-            (Self::Pending, Self::Done)
-                | (Self::Pending, Self::Abandoned)
-                | (Self::Pending, Self::Deferred)
-                | (Self::Deferred, Self::Done)
-                | (Self::Deferred, Self::Abandoned)
-        )
-    }
+impl oneiron_contracts::lifecycle::LifecycleWords for IntentState {
+    const WORDS: &'static [(Self::Kind, &'static str)] = &[
+        (Self::Pending, "pending"),
+        (Self::Done, "done"),
+        (Self::Abandoned, "abandoned"),
+        (Self::Deferred, "deferred"),
+    ];
 }
 
 /// MCP-style tool annotation hints consumed by the fail-closed classifier.
@@ -183,6 +189,7 @@ pub struct OutboundCallRequest {
     /// did (FIX 11591): every later send of it rechecks that this owner is
     /// still a live owner.
     authorizing_owner: Option<EntityId>,
+    /// Unix seconds, whatever clock the caller reads.
     pub now_ms: u64,
 }
 
@@ -542,6 +549,9 @@ pub struct IntentLedgerRecord {
     pub payload_hash: [u8; 32],
     pub(super) payload: Vec<u8>,
     pub idempotency_key: String,
+    /// The attempt whose row id `idempotency_key` is the hex of, when not this
+    /// row's own (`IntentLedgerRecord::with_idempotency_attempt`); else `None`.
+    pub(crate) idempotency_attempt_id: Option<AttemptId>,
     pub idempotency_supported: bool,
     pub authorization_binding: Option<OutboundAuthorizationBinding>,
     pub(crate) admitted_approval: Option<AdmittedApproval>,
@@ -562,6 +572,8 @@ pub struct IntentLedgerRecord {
     /// A later definite non-delivery describes only that later attempt.
     pub delivery_uncertain: bool,
     pub state: IntentState,
+    /// Unix seconds, as every time in this ledger; the `_ms` names predate
+    /// that unit and stay the codec's keys.
     pub created_ms: u64,
     pub updated_ms: u64,
 }
@@ -610,6 +622,7 @@ impl IntentLedgerRecord {
             payload_hash,
             payload: request.payload,
             idempotency_key: bytes_to_hex_lower(&id),
+            idempotency_attempt_id: None,
             idempotency_supported,
             authorization_binding: request.authorization_binding,
             admitted_approval: None,
@@ -686,6 +699,7 @@ impl fmt::Debug for IntentLedgerRecord {
                 &format_args!("[{} bytes redacted]", self.payload.len()),
             )
             .field("idempotency_key", &self.idempotency_key)
+            .field("idempotency_attempt_id", &self.idempotency_attempt_id)
             .field("idempotency_supported", &self.idempotency_supported)
             .field("authorization_binding", &self.authorization_binding)
             .field("binding_version", &self.binding_version)

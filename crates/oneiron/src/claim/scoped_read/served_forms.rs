@@ -1,6 +1,8 @@
 //! The served-form receipts a read writes (OF-329): what it served of each
 //! asset, recorded under the holder it read as, before it answers. A read in
 //! an off-record room keeps them in the room instead ([`session`]).
+use oneiron_store::receipt_ref::ReceiptRef;
+
 use super::ScopedRead;
 use crate::EntityId;
 use crate::batch::EntityMetadataHeader;
@@ -43,7 +45,7 @@ impl ScopedRead<'_> {
             let at = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
             let refs = ids
                 .iter()
-                .map(|id| format!("served_form:{}", id.to_hex()))
+                .map(|id| ReceiptRef::served_form(*id).to_string())
                 .collect();
             for (id, served) in ids.into_iter().zip(&served) {
                 crate::receipt::put_served_form_in_txn(
