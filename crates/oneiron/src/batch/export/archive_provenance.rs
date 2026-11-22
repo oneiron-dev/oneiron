@@ -169,8 +169,9 @@ pub(crate) fn sign_archive_manifest(
 /// The key must stand as its machine here ([`AuthorityFold::machine_proof_key`]:
 /// the trusted identity's key under this install's pin, else a live roster
 /// revision's in an answered role) and pass the one carrier rule
-/// ([`owner_act_signer_admits`]: a live machine no chain removed, never a
-/// roster key), and the signature must verify. Then the machine is the
+/// ([`owner_act_signer_admits`] under this install's pin: a live head the
+/// machine stands under here, none removed, never a roster key), and the
+/// signature must verify. Then the machine is the
 /// owner's own device exactly when this install trusts it as his explicit
 /// `Yours` by his own say-so
 /// ([`AuthorityFold::trusted_yours_revision`]), holds the row of that
@@ -197,30 +198,9 @@ pub(crate) fn archive_signer(
     vault_id: &[u8; 32],
     manifest: &WholeVaultDocumentManifest,
 ) -> Result<ArchiveSigner> {
-    let Some(provenance) = manifest.provenance.as_ref() else {
+    let Some((machine, key)) = standing_signer(fold, vault_id, manifest) else {
         return Ok(ArchiveSigner::Unproven);
     };
-    let (Some(machine), Some(key), Some(signature)) = (
-        lower_hex::<16>(&provenance.machine).and_then(|bytes| EntityId::from_bytes(bytes).ok()),
-        lower_hex::<32>(&provenance.machine_key),
-        lower_hex::<64>(&provenance.signature),
-    ) else {
-        return Ok(ArchiveSigner::Unproven);
-    };
-    let stands = fold.machine_proof_key(machine) == Some(key)
-        && owner_act_signer_admits(fold.machine(machine), &fold.roster, &key)
-        && archive_provenance_transcript(vault_id, machine, &key, manifest).is_ok_and(
-            |transcript| {
-                oneiron_authority::authority::strong_ed25519_verified_once(
-                    &key,
-                    &transcript,
-                    &signature,
-                )
-            },
-        );
-    if !stands {
-        return Ok(ArchiveSigner::Unproven);
-    }
     let Some((revision, proof)) = fold.trusted_yours_revision(machine, verifier.hosted) else {
         return Ok(ArchiveSigner::OtherMachine);
     };
@@ -240,6 +220,74 @@ pub(crate) fn archive_signer(
             ArchiveSigner::Unproven
         },
     )
+}
+
+/// The machine and key whose provenance signature on `manifest` stands on
+/// `fold`, the read-only fold of the vault whose id is `vault_id`: the key
+/// stands as its machine here ([`AuthorityFold::machine_proof_key`]), it
+/// passes the one carrier rule ([`owner_act_signer_admits`] under this
+/// install's pin), and the signature verifies. `None` for an archive with no
+/// signature, or one that does not parse or stand.
+fn standing_signer(
+    fold: &AuthorityFold,
+    vault_id: &[u8; 32],
+    manifest: &WholeVaultDocumentManifest,
+) -> Option<(EntityId, [u8; 32])> {
+    let provenance = manifest.provenance.as_ref()?;
+    let (Some(machine), Some(key), Some(signature)) = (
+        lower_hex::<16>(&provenance.machine).and_then(|bytes| EntityId::from_bytes(bytes).ok()),
+        lower_hex::<32>(&provenance.machine_key),
+        lower_hex::<64>(&provenance.signature),
+    ) else {
+        return None;
+    };
+    let stands = fold.machine_proof_key(machine) == Some(key)
+        && owner_act_signer_admits(
+            fold.machine(machine),
+            &fold.roster,
+            &key,
+            fold.pinned_root.as_ref(),
+        )
+        && archive_provenance_transcript(vault_id, machine, &key, manifest).is_ok_and(
+            |transcript| {
+                oneiron_authority::authority::strong_ed25519_verified_once(
+                    &key,
+                    &transcript,
+                    &signature,
+                )
+            },
+        );
+    stands.then_some((machine, key))
+}
+
+/// Whether `manifest` is this install's own export, judged in `txn`: its
+/// provenance signature stands on this vault's read-only fold read there
+/// ([`standing_signer`]) and names this install's machine. What the machine
+/// is to the owner does not matter here, only that the install that restores
+/// the archive wrote it. The owner's restore lands the choices about this
+/// install (the `sync: install` setting rows) only from such an archive
+/// (Engine ANSWER SETTING-ARCHIVE-RESTORE-INSTALL-ROWS = A, 21 Nov 12:46;
+/// DESIGN 15 section 1.5: install rows go with the machine identity).
+///
+/// # Errors
+/// This install's machine id or the fold does not read.
+pub(crate) fn archive_exported_by_this_install_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    manifest: &WholeVaultDocumentManifest,
+) -> Result<bool> {
+    if manifest.provenance.is_none() {
+        return Ok(false);
+    }
+    let Some(this_machine) = crate::identity::read_machine_id_in_txn(vault, txn)? else {
+        return Ok(false);
+    };
+    let fold = vault.authority_fold_readonly_in_txn(txn)?;
+    let Some(vault_id) = fold.vault_id else {
+        return Ok(false);
+    };
+    Ok(standing_signer(&fold, &vault_id, manifest)
+        .is_some_and(|(machine, _)| machine == this_machine))
 }
 
 /// The row `revision` stands by, when `vault` holds it in `txn` as the

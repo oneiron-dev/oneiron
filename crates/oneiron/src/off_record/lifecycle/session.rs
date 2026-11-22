@@ -389,43 +389,16 @@ impl OffRecordSession<'_> {
         query: &str,
         limit: usize,
     ) -> Result<Vec<ScoredEntity>> {
-        self.search_text_routed_over(route, query, limit, true)
-    }
-
-    /// [`Self::search_text_routed`] over base's postings alone, for a reader
-    /// that reads base alone in this room (a credential that cannot place
-    /// the room's rows): the room's words choose nothing it reads. Its run
-    /// still goes through the room's door.
-    pub(crate) fn search_base_text_routed(
-        &self,
-        route: &SessionWriteRoute,
-        query: &str,
-        limit: usize,
-    ) -> Result<Vec<ScoredEntity>> {
-        self.search_text_routed_over(route, query, limit, false)
-    }
-
-    fn search_text_routed_over(
-        &self,
-        route: &SessionWriteRoute,
-        query: &str,
-        limit: usize,
-        room: bool,
-    ) -> Result<Vec<ScoredEntity>> {
         route.revalidate()?;
         let profile = crate::config::Bm25RankProfile::default();
         let admit = |txn: &heed::RoTxn<'_>| self.participant_in_txn(txn);
-        let (search, holds_room_rows) = if room {
+        // The view ends before the run registers.
+        let (search, holds_room_rows) = {
             let view = self.read_view()?;
             let search = self
                 .vault
                 .search_text_scored(&view, query, limit, &profile, admit)?;
             (search, view.read().holds_room_rows())
-        } else {
-            let search =
-                self.vault
-                    .search_text_scored(&self.vault.store, query, limit, &profile, admit)?;
-            (search, false)
         };
         let started = (search.started_at, search.started);
         self.register_search(
@@ -464,6 +437,54 @@ impl OffRecordSession<'_> {
             started,
             limit,
             view.read().holds_room_rows(),
+        )
+    }
+
+    /// [`Self::search_text_scoped_routed`] under `plan`, a recall plan its
+    /// caller holds open on `lane` (a recall's seed lookup): the scan
+    /// neither opens nor ends one (`memory::scoped_session_text_planned`).
+    /// It scores over `view`, the lane's view of this room, or over base's
+    /// postings alone with `None`, for a lane that reads base alone (the
+    /// room's words then choose nothing it reads); its run registers through
+    /// `route` either way.
+    pub(crate) fn search_text_scoped_routed_planned(
+        &self,
+        route: &SessionWriteRoute,
+        view: Option<&crate::store::SessionStoreView<'_>>,
+        lane: &crate::claim::ScopedRead<'_>,
+        plan: &crate::claim::SearchPlan,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<ScoredEntity>> {
+        route.revalidate()?;
+        let admit = |txn: &heed::RoTxn<'_>| self.participant_in_txn(txn);
+        let ((scores, started), holds_room_rows) = match view {
+            Some(view) => (
+                crate::memory::scoped_session_text_planned(
+                    self.vault, view, lane, plan, query, limit, admit,
+                )?,
+                view.read().holds_room_rows(),
+            ),
+            None => (
+                crate::memory::scoped_session_text_planned(
+                    self.vault,
+                    &self.vault.store,
+                    lane,
+                    plan,
+                    query,
+                    limit,
+                    admit,
+                )?,
+                false,
+            ),
+        };
+        self.register_search(
+            route,
+            crate::store::RetrievalSignal::Text,
+            scores,
+            started,
+            limit,
+            holds_room_rows,
         )
     }
 
@@ -764,7 +785,10 @@ impl OffRecordSession<'_> {
             route,
             table,
             key,
-            value,
+            |wtxn, dbs| match dbs {
+                crate::side_table::RoutedDbs::Session(view) => table.put(view, wtxn, key, value),
+                crate::side_table::RoutedDbs::Base(vault) => table.put(vault, wtxn, key, value),
+            },
             |stored| {
                 let current = stored.map(|bytes| table.decode_value(bytes)).transpose()?;
                 accepts_current(current.as_ref())
@@ -781,7 +805,10 @@ impl OffRecordSession<'_> {
     /// the row and its counter: a turn's code-run replay append, its heal
     /// tally and the fold receipts it staged commit together or not at all.
     /// `accepts_stored` reads the row's stored bytes in place, so a compare
-    /// over part of a large row decodes only that part (FIX 16).
+    /// over part of a large row decodes only that part (FIX 16). `put_value`
+    /// puts the row at `key` on the target it is given: a replay heal fences
+    /// its record there before any put of it (FIX
+    /// FENCE-ERASED-FORM-THROUGH-WALL).
     #[expect(
         clippy::too_many_arguments,
         reason = "the counter-routed put's axes, plus the rows that commit with it"
@@ -791,7 +818,7 @@ impl OffRecordSession<'_> {
         route: &SessionWriteRoute,
         table: &SideTable<K, V, C>,
         key: &K,
-        value: &V,
+        put_value: impl FnOnce(&mut heed::RwTxn<'_>, crate::side_table::RoutedDbs<'_>) -> Result<()>,
         accepts_stored: impl FnOnce(Option<&[u8]>) -> Result<()>,
         counter: &SideTable<CK, CV, CC>,
         counter_key: &CK,
@@ -827,11 +854,11 @@ impl OffRecordSession<'_> {
                 let delta = self.overlay_counter_delta(counter, counter_key)?;
                 let (next_counter, total) = update_counter(base, delta, target)?;
                 if target == RouteTarget::Overlay {
-                    table.put(&view, wtxn, key, value)?;
+                    put_value(wtxn, RoutedDbs::Session(&view))?;
                     counter.put(&view, wtxn, counter_key, &next_counter)?;
                     also(wtxn, RoutedDbs::Session(&view))?;
                 } else {
-                    table.put(self.vault, wtxn, key, value)?;
+                    put_value(wtxn, RoutedDbs::Base(self.vault))?;
                     counter.put(&self.vault.store, wtxn, counter_key, &next_counter)?;
                     also(wtxn, RoutedDbs::Base(self.vault))?;
                 }
@@ -1023,6 +1050,24 @@ impl OffRecordSession<'_> {
     /// so this projects it rather than lending out the vault.
     pub(crate) fn vault_id(&self) -> VaultId {
         self.vault.vault_id()
+    }
+
+    /// The values base custody holds now (FIX REPLAY-COMPARE-KNOWN-MATCHER),
+    /// and the values this room keeps in its own custody, each under its
+    /// room handle (ROOM-LOCAL-CUSTODY): a run bound to this room compares
+    /// its replay rows with them, since the room reads its rows over base,
+    /// where a value custody holds took its handle, and keeps a fresh one
+    /// under a room handle. It projects the matcher rather than lending out
+    /// the vault or the room; the room's values are printed in the matcher
+    /// alone, never in the index.
+    ///
+    /// # Errors
+    ///
+    /// The custody read's.
+    pub(crate) fn base_known_values(
+        &self,
+    ) -> Result<Option<Arc<crate::store::known_value_index::KnownValues>>> {
+        self.vault.known_values_with_room(&self.entry.overlay)
     }
 
     /// Notes the messages of a turn witnessed while the room was on record:

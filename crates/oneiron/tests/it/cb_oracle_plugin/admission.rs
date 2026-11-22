@@ -96,6 +96,10 @@ impl Admission {
             source,
         }
     }
+    /// The vault owner's proof: the caller of the owner's own acts, such as a setting change.
+    pub(super) const fn owner(&self) -> &AuthenticatedOwner {
+        &self.owner
+    }
     pub(super) fn activate(
         &self,
         vault: &Vault,
@@ -152,6 +156,7 @@ impl HeldOutReplayNotes for Replay {
                 rule: None,
                 local: Some(&self.judge),
                 system_one: None,
+                precision: None,
                 escalation: None,
                 big: None,
                 human: &NoPerson,

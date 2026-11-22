@@ -29,7 +29,8 @@ pub enum HostedCommand {
 
 #[derive(Args, Clone, Debug)]
 pub struct HostedLoginArgs {
-    /// The hosted vault's origin, as `oneiron mcp --url` takes it.
+    /// The hosted vault's origin, as `oneiron mcp --url` takes it. An OAuth
+    /// sign-in takes https, or http to this machine alone.
     #[arg(long)]
     pub origin: String,
 
@@ -67,6 +68,37 @@ pub struct HostedLoginArgs {
     /// sign-in, the owner's answer in his inbox included.
     #[arg(long, default_value_t = 600, value_parser = clap::value_parser!(u64).range(1..))]
     pub sign_in_timeout_secs: u64,
+
+    /// Let `oneiron continue --cloud` move sessions to the vault recorded at
+    /// `--origin` in OAuth mode: a second sign-in, `full` at the vault's MCP
+    /// and git door, which the owner allows in his inbox ("continue this
+    /// session in your hosted vault") and which only `continue --cloud`
+    /// reads. It starts the same step-up itself when none stands. Its calls
+    /// still need his Grants, and a push his git_push Grant on the repo.
+    /// The recorded sign-in stays `read`.
+    #[arg(long, conflicts_with_all = ["auth_mode", "credential_file", "owner_upgrade_headers_file"])]
+    pub push: bool,
+
+    /// Let this machine's session hooks land each session's log in the vault
+    /// recorded at `--origin` in OAuth mode as the session ends: a second
+    /// sign-in, `full` at the vault's MCP alone (never its git door), which
+    /// the owner allows in his inbox ("land this machine's coding sessions in
+    /// your hosted vault as each ends") and which only the hooks' hand-over
+    /// reads. Until it stands, session logs wait on this machine, and they
+    /// land at the next session end once it does. The import still needs his
+    /// Grant naming the verb. The recorded sign-in stays `read`.
+    #[arg(
+        long,
+        conflicts_with_all = ["auth_mode", "credential_file", "owner_upgrade_headers_file", "push"]
+    )]
+    pub hand_over: bool,
+
+    /// With --hand-over: file the request without a browser. The owner's
+    /// inbox asks for it as usual, and this command polls his answer for up
+    /// to --sign-in-timeout-secs. The session hooks start this themselves
+    /// at the first session end that finds no hand-over sign-in.
+    #[arg(long, requires = "hand_over")]
+    pub unattended: bool,
 }
 
 #[derive(Args, Clone, Debug)]

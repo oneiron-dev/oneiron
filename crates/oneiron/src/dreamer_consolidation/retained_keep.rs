@@ -25,8 +25,14 @@
 //! of it still waits or stands, and an explicit Keep stages it afresh, at a
 //! fresh id. The declined claim never reopens and is never approved, and
 //! nothing stages it again on its own: the Dreamer's ruling never offers it.
-//! A staged Keep retracted while it is still Proposed, as `derive.revert`
-//! takes one back, reads the same way.
+//! A retracted staged Keep reads the same way, whether it was still
+//! Proposed, as `derive.revert` takes one back, or the owner had approved it
+//! there and retracted it later (FIX
+//! KEEP-HISTORY-APPROVED-THEN-RETRACTED-STAGED-KEEP-BLOCKS-ALTERNATIVE): its
+//! alternative is keepable again, by an explicit Keep. After an approved Keep
+//! was retracted that Keep is a person's alone: a responder that is no person
+//! is refused at the write (`approved_keep_withdrawn_in_txn`), so a ruling
+//! chosen before the retraction never stages the alternative again.
 
 use super::retained_conflict::{RetainedAlternative, retained_alternatives};
 use super::settle::keep_approval::KeepAs;
@@ -97,7 +103,7 @@ pub(super) struct KeepHistory {
     /// by its provenance (FIX 6152): a member standing for its alternative.
     pub(super) staged: Vec<(EntityId, EntityId)>,
     /// Those of the staged Keeps the owner declined there (FIX 7072), or that
-    /// were retracted while still Proposed: still members, standing for
+    /// were retracted, approved there or not: still members, standing for
     /// nothing, so a Keep after them stages afresh.
     pub(super) declined: Vec<(EntityId, EntityId)>,
     /// Fresh MACHINE copies the owner's settlement reverts restored.
@@ -108,11 +114,11 @@ pub(super) struct KeepHistory {
 /// alternatives. After a reverted settlement: each landing those
 /// settlements made while it no longer stands, by the answers the owner
 /// retracted that name one, and each Keep staged since that names the
-/// marker. With none reverted, a Keep is staged at a fresh id only after the
-/// owner declined one staged at its alternative's own id, which the marker
-/// names among `named` (FIX 7072): only then are the subject's staged Keeps
-/// read, and a subject that does not read leaves the history as it stood
-/// before, the declined Keep still standing in for its alternative.
+/// marker. With none reverted, a Keep is staged at a fresh id only after one
+/// staged at its alternative's own id, which the marker names among `named`,
+/// was declined or retracted (FIX 7072): only then are the subject's staged
+/// Keeps read, and a subject that does not read leaves the history as it
+/// stood before, the closed Keep still standing in for its alternative.
 pub(super) fn keep_history_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -151,12 +157,14 @@ pub(super) fn keep_history_in_txn(
 }
 
 /// Whether the staged Keep `claim` closed with no answer standing: the owner
-/// declined it in its import's review (FIX 7072), or it was retracted while
-/// still Proposed. It stands for nothing, whoever closed it.
+/// declined it in its import's review (FIX 7072), or it was retracted, while
+/// still Proposed or after the owner approved it there (lead ruling 21 Nov,
+/// FIX KEEP-HISTORY-APPROVED-THEN-RETRACTED-STAGED-KEEP-BLOCKS-ALTERNATIVE).
+/// It stands for nothing, whoever closed it. A Keep another claim superseded
+/// is not withdrawn: it still stands in for its alternative.
 fn declined_or_withdrawn(claim: &ClaimBody) -> bool {
     claim.approval == ClaimApprovalStatus::Rejected
-        || (claim.approval == ClaimApprovalStatus::Proposed
-            && claim.lifecycle == ClaimLifecycleStatus::Retracted)
+        || claim.lifecycle == ClaimLifecycleStatus::Retracted
 }
 
 /// Whether `claim` is a Keep of `marker`'s retained alternative, staged in
@@ -247,9 +255,9 @@ fn restored_marker(body: &ClaimBody) -> Option<EntityId> {
 /// The retained alternatives a responder may keep: each one no member
 /// stands in for, by its own id or as a staged Keep of it, with the
 /// reverted landings made of it and the staged Keeps of it the owner
-/// declined. A declined Keep stays a member but stands in for nothing (FIX
-/// 7072): its alternative is keepable again unless another Keep of it still
-/// waits or stands.
+/// declined or that were retracted. Such a Keep stays a member but stands in
+/// for nothing (FIX 7072): its alternative is keepable again unless another
+/// Keep of it still waits or stands.
 pub(super) fn keepable(
     alternatives: Vec<RetainedAlternative>,
     members: &[EntityId],
@@ -281,10 +289,34 @@ fn of_selector(kept: &[(EntityId, EntityId)], selector: EntityId) -> Vec<EntityI
         .collect()
 }
 
+/// Whether a Keep of `alternative`, staged in its import's review, was
+/// approved there and later retracted (lead ruling 21 Nov, FIX
+/// KEEP-HISTORY-APPROVED-THEN-RETRACTED-STAGED-KEEP-BLOCKS-ALTERNATIVE). The
+/// owner made that alternative true and took it back, so it is a person's to
+/// keep again: the settlement write refuses a responder that is no person,
+/// whose ruling may have been chosen before the retraction. A Keep the owner
+/// declined, or one retracted while still Proposed, is not counted: after
+/// those any responder's explicit Keep stages the alternative afresh.
+pub(super) fn approved_keep_withdrawn_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    alternative: &RetainedAlternative,
+) -> Result<bool> {
+    for id in &alternative.declined {
+        if vault.get_claim_in_txn(txn, id)?.is_some_and(|claim| {
+            claim.approval == ClaimApprovalStatus::Approved
+                && claim.lifecycle == ClaimLifecycleStatus::Retracted
+        }) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// Keeps `alternative` of the conflict `marker` in the settlement's
 /// transaction: lands it at its own id the first time, at a fresh id after
-/// a revert took a landing of it back or the owner declined a Keep of it
-/// staged in its import's review (FIX 7072), or stages it in its import's
+/// a revert took a landing of it back or a Keep of it staged in its import's
+/// review was declined or retracted (FIX 7072), or stages it in its import's
 /// review at that same id, linked to `marker` and the alternative so it
 /// stays a member of the conflict (FIX 6152). `keep_as` says how it lands
 /// (FIX 5753).

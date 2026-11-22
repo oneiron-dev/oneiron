@@ -8,12 +8,13 @@ use std::time::Duration;
 
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
+use oneiron::store::ports::StoreClock;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
 use super::*;
 use crate::ai_host::AiHost;
-use crate::ai_host::test_support::{TEST_SECRET, eventually, models_toml, rooted_vault};
+use crate::ai_host::test_support::{TEST_SECRET, eventually, models_toml, rooted_vault_on};
 use crate::fake_llm::{FakeLlm, Reply};
 use crate::server::SyncServer;
 
@@ -21,6 +22,8 @@ use crate::server::SyncServer;
 /// cheap writer's call as the agent wears it.
 const SELF_WRITER_FRAME: &str =
     "You write this summary as the agent itself, in the first person, about your own conversation.";
+/// The served model's context in [`self_row_server`].
+pub(super) const SELF_ROW_CONTEXT_TOKENS: u64 = 32_768;
 /// A phrase only the fake's summary holds, so a later request that carries
 /// it read the landed summary.
 const SUMMARY_PHRASE: &str = "harbour-ledger-summary";
@@ -81,7 +84,7 @@ fn is_compaction_call(body: &Value) -> bool {
 
 /// The fake model's reply: a compaction call's summary over the span it
 /// names, with every pin, or else a long chat answer that fills the window.
-fn reply(body: &Value) -> String {
+pub(super) fn reply(body: &Value) -> String {
     if is_compaction_call(body) {
         let messages = body["messages"].as_array().cloned().unwrap_or_default();
         let input: Value = messages
@@ -111,10 +114,42 @@ fn reply(body: &Value) -> String {
 
 /// A served vault whose code-mode writer compaction is live on the fake
 /// model at `base_url`, a 1500-token window with one hot turn, and whose
-/// self row reads the retained turns with the widest locality ceiling and
-/// names that served model as its cheap writer.
-async fn retained_row_server(
+/// self row reads `source` with the widest locality ceiling and names that
+/// served model as its cheap writer.
+pub(super) async fn self_row_server(
     base_url: &str,
+    source: oneiron::llm::SelfCompactionSource,
+) -> (
+    tempfile::TempDir,
+    tempfile::TempDir,
+    Arc<SyncServer>,
+    AiHost,
+) {
+    self_row_server_on(base_url, source, SELF_ROW_CONTEXT_TOKENS).await
+}
+
+/// [`self_row_server`] with the served model's context `context_tokens`,
+/// the room its cheap writer reads a window in.
+pub(super) async fn self_row_server_on(
+    base_url: &str,
+    source: oneiron::llm::SelfCompactionSource,
+    context_tokens: u64,
+) -> (
+    tempfile::TempDir,
+    tempfile::TempDir,
+    Arc<SyncServer>,
+    AiHost,
+) {
+    self_row_server_clocked(base_url, source, context_tokens, StoreClock::default()).await
+}
+
+/// [`self_row_server_on`] with its vault on `store_clock`, a clock the test
+/// owns: the vault stamps and judges by its time.
+pub(super) async fn self_row_server_clocked(
+    base_url: &str,
+    source: oneiron::llm::SelfCompactionSource,
+    context_tokens: u64,
+    store_clock: StoreClock,
 ) -> (
     tempfile::TempDir,
     tempfile::TempDir,
@@ -128,10 +163,10 @@ async fn retained_row_server(
          [code_mode]\nprompt_package = {:?}\n\
          [code_mode.compaction]\nwindow_tokens = 1500\nhot_steps = 1\n\
          [providers.local]\nkind = \"local-openai-compat\"\nbase_url = \"{base_url}\"\n\
-         context_tokens = 32768\n",
+         context_tokens = {context_tokens}\n",
         prompts.path().display().to_string(),
     ));
-    let (dir, vault) = rooted_vault();
+    let (dir, vault) = rooted_vault_on(store_clock);
     let server = SyncServer::new(
         vault,
         SyncServerConfig {
@@ -142,7 +177,7 @@ async fn retained_row_server(
     .unwrap();
     let (server, host) = AiHost::attach(server, Some(&models)).await;
     let mut table = server.vault().purpose_default_table().unwrap();
-    table.self_compaction.source = oneiron::llm::SelfCompactionSource::RetainedTurns;
+    table.self_compaction.source = source;
     table.self_compaction.locality = oneiron::ModelLocality::ThirdParty;
     // The shipped row's cheap model has no offer on this server. With no
     // model manifest the house route it gives way to is a seat, and a
@@ -161,24 +196,38 @@ async fn send(server: &Arc<SyncServer>, mut request: Request<Body>) -> (StatusCo
             40_000,
         ))));
     let request = slip_credentials::bind_request(server, request);
-    let response = api_routes(Arc::clone(server))
-        .oneshot(request)
-        .await
-        .expect("route response");
-    let status = response.status();
-    (
-        status,
-        to_bytes(response.into_body(), usize::MAX)
+    let server = Arc::clone(server);
+    crate::test_engine_stack::on_engine_stack(async move {
+        let response = api_routes(server)
+            .oneshot(request)
             .await
-            .unwrap()
-            .to_vec(),
-    )
+            .expect("route response");
+        let status = response.status();
+        (
+            status,
+            to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+    })
+    .await
 }
 
 async fn chat_turn(server: &Arc<SyncServer>, conversation: &str, turn: usize) {
+    chat_text(
+        server,
+        conversation,
+        &format!("Log the north pier tide, turn {turn}."),
+    )
+    .await;
+}
+
+/// The owner says `text` in `conversation`, and the chat answers.
+pub(super) async fn chat_text(server: &Arc<SyncServer>, conversation: &str, text: &str) {
     let body = json!({
         "conversation_ref": conversation,
-        "text": format!("Log the north pier tide, turn {turn}."),
+        "text": text,
     });
     let (status, answer) = send(
         server,
@@ -215,7 +264,7 @@ fn seen_report(fake: &FakeLlm) -> Vec<String> {
 
 /// Each compaction call's span, pin count and input size, for a failure's
 /// report: which windows went out, and how often.
-fn compaction_calls_report(fake: &FakeLlm) -> Vec<String> {
+pub(super) fn compaction_calls_report(fake: &FakeLlm) -> Vec<String> {
     fake.seen()
         .iter()
         .filter(|seen| is_compaction_call(&seen.body))
@@ -269,7 +318,11 @@ fn stored_children(vault: &oneiron::Vault, conversation: &oneiron::EntityId) -> 
 /// The chat log the turns' own reader, the owner, reads now, as a self
 /// turn reads it before its user turn, the transcript under it, and the
 /// rows stored under the conversation, for a failure's report.
-fn log_report(server: &SyncServer, owner: oneiron::EntityId, conversation: &str) -> String {
+pub(super) fn log_report(
+    server: &SyncServer,
+    owner: oneiron::EntityId,
+    conversation: &str,
+) -> String {
     let Ok(id) = oneiron::EntityId::from_hex(conversation) else {
         return format!("conversation ref {conversation} names no id");
     };
@@ -315,31 +368,13 @@ fn log_report(server: &SyncServer, owner: oneiron::EntityId, conversation: &str)
     format!("{log}; transcript: {transcript}; stored: {stored}")
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn retained_turns_row_admits_the_self_chat_mode() {
-    let fake = FakeLlm::start(Vec::new(), Some(Reply::Computed(Arc::new(reply)))).await;
-    let (_dir, _prompts, server, _host) = retained_row_server(&fake.base_url).await;
-    let (agent, _) = server
-        .vault()
-        .get_seeded_agent_definition_by_logical_id("sys.default")
-        .unwrap()
-        .expect("seeded default agent");
-    assert!(
-        server.ai.chat_self_mode(server.vault(), agent).is_some(),
-        "a self agent's chat under a row on the retained turns compacts as the agent"
-    );
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn retained_turns_row_chat_compacts_on_the_cheap_writer_as_the_agent() {
-    let fake = FakeLlm::start(Vec::new(), Some(Reply::Computed(Arc::new(reply)))).await;
-    let (_dir, _prompts, server, _host) = retained_row_server(&fake.base_url).await;
-    let conversation = oneiron::EntityId::now().to_hex();
-
-    // A chat window compacts one sitting's turns, and with the Dreamer off no
-    // AppOpen ever mints that sitting: open the owner's sitting on this
-    // machine first, under the key each turn's witness bumps, so every turn
-    // below joins it.
+/// Opens the owner's sitting on this machine and answers the owner and the
+/// sitting's key. A chat window compacts one sitting's turns, and with the
+/// Dreamer off no AppOpen ever mints that sitting: it opens under the key
+/// each turn's witness bumps, so every later turn joins it.
+pub(super) fn open_owner_sitting(
+    server: &SyncServer,
+) -> (oneiron::EntityId, oneiron::session_lifecycle::SessionKey) {
     let owner = server
         .vault()
         .ensure_embedded_owner_actor()
@@ -357,13 +392,25 @@ async fn retained_turns_row_chat_compacts_on_the_cheap_writer_as_the_agent() {
         ),
         "the owner's sitting opens for the turns to join"
     );
+    (owner, sitting)
+}
+
+/// Opens the owner's sitting on this machine, then sends chat turns until a
+/// compaction call reaches the fake, at most six. Returns the owner and the
+/// next turn's number.
+pub(super) async fn turns_until_compaction(
+    server: &Arc<SyncServer>,
+    fake: &FakeLlm,
+    conversation: &str,
+) -> (oneiron::EntityId, usize) {
+    let (owner, sitting) = open_owner_sitting(server);
 
     // The cold-start threshold is 750 tokens for this 1500-token window.
     // A tiny first flight can be rejected; later flights include a long answer.
     let mut turn = 0;
     let mut compacted = false;
     while turn < 6 && !compacted {
-        chat_turn(&server, &conversation, turn).await;
+        chat_turn(server, conversation, turn).await;
         turn += 1;
         compacted = eventually(Duration::from_secs(10), || {
             fake.seen()
@@ -375,13 +422,45 @@ async fn retained_turns_row_chat_compacts_on_the_cheap_writer_as_the_agent() {
     assert!(
         compacted,
         "no compaction call after {turn} turns; requests: {:?}; owner's read: {}; sitting open: {:?}",
-        seen_report(&fake),
-        log_report(&server, owner, &conversation),
+        seen_report(fake),
+        log_report(server, owner, conversation),
         server
             .vault()
             .open_session(sitting)
             .map(|open| open.is_some()),
     );
+    (owner, turn)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn retained_turns_row_admits_the_self_chat_mode() {
+    let fake = FakeLlm::start(Vec::new(), Some(Reply::Computed(Arc::new(reply)))).await;
+    let (_dir, _prompts, server, _host) = self_row_server(
+        &fake.base_url,
+        oneiron::llm::SelfCompactionSource::RetainedTurns,
+    )
+    .await;
+    let (agent, _) = server
+        .vault()
+        .get_seeded_agent_definition_by_logical_id("sys.default")
+        .unwrap()
+        .expect("seeded default agent");
+    assert!(
+        server.ai.chat_self_mode(server.vault(), agent).is_some(),
+        "a self agent's chat under a row on the retained turns compacts as the agent"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn retained_turns_row_chat_compacts_on_the_cheap_writer_as_the_agent() {
+    let fake = FakeLlm::start(Vec::new(), Some(Reply::Computed(Arc::new(reply)))).await;
+    let (_dir, _prompts, server, _host) = self_row_server(
+        &fake.base_url,
+        oneiron::llm::SelfCompactionSource::RetainedTurns,
+    )
+    .await;
+    let conversation = oneiron::EntityId::now().to_hex();
+    let (owner, mut turn) = turns_until_compaction(&server, &fake, &conversation).await;
     let call = fake
         .seen()
         .into_iter()
@@ -415,5 +494,78 @@ async fn retained_turns_row_chat_compacts_on_the_cheap_writer_as_the_agent() {
         seen_report(&fake),
         compaction_calls_report(&fake),
         log_report(&server, owner, &conversation),
+    );
+}
+
+/// FIX-LIST SELF-COMPACTION-AUTO-FALLBACK-UNTESTED (1): under a row on
+/// `auto`, the shipped default, a chat whose live prefix is cold binds no
+/// live fork at its breakpoint (FIX 6029), and the cheap writer writes the
+/// flight on the retained turns as the agent. The fake's local route is one
+/// the warmth table does not know, so every prefix reads cold here.
+#[cfg(oneiron_test_support)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn auto_row_chat_with_a_cold_prefix_compacts_on_the_retained_turns_as_the_agent() {
+    let fake = FakeLlm::start(Vec::new(), Some(Reply::Computed(Arc::new(reply)))).await;
+    let (_dir, _prompts, server, _host) =
+        self_row_server(&fake.base_url, oneiron::llm::SelfCompactionSource::Auto).await;
+    let (agent, _) = server
+        .vault()
+        .get_seeded_agent_definition_by_logical_id("sys.default")
+        .unwrap()
+        .expect("seeded default agent");
+    let conversation = oneiron::EntityId::now().to_hex();
+    let (owner, _) = turns_until_compaction(&server, &fake, &conversation).await;
+
+    // The call is the house compaction prompt worn by the agent's frame,
+    // never a fork of the chat's own request.
+    let call = fake
+        .seen()
+        .into_iter()
+        .find(|seen| is_compaction_call(&seen.body))
+        .unwrap();
+    let system = message_text(&call.body["messages"][0]);
+    assert!(
+        system.contains(SELF_WRITER_FRAME),
+        "the cheap writer writes as the agent: {system}"
+    );
+
+    // The summary lands, and its receipt names the retained turns and the
+    // agent as its writer.
+    let id = oneiron::EntityId::from_hex(&conversation).unwrap();
+    let reader = server.vault().memory(owner, oneiron::EdgeActorClass::Human);
+    let history_lines = server.ai.chat_settings().history_turns;
+    let mut summary = None;
+    let landed = eventually(Duration::from_secs(20), || {
+        summary = oneiron::compaction::read_chat_log(&reader, id, 1, history_lines)
+            .ok()
+            .and_then(|log| log.summaries.first().copied());
+        summary.is_some()
+    })
+    .await;
+    assert!(
+        landed,
+        "no summary landed; compaction calls: {:?}; owner's read: {}",
+        compaction_calls_report(&fake),
+        log_report(&server, owner, &conversation),
+    );
+    let summary = summary.unwrap();
+    let execution = oneiron::test_doors::compaction_request::conversation_landing_execution(
+        server.vault(),
+        &summary,
+    )
+    .unwrap()
+    .expect("the landed summary keeps its receipt");
+    assert_eq!(
+        execution.source,
+        oneiron::llm::SelfCompactionSource::RetainedTurns,
+        "a cold prefix under auto runs on the retained turns: {execution:?}"
+    );
+    assert_eq!(
+        execution.writer, agent,
+        "the agent writes its own summary: {execution:?}"
+    );
+    assert!(
+        execution.prefix_sources.is_empty(),
+        "no live prefix was read: {execution:?}"
     );
 }

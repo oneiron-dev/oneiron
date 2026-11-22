@@ -5,13 +5,14 @@ use std::time::Instant;
 
 use super::payload::FederationPayloadBytes;
 
+use oneiron_contracts::fingerprint::{ContentHash, ContentHasher};
 use oneiron_contracts::host_memory::{MachineMemory, MemoryRefusal};
 
 use super::schedule::{self, RetainedWorkQueue, Waiting};
-use super::{FederationBurstWorkState, FederationPeer, corrupt, erase, observations};
+use super::{BurstPeer, DevicePeer, FederationBurstWorkState, corrupt, erase, observations};
 use crate::store::Store;
+use crate::sync::WindowKey;
 use crate::sync::transport::MAX_DECODED_PAYLOAD_BYTES;
-use crate::sync::{WindowKey, encode_sync_selector};
 use crate::{EntityId, Result, Vault};
 use oneiron_model::llm::NormalizedBurstInputs;
 use serde::{Deserialize, Serialize};
@@ -70,18 +71,54 @@ struct StoredWork<'a> {
     carried: Cow<'a, [EntityId]>,
 }
 
-fn prefix(peer: &FederationPeer) -> Result<Vec<u8>> {
+fn prefix(peer: BurstPeer<'_>) -> Result<Vec<u8>> {
     let mut prefix = DEFERRED_PREFIX.to_vec();
     prefix.extend_from_slice(&peer.digest());
-    // Delivery is additionally bound to the exact requested selector. The
-    // observation bucket intentionally is not: narrowing cannot reset rate.
-    prefix.extend_from_slice(blake3::hash(&encode_sync_selector(&peer.selector)?).as_bytes());
+    // Delivery is additionally bound to the exact requested selector (a
+    // device's to its proven key). The observation bucket intentionally is
+    // not: narrowing cannot reset rate.
+    prefix.extend_from_slice(ContentHash::of(&peer.lane_bytes()?).as_bytes());
     Ok(prefix)
+}
+
+/// The tag a retained batch's identity hashes for its kind. An own device's
+/// update is one batch whichever socket sent it: the same bytes for the same
+/// window, from a residence socket or a full-window one, share one id, so a
+/// receipt one of them settled answers the other (an update its owner
+/// rejected stays rejected), and a held row answers both as held. The row
+/// keeps the kind it arrived with, which its replay judges by (#9691 review).
+fn identity_tag(kind: WorkKind) -> u8 {
+    match kind {
+        WorkKind::Selector => 0,
+        WorkKind::MemberUpdate => 1,
+        WorkKind::GuestUpdate => 2,
+        WorkKind::DeviceUpdate | WorkKind::DeviceResidenceUpdate => 3,
+    }
+}
+
+/// Every own device with retained work, as its connection proved it.
+pub(super) fn retained_device_peers(vault: &Vault) -> Result<Vec<DevicePeer>> {
+    let txn = vault.store.env.read_txn()?;
+    let mut peers = Vec::new();
+    for row in vault.store.sync_queue.prefix_iter(&txn, DEFERRED_PREFIX)? {
+        let (_, value) = row?;
+        let work = DeferredWork::decode(&value)?;
+        if matches!(
+            work.kind,
+            WorkKind::DeviceUpdate | WorkKind::DeviceResidenceUpdate
+        ) {
+            let peer = DevicePeer::decode(&work.selector)?;
+            if !peers.contains(&peer) {
+                peers.push(peer);
+            }
+        }
+    }
+    Ok(peers)
 }
 
 impl DeferredWork {
     pub(in crate::sync) fn new(
-        peer: &FederationPeer,
+        peer: BurstPeer<'_>,
         key: &WindowKey,
         kind: WorkKind,
         payload: &[u8],
@@ -119,7 +156,7 @@ impl DeferredWork {
         &self,
         vault: &Vault,
         txn: &heed::RoTxn<'_>,
-        peer: &FederationPeer,
+        peer: BurstPeer<'_>,
         now: u64,
     ) -> Result<Option<FederationBurstWorkState>> {
         if self.authority_digest != peer.authority_digest_in_txn(vault, txn)? {
@@ -131,24 +168,20 @@ impl DeferredWork {
 
     /// The retained request's identity and selector, without retaining its bytes.
     pub(in crate::sync) fn identity(
-        peer: &FederationPeer,
+        peer: BurstPeer<'_>,
         key: &WindowKey,
         kind: WorkKind,
         payload: &[u8],
     ) -> Result<([u8; 32], Vec<u8>)> {
-        let selector = encode_sync_selector(&peer.selector)?;
-        let mut hash = blake3::Hasher::new();
+        let selector = peer.lane_bytes()?;
+        let mut hash = ContentHasher::new();
         hash.update(b"oneiron/federation-work/v1");
         hash.update(&peer.digest());
-        hash.update(blake3::hash(&selector).as_bytes());
+        hash.update(ContentHash::of(&selector).as_bytes());
         hash.update(key.as_str().as_bytes());
-        hash.update(&[match kind {
-            WorkKind::Selector => 0,
-            WorkKind::MemberUpdate => 1,
-            WorkKind::GuestUpdate => 2,
-        }]);
+        hash.update(&[identity_tag(kind)]);
         hash.update(payload);
-        Ok((*hash.finalize().as_bytes(), selector))
+        Ok((hash.finish().into_bytes(), selector))
     }
 
     /// Starts this batch's wait in the admitting writer: its arrival, and its
@@ -173,7 +206,7 @@ impl DeferredWork {
     pub(super) fn key(&self) -> Vec<u8> {
         let mut key = DEFERRED_PREFIX.to_vec();
         key.extend_from_slice(&self.peer);
-        key.extend_from_slice(blake3::hash(&self.selector).as_bytes());
+        key.extend_from_slice(ContentHash::of(&self.selector).as_bytes());
         key.extend_from_slice(&self.id);
         key
     }
@@ -209,7 +242,7 @@ impl DeferredWork {
             || saved.peer != self.peer
             || saved.selector != self.selector
             || saved.window != self.window
-            || saved.kind != self.kind
+            || identity_tag(saved.kind) != identity_tag(self.kind)
             || saved.payload != self.payload
         {
             return Err(corrupt());
@@ -385,7 +418,7 @@ impl DeferredWork {
     pub(in crate::sync) fn retire(
         &self,
         vault: &Vault,
-        peer: &FederationPeer,
+        peer: BurstPeer<'_>,
         state: FederationBurstWorkState,
     ) -> Result<()> {
         vault.with_write_txn_grouped(|txn| {
@@ -401,20 +434,20 @@ impl DeferredWork {
 
     /// Delete only after durable import or successful direct-response enqueue.
     /// A crash before deletion safely replays the same deterministic CRDT ops.
-    pub(in crate::sync) fn complete(&self, vault: &Vault, peer: &FederationPeer) -> Result<()> {
+    pub(in crate::sync) fn complete(&self, vault: &Vault, peer: BurstPeer<'_>) -> Result<()> {
         self.settle(vault, peer, false)
     }
 
     /// Retires an update the admission door refused as the peer's own bytes
     /// when it was retried, recorded as a structural failure as a live refusal
     /// is, so the work behind it drains.
-    pub(in crate::sync) fn reject(&self, vault: &Vault, peer: &FederationPeer) -> Result<()> {
+    pub(in crate::sync) fn reject(&self, vault: &Vault, peer: BurstPeer<'_>) -> Result<()> {
         self.settle(vault, peer, true)
     }
 
-    fn settle(&self, vault: &Vault, peer: &FederationPeer, structural_failure: bool) -> Result<()> {
+    fn settle(&self, vault: &Vault, peer: BurstPeer<'_>, structural_failure: bool) -> Result<()> {
         peer.revalidate(vault)?;
-        if self.peer != peer.digest() || self.selector != encode_sync_selector(&peer.selector)? {
+        if self.peer != peer.digest() || self.selector != peer.lane_bytes()? {
             return Err(corrupt());
         }
         vault.with_write_txn_grouped(|txn| {
@@ -439,16 +472,13 @@ impl DeferredWork {
         })
     }
 
-    pub(in crate::sync) fn next_update(
-        vault: &Vault,
-        peer: &FederationPeer,
-    ) -> Result<Option<Self>> {
+    pub(in crate::sync) fn next_update(vault: &Vault, peer: BurstPeer<'_>) -> Result<Option<Self>> {
         Self::find_update(vault, peer, None)
     }
 
     pub(in crate::sync) fn update_by_id(
         vault: &Vault,
-        peer: &FederationPeer,
+        peer: BurstPeer<'_>,
         id: &[u8; 32],
     ) -> Result<Option<Self>> {
         Self::find_update(vault, peer, Some(id))
@@ -461,7 +491,7 @@ impl DeferredWork {
     /// update for the peer's rate to come back to its baseline.
     fn find_update(
         vault: &Vault,
-        peer: &FederationPeer,
+        peer: BurstPeer<'_>,
         id: Option<&[u8; 32]>,
     ) -> Result<Option<Self>> {
         peer.revalidate(vault)?;
@@ -495,8 +525,18 @@ impl DeferredWork {
                     stale.push(work);
                     continue;
                 }
-                let ready = work.kind != WorkKind::Selector
-                    && (work.isolated_update.is_none() || rate_ready);
+                let ready = match work.kind {
+                    WorkKind::Selector => false,
+                    // An own device's retained update, deferred or isolated,
+                    // waits for the device's rate to come back to its
+                    // baseline; its home then replays it with no human step
+                    // (arch-0023b `#decision-federation-26`: "Defer replays
+                    // the burst later"; L7-41).
+                    WorkKind::DeviceUpdate | WorkKind::DeviceResidenceUpdate => rate_ready,
+                    WorkKind::MemberUpdate | WorkKind::GuestUpdate => {
+                        work.isolated_update.is_none() || rate_ready
+                    }
+                };
                 waiting.push(Waiting {
                     caller: prefix.clone(),
                     arrival: work.arrival,

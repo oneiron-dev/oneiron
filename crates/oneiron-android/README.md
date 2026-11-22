@@ -9,6 +9,14 @@ Use the app-private files directory for production vaults. Close each instance
 before reopening the same root. Do not mutate `nativeHandle` with reflection.
 A phone app opens with `EmbeddedVault(path, DeviceClass.PHONE)`: the class is
 the host's to declare, never read off the OS, and `COMPUTER` is the default.
+An app that stores vectors names the model that computes them when it opens,
+`EmbeddedVault(path, embeddingModel = "org/name@revision")`: without one every
+`putVector` throws ("embedding model is required before writing vectors"), and
+the vault keeps the first model an open names (census L9-28). Each `putVector`
+may carry `VectorProvenance(device, runtime)`, the device family (`cpu`,
+`cuda`, `metal`, `remote`) and runtime that computed it, so `oneiron doctor`
+names them instead of `unknown` (ARCH-0036 device mark), as the C, N-API and
+Swift puts do.
 The engine checks each body against its kind. Kind 4 is a conversation, and its
 body must be a MessagePack map (`ConversationBody`, every field optional).
 
@@ -40,8 +48,10 @@ The Android workflow (`.github/workflows/android-embedded.yml`) builds
 `aarch64-linux-android` with NDK 27.2.12479018 and API 26, packages the `.so`,
 then runs the Kotlin open/put/get/reopen instrumentation test
 (`kotlin/src/androidTest/kotlin/org/oneiron/EmbeddedVaultTest.kt`) on an API 35
-arm64 emulator. Aarch64 provides NEON. The Rust crate has no Rust tests of its
-own; that instrumentation test is the only on-device check.
+arm64 emulator. Aarch64 provides NEON. The Rust crate's own tests
+(`cargo test -p oneiron-android --lib`) run the native vault's open and vector
+put on the host, below the JNI boundary; that instrumentation test is the only
+on-device check.
 
 Canon: `oneiron/core/oneiron-arch-0019-oneiron-db-v1.md` (embedded
 same-core deployment); the generated docs mirror remains read-only.

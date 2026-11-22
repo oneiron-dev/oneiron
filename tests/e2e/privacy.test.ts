@@ -116,11 +116,26 @@ async function uploadVersions(
   return record;
 }
 
+/** What the shared owner preview shows a record erase taking (verbs/record_erase.rs RecordErasePreview). */
+type RecordEraseTakes = {
+  record: string;
+  same_bytes: string[];
+  held_bytes: { content_hash: string; other_holders: string[] }[];
+};
+
+/** The owner's shared preview of erasing `record` (DEC-0006 #undo-class): what it takes, and the confirm its erase passes back. */
+async function previewRecordErase(client: PublicHttpClient, record: string): Promise<{ takes: RecordEraseTakes; confirm: string }> {
+  const preview = await client.call("vault.owner_confirm.preview", {
+    verb: "vault.records.erase_confirm", input: { record },
+  });
+  return { takes: preview.takes as RecordEraseTakes, confirm: preview.confirm };
+}
+
 async function eraseRecord(client: PublicHttpClient, record: string): Promise<DeleteReceipt> {
-  const preview = await client.call("vault.records.erase_preview", { record });
-  expect(preview.record).toBe(record);
+  const preview = await previewRecordErase(client, record);
+  expect(preview.takes.record).toBe(record);
   const outcome = await client.call("vault.records.erase_confirm", {
-    record, preview_digest: preview.preview_digest, also_same_bytes: false,
+    record, confirm: preview.confirm, also_same_bytes: false,
   });
   if (!("first" in outcome)) throw new Error("Erase confirm answered no first receipt");
   expect(outcome.first_act ?? null).toBeNull(); // Personal vault: no shared-owner veto.
@@ -1189,7 +1204,7 @@ suite.test(test, "PRIVACY-04", "Shared blobs survive one record erasure should w
     const a = await uploadVersions(engine.client, data.sharedBlobs.names[0], versions);
     const b = await uploadVersions(engine.client, data.sharedBlobs.names[1], versions);
     expect(a.id_hex).not.toBe(b.id_hex);
-    const preview = await engine.client.call("vault.records.erase_preview", { record: a.id_hex });
+    const { takes: preview } = await previewRecordErase(engine.client, a.id_hex);
     expect(preview.same_bytes).toContain(b.id_hex);
     expect(preview.held_bytes).toHaveLength(versions.length);
     for (const holder of preview.held_bytes) expect(holder.other_holders).toContain(b.id_hex);
@@ -1256,9 +1271,9 @@ suite.test(test, "PRIVACY-05", "Legal hold narrows delete should work", async ()
     expect(hold.kind).toBe(spec.expected.kind);
     expect(hold.targets).toEqual([{ record: record.id_hex }]);
     expect(hold.lifted_at ?? null).toBeNull();
-    const preview = await engine.client.call("vault.records.erase_preview", { record: record.id_hex });
+    const preview = await previewRecordErase(engine.client, record.id_hex);
     const eraseInput = {
-      record: record.id_hex, preview_digest: preview.preview_digest, also_same_bytes: false,
+      record: record.id_hex, confirm: preview.confirm, also_same_bytes: false,
     } satisfies FacadeInput<"vault.records.erase_confirm">;
     const refusal = await engine.client.raw<{ error: { code: string } }>(
       "POST", "/v1/core/facade/vault.records.erase_confirm", eraseInput,
@@ -1286,17 +1301,18 @@ suite.test(test, "PRIVACY-05", "Legal hold narrows delete should work", async ()
     const standing = await engine.client.call("vault.legal_holds.list", {});
     const shown = standing.find(row => row.hold_id === hold.hold_id);
     if (!shown) throw new Error("Placed hold is not standing");
+    // The one confirm is the shared owner preview (DEC-0006 #undo-class):
+    // what it shows is the title, prompt, records and standing hold, and the
+    // call passes its confirm back (FIX 1462, one press).
+    const liftPreview = await engine.client.call("vault.owner_confirm.preview", {
+      verb: "vault.legal_holds.lift_and_erase", input: { records: [record.id_hex] },
+    });
+    const liftShown = liftPreview.takes as { title: string; records: string[]; holds: { hold_id: string }[] };
+    expect(liftShown.title).toBe("Lift the hold and erase?");
+    expect(liftShown.records).toEqual([record.id_hex]);
+    expect(liftShown.holds.map(row => row.hold_id)).toEqual([shown.hold_id]);
     const liftInput = {
-      records: [record.id_hex],
-      shown_state: {
-        title: "Lift the hold and erase?",
-        prompt: "This lifts your hold and erases these records. It does not end any legal duty to keep them. This choice is recorded.",
-        records: [record.id_hex],
-        holds: [{
-          hold_id: shown.hold_id, targets: shown.targets, placed_by: shown.placed_by ?? null,
-          placed_at: shown.placed_at, matter_ref: shown.matter_ref ?? null,
-        }],
-      },
+      records: [record.id_hex], confirm: liftPreview.confirm,
     } satisfies FacadeInput<"vault.legal_holds.lift_and_erase">;
     const denied = await narrow.client.raw("POST", "/v1/core/facade/vault.legal_holds.lift_and_erase", liftInput);
     expect(denied.status).toBe(spec.expected.unprivilegedLiftStatus);

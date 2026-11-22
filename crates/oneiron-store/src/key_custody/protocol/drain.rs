@@ -26,9 +26,7 @@ use crate::key_custody::protocol::hex;
 
 /// The drain grammar's version.
 pub const DRAIN_VERSION: u8 = 1;
-pub const OPERATION_CONTEXT: &str = "oneiron/custody-drain/operation/v1";
 const PLACEMENT_CONTEXT: &str = "oneiron/custody-drain/placement/v1";
-pub const ORIGIN_CONTEXT: &str = "oneiron/custody-drain/origin/v1";
 pub const MAC_DOMAIN: &[u8] = b"oneiron/custody-drain/ack-mac/v1";
 
 /// One drain's generation token: the secret its member's ack is MACed

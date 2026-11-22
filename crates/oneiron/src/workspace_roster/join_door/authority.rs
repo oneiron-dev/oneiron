@@ -36,6 +36,45 @@ pub(in crate::workspace_roster) fn admission_party_in_txn(
     {
         return Ok(true);
     }
+    leader_admits_in(vault, txn, room, actor)
+}
+
+/// [`admission_party_in_txn`] for the sender of a federation peer's room
+/// body: a host read without the write-actor check
+/// ([`crate::conversation::person_room_host_in_txn`]), the peer's grant
+/// having authenticated the sender, or the room's nearest project leader
+/// (ROOM-BODY-REPLICA-SETTINGS).
+#[cfg(feature = "sync")]
+pub(in crate::workspace_roster) fn peer_admission_party_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    sender: WriteActor,
+) -> Result<bool> {
+    if sender.actor_class() == EdgeActorClass::Human
+        && crate::conversation::person_room_host_in_txn(
+            vault,
+            txn,
+            room,
+            sender.entity_ref(),
+            true,
+        )?
+        .is_some()
+    {
+        return Ok(true);
+    }
+    leader_admits_in(vault, txn, room, sender)
+}
+
+/// Whether `actor` answers `room`'s admission as the live leader of its
+/// nearest signed project, where the room's `admission` policy row lets a
+/// leader answer.
+fn leader_admits_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    actor: WriteActor,
+) -> Result<bool> {
     if actor.actor_class() == EdgeActorClass::System
         || nearest_leaders_in(vault, txn, room)?.get(&actor.entity_ref()) != Some(&true)
     {

@@ -3,7 +3,8 @@
 //! the OAuth sign-in `oneiron hosted login` made there as a native app
 //! ([`crate::commands::oauth_sign_in`]), whose access token goes over HTTP
 //! alone: the server's socket upgrade takes a slip or the owner's sign-in,
-//! never an OAuth token.
+//! never an OAuth token. It goes only to the origin the sign-in was made
+//! at, over https or to this machine.
 //!
 //! Owner mode reads that sign-in from an owner-only file: one JSON object of
 //! header names to text values, which the socket's upgrade carries in place
@@ -72,8 +73,12 @@ impl Auth {
                  --origin <url>` wrote for this vault"
             )
         })?;
-        // Read once now, so a file that is not admitted fails at spawn.
-        let session = OAuthSession::open(path, tokio::runtime::Handle::try_current()?)?;
+        let url = reqwest::Url::parse(&args.url)
+            .map_err(|error| anyhow::anyhow!("--url {} is not a URL: {error}", args.url))?;
+        // Read once now, so a file that is not admitted, a sign-in made at
+        // another origin than --url, or a --url its tokens may not travel
+        // to in clear fails at spawn.
+        let session = OAuthSession::open(path, &url, tokio::runtime::Handle::try_current()?)?;
         Ok(Self::OAuth { session })
     }
 

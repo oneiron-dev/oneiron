@@ -48,6 +48,49 @@ impl Masker {
     }
 }
 
+/// How a body the door reads as a tree encodes again.
+#[derive(Clone, Copy)]
+pub(super) enum BodyForm {
+    Json,
+    MessagePack,
+}
+
+/// The tree `data` decodes to as [`Masker::mask_body`] reads it, JSON first,
+/// then a whole MessagePack value, wiped when it drops, with the form it
+/// encodes back to; `None` for a body read as text, or not read at all.
+pub(super) fn body_tree(data: &[u8]) -> Option<(PlanTree, BodyForm)> {
+    if opens_json(data)
+        && let Ok(value) = serde_json::from_slice::<Value>(data)
+    {
+        return Some((PlanTree(value), BodyForm::Json));
+    }
+    let mut cursor = std::io::Cursor::new(data);
+    if opens_whole_messagepack(data)
+        && let Ok(value) = rmpv::decode::read_value(&mut cursor)
+    {
+        let tree = PlanTree(value);
+        if cursor.position() == data.len() as u64 {
+            return Some((tree, BodyForm::MessagePack));
+        }
+    }
+    None
+}
+
+/// `tree` encoded in `form`, as [`Masker::mask_body`] writes a masked body.
+pub(super) fn encode_body(tree: &Value, form: BodyForm) -> Result<Vec<u8>> {
+    match form {
+        BodyForm::Json => serde_json::to_vec(tree)
+            .map_err(|_| Error::InvariantViolation("a sealed JSON body did not encode")),
+        BodyForm::MessagePack => {
+            let mut out = Vec::new();
+            rmpv::encode::write_value(&mut out, tree).map_err(|_| {
+                Error::InvariantViolation("a sealed MessagePack body did not encode")
+            })?;
+            Ok(out)
+        }
+    }
+}
+
 /// Whether [`Masker::mask_body`] reads `data` as one text, all of it, and
 /// tries no decoder: no decoder can take it, and it is UTF-8.
 pub(super) fn reads_as_text(data: &[u8]) -> bool {
@@ -58,7 +101,7 @@ pub(super) fn reads_as_text(data: &[u8]) -> bool {
 /// skips, its first byte opens one (`{`, `[`, `"`, `-`, a digit, or the `t`,
 /// `f`, `n` of `true`, `false`, `null`). Its parser refuses any other first
 /// byte at once, so a body this refuses it refuses too (speed).
-fn opens_json(data: &[u8]) -> bool {
+pub(super) fn opens_json(data: &[u8]) -> bool {
     data.iter()
         .find(|&&byte| !matches!(byte, b' ' | b'\n' | b'\t' | b'\r'))
         .is_some_and(|&byte| {
@@ -73,6 +116,6 @@ fn opens_json(data: &[u8]) -> bool {
 /// 0x80 is a positive fixint, a whole value of that one byte, so a longer
 /// body that opens with one never reads whole, and an empty one reads as
 /// nothing (speed).
-fn opens_whole_messagepack(data: &[u8]) -> bool {
+pub(super) fn opens_whole_messagepack(data: &[u8]) -> bool {
     data.len() == 1 || data.first().is_some_and(|&byte| byte >= 0x80)
 }

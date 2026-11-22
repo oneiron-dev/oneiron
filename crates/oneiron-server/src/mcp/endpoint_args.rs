@@ -307,6 +307,14 @@ pub struct McpVerbArguments {
     /// `tasks.create`'s typed brief (OF-220), decoded with the input.
     #[serde(default)]
     pub brief: Option<Value>,
+    /// `tasks.create`'s one-line request (L8-07): with `intent_key`, a post
+    /// whose brief the engine composes on the host's local model.
+    #[serde(default)]
+    pub one_liner: Option<String>,
+    /// `tasks.create`'s lens rows for a one-liner (L8-07), by short-id ref
+    /// or 32-hex id, decoded with the input.
+    #[serde(default)]
+    pub lens_refs: Option<Vec<String>>,
     /// `tasks.create`'s absolute expiry, decoded with the input.
     #[serde(default)]
     pub ttl: Option<Value>,
@@ -336,7 +344,7 @@ pub struct McpVerbArguments {
 }
 
 impl McpVerbArguments {
-    fn present_fields(&self) -> [(&'static str, bool); 24] {
+    fn present_fields(&self) -> [(&'static str, bool); 26] {
         [
             ("key", self.key.is_some()),
             ("frame_epoch", self.frame_epoch.is_some()),
@@ -354,6 +362,8 @@ impl McpVerbArguments {
             ("assignee", self.assignee.is_some()),
             ("intent_key", self.intent_key.is_some()),
             ("brief", self.brief.is_some()),
+            ("one_liner", self.one_liner.is_some()),
+            ("lens_refs", self.lens_refs.is_some()),
             ("ttl", self.ttl.is_some()),
             ("parent_ref", self.parent_ref.is_some()),
             ("due_at", self.due_at.is_some()),
@@ -387,10 +397,8 @@ impl McpVerbArguments {
             }
         }
         validate_optional_nonblank(tool, "arguments.key", self.key.as_deref())?;
-        // The WRITER's bound, applied before any persistence: a label the
-        // engine's board row ceiling cannot render is refused here rather than
-        // stored and then made to reject the whole TASKS section on every later
-        // render (ONE-1704 repair).
+        // A present label must be nonblank. The writer keeps a label of any
+        // length; only its board row preview is bounded (FIX 52).
         if let Some(label) = self.label.as_deref() {
             oneiron::task_verb::check_task_label(label).map_err(|error| {
                 McpToolValidationError::field(tool, "arguments.label", error.message)
