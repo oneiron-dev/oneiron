@@ -9238,7 +9238,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/workspace_roster/rooms/peer_settings.rs` | src | s | 1 crate-vis | — | A federation peer's room body (ROOM-BODY-REPLICA-SETTINGS; Engine ruling 20 Nov 23:56 = A) |
 | `src/workspace_roster/rooms/pins.rs` | src | m | 3 fn · 1 re-export · 7 crate-vis | — | A room's shared pins (ROOM-SCOPED-PINS; owner 12 Nov 00:04, ROOM-PIN-WRITERS = A; Engine ruling… |
 | `src/workspace_roster/rooms/private_threads.rs` | src | s | 1 fn · 1 re-export | — | That a room's private threads exist (owner ruling 2026-10-20, FIX 6381, 6384; replaces FIX 6338): "The Owner… |
-| `src/workspace_roster/rooms/replica.rs` | src | L | 17 crate-vis | — | OF-522: a room's turn rows on the owner's other machines |
+| `src/workspace_roster/rooms/replica.rs` | src | m | 17 crate-vis | — | OF-522: a room's turn rows on the owner's other machines |
+| `src/workspace_roster/rooms/replica/claim_merge.rs` | src | s | 1 crate-vis | — | A claim another machine of this vault carried, merged with this vault's claim of the same turn (FIX 1794… |
 | `src/workspace_roster/rooms/replica/shared.rs` | src | m | 12 crate-vis | — | Replicated room join, offer and response merging |
 | `src/workspace_roster/rooms/retry_claim.rs` | src | s | 7 crate-vis | — | The claim a Retry takes on its source's unclaimed parent in a project's home room (HOMERETRY-AUTHORITY = C… |
 | `src/workspace_roster/rooms/speaking.rs` | src | s | 1 struct · 1 fn · 1 const | RoomSpeakingClaim | Who holds the next turn in a room, as the board's ROOM section renders it (FIX 15646; ARCH-0067 §8: "the… |
@@ -9254,8 +9255,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/workspace_roster/rooms/upkeep_voice.rs` | src | s | 1 struct · 2 fn · 1 re-export · 2 crate-vis | RoomUpkeepVoiceReceipt | The room host's upkeep voice (ARCH-0067 §8, OF-417): "The engine performs every room's mechanical upkeep… |
 | `src/workspace_roster/rooms/upkeep_voice_guard.rs` | src | s | 8 crate-vis | — | What a room host's upkeep voice must still hold in the write it lands in (OF-417) |
 | `src/workspace_roster/rooms/wake.rs` | src | s | 3 struct · 3 fn · 1 const · 1 crate-vis | RoomWake, RoomWakeTurn, StagedRoomWake | The room wake producer (FIX 15647): a committed room turn wakes each agent it addresses, and each agent… |
-| `src/workspace_roster/rooms/witness.rs` | src | L | 17 crate-vis | — | Claim-before-speaking guard inside the existing witness transaction |
+| `src/workspace_roster/rooms/witness.rs` | src | m | 7 crate-vis | — | Claim-before-speaking guard inside the existing witness transaction |
+| `src/workspace_roster/rooms/witness/claim_scrub.rs` | src | s | 8 crate-vis | — | An erased actor's name out of the room claims that record it, here and in a carried copy (FIX 3520, FIX… |
 | `src/workspace_roster/rooms/witness/private_thread_reply.rs` | src | s | 1 crate-vis | — | An ordinary room's witness refuses a new turn that replies into a private thread… |
+| `src/workspace_roster/rooms/witness/regeneration_permit.rs` | src | s | 7 crate-vis | — | A Retry's proven leave to answer a room's claimed turn again (FIX 3149), and the claim a Retry takes on a… |
 | `src/workspace_roster/runner.rs` | src | m | 4 fn · 2 crate-vis | — | Resumable onboarding runner, house-name rename, and roster read |
 | `src/workspace_roster/scrub.rs` | src | s | 4 crate-vis | — | An erased actor leaves the workspace roster (FIX 3520): the member rows, the companion-principal bindings… |
 | `src/workspace_roster/sharing.rs` | src | s | 4 fn · 1 re-export | — | Sharing reads (ONEIRON-ARCH-0063: the owner dials personal context per contact; ONEIRON-ARCH-0067 §8… |
