@@ -3161,19 +3161,23 @@ widens what somebody may do, or touches your identity: adding a device that can 
 a recovery kit act, a setting that opens more than it closes. A change that narrows, or moves no
 authority, does not ask, unless it touches your identity: removing a device's key asks too.
 
-One confirm serves every important change of the next 15 minutes in the same program. A locked
-screen ends that time. The lock is read at each important change and once a second, so a lock
-shorter than a second that no change meets can go unseen.
+One confirm serves every important change of the next 15 minutes in the same program, which is
+one running process: each `oneiron` command asks for itself. A locked screen ends that time.
+The lock is read at each important change and once a second, so a lock shorter than a second
+that no change meets can go unseen.
 
 It asks today on a Mac, in a program that opens the vault itself through an embedded SDK client
-(Rust, Node, Python) and in the `oneiron` commands that work on a stopped vault. A running
-server (`oneiron serve`, a managed vault) does not ask yet: whoever calls it is usually not at
-its screen. The macOS recorder does not ask yet either: its vault also answers your other
-devices. Windows does not ask yet.
+(Rust, Node, Python, Swift) and in the `oneiron` commands that work on a stopped vault. What
+decides is who opened the vault, not the language: a client that works on a vault a server in
+the same program opened does not ask. A running server (`oneiron serve`, a managed vault) does
+not ask yet: whoever calls it is usually not at its screen. The macOS recorder does not ask yet
+either: its vault also answers your other devices. Windows does not ask yet.
 
-A device with no such prompt does not ask, and the change goes through: Linux, a process with
-no screen session. Where the keystore is off (`[keystore] backend = "off"`) nothing asks
-either.
+A device with no such prompt does not ask, and the change goes through: Linux, a program whose
+login has no screen session. Where the keystore is off (`[keystore] backend = "off"`) nothing
+asks either. Where a device PIN is set on the install, the PIN is checked in place of the
+prompt, on every device: an important change then needs the PIN entered within its own time,
+and a refusal there is the PIN's own, with none of the reason codes below.
 
 When the confirm does not happen, the change you asked for is not made, and the refusal says
 why. A command prints the sentence. An SDK client gets `INVALID_STATE` with two reason codes,
@@ -3186,13 +3190,17 @@ why. A command prints the sentence. An SDK client gets `INVALID_STATE` with two 
 | `here:screen_locked` | The screen is locked, or it locked while the prompt was up. | Unlock this device, then try again here. |
 | `here:prompt_failed` | The device's prompt failed. | Try again when the device's unlock prompt works. |
 
-A command run over ssh on a Mac whose screen is locked gets `here:screen_locked`: unlock that
-Mac first.
+The session the program runs in decides, not how you reached the Mac. A command in a session
+whose screen is locked, or whose user is switched out, gets `here:screen_locked`: unlock that
+Mac first. A command whose login has no screen session at all, as a login over ssh can be,
+does not ask.
 
 A refusal undoes nothing the same command did before the change. `oneiron init` asks when you
-agree to conversation learning on a new vault: after a refusal the vault is made and configured,
-with learning off, and a second `oneiron init` does not ask the question again. Turn learning
-on later with `PUT /v1/owner/conversation-learning`. `oneiron restore --join` has readied this
+agree to conversation learning on a new vault and an auth secret is configured (`auth_secret`
+or `ONEIRON_AUTH_SECRET`): after a refusal the vault is made and configured, with learning off,
+and a second `oneiron init` does not ask the question again. With no auth secret it leaves
+learning off and shows no prompt. Turn learning on later with
+`PUT /v1/owner/conversation-learning`. `oneiron restore --join` has readied this
 install's own keys by the time it asks: after a refusal, run it again to join.
 
 ## Calling the owner routes

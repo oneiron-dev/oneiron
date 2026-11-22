@@ -99,14 +99,24 @@ impl PresenceGate {
 
     /// This process's one gate for a host to install on each vault handle it
     /// opens: every call in one process answers the same gate, made at the
-    /// first call. One confirm serves all its handles, acts that arrive
-    /// together share one prompt, and one screen-lock watch runs. The gate
-    /// lives as long as the process.
+    /// first call. One confirm serves all its handles, and acts that arrive
+    /// together share one prompt. On a Mac one screen-lock watch runs, where
+    /// it could start; the gate of a platform that cannot ask runs none. The
+    /// gate lives as long as the process.
     ///
     /// A child that `fork` made is another process: its first call makes a
-    /// gate of its own, with a closed window and its own watch, since the
-    /// parent's watch thread does not exist in it. Two copies of this crate
-    /// loaded into one process each hold a gate of their own.
+    /// gate of its own, with a closed window and, on a Mac, its own watch,
+    /// since the parent's watch thread does not exist in it. The gate it
+    /// inherited is leaked there and never dropped: a drop ends the window
+    /// under a lock that the parent's watch thread may have held at the
+    /// fork, and no thread of the child would release it. This call holds a
+    /// lock of its own while it runs, so a fork made while another thread of
+    /// the parent is inside this call leaves the child's call waiting for
+    /// good, as a fork does with any lock held at that moment: a host that
+    /// forks and does not `exec` forks before its threads call here.
+    ///
+    /// Two copies of this crate loaded into one process each hold a gate of
+    /// their own.
     #[must_use]
     pub fn process_wide() -> Arc<Self> {
         static PROCESS_WIDE: Mutex<Option<(u32, Arc<PresenceGate>)>> = Mutex::new(None);
@@ -118,7 +128,12 @@ impl PresenceGate {
             return Arc::clone(gate);
         }
         let gate = Arc::new(Self::for_hosts());
-        *held = Some((process, Arc::clone(&gate)));
+        if let Some((_, inherited)) = held.replace((process, Arc::clone(&gate))) {
+            // Another process made it: this one is its forked child. Its
+            // drop would end the window under a lock that only a thread of
+            // the parent could release.
+            std::mem::forget(inherited);
+        }
         gate
     }
 

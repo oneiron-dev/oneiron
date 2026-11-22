@@ -88,6 +88,12 @@ fn a_gate_installed_before_stays() {
 fn an_important_act_stands_on_a_platform_without_a_prompt() {
     let (vault, _dir) = open_vault();
     vault.install_process_presence_gate();
+    // The answer below is also a handle's with no gate: this one holds the
+    // process's gate, so it is the gate's own answer.
+    assert!(Arc::ptr_eq(
+        &installed_gate(&vault),
+        &PresenceGate::process_wide()
+    ));
     let witness = vault
         .owner_presence(OwnerActImportance::Important, REASON)
         .expect("the act stands");

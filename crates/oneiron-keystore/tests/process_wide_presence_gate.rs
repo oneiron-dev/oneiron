@@ -14,7 +14,9 @@ fn every_call_answers_the_same_gate() {
     assert!(Arc::ptr_eq(&first, &second));
 }
 
-/// Four threads call at once, each started before any is joined.
+/// Four other threads call, each started before any is joined. This thread
+/// made the gate first, so the test holds the lookup across threads, not a
+/// race of first calls.
 #[test]
 fn calls_on_other_threads_answer_the_same_gate() {
     let here = PresenceGate::process_wide();

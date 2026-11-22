@@ -24,11 +24,19 @@ fn an_embedded_open_leaves_a_presence_gate_beside_its_keystore() {
     );
 }
 
+/// The host's vault holds a keystore and no gate, as a serving host's does:
+/// an attach that installed the gate beside a keystore, as the open does,
+/// would show here. It needs the platform's default keystore too.
 #[test]
 fn a_handle_attached_to_a_host_vault_installs_no_gate() {
     let dir = tempfile::tempdir().expect("a tempdir");
     let vault =
         Arc::new(Vault::open_owned(dir.path(), VaultConfig::default()).expect("the host's vault"));
+    vault.install_default_keystore(dir.path());
+    assert!(
+        vault.device_keystore_assurance().is_some(),
+        "the host's vault holds the platform's default keystore"
+    );
     assert!(vault.presence_gate().is_none());
     let client = OneironClient::attach(dir.path(), Arc::clone(&vault), &OpenOptions::default())
         .expect("a handle on the host's vault");
