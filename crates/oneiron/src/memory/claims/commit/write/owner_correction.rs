@@ -63,6 +63,7 @@ impl Memory<'_> {
             || self.machine_signer.is_some()
             || actor.entity_ref() != self.actor
             || actor.actor_class() != EdgeActorClass::Human
+            || !self.acts_as_own_person()
             || write.beside_stated
             || write.input.predicate == crate::booking::BOOKING_PUBLIC_PAGE_PREDICATE
             || self.vault.has_deferred_claim_in_txn(txn, &write.id)?
