@@ -46,17 +46,22 @@ use oneiron::{EntityId, TimeRange};
 use oneiron_server::test_doors::pre_idle_reuse::{ManagedBackups, managed_backups};
 use rustix::fs::inotify::{self, CreateFlags, ReadFlags, WatchFlags};
 
-/// The first test's vault: 1,024 texts of 32 KiB.
-const BODIES: u64 = 1_024;
+/// The first test's vault: 32 texts of 64 KiB, a backup of a few MB. Rows are
+/// the fixture's cost, not bytes: each text is a put, a bound body and a
+/// synced custody frame. Main's nightly (19 Nov, nextest profile `nightly`, a
+/// 120 s bound) killed the old 1,024-text vault before the test printed.
+const BODIES: u64 = 32;
+const BODY_BYTES: usize = 64 * 1024;
 /// The other tests' vaults, small: they time nothing.
-const SMALL_BODIES: u64 = 64;
-const BODY_BYTES: usize = 32 * 1024;
+const SMALL_BODIES: u64 = 8;
+const SMALL_BODY_BYTES: usize = 32 * 1024;
 
-/// Text no compressor shrinks much: letters and digits from a xorshift.
-fn body(seed: u64) -> Vec<u8> {
+/// `bytes` of text no compressor shrinks much: letters and digits from a
+/// xorshift.
+fn body(seed: u64, bytes: usize) -> Vec<u8> {
     const ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
     let mut state = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
-    (0..BODY_BYTES)
+    (0..bytes)
         .map(|_| {
             state ^= state << 13;
             state ^= state >> 7;
@@ -75,10 +80,11 @@ fn thread_rchar() -> u64 {
         .expect("an rchar line")
 }
 
-/// A managed vault holding `bodies` texts with one accepted backup; the
-/// directories live as long as it does, and the vault drops first. Bind it
-/// whole: a pattern that leaves the directories out drops them, and with
-/// them the vault's files and its backups, at the end of its statement.
+/// A managed vault holding `bodies` texts of `body_bytes` with one accepted
+/// backup that covers the vault; the directories live as long as it does, and
+/// the vault drops first. Bind it whole: a pattern that leaves the directories
+/// out drops them, and with them the vault's files and its backups, at the end
+/// of its statement.
 struct Backed {
     managed: ManagedBackups,
     size: u64,
@@ -86,7 +92,7 @@ struct Backed {
     _backups: tempfile::TempDir,
 }
 
-fn backed_up(bodies: u64) -> Backed {
+fn backed_up(bodies: u64, body_bytes: usize) -> Backed {
     let vault_dir = tempfile::tempdir().expect("tempdir");
     let backups = tempfile::tempdir().expect("backup dir");
     let managed = managed_backups(vault_dir.path(), backups.path());
@@ -98,7 +104,7 @@ fn backed_up(bodies: u64) -> Backed {
                 ENTITY_TYPE_ASSET,
                 TimeRange { start: 7, end: 7 },
                 9,
-                &body(seed),
+                &body(seed, body_bytes),
             )
             .expect("a text asset");
     }
@@ -106,6 +112,15 @@ fn backed_up(bodies: u64) -> Backed {
         managed.pass().expect("the managed pass"),
         "the first managed pass takes a backup"
     );
+    // The first pass's custody publication journals its policy after that
+    // backup recorded what it covers, so the vault reads as changed once, and
+    // the first backup before an idle reap takes a new backup in place of a
+    // reuse ([CUSTODY-POLICY-JOURNAL-AFTER-BACKUP-MARK]). Take it here, so each
+    // test starts from an accepted backup that covers the vault.
+    managed
+        .before_idle()
+        .expect("the settling backup before an idle reap")
+        .expect("it settled");
     let file = managed.accepted_file().expect("the accepted backup");
     let size = std::fs::metadata(&file).expect("artifact metadata").len();
     Backed {
@@ -204,9 +219,12 @@ fn flip_byte(path: &Path, at: u64) {
 
 #[test]
 fn a_verified_backup_is_reused_before_an_idle_reap_without_a_whole_read() {
-    let backed = backed_up(BODIES);
+    let backed = backed_up(BODIES, BODY_BYTES);
     let (managed, size) = (&backed.managed, backed.size);
-    assert!(size >= 8 * 1024 * 1024, "a large backup: {size} bytes");
+    assert!(
+        size >= 1024 * 1024,
+        "a backup whose whole read stands far above this thread's other reads: {size} bytes"
+    );
     let verified = managed.verify_in_background();
     let (reused, read, ms) = timed_before_idle(managed);
     println!(
@@ -227,7 +245,7 @@ fn a_verified_backup_is_reused_before_an_idle_reap_without_a_whole_read() {
 
 #[test]
 fn a_backup_changed_after_its_verdict_is_never_reused() {
-    let backed = backed_up(SMALL_BODIES);
+    let backed = backed_up(SMALL_BODIES, SMALL_BODY_BYTES);
     let (managed, size) = (&backed.managed, backed.size);
     let verified = managed.verify_in_background();
     assert_eq!(verified, Some(true), "a verdict stands before the change");
@@ -262,7 +280,7 @@ fn a_backup_changed_after_its_verdict_is_never_reused() {
 
 #[test]
 fn the_next_background_verify_reads_a_changed_backup_again() {
-    let backed = backed_up(SMALL_BODIES);
+    let backed = backed_up(SMALL_BODIES, SMALL_BODY_BYTES);
     let (managed, size) = (&backed.managed, backed.size);
     let first = managed.verify_in_background();
     assert_eq!(first, Some(true), "a verdict stands before the change");
@@ -289,7 +307,7 @@ fn the_next_background_verify_reads_a_changed_backup_again() {
 
 #[test]
 fn an_unverified_backup_is_read_whole_and_reused() {
-    let backed = backed_up(SMALL_BODIES);
+    let backed = backed_up(SMALL_BODIES, SMALL_BODY_BYTES);
     let (managed, size) = (&backed.managed, backed.size);
     let (reused, read, ms) = timed_before_idle(managed);
     println!("FIXHELD-UNVERIFIED reused={reused} read_bytes={read} backup_bytes={size} ms={ms:.3}");
@@ -302,7 +320,7 @@ fn an_unverified_backup_is_read_whole_and_reused() {
 
 #[test]
 fn a_verdict_that_does_not_answer_adds_no_open_before_the_whole_read() {
-    let backed = backed_up(SMALL_BODIES);
+    let backed = backed_up(SMALL_BODIES, SMALL_BODY_BYTES);
     let (managed, size) = (&backed.managed, backed.size);
     let file = managed.accepted_file().expect("the accepted backup");
     let ((unverified_reused, unverified_read, _), unverified_opens) =
