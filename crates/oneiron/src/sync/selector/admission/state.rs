@@ -4,6 +4,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncError};
@@ -32,11 +34,17 @@ pub(crate) struct AdmittedUpdate {
     pub(super) births: Vec<(EntityId, Vec<u8>)>,
     pub(super) peer_rows: Vec<(EntityId, Vec<u8>)>,
     pub(super) delivered: BTreeMap<EntityId, [u8; 32]>,
+    /// Each record tombstone the live peer lane admitted into these bytes,
+    /// with the digest of its value (CROSS-VAULT-DELETE-NEVER-ADMITTED = A).
+    pub(super) tombstones: BTreeMap<EntityId, [u8; 32]>,
     pub(super) born_with: Vec<super::super::born_with::CarriedText>,
     /// The birth placement admission validated for each TASK or SUMMARY row
     /// these bytes bring (FIX 3656).
     pub(super) placements: crate::sync::ingest::AdmittedPlacements,
     pub(super) lane: Option<String>,
+    /// The member peer whose first-party update this is, whose room bodies
+    /// the import judges again (ROOM-BODY-REPLICA-SETTINGS).
+    pub(super) first_party_sender: Option<EntityId>,
     pub(super) routed: Vec<AdmittedUpdate>,
 }
 
@@ -53,6 +61,13 @@ impl AdmittedUpdate {
     /// WORLD window (FIX 3497), in the order they import.
     pub(crate) fn parts(&self) -> impl Iterator<Item = &Self> {
         std::iter::once(self).chain(&self.routed)
+    }
+
+    /// The member peer whose first-party update this is, if one: its room
+    /// bodies are judged again in the import's writer transaction
+    /// (ROOM-BODY-REPLICA-SETTINGS).
+    pub(crate) const fn first_party_sender(&self) -> Option<EntityId> {
+        self.first_party_sender
     }
 
     /// The admitted bytes to import.
@@ -76,8 +91,8 @@ impl AdmittedUpdate {
         &self.placements
     }
 
-    /// The writes the update asks of this vault: its rows and edges, and the
-    /// stamps that wait out of it (Astra-b F2 on #1432).
+    /// The writes the update asks of this vault: its rows, edges and admitted
+    /// tombstones, and the stamps that wait out of it (Astra-b F2 on #1432).
     pub(crate) fn writes(&self) -> u64 {
         self.parts()
             .map(|part| {
@@ -167,6 +182,13 @@ impl AdmittedUpdate {
     /// pact delivers when the update's import writes it (FIX 321).
     pub(crate) const fn delivered(&self) -> &BTreeMap<EntityId, [u8; 32]> {
         &self.delivered
+    }
+
+    /// Every record tombstone the live peer lane admitted into these bytes,
+    /// with the digest of its value: a soft one carries the lane's delivery
+    /// to the shell it leaves.
+    pub(crate) const fn tombstones(&self) -> &BTreeMap<EntityId, [u8; 32]> {
+        &self.tombstones
     }
 
     /// After the update's import, keeps the born-with text the sender let
@@ -306,7 +328,7 @@ pub(in crate::sync) fn staged_births(
     // A receipt binds all per-window records before any is selected or held.
     let record = crate::batch::export::vault_import_staged_stamps(vault, receipt_id)?
         .ok_or(Error::CorruptedIndex("staged facet stamps"))?;
-    if stamps_digest != Some(*blake3::hash(&record).as_bytes()) {
+    if stamps_digest != Some(*ContentHash::of(&record).as_bytes()) {
         return Err(Error::CorruptedIndex("staged facet stamps"));
     }
     let mut records = crate::batch::export::decode_staged_window_parts(&record)?

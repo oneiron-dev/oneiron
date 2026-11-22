@@ -10,6 +10,7 @@
 use std::ops::{Deref, DerefMut};
 
 use oneiron::EntityId;
+use oneiron::engine_executor::{AdmittedSkillAnswer, AdmittedSkillText};
 use oneiron::runtime_hooks::VerbHookStop;
 use oneiron::task_verb::sdk::{ActAnswer, AgentVerb};
 use serde_json::Value;
@@ -34,6 +35,9 @@ pub(crate) const NARROW_UNKNOWN_MCP_READS: bool = false;
 pub(crate) struct McpServed {
     rows: Vec<EntityId>,
     unknown: bool,
+    /// An admitted skill call's answer held as JSON text, from the row's
+    /// door to its post chain (SKILL-ANSWER-DEEP-JSON-STACK-SAFE).
+    admitted_skill_text: Option<AdmittedSkillText>,
 }
 
 impl McpServed {
@@ -54,6 +58,25 @@ impl McpServed {
     /// rows while [`NARROW_UNKNOWN_MCP_READS`] holds.
     pub(crate) fn rows(&self) -> Option<&[EntityId]> {
         (!(self.unknown && NARROW_UNKNOWN_MCP_READS)).then_some(self.rows.as_slice())
+    }
+
+    /// The value an admitted skill call's row answers with before its post
+    /// chain: `answer` itself, or `null` in place of one held as JSON text,
+    /// which waits here for that chain ([`Self::take_admitted_skill_text`]).
+    pub(crate) fn hold_admitted_skill_answer(&mut self, answer: AdmittedSkillAnswer) -> Value {
+        match answer {
+            AdmittedSkillAnswer::Value(value) => value,
+            AdmittedSkillAnswer::Text(text) => {
+                self.admitted_skill_text = Some(text);
+                Value::Null
+            }
+        }
+    }
+
+    /// The admitted skill call's answer held as JSON text, for its post
+    /// chain; taken once.
+    pub(crate) fn take_admitted_skill_text(&mut self) -> Option<AdmittedSkillText> {
+        self.admitted_skill_text.take()
     }
 
     /// [`Self::rows`], owned.

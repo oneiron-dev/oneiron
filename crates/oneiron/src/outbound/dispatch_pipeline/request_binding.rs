@@ -217,9 +217,18 @@ impl PreparedOutboundDispatch {
         let payload = self.frozen_payload_bytes()?;
         let request = &self.request;
         if let Some(record) = self.replay.as_ref() {
+            // The row keeps the attempt its provider key names; a replay
+            // under another one is another send's (`with_idempotency_attempt`).
+            let idempotency_attempt = request
+                .idempotency_identity_ref
+                .as_deref()
+                .map(outbound_dispatch_attempt_id)
+                .transpose()?
+                .filter(|attempt| *attempt != record.attempt_id);
             if record.server != request.intent.channel
                 || record.tool != self.verb_contract.kind
                 || record.payload() != payload.as_slice()
+                || record.idempotency_attempt_id != idempotency_attempt
                 || record.idempotency_supported != self.idempotency_supported
                 || !record.budget_accounting.budget_class.is_send()
                 || record.resolved_endpoint.is_some()

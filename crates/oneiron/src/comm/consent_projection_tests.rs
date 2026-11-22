@@ -10,7 +10,10 @@ fn open_production_vault(dir: &std::path::Path) -> Result<Vault> {
     config.map_size = 64 * 1024 * 1024;
     config.dimensions = 4;
     config.embedding_model = None;
-    Vault::open(dir, config)
+    let vault = Vault::open(dir, config)?;
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    vault.prepare_install_signing().expect("install signing");
+    Ok(vault)
 }
 
 /// The `opt_out` entries the party's public contact view carries.
@@ -200,6 +203,8 @@ fn a_refused_event_does_not_hold_back_a_later_stop() -> CommResult<()> {
         thread_ref: None,
         occurred_at: 10,
         projected: false,
+        original_head: None,
+        source_position: None,
     };
     // The STOP sorts AFTER the refused event, so the pass reaches it only by
     // carrying on past the refusal.
@@ -212,6 +217,8 @@ fn a_refused_event_does_not_hold_back_a_later_stop() -> CommResult<()> {
         thread_ref: None,
         occurred_at: 40,
         projected: false,
+        original_head: None,
+        source_position: None,
     };
     vault.try_with_write_txn(|wtxn| {
         put_comm_record_in_txn(&vault, wtxn, source_event, &event)?;
@@ -304,6 +311,8 @@ fn stop_on_a_merged_twin_still_holds_the_survivors_sends() -> CommResult<()> {
         thread_ref: None,
         occurred_at: 30,
         projected: false,
+        original_head: None,
+        source_position: None,
     };
     vault.try_with_write_txn(|wtxn| put_comm_record_in_txn(&vault, wtxn, entity(0x78), &stop))?;
     run_comm_projector(&vault)?;
@@ -366,6 +375,8 @@ fn delayed_stop_on_an_already_merged_twin_refreshes_the_party() -> CommResult<()
         thread_ref: None,
         occurred_at: 30,
         projected: false,
+        original_head: None,
+        source_position: None,
     };
     vault.try_with_write_txn(|wtxn| put_comm_record_in_txn(&vault, wtxn, entity(0x79), &stop))?;
     run_comm_projector(&vault)?;
@@ -441,6 +452,8 @@ fn put_stop_naming(
         thread_ref: None,
         occurred_at,
         projected: false,
+        original_head: None,
+        source_position: None,
     };
     vault.try_with_write_txn(|wtxn| put_comm_record_in_txn(vault, wtxn, event_id, &stop))
 }

@@ -23,17 +23,17 @@ use oneiron::authority::{
     OAuthAuthorizationStatus, OAuthClientRecord, oauth_code_challenge_admitted,
     oauth_requested_tier,
 };
-use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 use super::client_document::resolve_client;
 use super::html::escape_html;
-use super::{OAuthFloodCaps, OAuthIdentity, not_found, now};
+use super::{
+    OAuthFloodCaps, OAuthIdentity, PAGE_TOKEN_HEADER, PAGE_TOKEN_META, PURPOSE_PARAMETER,
+    ProtectedResource, SignInPurpose, not_found, now,
+};
 use crate::auth::ClientAddress;
 use crate::server::SyncServer;
 
-/// The header the page sends its token in; `authorize.js` names the same one.
-const PAGE_TOKEN_HEADER: &str = "x-oneiron-oauth-page";
 /// The page's one script, allowed by its digest alone.
 const PAGE_SCRIPT: &str = include_str!("authorize.js");
 
@@ -44,8 +44,9 @@ const UNKNOWN_CLIENT: &str =
 const UNKNOWN_REDIRECT: &str =
     "This sign-in request names a return address the app did not register.";
 
-/// The authorize request's parameters; every other is ignored.
-#[derive(Deserialize)]
+/// The authorize request's parameters; every other is ignored. Each but `resource` comes at
+/// most once; `resource` may come several times (RFC 8707 §2).
+#[derive(Default)]
 pub(super) struct AuthorizeQuery {
     response_type: Option<String>,
     client_id: Option<String>,
@@ -53,8 +54,78 @@ pub(super) struct AuthorizeQuery {
     code_challenge: Option<String>,
     code_challenge_method: Option<String>,
     state: Option<String>,
-    resource: Option<String>,
+    resources: Vec<String>,
     scope: Option<String>,
+    /// What the sign-in asks to do, by name ([`SignInPurpose`]).
+    purpose: Option<String>,
+}
+
+impl AuthorizeQuery {
+    /// The parameters `pairs` name, in their order; `None` when one other than `resource`
+    /// comes twice, which reads as no request, as it did before a request could name several
+    /// resources.
+    fn from_pairs(pairs: Vec<(String, String)>) -> Option<Self> {
+        let mut query = Self::default();
+        for (name, value) in pairs {
+            let slot = match name.as_str() {
+                "response_type" => &mut query.response_type,
+                "client_id" => &mut query.client_id,
+                "redirect_uri" => &mut query.redirect_uri,
+                "code_challenge" => &mut query.code_challenge,
+                "code_challenge_method" => &mut query.code_challenge_method,
+                "state" => &mut query.state,
+                "scope" => &mut query.scope,
+                PURPOSE_PARAMETER => &mut query.purpose,
+                "resource" => {
+                    query.resources.push(value);
+                    continue;
+                }
+                _ => continue,
+            };
+            if slot.replace(value).is_some() {
+                return None;
+            }
+        }
+        Some(query)
+    }
+}
+
+/// The resources an authorize request names (RFC 8707 §2): at least one, each one of this
+/// vault's own ([`ProtectedResource`]) and none twice. Answers the first and the rest, in the
+/// request's order, and which of the vault's each is; `None` for a request that names none,
+/// another, or one twice.
+fn named_resources(
+    identity: &OAuthIdentity,
+    named: &[String],
+) -> Option<(String, Vec<String>, Vec<ProtectedResource>)> {
+    let (first, further) = named.split_first()?;
+    let mut seen = Vec::with_capacity(named.len());
+    for identifier in named {
+        let resource = identity.named_resource(identifier)?;
+        if seen.contains(&resource) {
+            return None;
+        }
+        seen.push(resource);
+    }
+    Some((first.clone(), further.to_vec(), seen))
+}
+
+/// What a sign-in for `resources` asks to do, as the owner's ask and the consent page say it:
+/// the purpose the request names (`named`, [`SignInPurpose`]), else what a resource it names
+/// says ([`ProtectedResource::purpose`]), else nothing, its tier saying it. Refused with
+/// `invalid_request` for a purpose this vault does not know, or one beside a resource it does
+/// not admit (the hand-over never names `/git`).
+fn sign_in_purpose(
+    named: Option<&str>,
+    resources: &[ProtectedResource],
+) -> Result<Option<&'static str>, &'static str> {
+    let Some(name) = named else {
+        return Ok(resources.iter().find_map(|resource| resource.purpose()));
+    };
+    SignInPurpose::named(name)
+        .filter(|purpose| resources.iter().all(|resource| purpose.admits(*resource)))
+        .map(|purpose| Some(purpose.says()))
+        .ok_or("invalid_request")
 }
 
 /// Where a request's errors go once its client and redirect URI are known.
@@ -107,7 +178,7 @@ pub(super) async fn page(
     State(server): State<Arc<SyncServer>>,
     Extension(caps): Extension<Arc<OAuthFloodCaps>>,
     ClientAddress(source): ClientAddress,
-    query: Result<Query<AuthorizeQuery>, QueryRejection>,
+    query: Result<Query<Vec<(String, String)>>, QueryRejection>,
 ) -> Response {
     let Some(identity) = OAuthIdentity::of(&server) else {
         return not_found();
@@ -115,7 +186,10 @@ pub(super) async fn page(
     if let Some(shed) = caps.shed_authorization(source) {
         return shed;
     }
-    let Ok(Query(query)) = query else {
+    let Some(query) = query
+        .ok()
+        .and_then(|Query(pairs)| AuthorizeQuery::from_pairs(pairs))
+    else {
         return error_page(UNREADABLE);
     };
     let Some(client_id) = query.client_id.as_deref().filter(|id| !id.is_empty()) else {
@@ -153,10 +227,14 @@ pub(super) async fn page(
     }) else {
         return redirect.error("invalid_request");
     };
-    let resource = identity.resource();
-    if query.resource.as_deref() != Some(resource.as_str()) {
+    let Some((resource, further_resources, named)) = named_resources(&identity, &query.resources)
+    else {
         return redirect.error("invalid_target");
-    }
+    };
+    let purpose = match sign_in_purpose(query.purpose.as_deref(), &named) {
+        Ok(purpose) => purpose,
+        Err(code) => return redirect.error(code),
+    };
     let Some(tier) = oauth_requested_tier(query.scope.as_deref()) else {
         return redirect.error("invalid_scope");
     };
@@ -169,13 +247,15 @@ pub(super) async fn page(
         code_challenge,
         state: query.state.as_deref(),
         resource: &resource,
+        further_resources: &further_resources,
+        purpose,
         tier,
     };
     match server
         .vault()
         .begin_oauth_authorization(issuer, &start, now)
     {
-        Ok(Some(pending)) => consent_page(&client, redirect_uri, &pending),
+        Ok(Some(pending)) => consent_page(&client, redirect_uri, purpose, &pending),
         Ok(None) => redirect.error("temporarily_unavailable"),
         Err(error) => {
             tracing::warn!(%error, "recording an OAuth authorization request failed");
@@ -249,11 +329,13 @@ fn status_reply(status: StatusCode, word: &str, redirect: Option<String>) -> Res
     (status, axum::Json(body)).into_response()
 }
 
-/// The page that waits for the owner's answer: the client, its host, the tier asked and the
-/// match code, every one escaped, and the script that polls.
+/// The page that waits for the owner's answer: the client, its host, the tier asked, what the
+/// sign-in asks to do when a resource it names says, and the match code, every one escaped, and
+/// the script that polls.
 fn consent_page(
     client: &OAuthClientRecord,
     redirect_uri: &str,
+    purpose: Option<&str>,
     pending: &OAuthAuthorizationPending,
 ) -> Response {
     let digest =
@@ -262,11 +344,14 @@ fn consent_page(
         "default-src 'none'; script-src 'sha256-{digest}'; connect-src 'self'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
     );
     let html = format!(
-        "<!doctype html><html lang=en><meta charset=utf-8><meta name=referrer content=no-referrer><meta name=viewport content=\"width=device-width,initial-scale=1\"><meta name=oauth-page-token content=\"{token}\"><title>Sign-in request</title><main><h1>Sign-in request</h1><p><strong>{name}</strong> ({host}) asks to use this vault with <strong>{tier}</strong> access.</p><p>Match code: <code>{code}</code></p><p>Open your inbox and check that the request there shows the same match code, then allow or deny it.</p><p id=status role=status>Waiting for your answer.</p></main><script>{PAGE_SCRIPT}</script></html>",
+        "<!doctype html><html lang=en><meta charset=utf-8><meta name=referrer content=no-referrer><meta name=viewport content=\"width=device-width,initial-scale=1\"><meta name={PAGE_TOKEN_META} content=\"{token}\"><title>Sign-in request</title><main><h1>Sign-in request</h1><p><strong>{name}</strong> ({host}) asks to use this vault with <strong>{tier}</strong> access{purpose}.</p><p>Match code: <code>{code}</code></p><p>Open your inbox and check that the request there shows the same match code, then allow or deny it.</p><p id=status role=status>Waiting for your answer.</p></main><script>{PAGE_SCRIPT}</script></html>",
         token = escape_html(&pending.page_token),
         name = escape_html(client.display_name()),
         host = escape_html(&client.display_host(redirect_uri)),
         tier = escape_html(pending.tier.wire_name()),
+        purpose = purpose
+            .map(|purpose| format!(", to {}", escape_html(purpose)))
+            .unwrap_or_default(),
         code = escape_html(&pending.match_code),
     );
     ([(header::CONTENT_SECURITY_POLICY, csp)], Html(html)).into_response()

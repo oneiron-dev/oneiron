@@ -112,7 +112,9 @@ Its entry reads the credential
 from `agent.cred` in the data folder the client gives each installed plugin
 (`${PLUGIN_DATA}`), so each client's install holds its own credential. An
 Agent Plugins client expands no other variable, so the package cannot read a
-file under `~/.config/oneiron/`.
+file under `~/.config/oneiron/`. Cursor expands neither variable in the
+package's `mcp.json`, so on Cursor that entry cannot start and the tools come
+from the Cursor plugin (below).
 
 1. Install the folder the way your client installs a local plugin. In VS
    Code, `chat.pluginLocations` (Experimental) in `settings.json` registers
@@ -121,13 +123,40 @@ file under `~/.config/oneiron/`.
    client's MCP server log, names the full path of `agent.cred` and the
    command that mints it.
 3. Stop `oneiron serve`, mint to that path under the client's own name (for
-   example `oneiron token agent --name cursor --out <data folder>/agent.cred`),
+   example `oneiron token agent --name codex --out <data folder>/agent.cred`),
    start `serve` again, and restart the plugin's server in the client.
 
 It runs `oneiron` from the `PATH` the client starts servers with and reaches
 `serve` at its default address; for another, add `--url` and the origin to
 the args in the package's `mcp.json`. Use the plugin or the client's own MCP
 config (as for Codex above), not both.
+
+**Cursor** loads the shared package for its skill, but its tools come from
+the Oneiron Cursor plugin ([`plugins/cursor/`](../../plugins/cursor/)), which
+also carries Cursor's session hooks. Cursor expands neither `${PLUGIN_DATA}`
+nor `${PLUGIN_ROOT}` in an Agent Plugins `mcp.json`, and reads any other
+`${...}` in a plugin as a plugin variable whose value is kept in Cursor's
+dashboard. So the plugin's entry names no variable: it runs `oneiron mcp
+--surface tool-first` through `/bin/sh`, which fills in `$HOME`, and reads
+the credential at `~/.config/oneiron/cursor.cred`.
+
+1. Install `plugins/cursor/` beside the shared package, the way Cursor
+   installs a local plugin (for example a copy under
+   `~/.cursor/plugins/local/`).
+2. With `serve` stopped, mint the agent's credential to that path, then
+   start `serve` again:
+
+   ```bash
+   oneiron token agent --name cursor --out ~/.config/oneiron/cursor.cred
+   ```
+
+3. In Cursor's **Customize** page, turn off the shared package's own
+   `oneiron` server (`plugin-oneiron-oneiron`), which cannot start in
+   Cursor, and keep the Cursor plugin's (`plugin-oneiron-cursor-oneiron`).
+
+For `--url`, edit the command in the plugin's `mcp.json`. The session hooks
+read a credential of their own
+([Session hooks for Codex, Cursor and GitHub Copilot](client-session-hooks.md)).
 
 **Hermes Agent** takes Oneiron in its memory slot instead of as MCP tools: the
 `oneiron-hermes` package (`packages/oneiron-hermes`) is a Hermes memory

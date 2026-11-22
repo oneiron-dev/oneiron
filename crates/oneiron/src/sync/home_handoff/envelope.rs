@@ -20,6 +20,7 @@
 
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use getrandom::SysRng;
+use oneiron_contracts::fingerprint::ContentHash;
 use oneiron_crypto::{
     Argon2Cost, Envelope, Header, HybridPublicKey, MAX_PLAINTEXT_LEN, OpenKey, OpenPolicy, Purpose,
     SealKey, SealParams, SuiteId, WrapType, seal,
@@ -258,7 +259,7 @@ pub(super) fn seal_handoff(
     }
     let handoff = SealedHandoff {
         id,
-        digest: *blake3::hash(&sealed).as_bytes(),
+        digest: *ContentHash::of(&sealed).as_bytes(),
         movement: *movement,
         sealed,
     };
@@ -316,7 +317,7 @@ pub(crate) fn open_handoff(vault: &Vault, id: HandoffId, sealed: &[u8]) -> Resul
     };
     Ok(VerifiedHandoff {
         id,
-        digest: *blake3::hash(sealed).as_bytes(),
+        digest: *ContentHash::of(sealed).as_bytes(),
         sections: decode(&manifest.sections)?,
         signed: manifest.signed,
         header,

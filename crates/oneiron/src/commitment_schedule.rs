@@ -288,13 +288,19 @@ pub struct ScheduleHistoryEntry {
     pub ordinal: u32,
     /// The instance's CMT-1 status.
     pub status: CommitmentStatus,
+    /// Whether the instance was withdrawn: its claim closed while its promise
+    /// was open (FIX 22383). Its `status` still says open, yet it acts no
+    /// more, so the schedule counts it closed, never as a completion, and
+    /// never mints it again.
+    pub withdrawn: bool,
 }
 
 impl ScheduleHistoryEntry {
-    /// Whether this occurrence is still open.
+    /// Whether this occurrence is still open: its status is open and it was
+    /// not withdrawn.
     #[must_use]
     pub const fn is_open(&self) -> bool {
-        matches!(self.status, CommitmentStatus::Open)
+        matches!(self.status, CommitmentStatus::Open) && !self.withdrawn
     }
 }
 
@@ -303,7 +309,9 @@ impl ScheduleHistoryEntry {
 /// The distinction that matters is quota accounting: only [`Self::Fulfilled`]
 /// COMPLETES a slot. A lapse, a release, and a supersession all close the row
 /// without the promise having been kept, and none of them earns a replacement
-/// slot inside the same window.
+/// slot inside the same window. Neither does a withdrawal, which closes the
+/// instance's claim and leaves its status as it was
+/// ([`ScheduleHistoryEntry::withdrawn`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum CommitmentInstanceOutcome {

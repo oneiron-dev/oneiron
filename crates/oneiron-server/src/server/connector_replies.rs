@@ -87,6 +87,12 @@ impl SyncServer {
 /// with its result. A witness repair failure never withholds the ordinary jobs.
 fn reply_pass(server: &Arc<SyncServer>, runtime: &tokio::runtime::Handle) -> oneiron::Result<()> {
     let vault = server.vault();
+    // A copy restored and not joined runs no connector reply (row
+    // RESTORED-UNJOINED-STARTS-NO-WORK): rows wait, and the first pass after the
+    // join runs them. Writes nothing: no reclaim, no repair, no claim, no send.
+    if vault.restored_unjoined()? {
+        return Ok(());
+    }
     vault.reclaim_connector_reply_jobs(unix_seconds_now())?;
     match catch_unwind(AssertUnwindSafe(|| {
         crate::ai_host::repair_connector_reply_witnesses(vault, unix_seconds_now())
