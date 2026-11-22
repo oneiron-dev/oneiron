@@ -1446,6 +1446,7 @@ fn the_owner_cannot_rewrite_a_work_talk_message_but_erases_and_holds() -> TestRe
         &fixture.owner_proof,
         vec![LegalHoldTarget::Record(message)],
         None,
+        None,
     )?;
     let erased_while_held = fixture.vault.delete_entity_with_reason_as_owner(
         &fixture.owner_proof,

@@ -1,5 +1,6 @@
-//! Doors to an owner's hold store for `tests/legal_hold_clone.rs`: a
-//! hold's directory, and each of its sealed captures opened and checked.
+//! Doors to an owner's hold store for the hold tests: a hold's
+//! directory, each of its sealed captures opened and checked, and whether
+//! its future-messages standing exists.
 
 use std::fs;
 use std::io::{self, Read};
@@ -44,6 +45,16 @@ pub fn hold_dir(vault: &Vault, hold_id: EntityId) -> Result<PathBuf> {
     Ok(root
         .join(bytes_to_hex_lower(vault.vault_id().as_bytes()))
         .join(hold_id.to_hex()))
+}
+
+/// Whether the hold's future-messages standing exists (Ruling
+/// L10-21-OWNER-FUTURE-MESSAGES = A).
+///
+/// # Errors
+/// A storage error.
+pub fn prospective_standing(vault: &Vault, hold_id: EntityId) -> Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(crate::deletion::outbox_in_txn(&vault.store, &txn, (*hold_id.as_bytes(), 0))?.is_some())
 }
 
 /// Opens every sealed capture of `hold_id`: `hold.key` under this install's

@@ -8,7 +8,7 @@ use crate::entity_id::EntityId;
 #[doc(hidden)]
 pub use oneiron_verb_wire::deletion::legal_hold::types::{
     HoldCloneCapture, LegalHold, LegalHoldActorKind, LegalHoldEvent, LegalHoldEventKind,
-    LegalHoldKind, LegalHoldReason, LegalHoldTarget,
+    LegalHoldFutureMessages, LegalHoldKind, LegalHoldReason, LegalHoldTarget, MessageSelector,
 };
 
 /// How long a hold's log rows outlive the hold, in calendar months (C3: the

@@ -229,7 +229,7 @@ fn a_held_artifact_releases_the_version_whose_claim_a_replica_releases() {
         .unwrap();
     let hold = a
         .vault
-        .place_legal_hold(&owner, vec![LegalHoldTarget::Record(artifact)], None)
+        .place_legal_hold(&owner, vec![LegalHoldTarget::Record(artifact)], None, None)
         .unwrap();
 
     // As in the release test above: B deletes with its window closed, and A catches up through
@@ -351,7 +351,7 @@ fn a_held_artifact_on_a_replica_releases_the_claim_whose_version_the_uploader_re
         .unwrap();
     let hold = b
         .vault
-        .place_legal_hold(&owner, vec![LegalHoldTarget::Record(artifact)], None)
+        .place_legal_hold(&owner, vec![LegalHoldTarget::Record(artifact)], None, None)
         .unwrap();
 
     // As in the test above: A deletes with its window closed, and B catches up through A's export

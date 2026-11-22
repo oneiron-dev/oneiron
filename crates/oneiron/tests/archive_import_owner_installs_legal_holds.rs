@@ -110,6 +110,7 @@ fn the_owner_restore_installs_a_standing_hold_and_its_record_still_deletes() {
             &source_owner,
             vec![LegalHoldTarget::Record(record)],
             Some(matter.clone()),
+            None,
         )
         .expect("the owner places the source hold");
     assert!(hold.stands(), "the source hold stands: {hold:?}");
@@ -287,6 +288,7 @@ fn the_next_hold_act_after_a_restore_follows_the_restored_log() {
             &source_owner,
             vec![LegalHoldTarget::Record(first)],
             Some("matter-002".to_owned()),
+            None,
         )
         .expect("the owner places the source hold");
     let source_log = source
@@ -402,6 +404,7 @@ fn a_lifted_hold_restores_as_history() {
             &source_owner,
             vec![LegalHoldTarget::Record(record)],
             Some("matter-003".to_owned()),
+            None,
         )
         .expect("the owner places the source hold");
     let lifted = source
@@ -519,6 +522,7 @@ fn a_hosted_privacy_erase_erases_a_held_record_without_in_place_hold_rows() {
             &source_owner,
             vec![LegalHoldTarget::Record(record)],
             Some("matter-004".to_owned()),
+            None,
         )
         .expect("the owner places the source hold");
     assert!(hold.stands(), "the source hold stands: {hold:?}");
