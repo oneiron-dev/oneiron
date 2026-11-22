@@ -50,11 +50,12 @@ pub const SOFTWARE_ARGON2ID_ATTESTATION_KIND: &str = "SoftwareArgon2id";
 
 /// The attestation kinds whose evidence names nothing (RULING
 /// L5-22-OVERLAY-SCOPE = A takes identifying evidence only): an owner-key
-/// possession proof is a signature over the enrollment challenge,
-/// verification material (owner_key_enrollment.rs); the two software kinds
-/// attest no device.
+/// possession proof, and the recovery root's authority-key proof, is a
+/// signature over the enrollment challenge, verification material
+/// (owner_key_enrollment.rs); the two software kinds attest no device.
 pub const NON_IDENTIFYING_ATTESTATION_KINDS: &[&str] = &[
     OWNER_KEY_POSSESSION_KIND,
+    RECOVERY_AUTHORITY_POSSESSION_KIND,
     HOST_ROOT_ATTESTATION_KIND,
     SOFTWARE_ARGON2ID_ATTESTATION_KIND,
 ];
