@@ -247,7 +247,8 @@ fn sealed_with(draft: Draft) -> TestResult<Sealed> {
             &signing,
             &SigningAction::Complete {
                 consent: true,
-                next: None
+                next: None,
+                check_in_ref: None
             },
             None,
             None,
