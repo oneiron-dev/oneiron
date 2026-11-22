@@ -268,16 +268,26 @@ pub(crate) enum DoorClaim {
 /// one of those runs the verb again: the accept and the attach answer their
 /// exact repeat with the same counter and write nothing, and a prepare offers
 /// its unbound edge again under a fresh pact.
-const UNKEPT_REPLY_VERBS: [&str; 4] = [
+/// A personal booking link's mint answers its raw token once
+/// (BK-PERSONAL-LINKS): the vault keeps only the token's digest, and a kept
+/// reply would write the bearer token itself to this vault's invocation
+/// state, for any later request naming the invocation to read again. A
+/// same-id retry mints again: a fresh link and token, beside the first link,
+/// which the owner's list shows and revokes as any other.
+const UNKEPT_REPLY_VERBS: [&str; 5] = [
     "vault.inquire",
     "vault.inquiry.edge.prepare_join",
     "vault.members.accept_with_inquiry_edge",
     "vault.members.inquiry_edge.attach",
+    "vault.booking.personal_link.mint",
 ];
 
 /// Whether an invocation claim keeps `verb`'s answer for a later request
-/// naming the same invocation: false only for [`UNKEPT_REPLY_VERBS`].
-fn verb_reply_is_kept(verb: &str) -> bool {
+/// naming the same invocation: false only for [`UNKEPT_REPLY_VERBS`]. A
+/// hook's ask on such a verb saves no credential to resume the call on
+/// either (`hooks::row_hooks_pre_decided`): the drain would save its answer
+/// for the retry.
+pub(crate) fn verb_reply_is_kept(verb: &str) -> bool {
     !UNKEPT_REPLY_VERBS.contains(&verb)
 }
 

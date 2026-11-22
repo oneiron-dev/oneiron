@@ -34,6 +34,7 @@ use std::cell::Cell;
 use std::collections::BTreeMap;
 
 use base64::Engine as _;
+use oneiron_contracts::fingerprint::ContentHasher;
 
 use super::{EMAIL_CHANNEL, GmailDelegatedAdapter, MAX_GMAIL_THREAD_ID_BYTES, validate_gmail_id};
 use crate::Vault;
@@ -209,7 +210,7 @@ impl GmailSendPlan {
             .rsplit_once('@')
             .map(|(_, domain)| domain)
             .ok_or_else(|| Error::InvalidConfig("gmail mailbox has no domain".to_owned()))?;
-        let mut seed = blake3::Hasher::new();
+        let mut seed = ContentHasher::new();
         seed.update(b"oneiron.gmail.send.message_id.v1");
         for part in [
             logical_ref,
@@ -220,7 +221,7 @@ impl GmailSendPlan {
         ] {
             hash_part(&mut seed, part);
         }
-        let digest = seed.finalize().to_hex();
+        let digest = seed.finish().to_hex();
         let local = &digest.as_str()[..32];
         let message_id = canonical_message_id(&format!("<{local}.oneiron@{domain}>"))?;
         let mut plan = Self {
@@ -441,7 +442,7 @@ impl GmailSendPlan {
         } else {
             b"oneiron.gmail.send.plan.v1"
         };
-        let mut hasher = blake3::Hasher::new();
+        let mut hasher = ContentHasher::new();
         hasher.update(domain);
         hash_part(&mut hasher, &self.from_mailbox);
         hash_optional(&mut hasher, self.from_display_name.as_deref());
@@ -496,7 +497,7 @@ impl GmailSendPlan {
         } else {
             GMAIL_SEND_PLAN_REF_PREFIX
         };
-        self.content_ref = format!("{prefix}{}", hasher.finalize().to_hex());
+        self.content_ref = format!("{prefix}{}", hasher.finish().to_hex());
     }
 
     /// Renders the RFC 5322 bytes, with the CA-05 hygiene headers replayed
@@ -570,12 +571,12 @@ impl GmailSendPlan {
     }
 }
 
-fn hash_part(hasher: &mut blake3::Hasher, part: &str) {
+fn hash_part(hasher: &mut ContentHasher, part: &str) {
     hasher.update(&(part.len() as u64).to_le_bytes());
     hasher.update(part.as_bytes());
 }
 
-fn hash_optional(hasher: &mut blake3::Hasher, part: Option<&str>) {
+fn hash_optional(hasher: &mut ContentHasher, part: Option<&str>) {
     match part {
         Some(part) => {
             hasher.update(&[1]);

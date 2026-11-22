@@ -22,6 +22,7 @@ mod program_entry;
 mod record;
 mod repl;
 pub mod reply_evidence;
+pub(crate) mod resume_divergence;
 mod run_position;
 mod run_signals;
 mod self_brief;
@@ -88,6 +89,10 @@ pub use self::types::{
     JsCodeModeOutput, JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStepOutcome, JsCodeModeStream,
     JsResultCall, JsResultRef, JsResultTarget, ParkedWait, SelfDispatchResponse, StoreReceiptInput,
     StoreReceiptTree, guest_response_with_budget,
+};
+// L8-23: what a resumed pending step's walk met, on its outcome and its hold.
+pub use self::host::resume_preflight::{
+    ChangedStep, ResumePreflightReport, ResumeVerdict, UnreachedStep,
 };
 
 pub(crate) use self::host::executor_declarations_block;

@@ -21,6 +21,7 @@ pub mod connector_sends;
 pub mod continue_command;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 pub mod credential_file_network_fs;
+pub mod credential_write_actor;
 pub mod device_burst_drain;
 pub mod device_home_dial;
 #[cfg(feature = "mesh")]
@@ -76,6 +77,7 @@ pub mod raw_stream;
 #[cfg(unix)]
 pub mod recovery_box_hold;
 pub mod refusal_wire;
+pub mod remote_task_poll;
 pub mod replay_admission;
 pub mod residence;
 pub mod residence_connection;
