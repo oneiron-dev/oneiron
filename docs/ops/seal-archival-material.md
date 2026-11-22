@@ -17,11 +17,22 @@ published only when its actual selected chain is covered. Another newly selected
 chain follows the same path. The signing backend is not called again for a DSS
 rebuild. TSA ordering and the timestamp capacity ladder are unchanged.
 
+A failover can leave material that only an abandoned token needed: TSA A fails,
+B's token adds B's chain, and the fresh token comes from A again. A verifier
+holds every DSS certificate to a path valid at the material time, and B's
+certificate may expire before A's final token. So when the final token's chain
+needs less than the DSS holds, the seal goes back to the B-LT material plus that
+chain's own evidence (gathered again when it is not B-LT material), rebuilds
+DSS from the signed revision, and requests one more archival token. It publishes
+that document when its token's chain is covered, and otherwise the first one.
+This is one extra token request, made only after such a failover.
+
 If archival timestamping or its missing validation evidence is unavailable, the
 seal keeps the valid B-LT document and reports `DocumentTimestampUnavailable`.
 Memory refusals stay typed seal errors, not TSA failover or profile degradation.
 This path uses the existing seal memory ledger and fetch policy. It introduces
-no retry count, timeout, resource limit or endpoint pinning.
+no retry count beyond that one request, and no timeout, resource limit or
+endpoint pinning.
 
 The native seal organ must be rebuilt to use this behavior. There is no wire,
 SDK, configuration or stored-record change.

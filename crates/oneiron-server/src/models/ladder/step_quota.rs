@@ -42,7 +42,7 @@ impl OfferLadder {
     pub(super) fn record_step_offer_result(&self, call: Call<'_>, mut walk: Walk) -> LlmError {
         match walk.last.take() {
             Some(error) => {
-                self.ask_parked(&walk, call.needs, call.run.principal());
+                self.ask_parked(&walk, call.needs, call.run);
                 error
             }
             None => self.parked_refusal(call, walk),
@@ -66,7 +66,7 @@ impl OfferLadder {
                 .health_rest(&walk)
                 .unwrap_or_else(|| self.unanswered(call, walk));
         };
-        self.ask_parked(&walk, call.needs, call.run.principal());
+        self.ask_parked(&walk, call.needs, call.run);
         let (retry_after, resets_at) = match rest.source {
             ResetSource::Parked => (None, Vec::new()),
             _ => (Some(rest.until.saturating_sub(now)), vec![rest.until]),

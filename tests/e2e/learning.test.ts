@@ -139,11 +139,12 @@ type Learning02Recall = PublicCall<"vault.recall">;
 suite.todo(test, "LEARNING-02", "waits on typed measured learning-cell/prior/provenance view and attributed-outcome projection observation");
 
 // LEARNING-03 — Autoresearch retains unsuccessful experiments should work.
-// OF-351 / OF-366. Waiting: typed campaign archive/evidence read, sealed-cohort
-// setup, and host-bound experiment child creation with HTTP+SDK bindings.
-// vault.research.fork only RECORDS an already-enqueued child; it cannot enqueue
-// one. run-tree reads only queue topology/status/result refs, not experiment
-// search/held-out evidence. Do not forge IDs or redirect unrelated tasks to fake it.
+// OF-351 / OF-366. vault.research.bind_authoring binds the fixed OF-366 ruler
+// to a create_root root (the row evaluate_split scores under);
+// vault.research.create_child enqueues a host-bound child and fork RECORDS it;
+// vault.research.archive returns every retained node with its original evidence;
+// vault.evals.cohorts.setup cuts the sealed cohort. run-tree reads only queue
+// topology/status/result refs. Do not forge IDs or redirect unrelated tasks to fake it.
 // Existing calls below are the real generated wire shapes, carried by HTTP and
 // tool-first MCP (arguments.spec); no made-up research endpoint is needed.
 // Author the ruler first. Fork good, losing and buggy candidates. Evaluate on
@@ -175,7 +176,7 @@ type Learning03Archive = {
   proposed_claim: { claim: Ref; parents: Ref[]; diff_receipt: Ref; approval: "Proposed" };
 };
 // Root: vault.research.create_root enqueues the run-bearing root vault.research.bind accepts.
-suite.todo(test, "LEARNING-03", "waits on its arming PR: the OF-366 authoring bind, real experiment results and counted sealed-referee completion over a vault.research.create_root root");
+suite.todo(test, "LEARNING-03", "waits on its arming PR: real experiment results and counted sealed-referee completion over vault.research.create_root roots; vault.research.bind_authoring binds the OF-366 ruler");
 
 // LEARNING-04 — Multi-critic findings and seal audits should work. OF-352/544.
 // Waiting: typed confession/recheck/audit receipt readback and controlled public

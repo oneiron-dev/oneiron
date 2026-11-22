@@ -109,15 +109,9 @@ async fn authenticated_note_socket_preserves_pins_provenance_and_review_after_re
     let a_dir = tempfile::tempdir().unwrap();
     let b_dir = tempfile::tempdir().unwrap();
     let a = Arc::new(Vault::open(a_dir.path(), VaultConfig::device()).unwrap());
-    let actor = EntityId::now();
-    a.put_entity(
-        &actor,
-        oneiron::registry::ENTITY_TYPE_PERSON,
-        TimeRange { start: 1, end: 1 },
-        1,
-        b"author",
-    )
-    .unwrap();
+    // The NOTE edit lands by the Grant, not by authorship: the author is
+    // the vault's owner (RULING NOTE-SCALAR-NO-GRANT = A).
+    let actor = a.ensure_embedded_owner_actor().unwrap();
     let memory = a.memory(actor, EdgeActorClass::Human);
     let claim = EntityId::now();
     memory
@@ -336,19 +330,19 @@ async fn document_handler_refuses_unbound_and_selector_impersonation_and_raw_pin
     use super::{conn_state::ConnState, documents::handle_document};
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
-    let author = EntityId::now();
+    // The author's edits land by the Grant, not by authorship: the author
+    // is the vault's owner (RULING NOTE-SCALAR-NO-GRANT = A).
+    let author = vault.ensure_embedded_owner_actor().unwrap();
     let stranger = EntityId::now();
-    for actor in [author, stranger] {
-        vault
-            .put_entity(
-                &actor,
-                oneiron::registry::ENTITY_TYPE_PERSON,
-                TimeRange { start: 1, end: 1 },
-                1,
-                b"actor",
-            )
-            .unwrap();
-    }
+    vault
+        .put_entity(
+            &stranger,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"actor",
+        )
+        .unwrap();
     let note = EntityId::from_hex(
         &vault
             .memory(author, EdgeActorClass::Human)
@@ -847,22 +841,14 @@ async fn note_frames_gate(check_latency: bool) {
     use std::time::Instant;
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
-    // R4: the bare Member row stands for nothing. The writer stays `author`; the socket runs
-    // as the vault's live owner on the own-device Grant (Member scope kept, role/preset Owner).
-    let author = EntityId::now();
-    vault
-        .put_entity(
-            &author,
-            oneiron::registry::ENTITY_TYPE_PERSON,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"author",
-        )
-        .unwrap();
-    let actor = oneiron::WriteActor::new(author, EdgeActorClass::Human);
+    // The title frames land by the Grant, not by authorship: the author is
+    // the vault's owner (RULING NOTE-SCALAR-NO-GRANT = A). R4: the bare Member
+    // row stands for nothing, so the socket runs as the owner on the own-device
+    // Grant (Member scope kept, role/preset Owner).
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    let actor = oneiron::WriteActor::new(owner, EdgeActorClass::Human);
     let first = vault.create_note("research", "first", actor).unwrap();
     let second = vault.create_note("research", "second", actor).unwrap();
-    let owner = vault.ensure_embedded_owner_actor().unwrap();
     let grant_id = EntityId::now();
     let mut grant = oneiron::federation::FederationGrant::new(
         oneiron::FederationGrantScope::vault(7),

@@ -10,6 +10,7 @@ use super::super::OwnDeviceImport;
 use super::super::base::{ITEM11_UNREADABLE_HOME_PROMOTION, SyncClient, home_reads_window};
 use super::super::types::{SyncClientConfig, SyncResidenceMode};
 use crate::EntityId;
+use crate::side_table::{self, Raw, SideTable};
 use crate::sync::selector::encode_sync_selector;
 use crate::sync::transport::TransportError;
 use crate::sync::types::WindowKey;
@@ -66,6 +67,15 @@ fn import_promotion_snapshot_with(
 /// window sync without waiting for a first edit to promote it.
 const RETAIN_REFUSED_PREFIX: &str = "rr:w:";
 
+/// The rows under [`RETAIN_REFUSED_PREFIX`]. Key: the window key. Value: `[1]`.
+const RETAIN_REFUSED_WINDOW: SideTable<String, [u8; 1], Raw> =
+    SideTable::new(&side_table::SYNC_RESIDENCE_RETAIN_REFUSED_WINDOW);
+
+/// A window promoted from thin to canonical residence (`rp:w:`): the home
+/// granted it, and reconnect replays it. Key: the window key. Value: `[1]`.
+const PROMOTED_WINDOW: SideTable<String, [u8; 1], Raw> =
+    SideTable::new(&side_table::SYNC_RESIDENCE_PROMOTED_WINDOW);
+
 /// Asks the home again to retain each window it refused, on an opened
 /// machine; returns how many it retains now. Off the live sync loop, on the
 /// window manager and a client config alone, like [`relay_sealed_bundle`].
@@ -114,18 +124,11 @@ pub(crate) fn mark_ungranted_windows_in_txn(
 ) -> crate::error::Result<Vec<WindowKey>> {
     let mut marked = Vec::new();
     for window in windows {
-        let granted = vault
-            .store
-            .sync_state
-            .get(txn, &format!("rp:w:{window}"))?
-            .is_some();
-        if granted {
+        let key = window.to_string();
+        if PROMOTED_WINDOW.contains(vault, txn, &key)? {
             continue;
         }
-        vault
-            .store
-            .sync_state
-            .put(txn, &format!("{RETAIN_REFUSED_PREFIX}{window}"), &[1])?;
+        RETAIN_REFUSED_WINDOW.put(vault, txn, &key, &[1])?;
         marked.push(window);
     }
     Ok(marked)
@@ -134,6 +137,8 @@ pub(crate) fn mark_ungranted_windows_in_txn(
 impl SyncClient {
     /// Promote a thin item's whole canonical window before the first edit.
     /// A denied or oversized full-window grant leaves the thin cache read-only.
+    /// Member world admission belongs to the home's pinned selector, not
+    /// local owner placement policy (MEMBER-SYNC-CATALOGUE = A).
     pub async fn promote_window(
         &mut self,
         window: &WindowKey,
@@ -160,7 +165,10 @@ impl SyncClient {
         // A home that may not read the window's world is not told its name
         // (FIX 922 item 11): the promotion is refused and the thin cache stays
         // read-only (FIX 22217).
-        if ITEM11_UNREADABLE_HOME_PROMOTION && !home_reads_window(&self.vault, rpc.home, window) {
+        if !self.config.member_lane
+            && ITEM11_UNREADABLE_HOME_PROMOTION
+            && !home_reads_window(&self.vault, rpc.home, window)
+        {
             return Err(TransportError::world_unreadable_by_home());
         }
         let reply: PromotionReply = serde_json::from_value(
@@ -214,7 +222,8 @@ impl SyncClient {
     /// window marked promoted. Its snapshot merges into the held copy: the
     /// two are the same canonical CRDT, never an independently authored one.
     /// A refused window stays on disk but no longer syncs, and is marked so the
-    /// residence upkeep asks again ([`retry_refused_retains`]).
+    /// residence upkeep asks again ([`retry_refused_retains`]). A member lane
+    /// leaves world admission to the home (MEMBER-SYNC-CATALOGUE = A).
     pub async fn retain_window(&mut self, window: &WindowKey) -> Result<bool, TransportError> {
         if self.config.residence_mode != SyncResidenceMode::Opened {
             return Err(refused());
@@ -298,7 +307,10 @@ impl SyncClient {
         // the selector (FIX 3872): a retain stays on disk, marked for the
         // residence upkeep to ask again, as when the home refuses it, while a
         // prefetch waits for the next predicted pass.
-        if ITEM11_UNREADABLE_HOME_PROMOTION && !home_reads_window(&self.vault, rpc.home, window) {
+        if !self.config.member_lane
+            && ITEM11_UNREADABLE_HOME_PROMOTION
+            && !home_reads_window(&self.vault, rpc.home, window)
+        {
             if held.is_some() {
                 self.mark_retain_refused(window)?;
             }
@@ -379,14 +391,9 @@ impl SyncClient {
             .map_err(|e| TransportError::Storage(e.to_string()))?;
         self.vault
             .with_write_txn_grouped(|txn| {
-                self.vault
-                    .store
-                    .sync_state
-                    .delete(txn, &format!("{RETAIN_REFUSED_PREFIX}{window}"))?;
-                self.vault
-                    .store
-                    .sync_state
-                    .put(txn, &format!("rp:w:{window}"), &[1])
+                let key = window.to_string();
+                RETAIN_REFUSED_WINDOW.delete(&*self.vault, txn, &key)?;
+                PROMOTED_WINDOW.put(&*self.vault, txn, &key, &[1])
             })
             .map_err(|e| TransportError::Storage(e.to_string()))?;
         super::promoted_pads::land_pads(&self.vault, window, pads);
@@ -440,10 +447,7 @@ impl SyncClient {
         self.vault
             .with_write_txn_grouped(|txn| {
                 drop_thin_rows_in(&self.vault, txn, window)?;
-                self.vault
-                    .store
-                    .sync_state
-                    .put(txn, &format!("rp:w:{window}"), &[1])?;
+                PROMOTED_WINDOW.put(&*self.vault, txn, &window.to_string(), &[1])?;
                 Ok(())
             })
             .map_err(|e| TransportError::Storage(e.to_string()))?;
@@ -459,11 +463,7 @@ impl SyncClient {
     fn mark_retain_refused(&self, window: &WindowKey) -> Result<(), TransportError> {
         self.vault
             .with_write_txn_grouped(|txn| {
-                self.vault.store.sync_state.put(
-                    txn,
-                    &format!("{RETAIN_REFUSED_PREFIX}{window}"),
-                    &[1],
-                )
+                RETAIN_REFUSED_WINDOW.put(&*self.vault, txn, &window.to_string(), &[1])
             })
             .map_err(|e| TransportError::Storage(e.to_string()))
     }
@@ -475,7 +475,8 @@ impl SyncClient {
     /// and a later first edit promotes it again. Controls, tombstoned and
     /// pending rows stay. Not `complete` while the home lacks an op, a queued
     /// write for the window waits, or a handle keeps the window open: call
-    /// again.
+    /// again. A member lane's world admission belongs to the home
+    /// (MEMBER-SYNC-CATALOGUE = A), as for promotion.
     pub async fn demote_window(
         &mut self,
         window: &WindowKey,
@@ -504,7 +505,10 @@ impl SyncClient {
         // A home that may not read the window's world is not told its name or
         // the selector (FIX 3872): the demotion is refused and the window
         // stays promoted here (FIX 22217).
-        if ITEM11_UNREADABLE_HOME_PROMOTION && !home_reads_window(&self.vault, rpc.home, window) {
+        if !self.config.member_lane
+            && ITEM11_UNREADABLE_HOME_PROMOTION
+            && !home_reads_window(&self.vault, rpc.home, window)
+        {
             return Err(TransportError::world_unreadable_by_home());
         }
         let reply: WindowVvReply = serde_json::from_value(

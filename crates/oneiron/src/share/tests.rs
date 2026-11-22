@@ -31,6 +31,7 @@ pub(crate) fn fixture_with_config(
         created_at: 42,
         revoked_at: None,
         expires_at: None,
+        mention: None,
     };
     vault.put_entity(
         &issuer.entity_ref(),
@@ -157,7 +158,7 @@ fn claim(
     body.stale = stale;
     let bytes = encode_claim_body(&body)?;
     vault.with_write_txn(|txn| {
-        let raw = entity_record(ENTITY_TYPE_CLAIM, time(1), 1, &bytes);
+        let raw = entity_record(ENTITY_TYPE_CLAIM, time(1), 1, 0, &bytes);
         vault.store.entities.put(txn, id.as_bytes(), &raw)?;
         Ok(())
     })?;
@@ -322,7 +323,12 @@ fn revoke_stops_resolution_and_cannot_be_bypassed() -> Result<()> {
         vault
             .put_access_grant(
                 &id,
-                &AccessGrant::companion_profile_read(entity(0x52), entity(0x53), entity(0x54), 1)
+                &AccessGrant::companion_profile_read(
+                    entity(0x52),
+                    entity(0x53),
+                    Some(entity(0x54)),
+                    1,
+                )
             )
             .is_err()
     );
@@ -418,7 +424,9 @@ fn pending_never_creates_and_generic_grants_never_mint_shares() -> Result<()> {
 fn effect_authority_binds_every_immutable_share_axis() -> Result<()> {
     let (_dir, _vault, issuer, share) = fixture()?;
     let id = entity(0x81);
-    let effect = crate::gate::share_create_effect(&id, &issuer, &share)?;
+    let travel =
+        crate::share_travel::TravelChoice::default_for(crate::share_travel::TravelKind::Brief);
+    let effect = crate::gate::share_create_effect(&id, &issuer, &share, &travel)?;
     let mut variants = Vec::new();
     let mut other = share.clone();
     other.brief_ref.push('x');
@@ -438,17 +446,17 @@ fn effect_authority_binds_every_immutable_share_axis() -> Result<()> {
     for other in variants {
         assert_ne!(
             effect.brief_ref,
-            crate::gate::share_create_effect(&id, &issuer, &other)?.brief_ref
+            crate::gate::share_create_effect(&id, &issuer, &other, &travel)?.brief_ref
         );
     }
     assert_ne!(
         effect.brief_ref,
-        crate::gate::share_create_effect(&entity(0x82), &issuer, &share)?.brief_ref
+        crate::gate::share_create_effect(&entity(0x82), &issuer, &share, &travel)?.brief_ref
     );
     let other = WriteActor::new(entity(0x54), EdgeActorClass::Human);
     assert_ne!(
         effect.brief_ref,
-        crate::gate::share_create_effect(&id, &other, &share)?.brief_ref
+        crate::gate::share_create_effect(&id, &other, &share, &travel)?.brief_ref
     );
     let mut reordered = share.clone();
     reordered.world_refs = share.world_refs.iter().rev().copied().collect();
@@ -458,7 +466,7 @@ fn effect_authority_binds_every_immutable_share_axis() -> Result<()> {
     );
     assert_eq!(
         effect.brief_ref,
-        crate::gate::share_create_effect(&id, &issuer, &reordered)?.brief_ref
+        crate::gate::share_create_effect(&id, &issuer, &reordered, &travel)?.brief_ref
     );
     Ok(())
 }
@@ -481,7 +489,7 @@ fn malformed_or_unadmitted_share_rows_return_no_view() -> Result<()> {
     for bytes in [
         vec![],
         vec![ENTITY_TYPE_ACCESS_GRANT],
-        entity_record(ENTITY_TYPE_ACCESS_GRANT, time(42), 42, b"bad body"),
+        entity_record(ENTITY_TYPE_ACCESS_GRANT, time(42), 42, 0, b"bad body"),
     ] {
         vault.with_write_txn(|txn| {
             vault
@@ -872,7 +880,12 @@ fn headerless_residue_with_live_share_refuses_deletion() -> Result<()> {
     share.brief_ref = brief.to_hex();
     vault.create_share(&grant, &issuer, &share)?;
     vault.with_write_txn(|txn| {
-        crate::batch::deindex_entity(&vault.store, txn, &brief).map(|_| ())
+        crate::batch::deindex_entity(
+            &crate::secret_custody::CustodyWrite::of(&vault),
+            txn,
+            &brief,
+        )
+        .map(|_| ())
     })?;
     assert!(vault.get_raw(&brief)?.is_none());
     vault.put_vector(&brief, &[0.1, 0.2, 0.3, 0.4])?;
@@ -975,7 +988,12 @@ fn headerless_delete_reserves_identity_before_local_purge() -> Result<()> {
     share.brief_ref = brief.to_hex();
     vault.create_share(&grant, &issuer, &share)?;
     vault.with_write_txn(|txn| {
-        crate::batch::deindex_entity(&vault.store, txn, &brief).map(|_| ())
+        crate::batch::deindex_entity(
+            &crate::secret_custody::CustodyWrite::of(&vault),
+            txn,
+            &brief,
+        )
+        .map(|_| ())
     })?;
     vault.put_vector(&brief, &[0.1, 0.2, 0.3, 0.4])?;
     vault.revoke_share(&grant, &issuer, 90)?;

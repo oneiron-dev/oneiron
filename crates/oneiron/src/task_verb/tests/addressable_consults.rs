@@ -37,6 +37,7 @@ fn child_consult_answers_abstains_and_refuses_dangling_actor() {
                     reason_ref: question,
                 },
                 completed_at: CONSULT_NOW + 10,
+                measured_spend: None,
             },
         )
         .unwrap();

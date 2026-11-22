@@ -28,7 +28,8 @@ pub(in crate::sync) use document_admission::{
 mod edge;
 mod guest_document;
 pub use guest_document::{
-    GuestDocumentShareRequest, export_guest_document_for_guest, share_guest_document_as_owner,
+    GuestDocumentShareRequest, export_guest_document_for_guest, guest_document_rows_still_readable,
+    share_guest_document_as_owner,
 };
 mod guest_proposal;
 pub use guest_proposal::{
@@ -40,6 +41,12 @@ mod machine_history;
 pub(in crate::sync) use machine_history::{HistoryControlGate, machine_history_controls};
 mod note_admission;
 mod peer_confidence;
+// SELECTOR-RELEASE-POINT = B: what a queued answer is judged again by.
+mod release_basis;
+pub use release_basis::{
+    CoreferenceDisclosure, SelectorReaderReach, SelectorReleaseBasis,
+    recording_coreference_disclosure,
+};
 mod scope;
 // FIX 7608 slice 4: the masked copy a sync peer gets of a marked repo item.
 pub(crate) mod secret_projection;
@@ -57,13 +64,12 @@ pub(crate) const HELD_EDIT_CAUSALITY_KEY: &str = "0";
 mod text_egress;
 // FIX 10161: the tombstones a narrower grant's export carries.
 mod tombstones;
+pub(in crate::sync) use tombstones::device_only_by_capture;
 // FIX 10162: the admission validators that read in the caller's txn.
 #[cfg(feature = "sync")]
 mod validators;
 pub(crate) use note_admission::admit_note_in_txn;
 pub(in crate::sync) use text_egress::document_sources_readable_in_txn;
-// FIX [LIBTEST-QUARANTINE-SYNC-SELECTOR-TESTS]: the lib test target's type check fails here (8 errors: E0061 x4, E0063 x4); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 
@@ -72,8 +78,11 @@ mod tests;
 use super::bridge;
 use super::loro_support;
 
+pub(in crate::sync) use self::admission::FEDERATION_ADMISSION_MESSAGE;
 #[cfg(test)]
 pub(in crate::sync) use self::admission::admit_peer_window_update;
+#[cfg(feature = "sync")]
+pub(crate) use self::admission::is_peer_task_authority_fact_refusal;
 #[cfg(feature = "test-hooks")]
 pub use self::admission::put_selector_test_federation_grant;
 #[cfg(feature = "sync")]
@@ -97,13 +106,15 @@ pub(crate) fn keep_carried_born_with(
 ) -> crate::error::Result<()> {
     born_with::keep_carried(vault, carried)
 }
+pub(crate) use self::authorize::GuestTombstones;
 pub(in crate::sync) use self::codec::granted_window_doc;
 pub(crate) use self::codec::guest_share_envelope_body_listing;
 pub use self::codec::{
-    RequestedAxis, SYNC_SELECTOR_SCHEMA_VERSION, SelectorVvRequest, SyncSelector,
-    SyncSelectorWorld, decode_selector_vv_request, decode_sync_selector,
+    RequestedAxis, SYNC_SELECTOR_SCHEMA_VERSION, SelectorAnswerDoc, SelectorVvRequest,
+    SyncSelector, SyncSelectorWorld, decode_selector_vv_request, decode_sync_selector,
     encode_selector_vv_request, encode_sync_selector, filtered_window_doc, filtered_window_doc_for,
     filtered_window_doc_for_peer, guest_share_envelope, guest_share_envelope_body,
+    selector_answer_doc_for_peer,
 };
 pub(crate) use self::edge::ReleasedStamps;
 pub(crate) use self::held_retire::retire_held_facet_stamps;

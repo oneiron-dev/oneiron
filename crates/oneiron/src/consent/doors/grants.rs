@@ -592,6 +592,31 @@ pub(crate) fn standing_grant_rows_in_txn(
     GRANTS.scan(store, txn)
 }
 
+/// Lands one standing grant row a home move carried, as the old home stored
+/// it, revoked or not, under its own reference, over any row this node keeps
+/// there (FIX [BK-HOME-MOVE-PAGE-INVITE-GRANT-NOT-CARRIED]): the new home
+/// holds the grant as the old home held it, so a grant the owner revoked
+/// there stays revoked, and a later mint here finds it and writes nothing.
+/// No receipt: the old home receipted each act on the row.
+///
+/// # Errors
+///
+/// [`Error::InvalidConfig`] when `grant_ref` is not the row's own reference
+/// or the row is a bypass grant, which no move carries; storage errors.
+pub(crate) fn land_carried_grant_row_in_txn(
+    store: &crate::store::Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    grant_ref: &str,
+    row: &ConsentGrantRow,
+) -> Result<()> {
+    if row.bypass.is_some() || crate::consent::consent_grant_row_grant_ref(row) != grant_ref {
+        return Err(Error::InvalidConfig(
+            "a carried standing grant row is not stored under its own reference".to_owned(),
+        ));
+    }
+    super::super::codec::put_grant_row_in_txn(store, wtxn, grant_ref, row)
+}
+
 /// [`Vault::record_standing_grant_use_in_txn`] for a door that holds the
 /// store and not the vault: the Gate's external-effect record writes the
 /// quiet reuse of the standing grant that covered an admitted effect beside

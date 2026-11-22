@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use crate::config::VaultConfig;
+use crate::connector_key::EffectorBudgetRowId;
 
 use super::*;
 
@@ -73,12 +74,15 @@ fn persist_pending(
         payload_hash: call.payload_hash,
         payload: call.payload.to_vec(),
         idempotency_key: call.idempotency_key.expect("idempotency key"),
+        idempotency_attempt_id: None,
         idempotency_supported,
         authorization_binding: Some(authorization_binding),
         admitted_approval: None,
+        pinned_approval: None,
         binding_version: OUTBOUND_BINDING_VERSION,
         resolved_endpoint: None,
         capability_provenance: None,
+        authorizing_owner: None,
         budget_accounting: BudgetChargeMarker {
             key_ref: None,
             budget_class: BudgetClass::Send,
@@ -576,7 +580,9 @@ fn content_digest_is_hash_of_msgpack_minus_digest_key() {
         .iter()
         .map(|(key, _)| key.as_str().expect("row keys are strings"))
         .collect();
-    assert_eq!(stored_keys, INTENT_LEDGER_VALUE_KEYS);
+    // Every key but the idempotency attempt, which only a row whose provider
+    // key names another attempt writes (review round 2 of #10220).
+    assert_eq!(stored_keys, &INTENT_LEDGER_VALUE_KEYS[..24]);
 
     let (digest_key, digest_value) = entries.pop().expect("the row carries a final entry");
     assert_eq!(digest_key.as_str(), Some(KEY_CONTENT_DIGEST));
@@ -844,7 +850,8 @@ fn every_body_field_is_digest_bound() {
             mutated(&base, |record| {
                 record.budget_accounting.key_ref =
                     Some(EntityId::from_bytes([0x77; 16]).expect("budget key ref"));
-                record.budget_accounting.matched_rows = vec![1, 2];
+                record.budget_accounting.matched_rows =
+                    vec![EffectorBudgetRowId::key(1), EffectorBudgetRowId::key(2)];
                 record.budget_accounting.sends_debit = 1;
             }),
         ),

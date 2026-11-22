@@ -425,21 +425,18 @@ pub(crate) mod test_support {
             bytes[1] = self.seed;
             bytes[2] = index;
             let claim_id = EntityId::from_bytes(bytes).expect("claim fixture id");
+            let mut body = ClaimBody::new(
+                predicate,
+                ClaimSubject::Entity(subject),
+                value,
+                1.0,
+                self.approval,
+                ClaimLifecycleStatus::Active,
+            )
+            .unwrap();
+            crate::test_util::stamp_vault_default_facet(vault, &mut body);
             vault
-                .put_claim(
-                    &claim_id,
-                    &ClaimBody::new(
-                        predicate,
-                        ClaimSubject::Entity(subject),
-                        value,
-                        1.0,
-                        self.approval,
-                        ClaimLifecycleStatus::Active,
-                    )
-                    .unwrap(),
-                    TimeRange { start: 1, end: 1 },
-                    1,
-                )
+                .put_claim(&claim_id, &body, TimeRange { start: 1, end: 1 }, 1)
                 .expect("put calendar claim");
         }
     }

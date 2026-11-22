@@ -1,6 +1,7 @@
 //! Public API surface of the engine-native executor: limits, config, errors, and code-mode step/outcome types.
 
 use super::cancel::StepCancellation;
+use super::host::resume_preflight::ResumePreflightReport;
 use crate::code_run::{
     CodeRunDeterminism, CodeRunReplayRecord, ResultFacet, SelfCall, SelfDispatchOutcome,
     SelfDurableWait, WaitKey,
@@ -404,12 +405,14 @@ pub trait JsCodeModeRuntime {
     ) {
     }
 
-    /// Lends the isolating backends the run's vault carries (F1-6): the
-    /// set its isolated lane selects a backend from. A runtime with no
-    /// isolated lane selects none, so it keeps none.
+    /// Lends the isolating backends the run's vault carries (F1-6), with
+    /// the vault's sandbox provider switch (L8-43): the set its isolated lane
+    /// selects a backend from, and whose machines it selects. A runtime with
+    /// no isolated lane selects none, so it keeps neither.
     fn bind_sandbox_backends(
         &mut self,
         _backends: std::sync::Arc<dyn crate::code_sandbox::microvm::SandboxBackends>,
+        _provider: crate::code_sandbox::SandboxProvider,
     ) {
     }
 
@@ -554,12 +557,26 @@ pub struct EngineExecutorOutcome {
     /// 8277), read without waiting on any check: a pending one lands later
     /// under its `check_ref`.
     pub program_steps: Vec<crate::code_run::ProgramStepFeedback>,
+    /// The resume-preflight report of the pending step this entry resumed, when it resumed one
+    /// and then committed it or parked it again (L8-23).
+    pub resume_preflight: Option<ResumePreflightReport>,
     /// The prompt prefix the run's last turn answer left cached, when its
     /// ladder stamped one (L2-37): a parked run's idle call reads it.
     pub cache_horizon: Option<crate::idle_fold::CachedPrefixHorizon>,
 }
 
 impl EngineExecutorOutcome {
+    /// This outcome with the resume-preflight report of the pending step its entry resumed,
+    /// when the entry resumed one and then committed it or parked it again (L8-23).
+    #[must_use]
+    pub(super) fn with_resume_preflight(
+        mut self,
+        resume_preflight: &Option<ResumePreflightReport>,
+    ) -> Self {
+        self.resume_preflight = resume_preflight.clone();
+        self
+    }
+
     /// The wait a Waiting run parked on, keyed as its reply is delivered;
     /// `None` for any other status.
     #[must_use]

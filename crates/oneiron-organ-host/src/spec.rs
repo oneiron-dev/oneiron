@@ -13,7 +13,9 @@ use crate::budget::BudgetConfig;
 
 /// Whose code an organ is. A third-party organ runs only inside a
 /// filesystem fence (Landlock on Linux, Seatbelt on macOS, FIX 7885); a
-/// host with none refuses it.
+/// host with none refuses it. A first-party organ runs inside the Linux
+/// fence where the host has it (FIX [FIRST-PARTY-ORGAN-PROC-REACH]), and
+/// unfenced where it has none and on macOS.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OrganTier {
     FirstParty,
@@ -75,14 +77,22 @@ pub struct OrganSpec {
     pub max_ask_bytes: u64,
     /// Where a granted `net.fetch` may go.
     pub fetch: FetchGrant,
-    /// What a third-party organ's fence lets it read besides the system's
-    /// own files and its program: dirs, each with all under it, or files.
-    /// A pack build is its program alone, and inputs cross as sealed
-    /// regions on its socket, so a pack organ names none. It writes only
-    /// its own scratch dir, which the host makes for each process and
+    /// What the organ's fence lets it read besides the system's own files
+    /// and its program: dirs, each with all under it, or files. A pack
+    /// build is its program alone, and inputs cross as sealed regions on
+    /// its socket, so a pack organ names none. A third-party organ writes
+    /// only its own scratch dir, which the host makes for each process and
     /// removes as it ends; outputs cross as sealed regions too. A
-    /// first-party organ is not fenced and ignores it.
+    /// first-party organ is fenced only on Linux, where the host has the
+    /// fence ([`OrganTier`]); unfenced it reads what its uid may.
     pub read_dirs: Vec<PathBuf>,
+    /// What a first-party organ's fence lets it write, and read, besides
+    /// the null device: dirs, each with all under it, or files. No organ
+    /// the engine installs names one, since its outputs cross as sealed
+    /// regions; the host's own checks grant their probe the dir it signals
+    /// through. A third-party organ writes its own scratch dir alone and
+    /// ignores it.
+    pub write_dirs: Vec<PathBuf>,
 }
 
 /// One ask verb an install grant names.
@@ -166,6 +176,7 @@ impl OrganSpec {
                 ..FetchGrant::default()
             },
             read_dirs: Vec::new(),
+            write_dirs: Vec::new(),
         }
     }
 }

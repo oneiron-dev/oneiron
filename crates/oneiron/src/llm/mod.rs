@@ -18,9 +18,11 @@ pub use defaults::{
     PurposeDefaultSubmitter, purpose_default_grant_target,
 };
 mod inference_admission;
+mod quota_delegate;
 mod tagger_admission;
 pub use inference_admission::admitted_as;
 pub use tagger_admission::{TaggerCall, TaggerCallContext, TaggerEgressPredicate};
+pub(crate) mod model_licence;
 mod role_defaults;
 mod solo;
 pub use inference_admission::{
@@ -57,6 +59,14 @@ pub mod score_scraper;
 pub mod seat;
 mod step;
 pub use step::public as model_step;
+#[cfg(oneiron_test_support)]
+pub(crate) use step::step_state_present_for_attempt;
+pub(crate) use step::{
+    StepCallInputs, StepInputLabels, StepInputRange, StepRecord, bind_step_call_inputs,
+    bind_step_input_versions, request_hash_step_receipt_in_txn, request_hash_step_record_in_txn,
+    request_hash_submit_receipt, request_hash_submit_receipt_keeping_erased,
+};
+
 pub mod tagger;
 
 pub use step::{
@@ -79,10 +89,19 @@ pub(crate) use step::{
     trap_consume_precheck_in_txn, verified_step_consolidation_eligible_in_txn,
     verified_step_effector_eligible_in_txn, wake_trap_in_txn,
 };
+// The parse retry's replay reads a step's saved work alone, its count reads
+// the sends the retry made, and its pending mark outlives a held-back retry
+// (reviews of #10269).
+pub(crate) use step::{
+    call_as_step_checked_counting_sends, follow_up_pending, mark_follow_up_pending,
+    recover_saved_step,
+};
 pub(crate) use step::{
     wake_budget_trap_of_park_in_txn, wake_budget_traps_in_txn, wake_pass_budget_traps,
     wake_resident_share_traps_in_txn,
 };
+// COMPACTION-STEP-CLAIM-READS-WITHOUT-SOURCES: a filed compaction step's rows.
+pub(crate) use step::{compaction_response_holders_in, is_compaction_step_row};
 // SEAT-PARK-MODEL-STEP-PATH: when a spent seat's refusal says it resets.
 pub(crate) use step::stated_reset_at;
 // KS-2B1: row-held step responses under body custody.
@@ -174,6 +193,9 @@ pub use self::autocheck::{
     AutoCheckCandidateOwned, AutoCheckDecisions, AutoCheckNotes, AutoCheckOutcome,
     AutoCheckSignals, AutoCheckWorldHold, BoundedAutoChecker,
 };
+pub use self::model_licence::{
+    NONCOMMERCIAL_LICENCES_HOSTED_REFUSAL, noncommercial_model_licences_admitted,
+};
 pub use self::role_defaults::RoleModelDefaults;
 pub use self::solo::{is_solo, mark_solo};
 pub(crate) use self::step::{
@@ -191,9 +213,9 @@ pub use oneiron_model::llm::{
     LlmCallMetadata, LlmCapability, LlmCatalogCost, LlmCatalogEntry, LlmEndpointFlavor, LlmError,
     LlmGenerateFuture, LlmInputUsage, LlmMessage, LlmMessageRole, LlmOutputUsage, LlmRequest,
     LlmResponse, LlmResult, LlmRole, LlmStream, LlmStreamEvent, LlmStreamResult, LlmToolSpec,
-    LlmUsage, ModelId, ModelIdError, ModelLocality, ModelTierRef, OwnedDispatchRelease,
-    PinnedConfigViolation, PinnedModelConfig, REASONING_BUDGET_PARAM, ReasoningEffort,
-    ReasoningPartKind, ResponseFormat, RetryableLlmError, SafeguardModelBinding,
+    LlmUsage, ModelId, ModelIdError, ModelLocality, ModelTierRef, OWN_SERVER_ONLY_PARAM,
+    OwnedDispatchRelease, PinnedConfigViolation, PinnedModelConfig, REASONING_BUDGET_PARAM,
+    ReasoningEffort, ReasoningPartKind, ResponseFormat, RetryableLlmError, SafeguardModelBinding,
     SafeguardModelBindingError, ServedCacheHorizon, SingleRouteBackend, SingleSend, SpentKind,
     TierPrecedence, TransportFault, TransportFaultKind, UnsupportedCapability,
 };
@@ -230,7 +252,9 @@ pub use budget::{
     VaultResidentLedger,
 };
 pub use step::heal_sent_markers;
-pub(crate) use step::{OpenTrapWait, open_trap_waits};
+pub(crate) use step::{
+    OpenTrapWait, open_trap_waits, trap_consumed_in_txn, trap_waits_for_attempt_in_txn,
+};
 pub(crate) use step::{resume_peer_result_steps, resume_signalled_steps};
 
 // The lift sweep's typed acceptance for this module's authored side

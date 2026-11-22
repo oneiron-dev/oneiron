@@ -107,6 +107,9 @@ pub(crate) struct HousekeepingPasses {
     /// The checkpoint upkeep's last failure, `None` once a pass ends `Ok`.
     /// In RAM only: a restarted host warns again.
     checkpoint_failure: std::sync::Mutex<Option<CheckpointFailure>>,
+    /// The own devices' burst batches whose landing a socket or the device
+    /// burst drain's pass claimed (FIX DEVICE-BURST-ALLOW-DRAIN-OVERLAP).
+    pub(super) device_burst_landings: super::device_burst_drain::DeviceBurstLandings,
     /// The lifecycle tick's steps, in the order it took them.
     #[cfg(test)]
     pub(super) tick_steps: std::sync::Mutex<Vec<&'static str>>,
@@ -278,9 +281,6 @@ impl SyncServer {
                 .cleanup_residence_work(HOUSEKEEPING_PASS_BUDGET)
                 .await;
             super::consult_settle::settle_consults(Arc::clone(server.vault())).await;
-            // Waits over AGENT children whose `until` has passed are answered
-            // as `cutoff` ([AGENT-WAIT-DEADLINE]).
-            super::agent_wait_settle::settle_agent_waits(Arc::clone(server.vault())).await;
             // SEAT-PARK-MODEL-STEP-PATH: a lapsed SIWC login whose credential
             // opens again writes its seat Available, which wakes its parks.
             let restored = server
@@ -312,6 +312,17 @@ impl SyncServer {
                 tracing::warn!(
                     panicked = error.is_panic(),
                     "courtesy delete delivery failed"
+                );
+            }
+            // L7-09: the owner's standing erase_request_reply row answers
+            // each filed courtesy ask that has no answer yet.
+            let answers = Arc::clone(&server);
+            if let Err(error) =
+                tokio::task::spawn_blocking(move || answers.answer_filed_asks_by_setting()).await
+            {
+                tracing::warn!(
+                    panicked = error.is_panic(),
+                    "courtesy ask setting answer failed"
                 );
             }
             // Lapsed host orders, ended silences, owner erases no hold blocks
@@ -490,7 +501,6 @@ impl SyncServer {
         let (report, reported) = tokio::sync::oneshot::channel();
         let vault = Arc::clone(self.vault());
         let consults = Arc::clone(&vault);
-        let agent_waits = Arc::clone(&vault);
         let budget = self.housekeeping_passes.budget(OWNER_PASS_BUDGET);
         let access = Arc::new(self.model_pack_access());
         let host_access = Arc::clone(&access);
@@ -529,10 +539,8 @@ impl SyncServer {
             if let Ok(done) = done {
                 let _ = report.send(done);
             }
-            // Overdue consults expire on the owner's pass too (DOOR-063), and
-            // due waits over AGENT children are answered.
+            // Overdue consults expire on the owner's pass too (DOOR-063).
             super::consult_settle::settle_consults(consults).await;
-            super::agent_wait_settle::settle_agent_waits(agent_waits).await;
         });
         self.housekeeping_passes.hold(pass);
         reported.await.ok()

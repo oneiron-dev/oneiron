@@ -24,6 +24,8 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError, Weak};
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use super::admit::ShadowAdmission;
 use super::types::{ShadowBodyRef, ShadowUnavailable, ShadowUnavailableReason};
 use crate::batch::secret_scan::{BodySpool, SpoolAdmission};
@@ -349,7 +351,7 @@ impl ShadowBodyStore {
         };
         let mut bytes = Vec::new();
         file.read_to_end(&mut bytes)?;
-        if *blake3::hash(&bytes).as_bytes() != body.hash {
+        if *ContentHash::of(&bytes).as_bytes() != body.hash {
             return Err(Error::CorruptedIndex("shadow arm body digest"));
         }
         Ok(Some(bytes))

@@ -2,22 +2,15 @@
 
 use super::{NoteEdit, NoteEditOutcome, TakeTarget, decode_note_body};
 use crate::claim::ScopedReadActorKey;
-use crate::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
+use crate::{EdgeActorClass, EntityId, Vault, VaultConfig, WriteActor};
 
 #[test]
 fn note_live_reads_survive_reopen_without_mirroring_projection_into_birth() {
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), VaultConfig::device()).unwrap();
-    let actor = EntityId::from_bytes([0x51; 16]).unwrap();
-    vault
-        .put_entity(
-            &actor,
-            crate::registry::ENTITY_TYPE_PERSON,
-            TimeRange { start: 1, end: 1 },
-            1,
-            b"person",
-        )
-        .unwrap();
+    // The NOTE edit lands by the Grant, not by authorship: the author is
+    // the vault's owner (RULING NOTE-SCALAR-NO-GRANT = A).
+    let actor = vault.ensure_embedded_owner_actor().unwrap();
     vault
         .install_read_permit_for_test(WriteActor::new(actor, EdgeActorClass::Human))
         .unwrap();

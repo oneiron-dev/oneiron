@@ -247,21 +247,20 @@ fn carried(
             Scope::RELATED,
             vec![markup("p:pic>")],
         ),
-        _ => return listed(recipe, subject, n, ids),
+        _ => return Ok(listed(recipe, subject, n, ids)),
     })
 }
 
 /// The mutations that move the text shape or change the slide list.
-fn listed(recipe: Recipe, subject: &Subject<'_>, n: NodeId, ids: &mut Ids) -> Res<Plan> {
+fn listed(recipe: Recipe, subject: &Subject<'_>, n: NodeId, ids: &mut Ids) -> Plan {
     let (s, t) = (subject.anchor.slide, subject.anchor.shape);
     let deck = &subject.deck.deck;
     let first = deck
         .texts
         .get(&t)
         .and_then(|body| body.paragraphs.first())
-        .map(|paragraph| office_text(&paragraph.text()))
-        .unwrap_or_default();
-    Ok(match recipe {
+        .map_or_default(|paragraph| office_text(&paragraph.text()));
+    match recipe {
         Recipe::AddSlide => new_slide(n, ids),
         Recipe::MoveShape => {
             let top = deck.nodes[&s].children.len() + 1;
@@ -329,7 +328,7 @@ fn listed(recipe: Recipe, subject: &Subject<'_>, n: NodeId, ids: &mut Ids) -> Re
             ],
             removes_shape: true,
         },
-    })
+    }
 }
 
 /// A group of two live-born shapes, one with text.
