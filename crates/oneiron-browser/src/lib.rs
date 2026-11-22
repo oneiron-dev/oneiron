@@ -56,8 +56,8 @@ mod switch;
 mod verbs;
 
 pub use answer::{
-    BrowserAnswer, DesktopAnswer, SessionFenceProof, SessionManifest, SessionSeccomp,
-    TakeoverRecord, WindowSwitch, WindowSwitchCause,
+    BrowserAnswer, DesktopAnswer, SessionFenceProof, SessionGuestPressure, SessionManifest,
+    SessionSeccomp, TakeoverRecord, WindowSwitch, WindowSwitchCause,
 };
 pub use demonstration::{
     DemonstrationId, DemonstrationOutput, DemonstrationSource, DemonstrationStartInput,

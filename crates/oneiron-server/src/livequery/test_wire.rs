@@ -3,6 +3,7 @@
 //! the actual MessagePack envelope, binary chunks, sequencing and snapshot EOSE.
 use super::*;
 
+#[cfg(test)]
 pub(crate) fn request(tag: u8, mut value: Value) -> Vec<u8> {
     let object = value.as_object_mut().unwrap();
     let id = object
@@ -28,6 +29,7 @@ pub(crate) fn request(tag: u8, mut value: Value) -> Vec<u8> {
     bytes
 }
 
+#[cfg(test)]
 fn messagepack(value: Value) -> rmpv::Value {
     match value {
         Value::Null => rmpv::Value::Nil,

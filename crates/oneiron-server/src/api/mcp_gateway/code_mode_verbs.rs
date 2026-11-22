@@ -74,6 +74,9 @@ pub(crate) use self::dispatch::code_mode_line;
 // The integration tests' door to a draft's solved-run span (FIX 10508).
 #[cfg(oneiron_test_support)]
 pub(crate) use self::solved_runs::draft_checked_span;
+// The integration tests' door to a run call's admitted lane (FIX-LIST 25102).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::dispatch::admit_run_call_for_test;
 
 use self::dispatch::*;
 use self::field_writer::RunFieldWriter;

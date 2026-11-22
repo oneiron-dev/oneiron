@@ -15,6 +15,11 @@ pub struct IdentityAnswerEvidenceRequest {
     pub choice: String,
     #[serde(default)]
     pub evidence_refs: Vec<String>,
+    /// The token of the member's someone-new proposal an owner accepts, as
+    /// its notice's tap names it: the answer stands only while that proposal
+    /// does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposal: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

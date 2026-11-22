@@ -11,6 +11,7 @@ use crate::{Vault, VaultConfig};
 fn fixture() -> (tempfile::TempDir, Vault, WriteActor) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let actor = vault.ensure_embedded_owner_actor().unwrap();
     (dir, vault, WriteActor::new(actor, EdgeActorClass::Human))
 }
@@ -364,7 +365,7 @@ fn unknown_plugin_kind_is_refused_at_raw_local_and_replay_doors() {
     let body = encode_note_body(&NoteBody {
         source_revision_ref: [0x42; 16],
         kind: NoteKind::wire("example.notes/uninstalled").unwrap(),
-        author_ref: actor.entity_ref(),
+        author_ref: NoteActor::Actor(actor.entity_ref()),
         markdown: "birth".into(),
     })
     .unwrap();
@@ -378,7 +379,7 @@ fn unknown_plugin_kind_is_refused_at_raw_local_and_replay_doors() {
     assert!(matches!(
         vault
             .batch()
-            .put_replicated(&id, crate::registry::ENTITY_TYPE_NOTE, time, 1, &body)
+            .put_replicated(&id, crate::registry::ENTITY_TYPE_NOTE, time, 1, None, &body)
             .commit(),
         Err(Error::Record(crate::error::RecordError::InvalidNoteBody(_)))
     ));

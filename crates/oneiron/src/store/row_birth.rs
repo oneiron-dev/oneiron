@@ -9,8 +9,8 @@ use crate::write_envelope::provenance::made_by::{
     MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByProcess, MadeByTrigger,
 };
 use heed::RwTxn;
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 #[doc(hidden)]
 use oneiron_verb_wire::store::row_birth::{MAX_CONTENT_HASH_HEX, WITHHELD_HANDLE_HEX};
@@ -224,7 +224,7 @@ impl RowBirth {
                     identity: door.to_owned(),
                     version: "1".into(),
                     // A write door takes no render parameters.
-                    params_hash: format!("{:x}", Sha256::digest([])),
+                    params_hash: write_door_params_hash(),
                 },
                 at,
                 trigger: None,
@@ -246,15 +246,14 @@ impl RowBirth {
     }
 
     /// The input hash over `parts`, each length-prefixed so two splits of the
-    /// same bytes never collide.
+    /// same bytes never collide (`purposes::store::MADE_BY_CONTENT`).
     #[must_use]
     pub fn content_hash_of(parts: &[&[u8]]) -> String {
-        let mut hasher = blake3::Hasher::new_derive_key("oneiron made_by content_hash v1");
+        let mut hasher = LegacyDigest::new(purposes::store::MADE_BY_CONTENT);
         for part in parts {
-            hasher.update(&(part.len() as u64).to_le_bytes());
-            hasher.update(part);
+            hasher.len_u64_le(part.len()).raw(part);
         }
-        hasher.finalize().to_hex().to_string()
+        oneiron_hex::encode(&hasher.finish())
     }
 
     /// The shape rules a birth must meet before any row is read: a valid
@@ -377,7 +376,7 @@ impl RowBirth {
                     identity: door.to_owned(),
                     version: "1".into(),
                     // A write door takes no render parameters.
-                    params_hash: format!("{:x}", Sha256::digest([])),
+                    params_hash: write_door_params_hash(),
                 },
                 at,
                 trigger: None,
@@ -416,4 +415,17 @@ impl RowBirth {
         }
         Some(birth)
     }
+}
+
+/// A write door's params hash: SHA-256 of no bytes, as lowercase hex
+/// (`purposes::store::WRITE_DOOR_PARAMS`).
+fn write_door_params_hash() -> String {
+    oneiron_hex::encode(&LegacyDigest::new(purposes::store::WRITE_DOOR_PARAMS).finish())
+}
+
+/// [`write_door_params_hash`] for the K door
+/// (`test_doors::fingerprint_keep_store_digests`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn write_door_params_hash_for_test() -> String {
+    write_door_params_hash()
 }

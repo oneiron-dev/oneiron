@@ -29,7 +29,9 @@ pub use oneiron_verb_wire::skill_optimize::eval_set::repair_task::{
 };
 
 /// A compiled response task. The answer and source evidence stay out of the
-/// candidate input. This is not a label, a no-leak certificate or a measured pass.
+/// candidate input, and the answer is not in the task's own workspace or
+/// history, by exact text. This is not a label, a
+/// certificate of task quality or a measured pass.
 #[derive(Debug, Clone)]
 pub struct EvalRepairTask {
     pub source: EvalRepairTaskSource,
@@ -67,6 +69,27 @@ impl EvalRepairTask {
 pub struct EvalRepairTaskRead {
     pub task: Option<EvalRepairTask>,
     pub receipt: ScopedReadReceipt,
+}
+
+/// Whether `answer` sits in `world`, which the candidate is shown: in a string
+/// or an object key, or as a number's or a boolean's whole text. The answer is
+/// trimmed of outer whitespace; an empty one leaks nothing. Exact text only:
+/// a paraphrase passes, and a short answer that recurs by chance refuses.
+fn answer_leaks(world: &Value, answer: &str) -> bool {
+    fn holds(value: &Value, answer: &str) -> bool {
+        match value {
+            Value::String(text) => text.contains(answer),
+            Value::Object(fields) => fields
+                .iter()
+                .any(|(key, value)| key.contains(answer) || holds(value, answer)),
+            Value::Array(items) => items.iter().any(|item| holds(item, answer)),
+            Value::Number(number) => number.to_string() == answer,
+            Value::Bool(flag) => flag.to_string() == answer,
+            Value::Null => false,
+        }
+    }
+    let answer = answer.trim();
+    !answer.is_empty() && holds(world, answer)
 }
 
 fn at_pointer<'a>(value: &'a Value, pointer: &str) -> Result<&'a Value> {
@@ -163,6 +186,17 @@ impl Memory<'_> {
                 "Repair response outcome must be text",
             ))?
             .to_owned();
+        // A trace is a task only if its answer is not leaked in the workspace
+        // or the history (ARCH-0053 #eval-trace-task): the rebuilt state and
+        // the input. The intent is the task's own words and is not checked.
+        if answer_leaks(&spec.initial_state, &expected_response)
+            || answer_leaks(&spec.input, &expected_response)
+        {
+            return Err(Error::InvalidClaimBody(
+                "Repair task answer is leaked in its workspace or history",
+            )
+            .into());
+        }
         // The grader is hashed with the task, but is never part of a leg's input.
         let bytes = serde_json::to_vec(&(&source, &spec, &expected_response))
             .map_err(|_| Error::InvalidClaimBody("Repair task encoding failed"))?;

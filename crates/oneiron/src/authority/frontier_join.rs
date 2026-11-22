@@ -33,6 +33,14 @@
 //! keeps today's width refusal and nothing is written. It reads no role,
 //! clearance or owner act beyond that, and grants nothing.
 //!
+//! A carrier's join for the owner's own act carries the owner key's proof
+//! that act carries ([`FrontierSigner::install`]; row
+//! OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS), so an install past its
+//! owner reserve lands the join as it lands the act. The proof stays off a
+//! join whose parent state does not take it ([`gives_owner_proof`]), which
+//! the fold judges there; such a join is carried unproven, as every join
+//! for an act that is not the owner's own is.
+//!
 //! A writer whose own side heads alone fill one entry joins them the same
 //! way first, in one join, by the same key, in the scope of the branch they
 //! ride (FIX 11868): an anchor its own heads
@@ -53,6 +61,7 @@ use std::collections::BTreeSet;
 use ed25519_dalek::SigningKey;
 
 use super::machine_standing::{InstallCounted, Standing, StandingView, every_chain};
+use super::owner_proof::{OwnerProofSigner, gives_owner_proof};
 use super::*;
 use crate::error::Result;
 use crate::{EntityId, TimeRange, Vault};
@@ -67,6 +76,10 @@ const JOIN_NOT_FOLDED: &str = "the authority log has more concurrent heads than 
 pub(crate) enum FrontierSigner<'a> {
     /// The install key of the machine that carries the act.
     Install(EntityId, &'a SigningKey),
+    /// The install key of the machine that carries the owner's own act,
+    /// beside the owner key's proof that act carries
+    /// ([`crate::Vault::owner_act_proof_signer`]).
+    ProvenInstall(EntityId, &'a SigningKey, &'a OwnerProofSigner<'a>),
     /// The host's slip issuer, for a host-issued op.
     Host(&'a HostSlipIssuer),
     /// A stored owner root's anchor, for the anchor's own rows alone: its
@@ -76,14 +89,45 @@ pub(crate) enum FrontierSigner<'a> {
     /// P-256 (FIX 11993), held behind the caller's signing callback, which
     /// signs each join's transcript (FIX 11867). Its joins are in the host
     /// family: that family's rule, a live owner roster key, is the standing
-    /// the ReRoot itself stands on.
+    /// the ReRoot itself stands on. The recovery root's authority key joins
+    /// the same way at the root's door, under the same rule (pass 27 R4).
     Callback(&'a AuthorityKey, &'a dyn Fn(&[u8]) -> Result<Vec<u8>>),
 }
 
-impl FrontierSigner<'_> {
+impl<'a> FrontierSigner<'a> {
+    /// The carrier `machine`'s joins under its install key `signing`, with
+    /// `proof`, the owner key's proof the act they lead to carries, when it
+    /// carries one.
+    pub(crate) fn install(
+        machine: EntityId,
+        signing: &'a SigningKey,
+        proof: Option<&'a OwnerProofSigner<'a>>,
+    ) -> Self {
+        match proof {
+            Some(proof) => Self::ProvenInstall(machine, signing, proof),
+            None => Self::Install(machine, signing),
+        }
+    }
+
+    /// This signer for a join whose parent state is `state`: a proof that
+    /// state does not take ([`gives_owner_proof`]) stays off the join, which
+    /// is then carried unproven.
+    fn proved_at(self, state: &FoldState) -> Self {
+        match self {
+            Self::ProvenInstall(machine, signing, proof)
+                if !gives_owner_proof(state, &proof.key()) =>
+            {
+                Self::Install(machine, signing)
+            }
+            other => other,
+        }
+    }
+
     fn family(self) -> FrontierJoinFamily {
         match self {
-            Self::Install(carrier, _) => FrontierJoinFamily::Install(carrier),
+            Self::Install(carrier, _) | Self::ProvenInstall(carrier, ..) => {
+                FrontierJoinFamily::Install(carrier)
+            }
             Self::Host(_) | Self::Callback(..) => FrontierJoinFamily::Host,
             Self::Anchor(_) => FrontierJoinFamily::Anchor,
         }
@@ -91,9 +135,9 @@ impl FrontierSigner<'_> {
 
     fn key(self) -> AuthorityKey {
         match self {
-            Self::Install(_, signing) | Self::Anchor(signing) => {
-                AuthorityKey::Ed25519(signing.verifying_key().to_bytes())
-            }
+            Self::Install(_, signing)
+            | Self::ProvenInstall(_, signing, _)
+            | Self::Anchor(signing) => AuthorityKey::Ed25519(signing.verifying_key().to_bytes()),
             Self::Host(issuer) => issuer.public_key(),
             Self::Callback(key, _) => key.clone(),
         }
@@ -103,7 +147,7 @@ impl FrontierSigner<'_> {
     /// by its signer's own rule.
     fn first_sequence(self, fold: &AuthorityFold) -> Result<u64> {
         match self {
-            Self::Install(..) | Self::Anchor(_) | Self::Callback(..) => {
+            Self::Install(..) | Self::ProvenInstall(..) | Self::Anchor(_) | Self::Callback(..) => {
                 next_sequence(fold, &self.key())
             }
             Self::Host(issuer) => fold
@@ -131,6 +175,9 @@ impl FrontierSigner<'_> {
             Self::Install(_, signing) | Self::Anchor(signing) => {
                 sign_side_entry(fold, signing, seq, parents, op, now)
             }
+            Self::ProvenInstall(_, signing, proof) => {
+                sign_side_entry_with_owner_proof(fold, signing, seq, parents, op, now, Some(proof))
+            }
             Self::Host(issuer) => {
                 issuer.sign_entry(fold.vault_id, seq, parents.into_iter().collect(), op, now)
             }
@@ -146,7 +193,7 @@ impl FrontierSigner<'_> {
 /// Whether `state` admits `signer` to sign a join in `family`, as the rows
 /// the join leads to admit their own signer there: for a carrier, the one
 /// carrier rule in the roster view ([`super::owner_act_signer_admits`]: not
-/// a roster key, no removed chain, a live chain whose machine key it is);
+/// a roster key, the roster's chain live under it as its machine key);
 /// for the host, a live owner roster key, as the host's slip issuer and a
 /// ReRoot's signer are (FIX 11867), in either root suite (FIX 11993); for an
 /// anchor, an anchor `state` recorded for a stored root, as its marks are
@@ -164,7 +211,7 @@ fn admits_join_signer(
         (FrontierJoinFamily::Install(carrier), AuthorityKey::Ed25519(key)) => {
             Standing::new(state, pin, counted).admits_owner_act_signer(carrier, key, roster)
         }
-        (FrontierJoinFamily::Host, _) => roster_has_live_owner(&state.roster, signer),
+        (FrontierJoinFamily::Host, _) => state.has_live_owner(signer),
         (FrontierJoinFamily::Anchor, AuthorityKey::Ed25519(key)) => {
             state.root_anchors.contains_key(key)
         }
@@ -330,9 +377,10 @@ impl Vault {
             return Ok(None);
         }
         measure_authority_work(self.limit_watch(), heads.len());
-        if !self.heads_merge_admits_in_txn(txn, heads, signer)? {
+        let Some(merged) = self.heads_merge_admitting_in_txn(txn, heads, signer)? else {
             return Ok(None);
-        }
+        };
+        let signer = signer.proved_at(&merged);
         let now = self.instant_in_txn(txn)?.secs();
         let at = TimeRange {
             start: now,
@@ -347,38 +395,39 @@ impl Vault {
         }))
     }
 
-    /// Whether the merge of every one of `heads`' states admits `signer` to
+    /// The merge of every one of `heads`' states when it admits `signer` to
     /// sign their join: the parent state the fold judges the join on (FIX
     /// 8527), read from the same capture as the causal points. Merged in
-    /// hash order, one head at a time. `false` when a head has no state
-    /// there, as the join would then never fold, and when the capture is
-    /// unavailable ([`AUTHORITY_NEW_CHECK_UNKNOWN_KEEP_CURRENT`]).
-    fn heads_merge_admits_in_txn(
+    /// hash order, one head at a time. `None` when the merge does not admit
+    /// the signer, when a head has no state there, as the join would then
+    /// never fold, and when the capture is unavailable
+    /// ([`AUTHORITY_NEW_CHECK_UNKNOWN_KEEP_CURRENT`]).
+    fn heads_merge_admitting_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         heads: &BTreeSet<AuthorityEntryHash>,
         signer: FrontierSigner<'_>,
-    ) -> Result<bool> {
+    ) -> Result<Option<FoldState>> {
         let states = match super::act_standing::head_states_in_txn(&self.store, txn, heads) {
             Ok(states) => states,
             Err(_) if AUTHORITY_NEW_CHECK_UNKNOWN_KEEP_CURRENT => None,
             Err(error) => return Err(error),
         };
         let Some(states) = states else {
-            return Ok(false);
+            return Ok(None);
         };
         let mut merged: Option<FoldState> = None;
         for head in heads {
             let Some(state) = states.get(head).and_then(Option::as_ref) else {
-                return Ok(false);
+                return Ok(None);
             };
             merged = Some(match merged {
                 Some(merged) => merge_states(&merged, state),
                 None => state.clone(),
             });
         }
-        Ok(merged.is_some_and(|state| {
-            admits_join_signer(&state, signer.family(), &signer.key(), (None, &every_chain))
+        Ok(merged.filter(|state| {
+            admits_join_signer(state, signer.family(), &signer.key(), (None, &every_chain))
         }))
     }
 }

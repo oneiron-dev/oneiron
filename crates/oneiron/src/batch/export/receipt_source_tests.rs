@@ -1,11 +1,11 @@
 //! Readable task trace sources are data, never local receipt authority.
+use super::archive_rewrite_fixture::rewrite_archive_rows;
 use super::*;
 use crate::actor_claims::{ActorClaimEvidence, ActorClaimRow, write_actor_claim};
 use crate::attempt_queue::{
     AttemptQueue, ClaimAttempt, ClaimOutcome, CompleteAttempt, EnqueueAttempt, EnqueueOutcome,
     ManifestEntry, ManifestKind,
 };
-use crate::context_pack::PackFormat;
 use crate::error::Result;
 use crate::receipt::{ReceiptRecord, attempt_pack_receipt, attempt_pack_receipt_id};
 use crate::temporal::TimeRange;
@@ -71,19 +71,15 @@ fn archived_task_receipt_retains_actual_manifest_but_cannot_stamp_a_receiving_va
     let (_dir, source) = open_test_vault_with(VaultConfig::default());
     let (_target_dir, target) = open_test_vault_with(VaultConfig::default());
     let (claim, receipt) = fixture(&source)?;
-    for format in [
-        PackFormat::Json,
-        PackFormat::Markdown,
-        PackFormat::Toon,
-        PackFormat::Yaml,
-        PackFormat::Plaintext,
-    ] {
-        let export = source.export_whole_vault(format)?;
+    for include_secrets in [false, true] {
+        let export = source.export_whole_vault(include_secrets)?;
         assert!(!export.bytes().is_empty());
-        assert!(String::from_utf8_lossy(export.bytes()).contains(&receipt.receipt_id));
+        let document = source.read_whole_vault_archive(export.bytes())?;
+        let text = serde_json::to_vec(&document).unwrap();
+        assert!(String::from_utf8_lossy(&text).contains(&receipt.receipt_id));
     }
-    let export = source.export_whole_vault(PackFormat::Json)?;
-    let document = target.read_whole_vault_json(export.bytes())?;
+    let export = source.export_whole_vault(false)?;
+    let document = target.read_whole_vault_archive(export.bytes())?;
     let envelope = document
         .derivation_envelopes
         .iter()
@@ -100,11 +96,10 @@ fn archived_task_receipt_retains_actual_manifest_but_cannot_stamp_a_receiving_va
         .find(|row| row.id == claim.to_hex())
         .unwrap();
     envelope.receipts.push(envelope.receipts[0].clone());
-    assert!(
-        target
-            .read_whole_vault_json(&serde_json::to_vec(&altered).unwrap())
-            .is_err()
-    );
+    let forged = rewrite_archive_rows(export.bytes(), "records/derivation_envelope.jsonl", |_| {
+        altered.derivation_envelopes.clone()
+    })?;
+    assert!(target.read_whole_vault_archive(&forged).is_err());
     let mut altered = document;
     let envelope = altered
         .derivation_envelopes
@@ -115,11 +110,10 @@ fn archived_task_receipt_retains_actual_manifest_but_cannot_stamp_a_receiving_va
         receipt_id: format!("attempt:{}", EntityId::now().to_hex()),
         reason: ReceiptSourceOmission::NotStored,
     };
-    assert!(
-        target
-            .read_whole_vault_json(&serde_json::to_vec(&altered).unwrap())
-            .is_err()
-    );
+    let forged = rewrite_archive_rows(export.bytes(), "records/derivation_envelope.jsonl", |_| {
+        altered.derivation_envelopes.clone()
+    })?;
+    assert!(target.read_whole_vault_archive(&forged).is_err());
     Ok(())
 }
 #[test]
@@ -136,18 +130,14 @@ fn missing_or_credential_bearing_receipt_sources_are_explicit_never_fabricated()
         source.store.vault_meta.put(txn, &key, &raw)?;
         Ok(())
     })?;
-    for format in [
-        PackFormat::Json,
-        PackFormat::Markdown,
-        PackFormat::Toon,
-        PackFormat::Yaml,
-        PackFormat::Plaintext,
-    ] {
-        let export = source.export_whole_vault(format)?;
-        assert!(!String::from_utf8_lossy(export.bytes()).contains(&secret));
+    for include_secrets in [false, true] {
+        let export = source.export_whole_vault(include_secrets)?;
+        let document = source.read_whole_vault_archive(export.bytes())?;
+        let text = serde_json::to_vec(&document).unwrap();
+        assert!(!String::from_utf8_lossy(&text).contains(&secret));
     }
-    let export = source.export_whole_vault(PackFormat::Json)?;
-    let document = source.read_whole_vault_json(export.bytes())?;
+    let export = source.export_whole_vault(false)?;
+    let document = source.read_whole_vault_archive(export.bytes())?;
     let envelope = document
         .derivation_envelopes
         .iter()
@@ -164,8 +154,8 @@ fn missing_or_credential_bearing_receipt_sources_are_explicit_never_fabricated()
         source.store.vault_meta.delete(txn, &key)?;
         Ok(())
     })?;
-    let export = source.export_whole_vault(PackFormat::Json)?;
-    let document = source.read_whole_vault_json(export.bytes())?;
+    let export = source.export_whole_vault(false)?;
+    let document = source.read_whole_vault_archive(export.bytes())?;
     let envelope = document
         .derivation_envelopes
         .iter()
@@ -187,20 +177,20 @@ fn real_cited_receipt_source_survives_import_reopen_and_reexport_without_native_
     let (_source_dir, source) = open_test_vault_with(VaultConfig::default());
     let (target_dir, target) = open_test_vault_with(VaultConfig::default());
     let (claim, receipt) = fixture(&source)?;
-    let archive = source.export_whole_vault(PackFormat::Json)?;
-    let imported = target.import_whole_vault_json(archive.bytes())?;
+    let archive = source.export_whole_vault(false)?;
+    let imported = target.import_whole_vault_archive(archive.bytes())?;
     assert_eq!(imported.archived_receipt_sources, 1);
     assert_eq!(
         target
-            .import_whole_vault_json(archive.bytes())?
+            .import_whole_vault_archive(archive.bytes())?
             .archived_receipt_sources,
         0
     );
     assert_eq!(attempt_pack_receipt(&target, &receipt.receipt_id)?, None);
     drop(target);
     let target = Vault::open(target_dir.path(), VaultConfig::default())?;
-    let reexport = target.export_whole_vault(PackFormat::Json)?;
-    let document = target.read_whole_vault_json(reexport.bytes())?;
+    let reexport = target.export_whole_vault(false)?;
+    let document = target.read_whole_vault_archive(reexport.bytes())?;
     let row = document
         .derivation_envelopes
         .iter()
@@ -215,10 +205,10 @@ fn real_cited_receipt_source_survives_import_reopen_and_reexport_without_native_
         }
     ));
     let (_third_dir, third) = open_test_vault_with(VaultConfig::default());
-    third.import_whole_vault_json(reexport.bytes())?;
+    third.import_whole_vault_archive(reexport.bytes())?;
     assert_eq!(attempt_pack_receipt(&third, &receipt.receipt_id)?, None);
     // Receipt contents cannot change while their holder/body/reference remains identical.
-    let mut forged = source.read_whole_vault_json(archive.bytes())?;
+    let mut forged = source.read_whole_vault_archive(archive.bytes())?;
     let mut different = receipt.clone();
     different.outcome = "foreign altered outcome".into();
     forged
@@ -228,13 +218,13 @@ fn real_cited_receipt_source_survives_import_reopen_and_reexport_without_native_
         .unwrap()
         .receipts[0] =
         ExportReceiptSource::from_record(receipt.receipt_id.clone(), Some(&different))?;
-    assert!(
-        target
-            .import_whole_vault_json(&serde_json::to_vec(&forged).unwrap())
-            .is_err()
-    );
-    let after = target.export_whole_vault(PackFormat::Json)?;
-    let after = target.read_whole_vault_json(after.bytes())?;
+    let forged_archive =
+        rewrite_archive_rows(archive.bytes(), "records/derivation_envelope.jsonl", |_| {
+            forged.derivation_envelopes.clone()
+        })?;
+    assert!(target.import_whole_vault_archive(&forged_archive).is_err());
+    let after = target.export_whole_vault(false)?;
+    let after = target.read_whole_vault_archive(after.bytes())?;
     assert_eq!(
         after
             .derivation_envelopes
@@ -255,8 +245,8 @@ fn receipt_id_collision_cannot_replace_either_bound_archive_or_native_terminal_d
     let (_target_dir, target) = open_test_vault_with(VaultConfig::default());
     let (imported_claim, _) = fixture(&source)?;
     let (native_claim, native_receipt) = fixture(&target)?;
-    let export = source.export_whole_vault(PackFormat::Json)?;
-    let mut document = source.read_whole_vault_json(export.bytes())?;
+    let export = source.export_whole_vault(false)?;
+    let mut document = source.read_whole_vault_archive(export.bytes())?;
     // This is deliberately hostile foreign data, not a claimed local terminal
     // act. It alleges the same receipt ID as a real local terminal event.
     let claim = document
@@ -304,13 +294,19 @@ fn receipt_id_collision_cannot_replace_either_bound_archive_or_native_terminal_d
         foreign.receipt_id.clone(),
         Some(&foreign),
     )?];
-    target.import_whole_vault_json(&serde_json::to_vec(&document).unwrap())?;
+    let forged = rewrite_archive_rows(export.bytes(), "records/entity/claim.jsonl", |_| {
+        document.claims.clone()
+    })?;
+    let forged = rewrite_archive_rows(&forged, "records/derivation_envelope.jsonl", |_| {
+        document.derivation_envelopes.clone()
+    })?;
+    target.import_whole_vault_archive(&forged)?;
     assert_eq!(
         attempt_pack_receipt(&target, &native_receipt.receipt_id)?,
         Some(native_receipt.clone())
     );
-    let export = target.export_whole_vault(PackFormat::Json)?;
-    let document = target.read_whole_vault_json(export.bytes())?;
+    let export = target.export_whole_vault(false)?;
+    let document = target.read_whole_vault_archive(export.bytes())?;
     let imported = document
         .derivation_envelopes
         .iter()

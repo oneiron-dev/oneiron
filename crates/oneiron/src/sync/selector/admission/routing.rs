@@ -394,7 +394,7 @@ impl<'a> Routes<'a> {
     }
 
     /// The part landing in `window`, a new one when none does yet.
-    fn part(&mut self, window: WindowKey) -> usize {
+    pub(super) fn part(&mut self, window: WindowKey) -> usize {
         match self.keys.iter().position(|key| *key == window) {
             Some(part) => part,
             None => {

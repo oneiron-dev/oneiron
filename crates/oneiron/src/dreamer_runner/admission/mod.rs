@@ -66,31 +66,25 @@ const BUDGET_STEP_CHARGE: SideTable<(AttemptId, [u8; 32]), EntityId, Raw> =
     SideTable::new(&side_table::DREAMER_BUDGET_STEP_CHARGE);
 
 /// `dreamer:budget_reservation:` row key: a big-endian u16 length, the budget
-/// id's own bytes, then the reserving child attempt id — not a
-/// [`crate::side_table::FixedSideKey`] tuple because the budget id is neither
-/// fixed-width nor last.
+/// id's own bytes, then the reserving child attempt id. The budget id is
+/// neither fixed-width nor last, so it carries its length.
+#[derive(SideKey)]
 pub(super) struct BudgetReservationKey {
+    #[side_key(len = u16)]
     pub(super) budget_id: String,
     pub(super) attempt_id: AttemptId,
 }
 
-impl SideKey for BudgetReservationKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        let budget_id_len = u16::try_from(self.budget_id.len()).unwrap_or(u16::MAX);
-        out.extend_from_slice(&budget_id_len.to_be_bytes());
-        out.extend_from_slice(self.budget_id.as_bytes());
-        out.extend_from_slice(self.attempt_id.as_bytes());
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let (len_bytes, rest) = bytes.split_at_checked(2)?;
-        let len = usize::from(u16::from_be_bytes(len_bytes.try_into().ok()?));
-        let (id_bytes, attempt_bytes) = rest.split_at_checked(len)?;
-        Some(Self {
-            budget_id: String::from_utf8(id_bytes.to_vec()).ok()?,
-            attempt_id: AttemptId::decode_key(attempt_bytes)?,
-        })
-    }
+/// One [`BudgetReservationKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn budget_reservation_key_pin_for_test(
+    budget_id: &str,
+    attempt_id: AttemptId,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&BudgetReservationKey {
+        budget_id: budget_id.to_owned(),
+        attempt_id,
+    })
 }
 
 struct DreamerKindAdmissionResult {
@@ -443,6 +437,20 @@ impl DreamerRunnerStore<'_> {
         route: Option<&mut dyn FnMut(&AttemptRecord) -> Option<String>>,
         only: Option<AttemptId>,
     ) -> Result<DreamerKindAdmissionResult> {
+        // A copy restored and not joined admits no row of a held kind (row
+        // RESTORED-UNJOINED-STARTS-NO-WORK): asked before the scan, the
+        // budget reads and the budget trap's pause, so each such row stays
+        // ready and unpaused for the first admission after the join.
+        if self
+            .attempts
+            .kind_held_while_unjoined_in_txn(wtxn, queue_kind)?
+        {
+            return Ok(DreamerKindAdmissionResult {
+                outcome: DreamerAdmissionOutcome::Empty,
+                budget_exhausted_candidate: None,
+                requester_withdrawn_candidate: None,
+            });
+        }
         // FIX 5661: while this node drains its free-time rows toward a home
         // move, or froze them for one, a free-time item whose try never
         // started waits queued and inert for the move to carry it, bound

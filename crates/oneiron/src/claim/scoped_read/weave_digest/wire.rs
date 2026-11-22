@@ -326,60 +326,65 @@ impl WireDigest {
 /// (`dependencies::indexed_sources`), never the period's gates.
 pub(super) fn report_sources(report: &WeaveReport) -> Result<BTreeSet<EntityId>> {
     let mut sources = BTreeSet::new();
-    for section in &report.sections {
-        for item in &section.items {
-            match item {
-                WeaveItem::Claim { id, body } => {
-                    sources.insert(*id);
-                    match body.subject {
-                        ClaimSubject::Entity(subject) => {
-                            sources.insert(subject);
-                        }
-                        ClaimSubject::Edge { source, target, .. } => {
-                            sources.insert(source);
-                            sources.insert(target);
-                        }
-                    }
-                }
-                WeaveItem::Project { id, goal } => {
-                    sources.insert(*id);
-                    if let Some(goal) = goal {
-                        sources.insert(EntityId::from_hex(goal).map_err(|_| invalid())?);
-                    }
-                }
-                WeaveItem::Budget {
-                    project,
-                    budget_ref,
-                } => {
-                    sources.insert(*project);
-                    sources.insert(*budget_ref);
-                }
-                WeaveItem::Link { source, target, .. } => {
-                    sources.insert(*source);
-                    sources.insert(*target);
-                }
-                // The reader's own dreaming time and entry count: no copied
-                // body, and no diary entry's id or text.
-                WeaveItem::DreamProgress { .. } => {}
-                // A card is a side-table row, not a record: a saved period
-                // reads the current card again before it serves one. Its
-                // draft's sources index it apart (`dependencies`).
-                WeaveItem::AgentHealth { .. } => {}
-                // An audit is a side-table row too, read again the same way;
-                // the rows it stands on are records.
-                WeaveItem::SieveAudit { audit, .. } => {
-                    sources.extend(super::super::weave_report::sieve_score::sieve_audit_rows(
-                        audit,
-                    ));
-                }
-                // A loop row's refs index its period for erasure apart
-                // (`dependencies::indexed_sources`): the row is rechecked
-                // whole on its own, so its refs never gate the period.
-                WeaveItem::LoopDecision { .. } => {}
-            }
-        }
+    for item in report.sections.iter().flat_map(|section| &section.items) {
+        item_sources(item, &mut sources)?;
     }
     Ok(sources)
+}
+
+/// [`report_sources`] of one row, added to `sources`: the refs a reopen of
+/// its period reads before it serves the row.
+pub(super) fn item_sources(item: &WeaveItem, sources: &mut BTreeSet<EntityId>) -> Result<()> {
+    match item {
+        WeaveItem::Claim { id, body } => {
+            sources.insert(*id);
+            match body.subject {
+                ClaimSubject::Entity(subject) => {
+                    sources.insert(subject);
+                }
+                ClaimSubject::Edge { source, target, .. } => {
+                    sources.insert(source);
+                    sources.insert(target);
+                }
+            }
+        }
+        WeaveItem::Project { id, goal } => {
+            sources.insert(*id);
+            if let Some(goal) = goal {
+                sources.insert(EntityId::from_hex(goal).map_err(|_| invalid())?);
+            }
+        }
+        WeaveItem::Budget {
+            project,
+            budget_ref,
+        } => {
+            sources.insert(*project);
+            sources.insert(*budget_ref);
+        }
+        WeaveItem::Link { source, target, .. } => {
+            sources.insert(*source);
+            sources.insert(*target);
+        }
+        // The reader's own dreaming time and entry count: no copied
+        // body, and no diary entry's id or text.
+        WeaveItem::DreamProgress { .. } => {}
+        // A card is a side-table row, not a record: a saved period
+        // reads the current card again before it serves one. Its
+        // draft's sources index it apart (`dependencies`).
+        WeaveItem::AgentHealth { .. } => {}
+        // An audit is a side-table row too, read again the same way;
+        // the rows it stands on are records.
+        WeaveItem::SieveAudit { audit, .. } => {
+            sources.extend(super::super::weave_report::sieve_score::sieve_audit_rows(
+                audit,
+            ));
+        }
+        // A loop row's refs index its period for erasure apart
+        // (`dependencies::indexed_sources`): the row is rechecked
+        // whole on its own, so its refs never gate the period.
+        WeaveItem::LoopDecision { .. } => {}
+    }
+    Ok(())
 }
 
 pub(super) fn source_key(source: &EntityId, digest_key: &[u8]) -> Vec<u8> {

@@ -76,10 +76,18 @@
 //! The bias shows up as a number that moved, which is the only form in which it
 //! is visible at all.
 
+mod amendment_writer_hook;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::amendment_writer_hook::set_before_amendment_writer_hook;
 mod audit;
 mod causes;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::causes::amendment_cause_rows_for_test;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::causes::receipt_key_for_test as cause_receipt_key_for_test;
 mod cells;
 mod evidence_judge;
+mod gate_receipt_erase;
 mod origin;
 mod projector;
 mod rejection;
@@ -117,7 +125,9 @@ pub(in crate::edit_distance) use self::cells::record_untouched_in_txn;
 pub(in crate::edit_distance) use self::evidence_judge::{
     amendment_evidence_in_txn, amendment_judgment_in_txn,
 };
+pub(crate) use self::gate_receipt_erase::forget_gate_amendment_in_txn;
 pub(in crate::edit_distance) use self::origin::UNKNOWN_EXECUTOR;
+pub(crate) use self::projector::reconcile_amendment_projections;
 pub use self::rejection::judge_rejection_with_cause;
 pub(in crate::edit_distance) use self::rejection::{
     Rejection, judge_rejection_in_txn, judge_rejection_with_cause_in_txn,
@@ -154,8 +164,6 @@ pub fn amendments_by_attempt(
     Ok(by_attempt)
 }
 
-// FIX [LIBTEST-QUARANTINE-EDIT-DISTANCE-ATTRIBUTION-TESTS]: the lib test target's type check fails here (2 errors: E0308 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 
