@@ -1,7 +1,8 @@
 #![cfg(oneiron_test_support)]
 //! The owner's restore installs the room membership ledger live.
 //!
-//! Public doors only; neutral fixtures (`owen`, `yuki`); vaults in tempdirs. Each destination
+//! Public doors beside the `oneiron::test_doors` cooperative restriction; neutral fixtures
+//! (`owen`, `yuki`); vaults in tempdirs. Each destination
 //! opens at least one wall-clock second after its source (sleep 1100 ms), as in
 //! `archive_import_retained_side_rows.rs`.
 //!
@@ -28,10 +29,10 @@
 //!   `CONVERSATION_MEMBERSHIP_ROW` rows and one kept-live `CONVERSATION_MEMBERSHIP_SEQ`
 //!   row, and the destination ledger and members stay its own.
 //! * `a_whole_vault_export_withholds_the_ledger_and_roles_of_a_use_limited_room`
-//!   (REVIEW-9446 P1-1): on a hosted source, a customer hold refuses the room's privacy
-//!   erase and use-limits the room; the export then carries no `CONVERSATION_MEMBERSHIP_ROW`,
-//!   `CONVERSATION_MEMBERSHIP_SEQ` or `CONVERSATION_ROLE_GRANT` row of that room, where the
-//!   export before the hold carried two, one and one.
+//!   (REVIEW-9446 P1-1): on a source, a cooperative review restriction use-limits the room;
+//!   the export then carries no `CONVERSATION_MEMBERSHIP_ROW`, `CONVERSATION_MEMBERSHIP_SEQ`
+//!   or `CONVERSATION_ROLE_GRANT` row of that room, where the export before the restriction
+//!   carried two, one and one.
 //! * `a_room_whose_member_is_no_live_person_here_stays_out_of_the_owner_restore`
 //!   (REVIEW-9446 P1-2): the source user-deletes yuki, so its archive carries the room and its
 //!   ledger but no yuki record. An owner restore into a vault without yuki, and one into a
@@ -54,9 +55,9 @@
 //!   `CONVERSATION_MEMBERSHIP_ROW` or `CONVERSATION_MEMBERSHIP_SEQ` row of it, where it
 //!   carried two and one before.
 //! * `a_whole_vault_export_withholds_a_ledger_that_names_a_use_limited_member`
-//!   (round 2 P1-2): on a hosted source yuki joins and leaves, then a customer hold refuses her
-//!   privacy erase; the export still carries the room but no row or revision of its ledger,
-//!   where it carried three and one before the hold.
+//!   (round 2 P1-2): on a source yuki joins and leaves, then a cooperative review restriction
+//!   use-limits her; the export still carries the room but no row or revision of its ledger,
+//!   where it carried three and one before the restriction.
 //! * `an_identical_ledger_of_a_deleted_room_is_held_back_not_unchanged` (round 2 P1-3; door
 //!   `copy_room_ledger`): a carrier vault holds the source room's ledger with no room record,
 //!   so its archive carries that ledger alone; the owner restore into the source after the
@@ -78,7 +79,7 @@
 //!   user-deleted the export carries no `CONVERSATION_ROLE_GRANT` row of it, where it carried
 //!   one before.
 //! * `a_whole_vault_export_withholds_the_role_grant_of_a_use_limited_grantee` (Q1 = A): on a
-//!   hosted source a customer hold refuses the Admin grantee yuki's privacy erase; the export
+//!   source a cooperative review restriction use-limits the Admin grantee yuki; the export
 //!   still carries the room but no role grant naming yuki, where it carried one before.
 //! * `a_malformed_inert_ledger_copy_is_withheld_alone` (REVIEW-9739 P1-2; door
 //!   `retain_inert_side_row`): the source keeps two inert copies an archive could carry, its
@@ -86,10 +87,10 @@
 //!   that reads as no ledger row; the export carries neither copy and still carries the room's
 //!   two live ledger rows and its revision.
 //! * `an_inert_ledger_copy_naming_a_use_limited_person_is_withheld_alone` (REVIEW-9739 round 2
-//!   P1-1; door `retain_inert_side_row`): on a hosted source the room keeps an inert copy of
-//!   yuki's ledger row that names another person, held, in her place; a customer hold then
-//!   refuses held's privacy erase. The export carries no such copy and still carries the
-//!   room's two live ledger rows and its revision.
+//!   P1-1; door `retain_inert_side_row`): on a source the room keeps an inert copy of yuki's
+//!   ledger row that names another person, restricted, in her place; a cooperative review
+//!   restriction then use-limits restricted. The export carries no such copy and still carries
+//!   the room's two live ledger rows and its revision.
 //!
 //! Tests 5 and 6 use public doors only and run red at the review test commit (the round-1
 //! head with #9721 merged, plus tests 5 and 6), where tests 1-4 pass. Tests 7 and 8 use the
@@ -117,13 +118,10 @@ use oneiron::batch::export::WholeVaultImportReceipt;
 use oneiron::conversation::{
     ConversationBody, ConversationKind, HistoryChoice, MembershipAction, RoomRole,
 };
-use oneiron::deletion::LegalHoldTarget;
-use oneiron::memory::{EraseOptions, EraseReason};
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::test_doors::archive_room_ledger;
-use oneiron::{
-    EdgeActorClass, EntityId, HostingPrivacyPosture, TimeRange, Vault, VaultConfig, WriteActor,
-};
+use oneiron::test_doors::campaign_member_index::restrict_record;
+use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, WriteActor};
 use retained_side_rows::{
     export_whole, open_later_vault, open_source_vault, owner_proof, retained_rows, rows_for,
 };
@@ -691,56 +689,10 @@ fn a_destination_that_seats_the_room_itself_keeps_its_own_ledger() {
     );
 }
 
-/// A source vault opened as the owner's own where Oneiron hosts the bytes, so a privacy erase
-/// that a standing customer hold refuses keeps its record use-limited.
-fn open_hosted_source_vault() -> (tempfile::TempDir, Vault) {
-    let dir = tempfile::tempdir().expect("temp dir for the hosted source vault");
-    let mut config = VaultConfig::default();
-    config.privacy.posture = HostingPrivacyPosture::Hosted;
-    let vault = Vault::open_owned(dir.path(), config).expect("open the hosted source vault");
-    (dir, vault)
-}
-
-/// Places a customer hold on `record` and runs its privacy erase, which the hold refuses: the
-/// record stays stored and use-limited, and a whole-vault export keeps it out.
+/// Restricts `record` under a cooperative review, in the row the cooperative-deletion answer
+/// writes: every use-limited read hides the record, and a whole-vault export keeps it out.
 fn use_limit(vault: &Vault, record: EntityId) {
-    let hold = vault
-        .place_legal_hold(
-            &owner_proof(vault),
-            vec![LegalHoldTarget::Record(record)],
-            Some("matter-9446".to_owned()),
-        )
-        .expect("FIXTURE: place the customer hold");
-    assert!(hold.stands(), "FIXTURE: the customer hold stands: {hold:?}");
-    let actor = vault
-        .ensure_embedded_owner_actor()
-        .expect("FIXTURE: the vault names its embedded owner actor");
-    let memory = vault.memory(actor, EdgeActorClass::Human);
-    let preview = memory
-        .preview_entity_delete(&record)
-        .expect("FIXTURE: preview the privacy erase");
-    let outcome = memory
-        .confirm_entity_erase(
-            &preview,
-            EraseOptions {
-                reason: EraseReason::GdprDelete,
-                also_same_bytes: false,
-                veto_starter: None,
-            },
-        )
-        .expect("FIXTURE: the privacy erase runs");
-    assert_eq!(
-        outcome.first.reason.as_str(),
-        "privacy_erase_kept",
-        "FIXTURE: the held privacy erase is kept: {outcome:?}"
-    );
-    assert!(
-        vault
-            .legal_hold_use_limit(&record)
-            .expect("FIXTURE: read the use limit")
-            .is_some(),
-        "FIXTURE: the kept erase use-limits the record"
-    );
+    restrict_record(vault, record).expect("FIXTURE: restrict the record");
 }
 
 /// The retained tuples of `table` in `rows` whose source key starts with `room`.
@@ -850,7 +802,7 @@ fn assert_room_kept_out(
 
 #[test]
 fn a_whole_vault_export_withholds_the_ledger_and_roles_of_a_use_limited_room() {
-    let (_source_dir, source) = open_hosted_source_vault();
+    let (_source_dir, source) = open_source_vault();
     let now = source.now_recorded_at();
     let (room, _owen, _yuki) = build_admin_grant_room(
         &source,
@@ -870,7 +822,7 @@ fn a_whole_vault_export_withholds_the_ledger_and_roles_of_a_use_limited_room() {
         assert_eq!(
             room_tuples(&before, table, room),
             rows,
-            "FIXTURE: before the hold the archive carries the room's {table} rows"
+            "FIXTURE: before the restriction the archive carries the room's {table} rows"
         );
     }
 
@@ -1136,7 +1088,7 @@ fn a_whole_vault_export_withholds_the_ledger_of_a_deleted_room() {
 
 #[test]
 fn a_whole_vault_export_withholds_a_ledger_that_names_a_use_limited_member() {
-    let (_source_dir, source) = open_hosted_source_vault();
+    let (_source_dir, source) = open_source_vault();
     let now = source.now_recorded_at();
     let (room, owen, yuki) = seat_room(
         &source,
@@ -1171,7 +1123,7 @@ fn a_whole_vault_export_withholds_a_ledger_that_names_a_use_limited_member() {
         assert_eq!(
             room_tuples(&before, table, room),
             rows,
-            "FIXTURE: before the hold the archive carries the room's {table} rows"
+            "FIXTURE: before the restriction the archive carries the room's {table} rows"
         );
     }
 
@@ -1468,7 +1420,7 @@ fn a_whole_vault_export_withholds_the_role_grant_of_a_deleted_room() {
 
 #[test]
 fn a_whole_vault_export_withholds_the_role_grant_of_a_use_limited_grantee() {
-    let (_source_dir, source) = open_hosted_source_vault();
+    let (_source_dir, source) = open_source_vault();
     let now = source.now_recorded_at();
     let (room, _owen, yuki) = build_admin_grant_room(
         &source,
@@ -1485,7 +1437,7 @@ fn a_whole_vault_export_withholds_the_role_grant_of_a_use_limited_grantee() {
             room
         ),
         1,
-        "FIXTURE: before the hold the archive carries yuki's role grant"
+        "FIXTURE: before the restriction the archive carries yuki's role grant"
     );
 
     use_limit(&source, yuki);
@@ -1569,7 +1521,7 @@ fn replace_bytes(bytes: &[u8], from: &[u8], to: &[u8]) -> Vec<u8> {
 
 #[test]
 fn an_inert_ledger_copy_naming_a_use_limited_person_is_withheld_alone() {
-    let (_source_dir, source) = open_hosted_source_vault();
+    let (_source_dir, source) = open_source_vault();
     let now = source.now_recorded_at();
     let at = TimeRange {
         start: now,
@@ -1592,7 +1544,7 @@ fn an_inert_ledger_copy_naming_a_use_limited_person_is_withheld_alone() {
     let copy = replace_bytes(&row_value, yuki_hex.as_bytes(), held.to_hex().as_bytes());
     assert_ne!(
         copy, row_value,
-        "FIXTURE: the copy names held in yuki's place"
+        "FIXTURE: the copy names the restricted person in yuki's place"
     );
     archive_room_ledger::retain_inert_side_row(
         &source,
@@ -1600,7 +1552,7 @@ fn an_inert_ledger_copy_naming_a_use_limited_person_is_withheld_alone() {
         row_key,
         copy,
     )
-    .expect("FIXTURE: keep an inert ledger row copy that names held");
+    .expect("FIXTURE: keep an inert ledger row copy that names the restricted person");
 
     use_limit(&source, held);
     let after = retained_rows(&export_whole(&source));
@@ -1611,7 +1563,7 @@ fn an_inert_ledger_copy_naming_a_use_limited_person_is_withheld_alone() {
         assert_eq!(
             room_tuples(&after, table, room),
             rows,
-            "the export carries the room's live {table} rows and no copy naming the held person"
+            "the export carries the room's live {table} rows and no copy naming the restricted person"
         );
     }
 }
