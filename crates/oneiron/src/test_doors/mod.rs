@@ -338,6 +338,7 @@ pub mod restored_enrolment;
 pub mod resume_preflight;
 pub mod retrieval_policy_default_floor;
 pub mod reveal_ask_window;
+pub mod room_claim_erase;
 pub mod room_facet_limit;
 pub mod room_facet_set;
 #[cfg(feature = "sync")]
