@@ -230,6 +230,7 @@ fn stage_scoped_pending(vault: &Vault, authority: &OutboundBindingAuthority, now
         data_class: SlateDataClass::Personal,
         header_parameters: Vec::new(),
         resolved_input_schema: Some(schema),
+        resolved_output_schema: None,
         trigger: None,
         destroys: false,
         spends: false,

@@ -159,6 +159,7 @@ fn read_tool(name: &str) -> SlateToolManifest {
         header_parameters: vec![],
         resolved_input_schema: Some(json!({"type": "object",
             "properties": {"query": {"type": "string", "enum": ["a", "b"]}}})),
+        resolved_output_schema: None,
         trigger: None,
         destroys: false,
         spends: false,

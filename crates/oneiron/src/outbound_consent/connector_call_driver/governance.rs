@@ -20,6 +20,9 @@ pub(super) struct GoverningTool {
     pub(super) key_id: EntityId,
     pub(super) key: ConnectorKeyRecord,
     pub(super) schema: Value,
+    /// The tool's approved output schema there, when its connector declares
+    /// one (L8-31).
+    pub(super) output_schema: Option<Value>,
 }
 
 /// Where the shared resolution stopped: the hold or refusal, and the grant
@@ -87,11 +90,11 @@ impl Vault {
         let Some(manifest) = key.retained_manifest.as_ref() else {
             return stop(held("connector_manifest_unapproved"));
         };
-        let Some(schema) = manifest
+        let Some((schema, output_schema)) = manifest
             .tools()
             .iter()
             .find(|found| found.name == tool)
-            .map(|found| found.input_schema.clone())
+            .map(|found| (found.input_schema.clone(), found.output_schema.clone()))
         else {
             return stop(if key.pending_manifest.is_some() {
                 held("connector_manifest_drift")
@@ -105,6 +108,7 @@ impl Vault {
             key_id,
             key,
             schema,
+            output_schema,
         }))
     }
 
