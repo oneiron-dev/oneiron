@@ -1,9 +1,9 @@
 //! A self agent's chat turn on its own live fork (FIX 4465 D). Only for an
-//! agent whose engine-owned profile names `self` under a row that reads the
-//! live context: `live_fork`, or `auto` (FIX 6029, the default), whose flight
-//! forks the warm prefix or, cold, is written by the cheap writer as the
-//! agent. A row on the retained turns and every other agent keep the chat
-//! path as it was.
+//! agent whose engine-owned profile names `self`, under every self row:
+//! `live_fork`; `auto` (FIX 6029, the default), whose flight forks the warm
+//! prefix or, cold, is written by the cheap writer as the agent; and the
+//! retained turns, whose flight the cheap writer always writes as the agent
+//! (L10-33). Every other agent keeps the chat path as it was.
 //!
 //! Such a turn's log is read from the retained ledger as its caller reads
 //! it, landed summaries in place of the turns they cover; the caller's own
@@ -114,8 +114,7 @@ pub(super) enum ChatEntry {
 /// `conversation_ref`, its log read from the retained ledger as `reader`
 /// reads it (a room's audience through the room's held projection, FIX
 /// 5031), `history_lines` raw messages after its summaries. `None` keeps
-/// the chat path as it was: a non-self agent, a row on the retained turns,
-/// or a ref that names nothing.
+/// the chat path as it was: a non-self agent, or a ref that names nothing.
 pub(super) fn self_chat(
     ai: &AiHandle,
     vault: &Vault,
@@ -290,6 +289,9 @@ pub(super) struct TurnMeter {
     pub(super) payer: WriteActor,
     pub(super) funding: Option<PayerPerson>,
     pub(super) budget_units: u64,
+    /// The turn keeps no model-call record, so its flight's runs name no
+    /// rows either (census L5-25).
+    pub(super) keeps_no_record: bool,
 }
 
 /// The answer's breakpoint, right before its stream: held until the answer

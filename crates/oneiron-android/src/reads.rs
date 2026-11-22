@@ -126,7 +126,10 @@ fn pack_format(format: Option<&str>) -> PackFormat {
 }
 
 /// A nullable Kotlin `String`.
-fn optional_string(env: &mut JNIEnv<'_>, text: &JString<'_>) -> Result<Option<String>, String> {
+pub(super) fn optional_string(
+    env: &mut JNIEnv<'_>,
+    text: &JString<'_>,
+) -> Result<Option<String>, String> {
     if text.is_null() {
         return Ok(None);
     }

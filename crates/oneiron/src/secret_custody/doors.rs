@@ -188,7 +188,10 @@ impl Vault {
     /// Registers an active custody-portable secret from outside any manifest
     /// flow, for out-of-crate tests. No door outside the crate registers a
     /// record yet, and the record itself stays unconstructible out of crate.
-    #[cfg(feature = "test-support")]
+    /// The `oneiron_test_support` test doors call it too (test_doors::
+    /// fenced_erase_form), and a crate that links oneiron without the feature
+    /// (oneiron-server) builds those doors under that cfg.
+    #[cfg(any(feature = "test-support", oneiron_test_support))]
     pub fn register_test_secret(
         &self,
         name: &str,

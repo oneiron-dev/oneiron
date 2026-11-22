@@ -1,8 +1,10 @@
-//! Test doors for a restored source-audience binding whose live policy is absent.
+//! Test doors for a restored source-audience binding whose live policy is absent,
+//! and for a witnessed TURN bound to a source policy after it landed.
 
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;
-use crate::registry::ENTITY_TYPE_CONVERSATION;
+use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN};
 use crate::source_audience::{self, ReplicationScope, SourceAudienceBirth};
 use crate::temporal::TimeRange;
 use crate::{EntityId, Vault};
@@ -17,15 +19,29 @@ use crate::{EntityId, Vault};
 /// Storage, encoding, or source-audience admission failures.
 pub fn bound_row(vault: &Vault, reader: EntityId) -> Result<(EntityId, EntityId)> {
     let row = EntityId::now();
+    let policy = bound_row_read_by(vault, row, &[reader])?;
+    Ok((row, policy))
+}
+
+/// [`bound_row`] with the id `row`, under a new source policy read by each
+/// of `readers`; the first one makes it. Returns the policy id.
+///
+/// # Errors
+///
+/// No reader, or storage, encoding, or source-audience admission failures.
+pub fn bound_row_read_by(vault: &Vault, row: EntityId, readers: &[EntityId]) -> Result<EntityId> {
+    let by = *readers
+        .first()
+        .ok_or_else(|| Error::InvalidConfig("a source policy needs a reader".into()))?;
     let at = vault.now_recorded_at();
     let body = conversation_body(&row)?;
     vault.with_write_txn(|txn| {
         let policy = source_audience::create_source_policy_in_txn(
             vault,
             txn,
-            [reader].into_iter().collect(),
+            readers.iter().copied().collect(),
             false,
-            reader,
+            by,
             at,
         )?;
         let birth = SourceAudienceBirth::mint_in(vault, txn, &policy)?;
@@ -42,7 +58,7 @@ pub fn bound_row(vault: &Vault, reader: EntityId) -> Result<(EntityId, EntityId)
             )
             .apply(txn)?;
         source_audience::bind_record_in_txn(vault, txn, &row, &policy)?;
-        Ok((row, policy))
+        Ok(policy)
     })
 }
 
@@ -116,6 +132,63 @@ pub fn thread_bound_row(
             .apply(txn)?;
         source_audience::bind_record_in_txn(vault, txn, &row, &thread)?;
         Ok((row, source, thread))
+    })
+}
+
+/// Binds the witnessed TURN `turn` to a new source policy read by each of
+/// `readers`, the first one making it, as a source landing binds a turn it
+/// lands: the turn's own body is re-put stamped with the obligation under
+/// the policy's birth proof, then bound, in one write. Its MESSAGEs read
+/// under their TURN's floor (read lineage), so the turn's words read only to
+/// `readers`. Returns the policy id.
+///
+/// # Errors
+///
+/// No reader, a row that is no TURN, or storage, encoding, or
+/// source-audience admission failures.
+pub fn bind_turn_read_by(vault: &Vault, turn: EntityId, readers: &[EntityId]) -> Result<EntityId> {
+    let by = *readers
+        .first()
+        .ok_or_else(|| Error::InvalidConfig("a source policy needs a reader".into()))?;
+    let at = vault.now_recorded_at();
+    vault.with_write_txn(|txn| {
+        let raw = vault
+            .store
+            .port_entity_raw(txn, &turn)?
+            .ok_or(Error::EntityNotFound)?;
+        let header = EntityMetadataHeader::parse(&raw)
+            .filter(|header| header.entity_type == ENTITY_TYPE_TURN)
+            .ok_or_else(|| Error::InvalidConfig("the row to bind is no TURN".into()))?;
+        let body = raw
+            .get(ENTITY_METADATA_HEADER_LEN..)
+            .unwrap_or_default()
+            .to_vec();
+        let policy = source_audience::create_source_policy_in_txn(
+            vault,
+            txn,
+            readers.iter().copied().collect(),
+            false,
+            by,
+            at,
+        )?;
+        let birth = SourceAudienceBirth::mint_in(vault, txn, &policy)?;
+        let stamped = birth.stamp_in_txn(vault, txn, &turn, &body)?;
+        vault
+            .batch_in()
+            .put_source_bound(
+                &turn,
+                ENTITY_TYPE_TURN,
+                TimeRange {
+                    start: header.occurred_start,
+                    end: header.occurred_end,
+                },
+                header.learned_at,
+                &stamped,
+                &birth,
+            )
+            .apply(txn)?;
+        source_audience::bind_record_in_txn(vault, txn, &turn, &policy)?;
+        Ok(policy)
     })
 }
 

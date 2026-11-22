@@ -18,8 +18,9 @@ use crate::self_heal::HealEvidenceContext;
 use crate::self_heal::blocked_reports::BlockedIssue;
 use crate::skill::SkillLifecycle;
 use crate::skill_optimize::{
-    SkillEditCycle, SkillEditDraft, SkillFailureContext, SkillOptimizeBrief, SkillRepairStamp,
-    propose_skill_repair_in_txn, proven_cycle, skill_repair_brief, validate_skill_draft,
+    SkillEditCycle, SkillEditDraft, SkillFailureContext, SkillFileEdit, SkillOptimizeBrief,
+    SkillRepairStamp, propose_skill_repair_in_txn, proven_cycle, skill_repair_brief,
+    validate_skill_draft,
 };
 
 use super::coach_diagnostic::ProducerTarget;
@@ -40,6 +41,8 @@ pub(super) enum SkillRepairDraft {
         brief: SkillOptimizeBrief,
         desc: String,
         rationale: String,
+        /// The brief's files the draft replaces whole (census L9-02).
+        files: Vec<SkillFileEdit>,
         candidate: EntityId,
         route: HealerRepairRoute,
         actor: WriteActor,
@@ -56,19 +59,27 @@ pub(super) enum SkillRepairDraft {
 
 impl SkillRepairDraft {
     /// The `repair` the heal's value carries: the drafted route with its
-    /// instructions and rationale, or what was skipped and why.
+    /// instructions and rationale, and the paths of the files it replaces
+    /// when it replaces any, or what was skipped and why.
     pub(super) fn value(&self) -> serde_json::Value {
         match self {
             Self::Drafted {
                 desc,
                 rationale,
+                files,
                 route,
                 ..
-            } => serde_json::json!({
-                "route": route,
-                "instructions": desc,
-                "rationale": rationale,
-            }),
+            } => {
+                let mut value = serde_json::json!({
+                    "route": route,
+                    "instructions": desc,
+                    "rationale": rationale,
+                });
+                if !files.is_empty() {
+                    value["files"] = files.iter().map(|file| file.path.as_str()).collect();
+                }
+                value
+            }
             Self::Skipped { skill, why } => serde_json::json!({
                 "skill": skill.map(|skill| skill.to_hex()),
                 "skipped": why,
@@ -318,18 +329,23 @@ impl Vault {
         if !bound(&route) {
             return skipped("unbound_agent");
         }
-        let (desc, rationale) = match author.draft_skill(&brief, &aim.cause) {
-            Ok(SkillEditDraft::Edit { desc, rationale }) => (desc, rationale),
+        let (desc, rationale, files) = match author.draft_skill(&brief, &aim.cause) {
+            Ok(SkillEditDraft::Edit {
+                desc,
+                rationale,
+                files,
+            }) => (desc, rationale, files),
             Ok(_) => return skipped("declined"),
             Err(_) => return skipped("author_failed"),
         };
-        if validate_skill_draft(&brief, &desc, &rationale).is_err() {
+        if validate_skill_draft(&brief, &desc, &rationale, &files).is_err() {
             return skipped("unusable_draft");
         }
         Ok(SkillRepairDraft::Drafted {
             brief,
             desc,
             rationale,
+            files,
             candidate,
             route,
             actor: self.dreamer_actor_for_attempt(attempt)?,
@@ -357,6 +373,7 @@ pub(super) fn land_skill_repair_in_txn(
         brief,
         desc,
         rationale,
+        files,
         candidate,
         actor,
         cycle,
@@ -387,6 +404,7 @@ pub(super) fn land_skill_repair_in_txn(
         brief,
         desc,
         rationale,
+        files,
         &stamp,
         candidate,
         TimeRange {

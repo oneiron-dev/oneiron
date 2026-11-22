@@ -10,6 +10,7 @@ use crate::error::{Error, Result};
 
 use super::record::{AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus};
 use crate::error::RecordError;
+use oneiron_contracts::msgpack::Entries;
 
 /// Current AccessGrant body schema version.
 pub const ACCESS_GRANT_SCHEMA_VERSION: u64 = 5;
@@ -427,29 +428,16 @@ pub(crate) fn decode_entity_ref(value: &Value) -> Result<EntityId> {
 }
 
 pub(crate) fn validate_keys(entries: &[(Value, Value)], keys: &[&str]) -> Result<()> {
-    let mut seen = vec![false; keys.len()];
-    for (key, _) in entries {
-        let key = key.as_str().ok_or_else(invalid_grant)?;
-        let Some(index) = keys.iter().position(|known| *known == key) else {
-            return Err(invalid_grant());
-        };
-        if seen[index] {
-            return Err(invalid_grant());
-        }
-        seen[index] = true;
-    }
-    if seen.into_iter().all(|value| value) {
-        Ok(())
-    } else {
-        Err(invalid_grant())
-    }
+    Entries::new(entries)
+        .exact_keys(keys, &[])
+        .map(drop)
+        .map_err(|_| invalid_grant())
 }
 
 pub(crate) fn required_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&'a Value> {
-    entries
-        .iter()
-        .find_map(|(candidate, value)| (candidate.as_str() == Some(key)).then_some(value))
-        .ok_or_else(invalid_grant)
+    Entries::new(entries)
+        .require(key)
+        .map_err(|_| invalid_grant())
 }
 
 pub(crate) fn invalid_grant() -> Error {

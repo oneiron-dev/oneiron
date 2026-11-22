@@ -262,6 +262,22 @@ impl Memory<'_> {
         if let Some(project) = leader_project {
             self.settle_leader_chats_in_txn(wtxn, plan, project)?;
         }
+        // A caller-placed project (FIX WITNESS-TURN-NO-PROJECT-POSITION): a
+        // leader-chat room settles its own, so one naming another refuses
+        // the turn; the same project is the leader settle above. Without a
+        // leader project, the settle is a birth settle only: it also places
+        // a no-project append's new messages under an existing TURN's
+        // non-default project, and never moves a row born earlier.
+        if let Some(caller_project) = plan.turn.project {
+            if leader_project.is_some_and(|leader| leader != caller_project) {
+                return Err(Error::Record(crate::error::RecordError::ConversationDenied).into());
+            }
+            if leader_project.is_none() {
+                self.settle_witness_project_in_txn(wtxn, plan, &admission, Some(caller_project))?;
+            }
+        } else if leader_project.is_none() && matches!(sink, WitnessSink::Base(_)) {
+            self.settle_witness_project_in_txn(wtxn, plan, &admission, None)?;
+        }
         // LAST statement in the transaction, deliberately: a witness
         // admitted on record must not commit base rows once the room has
         // flipped back off record (K10). Every earlier row rolls back with
@@ -273,10 +289,11 @@ impl Memory<'_> {
         // (state -> writer), so a base writer taking it (writer -> state)
         // would invert the order. `revalidate` takes only the overlay's
         // own lifecycle lock, which no holder ever blocks on the base
-        // writer for. What remains uncovered is the instant between this
-        // check and `wtxn.commit()`; closing that would require the flip
-        // to drain base writers the way `seal_writes` drains overlay
-        // segments.
+        // writer for. The instant between this check and the commit is the
+        // flip's and the close's to cover: each takes the writer once after
+        // it publishes (`Store::wait_for_open_write_txn`), so a witness that
+        // passed here commits before either returns (ARCH-0052
+        // #d5-proof-open).
         if let WitnessSink::Base(base) = sink
             && let Some(route) = base.route
         {
@@ -340,6 +357,132 @@ impl Memory<'_> {
                 self.actor,
                 project,
             )?;
+        }
+        Ok(())
+    }
+
+    /// A witness project settled at birth only: admitted against the
+    /// caller's credential, then settled onto the TURN this write mints
+    /// and each MESSAGE this write lands new, as a leader chat settles its
+    /// own. A caller project on an existing TURN is a no-op for the TURN
+    /// only where its stored position already names that project; any
+    /// other stored position, including the default project and no stored
+    /// stamp, is refused as a restamp. With no caller project, an existing
+    /// TURN settled under a non-default project places this write's new
+    /// messages under that project, under the same admission; a TURN at
+    /// the default project, or with no stored stamp, keeps the landing
+    /// every witness has today. An exact retry stamps nothing.
+    fn settle_witness_project_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        plan: &WitnessPlan<'_>,
+        admission: &WitnessAdmission<'_>,
+        caller_project: Option<EntityId>,
+    ) -> MemoryResult<()> {
+        let minted = matches!(admission.turn, AdmittedTurn::Mint { .. });
+        let (project, stamp_turn) = match (caller_project, minted) {
+            (Some(project), true) => {
+                self.admit_witness_project_in_txn(wtxn, project)?;
+                (project, true)
+            }
+            (Some(project), false) => {
+                let stored = crate::federation::record_scope::stored_witness_project(
+                    &self.vault.store,
+                    wtxn,
+                    plan.turn_id,
+                )?;
+                if stored != Some(project) {
+                    return Err(Error::InvalidClaimBody("record scope restamp refused").into());
+                }
+                self.admit_witness_project_in_txn(wtxn, project)?;
+                (project, false)
+            }
+            (None, true) => return Ok(()),
+            (None, false) => {
+                if !admission.has_new_messages() {
+                    return Ok(());
+                }
+                let stored = crate::federation::record_scope::stored_witness_project(
+                    &self.vault.store,
+                    wtxn,
+                    plan.turn_id,
+                )?;
+                let Some(project) = stored else {
+                    return Ok(());
+                };
+                if project == crate::claim::default_project_id() {
+                    return Ok(());
+                }
+                self.admit_witness_project_in_txn(wtxn, project)?;
+                (project, false)
+            }
+        };
+        if stamp_turn {
+            crate::federation::record_scope::stamp_witness_project(
+                &self.vault.store,
+                wtxn,
+                plan.turn_id,
+                project,
+            )?;
+        }
+        for (planned, exists) in plan.messages.iter().zip(&admission.message_exists) {
+            if *exists {
+                continue;
+            }
+            crate::federation::record_scope::stamp_witness_project(
+                &self.vault.store,
+                wtxn,
+                planned.id,
+                project,
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Whether the caller's credential admits placing this turn under
+    /// `project`: its slip audience covers the project. Shaped like the
+    /// scoped-claim position check: a transport caller with no credential
+    /// is refused, while the in-process host's own handle needs none, and
+    /// a bound slip must still be live, held by this actor, and grant a
+    /// write.
+    fn admit_witness_project_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        project: EntityId,
+    ) -> MemoryResult<()> {
+        let refused = || {
+            MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                "the caller credential does not admit this turn's project",
+                &["Witness without a project, or under a credential whose audience covers it."],
+            )
+        };
+        let Some(proof) = self.read_proof.as_ref() else {
+            return if self.transport_invocation {
+                Err(refused())
+            } else {
+                Ok(())
+            };
+        };
+        if proof.claims().holder_ref != self.actor.to_hex()
+            || !proof.claims().records.is_empty()
+            || !proof.claims().channels.is_empty()
+            || !self.vault.capability_slip_is_live_in_txn(txn, proof)?
+        {
+            return Err(refused());
+        }
+        if !["core:write", "write", "core:propose"]
+            .into_iter()
+            .any(|verb| proof.allows_verb(verb))
+        {
+            return Err(refused());
+        }
+        if !proof
+            .scope()
+            .audience
+            .contains(&crate::federation::ScopeId(project))
+        {
+            return Err(refused());
         }
         Ok(())
     }

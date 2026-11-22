@@ -325,6 +325,7 @@ pub(in crate::repo_mutation) fn record_queue_conflict_claim(
         batches: overlap.batches.clone(),
         resolution_batch: None,
         superseded: false,
+        resolved_by: None,
     };
     attach(&mut wtxn, &link)?;
     wtxn.commit()?;

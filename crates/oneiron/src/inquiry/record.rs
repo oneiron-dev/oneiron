@@ -28,7 +28,8 @@ use crate::error::Result;
 pub(super) use oneiron_records::inquiry::record::refuse;
 #[doc(hidden)]
 pub use oneiron_records::inquiry::record::{
-    Inquiry, InquiryAsker, InquiryKeep, InquiryOutcome, InquiryTask, StatementSource,
+    Inquiry, InquiryAsker, InquiryKeep, InquiryOutcome, InquiryTask, MAX_INQUIRY_PURPOSE_BYTES,
+    MAX_INQUIRY_QUESTION_BYTES, MAX_INQUIRY_ROLE_BYTES, MAX_INQUIRY_WIRE_BYTES, StatementSource,
 };
 
 /// One statement of an answer: its text and who made it.

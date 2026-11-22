@@ -374,6 +374,12 @@ impl Store {
         let due = |id: &TargetId, position: &CustodyPosition| {
             acked_seq(&acks, id, position) != Some(position.seq) || reseal(id)
         };
+        // A member with no adapter answers every batch the same (FIX 5847):
+        // it owes its group no head, and its answer is recorded below.
+        let without_batch: Vec<Option<TargetPending>> = targets
+            .iter()
+            .map(|target| target.pending_without_batch())
+            .collect();
         // Each member's head is its own kind's (KS-5, FIX 7191): a hosted
         // member's apart from a folder's or the residence home's.
         let groups = [&recipients.own, &recipients.hosted];
@@ -386,8 +392,8 @@ impl Store {
             set.revision,
             |position| {
                 let mut behind = vec![false; groups.len()];
-                for spec in &specs {
-                    behind[group(spec)] |= due(spec.id(), position);
+                for (spec, unread) in specs.iter().zip(&without_batch) {
+                    behind[group(spec)] |= unread.is_none() && due(spec.id(), position);
                 }
                 behind
             },
@@ -460,8 +466,14 @@ impl Store {
         // A target holding a newer head of this log than the batch: a newer
         // pass published it there, and that pass acks it (FIX 6394).
         let mut covered = false;
-        for target in &targets {
+        for (target, unread) in targets.iter().zip(&without_batch) {
             let spec = target.spec();
+            if let Some(pending) = unread {
+                if due(spec.id(), &position) {
+                    journal.note_pending(spec.id(), pending)?;
+                }
+                continue;
+            }
             let Some(batch) = batches[group(&spec)].as_ref() else {
                 continue;
             };

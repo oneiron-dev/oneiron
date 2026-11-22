@@ -22,11 +22,19 @@ pub(super) struct PipelinePprVisibility<'store, 'filters> {
 
 /// A narrowed walk must not carry mass through a row the caller cannot read.
 /// Canonical owner-wide retrieval keeps its existing cached walk instead.
+/// Under a clamp, a row whose words come from a row the pack's audience may
+/// not read is no more visible than one it may not read: neither carries
+/// mass nor counts toward a group's hub cap, so it cannot stop the group's
+/// readable rows from spreading (REVIEW-10215 round 1). The call's made_by
+/// slice stays off, as before: the stage applies it to the walk's results.
 pub(super) fn pipeline_ppr_visibility<'store, 'filters>(
     builder: &PipelineBuilder<'store>,
     filters: PipelineFilterConfig<'filters>,
     claim_gate: &ClaimStatusGateCache,
-) -> Option<PipelinePprVisibility<'store, 'filters>> {
+) -> Option<PipelinePprVisibility<'store, 'filters>>
+where
+    'store: 'filters,
+{
     let narrowed = builder.authority_filter.is_some()
         || builder.scoped_note_reader.is_some()
         || filters.candidate_filter.is_some()
@@ -47,7 +55,10 @@ pub(super) fn pipeline_ppr_visibility<'store, 'filters>(
         || filters.stale_worlds.is_some();
     narrowed.then(|| PipelinePprVisibility {
         store: builder.read,
-        filters,
+        filters: PipelineFilterConfig {
+            disclosure_word_sources: Some(builder.vault),
+            ..filters
+        },
         metadata: RefCell::new(EntityMetadataCache::default()),
         claim_gate: RefCell::new(claim_gate.fresh(filters.authority_filter.include_stale)),
     })

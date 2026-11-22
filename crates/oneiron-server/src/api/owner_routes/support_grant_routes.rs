@@ -46,7 +46,7 @@ pub(super) fn owner_table() -> OwnerTable {
             OwnerRoute {
                 method: "post",
                 path: "/support-grants/mint",
-                summary: "Mint our support person or agent a time-limited, revocable grant (OF-606): a live, non-owner PERSON of the vault (`holder`, `holder_class` human or agent) bound to that party's own Ed25519 key (`holder_key`, 64 hex), inside explicit bounds (`scope` with named worlds; `records` optional; propose or write only when named), for `ttl_secs` (default 3600, at most 86400), with a `purpose` and optional `ticket_ref`. Answers the credential (no private key), the grant and the mint's Gate receipt.",
+                summary: "Mint our support person or agent a time-limited, revocable grant (OF-606): a live, non-owner PERSON of the vault (`holder`, `holder_class` human or agent) bound to that party's own Ed25519 key (`holder_key`, 64 hex), inside explicit bounds (`scope` with named worlds; `records` optional; propose or write only when named), for `ttl_secs` (default 3600; at most the owner's cap `support.grant.max_ttl_secs`, 86400 until the owner sets another), with a `purpose` and optional `ticket_ref`. Answers the credential (no private key), the grant and the mint's Gate receipt.",
                 row: Some("vault.support_grants.mint"),
                 shape: None,
             },

@@ -69,6 +69,34 @@ pub(super) fn cleared_reader(
     seed_disclosure_scope(server, principal, oneiron::federation::Scope::top());
 }
 
+/// The owner raises `principal`'s model channel Names ceiling to Sensitive. A
+/// PERSON with no name claim reads at the Sensitive band, so below it a board
+/// row the reader is served carries the row's short id in place of its name
+/// (`oneiron::disclosure::model_channel`).
+fn raise_names_ceiling(server: &SyncServer, principal: oneiron::EntityId) {
+    let owner_ref = server.vault.ensure_embedded_owner_actor().unwrap();
+    let owner = server
+        .vault
+        .authenticate_owner(
+            owner_ref,
+            &owner_ref.to_hex(),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .unwrap();
+    server
+        .vault
+        .set_model_disclosure_ceiling(
+            &owner,
+            oneiron::disclosure::DisclosureCeilingSet {
+                connection: format!("agent:{}", principal.to_hex()),
+                class: Some(oneiron::disclosure::DisclosureDataClass::Names),
+                ceiling: oneiron::disclosure::DisclosureBand::Sensitive,
+            },
+        )
+        .unwrap();
+}
+
 /// Narrows `principal`'s reads to the `allowed` entity types with a policy
 /// manifest grant. Its credential stays live; rows of any other type stop
 /// being readable to it.
@@ -206,9 +234,11 @@ async fn a_turns_board_reconstructs_after_later_turns_change_it() {
                 .len(),
         );
     }
+    // ARCH-0022: an ungoverned actor reads base reality, so the first
+    // turn records its three base world tiers plus the pinned claim.
     assert_eq!(
         changed,
-        [1, 1, 0],
+        [4, 1, 0],
         "selection claims are written on change only"
     );
 
@@ -476,12 +506,14 @@ async fn a_claim_board_records_under_the_callers_own_capability() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{board:#}");
+    // ARCH-0022: an ungoverned actor reads base reality, so the first
+    // turn records its three base world tiers plus the pinned claim.
     assert_eq!(
         board["board_turn"]["changed_claims"]
             .as_array()
             .unwrap()
             .len(),
-        1
+        4
     );
     let (status, past) = route_json(server.clone(), history(turn, principal)).await;
     assert_eq!(status, StatusCode::OK, "{past:#}");
@@ -504,6 +536,9 @@ async fn a_turns_board_keeps_the_revision_it_served() {
     let person = seeded_test_entity_id(0x2067_0602);
     put_person(&server, person, "reader person");
     cleared_reader(&server, principal, seeded_test_entity_id(0x2067_0603));
+    // The served row's name is the revision signal, so the reader's model
+    // channel admits the document's (Sensitive) name.
+    raise_names_ceiling(&server, principal);
     server
         .vault
         .put_edge(&principal, oneiron::EdgeKind::About, &person, 1.0)

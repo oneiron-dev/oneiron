@@ -153,10 +153,8 @@ pub(super) fn as_text(program: &WorkflowProgram, text: &[String]) -> WorkflowPro
             } => moved(secret, typed),
             BatchStep::Expect { value, secret, .. } => moved(secret, value),
             BatchStep::Decide(step) => moved(&mut step.secret, &mut step.text),
-            BatchStep::Fill { field, .. } => {
-                if named(&field.secret) {
-                    field.secret_is_text = true;
-                }
+            BatchStep::Fill { field, .. } if named(&field.secret) => {
+                field.secret_is_text = true;
             }
             _ => {}
         }

@@ -71,6 +71,8 @@ use super::room_parts::ROOM_FACT_MAX_ROW_BYTES as MAX_ROW_BYTES;
 const PIN: &str = "pin/";
 /// The key prefix of a room's platform handle cells.
 const HANDLE: &str = "handle/";
+/// The key prefix of a turn's claims.
+const CLAIM: &str = "claim/";
 /// The key prefix of a turn's responses.
 const RESPONSE: &str = "response/";
 /// The key prefix of a join receipt.
@@ -118,7 +120,7 @@ pub(crate) fn carrier_key(row: &RoomSideRow, bytes: &[u8]) -> String {
     match row {
         RoomSideRow::HostPin { room, .. } => cell_key(*room, None),
         RoomSideRow::Handle { room, handle, .. } => cell_key(*room, Some(handle)),
-        RoomSideRow::Claim { claim } => format!("claim/{}/{}", claim.turn_id, digest()),
+        RoomSideRow::Claim { claim } => format!("{CLAIM}{}/{}", claim.turn_id, digest()),
         RoomSideRow::Response { parent, .. } => {
             format!("{RESPONSE}{}/{}", parent.to_hex(), digest())
         }
@@ -517,24 +519,43 @@ fn holds_room_fact_map(doc: &LoroDoc) -> bool {
     matches!(doc.get_value(), LoroValue::Map(roots) if roots.contains_key(ROOM_FACTS_MAP))
 }
 
-/// Every response `doc` carries for each of `parents`.
-fn responses_for(doc: &LoroDoc, parents: &BTreeSet<EntityId>) -> Vec<(EntityId, Vec<RoomSideRow>)> {
+/// Every response `doc` carries for each of `parents`, with every claim it
+/// carries for each parent that has one: a response's merge settles which
+/// claim its answer seals (REVIEW-9956 round 2).
+fn answer_rows_for(
+    doc: &LoroDoc,
+    parents: &BTreeSet<EntityId>,
+) -> Vec<(EntityId, Vec<RoomSideRow>)> {
     let mut found: BTreeMap<EntityId, Vec<RoomSideRow>> = BTreeMap::new();
     if parents.is_empty() {
         return Vec::new();
     }
     let map = doc.get_map(ROOM_FACTS_MAP);
-    for (map_key, bytes) in super::room_parts::rows(&map, |key| key.starts_with(RESPONSE)) {
+    let mut claims: BTreeMap<EntityId, Vec<RoomSideRow>> = BTreeMap::new();
+    let rows = super::room_parts::rows(&map, |key| {
+        key.starts_with(RESPONSE) || key.starts_with(CLAIM)
+    });
+    for (map_key, bytes) in rows {
         let Ok(row) = erased::decode_held(&bytes) else {
             continue;
         };
-        if let RoomSideRow::Response { parent, .. } = &row
-            && parents.contains(parent)
-            && row.well_formed()
-            && carrier_key(&row, &bytes) == map_key
-        {
-            found.entry(*parent).or_default().push(row);
+        if !row.well_formed() || carrier_key(&row, &bytes) != map_key {
+            continue;
         }
+        match &row {
+            RoomSideRow::Response { parent, .. } if parents.contains(parent) => {
+                found.entry(*parent).or_default().push(row);
+            }
+            RoomSideRow::Claim { claim } => {
+                if let Some(turn) = named(&claim.turn_id).filter(|turn| parents.contains(turn)) {
+                    claims.entry(turn).or_default().push(row);
+                }
+            }
+            _ => {}
+        }
+    }
+    for (parent, rows) in &mut found {
+        rows.extend(claims.remove(parent).unwrap_or_default());
     }
     found.into_iter().collect()
 }
@@ -580,7 +601,7 @@ impl RoomFactBatch {
                 _ => tracing::warn!(window, key = %map_key, "room side row malformed; left out"),
             }
         }
-        let responses = responses_for(doc, &parents);
+        let responses = answer_rows_for(doc, &parents);
         Self {
             carried,
             cleared,
@@ -908,4 +929,23 @@ impl Vault {
         }
         carried
     }
+}
+
+/// Whether `room`'s host-pin cell is marked changed while no live window
+/// carried the room: the cell a room-cell refresh with no handle marks (the
+/// door of `tests/room_pins_noop_marks.rs`).
+#[cfg(oneiron_test_support)]
+pub(crate) fn room_host_pin_cell_marked(vault: &Vault, room: EntityId) -> Result<bool> {
+    let rtxn = vault.store.env.read_txn()?;
+    DIRTY.contains(&vault.store, &rtxn, &cell_key(room, None))
+}
+
+/// Clears `room`'s host-pin cell mark, as an import that carries the cell
+/// does (the door of `tests/room_pins_noop_marks.rs`).
+#[cfg(oneiron_test_support)]
+pub(crate) fn clear_room_host_pin_cell_mark(vault: &Vault, room: EntityId) -> Result<()> {
+    vault.with_write_txn_grouped(|wtxn| {
+        DIRTY.delete(&vault.store, wtxn, &cell_key(room, None))?;
+        Ok(())
+    })
 }

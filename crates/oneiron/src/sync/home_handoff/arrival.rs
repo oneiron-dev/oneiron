@@ -7,6 +7,8 @@
 //! state (FIX 6457), and goes on with today's opening: nothing waits or
 //! refuses for it.
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use super::store::{self, HandoffHead, MoveRequest, StagedHandoff};
 use super::{AdoptOutcome, IncompleteReason, adopt, drop_staged, home_tables, open_handoff};
 use crate::Vault;
@@ -114,7 +116,7 @@ fn try_adopt(vault: &Vault, staged: &StagedHandoff) -> Result<bool> {
         }
         store::sealed_in_txn(vault, &txn, &staged.id, staged.count)?
     };
-    if *blake3::hash(&sealed).as_bytes() != staged.digest {
+    if *ContentHash::of(&sealed).as_bytes() != staged.digest {
         return Ok(false);
     }
     let verified = open_handoff(vault, staged.id, &sealed)?;

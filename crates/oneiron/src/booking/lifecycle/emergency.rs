@@ -7,7 +7,9 @@ use super::claim::{
     calendar_status_value, encode_event_body, read_booking_facts, read_booking_facts_to_cancel,
     supersede_exact_claim,
 };
-use super::door::BookingLifecycleConsumerInput;
+use super::door::{
+    BookingLifecycleConsumerInput, holds_booking_rows_in_txn, refuse_off_home_booking_write_in_txn,
+};
 use super::occurrence::{inclusive_occurrence, offers_slot};
 use super::passport::{outbound_passport_in, supersede_outbound_passport};
 use super::storage::{
@@ -34,7 +36,7 @@ fn emergency_refused(detail: impl Into<String>) -> BookingError {
 // outbound call may run while this writer is held.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct EmergencyPickRow {
+pub(super) struct EmergencyPickRow {
     emergency_item_key: Vec<u8>,
     proposal_index: usize,
 }
@@ -42,7 +44,7 @@ struct EmergencyPickRow {
 /// Same `booking.token.v1:` declaration [`TOKEN`](super::TOKEN) and
 /// [`CHECKOUT_LEASE`](super::CHECKOUT_LEASE) bind; see `TOKEN`'s doc comment.
 /// Key: hash32 (the emergency action token digest).
-const EMERGENCY_PICK: SideTable<
+pub(super) const EMERGENCY_PICK: SideTable<
     [u8; 32],
     EmergencyPickRow,
     VersionedNamed<{ super::types::LIFECYCLE_ROW_VERSION }>,
@@ -61,6 +63,19 @@ fn require_emergency_home(
     if local != Some(input.local_node_id) || home.is_none_or(|home| Some(home.node_id) != local) {
         return Err(BookingError::InvalidConfig(
             "emergency transition requires the lifecycle home node".to_owned(),
+        ));
+    }
+    // FIX [BK-LIFECYCLE-ROWS-NOT-CARRIED-BY-HOME-MOVE]: as the lifecycle door
+    // (`door::home_node_refusal`), a home that does not hold the booking rows
+    // is not their home yet, even where its election names it: it froze them
+    // for a move and adopted none since, or awaits the move that carries them
+    // here. Each writer below asks the same again, and also refuses once the
+    // election names another node.
+    if !holds_booking_rows_in_txn(vault, &txn)? {
+        return Err(BookingError::InvalidConfig(
+            "emergency transition requires the lifecycle home node: this node does not hold \
+             the booking rows during a home move"
+                .to_owned(),
         ));
     }
     Ok(())
@@ -90,6 +105,7 @@ pub(in crate::booking) fn commit_emergency_item(
     };
     require_emergency_home(vault, input)?;
     booking_writer(vault, |txn| {
+        refuse_off_home_booking_write_in_txn(vault, &*txn)?;
         if crate::identity::read_client_id_in_txn(vault, &*txn)
             .map_err(|error| engine_failure("local identity read", error))?
             != Some(input.local_node_id)
@@ -150,7 +166,7 @@ pub(in crate::booking) fn commit_emergency_item(
                 "emergency booking snapshot is stale or does not belong to this owner",
             ));
         }
-        validate_emergency_proposals(vault, plan, calendars, input)?;
+        validate_emergency_proposals(vault, &*txn, plan, calendars, input)?;
         emergency::verify_initial_invite_in(vault, txn, plan)?;
         let admission = plan
             .payload
@@ -219,6 +235,19 @@ pub(in crate::booking) fn commit_emergency_item(
                     "emergency calendar sequence conflicts with the lifecycle revision",
                 ));
             }
+            // The owner cancelled: the visitor's deposit comes back whole, in
+            // this commit (RULING DEPOSIT-HOST-CANCEL-REFUND = A), marked
+            // with this cancel's SEQUENCE for the card of a booking the
+            // visitor picks again (DEPOSIT-PICK-AFTER-EMERGENCY-CANCEL = A).
+            // The calendar's later readback finds the booking cancelled and
+            // moves nothing more.
+            super::deposit::refund_on_host_cancel_in_writer(
+                vault,
+                txn,
+                &event,
+                Some(calendar.sequence),
+                input.now_utc,
+            )?;
             write_receipt(
                 vault,
                 txn,
@@ -255,6 +284,9 @@ pub(in crate::booking) fn commit_emergency_item(
             calendar_delivered: plan.payload.is_none(),
             apology_delivered: false,
             picked: None,
+            // Each effect's first send is admitted under its idempotency key.
+            ledger_generations: std::collections::BTreeMap::new(),
+            readopted_sends: std::collections::BTreeMap::new(),
         };
         record_prestart_emergency_outcome(vault, txn, event, &item)?;
         emergency::write_item_in(vault, txn, &item)?;
@@ -262,20 +294,22 @@ pub(in crate::booking) fn commit_emergency_item(
     })
 }
 
-/// The plan's two or three proposals, each still a live, future slot the
-/// booking's calendars offer.
+/// The plan's proposals, at least the owner's floor in force at this commit
+/// (PACK-SETTINGS-ALL W1: higher is tighter, so a floor raised since the plan
+/// refuses it), each still a live, future slot the booking's calendars offer.
+/// The count has no order: a plan made under a larger count still commits.
 fn validate_emergency_proposals(
     vault: &Vault,
+    txn: &heed::RoTxn<'_>,
     plan: &crate::booking::emergency_reschedule::EmergencyPlan,
     calendars: &[(EntityId, Vec<crate::calendar::query::CalendarSel>)],
     input: &BookingLifecycleConsumerInput,
 ) -> Result<(), BookingError> {
     use crate::booking::emergency_reschedule as emergency;
-    if !(2..=3).contains(&plan.proposals.len()) {
-        return Err(emergency_refused(
-            "emergency requires two or three genuine proposals",
-        ));
-    }
+    emergency::setting_keys::emergency_proposal_policy_in_txn(vault, txn)
+        .map_err(|error| engine_failure("emergency proposal policy read", error))?
+        .admit(plan.proposals.len())
+        .map_err(emergency_refused)?;
     for slot in &plan.proposals {
         let target = TimeRange {
             start: slot.start_utc,
@@ -295,6 +329,12 @@ fn validate_emergency_proposals(
         }
     }
     Ok(())
+}
+
+/// The digest `token`'s pick row is keyed by (`EMERGENCY_PICK`): the one name the owner's copy
+/// of the apology gives a pick link (FIX [BK-EMERGENCY-APOLOGY-BLOB-HOLDS-RAW-PICK-TOKENS]).
+pub(in crate::booking) fn emergency_action_digest(token: &OpaqueLifecycleToken) -> [u8; 32] {
+    token_digest(token)
 }
 
 /// One released pick action per proposal, each row naming the item it picks
@@ -408,6 +448,7 @@ pub(in crate::booking) fn pick_emergency_item(
     use crate::booking::emergency_reschedule as emergency;
     require_emergency_home(vault, input)?;
     booking_writer(vault, |txn| {
+        refuse_off_home_booking_write_in_txn(vault, &*txn)?;
         if crate::identity::read_client_id_in_txn(vault, &*txn)
             .map_err(|error| engine_failure("local identity read", error))?
             != Some(input.local_node_id)
@@ -573,6 +614,7 @@ pub(in crate::booking) fn admit_emergency_pick(
     use crate::booking::emergency_reschedule as emergency;
     require_emergency_home(vault, input)?;
     booking_writer(vault, |txn| {
+        refuse_off_home_booking_write_in_txn(vault, &*txn)?;
         if crate::identity::read_client_id_in_txn(vault, &*txn)
             .map_err(|error| engine_failure("local identity read", error))?
             != Some(input.local_node_id)

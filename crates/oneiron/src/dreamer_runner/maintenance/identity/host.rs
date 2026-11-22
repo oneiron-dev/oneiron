@@ -4,12 +4,13 @@
 
 use serde_json::json;
 
+use super::setting_keys::RETRY_SECS;
 use super::{
     ASKS, Answer, IdentityAsk, IdentityAskReason, IdentityAskView, IdentityCardCopy,
-    IdentityDecisions, IdentityRuling, IdentitySettled, RETRY_SECS, SOMEONE_NEW, admission,
-    ask_answer_id, card, dreamer_seal, escalate_in_txn, evidence, index, invalid,
-    keep_separate_in_txn, key_hex, listed_candidates, notify_in_txn, options_in_txn, parse_choice,
-    parse_key, settle_ask_in_txn, settle_undo, view_in_txn,
+    IdentityDecisions, IdentityRuling, IdentitySettled, SOMEONE_NEW, admission, ask_answer_id,
+    card, dreamer_seal, escalate_in_txn, evidence, index, invalid, keep_separate_in_txn, key_hex,
+    listed_candidates, notify_in_txn, options_in_txn, parse_choice, parse_key, settle_ask_in_txn,
+    settle_undo, view_in_txn,
 };
 use crate::authority::{ActAuthority, ActSurface};
 use crate::claim::{ClaimSource, ScopedRead};
@@ -20,7 +21,7 @@ use crate::lens::GeneratedUiCard;
 use crate::limit_ask::EngineLimit;
 use crate::model_decision::catalogue::IDENTITY_SETTLE;
 use crate::model_decision::{AnswerContract, DecisionAnswer, Reversibility};
-use crate::{Error, Result, Vault};
+use crate::{EntityId, Error, Result, Vault};
 
 impl Vault {
     /// Open asks the host decides now, act-now ones first, up to `limit`,
@@ -95,7 +96,8 @@ impl Vault {
     /// chosen. A choice settles the mention and saves the hint.
     /// Anything else keeps a nightly ask's names separate for now, with the
     /// Dreamer's receipt, and sends an act-now ask to the person. A failed
-    /// call waits [`RETRY_SECS`]. An act-now ask is an outbound effect's
+    /// call waits the owner's [`RETRY_SECS`], read in the writer that stamps
+    /// it. An act-now ask is an outbound effect's
     /// question; a nightly one a reversible read's, as a later answer can
     /// move it.
     ///
@@ -209,7 +211,8 @@ impl Vault {
             Err(_) => {
                 self.with_write_txn_grouped(|txn| {
                     if let Some(mut row) = ASKS.get(&self.store, txn, &key)? {
-                        row.retry_at = now.saturating_add(RETRY_SECS);
+                        let wait = RETRY_SECS.read_in_txn(self, txn, &[], None)?.value;
+                        row.retry_at = now.saturating_add(wait.secs());
                         // No membership sync (FIX 10376): a retry stamps
                         // `retry_at` only, which the ask's erase never reads.
                         ASKS.put(&self.store, txn, &key, &row)?;
@@ -281,7 +284,8 @@ impl Vault {
                     {
                         return Ok(IdentityRuling::Gone);
                     }
-                    row.retry_at = now.saturating_add(RETRY_SECS);
+                    let wait = RETRY_SECS.read_in_txn(self, txn, &[], None)?.value;
+                    row.retry_at = now.saturating_add(wait.secs());
                     ASKS.put(&self.store, txn, &key, &row)?;
                     Ok(IdentityRuling::Retry)
                 })
@@ -315,17 +319,17 @@ impl Vault {
             let hits = self.tagged_mentions_of_name(ask.kind, &ask.name)?;
             let txn = self.store.env.read_txn()?;
             let admit = admission::Admit::in_txn(read, &txn)?;
-            let mut newest = None;
+            let mut newest: Option<(EntityId, EntityId)> = None;
             for hit in hits {
                 if hit.turn > since
-                    && newest.is_none_or(|held| hit.turn > held)
+                    && newest.is_none_or(|(held, _)| hit.turn > held)
                     && admit.reads_source(&txn, &hit.turn, &hit.mention.message)?
                 {
-                    newest = Some(hit.turn);
+                    newest = Some((hit.turn, hit.mention.message));
                 }
             }
             drop(txn);
-            let Some(newest) = newest else {
+            let Some((newest, message)) = newest else {
                 continue;
             };
             let moved = self.with_write_txn_grouped(|txn| {
@@ -339,7 +343,9 @@ impl Vault {
                 current.surfaced_turn = Some(newest);
                 ASKS.put(&self.store, txn, &key, &current)?;
                 index::sync_ask_membership(&self.store, txn, &key, Some(&old), Some(&current))?;
-                notify_in_txn(self, txn, &key, &newest, now)?;
+                // Each reader gets it only where their lane reads the later
+                // mention too: the Ask names its turn and conversation.
+                notify_in_txn(self, txn, &key, &current, (&newest, &message), now)?;
                 Ok(true)
             })?;
             sent += usize::from(moved);
@@ -399,6 +405,7 @@ impl Vault {
             Ok(IdentitySettled {
                 ask: key_hex(&key),
                 entity: entity.to_hex(),
+                proposed: false,
             })
         })
     }

@@ -90,7 +90,7 @@ fn method_label(method: &axum::http::Method) -> &str {
 /// wait ends with the call: calls dropped while the counter is held leave at
 /// most that many counts behind.
 pub(crate) async fn record_on_blocking_pool(
-    server: &Arc<crate::server::SyncServer>,
+    server: &crate::server::SyncServer,
     count: impl FnOnce(&super::WireTelemetry, u64) -> oneiron::Result<()> + Send + 'static,
 ) {
     let now = oneiron_vault_contract::now_ts();
@@ -100,10 +100,10 @@ pub(crate) async fn record_on_blocking_pool(
     else {
         return;
     };
-    let server = Arc::clone(server);
+    let telemetry = Arc::clone(&server.wire_telemetry);
     let _ = tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        count(&server.wire_telemetry, now)
+        count(&telemetry, now)
     })
     .await;
 }

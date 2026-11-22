@@ -2,8 +2,8 @@ use std::path::PathBuf;
 
 use oneiron_ruler::pack::{PackSlice, Slice, load_slice, sha256_hex};
 use oneiron_ruler::scorecard::{
-    Hit, QueryRun, RepeatRun, RunHeader, ScorecardError, build_scorecard, load_scorecard,
-    write_scorecard,
+    Hit, QueryRun, RepeatRun, RunHeader, ScorecardError, build_keyword_scorecard, build_scorecard,
+    load_scorecard, write_scorecard,
 };
 
 const SCORES: [f32; 5] = [0.9, 0.8, 0.7, 0.6, 0.5];
@@ -355,5 +355,46 @@ fn scorecard_round_trips_through_write_and_load() {
         assert_opt_close(a.recall_at_5, b.recall_at_5);
         assert_opt_close(a.recall_at_20, b.recall_at_20);
         assert_opt_close(a.recall_at_budget, b.recall_at_budget);
+    }
+}
+
+#[test]
+fn a_keyword_scorecard_needs_no_vectors_and_names_its_retriever() {
+    let (pack, pack_digest) = load_tiny();
+    let header = standard_header(2);
+    let runs = standard_runs();
+    let mut bare = pack.clone();
+    bare.embedding = None;
+    let keyword = build_keyword_scorecard(&bare, &pack_digest, &header, &runs, "bm25f").unwrap();
+    assert_eq!(keyword.model_id, "bm25f");
+    let pinned = build_scorecard(&pack, &pack_digest, &header, &runs).unwrap();
+    assert_close(keyword.metrics.ndcg_at_10, pinned.metrics.ndcg_at_10);
+    assert_close(keyword.metrics.mrr, pinned.metrics.mrr);
+    assert_close(keyword.metrics.recall_at_5, pinned.metrics.recall_at_5);
+    assert_close(keyword.metrics.recall_at_20, pinned.metrics.recall_at_20);
+    assert_close(
+        keyword.metrics.recall_at_budget,
+        pinned.metrics.recall_at_budget,
+    );
+    assert_close(keyword.metrics.abstention_f1, pinned.metrics.abstention_f1);
+    assert_eq!(keyword.per_query.len(), pinned.per_query.len());
+    for (left, right) in keyword.per_query.iter().zip(pinned.per_query.iter()) {
+        assert_opt_close(left.ndcg_at_10, right.ndcg_at_10);
+        assert_opt_close(left.mrr, right.mrr);
+        assert_opt_close(left.recall_at_5, right.recall_at_5);
+        assert_opt_close(left.recall_at_20, right.recall_at_20);
+        assert_opt_close(left.recall_at_budget, right.recall_at_budget);
+    }
+    assert_eq!(keyword.latency, pinned.latency);
+    assert_eq!(keyword.repeat_digest_equal, pinned.repeat_digest_equal);
+    assert!(matches!(
+        build_scorecard(&bare, &pack_digest, &header, &runs),
+        Err(ScorecardError::PackHasNoVectors)
+    ));
+    for retriever in ["", "a b"] {
+        assert!(matches!(
+            build_keyword_scorecard(&bare, &pack_digest, &header, &runs, retriever),
+            Err(ScorecardError::BadRetriever { .. })
+        ));
     }
 }

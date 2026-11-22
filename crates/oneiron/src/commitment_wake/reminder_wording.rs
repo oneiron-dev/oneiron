@@ -236,13 +236,17 @@ impl Vault {
         let offset = self
             .commitment_reminder_route()?
             .and_then(|route| route.utc_offset_minutes_at(reminder.due_at));
+        let cap = {
+            let txn = self.store.env.read_txn()?;
+            crate::commitment::setting_keys::reminder_quote_cap_in(self, &txn)?
+        };
         Ok(Some(CommitmentReminderWordingRequest {
             content_ref: payload.content_ref.clone(),
             reader: record.obligor.kind,
             phase: reminder.phase,
-            promise: quoted_promise(&record),
+            promise: quoted_promise(&record, cap),
             due: civil_time(reminder.due_at, offset),
-            fixed_text: reminder_text(&record, &reminder, offset),
+            fixed_text: reminder_text(&record, &reminder, offset, cap),
             persona_ref: payload.voice.persona_ref.clone(),
         }))
     }
@@ -255,8 +259,8 @@ impl Vault {
     ///
     /// # Errors
     ///
-    /// The ref is not a reminder's, the text is empty or longer than
-    /// [`COMMITMENT_REMINDER_WORDING_MAX_BYTES`], or the store failed.
+    /// The ref is not a reminder's, the text is empty or longer than the owner's
+    /// `commitment.reminder.max_wording_bytes` (4,096 by default), or the store failed.
     pub fn file_commitment_reminder_wording(
         &self,
         content_ref: &str,
@@ -269,7 +273,11 @@ impl Vault {
             ));
         };
         let text = text.trim();
-        if text.is_empty() || text.len() > COMMITMENT_REMINDER_WORDING_MAX_BYTES {
+        let cap = {
+            let txn = self.store.env.read_txn()?;
+            crate::commitment::setting_keys::reminder_wording_cap_in(self, &txn)?
+        };
+        if text.is_empty() || text.len() > cap {
             return Err(Error::InvalidClaimBody(
                 "reminder wording is empty or too long",
             ));

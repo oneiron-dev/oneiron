@@ -28,44 +28,38 @@ use crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_PROVENANCE_KEY;
 use rmpv::Value;
 
 /// Key of one forward step-index row: id16(attempt) + hash32(step) -> claim id16.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SideKey)]
 pub(super) struct StepIndexKey {
     pub(super) attempt_id: AttemptId,
     pub(super) step_hash: [u8; 32],
-}
-
-impl SideKey for StepIndexKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(self.attempt_id.as_bytes());
-        out.extend_from_slice(&self.step_hash);
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let (attempt, hash) = bytes.split_at_checked(16)?;
-        Some(Self {
-            attempt_id: AttemptId::from_bytes(attempt).ok()?,
-            step_hash: hash.try_into().ok()?,
-        })
-    }
 }
 
 /// Key of the reverse "i:" sub-index row: claim id16 -> the forward row's full stored key
 /// bytes. Both shapes share the `DREAMER_STEP_INDEX` declaration; they cannot collide because
 /// a forward row's key is always 48 bytes (id16 + hash32) and a reverse row's is always 18
 /// (`i:` + id16).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SideKey)]
+#[side_key(prefix = b"i:")]
 pub(super) struct StepIndexClaimKey(pub(super) EntityId);
 
-impl SideKey for StepIndexClaimKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(b"i:");
-        out.extend_from_slice(self.0.as_bytes());
-    }
+/// One [`StepIndexKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn step_index_key_pin_for_test(
+    attempt_id: AttemptId,
+    step_hash: [u8; 32],
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&StepIndexKey {
+        attempt_id,
+        step_hash,
+    })
+}
 
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let rest = bytes.strip_prefix(b"i:")?;
-        Some(Self(EntityId::from_bytes(rest.try_into().ok()?).ok()?))
-    }
+/// One [`StepIndexClaimKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn step_index_claim_key_pin_for_test(
+    claim: EntityId,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&StepIndexClaimKey(claim))
 }
 
 /// The forward memo-index row: (attempt, step hash) -> the claim id that answered it.
@@ -193,6 +187,40 @@ pub(super) fn step_claim_is_runner_execution(decoded: &DecodedStepClaim, body: &
     step_claim_producer(decoded, body) == Some(StepClaimProducer::Runner)
 }
 
+/// Whether the claim's stamped write-envelope provenance names the
+/// compaction step's surface, whatever attempt or run it binds: the read
+/// gate's test for a filed compaction step, which carries the compactor's
+/// words about the records its call read
+/// (COMPACTION-STEP-CLAIM-READS-WITHOUT-SOURCES). Wider than the memo
+/// index's [`step_claim_producer`], so a step that index refuses is gated too.
+pub(super) fn stamped_compaction_step(body: &ClaimBody) -> bool {
+    provenance_entries(body).is_some_and(|entries| {
+        provenance_field(entries, ENVELOPE_PROVENANCE_SURFACE_KEY) == Some(COMPACTION_STEP_SURFACE)
+    })
+}
+
+/// The entries of the claim's stamped write-envelope provenance map.
+fn provenance_entries(body: &ClaimBody) -> Option<&[(Value, Value)]> {
+    let Some(Value::Map(evidence)) = body.evidence.as_ref() else {
+        return None;
+    };
+    let provenance = evidence.iter().find_map(|(key, value)| {
+        (key.as_str() == Some(WRITE_ENVELOPE_EVIDENCE_PROVENANCE_KEY)).then_some(value)
+    });
+    match provenance {
+        Some(Value::Map(entries)) => Some(entries.as_slice()),
+        _ => None,
+    }
+}
+
+/// The string `name` holds in a provenance map's `entries`.
+fn provenance_field<'a>(entries: &'a [(Value, Value)], name: &str) -> Option<&'a str> {
+    entries
+        .iter()
+        .find_map(|(key, value)| (key.as_str() == Some(name)).then_some(value))
+        .and_then(Value::as_str)
+}
+
 /// The producer the claim's stamped write-envelope provenance attests: a map
 /// whose attempt id equals `attempt_id` and whose surface is the runner's,
 /// or the compaction step's with a non-empty run.
@@ -200,21 +228,8 @@ fn step_claim_provenance_producer(
     body: &ClaimBody,
     attempt_id: AttemptId,
 ) -> Option<StepClaimProducer> {
-    let Some(Value::Map(evidence)) = body.evidence.as_ref() else {
-        return None;
-    };
-    let provenance = evidence.iter().find_map(|(key, value)| {
-        (key.as_str() == Some(WRITE_ENVELOPE_EVIDENCE_PROVENANCE_KEY)).then_some(value)
-    });
-    let Some(Value::Map(entries)) = provenance else {
-        return None;
-    };
-    let field = |name: &str| {
-        entries
-            .iter()
-            .find_map(|(key, value)| (key.as_str() == Some(name)).then_some(value))
-            .and_then(Value::as_str)
-    };
+    let entries = provenance_entries(body)?;
+    let field = |name: &str| provenance_field(entries, name);
     let expected_attempt = bytes_to_hex_lower(attempt_id.as_bytes());
     if field(ENVELOPE_PROVENANCE_ATTEMPT_KEY) != Some(expected_attempt.as_str()) {
         return None;

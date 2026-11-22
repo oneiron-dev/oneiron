@@ -462,7 +462,16 @@ impl Vault {
         // due when the window opens, and is admitted again then (FIX 8686),
         // until the deadline its first deferral fixed (FIX 8753).
         if let Some(due) = paced_until {
-            let deadline = deadline.unwrap_or_else(|| paced::paced_connector_wake_deadline(now));
+            let deadline = match deadline {
+                Some(deadline) => deadline,
+                None => paced::paced_connector_wake_deadline(
+                    now,
+                    crate::outbound_consent::connector_call_pending_ttl_secs_in_txn(
+                        &self.store,
+                        txn,
+                    )?,
+                ),
+            };
             self.defer_connector_wake_in_txn(txn, id, event, due, deadline, now)?;
         }
         let attempt_id = if status == ConnectorWakeStatus::Enqueued {

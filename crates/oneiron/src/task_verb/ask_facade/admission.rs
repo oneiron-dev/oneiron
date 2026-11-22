@@ -63,7 +63,7 @@ impl Memory<'_> {
         now: u64,
     ) -> MemoryResult<AskCensus> {
         input.what.check_option_names()?;
-        let holders = self.ask_holders_in_txn(txn, input)?;
+        let (holders, reached_role) = self.ask_route_in_txn(txn, input)?;
         let bound = self.ask_class_in_txn(txn, input.task_ref)?;
         let context_class = bound.as_ref().map(|(_, class)| class.clone());
         let effective = input.effective(
@@ -152,6 +152,7 @@ impl Memory<'_> {
         }
         Ok(AskCensus {
             holders,
+            reached_role,
             governed_task: bound
                 .filter(|_| input.task_ref.is_none())
                 .map(|(task, _)| task),
@@ -228,6 +229,7 @@ impl Memory<'_> {
             no_live_route: census.no_live_route,
             created_at: now,
             guest_grants,
+            reached_role: census.reached_role,
             policy_surface,
             statement,
         };

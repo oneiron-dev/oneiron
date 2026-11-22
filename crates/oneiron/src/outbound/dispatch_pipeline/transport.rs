@@ -417,11 +417,14 @@ fn with_execution_request<R>(
         return None;
     };
     // FIX 8791: the sink's own profile-read hold waits for the seat's
-    // daily reset, named on the request's clock.
-    let linkedin_sandbox_policy = request
-        .linkedin_sandbox_policy
-        .clone()
-        .map(|policy| policy.with_caps_reset_after(request.occurred_at));
+    // daily reset, named on the request's clock, under the owner's seat
+    // settings, read again here. A settings read that fails reads as the
+    // shipped settings: no sweep, the UTC day.
+    let linkedin_sandbox_policy = request.linkedin_sandbox_policy.clone().map(|policy| {
+        crate::linkedin_connector::setting_keys::LinkedInSeatSettings::read(vault)
+            .unwrap_or_default()
+            .apply(policy, request.occurred_at)
+    });
     let execution_request = OutboundExecutionRequest {
         intent_ref: &request.intent_ref,
         intent: &request.intent,

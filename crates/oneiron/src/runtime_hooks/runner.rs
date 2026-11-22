@@ -3,9 +3,10 @@
 //! run key, and commits the run's memo, its run index row, local outcomes,
 //! receipt, intents and cursor in one write. Delivery is at least once, in
 //! commit order, per hook and per source. Due watcher TASKs tick on the
-//! runner's own wake: each pass on the vault's home releases them into the
-//! tick feed, hooks on or off, with a binding to take a tick or none, and the
-//! [`HOOK_RUNNER_TICK`] re-read bounds how late a tick runs (FIX 4749, 22180).
+//! runner's own wake: each pass on the vault's home runs their due ticks, the
+//! schedule's armed jobs, into the tick feed, hooks on or off, with a binding
+//! to take a tick or none, and the [`HOOK_RUNNER_TICK`] re-read bounds how
+//! late a tick runs (FIX 4749, 22180; stage 5b-3).
 
 mod body;
 mod commit;
@@ -20,7 +21,9 @@ use std::time::Duration;
 use serde_json::{Value, json};
 
 use crate::claim::{ClaimReadStatus, ScopedRead};
+use crate::llm::model_pack::AccessSnapshot;
 use crate::receipt::hex_lower;
+use crate::schedule::JobPass;
 use crate::skill_hub::pack_catalog::{HookActorClass, HookPhase, PackHookBinding};
 use crate::{EntityId, Error, Result, Vault};
 
@@ -76,6 +79,10 @@ impl std::fmt::Debug for FactHookRunner {
 pub struct HookPassReport {
     /// `hooks.enabled` is off; the pass released due ticks and read nothing.
     pub disabled: bool,
+    /// The install is a copy restored and not joined (row RESTORED-UNJOINED-STARTS-NO-WORK), with
+    /// hooks on or off: the pass ran no hook, drained no settled verb ask and applied no pending
+    /// intent. The join's proactivity notice wakes the next pass, which runs them.
+    pub unjoined: bool,
     pub entries_read: usize,
     pub runs: usize,
     pub memo_hits: usize,
@@ -94,6 +101,7 @@ pub struct HookPassReport {
 impl HookPassReport {
     fn append(&mut self, next: Self) {
         self.disabled |= next.disabled;
+        self.unjoined |= next.unjoined;
         self.entries_read += next.entries_read;
         self.runs += next.runs;
         self.memo_hits += next.memo_hits;
@@ -132,6 +140,31 @@ pub(crate) fn fact_bindings(
             .then_with(|| a.body_hash.cmp(&b.body_hash))
     });
     bindings
+}
+
+/// The due watcher ticks and timer turn programs a fact-hook runner pass
+/// runs ahead of the housekeeping tick: the due rows of their two jobs alone,
+/// within one [`HOOK_RUNNER_TICK`]; the ticks on the node that releases ticks
+/// (stage 5b-3), the timer programs on the machine that holds their armings.
+/// While a housekeeping pass holds the schedule's runner it runs nothing, and
+/// that pass runs them. Answers whether due rows may be left for the next
+/// pass, which then starts at once.
+fn run_due_ticks_and_timers(vault: &Vault) -> Result<bool> {
+    let deadline =
+        crate::store::housekeeping_schedule::HousekeepingBudget::within(HOOK_RUNNER_TICK)
+            .deadline();
+    let access = AccessSnapshot::new();
+    let pass = JobPass {
+        deadline: &deadline,
+        access: &access,
+    };
+    let jobs = [
+        &source::TASK_TICK_JOB,
+        &crate::dreamer_runner::PROGRAM_TIMER_JOB,
+    ];
+    Ok(vault
+        .run_due_of(&jobs, &pass)?
+        .is_some_and(|report| report.at_run_bound() || deadline.passed()))
 }
 
 impl FactHookRunner {
@@ -186,17 +219,31 @@ impl FactHookRunner {
         // A binding whose cursor this node first places below is bound after
         // these ticks: it runs an open TASK's (`open_tick_start_in_txn`), and
         // never a watch TASK's they settled (`enabled_before_tick_in_txn`).
-        let now = vault.store.clock.now_recorded_at();
-        match source::release_due_ticks(vault, now) {
+        // Timer turn programs wake beside them (untangle slice 6.8c); both are
+        // armed jobs of the schedule's runner (stage 5b-3).
+        match run_due_ticks_and_timers(vault) {
             Ok(more) => report.more = more,
             Err(error) => tracing::warn!(%error, "due watcher ticks wait for the next pass"),
         }
-        // Timer and feed turn programs are released beside the ticks, hooks on
-        // or off (untangle slice 6.8c); no loop of their own runs.
+        // Feed turn programs are released beside the ticks, and every owed
+        // wake is admitted, hooks on or off; no loop of their own runs.
+        let now = vault.store.clock.now_recorded_at();
         crate::dreamer_runner::release_program_wakes(vault, now);
         if !vault.hooks_enabled()? {
             report.disabled = true;
+            // The report names a copy restored and not joined with hooks off
+            // as with hooks on; the prune is local and runs either way. An
+            // unreadable answer is left to the next pass with hooks on, which
+            // fails on it.
+            report.unjoined = matches!(vault.restored_unjoined(), Ok(true));
             return hook_feeds::prune_hook_feeds(vault, max_entries).map(|()| report);
+        }
+        // A copy restored and not joined starts none of the image's hooks or
+        // held verb calls (row RESTORED-UNJOINED-STARTS-NO-WORK): its cursors
+        // stay where they are, and the join wakes the next pass.
+        if vault.restored_unjoined()? {
+            report.unjoined = true;
+            return Ok(report);
         }
         // Calls a settled verb hook ask made ready run here, the first pass
         // at start included: outside any write, at hook depth 0. A failed
@@ -584,6 +631,7 @@ impl Pass<'_, '_> {
             retained.enqueue(run, self.all, lane.actor_key().clone(), body, input, now)?;
             return Ok(true);
         }
+        let max_budget_ms = crate::runtime_hooks::setting_keys::hook_max_budget_ms(self.vault)?;
         let prepared = evaluation::evaluate(
             self.runtime,
             self.verdict,
@@ -593,6 +641,7 @@ impl Pass<'_, '_> {
             input,
             now,
             false,
+            max_budget_ms,
         );
         let memo = prepared.memo(self.vault, run)?;
         let queued = self.commit(run, memo, &prepared.verdict)?;

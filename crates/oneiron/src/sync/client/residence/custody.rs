@@ -136,11 +136,16 @@ async fn note_all(
     Ok(())
 }
 
-/// One relay pass: see the module notes.
+/// One relay pass: see the module notes. A member lane ends at once
+/// (H8-SHARED-ENV-LANE = B), as a federation lane does: the home serves it
+/// no custody call.
 pub(crate) async fn relay_custody(
     vault: &Arc<Vault>,
     config: &SyncClientConfig,
 ) -> Result<(), TransportError> {
+    if config.member_lane {
+        return Ok(());
+    }
     if config.federation_peer.is_some()
         || config.residence_selector.is_none()
         || !vault
@@ -181,7 +186,10 @@ pub(crate) async fn relay_custody(
             let why = "the residence home is out of reach; the next pass retries";
             return note_all(vault, owed, PendingCode::Offline, why).await;
         }
-        Err(RpcFault::Remote(_)) => {
+        // A member lane's dial names its 401/403 (MEMBER-SYNC threat F5);
+        // the early gate above keeps this pass from dialing one, so these
+        // arms only complete the match, as a refused socket.
+        Err(RpcFault::Remote(_) | RpcFault::Unauthorized | RpcFault::Forbidden(_)) => {
             let why = "the residence home refused this machine's socket";
             return note_all(vault, owed, PendingCode::Denied, why).await;
         }
@@ -230,13 +238,18 @@ pub(crate) async fn relay_custody(
 /// Drains residence member `target`, approved by `owner` (FIX 5843): begun,
 /// the home empties the lineage's heads on the proven socket and answers
 /// its sweep ack, committed here. The set's new revision. Any error leaves
-/// the member fenced for a retry, which begins the same drain again.
+/// the member fenced for a retry, which begins the same drain again. A
+/// member lane refuses before it begins or dials (H8-SHARED-ENV-LANE = B):
+/// the home serves it no custody call.
 pub async fn drain_custody_residence_member_as(
     vault: &Arc<Vault>,
     config: &SyncClientConfig,
     owner: &AuthenticatedOwner,
     target: &TargetId,
 ) -> Result<u64, TransportError> {
+    if config.member_lane {
+        return Err(refused());
+    }
     let begun = Arc::clone(vault);
     let begin_owner = owner.clone();
     let begin_target = target.clone();

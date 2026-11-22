@@ -8,7 +8,8 @@
 //! instead for the rest of its life; so does `--transport http`. A socket that
 //! drops fails the requests in flight on it with a typed error, and a later
 //! request opens a fresh one, after a backoff while opens keep failing; a
-//! request that never reached the socket goes over HTTP meanwhile.
+//! request that never reached the socket goes over HTTP meanwhile, as does
+//! one too long for the server's socket frame.
 //!
 //! Neither changes what a request is. Each still carries the slip and a holder
 //! proof signed for it alone, which the server's binding door verifies and
@@ -21,7 +22,8 @@
 //! In owner mode (FIX 5540) the socket is the only carrier: each upgrade
 //! carries the owner's sign-in, read afresh from its file, in place of the
 //! slip and its proof; his calls name no proof; and a request the socket
-//! cannot take gets a typed auth or unavailable error, never HTTP.
+//! cannot take gets a typed auth, unavailable or frame-too-large error,
+//! never HTTP.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -30,7 +32,7 @@ use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use futures_util::{SinkExt, StreamExt};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tokio::runtime::Handle;
 use tokio::sync::mpsc;
 use tokio::time::timeout_at;
@@ -44,7 +46,7 @@ use oneiron_vault_contract::BINDING_HEADER;
 
 mod replies;
 
-use replies::{ReplyWaiter, route};
+use replies::{ReplyWaiter, SocketAnswer, route};
 
 /// How long opening the socket may take, inside the request's own deadline.
 /// A server that cannot be reached in this time gets this request over HTTP,
@@ -95,6 +97,8 @@ pub(super) enum Cut {
     /// The server offers the owner no MCP socket, and owner mode has no
     /// other carrier.
     Unavailable(String),
+    /// Too long for the server's socket, and owner mode has no other carrier.
+    FrameTooLarge,
 }
 
 /// The bounds on one request.
@@ -118,6 +122,9 @@ pub(super) enum Credential<'a> {
     /// The owner's sign-in: the file of upgrade headers it is read from for
     /// each new socket. His calls name no holder proof.
     Owner { headers_file: &'a Path },
+    /// An OAuth access token, sent as the bearer over HTTP with no holder
+    /// proof: the server swaps it for the slip it holds for the sign-in.
+    OAuth { bearer: &'a str },
 }
 
 /// The bridge's connection: the socket while the server offers it, else one
@@ -164,16 +171,27 @@ impl Link {
                 Err(Carried::Unsent) => {}
             }
         }
-        // The owner's sign-in is attested for a socket upgrade alone: owner
-        // mode never posts over HTTP.
-        let Credential::Slip { bearer, sign } = credential else {
-            return Err(Cut::Unavailable(
+        match credential {
+            Credential::Slip { bearer, sign } => {
+                let binding = sign().map_err(Cut::Failed)?;
+                self.http.post(
+                    &self.endpoint(surface),
+                    bearer,
+                    Some(&binding),
+                    body,
+                    bounds,
+                )
+            }
+            Credential::OAuth { bearer } => {
+                self.http
+                    .post(&self.endpoint(surface), bearer, None, body, bounds)
+            }
+            // The owner's sign-in is attested for a socket upgrade alone:
+            // owner mode never posts over HTTP.
+            Credential::Owner { .. } => Err(Cut::Unavailable(
                 "owner mode carries MCP over the server's socket alone".to_owned(),
-            ));
-        };
-        let binding = sign().map_err(Cut::Failed)?;
-        self.http
-            .post(&self.endpoint(surface), bearer, &binding, body, bounds)
+            )),
+        }
     }
 }
 
@@ -197,20 +215,24 @@ impl HttpLink {
         Ok(Self { client, runtime })
     }
 
+    /// One POST carrying `bearer`, and `binding` when a slip's holder proof
+    /// goes with it.
     fn post(
         &self,
         url: &str,
         bearer: &str,
-        binding: &str,
+        binding: Option<&str>,
         body: Vec<u8>,
         bounds: &Bounds,
     ) -> Result<Exchange, Cut> {
-        let request = self
+        let mut request = self
             .client
             .post(url)
             .header(reqwest::header::CONTENT_TYPE, "application/json")
-            .header(reqwest::header::AUTHORIZATION, format!("Bearer {bearer}"))
-            .header(BINDING_HEADER, binding);
+            .header(reqwest::header::AUTHORIZATION, format!("Bearer {bearer}"));
+        if let Some(binding) = binding {
+            request = request.header(BINDING_HEADER, binding);
+        }
         // OF-604: a large body crosses zstd, as the remote SDK's does.
         let request = match oneiron::sync::transport::encode_http_body(&body) {
             Some(encoded) => {
@@ -403,10 +425,10 @@ impl SocketLink {
             Credential::Slip { sign, .. } => {
                 Some(sign().map_err(|error| Carried::Cut(Cut::Failed(error)))?)
             }
-            Credential::Owner { .. } => None,
+            Credential::Owner { .. } | Credential::OAuth { .. } => None,
         };
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let frame = request_frame(id, surface, binding.as_deref(), body).map_err(Carried::Cut)?;
+        let frame = request_frame(id, surface, binding.as_deref(), body).map_err(unsent)?;
         let (chunks, mut answer) = mpsc::unbounded_channel();
         if session
             .outbound
@@ -578,6 +600,11 @@ impl SocketLink {
                 Ok(upgrade) => upgrade.apply(headers),
                 Err(refused) => return Opened::Refused(refused.to_string()),
             },
+            // The upgrade takes a slip or the owner's sign-in, never an OAuth
+            // token: an OAuth bridge holds no socket.
+            Credential::OAuth { .. } => {
+                return Opened::Declined("the socket's upgrade takes no OAuth token".to_owned());
+            }
         }
         // Set after the owner's headers, which may not name it either.
         let Ok(protocol) = crate::handler::MCP_SUBPROTOCOL.parse() else {
@@ -718,6 +745,7 @@ async fn drive(mut socket: Socket, mut requests: mpsc::UnboundedReceiver<Outboun
 /// One request as an app RPC frame: the server's `mcp` method, carrying the
 /// message as the client wrote it and, for a slip, this request's own proof.
 /// The owner's socket takes no `binding` field at all, not even an empty one.
+/// A frame past [`super::SOCKET_MAX_OUTBOUND_FRAME`] is refused unsent.
 fn request_frame(
     id: u64,
     surface: McpSurface,
@@ -763,12 +791,7 @@ fn request_frame(
     request
         .serialize(&mut rmp_serde::Serializer::new(&mut frame).with_struct_map())
         .map_err(|error| Cut::Failed(format!("could not frame the request: {error}")))?;
-    Ok(frame)
-}
-
-/// The HTTP answer a socket call carries back.
-#[derive(Deserialize)]
-struct SocketAnswer {
-    status: u16,
-    body: String,
+    (frame.len() <= super::SOCKET_MAX_OUTBOUND_FRAME)
+        .then_some(frame)
+        .ok_or(Cut::FrameTooLarge)
 }
