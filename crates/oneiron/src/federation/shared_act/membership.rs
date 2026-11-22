@@ -1421,7 +1421,7 @@ impl Vault {
             &mut txn,
             vault_id,
             &id,
-            claimant,
+            (claimant, None),
             now,
             UnsignedExecution {
                 cause: MembershipExecutionCause::HostHandover,
