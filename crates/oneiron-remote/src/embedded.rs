@@ -256,9 +256,6 @@ fn open_uncontended(canonical: &Path, options: &OpenOptions) -> Result<SharedVau
     // the process's presence gate, so an important owner act asks through
     // this device's own unlock prompt (row OWNER-CONFIRM-SHEET). A handle
     // attached to a host's vault keeps what its host installed.
-    if vault.device_keystore_assurance().is_some() {
-        vault.install_process_presence_gate();
-    }
     let limit_questions = Arc::new(NativeLimitQuestions::default());
     vault.set_limit_ask(limit_questions.clone());
     STORE_OPEN_COUNT.fetch_add(1, Ordering::Relaxed);

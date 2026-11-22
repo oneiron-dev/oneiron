@@ -267,7 +267,7 @@ impl OneironClient {
         options: &OpenOptions,
     ) -> Result<Self, MemoryError> {
         Ok(Self {
-            backend: Backend::Embedded(EmbeddedClient::attach(path, vault, options, None)?),
+            backend: Backend::Embedded(EmbeddedClient::attach(path, vault.clone(), options, None).inspect(|_| vault.install_process_presence_gate())?),
             host_root: None,
         })
     }
