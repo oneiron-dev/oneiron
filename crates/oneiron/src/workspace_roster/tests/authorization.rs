@@ -7,7 +7,7 @@ type Mutation = fn(&Vault, &MemberOnboardingIntent, &OrgAdminWriter) -> Result<(
 type RawRows = Vec<(Vec<u8>, Vec<u8>)>;
 
 fn birth(intent: &MemberOnboardingIntent) -> &CompanionBirthIntent {
-    intent.companion_birth.as_ref().expect("companion fixture")
+    intent.companion.birth().expect("companion fixture")
 }
 
 /// Capture durable effects, not just the returned error. Authority entries
@@ -34,9 +34,12 @@ fn durable_rows(vault: &Vault) -> Result<Vec<RawRows>> {
 
 /// A grant authorization may durably advance the clock floor even when the
 /// requested workspace mutation is refused. It must not change any other row.
-fn durable_rows_without_authorization_clock(vault: &Vault) -> Result<Vec<RawRows>> {
+pub(super) fn durable_rows_without_authorization_clock(vault: &Vault) -> Result<Vec<RawRows>> {
     let mut rows = durable_rows(vault)?;
-    rows[1].retain(|(key, _)| key.as_slice() != crate::ports::CLOCK_FLOOR);
+    rows[1].retain(|(key, _)| {
+        key.as_slice() != crate::ports::CLOCK_FLOOR
+            && key.as_slice() != crate::side_table::BACKUP_CHANGE.prefix
+    });
     Ok(rows)
 }
 
@@ -96,7 +99,7 @@ fn every_onboarding_mutation_rechecks_revoked_authority_after_preflight() -> Res
         let (_dir, vault, mut intent) = fixture("Antevon");
         let companion = companion_birth();
         intent.grant_bundle.companion_profile_grant_ref = Some(companion.profile_grant_ref);
-        intent.companion_birth = Some(companion.clone());
+        intent.companion = CompanionChoice::Work(companion.clone());
         let requested = mailbox();
         intent.delegated_mailbox = Some(requested.clone());
         let owner = writer(WRITER);
@@ -371,7 +374,7 @@ fn grant_demotion_blocks_roster_and_rename_but_reauthorization_resumes() -> Resu
             FederationGrantPreset::Member,
         ),
     );
-    let before = durable_rows(&vault)?;
+    let before = durable_rows_without_authorization_clock(&vault)?;
     assert_eq!(
         record_roster_member(
             &vault,
@@ -392,7 +395,7 @@ fn grant_demotion_blocks_roster_and_rename_but_reauthorization_resumes() -> Resu
             )
             .is_err()
     );
-    assert_eq!(durable_rows(&vault)?, before);
+    assert_eq!(durable_rows_without_authorization_clock(&vault)?, before);
     seed_federation_grant(
         &vault,
         ADMIN_GRANT,
@@ -404,12 +407,12 @@ fn grant_demotion_blocks_roster_and_rename_but_reauthorization_resumes() -> Resu
         ),
     );
     let outcome = vault.onboard_workspace_member(intent.clone(), &stepped_up(owner), None)?;
-    let completed = durable_rows(&vault)?;
+    let completed = durable_rows_without_authorization_clock(&vault)?;
     assert_eq!(
         vault.onboard_workspace_member(intent, &stepped_up(owner), None)?,
         outcome
     );
-    assert_eq!(durable_rows(&vault)?, completed);
+    assert_eq!(durable_rows_without_authorization_clock(&vault)?, completed);
     Ok(())
 }
 
@@ -522,7 +525,7 @@ fn class_valid_bound_admins_keep_authorized_onboarding_behavior() -> Result<()> 
             ),
         );
         let outcome = vault.onboard_workspace_member(intent.clone(), &stepped_up(admin), None)?;
-        let companion = intent.companion_birth.as_ref().expect("required companion");
+        let companion = intent.companion.birth().expect("required companion");
         assert_eq!(
             person_substrate(&vault, &companion.person_ref, AT)?,
             Some(PersonSubstrate::Model)
@@ -913,9 +916,9 @@ fn revoked_mailbox_proof_blocks_apply_resume_publication_and_completed_replay() 
                     vault.revoke_access_grant(&state.mode.read_grant_ref.expect("read"), at)?;
                 }
                 1 => {
-                    vault.revoke_standing_outbound_grant(
-                        &state.mode.action_grant_ref.expect("draft"),
-                        at,
+                    vault.revoke_consent_grant(
+                        &owner,
+                        &state.action_grant.as_ref().expect("draft").grant_ref,
                     )?;
                 }
                 2 => {
@@ -1032,9 +1035,9 @@ fn mailbox_publication_fence_rejects_a_mutation_after_successful_verification() 
 fn mailbox_resume_refuses_future_lifecycle_and_changed_member_subject() -> Result<()> {
     for future_lifecycle in [false, true] {
         let (_dir, vault, intent, owner) = mailbox_fixture()?;
-        if !future_lifecycle {
-            root_owner(&vault, writer(WRITER), 0xE7)?;
-        }
+        // No authority root: the vault stays unrooted (as in the
+        // future_lifecycle branch), so the embedded-owner anchor below and
+        // the admin-grant onboarding both run without a binding.
         let requested = intent.delegated_mailbox.as_ref().expect("mailbox");
         assert!(matches!(
             vault.onboard_workspace_member(intent.clone(), &admin_writer(WRITER), Some(&owner)),
@@ -1057,11 +1060,17 @@ fn mailbox_resume_refuses_future_lifecycle_and_changed_member_subject() -> Resul
             )?;
         } else {
             activate_mailbox(&vault, requested.identity_ref)?;
+            let owner_writer = WriteActor::new(
+                vault
+                    .ensure_embedded_owner_actor()
+                    .map_err(|_| crate::Error::InvariantViolation("embedded owner"))?,
+                EdgeActorClass::Human,
+            );
             crate::subject_model::anchor_actor_subject(
                 &vault,
                 intent.actor_ref,
                 entity(OUTSIDER),
-                writer(WRITER),
+                owner_writer,
                 AT + 3,
             )?;
         }

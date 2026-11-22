@@ -51,6 +51,9 @@ pub(crate) fn facade_error_from_outbound_dispatch(err: OutboundDispatchError) ->
             &["Refresh the current effect state before retrying."],
         ),
         OutboundDispatchError::Chokepoint(
+            crate::outbound_intent_ledger::IntentLedgerError::Calendar(verdict),
+        ) => facade_error_from_calendar(verdict),
+        OutboundDispatchError::Chokepoint(
             crate::outbound_intent_ledger::IntentLedgerError::InvalidBoundActor,
         ) => MemoryError::new(
             MEMORY_CODE_FORBIDDEN,

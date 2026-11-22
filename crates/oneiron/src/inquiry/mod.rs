@@ -67,6 +67,8 @@ pub(crate) use log::erase_inquiry_log_actor_in_txn;
 pub use log::{InquiryDecider, InquiryLogEntry};
 #[cfg_attr(not(oneiron_test_support), allow(unused_imports))]
 pub(crate) use log::{log_inquiry_in_txn, settle_inquiry_in_txn};
+#[cfg(oneiron_test_support)]
+pub(crate) use member::effect_digest_for_test;
 pub(crate) use member::erase_inquiry_pending_actor_in_txn;
 pub use member::{
     INQUIRY_ANSWER_VERB, InquiryJudgment, InquiryJudgmentOutcome, InquiryMemberAnswer,
@@ -74,9 +76,9 @@ pub use member::{
 };
 pub(crate) use policy::{INQUIRY_ROW_KEY, InquiryPolicyRead};
 pub use policy::{INQUIRY_ROW_VERSION, InquiryKeepSetting, InquiryKeepSource, InquiryPolicy};
-#[cfg_attr(not(oneiron_test_support), allow(unused_imports))]
-pub(crate) use receipt::write_inquiry_receipt_in_txn;
 pub(crate) use receipt::{erase_inquiry_receipt_actor_in_txn, inquiry_receipts};
+#[cfg_attr(not(oneiron_test_support), allow(unused_imports))]
+pub(crate) use receipt::{write_inquiry_receipt_in_txn, write_inquiry_terms_receipt_in_txn};
 pub use record::{
     Inquiry, InquiryAnswer, InquiryAsker, InquiryKeep, InquiryOutcome, InquiryStatement,
     InquiryTask, MAX_INQUIRY_PURPOSE_BYTES, MAX_INQUIRY_QUESTION_BYTES, MAX_INQUIRY_ROLE_BYTES,

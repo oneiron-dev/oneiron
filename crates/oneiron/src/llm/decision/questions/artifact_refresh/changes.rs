@@ -1,5 +1,7 @@
 //! Sparse changed-unit reads for standing artifact questions.
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use super::{Asking, Changed, Selection};
 use crate::edit_roundtrip::judgment_cells::named_sheet_cells;
 use crate::edit_roundtrip::{CellRef, CellValue, SheetRowSelection};
@@ -187,7 +189,7 @@ impl Asking<'_> {
                     Ok(Some(
                         read.into_iter()
                             .map(|block| {
-                                let text = *blake3::hash(block.text.as_bytes()).as_bytes();
+                                let text = *ContentHash::of(block.text.as_bytes()).as_bytes();
                                 (block.id, text)
                             })
                             .collect::<std::collections::BTreeMap<_, _>>(),

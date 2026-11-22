@@ -71,9 +71,10 @@ fn entity_line(label: CallLabel, name: Option<&str>) -> String {
 
 fn claim_line(label: CallLabel, claim: &KnownClaim, rel: Option<&[CallLabel]>) -> String {
     let topic = topic_key_suffix(claim);
+    let uncitable = uncitable_suffix(claim);
     match rel {
         Some(rel) => format!(
-            "  claim {label} {} = {} [{}]{topic}\n",
+            "  claim {label} {} = {} [{}]{topic}{uncitable}\n",
             claim.predicate,
             claim.value,
             rel.iter()
@@ -82,7 +83,7 @@ fn claim_line(label: CallLabel, claim: &KnownClaim, rel: Option<&[CallLabel]>) -
                 .join(" ")
         ),
         None => format!(
-            "  claim {label} {} = {}{topic}\n",
+            "  claim {label} {} = {}{topic}{uncitable}\n",
             claim.predicate, claim.value
         ),
     }
@@ -94,6 +95,12 @@ fn topic_key_suffix(claim: &KnownClaim) -> String {
         .as_ref()
         .map(|topic| format!(" topic_key={topic}"))
         .unwrap_or_default()
+}
+
+/// What a head verification may not take as evidence carries at the very end
+/// of its line, after any topic key: nothing for a citable head.
+fn uncitable_suffix(claim: &KnownClaim) -> &'static str {
+    if claim.citable { "" } else { " (uncitable)" }
 }
 
 /// What an entity line counts against a page's room: its length with the
@@ -115,7 +122,8 @@ pub(super) fn claim_line_bytes(claim: &KnownClaim) -> usize {
         claim.value
     )
     .len()
-        + topic_key_suffix(claim).len();
+        + topic_key_suffix(claim).len()
+        + uncitable_suffix(claim).len();
     match &claim.rel {
         Some(ids) => {
             line + format!(

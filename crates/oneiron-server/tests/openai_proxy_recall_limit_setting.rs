@@ -296,6 +296,7 @@ fn set_recall_limit(vault: &Vault, issuer: &HostSlipIssuer, rows: u32) {
                 expected_revision: None,
                 why: None,
                 check_in_ref: None,
+                weight_runs: None,
             },
         )
         .expect("the owner sets proxy.openai.recall_limit");

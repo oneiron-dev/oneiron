@@ -266,7 +266,7 @@ impl NodePayload {
         )
     }
 
-    /// A chart's series fit the categories each draws ([`chart::check`]).
+    /// A chart's series fit the categories each draws (`chart::check`).
     pub fn check(&self) -> Result<(), LiveError> {
         chart::check(self)
     }

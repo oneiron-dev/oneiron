@@ -44,10 +44,8 @@ fn owned_vault_keeps_lease_until_last_arc_and_releases_failed_open() {
         Err(Error::ConcurrentWrite(VAULT_WRITER_LEASE_HELD))
     ));
     drop(held);
-    let bad = VaultConfig {
-        dimensions: 17,
-        ..VaultConfig::default()
-    };
+    let mut bad = VaultConfig::default();
+    bad.dimensions = 17;
     assert!(Vault::open_owned(dir.path(), bad).is_err());
     Vault::open_owned(dir.path(), VaultConfig::default()).expect("failed open released lease");
 }
@@ -114,10 +112,8 @@ fn failed_open_releases_lease_a_forked_child_still_holds_open() {
             .send(ParkedChild::fork())
             .expect("hand the child to the test");
     });
-    let bad = VaultConfig {
-        dimensions: 17,
-        ..VaultConfig::default()
-    };
+    let mut bad = VaultConfig::default();
+    bad.dimensions = 17;
     assert!(Vault::open_owned(dir.path(), bad).is_err());
     let child = child
         .try_recv()
@@ -160,6 +156,7 @@ fn embedded_owner_bootstrap_refuses_permanent_hard_delete_after_reopen() {
     ] {
         let dir = tempfile::tempdir().expect("tempdir");
         let vault = Vault::open(dir.path(), VaultConfig::default()).expect("open vault");
+        vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
         let owner = vault.ensure_embedded_owner_actor().expect("bootstrap");
         assert_eq!(
             vault.ensure_embedded_owner_actor().expect("idempotent"),
@@ -171,6 +168,7 @@ fn embedded_owner_bootstrap_refuses_permanent_hard_delete_after_reopen() {
         assert!(vault.get_raw(&owner).expect("read owner").is_none());
         drop(vault);
         let vault = Vault::open(dir.path(), VaultConfig::default()).expect("reopen vault");
+        vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
         let before = vault.store.env.read_txn().expect("marker snapshot");
         assert!(
             vault

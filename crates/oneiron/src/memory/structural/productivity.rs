@@ -163,41 +163,48 @@ impl Memory<'_> {
     }
 
     /// The role-labelled `ChildOf` tree under one TASK, read through the
-    /// caller's lane: a withheld child and its subtree are absent and
-    /// counted in the receipt; a non-TASK child is not part of the tree.
+    /// caller's lane: a withheld TASK child and its subtree are absent and
+    /// counted in the receipt; a child of another type is not part of the
+    /// tree, withheld or not, so it never counts.
     pub fn productivity_tree(
         &self,
         input: &ProductivityTreeRequest,
     ) -> MemoryResult<ScopedReadResult<Option<ProductivityTree>>> {
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
         let root = self.resolve_ref_in_lane(&lane, &input.root_ref)?;
-        lane.child_of_tree_projected(&root, input.max_depth, node_body, |txn, nodes| {
-            let Some(nodes) = nodes else {
-                return Ok(None);
-            };
-            let ref_of = |id: &crate::EntityId| -> MemoryResult<String> {
-                Ok(self
-                    .short_ref_of_in_txn(txn, id)?
-                    .unwrap_or_else(|| id.to_hex()))
-            };
-            let mut rows = Vec::with_capacity(nodes.len());
-            for node in nodes {
-                rows.push(ProductivityNode {
-                    task_ref: ref_of(&node.id)?,
-                    id_hex: node.id.to_hex(),
-                    parent_ref: node.parent.as_ref().map(ref_of).transpose()?,
-                    depth: node.depth,
-                    role: node.node.role,
-                    label: node.node.label,
-                    current_streak: node.node.streak.map(|(current, _)| current),
-                    longest_streak: node.node.streak.map(|(_, longest)| longest),
-                });
-            }
-            Ok(Some(ProductivityTree {
-                root_ref: ref_of(&root)?,
-                nodes: rows,
-            }))
-        })
+        lane.child_of_tree_projected(
+            &root,
+            input.max_depth,
+            Some(ENTITY_TYPE_TASK),
+            node_body,
+            |txn, nodes| {
+                let Some(nodes) = nodes else {
+                    return Ok(None);
+                };
+                let ref_of = |id: &crate::EntityId| -> MemoryResult<String> {
+                    Ok(self
+                        .short_ref_of_in_txn(txn, id)?
+                        .unwrap_or_else(|| id.to_hex()))
+                };
+                let mut rows = Vec::with_capacity(nodes.len());
+                for node in nodes {
+                    rows.push(ProductivityNode {
+                        task_ref: ref_of(&node.id)?,
+                        id_hex: node.id.to_hex(),
+                        parent_ref: node.parent.as_ref().map(ref_of).transpose()?,
+                        depth: node.depth,
+                        role: node.node.role,
+                        label: node.node.label,
+                        current_streak: node.node.streak.map(|(current, _)| current),
+                        longest_streak: node.node.streak.map(|(_, longest)| longest),
+                    });
+                }
+                Ok(Some(ProductivityTree {
+                    root_ref: ref_of(&root)?,
+                    nodes: rows,
+                }))
+            },
+        )
     }
 }
 

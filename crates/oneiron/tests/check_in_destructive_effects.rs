@@ -51,8 +51,8 @@ use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::inquiry::erase_actor_in_tables_in_order;
 use oneiron::test_doors::shared_act_family::rows_naming;
 use oneiron::verbs::{
-    AgentGrantMintRequest, RecordEraseConfirmRequest, RecordEraseOutcome, RecordEraseRequest,
-    confirm_record_erase, mint_agent_grant_as, preview_record_erase,
+    AgentGrantMintRequest, OwnerConfirmPreviewRequest, RecordEraseConfirmRequest,
+    RecordEraseOutcome, confirm_record_erase, mint_agent_grant_as, preview_owner_confirm,
 };
 use oneiron::workspace_roster::{WorkCompanionPolicy, WorkspaceRosterPreset};
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
@@ -174,24 +174,36 @@ fn artifact(memory: &Memory<'_>) -> EntityId {
     EntityId::from_hex(&put.id_hex).expect("an artifact id")
 }
 
-/// The owner previews the erase of `record`, then confirms it on
-/// `owner_proof`, naming `check_in_ref` when given.
+/// The owner previews the erase of `record` through the shared preview
+/// (L8-49), then confirms it on `owner_proof` with that preview's confirm,
+/// naming `check_in_ref` when given.
 fn erase(
     memory: &Memory<'_>,
     owner_proof: &AuthenticatedOwner,
     record: EntityId,
     check_in_ref: Option<&str>,
 ) -> RecordEraseOutcome {
-    let preview = preview_record_erase(memory, RecordEraseRequest { record })
-        .expect("the owner previews the erase");
+    let input = RecordEraseConfirmRequest {
+        record,
+        confirm: None,
+        also_same_bytes: false,
+        check_in_ref: check_in_ref.map(str::to_owned),
+    };
+    let preview = preview_owner_confirm(
+        memory,
+        owner_proof,
+        OwnerConfirmPreviewRequest {
+            verb: ERASE.to_owned(),
+            input: serde_json::to_value(&input).expect("the erase input encodes"),
+        },
+    )
+    .expect("the owner previews the erase");
     confirm_record_erase(
         memory,
         owner_proof,
         RecordEraseConfirmRequest {
-            record,
-            preview_digest: preview.preview_digest,
-            also_same_bytes: false,
-            check_in_ref: check_in_ref.map(str::to_owned),
+            confirm: Some(preview.confirm),
+            ..input
         },
     )
     .expect("the owner confirms the erase")

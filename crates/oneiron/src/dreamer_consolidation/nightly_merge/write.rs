@@ -85,6 +85,7 @@ impl NightlyWrite<'_> {
             );
             self.vault
                 .sign_retained_machine_claim_in_txn(txn, &id, &candidate, &mut envelope)?;
+            let subject = candidate.subject();
             self.vault
                 .batch_in()
                 .claim_candidate(
@@ -98,6 +99,9 @@ impl NightlyWrite<'_> {
                     self.now,
                 )
                 .apply_recording_gate_decisions(txn)?;
+            // An output about a PERSON under a cleanup archive is a new
+            // mention of her: she is restored in the commit (ARCH-0073 §6).
+            self.vault.restore_mentioned_subject_in_txn(txn, subject)?;
             outputs.push(id);
         }
         Ok(outputs)

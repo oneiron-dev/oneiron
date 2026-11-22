@@ -17,7 +17,7 @@ use crate::sync::TransportError;
 use crate::sync::client::{SyncEvent, SyncResidenceMode};
 use crate::sync::residence::{
     ResidenceDirectiveState, finish_residence_directive_in_txn, load_device_sync_preference,
-    pending_residence_directives, residence_refusal_reason,
+    pending_residence_directives, residence_directive_counts, residence_refusal_reason,
 };
 
 use super::SyncConnection;
@@ -144,6 +144,10 @@ impl SyncConnection {
         for pending in pending_residence_directives(vault).map_err(storage)? {
             match self.apply_residence_directive(&pending).await {
                 Ok(()) => finished += 1,
+                // The fold took the directive out since it was read as
+                // pending (row SEQ-FLOOR-S-WITHHELD-COSIGN): its act and
+                // result committed nothing, and the next one runs.
+                Err(_) if !residence_directive_counts(vault, &pending).map_err(storage)? => {}
                 Err(error) if refuses(&error) => {
                     let reason = residence_refusal_reason(&error.to_string());
                     vault
@@ -172,8 +176,8 @@ impl SyncConnection {
     }
 
     /// Runs one directive and records its result. A mode switch, a world
-    /// pick and a prune commit with their result; an open and the index read
-    /// commit nothing a second run would change, then the result.
+    /// pick, a prune and an open commit with their result; the index read
+    /// commits nothing a second run would change, then the result.
     async fn apply_residence_directive(
         &self,
         pending: &ResidenceDirectiveState,
@@ -207,10 +211,11 @@ impl SyncConnection {
             ResidenceAct::Open { window, item } => {
                 let window = crate::sync::WindowKey::try_new(window.as_str())
                     .ok_or(TransportError::InvalidWindowKey)?;
-                self.open_item(&window, *item).await?;
-                vault
-                    .with_write_txn_grouped(|txn| applied(vault, txn, pending, 1))
-                    .map_err(storage)?;
+                // The result commits with the copy the open keeps, so no copy
+                // stays once the directive no longer counts (row
+                // SEQ-FLOOR-S-WITHHELD-COSIGN).
+                self.open_item_with(&window, *item, |txn| applied(vault, txn, pending, 1))
+                    .await?;
             }
             ResidenceAct::Index => {
                 let windows = self.residence_index()?;

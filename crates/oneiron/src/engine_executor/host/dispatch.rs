@@ -323,7 +323,15 @@ impl RecordingJsHost<'_, '_> {
         };
         let output = match storage.publish_code_run_reply(path, sink, self.run_id, sources, None)? {
             Ok(output) => output,
-            Err(unavailable) => return Ok(unavailable),
+            Err(unavailable) => {
+                // The admitted caller reads what the row keeps: an answer
+                // the wall withheld reaches it withheld too.
+                if self.admitted_skill_seq == Some(seq) {
+                    self.admitted_skill_answer = None;
+                    self.admitted_skill_withheld = true;
+                }
+                return Ok(unavailable);
+            }
         };
         let mut card = result_handle_json(self.run_id, &output);
         if shown == Shown::Result {
@@ -338,13 +346,20 @@ impl RecordingJsHost<'_, '_> {
     /// A callable skill's checked answer as the guest gets it: its JSON up
     /// to the inline reply size, else its card, the answer copied whole from
     /// the call's spool into a body of the run; only the large-answer copy
-    /// here streams in frames without reading into one value.
+    /// here streams in frames without reading into one value. With `whole`
+    /// (a verb-hook post chain is live for the call, its own or the admitted
+    /// outer caller's) the answer is read into one value at any size, so
+    /// that chain reads the body itself, never its card; `dispatch_call`
+    /// then stores it for the record as it stores every large answer, a
+    /// hook's view leaving it record-only ([`Shown::View`]).
     pub(super) fn skill_answer(
         &mut self,
         seq: u64,
         mut answer: crate::skill::CallableSkillAnswer,
+        whole: bool,
     ) -> Result<serde_json::Value> {
-        if answer.byte_len() <= RESULT_REPLY_INLINE_BYTES as u64 {
+        if whole || answer.byte_len() <= RESULT_REPLY_INLINE_BYTES as u64 {
+            refuse_too_deep_answer(&mut answer, whole)?;
             return serde_json::from_reader(std::io::BufReader::new(answer.reader()?)).map_err(
                 |_| Error::InvalidConfig("callable skill returned non-JSON output".to_owned()),
             );
@@ -472,6 +487,24 @@ impl RecordingJsHost<'_, '_> {
                 Err(stopped) => return Ok((stopped, None)),
             }
         };
+        // Whether a verb-hook post chain will read this call's answer: its
+        // own, live once its pre chain found hooks on the call, or, for the
+        // admitted outer call (`hooked` is `None` only there), the outer
+        // caller's, live once its own pre chain found hooks on it. The
+        // admitted entry carries that chain's state in
+        // (`admitted_outer_hooks_live`); nothing here re-reads the current
+        // bindings, so one toggled between the outer pre chain and this
+        // dispatch cannot split them, and a binding that could not take
+        // the outer caller leaves this call as it found it. While one may
+        // run, the answer is read whole below, however large, so no chain
+        // judges only a large answer's card and no name binds its real
+        // body before that chain has seen it.
+        let outer_hooks_live = hooked.is_none() && self.admitted_outer_hooks_live;
+        let whole_for_hooks = outer_hooks_live
+            || hooked
+                .as_ref()
+                .and_then(|held| held.0.as_ref())
+                .is_some_and(|pre| !pre.passed_through());
         // A callable running its body again runs the call it ran before: a
         // hook that redirects it holds the entry, and the body's calls are
         // refused (FIX 5878).
@@ -563,7 +596,7 @@ impl RecordingJsHost<'_, '_> {
         let outcome = match ran {
             Ok(answer) => SelfDispatchOutcome::SkillCall(SelfSkillCallResult {
                 skill: skill.skill,
-                output: self.skill_answer(seq, answer)?,
+                output: self.skill_answer(seq, answer, whole_for_hooks)?,
             }),
             // A cancelled skill is a failed call under its stable code, read
             // from the typed error the runtime raised, never from guest text.
@@ -603,9 +636,17 @@ impl RecordingJsHost<'_, '_> {
             };
             self.context_capture.callables.push(callable);
         }
-        // The post chain reads the answer as the guest gets it: a large one
-        // by its handle.
-        let outcome = self.store_large_answer(seq, outcome, Shown::Result)?;
+        // The admitted outer caller's post chain reads the whole answer
+        // this host returns to it: hold it for that entry, while
+        // `dispatch_call` records the outcome itself record-only below.
+        if outer_hooks_live && let SelfDispatchOutcome::SkillCall(result) = &outcome {
+            self.admitted_skill_answer = Some(result.output.clone());
+        }
+        // The post chain reads the answer itself: while one is live a large
+        // answer came back whole above, never by its card. No spill runs
+        // before it here: `dispatch_call` stores the outcome for its row
+        // once the chain has left its view, record-only when a view stands
+        // in its place, as it does for every other call.
         let rewritten = hooked.as_ref().and_then(|hooked| hooked.1.clone());
         match hooked {
             Some(hooked) => Ok((
@@ -631,8 +672,12 @@ impl RecordingJsHost<'_, '_> {
         // A resumed turn program's settled calls answer from the rows that
         // settled them, before a position is taken or anything dispatched
         // (DOOR-141 PR3b). Only a pinned entry binds an injection.
+        // A value base custody holds took its handle in a settled row, and
+        // meets it there (FIX REPLAY-COMPARE-KNOWN-MATCHER).
+        let gated_write = self.gated_write;
+        let base_known = || gated_write.base_known_values();
         if let Some(injection) = self.injection.as_mut() {
-            match injection.answer(&call) {
+            match injection.answer(&call, &base_known) {
                 InjectedAnswer::Live => {}
                 InjectedAnswer::Settled { seq, outcome, view } => {
                     // The injected card replaces `store_reply`: consume its
@@ -848,7 +893,14 @@ impl RecordingJsHost<'_, '_> {
         // The seats this call's spawn resolved, taken whatever came of it:
         // its row keeps them, a failure's included (FIX 9180).
         let seats = self.gated_write.take_spawn_seats();
-        let shown = if view.is_some() {
+        // The admitted skill call's whole answer is held for its outer
+        // caller, whose post chain may still serve a view of it: its real
+        // body records record-only here too, bound to no name, exactly as
+        // when this call's own chain left a view.
+        let admitted_answer = matches!(&call, SelfCall::SkillsCall(_))
+            && self.admitted_skill_seq == Some(seq)
+            && self.admitted_skill_answer.is_some();
+        let shown = if view.is_some() || admitted_answer {
             Shown::View
         } else {
             Shown::Result
@@ -887,7 +939,7 @@ impl RecordingJsHost<'_, '_> {
                 .with_inputs(inputs.as_ref())
                 .with_spawn_seats(seats)
                 .with_rewritten_request(rewritten.as_ref())?;
-        row.hook_view_served = view.is_some();
+        row.hook_view_served = view.is_some() || admitted_answer;
         if self.durable_wait.is_none()
             && let SelfDispatchOutcome::DurableWait(wait) = &outcome
         {
@@ -964,4 +1016,66 @@ pub(super) fn records_failed_effect(effect: SelfEffect) -> bool {
             | SelfEffect::ReportBlocked
             | SelfEffect::InferenceDefaultsReplace
     ) || effect.is_speech()
+}
+
+/// The deepest answer `serde_json::from_reader` parses with its default
+/// recursion limit: 128 levels of budget, one spent per `[` or `{`
+/// (`serde_json` 1.0.151 `de.rs`, `remaining_depth: 128`, `check_recursion`
+/// failing at zero), so 127 nests. The spool check accepts any depth
+/// (`skill/call/json_tokens.rs` keeps its own stack); past this one the
+/// whole-answer parse below would fail a valid answer as non-JSON, so the
+/// call is refused with its cause instead, before any value is built.
+const WHOLE_ANSWER_MAX_DEPTH: u32 = 127;
+
+/// Refuses a spooled answer that nests past [`WHOLE_ANSWER_MAX_DEPTH`]:
+/// the whole-answer parse cannot read it, however valid its JSON. With a
+/// live post chain the hook never judges half an answer; without one the
+/// answer still says why it cannot be read whole. Reads the spool from its
+/// first byte and leaves it rewound, as it found it.
+fn refuse_too_deep_answer(
+    answer: &mut crate::skill::CallableSkillAnswer,
+    whole_for_hooks: bool,
+) -> Result<()> {
+    let reader = answer.reader()?;
+    let mut depth: u32 = 0;
+    let mut deepest: u32 = 0;
+    let mut string = false;
+    let mut escaped = false;
+    let mut chunk = vec![0; 8 * 1024];
+    loop {
+        let read = std::io::Read::read(reader, &mut chunk)?;
+        if read == 0 {
+            break;
+        }
+        for byte in &chunk[..read] {
+            if string {
+                if escaped {
+                    escaped = false;
+                } else if *byte == b'\\' {
+                    escaped = true;
+                } else if *byte == b'"' {
+                    string = false;
+                }
+                continue;
+            }
+            match *byte {
+                b'"' => string = true,
+                b'{' | b'[' => {
+                    depth = depth.saturating_add(1);
+                    deepest = deepest.max(depth);
+                    if deepest > WHOLE_ANSWER_MAX_DEPTH {
+                        let why = if whole_for_hooks {
+                            "the skill answer nests too deep for the live post hook to judge"
+                        } else {
+                            "the skill answer nests too deep to read whole"
+                        };
+                        return Err(Error::Refused(why.to_owned()));
+                    }
+                }
+                b'}' | b']' => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+        }
+    }
+    Ok(())
 }

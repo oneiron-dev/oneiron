@@ -32,6 +32,7 @@ use std::fmt;
 use crate::EntityId;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::llm::decision::DecisionWireLabels;
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use oneiron_model::llm::LlmRequest;
 
 mod decision_rungs;
@@ -46,8 +47,6 @@ pub(super) use subject::subject_label;
 const CALL_LABELS_KEY: &str = "call_labels";
 /// The label wire's version: a new wire is a new request.
 const CALL_LABELS_VERSION: u64 = 1;
-/// The domain of a label map's digest.
-const DIGEST_DOMAIN: &[u8] = b"oneiron:dreamer-call-labels:v1";
 /// How a reply names a person it declares.
 const NEW_PERSON: &str = "new:";
 
@@ -288,43 +287,53 @@ impl CallLabelMap {
     }
 
     fn digest(&self, mint: Option<&[u8]>) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(DIGEST_DOMAIN);
-        match mint {
-            Some(mint) => {
-                hasher.update(&[1]);
-                hasher.update(&(mint.len() as u64).to_be_bytes());
-                hasher.update(mint);
-            }
-            None => {
-                hasher.update(&[0]);
-            }
-        }
-        for (kind, ids) in &self.ids {
-            for (index, id) in ids.iter().enumerate() {
-                let label = CallLabel {
-                    kind: *kind,
-                    number: index + 1,
-                }
-                .to_string();
-                hasher.update(&(label.len() as u64).to_be_bytes());
-                hasher.update(label.as_bytes());
-                hasher.update(id.as_bytes());
-            }
-        }
-        // A map that shows no choice digests as it did before choices were
-        // shown (FIX 7506 P1's extraction, NOTE and listing calls).
-        for (question, shown) in &self.choices {
-            hasher.update(b"choices");
-            hasher.update(question.as_bytes());
-            hasher.update(&(shown.len() as u64).to_be_bytes());
-            for option in shown {
-                hasher.update(&(option.len() as u64).to_be_bytes());
-                hasher.update(option.as_bytes());
-            }
-        }
-        *hasher.finalize().as_bytes()
+        labels_digest(mint, &self.ids, &self.choices)
     }
+}
+
+/// A label map's digest (`purposes::dreamer_consolidation::CALL_LABELS`): the
+/// mint, each kind's labels with their ids, then each choice question's
+/// options as shown.
+fn labels_digest(
+    mint: Option<&[u8]>,
+    ids: &BTreeMap<LabelKind, Vec<EntityId>>,
+    choices: &BTreeMap<EntityId, Vec<String>>,
+) -> [u8; 32] {
+    let mut hasher = LegacyDigest::new(purposes::dreamer_consolidation::CALL_LABELS);
+    match mint {
+        Some(mint) => {
+            hasher.raw(&[1]);
+            hasher.len_u64_be(mint.len());
+            hasher.raw(mint);
+        }
+        None => {
+            hasher.raw(&[0]);
+        }
+    }
+    for (kind, kind_ids) in ids {
+        for (index, id) in kind_ids.iter().enumerate() {
+            let label = CallLabel {
+                kind: *kind,
+                number: index + 1,
+            }
+            .to_string();
+            hasher.len_u64_be(label.len());
+            hasher.raw(label.as_bytes());
+            hasher.raw(id.as_bytes());
+        }
+    }
+    // A map that shows no choice digests as it did before choices were
+    // shown (FIX 7506 P1's extraction, NOTE and listing calls).
+    for (question, shown) in choices {
+        hasher.raw(b"choices");
+        hasher.raw(question.as_bytes());
+        hasher.len_u64_be(shown.len());
+        for option in shown {
+            hasher.len_u64_be(option.len());
+            hasher.raw(option.as_bytes());
+        }
+    }
+    hasher.finish()
 }
 
 /// A decision read's wire through this call's map: its questions by their
@@ -379,4 +388,35 @@ pub(super) trait CallSources {
         let id = self.labels().resolve(label)?;
         Some((id, self.shown(id)?))
     }
+}
+
+/// [`labels_digest`] over each kind's ids under its prefix letter, for the K
+/// door (`test_doors::fingerprint_keep_dreamer_consolidation_digests`). A
+/// letter no kind writes is skipped. Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn labels_digest_for_test(
+    mint: Option<&[u8]>,
+    ids: &[(char, Vec<EntityId>)],
+    choices: &BTreeMap<EntityId, Vec<String>>,
+) -> [u8; 32] {
+    const KINDS: [LabelKind; 8] = [
+        LabelKind::Entity,
+        LabelKind::Claim,
+        LabelKind::Turn,
+        LabelKind::Note,
+        LabelKind::Conversation,
+        LabelKind::Source,
+        LabelKind::Relationship,
+        LabelKind::Question,
+    ];
+    let ids = ids
+        .iter()
+        .filter_map(|(prefix, kind_ids)| {
+            KINDS
+                .into_iter()
+                .find(|kind| kind.prefix() == *prefix)
+                .map(|kind| (kind, kind_ids.clone()))
+        })
+        .collect();
+    labels_digest(mint, &ids, choices)
 }

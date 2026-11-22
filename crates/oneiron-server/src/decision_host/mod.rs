@@ -76,12 +76,19 @@ mod claim_merge;
 mod doors;
 mod native_capture;
 mod notes;
+#[cfg(oneiron_test_support)]
+mod question_head_door;
 mod refresh;
+#[cfg(oneiron_test_support)]
+mod system_one_door;
 
 pub(crate) use adapters::description_notes;
 pub use big_binding::BigRung;
 pub(crate) use notes::ReviewStateNotes;
 pub(crate) use refresh::{spawn_person_threshold, spawn_person_threshold_admitted};
+#[cfg(oneiron_test_support)]
+#[doc(hidden)]
+pub use system_one_door::{SystemOneRungForTest, system_one_rung_for_test};
 
 /// The rule table's identity on this host: the vault's host rule rows, which the owner's
 /// reasons write ([`oneiron::llm::decision::HostRule`]).
@@ -823,7 +830,8 @@ impl SystemOneRung {
             }
             (None, None) => anyhow::bail!("it names no key_env or key_secret"),
         }
-        .map_err(|error| anyhow::anyhow!("invalid System One seat: {error}"))?;
+        .map_err(|error| anyhow::anyhow!("invalid System One seat: {error}"))?
+        .with_native_budget(settings.native_budget);
         // A bearer held from bind sits in this process's memory; a broker key stays
         // behind the vault's custody door.
         let custody = if settings.key_env.is_some() {

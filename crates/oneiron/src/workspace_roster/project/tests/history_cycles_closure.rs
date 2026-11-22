@@ -4,7 +4,7 @@
 //! installs, a frozen drain is decided with before the other members are
 //! persisted and only within the batch's refresh rounds, a component that
 //! grows in a batch is decided once, a seal the frozen record never read
-//! names no parent, and a dark unsigned member still lists its held
+//! names no parent, and a decided unsigned member still lists its held
 //! revisions.
 use super::super::history_policy::{PROJECT_FRONTIER, ProjectHistoryPolicy};
 use super::super::read::ProjectVerdict;
@@ -241,8 +241,6 @@ fn a_drain_past_the_refresh_rounds_waits_for_the_next_refresh() -> Result<()> {
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-TESTS-HISTORY-CYCLES-CLOSURE-ITEMS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 /// Bug repro (Sol and Astra r17 F2): Q's saved record (Q2, under H) outlived
 /// the revocation of Q1's slip, and the owner once put H over Q (H1, then
 /// back to R). One batch holds Q3, which freezes Q once it counts and so ties
@@ -305,6 +303,7 @@ fn a_component_that_grows_in_a_batch_is_decided_once() -> Result<()> {
                 kind,
                 TimeRange { start: at, end: at },
                 at,
+                None,
                 &revision.canonical_bytes()?,
             );
         }
@@ -392,11 +391,11 @@ fn a_seal_the_frozen_record_never_read_names_no_parent() -> Result<()> {
 
 /// Bug repro (Sol r15 F5, Astra r15 F6): A is an owner-door project under
 /// B. A host successor over A's boundary waits for its slip's mint. B's
-/// board holder puts B under A past a bound of one world: dark, and A still
-/// lists the waiting successor.
+/// board holder puts B under A past a bound of one world: FIX 11050 decides
+/// in full, so both serve, and A still lists the waiting successor.
 #[cfg(feature = "sync")]
 #[test]
-fn a_dark_unsigned_member_lists_its_held_revisions() -> Result<()> {
+fn a_decided_unsigned_member_lists_its_held_revisions() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let (a, b) = (EntityId::now(), EntityId::now());
     let holder = {
@@ -433,7 +432,8 @@ fn a_dark_unsigned_member_lists_its_held_revisions() -> Result<()> {
     })?;
     let (_, b1) = revisions_of_row(b, &b1)?.pop().ok_or_else(invalid)?;
     put_companion(&vault, &b1, 11)?;
-    assert!(!lit(&vault, a)? && !lit(&vault, b)?);
+    // FIX 11050: decided in full past the bound; both serve.
+    assert!(lit(&vault, a)? && lit(&vault, b)?);
     let listed = vault.project_revisions(a)?;
     assert!(
         matches!(

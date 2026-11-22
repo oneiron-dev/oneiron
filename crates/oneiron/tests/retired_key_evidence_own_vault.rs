@@ -21,7 +21,7 @@ use oneiron::authority::{
     ROLE_CLOUD, ROLE_OWNER, authority_entry_hash, authority_transcript,
     encode_authority_log_entry_body, genesis_vault_id,
 };
-use oneiron::{TimeRange, Vault, VaultConfig};
+use oneiron::{ErrorKind, TimeRange, Vault, VaultConfig};
 
 fn key_of(signing: &SigningKey) -> AuthorityKey {
     AuthorityKey::Ed25519(signing.verifying_key().to_bytes())
@@ -259,4 +259,108 @@ fn a_signed_import_of_another_vaults_rows_adds_no_evidence() {
     );
     assert_eq!(here.authority_handoff_equivocations(), Vec::new());
     assert_eq!(here.authority_handoff_alarms().expect("alarms"), Vec::new());
+}
+
+#[test]
+fn a_revocation_after_a_handoff_records_evidence_only_for_the_handoff_key() {
+    let old = SigningKey::from_bytes(&[175; 32]);
+    let next = SigningKey::from_bytes(&[176; 32]);
+    let revoked = SigningKey::from_bytes(&[177; 32]);
+    let agent = SigningKey::from_bytes(&[178; 32]);
+    let (_dir, vault) = open_vault();
+    let genesis = genesis(&old, 183);
+    let vault_id = genesis_vault_id(&genesis).expect("vault id");
+    put(&vault, &genesis).expect("genesis");
+    let handoff = signed(
+        Some(vault_id),
+        1,
+        Some(&genesis),
+        AuthorityOp::ReRoot {
+            new_device: device(key_of(&next), ROLE_OWNER | ROLE_ADMIN),
+        },
+        &old,
+    );
+    vault.apply_signed_re_root(&handoff).expect("handoff");
+    let admission = signed(
+        Some(vault_id),
+        1,
+        Some(&handoff),
+        AuthorityOp::EnrollDevice {
+            device: device(key_of(&revoked), ROLE_AGENT),
+        },
+        &next,
+    );
+    put(&vault, &admission).expect("the successor enrolls a new key");
+    let before_revocation = vault.authority_fold().expect("fold before revocation");
+    assert!(
+        before_revocation
+            .roster
+            .get(&key_of(&revoked))
+            .is_some_and(|device| !device.revoked)
+    );
+    let mut late = signed(
+        Some(vault_id),
+        1,
+        Some(&admission),
+        AuthorityOp::EnrollDevice {
+            device: device(key_of(&agent), ROLE_AGENT),
+        },
+        &revoked,
+    );
+    // The agent signs the row; the successor's cosign supplies consent.
+    let cosigner = key_of(&next);
+    late.cosigns.push(AuthoritySignature {
+        suite: cosigner.suite(),
+        public_key: cosigner,
+        signature: vec![0; 64],
+    });
+    let transcript = authority_transcript(&late).expect("cosigned transcript");
+    late.signer.signature = revoked.sign(&transcript).to_bytes().to_vec();
+    late.cosigns[0].signature = next.sign(&transcript).to_bytes().to_vec();
+    let revocation = signed(
+        Some(vault_id),
+        2,
+        Some(&admission),
+        AuthorityOp::RevokeDevice {
+            revoked_key: key_of(&revoked),
+        },
+        &next,
+    );
+    put(&vault, &revocation).expect("the successor revokes the new key");
+    let fold = vault.authority_fold().expect("fold after revocation");
+    let handoff_hash = authority_entry_hash(&handoff).expect("handoff hash");
+    assert!(fold.valid_entries.contains(&handoff_hash));
+    assert!(
+        fold.valid_entries
+            .contains(&authority_entry_hash(&revocation).expect("revocation hash"))
+    );
+    assert_eq!(
+        fold.retired_keys,
+        BTreeSet::from([key_of(&old), key_of(&revoked)])
+    );
+
+    let error = put(&vault, &late).expect_err("the door refuses the revoked agent's row");
+    assert_eq!(error.kind(), ErrorKind::InvalidAuthorityLogBody);
+    assert!(vault.authority_handoff_equivocations().is_empty());
+
+    let old_row = signed(
+        Some(vault_id),
+        2,
+        Some(&genesis),
+        AuthorityOp::EnrollDevice {
+            device: device(key_of(&agent), ROLE_AGENT),
+        },
+        &old,
+    );
+    let error = put(&vault, &old_row).expect_err("the door refuses the old root's row");
+    assert_eq!(error.kind(), ErrorKind::InvalidAuthorityLogBody);
+    assert_eq!(
+        vault.authority_handoff_equivocations(),
+        vec![AuthorityHandoffEquivocation {
+            signer: key_of(&old),
+            handoffs: BTreeSet::from([handoff_hash]),
+            refused: authority_entry_hash(&old_row).expect("refused row hash"),
+        }]
+    );
+    assert_eq!(vault.authority_handoff_equivocations_dropped(), 0);
 }

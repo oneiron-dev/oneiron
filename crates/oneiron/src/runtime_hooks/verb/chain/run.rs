@@ -58,6 +58,8 @@ pub(super) struct RunRecord<'c> {
     pub(super) dependencies: Vec<EntityId>,
     /// That input also showed content whose rows no host names.
     pub(super) unattributed: bool,
+    /// Some of that content names no row this vault holds either.
+    pub(super) unnamed_content: bool,
     /// The digest of the grant the input was built under.
     pub(super) grant: String,
     /// How the body was prepared before it ran (FIX 9208).
@@ -199,6 +201,7 @@ impl<'c> Chain<'c> {
             args_withheld,
             dependencies: input.dependencies,
             unattributed: input.unattributed,
+            unnamed_content: input.unnamed_content,
             grant: grant.digest(),
             preparation: verdict.preparation.clone(),
             reads: pins,

@@ -11,7 +11,9 @@
 //! BUDGET-CEILING): the prediction entry carries only the set's digest and counts, the set body
 //! is content-addressed, and only the target machine fetches it, by digest, over its connection.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::time::{Duration, Instant};
 
 use oneiron_retrieval::pipeline::ScoredEntity;
 
@@ -48,13 +50,81 @@ pub(crate) const PREDICT_DEPTH: u32 = 2;
 /// The walk's restart probability: the standard expansion's 0.15, as `retrieval_depth` runs it
 /// (that module keeps its own `STANDARD_PPR_ALPHA` private).
 const PREDICT_PPR_ALPHA: f32 = 0.15;
+/// The shortest spacing between two predictions the home pushes one machine under one parent, on
+/// the home's monotonic clock: half the machine's shortest ask spacing (an hour after a reconnect,
+/// on its own wall clock, `sync::connection::predicted`), so an honest machine's ask is never held
+/// back, while a machine that asks more often appends at most one signed entry per spacing to the
+/// owner's authority log (FIX PREDICTED-DIRECTIVES-GROW-AUTHORITY-LOG). Signed entries are never
+/// compacted away: canon keeps authority history and offloads it (dec-0005, tiered authority
+/// history, 2026-09-26).
+const PREDICT_PUSH_MIN_SPACING: Duration = Duration::from_secs(30 * 60);
+
+/// The pushes noted for the spacing: when each committed, by machine and parent.
+type NotedPushes = HashMap<(EntityId, EntityId), Instant>;
+
+/// When this home last committed a prediction for each machine under each parent, on the
+/// monotonic clock: the reference of [`PREDICT_PUSH_MIN_SPACING`]. Held in memory only, so a
+/// restarted home answers a machine's next ask however long it was down, and no wall-clock
+/// correction, on this home or in a signed date, moves a spacing. It holds only pushes younger
+/// than the spacing.
+#[derive(Debug, Default)]
+pub(crate) struct PredictedPushes(Mutex<NotedPushes>);
+
+/// The prediction gate: [`PredictedPushes`] taken under the writer and held through its commit,
+/// so a second ask waits for the first one's commit and the time noted at it.
+struct PredictedPushGate<'p>(MutexGuard<'p, NotedPushes>);
+
+impl PredictedPushes {
+    /// Takes the prediction gate, dropping every push older than the spacing.
+    fn gate(&self) -> PredictedPushGate<'_> {
+        let mut pushes = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        pushes.retain(|_, pushed| pushed.elapsed() < PREDICT_PUSH_MIN_SPACING);
+        PredictedPushGate(pushes)
+    }
+
+    /// Moves every noted push `secs` into the past, as that much time passing does. A push the
+    /// monotonic clock cannot date that far back leaves, as an expired one does.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn age(&self, secs: u64) {
+        let by = Duration::from_secs(secs);
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain(|_, pushed| match pushed.checked_sub(by) {
+                Some(earlier) => {
+                    *pushed = earlier;
+                    true
+                }
+                None => false,
+            });
+    }
+
+    /// How many pushes the home holds noted.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn noted(&self) -> usize {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner).len()
+    }
+}
+
+impl PredictedPushGate<'_> {
+    /// Whether this home committed a prediction for `machine` under `parent` within the spacing.
+    fn recent(&self, machine: EntityId, parent: EntityId) -> bool {
+        self.0.contains_key(&(machine, parent))
+    }
+
+    /// Notes a prediction for `machine` under `parent`, committed now, and opens the gate.
+    fn note_committed(mut self, machine: EntityId, parent: EntityId) {
+        self.0.insert((machine, parent), Instant::now());
+    }
+}
 
 /// What the home did with one machine's ask.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PredictedResidenceAnswer {
     /// A new prediction, appended and signed by this host.
     Pushed(ResidenceDirectiveState),
-    /// The kept set equals the machine's last prediction: nothing appended.
+    /// Nothing appended: the kept set equals this home's last prediction for the machine, which
+    /// still stands, or this home pushed the machine a prediction within its push spacing.
     Unchanged,
 }
 
@@ -299,6 +369,12 @@ impl Vault {
         let states = directive_states_in_txn(self, &txn)?;
         let parent = live_predicted_parent(&states, machine)?;
         let now = self.instant_in_txn(&txn)?.secs();
+        // Taken under this writer and held through its commit.
+        let gate = self.store.predicted_pushes.gate();
+        if gate.recent(machine, parent.id) {
+            txn.abort();
+            return Ok(PredictedResidenceAnswer::Unchanged);
+        }
         let seeds = self.fresh_machine_seeds(&mut txn, machine, now, visibility)?;
         if seeds.is_empty() {
             txn.commit()?;
@@ -315,8 +391,8 @@ impl Vault {
             visibility,
         )?;
         let (windows, documents) = self.prediction_units(&txn, &scores)?;
-        let (previous, prediction_exists) =
-            self.previous_predicted_set(&txn, &states, machine, parent.id)?;
+        let (previous, previous_stands) =
+            self.previous_predicted_set(&txn, &states, machine, parent.id, now)?;
         let set = PredictedResidenceSet {
             windows: keep_ranked_windows(&windows, &previous.windows, parent.window_budget),
             documents: keep_ranked_documents(
@@ -325,12 +401,14 @@ impl Vault {
                 parent.document_budget,
             ),
         };
-        if prediction_exists && set == previous {
+        if previous_stands && set == previous {
             txn.commit()?;
             return Ok(PredictedResidenceAnswer::Unchanged);
         }
         let pushed = self.push_prediction(&mut txn, issuer, machine, &parent, now, &set)?;
         txn.commit()?;
+        // Noted only once the push committed, at its commit, before the gate opens.
+        gate.note_committed(machine, parent.id);
         Ok(PredictedResidenceAnswer::Pushed(pushed))
     }
 
@@ -430,38 +508,50 @@ impl Vault {
         Ok((windows, documents))
     }
 
-    /// The machine's previous predicted set under `parent`: the body of its last `Predicted`
-    /// directive under that parent, and whether such a prediction exists. Empty when it has none,
-    /// or no longer holds its body.
+    /// This home's last predicted set for `machine` under `parent`, and whether it still stands
+    /// there. The set is the body this home holds for the machine (each push keeps only its own
+    /// body) while a `Predicted` directive under `parent` names it: empty when it holds none, and
+    /// then it never stands. It stands unless a later prediction under `parent`, dated no later than
+    /// `now`, names a set this home holds no body for: the machine adopts the prediction it applies
+    /// last, so another home's since then stands until this home pushes again. A prediction dated
+    /// ahead by another home's clock neither stands in for this home's set nor unseats it.
     fn previous_predicted_set(
         &self,
         txn: &heed::RoTxn<'_>,
         states: &[ResidenceDirectiveState],
         machine: EntityId,
         parent: EntityId,
+        now: u64,
     ) -> Result<(PredictedResidenceSet, bool)> {
-        let last = states.iter().rev().find(|state| {
-            state.directive.machine == machine
-                && matches!(
-                    &state.directive.act,
-                    ResidenceAct::Predicted { parent: named, .. } if *named == parent
-                )
-        });
-        let Some(state) = last else {
-            return Ok((PredictedResidenceSet::default(), false));
-        };
-        let ResidenceAct::Predicted { set_digest, .. } = &state.directive.act else {
-            return Ok((PredictedResidenceSet::default(), false));
-        };
-        let body =
-            PREDICTED_BODY.get(&self.store, txn, &predicted_body_key(machine, set_digest))?;
-        let Some(body) = body else {
-            return Ok((PredictedResidenceSet::default(), true));
-        };
-        Ok((
-            PredictedResidenceSet::decode_verified(&body, set_digest)?,
-            true,
-        ))
+        let held = PREDICTED_BODY.scan_keys(&self.store, txn, machine.to_hex().as_bytes())?;
+        let mut stands = true;
+        for state in states.iter().rev() {
+            let ResidenceAct::Predicted {
+                parent: named,
+                set_digest,
+                ..
+            } = &state.directive.act
+            else {
+                continue;
+            };
+            if state.directive.machine != machine || *named != parent {
+                continue;
+            }
+            let digest = oneiron_hex::encode(set_digest);
+            if !held.iter().any(|key| key.1 == digest) {
+                stands &= state.directive.issued_at > now;
+                continue;
+            }
+            let body = PREDICTED_BODY.get(&self.store, txn, &(HexId(machine), digest))?;
+            let Some(body) = body else {
+                break;
+            };
+            return Ok((
+                PredictedResidenceSet::decode_verified(&body, set_digest)?,
+                stands,
+            ));
+        }
+        Ok((PredictedResidenceSet::default(), false))
     }
 
     /// Pushes `set` as the machine's new prediction under `parent` in `txn`: stores its body,

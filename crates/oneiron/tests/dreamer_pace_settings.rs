@@ -127,6 +127,7 @@ fn save_as(
             quote: None,
         }],
         assertions: WitnessAssertions::default(),
+        project: None,
     };
     let tags = EncoderOutput {
         spans: vec![NerSpan {
@@ -140,6 +141,7 @@ fn save_as(
         vad: None,
         context_links: Vec::new(),
         speaker_links: Vec::new(),
+        relations: None,
         stack_sha16: None,
         mood_parts: Vec::new(),
     };

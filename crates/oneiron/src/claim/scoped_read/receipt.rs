@@ -1,6 +1,7 @@
 //! Mandatory read receipts. Responses carry the requested/ceiling/intersection tuple.
 use super::ScopedRead;
-use crate::gate::{PolicyManifestResolution, ResolvedRetrievalFilter};
+use super::access_gate::HeldAuthority;
+use crate::gate::{PolicyManifestResolution, ResolvedRetrievalFilter, RetrievalPolicyFloor};
 use oneiron_contracts::gate::RetrievalFilter;
 use std::collections::BTreeSet;
 
@@ -21,6 +22,9 @@ fn read_scope_from_resolved(filter: &ResolvedRetrievalFilter) -> ReadScope {
 }
 
 impl ScopedRead<'_> {
+    /// The receipt of a read `applied` admitted, its ceiling the key's own
+    /// floor alone. A lane's live Grants enter a receipt only through
+    /// [`Self::receipt_in`], built in the serving snapshot.
     pub(super) fn receipt_for(
         &self,
         requested: Option<&RetrievalFilter>,
@@ -31,6 +35,60 @@ impl ScopedRead<'_> {
         let floor = policy.retrieval_floor_for_actor(Some(&self.actor_key));
         let grant_scope = floor.has_grant_scope_bound(self.actor_key.authority_scope())
             || policy.scoped_read_grants_all_bounded(&self.actor_key);
+        self.receipt_under(requested, floor, grant_scope, applied, suppressed_count)
+    }
+
+    /// This lane reporting its live Grants in each receipt it builds in a
+    /// serving snapshot ([`Self::receipt_in`]). Set on a verb answer whose
+    /// receipt tells its caller what admitted its rows: vault.recall,
+    /// vault.search.bm25, vault.claims.list and vault.get.
+    #[must_use]
+    pub(crate) fn with_live_grant_receipts(mut self) -> Self {
+        self.receipts_include_live_grants = true;
+        self
+    }
+
+    /// [`Self::receipt_for`] in the serving snapshot `rtxn`. On a lane that
+    /// reports its live Grants ([`Self::with_live_grant_receipts`]), a key A
+    /// may stand for reports its own floor and each of its own live Grants'
+    /// as its ceiling, and `applied` joined with what each live Grant reads
+    /// under the request: the reach that admitted its rows, not its own
+    /// floor alone (FIX GRANT-READ-NARROWING-SAYS-DENY-ALL). It reports and
+    /// never authorizes: each row took the row gate, B first, then each
+    /// Grant alone. Every other lane reports as [`Self::receipt_for`].
+    /// `held` is the authority the read's row gate held in `rtxn`, when it
+    /// held one: the receipt then reports the Grants that gate judged under.
+    pub(super) fn receipt_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        requested: Option<&RetrievalFilter>,
+        policy: &PolicyManifestResolution,
+        applied: &ResolvedRetrievalFilter,
+        suppressed_count: usize,
+        held: Option<&HeldAuthority>,
+    ) -> ScopedReadReceipt {
+        match self.live_grant_receipt_scope_in(rtxn, policy, applied, requested, held) {
+            Some(scope) => self.receipt_under(
+                requested,
+                scope.ceiling,
+                scope.statically_bounded,
+                &scope.applied,
+                suppressed_count,
+            ),
+            None => self.receipt_for(requested, policy, applied, suppressed_count),
+        }
+    }
+
+    /// The receipt under the ceiling `floor`; `grant_scope` adds the static
+    /// boundary hint.
+    fn receipt_under(
+        &self,
+        requested: Option<&RetrievalFilter>,
+        floor: RetrievalPolicyFloor,
+        grant_scope: bool,
+        applied: &ResolvedRetrievalFilter,
+        suppressed_count: usize,
+    ) -> ScopedReadReceipt {
         let actor_ceiling = ReadScope {
             entity_types: floor.allowed_entity_types,
             max_sensitivity_band: floor.max_sensitivity_band,
@@ -86,8 +144,8 @@ impl ScopedRead<'_> {
         requested: Option<&RetrievalFilter>,
         suppressed: usize,
     ) -> crate::Result<ScopedReadReceipt> {
-        let (applied, policy) = self.resolve_retrieval_filter(requested)?;
-        Ok(self.receipt_for(requested, &policy, &applied, suppressed))
+        let txn = self.grant_read_txn()?;
+        self.read_receipt_in(&txn, requested, suppressed)
     }
 
     /// [`Self::read_receipt`] for a search (FIX 7528): its applied scope is
@@ -100,8 +158,16 @@ impl ScopedRead<'_> {
         requested: Option<&RetrievalFilter>,
         suppressed: usize,
     ) -> crate::Result<ScopedReadReceipt> {
-        let plan = self.search_plan(requested)?;
-        Ok(self.receipt_for(requested, &plan.policy, &plan.candidates, suppressed))
+        let txn = self.grant_read_txn()?;
+        let plan = self.search_plan_in(&txn, requested)?;
+        Ok(self.receipt_in(
+            &txn,
+            requested,
+            &plan.policy,
+            &plan.candidates,
+            suppressed,
+            None,
+        ))
     }
 
     /// The receipt for a scan that already holds its transaction: the
@@ -113,7 +179,7 @@ impl ScopedRead<'_> {
         suppressed: usize,
     ) -> crate::Result<ScopedReadReceipt> {
         let (applied, policy) = self.resolve_retrieval_filter_in(txn, requested)?;
-        Ok(self.receipt_for(requested, &policy, &applied, suppressed))
+        Ok(self.receipt_in(txn, requested, &policy, &applied, suppressed, None))
     }
 }
 

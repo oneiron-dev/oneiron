@@ -6,9 +6,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::FEED_RETENTION_SECS;
+use super::{FEED_READ_MAX_LIMIT, FEED_RETENTION_SECS};
 use crate::error::{Error, Result};
-use crate::setting::{Kind, SettingValue, lower_is_tighter};
+use crate::setting::{Kind, PageMax, SettingValue, lower_is_tighter};
 
 /// How long a cursor in a pruned source stays held without an acknowledgement, in seconds: one
 /// hour to ten years.
@@ -34,6 +34,11 @@ fn feed_retention_default() -> FeedRetentionSecs {
     FeedRetentionSecs(FEED_RETENTION_SECS)
 }
 
+/// 256 entries: a feed read's maximum from each source before it became a key.
+fn feed_read_max_default() -> PageMax {
+    PageMax(u32::try_from(FEED_READ_MAX_LIMIT).unwrap_or(u32::MAX))
+}
+
 crate::setting::setting_keys! {
     /// How long a cursor in a pruned source stays held without an acknowledgement, in seconds;
     /// 604,800 (seven days) by default. A raise holds idle cursors longer, and is the looser
@@ -42,5 +47,15 @@ crate::setting::setting_keys! {
         kind: Kind::new(feed_retention_default)
             .strictest(feed_retention_default)
             .tighter(lower_is_tighter::<FeedRetentionSecs>),
+    };
+
+    /// The most entries one `vault.feeds.read` returns from each source (default 256). An ask
+    /// for more is served this many, and the page says more remain; an ask that names no limit
+    /// is still served 64. Zero is refused. A larger value is looser, so only the owner raises
+    /// it; an agent's raise waits on the owner's answer.
+    pub(crate) FEED_READ_MAX: PageMax = "feeds.read.max_per_source" {
+        kind: Kind::new(feed_read_max_default)
+            .strictest(feed_read_max_default)
+            .tighter(lower_is_tighter::<PageMax>),
     };
 }

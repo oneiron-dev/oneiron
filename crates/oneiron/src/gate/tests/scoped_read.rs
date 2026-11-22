@@ -313,7 +313,7 @@ fn scoped_read_hydrate_preserves_dangling_short_id_result() -> Result<()> {
 
 #[test]
 fn scoped_read_context_pack_scrubs_edges_to_denied_claims() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
+    let (_tmp, vault) = super::support::temp_vault_with_manifest();
     let allowed_world = test_id(0xCC);
     let denied_world = test_id(0xCD);
     put_policy_manifest_bytes(
@@ -535,7 +535,7 @@ fn a_session_tombstoned_facet_edge_stops_authorizing() -> Result<()> {
 
 #[test]
 fn scoped_read_context_pack_drops_neighbors_reached_only_from_filtered_results() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
+    let (_tmp, vault) = super::support::temp_vault_with_manifest();
     let facet = test_id(0x6E);
     put_policy_manifest_bytes(
         &vault,
@@ -727,7 +727,7 @@ fn scoped_read_edges_out_scrubs_denied_sources_and_targets() -> Result<()> {
 
 #[test]
 fn l2_prefix_uses_the_scoped_reader_before_cache_lookup() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
+    let (_tmp, vault) = super::support::temp_vault_with_manifest();
     let subject = test_id(0x21);
     let claim_id = test_id(0x33);
     put_text_entity(
@@ -770,7 +770,7 @@ fn l2_prefix_uses_the_scoped_reader_before_cache_lookup() -> Result<()> {
 
 #[test]
 fn scoped_receipts_count_no_row_the_grant_refuses_and_refresh_point_authority() -> Result<()> {
-    let (_tmp, vault) = temp_vault();
+    let (_tmp, vault) = super::support::temp_vault_with_manifest();
     let weak_id = test_id(0x51);
     let strong_id = test_id(0x52);
     let mut weak = source_trust_claim(ClaimSource::UserStated);
@@ -824,7 +824,8 @@ fn scoped_receipts_count_no_row_the_grant_refuses_and_refresh_point_authority() 
         .single();
     assert!(denied.value.is_none());
     assert!(denied.receipt.applied.deny_all);
-    assert_eq!(denied.receipt.suppressed_count, 1);
+    // O36: no own grant means no existence count (point_reads.rs:549-550; present at 571efc03606).
+    assert_eq!(denied.receipt.suppressed_count, 0);
     let missing = reader
         .read(&[crate::claim::PointRead::id(test_id(0x53))], None)?
         .single();
@@ -866,15 +867,300 @@ fn graph_read_receipts_clamp_nonclaim_types_and_include_unnarrowed_reads() -> Re
     install(&[ENTITY_TYPE_TURN])?;
     let narrowed_edges = read.edges_out(&source)?;
     assert!(narrowed_edges.value.unwrap().is_empty());
-    assert_eq!(narrowed_edges.receipt.suppressed_count, 1);
+    // R44: TURN-only withholds Supports target + birth FacetOf FACET (graph_reads.rs:138; e98039cb50b).
+    assert_eq!(narrowed_edges.receipt.suppressed_count, 2);
     let timeline = read.memory_timeline(&source)?;
     assert_eq!(timeline.records.len(), 1);
     assert_eq!(timeline.receipt.suppressed_count, 0);
     install(&[ENTITY_TYPE_TURN, ENTITY_TYPE_ASSET])?;
     let complete = read.edges_out(&source)?;
     assert_eq!(complete.value.unwrap()[0].target, target);
-    assert_eq!(complete.receipt.suppressed_count, 0);
+    // R44: TURN+ASSET still withholds the birth FacetOf FACET (graph_reads.rs:138; e98039cb50b).
+    assert_eq!(complete.receipt.suppressed_count, 1);
     assert!(complete.receipt.replan_hint.is_empty());
+    Ok(())
+}
+
+/// Review #9577 round 2 P1: a withheld peer two edges reach is one withheld
+/// row to the edge receipt, not one per edge. The source's birth `FacetOf`
+/// edge reaches the vault's default FACET, which a TURN-only reader is
+/// withheld too, so one edge to the target counts 2 (the 20 Nov night, FIX
+/// [NIGHTLY20-OWN-PR-TEST-REDS]); a second edge to the same target adds none.
+#[test]
+fn edges_out_counts_a_withheld_peer_once_across_its_edges() -> Result<()> {
+    use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_TURN};
+    let (_tmp, vault) = temp_vault();
+    let source = test_id(0x74);
+    let target = test_id(0x75);
+    vault.put_entity(&source, ENTITY_TYPE_TURN, test_time(1), 1, b"source")?;
+    vault.put_entity(&target, ENTITY_TYPE_ASSET, test_time(1), 1, b"target")?;
+    vault.put_edge(&source, EdgeKind::Supports, &target, 0.7)?;
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x76),
+        &encode_policy_manifest(vec![core_read_scoped_grant_entry(
+            "graph-reader",
+            Value::Map(vec![(
+                Value::from("entity_types"),
+                Value::Array(vec![Value::from(ENTITY_TYPE_TURN)]),
+            )]),
+        )]),
+    )?;
+    let read = || {
+        vault
+            .scoped_read(ScopedReadActorKey::new("graph-reader").unwrap())
+            .edges_out(&source)
+    };
+    let one_edge = read()?;
+    assert_eq!(
+        one_edge.receipt.suppressed_count, 2,
+        "FIXTURE: the target and the default FACET the birth FacetOf edge reaches"
+    );
+    vault.put_edge(&source, EdgeKind::Mentions, &target, 0.5)?;
+    let edges = read()?;
+    assert!(edges.value.unwrap().is_empty());
+    assert_eq!(
+        edges.receipt.suppressed_count, one_edge.receipt.suppressed_count,
+        "a second edge to the withheld target counts it no second time"
+    );
+    Ok(())
+}
+
+/// The TURN-only scoped grant the tree and neighborhood receipt tests read under.
+fn put_turn_only_reader_policy(vault: &crate::Vault, actor: &str) -> Result<()> {
+    put_policy_manifest_bytes(
+        vault,
+        test_id(0x7F),
+        &encode_policy_manifest(vec![core_read_scoped_grant_entry(
+            actor,
+            Value::Map(vec![(
+                Value::from("entity_types"),
+                Value::Array(vec![Value::from(crate::registry::ENTITY_TYPE_TURN)]),
+            )]),
+        )]),
+    )
+}
+
+/// FIX [SCOPED-READ-CHILD-TREE-RECEIPT-UNCOUNTED]: a child the `ChildOf` tree
+/// read withholds counts once in its receipt, and the row below it is never
+/// reached, so it does not count.
+#[test]
+fn child_of_tree_counts_a_withheld_child_once_and_nothing_below_it() -> Result<()> {
+    use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_TURN};
+    let (_tmp, vault) = temp_vault();
+    let root = test_id(0x77);
+    let shown = test_id(0x78);
+    let withheld = test_id(0x79);
+    let below_withheld = test_id(0x7A);
+    vault.put_entity(&root, ENTITY_TYPE_TURN, test_time(1), 1, b"root")?;
+    vault.put_entity(&shown, ENTITY_TYPE_TURN, test_time(1), 1, b"shown")?;
+    vault.put_entity(&withheld, ENTITY_TYPE_ASSET, test_time(1), 1, b"withheld")?;
+    vault.put_entity(&below_withheld, ENTITY_TYPE_TURN, test_time(1), 1, b"below")?;
+    vault.put_edge(&shown, EdgeKind::ChildOf, &root, 1.0)?;
+    vault.put_edge(&withheld, EdgeKind::ChildOf, &root, 1.0)?;
+    vault.put_edge(&below_withheld, EdgeKind::ChildOf, &withheld, 1.0)?;
+    put_turn_only_reader_policy(&vault, "tree-reader")?;
+    let tree = vault
+        .scoped_read(ScopedReadActorKey::new("tree-reader").unwrap())
+        .child_of_tree_projected(
+            &root,
+            4,
+            None,
+            |_| Ok::<_, crate::Error>(Some(())),
+            |_, nodes| {
+                Ok::<_, crate::Error>(
+                    nodes.map(|nodes| nodes.into_iter().map(|node| node.id).collect::<Vec<_>>()),
+                )
+            },
+        )?;
+    assert_eq!(tree.value, Some(vec![root, shown]));
+    assert_eq!(tree.receipt.suppressed_count, 1);
+    Ok(())
+}
+
+/// FIX [SCOPED-READ-CHILD-TREE-RECEIPT-UNCOUNTED], the same gap in the
+/// weighted neighborhood: a withheld peer two edges reach counts once. The
+/// anchor's birth `FacetOf` peer is withheld from the TURN-only reader too,
+/// so the count is read against the one-edge read.
+#[test]
+fn neighborhood_counts_a_withheld_peer_once_across_its_edges() -> Result<()> {
+    use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_TURN};
+    let (_tmp, vault) = temp_vault();
+    let anchor = test_id(0x7B);
+    let shown = test_id(0x7C);
+    let withheld = test_id(0x7D);
+    vault.put_entity(&anchor, ENTITY_TYPE_TURN, test_time(1), 1, b"anchor")?;
+    vault.put_entity(&shown, ENTITY_TYPE_TURN, test_time(1), 1, b"shown")?;
+    vault.put_entity(&withheld, ENTITY_TYPE_ASSET, test_time(1), 1, b"withheld")?;
+    vault.put_edge(&anchor, EdgeKind::Supports, &shown, 0.7)?;
+    vault.put_edge(&anchor, EdgeKind::Supports, &withheld, 0.7)?;
+    put_turn_only_reader_policy(&vault, "graph-reader")?;
+    let read = || {
+        vault
+            .scoped_read(ScopedReadActorKey::new("graph-reader").unwrap())
+            .neighborhood_projected(
+                &anchor,
+                crate::ports::EdgeDirection::Both,
+                None,
+                None,
+                None,
+                10,
+                |_, neighbors| {
+                    Ok::<_, crate::Error>(neighbors.map(|rows| {
+                        rows.into_iter()
+                            .map(|row| row.edge.target)
+                            .collect::<Vec<_>>()
+                    }))
+                },
+            )
+    };
+    let one_edge = read()?;
+    assert_eq!(
+        one_edge.receipt.suppressed_count, 2,
+        "FIXTURE: the withheld peer and the default FACET the birth FacetOf edge reaches"
+    );
+    vault.put_edge(&anchor, EdgeKind::Mentions, &withheld, 0.5)?;
+    let neighborhood = read()?;
+    assert_eq!(neighborhood.value, Some(vec![shown]));
+    assert_eq!(
+        neighborhood.receipt.suppressed_count, one_edge.receipt.suppressed_count,
+        "a second edge to the withheld peer counts it no second time"
+    );
+    Ok(())
+}
+
+/// A private CLAIM refused to a relationship-gated reader is absent, not
+/// counted as withheld, in its readable subject's inbound neighborhood.
+/// Red at 32b4658e (counts 1); green at HEAD (counts 0).
+#[test]
+fn neighborhood_never_counts_a_private_claim_a_relationship_reader_is_refused() -> Result<()> {
+    let (_tmp, vault) = temp_vault();
+    let principal = test_id(0x80);
+    let subject = test_id(0x81);
+    let claim = test_id(0x82);
+    vault.put_entity(&principal, ENTITY_TYPE_PERSON, test_time(1), 1, b"reader")?;
+    vault.put_entity(&subject, ENTITY_TYPE_TURN, test_time(1), 1, b"subject")?;
+    let mut body = source_trust_claim(ClaimSource::UserStated);
+    body.subject = ClaimSubject::Entity(subject);
+    body.scope = Some(Value::Map(vec![(
+        Value::from("private"),
+        Value::Boolean(true),
+    )]));
+    put_claim_body(&vault, &claim, &body)?;
+    vault.put_edge(&claim, EdgeKind::ClaimOf, &subject, 1.0)?;
+    crate::test_util::authorize_readers(&vault, &["reader"]);
+    let reader = vault.scoped_read(
+        ScopedReadActorKey::new("reader")
+            .expect("FIXTURE: reader key")
+            .require_access_grants(Some(principal)),
+    );
+    let unscoped = vault
+        .scoped_read(ScopedReadActorKey::new("reader").expect("FIXTURE: unscoped control key"));
+    assert!(
+        reader
+            .read(&[crate::claim::PointRead::id(subject)], None)?
+            .single()
+            .value
+            .is_some(),
+        "FIXTURE: the relationship reader must read the unscoped TURN subject"
+    );
+    assert!(
+        reader
+            .read(&[crate::claim::PointRead::id(claim)], None)?
+            .single()
+            .value
+            .is_none(),
+        "FIXTURE: the relationship reader must be refused the private CLAIM"
+    );
+    assert!(
+        unscoped
+            .read(&[crate::claim::PointRead::id(claim)], None)?
+            .single()
+            .value
+            .is_some(),
+        "FIXTURE: the same manifest-authorized actor without the relationship gate must read the CLAIM"
+    );
+    let neighborhood = reader.neighborhood_projected(
+        &subject,
+        crate::ports::EdgeDirection::In,
+        Some(EdgeKind::ClaimOf),
+        None,
+        None,
+        10,
+        |_, neighbors| {
+            Ok::<_, crate::Error>(neighbors.map(|rows| {
+                rows.into_iter()
+                    .map(|row| row.edge.target)
+                    .collect::<Vec<_>>()
+            }))
+        },
+    )?;
+    assert_eq!(
+        neighborhood.value,
+        Some(vec![]),
+        "review round 2 of #9637: the subject is visible but its private CLAIM is not listed"
+    );
+    assert_eq!(
+        neighborhood.receipt.suppressed_count, 0,
+        "review round 2 of #9637: a refused private CLAIM must not reveal its existence in the count"
+    );
+    Ok(())
+}
+
+/// Review P1 of #9637: the productivity tree reads only TASK nodes, so an
+/// ASSET filed under a Goal, withheld from a TASK-only reader, is no row the
+/// tree withholds and is never counted in its receipt.
+#[test]
+fn productivity_tree_never_counts_a_withheld_non_task_child() -> Result<()> {
+    use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK};
+    use crate::write_envelope::task_body::{TASK_BODY_ROLE_KEY, TaskRole};
+    let (_tmp, vault) = temp_vault();
+    let reader = test_id(0x6A);
+    let goal = test_id(0x6B);
+    let asset = test_id(0x6C);
+    vault.put_entity(&reader, ENTITY_TYPE_PERSON, test_time(1), 1, b"reader")?;
+    let mut goal_body = Vec::new();
+    rmpv::encode::write_value(
+        &mut goal_body,
+        &Value::Map(vec![
+            (
+                Value::from(TASK_BODY_ROLE_KEY),
+                Value::from(u64::from(TaskRole::Goal.role_byte())),
+            ),
+            (Value::from("label"), Value::from("goal")),
+        ]),
+    )
+    .expect("encode goal body");
+    vault.put_entity(&goal, ENTITY_TYPE_TASK, test_time(1), 1, &goal_body)?;
+    vault.put_entity(&asset, ENTITY_TYPE_ASSET, test_time(1), 1, b"asset")?;
+    vault.put_edge(&asset, EdgeKind::ChildOf, &goal, 1.0)?;
+    put_policy_manifest_bytes(
+        &vault,
+        test_id(0x6D),
+        &encode_policy_manifest(vec![core_read_scoped_grant_entry(
+            &reader.to_hex(),
+            Value::Map(vec![(
+                Value::from("entity_types"),
+                Value::Array(vec![Value::from(ENTITY_TYPE_TASK)]),
+            )]),
+        )]),
+    )?;
+    let tree = vault
+        .memory(reader, EdgeActorClass::Agent)
+        .productivity_tree(&crate::memory::ProductivityTreeRequest {
+            root_ref: goal.to_hex(),
+            max_depth: 4,
+        })
+        .expect("the reader reads the goal's tree");
+    let nodes = tree.value.expect("the goal is readable").nodes;
+    assert_eq!(
+        nodes
+            .into_iter()
+            .map(|node| node.id_hex)
+            .collect::<Vec<_>>(),
+        vec![goal.to_hex()]
+    );
+    assert_eq!(tree.receipt.suppressed_count, 0);
     Ok(())
 }
 

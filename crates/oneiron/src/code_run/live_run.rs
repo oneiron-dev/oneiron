@@ -14,6 +14,7 @@
 //! nothing, and a handle resolves only while the runner that holds the same
 //! lease has registered the run with its host.
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use rand_core::{OsRng, RngCore};
 
 use crate::attempt_queue::{AttemptId, AttemptRecord, AttemptState};
@@ -62,13 +63,26 @@ impl LiveRunCredential {
     /// connection at `locality`.
     #[must_use]
     pub fn of(principal: &str, locality: CallerLocality) -> Self {
-        let mut hasher = blake3::Hasher::new_derive_key("oneiron live-run credential v1");
-        hasher.update(principal.as_bytes());
         Self {
-            digest: *hasher.finalize().as_bytes(),
+            digest: credential_digest(principal),
             locality,
         }
     }
+}
+
+/// A live-run credential's digest of its idempotency identity
+/// (`purposes::code_run::LIVE_RUN_CREDENTIAL`).
+fn credential_digest(principal: &str) -> [u8; 32] {
+    LegacyDigest::new(purposes::code_run::LIVE_RUN_CREDENTIAL)
+        .raw(principal.as_bytes())
+        .finish()
+}
+
+/// [`credential_digest`] for the K door
+/// (`test_doors::fingerprint_keep_code_run_digests`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn credential_digest_for_test(principal: &str) -> [u8; 32] {
+    credential_digest(principal)
 }
 
 /// One credential's attachment to one lease of a live agent run, as the
@@ -130,17 +144,28 @@ impl CodeRunLiveRunBinding {
                 "action arguments do not match declared schema".to_owned(),
             ));
         }
-        let mut hasher = blake3::Hasher::new_derive_key("oneiron live-run action key v1");
-        for part in [
-            self.issued.as_slice(),
-            self.credential.digest.as_slice(),
-            key.as_bytes(),
-        ] {
-            hasher.update(&(part.len() as u64).to_be_bytes());
-            hasher.update(part);
-        }
-        Ok(format!("live-run:{}", hasher.finalize().to_hex()))
+        Ok(action_key_text(&self.issued, &self.credential.digest, key))
     }
+}
+
+/// An action's idempotency key in the namespace of the issued handle and the
+/// credential digest (`purposes::code_run::LIVE_RUN_ACTION_KEY`).
+fn action_key_text(issued: &[u8], credential: &[u8; 32], key: &str) -> String {
+    let mut digest = LegacyDigest::new(purposes::code_run::LIVE_RUN_ACTION_KEY);
+    for part in [issued, credential.as_slice(), key.as_bytes()] {
+        digest.len_u64_be(part.len()).raw(part);
+    }
+    format!(
+        "live-run:{}",
+        crate::entity_id::bytes_to_hex_lower(&digest.finish())
+    )
+}
+
+/// [`action_key_text`] for the K door
+/// (`test_doors::fingerprint_keep_code_run_digests`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn action_key_text_for_test(issued: &[u8], credential: &[u8; 32], key: &str) -> String {
+    action_key_text(issued, credential, key)
 }
 
 /// The attachment run `run_id`'s replay row keeps, if any.

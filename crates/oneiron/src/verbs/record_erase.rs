@@ -1,24 +1,24 @@
-//! The served erase of one record (OF-150 / OF-163): `vault.records.erase_preview`
-//! shows what an erase would take (the brief grants it revokes, the records
-//! holding the same bytes, the LFS chunks it shares), and
-//! `vault.records.erase_confirm` erases it under the caller's own proof once
-//! they confirm that same preview by its digest. In a shared vault a record
+//! The served erase of one record (OF-150 / OF-163): the shared preview
+//! `vault.owner_confirm.preview` shows what an erase would take (the brief
+//! grants it revokes, the records holding the same bytes, the LFS chunks it
+//! shares), and `vault.records.erase_confirm` erases it under the caller's
+//! own proof once they confirm that same preview. In a shared vault a record
 //! another owner wrote, and the confirmed record itself where two or more
 //! Owners hold the vault, starts its own `erase` act instead, which
 //! `vault.shared.execute` carries out once its veto window has run out.
 use serde::{Deserialize, Serialize};
 
+use super::owner_confirm;
 use crate::consent::AuthenticatedOwner;
 use crate::deletion::DeleteEntityPreview;
 use crate::memory::{
-    DeleteReceipt, DeleteRequestState, EraseOptions, EraseReason, MEMORY_CODE_INVALID_STATE,
-    Memory, MemoryError, MemoryResult, SameBytesHold, SameBytesOutcome,
+    DeleteReceipt, DeleteRequestState, EraseOptions, EraseReason, Memory, MemoryError,
+    MemoryResult, SameBytesHold, SameBytesOutcome,
 };
-use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, entity_id::bytes_to_hex_lower};
 
 #[doc(hidden)]
-pub use oneiron_verb_wire::verbs::record_erase::{RecordEraseConfirmRequest, RecordEraseRequest};
+pub use oneiron_verb_wire::verbs::record_erase::RecordEraseConfirmRequest;
 
 /// One live brief grant the erase revokes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,8 +41,10 @@ pub struct EraseLfsChunk {
     pub other_owners: Vec<String>,
 }
 
-/// `vault.records.erase_preview`'s answer. `preview_digest` is the BLAKE3 of
-/// the rest of it; `erase_confirm` takes it back, so a record whose shares or
+/// What erasing the record would take, as the shared preview shows it: the
+/// record, the brief grants the erase revokes, the records holding the same
+/// bytes, the LFS chunks it shares, and what `also_same_bytes` would also
+/// take. The shared confirm binds it, so a record whose shares or
 /// same-bytes holders changed since is refused, not erased.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecordErasePreview {
@@ -57,13 +59,12 @@ pub struct RecordErasePreview {
     /// For a world whose keys this erase destroys (ARCH-0038
     /// #erase-sealed-bundles), the owner-ruled words: the world is erased now,
     /// and old backups keep only an unreadable copy until they expire. Absent
-    /// for every other record, so its preview and digest stay as they were.
+    /// for every other record, so its preview stays as it was.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub old_backups_notice: Option<String>,
     /// Beside that notice, the days within which those old backups expire.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub old_backups_expire_within_days: Option<u32>,
-    pub preview_digest: String,
 }
 
 /// What became of one other record holding the same bytes: `erased`,
@@ -138,12 +139,9 @@ fn erases_world(
         .map_err(MemoryError::from)
 }
 
-fn preview_view(
-    preview: &DeleteEntityPreview,
-    world_erase: bool,
-) -> MemoryResult<RecordErasePreview> {
+fn preview_view(preview: &DeleteEntityPreview, world_erase: bool) -> RecordErasePreview {
     let (old_backups_notice, old_backups_expire_within_days) = world_erase_notice(world_erase);
-    let mut view = RecordErasePreview {
+    RecordErasePreview {
         record: preview.entity().to_hex(),
         shared_with: preview
             .shared_with()
@@ -177,12 +175,7 @@ fn preview_view(
         remote_copies_may_remain: preview.remote_copies_may_remain(),
         old_backups_notice,
         old_backups_expire_within_days,
-        preview_digest: String::new(),
-    };
-    let canonical = serde_json::to_vec(&view)
-        .map_err(|_| MemoryError::bad_request("the erase preview does not encode"))?;
-    view.preview_digest = blake3::hash(&canonical).to_hex().to_string();
-    Ok(view)
+    }
 }
 
 /// The held row's reason code, as [`SameBytesHold`] logs it.
@@ -194,130 +187,53 @@ fn hold_code(hold: SameBytesHold) -> &'static str {
     }
 }
 
-/// How long a retained erase preview stays confirmable (FIX 12522): ten
-/// minutes on the vault's recording clock.
-const ERASE_PREVIEW_TTL_SECS: u64 = 600;
-
-/// The erase previews a caller was shown and may still confirm, one live row
-/// per caller and record: a re-preview overwrites it. Confirm requires the
-/// caller's own live row for the record it erases, so a hook that rewrites
-/// the record and digest to another record's valid preview cannot redirect
-/// the erase to a record the caller never previewed.
-const ERASE_PREVIEWS: SideTable<(EntityId, EntityId), ErasePreviewRow, Named> =
-    SideTable::new(&side_table::ERASE_PREVIEW);
-
-/// One retained erase preview: the digest the preview showed, and when it
-/// was issued and expires on the vault's recording clock.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ErasePreviewRow {
-    preview_digest: String,
-    issued_at: u64,
-    expires_at: u64,
-}
-
-/// An erased caller's retained previews go, in the actor erase's own writer.
-pub(crate) fn erase_preview_actor_in_txn(
-    vault: &crate::Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    actor: &EntityId,
-) -> crate::Result<()> {
-    ERASE_PREVIEWS.delete_from(&vault.store, wtxn, actor.as_bytes())?;
-    Ok(())
-}
-
-/// `vault.records.erase_preview`: what erasing `record` would take, read
-/// under the caller's own deletion authority. It also retains the preview's
-/// digest for this caller and record until it expires, which
-/// `vault.records.erase_confirm` requires back.
-pub fn preview_record_erase(
+/// The erase's view twice over: the engine preview the erase runs on, and
+/// the shown view the owner confirms. [`confirm_record_erase`] and the
+/// shared preview call this same fn, so a confirm binds what the preview
+/// showed.
+pub(crate) fn record_erase_view(
     memory: &Memory<'_>,
-    input: RecordEraseRequest,
-) -> MemoryResult<RecordErasePreview> {
-    let preview = memory.preview_entity_delete(&input.record)?;
-    let vault = memory.vault();
+    record: &EntityId,
+) -> MemoryResult<(DeleteEntityPreview, RecordErasePreview)> {
+    let preview = memory.preview_entity_delete(record)?;
     let world_erase = {
-        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-        erases_world(memory, &txn, input.record)?
+        let txn = memory
+            .vault()
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::Error::from)?;
+        erases_world(memory, &txn, *record)?
     };
-    let view = preview_view(&preview, world_erase)?;
-    let now = vault.store.clock.now_recorded_at();
-    let row = ErasePreviewRow {
-        preview_digest: view.preview_digest.clone(),
-        issued_at: now,
-        expires_at: now + ERASE_PREVIEW_TTL_SECS,
-    };
-    vault
-        .with_write_txn_grouped(|txn| {
-            // The caller is checked only in the earlier preview snapshot: a
-            // hard erase of the caller committing after it runs this
-            // writer's actor scrub first, so refuse the insert when the
-            // caller carries its dt: hard-delete marker here (review P1 on
-            // #4445; the ac: cleanup-archive marker is the wrong family).
-            if vault.local_hard_delete_marker_exists_in_txn(txn, &memory.actor())? {
-                return Err(crate::Error::InvariantViolation(
-                    "erase preview caller was erased",
-                ));
-            }
-            // Rows key by caller and record, not by issue time, so expiry has
-            // no order to stop at: every expired row goes.
-            let mut expired = Vec::new();
-            for entry in ERASE_PREVIEWS.iter_from(&vault.store, txn, &[])? {
-                let (key, stored) = entry?;
-                if stored.expires_at < now {
-                    expired.push(key);
-                }
-            }
-            for key in &expired {
-                ERASE_PREVIEWS.delete(&vault.store, txn, key)?;
-            }
-            ERASE_PREVIEWS.put(&vault.store, txn, &(memory.actor(), input.record), &row)
-        })
-        .map_err(MemoryError::from)?;
-    Ok(view)
+    let view = preview_view(&preview, world_erase);
+    Ok((preview, view))
 }
 
 /// `vault.records.erase_confirm`: erases the record the caller previewed,
-/// under the owner erase reason, once the preview it takes again still has the
-/// digest they confirmed. `owner` is the caller's own proof: with it a held
-/// record starts its own `erase` act. The confirm names the caller's own live
-/// retained preview of this record first: without it the erase is refused,
-/// even when the digest it names is fresh.
+/// under the owner erase reason, once the preview it takes again is still
+/// what they confirmed. `owner` is the caller's own proof: with it a held
+/// record starts its own `erase` act. The confirm names the caller's own
+/// live retained preview of this call first (FIX 12522, kept through the
+/// shared row): without it the erase is refused, even when what it names is
+/// fresh.
 pub fn confirm_record_erase(
     memory: &Memory<'_>,
     owner: &AuthenticatedOwner,
     input: RecordEraseConfirmRequest,
 ) -> MemoryResult<RecordEraseOutcome> {
-    let preview = memory.preview_entity_delete(&input.record)?;
+    let ask = owner_confirm::asked("vault.records.erase_confirm", &input)?;
+    let (preview, view) = record_erase_view(memory, &input.record)?;
     let vault = memory.vault();
-    let now = vault.store.clock.now_recorded_at();
-    let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-    let retained = ERASE_PREVIEWS
-        .get(&vault.store, &txn, &(memory.actor(), input.record))
-        .map_err(MemoryError::from)?;
-    let live = matches!(retained, Some(ref row) if row.expires_at >= now && row.preview_digest == input.preview_digest);
-    if !live {
-        return Err(MemoryError::new(
-            MEMORY_CODE_INVALID_STATE,
-            "this erase names no live preview of its own for this record",
-            &["Preview the erase again and confirm what it shows now."],
-        ));
-    }
-    let world_erase = erases_world(memory, &txn, input.record)?;
-    if preview_view(&preview, world_erase)?.preview_digest != input.preview_digest {
-        return Err(MemoryError::new(
-            MEMORY_CODE_INVALID_STATE,
-            "the record's erase preview changed since it was shown",
-            &["Preview the erase again and confirm what it shows now."],
-        ));
-    }
-    drop(txn);
+    owner_confirm::admit(vault, owner, ask, &view)?;
+    // The confirmed view names the old backups exactly when this erase
+    // destroys a world's keys.
+    let world_erase = view.old_backups_notice.is_some();
     // An asker's approved check-in the Owner applies (2j; P24-SHAPE Q7 = A)
     // is spent in its own writer, on the Owner's live proof, before the
     // staged erase's writes: a refusal after it leaves the approval spent,
-    // and the Owner confirms again on their own proof alone. The preview,
-    // the veto window, the legal holds and the Owner proof the erase asks
-    // for all still hold; an answer is no proof of its own.
+    // and the Owner confirms again on their own proof alone. The shared
+    // confirm, the veto window, the legal holds and the Owner proof the
+    // erase asks for all still hold; an answer is no proof of its own.
     let mut decision = crate::check_in::owner_own_proof_decision(crate::check_in::ActClass::Erase);
     if let Some(applied) = super::shared::check_in_ref(input.check_in_ref.as_deref())? {
         let effect_digest =

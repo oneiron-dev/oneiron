@@ -92,13 +92,17 @@ pub(super) fn index_wake_in_txn(
 }
 
 /// Drops the index row of the wake keyed `(turn, registration)` under
-/// `actor`, in the writer that deletes the wake.
+/// `actor`, in the writer that deletes the wake, and with it the marks this
+/// machine kept for the wake as its recorder or as the home that took it
+/// (`retraction`).
 pub(super) fn unindex_wake_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     actor: EntityId,
     (turn, registration): (EntityId, EntityId),
 ) -> Result<()> {
+    #[cfg(feature = "sync")]
+    super::retraction::forget_wake_in_txn(vault, txn, actor, (turn, registration))?;
     ACTOR_WAKE
         .delete(vault, txn, &(actor, turn, registration))
         .map(drop)

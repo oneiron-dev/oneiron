@@ -2,7 +2,9 @@
 
 mod answer_actor;
 pub use answer_actor::AnswerActor;
-pub(crate) use answer_actor::{erase_ask_actor_in_txn, forget_ask_states_in_txn};
+pub(crate) use answer_actor::{
+    erase_ask_actor_in_txn, forget_ask_states_in_txn, rewrite_ask_states_in_txn,
+};
 mod asks;
 pub(crate) use asks::WORLD_PRIVACY_ASK_QUEUE;
 pub use asks::{AskAnswer, AskGrantDraft, AskPrior, DecisionAsk, DecisionAsks};
@@ -11,7 +13,7 @@ mod codec;
 mod generated;
 pub use generated::{
     DecisionWireLabels, GENERATED_SETTLEMENT_INVARIANT, GeneratedDecisions, GeneratedMiss,
-    GeneratedRung, GeneratedStep,
+    GeneratedRung, GeneratedStep, SUBMITTED_READ_INVARIANT, SubmittedRead,
 };
 mod held;
 pub use held::HeldLadder;

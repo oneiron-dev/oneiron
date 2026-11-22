@@ -42,13 +42,18 @@ side_tables! {
         => crate::Vault::erase_pending_act_actor_in_txn;
     /// The key a pending invitation's own slips must bind, as the invitee bound it with an
     /// independent credential of their own or an owner's invitation pairing code (FIX 8745).
-    /// Key: hex32 (invitee id) ":" hex32 (invitation id).
+    /// Key: hex32 (invitee id) ":" hex32 (invitation id). A hard erase of a person deletes the
+    /// keys they bound.
     SHARED_VAULT_INVITATION_KEY: VaultMeta b"shared-vault:invitation-key:v1:" Raw
-        [restore: refuse "shared vault membership"] [family: unclassified] [tier: canonical];
+        [restore: refuse "shared vault membership"] [family: unclassified] [tier: canonical]
+        => crate::Vault::erase_shared_invitation_key_actor_in_txn;
     /// One invitation of a person into the shared vault, pending until they accept, decline or an
-    /// `add_member` holder withdraws it. Key: hex32 (invitee id) ":" hex32 (invitation id).
+    /// `add_member` holder withdraws it. Key: hex32 (invitee id) ":" hex32 (invitation id). A
+    /// hard erase of a person deletes their invitations and writes the erased marker over the
+    /// inviter or withdrawer of another's; such an invitation no longer admits.
     SHARED_VAULT_INVITATION: VaultMeta b"shared-vault:invitation:v1:" Raw
-        [restore: refuse "shared vault membership"] [family: unclassified] [tier: canonical];
+        [restore: refuse "shared vault membership"] [family: unclassified] [tier: canonical]
+        => crate::Vault::erase_shared_invitation_actor_in_txn;
     /// One callable call frozen as a case for the helper gate: its arguments, the answer that passed
     /// its contract, the caller, its source rows, the revision. Key: id16 (skill that ran) + u64be
     /// at + u64be step seq + receipt string.

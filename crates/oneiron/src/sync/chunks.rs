@@ -13,6 +13,8 @@
 //! of any length is decoded as it arrives, and a reply is written as its
 //! client takes it, neither held whole.
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use super::loro_support::{map_for_each_value_bytes, map_insert_bytes};
 use super::schema::create_window_doc;
 use super::selector::{
@@ -497,7 +499,7 @@ where
             return Err(invalid());
         }
         let (_, bytes) = page.chunks.pop().expect("one verified entry");
-        if bytes.len() != chunk.size as usize || blake3::hash(&bytes).as_bytes() != &chunk.hash {
+        if bytes.len() != chunk.size as usize || ContentHash::of(&bytes).as_bytes() != &chunk.hash {
             return Err(invalid());
         }
         Ok(bytes)

@@ -38,9 +38,9 @@
 
 use oneiron::context_board::{
     BoardBlockHeader, BoardBudgetRequest, BoardFrame, BoardLayout, BoardLegend, BoardSection,
-    MEMORIES_SECTION_VERSION_V4, MemoriesBudget, MemoriesSection, MemoryRow, MemorySlot,
-    MemorySource, MemoryTier, SHED_ORDER, SectionPolicy, ShedRank, apply_board_layout,
-    assemble_memories_sections, render_board_block,
+    FOLD_ATTENTION_ROWS_MAX, MEMORIES_SECTION_VERSION_V4, MemoriesBudget, MemoriesSection,
+    MemoryRow, MemorySlot, MemorySource, MemoryTier, SHED_ORDER, SectionPolicy, ShedRank,
+    apply_board_layout, assemble_memories_sections, render_board_block,
 };
 use oneiron::memory::Memory;
 use oneiron::registry::{ENTITY_TYPE_ASSET_TEXT, ENTITY_TYPE_PERSON};
@@ -248,7 +248,12 @@ fn a_fold_line_is_rebuilt_from_live_rows() -> TestResult {
     let layout: BoardLayout = serde_json::from_value(folded["pending"].clone())?;
 
     let two = tasks_section(&["t1 running one", "t2 queued two"])?;
-    let laid = apply_board_layout(std::slice::from_ref(&two), &layout, 10_000);
+    let laid = apply_board_layout(
+        std::slice::from_ref(&two),
+        &layout,
+        10_000,
+        FOLD_ATTENTION_ROWS_MAX,
+    );
     assert_eq!(laid.folded, vec!["tasks".to_owned()]);
     let line = laid.sections[0].header_line();
     assert!(laid.sections[0].is_folded(), "{line}");
@@ -256,7 +261,12 @@ fn a_fold_line_is_rebuilt_from_live_rows() -> TestResult {
     assert!(line.ends_with("· note: sweep first"), "{line}");
 
     let three = tasks_section(&["t1 running one", "t2 queued two", "t3 done three"])?;
-    let laid = apply_board_layout(std::slice::from_ref(&three), &layout, 10_000);
+    let laid = apply_board_layout(
+        std::slice::from_ref(&three),
+        &layout,
+        10_000,
+        FOLD_ATTENTION_ROWS_MAX,
+    );
     let line = laid.sections[0].header_line();
     assert!(line.starts_with("TASKS 3 · open:"), "{line}");
 
@@ -404,7 +414,7 @@ fn pinned_rows_are_never_folded_or_shed() -> TestResult {
         json!({"section": "memories", "share_pct": 0}),
     )?;
     let layout: BoardLayout = serde_json::from_value(sized["pending"].clone())?;
-    let laid = apply_board_layout(&sections, &layout, 10_000);
+    let laid = apply_board_layout(&sections, &layout, 10_000, FOLD_ATTENTION_ROWS_MAX);
     assert_eq!(laid.fitted, vec!["memories".to_owned()]);
     assert!(
         laid.sections[0]
@@ -419,7 +429,7 @@ fn pinned_rows_are_never_folded_or_shed() -> TestResult {
     // A fold folds the snippets to one line; the pinned floor stays.
     let folded = stage(&owner, "self.board.fold", json!({"section": "memories"}))?;
     let layout: BoardLayout = serde_json::from_value(folded["pending"].clone())?;
-    let laid = apply_board_layout(&sections, &layout, 10_000);
+    let laid = apply_board_layout(&sections, &layout, 10_000, FOLD_ATTENTION_ROWS_MAX);
     assert!(laid.sections[0].is_folded());
     assert!(laid.sections[0].detail_rows().is_empty());
     assert!(

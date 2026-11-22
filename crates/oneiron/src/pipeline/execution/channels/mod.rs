@@ -17,6 +17,7 @@ use self::admit::ChannelAccumulator;
 use self::post_blend::{PostBlend, PostBlendInputs};
 use self::ppr_expand::{PprExpandInputs, PprExpandState};
 use self::ppr_visibility::pipeline_ppr_visibility;
+pub(in crate::pipeline) use self::rerank::RerankedBlock;
 use self::rerank::{RerankApplied, RerankLadderInputs};
 use self::text::TextChannelInputs;
 use self::trace_assembly::TraceInputs;
@@ -433,6 +434,10 @@ impl PipelineBuilder<'_> {
                     // ARCH-0039 Layer 2: seed specificity applies ONLY to
                     // search_ppr — seeds are weighted 1/ln(1 + passage_count)
                     // instead of uniform 1/n.
+                    // The walk alone, for `oneiron-bench ppr-walk-share`
+                    // (UNBUILT3-06): a span no subscriber listens to costs a
+                    // level check and changes no output.
+                    let _walk = tracing::trace_span!("ppr_search_walk").entered();
                     match pipeline_ppr_visibility(self, filter_config, &claim_gate) {
                         Some(visibility) => {
                             crate::ppr::ppr_query_scoped_in_txn_with_diagnostics_and_deadline(
@@ -545,7 +550,7 @@ impl PipelineBuilder<'_> {
                     media_evidence: Default::default(),
                     blend_components: HashMap::new(),
                     access_factors: HashMap::new(),
-                    rerank_merged_components: None,
+                    rerank_components: None,
                     retrieval_trace: None,
                     replay_inputs: capture_replay_enabled.then(|| {
                         capture_replay_inputs(
@@ -762,9 +767,10 @@ impl PipelineBuilder<'_> {
             )?;
 
             let RerankApplied {
-                merged_components: rerank_merged_components,
+                rerank_components,
                 reranked_trace_scores,
                 words_revisions,
+                block: mut reranked_block,
             } = self.apply_rerank_ladder(
                 rtxn,
                 &mut scores,
@@ -773,7 +779,6 @@ impl PipelineBuilder<'_> {
                 RerankLadderInputs {
                     ladder_scores: rerank_ladder_scores.as_ref(),
                     blend_access_factors: &blend_access_factors,
-                    blend_components: &blend_components,
                     filter_config,
                     rerank_query,
                     capture_retrieval_trace,
@@ -820,6 +825,7 @@ impl PipelineBuilder<'_> {
                     &mut claim_gate,
                 )?
             };
+            reranked_block.follow_turn_fold(&cited_messages);
 
             let capabilities = self.prepare_pack_candidates(
                 rtxn,
@@ -828,6 +834,7 @@ impl PipelineBuilder<'_> {
                 &acc.media_evidence,
                 &mut empty_reason,
                 overrides.skip_ret01_abstain,
+                &reranked_block,
             )?;
 
             // OF-023 hold-both: an observed claim never sits above a stated
@@ -910,9 +917,14 @@ impl PipelineBuilder<'_> {
             }
             // Only admitted final candidates participate. This selection cannot
             // surface hidden bridge nodes, undo filters, or multiply scores twice.
+            // It selects across the whole list, but orders within the
+            // reranked block and within the rest (RERANK-GROUP-ORDER = A).
             if let Some(diversity) = community_diversity {
                 keep_critical_through(&mut scores, &critical, |scores| {
-                    diversity.apply(scores, self.result_limit, &self.ppr_community)
+                    let before = scores.clone();
+                    diversity.apply(scores, self.result_limit, &self.ppr_community)?;
+                    reranked_block.keep_group_places(&before, scores);
+                    Ok(())
                 })?;
             }
             let text_exhausted = text_exhausted && scores.len() <= self.result_limit;
@@ -967,7 +979,7 @@ impl PipelineBuilder<'_> {
                         fused_trace_scores,
                         blended_trace_scores,
                         reranked_trace_scores: reranked_trace_scores.as_deref(),
-                        rerank_merged_components: rerank_merged_components.as_ref(),
+                        rerank_components: rerank_components.as_ref(),
                         blend_components: &blend_components,
                         blend_access_factors: &blend_access_factors,
                         community_trace_identity,
@@ -1081,7 +1093,7 @@ impl PipelineBuilder<'_> {
                 media_evidence: acc.media_evidence,
                 blend_components,
                 access_factors: blend_access_factors,
-                rerank_merged_components,
+                rerank_components,
                 retrieval_trace,
                 replay_inputs,
                 ppr_expand_executed,
@@ -1184,6 +1196,10 @@ impl PipelineBuilder<'_> {
             })
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the reranked block joins the pack candidates' inputs"
+    )]
     fn prepare_pack_candidates(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -1192,6 +1208,7 @@ impl PipelineBuilder<'_> {
         media_evidence: &super::super::budget::MediaEvidence,
         empty_reason: &mut Option<EmptyReason>,
         skip_ret01_abstain: bool,
+        reranked_block: &RerankedBlock,
     ) -> Result<Vec<super::super::types::ScoredEntity>> {
         if self.implicit_anchor_only(scores, signal_components) {
             scores.clear();
@@ -1207,6 +1224,7 @@ impl PipelineBuilder<'_> {
                 signal_components,
                 self.skill_executor.as_deref(),
                 self.skill_reliability_query.as_ref(),
+                reranked_block,
             )?
         } else {
             Vec::new()

@@ -45,17 +45,19 @@ pub(super) fn index(
         .map_err(|_| AppError::internal_server_error("index selection unavailable"))?;
 
     if after.is_none() {
-        let entries = window_index_projection_with(
-            &server.vault,
-            &doc,
-            &window,
-            crate::handler::selector_scope::selector_grant_scope(),
-            &selector,
-            admission.withhold(),
-            budgets.title_max_chars,
-            |id| admission.allows_item(id),
-        )
-        .map_err(|_| AppError::internal_server_error("index unavailable"))?;
+        let (entries, coreference) = oneiron::sync::recording_coreference_disclosure(|| {
+            window_index_projection_with(
+                &server.vault,
+                &doc,
+                &window,
+                crate::handler::selector_scope::selector_grant_scope(),
+                &selector,
+                admission.withhold(),
+                budgets.title_max_chars,
+                |id| admission.allows_item(id),
+            )
+        });
+        let entries = entries.map_err(|_| AppError::internal_server_error("index unavailable"))?;
         let bytes = entries
             .iter()
             .try_fold(0usize, |total, entry| {
@@ -115,6 +117,7 @@ pub(super) fn index(
             destination,
             selection_revision,
             items: entries,
+            coreference,
             pages: 0,
             budgets,
             _held: held,
@@ -137,6 +140,9 @@ pub(super) fn index(
         *cache = None;
         return Err(index_changed());
     }
+    // Every page carries rows the first page's filter decided: its answer
+    // stands only while that filter's coreference shares do.
+    retained.coreference.record();
     retained.pages = retained.pages.saturating_add(1);
     if retained.pages == budgets.max_index_pages.saturating_add(1) {
         // Rule 5: a read past its page row asks once and goes on.
@@ -260,6 +266,9 @@ pub(crate) struct ResidenceTouchStage {
     basis: TouchBasis,
     /// Each item the touch named by reference, with the BLAKE3 it named.
     items: Vec<(TouchItem, [u8; 32], Vec<u8>)>,
+    /// The coreference links the touch's filters let these bytes carry: a
+    /// part sliced from them stands only while they are still shared.
+    coreference: oneiron::sync::CoreferenceDisclosure,
     /// The staged bytes' charge on the server's retained-memory line.
     _held: crate::byte_line::HeldBytes,
 }
@@ -293,7 +302,11 @@ pub(super) fn touch(
     let target = touch_target(server, auth, peer, &input)?;
     // Read before the item, so the stage never names a basis newer than its bytes.
     let basis = touch_basis(server, &target)?;
-    let (blob, document, cache_worlds) = read_touch(server, &target, None)?;
+    // What the read's filters let the item carry is kept with any staged
+    // bytes; it is recorded into this answer's basis as well.
+    let (read, coreference) =
+        oneiron::sync::recording_coreference_disclosure(|| read_touch(server, &target, None));
+    let (blob, document, cache_worlds) = read?;
     let rows = touch_rows(server, target.id)?;
     // Where the row sits, kept beside the machine's copy (FIX 14534).
     let content_world = target
@@ -337,6 +350,7 @@ pub(super) fn touch(
                 id: target.id,
                 basis,
                 items: named,
+                coreference,
                 _held: held,
             });
     }
@@ -374,6 +388,9 @@ pub(super) fn touch_part(
     let staged = match stage {
         Some(stage) => match stage.named(&target, input.item, &hash) {
             Some(bytes) if touch_basis(server, &target)?.as_ref() == Some(&stage.basis) => {
+                // The staged bytes carry what the touch's filters decided:
+                // this part stands only while those links are still shared.
+                stage.coreference.record();
                 Some(bytes)
             }
             _ => None,

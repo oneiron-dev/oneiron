@@ -54,6 +54,8 @@ const ERASERS: &[EntitySideRowEraser] = &[
     },
     // FIX 10466: every inference snapshot whose dependency set reaches it.
     |write, txn, id| crate::store::snapshot_catalog::erase_in_txn(write.store, txn, id),
+    // L8-65: the erased record's rows in each reader's read exposure.
+    |write, txn, id| crate::claim::erase_read_exposure_records_in_txn(write.store, txn, id),
     // FIX 15128: every drafter training example whose dependency set names it.
     |write, txn, id| crate::drafter::erase_drafter_examples_for_source_in_txn(write, txn, id),
     // FIX 12569: every drafter version whose training ancestry reaches it.
@@ -103,6 +105,8 @@ const ERASERS: &[EntitySideRowEraser] = &[
     },
     // FIX 9876: an imported MESSAGE's text hash in the history import ledger.
     |write, txn, id| crate::ingest::history::erase_message_in_txn(write.store, txn, id),
+    // L2-15-CAPTURE-SUBJECT: an erased AG-UI capture's asset, owed its own delete.
+    |write, txn, id| crate::ingest::owe_capture_asset_erase_in_txn(write.store, txn, id),
     // FIX 9775: a PERSON's trusted-contact relations, asks and staged notices.
     |write, txn, id| erase_trusted_contact_rows_in_txn(write.store, txn, id),
     // FIX 11952: a TASK's comm receipt-import skip marker.
@@ -118,6 +122,9 @@ const ERASERS: &[EntitySideRowEraser] = &[
     },
     // FIX 15414: every mail claim re-check naming an erased TURN, MESSAGE or claim.
     |write, txn, id| crate::mail_pack::erase_claim_recheck_ids_in_txn(write.store, txn, id),
+    // Fix list row 17645: a drafted reply with files, its retained message, plan and Ask,
+    // when a row it depends on is erased.
+    crate::mail_pack::erase_reply_attachment_dependents_in_txn,
     // FIX 11815: an agent hook's proposal, by the binding claim it widens.
     |write, txn, id| {
         crate::store::pack_hook_proposal::erase_hook_proposal_in_txn(write.store, txn, id)

@@ -85,7 +85,7 @@ impl ScopedRead<'_> {
         let key = &self.actor_key;
         if key.actor_ref() != admin.actor().to_hex()
             || key.reads_as_vault_owner()
-            || key.owner_exemption.is_some()
+            || key.relationship_gate_lift_owner().is_some()
             || !key
                 .authority_scope()
                 .is_some_and(|held| held.is_narrowing_of(&scope))

@@ -272,6 +272,10 @@ impl ScopedRead<'_> {
                         if !self.weave_claim_edge_admitted_in(txn, &policy, &filter, &body)? {
                             continue;
                         }
+                        // A reaction claim names its reactor only to a
+                        // reader who may read them (FIX
+                        // REACTION-CLAIM-VALUE-REACTOR-ID).
+                        let body = self.redact_reaction_claim_in(txn, body)?;
                         items.push(WeaveItem::Claim {
                             id,
                             body: Box::new(body),
@@ -366,7 +370,7 @@ impl ScopedRead<'_> {
 /// Whether `recipe` fits the policy row of `role` held by `id`: every
 /// section one the row allows, each predicate a token, edge kinds only on a
 /// Links section.
-pub(super) fn validate_weave_recipe_for(
+pub(crate) fn validate_weave_recipe_for(
     policy: &crate::gate::PolicyManifestResolution,
     role: &str,
     id: EntityId,

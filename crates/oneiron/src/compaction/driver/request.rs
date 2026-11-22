@@ -117,6 +117,36 @@ impl CompactionRequest {
         })
     }
 
+    /// A conversation window sealed from its parts alone, for a door that
+    /// sends it to a host's backend directly: nothing is read from the
+    /// vault, so it names no source and meets no prior epoch.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn for_test_window(
+        vault: &Vault,
+        session_ref: EntityId,
+        window: Vec<CompactionWindowMessage>,
+        summary_token_budget: u64,
+    ) -> Result<Self> {
+        let (turn_start, last) = validate_window_span(&window)?;
+        Ok(Self {
+            request_id: vault.store.clock.entity_id()?,
+            session_ref,
+            window,
+            summary_token_budget,
+            turn_start,
+            watermark: CompactionWatermark {
+                learned_at: vault.now_recorded_at(),
+                turn_id: None,
+                turn: Some(last),
+            },
+            pins: Vec::new(),
+            sources: Vec::new(),
+            window_read_from_sources: false,
+            note: None,
+            log: WindowLog::Conversation(None),
+        })
+    }
+
     /// The host calls a host-numbered log's `sources` were read from; `None`
     /// for a conversation.
     pub(crate) const fn host_calls(&self) -> Option<u64> {

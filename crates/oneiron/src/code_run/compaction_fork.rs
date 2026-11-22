@@ -12,6 +12,7 @@
 //! the prefix ends, so a provider that caches by marked blocks can reuse it.
 //! A provider with no rendering for it sends a plain call.
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -149,12 +150,15 @@ pub fn shift_cache_boundaries(request: &mut LlmRequest) {
 
 /// The digest a chat breakpoint keeps for the offer its rung was admitted
 /// under (FIX 4465 D): the hex BLAKE3 of the binding's JSON, a ref to it,
-/// never the credential it names. `None` when the binding does not encode.
+/// never the credential it names (`purposes::code_run::LIVE_FORK_OFFER`).
+/// `None` when the binding does not encode.
 #[must_use]
 pub fn live_fork_offer_digest(offer: &OfferBinding) -> Option<String> {
     let bytes = serde_json::to_vec(offer).ok()?;
     Some(crate::entity_id::bytes_to_hex_lower(
-        blake3::hash(&bytes).as_bytes(),
+        &LegacyDigest::new(purposes::code_run::LIVE_FORK_OFFER)
+            .raw(&bytes)
+            .finish(),
     ))
 }
 

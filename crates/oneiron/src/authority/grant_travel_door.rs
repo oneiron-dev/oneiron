@@ -101,7 +101,12 @@ impl Vault {
         let key =
             crate::identity::read_machine_signing_key_in_txn(self, txn)?.ok_or_else(no_signer)?;
         let public_key = key.verifying_key().to_bytes();
-        if !super::owner_act_signer_admits(fold.machine(machine), &fold.roster, &public_key) {
+        if !super::owner_act_signer_admits(
+            fold.machine(machine),
+            &fold.roster,
+            &public_key,
+            fold.pinned_root.as_ref(),
+        ) {
             return Err(no_signer());
         }
         // Revision integrity (mesh contract §4): the owner chose on what the

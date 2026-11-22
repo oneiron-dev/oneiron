@@ -18,6 +18,7 @@ pub(super) mod admissions;
 pub(super) mod sieve_score;
 // The live projection core, a due Owner schedule's binding too (FIX 1259).
 mod projection;
+pub(crate) use projection::validate_weave_recipe_for;
 // The moves an agent-health card keeps, served past the reader's floor (FIX 8536).
 mod card_moves;
 // The weave Admin's lane and live report, under its current proof (OF-499 A3).
@@ -156,6 +157,28 @@ impl WeaveReport {
         }
         rows
     }
+
+    /// The rows whose content or metadata this report hands its reader, which count toward
+    /// the reader's read exposure (L8-65): each claim, each project with its goal ref, a
+    /// dreaming's resident, and what an agent-health card is built from. A row an item names
+    /// only by id does not count: a project's goal, a budget's project and budget ref, a link's
+    /// endpoints, the rows a sieve audit stands on, and a loop decision's evidence refs.
+    #[must_use]
+    pub(crate) fn served_rows(&self) -> Vec<EntityId> {
+        let mut rows = Vec::new();
+        for item in self.sections.iter().flat_map(|section| &section.items) {
+            match item {
+                WeaveItem::Claim { id, .. } | WeaveItem::Project { id, .. } => rows.push(*id),
+                WeaveItem::DreamProgress { resident, .. } => rows.push(*resident),
+                WeaveItem::AgentHealth { card, .. } => rows.extend(card_rows(card)),
+                WeaveItem::Budget { .. }
+                | WeaveItem::Link { .. }
+                | WeaveItem::SieveAudit { .. }
+                | WeaveItem::LoopDecision { .. } => {}
+            }
+        }
+        rows
+    }
 }
 
 /// The rows an agent-health card is built from, as the card keeps them:
@@ -202,6 +225,7 @@ impl ScopedRead<'_> {
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, None)?;
         self.redact_sieve_decisions_in(&txn, &policy, &filter, &mut report.value);
         self.project_card_moves_in(&txn, &policy, &filter, &mut report.value);
+        self.charge_served(report.value.served_rows());
         Ok(report)
     }
 

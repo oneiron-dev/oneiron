@@ -191,6 +191,7 @@ fn embedded_room_history_reads_inside_the_rosters_scope() {
                 }],
                 occurred_at: 2,
                 thread_audience: None,
+                project: None,
                 assertions: Default::default(),
             })
             .unwrap();

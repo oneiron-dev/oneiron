@@ -25,6 +25,8 @@
 //! of it still waits or stands, and an explicit Keep stages it afresh, at a
 //! fresh id. The declined claim never reopens and is never approved, and
 //! nothing stages it again on its own: the Dreamer's ruling never offers it.
+//! A staged Keep retracted while it is still Proposed, as `derive.revert`
+//! takes one back, reads the same way.
 
 use super::retained_conflict::{RetainedAlternative, retained_alternatives};
 use super::settle::keep_approval::KeepAs;
@@ -94,8 +96,9 @@ pub(super) struct KeepHistory {
     /// The Keeps staged in their import's review, each linked to the marker
     /// by its provenance (FIX 6152): a member standing for its alternative.
     pub(super) staged: Vec<(EntityId, EntityId)>,
-    /// Those of the staged Keeps the owner declined there (FIX 7072): still
-    /// members, standing for nothing, so a Keep after them stages afresh.
+    /// Those of the staged Keeps the owner declined there (FIX 7072), or that
+    /// were retracted while still Proposed: still members, standing for
+    /// nothing, so a Keep after them stages afresh.
     pub(super) declined: Vec<(EntityId, EntityId)>,
     /// Fresh MACHINE copies the owner's settlement reverts restored.
     pub(super) restored: Vec<EntityId>,
@@ -147,10 +150,19 @@ pub(super) fn keep_history_in_txn(
     )
 }
 
-/// Whether `claim` is a Keep of `marker`'s retained alternative, staged in
-/// its import's review, that the owner declined there (FIX 7072).
-fn declined_keep_of(claim: &ClaimBody, marker: EntityId) -> bool {
+/// Whether the staged Keep `claim` closed with no answer standing: the owner
+/// declined it in its import's review (FIX 7072), or it was retracted while
+/// still Proposed. It stands for nothing, whoever closed it.
+fn declined_or_withdrawn(claim: &ClaimBody) -> bool {
     claim.approval == ClaimApprovalStatus::Rejected
+        || (claim.approval == ClaimApprovalStatus::Proposed
+            && claim.lifecycle == ClaimLifecycleStatus::Retracted)
+}
+
+/// Whether `claim` is a Keep of `marker`'s retained alternative, staged in
+/// its import's review, that no longer waits there and stands for nothing.
+fn declined_keep_of(claim: &ClaimBody, marker: EntityId) -> bool {
+    declined_or_withdrawn(claim)
         && KeptConflictLink::of_claim(claim).is_some_and(|link| link.marker == marker)
 }
 
@@ -176,7 +188,7 @@ fn subject_keeps_in_txn(
         if let Some(link) = KeptConflictLink::of_claim(&claim) {
             if link.marker == marker {
                 kept.staged.push((link.selector, id));
-                if claim.approval == ClaimApprovalStatus::Rejected {
+                if declined_or_withdrawn(&claim) {
                     kept.declined.push((link.selector, id));
                 }
             }

@@ -5,6 +5,7 @@ use super::subscriptions::LiveQuerySource;
 use super::*;
 use crate::config::SyncServerConfig;
 use crate::server::SyncServer;
+use crate::test_engine_stack::run_on_engine_stack;
 use oneiron::access_grant::{
     AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus,
 };
@@ -55,6 +56,15 @@ fn server_with_config(
             )
             .unwrap();
     }
+    vault
+        .put_entity(
+            &EntityId::from_hex(SPACE).unwrap(),
+            oneiron::registry::ENTITY_TYPE_RELATIONSHIP,
+            oneiron::temporal::TimeRange { start: AT, end: AT },
+            AT,
+            b"fixture relationship",
+        )
+        .unwrap();
     let actor = EntityId::from_hex(ACTOR).unwrap();
     vault
         .install_read_permit_for_test(WriteActor::new(actor, EdgeActorClass::Human))
@@ -160,6 +170,7 @@ pub(super) fn witness(server: &SyncServer, text: &str) -> WitnessReceipt {
             occurred_at: AT,
             assertions: Default::default(),
             thread_audience: None,
+            project: None,
         })
         .unwrap()
 }
@@ -251,6 +262,11 @@ async fn verified_actor_classes_are_mapped_exactly_and_missing_class_is_forbidde
             "Reconnect with a differently scoped slip to act as another actor.",
         ])
     );
+    // A socket's subscriptions, membership and projection refuse the same
+    // slip with the facade's own words (T0I-ACTOR-CLASS-SUGGESTION-TWO-TEXTS).
+    let socket_refusal = error_body(bound_actor_class(&auth).unwrap_err());
+    assert_eq!(socket_refusal["message"], reply["error"]["message"]);
+    assert_eq!(socket_refusal["suggestions"], reply["error"]["suggestions"]);
     let payload_actor = rpc(
         &server,
         &auth,
@@ -267,6 +283,9 @@ async fn verified_actor_classes_are_mapped_exactly_and_missing_class_is_forbidde
         reply["error"]["message"],
         "facade routes bind writes to an authenticated principal"
     );
+    let socket_refusal = error_body(bound_reader(&owner).unwrap_err());
+    assert_eq!(socket_refusal["message"], reply["error"]["message"]);
+    assert_eq!(socket_refusal["suggestions"], reply["error"]["suggestions"]);
     let (issuer, _) =
         crate::test_credentials::rooting_host_issuer(server.vault(), SECRET.as_bytes());
     let template = server.vault().ensure_host_root_slip(&issuer).unwrap();
@@ -1909,7 +1928,7 @@ fn owner_feed_fixture() -> (
         oneiron::registry::TypeByteFamily::Productivity,
     )
     .unwrap();
-    let actor = EntityId::from_hex(ACTOR).unwrap();
+    let actor = server.vault().ensure_embedded_owner_actor().unwrap();
     let anchor = EntityId::now();
     let body = oneiron::ClaimBody::new(
         "profile.name",
@@ -1930,7 +1949,10 @@ fn owner_feed_fixture() -> (
         )
         .unwrap();
     crate::test_credentials::bind_owner(server.vault(), SECRET, actor);
-    let owner_recipe = format!("principal_ref={ACTOR};actor_class=human;jti=watch-owner");
+    let owner_recipe = format!(
+        "principal_ref={};actor_class=human;jti=watch-owner",
+        actor.to_hex()
+    );
     let owner = crate::test_credentials::authenticate(&server, &owner_recipe);
     assert!(owner.is_owner_grade());
     (_dir, server, actor, anchor, owner)
@@ -2270,6 +2292,7 @@ async fn erasing_a_folded_message_refreshes_the_live_recall_of_its_turn() {
                 occurred_at: AT,
                 assertions: Default::default(),
                 thread_audience: None,
+                project: None,
             })
             .unwrap();
         let id_of = |short_id: &str| {
@@ -2426,39 +2449,44 @@ async fn rpc_recall_takes_call_mode_and_refuses_a_deadline_out_of_range() {
 /// The read RPC is synchronous, yet a stage that never yields cannot hold a
 /// call-mode recall past its deadline: the read runs on a thread of its own,
 /// and at the deadline the RPC answers with the pack recall published.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn rpc_call_mode_recall_answers_by_its_deadline_past_a_stalled_stage() {
-    use oneiron::retrieval_depth::SlowRetrievalStage;
-    use oneiron::store::RetrievalSignal;
-    use std::time::{Duration, Instant};
+#[test]
+fn rpc_call_mode_recall_answers_by_its_deadline_past_a_stalled_stage() {
+    run_on_engine_stack(
+        "rpc_call_mode_recall_answers_by_its_deadline_past_a_stalled_stage",
+        || async move {
+            use oneiron::retrieval_depth::SlowRetrievalStage;
+            use oneiron::store::RetrievalSignal;
+            use std::time::{Duration, Instant};
 
-    const DEADLINE_MS: u64 = 300;
-    let (_dir, server) = server();
-    let auth = auth(&server, "human");
-    server
-        .vault()
-        .arm_slow_retrieval_stage_for_test(Some(SlowRetrievalStage {
-            signal: RetrievalSignal::Text,
-            duration: Duration::from_secs(3),
-            yields: false,
-        }));
-    let started = Instant::now();
-    let reply = rpc(
-        &server,
-        &auth,
-        "vault.recall",
-        json!({"query":"solar","effort":"call","deadline_ms":DEADLINE_MS}),
-    );
-    let took = started.elapsed();
-    server.vault().arm_slow_retrieval_stage_for_test(None);
-    assert!(reply.get("error").is_none(), "{reply}");
-    assert!(
-        took < Duration::from_millis(DEADLINE_MS + 1_000),
-        "the stalled stage held the answer {took:?}"
-    );
-    assert_eq!(reply["result"]["items"], json!([]), "{reply}");
-    assert_eq!(
-        reply["result"]["retrieval_meta"]["partial"], true,
-        "{reply}"
-    );
+            const DEADLINE_MS: u64 = 300;
+            let (_dir, server) = server();
+            let auth = auth(&server, "human");
+            server
+                .vault()
+                .arm_slow_retrieval_stage_for_test(Some(SlowRetrievalStage {
+                    signal: RetrievalSignal::Text,
+                    duration: Duration::from_secs(3),
+                    yields: false,
+                }));
+            let started = Instant::now();
+            let reply = rpc(
+                &server,
+                &auth,
+                "vault.recall",
+                json!({"query":"solar","effort":"call","deadline_ms":DEADLINE_MS}),
+            );
+            let took = started.elapsed();
+            server.vault().arm_slow_retrieval_stage_for_test(None);
+            assert!(reply.get("error").is_none(), "{reply}");
+            assert!(
+                took < Duration::from_millis(DEADLINE_MS + 1_000),
+                "the stalled stage held the answer {took:?}"
+            );
+            assert_eq!(reply["result"]["items"], json!([]), "{reply}");
+            assert_eq!(
+                reply["result"]["retrieval_meta"]["partial"], true,
+                "{reply}"
+            );
+        },
+    )
 }

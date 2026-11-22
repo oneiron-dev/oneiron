@@ -54,8 +54,9 @@ then for each client:
 
    Use `copilot-hooks` and `cursor-hooks` for the others. The hooks only
    read, so the credential is read-only. It is separate from the agent
-   credential the MCP entry reads (`agent.cred` in the plugin's data folder),
-   so you can revoke either alone.
+   credential the MCP entry reads (`agent.cred` in the plugin's data folder;
+   on Cursor, `~/.config/oneiron/cursor.cred`), so you can revoke either
+   alone.
 2. **Let `serve` read the client's logs.** A Codex hand-over queues a rollout
    under `~/.codex/sessions` (or `codex_root`). Copilot and Cursor hand over
    a hook transcript, which `serve` reads only under a folder listed in
@@ -71,8 +72,10 @@ then for each client:
      as [Connect an agent](connect-an-agent.md) says). Its hooks run with
      the plugin, and stop when you disable it.
    - Cursor: install `plugins/cursor/` beside the shared package, the way
-     Cursor installs a local plugin. It carries the hooks alone; the tools
-     and the skill stay in the shared package.
+     Cursor installs a local plugin. It carries the hooks and Cursor's own
+     MCP entry, as Cursor cannot start the shared package's
+     ([Connect an agent](connect-an-agent.md#2-add-it-to-the-agent));
+     the skill stays in the shared package.
 
 Each hook runs `oneiron` from the `PATH` the client runs hooks with, and
 reads the credential at `$HOME/.config/oneiron/<client>-hooks.cred`. The

@@ -53,6 +53,7 @@ pub use credential::{
 };
 pub(crate) use held_member::hold_member;
 pub use held_member::with_held_member;
+pub(crate) use paced::PACED_VERB_LINE_JOB;
 pub(super) use paced::scrub_erased_paced_in_txn;
 pub use paced::{PACED_VERB_WAIT_DEFAULT_SECS, is_paced_verb};
 pub(crate) use paced::{
@@ -294,6 +295,21 @@ impl Vault {
         invocation: InvocationId,
     ) -> Result<Option<Vec<EntityId>>> {
         ask::saved_producers(self, invocation)
+    }
+
+    /// The args a hook's ask saved under `call`'s invocation in `storage`,
+    /// when the saved call is `call`'s own, for its host to rebuild its retry
+    /// from (FIX CHAT-WITNESS-ASK-RESUME-ARGS-DRIFT; [`ask::saved_args`]).
+    ///
+    /// # Errors
+    ///
+    /// Reading the saved call.
+    pub(crate) fn verb_hook_saved_args(
+        &self,
+        storage: VerbHookStorage<'_>,
+        call: &VerbCall,
+    ) -> Result<Option<Value>> {
+        ask::saved_args(self, storage, call)
     }
 
     /// Runs the pre chain of `call` over `args`: the matching pre-hooks in

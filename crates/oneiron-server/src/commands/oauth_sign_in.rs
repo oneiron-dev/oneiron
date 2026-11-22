@@ -11,7 +11,12 @@
 //! reads the token file again first: tokens another process already
 //! refreshed are taken as they are, never refreshed a second time. A sign-in
 //! takes the file's place, or leaves it, under the same lock, and the lock
-//! file is never removed. No value the file holds is printed or logged.
+//! file is never removed. No token the file holds is printed or logged.
+//!
+//! A bearer and a refresh token prove no holder, so whoever reads one on
+//! the way can use it until it is revoked. They go only to the vault the
+//! sign-in was made at, over TLS or to this machine itself
+//! ([`admits_tokens_to`]; RFC 6749 §3.2, RFC 6750 §5.3).
 
 use std::fs::File;
 use std::io::Read as _;
@@ -122,6 +127,32 @@ impl OAuthSignIn {
         now_ms.saturating_add(EXPIRY_MARGIN_MS) < self.expires_at_ms
     }
 
+    /// Refuses unless this sign-in, read from `path`, was made at `url`'s
+    /// origin, which its token endpoint names: its tokens go to that vault
+    /// alone.
+    fn made_at(&self, path: &Path, url: &reqwest::Url) -> anyhow::Result<()> {
+        let made = reqwest::Url::parse(&self.token_endpoint).map_err(|_| {
+            anyhow::anyhow!(
+                "{} names no token endpoint URL; sign in again with `oneiron hosted login \
+                 --origin <url>`",
+                path.display()
+            )
+        })?;
+        let (made, asked) = (made.origin(), url.origin());
+        anyhow::ensure!(
+            made == asked,
+            "the OAuth sign-in in {} was made at {}, not at {}, and its tokens go to the vault \
+             they were made at alone; pass --url {}, or sign in there with `oneiron hosted login \
+             --origin {}`",
+            path.display(),
+            made.ascii_serialization(),
+            asked.ascii_serialization(),
+            made.ascii_serialization(),
+            asked.ascii_serialization()
+        );
+        Ok(())
+    }
+
     /// Reads `path`: a file only its owner may read, by its mode and by any
     /// ACL, holding one sign-in. Every refusal names the file, never a value.
     pub(crate) fn read(path: &Path) -> anyhow::Result<Self> {
@@ -187,6 +218,24 @@ impl OAuthSignIn {
             anyhow::bail!("remove {}: {error}", path.display());
         }
         Ok(())
+    }
+}
+
+/// Whether an OAuth code, bearer or refresh token may be sent to `url`:
+/// over https, or over http to this machine itself (`localhost`, an IPv4
+/// address in 127.0.0.0/8, or `::1`), where it never crosses a network.
+pub(crate) fn admits_tokens_to(url: &reqwest::Url) -> bool {
+    match url.scheme() {
+        "https" => true,
+        "http" => url.host_str().is_some_and(|host| {
+            host == "localhost"
+                || host
+                    .trim_start_matches('[')
+                    .trim_end_matches(']')
+                    .parse::<std::net::IpAddr>()
+                    .is_ok_and(|address| address.to_canonical().is_loopback())
+        }),
+        _ => false,
     }
 }
 
@@ -265,21 +314,36 @@ pub(crate) async fn revoke(client: &reqwest::Client, sign_in: &OAuthSignIn) -> a
     Ok(())
 }
 
-/// The sign-in one bridge holds: the file it reads, and the tokens it read
-/// last. Locked only around a token lookup or a refresh.
+/// The sign-in one bridge holds: the file it reads, the origin its tokens
+/// go to, and the tokens it read last. Locked only around a token lookup or
+/// a refresh.
 pub(crate) struct OAuthSession {
     path: PathBuf,
+    url: reqwest::Url,
     held: Mutex<OAuthSignIn>,
     client: reqwest::Client,
     runtime: Handle,
 }
 
 impl OAuthSession {
-    /// The sign-in `path` holds, refreshed on `runtime` when it is due.
-    pub(crate) fn open(path: &Path, runtime: Handle) -> anyhow::Result<Self> {
+    /// The sign-in `path` holds, for requests to `url`, refreshed on
+    /// `runtime` when it is due. Refused when `url` is plain http to
+    /// another machine, or when the sign-in was made at another origin.
+    pub(crate) fn open(path: &Path, url: &reqwest::Url, runtime: Handle) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            admits_tokens_to(url),
+            "{} is plain http to another machine, and an OAuth bearer and refresh token prove \
+             no holder: whoever reads them on the way can use them. Serve the vault over https, \
+             or reach a plain-http vault with a paired slip (--auth-mode slip --credential-file \
+             <file>)",
+            url.origin().ascii_serialization()
+        );
+        let held = OAuthSignIn::read(path)?;
+        held.made_at(path, url)?;
         Ok(Self {
-            held: Mutex::new(OAuthSignIn::read(path)?),
+            held: Mutex::new(held),
             path: path.to_owned(),
+            url: url.clone(),
             client: endpoint_client()?,
             runtime,
         })
@@ -312,6 +376,9 @@ impl OAuthSession {
     fn refresh(&self, held: &mut OAuthSignIn, stale: &str) -> anyhow::Result<()> {
         let _lock = RefreshLock::take(&self.path)?;
         let on_file = OAuthSignIn::read(&self.path)?;
+        // The file may hold a sign-in made at another origin by now: none of
+        // its tokens goes to this one, and its refresh token is not spent.
+        on_file.made_at(&self.path, &self.url)?;
         if on_file.access_token != stale && on_file.fresh(now_ms()) {
             *held = on_file;
             return Ok(());

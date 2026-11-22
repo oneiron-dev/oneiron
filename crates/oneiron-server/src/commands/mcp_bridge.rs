@@ -95,6 +95,17 @@ pub(crate) fn mint_invocation() -> String {
     oneiron::runtime_hooks::InvocationId(id).to_hex()
 }
 
+/// The kinds (`data.kind`) of the bridge's own JSON-RPC errors that leave a
+/// request's fate unknown, as `Refusal::rpc_error` names them: the request
+/// may have reached the server, which may have acted on it, but no answer
+/// came in time, the one that came is not its JSON-RPC answer, or it was too
+/// long to read. A caller of a verb that changes state cannot learn from
+/// them whether it did. Read by `oneiron continue --cloud`, Unix-only as
+/// every hook command is.
+#[cfg(unix)]
+pub(crate) const UNANSWERED_ERROR_KINDS: [&str; 3] =
+    ["server_unreachable", "server_error", "reply_too_large"];
+
 /// What the bridge's pending-call memory keys one tool call by.
 type CallKey = [u8; 32];
 

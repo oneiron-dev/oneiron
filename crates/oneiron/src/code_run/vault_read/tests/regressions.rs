@@ -26,6 +26,7 @@ fn error_variants(method: VaultReadMethod) -> [VaultReadError; 6] {
         },
         VaultReadError::Engine {
             narrowing: None,
+            legal_hold: None,
             method,
             engine_code: "CUSTOM_ENGINE_CODE".to_owned(),
             message: "preserve the engine detail".to_owned(),
@@ -87,6 +88,8 @@ fn persistent_adapter_observes_grant_revocation_and_narrowing() {
             refs: vec![reference.clone()],
             view: None,
             filter: None,
+            image_input: false,
+            task: None,
         };
         let timeline = CoreMemoryTimelineRequest {
             id: admitted_id.to_hex(),
@@ -189,7 +192,7 @@ fn persistent_adapter_observes_grant_revocation_and_narrowing() {
 #[test]
 fn finish_post_filter_scrubs_all_durable_trace_stages_and_fork_index() {
     for remove_all in [false, true] {
-        let (_dir, vault) = open_test_vault_with(telemetry_config());
+        let (_dir, vault) = crate::test_util::open_test_vault_with_manifest(telemetry_config());
         let (admitted_id, denied_id) = seed_scoped_pack_vault(&vault);
         let mut assembly = vault
             .context_pack()
@@ -313,6 +316,7 @@ fn trace_candidates(
 }
 
 fn provisional_context_pack_run(vault: &Vault) -> (Vec<u8>, RetrievalRunRecord) {
+    vault.store.wait_for_deferred_commits();
     let rtxn = vault.store.env.read_txn().expect("read provisional row");
     let rows = vault
         .store
@@ -333,7 +337,7 @@ fn provisional_context_pack_run(vault: &Vault) -> (Vec<u8>, RetrievalRunRecord) 
 
 #[test]
 fn finish_post_filter_propagates_finalize_failure_and_discards_trace() {
-    let (_dir, vault) = open_test_vault_with(telemetry_config());
+    let (_dir, vault) = crate::test_util::open_test_vault_with_manifest(telemetry_config());
     seed_scoped_pack_vault(&vault);
     let mut assembly = vault
         .context_pack()

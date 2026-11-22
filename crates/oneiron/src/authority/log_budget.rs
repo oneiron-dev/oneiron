@@ -37,6 +37,11 @@
 //! ancestor's own ancestry. Only a key the fold holds as a live owner does
 //! the owner's work: a revoked or retired owner key, or one no roster holds,
 //! has its rows wait at the reserve as a machine's do.
+//! A slip issuer the fold holds as a live owner does the owner's work
+//! whatever else its roster row holds: on a hosted vault the host's root
+//! key (`ROLE_CLOUD`, `CloudCustodial`) is one, so its rows land past the
+//! reserve as the owner's work, whether or not the vault also holds an
+//! owner key of its own.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -49,6 +54,21 @@ use super::log_structure::{
 use super::*;
 use crate::HostingPrivacyPosture;
 use crate::store::Store;
+
+mod log_check;
+mod owner_reserve;
+mod policy_bounds;
+
+pub use log_check::AuthorityLogCheck;
+pub(crate) use log_check::authority_signer_label;
+pub(crate) use owner_reserve::OwnerReserveHold;
+use owner_reserve::*;
+use policy_bounds::signer_bound;
+pub(super) use policy_bounds::{fold_memory_floor, memory_floor_fold};
+#[cfg(test)]
+pub(crate) use policy_bounds::{
+    with_fold_memory_floor_for_test, with_physical_memory_for_test, with_rows_per_signer_for_test,
+};
 
 /// The default of the `authority_log_signer_bound` policy row: the rows a
 /// key no slip issuer vouches for stores before its typed check asks.
@@ -77,309 +97,6 @@ thread_local! {
         const { std::cell::Cell::new(None) };
     static PHYSICAL_MEMORY_FOR_TEST: std::cell::Cell<Option<u64>> =
         const { std::cell::Cell::new(None) };
-}
-
-/// The least the memory floor's default reaches, however small the machine.
-const FOLD_MEMORY_FLOOR_MIN_BYTES: u64 = 1024 * 1024 * 1024;
-
-/// The owner's reserve under the memory floor is the floor divided by this:
-/// an eighth, so a log near an 8 GiB floor still has 1 GiB for the owner's
-/// work once every other row waits. A row that is not the owner's work lands
-/// only while the log with it stays under the reserve's start
-/// ([`FoldProjection::bytes_with`]), so only the owner's work enters the
-/// reserve. A stored row with a missing ancestor is charged at its worst
-/// case, every row and missing parent of the log, from its arrival
-/// (OWNER-RESERVE-ORPHAN-CHARGE = A; Astra owner-reserve F1, OPUS-SECREAD-A
-/// #8360 N2), so a parent it names adds nothing for its own ancestry when it
-/// lands later, the owner's or another's. One of the owner's rows then
-/// projects at most 16 KiB, plus 640 bytes for each row and missing parent
-/// the log with it holds (its ancestors at most), plus 640 bytes for each
-/// stored row with a missing ancestor times what the owner's row adds to the
-/// log's worst case: one unless a stored row names it, and one for each of
-/// its parents that no row is or names. On a floor at or above the default's
-/// least (1 GiB) and with few parents missing, the reserve holds about three
-/// such rows when every stored row is an ancestor of each, and at least one
-/// when stored rows with a missing ancestor fill the log to the reserve's
-/// start (estimate: a row's 16 KiB caps the rows under the reserve's start,
-/// and the rows with a missing ancestor are fewer). A floor row set to a few
-/// hundred KiB can leave it too small for one.
-const FOLD_MEMORY_OWNER_RESERVE_DIVISOR: u64 = 8;
-
-/// Runs `body` with the signer bound and the row and pair headroom rows
-/// scaled to `rows` per signer on this thread, so a test crosses them in a
-/// few rows.
-#[cfg(test)]
-pub(crate) fn with_rows_per_signer_for_test<T>(rows: usize, body: impl FnOnce() -> T) -> T {
-    ROWS_PER_SIGNER_FOR_TEST.with(|bound| bound.set(Some(rows)));
-    let result = body();
-    ROWS_PER_SIGNER_FOR_TEST.with(|bound| bound.set(None));
-    result
-}
-
-/// Runs `body` with every fold on this thread under a memory floor of
-/// `bytes`, the policy row's or the default's.
-#[cfg(test)]
-pub(crate) fn with_fold_memory_floor_for_test<T>(bytes: u64, body: impl FnOnce() -> T) -> T {
-    FOLD_MEMORY_FLOOR_FOR_TEST.with(|floor| floor.set(Some(bytes)));
-    let result = body();
-    FOLD_MEMORY_FLOOR_FOR_TEST.with(|floor| floor.set(None));
-    result
-}
-
-/// Runs `body` on this thread as on a machine with `bytes` of physical
-/// memory.
-#[cfg(test)]
-pub(crate) fn with_physical_memory_for_test<T>(bytes: u64, body: impl FnOnce() -> T) -> T {
-    PHYSICAL_MEMORY_FOR_TEST.with(|memory| memory.set(Some(bytes)));
-    let result = body();
-    PHYSICAL_MEMORY_FOR_TEST.with(|memory| memory.set(None));
-    result
-}
-
-/// The rows a signer stores before the rest wait, unless a slip issuer
-/// signed or cosigned them: the policy row, or a test's scaled bound.
-fn signer_bound(store: &Store, txn: &heed::RoTxn<'_>) -> crate::error::Result<usize> {
-    #[cfg(test)]
-    if let Some(rows) = ROWS_PER_SIGNER_FOR_TEST.with(std::cell::Cell::get) {
-        return Ok(rows);
-    }
-    let bound = authority_observation_policy_in_txn(store, txn)?.log_signer_bound;
-    Ok(usize::try_from(bound).unwrap_or(usize::MAX))
-}
-
-/// The counted rows, slip-issuer handoffs and counted ancestor pairs at
-/// which the log raises its headroom checks: the policy rows, or a test's
-/// scaled bound for rows and pairs.
-fn headroom(store: &Store, txn: &heed::RoTxn<'_>) -> crate::error::Result<(u64, u64, u64)> {
-    let policy = authority_observation_policy_in_txn(store, txn)?;
-    #[cfg(test)]
-    if let Some(rows) = ROWS_PER_SIGNER_FOR_TEST.with(std::cell::Cell::get) {
-        let rows = rows as u64;
-        return Ok((rows, policy.log_headroom_handoffs, 2 * rows * rows));
-    }
-    Ok((
-        policy.log_headroom_rows,
-        policy.log_headroom_handoffs,
-        policy.log_headroom_ancestor_pairs,
-    ))
-}
-
-/// The bytes a fold may project to hold at its peak: the policy row, else a
-/// quarter of this machine's physical memory between 1 GiB and
-/// [`DEFAULT_AUTHORITY_LOG_FOLD_MEMORY_FLOOR_BYTES`] (the cap when the
-/// platform does not say), or a test's floor.
-pub(super) fn fold_memory_floor(policy: Option<&AuthorityObservationPolicy>) -> u64 {
-    #[cfg(test)]
-    if let Some(bytes) = FOLD_MEMORY_FLOOR_FOR_TEST.with(std::cell::Cell::get) {
-        return bytes;
-    }
-    policy
-        .and_then(|policy| policy.log_fold_memory_floor_bytes)
-        .unwrap_or_else(|| {
-            physical_memory_bytes().map_or(DEFAULT_AUTHORITY_LOG_FOLD_MEMORY_FLOOR_BYTES, |bytes| {
-                (bytes / 4).clamp(
-                    FOLD_MEMORY_FLOOR_MIN_BYTES,
-                    DEFAULT_AUTHORITY_LOG_FOLD_MEMORY_FLOOR_BYTES,
-                )
-            })
-        })
-}
-
-/// The projected peak past which the doors keep the rest of the memory floor
-/// for the owner's work: the floor the fold reads on this install, less its
-/// owner reserve ([`FOLD_MEMORY_OWNER_RESERVE_DIVISOR`]).
-fn owner_reserve_start(store: &Store, txn: &heed::RoTxn<'_>) -> crate::error::Result<u64> {
-    let policy = authority_observation_policy_in_txn(store, txn)?;
-    let floor = fold_memory_floor(Some(&policy));
-    Ok(floor - floor / FOLD_MEMORY_OWNER_RESERVE_DIVISOR)
-}
-
-/// An upper bound on the peak a fold of `rows` projects
-/// ([`fold_projected_bytes`]), `rows` being each stored row's entry hash, as
-/// the fold keys its rows, and parents. A row's ancestor pairs are bounded
-/// parents first: a row on one parent has that parent's bound and the parent
-/// itself, exactly as the fold counts them; a join has the lesser of the same
-/// sum over its parents and the rows bounded before it, since every ancestor
-/// of it is one of them. A one-signer chain is bounded exactly.
-///
-/// A row with a missing ancestor, a parent no row is or a row on one, is
-/// charged at its worst case: every stored row and every missing parent of
-/// the log among its ancestors (OWNER-RESERVE-ORPHAN-CHARGE = A;
-/// OPUS-SECREAD-A #8360 N2). The fold counts a missing parent once, but the
-/// parent can bring any ancestry when it comes, and the owner's work lands
-/// past the reserve unbounded; charged so from its arrival, the row gains
-/// nothing when its parent lands, whoever signed it. A parent still unbounded
-/// when its child is bounded closes a cycle, which no signed history holds;
-/// the log is then bounded as if every row had every row and every missing
-/// parent among its ancestors.
-fn stored_fold_projection(
-    rows: &BTreeMap<AuthorityEntryHash, &[AuthorityEntryHash]>,
-) -> FoldProjection {
-    let missing = rows
-        .values()
-        .flat_map(|parents| parents.iter())
-        .filter(|parent| !rows.contains_key(*parent))
-        .copied()
-        .collect::<BTreeSet<_>>();
-    let most = (rows.len() as u64).saturating_add(missing.len() as u64);
-    let mut bound = BTreeMap::<AuthorityEntryHash, u64>::new();
-    let mut open = BTreeSet::new();
-    let mut entered = BTreeSet::new();
-    let mut cyclic = false;
-    let mut closed_pairs = 0_u64;
-    for start in rows.keys() {
-        let mut stack = vec![(*start, false)];
-        while let Some((hash, parents_bounded)) = stack.pop() {
-            let parents = rows[&hash];
-            if parents_bounded {
-                let mut opens = false;
-                let mut through = 0_u64;
-                for parent in parents {
-                    if !rows.contains_key(parent) || open.contains(parent) {
-                        opens = true;
-                        continue;
-                    }
-                    let ancestors = bound.get(parent).map_or_else(
-                        || {
-                            cyclic = true;
-                            most
-                        },
-                        |ancestors| ancestors.saturating_add(1),
-                    );
-                    through = through.saturating_add(ancestors);
-                }
-                let ancestors = if opens {
-                    open.insert(hash);
-                    most
-                } else if parents.len() == 1 {
-                    through
-                } else {
-                    through.min(bound.len() as u64)
-                };
-                if !opens {
-                    closed_pairs = closed_pairs.saturating_add(ancestors);
-                }
-                bound.insert(hash, ancestors);
-            } else if entered.insert(hash) {
-                stack.push((hash, true));
-                stack.extend(
-                    parents
-                        .iter()
-                        .filter(|parent| rows.contains_key(*parent) && !entered.contains(*parent))
-                        .map(|parent| (*parent, false)),
-                );
-            }
-        }
-    }
-    FoldProjection {
-        rows: rows.len(),
-        closed_pairs,
-        open,
-        missing,
-        cyclic,
-        bound,
-    }
-}
-
-/// The stored log's projected fold peak ([`stored_fold_projection`]), with
-/// what the door needs to bound the log with one more row in it.
-#[derive(Debug)]
-struct FoldProjection {
-    rows: usize,
-    /// The ancestor pairs of the stored rows with no missing ancestor.
-    closed_pairs: u64,
-    /// The stored rows with a missing ancestor, each charged at the log's
-    /// worst case ([`Self::most`]).
-    open: BTreeSet<AuthorityEntryHash>,
-    /// The distinct parents no stored row is.
-    missing: BTreeSet<AuthorityEntryHash>,
-    /// Whether the stored rows close a cycle (every row is then bounded with
-    /// every row and missing parent).
-    cyclic: bool,
-    /// Each stored row's ancestor bound.
-    bound: BTreeMap<AuthorityEntryHash, u64>,
-}
-
-impl FoldProjection {
-    /// The log's worst case for one row's ancestors: every stored row and
-    /// every missing parent.
-    fn most(&self) -> u64 {
-        (self.rows as u64).saturating_add(self.missing.len() as u64)
-    }
-
-    /// The stored log's projected ancestor pairs.
-    fn pairs(&self) -> u64 {
-        let most = self.most();
-        if self.cyclic {
-            return (self.rows as u64).saturating_mul(most);
-        }
-        self.closed_pairs
-            .saturating_add((self.open.len() as u64).saturating_mul(most))
-    }
-
-    /// The stored log's projected peak.
-    fn bytes(&self) -> u64 {
-        fold_projected_bytes(self.rows, self.pairs())
-    }
-
-    /// The projected peak with the row `hash`, on `parents`, stored too
-    /// (Astra owner-reserve F1). Its own ancestors are bounded as a stored
-    /// row's are, at the worst case of the log with it when one of its
-    /// parents is missing or has a missing ancestor. That worst case is the
-    /// one every stored row with a missing ancestor is charged: the row adds
-    /// one to it unless a stored row names it, and its parents that no row
-    /// is or names add one each (Astra owner-reserve r2 F1: a join names any
-    /// number of those). A stored row with no missing ancestor never has the
-    /// row among its ancestors, so its bound stands. Nothing else moves: a
-    /// stored row that names the row was charged at its worst case when it
-    /// came, so the row's own ancestry adds nothing to it (OPUS-SECREAD-A
-    /// #8360 N2).
-    fn bytes_with(&self, hash: &AuthorityEntryHash, parents: &[AuthorityEntryHash]) -> u64 {
-        if self.bound.contains_key(hash) {
-            return self.bytes();
-        }
-        let rows = self.rows.saturating_add(1);
-        let fresh = parents
-            .iter()
-            .filter(|parent| {
-                *parent != hash
-                    && !self.bound.contains_key(*parent)
-                    && !self.missing.contains(*parent)
-            })
-            .collect::<BTreeSet<_>>()
-            .len() as u64;
-        // The log with the row in it: it is no longer missing, and its fresh
-        // parents are.
-        let missing = (self.missing.len() as u64)
-            .saturating_sub(u64::from(self.missing.contains(hash)))
-            .saturating_add(fresh);
-        let most = (rows as u64).saturating_add(missing);
-        if self.cyclic {
-            return fold_projected_bytes(rows, (rows as u64).saturating_mul(most));
-        }
-        let opens = parents
-            .iter()
-            .any(|parent| !self.bound.contains_key(parent) || self.open.contains(parent));
-        let through = |parent: &AuthorityEntryHash| {
-            self.bound
-                .get(parent)
-                .map_or(most, |ancestors| ancestors.saturating_add(1))
-        };
-        let own = match parents {
-            _ if opens => most,
-            [parent] => through(parent),
-            _ => parents
-                .iter()
-                .map(through)
-                .fold(0, u64::saturating_add)
-                .min(self.bound.len() as u64),
-        };
-        let pairs = self
-            .closed_pairs
-            .saturating_add((self.open.len() as u64).saturating_mul(most))
-            .saturating_add(own);
-        fold_projected_bytes(rows, pairs)
-    }
 }
 
 /// This machine's physical memory, when the platform says.
@@ -434,30 +151,6 @@ impl AuthorityFold {
             _ => None,
         })
     }
-}
-
-/// A short, stable label for `key` in owner-facing refusals.
-#[must_use]
-pub(crate) fn authority_signer_label(key: &AuthorityKey) -> String {
-    let (suite, bytes) = match key {
-        AuthorityKey::Ed25519(bytes) => ("ed25519", &bytes[..]),
-        AuthorityKey::P256(bytes) => ("p256", &bytes[..]),
-    };
-    let hex: String = bytes
-        .iter()
-        .take(8)
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
-    format!("{suite}:{hex}")
-}
-
-/// The fold of a log past its memory floor: no root, no roster, one typed
-/// issue naming the floor.
-pub(super) fn memory_floor_fold(floor_bytes: u64) -> AuthorityFold {
-    let mut fold = fold_authority_log(&[]);
-    fold.issues
-        .push(AuthorityFoldIssue::FoldMemoryFloor { floor_bytes });
-    fold
 }
 
 pub(super) fn is_slip_op(op: &AuthorityOp) -> bool {
@@ -523,6 +216,15 @@ pub(crate) struct AuthorityDoorView {
     /// The adopted image's evidence the view read, for the doors' other
     /// readers in the same generation.
     pub(super) evidence: Option<Arc<AdoptedEvidence>>,
+}
+
+impl AuthorityDoorView {
+    /// Whether this install believes `entry`, as this view's structure reads
+    /// it (`AuthorityStructure::believes`): the roster's rows and this
+    /// install's own anchors' rows.
+    pub(super) fn believes(&self, entry: &AuthorityLogEntry) -> bool {
+        self.structure.believes(entry)
+    }
 }
 
 /// The per-signer and log-wide counts of a door view.
@@ -648,10 +350,14 @@ pub(super) fn door_view(
 }
 
 /// Whether `entry`'s signer has standing to store a replicated row: a key
-/// some valid row admitted (live, revoked or retired), a machine's install
-/// key, a valid root's owner anchor, the anchor of the root record it is,
-/// or a key the stored log's structure admits though the fold does not
-/// hold it yet, such as an owner key a pre-handoff rotation named. A key
+/// some valid row admitted (live, revoked or retired), an install key the
+/// roster's chain of a machine names, a valid root's owner anchor, the
+/// anchor of the root record it is, or a key the stored log's structure
+/// admits though the fold does not hold it yet, such as an owner key a
+/// pre-handoff rotation named. An install key only an anchor's chain names
+/// stands through the structure alone, as a stranger's when the anchor is
+/// not this install's own, so its rows count against the stranger bounds
+/// (Fable pass 29: the fold reads no unpinned anchor's chain for it). A key
 /// none of these name signs no valid row, so its rows wait for the
 /// enrollment instead of being stored.
 pub(crate) fn signer_has_standing(
@@ -664,54 +370,13 @@ pub(crate) fn signer_has_standing(
     if fold.roster.contains_key(signer)
         || fold.retired_keys.contains(signer)
         || matches!(signer, AuthorityKey::Ed25519(key)
-            if fold.machines.values().any(|machine| machine.names_key(key))
+            if fold.machines.values().any(|machine| machine.roster_names_key(key))
                 || fold.root_anchors().contains_key(key))
         || self_signed_root(entry).is_some()
     {
         return Ok(true);
     }
     Ok(door_view(store, txn)?.structure.stands(signer))
-}
-
-/// The largest wait at the owner's reserve this handle saw, and the fold
-/// peak the log with it projects (Astra owner-reserve r2 F4). The door judges
-/// the log with the arriving row in it, so a held row leaves the stored log
-/// under the reserve's start; so does carried owner work that rolled back
-/// (r3 F3). The reserve's typed check reads this hold while it stands
-/// ([`Self::stands`]). A smaller wait never takes the place of a larger one
-/// that stands (r3 F2), so the check names the reserve while its largest
-/// wait does not fit, and a wait no peer sends again keeps it named until
-/// the handle closes. Kept per handle and never persisted: a replica's next
-/// drain, and the owner's next import, hold the row again.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct OwnerReserveHold {
-    /// The held row, or the request whose carried work rolled back.
-    entry: AuthorityEntryHash,
-    /// Whether `entry` is a request whose carried work rolled back.
-    work: bool,
-    projected: u64,
-}
-
-impl OwnerReserveHold {
-    /// Whether the hold still names a wait under `projection`, the stored
-    /// log's: a held row until it is stored, carried work until it lands
-    /// ([`carried_work_past_owner_reserve_in_txn`]) or its request leaves
-    /// this install's work ([`end_owner_reserve_work_hold`]).
-    fn stands(&self, projection: &FoldProjection) -> bool {
-        self.work || !projection.bound.contains_key(&self.entry)
-    }
-}
-
-/// Records `hold` on `store`'s handle unless a larger hold stands under
-/// `projection` (Astra owner-reserve r3 F2).
-fn hold_at_owner_reserve(store: &Store, projection: &FoldProjection, hold: OwnerReserveHold) {
-    if let Ok(mut held) = store.authority_owner_reserve_hold.lock() {
-        let larger_stands =
-            held.is_some_and(|held| held.projected > hold.projected && held.stands(projection));
-        if !larger_stands {
-            *held = Some(hold);
-        }
-    }
 }
 
 /// What a store door does with an AUTHORITY_LOG row.
@@ -1094,133 +759,4 @@ fn carries_own_will(
         AuthorityOp::MachineProfile(profile) => profile.act.is_some(),
         _ => false,
     })
-}
-
-/// A typed OF-520 question about the authority log's bounds, read from the
-/// stored log: evidence for the owner, never a refusal.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AuthorityLogCheck {
-    /// [`Self::SIGNER_BOUND`], [`Self::UNPINNED_ROOTS`],
-    /// [`Self::FOLD_HEADROOM`] or [`Self::OWNER_RESERVE`].
-    pub kind: &'static str,
-    /// For a headroom check, what reached its row: [`Self::ROWS`],
-    /// [`Self::HANDOFFS`] or [`Self::ANCESTOR_PAIRS`].
-    pub scope: Option<&'static str>,
-    /// The signer at its bound, for a signer-bound check.
-    pub signer: Option<String>,
-    /// The signer's stored rows, the strangers' rows, the log's counted
-    /// rows, slip-issuer handoffs or counted ancestor pairs, or, for the
-    /// owner reserve, the projected fold peak in bytes of the stored log, or
-    /// of the log with the row the door last held at the reserve in it while
-    /// that row is not stored, whichever is more.
-    pub count: u64,
-    /// The policy row `count` reached, or, for the owner reserve, the
-    /// memory floor less the reserve, in bytes.
-    pub threshold: u64,
-}
-
-impl AuthorityLogCheck {
-    /// A key that is no slip issuer reached the `authority_log_signer_bound`
-    /// row. Its further rows land as before: the check only asks
-    /// ([`AUTHORITY_LOG_SIGNER_COUNT_ADVISORY`]).
-    pub const SIGNER_BOUND: &'static str = "authority_log_signer_bound";
-    /// The rows of anchors this install does not pin reached the
-    /// `authority_log_signer_bound` row they share: their root records, their
-    /// marks, and their machines' world rows. Further ones wait until this
-    /// install pins their root or the owner raises the row, and then land on
-    /// the next drain.
-    pub const UNPINNED_ROOTS: &'static str = "authority_log_unpinned_roots";
-    /// The log's counted rows, its slip issuers' handoffs, or its counted
-    /// ancestor pairs reached their `authority_log_fold_headroom` policy row.
-    /// The fold still reads them all; past the
-    /// `authority_log_fold_memory_floor` row it refuses the log.
-    pub const FOLD_HEADROOM: &'static str = "authority_log_fold_headroom";
-    /// The stored log's projected fold peak, or the peak of the log with a
-    /// row the door held in it, passed the `authority_log_fold_memory_floor`
-    /// row less the owner's reserve under it: every row but the owner's work
-    /// that would take the log past it waits until the owner raises that
-    /// row, and then lands on the next drain.
-    pub const OWNER_RESERVE: &'static str = "authority_log_owner_reserve";
-    /// The scope of a headroom check on counted rows.
-    pub const ROWS: &'static str = "rows";
-    /// The scope of a headroom check on slip issuers' handoffs.
-    pub const HANDOFFS: &'static str = "handoffs";
-    /// The scope of a headroom check on counted ancestor pairs.
-    pub const ANCESTOR_PAIRS: &'static str = "ancestor_pairs";
-}
-
-impl crate::Vault {
-    /// The open checks on the stored authority log: each key no slip issuer
-    /// vouches for that reached its bound, the strangers' shared bound, one
-    /// per headroom scope that reached its policy row, and the owner's
-    /// reserve under the memory floor once the log reached it.
-    pub fn authority_log_checks(&self) -> crate::error::Result<Vec<AuthorityLogCheck>> {
-        let txn = self.store.env.read_txn()?;
-        let view = door_view(&self.store, &txn)?;
-        let bound = signer_bound(&self.store, &txn)?;
-        let mut checks: Vec<_> = view
-            .rows
-            .iter()
-            .filter(|(signer, rows)| **rows >= bound && !view.structure.issuers.contains(*signer))
-            .map(|(signer, rows)| AuthorityLogCheck {
-                kind: AuthorityLogCheck::SIGNER_BOUND,
-                scope: None,
-                signer: Some(authority_signer_label(signer)),
-                count: *rows as u64,
-                threshold: bound as u64,
-            })
-            .collect();
-        if view.strangers >= bound {
-            checks.push(AuthorityLogCheck {
-                kind: AuthorityLogCheck::UNPINNED_ROOTS,
-                scope: None,
-                signer: None,
-                count: view.strangers as u64,
-                threshold: bound as u64,
-            });
-        }
-        let reserve_start = owner_reserve_start(&self.store, &txn)?;
-        let held = self
-            .store
-            .authority_owner_reserve_hold
-            .lock()
-            .ok()
-            .and_then(|hold| *hold)
-            .filter(|hold| hold.stands(&view.projection))
-            .map_or(0, |hold| hold.projected);
-        let projected_bytes = view.projection.bytes().max(held);
-        if projected_bytes > reserve_start {
-            checks.push(AuthorityLogCheck {
-                kind: AuthorityLogCheck::OWNER_RESERVE,
-                scope: None,
-                signer: None,
-                count: projected_bytes,
-                threshold: reserve_start,
-            });
-        }
-        let (rows_at, handoffs_at, pairs_at) = headroom(&self.store, &txn)?;
-        let pairs = self
-            .authority_view_readonly_in_txn(&txn)?
-            .counted_ancestor_pairs;
-        for (scope, count, at) in [
-            (AuthorityLogCheck::ROWS, view.counted as u64, rows_at),
-            (
-                AuthorityLogCheck::HANDOFFS,
-                view.issuer_handoffs as u64,
-                handoffs_at,
-            ),
-            (AuthorityLogCheck::ANCESTOR_PAIRS, pairs, pairs_at),
-        ] {
-            if count >= at {
-                checks.push(AuthorityLogCheck {
-                    kind: AuthorityLogCheck::FOLD_HEADROOM,
-                    scope: Some(scope),
-                    signer: None,
-                    count,
-                    threshold: at,
-                });
-            }
-        }
-        Ok(checks)
-    }
 }

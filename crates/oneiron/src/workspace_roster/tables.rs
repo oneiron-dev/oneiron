@@ -86,6 +86,11 @@ crate::side_table::side_tables! {
     /// id16 (change event id).
     PROJECT_ROOM_CHANGES: VaultMeta b"project.room_changes.v1/" Named
         [restore: content] [family: unclassified] [tier: canonical];
+    /// A room whose project now reads less, queued by the write that narrowed it until that
+    /// write's batch marks stale the standing answers the room left wider than their rows, with
+    /// the rows a delete detached from it. Emptied in the same transaction. Key: id16 (room).
+    PROJECT_ROOM_NARROWING: VaultMeta b"project.room_narrowing.v1/" Named
+        [restore: not_imaged] [family: not_imaged] [tier: runtime];
     /// Index from a project's derived home room back to the project that owns it. Key: id16 (derived
     /// home-room id).
     PROJECT_ROOM_OWNER: VaultMeta b"project.room_owner.v1/" Raw

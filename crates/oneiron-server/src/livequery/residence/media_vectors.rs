@@ -1,4 +1,5 @@
-//! Read-only own-peer text vectors; these bytes never enter a canonical window root.
+//! Read-only own-peer media vectors, of every kind a space fills; these bytes never enter a
+//! canonical window root.
 
 use std::collections::BTreeSet;
 
@@ -38,7 +39,7 @@ pub(super) fn media_vectors(
     let mut selected = Vec::new();
     for replica in server
         .vault
-        .text_media_vector_replicas(&input.id, &input.space)
+        .media_vector_replicas(&input.id, &input.space)
         .map_err(unavailable)?
     {
         if replica.space_id() != input.space {
@@ -65,7 +66,7 @@ pub(super) fn media_vectors(
         if full_sources_match(server, input.id, &selector, &current, replica.sources())?
             && server
                 .vault
-                .text_media_vector_replicas(&input.id, &input.space)
+                .media_vector_replicas(&input.id, &input.space)
                 .map_err(unavailable)?
                 .contains(&replica)
         {

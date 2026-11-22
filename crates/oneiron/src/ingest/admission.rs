@@ -1,11 +1,11 @@
 //! Imported-evidence admission: typed claim and entity intake with JSON-to-MessagePack bridging.
 
 use rmpv::Value as MsgpackValue;
-use serde_json::Value;
 
 use super::{NormalizedIngestClaim, NormalizedIngestEntity};
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
 use crate::entity_id::EntityId;
+use crate::serialize::json_to_msgpack_value;
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
 
@@ -412,9 +412,20 @@ pub fn admit_imported_entity(
 /// The verdict class (`clear`, `flagged` or `indeterminate`) of the screen an
 /// imported claim's admission ran under, read back from the evidence
 /// [`imported_candidate`] wrote; `None` when no screen ran.
+///
+/// A stored claim keeps that evidence under its write envelope's candidate
+/// key, beside the actor and provenance the envelope adds, so the verdict is
+/// read there; the bare candidate evidence reads the same.
 pub(crate) fn imported_screen_verdict(evidence: &MsgpackValue) -> Option<&str> {
     let MsgpackValue::Map(entries) = evidence else {
         return None;
+    };
+    let entries = match map_entry(
+        entries,
+        crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY,
+    ) {
+        Some(MsgpackValue::Map(candidate)) => candidate,
+        _ => entries,
     };
     let MsgpackValue::Map(fields) = map_entry(entries, "screen")? else {
         return None;
@@ -447,39 +458,6 @@ pub(super) fn imported_evidence_value(source_id: &str, source_record_id: &str) -
             MsgpackValue::from(source_record_id),
         ),
     ])
-}
-
-pub(crate) fn json_to_msgpack_value(value: &Value) -> MsgpackValue {
-    match value {
-        Value::Null => MsgpackValue::Nil,
-        Value::Bool(value) => MsgpackValue::Boolean(*value),
-        Value::Number(value) => {
-            if let Some(value) = value.as_i64() {
-                MsgpackValue::from(value)
-            } else if let Some(value) = value.as_u64() {
-                MsgpackValue::from(value)
-            } else if let Some(value) = value.as_f64() {
-                MsgpackValue::F64(value)
-            } else {
-                MsgpackValue::Nil
-            }
-        }
-        Value::String(value) => MsgpackValue::from(value.as_str()),
-        Value::Array(values) => {
-            MsgpackValue::Array(values.iter().map(json_to_msgpack_value).collect())
-        }
-        Value::Object(entries) => MsgpackValue::Map(
-            entries
-                .iter()
-                .map(|(key, value)| {
-                    (
-                        MsgpackValue::from(key.as_str()),
-                        json_to_msgpack_value(value),
-                    )
-                })
-                .collect(),
-        ),
-    }
 }
 
 pub(super) fn imported_candidate(

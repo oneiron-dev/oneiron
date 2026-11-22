@@ -105,6 +105,15 @@ pub(super) fn plan_in_txn(
         Option<Vec<u8>>,
     ),
 ) -> Result<ScopeSummaryPlan> {
+    // An Arc is its conversation's, declared by the vault's Dreamer: its
+    // words come from sittings' summary lines, which no requester lane
+    // judges, so a narrowed lane declares none, and a declaration that
+    // froze one never plans (FIX ARC-SUMMARY-PLAN-SKIPS-DECLARED-LANE).
+    if !super::request::declared_lane(input)?.is_principal() {
+        return Err(invalid(
+            "an arc summary is not declared under a narrowed read lane",
+        ));
+    }
     let (members, arc) = sources_in_txn(vault, txn, scope, request.requester)?;
     Ok(ScopeSummaryPlan {
         input: super::derivation::encode(input)?,

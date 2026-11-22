@@ -145,7 +145,11 @@ impl Memory<'_> {
     /// again, the alternative is born Proposed and the responder approves it
     /// as its own act (an Owner, co-Owners included, or a delegate under its
     /// Grant; never the Dreamer), and the settlement commits with it. The
-    /// receipt then names that approval. A retry whose write is discarded
+    /// receipt then names that approval. A retained curator finding whose
+    /// rung would retract, weaken or mark stale a claim restricting
+    /// someone's access is a person's to approve: a responder that is no
+    /// person has its retry refused (RULING
+    /// RESTRICTION-CLOSE-BY-CURATOR-APPROVAL). A retry whose write is discarded
     /// answers with the first refusal, the retained alternative intact; one
     /// that committed answers with what it committed, even when the writer's
     /// post-commit work then fails. A VAD consolidation that fails after the
@@ -295,7 +299,9 @@ impl Memory<'_> {
         let keep_as = approval
             .as_ref()
             .map_or(KeepAs::Auto(held), KeepAs::Approved);
-        let person = self.actor_class == EdgeActorClass::Human;
+        // A person's slip handed on to an agent's key is no person's: it
+        // never closes user-stated truth or a restriction here.
+        let person = self.acts_as_own_person();
         let mut provenance = vec![
             (Value::from("surface"), Value::from(KIND)),
             (
@@ -771,6 +777,23 @@ pub(crate) fn conflict_review_held_in(
     subject: EntityId,
 ) -> Result<Option<String>, Error> {
     live_review_bound(vault, txn, actor, HOLD_VERB, subject)
+}
+
+/// The owner's live hold on the Dreamer's conflict review of `subject`, its
+/// own or the whole vault's, by the Grant's ref. It is the one hold an owner
+/// mints ([`Memory::hold_dreamer_conflict_review`]), so the open conflicts
+/// page asks it for every reader but the owner: a held subject's conflicts
+/// are the owner's to answer.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn dreamer_conflict_review_held_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    subject: EntityId,
+) -> Result<Option<String>, Error> {
+    live_review_bound(vault, txn, dreamer_principal()?, HOLD_VERB, subject)
 }
 
 /// The live standing Grant of `verb` naming `actor` on `subject`, its own or
