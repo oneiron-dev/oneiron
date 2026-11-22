@@ -18,12 +18,13 @@
 //! beside the act: an owner's world edit that mints the world's key here
 //! lands past the reserve with its key wraps.
 //!
-//! A history import stays one batch, as for every row the door holds
-//! (OWNER-RESERVE-IMPORT = A, Engine 15 Nov 17:50): the owner's import that
+//! The whole-history import door stays one batch, as for every row the door
+//! holds (OWNER-RESERVE-IMPORT = A, Engine 15 Nov 17:50): an import that
 //! carries one row past the reserve that is not the owner's work refuses
 //! whole (`AuthorityLogFull`, typed and retryable), the owner's typed check
 //! names the reserve, and the same import lands whole once the owner raises
-//! the floor.
+//! the floor. The owner's verb lands such an import partially (option B,
+//! `authority_log_owner_reserve_import.rs`).
 //!
 //! The door judges the log with the arriving row in it (Astra owner-reserve
 //! F1): rows a machine signs on a parent it withholds count that parent once,
@@ -172,6 +173,7 @@ fn admit_flooder(rooted: &Rooted) -> Flooder {
         device_class: MachineDeviceClass::Computer,
         encryption_key,
         machine_proof,
+        restored_from: None,
     };
     let folded = rooted
         .vault
@@ -182,7 +184,9 @@ fn admit_flooder(rooted: &Rooted) -> Flooder {
             MachineRole::Owned(MachineOwnership::Yours),
             None,
         )
-        .expect("the owner admits the machine");
+        .expect("the owner admits the machine")
+        .into_standing()
+        .expect("the owner's admission stands");
     assert!(folded.is_mine(None), "the admitted machine is the owner's");
     let admission = folded
         .chains()
@@ -429,7 +433,10 @@ fn an_admitted_machines_flood_waits_under_the_floor_and_the_owner_removes_it() {
         "after {landed} flood rows ({end:?}) the fold passes its memory floor, so every \
          authority gate refuses it (the removal: {removal:?})"
     );
-    let removed = removal.expect("the owner removes the flooding machine");
+    let removed = removal
+        .expect("the owner removes the flooding machine")
+        .into_standing()
+        .expect("the owner's removal stands");
     assert!(
         !removed.is_mine(None),
         "the removed machine is no longer the owner's"
@@ -548,7 +555,7 @@ fn an_owners_world_edit_past_the_reserve_mints_its_key_on_this_install() {
 }
 
 #[test]
-fn an_owners_import_past_the_reserve_refuses_whole_and_lands_once_the_floor_is_raised() {
+fn a_whole_history_import_past_the_reserve_refuses_whole_and_lands_once_the_floor_is_raised() {
     let (rooted, flooder) = floored_vault_with_flooder();
     let owners_row = host_root_row_from_a_second_install(&rooted);
     let (landed, end) = flood(&rooted, &flooder);

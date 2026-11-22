@@ -5,6 +5,12 @@ use serde::{Deserialize, Serialize};
 
 /// A caller's turn identity. Each run remains independent; grouping is a read
 /// projection, never a collapsing write.
+///
+/// The convention the engine's natural outcome producer reads
+/// (UNBUILT-03-TURN-LINK = A): `episode_id` holds the id bytes of the
+/// CONVERSATION entity the turn belongs to, and `turn_id` those of its TURN
+/// entity. Only a run stamped so can be labelled from what the user says
+/// later in that conversation; other bytes stay opaque and earn no label.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RetrievalTurn {
     pub turn_id: [u8; 16],

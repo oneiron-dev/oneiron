@@ -24,10 +24,12 @@ impl Vault {
         Ok(())
     }
 
-    /// Installs one read-only, actor/class-bound grant in the stock manifest.
+    /// Installs one read-only, actor-bound grant in the stock manifest.
     /// TEST-SUPPORT ONLY: no write ceiling, source permit, or approval is added.
     /// Refuses a missing/customized policy or a missing/class-mismatched actor.
     /// Reads still pass the normal policy, liveness, and record-scope gates.
+    /// The row names the actor but no class, as the production agent grant's
+    /// row names none, so a classless room peer key matches it.
     #[doc(hidden)]
     pub fn install_read_permit_for_test(&self, actor: WriteActor) -> Result<()> {
         self.install_read_permits_for_test(&[actor])
@@ -35,6 +37,8 @@ impl Vault {
 
     /// Installs a bounded, explicit read permit for each distinct actor in one
     /// owner-authored test policy. Production policy doors are unchanged.
+    /// Each row names its actor but no class, as the production agent grant's
+    /// rows name none, so classless room peer keys match them.
     #[doc(hidden)]
     pub fn install_read_permits_for_test(&self, actors: &[WriteActor]) -> Result<()> {
         if actors.is_empty() {
@@ -56,10 +60,6 @@ impl Vault {
                     .map(|actor| {
                         Value::Map(vec![
                             ("actor_ref".into(), actor.entity_ref().to_hex().into()),
-                            (
-                                "actor_class".into(),
-                                actor.actor_class().gate_actor_class().into(),
-                            ),
                             ("effector".into(), "core:read".into()),
                             ("scope".into(), scope.clone()),
                             ("receipt_required".into(), false.into()),

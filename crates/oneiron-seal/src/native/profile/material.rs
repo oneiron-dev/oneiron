@@ -109,7 +109,7 @@ pub(super) async fn fetch_valid_crl(
 
 /// `Some` when `crl_der` is a valid CRL: it parses, its signature verifies
 /// against the issuing certificate, and it is fresh at the applicable time
-/// (thisUpdate not in the future; a present nextUpdate not in the past).
+/// (thisUpdate not in the future; a nextUpdate present and not in the past).
 /// The issuer certificate must also AUTHORIZE CRL signing (the shared
 /// verify-side cRLSign KeyUsage gate): an unauthorized-issuer CRL embedded
 /// here would fail the mandatory self-verify, turning an expected B-LT
@@ -158,7 +158,7 @@ fn crl_valid(
         crl.tbs_cert_list.next_update,
         now_secs,
     ) {
-        return Ok(None); // not yet valid, or stale
+        return Ok(None); // not yet valid, stale, or without nextUpdate
     }
     Ok(Some(()))
 }

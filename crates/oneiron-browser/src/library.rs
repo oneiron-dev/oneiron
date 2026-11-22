@@ -15,7 +15,8 @@
 //! and a run that misses its postcondition goes back to the planner with
 //! the checks it missed and the page it left. A run is strict, where only a
 //! rule answers its routine steps, or assisted (CUA E2); a program whose
-//! strict runs miss three times in a row retires `drift`. A program that
+//! strict runs miss three times in a row (the vault owner's
+//! `browser.library.drift_misses`, 3 by default) retires `drift`. A program that
 //! stops working leaves by retire, and a later solved run that passes both
 //! checks files it afresh, or files its repair as its successor
 //! (`supersedes`), which retires it in the same write.
@@ -76,10 +77,26 @@ pub use propose::{ProposeInput, ProposeOutput, WorkflowCheck, WorkflowProof};
 pub(crate) use propose::{check_solved, no_fresh_guest, replay_and_file, supersedes_refused};
 pub use secret_slots::SecretParam;
 
-use crate::{BatchStep, BrowserError, ExpectInput};
+use crate::BrowserError;
 #[cfg(feature = "driver")]
-use crate::{BrowserDriver, CheckReceipt};
+use crate::{BatchStep, BrowserDriver, CheckReceipt, ExpectInput};
 use std::collections::BTreeMap;
+
+/// Whether `text` opens a `{{` slot, as [`fill_text`] reads it.
+fn opens_slot(text: &str) -> bool {
+    text.contains("{{")
+}
+
+/// Whether any string in `value` opens a `{{` slot, as [`fill_slots`]
+/// reads them.
+fn holds_slot_opening(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::String(text) => opens_slot(text),
+        serde_json::Value::Array(items) => items.iter().any(holds_slot_opening),
+        serde_json::Value::Object(fields) => fields.values().any(holds_slot_opening),
+        _ => false,
+    }
+}
 
 /// Fills every `{{name}}` slot in `value`'s strings from `args`.
 fn fill_slots(
@@ -87,7 +104,7 @@ fn fill_slots(
     args: &BTreeMap<String, String>,
 ) -> Result<(), BrowserError> {
     match value {
-        serde_json::Value::String(text) if text.contains("{{") => {
+        serde_json::Value::String(text) if opens_slot(text) => {
             *text = fill_text(text, args).map_err(|gap| match gap {
                 SlotGap::Unclosed => BrowserError::Input("a {{ slot is never closed".to_owned()),
                 SlotGap::Missing(name) => {

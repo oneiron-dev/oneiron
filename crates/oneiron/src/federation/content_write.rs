@@ -278,8 +278,28 @@ impl<'v, 't, 'env> ActorContentTxn<'v, 't, 'env> {
     }
 
     /// A NOTE adapter owns its document/head writes. New NOTE birth is applied
-    /// via `apply_batch`; this door checks existing document mutations.
+    /// via `apply_batch`; this door checks existing document mutations. A NOTE
+    /// a customer hold kept from a privacy erasure, or a cooperative
+    /// restriction, takes no named change, as the base put refuses one
+    /// (OF-470 C6): the refusal comes before `write` reads the document.
     pub(crate) fn update_note<T, E>(
+        &mut self,
+        id: EntityId,
+        write: impl FnOnce(&mut heed::RwTxn<'_>, CoreWriteLaneRef<'v>) -> std::result::Result<T, E>,
+    ) -> std::result::Result<T, E>
+    where
+        E: From<Error>,
+    {
+        if let Some(refusal) = self.vault.store.use_restricted_in_txn(self.txn, &id)? {
+            return Err(E::from(refusal));
+        }
+        self.record(id, ContentOwner::Note, write)
+    }
+
+    /// The NOTE history purge's adapter: [`Self::update_note`] without its use
+    /// limit refusal. The purge asks the NOTE's legal hold itself and answers
+    /// a held NOTE with the hold's own refusal (OF-470).
+    pub(crate) fn note_history_purge<T, E>(
         &mut self,
         id: EntityId,
         write: impl FnOnce(&mut heed::RwTxn<'_>, CoreWriteLaneRef<'v>) -> std::result::Result<T, E>,

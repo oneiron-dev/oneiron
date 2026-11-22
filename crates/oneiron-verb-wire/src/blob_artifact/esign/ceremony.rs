@@ -41,4 +41,11 @@ pub enum SigningOutcome {
         held_at: u64,
     },
     ConsentRequired,
+    /// Complete refused: the signer has no standing review of the frozen
+    /// items and their values (a saved field voids one). `row` names the
+    /// e-sign rule pack's UETA section 10 row that requires it; send Review,
+    /// then Complete.
+    ReviewRequired {
+        row: String,
+    },
 }

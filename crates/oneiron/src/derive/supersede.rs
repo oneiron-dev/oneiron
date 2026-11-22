@@ -17,6 +17,14 @@ use crate::{EntityId, Vault};
 /// user-stated replacement included.
 pub const SUPERSEDE_PROTECTED_SOURCE: &str = "gate.deny.derive.supersede_protected_source";
 
+/// The refusal of a supersession that would close a claim restricting
+/// someone's access (`federation::claim_removal_widens_in`: a delivery
+/// window, an opt-out, a do-not-contact, a held campaign member, ...),
+/// whatever replaces it. A derivation is no person's act, and lifting a
+/// restriction is a widening, which asks a person (RULING
+/// RESTRICTION-CLOSE-BY-DERIVE-ITEM; canon #widen-world-floor).
+pub const SUPERSEDE_RESTRICTION: &str = "gate.deny.derive.supersede_restriction";
+
 /// The refusal of a supersession whose replacement does not stand yet: a
 /// proposal, a rejected or stale claim, or a claim whose critical confirmation
 /// the owner has not answered.
@@ -76,6 +84,9 @@ pub(super) fn stage_in_txn(
     {
         return refuse(vault, txn, context, old, &[SUPERSEDE_PROTECTED_SOURCE]);
     }
+    if crate::federation::claim_removal_widens_in(vault, txn, &old_body)? {
+        return refuse(vault, txn, context, old, &[SUPERSEDE_RESTRICTION]);
+    }
     // A replacement that still waits or is stale closes nothing: until it is
     // approved, its critical confirmation answered, and it is not stale, it is
     // not in recall, so the claim it would close must stand.
@@ -87,40 +98,41 @@ pub(super) fn stage_in_txn(
     {
         return refuse(vault, txn, context, old, &[SUPERSEDE_REPLACEMENT_UNSETTLED]);
     }
-    let mut savepoint = vault.store.env.nested_write_txn(txn)?;
-    match vault.supersede_claim_in_txn_as(
-        &mut savepoint,
-        &new,
-        &old,
-        context.now,
-        Some(context.stamp.actor),
-    ) {
-        Ok(()) => {
-            savepoint.commit()?;
-            let receipt = allowance_receipt_in_txn(
-                vault,
-                txn,
-                context,
-                Some(old),
-                &[SUPERSEDE_ALLOWED.to_owned()],
-                &allowance,
-            )?;
-            Ok(ItemOutcome::Landed {
-                rows: vec![new, old],
-                approval: None,
-                receipt: Some(receipt),
-            })
+    let mut refused = vec![SUPERSEDE_LIFECYCLE];
+    // Hand queued work to this write's owner (FIX DERIVE-COMMIT-ITEM-SAVEPOINTS-DROP-POSTCOMMIT-WORK).
+    let Some(()) = crate::batch::savepoint_in_txn(vault, txn, |savepoint| {
+        match vault.supersede_claim_in_txn_as(
+            savepoint,
+            &new,
+            &old,
+            context.now,
+            Some(context.stamp.actor),
+        ) {
+            Ok(()) => Ok(Some(())),
+            Err(Error::Gate(GateError::GateWriteRejected { reason_codes, .. })) => {
+                refused = reason_codes;
+                Ok(None)
+            }
+            Err(Error::Claim(_) | Error::InvalidClaimBody(_)) => Ok(None),
+            Err(error) => Err(error),
         }
-        Err(Error::Gate(GateError::GateWriteRejected { reason_codes, .. })) => {
-            savepoint.abort();
-            refuse(vault, txn, context, old, &reason_codes)
-        }
-        Err(Error::Claim(_) | Error::InvalidClaimBody(_)) => {
-            savepoint.abort();
-            refuse(vault, txn, context, old, &[SUPERSEDE_LIFECYCLE])
-        }
-        Err(error) => Err(error),
-    }
+    })?
+    else {
+        return refuse(vault, txn, context, old, &refused);
+    };
+    let receipt = allowance_receipt_in_txn(
+        vault,
+        txn,
+        context,
+        Some(old),
+        &[SUPERSEDE_ALLOWED.to_owned()],
+        &allowance,
+    )?;
+    Ok(ItemOutcome::Landed {
+        rows: vec![new, old],
+        approval: None,
+        receipt: Some(receipt),
+    })
 }
 
 fn refuse(
@@ -138,7 +150,7 @@ fn refuse(
 /// The body of the claim `id` as `read` serves it in `txn`; `None` for a row
 /// that is not a claim, is gone, or lies outside that read. A read whose
 /// credential no longer stands serves no row.
-fn claim_body_in(
+pub(super) fn claim_body_in(
     read: &ScopedRead<'_>,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
