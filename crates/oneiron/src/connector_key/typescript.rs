@@ -144,7 +144,24 @@ fn array(node: &Map<String, Value>, depth: usize) -> String {
     };
     match node.get("prefixItems") {
         Some(Value::Array(prefix)) => {
-            let mut members: Vec<String> = prefix.iter().map(|item| render(item, depth)).collect();
+            // `prefixItems` alone admits a shorter array, down to an empty
+            // one: only the first `minItems` elements are sure to be there.
+            let required = node
+                .get("minItems")
+                .and_then(Value::as_u64)
+                .map_or(0, |n| usize::try_from(n).unwrap_or(usize::MAX));
+            let mut members: Vec<String> = prefix
+                .iter()
+                .enumerate()
+                .map(|(at, item)| {
+                    let member = render(item, depth);
+                    if at < required {
+                        member
+                    } else {
+                        format!("{}?", grouped(&member))
+                    }
+                })
+                .collect();
             if let Some(rest) = rest {
                 members.push(format!("...{}[]", grouped(&rest)));
             }
