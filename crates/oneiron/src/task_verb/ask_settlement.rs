@@ -145,10 +145,10 @@ fn first_cut_reads_in(
 
 /// Whether a word can still decide the ask `id`: it has no result, and the
 /// settlement this node runs on its next word does not cut it Stale. A Stale
-/// cut decides nothing: it takes the hold default, every kind's resolver
-/// passes it over, and a verb hook's stopped call stays stopped. A node that
-/// does not own the revision cuts nothing, so there the ask stays open to a
-/// word.
+/// cut decides nothing: it takes the hold default, no kind's resolver applies
+/// a word on it (a comm widen round closes with nothing widened), and a verb
+/// hook's stopped call stays stopped. A node that does not own the revision
+/// cuts nothing, so there the ask stays open to a word.
 pub(super) fn decision_open_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
