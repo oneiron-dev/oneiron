@@ -147,15 +147,14 @@ fn write_owner_intent_in_txn(
         // The words keep their MESSAGE's audience (OPUS-LEAKS) and the
         // project and world it is read at (ONE-1592 P3; FIX
         // INTENT-DISTINCT-PROJECT-WORLD). A MESSAGE with no place has no
-        // audience either, and is refused above. The facet stays the vault
-        // default: a MESSAGE has no stored FACET of its own (ONE-1645).
+        // audience either, and is refused above.
         let (relationships, private) = message_audience_in_txn(vault, txn, &message)?;
         let (project, world) = vault
             .derivation_project_and_world_in_txn(txn, message)?
             .ok_or_else(|| {
                 invalid("a stated intent cites a MESSAGE whose place does not resolve")
             })?;
-        let facet = vault.claim_put_facet_in_txn(txn, &id)?;
+        let facet = message_source_facet_in_txn(vault, txn, &id, &message)?;
         candidate = candidate.with_scope_stamps(facet, project);
         if world != crate::claim::base_world_id() {
             candidate = candidate.with_world(world);
@@ -193,6 +192,36 @@ fn write_owner_intent_in_txn(
         )
         .apply(txn)?;
     Ok(id)
+}
+
+/// The facet the intent `id` quoting `message` is born under: the FACET the
+/// MESSAGE's TURN was born under, as a derivation is born under its source's
+/// facet (ARCH-0022:139; FIX INTENT-FACET-FROM-SOURCE-TURN). A MESSAGE has no
+/// stored FACET of its own (ONE-1645), but its TURN does, a mask's when it
+/// was spoken under one (a workspace's import, L2-18). A MESSAGE in no TURN,
+/// or a TURN with no stored FACET, gives the vault default; a write over a
+/// stored claim keeps that claim's facet. A MESSAGE in more than one TURN is
+/// refused rather than guessed.
+fn message_source_facet_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    message: &EntityId,
+) -> Result<EntityId> {
+    let turns = vault.filtered_edge_peers(
+        txn,
+        crate::ports::EdgeDirection::Out,
+        message,
+        crate::edge::EdgeKind::PartOf,
+        Some(crate::registry::ENTITY_TYPE_TURN),
+    )?;
+    match turns.as_slice() {
+        [] => vault.claim_put_facet_in_txn(txn, id),
+        [turn] => vault.claim_put_facet_of_record_in_txn(txn, id, *turn),
+        _ => Err(invalid(
+            "a stated intent cites a MESSAGE in more than one TURN",
+        )),
+    }
 }
 
 /// The audience the words of `message` carry, as the read gate judges a

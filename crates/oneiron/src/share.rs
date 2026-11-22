@@ -35,7 +35,8 @@ use crate::write_envelope::WriteActor;
 const ADMISSIONS: SideTable<EntityId, Vec<u8>, Raw> =
     SideTable::new(&side_table::SHARE_BRIEF_ADMISSION);
 
-/// A one-way identity fence. Its exact stored marker is the single byte `1`.
+/// A deleting brief's identity fence ([`reserve_brief_delete`]). Its exact
+/// stored marker is the single byte `1`.
 const DELETE_RESERVATIONS: SideTable<EntityId, [u8; 1], Raw> =
     SideTable::new(&side_table::SHARE_BRIEF_DELETE_RESERVATION);
 
@@ -242,17 +243,44 @@ fn decode_refs(value: &Value) -> Result<BTreeSet<EntityId>> {
 // Local, engine-written provenance. Generic grant writes cannot touch a reserved id,
 // even after deletion or a foreign overwrite. A replayed row with no local admission
 // never becomes a usable share. No rendered bytes or claim values live here.
-// A one-way admission fence for a deleted brief identity. It is staged in the
-// same writer that rechecks direct shares, before the CRDT tombstone can publish.
-// A failed delete may leave the fence, but cannot leave an unshared new grant
-// racing ahead of a later retry at the same id.
+// An admission fence for a deleted brief identity. It is staged in the same
+// writer that rechecks direct shares, before the CRDT tombstone can publish, and
+// stays once a delete of the id linearizes. A delete refused before that point
+// releases a fence its own flight created ([`crate::deletion::BriefDeleteFences`]),
+// so it leaves no unshared new grant racing ahead of a later retry at the same
+// id, and no live brief that can never be shared again. A crash keeps the fence.
+// Returns whether this put created the row.
 pub(crate) fn reserve_brief_delete(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
-) -> Result<()> {
+) -> Result<bool> {
+    if DELETE_RESERVATIONS.contains(store, txn, id)? {
+        return Ok(false);
+    }
     DELETE_RESERVATIONS.put(store, txn, id, &[1])?;
+    Ok(true)
+}
+
+/// Removes the fence [`reserve_brief_delete`] created for a delete refused
+/// before it linearized.
+pub(crate) fn release_brief_delete(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    DELETE_RESERVATIONS.delete(store, txn, id)?;
     Ok(())
+}
+
+/// Whether `id` holds a brief delete fence.
+#[cfg(test)]
+pub(crate) fn brief_delete_reserved(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    DELETE_RESERVATIONS.contains(store, txn, id)
 }
 
 pub(crate) fn check_generic_grant_write(
@@ -390,6 +418,19 @@ pub(crate) fn share_effect_target(
         "share:brief:{}",
         crate::entity_id::bytes_to_hex_lower(&hash.finalize())
     ))
+}
+
+/// `Err` when the row `id` names is stored with an entity header that does
+/// not decode. The share reads below take such a row for no share; a slip
+/// door that judges a share-bound slip calls this first, so the vault
+/// failing to answer is a store fault there, never the slip's refusal
+/// (RATCHET-9413 review round 2). An absent row passes.
+pub(crate) fn require_share_header_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    store.port_entity_record(txn, id).map(drop)
 }
 
 /// The share `id` names and its admission, as stored: nothing is proved but
@@ -558,7 +599,13 @@ fn share_viewer_actor_in_txn(
     }
     let mut actor_class = None;
     for class in classes {
-        if !crate::authority::actor_binding_is_active(&fold, viewer, class.gate_actor_class()) {
+        if !crate::authority::actor_binding_is_live_in(
+            &vault.store,
+            txn,
+            &fold,
+            viewer,
+            class.gate_actor_class(),
+        )? {
             continue;
         }
         if crate::provenance::validate_actor_class(raw.entity_type, class).is_err()
@@ -939,7 +986,5 @@ fn share_claim_facets(
 }
 
 pub(crate) mod tables;
-// FIX [LIBTEST-QUARANTINE-SHARE-TESTS]: the lib test target's type check fails here (11 errors: E0061 x7, E0308 x3, E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 pub(crate) mod tests;

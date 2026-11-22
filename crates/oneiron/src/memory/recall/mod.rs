@@ -443,22 +443,25 @@ impl Memory<'_> {
         // as_of, never at the wall clock (FIX 12226).
         let census = census
             .with_judged_at(execution.as_of)
-            .with_read_filter(self.read_filter.as_ref());
+            .with_read_filter(self.read_filter.as_ref())
+            .with_live_grant_receipts();
         // The caller's own filter rides every lane the recall reads (FIX
         // 3977): a session lane is built afresh from the key, so it binds
         // the handle's filter again; a rebind only meets it.
         let lane = lane
             .with_judged_at(execution.as_of)
-            .with_read_filter(self.read_filter.as_ref());
+            .with_read_filter(self.read_filter.as_ref())
+            .with_live_grant_receipts();
         // The receipt of a search: the candidates it ranks, the key's own
         // rows and those its own live Grants read (FIX 7528). A key that
         // reads nothing by itself still recalls what a Grant of its own reads.
         let mut receipt = lane.search_receipt(None, 0)?;
+        let plan = lane.recall_plan()?;
         let crate::claim::SearchPlan {
             filter: plan_filter,
             candidates: plan_candidates,
             policy: plan_policy,
-        } = lane.recall_plan()?;
+        } = &plan;
         let effective = effort;
         let deep_pending = None;
         let pack_format = format.map(parse_pack_format).transpose()?;
@@ -494,7 +497,7 @@ impl Memory<'_> {
         // Admission runs in each candidate's retrieval transaction before ranking:
         // the kinds here, then the actor gate under one authority per snapshot
         // (FIX 11648).
-        let gate = lane.recall_candidate_gate(&plan_policy, &plan_filter);
+        let gate = lane.recall_candidate_gate(plan_policy, plan_filter);
         let conversation_gate =
             conversation::ConversationGate::new(&gate, self.vault, &selection.conversations);
         let admitted =
@@ -537,28 +540,36 @@ impl Memory<'_> {
                 .deadline
                 .is_some_and(crate::retrieval_depth::RetrievalDeadline::stop_before_stage)
         {
+            // Every seed scan admits each posting on the lane inside the
+            // scan, before its rank and cut, and its statistics count no
+            // row the lane keeps with no count, under the plan this recall
+            // holds (FIX RECALL-PPR-SEED-SCANS-UNSCOPED-CUT): a row the actor
+            // cannot read takes no seed place a readable match could fill.
             let hits = match (session, route.as_ref()) {
                 (Some(session), Some(route)) => {
                     let limit = lane.search_candidate_limit(PPR_SEED_LIMIT)?;
                     // Seeds come from what the lane reads: a reader that
                     // reads base alone in the room seeds from base alone.
-                    let raw = if lane.reads_room() {
-                        session.search_text_routed(route, query, limit)?
-                    } else {
-                        session.search_base_text_routed(route, query, limit)?
-                    };
+                    let view = session_view.as_ref().filter(|_| lane.reads_room());
+                    let raw = session.search_text_scoped_routed_planned(
+                        route, view, &lane, &plan, query, limit,
+                    )?;
                     let scored = lane.filter_scored_entities(raw)?;
                     receipt.restrict_with(&scored.receipt);
                     scored.value
                 }
                 _ => {
                     // A deadline's text-stage hook belongs to the principal
-                    // retrieval, not its preparatory seed lookup. Still
-                    // admit every seed through the actor's read lane, and
-                    // read the query's time words on the recall's clock.
+                    // retrieval, not its preparatory seed lookup, so this
+                    // lookup runs no pipeline stage. Still admit every seed
+                    // through the actor's read lane, and read the query's
+                    // time words on the recall's clock.
                     let scored = if execution.deadline.is_some() {
                         let limit = lane.search_candidate_limit(PPR_SEED_LIMIT)?;
-                        lane.filter_scored_entities(self.vault.search_text(query, limit)?)?
+                        let raw = self
+                            .vault
+                            .search_text_scoped_planned(&lane, &plan, query, limit)?;
+                        lane.filter_scored_entities(raw)?
                     } else {
                         lane.search_text_as_of(query, PPR_SEED_LIMIT, None, execution.as_of)?
                     };
@@ -634,7 +645,8 @@ impl Memory<'_> {
                 .token_budget(budget);
             builder = builder
                 .filter_candidates(&admitted)
-                .gate_candidates(&conversation_gate);
+                .gate_candidates(&conversation_gate)
+                .statistics_read(&lane);
             // A facet narrows strictly inside this same builder (FIX 9961):
             // the pack it admits and pins is the one its items and its
             // rendering are read from, and it walks no edges, so nothing

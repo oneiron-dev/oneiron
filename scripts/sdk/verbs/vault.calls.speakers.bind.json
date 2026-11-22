@@ -1,0 +1,17 @@
+{
+  "name": "vault.calls.speakers.bind",
+  "description": "The owner names one speaker of a kept call as a PERSON; the transcript shows that name on every turn of the speaker, and no turn is rewritten. A later bind replaces it.",
+  "input": "crate::disclosure::CallSpeakerBindRequest",
+  "output": "crate::disclosure::CallSpeakerBindReceipt",
+  "call": "memory.vault().bind_call_speaker(&memory.embedded_owner(\"vault.calls.speakers.bind\")?, input).map_err(crate::memory::MemoryError::from)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "reversible_work",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

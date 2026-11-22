@@ -3,12 +3,15 @@
 //! `crate::mcp` defines `McpResolvedActor` and the resolution errors forwarded here.
 
 use super::*;
+use crate::api::write_facet::RequestSession;
 
-/// The session and the room turn a request names in its headers.
+/// The session and the room turn a request names in its headers. The
+/// session is read as HTTP reads it ([`RequestSession`]): a SESSION by its
+/// id, or an off-record stretch by its ref, a room's included.
 pub(in crate::api::mcp_gateway) fn mcp_request_placement(
     headers: &HeaderMap,
-) -> Result<(Option<oneiron::EntityId>, Option<oneiron::EntityId>), McpGatewayError> {
-    let session = crate::api::write_facet::request_session(headers).map_err(|()| {
+) -> Result<(Option<RequestSession>, Option<oneiron::EntityId>), McpGatewayError> {
+    let session = RequestSession::of_request(headers).map_err(|()| {
         McpGatewayError::new(-32602, "tool_args_invalid", "invalid session header")
     })?;
     let room_turn = headers
@@ -72,7 +75,8 @@ pub(crate) async fn resolve_mcp_actor_for_auth(
     auth: &crate::auth::CoreAuth,
     session: Option<oneiron::EntityId>,
 ) -> Result<McpCallContext, McpGatewayError> {
-    if let Some(owner) = super::owner_call::attested_owner_call(server, auth, session) {
+    let session = session.map(RequestSession::of_id);
+    if let Some(owner) = super::owner_call::attested_owner_call(server, auth, session.clone()) {
         return owner;
     }
     let credential = auth
@@ -98,7 +102,7 @@ pub(super) async fn registered_actor(
     auth: crate::auth::CoreAuth,
     mode: McpSurfaceMode,
     request_id: &str,
-    session: Option<oneiron::EntityId>,
+    session: Option<RequestSession>,
     room_turn: Option<oneiron::EntityId>,
 ) -> Result<McpCallContext, McpGatewayError> {
     // A paired record expires when its slip does, and a slip's lifetime runs
@@ -194,15 +198,17 @@ pub(in crate::api::mcp_gateway) fn admitted_context(
     auth: crate::auth::CoreAuth,
     mode: McpSurfaceMode,
     request_id: &str,
-    session: Option<oneiron::EntityId>,
+    session: Option<RequestSession>,
     room_turn: Option<oneiron::EntityId>,
 ) -> Result<McpCallContext, McpGatewayError> {
     mcp_proof_admits(server, &actor, &auth)?;
-    let session_ref = session.map(|session| session.to_hex());
+    let session_ref = session
+        .as_ref()
+        .map(|session| session.session_ref().to_owned());
     actor.auth = Some(auth.in_off_record_session(session_ref.as_deref()));
     let landing = crate::api::write_facet::landing_facet(
         &server.vault,
-        session,
+        session.as_ref(),
         &actor.scope.facets,
         actor.scope.facet_ref,
     );

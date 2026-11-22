@@ -62,6 +62,10 @@ mod topology;
 
 #[cfg(oneiron_test_support)]
 #[doc(hidden)]
+#[path = "../../test_doors/home_probe.rs"]
+pub mod home_probe;
+#[cfg(oneiron_test_support)]
+#[doc(hidden)]
 #[path = "../../test_doors/sync_outbox.rs"]
 pub mod sync_outbox;
 
@@ -115,15 +119,13 @@ pub struct SyncConnection {
     /// residence upkeep rings it once the authority history is in (OF-534).
     directive_wake: Arc<tokio::sync::Notify>,
     /// Wakes the predicted level's upkeep on this machine: the residence upkeep rings it once
-    /// the authority history is in, a newly applied prediction rings it, and the app shell's
-    /// fetch conditions ring it (ARCH-0023b #predicted-residence).
+    /// the authority history is in and a newly applied prediction rings it (ARCH-0023b
+    /// #predicted-residence). A change of the app shell's fetch conditions wakes the upkeep
+    /// through the open vault's report ([`crate::Vault::report_fetch_conditions`]).
     predicted_wake: Arc<tokio::sync::Notify>,
     /// A (re)connect completed since the predicted upkeep last asked for a prediction, so it
     /// asks again even before its 6 h are up (Engine ruling L7-46-MERGE A).
     predicted_connected: std::sync::atomic::AtomicBool,
-    /// What the app shell last reported about fetching predictions on this machine, both false
-    /// until it reports (a phone fetches only on a reported unmetered and powered state).
-    fetch_conditions: std::sync::Mutex<FetchConditions>,
     /// Wakes the steady loop to judge again which worlds this machine
     /// follows: a world pick, each residence upkeep tick and an authority
     /// catch-up that took rows ring it. A changed set renegotiates at once
@@ -178,16 +180,7 @@ pub struct ResidenceModeChange {
     pub pruned_items: usize,
 }
 
-/// What the app shell reports about fetching predictions on this machine (ARCH-0023b
-/// #predicted-residence: "Phones fetch only on Wi-Fi and power"). A computer fetches whatever
-/// the shell reports; a phone fetches only when both hold, closed by default.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct FetchConditions {
-    /// Whether the machine is on an unmetered network.
-    pub unmetered: bool,
-    /// Whether the machine is on power.
-    pub powered: bool,
-}
+pub use crate::sync::fetch_conditions::FetchConditions;
 
 impl SyncConnection {
     /// Creates a new connection manager over manager-owned windows. An own
@@ -198,7 +191,7 @@ impl SyncConnection {
         mut config: ConnectionConfig,
     ) -> crate::error::Result<Self> {
         let queue = SyncQueue::new(Arc::clone(manager.vault()))?;
-        let mode = if config.client_config.federation_peer.is_some() {
+        let mode = if config.client_config.residence_mode_is_fixed() {
             config.client_config.residence_mode
         } else {
             crate::sync::residence::resolve_residence_mode(
@@ -216,7 +209,7 @@ impl SyncConnection {
         }
         let mode = tokio::sync::watch::channel(mode).0;
         // An own device's query doors ask the home through this connection.
-        let home_search = config.client_config.federation_peer.is_none().then(|| {
+        let home_search = (!config.client_config.residence_mode_is_fixed()).then(|| {
             HomeSearch::attach(
                 manager.vault(),
                 config.client_config.clone(),
@@ -232,7 +225,6 @@ impl SyncConnection {
             directive_wake: Arc::default(),
             predicted_wake: Arc::default(),
             predicted_connected: std::sync::atomic::AtomicBool::new(false),
-            fetch_conditions: std::sync::Mutex::default(),
             follow_wake: Arc::default(),
             home_handoff_wake: Arc::default(),
             left: tokio::sync::watch::channel(left).0,
@@ -548,26 +540,23 @@ impl SyncConnection {
         self.directive_wake.notify_one();
     }
 
-    /// Records what the app shell reports about fetching predictions on this machine, and rings
-    /// the predicted upkeep so a newly opened gate fetches now rather than at the next upkeep.
+    /// Records what the app shell reports about fetching predictions on this machine, on the
+    /// open vault this connection runs ([`crate::Vault::report_fetch_conditions`]), so a
+    /// connection rebuilt later starts from it too. A change rings the predicted upkeep, so a
+    /// newly opened gate fetches now rather than at the next upkeep.
     pub fn set_fetch_conditions(&self, conditions: FetchConditions) {
-        if let Ok(mut current) = self.fetch_conditions.lock() {
-            *current = conditions;
-        }
-        self.predicted_wake.notify_one();
+        self.manager.vault().report_fetch_conditions(conditions);
     }
 
     /// Whether the predicted upkeep may ask and fetch now: a computer always may, and any other
-    /// machine only on a reported unmetered and powered state. A poisoned lock reads as closed.
+    /// machine only on the open vault's reported unmetered and powered state.
     fn fetch_gate_open(&self) -> bool {
-        if self.manager.vault().config.machine_device_class
-            == crate::authority::MachineDeviceClass::Computer
-        {
+        let vault = self.manager.vault();
+        if vault.config.machine_device_class == crate::authority::MachineDeviceClass::Computer {
             return true;
         }
-        self.fetch_conditions
-            .lock()
-            .is_ok_and(|conditions| conditions.unmetered && conditions.powered)
+        let conditions = vault.reported_fetch_conditions();
+        conditions.unmetered && conditions.powered
     }
 
     /// [`Self::set_residence_mode`], with `finish` run in the transaction
@@ -601,6 +590,20 @@ impl SyncConnection {
         finish: impl FnOnce(&mut heed::RwTxn<'_>, &ResidenceModeChange) -> crate::error::Result<()>,
     ) -> Result<ResidenceModeChange, crate::sync::TransportError> {
         let storage = |e: crate::Error| crate::sync::TransportError::Storage(e.to_string());
+        // H8-SHARED-ENV-LANE = B: the member lane stays Opened for its life.
+        if self.config.client_config.member_lane {
+            if mode != SyncResidenceMode::Opened {
+                return Err(crate::sync::TransportError::InvalidPayload(
+                    "a member lane is always Opened",
+                ));
+            }
+            return Ok(ResidenceModeChange {
+                mode: SyncResidenceMode::Opened,
+                retained: Vec::new(),
+                unsynced: Vec::new(),
+                pruned_items: 0,
+            });
+        }
         if self.config.client_config.federation_peer.is_some() {
             return Err(crate::sync::TransportError::InvalidPayload(
                 "a federation lane has no residence mode",
@@ -722,9 +725,13 @@ impl SyncConnection {
         worlds: std::collections::BTreeSet<crate::EntityId>,
         finish: impl FnOnce(&mut heed::RwTxn<'_>) -> crate::error::Result<()>,
     ) -> Result<std::collections::BTreeSet<crate::EntityId>, crate::sync::TransportError> {
-        if self.config.client_config.federation_peer.is_some() {
+        if self.config.client_config.residence_mode_is_fixed() {
             return Err(crate::sync::TransportError::InvalidPayload(
-                "a federation lane has no world pick",
+                if self.config.client_config.member_lane {
+                    "a member lane has no world pick"
+                } else {
+                    "a federation lane has no world pick"
+                },
             ));
         }
         if worlds.len() > crate::authority::RESIDENCE_FOLLOW_WORLDS_MAX {
@@ -753,6 +760,18 @@ impl SyncConnection {
         self.client()?.open_item(window, item).await
     }
 
+    /// [`Self::open_item`], with `finish` run in the transaction that stamps
+    /// or keeps the copy. An owner's open directive records its result there
+    /// ([`crate::sync::SyncClient::open_item_with`]).
+    pub(crate) async fn open_item_with(
+        &self,
+        window: &crate::sync::WindowKey,
+        item: crate::EntityId,
+        finish: impl FnOnce(&mut heed::RwTxn<'_>) -> crate::error::Result<()> + Send,
+    ) -> Result<crate::sync::OpenedItem, crate::sync::TransportError> {
+        self.client()?.open_item_with(window, item, finish).await
+    }
+
     /// Fetch the current windows' thin index again and return it.
     pub async fn refresh_residence_index(
         &self,
@@ -764,9 +783,13 @@ impl SyncConnection {
     /// Take in the signed authority entries the home holds and this machine
     /// lacks (OF-469). See [`crate::sync::SyncClient::catch_up_authority`].
     pub async fn catch_up_authority(&self) -> Result<usize, crate::sync::TransportError> {
-        if self.config.client_config.federation_peer.is_some() {
+        if self.config.client_config.residence_mode_is_fixed() {
             return Err(crate::sync::TransportError::InvalidPayload(
-                "a federation lane takes no home authority history",
+                if self.config.client_config.member_lane {
+                    "a member lane takes no home authority history"
+                } else {
+                    "a federation lane takes no home authority history"
+                },
             ));
         }
         self.client()?.catch_up_authority().await
@@ -825,9 +848,13 @@ impl SyncConnection {
         &self,
         window: &crate::sync::WindowKey,
     ) -> Result<crate::sync::residence::WindowDemotion, crate::sync::TransportError> {
-        if self.config.client_config.federation_peer.is_some() {
+        if self.config.client_config.residence_mode_is_fixed() {
             return Err(crate::sync::TransportError::InvalidPayload(
-                "a federation lane has no residence mode",
+                if self.config.client_config.member_lane {
+                    "a member lane is always Opened"
+                } else {
+                    "a federation lane has no residence mode"
+                },
             ));
         }
         let demotion = self.client()?.demote_window(window).await?;
@@ -1003,10 +1030,12 @@ enum LoopExit {
     /// A peer session's probe received the home's root (FIX 4748): what was
     /// buffered is queued, and the next connect tries the home's first round.
     HomeReturned,
+    /// The home answered a peer session's probe with a 403 to the credential
+    /// it carried (MEMBER-SELECTOR-SOCKET): what was buffered is queued, and
+    /// the run stops as on a home dial's 403.
+    Forbidden,
 }
 
-// FIX [LIBTEST-QUARANTINE-SYNC-CONNECTION-TESTS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

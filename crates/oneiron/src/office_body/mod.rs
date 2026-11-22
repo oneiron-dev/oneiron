@@ -76,6 +76,8 @@ pub(crate) use holder_ask::{
     LiveEditAskOutcome, live_edit_asked_owners_in, live_edit_offered_owners_in,
     resolve_holder_ask_in_txn, resolve_live_edit_holder_ask_in_txn,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use holder_ask::{LiveEditRoute, is_live_edit_ask, live_edit_intent_key};
 pub use live_units::LivePin;
 pub(crate) use live_units::{LiveChange, LiveSheet};
 pub use oneiron_docedit::contract::{

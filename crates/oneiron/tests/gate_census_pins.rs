@@ -213,15 +213,13 @@ fn raw_puts_hosts_make_and_the_typed_preference_door_pass() -> TestResult {
     let receipt = fixture
         .vault
         .memory(fixture.owner, EdgeActorClass::Human)
-        .set_expression_preference(
-            &ExpressionPreferenceInput {
-                subject_ref: person.to_hex(),
-                value: ExpressionPreferenceValue::Language("en-US".to_owned()),
-                origin: ExpressionPreferenceOrigin::ExplicitUser,
-                valid_from: at,
-            },
-            at,
-        )
+        .set_expression_preference(&ExpressionPreferenceInput {
+            subject_ref: person.to_hex(),
+            value: ExpressionPreferenceValue::Language("en-US".to_owned()),
+            origin: ExpressionPreferenceOrigin::ExplicitUser,
+            valid_from: at,
+            occurred_at: Some(at),
+        })
         .map_err(|error| format!("the typed expression-preference door: {error:?}"))?;
     assert!(!receipt.claim_short_id.is_empty());
     Ok(())

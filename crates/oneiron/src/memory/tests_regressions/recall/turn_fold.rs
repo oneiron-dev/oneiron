@@ -5,15 +5,10 @@
 /// turn as the worker would ([`fill_turn`]).
 fn open_embedding_vault() -> (tempfile::TempDir, crate::Vault) {
     let dir = tempfile::tempdir().expect("tempdir");
-    let vault = crate::Vault::open(
-        dir.path(),
-        crate::config::VaultConfig {
-            embedding_model: Some("test/model@v1".to_owned()),
-            dimensions: 4,
-            ..crate::config::VaultConfig::default()
-        },
-    )
-    .expect("open vault");
+    let mut config = crate::config::VaultConfig::device();
+    config.embedding_model = Some("test/model@v1".to_owned());
+    config.dimensions = 4;
+    let vault = crate::Vault::open(dir.path(), config).expect("open vault");
     (dir, vault)
 }
 

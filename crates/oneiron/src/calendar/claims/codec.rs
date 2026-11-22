@@ -1,11 +1,13 @@
 //! Calendar claim validation dispatch plus MessagePack encode/decode and field helpers.
 
+use oneiron_contracts::msgpack::{Entries, MsgpackError};
 use rmpv::Value;
 
 use super::predicates::{
     CONTENT_HASH_LEN, MAX_RRULE_BYTES, MAX_TEXT_BYTES, PREDICATE_CALENDAR_ATTENDEE,
     PREDICATE_CALENDAR_MEETING_LINK, PREDICATE_CALENDAR_ORIGIN, PREDICATE_CALENDAR_PASSPORT,
-    PREDICATE_CALENDAR_PREP_OPT_IN, PREDICATE_CALENDAR_RRULE, PREDICATE_CALENDAR_SERIES_EXCEPTION,
+    PREDICATE_CALENDAR_PREP_OPT_IN, PREDICATE_CALENDAR_REPLAY_CANCEL_EVIDENCE,
+    PREDICATE_CALENDAR_RRULE, PREDICATE_CALENDAR_SERIES_EXCEPTION,
     PREDICATE_CALENDAR_SERIES_MASTER, PREDICATE_CALENDAR_STATUS, PREDICATE_CALENDAR_SUCCESSOR,
     PREDICATE_CALENDAR_TIME_KIND, PREDICATE_CALENDAR_TZ, PREDICATE_CALENDAR_WALL_TIME,
     is_calendar_claim_predicate,
@@ -13,9 +15,9 @@ use super::predicates::{
 use super::values::{
     CalendarAttendeeValue, CalendarBusyTransparency, CalendarOrigin, CalendarPassportDirection,
     CalendarPassportPresence, CalendarPassportSource, CalendarPassportValue,
-    CalendarSeriesExceptionValue, CalendarSeriesMasterValue, CalendarStatus, CalendarStatusBasis,
-    CalendarStatusValue, CalendarSuccessorValue, CalendarTimeKind, CalendarTimeKindValue,
-    CalendarWallTimeValue,
+    CalendarReplayCancelEvidenceValue, CalendarSeriesExceptionValue, CalendarSeriesMasterValue,
+    CalendarStatus, CalendarStatusBasis, CalendarStatusValue, CalendarSuccessorValue,
+    CalendarTimeKind, CalendarTimeKindValue, CalendarWallTimeValue,
 };
 use crate::Vault;
 use crate::calendar::outcome::{
@@ -82,6 +84,12 @@ pub(super) const KEY_LAST_SEEN_AT: &str = "last_seen_at";
 
 pub(super) const KEY_PRESENCE: &str = "presence";
 
+pub(super) const KEY_CANCELLED_SINCE: &str = "cancelled_since";
+
+pub(super) const KEY_WRITTEN_CANCELLED: &str = "written_cancelled";
+
+pub(super) const KEY_DEFERRED_CANCEL_SEEN_AT: &str = "deferred_cancel_seen_at";
+
 pub(super) const KEY_STATUS: &str = "status";
 
 pub(super) const KEY_BASIS: &str = "basis";
@@ -89,6 +97,10 @@ pub(super) const KEY_BASIS: &str = "basis";
 pub(super) const KEY_RECORDED_AT: &str = "recorded_at";
 
 pub(super) const KEY_OUTCOME: &str = "outcome";
+
+pub(super) const KEY_SEQUENCE: &str = "sequence";
+
+pub(super) const KEY_PROVED_AT: &str = "proved_at";
 
 /// Asserts that a calendar claim's subject is an existing EVENT row.
 ///
@@ -165,6 +177,9 @@ pub(in crate::calendar) fn validate_calendar_claim_value(
         PREDICATE_CALENDAR_STATUS => decode_status_value(value).map(|_| ()),
         PREDICATE_CALENDAR_EVENT_OUTCOME => decode_event_outcome_value(value).map(|_| ()),
         PREDICATE_CALENDAR_PREP_OPT_IN => decode_prep_opt_in_value(value).map(|_| ()),
+        PREDICATE_CALENDAR_REPLAY_CANCEL_EVIDENCE => {
+            decode_replay_cancel_evidence_value(value).map(|_| ())
+        }
         _ => unreachable!("predicate membership checked above"),
     }
 }
@@ -315,6 +330,15 @@ pub(in crate::calendar) fn decode_attendee_value(value: &Value) -> Result<Calend
 /// back-compat; new writes include it. The content hash is MessagePack binary
 /// of exactly 32 bytes. An optional source names the exact archived content,
 /// with a canonical artifact id and a positive version; it adds no dependency.
+/// An optional `cancelled_since` dates the source's first report of the UID
+/// cancelled; a row without it (every row of an uncancelled version, and
+/// every row written before it) decodes it as `None`.
+/// An optional `written_cancelled`, present only as `true`, marks the
+/// source's cancellation as the engine's own write of the EVENT already
+/// cancelled; a row without it decodes it as `false`.
+/// An optional `deferred_cancel_seen_at` dates a pull's first sighting of a
+/// cancelled version it held back unread; a row without it decodes it as
+/// `None`.
 pub(crate) fn decode_passport_value(value: &Value) -> Result<CalendarPassportValue> {
     let entries = value_map(value)?;
     let required = [
@@ -326,7 +350,13 @@ pub(crate) fn decode_passport_value(value: &Value) -> Result<CalendarPassportVal
         KEY_LAST_SEEN_AT,
     ];
     let mut allowed = required.to_vec();
-    allowed.extend([KEY_PRESENCE, KEY_SOURCE]);
+    allowed.extend([
+        KEY_PRESENCE,
+        KEY_SOURCE,
+        KEY_CANCELLED_SINCE,
+        KEY_WRITTEN_CANCELLED,
+        KEY_DEFERRED_CANCEL_SEEN_AT,
+    ]);
     validate_keys(entries, &allowed, &required)?;
     let system = required_string(entries, KEY_SYSTEM)?;
     let uid = required_string(entries, KEY_UID)?;
@@ -362,6 +392,29 @@ pub(crate) fn decode_passport_value(value: &Value) -> Result<CalendarPassportVal
         direction,
         last_seen_at: required_u64(entries, KEY_LAST_SEEN_AT)?,
         presence,
+        cancelled_since: optional_value(entries, KEY_CANCELLED_SINCE)?
+            .map(|value| {
+                value
+                    .as_u64()
+                    .ok_or_else(|| invalid_claim("calendar passport cancelled_since is invalid"))
+            })
+            .transpose()?,
+        written_cancelled: match optional_value(entries, KEY_WRITTEN_CANCELLED)? {
+            None => false,
+            Some(Value::Boolean(true)) => true,
+            Some(_) => {
+                return Err(invalid_claim(
+                    "calendar passport written_cancelled is present only as true",
+                ));
+            }
+        },
+        deferred_cancel_seen_at: optional_value(entries, KEY_DEFERRED_CANCEL_SEEN_AT)?
+            .map(|value| {
+                value.as_u64().ok_or_else(|| {
+                    invalid_claim("calendar passport deferred_cancel_seen_at is invalid")
+                })
+            })
+            .transpose()?,
     })
 }
 
@@ -399,6 +452,32 @@ pub(in crate::calendar) fn encode_event_outcome_value(value: &EventOutcomeClaimV
     ])
 }
 
+/// Encodes a [`CalendarReplayCancelEvidenceValue`] into the exact wire map
+/// [`decode_replay_cancel_evidence_value`] accepts.
+#[must_use]
+pub(in crate::calendar) fn encode_replay_cancel_evidence_value(
+    value: &CalendarReplayCancelEvidenceValue,
+) -> Value {
+    Value::Map(vec![
+        (Value::from(KEY_SEQUENCE), Value::from(value.sequence)),
+        (Value::from(KEY_PROVED_AT), Value::from(value.proved_at)),
+    ])
+}
+
+/// Decodes a `calendar.replay_cancel_evidence` value: an exact key set, a
+/// `u32` SEQUENCE and a `u64` proof time.
+pub(in crate::calendar) fn decode_replay_cancel_evidence_value(
+    value: &Value,
+) -> Result<CalendarReplayCancelEvidenceValue> {
+    let entries = value_map(value)?;
+    let keys = [KEY_SEQUENCE, KEY_PROVED_AT];
+    validate_keys(entries, &keys, &keys)?;
+    Ok(CalendarReplayCancelEvidenceValue {
+        sequence: required_u32(entries, KEY_SEQUENCE)?,
+        proved_at: required_u64(entries, KEY_PROVED_AT)?,
+    })
+}
+
 /// Decodes a `calendar.event_outcome` value.
 ///
 /// Exact key set, closed token sets, and a `u64` `recorded_at`: an outcome token
@@ -417,10 +496,9 @@ pub(crate) fn decode_event_outcome_value(value: &Value) -> Result<EventOutcomeCl
 }
 
 fn value_map(value: &Value) -> Result<&[(Value, Value)]> {
-    match value {
-        Value::Map(entries) => Ok(entries),
-        _ => Err(invalid_claim("calendar claim value must be a map")),
-    }
+    Entries::of(value)
+        .map(Entries::as_slice)
+        .map_err(|_| invalid_claim("calendar claim value must be a map"))
 }
 
 fn as_str<'a>(value: &'a Value, reason: &'static str) -> Result<&'a str> {
@@ -428,26 +506,18 @@ fn as_str<'a>(value: &'a Value, reason: &'static str) -> Result<&'a str> {
 }
 
 fn required_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&'a Value> {
-    let mut matches = entries
-        .iter()
-        .filter_map(|(candidate, value)| (candidate.as_str() == Some(key)).then_some(value));
-    let value = matches
-        .next()
-        .ok_or_else(|| invalid_claim("calendar value missing required key"))?;
-    if matches.next().is_some() {
-        return Err(invalid_claim("calendar value contains duplicate key"));
-    }
-    Ok(value)
+    Entries::new(entries).require(key).map_err(|error| {
+        invalid_claim(match error {
+            MsgpackError::DuplicateKey(_) => "calendar value contains duplicate key",
+            _ => "calendar value missing required key",
+        })
+    })
 }
 
 fn optional_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<Option<&'a Value>> {
-    if entries
-        .iter()
-        .any(|(candidate, _)| candidate.as_str() == Some(key))
-    {
-        return required_value(entries, key).map(Some);
-    }
-    Ok(None)
+    Entries::new(entries)
+        .get(key)
+        .map_err(|_| invalid_claim("calendar value contains duplicate key"))
 }
 
 fn required_string<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&'a str> {
@@ -510,6 +580,8 @@ fn required_entity_ref(entries: &[(Value, Value)], key: &str) -> Result<EntityId
     Ok(id)
 }
 
+// Not Entries::exact_keys: a too-long or unknown key set refuses before a repeated key,
+// with its own message.
 /// Rejects extra keys, missing required keys, and non-string keys.
 ///
 /// `allowed` is the full key set; `required` is the subset that must be present.

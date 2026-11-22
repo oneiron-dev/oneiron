@@ -8,8 +8,8 @@
 //! run never applied is not lost: it wakes the next run.
 //!
 //! Fixture: the vault's owner (`owen`) and a custom agent (`yuki`), bound as
-//! a resident with a 3 s hold under `AllAddressed`, on a fake store clock,
-//! as in `agent_wake_hold.rs`. A second custom agent (`kai`) sends as its
+//! a resident with a 3 s hold under `AllAddressed`, on a fake store clock
+//! an hour ahead of the wall clock, as in `agent_wake_hold.rs`. A second custom agent (`kai`) sends as its
 //! model PERSON. Messages are admitted through the test doors
 //! `resident_wake_hold::admit_inbox_message` and `admit_person_message`.
 //! This test's worker leases and completes yuki's wakes. The last test runs
@@ -60,7 +60,7 @@ use oneiron::{
     LlmResponse, LlmStreamResult, LlmUsage, ModelId, ModelLocality, ModelTierRef, TimeRange, Vault,
     VaultConfig,
 };
-use oneiron_testkit::FakeClock;
+use oneiron_testkit::{FAKE_EPOCH, FakeClock};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -75,6 +75,19 @@ struct Fixture {
     owen: EntityId,
     yuki: EntityId,
     inbox: EntityId,
+}
+
+/// A fake store clock an hour ahead of the wall clock, and no earlier than
+/// the testkit's epoch. An agent's PERSON takes its model substrate at the
+/// wall-clock time the agent is created (`create_agent_definition_as`), and
+/// a substrate reads only from then on, so every fake instant must come
+/// after it: at `FakeClock::default` (`FAKE_EPOCH`, 2027-01-15) the agents
+/// would read as none once the wall clock passes that date.
+fn test_clock() -> TestResult<FakeClock> {
+    let wall = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs();
+    Ok(FakeClock::at(wall.saturating_add(3_600).max(FAKE_EPOCH)))
 }
 
 fn config(clock: &FakeClock) -> VaultConfig {
@@ -311,7 +324,7 @@ fn busy_resident(
 /// pass lands it no second time.
 #[test]
 fn a_persons_message_to_a_busy_resident_lands_at_its_next_step() -> TestResult {
-    let clock = FakeClock::default();
+    let clock = test_clock()?;
     let dir = tempfile::tempdir()?;
     let (vault, fixture, wake, _leased) = busy_resident(&clock, &dir)?;
 
@@ -359,7 +372,7 @@ fn a_persons_message_to_a_busy_resident_lands_at_its_next_step() -> TestResult {
 /// it has ended, the message wakes the resident.
 #[test]
 fn an_agents_message_to_a_busy_resident_waits_for_the_run_to_end() -> TestResult {
-    let clock = FakeClock::default();
+    let clock = test_clock()?;
     let dir = tempfile::tempdir()?;
     let (vault, fixture, wake, leased) = busy_resident(&clock, &dir)?;
     let proof = owner_proof(&vault, fixture.owen)?;
@@ -405,7 +418,7 @@ fn an_agents_message_to_a_busy_resident_waits_for_the_run_to_end() -> TestResult
 /// as it would a sleeping one, and lands on no branch.
 #[test]
 fn a_persons_message_to_a_resident_whose_wake_is_parked_wakes_it() -> TestResult {
-    let clock = FakeClock::default();
+    let clock = test_clock()?;
     let dir = tempfile::tempdir()?;
     let (vault, fixture, wake, leased) = busy_resident(&clock, &dir)?;
     DreamerRunnerStore::new(&vault).park_attempt(ParkDreamerAttempt {
@@ -446,7 +459,7 @@ fn a_persons_message_to_a_resident_whose_wake_is_parked_wakes_it() -> TestResult
 /// resumes, it does not take the message again.
 #[test]
 fn a_message_on_a_wake_that_then_parks_wakes_the_resident() -> TestResult {
-    let clock = FakeClock::default();
+    let clock = test_clock()?;
     let dir = tempfile::tempdir()?;
     let (vault, fixture, wake, leased) = busy_resident(&clock, &dir)?;
 
@@ -508,7 +521,7 @@ fn a_message_on_a_wake_that_then_parks_wakes_the_resident() -> TestResult {
 /// is not lost. It is not counted as woken, so it wakes the next run.
 #[test]
 fn a_message_its_run_never_applied_wakes_the_next_run() -> TestResult {
-    let clock = FakeClock::default();
+    let clock = test_clock()?;
     let dir = tempfile::tempdir()?;
     let (vault, fixture, wake, leased) = busy_resident(&clock, &dir)?;
 
@@ -613,7 +626,7 @@ impl JsCodeModeRuntime for PendingRuntime {
 /// lands one, straight on the branch, so only the step loop is under test.
 #[test]
 fn a_pending_message_reaches_the_next_model_request() -> TestResult {
-    let clock = FakeClock::default();
+    let clock = test_clock()?;
     let dir = tempfile::tempdir()?;
     let (vault, fixture, wake, leased) = busy_resident(&clock, &dir)?;
     let key = message_key(&fixture, "steer-2");

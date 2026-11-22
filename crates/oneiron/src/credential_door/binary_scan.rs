@@ -99,11 +99,12 @@ fn scan_failed(path: &str) -> CredentialDoorError {
 /// disposition the single `let disposition` statement below names, text and
 /// binary alike; there is no knob, flag or caller choice.
 ///
-/// - Refuse (today): one lift proposal per offending blob, naming its path
-///   and reason, never its bytes, and the push is refused with them.
-/// - Admit-marked (after the masked readers land): the value-free hits go
-///   on to the admitted intent, whose transaction marks them or refuses the
-///   push whole. No refusal is logged.
+/// - Admit-marked (the disposition, since the FIX 7608 flip): the
+///   value-free hits go on to the admitted intent, whose transaction marks
+///   them or refuses the push whole. No refusal is logged.
+/// - Refuse (the alternative arm, unused): one lift proposal per offending
+///   blob, naming its path and reason, never its bytes, and the push is
+///   refused with them.
 ///
 /// # Errors
 /// [`CredentialDoorError::ScanFailure`] for a hit outside `blobs`.
