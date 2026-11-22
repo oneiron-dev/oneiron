@@ -80,15 +80,14 @@ pub(crate) fn owe_torn_grant_end_in_txn(
     )
 }
 
-/// Whether the torn Grant row `body` is of a kind an act may give. An own-device grant, a base
-/// agent's engine-default Steward grant and a guest's grant have no act before their own pass 28
-/// steps (R4, R3c), and a body that does not decode never stands, so none of them owes an end:
-/// its debt would wait for a giving that never comes.
+/// Whether the torn Grant row `body` is of a kind an act may give. An own-device grant and a
+/// base agent's engine-default Steward grant have no act before their own pass 28 step (R4),
+/// and a body that does not decode never stands, so none of them owes an end: its debt would
+/// wait for a giving that never comes. A guest's Grant is given by its act since R3c, so a torn
+/// one owes its end like any other.
 fn torn_row_takes_acts(body: &[u8]) -> bool {
     super::decode_federation_grant_body(body).is_ok_and(|grant| {
-        !super::is_own_device_grant(&grant)
-            && !super::is_system_agent_steward_grant(&grant)
-            && grant.role != super::FederationGrantRole::Guest
+        !super::is_own_device_grant(&grant) && !super::is_system_agent_steward_grant(&grant)
     })
 }
 

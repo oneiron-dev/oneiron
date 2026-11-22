@@ -154,9 +154,9 @@ impl Vault {
         }))
     }
 
-    /// The one row predicate: `id` is a live FEDERATION_GRANT row, not
-    /// withdrawn, naming the person, conferring now, whose purpose stands
-    /// here and whose pact lets it confer. An own-device residence grant
+    /// The one row predicate: `id` is a live FEDERATION_GRANT row the
+    /// verified fold stands behind, naming the person, conferring now, whose
+    /// purpose stands here and whose pact lets it confer. An own-device residence grant
     /// and an owner's grant to a named agent are no human's standing.
     fn payer_row_stands_in_txn(
         &self,
@@ -185,14 +185,16 @@ impl Vault {
         {
             return Ok(false);
         }
-        // A Grant over the shared vault pays only while the fold stands behind it (pass 28
-        // R3), never as a row alone.
-        if matches!(grant.scope, FederationGrantScope::Vault { .. })
-            && super::shared_grant_row_in_fold(&context.fold, id, &body, context.now).is_none()
-        {
-            return Ok(false);
-        }
-        Ok(!self.guest_grant_withdrawn_in_txn(txn, &id)?)
+        // A Grant pays only while the fold stands behind it (pass 28 R3), never as a row
+        // alone: a member row on its counted giving, a guest's on its own (R3c; a Connect
+        // guest's on its Active pact too), and none whose line a counted act ended.
+        Ok(
+            if matches!(grant.scope, FederationGrantScope::Vault { .. }) {
+                super::shared_grant_row_in_fold(&context.fold, id, &body, context.now).is_some()
+            } else {
+                super::guest_grant_in_fold(&context.fold, id, &body, context.now).is_some()
+            },
+        )
     }
 }
 

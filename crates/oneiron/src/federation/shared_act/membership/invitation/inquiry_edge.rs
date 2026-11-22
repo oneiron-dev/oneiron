@@ -88,6 +88,9 @@ impl Vault {
         issuer: &HostSlipIssuer,
         edge: &InquiryJoinOffer,
     ) -> Result<Option<(SharedActExecutionReceipt, ConnectOffer)>> {
+        // A retry's company half may give its Grant: its act is signed by this install's key,
+        // loaded before the writer opens.
+        self.load_membership_carrier();
         self.with_write_txn_grouped(|txn| {
             let actor = invitee.revalidate_person_in_txn(self, txn)?;
             check_vault(self, txn, vault_id)?;

@@ -325,38 +325,25 @@ impl Vault {
         if delegate.is_some() || guest_vault != Some(vault_id) {
             return Ok(delegate);
         }
-        // A guest's Grant is still read from its row until pass 28 R3's guests and
-        // slips step.
+        // A guest's Grant stands on its counted giving, never on its row (pass 28 R3c): a
+        // row no counted act gives, one put back after its revoke and one widened in place
+        // make no scoped guest, and one that does not decode is skipped, never a fault.
+        let now = self.store.clock.now_recorded_at();
         for entry in self
             .store
             .port_entity_ids_by_type(txn, ENTITY_TYPE_FEDERATION_GRANT, None)?
         {
             let id = entry?;
-            let raw = self
-                .store
-                .port_entity_record(txn, &id)?
-                .ok_or_else(denied)?
-                .encode();
-            if EntityMetadataHeader::parse(&raw)
-                .is_none_or(|header| header.entity_type != ENTITY_TYPE_FEDERATION_GRANT)
-            {
-                return Err(denied());
-            }
-            if raw.len() == ENTITY_METADATA_HEADER_LEN
-                || !crate::vault::live_entity_row_in_txn(&self.store, txn, &id)?.is_live()
-            {
+            let crate::vault::LiveEntityRow::Live {
+                entity_type: ENTITY_TYPE_FEDERATION_GRANT,
+                body,
+            } = crate::vault::live_entity_row_in_txn(&self.store, txn, &id)?
+            else {
                 continue;
-            }
-            let grant = decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
-            if grant.member_ref != *person
-                || grant
-                    .expires_at
-                    .is_some_and(|expires| self.store.clock.now_recorded_at() >= expires)
-                || !super::pact_admits_grant(&fold, &id, &grant)
+            };
+            if super::guest_grant_in_fold(&fold, id, &body, now)
+                .is_some_and(|standing| standing.grant().member_ref == *person)
             {
-                continue;
-            }
-            if grant.role == FederationGrantRole::Guest {
                 return Ok(Some(MembershipStanding::ScopedGuest { grant: id }));
             }
         }
@@ -444,17 +431,17 @@ pub(crate) fn authenticated_grant_membership_for_store_in_txn(
     {
         return Ok(None);
     }
-    // A Grant over the shared vault confers only while the fold stands behind it
-    // (pass 28 R3), never as a row alone.
-    if matches!(grant.scope, FederationGrantScope::Vault { .. })
-        && super::shared_grant_row_in_fold(
-            &fold,
-            grant_id,
-            &raw[ENTITY_METADATA_HEADER_LEN..],
-            store.clock.now_recorded_at(),
-        )
-        .is_none()
-    {
+    // A Grant confers only while the fold stands behind it (pass 28 R3), never as a row
+    // alone: one over the shared vault on its counted giving, a guest's on its own (R3c; a
+    // Connect guest's on its Active pact too).
+    let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+    let now = store.clock.now_recorded_at();
+    let stands = if matches!(grant.scope, FederationGrantScope::Vault { .. }) {
+        super::shared_grant_row_in_fold(&fold, grant_id, body, now).is_some()
+    } else {
+        super::guest_grant_in_fold(&fold, grant_id, body, now).is_some()
+    };
+    if !stands {
         return Ok(None);
     }
     Ok(Some(

@@ -6,12 +6,12 @@
 
 use rmpv::Value;
 
-use super::{GUEST_ACTOR_KEYS, GUEST_ACTOR_KIND, canonical_vault_id, pact_admits_grant};
+use super::{GUEST_ACTOR_KEYS, GUEST_ACTOR_KIND, canonical_vault_id};
 use crate::Vault;
 use crate::authority::{AuthorityFold, AuthorityVaultId};
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::federation::{FederationGrant, FederationGrantScope, decode_federation_grant_body};
+use crate::federation::{FederationGrantScope, decode_federation_grant_body};
 use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_PERSON};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
@@ -71,12 +71,14 @@ pub(crate) fn connect_guest_standing_in_txn(
         else {
             continue;
         };
-        let grant = decode_federation_grant_body(&body)?;
+        let Ok(grant) = decode_federation_grant_body(&body) else {
+            continue;
+        };
         if grant.scope
             == (FederationGrantScope::Connect {
                 peer_vault_id: origin,
             })
-            && grant_stands_in_txn(vault, txn, &fold, &id, &grant, &person)?
+            && grant_stands(vault, &fold, &id, &body, &person)
         {
             return Ok(true);
         }
@@ -85,9 +87,10 @@ pub(crate) fn connect_guest_standing_in_txn(
 }
 
 /// Whether `grant_id` is a live Connect guest grant here naming `guest`,
-/// read in `txn`: its row live and not withdrawn, conferring now, and bound
-/// by its one Active pact. An accepted proposal's record reads it to say
-/// whether the guest's grant had lapsed (FIX 3684).
+/// read in `txn`: its row live and given by its owner's counted act that no
+/// counted act ended (pass 28 R3c), conferring now, and bound by its one
+/// Active pact. An accepted proposal's record reads it to say whether the
+/// guest's grant had lapsed (FIX 3684).
 pub(crate) fn connect_grant_stands_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -101,26 +104,26 @@ pub(crate) fn connect_grant_stands_in_txn(
     else {
         return Ok(false);
     };
-    let grant = decode_federation_grant_body(&body)?;
     let fold = vault.authority_fold_readonly_in_txn(txn)?;
-    grant_stands_in_txn(vault, txn, &fold, grant_id, &grant, guest)
+    Ok(grant_stands(vault, &fold, grant_id, &body, guest))
 }
 
-fn grant_stands_in_txn(
+/// Whether the live Grant row `grant_id`, whose stored body is `body`, is a Connect guest
+/// grant naming `guest` that the verified fold stands behind (its owner's counted giving, no
+/// counted end, one Active operative pact with its peer: `guest_grant_in_fold`) and that
+/// confers now.
+fn grant_stands(
     vault: &Vault,
-    txn: &heed::RoTxn<'_>,
     fold: &AuthorityFold,
     grant_id: &EntityId,
-    grant: &FederationGrant,
+    body: &[u8],
     guest: &EntityId,
-) -> Result<bool> {
-    if grant.member_ref != *guest
-        || !grant.role.is_guest()
-        || !matches!(grant.scope, FederationGrantScope::Connect { .. })
-        || !grant.confers_at(vault.store.clock.now_recorded_at())
-        || vault.guest_grant_withdrawn_in_txn(txn, grant_id)?
-    {
-        return Ok(false);
-    }
-    Ok(pact_admits_grant(fold, grant_id, grant))
+) -> bool {
+    let now = vault.store.clock.now_recorded_at();
+    crate::federation::guest_grant_in_fold(fold, *grant_id, body, now).is_some_and(|standing| {
+        let grant = standing.grant();
+        grant.member_ref == *guest
+            && matches!(grant.scope, FederationGrantScope::Connect { .. })
+            && grant.confers_at(now)
+    })
 }

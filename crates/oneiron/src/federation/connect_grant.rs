@@ -290,7 +290,11 @@ pub(crate) fn grant_serves_selector(grant: &FederationGrant) -> bool {
 /// Whether the fold's pact states let `grant` (stored as `grant_id`) confer.
 /// A Connect grant confers only through exactly one Active operative pact
 /// with its own peer vault: Unpacted, it is inert. Every other purpose keeps
-/// the generic gate, Unpacted or Active.
+/// the generic gate, Unpacted or Active: no pact applies to it, and its own
+/// counted act, which its reader reads first (pass 28 R3), is what gives it.
+/// A pact gate never gives a Grant standing; a reader that takes
+/// [`super::StandingGrant`] has the counted act, and a Connect guest's
+/// witness asks this gate too.
 pub(crate) fn pact_admits_grant(
     fold: &AuthorityFold,
     grant_id: &EntityId,
@@ -443,6 +447,8 @@ impl Vault {
         expires_at: Option<u64>,
         detach: Option<ConnectMemberLeaveConsent<'_>>,
     ) -> Result<ConnectGrantMinted> {
+        // The giving is signed by this install's key, loaded before the writer opens.
+        self.load_membership_carrier();
         self.with_write_txn_grouped(|txn| {
             self.mint_connect_grant_in_txn(
                 txn,
@@ -496,6 +502,12 @@ impl Vault {
                 )
             }
         };
+        // The giving's deciding person (pass 28 R3c): the approving owner, or the member whose
+        // live seat approved an inquiry seat's company half (L7-04-COMPANY-HALF = A). The door
+        // judged the approval above; the act's decider records it.
+        let giver = actor
+            .or(seat_binding.as_ref().map(|binding| binding.person_ref))
+            .ok_or_else(|| refused("a Connect grant's giving names the person who approved it"))?;
         let ConnectGrantRequest {
             scope: requested,
             inquiry_terms,
@@ -556,14 +568,16 @@ impl Vault {
             ));
         }
         let id = self.store.clock.entity_id()?;
-        self.put_connect_row_in_txn(
-            txn,
-            id,
-            ENTITY_TYPE_FEDERATION_GRANT,
-            now,
-            super::encode_federation_grant_body(&grant)?,
-            true,
-        )?;
+        // The giving is the Grant's counted act (pass 28 R3c, RULING R3C-GUEST-GIVING-ACT = A),
+        // signed in this transaction: the row stands on it and on the pact that binds it later,
+        // never on itself.
+        let family = if grant.inquiry_terms.is_some() {
+            crate::authority::GrantFamily::InquiryEdge
+        } else {
+            crate::authority::GrantFamily::Connect
+        };
+        let data = self.give_grant_in_txn(txn, giver, id, family, &grant)?;
+        self.put_connect_row_in_txn(txn, id, ENTITY_TYPE_FEDERATION_GRANT, now, data, true)?;
         Ok(ConnectGrantMinted {
             grant: id,
             guest_actor,
