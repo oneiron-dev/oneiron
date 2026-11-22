@@ -311,11 +311,14 @@ fn a_replay_names_no_world_the_current_read_does_not_read() {
         "FIXTURE: the first answer's census names the claim's world"
     );
 
-    // The same caller, its read narrowed to turns and messages: it still
-    // reads the turn, and no claim, so no world.
-    let narrowed: ReadFilterInput =
-        serde_json::from_value(serde_json::json!({ "entity_types": ["TURN", "MESSAGE"] }))
-            .expect("a read filter");
+    // The same caller, its read narrowed to turns, messages and their
+    // conversations: it still reads the turn as the first answer served it
+    // (a turn's conversation id goes only to a read that reads that
+    // conversation), and no claim, so no world.
+    let narrowed: ReadFilterInput = serde_json::from_value(
+        serde_json::json!({ "entity_types": ["TURN", "MESSAGE", "CONVERSATION"] }),
+    )
+    .expect("a read filter");
     let narrowed = memory.with_read_filter(Some(&narrowed));
     let fresh = recall(&narrowed, serde_json::json!({})).expect("a narrowed recall");
     assert!(
