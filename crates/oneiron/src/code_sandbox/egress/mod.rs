@@ -12,6 +12,10 @@ use crate::policy_model::{PolicyClassifyDecision, PolicyClassifyRequest, PolicyV
 use crate::{EntityId, Vault};
 pub use dns::{UnusableResolver, exchange_dns_query};
 pub use fixture::{FixtureForward, FixtureForwardError};
+// The redirect test's door (FIX 7945) drives the HTTP fetch with its own
+// address for each hop's host.
+#[cfg(oneiron_test_support)]
+pub(crate) use http::fetch_resolved;
 pub use name_gate::EgressNameRefusal;
 use oneiron_container::{EgressRelay, HostNetFloor, HttpRequest, HttpResponse};
 use oneiron_sandbox_contract::network::global_address;

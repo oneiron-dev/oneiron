@@ -15,6 +15,17 @@ const FLOOR_WAIT_FIRST: Duration = Duration::from_millis(5);
 const FLOOR_WAIT_MAX: Duration = Duration::from_millis(250);
 
 pub(super) fn fetch(proxy: &OpenEgressProxy, request: HttpRequest) -> io::Result<HttpResponse> {
+    fetch_resolved(proxy, request, &|host, port| proxy.resolve(host, port))
+}
+
+/// Red pin of FIX 7945 (never merged): main's fetch with each hop's host
+/// looked up by `resolve`, for the redirect test's door. Main's redirect
+/// bound is unchanged.
+pub(crate) fn fetch_resolved(
+    proxy: &OpenEgressProxy,
+    request: HttpRequest,
+    resolve: &dyn Fn(&str, u16) -> io::Result<Vec<SocketAddr>>,
+) -> io::Result<HttpResponse> {
     let mut url = Url::parse(&request.url).map_err(io::Error::other)?;
     let mut method =
         reqwest::Method::from_bytes(request.method.as_bytes()).map_err(io::Error::other)?;
@@ -40,7 +51,7 @@ pub(super) fn fetch(proxy: &OpenEgressProxy, request: HttpRequest) -> io::Result
             let port = url
                 .port_or_known_default()
                 .ok_or_else(|| io::Error::other("HTTP port"))?;
-            let addresses = proxy.resolve(host, port)?;
+            let addresses = resolve(host, port)?;
             let remaining = proxy
                 .config
                 .request_timeout
