@@ -1,0 +1,17 @@
+{
+  "name": "vault.coach.training_runs.execute",
+  "description": "Take this host's next step for one training run its owner authorized, for the owner or an agent whose own Grant lists this verb, then drive it up to wait_ms; it never authorizes, and the bound never stops the run.",
+  "input": "crate::task_verb::sdk::TrainingRunExecuteRequest",
+  "output": "crate::task_verb::sdk::TrainingRunObservation",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.coach.training_runs.execute\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "unstated",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "training_run_executor"
+}

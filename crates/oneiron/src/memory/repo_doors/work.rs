@@ -25,6 +25,7 @@ use crate::origin::secret_projection::{RepoSecretAudience, materialize_masked_re
 use crate::temporal::TimeRange;
 use crate::{EntityId, Vault};
 use oneiron_authority::federation::{RepoAccessIntent, RepoAccessRefusal};
+use oneiron_contracts::fingerprint::ContentHash;
 
 /// The queue a run's ref is attached to, read under the repo's coordinator.
 pub(crate) struct RepoQueueTarget<'v> {
@@ -401,7 +402,7 @@ impl Memory<'_> {
             .map(|(path, bytes)| {
                 CodebaseFileEntry::new(
                     path.clone(),
-                    *blake3::hash(bytes).as_bytes(),
+                    *ContentHash::of(bytes).as_bytes(),
                     bytes.len() as u64,
                 )
             })

@@ -1,8 +1,8 @@
 //! Doors for `tests/agent_wake_hold.rs` (AGM-4 wake hold),
 //! `tests/agent_message_classes.rs` and `tests/agent_message_classifier.rs`
-//! (AGM-2 message classes): an inbound
-//! message to a resident's inbox, admitted as routing admits one, with no
-//! provider adapter in the loop.
+//! (AGM-2 message classes) and `tests/resident_human_messages_wake.rs`: an
+//! inbound message to a resident's inbox, admitted as routing admits one,
+//! with no provider adapter in the loop.
 
 use crate::error::Result;
 use crate::surface_event::{

@@ -566,3 +566,12 @@ fn read_files(
         }
     }
 }
+
+#[cfg(test)]
+pub(crate) fn peel_tag_files_for_scan_tests(
+    wire: &GitWire<'_>,
+    repo: &GitWireRepo,
+    oid: &crate::git_wire::GitOid,
+) -> Result<BTreeMap<String, super::tree::OriginTreeFile>> {
+    read_files(wire, repo, oid)
+}

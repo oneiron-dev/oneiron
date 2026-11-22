@@ -9,6 +9,12 @@
 //! A pending row belongs to the checker incarnation that admitted it: read
 //! under any other (a restart, a restore), it is interrupted, never pending
 //! for good and never clean.
+//!
+//! A row names the check that wrote it. A program that fails before its
+//! first host call commits no step, so the re-entry's program runs at the
+//! same step and keeps its feedback under the same key: the later check's
+//! row takes the earlier check's place, and the earlier check, landing late,
+//! never takes the later one's.
 
 use serde::{Deserialize, Serialize};
 
@@ -58,6 +64,11 @@ pub(crate) struct StoredStepFeedback {
     /// The run's body holding every diagnostic, for a collection past one
     /// reply.
     body: Option<StoredBody>,
+    /// The check that wrote the row: an id minted as its program's check
+    /// started, so a later check's is greater. `None` on a row written
+    /// before rows named their check.
+    #[serde(default)]
+    check_id: Option<EntityId>,
 }
 
 /// The descriptor of a run's body a row names, as the row keeps it: every
@@ -117,9 +128,11 @@ impl StoredBody {
 }
 
 impl StoredStepFeedback {
-    /// `feedback` as a row keeps it, its stored collection's body `body`.
+    /// `feedback` as a row of check `check_id` keeps it, its stored
+    /// collection's body `body`.
     pub(crate) fn of(
         actor: Option<EntityId>,
+        check_id: EntityId,
         feedback: &ProgramStepFeedback,
         body: Option<CodeRunRawOutput>,
     ) -> Self {
@@ -135,6 +148,7 @@ impl StoredStepFeedback {
             measures: None,
             inline: None,
             body: None,
+            check_id: Some(check_id),
         };
         let collection = match &feedback.type_diagnostics {
             TypeDiagnostics::Complete {
@@ -190,6 +204,36 @@ impl StoredStepFeedback {
     /// Whether the row's check may still land.
     pub(crate) fn pending(&self) -> bool {
         self.state == StoredCheckState::Pending
+    }
+
+    /// Whether this row takes the place of `held`, the row its key holds: a
+    /// later check's row takes an earlier check's place, pending or landed,
+    /// and an earlier check's never takes a later one's; a check's pending
+    /// row never takes the place of its own landed result. Check ids order
+    /// the checks of one checker incarnation only: a held row of another
+    /// incarnation was written before this one started, so every row of
+    /// this one takes its place. A held row that names no check was written
+    /// before rows named theirs, by an earlier check.
+    fn takes_place_of(&self, held: &Self) -> bool {
+        if held.incarnation != self.incarnation {
+            return true;
+        }
+        match (self.check_id, held.check_id) {
+            (Some(check), Some(held_check)) if check != held_check => check > held_check,
+            (Some(_), None) => true,
+            _ => !self.pending() || held.pending(),
+        }
+    }
+
+    /// This row's body when `kept`, the row its key keeps in its place,
+    /// does not name it too: each check keeps its body at its own path, its
+    /// own occurrence, so a body the kept row names is the same check's.
+    fn body_not_named_by(&self, kept: &Self) -> Option<CodeRunRawOutput> {
+        let body = self.body.as_ref()?;
+        kept.body
+            .as_ref()
+            .is_none_or(|kept| kept.path != body.path)
+            .then(|| body.output())
     }
 
     /// The step feedback this row holds for `key`: a pending check of
@@ -311,8 +355,11 @@ impl Vault {
             .collect()
     }
 
-    /// Writes a step's feedback as the step ended: a pending row never
-    /// takes the place of a check that has already landed.
+    /// Writes a step's feedback as the step ended, or as its check landed
+    /// after it (`put_in`): an earlier check's row never takes the place
+    /// of a later check's, and a pending row never takes the place of its
+    /// own check's landed result. A body the write leaves no row naming
+    /// goes in the same transaction.
     ///
     /// # Errors
     ///
@@ -323,7 +370,9 @@ impl Vault {
         row: &StoredStepFeedback,
     ) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
-        put_in(&self.store, self, &mut wtxn, key, row)?;
+        if let Some(body) = put_in(&self.store, self, &mut wtxn, key, row)? {
+            release_step_body_in_txn(self, &mut wtxn, key.0, &body)?;
+        }
         Ok(wtxn.commit()?)
     }
 }
@@ -348,23 +397,53 @@ pub(super) fn rows_in(
 }
 
 /// Writes a step's feedback in `wtxn`, the row it replaces read on `read`
-/// and the row written along `write`: a pending row never takes the place
-/// of a check that has already landed.
+/// and the row written along `write`, when it takes the held row's place
+/// (`StoredStepFeedback::takes_place_of`): a program that failed before
+/// its first host call shares its step's key with the re-entry's program,
+/// and its check, landing late, never takes the place of the feedback of
+/// the program that ran the step; a pending row never takes the place of
+/// its own check's landed result.
+///
+/// Returns the body the write leaves no row naming, for the caller to
+/// release where the route registered it: the replaced row's, or this
+/// row's when it does not take the held row's place. Each check keeps its
+/// body at its own path, so releasing one check's never releases another
+/// check's, even of the same bytes; a body the kept row names too is the
+/// same check's and stays.
 pub(super) fn put_in(
     read: &impl SideTableDbs,
     write: &impl SideTableDbs,
     wtxn: &mut heed::RwTxn<'_>,
     key: StepKey,
     row: &StoredStepFeedback,
-) -> Result<()> {
-    if row.pending()
-        && ROWS
-            .get(read, wtxn, &key)?
-            .is_some_and(|held| !held.pending())
+) -> Result<Option<CodeRunRawOutput>> {
+    let held = ROWS.get(read, wtxn, &key)?;
+    if let Some(held) = &held
+        && !row.takes_place_of(held)
     {
-        return Ok(());
+        return Ok(row.body_not_named_by(held));
     }
-    ROWS.put(write, wtxn, &key, row)
+    ROWS.put(write, wtxn, &key, row)?;
+    Ok(held.and_then(|held| held.body_not_named_by(row)))
+}
+
+/// Releases run `run`'s occurrence of `body`, a step feedback row's stored
+/// collection, with that occurrence's own marks.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(super) fn release_step_body_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    run: EntityId,
+    body: &CodeRunRawOutput,
+) -> Result<()> {
+    let occurrence = ResultOccurrence::of(Some(run), body)?;
+    let marks = occurrence.mark_key(&body.handle);
+    crate::code_run::drop_code_run_result_marks_in_txn(&vault.store, wtxn, &marks)?;
+    release_body_in_txn(&vault.store, wtxn, &run, &occurrence.id())?;
+    Ok(())
 }
 
 /// The program steps' type feedback of each of `runs`, as it stands, read
@@ -424,10 +503,7 @@ pub(crate) fn erase_type_diagnostics_actor_in_txn(
         .collect();
     for ((run, program_seq, invocation), row) in owned {
         if let Some(body) = row.body() {
-            let occurrence = ResultOccurrence::of(Some(run), &body)?;
-            let marks = occurrence.mark_key(&body.handle);
-            crate::code_run::drop_code_run_result_marks_in_txn(&vault.store, wtxn, &marks)?;
-            release_body_in_txn(&vault.store, wtxn, &run, &occurrence.id())?;
+            release_step_body_in_txn(vault, wtxn, run, &body)?;
         }
         // FIX 12085: the deleted row's lifted custody goes with it.
         let place = format!("side:{}", ROWS.decl().name);

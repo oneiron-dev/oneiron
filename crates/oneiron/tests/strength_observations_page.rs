@@ -15,8 +15,8 @@ use oneiron::test_doors::consolidation::{
 };
 use oneiron::test_doors::derive::{claim_subject, narrow_steward_grant_to_project};
 use oneiron::test_doors::steward::{
-    STEWARD_READ_VERB, STEWARD_VERBS, dreamer, record_strength_observations, stand_steward_grant,
-    stand_steward_grant_in_bands,
+    STEWARD_READ_VERB, STEWARD_VERBS, dreamer, grant_mark, record_strength_observations,
+    stand_steward_grant, stand_steward_grant_in_bands,
 };
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
 use serde_json::{Value, json};
@@ -280,6 +280,37 @@ fn an_agent_with_no_grant_is_refused() -> StrengthPageTestResult<()> {
         panic!("an ungranted agent is refused");
     };
     assert_eq!(error.code, MEMORY_CODE_FORBIDDEN);
+    Ok(())
+}
+
+/// A base agent whose MACHINE is provisioned and that has no standing Steward
+/// row is refused: its manifest rows never stand in for the grant on this
+/// page. Once its grant stands, the same call serves the observed claim.
+#[test]
+fn a_base_agent_without_a_standing_steward_row_is_refused_until_its_grant_stands()
+-> StrengthPageTestResult<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = open_strength_observation_vault(&dir)?;
+    let (claims, sources, latest) = observe_strength_claim(&vault, &["profile.name"])?;
+    let actor = dreamer(&vault)?;
+    assert!(
+        grant_mark(&vault, actor)?.is_none(),
+        "no Steward row stands for the Dreamer yet"
+    );
+    let Err(refused) =
+        read_strength_observation_page(&vault, actor, EdgeActorClass::System, json!({}))
+    else {
+        panic!("a base agent with no standing Steward row is refused");
+    };
+    assert_eq!(refused.code, MEMORY_CODE_FORBIDDEN);
+    assert!(
+        refused.message.contains("live Steward reader"),
+        "the page's own refusal: {}",
+        refused.message
+    );
+    stand_steward_grant(&vault, actor, &STEWARD_VERBS)?;
+    let page = read_strength_observation_page(&vault, actor, EdgeActorClass::System, json!({}))?;
+    assert_current_observation(&page, claims[0], &sources, latest);
     Ok(())
 }
 

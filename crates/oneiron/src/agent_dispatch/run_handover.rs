@@ -42,6 +42,7 @@
 //! The same pass renews this machine's own lease on each run with a try
 //! pending in its queue (`own_agent_run_lease_renewal`): a parked or queued
 //! try, or a step that runs past half a hold, commits nothing that renews it.
+//! An orphaned child the claim refuses is neither renewed nor kept (REVIEW-9863).
 //!
 //! The old executor needs nothing from here: slice 5's fence stands it down
 //! at its next step commit or effect, and its settlement ends its local try
@@ -63,7 +64,7 @@ use std::collections::BTreeMap;
 use super::run_task::{
     AgentRunExecutorLease, AgentRunTaskBody, agent_run_lease_held_until, agent_run_lease_renewal,
     agent_run_task_body_in, agent_run_task_ref_in, attempt_id_from_hex, closing,
-    open_agent_runs_in, update_agent_run_task_body_in_txn,
+    open_agent_runs_in, queued_orphaned_child_in, update_agent_run_task_body_in_txn,
 };
 use super::{
     AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatchInput, AgentDispatcher, decode_agent_dispatch_input,
@@ -98,7 +99,7 @@ const WORLD_NOT_READABLE_HERE: &str = "world_not_readable_here";
 const RUN_TASK_UNREADABLE: &str = "run_task_unreadable";
 /// No writer proof that counts here stands behind the TASK's frozen fields
 /// (`super::run_writer_proof`), so its payload is not re-created here.
-const RUN_TASK_WRITER_UNPROVEN: &str = "run_task_writer_unproven";
+pub(super) const RUN_TASK_WRITER_UNPROVEN: &str = "run_task_writer_unproven";
 /// A try of the run is leased, landing or paused here.
 const TRY_HELD_HERE: &str = "try_held_here";
 /// The run's newest try here ended another way than failed.
@@ -258,11 +259,12 @@ impl Vault {
             for (task_ref, body) in runs {
                 let lease = body.executor;
                 let pending = local.get(&task_ref).copied();
+                let orphaned = queued_orphaned_child_in(self, &rtxn, pending.map(|(id, _)| id))?;
                 if lease.node_id == node_id {
                     if let Some(held_until) =
-                        own_agent_run_lease_renewal(lease, pending.is_some(), now)
+                        own_agent_run_lease_renewal(lease, pending.is_some() && !orphaned, now)
                     {
-                        renew.push((task_ref, lease, held_until));
+                        renew.push((task_ref, lease, held_until, pending.map(|(id, _)| id)));
                     }
                     continue;
                 }
@@ -284,6 +286,7 @@ impl Vault {
                 };
                 let local_try = match reason {
                     Some(reason) => LocalTry::Wait(reason),
+                    None if orphaned => LocalTry::Wait(NOT_THE_AGENT_PUMPS),
                     None => match attempt_id_from_hex(&body.live_attempt_ref) {
                         Some(live) => {
                             handover_local_try(pending, newest_local_try_in(self, &rtxn, live)?)
@@ -350,7 +353,11 @@ impl Vault {
         if !renew.is_empty() {
             reap.renewed = self.with_write_txn_grouped(|wtxn| {
                 let mut renewed = 0_usize;
-                for (task_ref, lease, held_until) in renew {
+                for (task_ref, lease, held_until, try_id) in renew {
+                    // REVIEW-9863: sync may rewrite the TASK unproven after the read.
+                    if queued_orphaned_child_in(self, &*wtxn, try_id)? {
+                        continue;
+                    }
                     let mut done = false;
                     update_agent_run_task_body_in_txn(self, wtxn, task_ref, now, |body| {
                         if body.outcome.is_none() && body.executor.same_holding(lease) {
@@ -646,6 +653,10 @@ fn take_expired_agent_run_in_txn(
             });
             if !queued {
                 return Ok(AgentRunTake::Waits(LOCAL_TRY_CHANGED));
+            }
+            // REVIEW-9863: a kept try must be one the claim takes.
+            if queued_orphaned_child_in(vault, &*wtxn, Some(id))? {
+                return Ok(AgentRunTake::Waits(NOT_THE_AGENT_PUMPS));
             }
             // The queued try spends under the scope its dispatch or an
             // earlier take kept for it here. The take judges that scope as

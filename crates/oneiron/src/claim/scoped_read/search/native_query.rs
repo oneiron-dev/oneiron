@@ -36,6 +36,7 @@ impl ScopedRead<'_> {
             .reading(self.store_read())
             .authority_filter(candidates)
             .scoped_note_reader(self.actor_key.clone())
+            .statistics_read(self)
             .filter_candidates(&super::plan_row_decodes)
             .gate_candidates(&admitted);
         if let Some(telemetry) = telemetry {
@@ -78,6 +79,7 @@ impl ScopedRead<'_> {
             .reading(self.store_read())
             .l2_summary_reader(self)
             .scoped_note_reader(self.actor_key.clone())
+            .statistics_read(self)
             .authority_filter(candidates)
             .filter_candidates(&super::plan_row_decodes)
             .gate_candidates(&admitted);

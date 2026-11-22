@@ -176,10 +176,9 @@ fn a_handoff_that_arrives_after_its_siblings_floor_still_settles() {
     }
 }
 
-/// Control 5: local sequence floors still refuse every row outside a
-/// handoff's line but a roster row (`changes_roster`). After H settles, a
-/// withdrawal the successor B signs below B's own observed floor is refused,
-/// though H's line stands unfloored.
+/// Control 5: a sibling withdrawal below B's rows floor still holds. A
+/// withdrawal below B's sequence in its own ancestry is refused, even
+/// outside the handoff's line.
 #[test]
 fn a_row_below_its_floor_outside_any_handoffs_line_stays_refused() {
     let fork = fork(239);
@@ -190,14 +189,24 @@ fn a_row_below_its_floor_outside_any_handoffs_line_stays_refused() {
     vault.apply_signed_re_root(&fork.handoff).unwrap();
     let high = withdrawal(id, &fork.handoff, &fork.next, 5, 8);
     let rollback = withdrawal(id, &fork.handoff, &fork.next, 2, 9);
+    let ancestry_rollback = withdrawal(id, &high, &fork.next, 2, 10);
     put(&vault, &[&high]).unwrap();
     put(&vault, &[&rollback]).unwrap();
+    put(&vault, &[&ancestry_rollback]).unwrap();
     let fold = vault.authority_fold().unwrap();
     assert!(fold.valid_entries.contains(&hash(&high)));
-    assert!(!fold.valid_entries.contains(&hash(&rollback)));
+    assert!(fold.valid_entries.contains(&hash(&rollback)));
+    assert!(
+        !fold
+            .issues
+            .contains(&AuthorityFoldIssue::NonMonotonicSeq(hash(&rollback)))
+    );
+    assert!(!fold.valid_entries.contains(&hash(&ancestry_rollback)));
     assert!(
         fold.issues
-            .contains(&AuthorityFoldIssue::NonMonotonicSeq(hash(&rollback)))
+            .contains(&AuthorityFoldIssue::NonMonotonicSeq(hash(
+                &ancestry_rollback
+            )))
     );
     assert!(is_live(&fold, &fork.next));
     assert_no_vouch_widens(&vault);

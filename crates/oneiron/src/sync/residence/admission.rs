@@ -140,6 +140,31 @@ impl<'v> ResidenceAdmission<'v> {
         self.context.allows_item(txn, &id)
     }
 
+    /// Keeps the tombstones of `entries` whose deleted rows the credential's
+    /// own bounds leave in, judged in one snapshot
+    /// ([`ResidenceReadContext::credential_admits_deleted_in`]): the bound a
+    /// hard-deleted row's tombstone meets, since no row is left to read.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors; a credential whose owner no longer stands.
+    pub fn retain_admitted_tombstones(
+        &self,
+        entries: &mut Vec<super::WindowTombstoneEntry>,
+    ) -> Result<()> {
+        let txn = self.vault.store.env.read_txn()?;
+        let mut failed = None;
+        entries.retain(|entry| {
+            self.context
+                .credential_admits_deleted_in(&txn, &entry.entity_id, &entry.value)
+                .unwrap_or_else(|error| {
+                    failed.get_or_insert(error);
+                    false
+                })
+        });
+        failed.map_or(Ok(()), Err)
+    }
+
     /// Where the row of the admitted item `id` sits, for the copy the
     /// destination keeps of it (FIX 14534): a world kept off the destination
     /// is never named to it, and reads as unknown.

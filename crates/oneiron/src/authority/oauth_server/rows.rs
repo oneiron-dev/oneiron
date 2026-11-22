@@ -64,8 +64,13 @@ pub(super) struct PendingAuthorization {
     pub(super) code_challenge: String,
     /// The client's own `state`, echoed on the redirect.
     pub(super) state: Option<String>,
-    /// The RFC 8707 resource: this vault's `/mcp`.
+    /// The first RFC 8707 resource the request named: this vault's `/mcp`, or its `/git`.
     pub(super) resource: String,
+    /// Every further resource it named (RFC 8707 §2: a request may name several;
+    /// CONTINUE-PUSH-NON-SLIP-SELECTION). Empty on a row that named one, and on every row
+    /// written before it, which reads as before.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) further_resources: Vec<String>,
     /// The tier the client asked for.
     pub(super) tier: AgentTier,
     /// The keyed hash of the page's poll secret (hex64).
@@ -93,6 +98,9 @@ pub(super) struct IssuedCode {
     pub(super) redirect_uri: String,
     pub(super) code_challenge: String,
     pub(super) resource: String,
+    /// The request's further resources ([`PendingAuthorization::further_resources`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) further_resources: Vec<String>,
     pub(super) grant: AuthorizedGrant,
     pub(super) expires_at: u64,
     /// The family its redemption minted; `None` until it is redeemed.
@@ -100,6 +108,11 @@ pub(super) struct IssuedCode {
 }
 
 impl IssuedCode {
+    /// Whether the code's request named `resource`, so a token request may name it.
+    pub(super) fn names_resource(&self, resource: &str) -> bool {
+        resource_named(&self.resource, &self.further_resources, resource)
+    }
+
     /// The grant of a code no exchange redeemed: no token stands on it.
     pub(super) fn unredeemed_grant(&self) -> Option<AuthorizedGrant> {
         self.redeemed_family.is_none().then_some(self.grant)
@@ -131,6 +144,10 @@ pub(super) struct IssuedToken {
 pub(super) struct TokenFamily {
     pub(super) client_id: String,
     pub(super) resource: String,
+    /// Its code's further resources ([`PendingAuthorization::further_resources`]): every
+    /// access token of the family reaches each resource its sign-in named, and no other.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) further_resources: Vec<String>,
     pub(super) grant: AuthorizedGrant,
     /// When its newest refresh token lapses; past it, no token of the family stands.
     pub(super) expires_at: u64,
@@ -145,6 +162,11 @@ pub(super) struct TokenFamily {
 }
 
 impl TokenFamily {
+    /// Whether the family's sign-in named `resource`: its access tokens reach it.
+    pub(super) fn names_resource(&self, resource: &str) -> bool {
+        resource_named(&self.resource, &self.further_resources, resource)
+    }
+
     /// Whether the expiry sweep drops the family at `now`: past its newest refresh token's
     /// lifetime, with no sign-in end due ([`FamilyOpening::end_due_at`]). A family whose sign-in
     /// end failed stays until a pass ends it and takes its grant back.
@@ -156,4 +178,9 @@ impl TokenFamily {
 /// The [`CLIENTS`] key of a client ID.
 pub(super) fn client_key(client_id: &str) -> String {
     blake3::hash(client_id.as_bytes()).to_hex().to_string()
+}
+
+/// Whether `resource` is `first` or one of `further`: the resources one sign-in named.
+fn resource_named(first: &str, further: &[String], resource: &str) -> bool {
+    first == resource || further.iter().any(|named| named == resource)
 }

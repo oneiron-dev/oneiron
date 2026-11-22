@@ -78,6 +78,9 @@ pub use self::rules::{
     BookingRuleOwnerStampBinding, BookingRuleScope, RuleAmendmentOutcome, booking_rule_row_id,
     booking_rule_variant_tag, default_booking_anti_abuse_rows, validate_rule_row,
 };
+pub(crate) use self::rules::{
+    email_prompt_at_failed_checks_default, email_quarantine_at_failed_checks_default,
+};
 pub use self::storage::BOOKING_ANTI_ABUSE_META_PREFIX;
 
 // -------------------------------------------------------------------------
@@ -87,8 +90,6 @@ pub use self::storage::BOOKING_ANTI_ABUSE_META_PREFIX;
 // The module is named so `cargo test -p oneiron booking_anti_abuse` selects
 // every test here (the ticket-gated command filters on the full test path,
 // and `booking::anti_abuse::tests` does not contain the substring).
-// FIX [LIBTEST-QUARANTINE-BOOKING-ANTI-ABUSE-TESTS]: the lib test target's type check fails here (2 errors: E0599 x1, E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 #[path = "tests.rs"]
 mod booking_anti_abuse_tests;

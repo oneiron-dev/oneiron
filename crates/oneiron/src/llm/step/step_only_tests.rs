@@ -14,7 +14,8 @@ use crate::Vault;
 use crate::attempt_queue::{AttemptQueue, AttemptState, ClaimAttempt, ClaimOutcome};
 use crate::claim::ClaimSubject;
 use crate::dreamer_runner::{
-    DreamerRunnerStore, EnqueueDreamerAttempt, EnqueueDreamerAttemptOutcome, ParkDreamerAttempt,
+    DreamerParkCause, DreamerRunnerStore, EnqueueDreamerAttempt, EnqueueDreamerAttemptOutcome,
+    ParkDreamerAttempt,
 };
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
@@ -236,7 +237,9 @@ fn step_only_and_attempt_scoped_doors_cannot_cross() -> Result<()> {
     let parked = runner.park_attempt(ParkDreamerAttempt {
         attempt_id: ctx.attempt_id,
         reason: "other wait".into(),
+        cause: DreamerParkCause::Signal,
         park_owner: "other-owner".into(),
+        carried_spend: None,
         now: 11,
     })?;
     assert!(vault.with_write_txn(|wtxn| consume_step_wait_in_txn(&vault, wtxn, &trap, 12_000))?);

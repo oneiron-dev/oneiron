@@ -17,6 +17,7 @@
 
 use std::collections::HashSet;
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use serde::{Deserialize, Serialize};
 
 use super::{HistoryMessage, HistoryRole, HistorySource, UNKNOWN_SPEAKER};
@@ -202,24 +203,33 @@ fn erasure_hashes(message: &HistoryMessage) -> [String; 3] {
 
 /// The hash of `message`'s side and words as `speaker` said them. A message
 /// whose side tells its speaker hashes as it did before Slack members were
-/// told apart, so no stored ledger row changes meaning.
+/// told apart, so no stored ledger row changes meaning. The ledger stores this
+/// hash and a re-import compares it, so it keeps its bytes (K, PLAN-UC-04
+/// stage 6.2).
 fn hash(message: &HistoryMessage, speaker: Speaker) -> String {
-    let mut hasher = blake3::Hasher::new();
+    let mut digest = LegacyDigest::new(purposes::ingest::HISTORY_MESSAGE);
     match speaker {
         Speaker::ByRole => {}
         Speaker::SlackMember => {
-            hasher.update(b"slack-member\0");
+            digest.raw(b"slack-member\0");
         }
         Speaker::Unknown => {
-            hasher.update(b"unknown\0");
+            digest.raw(b"unknown\0");
         }
     }
-    hasher.update(match message.role {
+    digest.raw(match message.role {
         HistoryRole::User => b"user\0",
         HistoryRole::Assistant => b"asst\0",
     });
-    hasher.update(message.text.as_bytes());
-    hasher.finalize().to_hex().to_string()
+    digest.raw(message.text.as_bytes());
+    oneiron_hex::encode(&digest.finish())
+}
+
+/// A message's hashes as each speaker said it: by role, as a Slack member,
+/// unknown ([`erasure_hashes`]).
+#[cfg(oneiron_test_support)]
+pub(crate) fn history_message_hashes_for_test(message: &HistoryMessage) -> [String; 3] {
+    erasure_hashes(message)
 }
 
 pub(super) fn get(

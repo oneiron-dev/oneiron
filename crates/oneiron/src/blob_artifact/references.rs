@@ -20,7 +20,7 @@ use crate::error::Result;
 use crate::ports::{DeletionMarker, TombstoneStoreRead};
 use crate::registry::{ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CLAIM};
 use crate::side_table::{self, HexId, Raw, SideTable};
-use crate::store::Store;
+use crate::store::{ManifestDbs, Store};
 use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
 
 use super::provenance::BLOB_VERSION_CLAIM_PREDICATE;
@@ -69,6 +69,94 @@ fn version_claim_reference(body: &ClaimBody) -> Option<(EntityId, ContentHash)> 
                 .map(|hash| (artifact, hash)),
             _ => None,
         })
+}
+
+/// The refusal of a version claim's delete or retarget by anyone but the owner.
+const LONE_VERSION_CLAIM_DELETE: &str = "a blob version claim goes with its version: delete the artifact, or the owner releases the version";
+
+/// The artifact and content hash the stored `blob.version` claim at `id` names: `None` for any
+/// other row, an absent one, or one this vault already holds a delete of.
+fn stored_version_claim_reference(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<(EntityId, ContentHash)>> {
+    // A delete or put reaches this on any prior row, a custody record among them: the copy is
+    // wiped.
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw_wiped(store, txn, id)? else {
+        return Ok(None);
+    };
+    if raw.len() <= ENTITY_METADATA_HEADER_LEN
+        || raw[0] != ENTITY_TYPE_CLAIM
+        || crate::deletion::row_deletion_marked(store, txn, id, Some(raw.as_slice()))?
+    {
+        return Ok(None);
+    }
+    Ok(crate::write_envelope::claim_body::decode_claim_body(
+        &raw[ENTITY_METADATA_HEADER_LEN..],
+        true,
+    )
+    .ok()
+    .as_ref()
+    .and_then(version_claim_reference))
+}
+
+/// The ledger guard (ARCH-0005a #erase-refcount-open, ASTRA-R2-002): a `blob.version` claim goes
+/// only with its artifact or its version. A replica that first syncs after a lone claim delete
+/// never learns the claim's pair, so the artifact's later delete there would leave its bytes.
+///
+/// The artifact and content hash the claim at `id` names while that artifact is live here:
+/// `None` for any other record, and for a claim whose artifact is gone or never arrived.
+pub(crate) fn live_version_claim_reference(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<(EntityId, ContentHash)>> {
+    match stored_version_claim_reference(store, txn, id)? {
+        Some((artifact, hash)) if artifact_is_live(store, txn, &artifact)? => {
+            Ok(Some((artifact, hash)))
+        }
+        _ => Ok(None),
+    }
+}
+
+/// The batch writer's side of the ledger guard: a batch Delete of a live artifact's version
+/// claim is refused. The delete rail runs the owner's delete as the version's release and refuses
+/// every other caller (`deletion/delete/guard.rs`); a peer's tombstone and the engine's own
+/// version release pass neither.
+pub(crate) fn reject_lone_version_claim_delete(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    match live_version_claim_reference(store, txn, id)? {
+        Some(_) => Err(lone_version_claim_refusal()),
+        None => Ok(()),
+    }
+}
+
+/// The same guard on a local same-id rewrite. A rewrite that changes the stored version claim's
+/// predicate, artifact or content hash drops its pair the way a delete does. One that keeps both
+/// (an approval, a retraction, an actor scrub) passes.
+pub(crate) fn reject_version_claim_retarget(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    incoming: &ClaimBody,
+) -> Result<()> {
+    match live_version_claim_reference(store, txn, id)? {
+        Some(stored) if version_claim_reference(incoming) != Some(stored) => {
+            Err(lone_version_claim_refusal())
+        }
+        _ => Ok(()),
+    }
+}
+
+/// The ledger guard's refusal, naming the way out.
+pub(crate) fn lone_version_claim_refusal() -> crate::error::Error {
+    crate::error::Error::Artifact(crate::error::ArtifactError::InvalidBlobArtifactBody(
+        LONE_VERSION_CLAIM_DELETE,
+    ))
 }
 
 /// Records the pair one claim put names, at the claim put chokepoint for local and replicated
@@ -300,7 +388,7 @@ pub(crate) fn artifacts_claiming(
 /// The artifacts live here whose version claims name the bytes under `hash`: the holders
 /// [`held_by_live_artifact`] asks about, listed.
 pub(super) fn live_claim_holders(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     hash: &ContentHash,
 ) -> Result<Vec<EntityId>> {
@@ -315,7 +403,7 @@ pub(super) fn live_claim_holders(
 }
 
 /// A stored artifact row with its body, under no delete this vault holds.
-fn artifact_is_live(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
+fn artifact_is_live(store: &impl ManifestDbs, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
     let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
         return Ok(false);
     };
@@ -418,7 +506,5 @@ pub(super) fn lift_release_fence(
     }
     Ok(())
 }
-// FIX [LIBTEST-QUARANTINE-BLOB-ARTIFACT-REFERENCES-TESTS]: the lib test target's type check fails here (2 errors: E0061 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
