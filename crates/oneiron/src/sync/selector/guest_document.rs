@@ -6,9 +6,7 @@ use crate::authority::{HostSlipIssuer, VerifiedSlip};
 use crate::claim::CallerLocality;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::{EntityId, LocalWorldId, bytes_to_hex_lower};
-use crate::federation::{
-    FederationGrant, FederationGrantScope, ScopeId, decode_federation_grant_body,
-};
+use crate::federation::{FederationGrant, FederationGrantScope, ScopeId};
 pub use crate::guest_document_share::GuestDocumentShareRequest;
 use crate::registry::{ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_WORLD};
 use crate::sync::{SyncSelector, SyncSelectorWorld, WindowKey, WindowManager};
@@ -29,7 +27,10 @@ fn context(
     input: &GuestDocumentShareRequest,
 ) -> Result<(FederationGrant, GuestDocumentContext)> {
     let txn = vault.store.env.read_txn()?;
-    let grant = guest_connect_grant_in(vault, &txn, &input.grant_ref)?;
+    let fold = vault.authority_fold_readonly_in_txn(&txn)?;
+    // The guest's Grant as the fold stands behind it (pass 28 R3d): the
+    // disclosure below carries its act's terms as its record ceiling.
+    let grant = guest_connect_grant_in(vault, &txn, &fold, &input.grant_ref)?;
     if input.world_ref == crate::claim::base_world_id()
         || LocalWorldId::try_from(input.world_ref).is_err()
         || !grant
@@ -39,10 +40,6 @@ fn context(
         || live_entity_row_in_txn(&vault.store, &txn, &input.world_ref)?.live_type()
             != Some(ENTITY_TYPE_WORLD)
     {
-        return Err(refused());
-    }
-    let fold = vault.authority_fold_readonly_in_txn(&txn)?;
-    if !crate::federation::pact_admits_grant(&fold, &input.grant_ref, &grant) {
         return Err(refused());
     }
     let (pact, epoch) = fold.active_pact_delivery_context(&input.grant_ref)?;
@@ -59,10 +56,14 @@ fn context(
 }
 
 /// The live guest grant `grant_ref` names, under Connect scope and
-/// conferring now; a missing row is not found and any other grant refuses.
+/// conferring now, as `fold` stands behind it (pass 28 R3d): its counted
+/// giving, no counted end, its act's terms, unexpired, and one Active
+/// operative pact with its peer. A missing row is not found and any other
+/// grant refuses: a row alone confers nothing.
 fn guest_connect_grant_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
+    fold: &crate::authority::AuthorityFold,
     grant_ref: &EntityId,
 ) -> Result<FederationGrant> {
     let LiveEntityRow::Live {
@@ -72,10 +73,13 @@ fn guest_connect_grant_in(
     else {
         return Err(Error::EntityNotFound);
     };
-    let grant = decode_federation_grant_body(&body)?;
+    let now = vault.store.clock.now_recorded_at();
+    let grant = crate::federation::guest_grant_in_fold(fold, *grant_ref, &body, now)
+        .ok_or_else(refused)?
+        .into_grant();
     if !grant.role.is_guest()
         || !matches!(grant.scope, FederationGrantScope::Connect { .. })
-        || !grant.confers_at(vault.store.clock.now_recorded_at())
+        || !grant.confers_at(now)
     {
         return Err(refused());
     }
@@ -257,8 +261,8 @@ pub fn guest_document_rows_still_readable(
         };
         let grant = {
             let txn = vault.store.env.read_txn()?;
-            let grant = guest_connect_grant_in(vault, &txn, &grant_ref)?;
             let fold = vault.authority_fold_readonly_in_txn(&txn)?;
+            let grant = guest_connect_grant_in(vault, &txn, &fold, &grant_ref)?;
             if !crate::federation::pact_admits_grant(&fold, &grant_ref, &grant) {
                 return Ok(false);
             }

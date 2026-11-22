@@ -60,7 +60,7 @@ use oneiron::sync::schema::create_window_doc;
 use oneiron::sync::window::reverse_rematerialize;
 use oneiron::sync::{
     SyncSelector, SyncSelectorWorld, WindowKey, authorize_sync_selector,
-    filtered_window_doc_for_peer, put_selector_test_federation_grant,
+    filtered_window_doc_for_peer,
 };
 use oneiron::test_doors::label_writers::{embedded_owner, open_member_vault};
 use oneiron::test_support::test_host_issuer;
@@ -545,8 +545,10 @@ fn export_through(
     let grant_id = EntityId::now();
     let mut grant = FederationGrant::new(scope, member, role, preset);
     grant.authority_scope = read_preset();
-    put_selector_test_federation_grant(&vault, &grant_id, &grant, now)
-        .expect("FIXTURE: the live federation grant");
+    // A row gives nothing by itself: the member's Grant stands on the
+    // owner's counted giving.
+    oneiron::test_doors::grant_act::give_member_grant_as_writer(&vault, grant_id, &grant, owner)
+        .expect("FIXTURE: the owner's counted giving of the live federation grant");
     let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
     authorize_sync_selector(&vault, scope, &selector).expect("FIXTURE: the selector is authorized");
 

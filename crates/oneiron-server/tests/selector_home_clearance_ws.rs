@@ -14,11 +14,13 @@
 //! and `public` claims and neither stamped one; a second test repeats the
 //! fetch under an Owner-role grant and asserts all four ride it.
 //!
-//! Needs the `oneiron/test-hooks` feature (`put_selector_test_federation_grant`)
-//! and its `[[test]]` stanza (see NOTES.md).
+//! Needs the `oneiron/test-hooks` feature (its `[[test]]` stanza, see NOTES.md)
+//! and the test doors (`--cfg oneiron_test_support`): a row gives nothing by
+//! itself, so the member's Grant is given by the owner's counted act.
 //!
-//! `cargo test --locked -p oneiron-server --features oneiron/test-hooks
-//! --test selector_home_clearance_ws`.
+//! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron-server
+//! --features oneiron/test-hooks --test selector_home_clearance_ws`.
+#![cfg(oneiron_test_support)]
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -32,10 +34,7 @@ use oneiron::federation::{
 };
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::sync::transport::{self, TAG_RPC, TAG_WINDOW_SYNC, window_sub_tags};
-use oneiron::sync::{
-    SyncSelector, SyncSelectorWorld, WindowKey, encode_selector_vv_request,
-    put_selector_test_federation_grant,
-};
+use oneiron::sync::{SyncSelector, SyncSelectorWorld, WindowKey, encode_selector_vv_request};
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EntityId,
     TimeRange, Vault, VaultConfig,
@@ -141,8 +140,25 @@ async fn fixture(role: FederationGrantRole, preset: FederationGrantPreset) -> Se
     let mut authority = Scope::top();
     authority.verbs = ScopeAxis::Some(BTreeSet::from(["read".to_owned()]));
     grant.authority_scope = authority;
-    put_selector_test_federation_grant(&vault, &grant_id, &grant, now)
-        .expect("the member's federation grant");
+    // The owner gives the member's Grant by a counted act, which this install
+    // carries under the root the credentials' issuer writes (the root binds
+    // the embedded owner; the server's start then finds it all in place).
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    let issuer = HostSlipIssuer::from_secret(SECRET.as_bytes()).expect("host issuer");
+    vault
+        .ensure_host_root_slip(&issuer)
+        .expect("host root slip");
+    vault
+        .provision_engine_machine_identities(&issuer)
+        .expect("the engine's MACHINE writers");
+    vault
+        .ensure_serving_install_profile(&issuer, oneiron::authority::MachineRole::Unanswered)
+        .expect("this install's live machine profile, to carry the grant act");
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the embedded owner");
+    oneiron::test_doors::grant_act::give_member_grant_as_writer(&vault, grant_id, &grant, owner)
+        .expect("the owner's counted giving of the member's federation grant");
     let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
     let key = WindowKey::from_timestamp(now).as_str().to_owned();
 
