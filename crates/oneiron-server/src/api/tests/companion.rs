@@ -2,6 +2,9 @@
 
 use super::*;
 
+#[cfg(oneiron_test_support)]
+use oneiron::test_doors::campaign_member_index::restrict_record;
+
 #[tokio::test]
 async fn v1_companion_profile_access_grants_allow_deny_and_revoke() {
     let (_dir, server) = test_server_with_config(SyncServerConfig {
@@ -1420,8 +1423,8 @@ async fn a_refresh_naming_more_source_revisions_than_one_snapshot_holds_is_refus
     }
 }
 
-/// A hosted server, so a privacy erase a customer hold refuses keeps its
-/// record stored and use-limited (C6 holds only on a hosted vault).
+/// A hosted server.
+#[cfg(oneiron_test_support)]
 fn hosted_companion_test_server() -> (tempfile::TempDir, Arc<SyncServer>) {
     let dir = tempfile::tempdir().expect("temp vault dir");
     let mut vault_config = oneiron::VaultConfig::device();
@@ -1436,64 +1439,22 @@ fn hosted_companion_test_server() -> (tempfile::TempDir, Arc<SyncServer>) {
     (dir, server)
 }
 
-/// Places a customer hold on `record` and runs its privacy erase, which the
-/// hold refuses: the record stays stored and use-limited.
-fn keep_use_limited(vault: &oneiron::Vault, record: oneiron::EntityId) {
-    let owner = vault
-        .ensure_embedded_owner_actor()
-        .expect("FIXTURE: the vault names its embedded owner actor");
-    let proof = vault
-        .authenticate_owner(
-            owner,
-            &owner.to_hex(),
-            true,
-            oneiron::store::GateDecisionId::now(),
-        )
-        .expect("FIXTURE: owner proof");
-    let hold = vault
-        .place_legal_hold(
-            &proof,
-            vec![oneiron::deletion::LegalHoldTarget::Record(record)],
-            Some("matter-companion-profile".to_owned()),
-        )
-        .expect("FIXTURE: place the customer hold");
-    assert!(hold.stands(), "FIXTURE: the customer hold stands: {hold:?}");
-    let memory = vault.memory(owner, oneiron::EdgeActorClass::Human);
-    let preview = memory
-        .preview_entity_delete(&record)
-        .expect("FIXTURE: preview the privacy erase");
-    let outcome = memory
-        .confirm_entity_erase(
-            &preview,
-            oneiron::memory::EraseOptions {
-                reason: oneiron::memory::EraseReason::GdprDelete,
-                also_same_bytes: false,
-                veto_starter: None,
-            },
-        )
-        .expect("FIXTURE: the privacy erase runs");
-    assert_eq!(
-        outcome.first.reason.as_str(),
-        "privacy_erase_kept",
-        "FIXTURE: the held privacy erase is kept: {outcome:?}"
-    );
-    assert!(
-        vault
-            .legal_hold_use_limit(&record)
-            .expect("FIXTURE: read the use limit")
-            .is_some(),
-        "FIXTURE: the kept erase use-limits the record"
-    );
+/// Restricts `record` under a cooperative review, in the row the
+/// cooperative-deletion answer writes: every use-limited read hides the record.
+#[cfg(oneiron_test_support)]
+fn use_limit(vault: &oneiron::Vault, record: oneiron::EntityId) {
+    restrict_record(vault, record).expect("FIXTURE: restrict the record");
 }
 
 /// A profile kept from use answers as withheld (FIX
 /// COMPANION-USE-LIMITED-PROFILE-READS-AS-MISSING; Engine ANSWER
 /// COMPANION-USE-LIMITED-PROFILE-ANSWER = A): state missing, with no next
 /// step and no drift anchors, on the read and on the refresh plan alike. A
-/// refresh cannot make it readable while the limit stands. Here the profile
-/// is content about a PERSON whose privacy erase a customer hold refused.
+/// refresh cannot make it readable while the limit stands. Here a cooperative
+/// review restriction use-limits the profile itself.
+#[cfg(oneiron_test_support)]
 #[tokio::test]
-async fn v1_companion_profile_of_a_use_limited_person_answers_no_next_step() {
+async fn v1_companion_use_limited_profile_answers_no_next_step() {
     let (_dir, server) = hosted_companion_test_server();
     let grant_id = seeded_test_entity_id(0x1218_0E01);
     let principal_ref = seeded_test_entity_id(0x1218_0E02);
@@ -1546,7 +1507,7 @@ async fn v1_companion_profile_of_a_use_limited_person_answers_no_next_step() {
         "FIXTURE: the profile reads before the limit: {body}"
     );
 
-    keep_use_limited(&server.vault, person_ref);
+    use_limit(&server.vault, profile_id);
 
     let withheld = json!({
         "person_ref": person_ref.to_hex(),

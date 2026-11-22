@@ -2,33 +2,34 @@
 //! The whole-vault export withholds a retained side row about a record it keeps out (FIX
 //! WHOLE-VAULT-EXPORT-RETAINED-ROWS-OF-WITHHELD-RECORDS).
 //!
-//! Public doors only; neutral fixtures; vaults in tempdirs.
+//! Public doors beside the `oneiron::test_doors` cooperative restriction; neutral fixtures;
+//! vaults in tempdirs.
 //!
 //! * `a_whole_vault_export_withholds_the_landing_receipt_of_a_use_limited_note`: on a hosted
 //!   vault the owner lands a rewrite of each of two NOTEs, so the archive carries two
 //!   `NOTE_RECEIPT` rows, each keyed by its receipt's own id and naming its NOTE in its value.
-//!   A customer hold then refuses the first NOTE's privacy erase, which keeps it stored and
-//!   use-limited: the export carries neither that NOTE nor its receipt, and still carries the
-//!   second NOTE's receipt.
+//!   A cooperative review restriction then use-limits the first NOTE: the export carries neither
+//!   that NOTE nor its receipt, and still carries the second NOTE's receipt.
 //! * `a_whole_vault_export_withholds_a_setting_change_whose_reason_names_a_use_limited_note`:
 //!   the owner changes a vault-scope setting twice, each change's reason citing one NOTE by its
 //!   hex id, the id an erase of that NOTE finds in a change's reason and drops the change by.
-//!   After a customer hold keeps the first NOTE use-limited, the export carries no change citing
-//!   it and still carries the change citing the second NOTE (own review P1, 20 Nov).
+//!   After a cooperative review restriction use-limits the first NOTE, the export carries no
+//!   change citing it and still carries the change citing the second NOTE (own review P1, 20
+//!   Nov).
 //! * `a_whole_vault_export_withholds_a_house_link_receipt_naming_a_use_limited_org`: on a
 //!   hosted vault rooted under its host, the owner binds the workspace's house to run its org,
 //!   which files one `HOUSE_LINK_RECEIPT` keyed by the house and naming the org in its value. A
-//!   customer hold then refuses the org's privacy erase: the export carries neither the org nor
-//!   the receipt (REVIEW-9739 P1-1).
+//!   cooperative review restriction then use-limits the org: the export carries neither the org
+//!   nor the receipt (REVIEW-9739 P1-1).
 //! * `a_whole_vault_export_withholds_a_house_link_receipt_whose_key_names_a_use_limited_person`
 //!   (round 2 P1-2; door `retain_inert_side_row`): the same vault keeps an inert copy of the
-//!   bind receipt whose key leads with another person, held, and whose value is the live one; a
-//!   customer hold then refuses held's privacy erase. The export carries no such copy and still
-//!   carries the live receipt.
+//!   bind receipt whose key leads with another person, restricted, and whose value is the live
+//!   one; a cooperative review restriction then use-limits restricted. The export carries no
+//!   such copy and still carries the live receipt.
 //! * `a_whole_vault_export_withholds_a_standing_policy_whose_scope_names_a_use_limited_person`
-//!   (round 2 P1-3): N agreeing rulings in the scope `consult:<held hex>:brief` earn one
-//!   proposed `EDIT_DISTANCE_ESCALATION_POLICY` row; after a customer hold refuses held's
-//!   privacy erase the export carries no such row.
+//!   (round 2 P1-3): N agreeing rulings in the scope `consult:<person hex>:brief` earn one
+//!   proposed `EDIT_DISTANCE_ESCALATION_POLICY` row; after a cooperative review restriction
+//!   use-limits that person the export carries no such row.
 //!
 //! The first test runs red at the base (#9446 head 1adbb2714bf), whose export checks only the
 //! rows of three room tables, and green at the fix. The second runs red at 0b834f36c37, whose
@@ -41,75 +42,34 @@
 #[path = "archive_import_retained_side_rows.rs"]
 mod retained_side_rows;
 
-use oneiron::deletion::LegalHoldTarget;
 use oneiron::edit_distance::escalation::{
     EscalationReceipt, EscalationRuling, EscalationTrigger, escalation_standing_n,
     maybe_propose_standing_policy, record_escalation,
 };
-use oneiron::memory::{EraseOptions, EraseReason};
 use oneiron::note::{NoteProgramEdit, NoteVerdict};
 use oneiron::registry::{ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON};
 use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
 use oneiron::test_doors::archive_room_ledger;
+use oneiron::test_doors::campaign_member_index::restrict_record;
 use oneiron::workspace_roster::{DEFAULT_HOUSE_ROLE, WorkCompanionPolicy, WorkspaceRosterPreset};
 use oneiron::{
     EdgeActorClass, EntityId, HostingPrivacyPosture, TimeRange, Vault, VaultConfig, WriteActor,
 };
 use retained_side_rows::{export_whole, owner_proof, retained_rows, rows_for};
 
-/// A hosted vault with a device keystore, so a held privacy erase keeps its record
-/// use-limited.
+/// A hosted vault.
 fn open_hosted_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("temp dir for the hosted vault");
     let mut config = VaultConfig::default();
     config.privacy.posture = HostingPrivacyPosture::Hosted;
     let vault = Vault::open_owned(dir.path(), config).expect("open the hosted vault");
-    vault.install_device_keystore(std::sync::Arc::new(
-        oneiron_keystore::MemoryKeystore::default(),
-    ));
     (dir, vault)
 }
 
-/// Places a customer hold on `record` and runs its privacy erase, which the hold refuses: the
-/// record stays stored and use-limited, and a whole-vault export keeps it out.
+/// Restricts `record` under a cooperative review, in the row the cooperative-deletion answer
+/// writes: every use-limited read hides the record, and a whole-vault export keeps it out.
 fn use_limit(vault: &Vault, record: EntityId) {
-    let hold = vault
-        .place_legal_hold(
-            &owner_proof(vault),
-            vec![LegalHoldTarget::Record(record)],
-            Some("matter-retained-rows".to_owned()),
-        )
-        .expect("FIXTURE: place the customer hold");
-    assert!(hold.stands(), "FIXTURE: the customer hold stands: {hold:?}");
-    let actor = vault
-        .ensure_embedded_owner_actor()
-        .expect("FIXTURE: the vault names its embedded owner actor");
-    let memory = vault.memory(actor, EdgeActorClass::Human);
-    let preview = memory
-        .preview_entity_delete(&record)
-        .expect("FIXTURE: preview the privacy erase");
-    let outcome = memory
-        .confirm_entity_erase(
-            &preview,
-            EraseOptions {
-                reason: EraseReason::GdprDelete,
-                also_same_bytes: false,
-                veto_starter: None,
-            },
-        )
-        .expect("FIXTURE: the privacy erase runs");
-    assert_eq!(
-        outcome.first.reason.as_str(),
-        "privacy_erase_kept",
-        "FIXTURE: the held privacy erase is kept: {outcome:?}"
-    );
-    assert!(
-        vault
-            .legal_hold_use_limit(&record)
-            .expect("FIXTURE: read the use limit")
-            .is_some(),
-        "FIXTURE: the kept erase use-limits the record"
-    );
+    restrict_record(vault, record).expect("FIXTURE: restrict the record");
 }
 
 /// A NOTE the owner writes with `text` and then rewrites through a switch, which files one
@@ -175,7 +135,7 @@ fn a_whole_vault_export_withholds_the_landing_receipt_of_a_use_limited_note() {
         assert_eq!(
             receipt_tuples(&before, receipt),
             1,
-            "FIXTURE: before the hold the archive carries each NOTE's landing receipt"
+            "FIXTURE: before the restriction the archive carries each NOTE's landing receipt"
         );
     }
 
@@ -239,7 +199,7 @@ fn a_whole_vault_export_withholds_a_setting_change_whose_reason_names_a_use_limi
     let actor = || WriteActor::new(owner, EdgeActorClass::Human);
     let held_note = vault
         .create_note("research", "Meeting notes.", actor())
-        .expect("FIXTURE: the owner writes the held NOTE");
+        .expect("FIXTURE: the owner writes the restricted NOTE");
     let free_note = vault
         .create_note("research", "Shopping list.", actor())
         .expect("FIXTURE: the owner writes the free NOTE");
@@ -250,7 +210,7 @@ fn a_whole_vault_export_withholds_a_setting_change_whose_reason_names_a_use_limi
         assert_eq!(
             change_tuples(&before, sequence),
             1,
-            "FIXTURE: before the hold the archive carries each setting change"
+            "FIXTURE: before the restriction the archive carries each setting change"
         );
     }
 
@@ -351,7 +311,7 @@ fn a_whole_vault_export_withholds_a_house_link_receipt_naming_a_use_limited_org(
     assert_eq!(
         receipts(&export_whole(&vault)),
         1,
-        "FIXTURE: before the hold the archive carries the bind receipt"
+        "FIXTURE: before the restriction the archive carries the bind receipt"
     );
 
     use_limit(&vault, org);
@@ -370,7 +330,7 @@ fn a_whole_vault_export_withholds_a_house_link_receipt_naming_a_use_limited_org(
 #[test]
 fn a_whole_vault_export_withholds_a_house_link_receipt_whose_key_names_a_use_limited_person() {
     let (_dir, vault, _org) = bound_house_link_vault();
-    let held = EntityId::from_bytes([0xB4; 16]).expect("FIXTURE: the held person's id");
+    let held = EntityId::from_bytes([0xB4; 16]).expect("FIXTURE: the restricted person's id");
     vault
         .put_entity(
             &held,
@@ -379,7 +339,7 @@ fn a_whole_vault_export_withholds_a_house_link_receipt_whose_key_names_a_use_lim
             1,
             b"retained rows held house",
         )
-        .expect("FIXTURE: store the held person");
+        .expect("FIXTURE: store the restricted person");
     let live = house_link_receipts(&export_whole(&vault));
     let [(_, key, value)] = live.as_slice() else {
         panic!("FIXTURE: the archive carries one bind receipt: {live:?}");
@@ -392,7 +352,7 @@ fn a_whole_vault_export_withholds_a_house_link_receipt_whose_key_names_a_use_lim
         forged.clone(),
         value.clone(),
     )
-    .expect("FIXTURE: keep an inert receipt copy whose key leads with held");
+    .expect("FIXTURE: keep an inert receipt copy whose key leads with the restricted person");
 
     use_limit(&vault, held);
     let after = house_link_receipts(&export_whole(&vault));
@@ -406,7 +366,7 @@ fn a_whole_vault_export_withholds_a_house_link_receipt_whose_key_names_a_use_lim
 #[test]
 fn a_whole_vault_export_withholds_a_standing_policy_whose_scope_names_a_use_limited_person() {
     let (_dir, vault) = open_hosted_vault();
-    let held = EntityId::from_bytes([0xB5; 16]).expect("FIXTURE: the held person's id");
+    let held = EntityId::from_bytes([0xB5; 16]).expect("FIXTURE: the restricted person's id");
     vault
         .put_entity(
             &held,
@@ -415,7 +375,7 @@ fn a_whole_vault_export_withholds_a_standing_policy_whose_scope_names_a_use_limi
             1,
             b"retained rows held consultee",
         )
-        .expect("FIXTURE: store the held person");
+        .expect("FIXTURE: store the restricted consultee");
     let scope = format!("consult:{}:brief", held.to_hex());
     let trigger = EscalationTrigger::Unsure;
     let standing_n = escalation_standing_n(&vault).expect("FIXTURE: read the standing threshold");
@@ -442,7 +402,7 @@ fn a_whole_vault_export_withholds_a_standing_policy_whose_scope_names_a_use_limi
     assert_eq!(
         policies(&export_whole(&vault)),
         1,
-        "FIXTURE: before the hold the archive carries the standing policy"
+        "FIXTURE: before the restriction the archive carries the standing policy"
     );
 
     use_limit(&vault, held);
