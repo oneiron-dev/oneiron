@@ -1205,9 +1205,15 @@ pub enum LegalHoldsCommand {
     Place(Box<LegalHoldPlaceArgs>),
     /// Add records or partitions to one of your standing holds.
     Widen(Box<LegalHoldWidenArgs>),
+    /// Lift one of your holds. Destroys its sealed copy; nothing in the
+    /// vault is erased by it.
+    Lift(Box<LegalHoldLiftArgs>),
+    /// Re-seal one of your standing holds to a named recipient public key.
+    /// The access is logged.
+    Produce(Box<LegalHoldProduceArgs>),
     /// "Lift the hold and erase?": lift your holds on these records and
     /// erase them. Prints the confirm's prompt, and acts only with `--yes`.
-    LiftAndErase(Box<LegalHoldLiftArgs>),
+    LiftAndErase(Box<LegalHoldLiftAndEraseArgs>),
 }
 
 /// What a hold names.
@@ -1250,7 +1256,7 @@ pub struct LegalHoldWidenArgs {
 }
 
 #[derive(Args, Clone, Debug)]
-pub struct LegalHoldLiftArgs {
+pub struct LegalHoldLiftAndEraseArgs {
     /// The records to lift and erase, 32 hex each.
     #[arg(
         required_unless_present = "claim_free_partition",
@@ -1266,6 +1272,35 @@ pub struct LegalHoldLiftArgs {
     /// You have read the prompt and confirm it.
     #[arg(long)]
     pub yes: bool,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct LegalHoldLiftArgs {
+    /// The hold to lift, 32 hex, as `list` names it.
+    #[arg(long, value_name = "HEX")]
+    pub hold: String,
+
+    /// You have read the hold this lift prints and confirm it. Without it
+    /// the hold is shown and nothing is lifted.
+    #[arg(long)]
+    pub yes: bool,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct LegalHoldProduceArgs {
+    /// The standing hold to produce, 32 hex, as `list` names it.
+    #[arg(long, value_name = "HEX")]
+    pub hold: String,
+
+    /// The recipient public key, STANDARD base64 of its bytes.
+    #[arg(long, value_name = "BASE64")]
+    pub recipient_key: String,
 
     #[command(flatten)]
     pub serve: ServeArgs,

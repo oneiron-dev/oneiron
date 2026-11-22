@@ -86,6 +86,7 @@ pub(crate) fn event_row(
         matter_ref: hold.matter_ref.clone(),
         request_id,
         clone_fingerprint: None,
+        recipient_fingerprint: None,
     }
 }
 
@@ -96,11 +97,28 @@ pub(crate) fn append_event_in_txn(
     hold: &LegalHold,
     row: &LegalHoldEvent,
 ) -> Result<()> {
-    let table = match hold.kind {
+    append_in_txn(dbs, txn, own_log(hold), row)
+}
+
+/// `hold`'s own log: a customer hold's, or a host order's host-only one.
+fn own_log(hold: &LegalHold) -> Events {
+    match hold.kind {
         LegalHoldKind::Customer => EVENTS,
         LegalHoldKind::HostOrder => HOST_EVENTS,
-    };
-    append_in_txn(dbs, txn, table, row)
+    }
+}
+
+/// Whether `hold`'s own log already holds an `event` row.
+pub(crate) fn logged_in_txn(
+    dbs: &impl SideTableDbs,
+    txn: &RoTxn<'_>,
+    hold: &LegalHold,
+    event: LegalHoldEventKind,
+) -> Result<bool> {
+    Ok(own_log(hold)
+        .scan_from(dbs, txn, hold.hold_id.as_bytes())?
+        .iter()
+        .any(|(_, row)| row.event == event))
 }
 
 /// The newest event of `hold`'s own log.
@@ -109,11 +127,7 @@ pub(super) fn last_event_in_txn(
     txn: &RoTxn<'_>,
     hold: &LegalHold,
 ) -> Result<Option<LegalHoldEvent>> {
-    let table = match hold.kind {
-        LegalHoldKind::Customer => EVENTS,
-        LegalHoldKind::HostOrder => HOST_EVENTS,
-    };
-    Ok(table
+    Ok(own_log(hold)
         .iter_rev_from(dbs, txn, hold.hold_id.as_bytes())?
         .next()
         .transpose()?

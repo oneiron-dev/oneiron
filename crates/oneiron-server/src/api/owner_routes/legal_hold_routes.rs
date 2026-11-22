@@ -1,10 +1,11 @@
 //! `/v1/owner/legal-holds`: the owner's legal holds (OF-470), behind the same
 //! owner door as every other owner route. The owner places a hold, widens it,
-//! reads the holds and the id-only log, and lifts a hold only through the one
-//! "Lift the hold and erase?" confirm. Oneiron's host-order doors are never
-//! routed here: no owner, member or agent surface may reach them. Each
-//! route but the confirm's copy and its shown state runs its `vault.legal_holds.*` row's verb
-//! hooks once around the engine door (FIX 1466).
+//! lifts it (destroying its sealed copy), produces it to a named recipient,
+//! and reads the holds and the id-only log. Oneiron's host-order doors are
+//! never routed here: no owner, member or agent surface may reach them. Each
+//! route but the confirm's copy and its shown state runs its
+//! `vault.legal_holds.*` row's verb hooks once around the engine door (FIX
+//! 1466).
 
 use std::sync::Arc;
 
@@ -15,9 +16,10 @@ use axum::routing::{get, post};
 use oneiron::EdgeActorClass;
 use oneiron::deletion::{LIFT_AND_ERASE_PROMPT, LIFT_AND_ERASE_TITLE};
 use oneiron::task_verb::sdk::{
-    EmptyRequest, LegalHoldLiftAndEraseRequest, LegalHoldPlaceRequest, LegalHoldWidenRequest,
-    OwnerConfirmPreview, OwnerConfirmPreviewRequest, lift_legal_hold_and_erase_as,
-    preview_owner_confirm,
+    EmptyRequest, LegalHoldLiftAndEraseRequest, LegalHoldLiftRequest, LegalHoldPlaceRequest,
+    LegalHoldProduceRequest, LegalHoldWidenRequest, OwnerConfirmPreview,
+    OwnerConfirmPreviewRequest, lift_legal_hold_and_erase_as, lift_legal_hold_as,
+    preview_owner_confirm, produce_legal_hold_as,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -60,6 +62,26 @@ pub(super) fn owner_table() -> OwnerTable {
                 shape: None,
             },
             post(widen),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/legal-holds/lift",
+                summary: "Lifts the owner's customer hold hold_id and destroys its sealed copy.",
+                row: Some("vault.legal_holds.lift"),
+                shape: None,
+            },
+            post(lift),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/legal-holds/produce",
+                summary: "Re-seals the sealed copy of the owner's standing hold hold_id to a named recipient public key.",
+                row: Some("vault.legal_holds.produce"),
+                shape: None,
+            },
+            post(produce),
         ),
         (
             OwnerRoute {
@@ -177,6 +199,60 @@ async fn widen(
     })
     .await?;
     Ok(Json(hold))
+}
+
+/// `POST /v1/owner/legal-holds/lift`: lifts the owner's customer hold
+/// `hold_id` and destroys its sealed copy. Nothing in the vault is erased
+/// by it. The engine admits only the `confirm` of the shared
+/// `vault.owner_confirm.preview` of this lift, so a hold widened since its
+/// preview is not lifted.
+async fn lift(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: OwnerJsonBody<LegalHoldLiftRequest>,
+) -> OwnerReply<Value> {
+    let (owner, actor) = hooked_owner(&auth, &server)?;
+    let request = payload.read(&server).await?;
+    let hold = blocking(move || {
+        let vault = server.vault();
+        hooked_row(
+            vault,
+            actor,
+            "vault.legal_holds.lift",
+            request,
+            |request: LegalHoldLiftRequest| {
+                lift_legal_hold_as(vault, &owner, request).map_err(memory_refusal)
+            },
+        )
+    })
+    .await?;
+    Ok(Json(hold))
+}
+
+/// `POST /v1/owner/legal-holds/produce`: re-seals the sealed copy of the
+/// owner's standing customer hold `hold_id` to the named recipient public
+/// key, and logs the access.
+async fn produce(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: OwnerJsonBody<LegalHoldProduceRequest>,
+) -> OwnerReply<Value> {
+    let (owner, actor) = hooked_owner(&auth, &server)?;
+    let request = payload.read(&server).await?;
+    let produced = blocking(move || {
+        let vault = server.vault();
+        hooked_row(
+            vault,
+            actor,
+            "vault.legal_holds.produce",
+            request,
+            |request: LegalHoldProduceRequest| {
+                produce_legal_hold_as(vault, &owner, request).map_err(memory_refusal)
+            },
+        )
+    })
+    .await?;
+    Ok(Json(produced))
 }
 
 /// `GET /v1/owner/legal-holds/log`: the owner-visible hold log, oldest

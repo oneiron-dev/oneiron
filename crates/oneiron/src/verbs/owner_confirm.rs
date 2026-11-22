@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::calendar::calendar_hold_release_view;
-use super::legal_hold::LegalHoldLiftAndEraseRequest;
+use super::legal_hold::{LegalHoldLiftAndEraseRequest, LegalHoldLiftRequest, lift_legal_hold_view};
 use super::note_history::{self, NoteHistoryPurgeExecuteRequest, NoteHistoryPurgeRequest};
 use super::outbound_call_erase::OutboundCallRequestEraseRequest;
 use super::record_erase::{RecordEraseConfirmRequest, record_erase_view};
@@ -74,9 +74,14 @@ pub struct OwnerConfirmRow {
 /// (PLAN-CALENDAR-CONNECTOR-RELEASE-HOLD = A, the lead 21 Nov 09:40) and the
 /// resume of paused turn programs (ASK TURNPROGRAM-PAUSED-ARMINGS-OWNER-VERBS
 /// = A, the lead 21 Nov 10:01).
-pub static OWNER_CONFIRM_ROWS: [OwnerConfirmRow; 8] = [
+pub static OWNER_CONFIRM_ROWS: [OwnerConfirmRow; 9] = [
     OwnerConfirmRow {
         verb: "calendar.connector.release_hold",
+        proof: OwnerConfirmProof::Owner,
+        keep: PreviewKeep::Ttl,
+    },
+    OwnerConfirmRow {
+        verb: "vault.legal_holds.lift",
         proof: OwnerConfirmProof::Owner,
         keep: PreviewKeep::Ttl,
     },
@@ -438,6 +443,13 @@ pub fn preview_owner_confirm(
             let (_, view) = record_erase_view(memory, &typed.record)?;
             let shown = serde_json::to_value(&view)
                 .map_err(|_| MemoryError::bad_request("the erase preview does not encode"))?;
+            (bare, shown, true)
+        }
+        "vault.legal_holds.lift" => {
+            let (typed, bare) = confirm_free_input::<LegalHoldLiftRequest>(request.input)?;
+            let view = lift_legal_hold_view(vault, caller, &typed.hold_id)?;
+            let shown = serde_json::to_value(&view)
+                .map_err(|_| MemoryError::bad_request("the hold preview does not encode"))?;
             (bare, shown, true)
         }
         "vault.legal_holds.lift_and_erase" => {
