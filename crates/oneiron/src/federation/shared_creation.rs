@@ -80,8 +80,11 @@ pub(crate) fn role_preset(role: Role) -> Result<GrantPreset> {
 /// owner's `engine.controls` grant to a principal (6.6): his grant, not a
 /// membership. Nor does a house mind's link to the org it runs over
 /// `vault_id` (HOUSE-BIND = A): a host may bind a workspace's house before its
-/// owner shares the vault, and the link stays. A deleted grant's shell is no
-/// membership. The creation row still closes a vault that was shared.
+/// owner shares the vault, and the link stays. Nor does an owner's agent Grant
+/// (pass 28 R3f): his grant to his agent, which the creation moves to the
+/// shared scope ([`move_owner_mints_to_shared_scope_in_txn`]). A deleted
+/// grant's shell is no membership. The creation row still closes a vault that
+/// was shared.
 fn has_member_grant(vault: &Vault, txn: &heed::RoTxn<'_>, vault_id: u64) -> Result<bool> {
     for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(
         &vault.store,
@@ -105,6 +108,7 @@ fn has_member_grant(vault: &Vault, txn: &heed::RoTxn<'_>, vault_id: u64) -> Resu
             super::decode_federation_grant_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])?;
         if matches!(grant.scope, FederationGrantScope::Vault { .. })
             && !grant.is_git_push()
+            && !grant.owner_agent
             && !super::is_own_device_grant(&grant)
             && !super::holds_system_agent_grant(grant.member_ref)
             && !super::is_engine_controls_grant(&grant)
@@ -115,6 +119,93 @@ fn has_member_grant(vault: &Vault, txn: &heed::RoTxn<'_>, vault_id: u64) -> Resu
         }
     }
     Ok(false)
+}
+
+/// Moves each owner's mint row this vault holds at the own-device residence to the shared
+/// vault's scope, in the creation's own writer `txn` (pass 28 R3f; Engine ANSWER
+/// R3D-PRESHARE-OWNER-MINT-RESIDENCE = A, FIX [SHARED-CREATION-CARRIES-OWNER-MINTS]): his
+/// agent Grants, git push Grants, `engine.controls` Grants and Steward mints, so that an honest
+/// Grant he gave goes on standing after he shares. Every reader of an owner's mint reads its
+/// row at the vault's one residence: the own-device residence on a personal vault, the shared
+/// vault's scope once shared ([`super::owner_agent_mint_in_fold`]). No mint states the
+/// residence, so the row moved under its own id stands on the same counted mint: nothing is
+/// signed, and every holder of its id (an OAuth sign-in, an agent's free-time policy, a
+/// topology seal its agent decided) keeps it. Only the scope changes; the row keeps its valid
+/// time and its terms key. A row no counted mint gives there, one whose end is owed, an
+/// own-device Grant, a base agent's engine-default Steward Grant and a house link stay as
+/// they are.
+fn move_owner_mints_to_shared_scope_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    vault_id: u64,
+    now: u64,
+) -> Result<()> {
+    let residence = super::own_device_residence_scope();
+    let fold = vault.authority_view_readonly_in_txn(txn)?;
+    let mut ops = Vec::new();
+    for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(
+        &vault.store,
+        txn,
+        crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
+        None,
+    )? {
+        let id = id?;
+        let crate::vault::LiveEntityRow::Live {
+            entity_type: crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
+            body,
+        } = crate::vault::live_entity_row_in_txn(&vault.store, txn, &id)?
+        else {
+            continue;
+        };
+        let Ok((mut grant, terms_key)) = super::decode_federation_grant_body_keyed(&body) else {
+            continue;
+        };
+        if super::grant_end_owed_in_txn(&vault.store, txn, id)
+            || super::owner_agent_mint_in_fold(&fold, id, &grant, terms_key.as_ref(), &residence)
+                .is_none()
+        {
+            continue;
+        }
+        let occurred = crate::ports::EntityStoreRead::port_entity_record(&vault.store, txn, &id)?
+            .map_or(
+                TimeRange {
+                    start: now,
+                    end: now,
+                },
+                |record| record.occurred,
+            );
+        grant.scope = FederationGrantScope::vault(vault_id);
+        let data = match &terms_key {
+            Some(key) => super::encode_federation_grant_body_keyed(&grant, key)?,
+            None => super::encode_federation_grant_body(&grant)?,
+        };
+        ops.push(BatchOp::Put {
+            id,
+            entity_type: crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
+            occurred,
+            learned_at: now,
+            row_version: None,
+            data,
+            allow_maintenance: true,
+            allow_reserved_predicate: false,
+            hub_sync_imported: false,
+        });
+    }
+    if ops.is_empty() {
+        return Ok(());
+    }
+    apply_ops(
+        &vault.store,
+        &vault.config,
+        &vault.analyzer,
+        txn,
+        ops,
+        vault
+            .text_index_trusted
+            .load(std::sync::atomic::Ordering::Acquire),
+        false,
+        true,
+    )
 }
 
 impl Vault {
@@ -295,6 +386,8 @@ impl Vault {
         if let Some((id, data)) = seeded_manifest {
             self.write_owner_policy_manifest_in_txn(owner, &mut txn, id, data, now)?;
         }
+        // The owner's mints move to the residence the creation row names (pass 28 R3f).
+        move_owner_mints_to_shared_scope_in_txn(self, &mut txn, vault_id, now)?;
         SHARED_VAULT_CREATION.put(&self.store, &mut txn, &(), &creation)?;
         if !invites.is_empty() {
             // Invitations run on the store clock, as acceptance does.
