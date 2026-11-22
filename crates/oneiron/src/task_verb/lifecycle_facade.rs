@@ -364,12 +364,14 @@ impl Memory<'_> {
     /// The after-commit half of a settlement. The terminal record is
     /// committed before the signal goes out, so a crash in this gap loses
     /// nothing: `reconcile_peer_result_signals` replays the edge from the
-    /// local binding index.
+    /// local binding index. `at` is the settlement's Unix second; the trap
+    /// signal takes it in milliseconds.
     pub(super) fn signal_task_settled(&self, task_ref: EntityId, at: u64) -> MemoryResult<()> {
-        send_peer_result_signal(self.vault(), task_ref, at)?;
+        let at_ms = at.saturating_mul(1000);
+        send_peer_result_signal(self.vault(), task_ref, at_ms)?;
         // A sibling's answer settles the HANDLE, without rewriting siblings.
         // The local wait index is also re-driven at registration/startup.
-        crate::llm::reconcile_peer_result_signals(self.vault(), at)?;
+        crate::llm::reconcile_peer_result_signals(self.vault(), at_ms)?;
         Ok(())
     }
 
@@ -494,7 +496,11 @@ impl Memory<'_> {
         send_peer_result_signal(
             self.vault(),
             handle.group_ref,
-            self.vault().store.clock.now_recorded_at(),
+            self.vault()
+                .store
+                .clock
+                .now_recorded_at()
+                .saturating_mul(1000),
         )?;
         Ok(answer)
     }

@@ -7,7 +7,11 @@
 //! occurred range and the learned time of each row the writer files hold the
 //! same instant's second. On main every one of these rows held milliseconds.
 //!
-//! The Dreamer step and the trap run on public paths. The compaction step
+//! A trap signal sent from the TASK side, whose clock is the vault's Unix
+//! second, reaches the trap as that second's milliseconds.
+//!
+//! The Dreamer step, the trap and the peer-result signal run on public
+//! paths. The compaction step
 //! files through its test door, so it is built with `--cfg
 //! oneiron_test_support`: `RUSTFLAGS="--cfg oneiron_test_support" cargo test
 //! --locked -p oneiron --all-features --test model_step_row_times`. On the
@@ -322,6 +326,166 @@ fn a_traps_anchor_and_transition_are_stamped_in_unix_seconds() {
             end: PASS_SECOND,
         },
         "the superseded anchor closes at the transition's Unix second"
+    );
+}
+
+/// A peer-result wait opened and registered on the trap's millisecond clock
+/// is signalled by the TASK side, whose clock is the vault's Unix second
+/// (blind review round 1 of #10378). The settling second reaches the trap as
+/// milliseconds, so the `sent` transition is stamped at that second and its
+/// `at` is that second's milliseconds, and the waiting head closes there. On
+/// main the second lost to the head's milliseconds (`now.max(head.at)`): the
+/// transition took the wait's start, stamped in milliseconds; with the row
+/// times in seconds alone it would sit 120 seconds before the answer.
+#[test]
+fn a_peer_results_sent_transition_is_stamped_at_the_tasks_settling_second() {
+    use oneiron::config::VaultConfig;
+    use oneiron::dreamer_runner::{DreamerParkCause, ParkDreamerAttempt};
+    use oneiron::llm::{register_peer_result_wait, trap_for_durable_wait, trap_park_owner};
+    use oneiron::task_verb::{
+        TaskAssignee, TaskCreateSpec, TaskResultInput, TaskTerminalDisposition,
+    };
+
+    /// The trap's clock when the wait opens and registers, in milliseconds.
+    const WAIT_OPEN_MS: u64 = 1_790_000_000_000;
+    /// The Unix second the wait opens in.
+    const WAIT_OPEN_SECOND: u64 = 1_790_000_000;
+    /// The Unix second the peer's result settles the TASK, 120 seconds later.
+    const SETTLED_SECOND: u64 = 1_790_000_120;
+    // The first-party connector actor: the one identity the default policy
+    // manifest grants an Auto ceiling, so the delegating create effects (as
+    // `cb_oracle_tasks` arms its BYOA wait).
+    const ASKER_BYTES: [u8; 16] = [0xE1; 16];
+    let step_hash = [0x6Du8; 32];
+
+    let directory = tempfile::tempdir().expect("a directory");
+    let vault = Vault::open(directory.path(), VaultConfig::device()).expect("vault");
+    let put_person = |id: EntityId, body: &[u8]| {
+        vault
+            .put_entity(
+                &id,
+                ENTITY_TYPE_PERSON,
+                TimeRange { start: 1, end: 1 },
+                1,
+                body,
+            )
+            .expect("a person");
+    };
+    let asker = EntityId::from_bytes(ASKER_BYTES).expect("asker id");
+    let peer = EntityId::from_bytes([0x6E; 16]).expect("peer id");
+    put_person(asker, b"asker");
+    put_person(peer, b"peer");
+
+    let (receipt, wait) = vault
+        .memory(asker, EdgeActorClass::Agent)
+        .delegate_task_and_wait(
+            &TaskCreateSpec::new(
+                rmpv::Value::from("delegated"),
+                None,
+                None,
+                Some(WAIT_OPEN_SECOND),
+            )
+            .with_assignee(TaskAssignee::Peer { actor_ref: peer }),
+        )
+        .expect("FIXTURE: the delegation effects");
+    let task_ref = receipt.task_ref.expect("the delegation mints one TASK");
+    let runner = DreamerRunnerStore::new(&vault);
+    let attempt_id = match runner
+        .enqueue(EnqueueDreamerAttempt {
+            attempt_type: "peer-result-row-times-test".to_owned(),
+            input: rmpv::Value::from("step"),
+            parent_attempt: None,
+            dedupe_key: None,
+            run_id: Some("run-test".to_owned()),
+            now: WAIT_OPEN_SECOND,
+        })
+        .expect("attempt")
+    {
+        EnqueueDreamerAttemptOutcome::Enqueued(status)
+        | EnqueueDreamerAttemptOutcome::Existing(status) => status.attempt.id,
+        other => panic!("unexpected enqueue outcome: {other:?}"),
+    };
+    let ctx = DurableStepContext {
+        vault: &vault,
+        attempt_id,
+        run_id: Some("run-test".to_owned()),
+        envelope_actor: WriteActor::new(asker, EdgeActorClass::Agent),
+        subject: peer,
+        deadline: None,
+        now_ms: WAIT_OPEN_MS,
+        spend_scope: None,
+        wake_pass_bound: false,
+    };
+    let trap = open_trap(
+        &vault,
+        &ctx,
+        trap_for_durable_wait(&wait, step_hash),
+        step_hash,
+        "peer result",
+    )
+    .expect("FIXTURE: the delegation trap opens");
+    runner
+        .park_attempt(ParkDreamerAttempt {
+            attempt_id,
+            reason: "peer result".to_owned(),
+            cause: DreamerParkCause::Signal,
+            park_owner: trap_park_owner(&trap.trap_claim_id),
+            carried_spend: None,
+            now: WAIT_OPEN_SECOND,
+        })
+        .expect("FIXTURE: the step parks");
+    let before_wait = claims_of(&vault, DREAMER_TRAP_PREDICATE);
+    assert!(
+        matches!(
+            register_peer_result_wait(&vault, &trap, task_ref, WAIT_OPEN_MS)
+                .expect("the wait registers"),
+            DreamerTrapState::Waiting
+        ),
+        "FIXTURE: the unsettled TASK leaves the trap waiting"
+    );
+    let waiting = the_new_one(
+        &before_wait,
+        &claims_of(&vault, DREAMER_TRAP_PREDICATE),
+        "waiting transition",
+    );
+
+    let result_ref = EntityId::from_bytes([0x6F; 16]).expect("result id");
+    put_person(result_ref, b"the result");
+    let before_signal = claims_of(&vault, DREAMER_TRAP_PREDICATE);
+    vault
+        .memory(peer, EdgeActorClass::Agent)
+        .land_task_result(
+            task_ref,
+            &TaskResultInput {
+                result_ref,
+                disposition: TaskTerminalDisposition::Completed,
+                finished_at: SETTLED_SECOND,
+            },
+        )
+        .expect("the peer lands its result");
+    let sent = the_new_one(
+        &before_signal,
+        &claims_of(&vault, DREAMER_TRAP_PREDICATE),
+        "sent transition",
+    );
+    assert_stamped_at(
+        &vault,
+        &sent,
+        SETTLED_SECOND,
+        "the sent transition of the settling TASK",
+    );
+    assert_eq!(
+        claim_value_at(&vault, &sent),
+        SETTLED_SECOND * 1_000,
+        "the sent transition's own `at` is the settling second in milliseconds"
+    );
+    assert_eq!(
+        vault.get_occurred(&waiting).expect("occurred range"),
+        TimeRange {
+            start: WAIT_OPEN_SECOND,
+            end: SETTLED_SECOND,
+        },
+        "the waiting head closes at the settling second"
     );
 }
 
