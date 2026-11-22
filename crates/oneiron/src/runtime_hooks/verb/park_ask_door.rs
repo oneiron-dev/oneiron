@@ -164,6 +164,17 @@ impl HookAsk {
         Ok(())
     }
 
+    /// The owner turns this hook off under `proof` (the owner's dial,
+    /// [`Vault::set_pack_hook_enabled`]): the binding claim, the question of
+    /// every ask this hook opened, is rewritten in place.
+    ///
+    /// # Errors
+    ///
+    /// The dial's write refused.
+    pub fn turn_off(&self, vault: &Vault, proof: &AuthenticatedOwner) -> Result<()> {
+        vault.set_pack_hook_enabled(proof, self.binding_id, false)
+    }
+
     /// What `actor`'s call under `invocation` finds before its chain runs
     /// (`ask::retry`, with no resume target and no task-work turn, as a
     /// workflow step presents them).

@@ -16,8 +16,8 @@
 use super::ask_guard::AskedParty;
 use super::ask_record::{self, AskGroup};
 use super::ask_types::{
-    TaskAskDecision, TaskAskEvidenceReason, TaskAskResult, TaskAskSettlementReason, TaskAskSource,
-    TaskAskWord,
+    TaskAskDecision, TaskAskEvidenceReason, TaskAskOptionId, TaskAskResult,
+    TaskAskSettlementReason, TaskAskSource, TaskAskWord,
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::ClaimLifecycleStatus;
@@ -111,6 +111,46 @@ pub(super) fn asked_in(
     group: &AskGroup,
 ) -> Result<Option<AskedParty>> {
     Ok(attendee_intent(group).map(|_| AskedParty::VaultOwner))
+}
+
+/// Whether `option` approves what an attendee ask asks for: it names a
+/// contact as the speaker, an identity act. "None of these" names nobody
+/// ([`super::ask_guard`]).
+pub(super) fn approves(option: &TaskAskOptionId) -> bool {
+    matches!(
+        AttendeeIdentityChoice::from_option(option),
+        Some(AttendeeIdentityChoice::Contact(_))
+    )
+}
+
+/// Refuses an approving `word` that names a contact no longer live and
+/// active, from a read: the refusal the identity's own writer gives the
+/// same word on its cut (`Vault::resolve_attendee_identity_in_txn`), made
+/// before a device asks for the person
+/// ([`super::ask_guard::approved_act_stands_in`]). The other checks of that
+/// writer are the word's admission's ([`offered_in`]).
+///
+/// # Errors
+///
+/// [`Error::EntityNotFound`] for a contact that is gone,
+/// [`Error::InvalidClaimBody`] for one no longer active; storage errors.
+pub(super) fn approved_act_stands_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    _id: EntityId,
+    _group: &AskGroup,
+    word: &TaskAskWord,
+) -> Result<()> {
+    match word
+        .option
+        .as_ref()
+        .and_then(AttendeeIdentityChoice::from_option)
+    {
+        Some(AttendeeIdentityChoice::Contact(contact)) => {
+            crate::disclosure::require_live_contact_in_txn(vault, txn, &contact)
+        }
+        _ => Ok(()),
+    }
 }
 
 /// [`asked_in`], once `word` names one option the ask CLAIM froze, in its
@@ -213,22 +253,5 @@ impl Memory<'_> {
             return None;
         }
         self.owner_authorship()
-    }
-
-    /// The proof a word [`Self::tasks_answer`] gives carries: the one the
-    /// host bound ([`Self::answer_owner_proof`]), else, on a surface that
-    /// answers as this install's owner device, the one its owner key mints
-    /// for this word (UC-05 PR 2b). Generated code and a room turn carry
-    /// none either way.
-    pub(super) fn word_owner_proof(
-        &self,
-    ) -> crate::memory::MemoryResult<Option<std::borrow::Cow<'_, AuthenticatedOwner>>> {
-        if let Some(owner) = self.answer_owner_proof() {
-            return Ok(Some(std::borrow::Cow::Borrowed(owner)));
-        }
-        if self.writes_generated() || self.room_turn().is_some() {
-            return Ok(None);
-        }
-        Ok(self.owner_device_word_proof()?.map(std::borrow::Cow::Owned))
     }
 }

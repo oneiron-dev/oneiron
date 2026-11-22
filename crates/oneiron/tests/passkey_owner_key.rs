@@ -1037,6 +1037,7 @@ impl oneiron::authority::CheckpointRootSigner for HeldOwnerKey {
         &self,
         _vault: &Vault,
         _fold: &AuthorityFold,
+        _ground: &oneiron::authority::OwnerProofGround,
         transcript: &[u8],
     ) -> oneiron::Result<Vec<u8>> {
         Ok(self.0.sign(transcript).to_bytes().to_vec())

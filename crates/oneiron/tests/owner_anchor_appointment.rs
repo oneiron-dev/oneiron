@@ -1165,6 +1165,7 @@ impl CheckpointRootSigner for RestReadingSigner {
         &self,
         _vault: &Vault,
         _fold: &AuthorityFold,
+        _ground: &OwnerProofGround,
         transcript: &[u8],
     ) -> oneiron::Result<Vec<u8>> {
         Ok(self.key.sign(transcript).to_bytes().to_vec())
@@ -1242,6 +1243,7 @@ impl CheckpointRootSigner for GatedRootSigner {
         &self,
         _vault: &Vault,
         _fold: &AuthorityFold,
+        _ground: &OwnerProofGround,
         transcript: &[u8],
     ) -> oneiron::Result<Vec<u8>> {
         Ok(self.key.sign(transcript).to_bytes().to_vec())

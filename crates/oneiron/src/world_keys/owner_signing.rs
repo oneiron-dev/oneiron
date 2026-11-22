@@ -304,6 +304,7 @@ impl CheckpointRootSigner for OwnerRootSigner {
         &self,
         vault: &Vault,
         fold: &AuthorityFold,
+        _ground: &OwnerProofGround,
         transcript: &[u8],
     ) -> Result<Vec<u8>> {
         match self.refusal(vault, Some(fold)) {

@@ -101,7 +101,7 @@ pub use verb::{
     InvocationId, VerbCall, VerbCallScope, VerbDomain, VerbHookPre, VerbHookPreSnapshot,
     VerbHookStop, hook_class,
 };
-pub(crate) use verb::{VerbResume, verb_ask_settled_in_txn};
+pub(crate) use verb::{VerbResume, verb_ask_settled_in_txn, verb_ask_word_releases_in};
 
 // The lift sweep's typed acceptance for this module's authored side
 // tables (FIX 2680), named by their declarations.
