@@ -157,6 +157,7 @@ impl FreeTimePolicyRows {
         txn: &mut RwTxn<'_>,
         rows: FreeTimePartitioned<Self>,
     ) -> Result<TableAdopt> {
+        let fold = vault.authority_view_readonly_in_txn(txn)?;
         for row in Self::rejoin_in_txn(vault, txn, rows)? {
             let (agent, record) = match row {
                 FreeTimeAdoptRow::Live(live) => live,
@@ -165,21 +166,20 @@ impl FreeTimePolicyRows {
             if erased_in_txn(vault, txn, &agent)? {
                 continue;
             }
-            // A carried agent set whose Grant this install holds refused does not land (FIX 11608);
-            // absent or unstamped rows are trusted as today.
+            // A carried agent set whose Grant the fold's line refuses here does not land (FIX
+            // 11608; pass 28 R3b2: the line, never the row); a Grant no counted act names here
+            // yet, and an unstamped row, are trusted as today.
             if let Some(policy) = record.policy.as_ref()
                 && let (Some(acting), Some(grant)) = (policy.set_by_agent, policy.set_grant)
-                && matches!(
-                    grant_standing_in_txn(
-                        &vault.store,
-                        txn,
-                        grant,
-                        acting,
-                        OwnerActKind::FreeTimePolicy,
-                        policy.set_at
-                    ),
-                    Ok(GrantStanding::Refused)
-                )
+                && grant_standing_in_txn(
+                    &vault.store,
+                    txn,
+                    &fold,
+                    grant,
+                    acting,
+                    OwnerActKind::FreeTimePolicy,
+                    policy.set_at,
+                ) == GrantStanding::Refused
             {
                 continue;
             }

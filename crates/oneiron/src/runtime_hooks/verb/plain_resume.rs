@@ -491,17 +491,16 @@ fn grants_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, actor: EntityId) -> Resul
                 continue;
             }
             let names = if kind == ENTITY_TYPE_FEDERATION_GRANT {
-                // A Grant over this shared vault confers only while the fold stands behind it
-                // (pass 28 R3), never as a row alone; a personal vault's own-device residence
-                // rows are read from themselves until R4.
-                crate::federation::decode_federation_grant_body(&body).is_ok_and(|grant| {
-                    grant.member_ref == actor
-                        && grant.confers_at(now)
-                        && crate::federation::pact_admits_grant(&fold, &id, &grant)
-                        && (shared_scope.as_ref() != Some(&grant.scope)
-                            || crate::federation::shared_grant_row_in_fold(&fold, id, &body, now)
-                                .is_some())
-                })
+                // A Grant confers only while the fold stands behind it, never as a row alone:
+                // every Grant over this shared vault (pass 28 R3) and an owner's signed mint
+                // row on an own-device residence (R3b2).
+                crate::federation::grant_row_in_fold(&fold, id, &body, shared_scope.as_ref(), now)
+                    .is_some_and(|row| {
+                        let grant = row.grant();
+                        grant.member_ref == actor
+                            && grant.confers_at(now)
+                            && crate::federation::pact_admits_grant(&fold, &id, grant)
+                    })
             } else {
                 crate::access_grant::decode_access_grant_body(&body).is_ok_and(|grant| {
                     grant.principal_ref == actor
