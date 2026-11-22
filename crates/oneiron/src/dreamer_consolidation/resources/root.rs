@@ -1,4 +1,6 @@
 //! A typed root is a resource origin, not a conversation partition.
+use oneiron_contracts::fingerprint::ContentHash;
+
 use super::*;
 use crate::dreamer_consolidation::branch::{BranchAxes, QueuedBranch};
 use crate::dreamer_consolidation::root_evidence::bridge::{RootBinding, RootPayload};
@@ -121,7 +123,7 @@ impl<'a> BranchResources<'a> {
         for (id, row) in ids.iter().zip(rows) {
             let (entity_type, learned_at, body) =
                 row.ok_or_else(|| invalid_consolidation("root source is not readable"))?;
-            let body_hash = *blake3::hash(&body).as_bytes();
+            let body_hash = *ContentHash::of(&body).as_bytes();
             let mut is_claim = false;
             for pin in binding.pins() {
                 if EntityId::from_hex(&pin.reference.source_id)? == *id {
@@ -230,6 +232,7 @@ impl<'a> BranchResources<'a> {
             known: Default::default(),
             rules: vault.consolidation_key_rules()?,
             read_receipt: std::sync::Mutex::new(receipt),
+            held: std::cell::RefCell::default(),
         };
         resources.check_axes(resources.scope())?;
         resources.require_output(resources.scope())?;

@@ -7,14 +7,9 @@ use super::codec::{
     CODE_RUN_BRIDGE_CALL_KEYS, CODE_RUN_DETERMINISM_KEYS, CODE_RUN_OUTPUT_PREVIEW_KEYS,
     CODE_RUN_RAW_OUTPUT_KEYS, CODE_RUN_REPLAY_RECORD_KEYS, CODE_RUN_STEP_CHECKPOINT_KEYS,
 };
-use super::payload::{
-    decode_self_dispatch_outcome, self_call_request_value, self_dispatch_outcome_value,
-};
-use super::support::{
-    code_run_layout_hash, expect_map, invalid_code_run_replay, map_get, str_value, u64_value,
-    validate_text,
-};
-use super::types::{SelfCall, SelfDispatchOutcome, SelfEffect, SelfSpeechCall, SelfSpeechResult};
+use super::payload::decode_self_dispatch_outcome;
+use super::support::code_run_layout_hash;
+use super::types::{SelfDispatchOutcome, SelfEffect};
 // The bridge call's body names these by their `super::` paths.
 use super::{SelfStoredReply, SelfStoredReplyKind, spawn_replay};
 mod bridge;
@@ -28,10 +23,12 @@ pub use self::bridge::CodeRunBridgeCall;
 pub use self::checkpoint::CodeRunStepCheckpoint;
 pub use self::cursor::CodeRunReplayCursor;
 pub use self::pending_step::PendingCodeStep;
-pub(super) use self::request_identity::ErasedRequest;
+pub(super) use self::request_identity::{ErasedRequest, erased_identity_field};
 
 pub const CODE_RUN_REPLAY_SCHEMA_VERSION: u64 = 3;
-pub const CODE_RUN_RNG_SEED_LEN: usize = 32;
+#[doc(hidden)]
+pub use oneiron_records::code_run::replay::CODE_RUN_RNG_SEED_LEN;
+
 pub use crate::store::result_manifest::CODE_RUN_REPLAY_HASH_LEN;
 
 /// Frozen nondeterministic inputs for one code run.
@@ -226,6 +223,24 @@ fn cached_rows(
     cached.rows.clone()
 }
 
+/// Whether `kept`, the row the store holds at a live call's seq, stands for
+/// `call`, the call that ran there: the same request as replay meets it, so
+/// the form the side-row wall admitted the same request in (OF-067), an
+/// erased request by its identity, and a held input by its digests. A call
+/// whose request changed (a pure change or an owner's refire, L8-23) does not.
+/// The compare reads no custody values (FIX REPLAY-COMPARE-KNOWN-MATCHER): a
+/// row only that read would meet keeps the live call, which the side-row wall
+/// admits again at this put.
+fn held_row_stands_for(call: &CodeRunBridgeCall, kept: &CodeRunBridgeCall) -> Result<bool> {
+    if spawn_replay::replay_request_match(call.effect, &kept.request, &call.request, None)?.is_hit()
+    {
+        return Ok(true);
+    }
+    Ok(call.effect == SelfEffect::AgentVerb
+        && super::actions::held_request_form(&kept.request)
+            .is_some_and(|stored| Some(stored) == super::actions::held_request_form(&call.request)))
+}
+
 /// Persisted replay record for a first-party code run. Imported result
 /// outputs may have unknown frozen inputs and cannot seed deterministic execution.
 #[derive(Debug, Clone, PartialEq)]
@@ -314,6 +329,19 @@ pub struct CodeRunReplayGeneration {
     pub last_state_hash: [u8; CODE_RUN_REPLAY_HASH_LEN],
     /// The pending step's digest, zero while none is pending (FIX 7703).
     pub pending_digest: [u8; CODE_RUN_REPLAY_HASH_LEN],
+}
+
+/// What a guarded append reads from the stored row it replaces (FIX 16):
+/// the row's generation, and the run, birth world and bridge calls
+/// [`CodeRunReplayRecord::over_held`] keeps. It is decoded from the stored
+/// bytes in place; the row's outputs, bindings and earlier checkpoints are
+/// never decoded.
+#[derive(Debug)]
+pub(crate) struct CodeRunReplayHeld {
+    pub(crate) run_id: EntityId,
+    pub(crate) birth_world: Option<EntityId>,
+    pub(crate) bridge_calls: Vec<CodeRunBridgeCall>,
+    pub(crate) generation: CodeRunReplayGeneration,
 }
 
 impl CodeRunReplayGeneration {
@@ -424,9 +452,20 @@ impl CodeRunReplayRecord {
     /// as the side-row wall admitted it (OF-067). An append rewrites the whole
     /// row, so a call an earlier append stored keeps its handles and the wall
     /// mints only for the calls this append adds.
-    pub(crate) fn over_held(&self, held: Option<&Self>) -> Cow<'_, Self> {
+    ///
+    /// A resumed step that runs a changed call live at its recorded seq (a pure
+    /// change or an owner's refire, L8-23) puts another call at the same seq,
+    /// effect and stamps: the held row stands in its place only when replay
+    /// would meet the live request with it (`held_row_stands_for`). Otherwise
+    /// the live row stays, so the record keeps the call that ran, not the one
+    /// it replaced.
+    ///
+    /// # Errors
+    ///
+    /// A request the side-row wall cannot compare.
+    pub(crate) fn over_held(&self, held: Option<&CodeRunReplayHeld>) -> Result<Cow<'_, Self>> {
         let Some(held) = held.filter(|held| held.run_id == self.run_id) else {
-            return Cow::Borrowed(self);
+            return Ok(Cow::Borrowed(self));
         };
         let mut record = self.clone();
         record.birth_world = held.birth_world.or(record.birth_world);
@@ -435,6 +474,7 @@ impl CodeRunReplayRecord {
                 && call.effect == kept.effect
                 && call.started_at_ms == kept.started_at_ms
                 && call.finished_at_ms == kept.finished_at_ms
+                && held_row_stands_for(call, kept)?
             {
                 // A parked call keeps the rows its delivered reply listed
                 // (FIX 5455), which the held copy has not kept yet.
@@ -445,7 +485,7 @@ impl CodeRunReplayRecord {
                 }
             }
         }
-        Cow::Owned(record)
+        Ok(Cow::Owned(record))
     }
 
     /// Unions newly witnessed callable/result rows into the record. Unknown

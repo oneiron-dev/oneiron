@@ -19,7 +19,27 @@ pub(super) fn temp_vault() -> (tempfile::TempDir, crate::Vault) {
     let tmp = tempfile::tempdir().expect("temp dir");
     let vault =
         crate::Vault::open(tmp.path(), crate::config::VaultConfig::default()).expect("open vault");
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    // These tests cover policy decisions, not the built-in pack gate.
+    vault
+        .remove_builtin_pack_seed_marker_for_test()
+        .expect("FIXTURE: drop the built-in pack seed marker (OF-519 gate is not under test here)");
     clear_policy_manifests_for_test(&vault);
+    (tmp, vault)
+}
+
+/// Opens a temporary vault that keeps the seeded default policy manifest.
+///
+/// A pipeline run reads claim-aging profiles from that row before any channel
+/// and fails closed with `EntityNotFound` when it is gone (cause P, FIX row
+/// PIPELINE-LIBTEST-CLEARED-MANIFEST-ENTITYNOTFOUND). Only the scoped-read
+/// tests that run the pipeline use this opener; every other gate test stays on
+/// [`temp_vault`], which clears all manifests for the policy, default-deny and
+/// legacy paths they pin.
+pub(super) fn temp_vault_with_manifest() -> (tempfile::TempDir, crate::Vault) {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let vault =
+        crate::Vault::open(tmp.path(), crate::config::VaultConfig::default()).expect("open vault");
     (tmp, vault)
 }
 
@@ -198,16 +218,18 @@ pub(super) fn check_external_effect_policy_with_budget(
                 mut charge,
             } => {
                 exhausted = true;
-                if on_exhaust == EffectorBudgetOnExhaust::Suspend {
-                    crate::connector_key::suspend_connector_key_in_txn(
-                        store,
-                        wtxn,
-                        &target.key_id,
-                        &target.key,
-                        crate::connector_key::budget_exhausted_reason(&location),
-                        crate::unix_seconds_now(),
-                    )?;
-                    charge.read.status = ConnectorKeyStatus::Suspended;
+                if on_exhaust == EffectorBudgetOnExhaust::Suspend
+                    && let crate::connector_key::SuspendAdmission::Suspended(suspended) =
+                        crate::connector_key::suspend_connector_key_in_txn(
+                            store,
+                            wtxn,
+                            &target.key_id,
+                            &target.key,
+                            crate::connector_key::SuspendCause::BudgetExhausted(&location),
+                            crate::unix_seconds_now(),
+                        )?
+                {
+                    charge.read.status = suspended.status;
                 }
                 charge
             }

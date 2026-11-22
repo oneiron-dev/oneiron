@@ -3,13 +3,14 @@
 //! is unchanged.
 
 pub use oneiron_contracts::error::{
-    ArtifactError, ClaimError, CodeError, CompactionPacketError, ErasedHoldTarget, Error,
-    ErrorKind, GateDenial, GateDenialOutcome, GateDenialReason, GateError,
+    ArtifactError, ClaimError, CodeError, CompactionPacketError, DevicePinRefusal,
+    ErasedHoldTarget, Error, ErrorKind, GateDenial, GateDenialOutcome, GateDenialReason, GateError,
     HOLD_TARGET_ERASED_SUGGESTION, KitRecord, LEGAL_HOLD_SUGGESTION, LegalHoldBound,
     LegalHoldBoundKind, LegalHoldNotice, LegalHoldState, LiveDeckRefusal, MaintenanceError,
-    OffRecordError, RecordError, RegistryError, RelayError, Result, RoomLiveSpeakersHold,
-    SecretError, SideTableRowProblem, StoreError, SyncError, VaultRootEntry, VaultRootProblem,
-    VerbHookStop,
+    OWNER_KEY_REQUIRED, OWNER_PRESENCE_HERE_REASON_PREFIX, OWNER_PRESENCE_REQUIRED, OffRecordError,
+    OwnerKeyMoveStep, OwnerPresenceRefusal, RecordError, RegistryError, RelayError, Result,
+    RoomLiveSpeakersHold, SecretError, SideTableRowProblem, StoreError, SyncError, VaultRootEntry,
+    VaultRootProblem, VerbHookStop,
 };
 #[cfg(feature = "sync")]
 pub use oneiron_contracts::error::{

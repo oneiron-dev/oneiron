@@ -7,7 +7,7 @@
 //! helpers, their libraries and config), the host fence launcher, and both
 //! guests' image archives in the read-only root filesystem, each file root's
 //! with the mode its row names. It writes this descriptor at
-//! [`VM_GUEST_RUNTIME_DESCRIPTOR`](crate::vm::VM_GUEST_RUNTIME_DESCRIPTOR)
+//! [`VM_GUEST_RUNTIME_DESCRIPTOR`]
 //! and as the image manifest's `guest_runtime`, beside its
 //! `vm_guest_runtime_revision`
 //! ([`VM_GUEST_RUNTIME_REVISION`](crate::vm::VM_GUEST_RUNTIME_REVISION)).
@@ -142,8 +142,5 @@ fn guest_path(path: &Path) -> bool {
 
 /// 64 lowercase hex digits.
 fn lower_hex(text: &str) -> bool {
-    text.len() == 64
-        && text
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    oneiron_hex::is_lower_hex(text, Some(64))
 }

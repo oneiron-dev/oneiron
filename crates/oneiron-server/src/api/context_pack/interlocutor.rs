@@ -11,14 +11,17 @@ use std::collections::{BTreeMap, BTreeSet};
 /// (OF-365 ILD-1, design §11).
 ///
 /// Returns `None` exactly when no interlocutors block AND no room was
-/// supplied on an owner-grade credential: that request/response pair stays
+/// supplied on the owner's own credential: that request/response pair stays
 /// byte-identical to pre-ILD behavior. Room reads always receive the roster
 /// clamp; the resolved set is echoed as stamps on the response.
 ///
-/// Owner-grade is `CoreAuth::is_owner_grade` — un-narrowed on BOTH axes. A
-/// delegated token narrowed by scope alone is NOT owner-grade, so it takes
-/// the clamp like any other narrowed credential rather than silently
-/// skipping the gate. `room` is a room read's [`RoomAudience`].
+/// The owner's own credential ([`owner_credential`]) is an owner-grade one
+/// (`CoreAuth::is_owner_grade`, un-narrowed on BOTH axes) or the owner's own
+/// narrowed slip while its owner exemption holds (ANSWER
+/// OWNER-NARROW-SLIP-CLAMP = B): that slip's narrowing bounds the rows it
+/// reads, not its audience. A delegated token narrowed by scope alone is
+/// neither, so it takes the clamp like any other narrowed credential rather
+/// than silently skipping the gate. `room` is a room read's [`RoomAudience`].
 ///
 /// Every contact the set names is one `read`, the caller's own read, reads:
 /// one it cannot read resolves as a missing one does, so a narrowed caller
@@ -33,7 +36,8 @@ pub(crate) fn resolve_core_interlocutor_set(
     room: Option<&RoomAudience>,
 ) -> Result<Option<oneiron::InterlocutorSet>, ApiError> {
     let room_reader = room.and_then(|room| room.reader);
-    if controls.is_none() && room.is_none() && auth.is_owner_grade() {
+    let is_owner_credential = owner_credential(vault, auth)?;
+    if controls.is_none() && room.is_none() && is_owner_credential {
         return Ok(None);
     }
 
@@ -41,7 +45,7 @@ pub(crate) fn resolve_core_interlocutor_set(
     let mut parties = Vec::new();
     let mut voice_session_ref = None;
     if let Some(controls) = controls {
-        if controls.owner_present == Some(true) && !auth.is_owner_grade() {
+        if controls.owner_present == Some(true) && !is_owner_credential {
             return Err(ApiError::forbidden_scope("interlocutors.owner_present"));
         }
         owner_present = controls.owner_present;
@@ -153,15 +157,16 @@ pub(crate) fn resolve_core_interlocutor_set(
     }
 
     // Owner presence is a conjunction, never a request assertion: the
-    // credential must be owner-grade AND the caller must not have narrowed
-    // itself away. `owner_present == Some(true)` was already rejected above
-    // for non-owner-grade auth, so the `&&` here is the belt to that
-    // suspenders — a narrowed credential can only ever resolve to `false`.
-    // A room's roster cannot prove presence. The embedder must explicitly
-    // assert owner presence on an owner-grade credential; absent assertion
-    // never promotes an in-room assembly to Supervised or OwnerAlone. A
-    // room one of the vault's own agents reads is never the owner's session.
-    let owner_session = auth.is_owner_grade()
+    // credential must be the owner's own AND the caller must not have
+    // narrowed itself away. `owner_present == Some(true)` was already
+    // rejected above for any other credential, so the `&&` here is the belt
+    // to that suspenders — a delegated credential can only ever resolve to
+    // `false`. A room's roster cannot prove presence. The embedder must
+    // explicitly assert owner presence on the owner's own credential; absent
+    // assertion never promotes an in-room assembly to Supervised or
+    // OwnerAlone. A room one of the vault's own agents reads is never the
+    // owner's session.
+    let owner_session = is_owner_credential
         && owner_present.unwrap_or(room.is_none())
         && room.is_none_or(|room| room.reader.is_none() || room.owner_reads);
     let input = oneiron::InterlocutorResolutionInput {
@@ -255,17 +260,18 @@ impl RoomAudience {
 
 /// The room member the caller is proven to be the vault owner as, if any.
 /// A bare host credential authenticates the caller but identifies no PERSON
-/// in the room. An identified, owner-grade human slip excludes its exact
-/// holder when a live owner-capable actor binding or the room's native
-/// live-Owner entry proves it, co-Owners included. The presence flag and
-/// PROJECT leader are not identity evidence.
+/// in the room. An identified human slip of the owner's own
+/// ([`owner_credential`]: owner grade, or the owner's narrowed slip) excludes
+/// its exact holder when a live owner-capable actor binding or the room's
+/// native live-Owner entry proves it, co-Owners included. The presence flag
+/// and PROJECT leader are not identity evidence.
 fn bound_room_owner(
     vault: &oneiron::Vault,
     auth: &CoreAuth,
     members: &[oneiron::EntityId],
     parties: &[oneiron::disclosure::RoomPartyEntry],
 ) -> Result<Option<oneiron::EntityId>, ApiError> {
-    if !auth.is_owner_grade() || auth.actor_class() != Some("human") {
+    if auth.actor_class() != Some("human") || !owner_credential(vault, auth)? {
         return Ok(None);
     }
     let Some(id) = auth
@@ -281,7 +287,9 @@ fn bound_room_owner(
     let fold = vault
         .authority_fold()
         .map_err(|error| core_engine_error("room owner binding failed", error))?;
-    let owner = oneiron::authority::actor_binding_is_active(&fold, &id, "human")
+    let owner = vault
+        .actor_binding_is_live(&fold, &id, "human")
+        .map_err(|error| core_engine_error("room owner binding failed", error))?
         || members.iter().zip(parties).any(|(member, entry)| {
             *member == id && matches!(entry.party, oneiron::disclosure::RoomParty::VaultOwner)
         });
@@ -291,12 +299,19 @@ fn bound_room_owner(
 /// The room member an agent credential reads as, when it names one of the
 /// vault's own agents in the room. Its own credential's read already
 /// bounds it, so like the owner it adds no clearance term (ARCH-0067 §8).
+/// A transferred slip is another holder's, acting on the agent's word, so
+/// it is not the agent reading on its own (as the inquiry and
+/// guest-document doors hold it).
 fn own_agent_reader(
     auth: &CoreAuth,
     members: &[oneiron::EntityId],
     parties: &[oneiron::disclosure::RoomPartyEntry],
 ) -> Option<oneiron::EntityId> {
-    if auth.actor_class() != Some("agent") {
+    if auth.actor_class() != Some("agent")
+        || auth
+            .verified_slip()
+            .is_some_and(|proof| proof.is_transferred())
+    {
         return None;
     }
     let id = oneiron::EntityId::from_hex(auth.principal_ref()?).ok()?;
@@ -310,36 +325,190 @@ fn own_agent_reader(
         .then_some(id)
 }
 
+/// The home of the conversation an assembly serves (DEC-0006
+/// `#home-clearance`; RULING L5-02-UNNAMED-HOME = A). The owner's own
+/// credential is homed here, narrowed or not ([`owner_credential`]; ANSWER
+/// OWNER-NARROW-SLIP-HOME = A), and so is one of the vault's own
+/// agents reading on its own, and a reader that names a room of this vault
+/// (`room`) it stands in ([`oneiron::Vault::stands_in_room`]). Any other
+/// reader (a delegated caller, a guest, a member's companion, a reader that
+/// can read a room's record but is not in the room) is homed in
+/// [`oneiron::ConversationHome::UNNAMED`], which no owner clears: it reads
+/// stamped claims only by naming a room of this vault it is in.
+///
+/// `named` is the request's `conversation_home`, 64 hex. Another vault's id
+/// homes the assembly there, and a room of this vault takes no such home.
+/// Only the owner and the vault's own agents name another vault: for any
+/// other reader the name is the caller's word alone, and taking it would
+/// lift that home's clearance for a reader the ruling keeps unnamed, so it
+/// is refused. This vault's own id reads as this vault only for a reader
+/// already homed here: naming it is no way around the room for any other
+/// reader.
+pub(crate) fn core_conversation_home(
+    vault: &oneiron::Vault,
+    auth: &CoreAuth,
+    room: Option<oneiron::EntityId>,
+    named: Option<&str>,
+) -> Result<oneiron::ConversationHome, ApiError> {
+    use oneiron::ConversationHome;
+    let homed_here = owner_credential(vault, auth)?
+        || own_agent_credential(vault, auth)?
+        || caller_stands_in_room(vault, auth, room)?;
+    let Some(hex) = named else {
+        return Ok(if homed_here {
+            ConversationHome::ThisVault
+        } else {
+            ConversationHome::UNNAMED
+        });
+    };
+    let home = ConversationHome::from_vault_hex(hex).ok_or_else(|| {
+        ApiError::bad_request("invalid conversation_home", Some("conversation_home"))
+    })?;
+    let own = vault
+        .authority_vault_id()
+        .map_err(|error| core_engine_error("conversation home failed", error))?;
+    if own.is_some_and(|own| home == ConversationHome::Vault(own)) {
+        return if homed_here {
+            Ok(ConversationHome::ThisVault)
+        } else if room.is_some() {
+            // A room of this vault its reader is not in homes it nowhere.
+            Ok(ConversationHome::UNNAMED)
+        } else {
+            Err(ApiError::bad_request(
+                "a conversation of this vault is named by its conversation_id",
+                Some("conversation_home"),
+            ))
+        };
+    }
+    if room.is_some() {
+        return Err(ApiError::bad_request(
+            "a conversation of this vault is homed in this vault",
+            Some("conversation_home"),
+        ));
+    }
+    if !homed_here {
+        return Err(ApiError::forbidden_scope("conversation_home"));
+    }
+    Ok(home)
+}
+
+/// Whether `auth` presents the vault owner's own credential: an owner-grade
+/// one (`CoreAuth::is_owner_grade`), or a slip the owner still holds,
+/// narrowed below owner grade, whose owner exemption holds for its key in
+/// one snapshot, as each read under that key judges it
+/// ([`oneiron::Vault::credential_owner_held`]; ANSWERS
+/// OWNER-NARROW-SLIP-HOME = A, OWNER-NARROW-SLIP-CLAMP = B). Such a slip is
+/// the owner's, not a delegate's: its assembly is homed here and is the
+/// owner's own session, and its narrowing still bounds every row it reads. A
+/// delegate's slip, one handed to another key, or an agent's credential on
+/// the owner's PERSON is not.
+fn owner_credential(vault: &oneiron::Vault, auth: &CoreAuth) -> Result<bool, ApiError> {
+    if auth.is_owner_grade() {
+        return Ok(true);
+    }
+    let Some(proof) = auth.verified_slip() else {
+        return Ok(false);
+    };
+    vault
+        .credential_owner_held(proof)
+        .map_err(|error| core_engine_error("owner credential check failed", error))
+}
+
+/// Whether the caller `auth` names stands in `room` now, the room an
+/// assembly names ([`oneiron::Vault::stands_in_room`]); no room, or a caller
+/// with no principal, stands in none.
+fn caller_stands_in_room(
+    vault: &oneiron::Vault,
+    auth: &CoreAuth,
+    room: Option<oneiron::EntityId>,
+) -> Result<bool, ApiError> {
+    let Some(room) = room else {
+        return Ok(false);
+    };
+    let Some(caller) = auth
+        .principal_ref()
+        .and_then(|id| oneiron::EntityId::from_hex(id).ok())
+    else {
+        return Ok(false);
+    };
+    vault
+        .stands_in_room(room, caller)
+        .map_err(|error| core_engine_error("conversation home failed", error))
+}
+
+/// Whether `auth` is the credential of one of the vault's own agents,
+/// reading on its own. A transferred slip is another holder's, acting on the
+/// agent's word, so it is not the agent reading on its own (as the inquiry
+/// and guest-document doors hold it).
+pub(crate) fn own_agent_credential(
+    vault: &oneiron::Vault,
+    auth: &CoreAuth,
+) -> Result<bool, ApiError> {
+    if auth.actor_class() != Some("agent")
+        || auth
+            .verified_slip()
+            .is_some_and(|proof| proof.is_transferred())
+    {
+        return Ok(false);
+    }
+    let Some(id) = auth
+        .principal_ref()
+        .and_then(|id| oneiron::EntityId::from_hex(id).ok())
+    else {
+        return Ok(false);
+    };
+    vault
+        .is_vault_agent(&id)
+        .map_err(|error| core_engine_error("conversation home failed", error))
+}
+
 /// The disclosure clamp a resolved interlocutor set applies (OF-365 ILD-2):
-/// its contacts' current clearance and the current Tier-A marks. `None` is
-/// an unclamped owner session. A room read never takes owner presence as
-/// clearance. `room` is set for a room read, with whether the room has a
-/// proven reader ([`RoomAudience::reader`]).
+/// its contacts' current clearance and the current Tier-A marks, homed in
+/// `home` ([`core_conversation_home`]). `None` is an unclamped owner session
+/// homed here. A room read never takes owner presence as clearance. `room`
+/// is set for a room read, with whether the room has a proven reader
+/// ([`RoomAudience::reader`]).
 pub(crate) fn resolve_core_disclosure(
     vault: &oneiron::Vault,
     interlocutors: Option<&oneiron::InterlocutorSet>,
     room: Option<bool>,
+    home: oneiron::ConversationHome,
 ) -> Result<Option<oneiron::DisclosureContext>, ApiError> {
-    resolve_core_disclosure_with_once(vault, interlocutors, room, &BTreeMap::new())
+    resolve_core_disclosure_with_once(vault, interlocutors, room, &BTreeMap::new(), home)
 }
 
 /// [`resolve_core_disclosure`] under the owner's `once` answers this
 /// assembly spent ([`spend_core_once_disclosures`]): each answered contact is
-/// held to its answer's Scope in place of its clearance.
+/// held to its answer's Scope in place of its clearance. Homed in another
+/// vault, an unclamped owner session is clamped as the owner alone, so the
+/// home applies to it too.
 pub(crate) fn resolve_core_disclosure_with_once(
     vault: &oneiron::Vault,
     interlocutors: Option<&oneiron::InterlocutorSet>,
     room: Option<bool>,
     once: &BTreeMap<oneiron::EntityId, oneiron::federation::Scope>,
+    home: oneiron::ConversationHome,
 ) -> Result<Option<oneiron::DisclosureContext>, ApiError> {
+    let owner_alone;
+    let interlocutors = match (interlocutors, home) {
+        (None, oneiron::ConversationHome::Vault(_)) => {
+            owner_alone = oneiron::InterlocutorSet::owner_alone();
+            Some(&owner_alone)
+        }
+        (interlocutors, _) => interlocutors,
+    };
     interlocutors
         .map(|set| {
-            oneiron::DisclosureContext::resolve_with_once(
+            let ctx = oneiron::DisclosureContext::resolve_with_once(
                 vault,
                 set.clone(),
                 room.unwrap_or(false),
                 once,
-            )
+            )?;
+            match home {
+                oneiron::ConversationHome::ThisVault => Ok(ctx),
+                home => ctx.homed_in(vault, home),
+            }
         })
         .transpose()
         .map_err(|error| {

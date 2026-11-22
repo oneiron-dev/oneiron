@@ -43,14 +43,9 @@ pub struct DreamerTuningConfig {
     pub weights: BTreeMap<String, f64>,
     pub manifest_thresholds: BTreeMap<String, f64>,
 }
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct HarnessEvaluation {
-    #[serde(with = "crate::serialize::entity_ref")]
-    pub artifact: EntityId,
-    pub version: u64,
-    pub score: f64,
-}
+#[doc(hidden)]
+pub use oneiron_records::dreamer_runner::maintenance::evaluation::HarnessEvaluation;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RetuneThresholds {

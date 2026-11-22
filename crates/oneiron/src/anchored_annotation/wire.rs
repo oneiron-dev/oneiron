@@ -52,6 +52,8 @@ impl TryFrom<&AnnotationLocator> for Locator {
                 *char_start,
                 *char_end,
             ),
+            AnnotationLocator::ImagePixel { x, y, w, h } => Self::image_pixel(*x, *y, *w, *h),
+            AnnotationLocator::ImageObject { overlay } => Ok(Self::image_object(*overlay)),
         }
     }
 }
@@ -116,6 +118,13 @@ impl From<&Locator> for AnnotationLocator {
                 char_start: *char_start,
                 char_end: *char_end,
             },
+            Locator::ImagePixel { x, y, w, h } => Self::ImagePixel {
+                x: *x,
+                y: *y,
+                w: *w,
+                h: *h,
+            },
+            Locator::ImageObject { overlay } => Self::ImageObject { overlay: *overlay },
         }
     }
 }

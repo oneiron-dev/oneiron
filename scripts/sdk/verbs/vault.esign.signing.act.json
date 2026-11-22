@@ -1,6 +1,6 @@
 {
   "name": "vault.esign.signing.act",
-  "description": "One recipient ceremony act under the signing capability in the body: load the page, save a field, complete with consent, or reject; an agent caller makes Complete an automated sign act.",
+  "description": "One recipient ceremony act under the signing capability in the body: load the page, save a field, review the items and values, complete with consent after a review, or reject; an agent caller makes Complete an automated sign act.",
   "input": "crate::blob_artifact::esign::EsignSigningRequest",
   "output": "crate::blob_artifact::esign::SigningOutcome",
   "call": "memory.esign_signing_act(&input)?",

@@ -353,7 +353,7 @@ impl Queue<'_> {
             role: HistoryRole::User,
             text: queued.text,
             at_ms: queued.at_ms,
-            said_by,
+            said_by: said_by.map(str::to_owned),
             tools: Vec::new(),
             alias: None,
         });
@@ -461,7 +461,7 @@ fn user_line(thread: &mut Thread, value: &Value, fallback_id: &str, said_by: Opt
         text
     };
     let mut kept = message(value, fallback_id, HistoryRole::User, text);
-    kept.said_by = said_by;
+    kept.said_by = said_by.map(str::to_owned);
     thread.push(kept);
 }
 
@@ -532,6 +532,6 @@ fn attachment_line(
     if let Some(source) = str_field(attachment, "source_uuid") {
         source.clone_into(&mut kept.native_id);
     }
-    kept.said_by = said_by;
+    kept.said_by = said_by.map(str::to_owned);
     thread.push(kept);
 }

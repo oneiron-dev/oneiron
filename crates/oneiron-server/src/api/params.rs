@@ -64,13 +64,7 @@ pub(super) fn parse_entity_id_param(
 }
 
 pub(super) fn hex_bytes(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut encoded = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        encoded.push(HEX[(byte >> 4) as usize] as char);
-        encoded.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    encoded
+    oneiron_hex::encode(bytes)
 }
 
 // ─── Search Routes ────────────────────────────────────────────────────────────

@@ -418,7 +418,7 @@ pub(in crate::dreamer_runner::maintenance) fn withdraw_follow_ups_in_txn(
             .is_some_and(|body| body.lifecycle == ClaimLifecycleStatus::Active)
         {
             vault.retract_claim_in_txn_as(txn, &id, now, Some(owner))?;
-            applied::close_with_parent_in_txn(vault, txn, id, out.target, owner, now)?;
+            applied::close_with_parent_in_txn(vault, txn, id, out.target, owner)?;
             out.closed.push(id);
         }
     }

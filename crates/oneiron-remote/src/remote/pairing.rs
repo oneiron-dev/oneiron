@@ -19,7 +19,7 @@ pub(crate) fn parse_credential(key: &str) -> Result<(String, Option<SigningKey>)
     };
     let (slip, seed) = credential
         .rsplit_once('.')
-        .and_then(|(slip, seed)| Some((slip, seed_from_hex(seed)?)))
+        .and_then(|(slip, seed)| Some((slip, oneiron_hex::decode::<32>(seed)?)))
         .ok_or_else(|| {
             bad_request(
                 "the key is not a paired credential",
@@ -32,23 +32,8 @@ pub(crate) fn parse_credential(key: &str) -> Result<(String, Option<SigningKey>)
     ))
 }
 
-fn seed_from_hex(value: &str) -> Option<[u8; 32]> {
-    if value.len() != 64
-        || !value
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-    {
-        return None;
-    }
-    let mut seed = [0; 32];
-    for (slot, pair) in seed.iter_mut().zip(value.as_bytes().chunks_exact(2)) {
-        *slot = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
-    }
-    Some(seed)
-}
-
 fn lower_hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    oneiron_hex::encode(bytes)
 }
 
 /// The credential string for `slip_token` (`v2.slip.…`) bound to `key`, in

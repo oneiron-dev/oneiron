@@ -11,13 +11,17 @@
 //! its outcome were read from, as the writer that assembled each named them
 //! (FIX 7103). A writer that names none leaves them unknown.
 
-use std::collections::BTreeMap;
-
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::agent_dispatch::{load_team_type_tree_at_in_txn, load_team_type_tree_in_txn};
 use crate::attempt_queue::source_rows::union_source_rows;
+use crate::batch::export::ArchiveRetainedSideRow;
+use crate::batch::export::OwnerArchiveRestorePermit;
+use crate::batch::export::RetainedSideHeldBackReason;
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
 use crate::claim::learning_evidence::Anchor;
 use crate::claim::learning_evidence::EvidenceSource;
 use crate::claim::learning_evidence::LearningEvidence;
@@ -61,72 +65,13 @@ impl StoredTeamReceipt {
     }
 }
 
-/// Longest reference or model id kept.
-const MAX_REF_BYTES: usize = 256;
+#[doc(hidden)]
+use oneiron_records::team::receipt::bounded;
+#[doc(hidden)]
+pub use oneiron_records::team::receipt::{Coverage, DecidedBy, TeamShape};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::team::receipt::PatternSkillRef;
-
-/// How many agents, in which roles.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TeamShape {
-    pub width: u32,
-    /// Role name to head count, such as `lead`, `member`, `critic`.
-    pub roles: BTreeMap<String, u32>,
-}
-
-impl TeamShape {
-    /// A stable signature for grouping: `width` then `role:count` pairs.
-    #[must_use]
-    pub fn signature(&self) -> String {
-        let roles: Vec<String> = self
-            .roles
-            .iter()
-            .map(|(role, n)| format!("{role}:{n}"))
-            .collect();
-        format!("{}|{}", self.width, roles.join(","))
-    }
-}
-
-/// Who decided the team's result.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum DecidedBy {
-    Leader {
-        actor: EntityId,
-    },
-    Chair {
-        actor: EntityId,
-    },
-    Vote {
-        tally: BTreeMap<String, u32>,
-    },
-    /// A rule signed before the work: a test suite, a holdout, a pinned judge.
-    Referee {
-        rule: String,
-        signed_at: u64,
-    },
-}
-
-impl DecidedBy {
-    /// The decider kind token.
-    #[must_use]
-    pub const fn kind(&self) -> &'static str {
-        match self {
-            Self::Leader { .. } => "leader",
-            Self::Chair { .. } => "chair",
-            Self::Vote { .. } => "vote",
-            Self::Referee { .. } => "referee",
-        }
-    }
-}
-
-/// How much of the campaign's cell grid the team's outputs covered.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Coverage {
-    pub cells_filled: u32,
-    pub cells_total: u32,
-}
 
 /// The anchored outcome that settles a team run.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -186,13 +131,6 @@ pub struct TeamReceipt {
     pub calls: Option<u64>,
     pub outcome: Option<TeamOutcome>,
     pub at: u64,
-}
-
-fn bounded(text: &str, what: &'static str) -> Result<()> {
-    if text.is_empty() || text.len() > MAX_REF_BYTES || text.contains('\0') {
-        return Err(Error::InvalidClaimBody(what));
-    }
-    Ok(())
 }
 
 impl TeamReceipt {
@@ -659,4 +597,66 @@ fn stored_receipts_in_txn(
         a.at.cmp(&b.at).then_with(|| a.team_ref.cmp(&b.team_ref))
     });
     Ok(rows)
+}
+
+/// Lands the owner's archived `TEAM_RECEIPT` envelopes in input order, one outcome per row.
+pub(crate) fn land_archived_team_rows_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    rows: &[ArchiveRetainedSideRow],
+) -> Result<Vec<ArchivedSideRowOutcome>> {
+    let mut outcomes = Vec::with_capacity(rows.len());
+    for row in rows {
+        outcomes.push(land_archived_team_receipt_row_in_txn(
+            vault, txn, permit, row,
+        )?);
+    }
+    Ok(outcomes)
+}
+
+/// Lands one archived team-receipt envelope: the contract's structural checks, then an
+/// absent-key exact-bytes install that never feeds learning or validates the type tree.
+fn land_archived_team_receipt_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> Result<ArchivedSideRowOutcome> {
+    let (key, stored) = match decode_archived_row(&TEAM_RECEIPT, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    if stored.receipt.validate().is_err() {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidValue,
+        ));
+    }
+    if let Some(outcome) = &stored.receipt.outcome
+        && bounded(
+            &outcome.receipt,
+            "an outcome receipt is 1..=256 bytes without NUL",
+        )
+        .is_err()
+    {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidValue,
+        ));
+    }
+    if let Some(reason) = team_receipt_twins_hold_in_txn(&key, &stored)? {
+        return Ok(ArchivedSideRowOutcome::HeldBack(reason));
+    }
+    install_archived_row(&TEAM_RECEIPT, vault, txn, permit, &key, row)
+}
+
+/// Holds back a team receipt whose key is not its `team_ref` (C7 twin rule, no type check).
+fn team_receipt_twins_hold_in_txn(
+    key: &str,
+    stored: &StoredTeamReceipt,
+) -> Result<Option<RetainedSideHeldBackReason>> {
+    if key == stored.receipt.team_ref {
+        Ok(None)
+    } else {
+        Ok(Some(RetainedSideHeldBackReason::InvalidValue))
+    }
 }

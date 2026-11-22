@@ -71,22 +71,28 @@ pub use self::types::{
 };
 
 /// How long a pending reveal waits for its answer and its collection, in
-/// seconds. Canon names no window; a widen proposal's one-hour cap is the
-/// house ceiling for an ask that waits on the owner.
+/// seconds, until the owner sets `secrets.reveal.ask_window_secs`
+/// ([`setting_keys::REVEAL_ASK_WINDOW`](super::setting_keys::REVEAL_ASK_WINDOW)): its default.
+/// Canon names no window; a widen proposal's one-hour cap is the house default
+/// for an ask that waits on the owner.
 pub const REVEAL_ASK_TTL_SECS: u64 = 3600;
 
-/// The life of the T1 lease a delivered reveal stamps, and of the lease a
-/// PERSON reveal keeps on its row (FIX 11683), in seconds. Canon names none.
-pub const REVEAL_LEASE_TTL_SECS: u64 = 900;
+#[doc(hidden)]
+pub(super) use oneiron_records::secret_custody::reveal::reveal_connection;
+#[doc(hidden)]
+use oneiron_records::secret_custody::reveal::{
+    DISCLOSURE_VERSION, ONCE_DIGEST_DOMAIN, READER_AGENT, disclosure_line, project_selector,
+    reveal_class,
+};
+#[doc(hidden)]
+pub use oneiron_records::secret_custody::reveal::{
+    NO_PROJECT_SELECTOR, REVEAL_LEASE_TTL_SECS, UNKNOWN_PROVIDER_DISCLOSURE,
+};
 
 /// The longest `why`, or owner reason, a reveal keeps, in bytes after
 /// trimming. It lands in a receipt a later mask cannot reach, so it is
 /// scanned too.
 pub const REVEAL_TEXT_MAX_BYTES: usize = 512;
-
-/// The envelope selector of a reveal asked outside any project: a grant for
-/// it covers reveals that name no project, and no other.
-pub const NO_PROJECT_SELECTOR: &str = "project:none";
 
 /// Gate reason code: an agent's reveal waits on the owner's answer.
 pub const SECRET_REVEAL_REASON_ASKED: &str = "gate.consent.secret_reveal.asked";
@@ -100,21 +106,6 @@ const SECRET_REVEAL_OPERATION: &str = "secret.reveal";
 /// The Gate content kind of every reveal record.
 const SECRET_REVEAL_CONTENT_KIND: &str = "secret_reveal";
 
-/// The version of the engine's disclosure line, bound into the once digest:
-/// a change of wording is a different ask.
-const DISCLOSURE_VERSION: &str = "secret_reveal.disclosure.v2";
-
-/// What the disclosure line names when no host named the agent's model
-/// provider (an external HTTP or MCP agent, or a model no ladder served).
-/// One constant, so a ruling changes one line.
-pub const UNKNOWN_PROVIDER_DISCLOSURE: &str =
-    "this agent's model provider, which this host does not know";
-
-/// Domain of the digest an owner's answer authorizes.
-const ONCE_DIGEST_DOMAIN: &[u8] = b"oneiron.secret_reveal.once.v1";
-
-/// The reader of an agent's reveal; the owner's own read is `owner`.
-const READER_AGENT: &str = "agent";
 const READER_OWNER: &str = "owner";
 
 /// Every reveal, keyed by its id.
@@ -269,6 +260,19 @@ impl RevealAuthority {
             effector,
         }
     }
+}
+
+/// Whether any reveal, open or ended, named the custody record `secret`: a
+/// use of it, so a merge keeps the record (FILE-CUSTODY-MERGE-AFTER-REWRAP).
+pub(crate) fn custody_ever_revealed_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    secret: &EntityId,
+) -> Result<bool> {
+    Ok(REVEALS
+        .scan(store, txn)?
+        .iter()
+        .any(|(_, row)| row.secret == *secret))
 }
 
 /// The value a granted reveal delivers, read under `authority` in the
@@ -534,26 +538,6 @@ impl RevealRow {
     }
 }
 
-/// What "this connection" is: the asking agent's own actor. The engine holds
-/// no connection entity; one agent identity is one paired client.
-pub(super) fn reveal_connection(agent: &EntityId) -> String {
-    format!("agent:{}", agent.to_hex())
-}
-
-/// What "this class" is: the record's custody class.
-fn reveal_class(class: CustodyClass) -> String {
-    format!("secret:{}", class.as_str())
-}
-
-/// What "this project" is: the project the run works in, or
-/// [`NO_PROJECT_SELECTOR`].
-fn project_selector(project: Option<&EntityId>) -> String {
-    project.map_or_else(
-        || NO_PROJECT_SELECTOR.to_owned(),
-        |project| format!("project:{}", project.to_hex()),
-    )
-}
-
 /// The bound a reveal asks for at its default reach. "Approve and stop
 /// asking" mints this bound unless the owner picks another reach (FIX 2354):
 /// this connection × this class × this project.
@@ -605,21 +589,6 @@ fn covering_grant(
         .map(|grant| grant.bound().digest().to_hex()))
 }
 
-/// The engine's own line on where a revealed value goes, in words no agent
-/// wrote: `what` (such as "Revealing sc12 sends its value") goes on to name
-/// the connection and the provider. It names no value.
-fn disclosure_line(what: &str, connection: &str, provider: Option<&str>) -> String {
-    match provider {
-        Some(provider) => format!(
-            "{what} through {connection} to {provider}; {provider} and its logs then hold it."
-        ),
-        None => format!(
-            "{what} through {connection} to {UNKNOWN_PROVIDER_DISCLOSURE}; that provider and \
-             its logs then hold it."
-        ),
-    }
-}
-
 /// A reveal's why or an owner's reason: 1..=[`REVEAL_TEXT_MAX_BYTES`] bytes
 /// after trimming, one line, and no credential in it.
 fn checked_text(text: &str, empty: &'static str, long: &'static str) -> Result<String> {
@@ -664,14 +633,17 @@ pub fn parse_secret_handle(text: &str) -> Result<(&str, Option<u8>)> {
 }
 
 /// Resolves a handle to the custody record it names, inside `txn`. Returns
-/// the bare handle and the record. Only a live custody short id resolves.
+/// the bare handle and the record. Only a live custody short id resolves. A
+/// record a merge retired here resolves to the record that holds its value
+/// now, with that record's handle (REVIEW2 #8875 P2-1).
 pub(super) fn resolve_handle_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     handle: &str,
 ) -> Result<(String, EntityId)> {
     let (short, hash) = parse_secret_handle(handle)?;
-    resolve_parsed_handle_in_txn(store, txn, short, hash)
+    let (short, id) = resolve_parsed_handle_in_txn(store, txn, short, hash)?;
+    super::duplicate_merge::merged_winner_in_txn(store, txn, short, id)
 }
 
 /// Typed public handle lookup shared by custody and PERSON reveals.

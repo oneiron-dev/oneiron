@@ -36,9 +36,8 @@ const CONSENT_RECEIPT: &str = "oneiron.detector-consent/1";
 /// The `excluded` count of rows whose source family feeds neither side: a
 /// judge-audit family, or a sealed family outside the run's cohort.
 const OUTSIDE_SPLIT: &str = "family_outside_split";
-/// The one label unit a head trains on; a window label never becomes a
-/// target label.
-const TARGET_UNIT: &str = "target";
+#[doc(hidden)]
+use oneiron_records::training_pack::detector_corpus::TARGET_UNIT;
 
 /// The prepared-corpus reference a question run is prepared from: the
 /// owner's adjudicated per-target rows, one pinned version in custody. Each

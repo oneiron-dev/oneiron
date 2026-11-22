@@ -413,6 +413,7 @@ class OneironError(RuntimeError):
     reason_codes: tuple[str, ...] | None
     legal_hold: Facade.LegalHoldNotice | None
     room_join_hold: Facade.RoomJoinHold | None
+    pending: Facade.MemoryPending | None
     def __init__(
         self,
         code: str,
@@ -425,6 +426,7 @@ class OneironError(RuntimeError):
         reason_codes: list[str] | None = None,
         legal_hold: Facade.LegalHoldNotice | None = None,
         room_join_hold: Facade.RoomJoinHold | None = None,
+        pending: Facade.MemoryPending | None = None,
     ) -> None: ...
 
 class Oneiron(_FacadeVerbs):
@@ -452,6 +454,7 @@ class Oneiron(_FacadeVerbs):
     @classmethod
     def pair(cls, link: str) -> Paired: ...
     def as_actor(self, actor_key: str) -> "Oneiron": ...
+    def as_owner_device(self) -> "Oneiron": ...
     def in_room_turn(self, room_ref: str) -> "Oneiron": ...
     def in_off_record_session(self, session_ref: str) -> "Oneiron": ...
     def with_read_credential(self, credential: str) -> "Oneiron": ...

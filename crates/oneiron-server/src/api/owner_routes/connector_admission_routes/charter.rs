@@ -262,7 +262,7 @@ pub(super) async fn discard_charter(
         let name = normalize_name(&request.connector);
         let catalog = catalog(vault, &name)?;
         let record = vault
-            .discard_connector_charter(&catalog.key, unix_seconds_now())
+            .discard_connector_charter(&catalog.key)
             .map_err(charter_error)?;
         Ok(CharterView::new(name, catalog.key, &record))
     })

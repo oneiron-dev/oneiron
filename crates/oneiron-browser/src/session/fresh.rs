@@ -173,6 +173,9 @@ impl BrowserSession {
         if fresh.abandoned()
             && let Some(factory) = self.fresh.as_mut()
         {
+            // Its receipt names the pressure its guest showed by then (FIX
+            // 8013).
+            fresh.record_pressure();
             factory.abandoned(fresh.manifest());
         }
         let mut output = output?;

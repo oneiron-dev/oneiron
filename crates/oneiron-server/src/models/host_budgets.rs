@@ -32,7 +32,7 @@ pub(crate) struct ModelHostBudgets {
     media: Arc<ReplyLine>,
     chat: Arc<ReplyLine>,
     #[cfg(feature = "mesh")]
-    staging: oneiron_llm_own_server::StagingBudget,
+    staging: oneiron_llm::oneiron_rpc::StagingBudget,
 }
 
 /// A reply line and where its row asks.
@@ -56,7 +56,7 @@ impl ModelHostBudgets {
             media: line(LimitRow::MediaReplyBytes, limits.media_reply_bytes),
             chat: line(LimitRow::ChatReplyBytes, limits.chat_reply_bytes),
             #[cfg(feature = "mesh")]
-            staging: oneiron_llm_own_server::StagingBudget::default(),
+            staging: oneiron_llm::oneiron_rpc::StagingBudget::default(),
         }
     }
 
@@ -81,7 +81,7 @@ impl ModelHostBudgets {
     /// vault.
     #[cfg(feature = "mesh")]
     #[must_use]
-    pub(crate) fn mesh_staging(&self) -> oneiron_llm_own_server::StagingBudget {
+    pub(crate) fn mesh_staging(&self) -> oneiron_llm::oneiron_rpc::StagingBudget {
         self.staging.clone()
     }
 }

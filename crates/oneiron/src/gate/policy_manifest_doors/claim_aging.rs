@@ -3,6 +3,7 @@
 use super::{body_in_txn, decode_fields, encode_fields, invalid, record};
 use crate::claim::ClaimAgingProfiles;
 use crate::consent::AuthenticatedOwner;
+use crate::store::gate_reason::GateReceiptOutcome;
 use crate::{EdgeActorClass, Error, Result, Vault, WriteActor};
 
 pub(crate) const CLAIM_AGING_PROFILES_KEY: &str = "claim_aging_profiles";
@@ -103,7 +104,7 @@ pub fn configure_claim_aging_profiles_as_owner(
             id,
             &body,
             (
-                "allow",
+                GateReceiptOutcome::Allow,
                 vec!["gate.allow.owner_claim_aging_profiles".to_owned()],
             ),
         )?;

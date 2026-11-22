@@ -58,14 +58,8 @@ impl CommWidenRecipient {
     }
 }
 
-/// Where one request stands.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum CommWidenState {
-    Pending,
-    Approved,
-    Declined,
-}
+#[doc(hidden)]
+pub(crate) use oneiron_records::agent_dispatch::comm_widen::CommWidenState;
 
 /// The question one ask round carries: ids and time reserved before its
 /// witness, so a retry lands the same question.

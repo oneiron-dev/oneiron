@@ -22,6 +22,38 @@ use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::error::Error;
 
+impl IntentLedgerRecord {
+    /// This row with its provider-native key named by `attempt` where that is
+    /// not its own: a later local attempt of one logical send, admitted under a
+    /// ledger identity of its own, reaches its provider under the key its first
+    /// attempt's row carries, so a provider that drops a repeated key drops a
+    /// repeat of that send (`OutboundDispatchRequest::idempotency_identity_ref`).
+    /// The row keeps the attempt (`idempotency_attempt_id`).
+    pub(crate) fn with_idempotency_attempt(
+        mut self,
+        attempt: Option<AttemptId>,
+    ) -> IntentLedgerResult<Self> {
+        self.idempotency_attempt_id = attempt.filter(|attempt| *attempt != self.attempt_id);
+        self.idempotency_key = crate::entity_id::bytes_to_hex_lower(&self.idempotency_key_id()?);
+        Ok(self)
+    }
+
+    /// The id whose hex is this row's provider-native key: its own, or the one
+    /// its idempotency attempt derives under its call, tool and payload.
+    pub(super) fn idempotency_key_id(&self) -> IntentLedgerResult<[u8; 32]> {
+        match self.idempotency_attempt_id {
+            Some(attempt) => derive_intent_id(
+                attempt,
+                self.call_seq,
+                &self.server,
+                &self.tool,
+                &self.payload_hash,
+            ),
+            None => Ok(self.id),
+        }
+    }
+}
+
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum IntentRecoveryEntry {
     Valid(IntentLedgerRecord),
@@ -54,9 +86,12 @@ pub(crate) fn intent_recovery_entries(
 ///
 /// Intent identity keeps its shipped canonical-JSON preimage: it names rows
 /// that already exist on device, and it is not what this ledger's content
-/// digest covers. The JSON canonicalizer and the entire serde-JSON surface it
-/// needs are declared inside this function so no other path in this module —
-/// `record_content_digest` above all — can reach a JSON detour.
+/// digest covers. The preimage is the one kept sorted-JSON encoder's bytes
+/// (`crate::llm::canonical_json_bytes`), and only this function calls it here,
+/// so no other path in this module — `record_content_digest` above all — takes
+/// a JSON detour. The hash is plain BLAKE3 with no tag, started through the K
+/// door (`purposes::outbound_intent_ledger::INTENT_ID`): the id is the ledger's
+/// row key, so it keeps its bytes (PLAN-UC-04 stage 1.3).
 pub fn derive_intent_id(
     attempt_id: AttemptId,
     call_seq: u64,
@@ -64,10 +99,8 @@ pub fn derive_intent_id(
     tool: &str,
     payload_hash: &[u8; 32],
 ) -> IntentLedgerResult<[u8; 32]> {
-    use std::collections::BTreeMap;
-
+    use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
     use serde::Serialize;
-    use serde_json::{Map as JsonMap, Value as JsonValue};
 
     #[derive(Serialize)]
     struct IntentIdentity<'a> {
@@ -78,42 +111,20 @@ pub fn derive_intent_id(
         payload_hash: &'a [u8; 32],
     }
 
-    fn canonicalize_json(value: JsonValue) -> JsonValue {
-        match value {
-            JsonValue::Array(values) => {
-                JsonValue::Array(values.into_iter().map(canonicalize_json).collect())
-            }
-            JsonValue::Object(entries) => {
-                let mut sorted = BTreeMap::new();
-                for (key, value) in entries {
-                    sorted.insert(key, canonicalize_json(value));
-                }
-                let mut canonical = JsonMap::new();
-                for (key, value) in sorted {
-                    canonical.insert(key, value);
-                }
-                JsonValue::Object(canonical)
-            }
-            scalar => scalar,
-        }
-    }
-
-    fn canonical_hash<T: Serialize>(value: &T) -> IntentLedgerResult<[u8; 32]> {
-        const FAILED: &str = "outbound intent identity canonicalization failed";
-        let value =
-            serde_json::to_value(value).map_err(|_| IntentLedgerError::InvalidRecord(FAILED))?;
-        let bytes = serde_json::to_vec(&canonicalize_json(value))
-            .map_err(|_| IntentLedgerError::InvalidRecord(FAILED))?;
-        Ok(*blake3::hash(&bytes).as_bytes())
-    }
-
-    canonical_hash(&IntentIdentity {
+    const FAILED: &str = "outbound intent identity canonicalization failed";
+    let bytes = crate::llm::canonical_json_bytes(&IntentIdentity {
         attempt_id: attempt_id.as_bytes(),
         call_seq,
         server,
         tool,
         payload_hash,
     })
+    .map_err(|_| IntentLedgerError::InvalidRecord(FAILED))?;
+    Ok(
+        LegacyDigest::new(purposes::outbound_intent_ledger::INTENT_ID)
+            .raw(&bytes)
+            .finish(),
+    )
 }
 
 /// Test-only ledger primitive fixture. Production effects enter through
@@ -182,6 +193,7 @@ pub(crate) fn execute_outbound_call<S: OutboundSender + ?Sized>(
         payload_hash: call.payload_hash,
         payload: call.payload.to_vec(),
         idempotency_key,
+        idempotency_attempt_id: None,
         idempotency_supported,
         authorization_binding: Some(authorization_binding),
         admitted_approval: None,

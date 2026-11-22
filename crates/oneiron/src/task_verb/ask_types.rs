@@ -16,8 +16,9 @@ pub use oneiron_verb_wire::task_verb::ask_types::{
     TaskAskNeed, TaskAskOption, TaskAskProvisional, TaskAskSurface,
 };
 
-/// A question is either addressed to one executor, or resolved to every
-/// authority holder. There is no caller-picked authority holder allowlist.
+/// A question is addressed to one executor or to named people, resolved to
+/// every authority holder, or put to the next authorised role. There is no
+/// caller-picked authority holder allowlist.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskAskTarget {
@@ -27,6 +28,13 @@ pub enum TaskAskTarget {
     /// Foreign people enter through owner-confirmed disclosure bounds and
     /// per-ask guest grants, not membership or a caller-picked authority list.
     Guests(BTreeMap<EntityId, TaskAskGuest>),
+    /// The next authorised role on the decision ladders' role chain
+    /// (ROLES-EVERYWHERE = A; ARCH-0067 #tasks): the first role from `role`,
+    /// up to `ceiling`, with a live holder who may answer for `act`. A role
+    /// with no live holder is climbed past; the chain ends at the vault owner
+    /// role. It names who is asked and grants nothing. Admitted, the group's
+    /// effective target names the role the ask reached.
+    Role(crate::llm::decision::AskTo),
 }
 
 /// Stable option identity. Display text is never a predicate.
@@ -245,42 +253,14 @@ impl TaskAskSpec {
     }
 }
 
-/// Live ask routing. `None` means no native channel, not a promise of delivery.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TaskAskPreflightRecipient {
-    pub who: EntityId,
-    pub face: Option<String>,
-    pub channel: Option<String>,
-    pub word_required: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TaskAskPreflight {
-    pub recipients: Vec<TaskAskPreflightRecipient>,
-}
+#[doc(hidden)]
+pub use oneiron_records::task_verb::ask_types::{
+    TaskAskCoverage, TaskAskEffectAuthorization, TaskAskEvidenceReason, TaskAskFallback,
+    TaskAskHoldReason, TaskAskLaunchHold, TaskAskPersonKind, TaskAskPreflight,
+    TaskAskPreflightRecipient, TaskAskSettlementReason, TaskAskSource,
+};
 
 pub use crate::authority::task_ask_handle::TaskAskHandle;
-
-/// A typed explanation emitted at admission, without waiting for TTL.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum TaskAskHoldReason {
-    /// Mailbox TASKs are queued, but no native delivery route is known now.
-    NoLiveRoute,
-    /// The vault's approval mode holds the ask for the owner's launch
-    /// approval (OF-393): no member TASK or guest grant exists until the
-    /// owner approves; a denial keeps it held and visible.
-    ApprovalRequired,
-}
-
-/// The launch approval an ask waits on: the ref the owner's resume door
-/// takes, the frozen plan digest a ruling names, and the durable hold.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TaskAskLaunchHold {
-    pub launch_ref: EntityId,
-    pub plan_digest: String,
-    pub surface_ref: String,
-    pub denied: bool,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskAskReceipt {
@@ -403,29 +383,6 @@ impl TaskAskWord {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TaskAskSource {
-    Human,
-    /// Bearer-bound external word attributed to the intended person, not an instruction.
-    ForeignStated,
-    Companion,
-    Inform,
-    Executor,
-}
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TaskAskEvidenceReason {
-    Counted,
-    CompanionHint,
-    Inform,
-    HumanDominates,
-    Executor,
-    Superseded,
-    OutsideElectorate,
-    MissingSource,
-    Late,
-}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskAskEvidence {
@@ -445,17 +402,6 @@ pub struct TaskAskEvidence {
     #[serde(default)]
     pub delegation_grant_ref: Option<String>,
 }
-/// One person's attributed answer at this read. `Unknown` carries no answer;
-/// the agent's cutoff branch is never serialized as a person's default word.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TaskAskPersonKind {
-    Word,
-    Companion,
-    Default,
-    Unknown,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskAskPersonEvidence {
@@ -467,15 +413,6 @@ pub struct TaskAskPersonEvidence {
     pub source: Option<EntityId>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TaskAskCoverage {
-    pub met: bool,
-    pub required: u16,
-    pub responded: BTreeSet<EntityId>,
-    pub unknown: BTreeSet<EntityId>,
-    pub unmet_people: BTreeSet<EntityId>,
-}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskAskDecision {
@@ -504,21 +441,6 @@ impl TaskAskDecision {
         }
     }
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TaskAskFallback {
-    /// The default or disagreement branch is the asking agent's act.
-    pub branch: TaskAskDefault,
-    pub surface: TaskAskSurface,
-}
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TaskAskSettlementReason {
-    FirstWord,
-    AllResponded,
-    Deadline,
-    Stale,
-}
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskAskSettlement {
@@ -540,14 +462,6 @@ pub struct TaskAskSettlement {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub link_result_proof: Option<Vec<u8>>,
 }
-/// Ask settlement cannot grant or deny an external effect. Only the separate
-/// effect gate evaluates that authority against its own live inputs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TaskAskEffectAuthorization {
-    NotEvaluatedByAsk,
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskAskResult {

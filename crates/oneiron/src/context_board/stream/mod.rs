@@ -39,6 +39,10 @@ pub use self::room_wake::{PendingRoomWake, RoomWakeRead};
 pub use self::task_wake::{PendingTaskWake, StagedTaskWake, TaskWakeKind, TaskWakeRead};
 pub use self::wake::WakeEnvelope;
 
+// The envelope-id acknowledgement record (RC99, census L8-18).
+pub use self::registry::HANDED_WAKES_CAP;
+pub use self::wake::WakeDelivery;
+
 use super::one_line_token;
 
 // The flat stream.rs module used to provide these names to the inline test

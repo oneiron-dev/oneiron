@@ -18,32 +18,16 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::browser_library::SolvedRunEvidence;
-use crate::dreamer_runner::maintenance::browser_candidate::CANDIDATE_DOMAIN;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::learning::TypeRef;
 use crate::{EntityId, Error, Result};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 /// The version of this induction, in each candidate's fingerprint and job.
 pub(super) const INDUCTION_VERSION: u32 = 1;
 
-/// How far a candidate got.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub(super) enum Status {
-    /// Aligned and verified, every parameter bound.
-    Aligned,
-    /// Aligned, with secret slots or arguments its admission binds again.
-    NeedsBinding,
-    /// Did not align, ran short or failed a check: its reasons say why.
-    Diagnostic,
-}
-
-impl Status {
-    /// Whether an admission job may take the candidate.
-    pub(super) fn eligible(self) -> bool {
-        !matches!(self, Self::Diagnostic)
-    }
-}
+#[doc(hidden)]
+pub(super) use oneiron_records::dreamer_runner::maintenance::browser_programs::induction::Status;
 
 /// The failed program a repair supersedes, as its failure row names it.
 #[derive(Debug, Clone, Serialize)]
@@ -59,7 +43,8 @@ pub(super) struct Predecessor {
 /// One candidate program and the finding that proposes it.
 #[derive(Debug, Clone)]
 pub(super) struct Candidate {
-    /// Its input fingerprint in [`CANDIDATE_DOMAIN`]: its seen marker's key.
+    /// Its input fingerprint under `purposes::browser_library::PROGRAM_CANDIDATE`:
+    /// its seen marker's key.
     pub(super) fingerprint: [u8; 32],
     pub(super) status: Status,
     pub(super) proposal: ProposeInput,
@@ -484,14 +469,20 @@ fn slot_name(name: &str) -> bool {
         && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
 }
 
-/// BLAKE3 over `parts` in [`CANDIDATE_DOMAIN`], each part length-delimited.
-fn digest(parts: &[&[u8]]) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(CANDIDATE_DOMAIN);
+/// BLAKE3 over `parts` under `purposes::browser_library::PROGRAM_CANDIDATE`
+/// (its tag first), each part as its u64 big-endian length and its bytes.
+/// The diagnostic pass fingerprints its candidates here too. The seen marker
+/// is keyed by it, so it keeps its bytes (K, PLAN-UC-04 stage 6).
+pub(super) fn digest(parts: &[&[u8]]) -> [u8; 32] {
+    let mut fingerprint = LegacyDigest::new(purposes::browser_library::PROGRAM_CANDIDATE);
     for part in parts {
-        let len = u64::try_from(part.len()).unwrap_or(u64::MAX);
-        hasher.update(&len.to_be_bytes());
-        hasher.update(part);
+        fingerprint.len_u64_be(part.len()).raw(part);
     }
-    *hasher.finalize().as_bytes()
+    fingerprint.finish()
+}
+
+/// A candidate program's input fingerprint over `parts`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn program_candidate_digest_for_test(parts: &[&[u8]]) -> [u8; 32] {
+    digest(parts)
 }

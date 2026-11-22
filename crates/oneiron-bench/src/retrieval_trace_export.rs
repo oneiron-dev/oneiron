@@ -14,7 +14,6 @@ pub(crate) const RETRIEVAL_TRACE_EXPORT_CONTRACT_VERSION: &str =
     "oneiron.retrieval_trace_export.v1";
 const RETRIEVAL_TRACE_RECORD_TYPE: &str = "retrieval_trace";
 const DEFAULT_TRACE_EXPORT_DIMENSIONS: usize = 1024;
-const HEX_DIGITS: &[u8; 16] = b"0123456789abcdef";
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum RetrievalTraceExportError {
@@ -473,43 +472,16 @@ fn parse_fixed_hex<const N: usize>(value: &str) -> ExportResult<[u8; N]> {
             reason: format!("expected {} hex characters", N * 2),
         });
     }
-
-    let mut bytes = [0_u8; N];
-    let raw = value.as_bytes();
-    for index in 0..N {
-        let high = decode_hex_nibble(raw[index * 2]).ok_or_else(|| {
-            RetrievalTraceExportError::InvalidForkHash {
-                value: value.to_owned(),
-                reason: "contains a non-hex character".to_owned(),
-            }
-        })?;
-        let low = decode_hex_nibble(raw[index * 2 + 1]).ok_or_else(|| {
-            RetrievalTraceExportError::InvalidForkHash {
-                value: value.to_owned(),
-                reason: "contains a non-hex character".to_owned(),
-            }
-        })?;
-        bytes[index] = (high << 4) | low;
-    }
-    Ok(bytes)
-}
-
-fn decode_hex_nibble(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        b'A'..=b'F' => Some(byte - b'A' + 10),
-        _ => None,
-    }
+    oneiron_hex::decode_any_case::<N>(value).ok_or_else(|| {
+        RetrievalTraceExportError::InvalidForkHash {
+            value: value.to_owned(),
+            reason: "contains a non-hex character".to_owned(),
+        }
+    })
 }
 
 fn encode_hex(bytes: &[u8]) -> String {
-    let mut hex = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        hex.push(HEX_DIGITS[(byte >> 4) as usize] as char);
-        hex.push(HEX_DIGITS[(byte & 0x0f) as usize] as char);
-    }
-    hex
+    oneiron_hex::encode(bytes)
 }
 
 fn print_help() {

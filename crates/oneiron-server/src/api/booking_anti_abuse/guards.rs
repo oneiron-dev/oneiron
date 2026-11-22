@@ -21,6 +21,11 @@ use super::support::{correction_body, engine_error, log_rate_block};
 use crate::error::ApiError;
 use crate::server::SyncServer;
 
+/// When a hold past its page session's active-hold cap is told to try again:
+/// the hint the cap answers, and the one a session's busy line answers an
+/// anonymous hold with (`api::booking::turn`).
+pub(crate) const SESSION_HOLD_RETRY_SECS: u64 = 60;
+
 /// The hashed identity behind one rate bucket. With an email available the
 /// engine keys the book window on the IP+email pair, so two people behind
 /// one corporate NAT keep independent budgets; raw addresses never cross
@@ -226,7 +231,7 @@ pub(crate) async fn enforce_hold(
         && facts.active_holds_for_session >= max_active_per_session
     {
         return Ok(BookingHttpDisposition::RetryAfter {
-            seconds: 60,
+            seconds: SESSION_HOLD_RETRY_SECS,
             bound: u64::from(max_active_per_session),
         });
     }

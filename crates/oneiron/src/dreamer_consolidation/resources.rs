@@ -11,21 +11,28 @@ use super::conflict::{
 };
 use super::wake_plan::PreparedWake;
 
+mod bound_read;
+mod extraction_scope;
+mod held;
 mod nightly_link_grant;
 mod parts;
 mod pins;
 mod prior;
 mod restated;
 mod root;
+pub(crate) use bound_read::{BoundBranchInput, BoundBranchRead, project_bound_branch};
 pub(crate) use nightly_link_grant::require_nightly_link_write;
 pub use nightly_link_grant::{NightlyLinkGrantRequest, mint_nightly_link_grant};
 pub(super) use pins::{BranchPins, OwnedPins};
+pub(super) use prior::prior_keys;
 pub(super) use prior::standing;
 use root::ResourceOrigin;
 pub(super) mod signals;
 pub(crate) use signals::facet as claim_facet;
 mod slices;
-pub(super) use slices::ExtractionSlice;
+pub(super) use slices::{ExtractionSlice, PagePastRoom, SliceBound};
+#[cfg(oneiron_test_support)]
+pub(crate) use slices::{fitted_calls_for_test, native_slice_calls_in_room_for_test};
 mod write;
 use super::provenance::{ConsolidationSink, PromotionCandidate};
 use super::support::invalid_consolidation;
@@ -44,6 +51,10 @@ use crate::registry::{
 };
 use crate::write_envelope::WriteActor;
 use crate::{Result, Vault};
+#[cfg(oneiron_test_support)]
+pub(crate) use bound_read::extraction_routing_door;
+#[cfg(oneiron_test_support)]
+pub(crate) use bound_read::open_conflict_door;
 use oneiron_model::llm::{LlmResponse, Scope, ScopeResource};
 pub use write::ScopedConsolidationWrite;
 pub(crate) use write::{ConsolidationFence, RowRevision};
@@ -107,6 +118,9 @@ pub(super) struct BranchResources<'a> {
     /// Every scoped read this branch made, folded. Methods read through
     /// `&self`, so the fold sits behind a lock.
     read_receipt: std::sync::Mutex<ScopedReadReceipt>,
+    /// The escalation rows a window slot's early finish holds for its
+    /// settle (FIX 21927); `None` writes them at once.
+    held: std::cell::RefCell<Option<held::HeldEscalations>>,
 }
 
 impl<'a> BranchResources<'a> {
@@ -536,14 +550,16 @@ impl<'a> BranchResources<'a> {
         Ok(())
     }
 
-    pub(super) fn upsert_verified_gaps(
+    /// Writes verified contradiction gaps into the origin's gap queue; the
+    /// branch's own door is `upsert_verified_gaps`, which may hold them.
+    fn write_verified_gaps(
         &self,
         scope: &Scope,
         gaps: Vec<(
             super::gap::ReflectionGap,
             super::evidence::VerifiedEvidenceSet,
         )>,
-        now: u64,
+        now_ms: u64,
     ) -> Result<super::gap::GapQueueDelta> {
         self.check_axes(scope)?;
         let mut persisted = Vec::new();
@@ -569,18 +585,16 @@ impl<'a> BranchResources<'a> {
             self.origin.axes(),
             &self.write_fence(),
             persisted,
-            now,
+            now_ms,
         )
     }
 
-    // FIX [LIBTEST-QUARANTINE-DREAMER-CONSOLIDATION-TESTS]: the lib test target's type check fails here (1 error: E0609 x1, no field `branch`); every caller is in that gated module; port it with them, then drop this gate
-    #[cfg(any())]
     #[cfg(test)]
     pub(super) fn upsert_gaps(
         &self,
         scope: &Scope,
         gaps: Vec<super::gap::ReflectionGap>,
-        now: u64,
+        now_ms: u64,
     ) -> Result<super::gap::GapQueueDelta> {
         self.check_axes(scope)?;
         for gap in &gaps {
@@ -610,13 +624,14 @@ impl<'a> BranchResources<'a> {
                 }
             }
         }
-        super::gap::upsert_branch_gap_queue(
+        super::gap::upsert_origin_gap_queue(
             self.read.vault(),
             scope,
-            &self.branch,
+            self.origin.gap_projection(scope),
+            self.origin.axes(),
             &self.write_fence(),
             gaps,
-            now,
+            now_ms,
         )
     }
 

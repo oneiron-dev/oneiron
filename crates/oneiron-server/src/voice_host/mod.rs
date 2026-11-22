@@ -16,6 +16,7 @@ mod attachment;
 mod backend;
 mod boot;
 mod brain;
+mod call_wording;
 mod connection;
 mod entry_barrier;
 mod extraction;
@@ -28,6 +29,7 @@ mod public;
 mod public_events;
 mod public_hold;
 mod public_loop;
+mod record;
 mod serve_bindings;
 // The call's speakers matched into its roster, and one retired (FIX 3344, 1522).
 mod speaker_match;
@@ -35,11 +37,19 @@ mod speech;
 mod wire;
 
 pub(crate) use boot::VoiceBoot;
+#[cfg(oneiron_test_support)]
+pub(crate) use boot::phone_call::phone_call_session;
 pub use brain::{ChatBrain, ChatBrainBindings};
 pub(crate) use entry_barrier::{EntryWake, EntryWakes, entry_wake, next_entry_wake};
 pub use media_bridge::{VoiceMediaBindings, VoiceMediaIn};
+pub use oneiron::voice_call::{caller_number, voice_phone_conversation_id};
 pub use phone::PhoneCallRead;
 pub(crate) use public::{LiveVoiceSessions, PublicSession, start_public};
+pub use record::voice_home_conversation_id;
+pub(crate) use record::{
+    CallRecord, KeptTurn, phone_call_opening, phone_call_record, room_call_record,
+    standalone_call_record,
+};
 pub use serve_bindings::{VoiceServeBindings, VoiceServeConnection};
 pub use speech::{PlayoutFrame, TurnSources, VoiceBrainOut, VoicePlayout};
 pub use wire::VoiceWireBindings;
@@ -354,6 +364,20 @@ impl VoiceHost {
         state.core.close_utterance(&handle);
         state.open = None;
         Ok(())
+    }
+
+    /// Opens the generation a call starts with, `line` said whole with no
+    /// person's final before it (UNBUILT-02 PR 3B): the session refuses it
+    /// once a generation is live.
+    pub(super) fn open_announcement(
+        &self,
+        line: String,
+    ) -> Result<oneiron::voice_cascade::BrainRequest, HostError> {
+        self.require_running()?;
+        if line.trim().is_empty() {
+            return Err(HostError::InvalidRequest);
+        }
+        Ok(self.lock()?.core.open_announcement(line)?)
     }
 
     /// Prepares an observation without holding a session lock during extraction.

@@ -117,29 +117,10 @@ pub(crate) struct CapturedFoldCard {
     pub(crate) receipt: Option<ReaderFoldReceipt>,
 }
 
-/// The verdict the door's row check gave one read of another run's result
-/// (FIX 6352): the rows it was served from may reach the door's caller,
-/// they stay on this device, or the door refused the read with the code it
-/// named.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum RetainedReadVerdict {
-    Admitted,
-    Withheld,
-    Refused(String),
-}
-
-impl RetainedReadVerdict {
-    /// The verdict a row check's answer gives: `Ok(withheld)`, or the code
-    /// of the refusal the door named.
-    pub(crate) fn of(answer: std::result::Result<bool, &str>) -> Self {
-        match answer {
-            Ok(false) => Self::Admitted,
-            Ok(true) => Self::Withheld,
-            Err(code) => Self::Refused(code.to_owned()),
-        }
-    }
-}
+#[doc(hidden)]
+pub(crate) use oneiron_records::code_run::replay_context::reads::RetainedReadVerdict;
+#[doc(hidden)]
+use oneiron_records::code_run::replay_context::reads::established_at;
 
 /// One read of another run's result (a delegated source or a settled
 /// finding) as the door's row check answered it: the bridge position the
@@ -323,28 +304,4 @@ fn observe<T: PartialEq>(observed: &mut Vec<ObservedAnswer<T>>, at: u64, answer:
             answer,
         }),
     }
-}
-
-/// The answer the reads `seen` establish at bridge position `cut`, each
-/// answer with the first and last position it was seen at, where `settled`
-/// says an answer is final once seen: a final answer seen before the cut, an
-/// answer that is not final seen after it, else the one answer every read at
-/// the cut saw. `None` when they establish none.
-fn established_at<T: Copy + PartialEq>(
-    seen: impl Iterator<Item = (u64, u64, T)>,
-    cut: u64,
-    settled: impl Fn(&T) -> bool,
-) -> Option<T> {
-    let mut at_cut = None;
-    let mut agree = true;
-    for (first, last, answer) in seen {
-        if (settled(&answer) && first < cut) || (!settled(&answer) && last > cut) {
-            return Some(answer);
-        }
-        if first <= cut && cut <= last {
-            agree &= at_cut.is_none_or(|held| held == answer);
-            at_cut = Some(answer);
-        }
-    }
-    at_cut.filter(|_| agree)
 }

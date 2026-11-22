@@ -8,6 +8,7 @@
 //! `repo_provenance_required`: no author is made up. A session is
 //! attribution, not work isolation; one already open is the one used.
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use rmpv::Value;
 
 use super::HostSelfDispatcher;
@@ -57,9 +58,26 @@ impl RepoRequestWitness {
         Some(Self {
             digest,
             model: request.model.as_str().to_owned(),
-            params_hash: blake3::hash(&params).to_hex().to_string(),
+            params_hash: repo_params_hash(&params),
         })
     }
+}
+
+/// The hex hash of a request's sampling params and provider options as JSON
+/// (`purposes::code_run::REPO_REQUEST_PARAMS`).
+fn repo_params_hash(params: &[u8]) -> String {
+    bytes_to_hex_lower(
+        &LegacyDigest::new(purposes::code_run::REPO_REQUEST_PARAMS)
+            .raw(params)
+            .finish(),
+    )
+}
+
+/// [`repo_params_hash`] for the K door
+/// (`test_doors::fingerprint_keep_code_run_digests`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn repo_params_hash_for_test(params: &[u8]) -> String {
+    repo_params_hash(params)
 }
 
 impl HostSelfDispatcher<'_> {

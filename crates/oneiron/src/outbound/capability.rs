@@ -66,54 +66,15 @@ impl From<OutboundInterruptionClass> for DeliveryWindowVerbClass {
     }
 }
 
-/// Retry class consumed by the later dispatch/retry policy.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum OutboundRetryClass {
-    IdempotentNative,
-    IdempotentEmulated,
-    NonIdempotentInterrupt,
-    ReplaceIdempotent,
-}
-
-/// Delivery semantics consumed by edit/retract/dedupe routing.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum OutboundDeliverySemanticsKind {
-    FireAndForget,
-    Editable,
-    Retractable,
-    Replaceable,
-    ReactionTarget,
-    Ephemeral,
-}
-
-/// Delivery behavior for one verb.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct OutboundDeliverySemantics {
-    pub kind: OutboundDeliverySemanticsKind,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub window: Option<&'static str>,
-}
-
-/// Platform permission status for a capability.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum OutboundPermissionState {
-    Allowed,
-    Conditional,
-    ProviderReview,
-}
-
-/// The OF-327 capability-vs-permission split for one verb.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct OutboundCapabilityPermission {
-    pub capability: bool,
-    pub permission: OutboundPermissionState,
-    pub policy_risk: bool,
-    pub verified_at: &'static str,
-    pub note: &'static str,
-}
+#[doc(hidden)]
+pub(crate) use oneiron_records::outbound::capability::OutboundReplaySafety;
+#[doc(hidden)]
+use oneiron_records::outbound::capability::SUPERSEDING_SEND_VERB;
+#[doc(hidden)]
+pub use oneiron_records::outbound::capability::{
+    OutboundCapabilityPermission, OutboundDeliverySemantics, OutboundDeliverySemanticsKind,
+    OutboundPermissionState, OutboundRetryClass,
+};
 
 /// Seven-field outbound verb contract.
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -127,24 +88,6 @@ pub struct OutboundVerbContract {
     #[serde(rename = "capability_vs_permission")]
     pub capability_vs_permission: OutboundCapabilityPermission,
 }
-
-/// How a retry of one admitted send may go once an attempt may have delivered
-/// (FIX 8814): logical supersession is not provider retry safety.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum OutboundReplaySafety {
-    /// The provider dedupes the send by the key the transport presents.
-    ProviderKey,
-    /// The send lands on the same target each time (an edit in place, an
-    /// iMIP revision on its UID and SEQUENCE): a replay replaces, never adds.
-    StableTarget,
-    /// A replay can add a second delivery: an uncertain attempt is reconciled
-    /// before any resend, never resent on its own.
-    Reconcile,
-}
-
-/// The verb whose replacement is a new superseding message rather than an
-/// edit of the original (FIX 8814): it carries no provider dedupe.
-const SUPERSEDING_SEND_VERB: &str = "replace";
 
 impl OutboundVerbContract {
     /// This verb's replay safety (FIX 8814): a provider-native key, a

@@ -23,7 +23,8 @@
 //!   and no time, and two tokens for one position differ. A page gives one token per source
 //!   whether or not anything was scanned, and `more` says only that the page is full.
 //! - **A cursor idle past retention gets a gap, never a skip** (lead call K). A cursor in a pruned
-//!   source not acknowledged for [`FEED_RETENTION_SECS`] no longer holds the prune floor, and its
+//!   source not acknowledged for the owner's retention (`feeds.retention.idle_secs`,
+//!   [`FEED_RETENTION_SECS`] by default) no longer holds the prune floor, and its
 //!   subscription's reads answer [`FeedRead::Gap`] until [`Vault::feed_resync`]: the reader
 //!   resyncs, then takes a snapshot, so no change falls between the two. The rule reads the
 //!   cursor's age alone, never which rows went.
@@ -41,6 +42,7 @@
 //! the per-verb sources (slice 4.2); until then these are the engine's doors.
 
 mod edges;
+pub(crate) mod setting_keys;
 pub(crate) mod tables;
 
 use std::collections::BTreeSet;
@@ -54,6 +56,7 @@ use serde::{Deserialize, Serialize};
 use crate::claim::{PointRead, ScopedRead};
 use crate::error::ClaimError;
 use crate::ports::{ChangeLogStoreRead, ChangeOp, EntityStoreRead};
+use crate::request_limits::{ZeroLimitRefused, page_limit_zero_refused};
 use crate::runtime_hooks::{ClaimChangelogPosition, FactPosition, FactSource, SettlementPosition};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
@@ -80,7 +83,8 @@ const WITHDRAWN_TYPES: SideTable<EntityId, WithdrawnType, Named> =
 
 /// Entries one read returns from each source when the request names no limit.
 pub const FEED_READ_DEFAULT_LIMIT: usize = 64;
-/// The most entries one read returns from each source.
+/// The most entries one read returns from each source while the owner has not moved
+/// `feeds.read.max_per_source` (its default), and the candidates one scan of a source takes.
 pub const FEED_READ_MAX_LIMIT: usize = 256;
 /// Change log rows a read may scan for each entry it returns, so a run of rows the selector
 /// passes over cannot make one read unbounded. The page's `through` still moves past them.
@@ -125,10 +129,19 @@ pub enum FeedSource {
     Edges,
     /// TURNs whose words changed with no new version of their own, in commit order.
     Redirty,
+    /// Setting changes, in commit order: the setting primitive's change stream. Its rows are the
+    /// record of every change, so, like the change log's, they are never pruned.
+    Settings,
 }
 
 impl FeedSource {
-    pub const ALL: [Self; 4] = [Self::Changes, Self::Settlements, Self::Edges, Self::Redirty];
+    pub const ALL: [Self; 5] = [
+        Self::Changes,
+        Self::Settlements,
+        Self::Edges,
+        Self::Redirty,
+        Self::Settings,
+    ];
 
     #[must_use]
     pub const fn as_str(self) -> &'static str {
@@ -137,6 +150,7 @@ impl FeedSource {
             Self::Settlements => "settlements",
             Self::Edges => "edges",
             Self::Redirty => "redirty",
+            Self::Settings => "settings",
         }
     }
 
@@ -144,10 +158,10 @@ impl FeedSource {
         Self::ALL.into_iter().find(|source| source.as_str() == name)
     }
 
-    /// Whether a prune takes this source's rows: the change log keeps every row, so its cursors
-    /// never lapse.
+    /// Whether a prune takes this source's rows: the change log and the setting changes keep
+    /// every row, so their cursors never lapse.
     const fn pruned(self) -> bool {
-        !matches!(self, Self::Changes)
+        !matches!(self, Self::Changes | Self::Settings)
     }
 
     const fn tag(self) -> u8 {
@@ -156,6 +170,7 @@ impl FeedSource {
             Self::Settlements => 1,
             Self::Edges => 2,
             Self::Redirty => 3,
+            Self::Settings => 4,
         }
     }
 
@@ -182,6 +197,9 @@ impl FeedSource {
             }
             Self::Edges => edges::edge_head_in_txn(&vault.store, txn)?.map(Position::Edges),
             Self::Redirty => edges::redirty_head_in_txn(&vault.store, txn)?.map(Position::Redirty),
+            Self::Settings => {
+                crate::setting::settings_head_in_txn(&vault.store, txn)?.map(Position::Settings)
+            }
         })
     }
 }
@@ -210,6 +228,8 @@ pub enum FeedOp {
     EdgeAdded,
     EdgeRemoved,
     Redirty,
+    /// A setting row was set or cleared.
+    SettingChange,
 }
 
 impl FeedOp {
@@ -235,6 +255,7 @@ impl FeedOp {
             Self::Settle => FeedEntryKind::Settlement,
             Self::EdgeAdded | Self::EdgeRemoved => FeedEntryKind::Edge,
             Self::Redirty => FeedEntryKind::Redirty,
+            Self::SettingChange => FeedEntryKind::Setting,
         }
     }
 }
@@ -257,6 +278,7 @@ impl FeedPosition {
             ),
             Position::Edges(sequence) => (FeedSource::Edges, sequence.to_be_bytes().to_vec()),
             Position::Redirty(sequence) => (FeedSource::Redirty, sequence.to_be_bytes().to_vec()),
+            Position::Settings(sequence) => (FeedSource::Settings, sequence.to_be_bytes().to_vec()),
         };
         Ok(Self(format!(
             "{}:{}",
@@ -290,6 +312,7 @@ impl FeedPosition {
             )),
             "edges" => Ok((FeedSource::Edges, Position::Edges(sequence()?))),
             "redirty" => Ok((FeedSource::Redirty, Position::Redirty(sequence()?))),
+            "settings" => Ok((FeedSource::Settings, Position::Settings(sequence()?))),
             _ => Err(invalid("unknown feed source")),
         }
     }
@@ -362,6 +385,31 @@ pub struct FeedEntry {
     /// The edge, for an edge entry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub edge: Option<FeedEdge>,
+    /// The change, for a setting entry. A setting entry is no record's: its `entity` is the
+    /// change's own id and its `entity_type` is [`SETTING_ENTRY_TYPE`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub setting: Option<FeedSetting>,
+}
+
+/// The type byte a setting entry carries. No record type has it, so a selector that narrows to
+/// record types takes no setting entry.
+pub const SETTING_ENTRY_TYPE: u8 = u8::MAX;
+
+/// One setting change, as a setting entry names it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct FeedSetting {
+    /// Its place in the setting change stream.
+    pub sequence: u64,
+    pub key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub item: Option<String>,
+    pub scope: crate::setting::SettingScope,
+    pub mode: crate::setting::SettingMode,
+    pub setter: crate::setting::Setter,
+    /// The row's value before, as JSON; null when there was no row.
+    pub prior: serde_json::Value,
+    /// The row's value after, as JSON; null when the change cleared it.
+    pub value: serde_json::Value,
 }
 
 /// One page of a subscription. It moves no cursor: [`Vault::feed_ack`] does, with `through`.
@@ -382,9 +430,9 @@ pub struct FeedPage {
 pub enum FeedRead {
     /// The next page.
     Page(FeedPage),
-    /// A cursor lay idle past [`FEED_RETENTION_SECS`], so rows it had not acknowledged may be
-    /// gone. No page is read until the reader calls [`Vault::feed_resync`]; it then takes a
-    /// snapshot, and pages on from the resync.
+    /// A cursor lay idle past the owner's retention ([`FEED_RETENTION_SECS`] by default), so rows
+    /// it had not acknowledged may be gone. No page is read until the reader calls
+    /// [`Vault::feed_resync`]; it then takes a snapshot, and pages on from the resync.
     Gap(FeedGap),
 }
 
@@ -420,12 +468,28 @@ struct WithdrawnType {
 struct CursorRow {
     position: Option<FeedPosition>,
     updated_at: u64,
+    /// `Some(true)` once a prune deleted rows from this cursor's source while the cursor lay
+    /// idle past retention. A marked cursor is lapsed whatever the window, until its resync
+    /// writes it fresh: without the mark, a raised window would page on past the deleted rows, a
+    /// silent skip. Every row this code writes holds `Some`. `None` is a row written before the
+    /// mark existed: a prune may have passed it unmarked, so it never takes a window above
+    /// [`FEED_RETENTION_SECS`]. At the default nothing moves, as a lapsed cursor stays lapsed
+    /// until its resync.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pruned_past: Option<bool>,
 }
 
 impl CursorRow {
-    /// Whether this cursor in `source` lay idle past retention at `now`.
-    fn lapsed(&self, source: FeedSource, now: u64) -> bool {
-        source.pruned() && now.saturating_sub(self.updated_at) > FEED_RETENTION_SECS
+    /// Whether this cursor in `source` lay idle past `retention_secs` at `now`, or the prune
+    /// passed it: a marked cursor stays lapsed whatever the window, until its resync. A row
+    /// written before the mark existed keeps [`FEED_RETENTION_SECS`] as its longest window.
+    fn lapsed(&self, source: FeedSource, now: u64, retention_secs: u64) -> bool {
+        let window = match self.pruned_past {
+            Some(true) => return source.pruned(),
+            Some(false) => retention_secs,
+            None => retention_secs.min(FEED_RETENTION_SECS),
+        };
+        source.pruned() && now.saturating_sub(self.updated_at) > window
     }
 
     fn position(&self) -> Result<Option<Position>> {
@@ -481,6 +545,7 @@ impl Vault {
                 let cursor = CursorRow {
                     position: position.map(FeedPosition::of).transpose()?,
                     updated_at: at,
+                    pruned_past: Some(false),
                 };
                 CURSORS.put(&self.store, txn, &(subscription, [source.tag()]), &cursor)?;
                 FOLLOWING.put(&self.store, txn, &([source.tag()], subscription), &())?;
@@ -514,8 +579,9 @@ impl Vault {
 
     /// The next page of `reader`'s subscription: each source's entries after its cursor that
     /// the selector takes, each shown only where `reader`'s lane shows it now, with no sign of
-    /// any it did not show. It moves no cursor. A subscription with a cursor idle past
-    /// [`FEED_RETENTION_SECS`] answers [`FeedRead::Gap`] until [`Vault::feed_resync`].
+    /// any it did not show. It moves no cursor. A subscription with a cursor idle past the
+    /// owner's retention (`feeds.retention.idle_secs`, [`FEED_RETENTION_SECS`] by default)
+    /// answers [`FeedRead::Gap`] until [`Vault::feed_resync`].
     ///
     /// # Errors
     ///
@@ -525,11 +591,10 @@ impl Vault {
         reader: &ScopedRead<'_>,
         request: &FeedReadRequest,
     ) -> Result<FeedRead> {
-        let limit = request.limit.unwrap_or(FEED_READ_DEFAULT_LIMIT);
-        if limit == 0 {
-            return Err(invalid("a feed read's limit is at least 1"));
-        }
-        let limit = limit.min(FEED_READ_MAX_LIMIT);
+        let max = self.page_max_in_force(&setting_keys::FEED_READ_MAX)?.rows();
+        let limit = page_limit_zero_refused(request.limit, FEED_READ_DEFAULT_LIMIT, max)
+            .map_err(|ZeroLimitRefused| invalid("a feed read's limit is at least 1"))?
+            .rows;
         let _bodies = reader.prepare_point_read::<Error>()?;
         let txn = self.store.env.read_txn()?;
         let actor = live_reader_actor_in(reader, &txn)?;
@@ -537,6 +602,10 @@ impl Vault {
             .get(&self.store, &txn, &(actor, request.subscription))?
             .ok_or(Error::EntityNotFound)?;
         let now = self.store.clock.now_recorded_at();
+        let retention = setting_keys::FEED_RETENTION_IDLE_SECS
+            .read_in_txn(self, &txn, &[], None)?
+            .value
+            .0;
         let mut cursors = Vec::with_capacity(row.selector.sources.len());
         for source in &row.selector.sources {
             let cursor = CURSORS
@@ -544,7 +613,7 @@ impl Vault {
                 .ok_or(Error::CorruptedIndex(
                     "feed subscription without its cursor",
                 ))?;
-            if cursor.lapsed(*source, now) {
+            if cursor.lapsed(*source, now, retention) {
                 return Ok(FeedRead::Gap(FeedGap {
                     resync_from: FeedResyncFrom::Snapshot,
                 }));
@@ -632,6 +701,7 @@ impl Vault {
                         .map(FeedPosition::of)
                         .transpose()?,
                     updated_at: at,
+                    pruned_past: Some(false),
                 };
                 CURSORS.put(&self.store, txn, &(subscription, [source.tag()]), &cursor)?;
             }
@@ -670,7 +740,7 @@ impl Vault {
 ///
 /// `EntityNotFound` when the subscription is not `actor`'s; a token this subscription did not
 /// seal, one in a source it does not follow, two in one source, or one past that source's head;
-/// a cursor idle past [`FEED_RETENTION_SECS`] (resync first); or the write.
+/// a cursor idle past the owner's retention (resync first); or the write.
 pub(crate) fn ack_feed_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -682,6 +752,10 @@ pub(crate) fn ack_feed_in_txn(
         .ok_or(Error::EntityNotFound)?;
     let mut seen = Vec::with_capacity(request.through.len());
     let at = vault.store.clock.now_recorded_at();
+    let retention = setting_keys::FEED_RETENTION_IDLE_SECS
+        .read_in_txn(vault, txn, &[], None)?
+        .value
+        .0;
     for token in &request.through {
         let (source, position) = open_position(&row, request.subscription, token)?;
         if !row.selector.sources.contains(&source) {
@@ -699,7 +773,7 @@ pub(crate) fn ack_feed_in_txn(
             .ok_or(Error::CorruptedIndex(
                 "feed subscription without its cursor",
             ))?;
-        if current.lapsed(source, at) {
+        if current.lapsed(source, at, retention) {
             return Err(invalid(
                 "a feed cursor lay idle past retention: resync, then take a snapshot",
             ));
@@ -723,6 +797,9 @@ pub(crate) fn ack_feed_in_txn(
                 None => current.position,
             },
             updated_at: at,
+            // An ack never reaches a lapsed cursor (refused above), and a cursor that never
+            // lapsed was never pruned past, so the row is unmarked. Only a resync clears a mark.
+            pruned_past: Some(false),
         };
         CURSORS.put(&vault.store, txn, &key, &cursor)?;
     }
@@ -982,6 +1059,10 @@ pub(crate) fn feed_wake_mark(
         return Ok(None);
     };
     let now = vault.store.clock.now_recorded_at();
+    let retention = setting_keys::FEED_RETENTION_IDLE_SECS
+        .read_in_txn(vault, &txn, &[], None)?
+        .value
+        .0;
     let mut next = FeedWakeScan::default();
     let mut marks = Vec::new();
     for source in &row.selector.sources {
@@ -990,7 +1071,7 @@ pub(crate) fn feed_wake_mark(
             .ok_or(Error::CorruptedIndex(
                 "feed subscription without its cursor",
             ))?;
-        if cursor.lapsed(*source, now) {
+        if cursor.lapsed(*source, now, retention) {
             return Ok(Some((
                 Some(format!("gap:{}", cursor.updated_at)),
                 FeedWakeScan::default(),
@@ -1171,13 +1252,17 @@ fn source_floor_in_txn(
 ) -> Result<SourceFloor> {
     let mut floor = SourceFloor::Unfollowed;
     let now = store.clock.now_recorded_at();
+    let retention = setting_keys::FEED_RETENTION_IDLE_SECS
+        .read_in_dbs_txn(store, txn, &[], None)?
+        .value
+        .0;
     for key in FOLLOWING.scan_keys(store, txn, &[source.tag()])? {
         let (_, subscription) = key;
         let cursor = CURSORS
             .get(store, txn, &(subscription, [source.tag()]))?
             .ok_or(Error::CorruptedIndex("feed follower without its cursor"))?;
         // A cursor idle past retention holds nothing: its subscription answers a gap.
-        if cursor.lapsed(source, now) {
+        if cursor.lapsed(source, now, retention) {
             continue;
         }
         let Some(position) = cursor.position()? else {
@@ -1223,6 +1308,11 @@ pub(crate) fn prune_feeds(vault: &Vault, max_rows: usize) -> Result<()> {
     // them (review #6897): a subscription made since the read above, one that starts at the
     // beginning above all, holds every row its cursor has not passed.
     vault.with_write_txn_grouped(|txn| {
+        let retention = setting_keys::FEED_RETENTION_IDLE_SECS
+            .read_in_txn(vault, txn, &[], None)?
+            .value
+            .0;
+        let now = vault.store.clock.now_recorded_at();
         for (source, _) in &planned {
             let floor = match source_floor_in_txn(&vault.store, txn, *source)? {
                 SourceFloor::AtStart => continue,
@@ -1230,6 +1320,22 @@ pub(crate) fn prune_feeds(vault: &Vault, max_rows: usize) -> Result<()> {
                 SourceFloor::At(position) => Some(position),
             };
             let rows = edges::passed_rows_in_txn(&vault.store, txn, *source, floor, max_rows)?;
+            if !rows.is_empty() {
+                // Every cursor this prune deletes rows past that is lapsed now is marked, so
+                // a later raise of the window still gaps it instead of paging past the
+                // deleted rows.
+                let tag = [source.tag()];
+                for (_, subscription) in FOLLOWING.scan_keys(&vault.store, txn, &tag)? {
+                    let key = (subscription, tag);
+                    let mut cursor = CURSORS
+                        .get(&vault.store, txn, &key)?
+                        .ok_or(Error::CorruptedIndex("feed follower without its cursor"))?;
+                    if cursor.lapsed(*source, now, retention) {
+                        cursor.pruned_past = Some(true);
+                        CURSORS.put(&vault.store, txn, &key, &cursor)?;
+                    }
+                }
+            }
             edges::delete_rows_in_txn(&vault.store, txn, *source, &rows)?;
         }
         Ok(())
@@ -1376,7 +1482,7 @@ fn subscription_view_in_txn(
 }
 
 /// How the subscriber's lane judges one candidate.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 enum Judge {
     /// An edit, a settlement or a redirty notice: shown when this read of its entity is.
     Read(PointRead<'static>),
@@ -1386,6 +1492,11 @@ enum Judge {
     Withdrawal,
     /// Its history is gone, so no lane can be shown it.
     Withheld,
+    /// A setting change: shown to a reader of that key at that scope.
+    Setting {
+        key: String,
+        scope: crate::setting::SettingScope,
+    },
 }
 
 /// One fact a source read found, before the subscriber's lane judges it.
@@ -1472,6 +1583,7 @@ fn changes_after_in_txn(
                 recorded_at: change.recorded_at,
                 revision,
                 edge: None,
+                setting: None,
             },
             judge,
         });
@@ -1519,6 +1631,7 @@ fn settlements_after_in_txn(
                 recorded_at: fact.recorded_at,
                 revision: fact.revision,
                 edge: None,
+                setting: None,
             },
             judge: fact.point.map_or(Judge::Withheld, Judge::Read),
         });
@@ -1602,6 +1715,9 @@ fn scan_source_in_txn(
         FeedSource::Settlements => settlements_after_in_txn(vault, txn, after, FEED_READ_MAX_LIMIT),
         FeedSource::Edges => edges::edges_after_in_txn(vault, txn, after, FEED_READ_MAX_LIMIT),
         FeedSource::Redirty => edges::redirty_after_in_txn(vault, txn, after, FEED_READ_MAX_LIMIT),
+        FeedSource::Settings => {
+            setting_changes_after_in_txn(vault, txn, after, FEED_READ_MAX_LIMIT)
+        }
     }
 }
 
@@ -1628,7 +1744,7 @@ fn shown_in_txn(
                 points.push(source);
                 points.push(target);
             }
-            Judge::Withdrawal | Judge::Withheld => {}
+            Judge::Withdrawal | Judge::Withheld | Judge::Setting { .. } => {}
         }
     }
     let withdrawn: Vec<(EntityId, u8)> = candidates
@@ -1659,6 +1775,7 @@ fn shown_in_txn(
             }
             Judge::Withdrawal => (revealed.next().unwrap_or(false), true),
             Judge::Withheld => (false, false),
+            Judge::Setting { key, scope } => (setting_shown_in(reader, txn, &key, &scope)?, true),
         };
         // A row the lane does not show leaves no trace on the page: no count, no marker.
         if visible && taken {
@@ -1683,4 +1800,99 @@ fn takes_predicate(selector: &FeedSelector, entry: &FeedEntry, body: &[u8]) -> b
             .iter()
             .any(|glob| crate::runtime_hooks::glob_match(glob, &claim.predicate))
     })
+}
+
+/// Up to `limit` setting changes after `after`: each judged by its key and scope.
+fn setting_changes_after_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    after: Option<Position>,
+    limit: usize,
+) -> Result<Scanned> {
+    let after = match after {
+        None => None,
+        Some(Position::Settings(sequence)) => Some(sequence),
+        Some(_) => {
+            return Err(Error::CorruptedIndex(
+                "a settings cursor names another source",
+            ));
+        }
+    };
+    let (changes, through) =
+        crate::setting::settings_after_in_txn(&vault.store, txn, after, limit)?;
+    let mut scanned = Scanned {
+        entries: Vec::with_capacity(changes.len()),
+        through: through.map(Position::Settings),
+    };
+    for change in changes {
+        let spec = crate::setting::spec_named(&change.key).ok();
+        let json = |value: &Option<crate::setting::EncodedValue>| {
+            value
+                .as_ref()
+                .zip(spec)
+                .and_then(|(value, spec)| spec.kind.to_json(value))
+                .unwrap_or(serde_json::Value::Null)
+        };
+        scanned.entries.push(Candidate {
+            entry: FeedEntry {
+                position: FeedPosition::of(Position::Settings(change.sequence))?,
+                kind: FeedEntryKind::Setting,
+                op: FeedOp::SettingChange,
+                entity: change.id,
+                entity_type: SETTING_ENTRY_TYPE,
+                actor: change.by,
+                recorded_at: change.at,
+                revision: None,
+                edge: None,
+                setting: Some(FeedSetting {
+                    sequence: change.sequence,
+                    key: change.key.clone(),
+                    item: change.item.clone(),
+                    scope: change.scope.clone(),
+                    mode: change.mode,
+                    setter: change.setter,
+                    prior: json(&change.prior),
+                    value: json(&change.value),
+                }),
+            },
+            judge: Judge::Setting {
+                key: change.key,
+                scope: change.scope,
+            },
+        });
+    }
+    Ok(scanned)
+}
+
+/// Whether `reader` may read the setting `key` at `scope` now: the setting's own read rule.
+fn setting_shown_in(
+    reader: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    key: &str,
+    scope: &crate::setting::SettingScope,
+) -> Result<bool> {
+    let Ok(spec) = crate::setting::spec_named(key) else {
+        return Ok(false);
+    };
+    let actor = live_reader_actor_in(reader, txn)?;
+    let key_owner = reader.actor_key().vault_owner_ref() == Some(actor);
+    let human = reader
+        .actor_key()
+        .actor_class()
+        .is_none_or(|class| class == "human");
+    let owner = key_owner
+        || (human
+            && crate::memory::actor_is_vault_owner_in_txn(
+                reader.vault(),
+                txn,
+                actor,
+                crate::edge::EdgeActorClass::Human,
+            )
+            .unwrap_or(false));
+    let who = if owner {
+        crate::setting::SettingReader::Owner
+    } else {
+        crate::setting::SettingReader::Actor(actor)
+    };
+    crate::setting::reader_reads_key_in_txn(reader.vault(), txn, who, spec, Some(scope))
 }

@@ -6,6 +6,7 @@
 //! alone. A settled row keeps its evidence from minting again.
 use std::collections::{BTreeMap, BTreeSet};
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use serde::{Deserialize, Serialize};
 
 use super::admission::UpkeepGoal;
@@ -20,24 +21,8 @@ pub(super) type UpkeepKey = (EntityId, [u8; 32]);
 const JOURNAL: SideTable<UpkeepKey, UpkeepRow, Named> =
     SideTable::new(&side_table::DREAMER_PROJECT_TREE_UPKEEP);
 
-/// Domain separator for the evidence digest.
-const EVIDENCE_DOMAIN: &[u8] = b"oneiron:project-tree-upkeep:evidence:v1\0";
-
-/// Where one revision stands.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(super) enum UpkeepState {
-    /// Minted and journaled; its package, its scoring or its admission waits.
-    Open,
-    /// Scored strictly above the tree it revises and put in force for the
-    /// project. The owner's revert of it leaves the row as it is.
-    Won,
-    /// Scored no better than the tree it revises.
-    Lost,
-    /// The tree it revises is no longer the project's, or the Candidate is
-    /// no longer what was stored: it can never go in force.
-    Stale,
-}
+#[doc(hidden)]
+pub(super) use oneiron_records::dreamer_runner::maintenance::fork_promote::project_upkeep::state::UpkeepState;
 
 /// The Candidate's record as its package was stored: what the judge reads
 /// and the admission binds.
@@ -132,37 +117,44 @@ pub(super) fn evidence_digest(teams: &[TeamReceipt], tasks: &BTreeMap<String, St
         .filter(|team| team.outcome.is_some())
         .map(|team| (team.team_ref.as_str(), team))
         .collect();
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(EVIDENCE_DOMAIN);
+    let mut hasher = LegacyDigest::new(purposes::dreamer_runner::PROJECT_TREE_UPKEEP_EVIDENCE);
     for (team_ref, team) in settled {
         field(&mut hasher, team_ref.as_bytes());
         field(&mut hasher, team.type_ref.node_id.as_bytes());
-        hasher.update(&team.type_ref.tree_version.to_be_bytes());
+        hasher.raw(&team.type_ref.tree_version.to_be_bytes());
         field(&mut hasher, team.pattern.as_str().as_bytes());
-        hasher.update(&(team.models.len() as u64).to_be_bytes());
+        hasher.len_u64_be(team.models.len());
         for model in &team.models {
             field(&mut hasher, model.as_bytes());
         }
         let success = team.outcome.as_ref().is_some_and(|outcome| outcome.success);
-        hasher.update(&[u8::from(success)]);
-        hasher.update(&team.at.to_be_bytes());
+        hasher.raw(&[u8::from(success)]);
+        hasher.raw(&team.at.to_be_bytes());
         match tasks.get(team_ref) {
             Some(task) => {
-                hasher.update(&[1]);
+                hasher.raw(&[1]);
                 field(&mut hasher, task.as_bytes());
             }
             None => {
-                hasher.update(&[0]);
+                hasher.raw(&[0]);
             }
         }
     }
-    *hasher.finalize().as_bytes()
+    hasher.finish()
 }
 
 /// One length-prefixed field of the digest.
-fn field(hasher: &mut blake3::Hasher, bytes: &[u8]) {
-    hasher.update(&(bytes.len() as u64).to_be_bytes());
-    hasher.update(bytes);
+fn field(hasher: &mut LegacyDigest, bytes: &[u8]) {
+    hasher.len_u64_be(bytes.len());
+    hasher.raw(bytes);
+}
+
+#[cfg(oneiron_test_support)]
+pub(crate) fn evidence_digest_for_test(
+    teams: &[TeamReceipt],
+    tasks: &BTreeMap<String, String>,
+) -> [u8; 32] {
+    evidence_digest(teams, tasks)
 }
 
 /// The row `key` names.

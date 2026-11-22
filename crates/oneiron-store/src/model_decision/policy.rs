@@ -45,6 +45,53 @@ pub struct LearnedBand {
     pub mode: BandMode,
 }
 
+/// Where a learned row applies: the question id, the question version and the
+/// reversibility class.
+pub type LearnedBandKey = (EntityId, u32, Reversibility);
+
+impl LearnedBand {
+    /// The row a learn of `band` at `version` puts over `held`, the row its key holds
+    /// now: a shadow row, whose version must advance the held row's.
+    pub fn learned_over(
+        held: Option<&LearnedBand>,
+        question: &DecisionQuestion,
+        band: DecisionBand,
+        version: u32,
+    ) -> Result<LearnedBand> {
+        question.validate()?;
+        band.validate()?;
+        if version == 0 {
+            return Err(invalid("invalid learned band version"));
+        }
+        if held.is_some_and(|row| row.version >= version) {
+            return Err(invalid("learned band version must advance"));
+        }
+        Ok(LearnedBand {
+            band,
+            version,
+            mode: BandMode::Shadow,
+        })
+    }
+
+    /// The row an enforce puts over `held`: the held row, at its version, in enforce mode.
+    pub fn enforced_over(
+        held: Option<&LearnedBand>,
+        question: &DecisionQuestion,
+    ) -> Result<LearnedBand> {
+        question.validate()?;
+        let held = held.ok_or_else(|| invalid("band must be learned before enforcement"))?;
+        Ok(LearnedBand {
+            mode: BandMode::Enforce,
+            ..*held
+        })
+    }
+
+    /// How far the row has moved: its version, then enforce after shadow.
+    fn standing(&self) -> (u32, bool) {
+        (self.version, self.mode == BandMode::Enforce)
+    }
+}
+
 /// Resolves one question version's band on the running host. Without a learned
 /// row, `seed` is returned in shadow mode at version zero.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
@@ -250,21 +297,9 @@ impl DecisionBandPolicy {
         band: DecisionBand,
         version: u32,
     ) -> Result<LearnedBand> {
-        question.validate()?;
-        band.validate()?;
-        if version == 0 {
-            return Err(invalid("invalid learned band version"));
-        }
         let key = (question.id, question.version, reversibility);
         let mut rows = self.rows.write().unwrap_or_else(PoisonError::into_inner);
-        if rows.get(&key).is_some_and(|row| row.version >= version) {
-            return Err(invalid("learned band version must advance"));
-        }
-        let row = LearnedBand {
-            band,
-            version,
-            mode: BandMode::Shadow,
-        };
+        let row = LearnedBand::learned_over(rows.get(&key), question, band, version)?;
         rows.insert(key, row);
         Ok(row)
     }
@@ -274,13 +309,33 @@ impl DecisionBandPolicy {
         question: &DecisionQuestion,
         reversibility: Reversibility,
     ) -> Result<LearnedBand> {
-        question.validate()?;
+        let key = (question.id, question.version, reversibility);
         let mut rows = self.rows.write().unwrap_or_else(PoisonError::into_inner);
-        let row = rows
-            .get_mut(&(question.id, question.version, reversibility))
-            .ok_or_else(|| invalid("band must be learned before enforcement"))?;
-        row.mode = BandMode::Enforce;
-        Ok(*row)
+        let row = LearnedBand::enforced_over(rows.get(&key), question)?;
+        rows.insert(key, row);
+        Ok(row)
+    }
+
+    /// Replaces the shared learned rows with `rows`, the ones the vault holds, for every clone.
+    pub fn replace_learned_bands(
+        &self,
+        rows: impl IntoIterator<Item = (LearnedBandKey, LearnedBand)>,
+    ) {
+        *self.rows.write().unwrap_or_else(PoisonError::into_inner) = rows.into_iter().collect();
+    }
+
+    /// Installs `row`, which the vault now holds at `key`, for every clone, unless the
+    /// installed row is already later. A stored row only moves forward (a learn advances
+    /// its version, an enforce keeps it), so two writes that install in another order than
+    /// they committed still leave the later row.
+    pub fn install_learned_band(&self, key: LearnedBandKey, row: LearnedBand) {
+        let mut rows = self.rows.write().unwrap_or_else(PoisonError::into_inner);
+        if rows
+            .get(&key)
+            .is_none_or(|held| held.standing() <= row.standing())
+        {
+            rows.insert(key, row);
+        }
     }
 
     pub fn resolve(

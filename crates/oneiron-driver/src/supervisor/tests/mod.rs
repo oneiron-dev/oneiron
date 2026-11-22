@@ -245,7 +245,7 @@ fn local_factory_requires_persisted_model_binding() {
         registry::{ModelRegistryRow, ModelWireFormat},
     };
     use oneiron::{DreamerClaimAuthoringStrategy, ModelId, WriteActor};
-    use oneiron_llm_local::{
+    use oneiron_llm::local::{
         LocalAbortHandle, LocalGeneration, LocalLlmRuntime, LocalModelMetadata,
     };
     struct Runtime(LocalModelMetadata);

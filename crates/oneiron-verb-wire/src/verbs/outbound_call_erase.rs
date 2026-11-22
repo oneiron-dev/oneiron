@@ -13,6 +13,9 @@ pub struct OutboundCallRequestEraseRequest {
     /// The call's attempt, 32 hex.
     pub attempt: EntityId,
     pub call_seq: u64,
+    /// The confirm `vault.owner_confirm.preview` returned for this call.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confirm: Option<String>,
     /// An asker's approved check-in for this erase, 32 hex
     /// (`outbound_call_request_erase_effect_digest`): the Owner applies it
     /// on their own proof, and the answer names its asker.

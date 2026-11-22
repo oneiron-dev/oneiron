@@ -8,8 +8,9 @@ use crate::error::{Error, Result};
 
 use super::ledger::{LEDGER, encode_gate_decision};
 use super::orcb;
-use super::types::GateDecisionRecord;
+use super::types::{GateDecisionId, GateDecisionRecord};
 use super::vet::vet_gate_decision_record;
+use crate::side_table::SideKey;
 use crate::store::Store;
 use crate::store::key_custody::LocalCustody;
 
@@ -104,6 +105,25 @@ impl Store {
             self.owe_gate_actor_scrub_in_txn(wtxn, actor, decision_id, at)?;
         }
         Ok(())
+    }
+}
+
+impl Store {
+    /// Whether a Gate decision row kept under the ledger key suffix `source_key` as `raw` names
+    /// `actor`, read as the ledger reads its own rows; `None` when no one here can read it: a
+    /// sealed row whose key this vault retired or never held, or bytes that are no decision. An
+    /// actor's erase uses it on the inert archive copies of ledger rows (REVIEW-7706), which a
+    /// byte match cannot see inside a seal.
+    pub(crate) fn gate_decision_copy_names_actor(
+        &self,
+        source_key: &[u8],
+        raw: &[u8],
+        actor: &EntityId,
+    ) -> Option<bool> {
+        let decision_id = <GateDecisionId as SideKey>::decode_key(source_key)?;
+        self.decode_gate_decision_value(decision_id, raw)
+            .ok()
+            .map(|record| record.names_actor(actor))
     }
 }
 

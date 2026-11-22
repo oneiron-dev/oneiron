@@ -90,6 +90,7 @@ const ALREADY_EXPIRED: &str = "an agent grant's expires_at must be later than no
 const RESERVED_GIT_PUSH: &str =
     "an agent grant never lists git_push: only vault.repo.git_push.mint grants raw git push";
 const BAD_WALLET: &str = "an agent grant's wallet_ref names a nonempty issuer and id";
+const ACT_GRANT_WITHOUT_READ: &str = "an act Grant also lists read: a Grant whose verbs name an act an agent's Grant may carry confers, and so carries that act, only with read among its verbs";
 const BAD_WORKING_VIEW: &str = "an agent grant's working_view_bounds name a live owner working view of its repo_bounds repo, made by the minting owner in that account";
 /// The one verb of the read Grant pairing a named agent mints (Engine RULING
 /// PAIR-GRANT-DESIGN Q4): the Grant spelling, not the slip's `core:read`.
@@ -169,7 +170,8 @@ impl Vault {
     ///
     /// # Errors
     /// An owner refusal; `InvalidConfig` for a verb set and class set both
-    /// empty, a verb set over every verb, an invalid class name, a wallet
+    /// empty, a verb set over every verb, a verb set that names an act an
+    /// agent's Grant may carry but not `read`, an invalid class name, a wallet
     /// with an empty part, a working view bound without repo bounds or on
     /// no live owner view of their repo in the owner's account, a member
     /// that is no live agent principal, an expiry already passed or repo
@@ -254,6 +256,16 @@ impl Vault {
             .contains(&super::GIT_PUSH_VERB.to_owned())
         {
             return Err(Error::InvalidConfig(RESERVED_GIT_PUSH.into()));
+        }
+        // The act judge asks the Grant to confer, which needs `read` (Engine
+        // ANSWER AGENT-GRANTABLE-ACT-GRANT-NEEDS-READ-VERB = A).
+        if !authority_scope
+            .verbs
+            .contains(&super::agent_verb_class::CONFERRING_VERB.to_owned())
+            && crate::authority::agent_grantable_act_verbs()
+                .any(|verb| authority_scope.verbs.contains(&verb.to_owned()))
+        {
+            return Err(Error::InvalidConfig(ACT_GRANT_WITHOUT_READ.into()));
         }
         if !self.is_agent_principal_in_txn(txn, agent)? {
             return Err(Error::InvalidConfig(NOT_AN_AGENT.into()));
@@ -362,7 +374,10 @@ impl Vault {
     /// repo bounds or verb classes, as an OAuth sign-in's Grant. Only a named
     /// agent's PERSON gets one, and only while no Grant row names it: an
     /// agent definition, a base agent, an ordinary person and a holder a
-    /// Grant row already names mint nothing (`None`).
+    /// Grant row already names mint nothing (`None`). A published app's
+    /// backend mints nothing either: its grant rows are the owner's own acts,
+    /// default none (PUBLIC-BACKEND = A), and a link that names verbs for one
+    /// no Grant row names is refused before this (APP-BACKEND-LINK-GRANT = A).
     ///
     /// # Errors
     /// As [`Self::mint_agent_grant`]: the caller refuses its link.
@@ -374,12 +389,11 @@ impl Vault {
         holder: EntityId,
         scope: &Scope,
     ) -> Result<Option<EntityId>> {
-        if !self.is_live_named_agent_in_txn(txn, holder)?
-            || self
-                .agent_grants_reporting_in_txn(txn)?
-                .0
-                .iter()
-                .any(|standing| standing.grant.member_ref == holder)
+        let Some(name) = self.live_named_agent_name_in_txn(txn, holder)? else {
+            return Ok(None);
+        };
+        if crate::artifact_hosting::is_artifact_backend_name(&name)
+            || self.agent_grant_names_in_txn(txn, holder)?
         {
             return Ok(None);
         }
@@ -410,13 +424,65 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         holder: EntityId,
     ) -> Result<bool> {
+        Ok(self.live_named_agent_name_in_txn(txn, holder)?.is_some())
+    }
+
+    /// The name a live named agent's PERSON `holder` records in `txn`, as
+    /// [`Self::is_live_named_agent_in_txn`] judges it; None for any other
+    /// holder.
+    ///
+    /// # Errors
+    /// A store failure reading the row.
+    pub(crate) fn live_named_agent_name_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        holder: EntityId,
+    ) -> Result<Option<String>> {
         Ok(match live_entity_row_in_txn(&self.store, txn, &holder)? {
             LiveEntityRow::Live {
                 entity_type: crate::registry::ENTITY_TYPE_PERSON,
                 body,
-            } => crate::vault::is_named_agent_principal_body(&holder, &body),
-            _ => false,
+            } => crate::vault::named_agent_principal_name(&holder, &body),
+            _ => None,
         })
+    }
+
+    /// Whether a live owner-agent Grant row names `holder` in `txn`.
+    ///
+    /// # Errors
+    /// A store failure reading the Grant rows.
+    pub(crate) fn agent_grant_names_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        holder: EntityId,
+    ) -> Result<bool> {
+        Ok(self
+            .agent_grants_reporting_in_txn(txn)?
+            .0
+            .iter()
+            .any(|standing| standing.grant.member_ref == holder))
+    }
+
+    /// Whether a live owner-agent Grant row that has not expired names
+    /// `holder` in `txn`: [`Self::agent_grant_names_in_txn`] less every row
+    /// whose `expires_at` the authority clock has reached
+    /// ([`AgentGrantStanding::stands_at`] at [`Self::instant_in_txn`], the
+    /// reading the consent registry and a credential's read bound take). FIX
+    /// [APP-BACKEND-LINK-EXPIRED-GRANT-COUNTS].
+    ///
+    /// # Errors
+    /// A store failure reading the Grant rows or the authority clock.
+    pub(crate) fn unexpired_agent_grant_names_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        holder: EntityId,
+    ) -> Result<bool> {
+        let now = self.instant_in_txn(txn)?.secs();
+        Ok(self
+            .agent_grants_reporting_in_txn(txn)?
+            .0
+            .iter()
+            .any(|standing| standing.grant.member_ref == holder && standing.stands_at(now)))
     }
 
     /// The owner revokes the agent grant `grant_ref`: his signed act, then
@@ -617,7 +683,7 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         include_revoked: bool,
     ) -> Result<Vec<crate::consent::ConsentRegistryRow>> {
-        let now = self.instant_in_txn(txn)?.secs();
+        let now = self.grant_judgement_secs_in_txn(txn)?;
         let mut rows = Vec::new();
         let mut shown = BTreeSet::new();
         let grants = agent_grants_reporting_for_store_in_txn(&self.store, txn, true)?.0;

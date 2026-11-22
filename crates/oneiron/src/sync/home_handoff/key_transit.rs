@@ -11,8 +11,11 @@
 //! in a writer of its own and forgets the secret ([`receive_keys`]). Keys go
 //! before parts, so a target holding every part holds the keys too, and its
 //! own arrival can adopt without a session. A key whose actor is erased there
-//! is refused there; a key that does not travel leaves its content unreadable
-//! there, and the facts land alone. Seals are never stored.
+//! is refused there, and one whose actor was erased here since the freeze does
+//! not travel: that content is unreadable there, and the facts land alone. Any
+//! other key that does not travel fails the call, and no part goes before it
+//! does (review round 1 of #10109): a row that lands only whole, such as an
+//! emergency checkpoint, would be lost with the ack. Seals are never stored.
 //!
 //! An actor's erase retires its keys on each node (the custody's catalog
 //! scrub) and owes every other holder's copy. Each delivery round a node asks
@@ -160,12 +163,13 @@ pub(crate) fn open_key_session(
 /// session this node offered `source` for handoff `id`, each in a writer of
 /// its own, and forgets the session. Returns how many this node holds now.
 /// A key whose actor is erased here, or that this custody retired, is
-/// refused and not counted; one that does not open or install is logged and
-/// not counted.
+/// refused and not counted.
 ///
 /// # Errors
 ///
-/// No session open here for this handoff from `source`; storage errors.
+/// No session open here for this handoff from `source`; a key that does not
+/// open or install (the source sends it again under a fresh session);
+/// storage errors.
 pub(crate) fn receive_keys(
     vault: &Vault,
     id: HandoffId,
@@ -207,9 +211,7 @@ pub(crate) fn receive_keys(
                 installed = installed.saturating_add(1);
             }
             Ok(Installed::Refused { .. }) => {}
-            Err(error) => {
-                tracing::debug!(kind = ?error.kind(), "a home handoff key was not installed");
-            }
+            Err(error) => return Err(error),
         }
     }
     Ok(installed)
@@ -222,7 +224,8 @@ pub(crate) fn receive_keys(
 ///
 /// # Errors
 ///
-/// A session key that does not import; a malformed key ref.
+/// A session key that does not import; a key this node still holds live
+/// that does not export; custody faults.
 pub(crate) fn transit_keys(
     vault: &Vault,
     frozen: &FrozenHandoff,
@@ -255,9 +258,10 @@ pub(crate) fn transit_keys(
                 key: key.clone(),
                 sealed,
             }),
-            Err(error) => {
-                tracing::debug!(kind = ?error.kind(), "a home handoff key was not sent");
+            Err(_) if key_state(&vault.store, reference)? != KeyState::Live => {
+                tracing::debug!("an erased home handoff key was not sent");
             }
+            Err(error) => return Err(error),
         }
     }
     Ok(sent)

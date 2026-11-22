@@ -91,8 +91,9 @@ impl Decision for CampaignCompliance {
 
     /// A send the gate governs now that it would not; a row that binds it now
     /// and would not, so its requirement and its staleness no longer apply;
-    /// a consent class it lacks now and would not; or a row it fails now and
-    /// would pass.
+    /// a consent class it lacks now and would not; a row it fails now and
+    /// would pass; or a recorded consent the owner requires that it lacks now
+    /// and would have.
     fn loosens(live: &Self::Answer, restored: &Self::Answer) -> bool {
         match (live, restored) {
             (None, _) => false,
@@ -101,6 +102,7 @@ impl Decision for CampaignCompliance {
                 !live.rows.is_subset(&restored.rows)
                     || (live.uncovered && !restored.uncovered)
                     || !live.failed.is_subset(&restored.failed)
+                    || (live.recorded_consent_missing && !restored.recorded_consent_missing)
             }
         }
     }

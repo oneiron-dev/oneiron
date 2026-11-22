@@ -5,6 +5,7 @@ use crate::booking::{
     encode_event_type_claim_value,
 };
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
+use crate::edge::EdgeActorClass;
 use crate::memory::{ClaimInput, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_OWNER_BINDING_REQUIRED};
 use serde_json::json;
 
@@ -12,10 +13,14 @@ use serde_json::json;
 mod regressions;
 
 fn id(byte: u8) -> EntityId {
+    if byte == 2 {
+        // The fixture owner is the embedded owner, so the bound owner passes the live owner census.
+        return crate::vault::embedded_owner_actor_id().expect("owner");
+    }
     EntityId::from_bytes([byte; 16]).expect("id")
 }
 
-/// A vault rooted under the test host, with `id(2)` bound as its owner.
+/// A vault rooted under the test host, with the embedded owner bound as its owner.
 fn open() -> (tempfile::TempDir, Vault) {
     let (dir, vault) = open_unrooted();
     crate::test_util::bind_test_owner(&vault, id(2));
@@ -35,26 +40,23 @@ fn open_unrooted() -> (tempfile::TempDir, Vault) {
             .expect("entity");
     }
     let config = fixture_config();
+    let mut body = ClaimBody::new(
+        BOOKING_EVENT_TYPE_PREDICATE,
+        ClaimSubject::Entity(id(1)),
+        encode_event_type_claim_value(&BookingEventTypeClaimValue {
+            schema_version: BOOKING_EVENT_TYPE_SCHEMA_VERSION,
+            page_ref: id(1),
+            config,
+        })
+        .expect("configuration"),
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    crate::test_util::stamp_vault_default_facet(&vault, &mut body);
     vault
-        .put_claim(
-            &id(5),
-            &ClaimBody::new(
-                BOOKING_EVENT_TYPE_PREDICATE,
-                ClaimSubject::Entity(id(1)),
-                encode_event_type_claim_value(&BookingEventTypeClaimValue {
-                    schema_version: BOOKING_EVENT_TYPE_SCHEMA_VERSION,
-                    page_ref: id(1),
-                    config,
-                })
-                .expect("configuration"),
-                1.0,
-                ClaimApprovalStatus::Auto,
-                ClaimLifecycleStatus::Active,
-            )
-            .unwrap(),
-            TimeRange { start: 1, end: 1 },
-            1,
-        )
+        .put_claim(&id(5), &body, TimeRange { start: 1, end: 1 }, 1)
         .expect("config claim");
     (dir, vault)
 }
@@ -70,6 +72,7 @@ fn fixture_config() -> EventTypeConfig {
         booking_window_secs: 7 * 86_400,
         daily_cap: None,
         weekly_cap: None,
+        deposit: None,
         routing: RoutingMode::Either,
         hosts: vec![HostAvailabilityConfig {
             host_ref: id(3),
@@ -82,7 +85,9 @@ fn fixture_config() -> EventTypeConfig {
             }],
             preferred_hours: Vec::new(),
         }],
+        flex_with_ordinary: false,
         flex_windows: Vec::new(),
+        allowed_durations_min: Vec::new(),
     }
 }
 
@@ -99,13 +104,16 @@ fn publication() -> BookingPagePublication {
         event_types: vec![EventTypeCard {
             key: EventTypeKey("event".to_owned()),
             title: "Owner supplied title".to_owned(),
+            deposit: None,
             duration_min: 30,
             description: "Owner supplied description".to_owned(),
+            allowed_durations_min: Vec::new(),
         }],
         constraint_field: ConstraintFieldConfig {
             enabled: false,
             placeholder: String::new(),
         },
+        constraint_front: None,
         theme: ThemeTokens(json!({"arbitrary": [false, null, {"nested": "</script>"}]})),
         landing: crate::booking::BookingLandingContent::default(),
         initial_availability: PublicBookingAvailability {
@@ -114,6 +122,7 @@ fn publication() -> BookingPagePublication {
             window_secs: 3_600,
             visitor_tz: "UTC".to_owned(),
         },
+        sponsor: None,
     }
 }
 

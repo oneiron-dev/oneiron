@@ -1,18 +1,16 @@
-//! `hooks.replay` a page at a time (FIX 8629): at most
-//! [`MAX_REPLAY_ENTRIES`] entries a page, and a cursor to the rest. A fact
-//! hook's cursor holds each source's own frontier, moved past every fact a
-//! page scanned, whether or not the hook took it, so a page that kept no
-//! entry still moves on. A verb hook's cursor holds the saved-run index key
-//! (commit time, run key) its page ended at.
+//! `hooks.replay` a page at a time (FIX 8629): at most the owner's
+//! `hooks.replay.page_max` entries a page (256 by default), and a cursor to
+//! the rest. A fact hook's cursor holds each source's own frontier, moved
+//! past every fact a page scanned, whether or not the hook took it, so a page
+//! that kept no entry still moves on. A verb hook's cursor holds the
+//! saved-run index key (commit time, run key) its page ended at.
 
 use std::ops::Bound;
 use std::sync::Arc;
 
 use heed::RoTxn;
 
-use super::{
-    HookReplayEntry, MAX_REPLAY_BATCHES, MAX_REPLAY_ENTRIES, REPLAY_BATCH, Replay, SavedRun,
-};
+use super::{HookReplayEntry, MAX_REPLAY_BATCHES, REPLAY_BATCH, Replay, SavedRun};
 use crate::claim::ScopedRead;
 use crate::receipt::hex_lower;
 use crate::runtime_hooks::body::{HookBodyRuntime, HookVerdict};
@@ -134,13 +132,16 @@ pub struct HookReplayEntryPage {
     /// The next page's cursor; `None` once the replay read every entry its
     /// hook takes.
     pub next: Option<HookReplayCursor>,
+    /// The most entries this page could hold: the asked limit, at least 1
+    /// and at most the owner's `hooks.replay.page_max` as this page read it.
+    pub limit: usize,
 }
 
 impl Vault {
     /// [`Self::hooks_replay_listing`] a page at a time: at most `limit`
-    /// entries ([`MAX_REPLAY_ENTRIES`] a page) after `cursor`, or after
-    /// `since` when no cursor is given, with the next page's cursor, beside
-    /// the rows its entries stand on.
+    /// entries (the owner's `hooks.replay.page_max` a page) after `cursor`,
+    /// or after `since` when no cursor is given, with the next page's
+    /// cursor, beside the rows its entries stand on.
     ///
     /// # Errors
     ///
@@ -196,7 +197,13 @@ impl Vault {
         cursor: Option<HookReplayCursor>,
         limit: usize,
     ) -> Result<(HookReplayEntryPage, Vec<EntityId>)> {
-        let limit = limit.clamp(1, MAX_REPLAY_ENTRIES);
+        // The page bound is the owner's key, whichever caller asks: the
+        // owner verb, a whole listing, or a Candidate pack's qualification.
+        let page_max = crate::verbs::host::setting_keys::page_max(
+            self,
+            &crate::verbs::host::setting_keys::HOOKS_REPLAY_PAGE_MAX,
+        )?;
+        let limit = limit.clamp(1, page_max);
         let body = self.bound_body(row);
         let other_kind =
             || Error::InvalidConfig("cursor is another kind of hook's replay page".to_owned());
@@ -216,6 +223,7 @@ impl Vault {
                 Ok(HookReplayEntryPage {
                     entries: runs.iter().map(|run| replay.saved(lane, run)).collect(),
                     next,
+                    limit,
                 })
             });
         }
@@ -282,7 +290,11 @@ impl Replay<'_> {
             .iter()
             .any(|frontier| *frontier != SourceFrontier::End)
             .then_some(HookReplayCursor(CursorAt::Facts(frontiers)));
-        Ok(HookReplayEntryPage { entries, next })
+        Ok(HookReplayEntryPage {
+            entries,
+            next,
+            limit,
+        })
     }
 }
 

@@ -73,13 +73,14 @@ fn storage(error: crate::Error) -> TransportError {
 /// landed meanwhile and retires a debt no fetch settles (FIX 4384); then it
 /// fetches what is still owed from the home, on one connection, and releases
 /// the targets it fetched, those it landed rows for with their held rows
-/// tried again. Own residence only: a federation peer does not answer it.
-/// Returns how many rows landed.
+/// tried again. Own residence only: a federation peer does not answer it, and
+/// a member lane fetches none: the home admits no machine-history call on it
+/// (MEMBER-SYNC P5). Returns how many rows landed.
 pub(crate) async fn fetch_owed_machine_history(
     manager: &Arc<WindowManager>,
     config: &SyncClientConfig,
 ) -> Result<usize, TransportError> {
-    if config.federation_peer.is_some() {
+    if config.federation_peer.is_some() || config.member_lane {
         return Ok(0);
     }
     let vault = manager.vault();

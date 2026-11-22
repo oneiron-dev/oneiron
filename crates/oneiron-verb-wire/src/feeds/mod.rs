@@ -16,6 +16,8 @@ pub enum Position {
     Edges(u64),
     /// A redirty feed sequence.
     Redirty(u64),
+    /// A setting change sequence.
+    Settings(u64),
 }
 
 /// What an entry says happened.
@@ -35,6 +37,8 @@ pub enum FeedEntryKind {
     /// A TURN's words changed with no new version of its own: what was derived from them is
     /// due again.
     Redirty,
+    /// A setting row was set or cleared.
+    Setting,
 }
 
 /// Where a new subscription starts.
@@ -57,7 +61,8 @@ pub struct FeedReadRequest {
     #[serde(with = "oneiron_contracts::serialize::entity_ref")]
     #[schemars(with = "String")]
     pub subscription: EntityId,
-    /// Entries to return from each source, at most [`FEED_READ_MAX_LIMIT`];
+    /// Entries to return from each source, at most the owner's
+    /// `feeds.read.max_per_source` (default [`FEED_READ_MAX_LIMIT`]);
     /// [`FEED_READ_DEFAULT_LIMIT`] when absent.
     #[serde(default)]
     pub limit: Option<usize>,

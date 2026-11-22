@@ -185,11 +185,13 @@ impl Vault {
 
     /// Restores one archived ISSUE under `id` for the owner's whole-vault
     /// restore; `issue` is the report [`restorable_archived_report`] read from
-    /// its body. The actor, request, filing time, review and disclosure basis
-    /// and round come from the archive; the route is computed here from
-    /// `artifact_route` (resolved before the writer opened) and this vault's
-    /// route policy, and the disclosure from that route, keeping an archived
-    /// `Denied` only on the same route. The row is marked
+    /// its body. The actor, request, filing time, review and disclosure round
+    /// come from the archive; the route is computed here from `artifact_route`
+    /// (resolved before the writer opened) and this vault's route policy, and
+    /// the disclosure from that route and this vault's live grants, keeping an
+    /// archived `Denied` only on the same route. The archived disclosure basis
+    /// is dropped: a source owner's approve-once is no consent on this vault,
+    /// so its text waits on this owner (REVIEW-7706/7771). The row is marked
     /// [`ReportIssueOrigin::OwnerArchiveRestore`], so no signature is offered
     /// for it. A row already here with the same actor, request, filing time and
     /// review is `Unchanged`; any other row under `id` is a collision.
@@ -224,6 +226,7 @@ impl Vault {
             super::routing::report_disclosure(&route, issue.request.carries_text())
         };
         issue.route = route;
+        issue.disclosure_basis = None;
         self.project_report_disclosure_in_txn(txn, &mut issue)?;
         issue.origin = ReportIssueOrigin::OwnerArchiveRestore;
         write(self, txn, &issue)?;

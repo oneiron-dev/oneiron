@@ -1,4 +1,6 @@
 //! Transaction-bound project-policy birth and owner edit doors.
+use oneiron_contracts::fingerprint::ContentHash;
+
 use crate::Vault;
 use crate::authority::{ActorBindingStatus, AuthorityKey};
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
@@ -83,7 +85,7 @@ fn birth_from_policy(
             _ => return Err(invalid()),
         };
         if selected == depth {
-            source = Some((id, *blake3::hash(body).as_bytes()));
+            source = Some((id, *ContentHash::of(body).as_bytes()));
             break;
         }
     }
@@ -120,7 +122,7 @@ pub(crate) fn put_local_birth_in_txn(
     vault.store.sync_state.put(
         txn,
         &format!("project:birth:local:{}", id.to_hex()),
-        blake3::hash(&body).as_bytes(),
+        ContentHash::of(&body).as_bytes(),
     )?;
     Ok(())
 }
@@ -291,6 +293,38 @@ where
     };
     edit.signature = signer(&edit_transcript(&edit)?)?;
     Ok(edit)
+}
+
+/// Test-only signed edit over caller heads for the `ProjectDepthPredecessors`
+/// threshold table (rule 5): [`signed_edit`] plus its content id and bytes.
+/// The seed reads the bytes back through the public put door, which counts
+/// the predecessors; the fold would meet missing parents as pending, never
+/// as a refusal.
+#[cfg(test)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one signed edit's snapshot, subject, heads, signer key and signer"
+)]
+pub(crate) fn signed_edit_for_scan_tests<S>(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    project: EntityId,
+    depth: u64,
+    heads: &[EntityId],
+    writer: &WriteActor,
+    signer_key: AuthorityKey,
+    signer: S,
+) -> Result<(EntityId, Vec<u8>)>
+where
+    S: FnOnce(&[u8]) -> Result<Vec<u8>>,
+{
+    let edit = signed_edit(
+        vault, txn, project, depth, heads, writer, signer_key, signer,
+    )?;
+    Ok((
+        edit_id(&edit)?,
+        encode_contribution(&ProjectDepthContribution::Edit(edit))?,
+    ))
 }
 
 pub(crate) fn put_default_edit_in_txn<S>(

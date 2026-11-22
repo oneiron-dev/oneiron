@@ -9,7 +9,7 @@ use oneiron::secret_custody::{
     BrokerModelListingCall, BrokerModelListingHost, BrokerModelListingReply,
 };
 use oneiron_broker::{BrokerClient, BrokerConnection, CallHeader, Outcome, Shape};
-use oneiron_llm_anthropic::AnthropicMessagesConfig;
+use oneiron_llm::anthropic::AnthropicMessagesConfig;
 use serde_json::Value;
 use zeroize::Zeroizing;
 

@@ -15,17 +15,6 @@ pub const IMAGE_RELEASE_KIND: &str = "oneiron-image-release";
 #[error("expected {0}:<64 lowercase hex>")]
 pub struct DigestError(&'static str);
 
-fn lower_hex64(hex: &str) -> bool {
-    hex.len() == 64
-        && hex
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-}
-
-fn to_hex(bytes: &[u8; 32]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
-
 macro_rules! labeled_digest {
     ($(#[$doc:meta])* $name:ident, $label:literal) => {
         $(#[$doc])*
@@ -38,7 +27,7 @@ macro_rules! labeled_digest {
             pub fn parse(labeled: &str) -> Result<Self, DigestError> {
                 labeled
                     .strip_prefix(concat!($label, ":"))
-                    .filter(|hex| lower_hex64(hex))
+                    .filter(|hex| oneiron_hex::is_lower_hex(hex, Some(64)))
                     .map(|hex| Self(hex.to_owned()))
                     .ok_or(DigestError($label))
             }
@@ -46,7 +35,7 @@ macro_rules! labeled_digest {
             /// A digest the caller computed.
             #[must_use]
             pub fn from_bytes(bytes: [u8; 32]) -> Self {
-                Self(to_hex(&bytes))
+                Self(oneiron_hex::encode(&bytes))
             }
 
             /// The 64 lowercase hex characters, without the label.

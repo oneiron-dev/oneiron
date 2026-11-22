@@ -6,6 +6,7 @@ use crate::Vault;
 use crate::error::{Error, Result};
 use crate::gate;
 use crate::store::GateSystemNoticeRecord;
+use crate::store::gate_reason::GateReceiptOutcome;
 
 use super::super::binding::{
     PolicyContentBinding, content_binding, relay_skip_content_binding, relay_verify_content_binding,
@@ -260,7 +261,7 @@ impl Vault {
             wtxn,
             request,
             verdict,
-            &format!("owner_plane_{}", verdict.decision.ledger_str()),
+            verdict.decision.ledger_outcome(),
             reason_codes,
             notices,
         )?;
@@ -380,7 +381,7 @@ impl Vault {
                     return self.append_relay_receipt_binding_checked(
                         &receipt,
                         verdict,
-                        &format!("relay_boundary_{}", verdict.decision.ledger_str()),
+                        verdict.decision.ledger_outcome(),
                         reason_codes,
                         Vec::new(),
                         row,
@@ -404,24 +405,28 @@ impl Vault {
                     PolicyPlane::HostedLegal,
                     receipt.hosted.map(|hosted| hosted.version.as_str()),
                 )?);
+                (verdict.decision.ledger_outcome(), verdict.clone())
+            }
+            // A skipped pass decides nothing; its reason says which skip.
+            RelayBoundaryPass::TrustedVaultSide => {
+                reason_codes.push("gate.relay.trusted_vault_side".to_owned());
                 (
-                    format!("relay_boundary_{}", verdict.decision.ledger_str()),
-                    verdict.clone(),
+                    GateReceiptOutcome::Noted,
+                    relay_skip_verdict(receipt.request, receipt.config),
                 )
             }
-            RelayBoundaryPass::TrustedVaultSide => (
-                "relay_trusted_vault_side".to_owned(),
-                relay_skip_verdict(receipt.request, receipt.config),
-            ),
-            RelayBoundaryPass::NotRelayedByUs => (
-                "relay_not_relayed".to_owned(),
-                relay_skip_verdict(receipt.request, receipt.config),
-            ),
+            RelayBoundaryPass::NotRelayedByUs => {
+                reason_codes.push("gate.relay.not_relayed".to_owned());
+                (
+                    GateReceiptOutcome::Noted,
+                    relay_skip_verdict(receipt.request, receipt.config),
+                )
+            }
         };
         self.append_relay_receipt_binding_checked(
             &receipt,
             &receipt_verdict,
-            &outcome,
+            outcome,
             reason_codes,
             notices,
             RelayReceiptRow::Always,
@@ -462,7 +467,7 @@ impl Vault {
         wtxn: &mut heed::RwTxn<'_>,
         receipt: &RelayReceipt<'_>,
         verdict: &PolicyClassifyVerdict,
-        outcome: &str,
+        outcome: GateReceiptOutcome,
         reason_codes: Vec<String>,
         notices: Vec<GateSystemNoticeRecord>,
         row: RelayReceiptRow,
@@ -544,7 +549,7 @@ impl Vault {
         &self,
         receipt: &RelayReceipt<'_>,
         verdict: &PolicyClassifyVerdict,
-        outcome: &str,
+        outcome: GateReceiptOutcome,
         reason_codes: Vec<String>,
         notices: Vec<GateSystemNoticeRecord>,
         row: RelayReceiptRow,
@@ -654,7 +659,7 @@ impl Vault {
             &degraded,
             // The outcome follows the replacement verdict, as every
             // other receipt row's does: a halted pass is no Allow.
-            &format!("relay_boundary_{}", degraded.decision.ledger_str()),
+            degraded.decision.ledger_outcome(),
             codes,
             notices,
         )?;

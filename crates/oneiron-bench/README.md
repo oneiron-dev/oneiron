@@ -341,7 +341,7 @@ oneiron-bench infer run --arm-id ID --transport direct|own-server \
 
 - `--transport direct`: `ModelsConfig::from_toml` → `ModelRuntime::build` →
   `router().served(<engine id>)` → `RunBackend` under an undeclared run, over
-  the `oneiron-llm-openai` wire, as the Dreamer's step layer calls a model.
+  the `oneiron_llm::openai_compat` wire, as the Dreamer's step layer calls a model.
   The named provider must build `ready`.
 - `--transport native-ipc --native-socket /ABS/worker.sock`: the same catalog
   and OpenAI request/stream codecs, over EXL3 native codec v1 with one sealed

@@ -13,21 +13,8 @@ pub(super) const MATURED_PREFIX: &[u8] = b"shared-act:matured:v1:";
 /// Waiting acts beside their row keys.
 type WaitingActs = Vec<(Vec<u8>, PendingAuthorityAct)>;
 
-/// Durable, recipient-specific notice that a waiting act has matured: its
-/// window passed on the store clock with no live objection, so a live Owner
-/// may now execute it. A zero-wait act was told at its start instead.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PendingActMatured {
-    pub act_id: String,
-    #[serde(with = "crate::federation::vault_id_decimal")]
-    pub vault_id: u64,
-    pub act: String,
-    pub recipient: String,
-    pub deadline: u64,
-    /// The store-clock time the housekeeping pass saw the act matured.
-    pub noticed_at: u64,
-}
+#[doc(hidden)]
+pub use oneiron_records::federation::pending_act::matured::PendingActMatured;
 
 impl Vault {
     /// The housekeeping pass over waiting shared acts. Each act no door has

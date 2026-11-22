@@ -20,6 +20,7 @@ pub(crate) fn fixture() -> (tempfile::TempDir, Vault, EntityId, WriteActor) {
         )
         .unwrap();
     grant(&vault, actor, true);
+    grant_reads(&vault, actor);
     let conv = EntityId::now();
     vault
         .put_entity(
@@ -35,6 +36,30 @@ pub(crate) fn fixture() -> (tempfile::TempDir, Vault, EntityId, WriteActor) {
 
 pub(crate) fn grant(vault: &Vault, actor: WriteActor, allow: bool) {
     crate::conversation_dag::test_support::put_dag_test_policy(vault, actor, allow).unwrap();
+}
+
+/// OF-063: scoped reads are default-deny, so a DAG writer needs an explicit
+/// `core:read` grant to name the conversation it appends to. Same shape as
+/// the already-passing `dag_writer` manifest in `tests/mod.rs`.
+pub(crate) fn grant_reads(vault: &Vault, actor: WriteActor) {
+    let policy = serde_json::json!({
+        "schema_version": "1.2", "pack_id": "dag-test-read", "pack_version": "v1",
+        "min_engine_version": env!("CARGO_PKG_VERSION"),
+        "defaults": {}, "rules": [], "actor_ceilings": [],
+        "scoped_grants": [{
+            "actor_ref": actor.entity_ref().to_hex(),
+            "effector": "core:read",
+            "scope": crate::federation::scope_codec::read_preset(),
+            "receipt_required": false,
+        }],
+    });
+    crate::conversation_dag::test_support::put_test_policy_manifest(
+        vault,
+        actor,
+        EntityId::now(),
+        &policy,
+    )
+    .unwrap();
 }
 
 pub(crate) fn time(at: u64) -> TimeRange {

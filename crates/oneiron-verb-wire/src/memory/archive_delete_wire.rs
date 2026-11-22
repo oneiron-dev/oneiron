@@ -4,6 +4,8 @@
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::check_in::CheckInDecision;
+
 /// Explicit archived records to preview.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -33,6 +35,10 @@ pub struct ArchiveDeleteItem {
     /// deleted while it is still a cleanup archive.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected: Option<ArchiveDeleteExpectation>,
+    /// The approved check-in this record's delete waited on, 32 hex: the
+    /// one its `CHECK_IN_PENDING` reason code named (2k5c).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in_ref: Option<String>,
 }
 
 /// Explicit archived records to delete, each once.
@@ -52,6 +58,10 @@ pub struct ArchiveDeleteError {
     pub message: String,
     /// Remediation hints.
     pub suggestions: Vec<String>,
+    /// Machine-readable reasons; a waiting delete's names its check-in as
+    /// `check_in:<32 hex>` (2k5c).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reason_codes: Vec<String>,
 }
 
 /// What deleting one previewed record would remove.
@@ -104,13 +114,16 @@ pub struct ArchiveDeleteReceiptView {
     /// The redaction audit receipt (`redaction:<hex>`), when one was kept.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub receipt_ref: Option<String>,
-    /// The role the delete was admitted under: owner, admin, member or
-    /// agent.
+    /// The role the delete was admitted under: owner, admin, steward,
+    /// member or agent.
     pub role: String,
     /// The membership grant or agent Grant that admitted it, as evidence;
     /// absent for an owner.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grant_ref: Option<String>,
+    /// The check-in decision the delete ran on (2k5c); none for an agent's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<CheckInDecision>,
 }
 
 /// One target's delete: its receipt, or why it was not deleted.

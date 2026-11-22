@@ -83,27 +83,8 @@ pub(crate) use oneiron_records::workspace_roster::rooms::audience_events::{
 #[doc(hidden)]
 pub use oneiron_verb_wire::workspace_roster::rooms::audience_events::ThreadAudienceHistory;
 
-/// Whether an edit adds its person, removes them, walks them in or opens
-/// the thread's full history to them, or asks to join for them or denies
-/// that.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum AudienceOp {
-    Add,
-    Remove,
-    /// A self-add (FIX 6381): its person enters from this edit's turn on,
-    /// or stays as they are when already in.
-    WalkIn,
-    /// The Owner's explicit act (FIX 6383): its person reads every turn of
-    /// the thread until a remove.
-    OpenFullHistory,
-    /// Its person, the one who wrote it, asks to join (FIX 6381, 6384): it
-    /// changes no one's place in the thread.
-    RequestJoin,
-    /// A member denies its person's pending request to join: it changes no
-    /// one's place in the thread.
-    DenyJoin,
-}
+#[doc(hidden)]
+pub(crate) use oneiron_records::workspace_roster::rooms::audience_events::AudienceOp;
 
 /// One audience edit as its TURN carries it: the thread's root, the person
 /// added or removed (the root's stand-in for them once erased, FIX 5640),

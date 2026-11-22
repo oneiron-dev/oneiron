@@ -159,11 +159,11 @@ pub(super) fn ask_round(ask: &DecisionAsk) -> crate::Result<Option<AskRound>> {
     let intent = state
         .get("intent_id")
         .and_then(Value::as_str)
-        .and_then(hex32);
+        .and_then(oneiron_hex::decode::<32>);
     let question_digest = state
         .get("question_digest")
         .and_then(Value::as_str)
-        .and_then(hex32);
+        .and_then(oneiron_hex::decode::<32>);
     let generation = state
         .get("generation")
         .and_then(Value::as_u64)
@@ -182,17 +182,4 @@ pub(super) fn ask_round(ask: &DecisionAsk) -> crate::Result<Option<AskRound>> {
         question_digest,
         generation,
     }))
-}
-
-/// The 32 bytes `text` spells as 64 lowercase hex digits, as the Ask's
-/// state writes them.
-fn hex32(text: &str) -> Option<[u8; 32]> {
-    if text.len() != 64 {
-        return None;
-    }
-    let mut bytes = [0_u8; 32];
-    for (byte, pair) in bytes.iter_mut().zip(text.as_bytes().chunks_exact(2)) {
-        *byte = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
-    }
-    (crate::entity_id::bytes_to_hex_lower(&bytes) == text).then_some(bytes)
 }

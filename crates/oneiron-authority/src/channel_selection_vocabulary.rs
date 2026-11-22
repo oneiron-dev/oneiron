@@ -1,5 +1,7 @@
 //! Stable token vocabulary for channel-identity selection law.
 
+use oneiron_contracts::register::Register;
+
 /// Version of the persisted selection rule-set record.
 pub const CHANNEL_IDENTITY_SELECTION_SCHEMA_VERSION: u16 = 1;
 
@@ -22,8 +24,10 @@ const SELECTION_REF_MAX_BYTES: usize = 128;
     serde::Serialize,
     serde::Deserialize,
     schemars::JsonSchema,
+    Register,
 )]
 #[serde(rename_all = "snake_case")]
+#[register("relationship.context")]
 pub enum RelationshipContext {
     WorkDeal,
     SchedulingLogistics,
@@ -44,31 +48,10 @@ impl RelationshipContext {
         Self::GroupSpace,
     ];
 
-    /// Stable on-disk spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::WorkDeal => "work_deal",
-            Self::SchedulingLogistics => "scheduling_logistics",
-            Self::CampaignOutreach => "campaign_outreach",
-            Self::TransactionalSystem => "transactional_system",
-            Self::PersonalFriends => "personal_friends",
-            Self::GroupSpace => "group_space",
-        }
-    }
-
     /// Parses the stable on-disk spelling.
     #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "work_deal" => Some(Self::WorkDeal),
-            "scheduling_logistics" => Some(Self::SchedulingLogistics),
-            "campaign_outreach" => Some(Self::CampaignOutreach),
-            "transactional_system" => Some(Self::TransactionalSystem),
-            "personal_friends" => Some(Self::PersonalFriends),
-            "group_space" => Some(Self::GroupSpace),
-            _ => None,
-        }
+        <Self as Register>::named(value)
     }
 }
 
@@ -89,8 +72,10 @@ impl RelationshipContext {
     serde::Serialize,
     serde::Deserialize,
     schemars::JsonSchema,
+    Register,
 )]
 #[serde(rename_all = "snake_case")]
+#[register("channel.identity.face")]
 pub enum ChannelIdentityFace {
     DelegatedOwnerAccount,
     AgentNamedAddress,
@@ -101,31 +86,10 @@ pub enum ChannelIdentityFace {
 }
 
 impl ChannelIdentityFace {
-    /// Stable on-disk spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::DelegatedOwnerAccount => "delegated_owner_account",
-            Self::AgentNamedAddress => "agent_named_address",
-            Self::SideDomainAddress => "side_domain_address",
-            Self::HouseIdentity => "house_identity",
-            Self::CompanionIdentity => "companion_identity",
-            Self::NamedGroupParticipant => "named_group_participant",
-        }
-    }
-
     /// Parses the stable on-disk spelling.
     #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "delegated_owner_account" => Some(Self::DelegatedOwnerAccount),
-            "agent_named_address" => Some(Self::AgentNamedAddress),
-            "side_domain_address" => Some(Self::SideDomainAddress),
-            "house_identity" => Some(Self::HouseIdentity),
-            "companion_identity" => Some(Self::CompanionIdentity),
-            "named_group_participant" => Some(Self::NamedGroupParticipant),
-            _ => None,
-        }
+        <Self as Register>::named(value)
     }
 }
 
@@ -142,8 +106,10 @@ impl ChannelIdentityFace {
     serde::Serialize,
     serde::Deserialize,
     schemars::JsonSchema,
+    Register,
 )]
 #[serde(rename_all = "snake_case")]
+#[register("selection.rule.writer.kind")]
 pub enum SelectionRuleWriterKind {
     /// Compiled vault law; never produced by a caller write.
     SystemDefault,
@@ -152,25 +118,10 @@ pub enum SelectionRuleWriterKind {
 }
 
 impl SelectionRuleWriterKind {
-    /// Stable on-disk spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::SystemDefault => "system_default",
-            Self::Owner => "owner",
-            Self::Agent => "agent",
-        }
-    }
-
     /// Parses the stable on-disk spelling.
     #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "system_default" => Some(Self::SystemDefault),
-            "owner" => Some(Self::Owner),
-            "agent" => Some(Self::Agent),
-            _ => None,
-        }
+        <Self as Register>::named(value)
     }
 }
 

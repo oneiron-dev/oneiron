@@ -1,6 +1,7 @@
 //! Moved from `crates/oneiron/src/memory/outbound/invite.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+use oneiron_contracts::register::Register;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -20,8 +21,11 @@ pub const CALENDAR_INVITE_OUTBOUND_CHANNEL: &str = "calendar";
 pub const CALENDAR_INVITE_OUTBOUND_VERB: &str = "calendar.invite";
 
 /// iMIP method the invite surface accepts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Register,
+)]
 #[serde(rename_all = "UPPERCASE")]
+#[register("calendar.invite.surface.method")]
 pub enum CalendarInviteSurfaceMethod {
     /// `METHOD:REQUEST` — create or update an invitation.
     Request,
@@ -30,24 +34,11 @@ pub enum CalendarInviteSurfaceMethod {
 }
 
 impl CalendarInviteSurfaceMethod {
-    /// Wire token (`REQUEST` / `CANCEL`).
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Request => "REQUEST",
-            Self::Cancel => "CANCEL",
-        }
-    }
-
     /// Parses the wire token. The set is closed: an unrecognized iMIP method is
     /// a typed rejection at the boundary, never a defaulted `REQUEST`.
     #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "REQUEST" => Some(Self::Request),
-            "CANCEL" => Some(Self::Cancel),
-            _ => None,
-        }
+        <Self as Register>::named(value)
     }
 }
 

@@ -9,12 +9,10 @@ use serde::{Deserialize, Serialize};
 use super::ux::ReminderAction;
 use crate::booking::BookingError;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum BookingPolicyPrecedence {
-    NestedNarrowing,
-    HolderOverrideCappedAtVault,
-}
+#[doc(hidden)]
+pub use oneiron_records::booking::conversion::policy::{
+    BookingPolicyPrecedence, BookingPolicyScope,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -106,14 +104,6 @@ impl BookingConversionPolicy {
         }
         both
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum BookingPolicyScope {
-    Vault,
-    Nested,
-    Holder,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

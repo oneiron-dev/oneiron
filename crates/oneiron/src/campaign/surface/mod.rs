@@ -34,8 +34,6 @@ mod membership;
 mod parse;
 mod program;
 mod saved_query;
-// FIX [LIBTEST-QUARANTINE-CAMPAIGN-SURFACE-TESTS]: the lib test target's type check fails here (1 errors: E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 mod verbs;
@@ -47,9 +45,9 @@ pub use self::actions::{
     CampaignUnsubscribeReceipt, CampaignUnsubscribeRequest,
 };
 pub use self::campaign::{
-    CAMPAIGN_SCHEMA_VERSION, CampaignDefinition, CampaignLifecycle, CampaignRecord, CopyReviewMode,
-    CreateCampaignRequest, UpdateCampaignRequest, archive_campaign, create_campaign,
-    launch_campaign, read_campaign, update_campaign,
+    CAMPAIGN_SCHEMA_VERSION, CampaignDefinition, CampaignLifecycle, CampaignRecord,
+    CampaignSendMode, CopyReviewMode, CreateCampaignRequest, UpdateCampaignRequest,
+    archive_campaign, create_campaign, launch_campaign, read_campaign, update_campaign,
 };
 pub(crate) use self::campaign::{
     apply_campaign_complaint_answer_in_txn, campaign_type_byte, load_campaign_in_txn,

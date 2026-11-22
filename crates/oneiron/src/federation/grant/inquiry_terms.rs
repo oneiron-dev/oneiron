@@ -76,7 +76,7 @@ pub(super) fn body_entry(grant: &FederationGrant) -> Option<(Value, Value)> {
 /// The inquiry terms a body carries; a malformed value or an unknown token
 /// refuses the body.
 pub(super) fn decode_body_entry(entries: &[(Value, Value)]) -> Result<Option<InquiryTerms>> {
-    let Some(value) = optional_value(entries, KEY_INQUIRY_TERMS) else {
+    let Some(value) = optional_value(entries, KEY_INQUIRY_TERMS)? else {
         return Ok(None);
     };
     let Value::Map(terms) = value else {

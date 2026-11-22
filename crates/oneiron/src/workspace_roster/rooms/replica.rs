@@ -292,10 +292,8 @@ impl RoomSideRow {
     }
 }
 
-/// `hex` as an id, when it is one's canonical spelling.
-fn named(hex: &str) -> Option<EntityId> {
-    EntityId::from_hex(hex).ok().filter(|id| id.to_hex() == hex)
-}
+#[doc(hidden)]
+use oneiron_records::workspace_roster::rooms::replica::named;
 
 /// Where a room turn sits, for the side rows that ride beside it (FIX 3094).
 enum TurnPlace {
@@ -558,8 +556,11 @@ fn side_refusal_in(
 
 /// Merges a side row another machine of this vault carried (FIX 1794). A
 /// host pin or handle is the window's cell, whose latest carrier write by
-/// Loro order the window chose, and is written as carried. A claim is
-/// written once: the lowest `(at, receipt_ref)` stands. A participation fact
+/// Loro order the window chose, and is written as carried. Of two claims of
+/// one turn, the one whose holder spoke the turn's held answer stands (an
+/// answer seals its claim), then the higher generation (a takeover replaces
+/// the claim it took over), then the lower `(at, receipt_ref)`. A
+/// participation fact
 /// is appended once under its key: a divergent payload keeps the earlier
 /// `(at, cause)`. A response is settled with its rivals by
 /// [`merge_replicated_responses_in_txn`], and a join or offer card merged by
@@ -646,6 +647,45 @@ pub(crate) fn merge_replicated_side_row_in_txn(
                     merged.actor = actor;
                     CLAIMS.put(store, txn, &turn, &merged)?;
                     return Ok(SideMerge::Written);
+                }
+                // REVIEW-9956 own review: one receipt's copies settle by that
+                // rule alone, so no live copy returns over the erased form.
+                if (held.at, &held.receipt_ref) == (claim.at, &claim.receipt_ref) {
+                    return Ok(SideMerge::Conflict);
+                }
+                // REVIEW-9956 round 2: an answer seals its claim against a
+                // concurrent takeover no answer followed, in either order,
+                // as the turn's responses settle it too.
+                // An erased answerer seals nothing.
+                let answerer = match RESPONSE.get_lenient(store, txn, &turn)? {
+                    Some(response) => TURNS
+                        .get_lenient(store, txn, &response)?
+                        .and_then(|spoken| named(&spoken.actor)),
+                    None => None,
+                };
+                if let Some(answerer) = answerer {
+                    match (
+                        named(&held.actor) == Some(answerer),
+                        named(&claim.actor) == Some(answerer),
+                    ) {
+                        (true, false) => return Ok(SideMerge::Conflict),
+                        (false, true) => {
+                            CLAIMS.put(store, txn, &turn, claim)?;
+                            return Ok(SideMerge::Conflict);
+                        }
+                        _ => {}
+                    }
+                }
+                // ROOM-CLAIM-TAKEOVER = A: a takeover stands over the claim
+                // it replaced on every replica, so the higher generation
+                // stands, and a copy of a replaced claim changes nothing.
+                match claim.generation.cmp(&held.generation) {
+                    std::cmp::Ordering::Greater => {
+                        CLAIMS.put(store, txn, &turn, claim)?;
+                        return Ok(SideMerge::Written);
+                    }
+                    std::cmp::Ordering::Less => return Ok(SideMerge::Held),
+                    std::cmp::Ordering::Equal => {}
                 }
                 if (held.at, &held.receipt_ref) > (claim.at, &claim.receipt_ref) {
                     CLAIMS.put(store, txn, &turn, claim)?;

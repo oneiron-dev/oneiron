@@ -96,7 +96,7 @@ pub(super) fn has_vad_postcommit_owner(vault: &Vault, txn: &RwTxn<'_>) -> bool {
     PENDING_VAD.with(|pending| pending.borrow().contains_key(&transaction_key(vault, txn)))
 }
 
-pub(super) fn queue_dreamer_vad_approvals(vault: &Vault, txn: &RwTxn<'_>, ids: Vec<EntityId>) {
+pub(crate) fn queue_dreamer_vad_approvals(vault: &Vault, txn: &RwTxn<'_>, ids: Vec<EntityId>) {
     PENDING_VAD.with(|pending| {
         if let Some(queued) = pending.borrow_mut().get_mut(&transaction_key(vault, txn)) {
             queued.vad_ids.extend(ids);
@@ -366,6 +366,31 @@ pub(super) fn merge_postcommit_work(vault: &Vault, txn: &RwTxn<'_>, work: Postco
             queued.note_document_ids.extend(work.note_document_ids);
         }
     });
+}
+
+/// Runs `write` in a savepoint of `txn`. When it answers `Some`, the
+/// savepoint commits and its postcommit work moves to `txn`'s owner, as a
+/// nested actor batch's does; when it answers `None` or fails, the savepoint
+/// rolls back and its work is dropped with it. Work queued against a nested
+/// transaction that nobody owns is lost, so a savepoint that may write goes
+/// through here.
+pub(crate) fn savepoint_in_txn<T>(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    write: impl FnOnce(&mut RwTxn<'_>) -> Result<Option<T>>,
+) -> Result<Option<T>> {
+    let owned = has_vad_postcommit_owner(vault, txn);
+    let mut savepoint = vault.store.env.nested_write_txn(txn)?;
+    let scope = owned.then(|| VadPostcommitScope::new(vault, &savepoint));
+    let Some(written) = write(&mut savepoint)? else {
+        savepoint.abort();
+        return Ok(None);
+    };
+    savepoint.commit()?;
+    if let Some(scope) = scope {
+        merge_postcommit_work(vault, txn, scope.finish());
+    }
+    Ok(Some(written))
 }
 
 /// Announces a changed decision ask only after its owning transaction commits.
