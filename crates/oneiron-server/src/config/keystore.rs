@@ -116,11 +116,7 @@ impl KeystoreConfig {
     /// the hand-over (row OWNER-CONFIRM-SHEET, PR 5) a refusal on a server
     /// has nowhere to go.
     pub fn install_for_command(&self, vault: &oneiron::Vault, vault_path: &Path) -> bool {
-        let installed = self.install_on(vault, vault_path);
-        if installed {
-            vault.install_process_presence_gate();
-        }
-        installed
+        self.install_on(vault, vault_path)
     }
 
     /// [`Self::install_on`], saying what came of it: off, no keystore, or one
