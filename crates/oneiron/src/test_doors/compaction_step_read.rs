@@ -40,10 +40,9 @@ pub fn file_compaction_step(
     )
 }
 
-/// [`file_compaction_step`] stamped at `filed_at`, the time its rows are
-/// learned at. A pass files at wall milliseconds, which no month window's
-/// scan reaches (FIX COMPACTION-STEP-LEARNED-AT-MILLISECONDS); a step filed at
-/// a window's Unix seconds rides that window beside its sources.
+/// [`file_compaction_step`] filed at `filed_at`, in Unix seconds: the pass's
+/// clock reads that second, so its rows are learned at it and the step rides
+/// that second's month window beside its sources.
 pub fn file_compaction_step_at(
     vault: &Vault,
     run_ref: &str,
@@ -59,7 +58,7 @@ pub fn file_compaction_step_at(
         job,
         WriteActor::new(writer, EdgeActorClass::Agent),
         &[call],
-        filed_at,
+        filed_at * 1_000,
     )?)
 }
 

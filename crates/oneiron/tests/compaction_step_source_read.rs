@@ -751,9 +751,8 @@ mod selector_egress {
         )?;
         body.source = Some(ClaimSource::UserStated);
         vault.put_claim(&stated, &body, at, now)?;
-        // Filed at the window's seconds, so the step rides the window that
-        // carries its MESSAGE: a pass's millisecond stamp reaches no month
-        // window's scan (FIX COMPACTION-STEP-LEARNED-AT-MILLISECONDS).
+        // Filed at the window's second, so the step rides the window that
+        // carries its MESSAGE.
         let step = file_compaction_step_at(
             &vault,
             CHAT_RUN,
