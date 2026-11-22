@@ -57,6 +57,7 @@ fn raw_resume_of_budget_hold_does_not_diverge_hold_record() {
             None,
             "spend cap",
             now + 2,
+            None,
         )
         .expect("the budget hold is admitted");
     assert_eq!(held.state, BudgetHoldState::Held);

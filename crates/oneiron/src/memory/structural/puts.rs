@@ -4,7 +4,7 @@ use rmpv::Value;
 
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::memory::support::{
-    encode_rmpv, hard_deleted_refusal, hex_string, id_from_optional_hex, json_to_rmpv,
+    encode_rmpv, hard_deleted_refusal, hex_string, id_from_optional_hex, json_to_msgpack_value,
     verify_owner_actor_binding_in_txn,
 };
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
@@ -75,7 +75,7 @@ impl Memory<'_> {
                         &["Drop the role field; the facade stamps HabitCheckin."],
                     ));
                 }
-                entries.push((Value::from(key.as_str()), json_to_rmpv(value)));
+                entries.push((Value::from(key.as_str()), json_to_msgpack_value(value)));
             }
         }
         let data = encode_rmpv(&Value::Map(entries))?;

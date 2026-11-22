@@ -4,6 +4,8 @@
 //! frontiers are captured inside the transaction that accepts a replacement.
 //! A replica without these local revision frontiers has no renderable pair and
 //! must not reconstruct one from mutable live rows.
+use oneiron_contracts::fingerprint::ContentHash;
+
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -68,8 +70,8 @@ pub(crate) fn capture_in_txn(
     Ok(RevisionPair {
         before,
         after,
-        before_hash: *blake3::hash(&before_raw).as_bytes(),
-        after_hash: *blake3::hash(&after_raw).as_bytes(),
+        before_hash: *ContentHash::of(&before_raw).as_bytes(),
+        after_hash: *ContentHash::of(&after_raw).as_bytes(),
     })
 }
 
@@ -110,8 +112,8 @@ pub(crate) fn capture_in_store_txn(
     Ok(RevisionPair {
         before,
         after,
-        before_hash: *blake3::hash(&before_raw).as_bytes(),
-        after_hash: *blake3::hash(&after_raw).as_bytes(),
+        before_hash: *ContentHash::of(&before_raw).as_bytes(),
+        after_hash: *ContentHash::of(&after_raw).as_bytes(),
     })
 }
 

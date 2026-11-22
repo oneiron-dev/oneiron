@@ -143,6 +143,26 @@ impl LegacyDigest {
         self.raw(&u32::try_from(len).unwrap_or(u32::MAX).to_be_bytes())
     }
 
+    /// Bytes read to the end with no length before them, as
+    /// `blake3::Hasher::update_reader` writes them: an interrupted read is retried.
+    ///
+    /// # Errors
+    ///
+    /// The first read error other than [`std::io::ErrorKind::Interrupted`].
+    pub fn raw_reader(&mut self, mut reader: impl std::io::Read) -> std::io::Result<&mut Self> {
+        let mut buffer = [0; 65536];
+        loop {
+            match reader.read(&mut buffer) {
+                Ok(0) => return Ok(self),
+                Ok(n) => {
+                    self.raw(&buffer[..n]);
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
     #[must_use]
     pub fn finish(&self) -> [u8; crate::DIGEST_LEN] {
         match &self.0 {

@@ -1,0 +1,558 @@
+//! A first turn past the writer's input room, read in pieces (FIX-LIST
+//! COMPACTION-FIRST-TURN-PAST-INPUT-ROOM-STALLS; Engine ruling
+//! COMPACTION-OVER-ROOM-TURN-INTENT = CHUNKED, 21 Nov). A window holds whole
+//! turns, so a turn whose text alone does not fit the writer's input would
+//! head every later window, and its conversation would never compact again.
+//! Such a turn flies alone. Its window text is cut into byte ranges that each
+//! fit the writer beside a marker naming them; each piece is summarised by a
+//! pass of its own; and the turn's entry is the flight's sealed request
+//! re-sealed with the piece summaries as the turn's text, each under the byte
+//! range it covers. No summary claims bytes it was not given, and none of the
+//! turn is cut away. The whole turn's pins (FIX 9837) ride the entry. When a
+//! piece pass does not end accepted, or the entry does not fit, the entry
+//! falls back to the turn's head that fits, with a marker naming the cut.
+//!
+//! A piece summary may quote what its pass read beside the turn's bytes: a
+//! self-written pass's worn home (FIX 4817) and, on the live fork, its
+//! prefix rows (FIX 9463). The entry carries the piece summaries only while
+//! every home part they wore still reads at the revision its words were read
+//! at, and the entry's receipt takes what they read as its own, so the
+//! landing fence, the summary's withdrawal dependencies and its check
+//! material's erasure reach it (#10050 review, round 1). The entry request
+//! names those rows among its sources before it is sent, so the send's
+//! freshness guard reads them and every entry try's filed step derives from
+//! them (#10050 review, round 2).
+//!
+//! Each piece is sized on the writer's room beside its own reply, its
+//! summary's ceiling, and the entry on the room beside the turn's reply: a
+//! writer whose replies share its context leaves a piece more room than the
+//! entry (#10050 review, round 2).
+//!
+//! The entry's receipt names how its turn was read: each piece's byte range,
+//! or the head it fell back to. The Dreamer's check reads the piece summaries
+//! back out of the entry the writer was sent, each from its marker to the
+//! next, and judges each against exactly its bytes (FIX-LIST
+//! COMPACTION-CHECK-JUDGES-PER-CHUNK). The markers hold no model words, so
+//! the side-row wall's handles in a summary of the kept entry leave them as
+//! written (#10272 review, round 1).
+
+use std::ops::Range;
+
+use super::{ConversationTurnPiece, ConversationTurnReading, Pass, file_pass, run_pass};
+use crate::compaction::{
+    CompactionBackend, CompactionDriver, CompactionExecution, CompactionGatePolicy,
+    CompactionHomeRef, CompactionRequest, CompactionWindowMessage, compaction_home_worn_parts,
+    compaction_input_tokens,
+};
+use crate::error::{Error, Result};
+use crate::{EntityId, Vault, count_context_pack_tokens};
+
+/// The most bytes a piece search reads past its start per token of room: no
+/// token of the pack tokenizer runs longer, so the search never tokenizes
+/// more of a long turn than one piece can hold.
+const BYTES_PER_TOKEN_BOUND: usize = 32;
+
+/// How a turn past the writer's input room is read: its pieces, each piece
+/// summary's ceiling, and the head its entry falls back to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct TurnPieces {
+    /// Byte ranges of the turn's window text, in order, covering all of it.
+    ranges: Vec<Range<usize>>,
+    /// The token ceiling of each piece's summary: every piece summary under
+    /// its marker, with the pins, fits the entry.
+    piece_budget: u64,
+    /// The end of the head the entry falls back to: the longest prefix that
+    /// fits beside its cut marker and the pins.
+    head_end: usize,
+    /// The tokens of the turn's whole window text, as its cut marker names
+    /// them.
+    total_tokens: u64,
+    /// The writer's input room beside the entry's reply: the entry and the
+    /// head it falls back to each fit it.
+    room: u64,
+}
+
+impl TurnPieces {
+    /// The plan for `message`, a turn whose text alone does not fit `room`
+    /// beside a reply of `budget`, with the whole turn's `pins`; the writer
+    /// holds `piece_room(ceiling)` beside a reply of `ceiling`. Each piece
+    /// summary's ceiling is the largest from the gate's `floor` to `budget`
+    /// at which every piece, sized on the room beside that ceiling, leaves
+    /// its summary room in the entry. `None` when no plan fits: no ceiling
+    /// from `floor` up leaves a piece room beside its marker and every
+    /// summary room in one entry, or no head fits beside its cut marker and
+    /// the pins.
+    pub(super) fn plan(
+        message: &CompactionWindowMessage,
+        pins: &[String],
+        budget: u64,
+        room: u64,
+        floor: u64,
+        piece_room: impl Fn(u64) -> Option<u64>,
+    ) -> Option<Self> {
+        let text = message.content.as_str();
+        let pieces_at = |ceiling: u64| {
+            let ranges = cut(message, ceiling, piece_room(ceiling)?)?;
+            let pieces = u64::try_from(ranges.len()).ok()?;
+            let unwritten: Vec<(Range<usize>, String)> = ranges
+                .iter()
+                .map(|range| (range.clone(), String::new()))
+                .collect();
+            let overhead = input_tokens(message, entry_text(text.len(), &unwritten), pins, budget);
+            // A tenth is kept back for each summary's escapes inside the entry.
+            let share = (room.checked_sub(overhead)? / 10 * 9).checked_div(pieces)?;
+            (ceiling <= share).then_some(ranges)
+        };
+        let (piece_budget, ranges) = largest_ceiling(floor, budget, pieces_at)?;
+        let reach = usize::try_from(room)
+            .ok()?
+            .saturating_mul(BYTES_PER_TOKEN_BOUND);
+        let total_tokens = count_context_pack_tokens(text) as u64;
+        let head_end = longest_fit(text, 0, reach.min(text.len()), |end| {
+            input_tokens(
+                message,
+                head_text(text, end, total_tokens, total_tokens),
+                pins,
+                budget,
+            ) <= room
+        })?;
+        Some(Self {
+            ranges,
+            piece_budget,
+            head_end,
+            total_tokens,
+            room,
+        })
+    }
+
+    /// Whether `pins` fit this plan beside a reply of `budget`: the entry
+    /// with every piece summary at its ceiling, and the head it falls back
+    /// to, each beside them.
+    pub(super) fn fits(
+        &self,
+        message: &CompactionWindowMessage,
+        pins: &[String],
+        budget: u64,
+    ) -> bool {
+        let text = message.content.as_str();
+        let unwritten: Vec<(Range<usize>, String)> = self
+            .ranges
+            .iter()
+            .map(|range| (range.clone(), String::new()))
+            .collect();
+        let pieces = u64::try_from(self.ranges.len()).unwrap_or(u64::MAX);
+        let entry = input_tokens(message, entry_text(text.len(), &unwritten), pins, budget)
+            .saturating_add(self.piece_budget.saturating_mul(pieces));
+        let head = input_tokens(
+            message,
+            head_text(text, self.head_end, self.total_tokens, self.total_tokens),
+            pins,
+            budget,
+        );
+        entry <= self.room && head <= self.room
+    }
+}
+
+/// What the piece passes whose summaries a turn's entry carries read beside
+/// the turn's bytes: each home part a pass wore whole, at the revision its
+/// words were read at (FIX 4817), with the writer whose home it is, and on
+/// the live fork each row its captured prefix was read from (FIX 9463).
+#[derive(Debug, Default)]
+pub(super) struct PieceInputs {
+    home: Vec<(EntityId, CompactionHomeRef)>,
+    prefix_sources: Vec<EntityId>,
+}
+
+impl PieceInputs {
+    /// Takes what `execution`, an accepted piece pass's record, read.
+    fn wear(&mut self, execution: &CompactionExecution) {
+        for part in compaction_home_worn_parts(&execution.home) {
+            let worn = (execution.writer, part.clone());
+            if !self.home.contains(&worn) {
+                self.home.push(worn);
+            }
+        }
+        for row in &execution.prefix_sources {
+            if !self.prefix_sources.contains(row) {
+                self.prefix_sources.push(*row);
+            }
+        }
+    }
+
+    /// Whether every home part the pieces wore still reads in `vault` at the
+    /// revision its words were read at, as the landing fence reads it.
+    fn stand(&self, vault: &Vault) -> Result<bool> {
+        if self.home.is_empty() {
+            return Ok(true);
+        }
+        let txn = vault.store.env.read_txn().map_err(Error::from)?;
+        for (writer, part) in &self.home {
+            if !crate::compaction::home_pins::worn_part_stands_in(
+                &vault.store,
+                &txn,
+                *writer,
+                part,
+            )? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// Every row the pieces read beside the turn's bytes: each worn home
+    /// part's and each live-fork prefix row, in order, once.
+    fn rows(&self) -> Vec<EntityId> {
+        let mut rows: Vec<EntityId> = Vec::new();
+        let home = self.home.iter().filter_map(|(_, part)| part.row);
+        for row in home.chain(self.prefix_sources.iter().copied()) {
+            if !rows.contains(&row) {
+                rows.push(row);
+            }
+        }
+        rows
+    }
+
+    /// Adds what the pieces read to `execution`, the entry pass's record,
+    /// beside its own home and prefix rows: the entry's words carry theirs.
+    pub(super) fn carry_into(&self, execution: &mut CompactionExecution) {
+        for (_, part) in &self.home {
+            if !execution.home.contains(part) {
+                execution.home.push(part.clone());
+            }
+        }
+        for row in &self.prefix_sources {
+            if !execution.prefix_sources.contains(row) {
+                execution.prefix_sources.push(*row);
+            }
+        }
+    }
+}
+
+/// A turn's entry request, with what the piece passes whose summaries it
+/// carries read, and how its turn was read.
+pub(super) struct PiecedEntry {
+    pub(super) request: CompactionRequest,
+    pub(super) inputs: PieceInputs,
+    pub(super) reading: ConversationTurnReading,
+}
+
+/// The turn's entry request for `sealed`, a flight over one turn read in
+/// pieces by `plan`: one pass per piece on `backend`, each judged by
+/// `policy`, then `sealed` re-sealed with the piece summaries as the turn's
+/// text and the rows those piece passes read among its sources, with what
+/// they read. A piece pass that does not end accepted, an entry that does
+/// not fit the plan's room beside the pins, or a home part a piece pass wore
+/// that no longer reads at its revision re-seals it with the turn's head and
+/// the cut instead, and nothing the pieces read rides it. Every pass's paid
+/// calls are filed as `job`'s steps.
+///
+/// # Errors
+///
+/// A sealed flight over more than one turn, a piece request or a re-seal
+/// the driver refuses, and a home read that fails.
+pub(super) fn entry_request(
+    vault: &Vault,
+    driver: &mut CompactionDriver,
+    backend: &dyn CompactionBackend,
+    sealed: &CompactionRequest,
+    plan: &TurnPieces,
+    policy: &CompactionGatePolicy,
+    job: EntityId,
+) -> Result<PiecedEntry> {
+    let [message] = sealed.window.as_slice() else {
+        return Err(Error::InvariantViolation(
+            "a turn read in pieces flies alone",
+        ));
+    };
+    let text = message.content.as_str();
+    let mut summaries = Vec::with_capacity(plan.ranges.len());
+    let mut worn = PieceInputs::default();
+    for range in &plan.ranges {
+        let piece = sealed.for_piece(vault, piece_text(text, range), plan.piece_budget)?;
+        let (pass, execution) = run_pass(backend, &piece, policy);
+        if let Some(mut execution) = execution {
+            file_pass(vault, job, &mut execution);
+            if matches!(pass, Pass::Accepted(..)) {
+                worn.wear(&execution);
+            }
+        }
+        let Pass::Accepted(gated, _) = pass else {
+            break;
+        };
+        summaries.push((range.clone(), gated.summary_text().to_owned()));
+    }
+    let mut entry = (summaries.len() == plan.ranges.len())
+        .then(|| entry_text(text.len(), &summaries))
+        .filter(|entry| {
+            input_tokens(
+                message,
+                entry.clone(),
+                &sealed.pins,
+                sealed.summary_token_budget,
+            ) <= plan.room
+        });
+    // The piece summaries are sent on only while every home part their
+    // passes wore still reads at its revision: an erased or edited part's
+    // words never ride the entry.
+    if entry.is_some() && !worn.stand(vault)? {
+        entry = None;
+    }
+    let (content, inputs, reading) = match entry {
+        Some(entry) => {
+            let pieces = summaries
+                .iter()
+                .map(|(range, _)| ConversationTurnPiece {
+                    start: range.start as u64,
+                    end: range.end as u64,
+                })
+                .collect();
+            (entry, worn, ConversationTurnReading::Pieces { pieces })
+        }
+        None => {
+            let head = &text[..plan.head_end];
+            let head = head_text(
+                text,
+                plan.head_end,
+                plan.total_tokens,
+                count_context_pack_tokens(head) as u64,
+            );
+            let end = plan.head_end as u64;
+            (
+                head,
+                PieceInputs::default(),
+                ConversationTurnReading::Head { end },
+            )
+        }
+    };
+    // The rows the piece summaries were read from are the entry's sources
+    // before it is sent (#10050 review, round 2).
+    let request = driver.reseal_window_texts(vec![content], &inputs.rows())?;
+    Ok(PiecedEntry {
+        request,
+        inputs,
+        reading,
+    })
+}
+
+/// The piece summaries `entry`, a turn's entry over a window text of
+/// `total` bytes, carries under `pieces`, in order: each from its piece's
+/// marker to the next marker, the last to the entry's end. A summary's
+/// length is never read, so a handle the side-row wall put in a summary of
+/// the kept entry leaves every boundary as written (#10272 review, round 1).
+/// `None` unless the pieces cover `0..total` in order, `entry` opens with
+/// their header, and each marker stands in `entry` exactly once, in order: a
+/// summary that spells out a marker reads unreadable, never cut elsewhere.
+pub(crate) fn entry_piece_summaries<'a>(
+    entry: &'a str,
+    total: usize,
+    pieces: &[ConversationTurnPiece],
+) -> Option<Vec<&'a str>> {
+    let mut covered = 0;
+    let mut markers = Vec::with_capacity(pieces.len());
+    for piece in pieces {
+        let range = usize::try_from(piece.start).ok()?..usize::try_from(piece.end).ok()?;
+        if range.start != covered || range.end <= range.start {
+            return None;
+        }
+        covered = range.end;
+        markers.push(piece_marker(&range, total));
+    }
+    if covered != total
+        || markers
+            .iter()
+            .any(|marker| entry.matches(marker.as_str()).count() != 1)
+    {
+        return None;
+    }
+    let mut rest = entry.strip_prefix(entry_header(total, pieces.len()).as_str())?;
+    let mut summaries = Vec::with_capacity(markers.len());
+    for (at, marker) in markers.iter().enumerate() {
+        rest = rest.strip_prefix(marker.as_str())?;
+        let end = match markers.get(at + 1) {
+            Some(next) => rest.find(next.as_str())?,
+            None => rest.len(),
+        };
+        let (summary, after) = rest.split_at(end);
+        summaries.push(summary);
+        rest = after;
+    }
+    Some(summaries)
+}
+
+/// `message`'s text cut in order into byte ranges that each fit
+/// `piece_room` beside its marker and a reply of `ceiling`; `None` when the
+/// room holds no byte past a range's start beside its marker.
+fn cut(
+    message: &CompactionWindowMessage,
+    ceiling: u64,
+    piece_room: u64,
+) -> Option<Vec<Range<usize>>> {
+    let text = message.content.as_str();
+    let reach = usize::try_from(piece_room)
+        .ok()?
+        .saturating_mul(BYTES_PER_TOKEN_BOUND);
+    let mut ranges = Vec::new();
+    let mut start = 0;
+    while start < text.len() {
+        let limit = start.saturating_add(reach).min(text.len());
+        let end = longest_fit(text, start, limit, |end| {
+            input_tokens(message, piece_text(text, &(start..end)), &[], ceiling) <= piece_room
+        })?;
+        ranges.push(start..end);
+        start = end;
+    }
+    Some(ranges)
+}
+
+/// The largest ceiling from `floor` to `budget` at which `pieces_at` cuts a
+/// plan, with its ranges. A lower ceiling leaves each piece more room, so no
+/// more pieces and no larger an entry: the ceilings that cut one run from
+/// `floor` up to the largest, which a search over halves finds. `budget` is
+/// tried first, as it fits whenever the writer's room is ample.
+fn largest_ceiling(
+    floor: u64,
+    budget: u64,
+    pieces_at: impl Fn(u64) -> Option<Vec<Range<usize>>>,
+) -> Option<(u64, Vec<Range<usize>>)> {
+    if floor > budget {
+        return None;
+    }
+    if let Some(ranges) = pieces_at(budget) {
+        return Some((budget, ranges));
+    }
+    // `best` cuts a plan, `over` does not.
+    let mut best = (floor, pieces_at(floor)?);
+    let mut over = budget;
+    while over - best.0 > 1 {
+        let mid = best.0 + (over - best.0) / 2;
+        match pieces_at(mid) {
+            Some(ranges) => best = (mid, ranges),
+            None => over = mid,
+        }
+    }
+    Some(best)
+}
+
+/// The rendered input of one request over `message` with `content` as its
+/// text, beside `pins` and a reply of `budget`, on its costliest try.
+fn input_tokens(
+    message: &CompactionWindowMessage,
+    content: String,
+    pins: &[String],
+    budget: u64,
+) -> u64 {
+    let window = [CompactionWindowMessage {
+        message_id: message.message_id,
+        turn_id: message.turn_id,
+        content,
+        turn: message.turn,
+        tokens: 0,
+    }];
+    compaction_input_tokens(message.turn, &window, pins, None, budget)
+}
+
+/// One piece's text: the marker naming its bytes, then those bytes.
+fn piece_text(text: &str, range: &Range<usize>) -> String {
+    format!(
+        "[bytes {}..{} of {} of this turn's text; summarise only these bytes]\n{}",
+        range.start,
+        range.end,
+        text.len(),
+        &text[range.clone()]
+    )
+}
+
+/// The turn's entry: each piece summary under the byte range it covers.
+fn entry_text(total: usize, summaries: &[(Range<usize>, String)]) -> String {
+    let mut entry = entry_header(total, summaries.len());
+    for (range, summary) in summaries {
+        entry.push_str(&piece_marker(range, total));
+        entry.push_str(summary);
+    }
+    entry
+}
+
+/// The first line of a turn's entry: the length of the turn's text and how
+/// many pieces read it.
+fn entry_header(total: usize, pieces: usize) -> String {
+    format!(
+        "[this turn's text is {total} bytes, read in {pieces} pieces; each summary below covers \
+         exactly the bytes it names]"
+    )
+}
+
+/// The marker a piece summary follows in its turn's entry.
+fn piece_marker(range: &Range<usize>, total: usize) -> String {
+    format!("\n[bytes {}..{} of {total}] ", range.start, range.end)
+}
+
+/// The turn's head through `end`, then the marker naming the cut: the kept
+/// and the total bytes and tokens.
+fn head_text(text: &str, end: usize, total_tokens: u64, head_tokens: u64) -> String {
+    format!(
+        "{}\n[cut: this turn's text is {} bytes (about {total_tokens} tokens); only bytes 0..{end} \
+         (about {head_tokens} tokens) were given]",
+        &text[..end],
+        text.len()
+    )
+}
+
+/// The largest end in `start..=limit`, on a char boundary, whose prefix
+/// `fits`, backed off to just past the last whitespace of its second half
+/// when it ends inside the text, so a piece ends between words. `None` when
+/// no end past `start` fits.
+fn longest_fit(
+    text: &str,
+    start: usize,
+    limit: usize,
+    fits: impl Fn(usize) -> bool,
+) -> Option<usize> {
+    let limit = floor_boundary(text, limit);
+    if limit <= start {
+        return None;
+    }
+    let end = if fits(limit) {
+        limit
+    } else {
+        // `held` fits (or is `start`), `over` does not.
+        let (mut held, mut over) = (start, limit);
+        while over - held > 1 {
+            let mut mid = floor_boundary(text, held + (over - held) / 2);
+            if mid <= held {
+                match (held + 1..over).find(|at| text.is_char_boundary(*at)) {
+                    Some(next) => mid = next,
+                    None => break,
+                }
+            }
+            if fits(mid) {
+                held = mid;
+            } else {
+                over = mid;
+            }
+        }
+        held
+    };
+    if end <= start {
+        return None;
+    }
+    if end == text.len() {
+        return Some(end);
+    }
+    let half = floor_boundary(text, start + (end - start) / 2);
+    Some(
+        text[half..end]
+            .char_indices()
+            .rev()
+            .find(|(_, c)| c.is_whitespace())
+            .map_or(end, |(at, c)| half + at + c.len_utf8()),
+    )
+}
+
+/// The char boundary at or before `at`.
+fn floor_boundary(text: &str, at: usize) -> usize {
+    let mut at = at.min(text.len());
+    while !text.is_char_boundary(at) {
+        at -= 1;
+    }
+    at
+}

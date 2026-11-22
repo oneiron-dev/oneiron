@@ -8,7 +8,9 @@
 //! HTTP hydration prepares and acknowledges through it, and so does a
 //! pumped run's native port (FIX 17594 D3), which installs afresh for its
 //! live run, installs again at the held epoch for each later entry and
-//! advances the epoch at each fold batch. An MCP connection's setup (FIX
+//! advances the epoch at each fold batch; either port withdraws a prefix
+//! whose rows no longer stand, and stages it afresh at the same boundary
+//! ([BRIEF-PREFIX-STALE-PAST-REVOKE]). An MCP connection's setup (FIX
 //! 17594 D4) installs afresh at each page one, keeps its keyframe to the
 //! staged candidate's roster and acknowledges it once that page was
 //! released. A code-mode durable run (FIX 17594 D5) installs once and again
@@ -42,12 +44,14 @@ pub(crate) enum BriefBoundary {
     Fold { epoch: u64 },
 }
 
-/// The prefix a session delivered: the boundary it was rendered at and the
-/// installed epoch it covers, a fold's own or the epoch turn one rendered at.
+/// The prefix a session delivered: the boundary it was rendered at, the
+/// installed epoch it covers, a fold's own or the epoch turn one rendered at,
+/// and the installation's withdrawals when it was staged.
 #[derive(Debug, Clone, Copy)]
 struct AcknowledgedPrefix {
     boundary: BriefBoundary,
     epoch: u64,
+    withdrawals: u64,
 }
 
 /// One host-resolved agent run and the prefix this session actually emitted.
@@ -61,17 +65,24 @@ struct HostSelfBriefSession {
     /// acknowledged.
     acknowledged_sources: Vec<EntityId>,
     owner: BriefOwner,
+    /// How often a host withdrew this installation's prefix
+    /// ([`InstalledBriefs::withdraw`]): a prefix staged before the latest
+    /// withdrawal no longer stands.
+    withdrawals: u64,
 }
 
 impl HostSelfBriefSession {
     /// The boundary whose prefix this session has yet to acknowledge: turn
     /// one before any, then a fold at each epoch the host installs past the
-    /// acknowledged one. `None` while the acknowledged prefix covers the
-    /// installed epoch.
+    /// acknowledged one, and the acknowledged prefix's own boundary again
+    /// once a host withdrew it. `None` while the acknowledged prefix covers
+    /// the installed epoch and stands.
     fn pending_boundary(&self) -> Option<BriefBoundary> {
         match self.acknowledged {
             None => Some(BriefBoundary::Birth),
-            Some(acknowledged) if acknowledged.epoch == self.epoch => None,
+            Some(acknowledged) if acknowledged.epoch == self.epoch => {
+                (acknowledged.withdrawals != self.withdrawals).then_some(acknowledged.boundary)
+            }
             Some(_) => Some(BriefBoundary::Fold { epoch: self.epoch }),
         }
     }
@@ -86,6 +97,8 @@ pub(crate) struct BriefCandidate {
     boundary: BriefBoundary,
     /// The installed epoch the candidate's prefix covers.
     epoch: u64,
+    /// The installation's withdrawals when the candidate was staged.
+    withdrawals: u64,
     /// The session's prefix custody with the candidate's prefix bytes and
     /// resident PEOPLE in place.
     render: SelfBriefSession,
@@ -202,6 +215,7 @@ impl InstalledBriefs {
                 acknowledged: None,
                 acknowledged_sources: Vec::new(),
                 owner: BriefOwner(*last_owner),
+                withdrawals: 0,
             }
         });
         if epoch < entry.epoch {
@@ -237,6 +251,7 @@ impl InstalledBriefs {
                 acknowledged: None,
                 acknowledged_sources: Vec::new(),
                 owner,
+                withdrawals: 0,
             },
         );
         Ok(owner)
@@ -318,11 +333,26 @@ impl InstalledBriefs {
         Ok(true)
     }
 
+    /// Withdraws the prefix `owner`'s installation under `key` delivered or
+    /// staged: a row it shows no longer stands for its reader
+    /// ([BRIEF-PREFIX-STALE-PAST-REVOKE]). The acknowledged prefix's boundary
+    /// is due again at the installed epoch, so [`Self::prepare`] stages it
+    /// afresh, and no candidate staged before now is acknowledged. `false`,
+    /// with nothing changed, when `owner` no longer holds `key`.
+    pub(crate) fn withdraw(&mut self, key: &BriefKey, owner: BriefOwner) -> bool {
+        let Some(run) = self.runs.get_mut(key).filter(|run| run.owner == owner) else {
+            return false;
+        };
+        run.withdrawals = run.withdrawals.wrapping_add(1);
+        true
+    }
+
     /// Stages the prefix of the boundary `key`'s session has yet to
     /// acknowledge, from its installed state: turn one, or a fold, rendered
     /// with its roster under `people_budget_tok` (the `people` share of the
     /// agent's layout). The installed custody does not move. With the
-    /// installed epoch acknowledged, the cached prefix comes back unchanged.
+    /// installed epoch acknowledged and its prefix not withdrawn since, the
+    /// cached prefix comes back unchanged.
     /// `None` when nothing is installed under `key`.
     ///
     /// # Errors
@@ -365,6 +395,7 @@ impl InstalledBriefs {
                 owner: run.owner,
                 boundary,
                 epoch: run.epoch,
+                withdrawals: run.withdrawals,
                 render,
                 sources,
             },
@@ -373,19 +404,23 @@ impl InstalledBriefs {
 
     /// Promotes `candidate`'s prefix and roster to its session's custody and
     /// records its boundary as emitted, only while its key is held by the
-    /// owner it was staged for and that boundary is still the one to
-    /// deliver. Otherwise nothing changes.
+    /// owner it was staged for, that boundary is still the one to deliver
+    /// and no withdrawal came after it was staged. Otherwise nothing changes.
     pub(crate) fn acknowledge(&mut self, candidate: BriefCandidate) -> BriefAcknowledgment {
         let Some(run) = self.runs.get_mut(&candidate.key) else {
             return BriefAcknowledgment::Stale;
         };
-        if run.owner != candidate.owner || run.pending_boundary() != Some(candidate.boundary) {
+        if run.owner != candidate.owner
+            || run.withdrawals != candidate.withdrawals
+            || run.pending_boundary() != Some(candidate.boundary)
+        {
             return BriefAcknowledgment::Stale;
         }
         run.render = candidate.render;
         run.acknowledged = Some(AcknowledgedPrefix {
             boundary: candidate.boundary,
             epoch: candidate.epoch,
+            withdrawals: candidate.withdrawals,
         });
         run.acknowledged_sources = candidate.sources;
         BriefAcknowledgment::Committed

@@ -1,0 +1,612 @@
+{
+  "policy_pin": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "facts_pin": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "now_ms": 1720000000000,
+  "selection": {
+    "version": 1,
+    "soak_ms": 60000,
+    "evidence_minimum": 2,
+    "cosine_threshold": 0.9,
+    "weights": {
+      "type_prior": 0.7,
+      "frequency": 0.1,
+      "recency": 0.1,
+      "diversity": 0.1
+    },
+    "type_priors": {
+      "likes": 0.8,
+      "dislikes": 0.3
+    },
+    "default_type_prior": 0.5,
+    "frequency_scale": 10,
+    "diversity_scale": 3,
+    "recency_window_ms": 86400000,
+    "extraction_parallelism": 8,
+    "extraction_turns_per_child": 16,
+    "partition_extraction_parallelism": 8
+  },
+  "selection_cases": [
+    {
+      "name": "boundary_future_minimum",
+      "candidates": [
+        {
+          "claim": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+          "predicate": "likes",
+          "identity": "id-0",
+          "topic": "topic-0",
+          "value": "value-0",
+          "slice": "slice-0",
+          "corrects": null,
+          "evidence_count": 2,
+          "first_seen_ms": 1719999940000,
+          "latest_ms": 1719999999000,
+          "diversity": 1,
+          "fan_in": 0,
+          "new_refs": 0
+        },
+        {
+          "claim": "b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3",
+          "predicate": "dislikes",
+          "identity": "id-1",
+          "topic": "topic-1",
+          "value": "value-1",
+          "slice": "slice-1",
+          "corrects": null,
+          "evidence_count": 1,
+          "first_seen_ms": 1720000001000,
+          "latest_ms": 1720000000000,
+          "diversity": 1,
+          "fan_in": 0,
+          "new_refs": 0
+        },
+        {
+          "claim": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+          "predicate": "knows",
+          "identity": "id-2",
+          "topic": "topic-2",
+          "value": "value-2",
+          "slice": "slice-2",
+          "corrects": null,
+          "evidence_count": 1,
+          "first_seen_ms": 1719999880000,
+          "latest_ms": 1719999998000,
+          "diversity": 1,
+          "fan_in": 0,
+          "new_refs": 0
+        }
+      ],
+      "expected": {
+        "ready": [
+          0
+        ],
+        "held": [
+          [
+            2,
+            "evidence_count"
+          ],
+          [
+            1,
+            "soak"
+          ]
+        ],
+        "retry_at_ms": 1720000060000
+      }
+    },
+    {
+      "name": "retry_soak_earliest",
+      "candidates": [
+        {
+          "claim": "b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4",
+          "predicate": "likes",
+          "identity": "id-0",
+          "topic": "topic-0",
+          "value": "value-0",
+          "slice": "slice-0",
+          "corrects": null,
+          "evidence_count": 2,
+          "first_seen_ms": 1719999999000,
+          "latest_ms": 1719999999000,
+          "diversity": 1,
+          "fan_in": 0,
+          "new_refs": 0
+        },
+        {
+          "claim": "b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5b5",
+          "predicate": "likes",
+          "identity": "id-1",
+          "topic": "topic-1",
+          "value": "value-1",
+          "slice": "slice-1",
+          "corrects": null,
+          "evidence_count": 1,
+          "first_seen_ms": 1719999880000,
+          "latest_ms": 1719999998000,
+          "diversity": 1,
+          "fan_in": 0,
+          "new_refs": 0
+        }
+      ],
+      "expected": {
+        "ready": [],
+        "held": [
+          [
+            0,
+            "soak"
+          ],
+          [
+            1,
+            "evidence_count"
+          ]
+        ],
+        "retry_at_ms": 1720000059000
+      }
+    },
+    {
+      "name": "no_hold",
+      "candidates": [
+        {
+          "claim": "b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6",
+          "predicate": "likes",
+          "identity": "id-0",
+          "topic": "topic-0",
+          "value": "value-0",
+          "slice": "slice-0",
+          "corrects": null,
+          "evidence_count": 2,
+          "first_seen_ms": 1719999940000,
+          "latest_ms": 1719999999000,
+          "diversity": 1,
+          "fan_in": 0,
+          "new_refs": 0
+        }
+      ],
+      "expected": {
+        "ready": [
+          0
+        ],
+        "held": [],
+        "retry_at_ms": 1720000000001
+      }
+    },
+    {
+      "name": "ordering_ties",
+      "candidates": [
+        {
+          "claim": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4",
+          "predicate": "likes",
+          "identity": "id-0",
+          "topic": "topic-0",
+          "value": "value-0",
+          "slice": "slice-0",
+          "corrects": null,
+          "evidence_count": 20,
+          "first_seen_ms": 1719999880000,
+          "latest_ms": 1720000000000,
+          "diversity": 5,
+          "fan_in": 0,
+          "new_refs": 0
+        },
+        {
+          "claim": "d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2",
+          "predicate": "dislikes",
+          "identity": "id-1",
+          "topic": "topic-1",
+          "value": "value-1",
+          "slice": "slice-1",
+          "corrects": null,
+          "evidence_count": 2,
+          "first_seen_ms": 1719999880000,
+          "latest_ms": 1719956800000,
+          "diversity": 1,
+          "fan_in": 0,
+          "new_refs": 0
+        },
+        {
+          "claim": "d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3",
+          "predicate": "dislikes",
+          "identity": "id-2",
+          "topic": "topic-2",
+          "value": "value-2",
+          "slice": "slice-2",
+          "corrects": null,
+          "evidence_count": 2,
+          "first_seen_ms": 1719999880000,
+          "latest_ms": 1719956800000,
+          "diversity": 1,
+          "fan_in": 10,
+          "new_refs": 0
+        },
+        {
+          "claim": "d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1",
+          "predicate": "dislikes",
+          "identity": "id-3",
+          "topic": "topic-3",
+          "value": "value-3",
+          "slice": "slice-3",
+          "corrects": null,
+          "evidence_count": 2,
+          "first_seen_ms": 1719999880000,
+          "latest_ms": 1719956800000,
+          "diversity": 1,
+          "fan_in": 0,
+          "new_refs": 0
+        }
+      ],
+      "expected": {
+        "ready": [
+          0,
+          2,
+          3,
+          1
+        ],
+        "held": [],
+        "retry_at_ms": 1720000000001
+      }
+    },
+    {
+      "name": "max_rank",
+      "candidates": [
+        {
+          "claim": "e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1",
+          "predicate": "knows",
+          "identity": "id-0",
+          "topic": "topic-0",
+          "value": "value-0",
+          "slice": "slice-0",
+          "corrects": null,
+          "evidence_count": 5,
+          "first_seen_ms": 1719999880000,
+          "latest_ms": 1719978400000,
+          "diversity": 2,
+          "fan_in": 18446744073709551615,
+          "new_refs": 18446744073709551614
+        },
+        {
+          "claim": "e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2",
+          "predicate": "knows",
+          "identity": "id-1",
+          "topic": "topic-1",
+          "value": "value-1",
+          "slice": "slice-1",
+          "corrects": null,
+          "evidence_count": 5,
+          "first_seen_ms": 1719999880000,
+          "latest_ms": 1719978400000,
+          "diversity": 2,
+          "fan_in": 18446744073709551615,
+          "new_refs": 18446744073709551615
+        }
+      ],
+      "expected": {
+        "ready": [
+          1,
+          0
+        ],
+        "held": [],
+        "retry_at_ms": 1720000000001
+      }
+    }
+  ],
+  "grouping": {
+    "operands": [
+      {
+        "subject": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+        "predicate": "likes",
+        "value": "tea",
+        "rel": [
+          "d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5"
+        ],
+        "topic": {
+          "topic": "drinks"
+        },
+        "evidence": [
+          {
+            "turn": "c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2",
+            "version": {
+              "entity": "c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2",
+              "entity_type": 1,
+              "learned_at": 1720000000,
+              "revision": "blake3:d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3",
+              "projection": "blake3:e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4"
+            },
+            "span": {
+              "start": 0,
+              "end": 4
+            }
+          },
+          {
+            "turn": "c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2",
+            "version": {
+              "entity": "c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2",
+              "entity_type": 1,
+              "learned_at": 1720000000,
+              "revision": "blake3:d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3"
+            },
+            "span": {
+              "start": 5,
+              "end": 11
+            }
+          }
+        ]
+      },
+      {
+        "subject": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+        "predicate": "likes",
+        "value": "tea",
+        "rel": [
+          "d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5"
+        ],
+        "topic": {
+          "topic": "drinks"
+        },
+        "evidence": [
+          {
+            "turn": "c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2",
+            "version": {
+              "entity": "c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2",
+              "entity_type": 1,
+              "learned_at": 1720000000,
+              "revision": "blake3:d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3"
+            },
+            "span": {
+              "start": 5,
+              "end": 11
+            }
+          },
+          {
+            "turn": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+            "version": {
+              "entity": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+              "entity_type": 1,
+              "learned_at": 1720000000,
+              "revision": "blake3:d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3",
+              "projection": "blake3:e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4"
+            },
+            "span": {
+              "start": 0,
+              "end": 4
+            }
+          }
+        ]
+      },
+      {
+        "subject": {
+          "declared": 1
+        },
+        "predicate": "likes",
+        "value": "tea",
+        "evidence": [
+          {
+            "turn": "c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2",
+            "version": {
+              "entity": "c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2",
+              "entity_type": 1,
+              "learned_at": 1720000000,
+              "revision": "blake3:d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3"
+            },
+            "span": {
+              "start": 0,
+              "end": 4
+            }
+          }
+        ]
+      },
+      {
+        "subject": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+        "predicate": "likes",
+        "value": "tea",
+        "corrects": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+        "rel": [
+          "d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5"
+        ],
+        "topic": {
+          "topic": "drinks"
+        },
+        "evidence": [
+          {
+            "turn": "c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2",
+            "version": {
+              "entity": "c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2",
+              "entity_type": 1,
+              "learned_at": 1720000000,
+              "revision": "blake3:d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3"
+            },
+            "span": {
+              "start": 12,
+              "end": 16
+            }
+          }
+        ]
+      },
+      {
+        "subject": "c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1",
+        "predicate": "likes",
+        "value": "tea",
+        "rel": [
+          "d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5"
+        ],
+        "topic": {
+          "topic": "drinks"
+        },
+        "evidence": [
+          {
+            "turn": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+            "version": {
+              "entity": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+              "entity_type": 1,
+              "learned_at": 1720000000,
+              "revision": "blake3:d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3"
+            },
+            "span": {
+              "start": 5,
+              "end": 9
+            }
+          }
+        ]
+      }
+    ],
+    "observations": [
+      {
+        "claim": "a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0",
+        "predicate": "likes",
+        "identity": "id-z",
+        "topic": "topic-a",
+        "value": "value-a",
+        "slice": "slice-x",
+        "corrects": null,
+        "evidence_count": 2,
+        "first_seen_ms": 1719999880000,
+        "latest_ms": 1719999999000,
+        "diversity": 1,
+        "fan_in": 0,
+        "new_refs": 0
+      },
+      {
+        "claim": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "predicate": "likes",
+        "identity": "id-z",
+        "topic": "topic-a",
+        "value": "value-a",
+        "slice": "slice-y",
+        "corrects": null,
+        "evidence_count": 2,
+        "first_seen_ms": 1719999880000,
+        "latest_ms": 1719999999000,
+        "diversity": 1,
+        "fan_in": 0,
+        "new_refs": 0
+      },
+      null,
+      {
+        "claim": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3",
+        "predicate": "likes",
+        "identity": "id-z",
+        "topic": "topic-a",
+        "value": "value-a",
+        "slice": "slice-x",
+        "corrects": "c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+        "evidence_count": 2,
+        "first_seen_ms": 1719999880000,
+        "latest_ms": 1719999999000,
+        "diversity": 1,
+        "fan_in": 0,
+        "new_refs": 0
+      },
+      {
+        "claim": "a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4",
+        "predicate": "likes",
+        "identity": "id-a",
+        "topic": "topic-a",
+        "value": "value-a",
+        "slice": "slice-x",
+        "corrects": null,
+        "evidence_count": 2,
+        "first_seen_ms": 1719999880000,
+        "latest_ms": 1719999999000,
+        "diversity": 1,
+        "fan_in": 0,
+        "new_refs": 0
+      }
+    ],
+    "expected_groups": [
+      {
+        "representative_index": 0,
+        "member_indexes": [
+          0,
+          1,
+          3
+        ],
+        "corrects": null
+      },
+      {
+        "representative_index": 4,
+        "member_indexes": [
+          4
+        ],
+        "corrects": null
+      }
+    ],
+    "expected_pending": [
+      2
+    ],
+    "expected_union": [
+      [
+        {
+          "turn": "c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2",
+          "version": {
+            "entity": "c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2",
+            "entity_type": 1,
+            "learned_at": 1720000000,
+            "revision": "blake3:d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3",
+            "projection": "blake3:e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4"
+          },
+          "span": {
+            "start": 0,
+            "end": 4
+          }
+        },
+        {
+          "turn": "c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2",
+          "version": {
+            "entity": "c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2",
+            "entity_type": 1,
+            "learned_at": 1720000000,
+            "revision": "blake3:d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3"
+          },
+          "span": {
+            "start": 5,
+            "end": 11
+          }
+        },
+        {
+          "turn": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+          "version": {
+            "entity": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+            "entity_type": 1,
+            "learned_at": 1720000000,
+            "revision": "blake3:d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3",
+            "projection": "blake3:e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4"
+          },
+          "span": {
+            "start": 0,
+            "end": 4
+          }
+        },
+        {
+          "turn": "c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2",
+          "version": {
+            "entity": "c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2",
+            "entity_type": 1,
+            "learned_at": 1720000000,
+            "revision": "blake3:d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3"
+          },
+          "span": {
+            "start": 12,
+            "end": 16
+          }
+        }
+      ],
+      [
+        {
+          "turn": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+          "version": {
+            "entity": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+            "entity_type": 1,
+            "learned_at": 1720000000,
+            "revision": "blake3:d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3"
+          },
+          "span": {
+            "start": 5,
+            "end": 9
+          }
+        }
+      ]
+    ]
+  },
+  "f6_proxy": {
+    "predicate": "likes",
+    "source_count": 7,
+    "latest_learned_at_ms": 1719999000000,
+    "distinct_diversity": 2
+  }
+}

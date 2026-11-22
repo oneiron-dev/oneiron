@@ -1,5 +1,7 @@
 //! Splitting carried editor answers into their native units.
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use super::*;
 
 impl Vault {
@@ -332,7 +334,7 @@ impl Vault {
         for row in rows {
             let head_block = blocks.iter().find(|block| block.id == row.block);
             let text_moved = |text: &str| match (&exported, &export_blocks) {
-                (None, _) => *blake3::hash(text.as_bytes()).as_bytes() != row.text_hash,
+                (None, _) => *ContentHash::of(text.as_bytes()).as_bytes() != row.text_hash,
                 (Some(_), None) => false,
                 (Some(_), Some(was)) => was
                     .iter()

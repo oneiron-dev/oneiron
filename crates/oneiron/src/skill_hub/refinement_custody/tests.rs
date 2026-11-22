@@ -40,6 +40,12 @@ fn ruling(candidate: EntityId, id: EntityId, claim: bool) -> RefinementReceipt {
             paired: Vec::new(),
             person: Vec::new(),
             time: None,
+            images: Vec::new(),
+            think_row: None,
+            person_row: None,
+            rule: None,
+            asked: None,
+            state_cut: None,
         },
         human_ask: None,
     };
@@ -99,6 +105,7 @@ fn inert_source_cannot_set_local_latest_and_never_survives_candidate_delete() ->
     for claim in [false, true] {
         let dir = tempfile::tempdir()?;
         let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+        vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
         let candidate = EntityId::now();
         let receipt = ruling(candidate, EntityId::now(), claim);
         let (id, bytes) = encode(&candidate, &receipt)?;
@@ -152,6 +159,8 @@ fn inert_source_cannot_set_local_latest_and_never_survives_candidate_delete() ->
         );
         drop(vault);
         let reopened = Vault::open(dir.path(), crate::VaultConfig::default())?;
+        reopened
+            .install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
         assert!(reopened.get_raw(&id)?.is_none());
     }
     Ok(())
@@ -162,6 +171,7 @@ fn candidate_prefix_erases_over_100k_own_without_scanning_100k_unrelated() -> Re
     for claim in [false, true] {
         let dir = tempfile::tempdir()?;
         let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+        vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
         let unrelated = EntityId::now();
         let target = EntityId::now();
         let large = EntityId::now();
@@ -311,6 +321,7 @@ fn historical_refinement_carrier_scrubs_by_holder_without_trusting_forged_key() 
     use crate::sync::loro_support::export_snapshot;
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let holder = EntityId::now();
     let receipt = ruling(holder, EntityId::now(), false);
     let (carrier, bytes) = encode(&holder, &receipt)?;
@@ -327,7 +338,7 @@ fn historical_refinement_carrier_scrubs_by_holder_without_trusting_forged_key() 
     let window = crate::sync::types::WindowKey::new(&label);
     let doc = crate::sync::schema::create_window_doc("refinement-fixture", &window);
     let mut blob = vec![ENTITY_TYPE_ASSET];
-    for stamp in [1_u64, 1, 1] {
+    for stamp in [1_u64, 1, 1, 0] {
         blob.extend_from_slice(&stamp.to_be_bytes());
     }
     blob.extend_from_slice(&bytes);
@@ -379,6 +390,7 @@ fn directly_soft_deleted_receipt_carrier_clears_local_latest_for_both_targets() 
     for claim in [false, true] {
         let dir = tempfile::tempdir()?;
         let vault = Vault::open(dir.path(), crate::VaultConfig::default())?;
+        vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
         let holder = EntityId::now();
         let receipt = ruling(holder, EntityId::now(), claim);
         let (carrier, bytes) = encode(&holder, &receipt)?;

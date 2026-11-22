@@ -37,6 +37,7 @@ use std::collections::BTreeSet;
 
 use heed::RoTxn;
 use heed::types::Bytes;
+use oneiron_contracts::fingerprint::ContentHash;
 
 use super::carried_bodies::CarriedInline;
 use super::restore_class::{Class, Classes};
@@ -125,7 +126,7 @@ impl ResponseCensus {
             return Ok(Noted::Not);
         };
         let carrier = response_carrier(db, key);
-        let digest = *blake3::hash(&value[carriage.keep..]).as_bytes();
+        let digest = *ContentHash::of(&value[carriage.keep..]).as_bytes();
         self.responses.insert(carrier.clone());
         let binding =
             response_binding_in_txn(store, txn, &carrier)?.filter(|bound| bound.digest == digest);
@@ -259,7 +260,7 @@ pub(super) fn bind_in_txn(
     else {
         return Ok(Vec::new());
     };
-    let digest = *blake3::hash(&value[carriage.keep..]).as_bytes();
+    let digest = *ContentHash::of(&value[carriage.keep..]).as_bytes();
     if let Some(bound) =
         response_binding_in_txn(store, txn, carrier)?.filter(|bound| bound.digest == digest)
     {
@@ -403,7 +404,7 @@ pub(super) fn retire_carried(
         // An attempt's archive mark bound its carried bytes: it follows the
         // row to its text-free form (FIX 7115).
         if family == ResponseFamily::AttemptPayload {
-            let after = *blake3::hash(value).as_bytes();
+            let after = *ContentHash::of(value).as_bytes();
             if let (Ok(id), Some(rows)) = (
                 AttemptId::from_bytes(&key),
                 image.databases.get_mut("vault_meta"),
@@ -463,7 +464,7 @@ pub(super) fn unlease_carried_attempts(
         } else {
             *value = rebuild::unlease_attempt(&key, value)?;
         }
-        let after = *blake3::hash(value).as_bytes();
+        let after = *ContentHash::of(value).as_bytes();
         if let (Ok(id), Some(rows)) = (
             AttemptId::from_bytes(&key),
             image.databases.get_mut("vault_meta"),

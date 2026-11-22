@@ -100,7 +100,7 @@ fn deliver(
             return NOT_CONFIGURED;
         }
     };
-    let Some(expected) = signature.as_deref().and_then(decode_hex) else {
+    let Some(expected) = signature.as_deref().and_then(signature_bytes) else {
         return UNSIGNED;
     };
     match crate::builtin_host::hmac_matches(
@@ -159,15 +159,10 @@ fn refused(error: &LinearSyncError) -> Reply {
     }
 }
 
-fn decode_hex(text: &str) -> Option<Vec<u8>> {
-    let text = text.trim();
-    if text.len() % 2 != 0 || !text.is_ascii() {
-        return None;
-    }
-    (0..text.len())
-        .step_by(2)
-        .map(|at| u8::from_str_radix(&text[at..at + 2], 16).ok())
-        .collect()
+/// A signature header's bytes: hex digits of either case, untrimmed (a
+/// foreign header, HEX-CASE-POLICY = A).
+pub(crate) fn signature_bytes(text: &str) -> Option<Vec<u8>> {
+    oneiron_hex::decode_vec_any_case(text)
 }
 
 fn header(headers: &HeaderMap, name: &str) -> Option<String> {

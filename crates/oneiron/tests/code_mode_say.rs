@@ -227,6 +227,7 @@ fn fixture() -> TestResult<Fixture> {
             }],
             occurred_at: vault.now_recorded_at(),
             assertions: Default::default(),
+            project: None,
         })?;
     Ok(Fixture {
         _dir: dir,

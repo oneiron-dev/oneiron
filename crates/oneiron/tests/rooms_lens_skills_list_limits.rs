@@ -179,6 +179,7 @@ fn speak_trunk(vault: &Vault, speaker: EntityId, room: EntityId) -> TestResult<E
             }],
             occurred_at: vault.now_recorded_at(),
             assertions: Default::default(),
+            project: None,
         })?;
     Ok(turn)
 }
