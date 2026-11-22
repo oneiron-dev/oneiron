@@ -1170,9 +1170,10 @@ impl Judge<'_, '_, '_> {
         // review 2 P1-1, P1-2) reads only to an owner who reads every source
         // this vault holds, whatever its floor would name; and it does not
         // travel on a restricted lane, which carries no audience (#9289
-        // review 3 P1-3). An Owner's export carries it only when its copy
-        // carries every source this vault holds (fix list row 15416). The owner's full window carries it, and the vault
-        // it lands in raises its floor from what that vault holds.
+        // review 3 P1-3). The owner's full window carries it, and the vault
+        // it lands in raises its floor from what that vault holds; an Owner's
+        // export carries it only when its copy carries every source this
+        // vault holds (fix list row 15416).
         let restricted = matches!(
             self.ask,
             Ask::Travel {
