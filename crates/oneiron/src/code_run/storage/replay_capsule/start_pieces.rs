@@ -42,6 +42,7 @@ use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 
 use heed::{RoTxn, RwTxn};
+use oneiron_contracts::fingerprint::ContentHash;
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
@@ -512,7 +513,7 @@ pub(super) fn republish_start_pieces_in_txn(
     Ok(RepublishedStart {
         start: ExecutorStepStart {
             body,
-            digest: *blake3::hash(bytes).as_bytes(),
+            digest: *ContentHash::of(bytes).as_bytes(),
             erased: false,
             ..start.clone()
         },

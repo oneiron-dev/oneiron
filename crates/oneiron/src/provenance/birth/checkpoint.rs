@@ -37,7 +37,10 @@ pub(crate) static ADAPTER: Adapter = Adapter {
         },
         &PlacedTable {
             table: BIRTH_BY_TRIGGER,
-            place: place_born_from,
+            place: |out, row| {
+                place_born_from(out, row);
+                Ok(())
+            },
         },
     ],
     capture: Capture::ByTable,
@@ -57,16 +60,11 @@ fn place_birth(out: &mut Captured, row: TypedRow<EntityId, RowBirth>) -> Result<
 }
 
 /// A born-from index row under its born row, holding while its trigger does.
-#[allow(
-    clippy::unnecessary_wraps,
-    reason = "a placement callback: PlacedTable's fn pointer returns Result"
-)]
-fn place_born_from(out: &mut Captured, row: TypedRow<(EntityId, EntityId), ()>) -> Result<()> {
+fn place_born_from(out: &mut Captured, row: TypedRow<(EntityId, EntityId), ()>) {
     let (trigger, born) = row.key;
     let owner = OwnerRef::entity(&born);
     out.depends(owner, &row.at, OwnerRef::entity(&trigger));
     out.exact(owner, row.at, row.bytes);
-    Ok(())
 }
 
 /// A birth with its actor back; `None` when the actor did not open.

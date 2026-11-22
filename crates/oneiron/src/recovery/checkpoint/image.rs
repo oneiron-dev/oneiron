@@ -67,11 +67,40 @@ impl CheckpointImage {
     /// identity, and the root it pins, stay with the install that minted it:
     /// the restored vault joins as a new machine and opens unpinned. So does a copy served beside a live vault,
     /// whose authority it keeps; only a restore that takes that vault's
-    /// place carries its identity (`restore_class`).
+    /// place carries its identity (`restore_class`). The rows of a `sync:
+    /// install` setting go with it, for the same reason: each is a choice
+    /// about the install that set it, so the new machine starts at the
+    /// defaults (stage 7c-4, `setting::restore_drops_row`). So do the
+    /// machine's residence mode and world pick, in every build
+    /// (`identity::is_residence_choice_row`).
     pub(super) fn drop_machine_identity(&mut self) {
         if let Some(rows) = self.databases.get_mut("sync_state") {
-            rows.retain(|(key, _)| !crate::identity::is_machine_identity_row(key));
+            rows.retain(|(key, _)| {
+                !crate::identity::is_machine_identity_row(key)
+                    && !crate::identity::is_residence_choice_row(key)
+            });
         }
+        if let Some(rows) = self.databases.get_mut("vault_meta") {
+            rows.retain(|(key, _)| !crate::setting::restore_drops_row(key));
+        }
+    }
+
+    /// [`Self::drop_machine_identity`] on a vault the owner roots, and the
+    /// mark that the install it lands on was born of a restore of the image
+    /// `checkpoint_id` names (row RESTORED-COPIES-ENROL-EACH-OTHER): its
+    /// enrolment names the image, and it is not a machine of the vault until
+    /// a joined machine joins it. A managed vault's host root enrols the
+    /// node its own restores, wakes and migrates land
+    /// ([`Self::drop_machine_identity`] alone; RESTORED-COPIES-JOIN-SCOPE =
+    /// A); a copy beside a live vault is marked whoever roots it.
+    pub(super) fn drop_machine_identity_restored(&mut self, checkpoint_id: &str) -> Result<()> {
+        let image = blake3::Hash::from_hex(checkpoint_id).map_err(|_| codec_error())?;
+        self.drop_machine_identity();
+        let rows = self.databases.entry("sync_state".to_owned()).or_default();
+        let key = crate::side_table::IDENTITY_RESTORED_FROM.prefix;
+        let at = rows.partition_point(|(row, _)| row.as_slice() < key);
+        rows.insert(at, (key.to_vec(), image.as_bytes().to_vec()));
+        Ok(())
     }
 }
 

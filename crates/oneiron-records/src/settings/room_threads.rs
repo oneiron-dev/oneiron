@@ -1,6 +1,7 @@
 //! Moved from `crates/oneiron/src/settings/room_threads.rs` (lib split R1: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+use oneiron_authority::authority::Direction;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -14,4 +15,19 @@ pub struct RoomThreadAdminSettings {
     /// Whether an Admin may delete a private thread
     /// (`rooms.private_threads.admin_delete`).
     pub admin_delete: bool,
+}
+
+impl RoomThreadAdminSettings {
+    /// Turning on an off switch widens because Admins may do what they could not before.
+    /// Every other set narrows because it grants Admins no new action.
+    #[must_use]
+    pub fn direction_from(self, standing: Self) -> Direction {
+        if (self.admin_walk_in && !standing.admin_walk_in)
+            || (self.admin_delete && !standing.admin_delete)
+        {
+            Direction::Widens
+        } else {
+            Direction::Narrows
+        }
+    }
 }

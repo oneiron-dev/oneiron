@@ -24,7 +24,9 @@ use crate::error::{Error, Result};
 use crate::learning::{LearningCell, LearningEvidence, PREDICATE_LEARNING_EDIT_COST};
 use crate::ports::EntityStoreRead;
 use crate::side_table::HexId;
-use crate::skill_reliability::{AmendedOutcome, reconcile_amended_outcomes_in_txn};
+use crate::skill_reliability::{
+    AmendedOutcome, amended_outcomes_settled_in_txn, reconcile_amended_outcomes_in_txn,
+};
 use crate::temporal::TimeRange;
 
 // ---------------------------------------------------------------------------
@@ -141,56 +143,7 @@ pub fn project_edit_cost_claims(
 /// Storage errors; [`Error::CorruptedIndex`] on an undecodable row.
 pub fn project_amendment_reliability(vault: &Vault) -> Result<Vec<EntityId>> {
     vault.with_write_txn_grouped(|wtxn| {
-        let mut verdicts = Vec::new();
-        // The newest verdict per skill, for the floor join below: the
-        // scope, project, receipt and time a crossing this pass mints
-        // fires on. A crossing is the skill's own, so it fires once per
-        // skill however many scopes its verdicts span.
-        let mut newest: BTreeMap<EntityId, (String, Option<EntityId>, String, u64)> =
-            BTreeMap::new();
-        for (judgment, attempt) in amendment_judgments_in_txn(vault, wtxn)? {
-            if let Some(judge) = judgment.judge.as_deref()
-                && crate::skill_attribution::displacing_revision_in_txn(vault, wtxn, judge)?
-                    .is_some()
-            {
-                continue;
-            }
-            let Some((attempt_receipt, skill)) = attempt else {
-                continue;
-            };
-            let fired = (
-                judgment.scope.clone(),
-                judgment.project,
-                judgment.receipt_id.clone(),
-                judgment.at,
-            );
-            newest
-                .entry(skill)
-                .and_modify(|held| {
-                    if (fired.3, &fired.2) > (held.3, &held.2) {
-                        *held = fired.clone();
-                    }
-                })
-                .or_insert(fired);
-            // A verdict that charges this skill nothing is still a verdict on
-            // the attempt: it is what lets a later amendment stand over an
-            // earlier one.
-            let defect_share = judgment
-                .split
-                .iter()
-                .filter(|share| {
-                    share.class == AmendmentClass::SkillDefect && share.subject == Some(skill)
-                })
-                .map(|share| share.share)
-                .sum();
-            verdicts.push(AmendedOutcome {
-                skill,
-                attempt_receipt,
-                amendment_receipt: judgment.receipt_id,
-                defect_share,
-                at: judgment.at,
-            });
-        }
+        let (verdicts, newest) = amended_verdicts_in_txn(vault, wtxn)?;
         let skills = reconcile_amended_outcomes_in_txn(vault, wtxn, &verdicts)?;
         for skill in &skills {
             if let Some((scope, project, receipt, at)) = newest.get(skill) {
@@ -201,6 +154,107 @@ pub fn project_amendment_reliability(vault: &Vault) -> Result<Vec<EntityId>> {
         }
         Ok(skills)
     })
+}
+
+/// The scope, project, receipt and time of one skill's newest verdict: what a
+/// floor crossing a reliability pass mints fires on.
+type NewestVerdict = (String, Option<EntityId>, String, u64);
+
+/// Every amendment verdict the judgment ledger holds on an attempt, read on
+/// `txn`, and the newest verdict per skill. A verdict of a displaced judge
+/// revision is left out.
+fn amended_verdicts_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<(Vec<AmendedOutcome>, BTreeMap<EntityId, NewestVerdict>)> {
+    let mut verdicts = Vec::new();
+    // The newest verdict per skill, for the floor join: the scope, project,
+    // receipt and time a crossing the pass mints fires on. A crossing is the
+    // skill's own, so it fires once per skill however many scopes its
+    // verdicts span.
+    let mut newest: BTreeMap<EntityId, NewestVerdict> = BTreeMap::new();
+    for (judgment, attempt) in amendment_judgments_in_txn(vault, txn)? {
+        if let Some(judge) = judgment.judge.as_deref()
+            && crate::skill_attribution::displacing_revision_in_txn(vault, txn, judge)?.is_some()
+        {
+            continue;
+        }
+        let Some((attempt_receipt, skill)) = attempt else {
+            continue;
+        };
+        let fired = (
+            judgment.scope.clone(),
+            judgment.project,
+            judgment.receipt_id.clone(),
+            judgment.at,
+        );
+        newest
+            .entry(skill)
+            .and_modify(|held| {
+                if (fired.3, &fired.2) > (held.3, &held.2) {
+                    *held = fired.clone();
+                }
+            })
+            .or_insert(fired);
+        // A verdict that charges this skill nothing is still a verdict on
+        // the attempt: it is what lets a later amendment stand over an
+        // earlier one.
+        let defect_share = judgment
+            .split
+            .iter()
+            .filter(|share| {
+                share.class == AmendmentClass::SkillDefect && share.subject == Some(skill)
+            })
+            .map(|share| share.share)
+            .sum();
+        verdicts.push(AmendedOutcome {
+            skill,
+            attempt_receipt,
+            amendment_receipt: judgment.receipt_id,
+            defect_share,
+            at: judgment.at,
+        });
+    }
+    Ok((verdicts, newest))
+}
+
+// ---------------------------------------------------------------------------
+// Reconciliation with no judgment to land
+// ---------------------------------------------------------------------------
+
+/// Brings every row the amendment projections landed in line with the
+/// judgment ledger as it stands, landing no judgment of its own: the
+/// edit-cost rows and lessons of the landed-target ledger, then the amended
+/// outcomes on the skills' reliability records.
+///
+/// A writer that drops a judgment leaves what it held up to these passes:
+/// the erase, delete or discard of its Gate decision's content, a held
+/// scrub's settle, a restore's rerun, the decision's removal or retention,
+/// and a re-judgment that withdraws it. Before this pass only the owner's
+/// next settle of an amendment ran them, so on a quiet vault the dropped
+/// receipt's charge, lesson and defect share stood. The gate-decision housekeeping
+/// sweep runs this after its retention, hourly and at each start (FIX
+/// [AMENDMENT-TARGET-RETRACT-WAITS-FOR-NEXT-SETTLE]).
+///
+/// Each half reads first and writes only what it has to change, so a
+/// settled vault costs this no write transaction; the reliability half then
+/// decides again under its writer.
+///
+/// # Errors
+///
+/// Storage errors; [`Error::CorruptedIndex`] on an undecodable row; whatever
+/// the learning door or the `actor.*` write door refuses.
+pub(crate) fn reconcile_amendment_projections(vault: &Vault) -> Result<()> {
+    reconcile_targets(vault)?;
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        let (verdicts, _) = amended_verdicts_in_txn(vault, &rtxn)?;
+        if amended_outcomes_settled_in_txn(vault, &rtxn, &verdicts)? {
+            return Ok(());
+        }
+    }
+    project_amendment_reliability(vault)?;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

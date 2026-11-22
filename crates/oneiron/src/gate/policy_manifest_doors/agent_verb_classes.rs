@@ -13,6 +13,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use super::{body_in_txn, decode_fields, invalid, rewrite_default_manifest_field_as_owner_in_txn};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::consent::AuthenticatedOwner;
@@ -175,7 +177,7 @@ fn view(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<AgentVerbClassesView> {
     let table = decode_agent_verb_classes(&decode_fields(&body)?)?.unwrap_or_default();
     Ok(AgentVerbClassesView {
         manifest_ref: id.to_hex(),
-        body_hash: blake3::hash(&body).to_hex().to_string(),
+        body_hash: ContentHash::of(&body).to_hex(),
         classes: rows_of(&table),
     })
 }

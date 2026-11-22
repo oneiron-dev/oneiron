@@ -60,6 +60,9 @@ pub(super) struct Dispatch {
     pub(super) authority_entry_hash_pin: Option<oneiron_contracts::authority::AuthorityEntryHash>,
     pub(super) authority_entry_observation: Option<oneiron_authority::authority::AuthorityLogEntry>,
     pub(super) authority_dominates_key_squatter: bool,
+    /// The amended approval the owner's revision of a held MACHINE claim
+    /// recorded, measured once the body is staged.
+    pub(super) owner_revision_amendment: Option<crate::gate::OwnerRevisionAmendment>,
 }
 
 /// The admitted companion revision and its squatter verdict.
@@ -169,7 +172,7 @@ pub(super) fn admit_put<'a>(
         posture,
     );
     validate_put_carriers(store, wtxn, id, data, carriers)?;
-    crate::source_audience::note_landed_in(store, wtxn, data)?;
+    crate::source_audience::note_landed_in(store, wtxn, entity_type, data)?;
     let project_revisions =
         store
             .project_writes
@@ -303,6 +306,7 @@ pub(super) fn admit_put<'a>(
             authority_entry_hash_pin,
             authority_entry_observation,
             authority_dominates_key_squatter,
+            owner_revision_amendment: None,
         },
         revision: RevisionSlot {
             put: revision_put,

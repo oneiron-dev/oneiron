@@ -100,7 +100,7 @@ pub(super) fn judge_owner_key_enroll(
         return Err(AuthorityFoldIssue::InvalidEntry(hash));
     };
     let carrier = super::machine_claims::folded_machine_in(state, enroll.carrier);
-    if !super::owner_act_signer_admits(carrier.as_ref(), &state.roster, carrier_key) {
+    if !super::owner_act_signer_admits(carrier.as_ref(), &state.roster, carrier_key, None) {
         return Err(AuthorityFoldIssue::SignerNotInAncestry(hash));
     }
     if !super::owner_act::owner_live_at(state, enroll.act.owner) {
@@ -136,8 +136,9 @@ impl FoldState {
 
     /// Whether `key` authorizes no `ReRoot`, no `RotateKey`, no
     /// `EnrollDevice`, no revoke of another owner key or of a key its
-    /// parents do not hold (a device or an actor binding), no actor binding,
-    /// and no roster-signed machine profile in any role, from any
+    /// parents do not hold (a device or an actor binding), no actor binding
+    /// but a passkey's own first one ([`passkey_self_bind`]), and no
+    /// roster-signed machine profile in any role, from any
     /// signature position: a passkey (Engine ruling WEBPASSKEY-PASSKEY-OWN-REVOKE = B),
     /// or a key only a passkey vouched for, until confirmed (lead ruling
     /// WEBPASSKEY-BLIND-SIGNATURE = B). The one reader of these limits: a
@@ -146,6 +147,15 @@ impl FoldState {
     /// leaves such a key out (REVIEW2 #8451 P2-1).
     pub(super) fn passkey_limited(&self, key: &AuthorityKey) -> bool {
         self.passkey_contexts.contains_key(key) || self.passkey_vouch_unconfirmed(key)
+    }
+
+    /// Whether `key` is a passkey a key in the host's custody enrolled that
+    /// the passkey limits hold (row PASSKEY-SELF-BIND): the one kind of key
+    /// that may sign its own binding ([`passkey_self_bind`]), whose binding
+    /// then names its owner for their verbs and writes alone. Its federation
+    /// narrowings stay its own key's (`current_scope::narrowing_party`).
+    pub(super) fn host_vouched_passkey_limited(&self, key: &AuthorityKey) -> bool {
+        self.passkey_limited(key) && self.host_vouched_passkey_owners.contains_key(key)
     }
 }
 
@@ -215,7 +225,10 @@ pub(super) fn remember_passkey_vouch(
 /// machine for good, the removal by another name (blind review #8451 F1).
 /// Judged by the op alone, so that no sibling branch reopens it; an
 /// act-carried answer is the carrier's, signed by its install key, and
-/// never reaches this. Every other op passes.
+/// never reaches this. Every other op passes. The one binding a passkey
+/// signs, its own first `human` binding to the owner a host vouched for it
+/// as, is judged on the whole entry ([`passkey_self_bind`]) and never
+/// reaches this.
 fn passkey_limits_bar(state: &FoldState, op: &AuthorityOp, key: &AuthorityKey) -> bool {
     match op {
         AuthorityOp::ReRoot { .. }
@@ -243,20 +256,115 @@ fn passkey_limits_bar(state: &FoldState, op: &AuthorityOp, key: &AuthorityKey) -
 
 /// The participants of an entry with `op` (its signer and every cosign)
 /// whose consent the passkey limits do not count: each passkey-limited key
-/// the op bars ([`passkey_limits_bar`]). The generic rule refuses the entry
-/// when its signer is one, and otherwise asks the consent of the rest, so a
-/// limited key lends no consent from a cosign either (Sol xhigh stack review
-/// F2).
+/// the op bars ([`passkey_limits_bar`]), but `self_bound`, the signer of a
+/// passkey's own first binding ([`passkey_self_bind`]). The generic rule
+/// refuses the entry when its signer is one, and otherwise asks the consent
+/// of the rest, so a limited key lends no consent from a cosign either (Sol
+/// xhigh stack review F2).
 pub(super) fn passkey_barred_participants(
     state: &FoldState,
     op: &AuthorityOp,
     participants: &BTreeSet<AuthorityKey>,
+    self_bound: Option<&AuthorityKey>,
 ) -> BTreeSet<AuthorityKey> {
     participants
         .iter()
-        .filter(|key| state.passkey_limited(key) && passkey_limits_bar(state, op, key))
+        .filter(|key| {
+            Some(*key) != self_bound
+                && state.passkey_limited(key)
+                && passkey_limits_bar(state, op, key)
+        })
         .cloned()
         .collect()
+}
+
+/// Whether `entry` is a passkey's own first `human` binding, the one
+/// `BindActor` a passkey signs (the Oneiron lead 21 Nov 04:5x: "a passkey may
+/// sign its own human binding, while the binding itself grants nothing the
+/// passkey limits bar"; row PASSKEY-SELF-BIND). A hosted owner who signs in
+/// with a passkey alone holds no other owner key to bind with, and without
+/// a binding their owner verbs answer OWNER_BINDING_REQUIRED. It holds at
+/// the entry's parents only for all of:
+/// - the op binds the signer itself, `BindActor{P, O, human, epoch 1}`: no
+///   rebind, no other key, no other class;
+/// - P is the one signer, a P-256 key whose signature is a WebAuthn
+///   assertion envelope (the generic check verifies it with the user
+///   verified, in a context P's enrolment pinned), with no cosign;
+/// - P is an enrolled passkey (its context is pinned), no key only a
+///   passkey vouched for, live on the roster with `ROLE_OWNER` and
+///   consenting under this fold's arm;
+/// - P was never bound and no revoke names it: no binding, live or ended,
+///   and no revocation watermark;
+/// - O is an owner a counted fresh enrolment of P names whose predecessor
+///   is in the host's custody ([`remember_host_vouched_passkey`]): the host
+///   vouched for P as O's, and only O's own passkey binds O;
+/// - O is live at the parents (`owner_live_at`), so the binding revives no
+///   owner a removal ended.
+///
+/// The fold cannot read the census: the door revalidates O as the vault's
+/// live owner at prepare and at land. The binding gives P no owner proof:
+/// P stays passkey-limited for every other op, `gives_owner_proof` and
+/// `owner_proof_key` stay Ed25519-only, its federation narrowings stay its
+/// own key's (`current_scope::narrowing_party`) and its project-depth edits
+/// stay quarantined.
+pub(super) fn passkey_self_bind(
+    state: &FoldState,
+    entry: &AuthorityLogEntry,
+    context: FoldContext<'_>,
+) -> bool {
+    let AuthorityOp::BindActor {
+        authority_key,
+        actor_ref,
+        actor_class,
+        epoch,
+    } = &entry.op
+    else {
+        return false;
+    };
+    let key = entry.signer_key();
+    *epoch == 1
+        && actor_class == ACTOR_CLASS_HUMAN
+        && authority_key == key
+        && matches!(key, AuthorityKey::P256(_))
+        && entry.signer.suite == AuthoritySignatureSuite::P256
+        && entry.cosigns.is_empty()
+        && webauthn_assertion_context(&entry.signer.signature).is_some()
+        && state.passkey_contexts.contains_key(key)
+        && !state.passkey_vouch_unconfirmed(key)
+        && state.roster.get(key).is_some_and(|device| {
+            !device.revoked && device.roles & ROLE_OWNER != 0 && context.device_can_consent(device)
+        })
+        && !state.actor_bindings.contains_key(key)
+        && !state.actor_binding_revocations.contains_key(key)
+        && state
+            .host_vouched_passkey_owners
+            .get(key)
+            .is_some_and(|owners| owners.contains(actor_ref))
+        && super::owner_act::owner_live_at(state, *actor_ref)
+}
+
+/// Names a counted fresh passkey enrolment's owner for its passkey when its
+/// predecessor is in the host's custody (row PASSKEY-SELF-BIND): the host
+/// vouched for the passkey as that owner's, so the passkey may sign that
+/// owner's first binding ([`passkey_self_bind`]). A confirmation names no
+/// one, a passkey a key of the owner's enrolled is bound by its
+/// predecessor's own signature where the vault binds at enrolment, and the
+/// map merges by union, so a sibling branch's enrolment keeps its owner.
+pub(super) fn remember_host_vouched_passkey(
+    state: &mut FoldState,
+    entry: &AuthorityLogEntry,
+    enroll: &OwnerKeyEnroll,
+) {
+    if enroll.passkey_context().is_none()
+        || !super::machine_profile::in_host_custody(state, entry.signer_key())
+    {
+        return;
+    }
+    state
+        .host_vouched_passkey_owners
+        .entry(enroll.device.key.clone())
+        .or_default()
+        .insert(enroll.act.owner);
 }
 
 /// Whether `key` is fresh in `state`: no roster row names it, live or
@@ -313,9 +421,22 @@ pub(super) fn remember_passkey_context(state: &mut FoldState, enroll: &OwnerKeyE
     }
 }
 
-/// A live machine of the vault, in any role: no chain removed it, and some
-/// chain of it is live (the carrier rule's liveness, without its key).
+/// A live machine of the vault, in any role: the roster's head of it is
+/// live (the carrier rule's liveness, without its key). Every install
+/// judges this row, so an anchor's chain neither links nor removes the
+/// machine here (Fable pass 29).
 pub(super) fn machine_is_live(machine: &FoldedMachine) -> bool {
-    machine.chains().all(|(_, chain)| !chain.removed)
-        && machine.chains().any(|(_, chain)| chain.is_live())
+    machine
+        .roster
+        .as_ref()
+        .is_some_and(MachineRevision::is_live)
+}
+
+/// [`machine_is_live`] as a writer on this install reads it: also no head
+/// the machine stands under here ([`FoldedMachine::standing_heads`], the
+/// pinned anchor's chain too) says removed. The fold passes no pin and reads
+/// the roster's head alone; a door passes its install's pin, so it writes no
+/// enrolment its own install would not count (#8722 review round 2, P1).
+pub(super) fn machine_is_live_here(machine: &FoldedMachine, pin: Option<&PinnedRoot>) -> bool {
+    machine_is_live(machine) && machine.standing_heads(pin).iter().all(|head| !head.removed)
 }

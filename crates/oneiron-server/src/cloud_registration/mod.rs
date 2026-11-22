@@ -33,6 +33,7 @@ mod erase_revoke;
 mod erase_watch;
 mod http;
 mod jwt;
+mod peers;
 mod pins;
 mod refresh;
 mod wire;
@@ -52,7 +53,12 @@ use self::device::Flows;
 use self::discovery::Endpoints;
 use self::http::Http;
 use self::pins::{Pins, Trust};
-use self::wire::{CLIENT_ID, Failure, RegistrationStatus, TokenSet};
+use self::wire::{CLIENT_ID, RegistrationStatus, TokenSet};
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::peers::PeerState;
+pub(crate) use self::peers::{CloudPeers, PeerControl, PeerReport};
+pub(crate) use self::wire::Failure;
 
 /// The cloud registration client of one open vault.
 pub(crate) struct CloudRegistration {

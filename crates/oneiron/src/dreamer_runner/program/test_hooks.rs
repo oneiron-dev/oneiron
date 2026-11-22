@@ -7,13 +7,22 @@
 //! a machine holds and decided.
 
 use super::authority::TurnProgramAuthority;
+use super::resume::ProgramHold;
 use super::types::{
-    LandedTurnRef, OwedWakeHold, ProgramRecipePin, ProgramTrigger, TurnProgramArming,
+    LandedTurnRef, OwedWakeHold, ProgramRecipePin, ProgramTrigger, TurnProgramAdmissionRecord,
+    TurnProgramArming, TurnProgramAttemptStamp, TurnProgramWake,
 };
-use super::{ADMISSION, ARM, DECIDED, DISARMED, WAKE};
+use super::{ADMISSION, ARM, ATTEMPT, DECIDED, DISARMED, WAKE};
 use crate::authority::{InvocationSlipBinding, VerifiedSlip};
+use crate::dreamer_runner::{
+    DreamerRunnerStore, EnqueueDreamerAttempt, EnqueueDreamerAttemptOutcome,
+};
+use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
 use crate::{EdgeActorClass, EntityId, Vault};
+
+// The K-proof door's reach into the step digests (PLAN-UC-04 stage 7).
+pub(crate) use super::run::{outbound_result_digest_for_test, step_id_for_test};
 
 /// Arms a program for the agent `actor` in `conversation` at `armed_at`,
 /// sealed by the verified slip `proof` and the instrument `binding`, then
@@ -53,6 +62,7 @@ pub(crate) fn plant_slip_wake(
         trigger: ProgramTrigger::Turn,
         sealed: None,
         next_due: None,
+        paused_at: None,
     };
     let landed = LandedTurnRef {
         turn,
@@ -170,6 +180,7 @@ pub(crate) fn plant_arming(
         trigger: ProgramTrigger::Turn,
         sealed: None,
         next_due: None,
+        paused_at: None,
     };
     vault.with_write_txn_grouped(|txn| ARM.put(vault, txn, &(actor, registration), &arming))?;
     Ok(registration)
@@ -255,6 +266,7 @@ pub(crate) fn plant_timer_arming(
         },
         sealed: Some(authority),
         next_due: Some(first_at),
+        paused_at: None,
     };
     vault.with_write_txn_grouped(|txn| {
         ARM.put(vault, txn, &(actor, registration), &arming)?;
@@ -318,6 +330,98 @@ pub(crate) fn disarm_kept_here(
     DISARMED.contains(vault, &txn, &(actor, registration))
 }
 
+/// The admission row a planted held program try names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HeldProgramAdmission {
+    /// The admission that queued the try as its program's root try, its wake
+    /// sealed for the stamp's actor, as an admitted wake leaves it.
+    Bound,
+    /// None: the stamp names an admission no row holds.
+    Absent,
+}
+
+/// Plants a Diverged-held turn-program attempt for release tests: a Dreamer
+/// attempt stamped as `actor`'s program try (class `actor_class`), held by
+/// the program runtime, naming the `admission` row. A bound admission's wake
+/// is sealed for `actor` as the in-process host's own caller. Answers the
+/// attempt's hex, the hold's exact reason and its park time, as a release
+/// request names them. The planted try has no run or checkpoint: only what
+/// a Stop reads.
+pub(crate) fn plant_held_program_attempt(
+    vault: &Vault,
+    actor: EntityId,
+    actor_class: EdgeActorClass,
+    admission: HeldProgramAdmission,
+) -> Result<(String, String, u64)> {
+    let now = vault.now_recorded_at();
+    let store = DreamerRunnerStore::new(vault);
+    let status = match store.enqueue(EnqueueDreamerAttempt {
+        attempt_type: "test.held_program".to_owned(),
+        input: rmpv::Value::Nil,
+        parent_attempt: None,
+        dedupe_key: None,
+        run_id: None,
+        now,
+    })? {
+        EnqueueDreamerAttemptOutcome::Enqueued(status) => status,
+        EnqueueDreamerAttemptOutcome::Existing(status) => status,
+    };
+    let attempt = status.attempt.id;
+    vault.with_write_txn_grouped(|txn| {
+        let admission = match admission {
+            HeldProgramAdmission::Bound => {
+                let wake = TurnProgramWake {
+                    registration: EntityId::now(),
+                    revision: [0; 32],
+                    authority: TurnProgramAuthority::native(actor, actor_class),
+                    turn: LandedTurnRef {
+                        turn: EntityId::now(),
+                        conversation: EntityId::now(),
+                        landed_at: now,
+                    },
+                    occurrence: None,
+                    held: None,
+                };
+                let id = wake.admission_id();
+                ADMISSION.put(
+                    vault,
+                    txn,
+                    &id,
+                    &TurnProgramAdmissionRecord {
+                        admission: id,
+                        wake,
+                        definition: None,
+                        receipt_id: [0; 16],
+                        attempt: Some(attempt),
+                        refused: None,
+                        decided_at: now,
+                    },
+                )?;
+                id
+            }
+            HeldProgramAdmission::Absent => [0; 32],
+        };
+        ATTEMPT.put(
+            vault,
+            txn,
+            &attempt,
+            &TurnProgramAttemptStamp {
+                attempt_id: *attempt.as_bytes(),
+                admission,
+                actor,
+                actor_class: actor_class as u8,
+                receipt_id: [0; 16],
+            },
+        )
+    })?;
+    vault.hold_turn_program(attempt, ProgramHold::Diverged, now)?;
+    Ok((
+        bytes_to_hex_lower(attempt.as_bytes()),
+        ProgramHold::Diverged.reason().to_owned(),
+        now,
+    ))
+}
+
 /// Whether a carried decision for the wake TURN `turn` owes `registration`
 /// is kept here.
 pub(crate) fn decision_kept_here(
@@ -368,12 +472,17 @@ pub(crate) fn erase_actor_programs(vault: &Vault, actor: EntityId) -> Result<()>
     })
 }
 
-/// Each due row one of `actor`'s timers keeps: its due time and registration.
-pub(crate) fn timer_due_rows_for_actor(
-    vault: &Vault,
-    actor: EntityId,
-) -> Result<Vec<(u64, EntityId)>> {
-    super::trigger::timer_due_rows_for_actor(vault, actor)
+/// Marks `actor` hard-deleted here and erases its turn programs, in one
+/// writer and in that order, as a hard delete of its row does: the permanent
+/// marker a torn actor row takes, then the sweep. The row itself stays and
+/// nothing is staged for sync. Answers whether the actor then reads as erased
+/// here: only a PERSON or MACHINE row stored here takes the marker.
+pub(crate) fn erase_hard_deleted_actor_programs(vault: &Vault, actor: EntityId) -> Result<bool> {
+    vault.with_write_txn_grouped(|txn| {
+        crate::deletion::mark_torn_actor_row_in_txn(&vault.store, txn, &actor)?;
+        super::arm::erase_turn_program_actor_in_txn(vault, txn, &actor)?;
+        vault.carrier_actor_erased_in_txn(&*txn, &actor)
+    })
 }
 
 /// Each idle or feed row one of `actor`'s programs keeps: its kind tag and registration.
@@ -409,4 +518,38 @@ pub(crate) fn admitted_row_bytes(
 pub(crate) fn decided_rows_for_turn(vault: &Vault, turn: EntityId) -> Result<usize> {
     let txn = vault.store.env.read_txn()?;
     Ok(super::replica::turn_decided_rows_in_txn(vault, &txn, &turn)?.len())
+}
+
+/// The copy of an owed wake this machine took from a window, as an image of
+/// the vault holds it.
+#[cfg(feature = "sync")]
+#[derive(Debug)]
+pub struct ImportedWakeImage(super::types::TurnProgramWake);
+
+/// The owed wake TURN `turn` owes `registration`, read as an image of this
+/// vault taken now holds it. `None` when this machine owes no such wake.
+#[cfg(feature = "sync")]
+pub(crate) fn imported_wake_image(
+    vault: &Vault,
+    turn: EntityId,
+    registration: EntityId,
+) -> Result<Option<ImportedWakeImage>> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(WAKE
+        .get(vault, &txn, &(turn, registration))?
+        .map(ImportedWakeImage))
+}
+
+/// Puts `image` back as a historical restore replays it: the owed row, its
+/// index row and its imported mark return as content, and each live row this
+/// machine kept for the wake (a release, a decision) stands as it is.
+#[cfg(feature = "sync")]
+pub(crate) fn restore_imported_wake_image(vault: &Vault, image: &ImportedWakeImage) -> Result<()> {
+    let wake = &image.0;
+    let (actor, key) = (wake.authority.actor(), wake.key());
+    vault.with_write_txn_grouped(|txn| {
+        WAKE.put(vault, txn, &key, wake)?;
+        super::index::index_wake_in_txn(vault, txn, actor, key)?;
+        super::retraction::mark_imported_in_txn(vault, txn, actor, key)
+    })
 }

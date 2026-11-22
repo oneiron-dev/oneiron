@@ -26,7 +26,7 @@ use heed::RoTxn;
 
 use super::math_keys::invalid_voice;
 use super::metadata::PrintMetadata;
-use super::storage_admission::{read_active_print, read_consent_event, read_consent_events};
+use super::storage_admission::{read_active_print, read_consent_event};
 use super::types::{
     VoiceAttributionEvidence, VoiceConsentState, VoiceEnrollmentOrigin, VoiceEnrollmentRequest,
     VoicePrintPurpose, VoiceResolvedSegment, VoiceSessionRosterV1,
@@ -125,7 +125,7 @@ pub(super) fn recognition_readable_here_in(
 
 /// Whether `subject`'s consent event `consent_event_ref` still grants
 /// `purpose`: recorded, a grant covering it, and no withdrawal covering it
-/// recorded at or after it.
+/// dated at or after it or voiding it ([`super::consent_void`]).
 pub(super) fn consent_live_for_in(
     vault: &Vault,
     txn: &RoTxn<'_>,
@@ -139,13 +139,12 @@ pub(super) fn consent_live_for_in(
     if event.state != VoiceConsentState::Granted || !event.covers(purpose) {
         return Ok(false);
     }
-    Ok(!read_consent_events(&vault.store, txn, subject)?
-        .into_iter()
-        .any(|later| {
-            later.state == VoiceConsentState::Withdrawn
-                && later.covers(purpose)
-                && later.occurred_at >= event.occurred_at
-        }))
+    Ok(!super::consent_void::grant_withdrawn_for(
+        &vault.store,
+        txn,
+        &event,
+        purpose,
+    )?)
 }
 
 /// Whether `record` may take part in a match serving `purpose` on this

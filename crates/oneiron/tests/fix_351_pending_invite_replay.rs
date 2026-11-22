@@ -215,6 +215,7 @@ fn put_booking_claims(vault: &Vault, booking: EntityId, page: EntityId, booker: 
             ClaimLifecycleStatus::Active,
         )
         .expect("claim body");
+        body.scope_facet = vault.default_facet().expect("the vault default facet");
         body.source = Some(ClaimSource::Observed);
         body.valid_from = Some(NOW);
         let seed = CLAIM_SEED

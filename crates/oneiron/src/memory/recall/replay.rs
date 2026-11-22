@@ -30,14 +30,16 @@ impl Memory<'_> {
             .vault
             .scoped_read(lane.actor_key().clone())
             .with_judged_at(as_of)
-            .with_read_filter(self.read_filter.as_ref());
+            .with_read_filter(self.read_filter.as_ref())
+            .with_live_grant_receipts();
         let lane = match unfaceted.worlds() {
             Some(worlds) => lane.within_worlds(worlds.clone()),
             None => lane,
         };
         let lane = lane
             .with_judged_at(as_of)
-            .with_read_filter(self.read_filter.as_ref());
+            .with_read_filter(self.read_filter.as_ref())
+            .with_live_grant_receipts();
         let mut receipt = lane.search_receipt(None, 0)?;
         if receipt.applied.deny_all {
             // A read that admits nothing reads no item, names no world and

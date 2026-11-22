@@ -88,6 +88,18 @@ impl ConnectorSendLine {
                     .map(|order| (order, row))
             })
             .collect();
+        // A copy restored and not joined claims no send (row
+        // RESTORED-UNJOINED-STARTS-NO-WORK): its sends are put in no line,
+        // so no drain writes an empty claim whose commit wakes the drain
+        // again. The join wakes it.
+        if !ready.is_empty()
+            && queue.kind_held_while_unjoined_in_txn(
+                &rtxn,
+                crate::outbound::BRIDGE_OUTBOUND_ATTEMPT_KIND,
+            )?
+        {
+            ready.clear();
+        }
         ready.sort_by_key(|(order, _)| *order);
         let writers = ready
             .into_iter()
