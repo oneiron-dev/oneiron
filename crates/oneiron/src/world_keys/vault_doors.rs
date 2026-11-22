@@ -269,6 +269,35 @@ impl Vault {
         )
     }
 
+    /// This install's signing keys ([`Vault::read_install_signer`]) and its
+    /// public encryption key for `vault_id`, as the install holds them now:
+    /// the read of a door that must know which machine this install is
+    /// before it asks for the person. Unlike [`Vault::machine_encryption_key`]
+    /// it mints no machine id, creates no slot and writes no row. `None`
+    /// where the signing keys cannot be read so.
+    pub(crate) fn read_held_install_keys(
+        &self,
+        vault_id: [u8; 32],
+    ) -> Result<Option<HeldInstallKeys>> {
+        let Some(signer) = self.read_install_signer()? else {
+            return Ok(None);
+        };
+        let keystore = self.device_keystore()?;
+        let held = super::machine::existing_machine_secret(
+            keystore.as_ref(),
+            vault_id,
+            *signer.machine.as_bytes(),
+        )?;
+        let encryption_key = held.map(|secret| MachineEncryptionKey {
+            suite: MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
+            key: secret.public_key().to_bytes(),
+        });
+        Ok(Some(HeldInstallKeys {
+            signer,
+            encryption_key,
+        }))
+    }
+
     /// The signing keys [`Vault::prepare_install_signing`] left on this handle.
     pub(crate) fn loaded_install_signer(&self) -> Option<Arc<crate::identity::InstallSigner>> {
         self.world_keys
@@ -342,6 +371,17 @@ impl Vault {
                 "the host installed no keystore on this vault",
             )))
     }
+}
+
+/// This install's keys as it holds them now, read with nothing readied
+/// ([`Vault::read_held_install_keys`]).
+pub(crate) struct HeldInstallKeys {
+    /// Its machine id with its machine and device signing keys.
+    pub(crate) signer: Arc<crate::identity::InstallSigner>,
+    /// Its public encryption key for the vault. `None` where the encryption
+    /// slot holds no seed: readying the install would then make a new key,
+    /// which no profile the vault holds can name.
+    pub(crate) encryption_key: Option<MachineEncryptionKey>,
 }
 
 /// What [`Vault::prepare_install_signing`] does when this install's slot is empty

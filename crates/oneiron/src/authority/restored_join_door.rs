@@ -18,6 +18,15 @@
 //! before it joins. It commits only when the fold reads the machine live.
 //! The signature proves the owner's word, not that no other machine exists:
 //! run on two copies of one image, each joins, as the owner said twice.
+//!
+//! The door asks for the person only for a join that has work to do (row
+//! RESTORED-JOIN-DOOR-ASKS-BEFORE-ITS-ALREADY-JOINED-RETURN). Before the ask
+//! it reads, with nothing readied and nothing written, every answer the
+//! writer gives without the owner's proof: an owner proof that is no longer
+//! this vault's live owner, the machine that already stands live under this
+//! install's keys (returned, and nobody is asked), a machine that stands any
+//! other way, a held enrolment that is not this install's ask, and a role
+//! no join names. The writer makes each of these checks again.
 
 use super::world_key_support::{next_sequence, unsigned_side_entry};
 use super::*;
@@ -74,28 +83,70 @@ const KEY_PROVES_NO_JOIN: &str = "this install was restored from a checkpoint an
 /// the entry is signed on.
 type FoldSign<'a> = dyn Fn(&AuthorityFold, &[u8]) -> Result<Vec<u8>> + 'a;
 
-/// Whether `folded` stands live under `request`'s keys: the machine this
+/// This install as a join names it: its machine, its keys, its class and
+/// the image a restore made it from. The writer takes them from the request
+/// this install signed; the door's read before the ask takes them from what
+/// the install holds already, with nothing readied
+/// ([`Vault::read_held_install_keys`]).
+struct JoiningInstall<'a> {
+    machine: EntityId,
+    machine_key: [u8; 32],
+    /// `None` on the read of an install whose encryption slot holds no seed:
+    /// readying it makes a new key, which no profile in the fold names.
+    encryption_key: Option<&'a MachineEncryptionKey>,
+    device_class: MachineDeviceClass,
+    restored_from: Option<[u8; 32]>,
+}
+
+impl<'a> From<&'a MachineEnrolmentRequest> for JoiningInstall<'a> {
+    fn from(request: &'a MachineEnrolmentRequest) -> Self {
+        Self {
+            machine: request.machine,
+            machine_key: request.machine_key,
+            encryption_key: Some(&request.encryption_key),
+            device_class: request.device_class,
+            restored_from: request.restored_from,
+        }
+    }
+}
+
+/// Whether `folded` stands live under `install`'s keys: the machine this
 /// install is.
-fn stands_as_this_install(folded: &FoldedMachine, request: &MachineEnrolmentRequest) -> bool {
+fn stands_as_this_install(folded: &FoldedMachine, install: &JoiningInstall<'_>) -> bool {
     folded.roster.as_ref().is_some_and(|roster| {
         roster.is_live()
-            && roster.profile.machine_key == request.machine_key
-            && roster.profile.encryption_key == request.encryption_key
+            && roster.profile.machine_key == install.machine_key
+            && Some(&roster.profile.encryption_key) == install.encryption_key
     })
+}
+
+/// The machine `fold` holds under `install`'s id: returned when it stands
+/// live under this install's keys, refused when it stands any other way (a
+/// removed machine never comes back). `None` when the fold holds none: the
+/// join has work to do.
+fn standing_machine(
+    fold: &AuthorityFold,
+    install: &JoiningInstall<'_>,
+) -> Result<Option<FoldedMachine>> {
+    match fold.machine(install.machine) {
+        Some(folded) if stands_as_this_install(folded, install) => Ok(Some(folded.clone())),
+        Some(_) => Err(authority_refused(NOT_LIVE_HERE)),
+        None => Ok(None),
+    }
 }
 
 /// Whether a held enrolment's `profile` is this install's ask: its keys,
 /// class and origin, the owner who joins it and the role he names.
 fn held_is_this_ask(
     profile: &MachineProfile,
-    request: &MachineEnrolmentRequest,
+    install: &JoiningInstall<'_>,
     owner: EntityId,
     role: MachineRole,
 ) -> bool {
-    profile.machine_key == request.machine_key
-        && profile.encryption_key == request.encryption_key
-        && profile.device_class == request.device_class
-        && profile.restored_from == request.restored_from
+    profile.machine_key == install.machine_key
+        && Some(&profile.encryption_key) == install.encryption_key
+        && profile.device_class == install.device_class
+        && profile.restored_from == install.restored_from
         && profile.owner == owner
         && profile.role == role
 }
@@ -106,7 +157,8 @@ impl Vault {
     /// vault's root, and joins it by the owner's act, signed by an owner key
     /// this install holds. Returns the machine as it then stands. A no-op
     /// returning the machine when it already stands live here under this
-    /// install's keys.
+    /// install's keys: the door reads that before it asks for the person
+    /// (`restored_join_read`), so a second join asks nobody.
     ///
     /// Every refusal the door can read before this install's identity is
     /// minted comes first: an install no restore made, and, for one that has
@@ -114,7 +166,8 @@ impl Vault {
     /// (REVIEW-9509/9511 P1). An enrolment the vault already holds for this
     /// install's machine is joined only when it is this install's ask
     /// (REVIEW-9510 P1), and the join commits only when the fold reads the
-    /// machine live under this install's keys.
+    /// machine live under this install's keys. The person is asked after
+    /// every answer the read can give and before the identity is minted.
     ///
     /// # Errors
     /// [`crate::error::RecordError::AuthorityRefused`] for a bound proof, a
@@ -123,7 +176,8 @@ impl Vault {
     /// live under this install's keys (a removed one never comes back), a
     /// held enrolment that is not this install's ask, or a join the fold
     /// does not count; an owner refusal when the proof is no longer the
-    /// vault's live owner; storage faults. Nothing is written on any error
+    /// vault's live owner; [`invalid_authority`] for the role `Removed`,
+    /// which joins nothing; storage faults. Nothing is written on any error
     /// but the install's own identity, minted once the reads above pass and
     /// the owner has confirmed: not the authority clock's reading either,
     /// which commits with the join. A declined confirm, or a host with no
@@ -152,6 +206,14 @@ impl Vault {
         // first. The keystore read before it refuses a host that installed
         // none with no prompt.
         self.device_keystore()?;
+        if let Some(standing) = self.restored_join_read(owner, vault_id, role)? {
+            return Ok(standing);
+        }
+        // The role is checked last, where the enrolment's writer checks it
+        // (`joining_profile`): `Removed` joins nothing.
+        if role == MachineRole::Removed {
+            return Err(invalid_authority());
+        }
         let witness = self.owner_presence(
             OwnerActImportance::Important,
             owner_presence_reasons::JOIN_RESTORED_INSTALL,
@@ -168,12 +230,9 @@ impl Vault {
         self.instant_in_write_txn(&mut txn)?;
         let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
-        if let Some(folded) = fold.machine(request.machine) {
-            return if stands_as_this_install(folded, &request) {
-                Ok(folded.clone())
-            } else {
-                Err(authority_refused(NOT_LIVE_HERE))
-            };
+        let install = JoiningInstall::from(&request);
+        if let Some(standing) = standing_machine(&fold, &install)? {
+            return Ok(standing);
         }
         let proof = self
             .owner_proof_signer(&fold, &ground)
@@ -184,7 +243,7 @@ impl Vault {
         let held: Vec<_> = fold.counted_waiting_enrolments(request.machine).collect();
         if !held
             .iter()
-            .all(|(_, held)| held_is_this_ask(&held.profile, &request, actor, role))
+            .all(|(_, held)| held_is_this_ask(&held.profile, &install, actor, role))
         {
             return Err(authority_refused(HELD_DIFFERS));
         }
@@ -219,7 +278,7 @@ impl Vault {
         let after = self.authority_view_readonly_in_txn(&txn)?;
         let folded = after
             .machine(target)
-            .filter(|folded| stands_as_this_install(folded, &request))
+            .filter(|folded| stands_as_this_install(folded, &install))
             .cloned()
             .ok_or_else(|| authority_refused(JOIN_NOT_COUNTED))?;
         txn.commit()?;
@@ -230,6 +289,66 @@ impl Vault {
         self.store.notify_attempt_observers();
         self.store.notify_proactivity_changes();
         Ok(folded)
+    }
+
+    /// What [`Self::join_restored_install`] answers without the owner's
+    /// proof, read before it asks for the person, in the writer's order.
+    /// Nothing is readied and nothing is written.
+    ///
+    /// The owner's proof is revalidated first, as the writer's first check.
+    /// Then, where this install's keys can be read as it holds them
+    /// ([`Self::read_held_install_keys`]): the machine the
+    /// fold holds under this install's id is returned when it stands live
+    /// under those keys, and the door then asks nobody; a machine that
+    /// stands any other way and a held enrolment that is not this install's
+    /// ask are refused.
+    ///
+    /// `None` when the join has work to do. `None` also where only readying
+    /// the install can say which machine it is: it has no machine id yet,
+    /// its signing slot is empty, or the vault's device key row is absent or
+    /// names another key. Readying may then mint a new machine, so the door
+    /// asks first and the writer answers.
+    ///
+    /// # Errors
+    /// An owner refusal when the proof is no longer the vault's live owner;
+    /// [`crate::error::RecordError::AuthorityRefused`] naming the refusal;
+    /// keystore and storage faults.
+    fn restored_join_read(
+        &self,
+        owner: &AuthenticatedOwner,
+        vault_id: [u8; 32],
+        role: MachineRole,
+    ) -> Result<Option<FoldedMachine>> {
+        let actor = {
+            let txn = self.store.env.read_txn()?;
+            owner.revalidate_as_vault_owner_in_txn(self, &txn)?
+        };
+        // The keystore is read outside every snapshot.
+        let Some(held) = self.read_held_install_keys(vault_id)? else {
+            return Ok(None);
+        };
+        let txn = self.store.env.read_txn()?;
+        if crate::identity::read_machine_id_in_txn(self, &txn)? != Some(held.signer.machine) {
+            return Ok(None);
+        }
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        let install = JoiningInstall {
+            machine: held.signer.machine,
+            machine_key: held.signer.machine_key.verifying_key().to_bytes(),
+            encryption_key: held.encryption_key.as_ref(),
+            device_class: self.config.machine_device_class,
+            restored_from: crate::identity::read_restored_from_image_in_txn(self, &txn)?,
+        };
+        if let Some(standing) = standing_machine(&fold, &install)? {
+            return Ok(Some(standing));
+        }
+        let waiting_is_this_installs_ask = fold
+            .counted_waiting_enrolments(install.machine)
+            .all(|(_, waiting)| held_is_this_ask(&waiting.profile, &install, actor, role));
+        if !waiting_is_this_installs_ask {
+            return Err(authority_refused(HELD_DIFFERS));
+        }
+        Ok(None)
     }
 
     /// Every refusal [`Self::join_restored_install`] reads before it writes,
@@ -365,7 +484,7 @@ impl Vault {
         let joined = self
             .authority_view_readonly_in_txn(txn)?
             .machine(request.machine)
-            .is_some_and(|folded| stands_as_this_install(folded, request));
+            .is_some_and(|folded| stands_as_this_install(folded, &JoiningInstall::from(request)));
         if !joined {
             return Err(authority_refused(JOIN_NOT_COUNTED));
         }
