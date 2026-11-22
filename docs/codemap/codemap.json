@@ -107617,13 +107617,23 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/workspace_roster/rooms/replica.rs",
      "purpose": "OF-522: a room's turn rows on the owner's other machines",
      "surface": {
       "crate-vis": 17
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/rooms/replica/claim_merge.rs",
+     "purpose": "A claim another machine of this vault carried, merged with this vault's claim of the same turn (FIX 1794…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -107797,13 +107807,23 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/workspace_roster/rooms/witness.rs",
      "purpose": "Claim-before-speaking guard inside the existing witness transaction",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/rooms/witness/claim_scrub.rs",
+     "purpose": "An erased actor's name out of the room claims that record it, here and in a carried copy (FIX 3520, FIX…",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -107814,6 +107834,16 @@
      "purpose": "An ordinary room's witness refuses a new turn that replies into a private thread…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/rooms/witness/regeneration_permit.rs",
+     "purpose": "A Retry's proven leave to answer a room's claimed turn again (FIX 3149), and the claim a Retry takes on a…",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -122570,7 +122600,7 @@
      "purpose": "Monthly CRDT window keys and their timestamp conversion"
     },
     "workspace_roster": {
-     "files": 152,
+     "files": 155,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -122584,9 +122614,9 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 276,
+   "over_bar": 274,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8544,
+   "source_files": 8547,
    "test_files": 2259
   },
   "oneiron-agent-runtime": {
