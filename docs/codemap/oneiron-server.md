@@ -780,7 +780,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/owner_routes/commitment_routes.rs` | src | s | 1 crate-vis | — | Owner doors for where commitment reminders go (OF-187) |
 | `src/api/owner_routes/concern_routes.rs` | src | m | 10 crate-vis | — | `/v1/owner/inbox/concern`: the owner reads one of the Coach's agent-health cards (OF-568) with its run-tree… |
 | `src/api/owner_routes/conflict_routes.rs` | src | m | 8 crate-vis | — | `/v1/owner/conflicts`: the contradictions the vault holds open, and the owner's settlement of one (OF-023… |
-| `src/api/owner_routes/connector_admission_routes.rs` | src | m | 15 crate-vis | — | `/v1/owner/connectors/register`, `/setup`, `/slate/accept` and `/qualify`: the owner's first admission of a… |
+| `src/api/owner_routes/connector_admission_routes.rs` | src | m | 16 crate-vis | — | `/v1/owner/connectors/register`, `/setup`, `/slate/accept` and `/qualify`: the owner's first admission of a… |
 | `src/api/owner_routes/connector_admission_routes/admitted.rs` | src | s | 4 crate-vis | — | `/refresh`, `/slate/staged/accept` and `/enabled`: the owner's doors on a connector already admitted |
 | `src/api/owner_routes/connector_admission_routes/charter.rs` | src | s | 9 crate-vis | — | `/charter`, `/charter/propose`, `/charter/approve` and `/charter/discard`: the owner's GOV-10 charter on a… |
 | `src/api/owner_routes/connector_admission_routes/qualify.rs` | src | m | 4 crate-vis | — | `/qualify` and `/attest`: the suite or the owner's attestation that activates a pending connector, or swaps… |
@@ -1281,10 +1281,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/config/skills/replay_judge.rs` | src | s | 1 struct · 4 fn · 4 crate-vis | ReplayJudgeWording | `[skills.replay_judge]`: the serve replay judge's wording (OF-495, FIX 1091) |
 | `src/config/tests.rs` | test | s | — | — | — |
 | `src/config/trusted_proxy.rs` | src | s | 1 struct · 1 fn · 1 crate-vis | TrustedProxy | `trusted_proxies`: the reverse proxies whose `X-Forwarded-For` entries the server believes when it keys a… |
-| `src/connector_admission_host.rs` | src | L | 17 crate-vis | — | The host half of a generic MCP catalog connector's first admission (OF-189): discovery at the endpoint… |
+| `src/connector_admission_host.rs` | src | L | 19 crate-vis | — | The host half of a generic MCP catalog connector's first admission (OF-189): discovery at the endpoint… |
+| `src/connector_admission_host/api_document.rs` | src | s | 1 crate-vis | — | The tools an installed connector lists, whichever way it was installed (L8-31 D6, D8): an MCP connector's… |
 | `src/connector_admission_host/issuer_rerun.rs` | src | s | 1 crate-vis | — | FIX 9304: the re-run an accepted issuer revision starts |
 | `src/connector_admission_host/reply_read.rs` | src | s | 1 crate-vis | — | Reading one admission reply body, JSON or an event stream, until the response that answers a request |
 | `src/connector_call_host.rs` | src | L | 1 struct · 1 fn · 1 mod · 23 crate-vis | ServedConnectorCallHost | The served [`ConnectorCallHost`] (ONE-2510): the generic connector call's transport, credential and reply… |
+| `src/connector_call_host/http_api.rs` | src | m | 3 crate-vis | — | One call of a tool translated from an API document (L8-31 D7): the request its stamped [`HttpOperation`] and… |
 | `src/connector_call_host/issuer_watch.rs` | src | s | 3 crate-vis | — | L5-11 (ARCH-0072 #drift; ARCH-0054 #auth "PRM 401 bootstrap"): automatic issuer change detection at a… |
 | `src/connector_call_host/json_wire.rs` | src | s | 6 crate-vis | — | The JSON a call writes and keeps: one POST of a JSON body, and a foreign value kept serialized until it goes… |
 | `src/connector_call_host/live_exchange.rs` | src | L | 21 crate-vis | — | The live half of the call host: the worker that owns an exchange once its send returned |
@@ -1303,6 +1305,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/connector_elicitation/owner.rs` | src | s | 4 crate-vis | — | The owner's ruling on an answer under `always ask` (FIX 3837, 3842): the ask raised or reused for exactly… |
 | `src/connector_elicitation/results.rs` | src | s | 6 crate-vis | — | Caller-bound live results exist only while an admitted consumer watches |
 | `src/connector_elicitation/status.rs` | src | s | 1 crate-vis | — | Live questions joined to an already-authorized native status snapshot |
+| `src/connector_translate/discovery.rs` | src | L | 1 crate-vis | — | Google Discovery documents as connector tools (L8-31 D5; canon agent-runtime `#translator-inputs`: "The… |
+| `src/connector_translate/mod.rs` | src | m | 5 crate-vis | — | API documents as connector tools (L8-31, canon agent-runtime `#translator-inputs`: "The generic translator… |
+| `src/connector_translate/openapi.rs` | src | L | 1 crate-vis | — | OpenAPI 3.0 and 3.1 documents as connector tools (L8-31 D4) |
 | `src/control_keys.rs` | src | s | 2 struct · 1 enum · 6 fn · 1 const · 1 mod | ControlKeys, KeyError, KeyRecord | Control-plane API keys: HMAC-SHA256 at rest, transactional uniqueness, and a database lookup on every… |
 | `src/control_keys/http.rs` | src | s | 1 fn | — | Optional private control-plane router; tenant bearer auth remains separate |
 | `src/control_keys/tests.rs` | test | s | — | — | — |
@@ -2348,7 +2353,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/config_referenced_file_admission.rs` | test | m | — | — | FIX [CONFIG-SIDE-FILES-MODE-UNCHECKED] and [CONFIG-SIDE-FILE-PARSE-ERRORS-PRINT-PARSER-MESSAGE]: a file a… |
 | `tests/config_refusal_origin.rs` | test | s | — | — | FIX [CONFIG-REFUSED-VALUE-NAMES-NO-FILE-LINE]: a value serve refuses after the parse names where it was set |
 | `tests/config_runner_seats_unknown_key.rs` | test | s | — | — | FIX [RUNNER-SEATS-UNKNOWN-KEY-SILENT]: a key under `[models.dreamer.runner_seats]` that no setting names is… |
+| `tests/connector_discovery_source.rs` | test | m | — | — | A Google API its Discovery document describes is a connector (L8-31 PR 3, canon agent-runtime… |
 | `tests/connector_issuer_prm_refusal.rs` | test | m | — | — | L5-11 (ARCH-0054 #auth "PRM 401 bootstrap"; ARCH-0072 #drift): the issuer watch a connector send runs at a… |
+| `tests/connector_openapi_source.rs` | test | m | — | — | An HTTP API its OpenAPI document describes is a connector (L8-31 PR 2, canon agent-runtime… |
 | `tests/connector_scope_signal_doors.rs` | test | m | — | — | Success paths of the connector scope revision doors (FIX [CONNECTORS-SCOPE-SIGNAL-NO-PUBLIC-GETTER])… |
 | `tests/connector_send_no_transport.rs` | test | m | — | — | FIX COMMITMENT-NO-TRANSPORT-NOT-STARTED-NO-TEST |
 | `tests/consent_revoke_grantee_renounce.rs` | test | m | — | — | A grantee may renounce its own standing consent grant (P-GATE-010, DEC-0006) |
