@@ -184,9 +184,9 @@ impl Memory<'_> {
         handle: &TaskAskHandle,
         word: &TaskAskWord,
     ) -> MemoryResult<(OwnerActImportance, &'static str)> {
-        let answerer = self
+        let _ = self
             .vault()
-            .owner_device_answerer(self.actor(), GateDecisionId::now())?;
+            .owner_device_answerer(self.actor(), GateDecisionId::now());
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
         self.verify_actor_write_in_txn(&txn)?;
         let group = self
@@ -199,7 +199,7 @@ impl Memory<'_> {
             &group,
             self.write_actor(),
             word,
-            Some(&answerer),
+            None,
             self.vault().store.clock.now_recorded_at(),
         )?;
         let vault = self.vault();
