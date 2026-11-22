@@ -27,6 +27,7 @@ use oneiron::claim::ScopedReadActorKey;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::test_doors::label_writers::embedded_owner;
+use oneiron::test_doors::room_facet_set::create_owner_project;
 use oneiron::test_doors::scoped_read_liveness::scoped_read_proof_live;
 use oneiron::workspace_roster::{
     ProjectProofVersion, ProjectRecord, ProjectResolution, ProjectRevisionHash, ProjectWriteProof,
@@ -268,16 +269,33 @@ fn signed_by(fixture: &Fixture, project: EntityId, paired: &Paired) -> ProjectRe
     body
 }
 
-/// A project the owner's door writes under the root project.
-fn owner_project(fixture: &Fixture) -> EntityId {
+/// A project born under the root project by the owner's signed birth, as
+/// main's rooted vault asks of every new project. `board_holder`, when given,
+/// holds a seat on its board and roster, so its slip may change the project.
+fn owner_project(fixture: &Fixture, board_holder: Option<EntityId>) -> EntityId {
     let vault = &fixture.vault;
     let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
     let root = vault.root_project().expect("the root project");
     let project = EntityId::now();
-    let record = ProjectRecord::new(project, Some(root), root, owner).expect("a project record");
-    vault
-        .put_project(project, &record, 2)
-        .expect("an owner-door project");
+    let mut record =
+        ProjectRecord::new(project, Some(root), root, owner).expect("a project record");
+    if let Some(holder) = board_holder {
+        record.board.push(holder.to_hex());
+        record.roster.push(holder.to_hex());
+    }
+    let signer = vault
+        .owner_project_signer(&fixture.issuer)
+        .expect("the owner's project signer");
+    create_owner_project(
+        vault,
+        &fixture.issuer,
+        &fixture.owner_proof,
+        &signer,
+        owner,
+        project,
+        &record,
+    )
+    .expect("an owner-door project");
     project
 }
 
@@ -285,16 +303,17 @@ fn owner_project(fixture: &Fixture) -> EntityId {
 fn a_deleted_holders_slip_signs_no_live_project_write() {
     let fixture = fixture();
     let vault = &fixture.vault;
-    let project = owner_project(&fixture);
     let gone = named_agent(&fixture, "deleted_holder_slip_project_gone");
     let kept = named_agent(&fixture, "deleted_holder_slip_project_kept");
+    let project = owner_project(&fixture, Some(kept));
     let gone_slip = minted_slip(&fixture, gone, 0x71);
     let kept_slip = minted_slip(&fixture, kept, 0x72);
 
     delete_to_shell(&fixture, gone);
 
-    // The put judges the fresh proof live; who may change the project is the
-    // read's judgment, so a live holder's proof lands here either way.
+    // The put judges the slip's holder before the project's authority: the
+    // deleted holder is refused for that alone, and the live holder, seated
+    // on the board, still changes the project.
     let refused = vault.put_project(project, &signed_by(&fixture, project, &gone_slip), 3);
     let error = refused.expect_err("a deleted holder's slip signed a live project write");
     assert!(
@@ -378,7 +397,7 @@ fn resolution_by(project: EntityId, paired: &Paired) -> ProjectResolution {
 fn the_fork_resolution_door_refuses_a_deleted_holders_slip() {
     let fixture = fixture();
     let vault = &fixture.vault;
-    let project = owner_project(&fixture);
+    let project = owner_project(&fixture, None);
     let gone = named_agent(&fixture, "deleted_holder_slip_resolver_gone");
     let kept = named_agent(&fixture, "deleted_holder_slip_resolver_kept");
     let gone_slip = minted_slip(&fixture, gone, 0x91);
