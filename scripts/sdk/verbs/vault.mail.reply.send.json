@@ -1,0 +1,15 @@
+{
+  "name": "vault.mail.reply.send",
+  "description": "Sends your current revision of a reply you drafted under the vault's send grant; with no grant that releases it, it waits for the mailbox owner's approval. Sending again replays the ledger, never sending twice.",
+  "input": "crate::mail_pack::MailReplySendRequest",
+  "output": "crate::mail_pack::MailReplyDraftView",
+  "call": "memory.mail_reply_send(&input)?",
+  "mcp_off_runtime": true,
+  "scope": "Write",
+  "act_class": "outbound_send",
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false
+}

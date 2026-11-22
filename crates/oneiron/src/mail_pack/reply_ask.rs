@@ -8,10 +8,11 @@
 //! thread and the message it answers: its birth names both, so its floor is
 //! theirs, and the vault's owner reads it only when he reads them
 //! (RECIPIENT-NOTICE-READ-BY-ANY-READER, owner half). It clears, seen and
-//! acked, when that revision is approved, discarded or drafted again. While
-//! the revision still waits, its taps approve it or discard it; each door
-//! judges the draft again when called, and the approve door takes the
-//! mailbox person's own proof, owner of the vault or not.
+//! acked, when that revision is approved, sent by its drafter (or left
+//! uncertain by that send), discarded or drafted again. While the revision
+//! still waits, its taps approve it or discard it; each door judges the
+//! draft again when called, and the approve door takes the mailbox person's
+//! own proof, owner of the vault or not.
 
 use super::reply::reply_awaits_in;
 use crate::entity_id::EntityId;
@@ -88,6 +89,32 @@ pub(super) fn raise_reply_ask_in_txn(
         vault.record_notification_in_txn(txn, &event)?;
     }
     Ok(())
+}
+
+/// Whether the Ask of revision `revision` of the draft `draft` stands, not
+/// yet acked by its person. A test door: built only under
+/// `--cfg oneiron_test_support`.
+///
+/// # Errors
+///
+/// Storage and codec failures.
+#[cfg(oneiron_test_support)]
+pub(crate) fn reply_ask_open(vault: &Vault, draft: &EntityId, revision: u64) -> Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    let id = notification_id(&ask_source(draft, revision))?;
+    let LiveEntityRow::Live { entity_type, body } =
+        live_entity_row_in_txn(&vault.store, &txn, &id)?
+    else {
+        return Ok(false);
+    };
+    if entity_type != ENTITY_TYPE_NOTIFICATION {
+        return Ok(false);
+    }
+    let body = decode_notification_body(&body)?;
+    Ok(body
+        .recipient
+        .as_ref()
+        .is_some_and(|person| body.acked_by.get(person) != Some(&true)))
 }
 
 /// Clears the Ask of revision `revision` of the draft `draft`, seen and

@@ -101,6 +101,9 @@ pub(crate) struct ExternalEffectGovernance {
     envelope_wait: Option<crate::outbound_grant::ChannelIdentityGrantRetention>,
     budget_target: Option<ExternalEffectBudgetTarget>,
     scoped_capability: Option<connector_key::ScopedCapabilityProvenance>,
+    /// PLAN L3-35: the agent send's check-in on the vault's send row; its
+    /// rows and answer go on the decision record.
+    send_check_in: Option<crate::check_in::SendCheckIn>,
 }
 
 /// The external-effect judgment before any decision id exists: what
@@ -134,6 +137,9 @@ pub(crate) struct ExternalEffectJudgment {
     envelope_wait: Option<crate::outbound_grant::ChannelIdentityGrantRetention>,
     budget_target: Option<ExternalEffectBudgetTarget>,
     scoped_capability: Option<connector_key::ScopedCapabilityProvenance>,
+    /// PLAN L3-35: the agent send's check-in on the vault's send row; its
+    /// rows and answer go on the decision record.
+    send_check_in: Option<crate::check_in::SendCheckIn>,
 }
 
 impl ExternalEffectJudgment {
@@ -154,6 +160,7 @@ impl ExternalEffectJudgment {
             envelope_wait: self.envelope_wait,
             budget_target: self.budget_target,
             scoped_capability: self.scoped_capability,
+            send_check_in: self.send_check_in,
         }
     }
 
