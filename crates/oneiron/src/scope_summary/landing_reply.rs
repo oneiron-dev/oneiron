@@ -11,6 +11,7 @@ use crate::registry::{
 };
 use crate::store::{ManifestDbs, Store};
 use crate::{EntityId, Error, Result};
+use oneiron_contracts::fingerprint::ContentHash;
 
 /// Verdict of [`validate_landing_reply_in`]: `Bound` admits the reply under
 /// its signed landing, `Waits` defers it until a later replay delivers the
@@ -19,6 +20,27 @@ use crate::{EntityId, Error, Result};
 pub(crate) enum LandingReplyVerdict {
     Bound,
     Waits,
+}
+
+/// Whether `text`, a landing reply's, is the words of `summary`, whose text
+/// is now `current`: that text, or the text the summary was generated with,
+/// which its landing replied with, since an edit or a sync merge of its
+/// document changes the one and not the other (review round 2 of #9931). A
+/// summary with no document keeps its minted text.
+fn reply_text_is_summarys(
+    dbs: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    summary: &EntityId,
+    text: &str,
+    current: &str,
+) -> Result<bool> {
+    if text == current {
+        return Ok(true);
+    }
+    Ok(
+        crate::entity_doc::summary_generated_text_hash_in(dbs, txn, summary)?
+            .is_some_and(|generated| ContentHash::of(text.as_bytes()).as_bytes() == &generated),
+    )
 }
 
 /// Binds a landing reply to a stored scope summary and a header on `target`
@@ -57,7 +79,9 @@ pub(crate) fn validate_landing_reply_in(
         .scope
         .as_ref()
         .ok_or_else(|| invalid("landing reply requires a conversation scope"))?;
-    if room.is_some_and(|room| room != scope.conversation) || text != body.text {
+    if room.is_some_and(|room| room != scope.conversation)
+        || !reply_text_is_summarys(dbs, txn, summary, text, &body.text)?
+    {
         return Err(invalid("landing reply differs from its summary"));
     }
     // The target's room: absent or not yet placed waits for a later replay;

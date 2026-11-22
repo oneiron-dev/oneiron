@@ -124,6 +124,7 @@ fn erase_edit_as(
                 receipt_id: None,
                 sweep_key: None,
                 turn_program_details: Vec::new(),
+                version_release: false,
             }
         };
         Ok(Some(ConfirmedEraseOutcome::Completed(outcome)))

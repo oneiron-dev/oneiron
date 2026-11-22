@@ -4,7 +4,7 @@ use super::*;
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::error::ArtifactError;
 use crate::note::{
-    NoteProgramEdit as NoteEdit, NoteProgramEditOutcome as NoteEditOutcome, NoteVerdict,
+    NoteActor, NoteProgramEdit as NoteEdit, NoteProgramEditOutcome as NoteEditOutcome, NoteVerdict,
 };
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
@@ -229,6 +229,9 @@ fn canonical_snapshot_writer_refuses_before_creating_private_or_unstable_artifac
     Ok(())
 }
 
+/// An edited non-NOTE entity document recovers into a fresh vault with its
+/// text, and a pending fork of it is carried by value: the capture holds the
+/// fork's output, and recovery lands the fork without touching live text.
 #[cfg(all(unix, feature = "sync"))]
 #[test]
 fn canonical_writer_recovers_edited_non_note_entity_document_in_fresh_vault() -> Result<()> {
@@ -320,9 +323,9 @@ fn canonical_writer_recovers_edited_non_note_entity_document_in_fresh_vault() ->
         Some(b"initial text and later".to_vec())
     );
 
-    // A pending fork carries a causal merge base, not just current text.
-    // Refuse a value-only artifact rather than drop that workflow.
-    source.open_text_proposal(
+    // A pending fork carries its causal base and its output by value (#1561):
+    // capture carries it instead of refusing the artifact.
+    let bundle = source.open_text_proposal(
         &EntityId::now(),
         &[crate::entity_doc::ForkRequest {
             entity: asset,
@@ -334,9 +337,46 @@ fn canonical_writer_recovers_edited_non_note_entity_document_in_fresh_vault() ->
         &DocAuthorization::ProposeOnly,
         12,
     )?;
-    let unsupported = dir.path().join("unsupported.canonical");
-    assert!(write_canonical_window_snapshot(&source, "2026-09", &window, &unsupported).is_err());
-    assert!(!unsupported.exists());
+    assert_eq!(bundle.pending().count(), 1);
+    let fork = EntityId::from_hex(&bundle.forks[0].fork)?;
+    assert_eq!(
+        source.entity_text_fork_text(&fork)?,
+        Some("pending replacement".to_owned())
+    );
+    let supported = dir.path().join("supported.canonical");
+    write_canonical_window_snapshot(&source, "2026-09", &window, &supported)?;
+    let pending_snapshot = CanonicalSnapshot::decode(&fs::read(&supported)?)?;
+    let history = pending_snapshot.entity_documents[0]
+        .history
+        .as_ref()
+        .expect("a pending fork is carried by value");
+    assert_eq!(history.forks.len(), 1);
+    assert_eq!(
+        history.forks[0].output.as_deref(),
+        Some("pending replacement")
+    );
+
+    // The carried fork output lands in a fresh vault; the live text is
+    // untouched and a recapture reproduces the carried history.
+    let forked_dir = tempfile::tempdir()?;
+    let forked = Vault::open(forked_dir.path(), VaultConfig::default())?;
+    let forked_recovery = recover_vault_window(
+        &forked,
+        &crate::sync::bridge::Materializer::new(),
+        forked_dir.path().join("manifest"),
+        &pending_snapshot,
+        RecoveryBudget::default(),
+    )?;
+    assert_eq!(forked_recovery.tier, RecoveryTier::FullRebuild);
+    assert_eq!(forked.entity_text(&asset)?, "initial text and later");
+    assert_eq!(
+        forked.entity_text_fork_text(&fork)?,
+        Some("pending replacement".to_owned())
+    );
+    assert_eq!(
+        capture_canonical_window(&forked, "2026-09", &forked_recovery.window)?.entity_documents,
+        pending_snapshot.entity_documents
+    );
     Ok(())
 }
 
@@ -364,6 +404,7 @@ fn world_month_canonical_snapshot_round_trips_and_rebuilds() -> Result<()> {
         crate::claim::ClaimLifecycleStatus::Active,
     )
     .unwrap();
+    crate::test_util::stamp_vault_default_facet(&vault, &mut body);
     body.world = Some(world);
     vault.put_claim(&claim, &body, occurred, at)?;
     let window = format!("2026-02@{}", world.to_hex());
@@ -419,6 +460,7 @@ fn world_month_canonical_snapshot_round_trips_and_rebuilds() -> Result<()> {
 fn soft_deleted_world_claim_canonical_recovery_keeps_shell_edge_and_address() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), VaultConfig::device())?;
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let world = EntityId::now();
     let person = EntityId::now();
     let claim = EntityId::now();
@@ -484,6 +526,7 @@ fn soft_deleted_world_claim_canonical_recovery_keeps_shell_edge_and_address() ->
     {
         let peer_dir = tempfile::tempdir()?;
         let peer = Vault::open(peer_dir.path(), VaultConfig::device())?;
+        peer.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
         peer.put_entity(
             &world,
             crate::registry::ENTITY_TYPE_WORLD,
@@ -540,8 +583,12 @@ fn soft_deleted_world_claim_canonical_recovery_keeps_shell_edge_and_address() ->
     Ok(())
 }
 
+/// The ladder rebuilds the window first, then quarantines a bad manifest;
+/// every obligation is admitted no matter the page size (Rule 5, FIX 8821).
+/// Byte pressure still refuses: a budget smaller than the snapshot stops the
+/// recovery before anything is quarantined or moved.
 #[test]
-fn recovery_ladder_quarantines_before_rebuild_and_never_drops_pressure() -> Result<()> {
+fn recovery_ladder_admits_every_obligation_and_refuses_byte_pressure() -> Result<()> {
     let fixture = fixture()?;
     let snapshot = &fixture.snapshot;
     let manifest = RecoveryManifest::from_snapshot(snapshot)?;
@@ -561,18 +608,39 @@ fn recovery_ladder_quarantines_before_rebuild_and_never_drops_pressure() -> Resu
         assess_recovery(Some(&damaged), snapshot)?,
         RecoveryTier::FullRebuild
     );
+    // Zero obligations is a page size, not a refusal: the recovery is
+    // admitted whole then the bad manifest is quarantined.
     let path = fixture._dir.path().join("manifest");
     fs::write(&path, b"bad manifest")?;
-    let error = match prepare_recovery(
+    let prepared = prepare_recovery(
         &path,
         snapshot,
         RecoveryBudget {
             max_bytes: usize::MAX,
             max_obligations: 0,
         },
+    )?;
+    assert_eq!(prepared.tier, RecoveryTier::FullRebuild);
+    assert_eq!(prepared.obligations.len(), manifest.chunks.len());
+    assert_eq!(
+        fs::read(prepared.quarantine_path.as_ref().unwrap())?,
+        b"bad manifest"
+    );
+    assert!(!path.exists());
+    assert_eq!(prepared.repaired_manifest(), &manifest);
+
+    // Byte pressure still refuses, before any quarantine or move.
+    fs::write(&path, b"bad manifest")?;
+    let error = match prepare_recovery(
+        &path,
+        snapshot,
+        RecoveryBudget {
+            max_bytes: 0,
+            max_obligations: 0,
+        },
     ) {
         Err(error) => error,
-        Ok(_) => panic!("pressure must refuse all work"),
+        Ok(_) => panic!("byte pressure must refuse the recovery"),
     };
     assert!(matches!(
         error,
@@ -582,14 +650,6 @@ fn recovery_ladder_quarantines_before_rebuild_and_never_drops_pressure() -> Resu
     assert!(error.is_retryable());
     assert_eq!(fs::read(&path)?, b"bad manifest");
     assert!(invalid_artifact_siblings(&path).is_empty());
-    let prepared = prepare_recovery(&path, snapshot, RecoveryBudget::default())?;
-    assert_eq!(prepared.tier, RecoveryTier::FullRebuild);
-    assert_eq!(
-        fs::read(prepared.quarantine_path.as_ref().unwrap())?,
-        b"bad manifest"
-    );
-    assert!(!path.exists());
-    assert_eq!(prepared.repaired_manifest(), &manifest);
     Ok(())
 }
 
@@ -658,7 +718,10 @@ fn redaction_refuses_title_copy_until_scrubbed_and_restores_safe_title() -> Resu
         .iter_mut()
         .find(|row| row.entity_id == *fixture.note.as_bytes() && row.head == *head.as_bytes())
         .unwrap();
-    live.title = Some("🦀 secret".into());
+    live.metadata.insert(
+        "title".to_owned(),
+        crate::entity_doc::encode_metadata_value(&rmpv::Value::from("🦀 secret"))?,
+    );
     assert!(copied.validate().is_ok());
     assert!(
         copied
@@ -670,7 +733,11 @@ fn redaction_refuses_title_copy_until_scrubbed_and_restores_safe_title() -> Resu
         .iter_mut()
         .find(|row| row.entity_id == *fixture.note.as_bytes() && row.head == *head.as_bytes())
         .unwrap()
-        .title = Some("Safe title".into());
+        .metadata
+        .insert(
+            "title".to_owned(),
+            crate::entity_doc::encode_metadata_value(&rmpv::Value::from("Safe title"))?,
+        );
     let redacted = copied.excluding_document_span(fixture.note, head, 7, 15, quote)?;
     let encoded = redacted.encode()?;
     assert!(
@@ -679,14 +746,16 @@ fn redaction_refuses_title_copy_until_scrubbed_and_restores_safe_title() -> Resu
             .any(|part| part == "🦀 secret".as_bytes())
     );
     let decoded = CanonicalSnapshot::decode(&encoded)?;
+    let title = decoded
+        .doc_snapshots
+        .iter()
+        .find(|row| row.head == *head.as_bytes())
+        .unwrap()
+        .metadata
+        .get("title")
+        .unwrap();
     assert_eq!(
-        decoded
-            .doc_snapshots
-            .iter()
-            .find(|row| row.head == *head.as_bytes())
-            .unwrap()
-            .title
-            .as_deref(),
+        crate::entity_doc::decode_metadata_value(title)?.as_str(),
         Some("Safe title")
     );
     let target_dir = tempfile::tempdir()?;
@@ -748,7 +817,13 @@ fn standard_forward_rebuild_restores_documents_shells_graph_and_indexes() -> Res
         Some("Recovered title")
     );
     // The recovered authority reserves the title in its own writer.
-    let owner = fixture.vault.read_note(&fixture.note)?.unwrap().author_ref;
+    let owner = fixture
+        .vault
+        .read_note(&fixture.note)?
+        .unwrap()
+        .author_ref
+        .id()
+        .unwrap();
     let second = target
         .create_note(
             "research",
@@ -1081,11 +1156,15 @@ fn canonical_workflows_bind_membership_and_refuse_partial_window_bundles() -> Re
         .find(|row| row.id == bundle.id)
         .unwrap()
         .waiting[0]
-        .actor = EntityId::now();
+        .actor = NoteActor::Actor(EntityId::now());
     assert!(bad.validate().is_err());
     Ok(())
 }
 
+/// A pending merge proposal survives reconstruction, and stale fork,
+/// proposal, receipt and proposal-document rows converge to the snapshot
+/// inside the admitted scope. The inline NOTE head document is rebuilt from
+/// the snapshot on the first recovery, never left absent.
 #[cfg(feature = "sync")]
 #[test]
 fn pending_merge_survives_reconstruction_and_stale_rows_converge() -> Result<()> {
@@ -1188,6 +1267,16 @@ fn pending_merge_survives_reconstruction_and_stale_rows_converge() -> Result<()>
         )
     };
     let first = recover()?;
+    // The first recovery already rebuilds the inline NOTE head document
+    // from the snapshot (FIX 7783): absence of a stored document rebuilds.
+    assert_eq!(target.note_text(inline)?, "inline text");
+    assert_eq!(
+        target
+            .note_program_document(inline)?
+            .expect("the first recovery rebuilds the inline head")
+            .text(),
+        "inline text"
+    );
     let target_actor = WriteActor::new(
         target.ensure_embedded_owner_actor().unwrap(),
         EdgeActorClass::Human,
@@ -1254,7 +1343,13 @@ fn pending_merge_survives_reconstruction_and_stale_rows_converge() -> Result<()>
         )
     })?;
     let repaired = recover()?;
-    assert!(target.note_program_document(inline)?.is_none());
+    assert_eq!(
+        target
+            .note_program_document(inline)?
+            .expect("stale rows never unbuild the inline head")
+            .text(),
+        "inline text"
+    );
     assert_eq!(target.note_text(inline)?, "inline text");
     assert_eq!(
         capture_canonical_window(&target, "2026-09", &repaired.window)?,
@@ -1362,7 +1457,7 @@ fn rejected_fork_without_document_recovers_and_divergent_workflow_fails_prefligh
         .find(|row| row.fork == fork)
         .unwrap()
         .clone();
-    divergent.actor = EntityId::now();
+    divergent.actor = NoteActor::Actor(EntityId::now());
     target.with_write_txn(|txn| {
         target
             .store
@@ -1391,7 +1486,7 @@ fn rejected_fork_without_document_recovers_and_divergent_workflow_fails_prefligh
 fn canonical_adapter_recovery_binds_merge_target_to_displayed_proposal() -> Result<()> {
     let fixture = fixture()?;
     let core = crate::note::decode_note_body(&fixture.vault.get(&fixture.note)?.unwrap())?;
-    let actor = WriteActor::new(core.author_ref, EdgeActorClass::Human);
+    let actor = WriteActor::new(core.author_ref.id().unwrap(), EdgeActorClass::Human);
     let doc = fixture.vault.note_program_document(fixture.note)?.unwrap();
     let fork = fixture
         .vault
@@ -1480,6 +1575,7 @@ fn canonical_roundtrip_keeps_suppression_record_over_quarantined_tombstone() -> 
                 ENTITY_TYPE_RECEIPT_RECORD,
                 TimeRange { start: at, end: at },
                 at,
+                None,
                 &body,
             )
             .apply(txn)
@@ -1680,6 +1776,7 @@ fn a_capture_without_sync_carries_the_refusal_of_a_deleted_fact_never_admitted()
         assigned_ref: None,
         actor_generation: None,
         assigned_generation: None,
+        answered_heads: None,
         occurred_at: LEARNED_AT,
     };
     let window = LoroDoc::new();
@@ -1718,6 +1815,7 @@ fn a_capture_without_sync_carries_the_refusal_of_a_deleted_fact_never_admitted()
     for stamp in [at.start, at.end, LEARNED_AT] {
         blob.extend_from_slice(&stamp.to_be_bytes());
     }
+    blob.extend_from_slice(&0u64.to_be_bytes());
     blob.extend_from_slice(&body);
     entities
         .insert(&fact.to_hex(), &blob[..])

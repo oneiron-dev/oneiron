@@ -7,7 +7,12 @@
 //! credential is judged on the world the read names and on the exact words
 //! behind each recorded source (FIX 11174, 11766), so a source it keeps out
 //! keeps the profile out. A recipient or credential judgement that cannot be
-//! read leaves the read as it was before this door. A row of an earlier
+//! read leaves the read as it was before this door. The stored row's source
+//! audience, its own binding and that of each claim it copies, is asked for
+//! the reader's authenticated person as every scoped read asks it, since the
+//! sealed state is read past the scoped row gate (REVIEW-9906): a profile of
+//! a claim learned from a private mailbox reads only to that mailbox's
+//! readers, and a judgement of it that cannot be read keeps the profile out. A row of an earlier
 //! schema, whose sources name no exact words, reads as no profile and says
 //! nothing of itself (FIX 11766, Engine B): no payload, source hints or
 //! regeneration hint, and no payload of it is decoded.
@@ -43,9 +48,11 @@ pub enum CompanionProfileAdmission {
     /// owner's recipient choice keeps the world the read names, or a world
     /// one of its sources lies in, from where the read goes, the reader's
     /// own credential keeps that world or the exact words of a source out,
-    /// the grant's own delegated bounds leave this read outside it, or the
-    /// stored row is of an earlier schema whose sources name no exact words
-    /// (FIX 11766).
+    /// the profile's source audience does not read to the reader, the
+    /// grant's own delegated bounds leave this read outside it, the profile
+    /// is kept from use (FIX COMPANION-USE-LIMITED-PROFILE-READS-AS-MISSING),
+    /// or the stored row is of an earlier schema whose sources name no exact
+    /// words (FIX 11766).
     Withheld { grant: EntityId },
 }
 
@@ -64,9 +71,15 @@ impl Vault {
     /// `principal_ref`'s read of the profile at `key` toward `destination`,
     /// judged in one snapshot: every live grant is tried, and the first that
     /// admits the read, its delegated bounds included, admits it. A read
-    /// only a grant's bounds keep out is withheld, not refused. `reader` is
-    /// the read lane of the request's authenticated caller, when one was
-    /// built; `selected` is the caller's source set for the freshness check.
+    /// only a grant's bounds keep out is withheld, not refused. So is a
+    /// profile kept from use, by its own C6 limit, a cooperative review
+    /// restriction, or as content about a PERSON a kept privacy erase limits
+    /// (FIX COMPANION-USE-LIMITED-PROFILE-READS-AS-MISSING; Engine ANSWER
+    /// COMPANION-USE-LIMITED-PROFILE-ANSWER = A): no regeneration makes it
+    /// readable while the limit stands, so it answers no next step, where a
+    /// missing profile answers a refresh. `reader` is the read lane of the
+    /// request's authenticated caller, when one was built; `selected` is the
+    /// caller's source set for the freshness check.
     pub fn companion_profile_snapshot_admitted(
         &self,
         principal_ref: &EntityId,
@@ -82,9 +95,11 @@ impl Vault {
             GrantMatch::Bounded(grant) => return Ok(CompanionProfileAdmission::Withheld { grant }),
             GrantMatch::None => return Ok(CompanionProfileAdmission::Denied),
         };
-        let Some(state) =
-            self.psych_profile_sealed_state_in_txn(&txn, &psych_profile_entity_id(key), selected)?
-        else {
+        let id = psych_profile_entity_id(key);
+        if crate::store::legal_hold::use_limit_in_txn(&self.store, &txn, &id)?.is_some() {
+            return Ok(CompanionProfileAdmission::Withheld { grant });
+        }
+        let Some(state) = self.psych_profile_sealed_state_in_txn(&txn, &id, selected)? else {
             return Ok(CompanionProfileAdmission::Withheld { grant });
         };
         if self.companion_profile_withheld_in(&txn, key, &state, destination, reader) {
@@ -149,10 +164,12 @@ impl Vault {
     }
 
     /// Whether the profile at `key`, as `state` stands, is kept from this
-    /// read: by the owner's recipient choice toward `destination`, or by
+    /// read: by the owner's recipient choice toward `destination`, by
     /// `reader`'s own credential (FIX 11174, 11766), which keeps it out only
-    /// on a positive exclusion; a judgement it could not read keeps today's
-    /// response. The snapshot's recorded sources are judged as
+    /// on a positive exclusion (a judgement it could not read keeps today's
+    /// response), or by the stored row's source audience
+    /// ([`Self::companion_profile_audience_withheld_in`]). The snapshot's
+    /// recorded sources are judged as
     /// [`COMPANION_PROFILE_WITHHOLDS_MIXED_SOURCES`] says.
     fn companion_profile_withheld_in(
         &self,
@@ -174,6 +191,50 @@ impl Vault {
                 reader.companion_profile_excluded_in(txn, key.world, sources)
                     == CompanionProfileSourceJudgement::Excluded
             })
+            || self.companion_profile_audience_withheld_in(txn, key, reader)
+    }
+
+    /// Whether the stored profile at `key` does not read to `reader`'s
+    /// authenticated person under the source audience (REVIEW-9906, FIX-LIST
+    /// SOURCE-AUDIENCE-WALK-MISSES-PSYCH-PROFILE-SOURCES): its own binding,
+    /// and that of each CLAIM it copies and of what each was learned from,
+    /// judged by [`crate::source_audience::readable_with_read_in`], the
+    /// conjunct every scoped read's private-thread check meets (owner
+    /// MAIL-SHARE = A). A read with no lane, or one that authenticates no
+    /// person, reads no bound lineage, as a scoped read does (FIX 2951). A
+    /// row gone reads as nothing restricted; a judgement that cannot be read
+    /// keeps the profile out.
+    fn companion_profile_audience_withheld_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        key: &PsychProfileKey,
+        reader: Option<&ScopedRead<'_>>,
+    ) -> bool {
+        let viewers: Vec<EntityId> = reader
+            .and_then(|reader| reader.actor_key().authenticated_person())
+            .into_iter()
+            .collect();
+        let id = psych_profile_entity_id(key);
+        let dbs = self.store.read();
+        let readable = crate::ports::EntityStoreRead::port_entity_raw(&dbs, txn, &id).and_then(
+            |raw| match raw {
+                Some(raw) => crate::source_audience::readable_with_read_in(
+                    self, &dbs, txn, id, &raw, &viewers,
+                ),
+                None => Ok(true),
+            },
+        );
+        match readable {
+            Ok(readable) => !readable,
+            Err(error) => {
+                tracing::warn!(
+                    error_kind = ?error.kind(),
+                    "a companion profile's source audience could not be read; the profile is \
+                     withheld"
+                );
+                true
+            }
+        }
     }
 
     /// Whether the owner's recipient choice keeps the profile at `key` from

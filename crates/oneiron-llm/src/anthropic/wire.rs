@@ -34,7 +34,7 @@ pub fn build_anthropic_messages_request(
     validate_capabilities(catalog, request, &provider_options, stream)?;
 
     let mut body = JsonMap::new();
-    for (key, value) in &request.params {
+    for (key, value) in request.wire_params()? {
         body.insert(key.clone(), value.clone());
     }
     for (key, value) in provider_options.to_wire_fields() {

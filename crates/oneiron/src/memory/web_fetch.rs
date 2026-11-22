@@ -1,6 +1,7 @@
 //! Actor-bound web acquisition and import. Network work never holds a writer.
 use crate::memory::web_acquisition::{
-    CrawlResult, FetchResult, WebAcquisition, WebCrawlRequest, WebFetchError, WebFetchRequest,
+    CrawlResult, FetchResult, HostedEgressRefusal, WebAcquisition, WebCrawlRequest, WebFetchError,
+    WebFetchRequest,
 };
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::provenance::birth::RowBirth;
@@ -270,21 +271,18 @@ fn fetch_error(error: WebFetchError) -> MemoryError {
         | WebFetchError::CredentialsInUrl { .. }
         | WebFetchError::InvalidPageBudget) => MemoryError::bad_request(error.to_string()),
         // A managed node's typed refusal (SCAN C447): its message names
-        // `hosted_infrastructure`.
+        // `hosted_infrastructure`, and its suggestion the reason, tenant
+        // isolation, and the self-host route (census L9-61).
         error @ WebFetchError::HostedInfrastructure { .. } => MemoryError::new(
             crate::memory::MEMORY_CODE_FORBIDDEN,
             error.to_string(),
-            &[
-                "A hosted node never fetches the infrastructure it runs on; a self-hosted node fetches this address.",
-            ],
+            &[HostedEgressRefusal::Infrastructure.suggestion()],
         ),
         // Its message names `hosted_private_network` (FIX 7657).
         error @ WebFetchError::HostedPrivateNetwork { .. } => MemoryError::new(
             crate::memory::MEMORY_CODE_FORBIDDEN,
             error.to_string(),
-            &[
-                "A hosted node refuses private-network addresses (RFC1918, CGNAT 100.64.0.0/10, IPv6 ULA fc00::/7) outside the origins its hosting operator allows; a self-hosted node fetches this address, or the hosting operator can allow its named private origin.",
-            ],
+            &[HostedEgressRefusal::PrivateNetwork.suggestion()],
         ),
         // A same-site crawl records a cross-site redirect per page; only a
         // non-seed page meets it, so it reaches here from no single fetch.

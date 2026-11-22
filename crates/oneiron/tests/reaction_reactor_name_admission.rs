@@ -75,6 +75,7 @@ impl ExtractionEncoder for Names {
             speaker_links: Vec::new(),
             mood_parts: Vec::new(),
             stack_sha16: None,
+            relations: None,
         };
         EncoderAttempt {
             execution: None,
@@ -186,6 +187,7 @@ fn fixture() -> Fixture {
             conversation_ref: EntityId::now().to_hex(),
             turn_ref: Some(turn.to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![hidden],
             occurred_at: 10,
             assertions: WitnessAssertions::default(),
@@ -241,6 +243,7 @@ fn fixture() -> Fixture {
             conversation_ref: room.to_hex(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             messages: vec![open],
             occurred_at: 20,
             assertions: WitnessAssertions::default(),

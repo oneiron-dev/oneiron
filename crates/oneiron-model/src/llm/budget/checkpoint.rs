@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 
 use super::guard::BudgetGuard;
-use super::ledger::{BudgetRowTally, LeaseState};
+use super::ledger::BudgetRowTally;
 use super::policy::{BudgetPolicyRow, BudgetPolicyTable};
 use super::state::BudgetState;
 use super::types::{BudgetExhaustionPolicy, BudgetThreshold};
@@ -133,11 +133,8 @@ impl BudgetGuard {
 
 /// The checkpoint of a meter whose lock the caller holds.
 fn checkpoint_locked(state: &BudgetState) -> Result<BudgetCheckpoint, BudgetDenied> {
-    if state
-        .leases
-        .values()
-        .any(|lease| lease.state == LeaseState::Open)
-    {
+    // The meter's table holds only open leases.
+    if !state.leases.is_empty() {
         return Err(BudgetDenied::LeaseInvalid);
     }
     let rows = state

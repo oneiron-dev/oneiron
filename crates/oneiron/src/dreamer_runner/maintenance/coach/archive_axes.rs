@@ -6,9 +6,16 @@ use std::sync::Arc;
 
 use rmpv::Value;
 
-use super::{COACH_ARCHIVE_AXES_FACET, COACH_HOST_QUEUE_KIND, invalid};
+use super::{COACH_HOST_QUEUE_KIND, invalid};
 use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerAttemptPayload, DreamerRunnerStore};
 use crate::{EntityId, Result, Vault};
+
+/// One output-archive axes request (ARM05 P2), queued for the host by
+/// `vault.research.archive.propose_axes`. The host reads it through
+/// [`Vault::coach_archive_axes_target`] and answers it through
+/// [`Vault::run_coach_archive_axes`]: the Coach's recipe on its model seat,
+/// else clusters on the pinned embedder. Input: `{request: <32 hex>}`.
+pub const COACH_ARCHIVE_AXES_FACET: &str = "coach.archive_axes";
 
 /// The job input's one key: the request id, as hex.
 const INPUT_KEY: &str = "request";

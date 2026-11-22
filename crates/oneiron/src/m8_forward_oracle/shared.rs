@@ -12,6 +12,7 @@ use crate::outbound_intent_ledger::BudgetClass;
 pub(super) fn open_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), VaultConfig::device()).expect("open vault");
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     (dir, vault)
 }
 
@@ -205,5 +206,6 @@ pub(super) fn oracle_prepared_effect(
         admission_ceiling: None,
         co_actor: None,
         exclusive_route: None,
+        idempotency_attempt: None,
     }
 }
