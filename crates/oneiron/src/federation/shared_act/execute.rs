@@ -2,7 +2,8 @@
 
 use super::membership::{MemberMove, UnsignedExecution};
 use super::*;
-use crate::authority::{MembershipExecutionCause, MembershipHandover};
+use crate::authority::{MembershipExecutionCause, MembershipHandover, OwnerProofGround};
+use crate::world_keys::{OwnerActImportance, owner_presence_reasons};
 
 impl Vault {
     /// Execute a completed `delete_vault`, `add_owner`, `transfer_ownership` or
@@ -37,8 +38,35 @@ impl Vault {
         act_id: &str,
         slips: Option<&HostSlipIssuer>,
     ) -> Result<SharedActExecution> {
-        let mut export = self
-            .removal_export(executor, act_id)?
+        self.execute_completed_shared_act_with_owner_key_revokes(executor, act_id, slips, &[])
+    }
+
+    /// The run [`Self::execute_completed_shared_act`] describes, with a
+    /// device's `owner_key_revokes` landed in its writer before the move
+    /// (row HOSTED-OWNER-MOVE-TWO-PHASE; none for a plain run).
+    pub(super) fn execute_shared_act_in_writer(
+        &self,
+        executor: &AuthenticatedOwner,
+        act_id: &str,
+        slips: Option<&HostSlipIssuer>,
+        owner_key_revokes: &[Vec<u8>],
+    ) -> Result<SharedActExecution> {
+        let (kind, export_source) = self.removal_export(executor, act_id)?;
+        // Only an ownership move can end a member's owner keys, so only it
+        // asks. The confirm stands before the archive is built and while the
+        // door holds nothing: a declined confirm builds nothing, and the
+        // prompt can block.
+        let ground = match kind {
+            Some(SharedActKind::TransferOwnership | SharedActKind::RemoveOwner) => {
+                let witness = self.owner_presence(
+                    OwnerActImportance::Important,
+                    owner_presence_reasons::EXECUTE_SHARED_ACT,
+                )?;
+                Some(OwnerProofGround::witnessed(&witness))
+            }
+            _ => None,
+        };
+        let mut export = export_source
             .map(|(member, records)| {
                 let ids = records.iter().map(|record| record.id).collect();
                 // Its diary reads are the removed owner's, who receives it.
@@ -112,6 +140,8 @@ impl Vault {
         let slips = slips.or(own_issuer.as_ref());
         let now = crate::ports::recorded_at_in_txn(&self.store, &mut txn)?;
         let owners = self.act_executors_in_txn(&txn, &act, actor, now)?;
+        // Read before the move, which may end the executor's ownership.
+        let owner_authored = self.membership_owner_write_in_txn(&txn, executor);
         let receipt_id = self.store.clock.entity_id()?.to_hex();
         let request_id = self.store.clock.entity_id()?.to_hex();
         self.claim_completed_authority_act_in_txn(
@@ -120,11 +150,32 @@ impl Vault {
             request_id.clone(),
             Some(receipt_id.clone()),
         )?;
+        // A device's confirm of a move that ends an Owner's keys lands its
+        // owner-key revokes here, before the move, which then finds none
+        // left to revoke (row HOSTED-OWNER-MOVE-TWO-PHASE).
+        if !owner_key_revokes.is_empty() {
+            let member =
+                super::owner_key_confirm::owner_standing_ends(&act)?.ok_or_else(invalid)?;
+            let root = slips.map(HostSlipIssuer::public_key);
+            self.land_owner_key_move_in_txn(
+                &mut txn,
+                actor,
+                member,
+                root.as_ref(),
+                owner_key_revokes,
+            )?;
+        }
         // The grant ids an Owner handover wrote and retired, for its signed
         // entry (FIX 5765), and the signed-mint Grants it deleted with no
         // signed withdrawal (FIX 12335).
         let mut handover_ids = (Vec::new(), Vec::new());
         let mut unsigned_withdrawals = Vec::new();
+        // An `add_owner` act that names a workspace seats that workspace's
+        // house mind, not a person (FIX HOUSE-OWNER-ROLE-VIA-ADD-OWNER).
+        let house_seat = kind == SharedActKind::AddOwner
+            && decode::<AddOwnerPlan>(&act.payload)?
+                .house_workspace
+                .is_some();
         let effect = match kind {
             SharedActKind::DeleteVault => {
                 let plan: DeleteVaultPlan = decode(&act.payload)?;
@@ -150,6 +201,9 @@ impl Vault {
                     detach: None,
                     notify: BTreeSet::new(),
                 }
+            }
+            SharedActKind::AddOwner if house_seat => {
+                self.house_owner_seat_effect_in_txn(&mut txn, &act, now)?
             }
             SharedActKind::AddOwner => {
                 let plan: AddOwnerPlan = decode(&act.payload)?;
@@ -184,8 +238,10 @@ impl Vault {
                 if plan.v != PLAN_VERSION || plan.from != act.starter {
                     return Err(invalid());
                 }
+                let ground = ground.as_ref().ok_or_else(invalid)?;
                 let moved = self.hand_over_in_txn(
                     &mut txn,
+                    ground,
                     act.vault_id,
                     &owners,
                     from,
@@ -225,8 +281,10 @@ impl Vault {
                 {
                     return Err(invalid());
                 }
+                let ground = ground.as_ref().ok_or_else(invalid)?;
                 let moved = self.hand_over_in_txn(
                     &mut txn,
+                    ground,
                     act.vault_id,
                     &owners,
                     target,
@@ -328,7 +386,7 @@ impl Vault {
                             &mut txn,
                             act.vault_id,
                             &receipt_id,
-                            actor,
+                            (actor, owner_authored.as_ref()),
                             now,
                             UnsignedExecution {
                                 cause: execution_cause,

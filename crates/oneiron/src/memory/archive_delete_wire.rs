@@ -25,7 +25,6 @@
 
 use super::archive_purge::{ArchiveConfirmItem, ArchiveDeleteResults, ArchiveExpectation};
 use super::entity_delete::spends_no_check_in;
-use super::support::verify_deletion_authority_in_txn;
 use super::{
     ArchivePurgeEntry, DeleteReceipt, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
     MEMORY_CODE_OWNER_BINDING_REQUIRED, Memory, MemoryError, MemoryResult,
@@ -190,7 +189,7 @@ fn owner_door_serves(memory: &Memory<'_>) -> MemoryResult<bool> {
         .env
         .read_txn()
         .map_err(crate::Error::from)?;
-    match verify_deletion_authority_in_txn(memory.vault, &txn, memory.actor, memory.actor_class) {
+    match memory.verify_own_deletion_authority_in(&txn) {
         Ok(()) => Ok(true),
         Err(error)
             if error.code == MEMORY_CODE_OWNER_BINDING_REQUIRED

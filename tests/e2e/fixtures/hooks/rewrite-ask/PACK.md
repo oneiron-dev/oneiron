@@ -1,5 +1,5 @@
 ---
-name: rewrite-ask
+name: hooks.rewrite
 description: Scoped rewrite and durable question through HTTP and MCP
 version: 1.0.0
 license: Apache-2.0

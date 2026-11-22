@@ -6,7 +6,9 @@ use oneiron_contracts::entity_id::EntityId;
 
 /// Takes the erased `id` out of `ask`: none when the ask's own mention is
 /// in it or no option is left (no candidate and no provisional entity of
-/// its own), else whether it changed.
+/// its own), else whether it changed. A member's someone-new proposal goes
+/// with any option it named: it is no longer the decision the owner was
+/// shown.
 pub fn erase_from_ask(ask: &mut IdentityAsk, id: &EntityId) -> Option<bool> {
     if ask.turn == *id || ask.message == *id {
         return None;
@@ -17,6 +19,9 @@ pub fn erase_from_ask(ask: &mut IdentityAsk, id: &EntityId) -> Option<bool> {
     if ask.provisional == Some(*id) {
         ask.provisional = None;
         changed = true;
+    }
+    if changed {
+        ask.someone_new_proposed_at = None;
     }
     if ask.surfaced_turn == Some(*id) {
         ask.surfaced_turn = None;

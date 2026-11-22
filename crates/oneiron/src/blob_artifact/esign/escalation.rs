@@ -12,8 +12,11 @@
 //! at every rung only a natural person answers; a board or an agent holding
 //! the role never does. No rule or model rung answers that question:
 //! decide() advises and never grants, so the ask goes straight to the role
-//! queue. An allowed hold signs as the call would have, on the document as
-//! it stands at the answer, and its trail names who allowed it; a declined
+//! queue. An allowed hold signs as its last call would have, on the document
+//! as it stands at the answer, and its trail names who allowed it; it lands
+//! only on the field values that call was made on, while the signer's review
+//! of them still stands (UETA section 10), so a field saved since, or a
+//! review of other values with no Complete after it, supersedes it. A declined
 //! one does not land, and the recipient's turn stays open for the
 //! document's sender to void or send again. A recipient whose signature the
 //! law keeps with a natural person is never automated, so it never reaches
@@ -32,6 +35,7 @@ use crate::side_table::{self, Named, SideTable};
 use crate::store::decision_ask_role::AskRole;
 use crate::{EntityId, Error, Result, Vault};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 /// Held automated sign act, one per recipient. Key: document hex32/recipient.
 const HELD: SideTable<String, HeldSigning, Named> = SideTable::new(&side_table::ESIGN_HELD_SIGNING);
@@ -121,12 +125,19 @@ pub struct HeldSigning {
     pub name: String,
     pub email: String,
     pub principal_ref: Option<String>,
-    /// The recipient the call named to sign next.
+    /// The recipient the hold's last call named to sign next.
     pub next: Option<String>,
-    /// Who called: the recipient's actor, IP and user agent at the hold.
+    /// Who made the hold's last call: the recipient's actor, IP and user
+    /// agent.
     pub actor: EsignAuditActor,
     /// Authentication, disclosure and consent carried by the accepted act.
     pub evidence: EsignSigningEvidence,
+    /// The recipient's own field values the held call was made on, under the
+    /// review that stood then (UETA section 10): the hold lands only on these,
+    /// while that review still stands. A repeat call sets them anew. None on
+    /// a hold kept before reviews: it never lands.
+    #[serde(default)]
+    pub reviewed_values: Option<BTreeMap<String, FieldValue>>,
     pub held_at: u64,
     /// Complete calls this hold covers, the first included.
     pub calls: u64,
@@ -213,7 +224,9 @@ fn clipped(text: &str, max: usize) -> String {
     text[..end].to_owned()
 }
 
-/// Holds one Complete the dial refused, or counts a repeat on its open hold.
+/// Holds one Complete the dial refused, on the reviewed `values` it was made
+/// on, or counts a repeat on its open hold, which then lands as the repeat:
+/// on its values, with its caller's evidence and its next recipient.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn hold(
     vault: &Vault,
@@ -223,6 +236,7 @@ pub(super) fn hold(
     recipient: &EsignRecipient,
     next: &Option<String>,
     evidence: EsignSigningEvidence,
+    values: BTreeMap<String, FieldValue>,
     actor: &EsignAuditActor,
     now: u64,
 ) -> Result<HeldSigning> {
@@ -230,6 +244,10 @@ pub(super) fn hold(
     let held = match HELD.get(&vault.store, txn, &key)? {
         Some(mut held) if held.open() => {
             held.calls = held.calls.saturating_add(1);
+            held.next = next.clone();
+            held.actor = actor.clone();
+            held.evidence = evidence;
+            held.reviewed_values = Some(values);
             held
         }
         _ => HeldSigning {
@@ -242,6 +260,7 @@ pub(super) fn hold(
             next: next.clone(),
             actor: actor.clone(),
             evidence,
+            reviewed_values: Some(values),
             held_at: now,
             calls: 1,
             state: HeldSigningState::Held,
@@ -509,7 +528,9 @@ impl Vault {
 
     /// Settles one hold with a role holder's answer. An allowed hold signs
     /// on the document as it stands now, after the same turn, expiry and
-    /// field checks the call met; a document that moved on supersedes it.
+    /// field checks the call met, and only on the field values the call was
+    /// made on while their review still stands (UETA section 10); a document
+    /// that moved on, or a field saved since, supersedes it.
     ///
     /// # Errors
     /// The hold is no longer open, the allowing answerer was erased (the
@@ -553,7 +574,12 @@ impl Vault {
                     };
                     let signed =
                         signed_event(&state.document, recipient, &held.next, evidence.clone());
-                    let lands = state.status == DocumentStatus::Pending
+                    let reviewed = held.reviewed_values.as_ref().is_some_and(|values| {
+                        state.review_stands(recipient, held.evidence.authentication_method)
+                            && *values == state.recipient_values(recipient)
+                    });
+                    let lands = reviewed
+                        && state.status == DocumentStatus::Pending
                         && state.rejection.is_none()
                         && now < state.document.expires_at
                         && state.clone().apply(&signed, now).is_ok();

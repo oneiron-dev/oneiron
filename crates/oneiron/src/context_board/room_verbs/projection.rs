@@ -70,12 +70,13 @@ impl RoomSectionPage {
         &self,
         people: &PeopleView<'_>,
     ) -> std::result::Result<BoardSection, BoardFrameError> {
-        self.board_section_inviting(people, super::super::room::ROOM_INVITE_CAP)
+        self.board_section_inviting(people, self.section.invite_shown)
     }
 
     /// [`Self::board_section`] on a board whose layout gives ROOM a share:
     /// the `invite?:` hint names as many persons as the share allots,
-    /// never fewer than the fixed cap (BOARD-LAYOUT).
+    /// never fewer than the room's [`RoomSection::invite_shown`]
+    /// (BOARD-LAYOUT).
     pub fn board_section_laid_out(
         &self,
         people: &PeopleView<'_>,
@@ -84,7 +85,7 @@ impl RoomSectionPage {
     ) -> std::result::Result<BoardSection, BoardFrameError> {
         self.board_section_inviting(
             people,
-            layout.row_allotment("room", cap_tok, super::super::room::ROOM_INVITE_CAP),
+            layout.row_allotment("room", cap_tok, self.section.invite_shown),
         )
     }
 
@@ -172,6 +173,10 @@ impl Memory<'_> {
             host: None,
             speaking: self.room_speaking_claims(room)?,
             invitable,
+            invite_shown: super::super::setting_keys::read_count(
+                self.vault(),
+                &super::super::setting_keys::ROOM_INVITE_SHOWN,
+            ) as usize,
         })
     }
 

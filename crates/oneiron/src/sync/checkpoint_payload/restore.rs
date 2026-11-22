@@ -24,11 +24,10 @@ use loro::checkpoint::{
 };
 use loro::{LoroDoc, LoroValue};
 
+use super::descriptor::{root_entry, withheld_part_key};
 use super::joined_turns::{Transport, derived_atom};
 use super::operations::{export_slice, holds_slice};
-use super::owners::{
-    key_fill, root_entry, root_fill, withheld_client_key, withheld_key, withheld_part_key,
-};
+use super::owners::{key_fill, root_fill, withheld_client_key, withheld_key};
 use super::{
     DerivedRole, DerivedSlot, JoinedTurn, KindPlacement, LoroCarrier, LoroSlot, LoroVerdict,
     OpenedAtom, OpenedSyncAtoms, Placement, SlotCopy, SyncCarrier, SyncPayloadOwners,
@@ -472,11 +471,12 @@ fn opened_actors<'s>(
     Ok(actors)
 }
 
-/// Refuses an opened value its family's codec does not read.
+/// Refuses an opened value its family's codec does not read, or reads as a
+/// row filed under another row's key.
 fn check(root: &str, key: &str, value: &[u8]) -> Result<()> {
     match root_entry(root, key, value, &AnyKind) {
         Placement::Unclassified {
-            reason: SyncUnclassified::Undecodable,
+            reason: SyncUnclassified::Undecodable | SyncUnclassified::KeyMismatch,
             ..
         } => Err(bad_part()),
         _ => Ok(()),

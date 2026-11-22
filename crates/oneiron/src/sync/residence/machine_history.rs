@@ -3,11 +3,15 @@
 //! the ones a selector export carries beside the target: its birth, each
 //! transition event and every handoff of its chain, read from this vault's
 //! stored truth under its pin. They page by count; the cursor binds the
-//! target and the tip the pages walk, and a moved tip starts over.
+//! target and the tip the pages walk, and a moved tip starts over. A page
+//! serves a history only when the asking selector's export would carry every
+//! row of it (RULING SECREAD-HOME-MACHINE-HISTORY = A).
 
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::federation::FederationGrantScope;
+use crate::sync::selector::{HistoryControlGate, SyncSelector};
 
 /// The most history rows one page carries. CALLS: "FIX 3820 machine history
 /// page".
@@ -56,6 +60,10 @@ pub enum MachineHistoryPage {
     /// This vault's own copy of the history does not resolve whole under its
     /// pin: it serves none of it.
     Pending,
+    /// The selector's window export would not carry a row of the history (its
+    /// member does not read it, or its grant does not select it), so it would
+    /// not carry the target either: the home serves none of it, and no part.
+    Refused,
     /// Rows of the history, each its id and raw envelope (metadata header,
     /// then body): the birth, then the transition events, then the handoffs
     /// oldest first.
@@ -68,16 +76,24 @@ pub enum MachineHistoryPage {
     },
 }
 
-/// One page of `target`'s machine-claim history, from where `cursor` stopped.
-/// The pages walk the whole history back to genesis: no depth bounds it, only
-/// the page size. A cursor of another target or another tip starts over at
-/// the birth, since the history it paged has moved.
+/// One page of `target`'s machine-claim history, from where `cursor` stopped,
+/// for `selector` (of a `grant_scope` grant). The pages walk the whole history
+/// back to genesis: no depth bounds it, only the page size. A cursor of
+/// another target or another tip starts over at the birth, since the history
+/// it paged has moved.
+///
+/// Every page judges every row of the history, not only its own: the page is
+/// [`MachineHistoryPage::Refused`] when the selector's export would not carry
+/// one of them, and [`MachineHistoryPage::Pending`] when one has no stored
+/// row here.
 ///
 /// # Errors
 ///
 /// Storage errors.
 pub fn machine_history_page(
     vault: &Vault,
+    grant_scope: FederationGrantScope,
+    selector: &SyncSelector,
     target: EntityId,
     cursor: Option<MachineHistoryCursor>,
 ) -> Result<MachineHistoryPage> {
@@ -88,18 +104,26 @@ pub fn machine_history_page(
     let Some(&tip) = ids.last() else {
         return Ok(MachineHistoryPage::Pending);
     };
+    let Some(gate) = HistoryControlGate::in_txn(vault, &rtxn, grant_scope, selector)? else {
+        return Ok(MachineHistoryPage::Refused);
+    };
     let start = cursor
         .filter(|cursor| cursor.target == target && cursor.tip == tip)
         .map_or(0, |cursor| {
             usize::try_from(cursor.offset).map_or(ids.len(), |offset| offset.min(ids.len()))
         });
     let mut rows = Vec::new();
-    for id in ids.iter().skip(start).take(MACHINE_HISTORY_PAGE_ROWS) {
+    for (index, id) in ids.iter().enumerate() {
         let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &rtxn, id)?
         else {
             return Ok(MachineHistoryPage::Pending);
         };
-        rows.push((*id, raw));
+        if !gate.carries(vault, &rtxn, id, &raw)? {
+            return Ok(MachineHistoryPage::Refused);
+        }
+        if index >= start && rows.len() < MACHINE_HISTORY_PAGE_ROWS {
+            rows.push((*id, raw));
+        }
     }
     let end = start + rows.len();
     Ok(MachineHistoryPage::Rows {

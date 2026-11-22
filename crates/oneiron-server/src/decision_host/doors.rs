@@ -149,6 +149,7 @@ impl DecisionHost {
             (DecisionRung::Rule, self.ladder.rule.is_some()),
             (DecisionRung::Local, self.ladder.local.is_some()),
             (DecisionRung::SystemOne, self.ladder.system_one.is_some()),
+            (DecisionRung::Precision, self.ladder.precision.is_some()),
             (DecisionRung::Escalation, self.ladder.escalation.is_some()),
             (DecisionRung::Big, self.ladder.big.is_some()),
         ]
@@ -461,20 +462,23 @@ impl DecisionHost {
     }
 
     /// The merge doors' useful-upstream question through this ladder, on
-    /// `deadline`. The doors require a System One or escalation seat to
-    /// answer first, so the dial starts at the first of those this host
-    /// fills; with neither, the question cannot be asked here.
+    /// `deadline`. The doors require a System One, precision or escalation
+    /// seat to answer first, so the dial starts at the first of those this
+    /// host fills; with none, the question cannot be asked here.
     pub fn useful_upstream<'a>(
         &'a self,
         deadline: &'a RetrievalDeadline,
     ) -> oneiron::Result<UsefulUpstreamDecisions<'a>> {
         let first = if self.ladder.system_one.is_some() {
             DecisionRung::SystemOne
+        } else if self.ladder.precision.is_some() {
+            DecisionRung::Precision
         } else if self.ladder.escalation.is_some() {
             DecisionRung::Escalation
         } else {
             return Err(oneiron::Error::InvalidConfig(
-                "useful-upstream needs a System One seat or the house read on this host".into(),
+                "useful-upstream needs a System One seat, the precision seat or the house read on this host"
+                    .into(),
             ));
         };
         Ok(UsefulUpstreamDecisions {

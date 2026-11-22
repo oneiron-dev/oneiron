@@ -9,6 +9,8 @@
 //! masked handle with no why or no proven recipient reads the projection.
 //! Bulk and hydration reads never come here: they stay mask-only.
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use super::super::{Memory, MemoryResult};
 use crate::Vault;
 use crate::blob_artifact::ArtifactExport;
@@ -371,7 +373,7 @@ impl Memory<'_> {
     {
         let marks = {
             let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
-            repo_secret_marks_for_hash_in_txn(self.vault, &txn, blake3::hash(&bytes).as_bytes())?
+            repo_secret_marks_for_hash_in_txn(self.vault, &txn, ContentHash::of(&bytes).as_bytes())?
         };
         let original = match why {
             Some(_) => repo_file_original(

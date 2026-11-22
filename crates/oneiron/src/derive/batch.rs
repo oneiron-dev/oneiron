@@ -195,6 +195,24 @@ pub struct DerivedPsychProfile {
     /// The snapshot: every source revision with the exact words it was read
     /// from, each from a record the agent reads.
     pub profile: crate::psych_profile::PsychProfile,
+    /// The stored claims a profile from the wire cites, each named in the
+    /// batch's sources at the version its read served. The stager reads
+    /// their words in the commit's own write, so `profile` then names no
+    /// source of its own. Empty for a profile that names its own sources.
+    pub cites: Vec<ItemRef>,
+}
+
+/// A PERSON an agent found named in TURNs it reads (untangle 6.9h): the
+/// engine mints it as extraction does, under an id it derives, born where
+/// the words that name it are read.
+#[derive(Debug, Clone)]
+pub struct DerivedPerson {
+    /// The item's name inside its batch.
+    pub local: String,
+    /// The person's name, as the TURNs spell it.
+    pub name: String,
+    /// The TURNs that name the person.
+    pub evidence: Vec<ItemRef>,
 }
 
 /// One derived item. Each kind is one arm with a stager of its own.
@@ -218,6 +236,8 @@ pub enum DerivationItem {
     PsychProfile(DerivedPsychProfile),
     /// A reversible archive (kind 6).
     Archive(DerivedArchive),
+    /// A PERSON named in TURNs.
+    Person(DerivedPerson),
 }
 
 impl DerivationItem {
@@ -233,6 +253,7 @@ impl DerivationItem {
             Self::PersonAbout(about) => &about.local,
             Self::PsychProfile(profile) => &profile.local,
             Self::Archive(archive) => &archive.local,
+            Self::Person(person) => &person.local,
         }
     }
 
@@ -248,29 +269,38 @@ impl DerivationItem {
             Self::PersonAbout(_) => "person_about",
             Self::PsychProfile(_) => "psych_profile",
             Self::Archive(_) => "archive",
+            Self::Person(_) => "person",
         }
     }
 
     /// Whether the item's first landed row is one the item itself creates:
     /// a claim, a settlement's answer, a link's status claim, a topology
-    /// event. Only such an item can be named by a later item. Every other
-    /// kind lands on a row that stood before it (a supersession's
-    /// replacement, an archived claim, a PERSON) or may replay one (an
-    /// evidence record, a profile at its address), and a name for such a row
-    /// would cite it with no version and no read of its own.
+    /// event, a person (never minted at an id that stood before). Only such
+    /// an item can be named by a later item. Every other kind lands on a row
+    /// that stood before it (a supersession's replacement, an archived claim,
+    /// a PERSON's `about` lines) or may replay one (an evidence record, a
+    /// profile at its address), and a name for such a row would cite it with
+    /// no version and no read of its own.
     pub(super) const fn creates_row(&self) -> bool {
         matches!(
             self,
-            Self::Claim(_) | Self::Settle(_) | Self::SameAs(_) | Self::Topology(_)
+            Self::Claim(_)
+                | Self::Settle(_)
+                | Self::SameAs(_)
+                | Self::Topology(_)
+                | Self::Person(_)
         )
     }
 
-    /// The rows the item cites as its sources: a claim's evidence and an
-    /// evidence item's sources. A stored one needs its version in the batch.
+    /// The rows the item cites as its sources: a claim's evidence, an
+    /// evidence item's sources, a profile's cited claims and the TURNs naming
+    /// a person. A stored one needs its version in the batch.
     fn cited(&self) -> &[ItemRef] {
         match self {
             Self::Claim(claim) => &claim.evidence,
             Self::Evidence(evidence) => &evidence.sources,
+            Self::PsychProfile(profile) => &profile.cites,
+            Self::Person(person) => &person.evidence,
             _ => &[],
         }
     }
@@ -292,8 +322,9 @@ impl DerivationItem {
             Self::SameAs(same_as) => vec![&same_as.source, &same_as.target],
             Self::Topology(_) => Vec::new(),
             Self::PersonAbout(about) => vec![&about.person],
-            Self::PsychProfile(_) => Vec::new(),
+            Self::PsychProfile(profile) => profile.cites.iter().collect(),
             Self::Archive(archive) => vec![&archive.claim],
+            Self::Person(person) => person.evidence.iter().collect(),
         }
     }
 }
@@ -305,31 +336,68 @@ pub struct DerivationBatch {
     /// The items, in the order they stage.
     pub items: Vec<DerivationItem>,
     /// The version of every stored source the items cite (a claim's evidence,
-    /// an evidence item's sources), as the caller's read served it
+    /// an evidence item's sources, a profile's claims), as the caller's read served it
     /// ([`crate::snapshot_read`]). The commit rechecks each in its write: a
     /// source that moved or is withheld since aborts the whole batch.
     pub sources: Vec<crate::snapshot_read::SourceVersion>,
 }
 
-/// The most items one batch holds.
+/// The most items one batch holds by default, and the floor of the owner's
+/// `derive.batch.max_items`: the engine's own jobs size their batches to fit
+/// it (the Dreamer's strength archive pages 200 claims a batch), so the owner
+/// may raise the cap but never set it below this.
 pub const MAX_BATCH_ITEMS: usize = 256;
+
+/// The value of `derive.batch.max_items`: the most items one batch holds, at
+/// least [`MAX_BATCH_ITEMS`].
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(transparent)]
+pub(crate) struct DerivationBatchCap(pub(crate) u32);
+
+impl crate::setting::SettingValue for DerivationBatchCap {
+    /// A cap is at least [`MAX_BATCH_ITEMS`].
+    fn check(self) -> Result<Self> {
+        if usize::try_from(self.0).is_ok_and(|cap| cap >= MAX_BATCH_ITEMS) {
+            Ok(self)
+        } else {
+            Err(Error::InvalidConfig(format!(
+                "a derivation batch cap is at least {MAX_BATCH_ITEMS} items: the engine's own \
+                 jobs fill batches that large"
+            )))
+        }
+    }
+}
 
 impl DerivationBatch {
     /// Checks the batch's shape: at least one item and no more than
-    /// [`MAX_BATCH_ITEMS`], every local name non-empty and unique, every
-    /// local reference naming an earlier item that creates a row
+    /// `max_items` (the owner's `derive.batch.max_items`, [`MAX_BATCH_ITEMS`]
+    /// by default), every local name non-empty and unique, every local
+    /// reference naming an earlier item that creates a row
     /// ([`DerivationItem::creates_row`]), at most one `about` item for a
     /// person, and a version for every stored source cited.
     ///
     /// # Errors
     ///
     /// A malformed batch, which aborts the whole commit.
-    pub(super) fn validate(&self) -> Result<()> {
+    pub(super) fn validate(&self, max_items: usize) -> Result<()> {
         if self.items.is_empty() {
             return Err(malformed("a derivation batch holds at least one item"));
         }
-        if self.items.len() > MAX_BATCH_ITEMS {
-            return Err(malformed("a derivation batch holds at most 256 items"));
+        if self.items.len() > max_items {
+            return Err(malformed(
+                "a derivation batch holds more items than derive.batch.max_items (default 256)",
+            ));
         }
         let mut earlier: BTreeSet<&str> = BTreeSet::new();
         let mut nameable: BTreeSet<&str> = BTreeSet::new();

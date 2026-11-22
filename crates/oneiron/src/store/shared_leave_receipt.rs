@@ -5,8 +5,7 @@ use crate::error::Result;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 
-#[doc(hidden)]
-pub use oneiron_records::store::shared_leave_receipt::{SharedLeaveKind, SharedLeaveReceipt};
+use oneiron_records::store::shared_leave_receipt::SharedLeaveReceipt;
 
 /// This device's leave records, keyed by the notice's receipt id.
 pub(crate) const LEAVE_RECEIPTS: SideTable<String, SharedLeaveReceipt, Named> =

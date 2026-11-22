@@ -203,6 +203,51 @@ impl AiHandle {
         self.runtime.admit_role(vault, role, request)
     }
 
+    /// Whether the vault's live model policy routes a call of `role` so that
+    /// it never leaves this device (I2-LOCAL, L9-15): every rung and owner's
+    /// fallback it may take is a managed worker this server supervises,
+    /// reached over that child's checked channel alone; and `routes`, the
+    /// model order of the worlds whose rows the call carries, leaves a rung
+    /// of that route and each rung the call's route off the device takes
+    /// under it ([`oneiron::authority::WorldModelRoutes::Inherit`] leaves
+    /// every rung). A route that cannot be read is no such route.
+    #[must_use]
+    pub(crate) fn role_routes_on_device(
+        &self,
+        vault: &Vault,
+        role: ModelRole,
+        routes: &oneiron::authority::WorldModelRoutes,
+    ) -> bool {
+        self.runtime.role_routes_on_device(vault, role, routes)
+    }
+
+    /// [`Self::admit_role`] on the route that keeps a call of `role` on this
+    /// device ([`Self::role_routes_on_device`]): refused before it is sent
+    /// when that route could leave the device now.
+    pub(crate) fn admit_role_on_device(
+        &self,
+        vault: &Vault,
+        role: ModelRole,
+        request: oneiron::LlmRequest,
+    ) -> Result<RoleCall, RoleRefusal> {
+        self.runtime.admit_role_on_device(vault, role, request)
+    }
+
+    /// [`Self::admit_role`] for a call of `role` off this device that
+    /// carries rows whose worlds order its offers by `routes`: a local-GPU
+    /// model pack's pick whose on-device offer `routes` leaves takes its
+    /// model's own-server rung when `routes` leaves that (L9-15).
+    pub(crate) fn admit_role_for_world_routes(
+        &self,
+        vault: &Vault,
+        role: ModelRole,
+        request: oneiron::LlmRequest,
+        routes: &oneiron::authority::WorldModelRoutes,
+    ) -> Result<RoleCall, RoleRefusal> {
+        self.runtime
+            .admit_role_for_world_routes(vault, role, request, routes)
+    }
+
     /// A run that declares nothing on `meter` (a chat turn's line), with this
     /// server's run receipts.
     pub(crate) fn undeclared_run(

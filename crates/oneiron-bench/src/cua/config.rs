@@ -215,16 +215,15 @@ impl Config {
                     covered.insert(route.engine_model.clone());
                 }
             }
-            if let Some(seat) = &models.decisions.system_one {
+            // The head's seat and the precision band's both speak the System
+            // One wire, so each goes through its own `system_one` gate route.
+            for (table, seat) in [
+                ("system_one", &models.decisions.system_one),
+                ("precision", &models.decisions.precision),
+            ] {
+                let Some(seat) = seat else { continue };
                 let wire = format!("{}-{}", seat.model, seat.version);
-                let route = arm
-                    .routes
-                    .iter()
-                    .find(|r| r.protocol == "system_one" && r.requested_model == wire)
-                    .ok_or("system_one_gate_unavailable")?;
-                if seat.endpoint != format!("{}/v1/systemone", route.local_url()) {
-                    return Err("system_one_gate_bypass".into());
-                }
+                let route = system_one_seat_route(&arm.routes, table, &wire, &seat.endpoint)?;
                 crate::interface_bench::pinned_model_for_wire_id(&pins, &route.engine_model)
                     .map_err(|e| e.to_string())?;
                 covered.insert(route.engine_model.clone());
@@ -263,6 +262,28 @@ impl Config {
         Ok(config)
     }
 }
+/// The `system_one` gate route the seat of `table` goes through: the route
+/// for its wire model whose local endpoint is the seat's endpoint. The head's
+/// seat and the precision band's may name one wire model behind two gates;
+/// each then goes through its own route.
+fn system_one_seat_route<'r>(
+    routes: &'r [Route],
+    table: &str,
+    wire: &str,
+    endpoint: &str,
+) -> Result<&'r Route> {
+    let mut wired = routes
+        .iter()
+        .filter(|r| r.protocol == "system_one" && r.requested_model == wire)
+        .peekable();
+    if wired.peek().is_none() {
+        return Err(format!("{table}_gate_unavailable"));
+    }
+    wired
+        .find(|r| endpoint == format!("{}/v1/systemone", r.local_url()))
+        .ok_or_else(|| format!("{table}_gate_bypass"))
+}
+
 impl Arm {
     pub(crate) fn body(&self) -> Result<String> {
         let body = fs::read_to_string(&self.models_body).map_err(|e| e.to_string())?;
@@ -290,5 +311,86 @@ impl Arm {
             }
         }
         Ok(output)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Route, system_one_seat_route};
+
+    fn system_one_route(provider: &str, listen_port: u16) -> Route {
+        serde_json::from_value(serde_json::json!({
+            "provider": provider,
+            "engine_model": "d3/flash@r1",
+            "requested_model": "d3-flash-r1",
+            "returned_model": "d3-flash-r1",
+            "upstream": "https://systemone.invalid",
+            "listen_port": listen_port,
+            "protocol": "system_one",
+            "cash": false,
+            "max_context_tokens": 8192,
+            "input_overhead_tokens": 0,
+            "max_output_tokens": 256,
+            "max_request_bytes": 65536,
+            "max_response_bytes": 65536,
+            "max_images": 0,
+            "timeout_seconds": 30,
+        }))
+        .expect("a system_one gate route")
+    }
+
+    /// The System One endpoint a seat names to send through `route`'s gate.
+    fn gate_endpoint(route: &Route) -> String {
+        format!("{}/v1/systemone", route.local_url())
+    }
+
+    #[test]
+    fn two_seats_on_one_wire_model_each_take_their_own_gate_route() {
+        let routes = [
+            system_one_route("head-gate", 9101),
+            system_one_route("precision-gate", 9102),
+        ];
+        let head = system_one_seat_route(
+            &routes,
+            "system_one",
+            "d3-flash-r1",
+            &gate_endpoint(&routes[0]),
+        )
+        .expect("the head's route");
+        let precision = system_one_seat_route(
+            &routes,
+            "precision",
+            "d3-flash-r1",
+            &gate_endpoint(&routes[1]),
+        )
+        .expect("the precision seat's route");
+        assert_eq!(head.listen_port, 9101);
+        assert_eq!(precision.listen_port, 9102);
+    }
+
+    #[test]
+    fn a_seat_past_every_gate_of_its_wire_model_is_a_bypass() {
+        let routes = [system_one_route("head-gate", 9101)];
+        let unlisted_gate = system_one_route("unlisted-gate", 9199);
+        assert_eq!(
+            system_one_seat_route(
+                &routes,
+                "precision",
+                "d3-flash-r1",
+                &gate_endpoint(&unlisted_gate),
+            )
+            .err(),
+            Some("precision_gate_bypass".to_owned())
+        );
+        assert_eq!(
+            system_one_seat_route(
+                &routes,
+                "precision",
+                "d3-other-r1",
+                &gate_endpoint(&routes[0]),
+            )
+            .err(),
+            Some("precision_gate_unavailable".to_owned())
+        );
     }
 }

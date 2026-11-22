@@ -22,7 +22,8 @@ use oneiron::ingest::history::slack::{self, SlackExport, SlackExportFile, SlackW
 use oneiron::ingest::history::{HistoryImportReport, HistorySource};
 use oneiron::test_doors::history_import_rows::imported_message_rows;
 use oneiron::test_doors::source_audience_binding::reads;
-use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
+use oneiron::{DeleteReason, EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
+use std::sync::Arc;
 use tempfile::TempDir;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -293,8 +294,19 @@ fn erased_words_never_land_again_when_the_map_moves_their_speaker() -> TestResul
         let (workspace, _) = import(&fixture, &export("T1", &files), first)?;
         let native_id = only_message(&workspace)?;
         let message = latest_message(&fixture, &native_id)?;
+        // The subject is what a later import does after the erase, not who
+        // may erase: an imported MESSAGE is a room record, which a plain
+        // delete refuses without the room's authority (ConversationDenied),
+        // so the test-support seam erases it, as tests/room_pins.rs does.
+        // Every delete signs as this install.
+        fixture
+            .vault
+            .install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
         assert!(
-            fixture.vault.delete_entity(&message)?,
+            fixture
+                .vault
+                .delete_room_record_unchecked_for_test(&message, DeleteReason::UserDelete)?
+                .existed,
             "the MESSAGE is erased"
         );
         let (_, reports) = import(&fixture, &export("T1", &files), first)?;

@@ -83,6 +83,7 @@ impl EmbeddedClient {
             off_record_session: None,
             host_open: None,
             read_proof: None,
+            answers_as_owner_device: false,
             limit_questions,
         };
         Ok((client, HostRootProfile::from_core(profile)))

@@ -127,9 +127,9 @@ pub(super) fn rewrite(
         let mut fresh = String::new();
         for (&col, value) in cells {
             match stored.get(&col) {
-                Some(&cell) => edits.extend(patched_cell(bytes, tree, cell, *value)?),
+                Some(&cell) => edits.extend(patched_cell(bytes, tree, cell, value)?),
                 None => {
-                    let xml = new_cell(&cell_name, col, *number, *value)?;
+                    let xml = new_cell(&cell_name, col, *number, value)?;
                     match stored.range(col..).next() {
                         Some((_, &next)) => inserted
                             .entry(tree.nodes[next].span.start)
@@ -167,7 +167,7 @@ pub(super) fn rewrite(
         }
         let mut out = format!("<{row_name} r=\"{number}\">");
         for (&col, value) in cells {
-            out.push_str(&new_cell(&cell_name, col, *number, *value)?);
+            out.push_str(&new_cell(&cell_name, col, *number, value)?);
         }
         out.push_str(&format!("</{row_name}>"));
         match rows.range(*number..).next() {

@@ -27,6 +27,7 @@ pub use crate::workspace_roster::rooms::audience_doors::ThreadAudienceReceipt;
 pub use crate::workspace_roster::rooms::audience_doors::ThreadAudienceRemoveRequest;
 pub use crate::workspace_roster::rooms::audience_events::ThreadAudienceHistory;
 pub use crate::workspace_roster::rooms::audience_history::ThreadAudienceOpenFullHistoryRequest;
+pub use crate::workspace_roster::rooms::closed::RoomClosedSet;
 pub use crate::workspace_roster::rooms::hosting::HostPin;
 pub use crate::workspace_roster::rooms::hosting::HostPinKind;
 pub use crate::workspace_roster::rooms::hosting::ProjectRoomPlace;

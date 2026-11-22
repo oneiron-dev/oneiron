@@ -5,7 +5,9 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 
 use crate::gate::ExternalEffectGateInput;
-use crate::gate::code_consent_settlement::ResolvedCodeConsentSettlement;
+use crate::gate::code_consent_settlement::{
+    CodeConsentSettlementEligibility, ResolvedCodeConsentSettlement,
+};
 use crate::{EntityId, Error, Result, Vault};
 
 use super::{ActionClass, ActionEnvelope, ActorBound, BoundClass, BoundEnvelope, GrantBound};
@@ -27,6 +29,25 @@ pub(super) struct FrozenCodeConsentBrowserScope {
 }
 
 impl FrozenCodeConsentSettlement {
+    /// A frozen settlement naming exactly `holders`, for the test door
+    /// (`test_doors::ask_answer_proof::mint_code_consent_ask`): the policy
+    /// admits every power holder, with no sources, no conflict, no bound
+    /// action and no browser scope. A test double only: it never settles a
+    /// code wait, it only asks the holders it names.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn with_holders_for_test(holders: BTreeSet<EntityId>) -> Self {
+        Self {
+            policy: ResolvedCodeConsentSettlement {
+                eligible: CodeConsentSettlementEligibility::AllPowerHolders,
+                sources: Vec::new(),
+                conflicting_authored_rows: false,
+            },
+            effect_bound: Vec::new(),
+            holders,
+            browser_scope: None,
+        }
+    }
+
     pub(crate) fn action_requirement(&self) -> Result<GrantBound> {
         let mut cursor = std::io::Cursor::new(&self.effect_bound);
         let value = rmpv::decode::read_value(&mut cursor)

@@ -128,9 +128,12 @@ enum Pass {
     Woken,
 }
 
-/// One pass, as the local owner.
+/// One pass, as the local owner. A managed vault has no local owner and
+/// syncs nothing here, so the host's egress guard changes no step today;
+/// it is passed as at the owner's door, so no served step runs unguarded.
 fn run_pass(server: &SyncServer, pass: Pass) {
     let vault = server.vault();
+    let guard = server.hosted_egress_guard();
     let owner = match crate::owner::local_owner(vault) {
         Ok(owner) => owner,
         Err(error) => {
@@ -154,7 +157,12 @@ fn run_pass(server: &SyncServer, pass: Pass) {
         },
     };
     for source in sources {
-        if let Err(error) = vault.mail_source_sync_step(&owner, source, MailSyncBudget::default()) {
+        if let Err(error) = vault.mail_source_sync_step_with_hosted_guard(
+            &owner,
+            source,
+            MailSyncBudget::default(),
+            guard.clone(),
+        ) {
             tracing::warn!(
                 source = %source.to_hex(),
                 error = %error,

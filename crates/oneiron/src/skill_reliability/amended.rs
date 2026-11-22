@@ -94,18 +94,18 @@ impl RawValue for AmendedRow {
 
     fn from_raw(bytes: &[u8]) -> std::result::Result<Self, side_table::CodecError> {
         let value = decode_value(bytes)?;
-        if map_u64(&value, KEY_SCHEMA_VERSION) != Some(SKILL_RELIABILITY_SCHEMA_VERSION) {
+        if map_u64(&value, KEY_SCHEMA_VERSION)? != Some(SKILL_RELIABILITY_SCHEMA_VERSION) {
             return Err(invalid("unsupported skill reliability amendment schema").into());
         }
-        let amendment = map_str(&value, KEY_AMENDMENT).ok_or(invalid(
+        let amendment = map_str(&value, KEY_AMENDMENT)?.ok_or(invalid(
             "skill reliability amendment is missing its receipt",
         ))?;
-        let share = map_f32(&value, KEY_SHARE)
+        let share = map_f32(&value, KEY_SHARE)?
             .filter(|share| (0.0..=1.0).contains(share))
             .ok_or(invalid(
                 "skill reliability amendment share is not in [0, 1]",
             ))?;
-        let at = map_u64(&value, KEY_AT)
+        let at = map_u64(&value, KEY_AT)?
             .ok_or(invalid("skill reliability amendment is missing its time"))?;
         Ok(Self {
             amendment: amendment.to_owned(),
@@ -221,7 +221,8 @@ type Desired = BTreeMap<Vec<u8>, (Arm, OutcomeRef, AmendedRow)>;
 /// and is not reprojected: it has no prior left to fold onto.
 ///
 /// The pass is idempotent: an arm whose rows already say exactly this is neither written nor
-/// reprojected.
+/// reprojected. An arm whose attempt carries no executor stamp has its rows written and is not
+/// reprojected: no reliability cell exists without an executor revision.
 ///
 /// # Errors
 ///
@@ -231,45 +232,101 @@ pub(crate) fn reconcile_amended_outcomes_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     verdicts: &[AmendedOutcome],
 ) -> Result<Vec<EntityId>> {
-    let desired = grounded_rows_in_txn(vault, wtxn, &later_verdicts(verdicts))?;
     let mut moved: Vec<(Arm, u64)> = Vec::new();
-    let mut note = |arm: Arm, at: u64| match moved.iter_mut().find(|(held, _)| *held == arm) {
-        Some((_, latest)) => *latest = (*latest).max(at),
-        None => moved.push((arm, at)),
-    };
+    for write in amended_writes_in_txn(vault, wtxn, verdicts)? {
+        AMENDED.put(&vault.store, wtxn, &write.outcome, &write.row)?;
+        match moved.iter_mut().find(|(held, _)| *held == write.arm) {
+            Some((_, latest)) => *latest = (*latest).max(write.at),
+            None => moved.push((write.arm, write.at)),
+        }
+    }
+
+    let mut projected = Vec::new();
+    for ((skill, executor), at) in moved {
+        // An arm with no executor stamp has no learning cell to reproject: every reliability
+        // cell names the executor revision it measured, and the attempt lane records no outcome
+        // without one. Its rows above still count in the skill's attributed tally. Reprojecting
+        // it fails, and with it the whole pass and every other arm's write (REVIEW-10104 P1).
+        let Some(executor) = executor else {
+            continue;
+        };
+        if vault.get_skill_record_in_txn(wtxn, &skill)?.is_none() {
+            continue;
+        }
+        let prior = skill_reliability_prior_in_txn(vault, wtxn, &skill)?;
+        project_in_txn(vault, wtxn, &skill, Some(&executor), prior, at)?;
+        if !projected.contains(&skill) {
+            projected.push(skill);
+        }
+    }
+    Ok(projected)
+}
+
+/// Whether the stored amendment rows already say exactly what `verdicts` land, read on
+/// `rtxn`: [`reconcile_amended_outcomes_in_txn`] over the same verdicts would write nothing and
+/// reproject no arm. A caller with no verdict of its own to land asks this first, so a settled
+/// vault costs it no write transaction.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn amended_outcomes_settled_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    verdicts: &[AmendedOutcome],
+) -> Result<bool> {
+    Ok(amended_writes_in_txn(vault, rtxn, verdicts)?.is_empty())
+}
+
+/// One stored amendment row a reconcile writes, and the arm it moves.
+struct AmendedWrite {
+    outcome: OutcomeRef,
+    row: AmendedRow,
+    arm: Arm,
+    /// The latest event time the row moves the arm at: the later of the old and the new row's.
+    at: u64,
+}
+
+/// The rows a reconcile over `verdicts` writes, read on `rtxn`: each stored row that differs
+/// from the one the later verdict lands now (withdrawn when none lands one), then each row a
+/// verdict lands where none is stored. Empty when the stored rows already say exactly this.
+fn amended_writes_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    verdicts: &[AmendedOutcome],
+) -> Result<Vec<AmendedWrite>> {
+    let desired = grounded_rows_in_txn(vault, rtxn, &later_verdicts(verdicts))?;
+    let mut writes = Vec::new();
     let mut stored = BTreeSet::new();
-    for (outcome, row) in AMENDED.scan(&vault.store, wtxn)? {
+    for (outcome, row) in AMENDED.scan(&vault.store, rtxn)? {
         let key = key_of(&outcome);
         let next = match desired.get(&key) {
             Some((_, _, wanted)) => wanted.clone(),
             None => row.withdrawn(),
         };
         if next != row {
-            AMENDED.put(&vault.store, wtxn, &outcome, &next)?;
             let (skill, executor) = outcome.arm();
-            note((skill, executor.map(str::to_owned)), row.at.max(next.at));
+            let arm = (skill, executor.map(str::to_owned));
+            writes.push(AmendedWrite {
+                at: row.at.max(next.at),
+                outcome,
+                row: next,
+                arm,
+            });
         }
         stored.insert(key);
     }
-    for (key, (arm, outcome, row)) in &desired {
-        if !stored.contains(key) {
-            AMENDED.put(&vault.store, wtxn, outcome, row)?;
-            note(arm.clone(), row.at);
+    for (key, (arm, outcome, row)) in desired {
+        if !stored.contains(&key) {
+            writes.push(AmendedWrite {
+                at: row.at,
+                outcome,
+                row,
+                arm,
+            });
         }
     }
-
-    let mut projected = Vec::new();
-    for ((skill, executor), at) in moved {
-        if vault.get_skill_record_in_txn(wtxn, &skill)?.is_none() {
-            continue;
-        }
-        let prior = skill_reliability_prior_in_txn(vault, wtxn, &skill)?;
-        project_in_txn(vault, wtxn, &skill, executor.as_deref(), prior, at)?;
-        if !projected.contains(&skill) {
-            projected.push(skill);
-        }
-    }
-    Ok(projected)
+    Ok(writes)
 }
 
 /// The later verdict per skill and attempt, by event time and then receipt id.
