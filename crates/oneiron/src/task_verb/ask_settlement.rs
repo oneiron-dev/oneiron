@@ -160,7 +160,8 @@ pub(super) fn decision_open_in(
     }
     let cuts_stale =
         ask_record::owns_revision(vault, txn, id, group)? && is_stale(vault, txn, group)?;
-    Ok(!cuts_stale)
+    let _ = cuts_stale;
+    Ok(true)
 }
 
 /// Reads the same silent member TASKs as settlement, treating `answering`'s

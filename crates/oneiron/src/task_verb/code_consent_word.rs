@@ -216,7 +216,7 @@ pub(super) fn answer_open_in(
         return Ok(false);
     };
     Ok(read_code_consent_wait_in_txn(vault, txn, wait_id)?
-        .is_some_and(|row| row.ask == Some(id) && row.takes_an_answer()))
+        .is_some_and(|row| row.ask == Some(id)))
 }
 
 /// The people a code consent wait asks: its question's owners, and the
