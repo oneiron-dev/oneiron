@@ -174,6 +174,7 @@ impl Vault {
             };
             return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(why)));
         }
+        let owner_authored = owner.owner_answer_in_txn(self, &wtxn)?;
         let (handle, id) = target_in_txn(&self.store, &wtxn, target)?;
         // The value stays as stored, never opened: a bind needs no custody
         // key (KS-6).
@@ -219,7 +220,7 @@ impl Vault {
             };
             let recorded = self.record_custody_change_in_txn(
                 &mut wtxn,
-                actor,
+                (actor, owner_authored.as_ref()),
                 surface,
                 ActiveChange {
                     change: CustodyChange::Rewrap,

@@ -13,7 +13,7 @@
 )]
 
 use super::{Carried, carrier_key, decode_carried, decode_pin, key_ids};
-use crate::entity_doc::DocActor;
+use crate::entity_doc::{CitationPin, DocActor};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::store::checkpoint_payload::rows::{OwnerRef, bad_part};
@@ -32,26 +32,16 @@ const PARTED_PIN: &str = "a parted document pin, read only once its parts join";
 const ACTOR: &str = "actor";
 
 /// Where the value under `key` in the pin map goes (a part's, the map's
-/// row places).
+/// row places). A whole pin filed under another pin's key is a key
+/// mismatch, placed under no one.
 pub(in crate::sync) fn entry(key: &str, value: &[u8]) -> Placement {
     let undecodable = || Placement::unclassified(None, SyncUnclassified::Undecodable);
     match decode_carried(value) {
-        Ok(Carried::Whole(pin, message, citation))
-            if carrier_key(message, citation, &pin).is_ok_and(|filed| filed == key) =>
-        {
-            let owner = OwnerRef::entity(&citation);
-            let holders = vec![Holder::new(owner, vec![OwnerRef::entity(&message)])];
-            let actors = match pin.actor {
-                DocActor::Actor(actor) => vec![(ACTOR.to_owned(), actor)],
-                DocActor::Erased => Vec::new(),
-            };
-            match rmp_serde::to_vec_named(&pin.actor_erased()) {
-                Ok(no_one) => Placement::split(holders, ValueSplit { no_one, actors }),
-                Err(_) => {
-                    Placement::unclassified(Some(owner), SyncUnclassified::ActorSplit(PIN_ACTOR))
-                }
-            }
-        }
+        Ok(Carried::Whole(pin, message, citation)) => match carrier_key(message, citation, &pin) {
+            Ok(filed) if filed == key => whole(pin, message, citation),
+            Ok(_) => Placement::unclassified(None, SyncUnclassified::KeyMismatch),
+            Err(_) => undecodable(),
+        },
         Ok(Carried::Parted(parted)) => match key_ids(key) {
             Some((message, citation)) => Placement::Manifest {
                 holders: vec![Holder::new(
@@ -64,6 +54,21 @@ pub(in crate::sync) fn entry(key: &str, value: &[u8]) -> Placement {
             None => undecodable(),
         },
         _ => undecodable(),
+    }
+}
+
+/// Where the whole `pin` of `message` by `citation`, filed under its own
+/// key, goes: its citer's, held while the message is, its actor split out.
+fn whole(pin: CitationPin, message: EntityId, citation: EntityId) -> Placement {
+    let owner = OwnerRef::entity(&citation);
+    let holders = vec![Holder::new(owner, vec![OwnerRef::entity(&message)])];
+    let actors = match pin.actor {
+        DocActor::Actor(actor) => vec![(ACTOR.to_owned(), actor)],
+        DocActor::Erased => Vec::new(),
+    };
+    match rmp_serde::to_vec_named(&pin.actor_erased()) {
+        Ok(no_one) => Placement::split(holders, ValueSplit { no_one, actors }),
+        Err(_) => Placement::unclassified(Some(owner), SyncUnclassified::ActorSplit(PIN_ACTOR)),
     }
 }
 

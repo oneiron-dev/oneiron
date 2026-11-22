@@ -449,13 +449,25 @@ fn agent_def_route_is_idempotent_by_task_ref() {
     // A retried route on the SAME task: the dispatcher's namespaced dedupe
     // key resolves to the row already realizing it.
     let replayed = AgentDispatcher::new(&vault)
-        .dispatch(DispatchAgent {
-            target: AgentDispatchTarget::Custom(agent_def_ref),
-            parent_attempt: None,
-            dedupe_key: Some(task_route_dedupe_key(task_ref)),
-            run_id: None,
-            now: ROUTE_NOW,
-        })
+        .dispatch_with_context(
+            DispatchAgent {
+                target: AgentDispatchTarget::Custom(agent_def_ref),
+                parent_attempt: None,
+                dedupe_key: Some(task_route_dedupe_key(task_ref)),
+                run_id: None,
+                now: ROUTE_NOW,
+            },
+            crate::agent_dispatch::AgentSpawnContext {
+                type_ref: task_verb_body(&vault, task_ref)
+                    .expect("decode task")
+                    .expect("typed task")
+                    .type_ref,
+                requester: crate::agent_dispatch::QueuedRequester::of_memory(&facade),
+                origin_conversation: facade.origin_conversation(),
+                caller_origin: Some(facade.caller_origin()),
+                ..crate::agent_dispatch::AgentSpawnContext::default()
+            },
+        )
         .expect("replayed dispatch");
     let after = attempts_for(&vault, task_ref);
 

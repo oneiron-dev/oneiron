@@ -15,14 +15,20 @@ use std::sync::Mutex;
 mod covers;
 mod gate_anchors;
 mod private_sources;
+mod room_ancestry;
 pub(crate) use gate_anchors::{gate_claim_anchors_in, gate_claim_anchors_store_in};
 pub(crate) use private_sources::{
-    private_thread_word_turns_in, private_threads_readable_raw_in,
-    private_threads_readable_with_read_in,
+    private_thread_walks_readable_with_read_in, private_thread_word_turns_in,
+    private_threads_readable_raw_in, private_threads_readable_with_read_in,
 };
+use room_ancestry::{
+    base_and_view_rows_in, room_for_revision_in, room_for_revision_over, rooms_of_revision_in,
+};
+pub(crate) use room_ancestry::{hangs_under_in, room_for_record_in};
 
-/// Immutable ledger snapshots, keyed by the version read in the caller's
-/// transaction. Reusing a ScopedRead after a kick cannot reuse stale authority.
+/// Immutable ledger snapshots of unindexed rooms, keyed by the version read
+/// in the caller's transaction. Reusing a ScopedRead after a kick cannot
+/// reuse stale authority.
 #[derive(Default)]
 pub(crate) struct AudienceCache {
     rows: BTreeMap<(EntityId, u64), Vec<MembershipRow>>,
@@ -93,8 +99,35 @@ pub(crate) fn anchors_own_windows_admit_in(
 }
 
 impl AudienceCache {
+    /// Whole membership ledgers this cache read, one per (room, revision)
+    /// of an unindexed room; an indexed room reads none.
     pub(crate) fn ledger_reads(&self) -> usize {
         self.ledger_reads
+    }
+
+    /// The whole membership ledger of the unindexed `room` at its revision
+    /// in `txn`, read once per (room, revision) per read pass.
+    fn ledger_rows_in(
+        &mut self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        room: EntityId,
+    ) -> Result<&[MembershipRow]> {
+        let revision = membership::revision_in(&vault.store, txn, room)?;
+        if !self.rows.contains_key(&(room, revision)) {
+            if self.rows.len() >= 1024 {
+                self.rows.clear();
+            }
+            self.rows.insert(
+                (room, revision),
+                membership::rows_in(&vault.store, txn, room)?,
+            );
+            self.ledger_reads = self.ledger_reads.saturating_add(1);
+        }
+        self.rows
+            .get(&(room, revision))
+            .map(Vec::as_slice)
+            .ok_or(Error::CorruptedIndex("audience snapshot"))
     }
 
     /// Whether the own-entry memo may be served and kept for `txn`,
@@ -154,7 +187,7 @@ impl AudienceCache {
         };
         // `readable` meets each private thread turn by turn; a cover walks
         // none ([`covers`]).
-        self.readable_with_covers(vault, txn, id, &raw, audience, false, None)
+        self.readable_with_covers(vault, txn, id, &raw, audience, false, None, None)
     }
     /// [`Self::readable`] over the exact revision being served, which for a
     /// pinned or indexed read may be older than the current row. With
@@ -164,7 +197,12 @@ impl AudienceCache {
     /// its other members so ([`private_threads_readable_with_read_in`]).
     /// `personal` is that member: in a room it holds a seat in now, the row
     /// meets its own membership window alone, never another member's, so a
-    /// join from now on narrows no one else's own read (FIX 5667).
+    /// join from now on narrows no one else's own read (FIX 5667). With
+    /// `stretch`, a read composed over a room stretch's view (`dbs`), a row
+    /// only that view holds, one the stretch staged, is read through it and
+    /// meets the room the stretch's shell maps to
+    /// ([`crate::off_record::StretchRoom::room_of`]); every row base holds is
+    /// judged on base, as before.
     #[expect(clippy::too_many_arguments)]
     pub(crate) fn readable_raw(
         &mut self,
@@ -175,13 +213,12 @@ impl AudienceCache {
         audience: &[EntityId],
         current: bool,
         personal: Option<EntityId>,
+        stretch: Option<(&crate::store::StoreRead<'_>, crate::off_record::StretchRoom)>,
     ) -> Result<bool> {
-        if !crate::vault::live_entity_row_in_txn(&vault.store, txn, &id)?.is_live()
-            || vault.archive_tombstone_in_txn(txn, &id)?.is_some()
-        {
+        if !stands_live_in(vault, stretch.map(|(dbs, _)| dbs), txn, id)? {
             return Ok(false);
         }
-        self.readable_with_covers(vault, txn, id, raw, audience, current, personal)
+        self.readable_with_covers(vault, txn, id, raw, audience, current, personal, stretch)
     }
     /// Whether `reader`, an unbound agent or the system, reads the revision
     /// `raw` of `id` by its own entry alone, as a person's own read does
@@ -207,6 +244,25 @@ impl AudienceCache {
         raw: &[u8],
         reader: EntityId,
     ) -> Result<bool> {
+        self.own_entry_readable_raw_in_stretch(vault, dbs, txn, id, raw, reader, None)
+    }
+
+    /// [`Self::own_entry_readable_raw`] for a read composed over a room
+    /// stretch's view `dbs`: a row that sits under the stretch's shell meets
+    /// `reader`'s own windows in the room that shell maps to
+    /// ([`crate::off_record::StretchRoom::room_of`]), as a base row of that
+    /// room does. With no `stretch` it is that read.
+    #[expect(clippy::too_many_arguments)]
+    pub(crate) fn own_entry_readable_raw_in_stretch(
+        &self,
+        vault: &Vault,
+        dbs: &crate::store::StoreRead<'_>,
+        txn: &heed::RoTxn<'_>,
+        id: EntityId,
+        raw: &[u8],
+        reader: EntityId,
+        stretch: Option<crate::off_record::StretchRoom>,
+    ) -> Result<bool> {
         let keep = self.own_windows_keep(vault, txn);
         // A whole answer is kept over base rows only: a session's composed
         // view moves no snapshot id under its overlay rows.
@@ -220,7 +276,7 @@ impl AudienceCache {
         {
             return Ok(kept);
         }
-        let judged = self.own_entry_judged(vault, dbs, txn, id, raw, reader, keep)?;
+        let judged = self.own_entry_judged(vault, dbs, txn, id, raw, reader, keep, stretch)?;
         let answer = judged == OwnEntry::Reads;
         // A row omitted because a header, a door or a source did not read is
         // never kept: only a judgement is (L09 11-04 14:02).
@@ -245,6 +301,7 @@ impl AudienceCache {
         raw: &[u8],
         reader: EntityId,
         keep: bool,
+        stretch: Option<crate::off_record::StretchRoom>,
     ) -> Result<OwnEntry> {
         let mut pending = vec![(id, raw.to_vec())];
         for live in base_and_view_rows_in(vault, dbs, txn, id)? {
@@ -262,6 +319,7 @@ impl AudienceCache {
                 if room == id {
                     continue;
                 }
+                let room = stretch.map_or(room, |stretch| stretch.room_of(room));
                 let kept = keep
                     .then(|| {
                         let own = self.own_entry.lock().ok()?;
@@ -327,12 +385,23 @@ impl AudienceCache {
         current: bool,
         personal: Option<EntityId>,
         depth: usize,
+        stretch: Option<(&crate::store::StoreRead<'_>, crate::off_record::StretchRoom)>,
     ) -> Result<bool> {
         let h = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("audience header"))?;
         // The room of the revision served and the room of the current row
         // both bind: an older revision about a private channel stays that
         // channel's, and a later move cannot widen the current read.
-        let live = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?;
+        let mut live = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?;
+        // A row base does not hold is one a room stretch staged: it is read,
+        // with its ancestry and private threads, through the stretch's view,
+        // and its shell is its room. Any row base holds is judged on base.
+        let staged = match stretch {
+            Some((dbs, stretch)) if live.is_none() => {
+                live = crate::ports::EntityStoreRead::port_entity_raw(dbs, txn, &id)?;
+                Some((dbs, stretch))
+            }
+            _ => None,
+        };
         let revisions = if live.as_deref() == Some(raw) {
             vec![None]
         } else {
@@ -341,15 +410,29 @@ impl AudienceCache {
         // Each audience member must also stand in each private thread the
         // row sits in (FIX 2951); a summary's or claim's covers are walked
         // there, so it runs once per row.
-        if depth == 0 && !private_threads_readable_raw_in(vault, txn, id, raw, audience, current)? {
-            return Ok(false);
+        if depth == 0 {
+            let threads_read = match staged {
+                Some((dbs, _)) => private_threads_readable_with_read_in(
+                    vault, dbs, txn, id, raw, audience, current,
+                )?,
+                None => private_threads_readable_raw_in(vault, txn, id, raw, audience, current)?,
+            };
+            if !threads_read {
+                return Ok(false);
+            }
         }
         // FIX 5638: the row itself, never a cover, may read to an Owner or
         // Admin off the room through its own private thread.
         let record = (depth == 0).then_some((id, raw));
         let mut rooms = BTreeSet::new();
         for revision in revisions {
-            match room_for_revision_in(vault, txn, id, revision) {
+            let room = match staged {
+                Some((dbs, stretch)) => {
+                    room_for_revision_over(vault, dbs, txn, id, revision, Some(stretch))
+                }
+                None => room_for_revision_in(vault, txn, id, revision),
+            };
+            match room {
                 Ok(room) => rooms.extend(room),
                 // Missing ancestry denies this candidate, not unrelated query hits.
                 Err(Error::EntityNotFound) => return Ok(false),
@@ -381,28 +464,27 @@ impl AudienceCache {
                     return Ok(false);
                 }
             } else {
-                let revision = membership::revision_in(&vault.store, txn, room)?;
-                if !self.rows.contains_key(&(room, revision)) {
-                    if self.rows.len() >= 1024 {
-                        self.rows.clear();
-                    }
-                    self.rows.insert(
-                        (room, revision),
-                        membership::rows_in(&vault.store, txn, room)?,
-                    );
-                    self.ledger_reads = self.ledger_reads.saturating_add(1);
-                }
-                let rows = self
-                    .rows
-                    .get(&(room, revision))
-                    .ok_or(Error::CorruptedIndex("audience snapshot"))?;
+                // An indexed room serves each person's windows from its
+                // per-participant index (ARCH-0052 :215, #7907); only an
+                // unindexed room reads and folds its whole ledger.
+                let rows = if super::membership_index::indexed_revision_in(&vault.store, txn, room)?
+                    .is_some()
+                {
+                    None
+                } else {
+                    Some(self.ledger_rows_in(vault, txn, room)?)
+                };
+                let windows_of = |person: EntityId| match rows {
+                    Some(rows) => membership::windows_rows(rows, person),
+                    None => membership::person_windows_in(&vault.store, txn, room, person),
+                };
                 // A seat's own read meets its own window alone (FIX 5667):
                 // another member's join from now on never narrows it. A
                 // reader with no seat here, a host or one on a Ready join,
                 // meets every member's, as a held turn does.
                 let mut seat = None;
                 if let Some(reader) = personal
-                    && membership::windows_rows(rows, reader)?
+                    && windows_of(reader)?
                         .last()
                         .is_some_and(|window| window.to.is_none())
                 {
@@ -421,7 +503,7 @@ impl AudienceCache {
                     // (OF-417); it is re-proved here, never cached, and so
                     // is a private thread's Owner or Admin with no seat here
                     // (FIX 5638): a seated one keeps its window (FIX 6268).
-                    let windows = membership::windows_rows(rows, *person)?;
+                    let windows = windows_of(*person)?;
                     let seated = windows.last().is_some_and(|window| window.to.is_none());
                     if !windows.iter().any(|w| w.contains(h.occurred_start))
                         && !attendee::speaker_entry_covers_in(
@@ -575,161 +657,25 @@ fn reaction_covers(claim: &crate::ClaimBody) -> Result<Option<Vec<EntityId>>> {
 
 pub(crate) use crate::store::conversation_summary::conversation_summary_covers;
 
-pub(crate) fn room_for_record_in(
+/// Whether `id` stands live for an audience read: live on base and not
+/// archived, or, over a room stretch's view `dbs`, live in that view while
+/// base holds no row of it at all, so a row the stretch staged. An overlay
+/// row never stands in for a base row that is gone.
+fn stands_live_in(
     vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    record: EntityId,
-) -> Result<Option<EntityId>> {
-    room_for_revision_in(vault, txn, record, None)
-}
-
-/// [`room_for_record_in`] starting from `revision` of `record` when given,
-/// so a served older revision is placed by its own subject. Every ancestor
-/// is read, however many (rule 5): past its threshold row the walk asks
-/// whether everything is okay, counted on every way out, and a record
-/// already seen ends a cycle.
-fn room_for_revision_in(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    record: EntityId,
-    revision: Option<&[u8]>,
-) -> Result<Option<EntityId>> {
-    let mut walk = ScanCount::start(
-        &vault.store,
-        txn,
-        EngineScan::RoomAncestryRecords,
-        record.as_bytes(),
-    )?;
-    let mut seen = BTreeSet::new();
-    let room = room_walk_in(vault, txn, record, revision, &mut seen);
-    walk.rows(seen.len());
-    walk.defer(&vault.store);
-    room
-}
-
-/// The walk [`room_for_revision_in`] counts, each record it reaches in
-/// `seen`.
-fn room_walk_in(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    record: EntityId,
-    revision: Option<&[u8]>,
-    seen: &mut BTreeSet<EntityId>,
-) -> Result<Option<EntityId>> {
-    let mut pending = vec![record];
-    let mut room = None;
-    while let Some(id) = pending.pop() {
-        if !seen.insert(id) {
-            continue;
-        }
-        let raw = match revision.filter(|_| id == record) {
-            Some(raw) => raw.to_vec(),
-            None => crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?
-                .ok_or(Error::EntityNotFound)?,
-        };
-        let h = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("room ancestor"))?;
-        if h.entity_type == ENTITY_TYPE_CONVERSATION {
-            if room.is_some_and(|r| r != id) {
-                return Err(state("ambiguous room"));
-            }
-            room = Some(id);
-            continue;
-        }
-        for kind in [
-            EdgeKind::ChildOf,
-            EdgeKind::PartOf,
-            EdgeKind::Parent,
-            EdgeKind::RepliesTo,
-            EdgeKind::SpawnedBy,
-            EdgeKind::BelongsTo,
-        ] {
-            pending.extend(counted_edge_ids(&vault.store, txn, &id, kind, false)?);
-        }
-        if h.entity_type == ENTITY_TYPE_CLAIM {
-            let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-            if let crate::claim::ClaimSubject::Entity(subject) = body.subject {
-                pending.push(subject);
-            }
-        }
-    }
-    Ok(room)
-}
-/// Every room the revision `raw` of `record` sits in (FIX 5861), up the
-/// edges and claim subjects [`room_for_revision_in`] walks: an ancestor that
-/// is gone is passed over, never a refusal, and a record that reaches two
-/// rooms sits in both. Each ancestor and edge is read on base and through
-/// `dbs`, a session's composed view (FIX 6487).
-fn rooms_of_revision_in(
-    vault: &Vault,
-    dbs: &crate::store::StoreRead<'_>,
-    txn: &heed::RoTxn<'_>,
-    record: EntityId,
-    raw: &[u8],
-) -> Result<BTreeSet<EntityId>> {
-    let union = crate::store::ManifestDbs::is_union(dbs);
-    let mut pending = vec![(record, raw.to_vec())];
-    let mut seen = BTreeSet::from([record]);
-    let mut rooms = BTreeSet::new();
-    while let Some((id, bytes)) = pending.pop() {
-        let Some(h) = EntityMetadataHeader::parse(&bytes) else {
-            continue;
-        };
-        if h.entity_type == ENTITY_TYPE_CONVERSATION {
-            rooms.insert(id);
-            continue;
-        }
-        let mut next = Vec::new();
-        for kind in [
-            EdgeKind::ChildOf,
-            EdgeKind::PartOf,
-            EdgeKind::Parent,
-            EdgeKind::RepliesTo,
-            EdgeKind::SpawnedBy,
-            EdgeKind::BelongsTo,
-        ] {
-            next.extend(counted_edge_ids(&vault.store, txn, &id, kind, false)?);
-            if union {
-                next.extend(counted_edge_ids(dbs, txn, &id, kind, false)?);
-            }
-        }
-        if h.entity_type == ENTITY_TYPE_CLAIM
-            && let Some(body) = bytes.get(ENTITY_METADATA_HEADER_LEN..)
-            && let Ok(claim) = crate::claim::decode_claim_body(body, true)
-            && let crate::claim::ClaimSubject::Entity(subject) = claim.subject
-        {
-            next.push(subject);
-        }
-        for ancestor in next {
-            if seen.insert(ancestor) {
-                for bytes in base_and_view_rows_in(vault, dbs, txn, ancestor)? {
-                    pending.push((ancestor, bytes));
-                }
-            }
-        }
-    }
-    Ok(rooms)
-}
-/// The rows `id` holds on base and, when `dbs` composes a session's view
-/// over it, in that view, each once (FIX 6487): an overlay row is read
-/// beside the base one, never in its place. None for a record neither holds.
-fn base_and_view_rows_in(
-    vault: &Vault,
-    dbs: &crate::store::StoreRead<'_>,
+    dbs: Option<&crate::store::StoreRead<'_>>,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
-) -> Result<Vec<Vec<u8>>> {
-    let mut rows = Vec::new();
-    if let Some(base) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)? {
-        rows.push(base);
+) -> Result<bool> {
+    match crate::vault::live_entity_row_in_txn(&vault.store, txn, &id)? {
+        crate::vault::LiveEntityRow::Absent => match dbs {
+            Some(dbs) => Ok(crate::vault::live_entity_row_in_txn(dbs, txn, &id)?.is_live()),
+            None => Ok(false),
+        },
+        row => Ok(row.is_live() && vault.archive_tombstone_in_txn(txn, &id)?.is_none()),
     }
-    if crate::store::ManifestDbs::is_union(dbs)
-        && let Some(view) = crate::ports::EntityStoreRead::port_entity_raw(dbs, txn, &id)?
-        && !rows.contains(&view)
-    {
-        rows.push(view);
-    }
-    Ok(rows)
 }
+
 impl Vault {
     /// The room audience is membership, never runtime presence.
     pub fn scoped_read_for_room(

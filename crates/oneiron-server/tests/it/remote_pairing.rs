@@ -20,6 +20,8 @@ use oneiron_server::build_app;
 use oneiron_server::config::SyncServerConfig;
 use oneiron_server::server::SyncServer;
 
+use crate::engine_stack::run_on_engine_stack;
+
 const SECRET: &str = "remote-pairing-host-root";
 const READ_WRITE: &[&str] = &["core:read", "core:write"];
 
@@ -161,237 +163,269 @@ fn turn() -> WitnessTurn {
     .unwrap()
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_paired_client_witnesses_claims_recalls_and_reads_its_receipts() {
-    let fixture = Fixture::serve().await;
-    let link = fixture.owner_link();
-    let scope = owner_claim_scope(&fixture.person);
-    let found = blocking(move || {
-        let client = paired(&link);
-        let witnessed = client.vault_witness(&turn()).unwrap();
-        let claim: ScopedClaimInput = serde_json::from_value(serde_json::json!({
-            "predicate": "preference.travel.seat",
-            "subject_ref": witnessed.turn_short_id,
-            "value": {"seat": "window"}, "confidence": 1.0, "source": "user_stated",
-            "scope": scope,
-        }))
-        .unwrap();
-        let claimed = client.vault_claims_upsert(&claim).unwrap();
-        let effort = oneiron_remote::parse_effort("medium").unwrap();
-        client
-            .vault_recall(
-                "window seat",
-                effort,
-                &RecallScope::default(),
-                10,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-            )
-            .unwrap();
-        let receipts = client.vault_receipts(100, &[], None).unwrap().receipts;
-        receipts
-            .iter()
-            .any(|receipt| receipt.receipt_ref == claimed.receipt_ref)
-    })
-    .await;
-    assert!(found);
+#[test]
+fn a_paired_client_witnesses_claims_recalls_and_reads_its_receipts() {
+    run_on_engine_stack(
+        "a_paired_client_witnesses_claims_recalls_and_reads_its_receipts",
+        || async move {
+            let fixture = Fixture::serve().await;
+            let link = fixture.owner_link();
+            let scope = owner_claim_scope(&fixture.person);
+            let found = blocking(move || {
+                let client = paired(&link);
+                let witnessed = client.vault_witness(&turn()).unwrap();
+                let claim: ScopedClaimInput = serde_json::from_value(serde_json::json!({
+                    "predicate": "preference.travel.seat",
+                    "subject_ref": witnessed.turn_short_id,
+                    "value": {"seat": "window"}, "confidence": 1.0, "source": "user_stated",
+                    "scope": scope,
+                }))
+                .unwrap();
+                let claimed = client.vault_claims_upsert(&claim).unwrap();
+                let effort = oneiron_remote::parse_effort("medium").unwrap();
+                client
+                    .vault_recall(
+                        "window seat",
+                        effort,
+                        &RecallScope::default(),
+                        10,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                    )
+                    .unwrap();
+                let receipts = client.vault_receipts(100, &[], None).unwrap().receipts;
+                receipts
+                    .iter()
+                    .any(|receipt| receipt.receipt_ref == claimed.receipt_ref)
+            })
+            .await;
+            assert!(found);
+        },
+    )
 }
 
 /// Wave 9 A/B: `oneiron token read` and `token pair --scope core:read` spell
 /// the Read verb `core:read`. A non-owner agent holding such a credential
 /// recalled an empty pack over HTTP, because the door dropped its slip.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_core_read_slip_lets_a_non_owner_agent_recall() {
-    let fixture = Fixture::serve().await;
-    let owner = EntityId::from_hex(&fixture.person).unwrap();
-    let agent = EntityId::now();
-    fixture
-        .vault
-        .put_entity(
-            &agent,
-            oneiron::registry::ENTITY_TYPE_PERSON,
-            oneiron::TimeRange { start: 1, end: 1 },
-            1,
-            b"an agent",
-        )
-        .unwrap();
-    let said = fixture
-        .vault
-        .memory(owner, oneiron::EdgeActorClass::Human)
-        .witness(&turn())
-        .unwrap()
-        .message_short_ids[0]
-        .clone();
-    let (link, _) = fixture.link(&["core:read"], &agent.to_hex(), Some("agent"));
-    let pack = blocking(move || {
-        let effort = oneiron_remote::parse_effort("medium").unwrap();
-        paired(&link)
-            .vault_recall(
-                "window seat",
-                effort,
-                &RecallScope::default(),
-                10,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-            )
-            .unwrap()
-    })
-    .await;
-    // The message comes back as its turn, quoting it (ARCH-0004).
-    assert!(
-        pack.items.iter().any(|item| item
-            .cited_messages
-            .iter()
-            .any(|message| message.short_id == said)),
-        "{pack:?}"
-    );
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn paired_client_exports_full_vault_in_five_formats() {
-    // OF-222 (owner ruling 10-17, fe8d9318937): the five-format writer is
-    // gone; the whole vault exports as one re-importable archive. The
-    // evidence-ledger check reads the archive back into its document.
-    use oneiron::memory::{EXPORT_TARGET_ARCHIVE, ExportAnswer};
-    let fixture = Fixture::serve().await;
-    let person = fixture.person.clone();
-    let vault = fixture.vault.clone();
-    let link = fixture.full_vault_link();
-    blocking(move || {
-        let client = paired(&link);
-        let generic: ExportAnswer = serde_json::from_value(
-            client
-                .agent_verb(
-                    "vault.export",
-                    serde_json::json!({"format": EXPORT_TARGET_ARCHIVE}),
+#[test]
+fn a_core_read_slip_lets_a_non_owner_agent_recall() {
+    run_on_engine_stack(
+        "a_core_read_slip_lets_a_non_owner_agent_recall",
+        || async move {
+            let fixture = Fixture::serve().await;
+            let owner = EntityId::from_hex(&fixture.person).unwrap();
+            let agent = EntityId::now();
+            fixture
+                .vault
+                .put_entity(
+                    &agent,
+                    oneiron::registry::ENTITY_TYPE_PERSON,
+                    oneiron::TimeRange { start: 1, end: 1 },
+                    1,
+                    b"an agent",
                 )
-                .unwrap(),
-        )
-        .unwrap();
-        let typed = client.vault_export(Some(EXPORT_TARGET_ARCHIVE)).unwrap();
-        for answer in [generic, typed] {
-            let ExportAnswer::Inline(export) = answer else {
-                panic!("an export with no delivery asked answers inline");
-            };
-            let document =
-                serde_json::to_value(vault.read_whole_vault_archive(&export.archive).unwrap())
-                    .unwrap();
-            assert!(
-                document["evidence_ledger"]["entities"]
-                    .as_array()
+                .unwrap();
+            let said = fixture
+                .vault
+                .memory(owner, oneiron::EdgeActorClass::Human)
+                .witness(&turn())
+                .unwrap()
+                .message_short_ids[0]
+                .clone();
+            let (link, _) = fixture.link(&["core:read"], &agent.to_hex(), Some("agent"));
+            let pack = blocking(move || {
+                let effort = oneiron_remote::parse_effort("medium").unwrap();
+                paired(&link)
+                    .vault_recall(
+                        "window seat",
+                        effort,
+                        &RecallScope::default(),
+                        10,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                    )
                     .unwrap()
+            })
+            .await;
+            // The message comes back as its turn, quoting it (ARCH-0004).
+            assert!(
+                pack.items.iter().any(|item| item
+                    .cited_messages
                     .iter()
-                    .any(|row| row["id"] == person && row["short_ref"].as_str().is_some())
+                    .any(|message| message.short_id == said)),
+                "{pack:?}"
             );
-        }
-        assert_eq!(code(client.vault_export(Some("gemini"))), "BAD_REQUEST");
-    })
-    .await;
+        },
+    )
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn read_only_paired_client_cannot_export_another_actors_private_note() {
-    use oneiron::note::{NoteKind, NoteScope, NoteWriteEnvelope};
-    let fixture = Fixture::serve().await;
-    let owner = EntityId::from_hex(&fixture.person).unwrap();
-    let other = EntityId::now();
-    fixture
-        .vault
-        .put_entity(
-            &other,
-            oneiron::registry::ENTITY_TYPE_PERSON,
-            oneiron::TimeRange { start: 1, end: 1 },
-            1,
-            b"another person",
-        )
-        .unwrap();
-    let note = fixture
-        .vault
-        .memory(owner, oneiron::EdgeActorClass::Human)
-        .author_note(&NoteWriteEnvelope {
-            kind: NoteKind::Diary,
-            scope: NoteScope::ActorPrivate { owner_ref: owner },
-            source_revision_ref: [0x77; 16],
-            markdown: "private export pairing fixture".into(),
-            mask: None,
-        })
-        .unwrap();
-    let (link, _) = fixture.link(&["core:read"], &other.to_hex(), Some("human"));
-    let (generic, typed) = blocking(move || {
-        let client = paired(&link);
-        (
-            client.agent_verb(
-                "vault.export",
-                serde_json::json!({"format": oneiron::memory::EXPORT_TARGET_ARCHIVE}),
-            ),
-            client.vault_export(Some(oneiron::memory::EXPORT_TARGET_ARCHIVE)),
-        )
-    })
-    .await;
-    for result in [
-        generic.map(|value| value.to_string()),
-        typed.map(|value| serde_json::to_string(&value).unwrap()),
-    ] {
-        let error = result.unwrap_err();
-        assert_eq!(error.code, "FORBIDDEN");
-        assert!(!error.message.contains("private export pairing fixture"));
-        assert!(!error.message.contains(&note.entity_ref));
-    }
+#[test]
+fn paired_client_exports_full_vault_in_five_formats() {
+    run_on_engine_stack(
+        "paired_client_exports_full_vault_in_five_formats",
+        || async move {
+            // OF-222 (owner ruling 10-17, fe8d9318937): the five-format writer is
+            // gone; the whole vault exports as one re-importable archive. The
+            // evidence-ledger check reads the archive back into its document.
+            use oneiron::memory::{EXPORT_TARGET_ARCHIVE, ExportAnswer};
+            let fixture = Fixture::serve().await;
+            let person = fixture.person.clone();
+            let vault = fixture.vault.clone();
+            let link = fixture.full_vault_link();
+            blocking(move || {
+                let client = paired(&link);
+                let generic: ExportAnswer = serde_json::from_value(
+                    client
+                        .agent_verb(
+                            "vault.export",
+                            serde_json::json!({"format": EXPORT_TARGET_ARCHIVE}),
+                        )
+                        .unwrap(),
+                )
+                .unwrap();
+                let typed = client.vault_export(Some(EXPORT_TARGET_ARCHIVE)).unwrap();
+                for answer in [generic, typed] {
+                    let ExportAnswer::Inline(export) = answer else {
+                        panic!("an export with no delivery asked answers inline");
+                    };
+                    let document = serde_json::to_value(
+                        vault.read_whole_vault_archive(&export.archive).unwrap(),
+                    )
+                    .unwrap();
+                    assert!(
+                        document["evidence_ledger"]["entities"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .any(|row| row["id"] == person && row["short_ref"].as_str().is_some())
+                    );
+                }
+                assert_eq!(code(client.vault_export(Some("gemini"))), "BAD_REQUEST");
+            })
+            .await;
+        },
+    )
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn logged_slip_reconnects_without_the_minting_host_secret() {
-    let fixture = Fixture::serve().await;
-    let link = fixture.owner_link();
-    let (_mint_origin, credential, _comm) =
-        blocking(move || OneironClient::pair(&link).unwrap()).await;
-    let public_server =
-        Arc::new(SyncServer::new(fixture.vault.clone(), SyncServerConfig::default()).unwrap());
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
-    let task = tokio::spawn(async move {
-        axum::serve(listener, build_app(public_server))
-            .await
-            .unwrap();
-    });
-    let read = blocking(move || {
-        OneironClient::connect(&url, &credential)
-            .unwrap()
-            .vault_receipts(10, &[], None)
-    })
-    .await;
-    task.abort();
-    assert!(
-        read.is_ok(),
-        "a logged slip needs no minting secret to verify"
-    );
+#[test]
+fn read_only_paired_client_cannot_export_another_actors_private_note() {
+    run_on_engine_stack(
+        "read_only_paired_client_cannot_export_another_actors_private_note",
+        || async move {
+            use oneiron::note::{NoteKind, NoteScope, NoteWriteEnvelope};
+            let fixture = Fixture::serve().await;
+            let owner = EntityId::from_hex(&fixture.person).unwrap();
+            let other = EntityId::now();
+            fixture
+                .vault
+                .put_entity(
+                    &other,
+                    oneiron::registry::ENTITY_TYPE_PERSON,
+                    oneiron::TimeRange { start: 1, end: 1 },
+                    1,
+                    b"another person",
+                )
+                .unwrap();
+            let note = fixture
+                .vault
+                .memory(owner, oneiron::EdgeActorClass::Human)
+                .author_note(&NoteWriteEnvelope {
+                    kind: NoteKind::Diary,
+                    scope: NoteScope::ActorPrivate { owner_ref: owner },
+                    source_revision_ref: [0x77; 16],
+                    markdown: "private export pairing fixture".into(),
+                    mask: None,
+                })
+                .unwrap();
+            let (link, _) = fixture.link(&["core:read"], &other.to_hex(), Some("human"));
+            let (generic, typed) = blocking(move || {
+                let client = paired(&link);
+                (
+                    client.agent_verb(
+                        "vault.export",
+                        serde_json::json!({"format": oneiron::memory::EXPORT_TARGET_ARCHIVE}),
+                    ),
+                    client.vault_export(Some(oneiron::memory::EXPORT_TARGET_ARCHIVE)),
+                )
+            })
+            .await;
+            for result in [
+                generic.map(|value| value.to_string()),
+                typed.map(|value| serde_json::to_string(&value).unwrap()),
+            ] {
+                let error = result.unwrap_err();
+                assert_eq!(error.code, "FORBIDDEN");
+                assert!(!error.message.contains("private export pairing fixture"));
+                assert!(!error.message.contains(&note.entity_ref));
+            }
+        },
+    )
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn back_to_back_calls_each_spend_a_fresh_nonce() {
-    let fixture = Fixture::serve().await;
-    let link = fixture.owner_link();
-    let (first, second) = blocking(move || {
-        let client = paired(&link);
-        (
-            client.vault_receipts(10, &[], None),
-            client.vault_receipts(10, &[], None),
-        )
-    })
-    .await;
-    assert!(first.is_ok() && second.is_ok());
+#[test]
+fn logged_slip_reconnects_without_the_minting_host_secret() {
+    run_on_engine_stack(
+        "logged_slip_reconnects_without_the_minting_host_secret",
+        || async move {
+            let fixture = Fixture::serve().await;
+            let link = fixture.owner_link();
+            let (_mint_origin, credential, _comm) =
+                blocking(move || OneironClient::pair(&link).unwrap()).await;
+            let public_server = Arc::new(
+                SyncServer::new(fixture.vault.clone(), SyncServerConfig::default()).unwrap(),
+            );
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let url = format!("http://{}", listener.local_addr().unwrap());
+            let task = tokio::spawn(async move {
+                axum::serve(listener, build_app(public_server))
+                    .await
+                    .unwrap();
+            });
+            let read = blocking(move || {
+                OneironClient::connect(&url, &credential)
+                    .unwrap()
+                    .vault_receipts(10, &[], None)
+            })
+            .await;
+            task.abort();
+            assert!(
+                read.is_ok(),
+                "a logged slip needs no minting secret to verify"
+            );
+        },
+    )
+}
+
+#[test]
+fn back_to_back_calls_each_spend_a_fresh_nonce() {
+    run_on_engine_stack(
+        "back_to_back_calls_each_spend_a_fresh_nonce",
+        || async move {
+            let fixture = Fixture::serve().await;
+            let link = fixture.owner_link();
+            let (first, second) = blocking(move || {
+                let client = paired(&link);
+                (
+                    client.vault_receipts(10, &[], None),
+                    client.vault_receipts(10, &[], None),
+                )
+            })
+            .await;
+            assert!(first.is_ok() && second.is_ok());
+        },
+    )
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -454,40 +488,52 @@ async fn a_link_for_a_holder_that_is_not_an_entity_is_unauthorized_at_pair() {
     assert_eq!(refused, "UNAUTHORIZED");
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_slip_with_no_actor_class_is_forbidden_at_the_verb() {
-    let fixture = Fixture::serve().await;
-    let (link, _) = fixture.link(READ_WRITE, &fixture.person, None);
-    let refused = blocking(move || code(paired(&link).vault_receipts(10, &[], None))).await;
-    assert_eq!(refused, "FORBIDDEN");
+#[test]
+fn a_slip_with_no_actor_class_is_forbidden_at_the_verb() {
+    run_on_engine_stack(
+        "a_slip_with_no_actor_class_is_forbidden_at_the_verb",
+        || async move {
+            let fixture = Fixture::serve().await;
+            let (link, _) = fixture.link(READ_WRITE, &fixture.person, None);
+            let refused = blocking(move || code(paired(&link).vault_receipts(10, &[], None))).await;
+            assert_eq!(refused, "FORBIDDEN");
+        },
+    )
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_read_only_slip_is_forbidden_to_write() {
-    let fixture = Fixture::serve().await;
-    let (link, _) = fixture.link(&["core:read"], &fixture.person, Some("human"));
-    let refused = blocking(move || code(paired(&link).vault_witness(&turn()))).await;
-    assert_eq!(refused, "FORBIDDEN");
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_revoked_slip_is_unauthorized_on_its_next_call() {
-    let fixture = Fixture::serve().await;
-    let link = fixture.owner_link();
-    let vault = fixture.vault.clone();
-    let refused = blocking(move || {
-        let (url, credential, _comm) = OneironClient::pair(&link).unwrap();
-        let client = OneironClient::connect(&url, &credential).unwrap();
-        client.vault_receipts(10, &[], None).unwrap();
-        let slip = CapabilitySlip::from_token(&bare_slip(&credential)).unwrap();
-        let issuer = vault.load_host_slip_issuer().unwrap();
-        vault
-            .revoke_capability_slip(&issuer, slip.claims.slip_id)
-            .unwrap();
-        code(client.vault_receipts(10, &[], None))
+#[test]
+fn a_read_only_slip_is_forbidden_to_write() {
+    run_on_engine_stack("a_read_only_slip_is_forbidden_to_write", || async move {
+        let fixture = Fixture::serve().await;
+        let (link, _) = fixture.link(&["core:read"], &fixture.person, Some("human"));
+        let refused = blocking(move || code(paired(&link).vault_witness(&turn()))).await;
+        assert_eq!(refused, "FORBIDDEN");
     })
-    .await;
-    assert_eq!(refused, "UNAUTHORIZED");
+}
+
+#[test]
+fn a_revoked_slip_is_unauthorized_on_its_next_call() {
+    run_on_engine_stack(
+        "a_revoked_slip_is_unauthorized_on_its_next_call",
+        || async move {
+            let fixture = Fixture::serve().await;
+            let link = fixture.owner_link();
+            let vault = fixture.vault.clone();
+            let refused = blocking(move || {
+                let (url, credential, _comm) = OneironClient::pair(&link).unwrap();
+                let client = OneironClient::connect(&url, &credential).unwrap();
+                client.vault_receipts(10, &[], None).unwrap();
+                let slip = CapabilitySlip::from_token(&bare_slip(&credential)).unwrap();
+                let issuer = vault.load_host_slip_issuer().unwrap();
+                vault
+                    .revoke_capability_slip(&issuer, slip.claims.slip_id)
+                    .unwrap();
+                code(client.vault_receipts(10, &[], None))
+            })
+            .await;
+            assert_eq!(refused, "UNAUTHORIZED");
+        },
+    )
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

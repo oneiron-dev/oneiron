@@ -259,6 +259,7 @@ fn window_and_token_expire_on_separate_jobs() -> TestResult {
         recipient_count: 1,
         on_behalf_of: None,
         idempotency_key: Some("send-1".into()),
+        check_in_ref: None,
     })?;
     assert_eq!(
         sent.outcome, "delivered_to_channel",
