@@ -53,15 +53,15 @@ impl RawValue for OutcomeRow {
 
     fn from_raw(bytes: &[u8]) -> std::result::Result<Self, side_table::CodecError> {
         let value = decode_value(bytes)?;
-        if map_u64(&value, KEY_SCHEMA_VERSION) != Some(SKILL_RELIABILITY_SCHEMA_VERSION) {
+        if map_u64(&value, KEY_SCHEMA_VERSION)? != Some(SKILL_RELIABILITY_SCHEMA_VERSION) {
             return Err(invalid("unsupported skill reliability outcome schema").into());
         }
-        let win = map_entry(&value, KEY_WIN)
+        let win = map_entry(&value, KEY_WIN)?
             .and_then(Value::as_bool)
             .ok_or(invalid("skill reliability outcome is missing win"))?;
         Ok(Self {
             win,
-            at: map_u64(&value, KEY_AT).unwrap_or(0),
+            at: map_u64(&value, KEY_AT)?.unwrap_or(0),
         })
     }
 }
@@ -279,7 +279,7 @@ impl RawValue for DisplacedMark {
     fn from_raw(bytes: &[u8]) -> std::result::Result<Self, side_table::CodecError> {
         let value = decode_value(bytes)?;
         let field = |key: &str| {
-            map_entry(&value, key)
+            map_entry(&value, key)?
                 .and_then(Value::as_str)
                 .map(str::to_owned)
                 .ok_or(invalid("skill reliability displacement mark is malformed"))

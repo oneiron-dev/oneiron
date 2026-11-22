@@ -2,6 +2,7 @@
 //! opens, which only its owner's answer closes (see `crate::gate::owner_answer`).
 
 use heed::{RoTxn, RwTxn};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -32,12 +33,12 @@ impl RawValue for OwnerAnswerObligationRecord {
 }
 
 /// The hash an obligation names its owner's item by: the item's content
-/// binding (`diff_handle`), whatever its length.
+/// binding (`diff_handle`), whatever its length
+/// (`purposes::store::OWNER_ANSWER_ITEM`).
 pub(crate) fn owner_answer_item_hash(diff_handle: &[u8]) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(b"oneiron:owner-answer-item:v1");
-    hasher.update(diff_handle);
-    *hasher.finalize().as_bytes()
+    LegacyDigest::new(purposes::store::OWNER_ANSWER_ITEM)
+        .raw(diff_handle)
+        .finish()
 }
 
 /// `claim_id`'s open owner-answer obligation, read through any store view.

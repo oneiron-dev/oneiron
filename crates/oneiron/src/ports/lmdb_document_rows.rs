@@ -37,20 +37,6 @@ fn slot_updates(slot: DocumentSlot) -> Vec<u8> {
     prefix
 }
 
-impl SideKey for DocumentSlot {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(self.to_hex().as_bytes());
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        Self::parse(std::str::from_utf8(bytes).ok()?)
-    }
-}
-
-impl FixedSideKey for DocumentSlot {
-    const WIDTH: usize = 32;
-}
-
 impl SideKey for UpdateSeq {
     fn encode_into(&self, out: &mut Vec<u8>) {
         let spelled = match self {
@@ -72,22 +58,6 @@ impl SideKey for UpdateSeq {
             20 if bytes.iter().all(u8::is_ascii_digit) => text.parse().ok().map(Self::Generation),
             _ => None,
         }
-    }
-}
-
-impl SideKey for DocumentUpdateKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        self.slot.encode_into(out);
-        out.push(b':');
-        self.seq.encode_into(out);
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let (slot, rest) = bytes.split_at_checked(DocumentSlot::WIDTH)?;
-        Some(Self {
-            slot: DocumentSlot::decode_key(slot)?,
-            seq: UpdateSeq::decode_key(rest.strip_prefix(b":")?)?,
-        })
     }
 }
 

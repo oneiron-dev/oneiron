@@ -1,0 +1,17 @@
+{
+  "name": "vault.turn_programs.resume",
+  "description": "Under owner proof and the owner's confirm, resumes the paused turn programs named on a vault copy made beside its source; a timer whose due time has passed then wakes once at once, and the programs not named stay paused.",
+  "input": "crate::dreamer_runner::ResumePausedTurnProgramsRequest",
+  "output": "crate::dreamer_runner::ResumedTurnPrograms",
+  "call": "crate::task_verb::sdk::resume_paused_turn_programs(memory, &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "security_control_disable",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

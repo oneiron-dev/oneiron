@@ -215,10 +215,17 @@ impl Vault {
                 );
                 Default::default()
             });
-        let data_key = self
+        let (data_key, data_key_held_commitment, data_key_commitment) = match self
             .unlock_vault_key()
-            .and_then(|()| self.vault_subkey(CUSTODY_HEAD_WRAP_CONTEXT))
-            .ok();
+            .and_then(|()| self.custody_head_data_key(CUSTODY_HEAD_WRAP_CONTEXT))
+        {
+            Ok((subkey, commitment, generation)) => (
+                Some(subkey),
+                Some(commitment),
+                (generation > 0).then_some(commitment),
+            ),
+            Err(_) => (None, None, None),
+        };
         let txn = self.store.env.read_txn()?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         let root = self
@@ -230,6 +237,8 @@ impl Vault {
         Ok(Ok(CustodyRecipients {
             root,
             data_key,
+            data_key_commitment,
+            data_key_held_commitment,
             pad_worlds_kept_local,
             credentials_eligible,
             pad_worlds,
@@ -362,6 +371,31 @@ impl Vault {
         let publication =
             self.store
                 .publish_custody(&recipients, &standing, &targets, &outboxes, anchor)?;
+        self.custody_status_of(publication)
+    }
+
+    /// A publication pass to the folder `folder` that reads its recipients,
+    /// then runs `between`, then notes its policy and seals: a pass whose
+    /// policy lock did not take (FIX 7314) while `between` committed. Test
+    /// door only (`test_doors::data_key_custody_head`).
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn publish_custody_with_recipients_read_before(
+        &self,
+        folder: &Path,
+        between: impl FnOnce(),
+    ) -> Result<CustodyStatus> {
+        let recipients = match self.custody_target_recipients()? {
+            Ok(recipients) => recipients,
+            Err(pending) => return Err(crate::Error::InvalidConfig(pending.detail())),
+        };
+        between();
+        let policy = self.store.custody_policy_guard();
+        let standing = self.store.note_custody_policy(&recipients, &policy)?;
+        let folder = FolderTarget::at(folder.to_path_buf());
+        let targets: Vec<&dyn CustodyTarget> = vec![&folder];
+        let publication =
+            self.store
+                .publish_custody(&recipients, &standing, &targets, &[], None)?;
         self.custody_status_of(publication)
     }
 
@@ -531,6 +565,10 @@ impl Vault {
         finish: impl FnOnce(&Self, Option<&super::HostOrderHolds>) -> Result<()>,
     ) -> Result<(Self, RestoreReport)> {
         let (mut image, checkpoint_id, bodies, required) = read_image_required(path, key)?;
+        // The image's machine identity drops here; whether the copy is born
+        // of a restore is read once the image has landed, off its own log
+        // ([`mark_restored_unless_managed`]).
+        let hosted = config.privacy.posture == crate::config::HostingPrivacyPosture::Hosted;
         image.drop_machine_identity();
         let artifact_holds = super::host_holds::artifact_host_holds(&mut image, key);
         let anchor = recovery.and_then(|recovery| recovery.anchor());
@@ -552,7 +590,7 @@ impl Vault {
         };
         let (mut made, forked, mut vault, mut report) = Self::restore_image(
             image,
-            checkpoint_id,
+            checkpoint_id.clone(),
             bodies,
             destination,
             config,
@@ -564,6 +602,7 @@ impl Vault {
             None,
             None,
         )?;
+        mark_restored_unless_managed(&vault, &checkpoint_id, hosted)?;
         finish(&vault, artifact_holds.as_ref())?;
         if let Some(landing) = &landing {
             report.custody_note = landing.note().map(str::to_owned);
@@ -641,3 +680,28 @@ impl AnchorStore for CustodyAnchorRoot {
 /// An erased body whose instance another holder still keeps: its key
 /// retires with that holder's release (KS-2A).
 pub const BODY_SHARED_OWNER_RETAINED: &str = "body_shared_owner_retained";
+
+/// Marks the install `vault` landed as born of a restore of the image
+/// `checkpoint_id` names (row RESTORED-COPIES-ENROL-EACH-OTHER), unless the
+/// vault is managed: a `hosted` destination whose landed log holds no live
+/// owner key outside the host's custody, read off the log's cloud stamp
+/// alone, on any posture ([`crate::authority::AuthorityFold::in_host_custody`]).
+/// A managed vault's host root enrols the node its restores, wakes and
+/// migrates land (RESTORED-COPIES-JOIN-SCOPE = A). The destination's posture
+/// alone proves no custody: a self-host root restored under a Hosted config
+/// stays the owner's, and its copy is marked (REVIEW-9509/9510 round 2 P1).
+fn mark_restored_unless_managed(vault: &Vault, checkpoint_id: &str, hosted: bool) -> Result<()> {
+    let image = blake3::Hash::from_hex(checkpoint_id).map_err(|_| codec_error())?;
+    let mut txn = vault.store.env.write_txn()?;
+    let fold = vault.authority_view_readonly_in_txn(&txn)?;
+    let owner_rooted = fold.roster.keys().any(|key| {
+        crate::authority::roster_has_live_owner(&fold.roster, key) && !fold.in_host_custody(key)
+    });
+    drop(fold);
+    if hosted && !owner_rooted {
+        return Ok(());
+    }
+    crate::identity::put_restored_from_image_in_txn(&vault.store, &mut txn, image.as_bytes())?;
+    txn.commit()?;
+    Ok(())
+}

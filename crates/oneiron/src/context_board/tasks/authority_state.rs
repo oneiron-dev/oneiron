@@ -1,6 +1,8 @@
 //! The ack/cancel render-state door: reads the TASK authority facts and appends them inside a caller transaction.
 
 use super::projection::TaskIntentPresence;
+use std::collections::BTreeSet;
+
 use crate::task_authority::{
     TaskAuthorityFact, TaskAuthorityFactKind, put_task_authority_fact_in_txn,
 };
@@ -23,13 +25,17 @@ pub(crate) fn task_is_acked(vault: &Vault, task_ref: EntityId) -> Result<bool> {
 
 /// Appends the immutable Acked fact for one TASK, inside the caller's
 /// transaction — so the acknowledgement commits with the verified `tasks.update`
-/// effect that earned it, or not at all.
+/// effect that earned it, or not at all. `answered_heads` are the failed
+/// heads it saw settled in its own second `now`; the fact always names them,
+/// an empty set included, so the board never reads it as a fact written
+/// before they were recorded.
 pub(crate) fn ack_task_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     task_ref: EntityId,
     actor: EntityId,
     now: u64,
+    answered_heads: BTreeSet<String>,
 ) -> Result<()> {
     put_task_state_fact_in_txn(
         vault,
@@ -38,6 +44,7 @@ pub(crate) fn ack_task_in_txn(
         TaskAuthorityFactKind::Acked,
         actor,
         now,
+        Some(answered_heads),
     )
 }
 
@@ -62,6 +69,7 @@ pub(crate) fn cancel_task_in_txn(
         TaskAuthorityFactKind::Cancelled,
         actor,
         now,
+        None,
     )
 }
 
@@ -72,6 +80,7 @@ fn put_task_state_fact_in_txn(
     kind: TaskAuthorityFactKind,
     actor: EntityId,
     now: u64,
+    answered_heads: Option<BTreeSet<String>>,
 ) -> Result<()> {
     put_task_authority_fact_in_txn(
         vault,
@@ -83,6 +92,7 @@ fn put_task_state_fact_in_txn(
             assigned_ref: None,
             actor_generation: None,
             assigned_generation: None,
+            answered_heads,
             occurred_at: now,
         },
     )

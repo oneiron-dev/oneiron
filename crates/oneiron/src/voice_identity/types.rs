@@ -279,6 +279,13 @@ pub struct VoiceWithdrawalRequest {
 pub struct VoiceWithdrawalReceipt {
     pub consent_event_ref: String,
     pub subject_ref: EntityId,
+    /// The date the consent log holds for the withdrawal: the asked date, or
+    /// this vault's clock when the asked date was later
+    /// (VOICE-FUTURE-DATED-WITHDRAWAL = B). On a replay, the date recorded
+    /// first.
+    pub occurred_at: u64,
+    /// The date the request asked for.
+    pub requested_occurred_at: u64,
     /// An identical recorded withdrawal was redelivered; no biometric rows
     /// were touched, even if a newer grant has since enrolled a new print.
     pub replayed: bool,
@@ -289,6 +296,19 @@ pub struct VoiceWithdrawalReceipt {
     pub deleted_sample_count: usize,
     pub deleted_vector_count: usize,
     pub deleted_active_pointer: bool,
+}
+
+/// What one consent-log transaction recorded (VOICE-CONSENT-LOG-WHO = A):
+/// the subject whose voice may be recognized, for which purposes. It enrols
+/// no print; enrolment stays engine-only.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VoiceConsentReceipt {
+    pub consent_event_ref: String,
+    pub subject_ref: EntityId,
+    pub purposes: Vec<VoicePrintPurpose>,
+    /// An identical recorded consent was redelivered; nothing new was
+    /// written, and no owner was told again.
+    pub replayed: bool,
 }
 
 /// One subject's stored centroid and its enrollment provenance.

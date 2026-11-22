@@ -37,7 +37,8 @@ fn normal_unsent_confirmation_uses_no_fake_cancel_and_first_pick_request_zero() 
                 &consumer(&vault, NOW),
                 &mut sink,
             )
-            .unwrap();
+            .unwrap()
+            .item;
         assert_eq!(
             sink.calls.len(),
             if policy == EmergencyActionPolicy::Cancel {

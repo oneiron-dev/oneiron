@@ -1,8 +1,9 @@
 //! `execute_code` admission (C10, under the rate law of ARCH-0044 C5): a
 //! burst of runs on one credential all complete, each waiting its turn past
-//! the bound while a duplicate still gets `code_run_busy`; a run keeps its
-//! permit until its worker ends, whether or not its caller is still waiting
-//! for it; and a wait ends at its deadline with no run started.
+//! the bound; a duplicate of a running run waits behind it in arrival order
+//! and enters the run once that entry's worker ends (FIX 9505); a run keeps
+//! its permit until its worker ends, whether or not its caller is still
+//! waiting for it; and a wait ends at its deadline with no run started.
 
 use std::collections::BTreeSet;
 use std::sync::{Arc, Condvar, Mutex};
@@ -255,11 +256,16 @@ async fn a_run_keeps_its_permit_until_its_worker_ends_and_the_next_waits_for_it(
     }
     drop(held);
 
-    // Its worker still runs, so its single-flight and its permit both stand:
-    // a duplicate is busy, and another credential's run waits its turn.
-    assert_eq!(
-        refused(run(&host, &vault, &first, "run-a")).await,
-        "code_run_busy"
+    // Its worker still runs, so its single flight and its permit both stand:
+    // a duplicate waits behind it in the run's line (FIX 9505,
+    // mcp/exec_host/active_run.rs), and another credential's run waits its
+    // turn.
+    let mut duplicate = run(&host, &vault, &first, "run-a");
+    assert!(
+        tokio::time::timeout(Duration::from_millis(300), &mut duplicate)
+            .await
+            .is_err(),
+        "a duplicate waits behind its run's running entry; it is never refused"
     );
     let mut next = run(&host, &vault, &second, "run-b");
     assert!(
@@ -269,12 +275,16 @@ async fn a_run_keeps_its_permit_until_its_worker_ends_and_the_next_waits_for_it(
         "past the bound a run waits; it is never refused"
     );
 
-    // Once the held worker ends, its permit passes to the waiting run.
+    // Once the held worker ends, its permit passes to the waiting run, and
+    // the duplicate enters its run.
     gate.open();
-    let outcome = tokio::time::timeout(Duration::from_secs(60), next)
-        .await
-        .expect("the waiting run gets its turn when the held worker ends");
-    assert!(outcome.is_ok(), "{outcome:?}");
+    let (next, duplicate) = tokio::time::timeout(Duration::from_secs(60), async {
+        tokio::join!(next, duplicate)
+    })
+    .await
+    .expect("the waiting run and the duplicate get their turns when the held worker ends");
+    assert!(next.is_ok(), "{next:?}");
+    assert!(duplicate.is_ok(), "{duplicate:?}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

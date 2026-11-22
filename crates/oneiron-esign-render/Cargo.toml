@@ -1,0 +1,19 @@
+[package]
+name = "oneiron-esign-render"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "One shared e-sign field renderer for the pre-seal burn-in"
+publish = false
+
+# A leaf crate on purpose: only lopdf and encoding_rs, so the engine and the
+# seal organ can both reach the same drawing program.
+
+[dependencies]
+lopdf = { version = "=0.44.0", default-features = false }
+encoding_rs = "0.8"
+
+[lints]
+workspace = true

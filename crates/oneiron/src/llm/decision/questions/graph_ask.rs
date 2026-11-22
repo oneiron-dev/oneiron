@@ -22,6 +22,7 @@ use crate::{
     WriteProvenance,
 };
 use fit::{eligible_sources, fit_neighbors, same_fitted_neighbors, source_in_txn};
+use oneiron_contracts::fingerprint::ContentHash;
 use serde_json::{Value, json};
 use std::collections::HashSet;
 
@@ -341,7 +342,24 @@ pub(super) fn asker_reader_in_txn(
     txn: &heed::RoTxn<'_>,
     principal: EntityId,
 ) -> Result<ScopedReadActorKey> {
-    let class = match crate::vault::live_entity_row_in_txn(&vault.store, txn, &principal)? {
+    // A relationship's rows answer the asker only on its own membership or
+    // live grant, as on every other read lane, unless the asker is the
+    // vault's live owner; the vault's own rows stay its to read.
+    Ok(party_read_key_in_txn(&vault.store, txn, principal)?.exempt_while_owner(principal))
+}
+
+/// The read key of one party to a question: its id, with the actor class of
+/// its live entity row (a PERSON reads as human, an AGENT_DEF as agent, a
+/// MACHINE as system), so a read row that names that class admits it as it
+/// does on every other read lane. Any other row names no class. It reads
+/// only `store`, so a judgment that holds no vault (an outcome label's
+/// fact, a silence window) keys its principal the same way.
+pub(super) fn party_read_key_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    party: EntityId,
+) -> Result<ScopedReadActorKey> {
+    let class = match crate::vault::live_entity_row_in_txn(store, txn, &party)? {
         crate::vault::LiveEntityRow::Live { entity_type, .. } => match entity_type {
             crate::registry::ENTITY_TYPE_PERSON => Some("human"),
             crate::registry::ENTITY_TYPE_AGENT_DEF => Some("agent"),
@@ -350,15 +368,11 @@ pub(super) fn asker_reader_in_txn(
         },
         _ => None,
     };
-    let key = match class {
-        Some(class) => ScopedReadActorKey::with_actor_class(principal.to_hex(), class),
-        None => ScopedReadActorKey::new(principal.to_hex()),
-    };
-    // A relationship's rows answer the asker only on its own membership or
-    // live grant, as on every other read lane, unless the asker is the
-    // vault's live owner; the vault's own rows stay its to read.
-    key.map(|key| key.exempt_while_owner(principal))
-        .ok_or(Error::InvariantViolation("canonical ask principal"))
+    match class {
+        Some(class) => ScopedReadActorKey::with_actor_class(party.to_hex(), class),
+        None => ScopedReadActorKey::new(party.to_hex()),
+    }
+    .ok_or(Error::InvariantViolation("canonical ask principal"))
 }
 
 pub(super) fn kind_is_graph_evidence(kind: u8) -> bool {
@@ -531,7 +545,7 @@ fn answer_unit(
         None,
     )?;
     if context.sources.iter().zip(current.value.iter()).any(|(old, new)| {
-        !matches!(new, Some((kind, _, body)) if *kind == old.entity_type && *blake3::hash(body).as_bytes() == old.hash)
+        !matches!(new, Some((kind, _, body)) if *kind == old.entity_type && *ContentHash::of(body).as_bytes() == old.hash)
     }) {
         return Ok(UnitOutcome::Abstain);
     }
@@ -730,12 +744,19 @@ pub(crate) fn trial_unit_context_in_txn(
     locality: crate::claim::CallerLocality,
     answer: &AnswerRecord,
 ) -> Result<GraphUnitContext> {
+    // An answer kept with no source pins (a host's own backfill saved before
+    // the engine pinned it, a refresh answer whose answerer was shown no
+    // graph context) names no version to re-read, and none is invented.
+    if answer.decision.receipt.evidence_versions.is_empty() {
+        return Err(invalid("held-out answer has no source pins"));
+    }
     // A trial reads inside the lane the answered version was saved under.
     let read_lane = super::saved_reader::answer_lane_in_txn(vault, txn, principal, answer)?;
     let key = super::saved_reader::saved_reader_in_txn(vault, txn, principal, &read_lane)?;
     let lane = super::reader_authority::question_lane(vault, key.at(locality));
     let reads_stored = lane.reads_stored_bodies_in(txn)?;
     let mut sources = Vec::new();
+    let mut served = Vec::new();
     for pin in &answer.decision.receipt.evidence_versions {
         let raw = lane
             .graph_ask_raw_in_txn(txn, &pin.id)?
@@ -746,7 +767,7 @@ pub(crate) fn trial_unit_context_in_txn(
         // The funnel supplies the live revision's logical bytes (FIX 5396):
         // an older revision's manifest bytes miss the recorded hash and the
         // trial refuses the frontier (FIX 5398).
-        if *blake3::hash(&body).as_bytes() != pin.body_hash
+        if *ContentHash::of(&body).as_bytes() != pin.body_hash
             || !source_eligible(vault, txn, &pin.id, header.entity_type)?
         {
             return Err(Error::ConcurrentWrite(
@@ -754,12 +775,17 @@ pub(crate) fn trial_unit_context_in_txn(
             ));
         }
         sources.push(source(reads_stored, pin.id, header.entity_type, body)?);
+        served.push((pin.id, raw));
     }
+    // The frontier is checked in the form its writer saved it: a refresh
+    // hashed the unit's live row, the standing writer the unit then its
+    // evidence. Each matches only while no source it hashed has moved.
     if sources
         .first()
         .is_none_or(|source| source.id != answer.unit)
-        || super::refresh::trial_source_frontier(vault, txn, principal, &read_lane, answer.unit)?
+        || (super::refresh::trial_source_frontier(vault, txn, principal, &read_lane, answer.unit)?
             != Some(answer.frontier)
+            && !super::standing::standing_frontier_holds_in_txn(vault, txn, answer, &served)?)
     {
         return Err(Error::ConcurrentWrite(
             "model trial source frontier changed",
@@ -786,7 +812,7 @@ pub(super) fn source(
     entity_type: u8,
     stored: Vec<u8>,
 ) -> Result<GraphContextSource> {
-    let hash = *blake3::hash(&stored).as_bytes();
+    let hash = *ContentHash::of(&stored).as_bytes();
     let body = if reads_stored {
         stored
     } else {
@@ -940,7 +966,7 @@ pub(super) fn unit_audio(
             name: format!("audio_{}", audio.len()),
             evidence: EvidenceVersion {
                 id: source.id,
-                body_hash: *blake3::hash(&bytes).as_bytes(),
+                body_hash: *ContentHash::of(&bytes).as_bytes(),
             },
             media_type,
             bytes,

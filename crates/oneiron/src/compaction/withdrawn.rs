@@ -87,7 +87,7 @@ impl WithdrawnKeyframe {
 
     /// The keyframe kept in the stored epoch body `body`, inline or beside a
     /// pointer; `None` when its keyframe keys do not hold one.
-    fn of_stored(body: &[u8]) -> Option<Self> {
+    pub(super) fn of_stored(body: &[u8]) -> Option<Self> {
         let mut cursor = body;
         let Ok(Value::Map(fields)) = rmpv::decode::read_value(&mut cursor) else {
             return None;

@@ -1,7 +1,9 @@
-//! Doors for `tests/memory_frontier_timeline.rs` to the vault's memory
-//! timeline (L3-39): the frontier its committed head stands at, the revision
-//! a row held at a frontier, and the bytes of a revision. The graph-FS memory
-//! fork reads the timeline through the same functions.
+//! Doors for `tests/memory_frontier_timeline.rs` and
+//! `tests/graph_fs_memory_fork.rs` to the vault's memory timeline (L3-39):
+//! the frontier its committed head stands at, the revision a row held at a
+//! frontier, the bytes of a revision, and a store that no longer holds a
+//! revision's bytes. The graph-FS memory fork reads the timeline through the
+//! same functions.
 
 use crate::error::Result;
 pub use crate::vault::entity_revision::MemoryFrontier;
@@ -42,4 +44,14 @@ pub fn revision_at(
 /// The pinned read's own errors.
 pub fn raw_at(vault: &Vault, id: &EntityId, revision: RevisionRef) -> Result<Option<Vec<u8>>> {
     vault.get_raw_with_mode(id, ReadMode::Pinned(revision))
+}
+
+/// Drops `id`'s retained bytes of `revision`, as a shallow document adopted
+/// by sync lacks them. The live revision keeps its bytes.
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn forget_retained_revision(vault: &Vault, id: &EntityId, revision: RevisionRef) -> Result<()> {
+    crate::vault::entity_revision::forget_retained_revision(vault, id, revision)
 }

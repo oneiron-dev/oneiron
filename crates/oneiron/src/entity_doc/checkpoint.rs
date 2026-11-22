@@ -50,11 +50,41 @@ use super::pins::{ENTITY_DOC_PIN, ENTITY_DOC_PURGE_RECEIPT};
 use super::storage::ENTITY_DOC_HEAD;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::store::ManifestDbs;
 use crate::store::checkpoint_payload::Subtype;
+use crate::store::checkpoint_payload::rows::descriptor::{
+    Adapter, Capture, CapturedByAdapter, Check, Join, Restore,
+};
 use crate::store::checkpoint_payload::rows::{
-    self, ActorPart, Captured, OpenedOwnerRows, OwnerRef, OwnerRows, Restored, RowDb, RowLocator,
-    RowPart, Unresolved,
+    self, ActorPart, Captured, OpenedOwnerRows, OwnerRef, Restored, RowDb, RowLocator, RowPart,
+    Unresolved,
+};
+use crate::store::{ManifestDbs, Store};
+
+/// Every entity-document row by owner, its actors split out. The capture is
+/// the adapter's own: a document slot goes to the entity its head, marker or
+/// birth claims, and a fork snapshot splits only beside its record. So is
+/// the check (a snapshot's history), and the join reads the whole
+/// compartment (a pending fork's record, the tree's entity). The restore is
+/// its own too: it rebuilds each document slot as one group before any row
+/// is written, and retires the causes of each pending fork it left out.
+pub(crate) static ADAPTER: Adapter = Adapter {
+    tables: &[
+        &CapturedByAdapter(ENTITY_DOC_HEAD),
+        documents::SNAPSHOT_TABLE,
+        documents::UPDATE_TABLE,
+        &CapturedByAdapter(ENTITY_DOC_CITATION_FLOOR),
+        &CapturedByAdapter(ENTITY_DOC_FORK),
+        &CapturedByAdapter(ENTITY_DOC_FORK_SNAPSHOT),
+        &CapturedByAdapter(ENTITY_DOC_PIN),
+        &CapturedByAdapter(ENTITY_DOC_PURGE_RECEIPT),
+        &CapturedByAdapter(ENTITY_DOC_RECEIPT),
+        &CapturedByAdapter(ENTITY_DOC_PROPOSAL_BUNDLE),
+    ],
+    capture: Capture::Own(capture),
+    check: Check::Own(check),
+    row_owner: None,
+    join: Join::Compartment(join_at),
+    restore: Restore::Own(restore),
 };
 
 /// The field a row's one actor fills.
@@ -90,10 +120,9 @@ fn put_actor(slot: &mut DocActor, field: &str, actor: EntityId) -> Result<()> {
 }
 
 /// Every entity-document row in `txn`, by owner.
-pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Captured> {
-    let mut out = Captured::default();
+fn capture(store: &Store, txn: &RoTxn<'_>, out: &mut Captured) -> Result<()> {
     let mut slots = BTreeMap::new();
-    for row in rows::typed_rows(dbs, txn, ENTITY_DOC_HEAD, &mut out)? {
+    for row in rows::typed_rows(store, txn, ENTITY_DOC_HEAD, out)? {
         let entity = row.key.0;
         if row.value.entity != entity.to_hex() {
             out.unclassified(row.at, None, Unresolved::NoOwner);
@@ -102,34 +131,33 @@ pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Capture
         slots.insert(row.value.document.clone(), entity);
         out.exact(OwnerRef::entity(&entity), row.at, row.bytes);
     }
-    documents::capture(dbs, txn, slots, &mut out)?;
-    for row in rows::typed_rows(dbs, txn, ENTITY_DOC_CITATION_FLOOR, &mut out)? {
+    documents::capture(store, txn, slots, out)?;
+    for row in rows::typed_rows(store, txn, ENTITY_DOC_CITATION_FLOOR, out)? {
         let owner = OwnerRef::entity(&row.key.0.0);
         out.depends(owner, &row.at, OwnerRef::entity(&row.key.1.0));
         out.exact(owner, row.at, row.bytes);
     }
-    capture_forks(dbs, txn, &mut out)?;
-    for row in rows::typed_rows(dbs, txn, ENTITY_DOC_PIN, &mut out)? {
+    capture_forks(store, txn, out)?;
+    for row in rows::typed_rows(store, txn, ENTITY_DOC_PIN, out)? {
         let owner = OwnerRef::entity(&row.key.0.0);
         out.depends(owner, &row.at, OwnerRef::entity(&row.key.1.0));
-        rows::split_actors(&mut out, owner, ENTITY_DOC_PIN, row, |pin| {
+        rows::split_actors(out, owner, ENTITY_DOC_PIN, row, |pin| {
             take_actor(&mut pin.actor)
         })?;
     }
-    for row in rows::typed_rows(dbs, txn, ENTITY_DOC_PURGE_RECEIPT, &mut out)? {
+    for row in rows::typed_rows(store, txn, ENTITY_DOC_PURGE_RECEIPT, out)? {
         let owner = OwnerRef::entity(&row.key.0.0);
-        rows::split_actors(&mut out, owner, ENTITY_DOC_PURGE_RECEIPT, row, |receipt| {
+        rows::split_actors(out, owner, ENTITY_DOC_PURGE_RECEIPT, row, |receipt| {
             take_actor(&mut receipt.actor)
         })?;
     }
-    for row in rows::typed_rows(dbs, txn, ENTITY_DOC_RECEIPT, &mut out)? {
+    for row in rows::typed_rows(store, txn, ENTITY_DOC_RECEIPT, out)? {
         let owner = OwnerRef::entity(&row.key.0.0);
-        rows::split_actors(&mut out, owner, ENTITY_DOC_RECEIPT, row, |receipt| {
+        rows::split_actors(out, owner, ENTITY_DOC_RECEIPT, row, |receipt| {
             take_actor(&mut receipt.actor)
         })?;
     }
-    proposal::capture(dbs, txn, &mut out)?;
-    Ok(out)
+    proposal::capture(store, txn, out)
 }
 
 /// Each fork under the entity its record names, and each fork snapshot
@@ -220,25 +248,6 @@ fn fork_goes(opened: &OpenedOwnerRows, at: &RowLocator) -> Result<bool> {
     }
 }
 
-fn owns(at: &RowLocator) -> bool {
-    let decls = [
-        ENTITY_DOC_HEAD.decl(),
-        ENTITY_DOC_CITATION_FLOOR.decl(),
-        ENTITY_DOC_FORK.decl(),
-        ENTITY_DOC_FORK_SNAPSHOT.decl(),
-        ENTITY_DOC_PIN.decl(),
-        ENTITY_DOC_PURGE_RECEIPT.decl(),
-        ENTITY_DOC_RECEIPT.decl(),
-        ENTITY_DOC_PROPOSAL_BUNDLE.decl(),
-    ];
-    documents::owns(at) || decls.into_iter().any(|decl| at.in_table(decl))
-}
-
-/// The bundle framing of `rows`' entity-document parts.
-pub(crate) fn bytes_for_owner(rows: &OwnerRows) -> Result<Vec<u8>> {
-    rows::frame_owner(rows, owns)
-}
-
 fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
     if at.in_table(ENTITY_DOC_HEAD.decl()) {
         rows::check_row(ENTITY_DOC_HEAD, at, value)
@@ -321,24 +330,33 @@ fn join(
     Err(rows::bad_part())
 }
 
+/// [`join`] at the part's own locator: the join each row outside a
+/// document slot takes, in the form the adapter's row names.
+fn join_at(
+    store: &Store,
+    view: &RoTxn<'_>,
+    opened: &OpenedOwnerRows,
+    at: &RowLocator,
+    value: &[u8],
+    parts: &[&ActorPart],
+) -> Result<Option<(RowLocator, Vec<u8>)>> {
+    Ok(join(store, view, opened, at, value, parts)?.map(|value| (at.clone(), value)))
+}
+
 /// Puts `opened`'s entity-document rows back: exact rows as they are, each
 /// actor that opened back in its row, each document slot rebuilt as one
 /// group before any row is written ([`documents::join`]), and each proposal
 /// fragment merged into the bundle the owners restored so far hold.
-pub(crate) fn restore_in_txn(
-    dbs: &impl ManifestDbs,
-    txn: &mut RwTxn<'_>,
-    opened: OpenedOwnerRows,
-) -> Result<Restored> {
+fn restore(store: &Store, txn: &mut RwTxn<'_>, opened: OpenedOwnerRows) -> Result<Restored> {
     let rebuilt = documents::join(&opened)?;
-    let restored = rows::restore_parts(dbs, txn, &opened, check, |view, at, value, parts| {
+    let restored = rows::restore_parts(store, txn, &opened, check, |view, at, value, parts| {
         if documents::owns(at) {
             let row = rebuilt.get(at).cloned();
             return row.map(Some).ok_or_else(rows::bad_part);
         }
-        join(dbs, view, &opened, at, value, parts)
+        join(store, view, &opened, at, value, parts)
     })?;
-    retire_left_fork_causes(dbs, txn, &opened, &restored)?;
+    retire_left_fork_causes(store, txn, &opened, &restored)?;
     Ok(restored)
 }
 

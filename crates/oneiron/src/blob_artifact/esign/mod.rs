@@ -1,4 +1,5 @@
 //! Native signing requests on versioned blob artifacts; claims are the state machine.
+pub(crate) mod archive_restore;
 mod dispatch_key;
 mod field_admission;
 mod fold;
@@ -11,6 +12,7 @@ mod notice_door;
 mod notice_scope;
 mod notice_send_act;
 mod notice_unattended;
+mod rules;
 pub use lifecycle::{
     EsignLifecycleRules, EsignNoticeSwitches, EsignReminderSweep, HeldEsignReminder,
 };
@@ -18,12 +20,16 @@ pub use notice_dispatch::{ESIGN_NOTICE_ATTEMPT_KIND, EsignNotice};
 pub use notice_door::{EsignNoticeOutcome, EsignNoticesDispatchRequest, EsignNoticesDispatchView};
 pub(crate) use notice_send_act::erase_notice_send_act_actor_in_txn;
 pub use notice_unattended::{EsignNoticeGroup, EsignUnattendedNotices};
+pub use rules::{
+    ESIGN_RULES_PACK_ID, ESIGN_UETA_REVIEW_ROW, EsignComplianceRow, EsignComplianceRowKind,
+    EsignComplianceSource, EsignRulePack, EsignRulesAmendRequest, EsignRulesDecisionRequest,
+    EsignRulesDisposition, EsignRulesGetRequest, EsignRulesPending, EsignRulesReceipt,
+    EsignRulesView,
+};
 #[cfg(oneiron_test_support)]
 #[doc(hidden)]
 #[path = "../../test_doors/esign_seal_verify_reasons.rs"]
 pub mod esign_seal_verify_reasons;
-// FIX [LIBTEST-QUARANTINE-BLOB-ARTIFACT-ESIGN-TESTS]: the lib test target's type check fails here (18 errors: E0063 x14, E0061 x2, E0639 x1, E0599 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 pub(crate) use lane_scope::bounded_by_whole_vault;
@@ -55,10 +61,11 @@ pub use ingress::EsignIngress;
 mod document_view;
 pub use document_view::{EsignDocumentTrail, EsignDocumentView, EsignSealTrail};
 mod door;
+pub use door::EsignFieldsPlaceRequest;
 pub use door::{
-    EsignCreateRequest, EsignDispatchRequest, EsignDispatchView, EsignDraftView, EsignGetRequest,
-    EsignIssuedLink, EsignLinksIssueRequest, EsignLinksView, EsignSealAttemptView,
-    EsignSealGetRequest, EsignSealView, EsignSealedItemView, EsignSealedView,
+    EsignCreateRequest, EsignDispatchRequest, EsignDispatchView, EsignDraftView,
+    EsignExtendRequest, EsignGetRequest, EsignIssuedLink, EsignLinksIssueRequest, EsignLinksView,
+    EsignSealAttemptView, EsignSealGetRequest, EsignSealView, EsignSealedItemView, EsignSealedView,
     EsignSigningImageRequest, EsignSigningImageView, EsignSigningPdfRequest, EsignSigningPdfView,
     EsignSigningPreviewRequest, EsignSigningPreviewView, EsignSigningRequest,
     EsignSigningSignatureRequest, EsignSigningSignatureView, EsignVoidRequest,

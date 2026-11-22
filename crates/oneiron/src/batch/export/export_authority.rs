@@ -62,8 +62,10 @@ pub fn classify_vault_import_manifest(
 /// ([`archive_signer`]). Manifest only, and no write, as that door.
 ///
 /// On a matching chain the signer decides provenance. The owner's own device
-/// proves it, when its `Yours` here is his own signature and no carrier's
-/// word, so a same-chain, same-state, unnulled archive it signed reads
+/// proves it, when its `Yours` here is his own say-so and not a carrier's
+/// act alone (off hosted, a carried answer an owner key proved is his
+/// say-so; on a hosted vault it is not), so a same-chain, same-state,
+/// unnulled archive it signed reads
 /// [`VaultImportClassification::ByteFaithfulOwnerRestore`]. A live machine of
 /// this vault in a role the owner answered as not his own device (a hosted
 /// node, an execution node, a rented, work or school machine) signed an
@@ -71,8 +73,9 @@ pub fn classify_vault_import_manifest(
 /// read as [`VaultImportClassification::ForeignAuthorityChain`] (Engine
 /// RULING L2-23-SIGNER = B). No signature, one that does not verify or
 /// whose key does not stand as its machine here, or one by a machine whose
-/// `Yours` rests on a carrier's act, on no owner-signed row this install
-/// holds, or on a hosted vault's adopted checkpoint image, proves nothing:
+/// `Yours` rests on a carrier's act alone, on no row this install holds
+/// that proves it his, or on a hosted vault's adopted checkpoint image,
+/// proves nothing:
 /// [`VaultImportMismatch::UnauthenticatedProvenance`]. Every other gate
 /// holds as for the storage door.
 ///
@@ -109,10 +112,7 @@ pub(crate) fn classify_vault_archive_manifest_on_fold(
 ) -> Result<VaultImportReceipt> {
     let encoded = serde_json::to_vec(manifest)
         .map_err(|_| Error::InvariantViolation("archive manifest serialization failed"))?;
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(EXPORT_MANIFEST_RECEIPT_DOMAIN);
-    hasher.update(&encoded);
-    let manifest_digest = *hasher.finalize().as_bytes();
+    let manifest_digest = manifest_receipt_digest(&encoded);
     classify_manifest(
         vault,
         fold,
@@ -276,8 +276,17 @@ fn authority_identity_of_fold(fold: &AuthorityFold) -> Option<AuthorityChainIden
 /// commits to what was PARSED, so whitespace or key-order noise in the artifact
 /// cannot make two identical manifests receipt differently.
 pub(super) fn canonical_manifest_digest(manifest: &ExportManifest) -> Result<[u8; 32]> {
+    Ok(manifest_receipt_digest(&manifest.to_json_pretty()?))
+}
+
+/// A receipt's manifest digest over the manifest's encoded bytes: BLAKE3 over
+/// the receipt domain, then those bytes. Both manifest forms take this one
+/// recipe, the export manifest's pretty JSON and the whole-vault archive
+/// manifest's compact JSON, so a receipt's digest names one transcript. Its
+/// one raw start is a PLAN-UC-04 stage 7 site.
+fn manifest_receipt_digest(encoded: &[u8]) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
     hasher.update(EXPORT_MANIFEST_RECEIPT_DOMAIN);
-    hasher.update(&manifest.to_json_pretty()?);
-    Ok(*hasher.finalize().as_bytes())
+    hasher.update(encoded);
+    *hasher.finalize().as_bytes()
 }

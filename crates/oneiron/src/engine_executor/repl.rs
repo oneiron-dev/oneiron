@@ -8,10 +8,14 @@ mod request;
 mod speech;
 mod turn;
 
-use self::deadline::{SliceProgram, check_pending_preparation, guest_abi_digest};
+use self::deadline::{
+    DeadlineSliceEnd, SliceProgram, drop_refired_outputs, guest_abi_digest,
+    pending_preparation_changed,
+};
 use self::turn::{StepProgram, TurnProgram};
 use super::continuation::{ContinuationNote, continuation_note, turn_note};
 use super::driver::EngineNativeExecutor;
+use super::host::resume_preflight::ResumePreflightReport;
 use super::host::{
     CallableChecks, RecordingJsHost, executor_boundary_contract, executor_system_prompt,
     executor_turn_instruction,
@@ -28,9 +32,10 @@ use super::store::{
     bind_published_output, checkpoint_label, clean_for_context, console_output_path,
     fallback_speech_marker, implicit_speak_output_path, load_context_output,
     load_observation_window, load_utf8_output, message_result_attachment, observation_output_path,
-    observation_ref, publish_output, record_prepared_source, record_reply_evidence,
-    record_script_output, record_text_output, recoverable_chunk_path, resumed_output_path,
-    resumed_output_wait, script_output_path, validate_runtime_outputs, write_json,
+    observation_ref, publish_output, record_output, record_prepared_source, record_reply_evidence,
+    record_script_output, record_text_output, recoverable_chunk_path, resume_preflight_output_path,
+    resumed_output_path, resumed_output_wait, script_output_path, validate_runtime_outputs,
+    write_json,
 };
 use super::types::{
     ENGINE_EXECUTOR_FALLBACK_NAME, ENGINE_EXECUTOR_PURPOSE_NAME, EngineExecutorConfig,
@@ -90,29 +95,44 @@ impl EngineNativeExecutor<'_> {
             terminal_status,
             prompt,
         } = loaded;
+        // The preflight report of the pending step this entry resumed, once it commits it or
+        // parks it again (L8-23).
+        let mut resume_preflight: Option<ResumePreflightReport> = None;
         if let Some(status) = terminal_status {
             // A run parked on a wait goes on, at the step after the parked
-            // one, once the wait's reply is delivered.
+            // one, once the wait's reply is delivered; a person's pause that
+            // reached it first holds it at the wait (FIX
+            // PAUSE-BOUNDARY-PARKED-RUN), its reply kept for the resume.
+            let mut paused = None;
             let resumed = match &status {
-                EngineExecutorStatus::Waiting(wait) => match self.park(&record, wait)? {
-                    Some(key) => {
-                        // The resumed run asks the model again, so it does so
-                        // under the teaching it committed to.
-                        if prompt == PromptBinding::Drifted {
-                            return Err(Error::InvalidConfig(
-                                "engine executor config changed for existing run".to_owned(),
-                            )
-                            .into());
+                EngineExecutorStatus::Waiting(wait) => {
+                    let delivered = self.park(&record, wait)?;
+                    paused = self.pause_at_wait(&record, &status)?;
+                    match delivered {
+                        Some(key) if paused.is_none() => {
+                            // The resumed run asks the model again, so it
+                            // does so under the teaching it committed to.
+                            if prompt == PromptBinding::Drifted {
+                                return Err(Error::InvalidConfig(
+                                    "engine executor config changed for existing run".to_owned(),
+                                )
+                                .into());
+                            }
+                            self.resume_delivered_wait(
+                                &mut record,
+                                wait,
+                                &key,
+                                expected_generation,
+                            )?
                         }
-                        self.resume_delivered_wait(&mut record, wait, &key, expected_generation)?
+                        _ => None,
                     }
-                    None => None,
-                },
+                }
                 _ => None,
             };
             let Some(generation) = resumed else {
                 self.recover_checkpointed_implicit_speak(&record, &status, config)?;
-                return Ok(self.outcome(status, 0, record));
+                return Ok(self.outcome(paused.unwrap_or(status), 0, record));
             };
             expected_generation = Some(generation);
         }
@@ -126,24 +146,30 @@ impl EngineNativeExecutor<'_> {
             cancel.check()?;
             let completed_steps = completed_step_count(&record)?;
             if steps_run >= config.limits.soft_steps {
-                return Ok(self.outcome(
-                    EngineExecutorStatus::Yielded {
-                        next_step_seq: completed_steps,
-                    },
-                    steps_run,
-                    record,
-                ));
+                return Ok(self
+                    .outcome(
+                        EngineExecutorStatus::Yielded {
+                            next_step_seq: completed_steps,
+                        },
+                        steps_run,
+                        record,
+                    )
+                    .with_resume_preflight(&resume_preflight));
             }
 
             // A step its deadline stopped runs its stored program again,
             // from the calls it already made, before any new model turn
             // (FIX 7703).
             let pending = record.pending_step.take();
-            let (program, replay) = match &pending {
+            let (program, mut replay, boundary_changed) = match &pending {
                 Some(pending) => {
                     let resumed =
                         self.take_pending_program(config, &mut record, &boundary, pending)?;
-                    (resumed.program, Some(resumed.replay))
+                    (
+                        resumed.program,
+                        Some(resumed.replay),
+                        resumed.boundary_changed,
+                    )
                 }
                 None => match self
                     .generate_step_program(
@@ -156,9 +182,11 @@ impl EngineNativeExecutor<'_> {
                     )
                     .await?
                 {
-                    TurnProgram::Generated(program) => (program, None),
+                    TurnProgram::Generated(program) => (program, None, false),
                     TurnProgram::Ended(status) => {
-                        return Ok(self.outcome(status, steps_run, record));
+                        return Ok(self
+                            .outcome(status, steps_run, record)
+                            .with_resume_preflight(&resume_preflight));
                     }
                 },
             };
@@ -181,10 +209,8 @@ impl EngineNativeExecutor<'_> {
             // before the program runs included, leaves its feedback, its
             // preparation note included (FIX 9046).
             let mut checking = self.start_step_check(&record, completed_steps, &prepared);
-            match &pending {
-                Some(pending) => {
-                    self.kept(&checking, check_pending_preparation(pending, &prepared))?;
-                }
+            let preparation_changed = match &pending {
+                Some(pending) => pending_preparation_changed(pending, &prepared),
                 None => {
                     self.kept(
                         &checking,
@@ -195,7 +221,11 @@ impl EngineNativeExecutor<'_> {
                             &prepared,
                         ),
                     )?;
+                    false
                 }
+            };
+            if let Some(replay) = replay.as_mut() {
+                replay.set_preflight_flags(boundary_changed, preparation_changed);
             }
             let bridge_start = record.bridge_calls.len();
             // ONE-1314: the DURABLE history is the load-bearing half of the
@@ -258,12 +288,24 @@ impl EngineNativeExecutor<'_> {
                 ran: step_outcome.is_ok(),
                 cancelled: cancel.is_cancelled(),
             };
-            if let Some(status) =
+            if let Some(end) =
                 self.end_deadline_slice(config, &mut record, expected_generation, &mut host, slice)?
             {
+                let DeadlineSliceEnd {
+                    status,
+                    resume_preflight: parked,
+                } = end;
                 checking.ended(Some(&status));
-                return Ok(self.outcome(status, steps_run, record));
+                if parked.is_some() {
+                    resume_preflight = parked;
+                }
+                return Ok(self
+                    .outcome(status, steps_run, record)
+                    .with_resume_preflight(&resume_preflight));
             }
+            // A refire's live call writes its own body at its seq's bridge-result path, in place
+            // of the recorded call's, however the step ends from here (L8-23).
+            drop_refired_outputs(&mut record, host.refired_seqs());
             let step_outcome = match step_outcome {
                 Ok(outcome) => outcome,
                 Err(err) => {
@@ -271,6 +313,9 @@ impl EngineNativeExecutor<'_> {
                     // joins the checkpoint for a later valid lease, but never
                     // turns this cancelled entry into a Waiting success.
                     let cancelled = cancel.is_cancelled();
+                    if resume_preflight.is_none() {
+                        resume_preflight = host.pending_preflight_report();
+                    }
                     let callable_rows = host.result_rows();
                     let durable_wait = host.durable_wait;
                     let bridge_calls = host.bridge_calls;
@@ -296,11 +341,14 @@ impl EngineNativeExecutor<'_> {
                             format!("Runtime error after host bridge calls: {err}"),
                             &correction,
                             config,
+                            !cancelled,
                         )?
                         && !cancelled
                     {
                         checking.ended(Some(&status));
-                        return Ok(self.outcome(status, steps_run + 1, record));
+                        return Ok(self
+                            .outcome(status, steps_run + 1, record)
+                            .with_resume_preflight(&resume_preflight));
                     }
                     // A response whose program failed before its first host bridge call
                     // commits no step; its correction record is written alone, as a
@@ -315,13 +363,15 @@ impl EngineNativeExecutor<'_> {
                     }
                     // A step a provider outage ended stops on that outage,
                     // which parks its run, however its guest took the
-                    // failure (FIX 3194).
-                    if let Some(outage) = host
-                        .hard_failure
-                        .take()
-                        .filter(|failure| matches!(failure, Error::ProviderUnavailable { .. }))
-                    {
-                        return Err(outage.into());
+                    // failure (FIX 3194). A step an off-record session
+                    // refused an act of ends on that refusal the same way:
+                    // the guest's throw keeps none of its words (FIX
+                    // OFF-RECORD-RUN-POLICY-REFUSAL-500).
+                    if let Some(failure) = host.hard_failure.take().filter(|failure| {
+                        matches!(failure, Error::ProviderUnavailable { .. })
+                            || super::is_session_act_refusal(failure)
+                    }) {
+                        return Err(failure.into());
                     }
                     return Err(err.into());
                 }
@@ -330,6 +380,9 @@ impl EngineNativeExecutor<'_> {
                 // The guest saw a typed Denied/Failed response (budget
                 // attached) at the chokepoint; the STEP still fails with
                 // the original error after persisting the bridge rows.
+                if resume_preflight.is_none() {
+                    resume_preflight = host.pending_preflight_report();
+                }
                 let callable_rows = host.result_rows();
                 let durable_wait = host.durable_wait;
                 let bridge_calls = host.bridge_calls;
@@ -353,9 +406,12 @@ impl EngineNativeExecutor<'_> {
                     format!("Host bridge call failed: {failure}"),
                     &correction,
                     config,
+                    !cancel.is_cancelled(),
                 )? {
                     checking.ended(Some(&status));
-                    return Ok(self.outcome(status, steps_run + 1, record));
+                    return Ok(self
+                        .outcome(status, steps_run + 1, record)
+                        .with_resume_preflight(&resume_preflight));
                 }
                 return Err(failure.into());
             }
@@ -373,6 +429,9 @@ impl EngineNativeExecutor<'_> {
             let (bodies, runtime_output_paths) = match step_bodies {
                 Ok(found) => found,
                 Err(err) => {
+                    if resume_preflight.is_none() {
+                        resume_preflight = host.pending_preflight_report();
+                    }
                     let callable_rows = host.result_rows();
                     let durable_wait = host.durable_wait;
                     let bridge_calls = host.bridge_calls;
@@ -399,10 +458,13 @@ impl EngineNativeExecutor<'_> {
                             ),
                             &correction,
                             config,
+                            !cancel.is_cancelled(),
                         )?
                     {
                         checking.ended(Some(&status));
-                        return Ok(self.outcome(status, steps_run + 1, record));
+                        return Ok(self
+                            .outcome(status, steps_run + 1, record)
+                            .with_resume_preflight(&resume_preflight));
                     }
                     return Err(err);
                 }
@@ -412,12 +474,33 @@ impl EngineNativeExecutor<'_> {
                 bridge_start as u64,
                 &host.bridge_calls,
             )?;
+            // The walk of the pending step this step resumed, read before the host's rows move
+            // into the record (L8-23).
+            let committed_preflight = if pending.is_some() && resume_preflight.is_none() {
+                host.pending_preflight_report()
+            } else {
+                None
+            };
             record.record_callable_rows(host.result_rows());
             record.bridge_calls.extend(host.bridge_calls);
             // Bridge results too large for one reply and stored values, as
             // bodies; the calls' rows and the step's bindings carry their
             // handles.
             record.outputs.extend(host.captured);
+            // A resumed step that commits with drift records its walk beside it, in the same
+            // put, labelled from the step's rows like its other outputs (L8-23).
+            if let Some(report) = committed_preflight {
+                if !report.is_clean() {
+                    let encoded = serde_json::to_vec(&report)?;
+                    record_output(
+                        &self.storage,
+                        &mut record,
+                        resume_preflight_output_path(completed_steps),
+                        &encoded,
+                    )?;
+                }
+                resume_preflight = Some(report);
+            }
             // The board frames its answers carried, for the model's view of
             // the step (FIX 2135).
             super::board_frames::record_step_board_frames(
@@ -612,28 +695,44 @@ impl EngineNativeExecutor<'_> {
 
             if let Some(status) = terminal_status {
                 // A reply that landed while the step ran resumes the run
-                // here, with no round trip through its host.
-                if let EngineExecutorStatus::Waiting(wait) = &status
-                    && let Some(key) = self.park(&record, wait)?
-                    && let Some(generation) =
-                        self.resume_delivered_wait(&mut record, wait, &key, Some(next_generation))?
-                {
-                    expected_generation = Some(generation);
-                    continue;
+                // here, with no round trip through its host. A person's
+                // pause pending when the run stops on its wait is taken at
+                // this boundary first, and the run returns paused instead
+                // of parked (FIX PAUSE-BOUNDARY-PARKED-RUN).
+                if let EngineExecutorStatus::Waiting(wait) = &status {
+                    let delivered = self.park(&record, wait)?;
+                    if let Some(paused) = self.pause_at_wait(&record, &status)? {
+                        return Ok(self.outcome(paused, steps_run, record));
+                    }
+                    if let Some(key) = delivered
+                        && let Some(generation) = self.resume_delivered_wait(
+                            &mut record,
+                            wait,
+                            &key,
+                            Some(next_generation),
+                        )?
+                    {
+                        expected_generation = Some(generation);
+                        continue;
+                    }
                 }
-                return Ok(self.outcome(status, steps_run, record));
+                return Ok(self
+                    .outcome(status, steps_run, record)
+                    .with_resume_preflight(&resume_preflight));
             }
             // A person's pause this step took holds the run here, before its
             // next model request: its row is already Paused and its lease
             // released, and a resume runs it on from this record.
             if paused {
-                return Ok(self.outcome(
-                    EngineExecutorStatus::Paused {
-                        next_step_seq: completed_step_count(&record)?,
-                    },
-                    steps_run,
-                    record,
-                ));
+                return Ok(self
+                    .outcome(
+                        EngineExecutorStatus::Paused {
+                            next_step_seq: completed_step_count(&record)?,
+                        },
+                        steps_run,
+                        record,
+                    )
+                    .with_resume_preflight(&resume_preflight));
             }
             expected_generation = Some(next_generation);
         }

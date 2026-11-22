@@ -26,7 +26,7 @@ pub(crate) use self::embedding_transform_gates::{
 pub use self::hnsw_model_gates::validate_embedding_model_id;
 pub(crate) use self::hnsw_model_gates::{
     ensure_model_id_for_vector_write, format_hnsw_distance_metric, format_hnsw_index_structure,
-    parse_utf8_bytes, read_hnsw_compatibility,
+    parse_utf8_bytes, persist_model_id_if_missing, read_hnsw_compatibility,
 };
 pub(in crate::store) use self::manifest_storage_gates::RegisteredPath;
 pub(crate) use self::manifest_storage_gates::{

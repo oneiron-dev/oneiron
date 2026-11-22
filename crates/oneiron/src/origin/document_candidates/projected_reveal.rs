@@ -21,8 +21,9 @@ use crate::git_wire::GitOid;
 use crate::origin::secret_marks::{RepoBlobAddress, RepoMarkFacts, RepoSecretMarkLookup};
 use crate::origin::secret_projection::claims::{RepoProjectionClaim, RepoProjectionRecord};
 use crate::origin::secret_projection::recipient::RepoProjectionRevealBinding;
+use crate::origin::secret_projection::repo_file_keys_in_txn;
 use crate::secret_custody::RepoFileRevealTarget;
-use crate::secret_record::{RepoFileKeys, RepoFileOriginal};
+use crate::secret_record::RepoFileOriginal;
 use crate::{EntityId, Vault};
 
 /// What one held proposal's files are checked against: the recipient its
@@ -109,10 +110,7 @@ impl ProjectedRevealCheck {
             marks: marks.ids()?,
         };
         let target = RepoFileRevealTarget::new(&file, &asker);
-        let keys = RepoFileKeys {
-            custody: marks.custody(),
-            opaque: marks.opaque(),
-        };
+        let keys = repo_file_keys_in_txn(vault, txn, &marks, &[], None)?;
         vault.repo_file_reveal_granted_in_txn(txn, &asker, &target, &keys)
     }
 }

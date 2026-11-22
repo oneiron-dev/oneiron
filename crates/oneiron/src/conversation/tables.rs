@@ -31,6 +31,12 @@ crate::side_table::side_tables! {
         [restore: refuse_image_entities "room roles and membership"]
         [family: unclassified]
         [tier: canonical];
+    /// Single-byte `[1]` marker that the room closed-setting door is rewriting a room body's
+    /// `closed` bit, set and cleared inside its write transaction. Key: id16 (room).
+    CONVERSATION_CLOSED_UPDATE: VaultMeta b"conversation:closed_update:" Raw
+        [restore: refuse_image_entities "room roles and membership"]
+        [family: unclassified]
+        [tier: canonical];
     /// Host-local room role grant of one current member. Key: id16 (room) + id16 (person).
     CONVERSATION_ROLE_GRANT: VaultMeta b"conversation:role_grant:v1:" Named
         [restore: refuse_image_entities "room roles and membership"]

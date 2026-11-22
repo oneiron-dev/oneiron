@@ -8,7 +8,13 @@ fn dispatch_holds_on_charter_drift_until_restamped()
     let (_tmp, vault, actor) = budget_vault_with_key(5)?;
     let key_id = entity(0xB7);
     let pending = vault.propose_connector_charter(&key_id, "never delete on email", 1_001)?;
-    vault.approve_connector_charter(&key_id, pending.compiled_hash, "owner", 1_002)?;
+    vault.approve_connector_charter(
+        &key_id,
+        pending.text_hash,
+        pending.compiled_hash,
+        "owner",
+        1_002,
+    )?;
 
     // Hand-corrupt the stored charter text under the stale stamp.
     let mut record = vault.get_connector_key(&key_id)?.expect("record");
@@ -40,7 +46,13 @@ fn dispatch_holds_on_charter_drift_until_restamped()
 
     // A fresh propose/approve re-stamps and restores enforcement.
     let restamp = vault.propose_connector_charter(&key_id, "never delete on email", 1_010)?;
-    vault.approve_connector_charter(&key_id, restamp.compiled_hash, "owner", 1_011)?;
+    vault.approve_connector_charter(
+        &key_id,
+        restamp.text_hash,
+        restamp.compiled_hash,
+        "owner",
+        1_011,
+    )?;
     let result =
         vault.dispatch_outbound_intent(email_send_dispatch_request(actor, 2), &mut executor)?;
     assert_eq!(result.outcome, OutboundDispatchOutcome::DeliveredToChannel);

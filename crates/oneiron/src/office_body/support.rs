@@ -387,6 +387,13 @@ pub(super) fn version_key(owner: &EntityId, number: u64) -> Vec<u8> {
     key
 }
 
+/// The export version key for the checkpoint-pins door: `artifact`'s
+/// `version`, as the writers key it.
+#[cfg(oneiron_test_support)]
+pub(crate) fn pins_version_key(artifact: &crate::entity_id::EntityId, version: u64) -> Vec<u8> {
+    version_key(artifact, version)
+}
+
 /// The refusal of a fork nothing answers, which waits in `proposal`.
 /// `refused` is the ask admission's refusal when no holder could be asked.
 pub(crate) fn fork_waits(proposal: &EntityId, refused: Option<&str>) -> Error {

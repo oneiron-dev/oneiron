@@ -109,14 +109,11 @@ impl Pipe {
             event,
         } = paused;
         let request = &event["params"]["request"];
-        let headers = request["headers"]
-            .as_object()
-            .map(|h| {
-                h.iter()
-                    .filter_map(|(k, v)| v.as_str().map(|v| (k.clone(), v.to_owned())))
-                    .collect()
-            })
-            .unwrap_or_default();
+        let headers = request["headers"].as_object().map_or_default(|h| {
+            h.iter()
+                .filter_map(|(k, v)| v.as_str().map(|v| (k.clone(), v.to_owned())))
+                .collect()
+        });
         let Some(body) = self.paused_body(&session, &event) else {
             self.fail_paused(&session, &id, "Failed");
             return;

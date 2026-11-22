@@ -71,14 +71,17 @@ impl Vault {
         self.commitment_instance_state_in_txn(&txn, instance)
     }
 
-    /// Drops the due phases (Lead, Due and LifecycleDue) of a withdrawn
-    /// `instance` in the caller's transaction, and returns whether it was
-    /// withdrawn. Any other state writes nothing. The series membership row
-    /// stays, so the withdrawn occurrence is never minted again.
-    pub(crate) fn clear_withdrawn_commitment_due_in_txn(
+    /// Closes a withdrawn `instance` for its schedule in the caller's
+    /// transaction, and returns whether it was withdrawn: its due phases
+    /// (Lead, Due and LifecycleDue) go, and its series is projected past it
+    /// at `withdrawn_at` (FIX 23511). Any other state writes nothing. The
+    /// series membership row stays, so the withdrawn occurrence is never
+    /// minted again.
+    pub(crate) fn close_withdrawn_commitment_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         instance: &EntityId,
+        withdrawn_at: u64,
     ) -> Result<bool> {
         if !matches!(
             self.commitment_instance_state_in_txn(&*wtxn, instance)?,
@@ -88,15 +91,20 @@ impl Vault {
         }
         self.store
             .commitment_due_clear_instance_phases_in_txn(wtxn, instance)?;
+        self.on_instance_withdrawn_in_txn(wtxn, instance, withdrawn_at)?;
         Ok(true)
     }
 
-    /// [`Vault::clear_withdrawn_commitment_due_in_txn`] in its own write
+    /// [`Vault::close_withdrawn_commitment_in_txn`] in its own write
     /// transaction: the lapse sweep's repair of a withdrawn instance whose due
     /// phases outlived its retraction.
-    pub(crate) fn clear_withdrawn_commitment_due(&self, instance: &EntityId) -> Result<bool> {
+    pub(crate) fn close_withdrawn_commitment(
+        &self,
+        instance: &EntityId,
+        withdrawn_at: u64,
+    ) -> Result<bool> {
         self.with_write_txn_grouped(|wtxn| {
-            self.clear_withdrawn_commitment_due_in_txn(wtxn, instance)
+            self.close_withdrawn_commitment_in_txn(wtxn, instance, withdrawn_at)
         })
     }
 }

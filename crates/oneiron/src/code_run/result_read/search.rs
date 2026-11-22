@@ -33,10 +33,10 @@ const BEHIND: u64 = 4;
 /// Matches one search returns unless it asks for fewer.
 const DEFAULT_LIMIT: usize = 100;
 
-/// Bytes of context on each side of a match unless it asks otherwise, and
-/// at most.
+/// Bytes of context on each side of a match unless it asks otherwise. The
+/// most it may ask is the owner's `code_run.result_search.max_context`
+/// ([`ReadBounds::search_max_context`]).
 const DEFAULT_CONTEXT: usize = 80;
-const MAX_CONTEXT: usize = 1024;
 
 /// Bytes of a match's own text a reply shows at most.
 const MATCH_TEXT_BYTES: usize = 1024;
@@ -109,7 +109,10 @@ pub(super) fn search(
         }
     };
     let limit = input.limit.unwrap_or(DEFAULT_LIMIT).max(1);
-    let context = input.context.unwrap_or(DEFAULT_CONTEXT).min(MAX_CONTEXT);
+    let context = input
+        .context
+        .unwrap_or(DEFAULT_CONTEXT)
+        .min(bounds.search_max_context);
     let budget = bounds.reply_bytes.saturating_sub(REPLY_FIELD_BYTES);
     let len = body.len();
     let begin = input
@@ -271,7 +274,7 @@ fn match_entry(
     let snap_on = |at: usize| if text { ceil_boundary(hay, at) } else { at };
     let shown = snap_back((range.start + MATCH_TEXT_BYTES).min(range.end)).max(range.start);
     let before = snap_on(range.start.saturating_sub(context)).min(range.start);
-    let after = snap_back((range.end + context).min(hay.len())).max(range.end);
+    let after = snap_back(range.end.saturating_add(context).min(hay.len())).max(range.end);
     let mut entry = json!({
         "offset": hay_start + range.start as u64,
         "len": range.len(),

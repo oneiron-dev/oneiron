@@ -18,6 +18,8 @@ use crate::store::ManifestDbs;
 use crate::{EntityId, Vault};
 
 mod pending;
+#[cfg(all(oneiron_test_support, feature = "sync"))]
+pub(crate) use pending::plant_retired_facet_receipts;
 pub(crate) use pending::unpark_stamp;
 #[cfg(feature = "sync")]
 pub(crate) use pending::{
@@ -128,7 +130,46 @@ pub(crate) fn facets_admit_in(
             return Ok(true);
         }
     }
-    let room = match header.entity_type {
+    let Some(room) = room_of(view, txn, id, header.entity_type)? else {
+        return Ok(false);
+    };
+    Ok(crate::workspace_roster::room_facets_in(vault, txn, room)?
+        .is_some_and(|room| !room.meet(facets).is_bottom()))
+}
+
+/// The facets the row `id` of type `kind` is read in by [`facets_admit_in`]
+/// beside a TASK's birth stamp: each `FacetOf` target it names and, for a
+/// room and each MESSAGE or TURN said there, each facet of the room. Empty
+/// for a row that sits in no facet.
+pub(crate) fn placed_facets_in(
+    vault: &Vault,
+    view: &(impl ManifestDbs + MachineHistoryScope),
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    kind: u8,
+) -> Result<std::collections::BTreeSet<EntityId>> {
+    let mut facets: std::collections::BTreeSet<EntityId> =
+        out_targets(view, txn, id, EdgeKind::FacetOf)?
+            .into_iter()
+            .collect();
+    if let Some(room) = room_of(view, txn, id, kind)?
+        && let Some(ScopeAxis::Some(room)) =
+            crate::workspace_roster::room_facets_in(vault, txn, room)?
+    {
+        facets.extend(room.into_iter().map(|facet| facet.0));
+    }
+    Ok(facets)
+}
+
+/// The room the row `id` of type `kind` sits in: a room itself, and the room
+/// a MESSAGE or TURN is said in.
+pub(crate) fn room_of(
+    view: &(impl ManifestDbs + MachineHistoryScope),
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    kind: u8,
+) -> Result<Option<EntityId>> {
+    Ok(match kind {
         ENTITY_TYPE_CONVERSATION => Some(id),
         ENTITY_TYPE_TURN => out_targets(view, txn, id, EdgeKind::ChildOf)?
             .first()
@@ -153,12 +194,7 @@ pub(crate) fn facets_admit_in(
             first.filter(|first| rooms.iter().all(|room| room == first))
         }
         _ => None,
-    };
-    let Some(room) = room else {
-        return Ok(false);
-    };
-    Ok(crate::workspace_roster::room_facets_in(vault, txn, room)?
-        .is_some_and(|room| !room.meet(facets).is_bottom()))
+    })
 }
 
 /// [`facets_admit_in`] for a CLAIM whose `FacetOf` targets are `placed`, as

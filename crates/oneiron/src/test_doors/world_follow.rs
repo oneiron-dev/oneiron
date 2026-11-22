@@ -1,6 +1,7 @@
 //! The thin index's window choice and a negotiation's follow set on a device
 //! lane, for the integration tests of a device following its worlds (census
-//! L7-42, ARCH-0023b #partial-sync).
+//! L7-42, ARCH-0023b #partial-sync), and the release check each outgoing
+//! frame meets (FIX 8861).
 
 use crate::sync::SyncClient;
 use crate::sync::transport::TransportError;
@@ -45,4 +46,12 @@ pub fn full_window_exchange_allowed(
     key: &WindowKey,
 ) -> Result<bool, TransportError> {
     client.full_window_exchange_allowed(key.as_str())
+}
+
+/// Whether `client` withholds the outgoing `frame` now, as its send path
+/// judges each frame right before release: the device-only destination
+/// check, and on a federation lane the peer's read of that text.
+#[must_use]
+pub fn frame_withheld(client: &SyncClient, frame: &[u8]) -> bool {
+    client.frame_withheld(frame)
 }
