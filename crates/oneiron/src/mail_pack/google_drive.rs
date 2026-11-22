@@ -1,6 +1,12 @@
 //! The Google Drive wire of a Drive source (MAIL-GOOGLE = A, ARCH-0027
 //! #mail-drive): Drive v3 REST over `reqwest::blocking`.
 //!
+//! A whole Drive's listing reads the account's own corpus (`corpora=user`:
+//! the files it owns or that were shared with it, and the shared-drive
+//! files it created, opened or shared), newest change first. The other
+//! files of a shared drive the account is a member of are not listed
+//! (FIX [DRIVE-WHOLE-SHARED-DRIVES]).
+//!
 //! Each call reads the source's credential at its door, effector
 //! `connector:google_drive`: the custody record the owner named at attach,
 //! whose bindings admit Drive. HTTPS only, no redirects; the Bearer header
@@ -28,8 +34,9 @@ use super::rest::{
 };
 use crate::consent::AuthenticatedOwner;
 use crate::note::{
-    DRIVE_WIRE_RATE_LIMITED, DriveChange, DriveChangesPage, DriveFileMeta, DriveOrigin, DriveQuota,
-    DriveStepBudget, DriveStepReport, DriveWire, MAX_DRIVE_DOWNLOAD_BYTES,
+    DRIVE_FOLDER_MIME_TYPE, DRIVE_WIRE_RATE_LIMITED, DriveChange, DriveChangesPage, DriveFileMeta,
+    DriveFilesPage, DriveOrigin, DriveQuota, DriveStepBudget, DriveStepReport, DriveWire,
+    MAX_DRIVE_DOWNLOAD_BYTES,
 };
 use crate::{Error, Result, Vault};
 
@@ -53,6 +60,9 @@ const DRIVE_FILE_FIELDS: &str = "id,name,mimeType,modifiedTime,size,trashed";
 
 /// Changes one feed page holds.
 const CHANGES_PAGE_SIZE: u32 = 100;
+
+/// Files one listing page holds: Drive's largest page.
+const LIST_PAGE_SIZE: u32 = 1000;
 
 /// The longest file id a URL names.
 const MAX_FILE_ID_BYTES: usize = 320;
@@ -225,6 +235,38 @@ impl DriveWire for HttpGoogleDriveWire<'_> {
             changes,
             next_page: text_of(page.get("nextPageToken")),
             new_start: text_of(page.get("newStartPageToken")),
+        }))
+    }
+
+    fn list(&self, origin: &DriveOrigin, page: Option<&str>) -> Result<Option<DriveFilesPage>> {
+        let mut query = vec![
+            (
+                "q",
+                format!("trashed = false and mimeType != '{DRIVE_FOLDER_MIME_TYPE}'"),
+            ),
+            ("orderBy", "modifiedTime desc".to_owned()),
+            ("pageSize", LIST_PAGE_SIZE.to_string()),
+            ("corpora", "user".to_owned()),
+            ("includeItemsFromAllDrives", "true".to_owned()),
+            ("supportsAllDrives", "true".to_owned()),
+            (
+                "fields",
+                format!("nextPageToken,files({DRIVE_FILE_FIELDS})"),
+            ),
+        ];
+        if let Some(page) = page {
+            query.push(("pageToken", page.to_owned()));
+        }
+        // Drive's "not found" for the page: the listing reads again.
+        let Some(answer) = self.get_json(origin, &format!("{DRIVE_API_URL}/files"), &query)? else {
+            return Ok(None);
+        };
+        Ok(Some(DriveFilesPage {
+            files: array(&answer, "files")
+                .iter()
+                .filter_map(file_meta)
+                .collect(),
+            next_page: text_of(answer.get("nextPageToken")),
         }))
     }
 
