@@ -24,7 +24,8 @@ use oneiron::test_doors::data_key_generation_devices::{
 };
 use oneiron::test_doors::steward::{open_owner_carrier_vault, owner};
 use oneiron::world_keys::{
-    DataKeyGenerationCause, DataKeyGenerationOutcome, DataKeyGenerationWays, RecoveryPreset,
+    DataKeyGenerationCause, DataKeyGenerationOutcome, DataKeyGenerationWays, NoRecoveryBox,
+    RecoveryPreset,
 };
 use oneiron::{EntityId, Vault, VaultConfig};
 
@@ -151,12 +152,15 @@ fn act_device_only(home: &Vault) -> DataKeyGenerationOutcome {
         confirmed.insert(id.clone());
     }
     let previewed = home
-        .data_key_generation_preview(&DataKeyGenerationWays {
-            password: None,
-            passkeys: Vec::new(),
-            escrows: Vec::new(),
-            confirmed_removals: BTreeSet::new(),
-        })
+        .data_key_generation_preview(
+            &DataKeyGenerationWays {
+                password: None,
+                passkeys: Vec::new(),
+                escrows: Vec::new(),
+                confirmed_removals: BTreeSet::new(),
+            }
+            .kept(),
+        )
         .expect("preview");
     let mut previewed: Vec<String> = previewed.iter().map(|info| info.id.clone()).collect();
     previewed.sort();
@@ -248,7 +252,12 @@ fn a_device_under_nobody_but_me_adopts_the_new_generation() {
     let owner_b = owner(&device_b.vault).expect("owner proof on B");
     device_b
         .vault
-        .set_recovery_preset_as(&owner_b, RecoveryPreset::NobodyButMe, |_| Ok(()))
+        .set_recovery_preset_as(
+            &owner_b,
+            RecoveryPreset::NobodyButMe,
+            |_| Ok(()),
+            &NoRecoveryBox,
+        )
         .expect("B enters Nobody but me");
 
     let outcome = act_device_only(&vault_a);
