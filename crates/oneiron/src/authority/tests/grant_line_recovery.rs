@@ -64,6 +64,7 @@ fn machine_revision(
                 seen_world_edits: BTreeSet::new(),
                 carrier: None,
                 act: None,
+                restored_from: None,
             }),
             authority_key_from_ed(owner),
             3,
