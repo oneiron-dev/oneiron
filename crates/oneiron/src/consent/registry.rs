@@ -173,10 +173,11 @@ impl ConsentRegistryRow {
     /// One owner's agent grant (FIX 5628), from its live grant row. Its
     /// one-tap revoke is the agent grant revoke door's, never the consent
     /// grant revoke; it is Active until its expiry, and always when it has
-    /// none. A grant with repo bounds shows them whole, and its repo among
-    /// the selectors as a GitPush row shows its repos (FIX 6894).
+    /// none (the caller shows a row that does not stand as revoked). A grant
+    /// with repo bounds shows them whole, and its repo among the selectors as
+    /// a GitPush row shows its repos (FIX 6894).
     pub(crate) fn from_agent_grant(
-        standing: &crate::federation::AgentGrantStanding,
+        standing: &crate::federation::AgentGrantRow,
         now: u64,
         classes: &crate::federation::AgentVerbClasses,
     ) -> Self {
