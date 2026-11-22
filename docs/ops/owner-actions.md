@@ -3190,10 +3190,10 @@ why. A command prints the sentence. An SDK client gets `INVALID_STATE` with two 
 | `here:screen_locked` | The screen is locked, or it locked while the prompt was up. | Unlock this device, then try again here. |
 | `here:prompt_failed` | The device's prompt failed. | Try again when the device's unlock prompt works. |
 
-The session the program runs in decides, not how you reached the Mac. A command in a session
-whose screen is locked, or whose user is switched out, gets `here:screen_locked`: unlock that
-Mac first. A command whose login has no screen session at all, as a login over ssh can be,
-does not ask.
+The session the program runs in decides, not how you reached the Mac. A command run over ssh
+works in your signed-in session where there is one: with that screen locked, or with you
+switched out, it gets `here:screen_locked`, so unlock that Mac first. A program that the
+system gives no screen session at all does not ask, as above.
 
 A refusal undoes nothing the same command did before the change. `oneiron init` asks when you
 agree to conversation learning on a new vault and an auth secret is configured (`auth_secret`
