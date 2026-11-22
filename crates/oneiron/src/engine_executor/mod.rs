@@ -22,10 +22,12 @@ mod program_entry;
 mod record;
 mod repl;
 pub mod reply_evidence;
+pub(crate) mod resume_divergence;
 mod run_position;
 mod run_signals;
 mod self_brief;
 mod session_refusal;
+pub(crate) mod setting_keys;
 mod shadow_step;
 mod skill_call;
 mod stack_floor;
@@ -59,13 +61,16 @@ pub(crate) use self::record::{executor_config_hash_for_test, step_state_hash_for
 pub use self::run_position::{CodeRunPosition, code_run_position};
 // FIX 17594: the host's self-brief port a native run's requests carry.
 pub use self::self_brief::{
-    BriefBoundary, BriefCandidateToken, BriefPrefix, FoldBoundary, SelfBriefPort,
+    BriefBoundary, BriefCandidateToken, BriefPrefix, BriefRecheck, FoldBoundary, SelfBriefPort,
 };
 // FIX OFF-RECORD-RUN-POLICY-REFUSAL-500: a session's refusal of a run's act.
 pub use self::session_refusal::is_session_act_refusal;
 pub use self::shadow_step::{ArmTypeFeedback, run_shadow_step};
 pub(crate) use self::shadow_step::{run_shadow_callable_branch, shadow_readable_outputs};
-pub use self::skill_call::{execute_live_skill_call, execute_live_skill_call_listing};
+pub use self::skill_call::{
+    AdmittedSkillAnswer, AdmittedSkillText, execute_live_skill_call,
+    execute_live_skill_call_listing, judge_admitted_skill_text, spill_admitted_skill_view,
+};
 // FIX 4414: the owner's per-run step evidence.
 pub(crate) use self::step_evidence::step_evidence_page;
 pub use self::store::{RESULT_READ_ROOT, RESULT_REPLY_INLINE_BYTES};
@@ -85,6 +90,10 @@ pub use self::types::{
     JsResultCall, JsResultRef, JsResultTarget, ParkedWait, SelfDispatchResponse, StoreReceiptInput,
     StoreReceiptTree, guest_response_with_budget,
 };
+// L8-23: what a resumed pending step's walk met, on its outcome and its hold.
+pub use self::host::resume_preflight::{
+    ChangedStep, ResumePreflightReport, ResumeVerdict, UnreachedStep,
+};
 
 pub(crate) use self::host::executor_declarations_block;
 #[cfg(oneiron_test_support)]
@@ -94,8 +103,6 @@ pub(crate) use self::host::spill_before_record;
 #[cfg(oneiron_test_support)]
 pub(crate) use self::wire::{HealedExecutorReply, heal_executor_text_tracking_repairs};
 
-// FIX [LIBTEST-QUARANTINE-ENGINE-EXECUTOR-TESTS]: the lib test target's type check fails here (59 errors: E0063 x22, E0560 x20, E0308 x8, E0061 x4, E0599 x4, E0027 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

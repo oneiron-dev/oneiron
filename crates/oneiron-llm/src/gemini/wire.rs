@@ -48,7 +48,7 @@ pub fn build_request(
         }
     }
     let mut generation = serde_json::Map::new();
-    for (name, value) in &request.params {
+    for (name, value) in request.wire_params()? {
         let wire_name = match name.as_str() {
             "max_tokens" => "maxOutputTokens",
             "top_p" => "topP",

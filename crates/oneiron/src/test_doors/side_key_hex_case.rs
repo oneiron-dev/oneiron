@@ -14,7 +14,8 @@ pub fn nonce_key(bytes: &[u8]) -> Option<(u64, String)> {
     crate::authority::decode_nonce_key_for_test(bytes)
 }
 
-/// `deletion::tombstone::PendingTombstoneKey`: the window label and the entity.
+/// A `deletion::tombstone::PENDING_TOMBSTONE` key (`WindowEntityHexKey`): the window label and
+/// the entity.
 pub fn pending_tombstone_key(bytes: &[u8]) -> Option<(String, EntityId)> {
     crate::deletion::decode_pending_tombstone_key_for_test(bytes)
 }

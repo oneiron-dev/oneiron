@@ -93,6 +93,37 @@ impl Vault {
         Ok(())
     }
 
+    /// Lands `body`, the owner-signed birth of project `id`, as history: the
+    /// one landing of every owner door that births a project. History lands
+    /// through the replay-shaped admission, which runs neither a live put's
+    /// transition check nor its birth stamp, so this door runs both. A parent
+    /// link to a project whose hard delete has published is refused, and the
+    /// new row takes the birth position a live put's projection stamps, the
+    /// position every agent Grant's read of it is judged against.
+    pub(super) fn land_owner_project_birth_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: EntityId,
+        kind: u8,
+        occurred: TimeRange,
+        learned_at: u64,
+        body: &ProjectRecord,
+    ) -> Result<()> {
+        super::proof::reject_fenced_new_parents(&self.store, txn, &[], &body.parents)?;
+        let bytes = encode(body)?;
+        self.batch_in()
+            .put_engine_history(&id, kind, occurred, learned_at, &bytes)
+            .apply(txn)?;
+        self.store.scope_stamps.stamp_put(
+            &self.store,
+            txn,
+            id,
+            kind,
+            &bytes,
+            crate::batch::row_put::RowPut::Birth,
+        )
+    }
+
     /// The owner's act commits only the state it signed as the head the fold
     /// installs: a signature or slip the fold refuses fails here, not on a
     /// later read.

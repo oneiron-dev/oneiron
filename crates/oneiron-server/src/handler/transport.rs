@@ -1,5 +1,6 @@
 //! Guarded socket chokepoint with revocation consults on queue and flush.
 
+mod construction;
 mod live_person;
 
 use std::sync::Arc;
@@ -8,8 +9,7 @@ use std::task::Poll;
 use axum::extract::ws::{CloseFrame, Message as WsMessage, Utf8Bytes};
 use futures_util::{FutureExt, SinkExt, Stream, StreamExt};
 use oneiron::sync::transport::{
-    LinkBytes, MAX_CODEC_INNER_BYTES, TAG_CODEC, TransportError, WireCodecs, decode_codec_frame,
-    encode_codec_frame,
+    LinkBytes, TAG_CODEC, TransportError, WireCodecs, decode_codec_frame, encode_codec_frame,
 };
 use tokio::time::Duration;
 
@@ -203,8 +203,15 @@ pub(super) struct GuardedTransport<S> {
     /// token id names him, so every consult asks the vault instead.
     live_owner: Option<crate::auth::CoreAuth>,
     live_person: Option<live_person::LivePerson>,
+    /// A shared-vault member's lane this socket serves (MEMBER-SYNC D5):
+    /// every consult asks whether its grant still stands, so a member whose
+    /// grant is revoked or deleted is sent nothing new (ARCH-0043:164).
+    live_member: Option<Arc<super::member_lane::MemberLane>>,
     /// Set only while an app-tier frame is draining; sync keeps its owner guard.
     pub(super) app_jti: Option<String>,
+    /// Set only while a selector answer's frame is draining: judged again before
+    /// its bytes leave and after each wait on the peer (SELECTOR-RELEASE-POINT = B).
+    pub(super) answer: Option<crate::selector_release::ReleasedAnswer>,
     conn_id: u32,
     /// The socket's own `write_buffer_size`, mirrored so the refusal below can
     /// be stated against it.
@@ -231,83 +238,6 @@ impl<S, E> GuardedTransport<S>
 where
     S: SinkExt<WsMessage> + Stream<Item = Result<WsMessage, E>> + Unpin,
 {
-    pub(super) fn new(
-        socket: S,
-        revoked: Arc<dyn RevokedTokenJtis + Send + Sync>,
-        session_jti: Option<String>,
-        conn_id: u32,
-    ) -> Self {
-        Self::with_write_through_threshold(
-            socket,
-            revoked,
-            session_jti,
-            conn_id,
-            WS_WRITE_BUFFER_SIZE,
-        )
-    }
-
-    /// The constructor that names the threshold, for a socket built with a
-    /// `write_buffer_size` other than [`WS_WRITE_BUFFER_SIZE`].
-    ///
-    /// The two must be the SAME number: this is the guard's model of the
-    /// codec's write-through point, and a guard modelling a different socket
-    /// than the one it holds guarantees nothing.
-    pub(super) fn with_write_through_threshold(
-        socket: S,
-        revoked: Arc<dyn RevokedTokenJtis + Send + Sync>,
-        session_jti: Option<String>,
-        conn_id: u32,
-        write_through_threshold: usize,
-    ) -> Self {
-        Self {
-            socket: Some(socket),
-            revoked,
-            session_jti,
-            vault: None,
-            live_owner: None,
-            live_person: None,
-            app_jti: None,
-            conn_id,
-            write_through_threshold,
-            peer_codecs: WireCodecs::NONE,
-            max_inner: MAX_CODEC_INNER_BYTES,
-            link_bytes: LinkBytes::default(),
-            refused: None,
-        }
-    }
-
-    /// Caps what an inbound codec frame may unwrap to: the socket's own
-    /// `max_frame_size`, so a compressed frame never carries more than a plain
-    /// one could (ARCH-0081 §7).
-    pub(super) fn with_inbound_cap(mut self, max_inner: usize) -> Self {
-        self.max_inner = max_inner.min(MAX_CODEC_INNER_BYTES);
-        self
-    }
-
-    /// Serves `vault`, and `owner`, its managed attested owner, when there is
-    /// one: every consult then asks `vault` whether its Owners deleted it
-    /// (FIX 1930) and whether he is still its live owner, so a session no
-    /// token id names is never unguarded.
-    pub(super) fn with_live_owner(
-        mut self,
-        vault: &Arc<oneiron::Vault>,
-        owner: Option<crate::auth::CoreAuth>,
-    ) -> Self {
-        self.vault = Some(Arc::clone(vault));
-        self.live_owner = owner;
-        self
-    }
-
-    /// Tracks an admitted member's lifetime without refusing an invitee.
-    pub(super) fn with_live_person(mut self, holder: Option<oneiron::EntityId>) -> Self {
-        self.live_person = self
-            .vault
-            .as_deref()
-            .zip(holder)
-            .map(|(vault, holder)| live_person::LivePerson::new(vault, holder));
-        self
-    }
-
     fn person_membership_ended(&self) -> bool {
         self.vault
             .as_deref()
@@ -350,6 +280,16 @@ where
                 .zip(self.live_owner.as_ref())
                 .is_some_and(|(vault, owner)| !owner.credential_is_live(vault))
             || self.person_membership_ended()
+            || self
+                .vault
+                .as_deref()
+                .zip(self.live_member.as_ref())
+                .is_some_and(|(vault, lane)| !lane.stands(vault))
+    }
+
+    /// Whether the selector answer draining no longer stands.
+    fn answer_withdrawn(&self) -> bool {
+        self.answer.as_ref().is_some_and(|answer| !answer.stands())
     }
 
     /// Whether the served vault's deletion marker is present, or unreadable:
@@ -571,17 +511,23 @@ where
         let Some(socket) = self.socket.as_mut() else {
             return false;
         };
-        if std::future::poll_fn(|cx| socket.poll_ready_unpin(cx))
-            .await
-            .is_err()
+        // A selector answer is judged here once this waits; its flush judges it anyway.
+        let mut waited = false;
+        if std::future::poll_fn(|cx| {
+            let ready = socket.poll_ready_unpin(cx);
+            waited |= ready.is_pending();
+            ready
+        })
+        .await
+        .is_err()
         {
             tracing::debug!(conn_id = self.conn_id, "outbound sink closed");
             return false;
         }
-        if self.credential_revoked() {
+        if self.credential_revoked() || (waited && self.answer_withdrawn()) {
             tracing::warn!(
                 conn_id = self.conn_id,
-                "credential revoked — closing live session instead of sending"
+                "credential revoked or answer withdrawn — closing live session instead of sending"
             );
             // No application bytes are queued; try the close frame without
             // letting control-frame backpressure delay dropping the socket.
@@ -670,7 +616,7 @@ where
     /// line and nowhere else: both are unbounded waits on the same sink, and
     /// both must abort rather than park past a revocation.
     async fn guarded_drain(&mut self, what: &'static str) -> bool {
-        self.guarded_flush_loop(what).await
+        self.guarded_flush_loop(what, false).await
     }
 
     /// Drains the queued frame, re-consulting the registry at every park.
@@ -682,7 +628,7 @@ where
     /// so it cannot arrive as an in-process wakeup: observing it means
     /// re-reading the registry, which means getting control back.
     async fn guarded_flush(&mut self) -> bool {
-        self.guarded_flush_loop("a frame awaited flush").await
+        self.guarded_flush_loop("a frame awaited flush", true).await
     }
 
     /// The guarded wait both drains share.
@@ -690,7 +636,9 @@ where
     /// One loop rather than two: the pre-handover drain and the post-handover
     /// flush park on the same sink under the same rules, and two copies of a
     /// security wait drift.
-    async fn guarded_flush_loop(&mut self, what: &'static str) -> bool {
+    /// A selector answer is judged after a park, and with `judge_answer` (a queued
+    /// frame's flush) before the first poll too: each frame, not only the first.
+    async fn guarded_flush_loop(&mut self, what: &'static str, mut judge_answer: bool) -> bool {
         loop {
             // BEFORE the poll, not only after it. `start_send` is a synchronous
             // queue-and-return, so a revocation landing between the pre-handover
@@ -700,11 +648,11 @@ where
             // consult ever runs. Checking only at a park makes the guard depend
             // on the peer being slow, which is exactly backwards: the fast peer
             // is the one that gets the frame.
-            if self.credential_revoked() {
+            if self.credential_revoked() || (judge_answer && self.answer_withdrawn()) {
                 tracing::warn!(
                     conn_id = self.conn_id,
                     stage = what,
-                    "credential revoked mid-wait — aborting transport"
+                    "credential revoked or answer withdrawn mid-wait — aborting transport"
                 );
                 self.abort();
                 return false;
@@ -726,7 +674,7 @@ where
                     return false;
                 }
                 // Back to the loop head, which re-consults before re-polling.
-                FlushStep::Parked => {}
+                FlushStep::Parked => judge_answer = true,
             }
         }
     }

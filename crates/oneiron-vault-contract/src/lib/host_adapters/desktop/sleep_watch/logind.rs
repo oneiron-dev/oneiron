@@ -10,7 +10,7 @@
 
 use super::SleepHooks;
 use std::io::{BufRead, BufReader};
-use std::process::{Child, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdout, Stdio};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 
@@ -34,7 +34,7 @@ pub fn prepare_for_sleep_line(line: &str) -> Option<bool> {
 /// Spawns the delay lock: `systemd-inhibit` in delay mode over `sleep
 /// infinity`, so logind delays a sleep until the child exits.
 fn spawn_delay_lock() -> Option<Child> {
-    Command::new("/usr/bin/systemd-inhibit")
+    oneiron_spawn::command("/usr/bin/systemd-inhibit")
         .args([
             "--what=sleep",
             "--mode=delay",
@@ -105,7 +105,7 @@ impl LogindWatch {
         hooks: Arc<dyn SleepHooks>,
         unobserved: impl FnOnce(&'static str),
     ) -> Option<Self> {
-        let mut monitor = match Command::new("/usr/bin/gdbus")
+        let mut monitor = match oneiron_spawn::command("/usr/bin/gdbus")
             .args([
                 "monitor",
                 "--system",

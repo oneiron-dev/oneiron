@@ -127,53 +127,11 @@ fn a_scope_field_carrying_a_reserved_character_still_names_exactly_itself() {
     assert_eq!(trust_table(&vault).expect("trust table").len(), 1);
 }
 
-#[test]
-fn the_write_door_re_validates_a_row_the_caller_assembled_by_hand() {
-    let (_dir, vault) = open_vault();
-    let scope = scope();
-    record_history(&vault, &scope, 3, 0);
-
-    // The fields are `pub` (the keystone shape), so a struct literal is a door
-    // around `ThresholdRow::new` — and a row that reached storage that way is
-    // unreadable on the way back out, which would take every policy read in the
-    // vault down rather than failing the one write that was wrong.
-    for illegal in [
-        ThresholdRow {
-            scope_pattern: WILDCARD_PATTERN.to_owned(),
-            required_streak: 0,
-            posterior_guard: 0.0,
-        },
-        ThresholdRow {
-            scope_pattern: "send_email/client_followup".to_owned(),
-            required_streak: 5,
-            posterior_guard: 0.5,
-        },
-        ThresholdRow {
-            scope_pattern: WILDCARD_PATTERN.to_owned(),
-            required_streak: 5,
-            posterior_guard: 1.5,
-        },
-    ] {
-        assert!(
-            matches!(
-                set_graduation_policy(&vault, &illegal).expect_err("hand-assembled row"),
-                Error::Gate(GateError::InvalidConsentBound(_))
-            ),
-            "{illegal:?} must be refused at the write door, not on every later read"
-        );
-    }
-
-    // Nothing landed, so the policy in force is still the one that was in force.
-    assert!(graduation_policy_rows(&vault).expect("rows").is_empty());
-    assert_eq!(
-        graduation_policy_for(&vault, &scope)
-            .expect("policy")
-            .required_streak,
-        DEFAULT_GRADUATION_STREAK_FLOOR
-    );
-    assert!(vault.ramp_scope_state(&scope).is_ok());
-}
-
+/// An unreadable threshold row is a typed error on every graduation read,
+/// never the compiled catch-all. Since a446e3423a6 the owner's rows are the
+/// `edit_distance.graduation.thresholds` setting, so the damaged row is that
+/// setting's; the key names no strictest value, so its read fails closed.
+#[cfg(all(oneiron_test_support, feature = "test-support"))]
 #[test]
 fn a_malformed_stored_row_is_a_typed_error_never_a_waived_threshold() {
     let (_dir, vault) = open_vault();
@@ -181,13 +139,12 @@ fn a_malformed_stored_row_is_a_typed_error_never_a_waived_threshold() {
     // A history, so the all-scopes reads below have a row whose policy they
     // must resolve before they can answer anything.
     record_history(&vault, &scope, 3, 0);
-    let key = THRESHOLD.key_bytes(&pattern_key(WILDCARD_PATTERN));
-    vault
-        .with_write_txn(|wtxn| {
-            vault.store.vault_meta.put(wtxn, &key, b"not a row")?;
-            Ok(())
-        })
-        .expect("plant a corrupt row");
+    crate::test_doors::setting::plant_undecodable_row(
+        &vault,
+        "edit_distance.graduation.thresholds",
+        crate::setting::SettingScope::Vault,
+    )
+    .expect("plant a corrupt row");
 
     let error = graduation_policy_for(&vault, &scope).expect_err("corrupt row");
     assert!(matches!(error, Error::CorruptedIndex(_)));
@@ -195,26 +152,6 @@ fn a_malformed_stored_row_is_a_typed_error_never_a_waived_threshold() {
     // than resolving to a threshold nobody wrote.
     assert!(vault.ramp_scope_state(&scope).is_err());
     assert!(vault.graduation_offers().is_err());
-
-    // A row whose bytes decode but whose VALUES are no longer a legal threshold
-    // is the same answer, not a silently repaired one.
-    let stored = StoredThresholdRow {
-        v: ROW_VERSION,
-        scope_pattern: WILDCARD_PATTERN.to_owned(),
-        required_streak: 0,
-        posterior_guard: 0.5,
-    };
-    let data = encode_row(&stored, "test row").expect("encode");
-    vault
-        .with_write_txn(|wtxn| {
-            vault.store.vault_meta.put(wtxn, &key, &data)?;
-            Ok(())
-        })
-        .expect("plant a zero-threshold row");
-    assert!(matches!(
-        graduation_policy_for(&vault, &scope).expect_err("zero threshold"),
-        Error::CorruptedIndex(_)
-    ));
 }
 
 // ---------------------------------------------------------------------------

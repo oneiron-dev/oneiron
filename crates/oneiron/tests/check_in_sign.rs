@@ -18,11 +18,17 @@
 //! - A Member completing a recipient whose principal is their own person
 //!   signs in their own name: not judged. Nor is a Complete of an outside
 //!   recipient (no principal), or a bearer's call of the Owner's recipient.
+//! - The approval binds the field values the Complete signs: a value the
+//!   Deputy saves after the Owner approves is another effect, so the
+//!   Complete that names the approved check-in is refused and signs nothing,
+//!   and one that names none asks again (REVIEW-9002 / REVIEW-9004 round 2).
 //!
 //! The vault is rooted, and its human binding is the owner's (H149), so each
 //! other person calls with the host key bound to them, then the key goes
-//! back to the owner. Each case drafts a one-recipient document on its own
-//! PDF, mints the recipient's link while it is a draft, and marks it sent.
+//! back to the owner. Each case drafts a one-recipient document with one
+//! optional text field on its own PDF, mints the recipient's link while it is
+//! a draft, and marks it sent. Each Complete follows the caller's Review, as
+//! the UETA section 10 gate asks (SGN-08).
 //!
 //! On 2k6a (580209a90a6) this file does not build: a Complete has no
 //! `check_in_ref`, an outcome no `CheckInPending`, and a signature's
@@ -38,9 +44,9 @@ use std::sync::Arc;
 use oneiron::authority::HostSlipIssuer;
 use oneiron::blob_artifact::esign::esign_seal_verify_reasons::append_event;
 use oneiron::blob_artifact::esign::{
-    DocumentKind, EsignAuditActor, EsignDocument, EsignEvent, EsignItem, EsignRecipient,
-    EsignSigningRequest, RecipientRole, SigningAction, SigningAutonomy, SigningOutcome,
-    SigningPrincipal,
+    DocumentKind, EsignAuditActor, EsignDocument, EsignEvent, EsignField, EsignItem,
+    EsignRecipient, EsignSigningRequest, FieldGeometry, FieldMeta, FieldValue, RecipientRole,
+    SigningAction, SigningAutonomy, SigningOutcome, SigningPrincipal,
 };
 use oneiron::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
 use oneiron::consent::AuthenticatedOwner;
@@ -107,10 +113,12 @@ struct Org {
     member: EntityId,
 }
 
-/// One sent document's single recipient and their signing link.
+/// One sent document's single recipient, their text field and their
+/// signing link.
 struct Signing {
     document: EntityId,
     recipient: String,
+    field: String,
     token: String,
 }
 
@@ -185,6 +193,7 @@ impl Org {
         let now = self.vault.now_recorded_at();
         let expires_at = now + 3600;
         let recipient = EntityId::now().to_hex();
+        let field = "amount".to_owned();
         let draft = EsignDocument {
             schema_version: 1,
             kind: DocumentKind::Document,
@@ -207,7 +216,20 @@ impl Org {
                 automated: false,
                 natural_person: None,
             }],
-            fields: Vec::new(),
+            fields: vec![EsignField {
+                id: field.clone(),
+                item: 0,
+                recipient: recipient.clone(),
+                required: false,
+                geometry: FieldGeometry {
+                    page: 1,
+                    x_percent: 10.0,
+                    y_percent: 10.0,
+                    width_percent: 50.0,
+                    height_percent: 20.0,
+                },
+                meta: FieldMeta::Text { max_bytes: 64 },
+            }],
             full_trail_appendix: false,
             lifecycle: None,
             project: None,
@@ -229,26 +251,62 @@ impl Org {
         Signing {
             document,
             recipient,
+            field,
             token,
         }
     }
 
-    /// `person`'s Complete of `signing`'s recipient through
-    /// `vault.esign.signing.act`, with the host key bound to them for a
-    /// member's call.
+    /// `person`'s Review, then their Complete, of `signing`'s recipient.
     fn complete(
         &self,
         person: EntityId,
         signing: &Signing,
         check_in_ref: Option<&str>,
     ) -> MemoryResult<SigningOutcome> {
-        let request = EsignSigningRequest {
-            token: signing.token.clone(),
-            action: SigningAction::Complete {
+        assert!(
+            matches!(
+                self.act(person, signing, SigningAction::Review)
+                    .expect("the Review lands"),
+                SigningOutcome::Page(_)
+            ),
+            "the caller reviews what they sign"
+        );
+        self.act(
+            person,
+            signing,
+            SigningAction::Complete {
                 consent: true,
                 next: None,
                 check_in_ref: check_in_ref.map(str::to_owned),
             },
+        )
+    }
+
+    /// `person` saves `text` into `signing`'s text field.
+    fn save(&self, person: EntityId, signing: &Signing, text: &str) {
+        self.act(
+            person,
+            signing,
+            SigningAction::SaveField {
+                field: signing.field.clone(),
+                value: FieldValue::Text(text.to_owned()),
+            },
+        )
+        .expect("the field saves");
+    }
+
+    /// `person`'s `action` on `signing`'s recipient through
+    /// `vault.esign.signing.act`, with the host key bound to them for a
+    /// member's call.
+    fn act(
+        &self,
+        person: EntityId,
+        signing: &Signing,
+        action: SigningAction,
+    ) -> MemoryResult<SigningOutcome> {
+        let request = EsignSigningRequest {
+            token: signing.token.clone(),
+            action,
         };
         let call = || {
             self.vault
@@ -446,6 +504,9 @@ fn a_signature_in_the_signers_own_name_is_not_judged() {
     let bearer = org.sent(Some(org.owner));
     let capability =
         oneiron::blob_artifact::esign::EsignCapability::parse(&bearer.token).expect("the link");
+    org.vault
+        .execute_signing_action(&capability, &SigningAction::Review, None, None)
+        .expect("the bearer reviews");
     assert_eq!(
         org.vault
             .execute_signing_action(
@@ -466,4 +527,34 @@ fn a_signature_in_the_signers_own_name_is_not_judged() {
         Some(None),
         "a bearer's call stays on main's gates"
     );
+}
+
+#[test]
+fn a_value_saved_after_the_approval_asks_again() {
+    let org = Org::new();
+    let signing = org.sent(Some(org.owner));
+    org.save(org.deputy, &signing, "100");
+    let id = pending_id(org.complete(org.deputy, &signing, None));
+    org.owner_approves(&id);
+
+    org.save(org.deputy, &signing, "999");
+    let refused = org
+        .complete(org.deputy, &signing, Some(&id))
+        .expect_err("the approval does not cover a value saved after it");
+    assert!(
+        refused.to_string().contains("another effect"),
+        "the approved check-in names other values: {refused}"
+    );
+    assert_eq!(org.signed(&signing), None, "the new value is not signed");
+    assert!(
+        !org.spent(&id),
+        "the refused act leaves the approval unspent"
+    );
+
+    let again = pending_id(org.complete(org.deputy, &signing, None));
+    assert_ne!(
+        again, id,
+        "the new value asks again, under its own check-in"
+    );
+    assert_eq!(org.signed(&signing), None, "a waiting act signs nothing");
 }

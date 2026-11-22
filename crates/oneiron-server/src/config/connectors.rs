@@ -27,9 +27,11 @@
 //! An `mcp_stdio` connector is a child process this host starts under the
 //! runner fence (canon `#runner-fence`, row L8-27) and speaks MCP to over
 //! its standard input and output. Its endpoint, the one a grant names, is
-//! `stdio:<name>:<16 hex>`, the hex a digest of its command, environment,
+//! `stdio:<name>:<32 hex>`, the hex a digest of its command, environment,
 //! working directory and upstream, so any change to them is a new endpoint
-//! the owner grants again, as for an HTTP endpoint that moves. Its
+//! the owner grants again, as for an HTTP endpoint that moves. The owner's
+//! register, setup, attest and consent answers name the command, working
+//! directory and upstream origin the digest stands for. Its
 //! environment holds no credential: a name that reads as one is refused
 //! here. A connector that names an `upstream` reaches that API through this
 //! server's loopback door (B2, RULING L8-27-B2-STDIO): its environment holds
@@ -216,7 +218,7 @@ impl ConnectorHostConfig {
     }
 
     /// The endpoint this host installed for the connector `name`: the URL of
-    /// an `mcp_http` connector, and `stdio:<name>:<16 hex>` for an
+    /// an `mcp_http` connector, and `stdio:<name>:<32 hex>` for an
     /// `mcp_stdio` one. A grant's endpoint allowlist names exactly this, and
     /// a send goes only where its frozen call's endpoint still equals it.
     #[must_use]
@@ -247,10 +249,12 @@ impl ConnectorHostConfig {
     }
 }
 
-/// 16 hex of blake3 over a stdio connector's command, environment,
-/// working directory and upstream, each part length-prefixed so no two
-/// settings hash alike. A connector with no upstream hashes as it did
-/// before upstreams were taken.
+/// 32 hex (128 bits) of blake3 over a stdio connector's command,
+/// environment, working directory and upstream, each part length-prefixed
+/// so no two settings hash alike: no config writer finds two settings with
+/// one endpoint, as about 2^32 hashes found two under 16 hex (FIX
+/// [STDIO-IDENTITY-64-BIT-ORIGIN-UNSHOWN]). A connector with no upstream
+/// hashes as it did before upstreams were taken, at the longer length.
 fn stdio_identity(
     command: &[String],
     env: &BTreeMap<String, String>,
@@ -283,7 +287,7 @@ fn stdio_identity(
         part(upstream.token_env.as_bytes());
     }
     let hex = digest.finalize().to_hex();
-    hex[..16].to_owned()
+    hex[..32].to_owned()
 }
 
 /// Whether an environment variable name reads as a credential: one of its

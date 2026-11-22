@@ -33,14 +33,16 @@
 //! reach each of the owner's linked machines, and a home move carries them;
 //! no table local to one node says which grant is in force. While no such
 //! row stands, no host has stood the grant yet: the manifest rows that name
-//! the agent stand, as before. Once one stands, the policy fold reads the
-//! agent's reach from the rows and no longer from manifest rows that name
-//! it ([`steward_rows_rewrite`]); the rows it yields are the ones the
-//! manifest held. An opt-out is a standing row with no verbs: a whole
-//! revoke, or a first mint over a policy the owner had emptied, leaves one,
-//! and it holds on every machine the rows reach. A row another machine
-//! stood before it saw the owner's act can only narrow the meet, never
-//! widen it; the owner's next act revokes every row it sees.
+//! the agent stand, as before (a snapshot page and a Dreamer attempt's
+//! binding are the exception: they answer a standing row only). Once one
+//! stands, the policy fold reads the agent's reach from the rows and no
+//! longer from manifest rows that name it ([`steward_rows_rewrite`]); the
+//! rows it yields are the ones the manifest held. An opt-out is a standing
+//! row with no verbs: a whole revoke, or a first mint over a policy the
+//! owner had emptied, leaves one, and it holds on every machine the rows
+//! reach. A row another machine stood before it saw the owner's act can only
+//! narrow the meet, never widen it; the owner's next act revokes every row
+//! it sees.
 //!
 //! The agent's read keys are held to that reach and to its live MACHINE
 //! binding ([`Vault::system_agent_reads_live_in`]), the live delegation an

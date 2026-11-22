@@ -11,6 +11,7 @@ use crate::codebase::RepoRef;
 use crate::entity_id::EntityId;
 use crate::error::{CodeError, Error, Result};
 use crate::git_wire::{GitWire, lock_repository};
+use oneiron_contracts::fingerprint::ContentHash;
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -105,7 +106,7 @@ impl Vault {
             .get(&self.store, &txn, &repo_mutation_snapshot_key(hash))?
             .ok_or(Error::EntityNotFound)?;
         let raw = super::oplog::SNAPSHOT.encode_value(&snapshot)?;
-        if *blake3::hash(&raw).as_bytes() != hash && super::support::sha256_bytes(&raw) != hash {
+        if *ContentHash::of(&raw).as_bytes() != hash && super::support::sha256_bytes(&raw) != hash {
             return Err(Error::CorruptedIndex("fork hash mismatch"));
         }
         let snapshot = super::snapshot::require_snapshot_schema(snapshot)?;

@@ -20,6 +20,17 @@
 //! vault slip, is refused `account_key_unbound`; on a rootless vault the role
 //! table judges it: its own NOTE deletes, another Member's is
 //! `not_owner_of_item`.
+//!
+//! The lead's ruling DEL2-ROOTLESS-MEMBER-KEY-READ = B (21 Nov): an account
+//! key holding `core:read` reads as its person, under its person's
+//! membership, with every bound kept. Red on main, where the key's read lane
+//! held no Scope and the reference admission answered 422
+//! `INVENTED_REFERENCE` before any judge: the two rootless delete cases
+//! above, a Member's key retracting its own claim on a rooted and on a
+//! rootless vault (200, the claim retracted), and a Member's key naming
+//! another Member's claim on a rooted vault (`account_key_unbound`). Guard
+//! (passes on main too): the key of a person who is no member of the shared
+//! vault still reads no NOTE there.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p
 //! oneiron-server --all-features --features oneiron/test-support --test
 //! delete_authority_served_door`.
@@ -36,6 +47,7 @@ use ed25519_dalek::SigningKey;
 use oneiron::authority::{ActSurface, CapabilitySlip, HostSlipIssuer, SlipCaveat, holder_proof};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{FederationGrantRole as Role, InitialSharedMember, Scope, ScopeAxis};
+use oneiron::memory::{ClaimInput, resolve_entity_ref};
 use oneiron::note::TakeTarget;
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
@@ -44,7 +56,7 @@ use oneiron::verbs::{
     AgentDefinitionCreateRequest, AgentGrantMintRequest, create_agent_definition_as,
     mint_agent_grant_as,
 };
-use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
+use oneiron::{ClaimLifecycleStatus, EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_server::managed::account_keys;
 use oneiron_server::managed::key_sync::{
     AccountKeyConfig, AccountKeyError, CentralCheckFuture, CentralKeyCheck, CentralKeyVerdict,
@@ -288,6 +300,12 @@ impl Served {
         self.post_delete(key, None, note).await
     }
 
+    /// The account key `key` posts the core retract of `claim`: the status
+    /// and the body.
+    async fn retract_by_key(&self, key: &str, claim: EntityId) -> (StatusCode, Value) {
+        self.post_verb("retract", key, None, &claim.to_hex()).await
+    }
+
     /// `POST /v1/core/memory/verbs/delete` of `note` under the Bearer `token`,
     /// with the holder's `binding` proof when the credential is a slip.
     async fn post_delete(
@@ -296,9 +314,21 @@ impl Served {
         binding: Option<String>,
         note: &str,
     ) -> (StatusCode, Value) {
+        self.post_verb("delete", token, binding, note).await
+    }
+
+    /// `POST /v1/core/memory/verbs/<verb>` of `id` under the Bearer `token`,
+    /// with the holder's `binding` proof when the credential is a slip.
+    async fn post_verb(
+        &self,
+        verb: &str,
+        token: &str,
+        binding: Option<String>,
+        id: &str,
+    ) -> (StatusCode, Value) {
         let mut request = Request::builder()
             .method("POST")
-            .uri("/v1/core/memory/verbs/delete")
+            .uri(format!("/v1/core/memory/verbs/{verb}"))
             .header("Authorization", format!("Bearer {token}"))
             .header("Content-Type", "application/json");
         if let Some(binding) = binding {
@@ -307,7 +337,7 @@ impl Served {
         let response = build_app(Arc::clone(&self.server))
             .oneshot(
                 request
-                    .body(Body::from(json!({ "id": note }).to_string()))
+                    .body(Body::from(json!({ "id": id }).to_string()))
                     .expect("request"),
             )
             .await
@@ -397,6 +427,53 @@ impl SharedServed {
         bind_host_owner(&served.vault, served.issuer(), served.owner)
             .expect("the owner's binding again");
         note
+    }
+
+    /// An `auto` claim `author` states about the subject, bound as
+    /// [`Self::member_note`] binds its writer.
+    fn member_claim(&self, author: EntityId) -> EntityId {
+        let served = &self.served;
+        if let Some(issuer) = served.issuer.as_ref() {
+            bind_host_actor(&served.vault, issuer, author, "human")
+                .expect("the host key bound to the Member for its write");
+        }
+        let input = ClaimInput {
+            id: None,
+            predicate: "prefers".to_owned(),
+            subject_ref: served.subject.to_hex(),
+            value: json!(format!("tea, says {}", author.to_hex())),
+            confidence: 1.0,
+            confidence_details: None,
+            source: "user_stated".to_owned(),
+            world_ref: None,
+            relationship_ref: None,
+            scope: None,
+            valid_from: None,
+            valid_to: None,
+            occurred_at: Some(100),
+            learned_at: Some(100),
+            salience: None,
+        };
+        let receipt = served
+            .vault
+            .memory(author, EdgeActorClass::Human)
+            .claim_upsert(&input)
+            .expect("the Member states a claim");
+        if let Some(issuer) = served.issuer.as_ref() {
+            bind_host_owner(&served.vault, issuer, served.owner)
+                .expect("the owner's binding again");
+        }
+        resolve_entity_ref(&served.vault, &receipt.claim_short_id).expect("claim id")
+    }
+
+    /// The lifecycle of `claim` now.
+    fn claim_lifecycle(&self, claim: EntityId) -> ClaimLifecycleStatus {
+        self.served
+            .vault
+            .get_claim(&claim)
+            .expect("read claim")
+            .expect("the claim exists")
+            .lifecycle
     }
 }
 
@@ -618,6 +695,57 @@ fn a_members_account_key_is_refused_another_members_note_on_a_rootless_vault() {
         let key = fx.served.account_key(Some(fx.member_b));
         let (status, body) = fx.served.delete_by_key(&key, &note).await;
         assert_refused(status, &body, "not_owner_of_item");
+        assert!(!fx.served.deleted(&note), "the refused NOTE is untouched");
+    });
+}
+
+#[test]
+fn a_members_account_key_retracts_its_own_claim_on_a_rooted_vault() {
+    on_engine_stack(|| async {
+        let fx = shared_served();
+        let claim = fx.member_claim(fx.member_a);
+        let key = fx.served.account_key(Some(fx.member_a));
+        let (status, body) = fx.served.retract_by_key(&key, claim).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["retract"]["state"], "retracted", "{body}");
+        assert_eq!(fx.claim_lifecycle(claim), ClaimLifecycleStatus::Retracted);
+    });
+}
+
+#[test]
+fn a_members_account_key_retracts_its_own_claim_on_a_rootless_vault() {
+    on_engine_stack(|| async {
+        let fx = shared_served_on(false);
+        let claim = fx.member_claim(fx.member_a);
+        let key = fx.served.account_key(Some(fx.member_a));
+        let (status, body) = fx.served.retract_by_key(&key, claim).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["retract"]["state"], "retracted", "{body}");
+        assert_eq!(fx.claim_lifecycle(claim), ClaimLifecycleStatus::Retracted);
+    });
+}
+
+#[test]
+fn a_members_account_key_is_refused_another_members_claim_on_a_rooted_vault() {
+    on_engine_stack(|| async {
+        let fx = shared_served();
+        let claim = fx.member_claim(fx.member_a);
+        let key = fx.served.account_key(Some(fx.member_b));
+        let (status, body) = fx.served.retract_by_key(&key, claim).await;
+        assert_refused(status, &body, "account_key_unbound");
+        assert_eq!(fx.claim_lifecycle(claim), ClaimLifecycleStatus::Active);
+    });
+}
+
+#[test]
+fn a_non_members_account_key_still_reads_no_note_on_a_rootless_vault() {
+    on_engine_stack(|| async {
+        let fx = shared_served_on(false);
+        let note = fx.member_note();
+        let key = fx.served.account_key(Some(fx.served.subject));
+        let (status, body) = fx.served.delete_by_key(&key, &note).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        assert_eq!(body["error"]["code"], "INVENTED_REFERENCE", "{body}");
         assert!(!fx.served.deleted(&note), "the refused NOTE is untouched");
     });
 }

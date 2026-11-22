@@ -16,6 +16,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use anyhow::Context;
 use oneiron::llm::manifest::ModelRole;
 use serde::Deserialize;
 use serde_json::Value as JsonValue;
@@ -118,7 +119,7 @@ impl DecisionReadFile {
             _ => self.recipe,
         };
         let recipe = DecisionReadRecipe::load(&path)
-            .map_err(|error| anyhow::anyhow!("models.decision_read.recipe: {error}"))?;
+            .map_err(|error| anyhow::anyhow!("models.decision_read.recipe: {error:#}"))?;
         Ok(DecisionReadSettings {
             recipe: Arc::new(recipe),
             max_response_bytes,
@@ -242,28 +243,34 @@ pub struct ReadPrompt<'a> {
 }
 
 impl DecisionReadRecipe {
+    /// The recipe at `path` and the templates it names. Each file decides
+    /// what the house model is told, so each is read only once no other user
+    /// can write it, and a recipe that does not parse names the file and the
+    /// place, never the parser's message (FIX CONFIG-SIDE-FILES-MODE-UNCHECKED,
+    /// CONFIG-SIDE-FILE-PARSE-ERRORS-PRINT-PARSER-MESSAGE).
     fn load(path: &Path) -> anyhow::Result<Self> {
-        let recipe_bytes = std::fs::read(path)
-            .map_err(|error| anyhow::anyhow!("read {}: {error}", path.display()))?;
-        let file: RecipeFile = toml::from_str(std::str::from_utf8(&recipe_bytes)?)?;
+        let recipe_text = crate::config::merge::read_referenced_file(path)?;
+        let file: RecipeFile = crate::config::parse_toml(path, &recipe_text)?;
         if file.format != RECIPE_FORMAT {
             anyhow::bail!("format must be {RECIPE_FORMAT}");
         }
         let template_path = path
             .parent()
             .map_or_else(|| file.template.clone(), |dir| dir.join(&file.template));
-        let template_text = std::fs::read_to_string(&template_path)
-            .map_err(|error| anyhow::anyhow!("read {}: {error}", template_path.display()))?;
+        let template_text = crate::config::merge::read_referenced_file(&template_path)?;
         let joint_path = path.parent().map_or_else(
             || file.joint_template.clone(),
             |dir| dir.join(&file.joint_template),
         );
-        let joint_text = std::fs::read_to_string(&joint_path)
-            .map_err(|error| anyhow::anyhow!("read {}: {error}", joint_path.display()))?;
-        let template = parse(&template_text)?;
-        let joint_template = parse(&joint_text)?;
-        let row = parse(&file.row)?;
-        let joint_row = parse(&file.joint_row)?;
+        let joint_text = crate::config::merge::read_referenced_file(&joint_path)?;
+        // A text that does not read names its file and line, never the text.
+        let template = parse(&template_text)
+            .with_context(|| format!("template {}", template_path.display()))?;
+        let joint_template = parse(&joint_text)
+            .with_context(|| format!("joint template {}", joint_path.display()))?;
+        let row = parse(&file.row).with_context(|| format!("row in {}", path.display()))?;
+        let joint_row =
+            parse(&file.joint_row).with_context(|| format!("joint_row in {}", path.display()))?;
         if !slots_fit(&template, &row, false) || !slots_fit(&joint_template, &joint_row, true) {
             anyhow::bail!(
                 "the template needs {{question}} and {{labels}}, the joint template {{paired}} too, and each holds only those and state slots; row needs exactly {{token}} and {{label}}, joint_row {{think}} too"
@@ -276,8 +283,8 @@ impl DecisionReadRecipe {
         }
         let probe = file.probe.map(ProbeFile::resolve).transpose()?;
         let mut hasher = blake3::Hasher::new();
-        hasher.update(&(recipe_bytes.len() as u64).to_le_bytes());
-        hasher.update(&recipe_bytes);
+        hasher.update(&(recipe_text.len() as u64).to_le_bytes());
+        hasher.update(recipe_text.as_bytes());
         hasher.update(&(template_text.len() as u64).to_le_bytes());
         hasher.update(template_text.as_bytes());
         hasher.update(joint_text.as_bytes());
@@ -502,7 +509,7 @@ fn parse(text: &str) -> anyhow::Result<Vec<Piece>> {
         } else if let Some(open) = tail.strip_prefix('{') {
             let end = open
                 .find('}')
-                .ok_or_else(|| anyhow::anyhow!("an unclosed {{ in {text:?}"))?;
+                .ok_or_else(|| anyhow::anyhow!("an unclosed {{ at line {}", line_at(text, tail)))?;
             let slot = match &open[..end] {
                 "question" => Slot::Question,
                 "paired" => Slot::Paired,
@@ -522,7 +529,10 @@ fn parse(text: &str) -> anyhow::Result<Vec<Piece>> {
             pieces.push(Piece::Slot(slot));
             rest = &open[end + 1..];
         } else {
-            anyhow::bail!("a lone }} in {text:?}; write }}}} for a brace");
+            anyhow::bail!(
+                "a lone }} at line {}; write }}}} for a brace",
+                line_at(text, tail)
+            );
         }
     }
     literal.push_str(rest);
@@ -530,4 +540,10 @@ fn parse(text: &str) -> anyhow::Result<Vec<Piece>> {
         pieces.push(Piece::Text(literal));
     }
     Ok(pieces)
+}
+
+/// The one-based line of `text` that its suffix `tail` starts on: where a
+/// template that does not read fails, named in place of its text.
+fn line_at(text: &str, tail: &str) -> usize {
+    text[..text.len() - tail.len()].matches('\n').count() + 1
 }

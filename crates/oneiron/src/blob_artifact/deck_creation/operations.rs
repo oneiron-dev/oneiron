@@ -12,6 +12,7 @@ use crate::memory::Memory;
 use crate::ports::ClaimReadStatus;
 use crate::typed_body::LiftedSources;
 use crate::vault::entity_refs::resolve_entity_ref;
+use oneiron_contracts::fingerprint::ContentHash;
 use oneiron_contracts::memory::{MemoryError, MemoryResult};
 use oneiron_docedit::design_plan::Brief;
 use oneiron_docedit::emit::Names;
@@ -519,7 +520,7 @@ impl Memory<'_> {
                 Some(&metadata.content_hash),
                 sight,
             )?;
-            if *blake3::hash(&sighted).as_bytes() != metadata.content_hash {
+            if *ContentHash::of(&sighted).as_bytes() != metadata.content_hash {
                 return Err(MemoryError::new(
                     oneiron_contracts::memory::MEMORY_CODE_FORBIDDEN,
                     "a masked input cannot be copied into a new deck",

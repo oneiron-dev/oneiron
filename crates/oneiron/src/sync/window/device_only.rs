@@ -27,7 +27,9 @@ use loro::json::{JsonOpContent, JsonSchema, MapOp};
 use loro::{ContainerID, ContainerType, LoroDoc, LoroMap, LoroValue, VersionVector};
 
 use super::super::bridge::parse_edge_key;
-use super::super::loro_support::{export_updates_from, json_covers_blob, map_for_each_value_bytes};
+use super::super::loro_support::{
+    export_updates_from, json_covers_blob, map_for_each_tombstone_value, map_for_each_value_bytes,
+};
 use super::super::manager::WindowManager;
 use super::super::types::WindowKey;
 use crate::Vault;
@@ -164,7 +166,9 @@ const FLAG_PASSES: usize = 3;
 /// again under the new set. That read and the acceptance hold the vault's
 /// device-only flag lock, which a settings commit takes too, so an edit
 /// committed before the verdict accepts is always seen. No read transaction
-/// is held across the inspection or the send.
+/// is held across the inspection or the send. Bytes that pass are read
+/// again for a row a record use limit keeps here
+/// (`use_limited::use_limit_update_verdict`).
 pub fn raw_update_verdict(
     manager: &Arc<WindowManager>,
     window_key: &str,
@@ -196,33 +200,48 @@ fn raw_update_verdict_with(
     update: &[u8],
     withheld_now: impl Fn(&Vault) -> Result<BTreeSet<EntityId>>,
 ) -> UpdateVerdict {
-    let verdict = (|| -> Result<UpdateVerdict> {
-        let vault = manager.vault();
-        let accepting = vault.device_only_acceptance();
-        let mut flagged = withheld_now(vault)?;
-        if flagged.is_empty() {
-            return Ok(UpdateVerdict::Portable);
-        }
-        drop(accepting);
-        for _ in 0..FLAG_PASSES {
-            let verdict = inspect_raw_update(manager, &flagged, window_key, update)?;
-            if verdict != UpdateVerdict::Portable {
-                return Ok(verdict);
+    let verdict =
+        device_only_update_verdict(manager, window_key, update, withheld_now).and_then(|verdict| {
+            match verdict {
+                UpdateVerdict::Portable => {
+                    super::use_limited::use_limit_update_verdict(manager, window_key, update)
+                }
+                withheld => Ok(withheld),
             }
-            let accepting = vault.device_only_acceptance();
-            let now_flagged = withheld_now(vault)?;
-            if now_flagged.is_subset(&flagged) {
-                return Ok(UpdateVerdict::Portable);
-            }
-            drop(accepting);
-            flagged = now_flagged;
-        }
-        Ok(UpdateVerdict::Uninspectable)
-    })();
+        });
     verdict.unwrap_or_else(|error| {
         tracing::warn!(kind = ?error.kind(), "raw window update not inspectable");
         UpdateVerdict::Uninspectable
     })
+}
+
+fn device_only_update_verdict(
+    manager: &Arc<WindowManager>,
+    window_key: &str,
+    update: &[u8],
+    withheld_now: impl Fn(&Vault) -> Result<BTreeSet<EntityId>>,
+) -> Result<UpdateVerdict> {
+    let vault = manager.vault();
+    let accepting = vault.device_only_acceptance();
+    let mut flagged = withheld_now(vault)?;
+    if flagged.is_empty() {
+        return Ok(UpdateVerdict::Portable);
+    }
+    drop(accepting);
+    for _ in 0..FLAG_PASSES {
+        let verdict = inspect_raw_update(manager, &flagged, window_key, update)?;
+        if verdict != UpdateVerdict::Portable {
+            return Ok(verdict);
+        }
+        let accepting = vault.device_only_acceptance();
+        let now_flagged = withheld_now(vault)?;
+        if now_flagged.is_subset(&flagged) {
+            return Ok(UpdateVerdict::Portable);
+        }
+        drop(accepting);
+        flagged = now_flagged;
+    }
+    Ok(UpdateVerdict::Uninspectable)
 }
 
 /// Recheck a selector's standalone synthetic update at release. Its closed
@@ -253,9 +272,51 @@ pub fn selector_update_verdict_for_peer(
         {
             return Ok(UpdateVerdict::Uninspectable);
         }
-        bytes_verdict(vault, &flagged, &key, &alone, update)
+        match bytes_verdict(vault, &flagged, &key, &alone, update)? {
+            UpdateVerdict::Portable if tombstones_withheld(vault, &flagged, &alone)? => {
+                Ok(UpdateVerdict::Withheld)
+            }
+            UpdateVerdict::Portable => {
+                super::use_limited::standalone_use_limit_verdict(vault, update)
+            }
+            withheld => Ok(withheld),
+        }
     })()
     .unwrap_or(UpdateVerdict::Uninspectable)
+}
+
+/// Whether a world in `flagged` keeps a row whose delete the standalone
+/// selector update `alone` carries, judged as the selector filter judged the
+/// tombstone when it built the answer: by the row stored at its id, and by the
+/// worlds whose words the capture bound to its delete says the row carried
+/// (REVIEW-10024). A world flagged after the filter ran, while the answer
+/// waited in its queue, withholds it here at its last door
+/// (CROSS-VAULT-DELETE-SELECTOR-ANSWER-RELEASE, emissionreview R3). A
+/// tombstone carries no words, so use limits leave it alone, as the filter
+/// does.
+fn tombstones_withheld(
+    vault: &Vault,
+    flagged: &BTreeSet<EntityId>,
+    alone: &LoroDoc,
+) -> Result<bool> {
+    if flagged.is_empty() {
+        return Ok(false);
+    }
+    let mut tombstones = Vec::new();
+    map_for_each_tombstone_value(&alone.get_map("tombstones"), |key, value| {
+        if let Ok(id) = EntityId::from_hex(key) {
+            tombstones.push((id, value.to_vec()));
+        }
+    });
+    let rtxn = vault.store.env.read_txn()?;
+    for (id, value) in &tombstones {
+        if crate::settings::device_only_withholds(&vault.store, &rtxn, flagged, id)?
+            || crate::sync::selector::device_only_by_capture(vault, &rtxn, flagged, id, value)
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn inspect_raw_update(

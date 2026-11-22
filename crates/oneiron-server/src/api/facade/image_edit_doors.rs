@@ -8,9 +8,10 @@
 //! but the owner also has the proposal's sources admitted through their own
 //! read as it lands (FIX 9310). The whole edit is one `image.render` call
 //! that runs where a node can (this host, then the owner's other nodes): its
-//! PNG lands as one proposal for Keep, or, when no node can run it now, the
-//! edit is held beside the artifact with its reason until a redrive runs it
-//! (IO-HOLD C). The door mints nothing: the call receipt the proposal names
+//! file, in the source's own format unless the request names another
+//! (FIX 23724), lands as one proposal for Keep, or, when no node can run it
+//! now, the edit is held beside the artifact with its reason until a
+//! redrive runs it (IO-HOLD C). The door mints nothing: the call receipt the proposal names
 //! is the host's attestation.
 //!
 //! `vault.artifacts.image.preview` (L4-16) takes the same caller and the
@@ -35,8 +36,8 @@ use oneiron::task_verb::sdk::{
 };
 use oneiron::{EdgeActorClass, EntityId};
 use oneiron_organ_host::image::{
-    ImageEdit, ImageEditRefusal, ImageEdited, ImageOp, ImagePreview, ImagePreviewed, ResizeFilter,
-    edit_image, preview_image,
+    ImageEdit, ImageEditRefusal, ImageEdited, ImageFormat, ImageOp, ImagePreview, ImagePreviewed,
+    ResizeFilter, edit_image, preview_image,
 };
 use oneiron_organ_host::{AskHandlers, CallClass, HostError, Submitted};
 
@@ -67,8 +68,8 @@ pub(in crate::api::facade) fn image_editor(
 }
 
 /// `vault.artifacts.image.edit`: the caller's edit of one version of an
-/// image artifact its lane reads whole, its PNG waiting for Keep or held for
-/// a node. The organ calls run on a blocking thread and read that version
+/// image artifact its lane reads whole, its file waiting for Keep or held
+/// for a node. The organ calls run on a blocking thread and read that version
 /// alone. Beside the answer, the rows its reads listed and the version it
 /// read: the artifact, the version's CLAIM and its content's ASSET.
 pub(crate) async fn vault_artifacts_image_edit(
@@ -86,7 +87,6 @@ pub(crate) async fn vault_artifacts_image_edit(
     let sight = source_sight(auth);
     let (answer, mut listed) =
         credential_listing(server, auth, caller, VERB, move |server, _, memory| {
-            let ImageExportFormat::Png = input.format;
             let (admitted, actor) = memory.artifacts_edit_admission(
                 &input.artifact_ref,
                 input.version,
@@ -98,6 +98,7 @@ pub(crate) async fn vault_artifacts_image_edit(
                 artifact: admitted.artifact,
                 version: Some(admitted.version),
                 ops: input.ops.iter().copied().map(image_op).collect(),
+                format: input.format.map(image_format),
                 run_ref: input.run_ref,
                 trigger: None,
                 submitter,
@@ -198,6 +199,14 @@ fn image_op(op: ImageEditOp) -> ImageOp {
                 ImageResizeFilter::Bilinear => ResizeFilter::Bilinear,
             },
         },
+    }
+}
+
+const fn image_format(format: ImageExportFormat) -> ImageFormat {
+    match format {
+        ImageExportFormat::Png => ImageFormat::Png,
+        ImageExportFormat::Jpeg => ImageFormat::Jpeg,
+        ImageExportFormat::Webp => ImageFormat::Webp,
     }
 }
 

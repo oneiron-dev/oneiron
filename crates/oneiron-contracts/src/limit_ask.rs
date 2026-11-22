@@ -527,6 +527,11 @@ pub enum EngineLimit {
     OrganMeshObjectBytes,
     /// Bytes one mesh connection holds staged at once; past it the row asks.
     OrganMeshStagedBytes,
+    /// Bytes of one HTTP or fixture response body a code sandbox's egress
+    /// reads for its guest, under the host byte floor and the request
+    /// deadline. Past it the body is delivered whole and the row asks (FIX
+    /// 7946).
+    SandboxEgressResponseBytes,
     /// Deadline jobs one caller has running at once: the recalls and searches
     /// a door answers at their deadline, each counted until its work ends,
     /// after its answer too (SCAN C030). Past it the job runs on and the row
@@ -661,6 +666,11 @@ pub enum EngineLimit {
     /// the row asks whether everything is okay and the pack is still
     /// served whole; nothing is refused or clamped.
     ContextSelectedEdges,
+    /// Distinct records the engine has served one external reader over its
+    /// whole life (L8-65): a reader is a key bound to a credential its caller
+    /// presented, the vault owner's own excepted. Past it the row asks whether
+    /// everything is okay, and every read is still served whole.
+    ActorExposedRecords,
 }
 
 /// `1/divisor` of the machine's memory, or the fallback when it cannot be

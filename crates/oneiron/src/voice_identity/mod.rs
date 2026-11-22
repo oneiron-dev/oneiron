@@ -31,8 +31,10 @@
 //! corroboration: an authenticated session remains the sole path to an
 //! `Owner`-class interlocutor entry.
 
+pub(crate) mod archive_restore;
 mod codec_core;
 mod codec_records;
+mod consent_void;
 // The law an enrollment is made under, as the trusted host resolved it (FIX 10218).
 mod enrollment_law;
 // Recognition material leaves with its subject (FIX 10219).
@@ -51,6 +53,7 @@ mod storage_admission;
 mod stored;
 mod types;
 mod vault;
+mod withdrawal_requested_at;
 
 pub use self::enrollment_law::{
     VoiceEnrollmentLegalContext, VoiceJurisdiction, VoicePrintLegalEvidence, WrittenReleaseRef,
@@ -61,20 +64,24 @@ pub(crate) use self::lifetime::{
 
 pub use self::types::{
     VOICE_MATCH_THRESHOLD_DEFAULT, VOICE_MATCH_THRESHOLD_MAX, VOICE_MATCH_THRESHOLD_MIN,
-    VoiceAttributionEvidence, VoiceConsentBasis, VoiceConsentEventV1, VoiceConsentState,
-    VoiceEmbeddingFamily, VoiceEmbeddingSpaceV1, VoiceEnrollmentOrigin, VoiceEnrollmentRequest,
-    VoiceEnrollmentSampleV1, VoiceMatchPolicy, VoiceMatchRequest, VoicePrintCalibration,
-    VoicePrintPurpose, VoicePrintRecordV1, VoiceResolvedSegment, VoiceRunCoverage,
-    VoiceSegmentEmbeddingInput, VoiceSessionRosterV1, VoiceSpeakerDeparture,
+    VoiceAttributionEvidence, VoiceConsentBasis, VoiceConsentEventV1, VoiceConsentReceipt,
+    VoiceConsentState, VoiceEmbeddingFamily, VoiceEmbeddingSpaceV1, VoiceEnrollmentOrigin,
+    VoiceEnrollmentRequest, VoiceEnrollmentSampleV1, VoiceMatchPolicy, VoiceMatchRequest,
+    VoicePrintCalibration, VoicePrintPurpose, VoicePrintRecordV1, VoiceResolvedSegment,
+    VoiceRunCoverage, VoiceSegmentEmbeddingInput, VoiceSessionRosterV1, VoiceSpeakerDeparture,
     VoiceWithdrawalReceipt, VoiceWithdrawalRequest, WHOLE_RECORDING_RUN_AUTHORITATIVE,
 };
 
 #[cfg(test)]
-pub(crate) use self::vault::{put_raw_voice_roster_for_test, put_voice_roster_for_test};
+pub(crate) use self::vault::put_raw_voice_roster_for_test;
+#[cfg(any(test, oneiron_test_support))]
+pub(crate) use self::vault::put_voice_roster_for_test;
+pub(crate) use self::vault::{
+    HumanCredentialReach, VOICE_CONSENT_RESTORE_EVENT_PREFIX,
+    VOICE_RECOGNITION_NOTIFICATION_PRODUCER,
+};
 
 pub(crate) mod tables;
-// FIX [LIBTEST-QUARANTINE-VOICE-IDENTITY-TESTS]: the lib test target's type check fails here (38 errors: E0061 x26, E0308 x5, E0063 x4, E0533 x2, E0599 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

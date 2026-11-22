@@ -54,6 +54,14 @@ crate::side_table::side_tables! {
     CODE_RUN_MODEL_CALL: VaultMeta b"code_run:model_call:v1:" Named Authored
         [restore: content] [family: unclassified] [tier: canonical]
         => crate::code_run::erase_model_call_actor_in_txn;
+    /// The reply MESSAGE one model call's answer streamed into (TURN-MODEL-LINK; ARCH-0026
+    /// #model-call-record: the record references the rows its call produced), written in the
+    /// call record's own transaction at the call's terminal, before the reply is saved, and
+    /// dropped with the MESSAGE's erase. A reply whose save then fails leaves a link to an id that
+    /// names no MESSAGE. Ids only. Key: id16(reply MESSAGE) + id16(attempt) + be64(lease
+    /// generation) + be64(call index).
+    CODE_RUN_MODEL_CALL_REPLY: VaultMeta b"code_run:model_call_reply:v1:" Named Engine
+        [restore: content] [family: unclassified] [tier: canonical];
     /// DOOR-141 PR3b: a turn program's resume checkpoint, joined to its code run's checkpoint
     /// commit: the head (the pinned program it replays, the record position and state hash its
     /// last entry committed, the applied and injected positions, its page count and the wait it
@@ -115,6 +123,14 @@ crate::side_table::side_tables! {
         // Payload family: A code run's response owner and wait holder hold ids, status and an
         // actor's id or its erasure, never the reply (FIX 6589).
         [restore: content] [family: structure] [tier: canonical];
+    /// One run's resume-divergence ask (L8-23): the held step, the walk's report, the report's
+    /// effect digest, when asked and the owner's answer. Only `engine_executor::resume_divergence`
+    /// writes it. Key: id16(run).
+    CODE_RUN_RESUME_DIVERGENCE: VaultMeta b"code_run:resume_divergence:v1:" Named Engine
+        // Restore class: A resume-divergence ask entangles a one-shot owner release of an effect
+        // with the replay it releases: a rollback could unspend it, and keeping it live alone
+        // would point into a rolled-back replay. Its family refuses a restore instead.
+        [restore: refuse "resume divergence answers"] [family: unclassified] [tier: canonical];
     /// The owner's value-free dismissal of one code-run secret lift proposal. The
     /// occurrence's secret/taint marks stay unchanged. Key: string(handle/occurrence).
     CODE_RUN_SECRET_LIFT_DISMISSED: VaultMeta b"code_run:secret_lift:dismissed:v1:" Named Engine

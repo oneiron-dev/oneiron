@@ -3,7 +3,7 @@
   "description": "The owner resumes a bound runner work a spend parked: while the work still stands at the spent attempt named, it moves to a successor on the given seat order; any other stand is answered as it stands, with no write.",
   "input": "crate::dispatch_byoa::RunnerWorkResumeRequest",
   "output": "crate::dispatch_byoa::RunnerWorkResumeView",
-  "call": "memory.vault().resume_runner_work_as_owner(&memory.embedded_owner(\"vault.runners.seats.resume\")?, &input)?",
+  "call": "memory.with_owner_or_delegate(\"vault.runners.seats.resume\", |who, _credential| match who { crate::authority::OwnerOrDelegate::Owner(owner) => memory.vault().resume_runner_work_as_owner(owner, &crate::dispatch_byoa::ProviderAdapterRegistry::standard(), &input), crate::authority::OwnerOrDelegate::Delegate(agent) => memory.vault().resume_runner_work_as_delegate(agent, &crate::dispatch_byoa::ProviderAdapterRegistry::standard(), &input) })?",
   "host_door": true,
   "host_door_lists": true,
   "scope": "Write",
@@ -13,5 +13,5 @@
   },
   "section": false,
   "openapi": true,
-  "host_door_proof": "owner"
+  "host_door_proof": "owner_delegate"
 }

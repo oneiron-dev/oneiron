@@ -242,6 +242,12 @@ fn open_uncontended(canonical: &Path, options: &OpenOptions) -> Result<SharedVau
     if let Some(device_class) = options.device_class {
         config.machine_device_class = device_class;
     }
+    if let Some(name) = options.machine_reported_name.clone() {
+        config.machine_reported_name = Some(name);
+    }
+    if let Some(model) = options.machine_reported_model.clone() {
+        config.machine_reported_model = Some(model);
+    }
     let vault = Vault::open_owned(canonical, config).map_err(map_lease_error)?;
     // Signing doors (delete receipts) need this install's keys from the keystore.
     vault.install_default_keystore(canonical);
