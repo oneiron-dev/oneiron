@@ -25,8 +25,6 @@ mod held_scrubs;
 pub(crate) mod prospective;
 mod types;
 
-use std::collections::BTreeSet;
-
 pub use confirmation::{LiftAndEraseShownState, ShownCustomerHold};
 pub(in crate::deletion) use held_scrubs::held_scrubs_owed_in_txn;
 pub use types::*;
@@ -38,36 +36,8 @@ use crate::error::{Error, Result};
 use crate::memory::Memory;
 use crate::memory::erase_sweep::{RecordEraseSweep, RecordEraseSweepRequest};
 use crate::recovery::checkpoint::CUSTODY_RETIREMENT_COMPLETE;
-use crate::store::legal_hold::{self as hold_store, HoldActor};
+use crate::store::legal_hold::{self as hold_store, HoldActor, check_opaque, distinct};
 use crate::{HostingPrivacyPosture, Vault};
-
-/// An opaque reference: ids only, never free text (C3).
-fn check_opaque(value: &str, what: &str) -> Result<()> {
-    let opaque = !value.is_empty()
-        && value.len() <= 128
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || b"._:-/".contains(&byte));
-    if opaque {
-        Ok(())
-    } else {
-        Err(Error::InvalidConfig(format!(
-            "{what} must be an opaque id: 1 to 128 of A-Z a-z 0-9 . _ : - /"
-        )))
-    }
-}
-
-fn distinct(targets: Vec<LegalHoldTarget>) -> Result<Vec<LegalHoldTarget>> {
-    let mut seen = BTreeSet::new();
-    let targets: Vec<LegalHoldTarget> = targets
-        .into_iter()
-        .filter(|target| seen.insert(*target))
-        .collect();
-    if targets.is_empty() {
-        return Err(Error::InvalidConfig("a legal hold names records".into()));
-    }
-    Ok(targets)
-}
 
 impl Vault {
     /// Oneiron hosts this vault's bytes: Cloud, or our relay copy of a
@@ -90,7 +60,7 @@ impl Vault {
     }
 
     /// A claim whose erase committed takes no hold until its key is gone.
-    fn refuse_erased_targets_in_txn(
+    pub(crate) fn refuse_erased_targets_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         targets: &[LegalHoldTarget],

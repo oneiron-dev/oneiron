@@ -21,6 +21,7 @@ mod identity;
 mod open;
 mod places;
 mod raw_writes;
+mod read_shape;
 
 pub(crate) mod code_consent_host;
 #[cfg(feature = "test-support")]
@@ -71,7 +72,8 @@ pub(crate) use self::entities::{
 pub(crate) use self::identity::VaultId;
 pub use self::identity::{OpenOptions, VaultStorageId};
 pub(crate) use self::open::{
-    EngineSeedIdentities, embedded_owner_actor_id, encode_embedded_owner_actor_body,
+    EMBEDDED_OWNER_ACTOR_NAME, EngineSeedIdentities, embedded_owner_actor_id,
+    encode_embedded_owner_actor_body,
 };
 pub use self::raw_writes::{RawEntityPut, SafeDeleteRequest};
 pub use self::reader_table::ReaderTableShortfall;
@@ -121,6 +123,11 @@ pub struct Vault {
     /// Orders a trusted-contact notice's last consent read and send against
     /// revocation and re-naming.
     pub(crate) trusted_contact_send_order: std::sync::RwLock<()>,
+    /// Lets one history import at a time own its second
+    /// ([`Vault::own_import_second`]), so two imports that start in the same
+    /// second own different seconds. A vault path opens once per process, so
+    /// this is the vault's one import-second lock.
+    pub(crate) import_second_order: std::sync::Mutex<()>,
     /// The owner's agent-pack share receipts whose write failed, each tried
     /// again on this handle's next travel receipt (FIX 5523). In memory
     /// only: a close or a crash drops them.
@@ -265,6 +272,10 @@ pub struct Vault {
     /// ([`Vault::set_lfs_read_room`]); none until it lends one.
     pub(crate) lfs_read_room:
         std::sync::RwLock<Option<std::sync::Arc<dyn crate::origin::lfs::LfsReadRoom>>>,
+    /// The text embedder this vault's live pending-text reconciler runs, which
+    /// `vault.worlds.vectors` judges each world by (FIX [WORLD-VECTORS-FACT]).
+    /// In memory only; none until a host builds a reconciler.
+    pub(crate) host_text_embedder: crate::embed::world_vectors::HostTextEmbedderSlot,
     /// Each published LFS object's verdict for a peer no read authority
     /// admits, by its OID and its manifest's BLAKE3 (EXPORTDOORS Q3). In
     /// memory only: what the object's bytes release, never who may read.
@@ -283,6 +294,11 @@ pub struct Vault {
     /// them, and then every tier that needs isolation is refused.
     pub(crate) sandbox_backends:
         std::sync::OnceLock<std::sync::Arc<dyn crate::code_sandbox::microvm::SandboxBackends>>,
+    /// The local model this vault composes task briefs with (L8-07,
+    /// [`Vault::install_task_brief_model`]); none until the host installs
+    /// one, and then a one-liner create is refused. In memory only.
+    pub(crate) task_brief_model:
+        std::sync::OnceLock<std::sync::Arc<dyn crate::task_verb::TaskBriefModel>>,
     /// The result bodies this handle's readers hold, which the body
     /// collector leaves alone (OF-597).
     pub(crate) result_body_pins: crate::store::result_body_pins::ResultBodyPins,
@@ -357,6 +373,10 @@ pub struct Vault {
     #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) slow_retrieval_stage:
         std::sync::Mutex<Option<crate::store::retrieval_deadline::SlowRetrievalStage>>,
+    /// What the integration tests' doors arm and read on this vault, never
+    /// process-global. In memory only.
+    #[cfg(oneiron_test_support)]
+    pub(crate) test_door_state: crate::test_doors::vault_state::VaultTestDoorState,
 }
 
 /// A vault's detached writes run before it closes (FIX 12023): those queued
@@ -379,8 +399,6 @@ impl Vault {
 }
 
 pub(crate) mod tables;
-// FIX [LIBTEST-QUARANTINE-VAULT-TESTS]: the lib test target's type check fails here (3 errors: E0639 x3); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

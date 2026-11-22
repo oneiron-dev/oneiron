@@ -22,6 +22,7 @@ impl Vault {
             session_key: None,
             machine_signer: None,
             read_proof: None,
+            account_key_read: false,
             phone_reads: Vec::new(),
             host_action: None,
             room_turn: None,
@@ -32,6 +33,7 @@ impl Vault {
             birth_position: Default::default(),
             owner_authorship: None,
             owner_surface: crate::authority::ActSurface::ThisInstall,
+            answers_as_owner_device: false,
             host_slip_issuer: None,
             invocation: None,
             drain_permit: None,
@@ -55,6 +57,7 @@ impl Vault {
             external_git_source_host: None,
             repo_tool_recipient: crate::origin::secret_projection::RepoToolRecipient::OFF,
             read_filter: None,
+            dispatch_attempt: None,
         }
     }
 
@@ -81,6 +84,7 @@ impl Vault {
             session_key: None,
             machine_signer: Some((public_key, sign)),
             read_proof: None,
+            account_key_read: false,
             phone_reads: Vec::new(),
             host_action: None,
             room_turn: None,
@@ -91,6 +95,7 @@ impl Vault {
             birth_position: Default::default(),
             owner_authorship: None,
             owner_surface: crate::authority::ActSurface::ThisInstall,
+            answers_as_owner_device: false,
             host_slip_issuer: None,
             invocation: None,
             drain_permit: None,
@@ -114,6 +119,7 @@ impl Vault {
             external_git_source_host: None,
             repo_tool_recipient: crate::origin::secret_projection::RepoToolRecipient::OFF,
             read_filter: None,
+            dispatch_attempt: None,
         }
     }
 }
@@ -146,6 +152,7 @@ impl<'v> Memory<'v> {
                 session_key: self.session_key,
                 machine_signer: self.machine_signer,
                 read_proof: self.read_proof.clone(),
+                account_key_read: self.account_key_read,
                 phone_reads: self.phone_reads.clone(),
                 host_action: self.host_action.clone(),
                 room_turn: Some(ceiling),
@@ -158,6 +165,7 @@ impl<'v> Memory<'v> {
                 // in person.
                 owner_authorship: None,
                 owner_surface: crate::authority::ActSurface::ThisInstall,
+                answers_as_owner_device: false,
                 host_slip_issuer: None,
                 // The same logical verb, run inside the turn.
                 invocation: self.invocation,
@@ -184,6 +192,8 @@ impl<'v> Memory<'v> {
                 repo_tool_recipient: self.repo_tool_recipient.clone(),
                 // The caller's own filter narrows the turn's reads too.
                 read_filter: self.read_filter.clone(),
+                // The turn runs inside the same leased run.
+                dispatch_attempt: self.dispatch_attempt,
             },
         })
     }

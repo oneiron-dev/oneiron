@@ -1,5 +1,7 @@
 //! ChannelIdentity binding and fulfillment values with scope strings.
 
+use oneiron_contracts::register::Register;
+
 use crate::entity_id::EntityId;
 
 use crate::error::Result;
@@ -120,9 +122,11 @@ impl ChannelIdentityBinding {
     serde::Serialize,
     serde::Deserialize,
     schemars::JsonSchema,
+    Register,
 )]
 #[non_exhaustive]
 #[serde(rename_all = "snake_case")]
+#[register("channel.identity.fulfillment")]
 pub enum ChannelIdentityFulfillment {
     Api,
     Manual,
@@ -131,21 +135,7 @@ pub enum ChannelIdentityFulfillment {
 
 impl ChannelIdentityFulfillment {
     #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Api => "api",
-            Self::Manual => "manual",
-            Self::Review => "review",
-        }
-    }
-
-    #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "api" => Some(Self::Api),
-            "manual" => Some(Self::Manual),
-            "review" => Some(Self::Review),
-            _ => None,
-        }
+        <Self as Register>::named(value)
     }
 }

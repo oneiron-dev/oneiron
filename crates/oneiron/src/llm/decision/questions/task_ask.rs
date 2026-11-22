@@ -1,5 +1,7 @@
 //! Transactional tasks.ask adapter to the shared versioned question substrate.
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use super::{
     arrival,
     reader_authority::{Reader, own_authority_readable_in_txn},
@@ -7,7 +9,7 @@ use super::{
     store::{HeadKey, QUESTION_HEAD, QUESTION_VERSION, VersionKey, encode, secret_scan_before_put},
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject, ScopedReadActorKey};
+use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
 use crate::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionBand, DecisionClass, DecisionDial, DecisionQuestion,
     DecisionReceipt, DecisionRung, TypedDecision,
@@ -120,7 +122,7 @@ pub(crate) fn bind_task_answer_in_txn(
             },
             human_ask: None,
         },
-        frontier: *blake3::hash(&source).as_bytes(),
+        frontier: *ContentHash::of(&source).as_bytes(),
         source_kind,
         answered_at: input.now,
         omitted: Vec::new(),
@@ -208,8 +210,9 @@ pub(crate) fn validate_task_answer_unit(
     let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
     let mut readers = Vec::with_capacity(2);
     for party in [principal, holder] {
-        let reader = ScopedReadActorKey::new(party.to_hex())
-            .ok_or(Error::InvariantViolation("canonical ask principal"))?;
+        // Each party reads with its live class, so a read row that names
+        // it ({actor_class: "agent", actor_ref: <agent>}) admits it here.
+        let reader = super::graph_ask::party_read_key_in_txn(&vault.store, txn, party)?;
         if !arrival::readable(&vault.store, txn, &policy, &reader, &unit)?
             && !own_authority_readable_in_txn(vault, txn, &policy, party, &reader, &unit)?
         {

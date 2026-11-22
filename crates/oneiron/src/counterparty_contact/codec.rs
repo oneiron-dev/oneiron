@@ -16,6 +16,7 @@ use super::types::{
 use crate::claim::{ClaimBody, ClaimSubject, MAX_PREDICATE_BYTES};
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
+use oneiron_contracts::msgpack::{self, Entries};
 use rmpv::Value;
 use std::io::Cursor;
 
@@ -378,35 +379,21 @@ fn required_string<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&'a s
 }
 
 fn validate_keys(entries: &[(Value, Value)], keys: &[&str]) -> Result<()> {
-    let mut seen = vec![false; keys.len()];
-    for (key, _) in entries {
-        let key = key.as_str().ok_or_else(invalid_contact)?;
-        let Some(index) = keys.iter().position(|known| *known == key) else {
-            return Err(invalid_contact());
-        };
-        if seen[index] {
-            return Err(invalid_contact());
-        }
-        seen[index] = true;
-    }
-    if seen.into_iter().all(|value| value) {
-        Ok(())
-    } else {
-        Err(invalid_contact())
-    }
+    Entries::new(entries)
+        .exact_keys(keys, &[])
+        .map(drop)
+        .map_err(|_| invalid_contact())
 }
 
 fn required_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&'a Value> {
-    entries
-        .iter()
-        .find_map(|(candidate, value)| (candidate.as_str() == Some(key)).then_some(value))
-        .ok_or_else(invalid_contact)
+    Entries::new(entries)
+        .require(key)
+        .map_err(|_| invalid_contact())
 }
 
-fn encode_msgpack_value(value: &Value, reason: &'static str) -> Result<Vec<u8>> {
-    let mut out = Vec::new();
-    rmpv::encode::write_value(&mut out, value).map_err(|_| Error::InvariantViolation(reason))?;
-    Ok(out)
+/// The reason named a write error, which writing into a Vec cannot raise; kept for the callers.
+fn encode_msgpack_value(value: &Value, _reason: &'static str) -> Result<Vec<u8>> {
+    Ok(msgpack::encode(value))
 }
 
 pub(super) fn invalid_contact() -> Error {

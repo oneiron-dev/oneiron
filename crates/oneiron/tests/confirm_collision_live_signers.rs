@@ -57,8 +57,9 @@ const AT: TimeRange = TimeRange { start: 1, end: 1 };
 const CONFIRM_ID: [u8; 32] = [0x31; 32];
 const CONFIRM_NONCE: [u8; 16] = [0x01; 16];
 
-/// A rooted vault as a host starts one: the owner bound under the host root
-/// and this install profiled, so it carries the owner's answers.
+/// A rooted vault as a host starts one: the owner bound under the host root,
+/// the handle holding that root, and this install profiled, so it carries
+/// the owner's answers.
 struct Rooted {
     _dir: tempfile::TempDir,
     vault: Vault,
@@ -77,6 +78,11 @@ fn rooted() -> Rooted {
         .expect("this install's live machine profile");
     let owner = vault.ensure_embedded_owner_actor().expect("the owner");
     oneiron::test_support::bind_host_owner(&vault, &issuer, owner).expect("the owner's binding");
+    // The handle holds the host's root as a serving host does, so the
+    // machines the owner admits as theirs are proven (row
+    // CARRIER-OWNER-PROOF) and stand instead of being held for an owner
+    // device. `test_host_issuer` is the same root `issuer` is.
+    vault.hold_checkpoint_root_signer(Arc::new(oneiron::test_support::test_host_issuer()));
     let proof = vault
         .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
         .expect("an owner proof");
@@ -118,6 +124,7 @@ fn admit_machine(rooted: &Rooted, seed: u8) -> EntityId {
         device_class: MachineDeviceClass::Computer,
         encryption_key,
         machine_proof,
+        restored_from: None,
     };
     let landing = rooted
         .vault

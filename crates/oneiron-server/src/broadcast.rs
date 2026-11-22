@@ -7,11 +7,48 @@
 //! - Lossy broadcast: on `Lagged`, the socket is resynced, never closed for
 //!   lag (rule 5; `handler::lag_resync`)
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use tokio::sync::broadcast;
 
 use crate::api::ReactiveChange;
 use crate::protocol::{SyncMessage, parse_message};
 use crate::server::BroadcastPayload;
+
+/// How many connection sessions hold a [`BroadcastSubscriber`] now.
+///
+/// The channel's own receiver count is not this number: the host subscribes
+/// for its own background work too (the cloud erase watch holds a receiver
+/// for the whole serve), so that count never reads zero on a served host and
+/// a managed reap could never find the vault quiescent (FIX 23314). Each
+/// session counts itself here instead, for as long as its subscriber lives.
+#[derive(Debug, Default)]
+pub(crate) struct BroadcastSessions(Arc<AtomicUsize>);
+
+impl BroadcastSessions {
+    /// The sessions holding a subscriber now. It never reads low: a session
+    /// is counted before it subscribes and released after its receiver drops.
+    pub(crate) fn live(&self) -> usize {
+        self.0.load(Ordering::SeqCst)
+    }
+}
+
+/// One session's place in [`BroadcastSessions`], released when it drops.
+struct BroadcastSessionMark(Arc<AtomicUsize>);
+
+impl BroadcastSessionMark {
+    fn enter(sessions: &BroadcastSessions) -> Self {
+        sessions.0.fetch_add(1, Ordering::SeqCst);
+        Self(Arc::clone(&sessions.0))
+    }
+}
+
+impl Drop for BroadcastSessionMark {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
 
 /// A subscriber handle for a single WebSocket connection.
 /// Wraps a broadcast receiver and filters out echo messages.
@@ -20,14 +57,23 @@ pub(crate) struct BroadcastSubscriber {
     conn_id: u32,
     /// Receiver end of the broadcast channel.
     rx: broadcast::Receiver<BroadcastPayload>,
+    /// Declared after `rx`, so it is released only after the receiver drops.
+    _session: BroadcastSessionMark,
 }
 
 impl BroadcastSubscriber {
-    /// Creates a new subscriber for the given connection.
-    pub(crate) fn new(conn_id: u32, tx: &broadcast::Sender<BroadcastPayload>) -> Self {
+    /// Creates a new subscriber for the given connection, counted in
+    /// `sessions` until it drops. The count is taken before it subscribes.
+    pub(crate) fn new(
+        conn_id: u32,
+        tx: &broadcast::Sender<BroadcastPayload>,
+        sessions: &BroadcastSessions,
+    ) -> Self {
+        let session = BroadcastSessionMark::enter(sessions);
         Self {
             conn_id,
             rx: tx.subscribe(),
+            _session: session,
         }
     }
 
@@ -187,7 +233,7 @@ mod tests {
     async fn observer_b_local_docs_never_reach_peer_socket() {
         let (tx, _) = broadcast::channel::<BroadcastPayload>(8);
         let id = oneiron::EntityId::now();
-        let mut peer = BroadcastSubscriber::new(1, &tx);
+        let mut peer = BroadcastSubscriber::new(1, &tx, &BroadcastSessions::default());
         let mut local = ReactiveChangeSubscriber::new(&tx);
         tx.send(BroadcastPayload::LocalDocs(vec![id])).unwrap();
         broadcast(&tx, 0, vec![42]).unwrap();
@@ -196,5 +242,27 @@ mod tests {
             Some(ReactiveChange::Doc { entities: vec![id] })
         );
         assert_eq!(peer.recv().await.unwrap(), Some(vec![42]));
+    }
+
+    /// FIX 23314: the host's own receivers are no sessions; a session counts
+    /// from before it subscribes until its receiver is gone.
+    #[test]
+    fn only_session_subscribers_count_as_sessions() {
+        let (tx, _) = broadcast::channel::<BroadcastPayload>(8);
+        let sessions = BroadcastSessions::default();
+        let host_watch = tx.subscribe();
+        assert_eq!(tx.receiver_count(), 1);
+        assert_eq!(sessions.live(), 0, "a host subscriber is no session");
+
+        let first = BroadcastSubscriber::new(1, &tx, &sessions);
+        let second = BroadcastSubscriber::new(2, &tx, &sessions);
+        assert_eq!(sessions.live(), 2);
+        drop(first);
+        assert_eq!(sessions.live(), 1);
+        assert_eq!(tx.receiver_count(), 2);
+        drop(second);
+        assert_eq!(sessions.live(), 0);
+        assert_eq!(tx.receiver_count(), 1, "only the host subscriber is left");
+        drop(host_watch);
     }
 }

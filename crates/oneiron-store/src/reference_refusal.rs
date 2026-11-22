@@ -1,5 +1,6 @@
 //! Content-free reference-refusal facts and their receipt projection.
 
+use crate::receipt_ref::ReceiptRef;
 use crate::receipt_row::ReceiptKind;
 use oneiron_contracts::entity_id::EntityId;
 use std::collections::BTreeMap;
@@ -113,7 +114,7 @@ pub struct ReferenceRefusalFacts {
 
 /// The receipt id of the reference-refusal record stored at `id`.
 pub fn receipt_id(id: &EntityId) -> String {
-    format!("reference_refusal:{}", id.to_hex())
+    ReceiptRef::reference_refusal(*id).to_string()
 }
 
 pub const fn actor_class_name(class: oneiron_base::edge::EdgeActorClass) -> &'static str {

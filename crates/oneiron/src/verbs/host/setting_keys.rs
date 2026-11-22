@@ -7,7 +7,7 @@ use std::num::NonZeroU32;
 
 use crate::Vault;
 use crate::error::{Error, Result};
-use crate::setting::{Kind, Setting, lower_is_tighter};
+use crate::setting::{Kind, Setting};
 
 /// `vault.support_grants.list`'s default page: 500 grants.
 fn support_grants_list_page_max() -> NonZeroU32 {
@@ -30,7 +30,7 @@ crate::setting::setting_keys! {
     /// strictest value: a tightest page would hide the owner's other grants without a word, so an
     /// unreadable row fails the list instead.
     pub(crate) SUPPORT_GRANTS_LIST_PAGE_MAX: NonZeroU32 = "support_grants.list.page_max" {
-        kind: Kind::new(support_grants_list_page_max).tighter(lower_is_tighter::<NonZeroU32>),
+        kind: Kind::new(support_grants_list_page_max).lower(),
     };
     /// The most entries one `vault.hooks.replay` page holds, each a dry run of the hook's body in
     /// the host's sandbox; a larger `limit` is served a page at a time through `next_cursor`. 256
@@ -38,7 +38,7 @@ crate::setting::setting_keys! {
     pub(crate) HOOKS_REPLAY_PAGE_MAX: NonZeroU32 = "hooks.replay.page_max" {
         kind: Kind::new(hooks_replay_page_max)
             .strictest(one_row)
-            .tighter(lower_is_tighter::<NonZeroU32>),
+            .lower(),
     };
 }
 

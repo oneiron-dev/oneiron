@@ -379,6 +379,13 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         |args| !args.hosted_private_origins.is_empty(),
         ArgvUse::Read,
     ),
+    // The private networks the operator lets a hosted fetch reach
+    // (HOSTED-EGRESS-OPERATOR-SETTING).
+    (
+        "hosted-private-network",
+        |args| !args.hosted_private_networks.is_empty(),
+        ArgvUse::Read,
+    ),
     // The bind: the supervisor's socket, never a host:port.
     (
         "host",

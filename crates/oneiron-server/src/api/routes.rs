@@ -310,6 +310,12 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .merge(crate::auth::seat_credential_helper_routes())
         // FIX 15702: a seat CLI's model calls, on its run's door reference.
         .merge(crate::auth::seat_model_door_routes())
+        // L8-27 B2: a stdio connector child's upstream calls, on its door reference.
+        .merge(
+            crate::connector_call_host::stdio::upstream::upstream_door_routes(Arc::clone(
+                server.connector_stdio.upstream_doors(),
+            )),
+        )
         .merge(self::report::routes())
         // OF-495: an agent role holder's skill tradeoff asks and picks.
         .merge(self::facade::role_picks::routes())
@@ -349,6 +355,8 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // subscription; Google's OIDC token on each delivery authenticates it.
         // Served only while `[gmail_push]` is set.
         .merge(crate::mail_host::push_routes(&server))
+        // BK-DEPOSITS: Stripe's signed word about a booking deposit.
+        .merge(crate::booking_deposit::webhook::routes())
         .layer(middleware::from_fn_with_state(
             server.clone(),
             crate::wire_telemetry::observe_http,

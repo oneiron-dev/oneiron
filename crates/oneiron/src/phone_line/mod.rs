@@ -2,7 +2,8 @@
 
 mod answer;
 pub(crate) mod tables;
-pub(crate) use answer::PhoneLineReadCeiling;
+pub use answer::PhoneLineConsent;
+pub(crate) use answer::{CallReach, PhoneLineReadCeiling};
 
 use crate::Vault;
 use crate::batch::EntityMetadataHeader;
@@ -16,6 +17,7 @@ use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_MACHINE};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use serde::{Deserialize, Serialize};
 
 const LINES: SideTable<EntityId, PhoneLineState, Named> =
@@ -119,7 +121,7 @@ impl Vault {
             bridge_actor,
             owner_actor,
             enabled: desired.enabled,
-            share_scope: desired.share_scope,
+            share_scope: Scope::default(),
             updated_at: now,
         };
         LINES.put(&self.store, &mut txn, &identity_ref, &state)?;
@@ -227,9 +229,13 @@ fn payload_key(payload_ref: &str) -> Result<[u8; 32]> {
         .map_err(|_| invalid())
 }
 
+/// The digest a replay of `arrival` is compared by. The live arrival row
+/// stores it, so it keeps its bytes (K, PLAN-UC-04 4.1).
 pub(crate) fn input_digest(arrival: &PhoneLineArrival) -> Result<[u8; 32]> {
     let bytes = serde_json::to_vec(arrival).map_err(|_| invalid())?;
-    Ok(*blake3::hash(&bytes).as_bytes())
+    Ok(LegacyDigest::new(purposes::phone_line::ARRIVAL_INPUT)
+        .raw(&bytes)
+        .finish())
 }
 
 pub(crate) fn replay_in_txn(

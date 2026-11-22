@@ -25,7 +25,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::authority::ActSurface;
+use crate::authority::{ActSurface, Direction, OwnerProofGround};
 use crate::claim::world_access::{
     PREDICATE_WORLD_ACCESS_ALLOWED_SET, PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET, WorldAuthoritySet,
     world_access_claim_body,
@@ -39,6 +39,7 @@ use crate::pipeline::{FoldedWorldAccess, WorldGrantIndex, folded_world_access};
 use crate::policy_setting_doors::{PolicySetting, record_policy_setting_act_in_txn};
 use crate::registry::ENTITY_TYPE_WORLD;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
+use crate::world_keys::{OwnerActImportance, owner_presence_reasons};
 use crate::write_envelope::{WriteEnvelope, WriteProvenance, write_envelope_evidence};
 use crate::{EntityId, TimeRange, Vault, WriteActor};
 
@@ -169,6 +170,103 @@ impl WorldAccessWrite {
     fn changes(&self) -> bool {
         self.grant.is_some() || self.default.is_some()
     }
+
+    /// Which way this set moves the agent's reads. The agent's reads resolve
+    /// its tiers in two ways, and the set narrows only when neither reads
+    /// more after it than before.
+    ///
+    /// A retrieval turn (`pipeline::resolve_world_authority`) reads the
+    /// folded rows as they stand: no grant row is an empty grant, and no
+    /// default row is an empty default. A board or a room turn
+    /// (`pipeline::reading_default`, [`Vault::board_world_authority`]) reads
+    /// base reality for an agent no grant governs, and with no default row,
+    /// base reality while the grant holds base. Both fail closed, and read
+    /// nothing, while a default row in force lies outside the grant.
+    ///
+    /// So the grant before the set is the folded grant, and the empty set
+    /// for an agent no grant governs and while its reads fail closed. The
+    /// grant after is the grant this set writes, else the folded grant. A
+    /// retrieval turn's default before is the stored default while the reads
+    /// resolve, else the empty set; a board's default before is base reality
+    /// for an agent no grant governs, the empty set while its reads fail
+    /// closed, the stored default where one is in force, and else base
+    /// reality where the folded grant holds base. After the set a default row
+    /// stands when the set writes one or one stood: both readings take it.
+    /// With none, a retrieval turn's default is the empty set and a board's
+    /// is base reality where the grant after holds base.
+    ///
+    /// A set that changes nothing narrows. Else the set narrows when the
+    /// grant after is a subset of the grant before and each reading's
+    /// default after is a subset of that reading's default before, and
+    /// widens otherwise, because a tier that holds anything one of the
+    /// agent's reads could not reach before is a wider read.
+    #[must_use = "the direction determines whether the owner is asked"]
+    fn direction(&self, governed: bool, prior: &FoldedWorldAccess) -> Result<Direction> {
+        if !self.changes() {
+            return Ok(Direction::Narrows);
+        }
+        let base = WorldAuthoritySet::new(true, [])?;
+        let empty = WorldAuthoritySet::default();
+        let default_row_before = prior.default_claim_id.is_some();
+        let fails_closed = governed
+            && default_row_before
+            && !prior.default_subset.is_subset_of(&prior.allowed_set);
+        let resolves_before = governed && !fails_closed;
+        let allowed_before = if resolves_before {
+            &prior.allowed_set
+        } else {
+            &empty
+        };
+        let allowed_after = self.grant.as_ref().unwrap_or(&prior.allowed_set);
+        let retrieval_default_before = if resolves_before && default_row_before {
+            &prior.default_subset
+        } else {
+            &empty
+        };
+        let board_default_before = if !governed {
+            &base
+        } else if fails_closed {
+            &empty
+        } else if default_row_before {
+            &prior.default_subset
+        } else if prior.allowed_set.include_base() {
+            &base
+        } else {
+            &empty
+        };
+        let default_row_after = self
+            .default
+            .as_ref()
+            .or(default_row_before.then_some(&prior.default_subset));
+        let retrieval_default_after = default_row_after.unwrap_or(&empty);
+        let board_default_after = match default_row_after {
+            Some(default) => default,
+            None if allowed_after.include_base() => &base,
+            None => &empty,
+        };
+        if allowed_after.is_subset_of(allowed_before)
+            && retrieval_default_after.is_subset_of(retrieval_default_before)
+            && board_default_after.is_subset_of(board_default_before)
+        {
+            Ok(Direction::Narrows)
+        } else {
+            Ok(Direction::Widens)
+        }
+    }
+}
+
+/// What [`Vault::set_agent_world_access_as_owner`]'s checks establish before
+/// its first write, on one snapshot: the plan, the importance the act asks
+/// with, and what the write needs.
+struct AgentWorldAccessChecks {
+    actor: EntityId,
+    now: u64,
+    governed: bool,
+    prior: FoldedWorldAccess,
+    write: WorldAccessWrite,
+    /// The authorized writer, present exactly when the set changes anything.
+    owner_writer: Option<WriteActor>,
+    importance: OwnerActImportance,
 }
 
 impl Vault {
@@ -197,60 +295,71 @@ impl Vault {
     /// force) where the request names another one or the new grant no longer
     /// covers the default in force, and records the owner's act, all in one
     /// commit, when `surface` names where the owner said so. A set the rows
-    /// in force already state writes and records nothing.
+    /// in force already state writes and records nothing. The door makes its
+    /// checks on a read before it asks: a set that lets the agent read more
+    /// than it does asks, and every other set asks nothing. The write
+    /// derives the importance again, and answers [`Error::ConcurrentWrite`]
+    /// when the act became more important since the person was asked.
     ///
     /// # Errors
     ///
     /// A proof that no longer holds, an id that is not a live agent
     /// principal, a listed id that is not a live WORLD or that names base
     /// reality, a default outside the grant, and storage errors.
+    /// [`Error::ConcurrentWrite`] if importance rises after the presence check.
     pub fn set_agent_world_access_as_owner(
         &self,
         owner: &AuthenticatedOwner,
         surface: Option<ActSurface>,
         request: AgentWorldAccessSetRequest,
     ) -> Result<AgentWorldAccessChange> {
-        let agent = request.agent;
-        let changed = self.with_write_txn_grouped(|txn| {
-            let actor = owner.revalidate_in_txn(self, txn)?;
-            require_agent(self, txn, agent)?;
-            let allowed = world_set(self, txn, &request.allowed)?;
-            let named_default = match &request.default_on {
-                Some(default_on) => Some(world_set(self, txn, default_on)?),
-                None => None,
+        self.set_agent_world_access_as_owner_between(owner, surface, request, || {})
+    }
+
+    /// [`Self::set_agent_world_access_as_owner`], with `between` run after the
+    /// door asked and before its write opens: the gap in which another writer
+    /// can commit first (the test door `test_doors::policy_doors_between`).
+    pub(crate) fn set_agent_world_access_as_owner_between(
+        &self,
+        owner: &AuthenticatedOwner,
+        surface: Option<ActSurface>,
+        request: AgentWorldAccessSetRequest,
+        between: impl FnOnce(),
+    ) -> Result<AgentWorldAccessChange> {
+        // No surface names no act, so none is asked for; with one the door's
+        // checks run on a read first, and the act the write may record is
+        // asked with the importance they derive, before the write opens.
+        let ground = if surface.is_some() {
+            let importance = {
+                let txn = self.store.env.read_txn()?;
+                self.agent_world_access_checks_in_txn(&txn, owner, request.agent, &request)?
+                    .importance
             };
-            if named_default
-                .as_ref()
-                .is_some_and(|default_on| !default_on.is_subset_of(&allowed))
-            {
-                return Err(Error::InvalidConfig(
-                    "an agent's default worlds must lie within the worlds it is allowed".to_owned(),
-                ));
+            let witness =
+                self.owner_presence(importance, owner_presence_reasons::AGENT_WORLD_ACCESS)?;
+            Some(OwnerProofGround::witnessed(&witness))
+        } else {
+            None
+        };
+        let agent = request.agent;
+        between();
+        let changed = self.with_write_txn_grouped(|txn| {
+            let checks = self.agent_world_access_checks_in_txn(txn, owner, agent, &request)?;
+            let AgentWorldAccessChecks {
+                actor,
+                now,
+                governed,
+                prior,
+                write,
+                owner_writer,
+                importance,
+            } = checks;
+            if let Some(ground) = &ground {
+                ground.refuse_risen_importance(importance)?;
             }
-            let now = self.store.clock.now_recorded_at();
-            let governed =
-                WorldGrantIndex::read(&self.store, txn)?.governs(&self.store, txn, agent)?;
-            // Planned over the rows the agent's reads admit, so a row the
-            // authority fold quarantines never decides the plan, and only
-            // those rows close. Closing a quarantined row would put its
-            // revoked writer's evidence again, which the batch's causal check
-            // refuses for every local claim write (FIX
-            // [CLAIM-CLOSE-OF-QUARANTINED-ROW]). Left in force, it can only
-            // narrow the agent's reads if its writer is admitted again: the
-            // fold meets every grant, and the newest default wins.
-            let rtxn: &heed::RoTxn<'_> = txn;
-            let fold = self.authority_fold_readonly_in_txn(rtxn)?;
-            let prior = folded_world_access(&self.store, rtxn, &agent, now, &|id, body| {
-                crate::authority::claim_causal_admitted(&self.store, rtxn, &fold, id, body)
-            })?;
-            let write = WorldAccessWrite::plan(governed, &prior, allowed, named_default);
-            if !write.changes() {
+            let Some(owner_writer) = owner_writer else {
                 return Ok(false);
-            }
-            // A fresh local write, so the owner's own observed frontier: an
-            // owner whose binding was revoked and granted again still writes.
-            let owner_writer = self
-                .observed_write_actor_in_txn(txn, WriteActor::new(actor, EdgeActorClass::Human))?;
+            };
             self.write_world_access_in_txn(txn, owner_writer, agent, &prior, &write, now)?;
             let digest =
                 |governed: bool, allowed: &WorldAuthoritySet, default_on| AgentWorldAccessDigest {
@@ -278,13 +387,79 @@ impl Vault {
             )?;
             // The signed record goes last, best effort (FIX 4624).
             if let Some(act) = signed {
-                self.record_policy_setting_op_in_txn(txn, act);
+                self.record_policy_setting_op_in_txn(txn, ground.as_ref(), act);
             }
             Ok(true)
         })?;
         Ok(AgentWorldAccessChange {
             access: self.agent_world_access(agent)?,
             changed,
+        })
+    }
+
+    /// Every check [`Self::set_agent_world_access_as_owner`] makes before its
+    /// first write, in the order the write makes them, with the plan and the
+    /// importance the act asks with. It runs on a read before the door asks
+    /// and again in the write, so a refusal raises no prompt.
+    fn agent_world_access_checks_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        owner: &AuthenticatedOwner,
+        agent: EntityId,
+        request: &AgentWorldAccessSetRequest,
+    ) -> Result<AgentWorldAccessChecks> {
+        let actor = owner.revalidate_in_txn(self, txn)?;
+        require_agent(self, txn, agent)?;
+        let allowed = world_set(self, txn, &request.allowed)?;
+        let named_default = match &request.default_on {
+            Some(default_on) => Some(world_set(self, txn, default_on)?),
+            None => None,
+        };
+        if named_default
+            .as_ref()
+            .is_some_and(|default_on| !default_on.is_subset_of(&allowed))
+        {
+            return Err(Error::InvalidConfig(
+                "an agent's default worlds must lie within the worlds it is allowed".to_owned(),
+            ));
+        }
+        let now = self.store.clock.now_recorded_at();
+        let governed = WorldGrantIndex::read(&self.store, txn)?.governs(&self.store, txn, agent)?;
+        // Planned over the rows the agent's reads admit, so a row the
+        // authority fold quarantines never decides the plan, and only
+        // those rows close. Closing a quarantined row would put its
+        // revoked writer's evidence again, which the batch's causal check
+        // refuses for every local claim write (FIX
+        // [CLAIM-CLOSE-OF-QUARANTINED-ROW]). Left in force, it can only
+        // narrow the agent's reads if its writer is admitted again: the
+        // fold meets every grant, and the newest default wins.
+        let fold = self.authority_fold_readonly_in_txn(txn)?;
+        let prior = folded_world_access(&self.store, txn, &agent, now, &|id, body| {
+            crate::authority::claim_causal_admitted(&self.store, txn, &fold, id, body)
+        })?;
+        let write = WorldAccessWrite::plan(governed, &prior, allowed, named_default);
+        let importance = OwnerActImportance::of_direction(write.direction(governed, &prior)?);
+        // A fresh local write, so the owner's own observed frontier: an
+        // owner whose binding was revoked and granted again still writes.
+        // Only for a set that changes anything, as the write did, so a set
+        // the rows already state keeps its answer.
+        let owner_writer =
+            if write.changes() {
+                Some(self.observed_write_actor_in_txn(
+                    txn,
+                    WriteActor::new(actor, EdgeActorClass::Human),
+                )?)
+            } else {
+                None
+            };
+        Ok(AgentWorldAccessChecks {
+            actor,
+            now,
+            governed,
+            prior,
+            write,
+            owner_writer,
+            importance,
         })
     }
 

@@ -90,6 +90,10 @@ impl Validator {
     }
 
     fn validate(&self, bytes: &[u8]) -> Res<Report> {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "evidence tooling run only by the deck-gate binaries, outside the server"
+        )]
         let mut child = Command::new("python3")
             .arg("-B")
             .arg(&self.script)

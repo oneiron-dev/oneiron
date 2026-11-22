@@ -392,6 +392,7 @@ fn claim(turn: EntityId) -> RoomSideRow {
             actor: fixed(0x41).to_hex(),
             receipt_ref: "r".repeat(ROOM_FACT_MAX_ROW_BYTES + 1024),
             at: 1,
+            generation: 0,
         },
     }
 }
@@ -469,8 +470,8 @@ pub fn checkpoint_refusal(snapshot: &[u8]) -> Result<Option<CaptureRefusal>> {
 
 /// The one holder a checkpoint files a turn program's arming row under: a
 /// disarmed row of `actor` for `registration`, filed under the key of the
-/// registration `keyed` (the D5 guard: a turn program row is placed by its
-/// body, whatever its key). `None` for any other placement.
+/// registration `keyed` (D5: a row filed under a key other than its own is
+/// placed under no one). `None` for any other placement.
 ///
 /// # Errors
 /// A fixture row that does not encode.

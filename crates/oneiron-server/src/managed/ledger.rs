@@ -162,6 +162,28 @@ impl WakeLedger {
         )
     }
 
+    /// This vault's caller of its recovery box's kit-only hold, on the same
+    /// supervisor socket and spawn identity (Fable pass 27 R7).
+    pub(super) fn recovery_box_hold(&self) -> super::recovery_box_hold::HypnosRecoveryBoxHold {
+        super::recovery_box_hold::HypnosRecoveryBoxHold::new(
+            self.hypnos_socket.clone(),
+            self.vault_name.clone(),
+            self.token.clone(),
+        )
+    }
+
+    /// This vault's reporter of its owner key changes, on the same
+    /// supervisor socket and spawn identity (Engine ruling 21 Nov 06:00).
+    pub(super) fn owner_key_change_report(
+        &self,
+    ) -> super::owner_key_change_report::HypnosOwnerKeyChange {
+        super::owner_key_change_report::HypnosOwnerKeyChange::new(
+            self.hypnos_socket.clone(),
+            self.vault_name.clone(),
+            self.token.clone(),
+        )
+    }
+
     /// The existing widen transcript over a body's counted length and exact bytes.
     pub(super) fn widen_transcript(
         &self,

@@ -54,6 +54,7 @@ fn ping_v3() -> CtlResponse {
         relay_delete_revision: None,
         engine_instance: None,
         deletion: None,
+        process: None,
     }
 }
 

@@ -46,6 +46,15 @@ pub(super) fn with_invocation(
     serde_json::to_vec(message).ok()
 }
 
+/// The invocation `message`'s `_meta` names, if any.
+pub(super) fn named_invocation(message: &Value) -> Option<String> {
+    message
+        .pointer("/params/_meta")
+        .and_then(|meta| meta.get(INVOCATION_META))
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+}
+
 /// The client capabilities this stdio session negotiated.
 #[derive(Default)]
 pub(super) struct ClientSession {

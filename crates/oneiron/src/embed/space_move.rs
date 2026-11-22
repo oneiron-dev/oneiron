@@ -25,8 +25,9 @@ use serde::{Deserialize, Serialize};
 
 use super::EgressPredicate;
 use super::media::{MediaEgressGate, MediaEmbeddingInput, PendingMedia};
+use super::setting_keys::SPACE_MOVE_UNDO_WINDOW;
 use super::space::{
-    EmbeddingSpace, InputKind, KindSlotBindings, SetupActor, SetupDoor, drop_space_rows_in_txn,
+    EmbeddingSpace, InputKind, KindSlotBindings, SetupActor, SetupDoor, drop_candidate_rows_in_txn,
     embedding_space_in_txn, kind_slot_bindings_in_txn, search_media_space_in_txn,
     set_kind_slot_in_txn, slot_setup_id, space_setup_id,
 };
@@ -54,8 +55,9 @@ pub const SPACE_PROBE_MIN_FAMILIES: usize = 10;
 
 /// Producer name of a space move's result note.
 pub const SPACE_MOVE_NOTE_PRODUCER: &str = "embedding.space_move";
-/// How long a swapped-in move can be undone, in vault seconds; then its incumbent retires. A
-/// placeholder read only through [`Vault::swap_undo_window_passed`].
+/// How long a swapped-in move can be undone, in vault seconds, until the owner sets
+/// `embed.space_move.undo_window_secs`; then its incumbent retires. Read only through
+/// [`Vault::swap_undo_window_passed`].
 pub const SPACE_MOVE_UNDO_WINDOW_SECS: u64 = 30 * 24 * 60 * 60;
 /// How long an open move may go without a check, in vault seconds, before it closes kept: its
 /// candidate never filled, or its probes never ran ([`Vault::expire_unfilled_space_moves`]).
@@ -689,7 +691,13 @@ impl Vault {
     ) -> Result<BTreeSet<EntityId>> {
         let moving = open_move_in_txn(&self.store, wtxn, candidate)?;
         EMBEDDING_MOVE.delete(&self.store, wtxn, &moving.candidate)?;
-        drop_space_rows_in_txn(&self.store, wtxn, candidate, &moving.kinds)?;
+        drop_candidate_rows_in_txn(
+            &self.store,
+            self.privacy_posture(),
+            wtxn,
+            candidate,
+            &moving.kinds,
+        )?;
         super::binding_move::move_ended_in_txn(self, wtxn, &moving)?;
         let owned = BTreeSet::from([space_setup_id(candidate)?]);
         self.publish_embedding_setup_as_in_txn(wtxn, &owned)
@@ -1139,11 +1147,15 @@ impl Vault {
     }
 
     /// Whether a move that swapped in at `swapped_at` (vault seconds) is past its undo window at
-    /// `now`, so its incumbent may retire: the one policy hook for the window. Today a fixed
-    /// [`SPACE_MOVE_UNDO_WINDOW_SECS`], a placeholder; the owner leans toward keeping the old
-    /// space while any retained backup or checkpoint still needs it, which would read here.
-    fn swap_undo_window_passed(&self, _rtxn: &RoTxn<'_>, swapped_at: u64, now: u64) -> bool {
-        now.saturating_sub(swapped_at) >= SPACE_MOVE_UNDO_WINDOW_SECS
+    /// `now`, so its incumbent may retire: the one policy hook for the window. The window is the
+    /// owner's `embed.space_move.undo_window_secs` ([`SPACE_MOVE_UNDO_WINDOW_SECS`] by default).
+    /// The owner leans toward also keeping the old space while any retained backup or checkpoint
+    /// still needs it, which would read here beside the key.
+    fn swap_undo_window_passed(&self, rtxn: &RoTxn<'_>, swapped_at: u64, now: u64) -> Result<bool> {
+        let window = SPACE_MOVE_UNDO_WINDOW
+            .read_in_txn(self, rtxn, &[], None)?
+            .value;
+        Ok(now.saturating_sub(swapped_at) >= window.0)
     }
 
     /// Retires the incumbent of each move past its undo window
@@ -1161,7 +1173,7 @@ impl Vault {
                     continue;
                 };
                 if let Some(id) = row.incumbent.declared()
-                    && self.swap_undo_window_passed(&rtxn, at, now)
+                    && self.swap_undo_window_passed(&rtxn, at, now)?
                     && embedding_space_in_txn(&self.store, &rtxn, id)?.is_some()
                 {
                     due.insert(id.to_owned());
@@ -1218,7 +1230,13 @@ impl Vault {
             // An embedder binding filling on it waits again with its candidate, which the next
             // pass declares again (O3b PR B); so it joins before the candidate's rows go.
             super::binding_move::move_ended_in_txn(self, &mut wtxn, &moving)?;
-            drop_space_rows_in_txn(&self.store, &mut wtxn, &moving.candidate, &moving.kinds)?;
+            drop_candidate_rows_in_txn(
+                &self.store,
+                self.privacy_posture(),
+                &mut wtxn,
+                &moving.candidate,
+                &moving.kinds,
+            )?;
             self.note_space_move_in_txn(&mut wtxn, &moving)?;
             expired.push(moving.candidate);
         }
@@ -1298,7 +1316,13 @@ impl Vault {
         }
         EMBEDDING_MOVE.put(&self.store, &mut wtxn, &moving.candidate, &moving)?;
         if matches!(moving.state, SpaceMoveState::Kept { .. }) {
-            drop_space_rows_in_txn(&self.store, &mut wtxn, candidate, &moving.kinds)?;
+            drop_candidate_rows_in_txn(
+                &self.store,
+                self.privacy_posture(),
+                &mut wtxn,
+                candidate,
+                &moving.kinds,
+            )?;
         }
         if concluded {
             self.note_space_move_in_txn(&mut wtxn, &moving)?;

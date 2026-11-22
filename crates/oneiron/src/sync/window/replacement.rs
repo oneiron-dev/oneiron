@@ -49,7 +49,7 @@ use super::super::loro_support::{
 };
 use super::super::types::WindowKey;
 use super::egress::{
-    export_scrubbed_window_snapshot, replay_pending_mirrors_kept, scrub_local_claim_carriers,
+    export_scrubbed_window_state, replay_pending_mirrors_kept, scrub_local_claim_carriers,
     scrub_local_only_carriers, scrub_redacted_attribution_carriers,
     scrub_withdrawn_delete_carriers,
 };
@@ -211,6 +211,9 @@ pub(in crate::sync) fn prepare_bounded_replacement(
         bound,
         super::validate_window_update_with_staged_worlds,
     )?;
+    // The rows another machine withheld after they travelled, which the replacement names by its
+    // marker alone: nothing this vault holds of them carries over (REVIEW-9846 round 2).
+    let marked = crate::sync::source_audiences::marked_elsewhere(vault, &candidate)?;
 
     // The work happens on a detached copy of the old window: what this prepares there (queued
     // sends, scrubs, pending mirrors) feeds the carry-over and never leaves through the live
@@ -270,12 +273,22 @@ pub(in crate::sync) fn prepare_bounded_replacement(
     written.extend(newest_ops(&candidate, &before, &candidate.oplog_vv())?.into_keys());
     conflicts.extend(keep_hard_deletes(&candidate, &hard, &written)?);
     conflicts.extend(delete_wins(&candidate, &written)?);
+    // A marker whose soft delete is still publishing it is left to that
+    // publication, which re-proves the delete first. The held set is locked
+    // before the snapshot opens and through the selection. A publication to
+    // this closed window holds it closed from its lookup through its commit
+    // (`WindowManager::publication_window`), and this replacement waited for
+    // it: a held marker's publication either committed before `old` was
+    // read, which then carries its tombstone, or finds this window
+    // registered and publishes through it.
     let pending: Vec<_> = {
+        let held = vault.store.tombstone_publications_in_flight.lock();
         let rtxn = vault.store.env.read_txn()?;
         vault
             .store
             .port_pending_tombstones_in_window(&rtxn, WindowAddress::new(key.as_str()))?
             .filter_map(std::result::Result::ok)
+            .filter(|marker| !held.holds_marker(&marker.window_label, &marker.id, &marker.raw))
             .collect()
     };
     let tombstones = TombstoneIndex::build(&candidate.get_map("tombstones"));
@@ -283,6 +296,18 @@ pub(in crate::sync) fn prepare_bounded_replacement(
         apply_tombstone_to_indexed_window_doc(&candidate, &tombstones, &marker.id, &marker.raw)?;
     }
     candidate.commit();
+    // Their holds land before reverse rematerialization reads them, which then packs none of
+    // them back from this vault's stored copy; a carrier a carried write put back goes. The
+    // forward pass lands the same markers again.
+    crate::sync::source_audiences::hold_back_withheld(vault, &marked)?;
+    let (entities, edges) = (candidate.get_map("entities"), candidate.get_map("edges"));
+    let mut excluded = false;
+    for id in &marked {
+        excluded |= super::reverse::remove_entity_crdt_carriers(&entities, &edges, id)?;
+    }
+    if excluded {
+        candidate.commit();
+    }
     // Reverse rematerialization may remove an uninstalled optional root.
     // Select only this snapshot's still-chosen values before that scrub.
     let positions = positions.and_then(|positions| positions.select_replacement(&candidate));
@@ -291,7 +316,9 @@ pub(in crate::sync) fn prepare_bounded_replacement(
     // live-window turn under the registry lock (FIX 12128).
     forward_rematerialize_detached(vault, &candidate, materializer, key)?;
 
-    let state = export_scrubbed_window_snapshot(vault, key, &candidate)?;
+    // The export reads the pin; a legal hold read in the writer keeps the
+    // candidate history a pinned export dropped (census L6-05).
+    let state = export_scrubbed_window_state(vault, key, &candidate)?;
     // The candidate is final once its snapshot is cut: the forward pass and the export scrubs can
     // still take a value out. A queued send retires only once each value it wrote is in the
     // window being installed or named as a conflict, and every other conflict is provisional
@@ -314,7 +341,8 @@ pub(in crate::sync) fn prepare_bounded_replacement(
     };
     let _position_bodies = positions.as_ref().map(|_| vault.pin_all_result_bodies());
     vault.with_write_txn_grouped(|wtxn| {
-        persist_window_doc_in_txn(vault, wtxn, key, &state, &vv)?;
+        let (stored, history_free) = state.stored_in_txn(vault, wtxn)?;
+        persist_window_doc_in_txn(vault, wtxn, key, stored, &vv, history_free)?;
         // The old generation's pending updates and the queued sends it took in depend on history
         // the candidate does not hold; their effects are in it as its own operations. A peer's
         // copy keeps the queued sends for the home, which has not taken them (FIX 4748).

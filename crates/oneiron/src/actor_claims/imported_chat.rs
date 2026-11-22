@@ -3,7 +3,7 @@
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
-use crate::provenance::birth::{RowBirth, stamp_row_birth_in_txn};
+use crate::provenance::birth::{RowBirth, stamp_birth_with_floor_in_txn};
 use crate::registry::{ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN};
 use crate::{EntityId, Error, Result, TimeRange, Vault};
 
@@ -36,7 +36,8 @@ pub(super) fn write_imported_chat_in_txn(
     if !imported.imported {
         return Ok(None);
     }
-    let (value, pair_scope) = row.value_and_scope()?;
+    let (value, pair_scope) =
+        row.value_and_scope(super::rows::actor_note_max_bytes_in_txn(vault, txn)?)?;
     let mut body = ClaimBody::new(
         row.predicate(),
         ClaimSubject::Entity(row.actor()),
@@ -64,7 +65,7 @@ pub(super) fn write_imported_chat_in_txn(
         evidence.at,
     )?;
     if let Some(birth) = birth {
-        stamp_row_birth_in_txn(&vault.store, txn, &id, birth)?;
+        stamp_birth_with_floor_in_txn(vault, txn, &id, birth)?;
     }
     Ok(Some(id))
 }

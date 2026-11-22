@@ -1,4 +1,9 @@
 //! The public path and signing API are separate from hosted device leases.
+//!
+//! The signing wire test sets its wire rows through
+//! `oneiron_server::test_doors::wire_thresholds` and needs the test-support
+//! build: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p
+//! oneiron-server --all-features --test it_esign_public`.
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode, header};
 use oneiron_server::{build_app, config::SyncServerConfig, server::SyncServer};
@@ -753,21 +758,25 @@ async fn real_managed_unix_listener_uses_kernel_peer_not_forwarded_caller_ip() {
         .expect("finish Unix signing server");
 }
 
+#[cfg(oneiron_test_support)]
 #[tokio::test]
 async fn signing_routes_keep_matched_wire_receipts_and_threshold_questions() {
+    use oneiron_server::test_doors::wire_thresholds::set_thresholds;
     use oneiron_server::wire_telemetry::{WireTelemetry, WireThresholds};
 
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
     let observer = WireTelemetry::new(vault.clone());
     let window_secs = 604_800;
-    observer
-        .set_thresholds(&WireThresholds {
+    set_thresholds(
+        &observer,
+        &WireThresholds {
             window_secs,
             per_verb: 1,
             per_actor: u64::MAX,
-        })
-        .unwrap();
+        },
+    )
+    .unwrap();
     drop(observer);
     let server = Arc::new(
         SyncServer::new(
@@ -907,6 +916,10 @@ async fn hosted_burst_keeps_a_live_ceremony_writable_and_raises_a_typed_check() 
         saved["data"]["values"][&field]["value"]["value"],
         "approved"
     );
+    // UETA section 10: the recipient reviews the saved value, then completes.
+    let (status, reviewed) = post(serde_json::json!({"action":"review"})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(reviewed["outcome"], "page");
     let (status, completed) = post(serde_json::json!({
         "action":"complete", "consent":true, "next":null
     }))

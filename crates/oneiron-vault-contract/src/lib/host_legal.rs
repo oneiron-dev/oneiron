@@ -336,6 +336,10 @@ impl ReleaseLiveOrder {
 
 /// Accepted only over the manager's kernel-authenticated native connection.
 /// This enum is framing, not an authorization token.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "one request is read per connection and matched at once, never kept in a collection"
+)]
 pub enum HostLegalRequest {
     Capture(CaptureRequest),
     ReleaseLiveOrder(ReleaseLiveOrder),

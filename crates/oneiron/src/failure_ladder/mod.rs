@@ -28,6 +28,7 @@ mod ladder;
 mod lineage;
 pub mod oversight;
 mod scope;
+pub(crate) mod setting_keys;
 pub mod task_terminal;
 mod transitions;
 
@@ -39,7 +40,10 @@ pub use self::classify::{
 pub use self::custom_review::{
     AgentKind, CustomFailureGroup, FailureSignalClass, TierOneFailureCount,
 };
-pub use self::drill::CustomFailureDrill;
+pub use self::drill::{
+    CustomFailureDrill, FailureDrillEvent, FailureDrillRequest, FailureDrillView,
+    failure_drill_as_agent,
+};
 pub(crate) use self::healer_case::get_in_txn as healer_case_in_txn;
 pub(crate) use self::healer_case::require_in_txn as require_healer_case_in_txn;
 pub use self::impact::{
@@ -56,8 +60,6 @@ pub use self::scope::{FailureEscalationMode, FailureScope, FailureScopePolicy};
 pub(crate) use self::transitions::{dispatched_target_ref, verified_blocked_reports};
 
 pub(crate) mod tables;
-// FIX [LIBTEST-QUARANTINE-FAILURE-LADDER-TESTS]: the lib test target's type check fails here (1 errors: E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 
