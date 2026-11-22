@@ -569,12 +569,12 @@ impl DisclosureContext {
     /// the other carriers `scope_summary::word_sources_in` names hold other
     /// records' words, so the row is admitted only with each of them, through
     /// nested copies, each judged by this context's own row test (Tier A, a
-    /// TURN's messages, the clearance, retained copies). A copy's summary
-    /// (`scope_summary::carried_summary`) is walked too: its own row is
-    /// judged by that test, and so is every record its words came from, its
-    /// registered dependencies included, so a Tier-A summary, or a Tier-A
-    /// record it was edited from, withholds every reply and header that
-    /// carries its words. Words whose sources no longer resolve, or that
+    /// TURN's messages, the clearance, retained copies). A copy's summary is
+    /// one of the copy's word sources: its own row is judged by that test,
+    /// and so is every record its words came from, its registered
+    /// dependencies included, so a Tier-A summary, or a Tier-A record it was
+    /// edited from, withholds every reply and header that carries its
+    /// words. Words whose sources no longer resolve, or that
     /// cycle, are refused. A claim passed with `claim_body` is judged on
     /// that body's words, the revision a caller serves, not on its live
     /// row's. The owner alone in a conversation of this vault is admitted
@@ -664,7 +664,6 @@ impl DisclosureContext {
             rtxn,
             *id,
             &raw,
-            super::disclosable_set::CarriedSummary::Follow,
             |record, record_raw| {
                 // The row itself is the caller's to judge, with its claim
                 // body ([`Self::admits_in_from`]).
