@@ -490,6 +490,7 @@ fn draft_reply(agent_memory: &Memory<'_>, thread_ref: &str, turn_ref: &str) -> M
             reply_all: false,
             cc: Vec::new(),
             request_key: "reply-send-fixture-1".to_owned(),
+            attachments: Vec::new(),
         })
         .expect("draft the reply")
 }
@@ -864,6 +865,7 @@ impl OutboundExecutionSink for ChangingSink<'_, '_> {
                 reply_all: false,
                 cc: Vec::new(),
                 request_key: "reply-send-fixture-1".to_owned(),
+                attachments: Vec::new(),
             }),
         };
         self.change = Some(change.map_err(|error| format!("{error:?}")));
