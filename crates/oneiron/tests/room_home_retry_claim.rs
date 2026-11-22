@@ -214,9 +214,7 @@ fn grant_messages(vault: &Vault, room: EntityId, principal: EntityId) -> TestRes
             },
             capability: AccessGrantCapability::MessagesRead,
             status: AccessGrantStatus::Active,
-            created_at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)?
-                .as_secs(),
+            created_at: vault.now_recorded_at(),
             revoked_at: None,
             expires_at: None,
             companion_bounds: None,
