@@ -432,8 +432,10 @@ where
 /// The owner's settings for one runner seat (OF-137's [`RunnerSeat`]).
 /// Labels and custody handle names only, like every surface here: a
 /// vendor-login seat names no handle at all, because the login stays with
-/// the official CLI on its runtime.
+/// the official CLI on its runtime. A key that names no field is refused
+/// (FIX RUNNER-SEATS-UNKNOWN-KEY-SILENT).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct RunnerSeatSettings {
     /// Registered runner name ("claude-code", "codex", "opencode").
     pub runner: String,
@@ -453,17 +455,18 @@ fn default_seat_auth() -> String {
 /// One official seat the owner holds, registered as a named Dreamer
 /// provider under its adapter's name (OF-137): the seat settings, plus the
 /// endpoint bindings a CLI seat ignores. Labels and custody handles only,
-/// like [`SeatSettings`].
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+/// like [`SeatSettings`]. The owner writes it as one table, the seat's keys
+/// beside the bindings, and it is serialized so; it is read, and described as
+/// a schema, through that one table (`surface::OfficialSeatFields`), so a
+/// key that names no field is refused (FIX RUNNER-SEATS-UNKNOWN-KEY-SILENT).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct OfficialRunnerSeatSettings {
     #[serde(flatten)]
     pub seat: SeatSettings,
     /// Slug-to-model bindings for endpoint-shaped seats (Agent SDK, Sign
     /// in with ChatGPT, API keys).
-    #[serde(default)]
     pub models: BTreeMap<String, String>,
     /// Overrides the adapter's default endpoint base URL.
-    #[serde(default)]
     pub base_url: Option<String>,
 }
 
@@ -484,7 +487,9 @@ impl OfficialRunnerSeatSettings {
 }
 
 /// The owner's ordered runner seats and what a spent one does, as settings.
+/// A key that names no field is refused (FIX RUNNER-SEATS-UNKNOWN-KEY-SILENT).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct RunnerSeatPolicySettings {
     pub seats: Vec<RunnerSeatSettings>,
     /// `stop` (default), `next_seat`, or `internal_models`.

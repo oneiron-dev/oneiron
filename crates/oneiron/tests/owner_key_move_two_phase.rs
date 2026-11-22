@@ -6,7 +6,11 @@
 //! executing Owner's device takes the act's plan, signs each `RevokeDevice`
 //! itself with their enrolled owner key as the primary signer, and the server
 //! lands those rows with the move in the act's one writer. Removal, demotion
-//! and an Owner's own leave all go this way.
+//! and an Owner's own leave all go this way. A `human` binding the move ends
+//! on a key it keeps is ended the same way, by a `RevokeActor` the device
+//! signs first (row HOSTED-MOVE-REVOKE-ACTOR-MIGRATED-BINDING; the last three
+//! tests, red on the base at runtime: there the device signs no
+//! `RevokeActor`, and the move's host-signed one does not count).
 //!
 //! The device here is an independent signing key, outside this install,
 //! through [`sign_owner_key_move`]; the last two tests run the device door on
@@ -25,8 +29,8 @@ use std::sync::Arc;
 
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{
-    ActAuthority, ActSurface, AuthorityKey, AuthorityLogEntry, AuthorityOp, HostSlipIssuer,
-    MachineRole, OWNER_KEY_MOVE_MEMBER_NOT_CONFIRMED, OWNER_KEY_MOVE_NO_HELD_KEY,
+    ActAuthority, ActSurface, ActorBindingStatus, AuthorityKey, AuthorityLogEntry, AuthorityOp,
+    HostSlipIssuer, MachineRole, OWNER_KEY_MOVE_MEMBER_NOT_CONFIRMED, OWNER_KEY_MOVE_NO_HELD_KEY,
     OWNER_KEY_MOVE_NOT_PLANNED, OWNER_KEY_MOVE_NOT_SYNCED, OWNER_KEY_MOVE_PLAN_STALE,
     OWNER_KEY_MOVE_SIGNER_NOT_EXECUTORS, OwnerKeyEnrollment, OwnerKeyMovePlan, OwnerKeyMoveSigner,
     authority_entry_hash, decode_authority_log_entry_body, encode_authority_log_entry_body,
@@ -37,8 +41,10 @@ use oneiron::federation::{FederationGrantRole as Role, InitialSharedMember};
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::temporal::TimeRange;
+use oneiron::test_doors::passkey_vouch_limits::{SignedRow, append_signed_rows};
 use oneiron::test_support::bind_host_owner;
 use oneiron::{EntityId, ErrorKind, HostingPrivacyPosture, Vault, VaultConfig};
+use oneiron_authority::authority::ACTOR_CLASS_HUMAN;
 
 const SHARED: u64 = 46;
 /// The seed of the owner's own owner key, on a device of theirs.
@@ -49,6 +55,8 @@ const CO_OWNER_SEED: u8 = 9;
 const CO_OWNER_SECOND_SEED: u8 = 11;
 /// The seed of a third Owner's owner key.
 const THIRD_OWNER_SEED: u8 = 13;
+/// The seed of the owner's second owner key, which a test binds a person on.
+const OWNER_SECOND_SEED: u8 = 15;
 
 fn person(vault: &Vault) -> EntityId {
     let id = EntityId::now();
@@ -226,6 +234,57 @@ impl Hosted {
             .find(|key| key.public_key == public_key)
             .expect("the key is listed")
             .live
+    }
+
+    /// The person a live `human` binding on `key` names, if any.
+    fn bound_to(&self, key: &AuthorityKey) -> Option<EntityId> {
+        self.vault
+            .authority_fold()
+            .expect("the fold")
+            .actor_bindings
+            .get(key)
+            .filter(|binding| {
+                binding.status == ActorBindingStatus::Active
+                    && binding.actor_class == ACTOR_CLASS_HUMAN
+            })
+            .map(|binding| binding.actor_ref)
+    }
+
+    /// `signer`'s owner key signs a `human` binding of `person` on `key`,
+    /// which holds none yet, at epoch 1; the fold counts it.
+    fn bind_signed_by(&self, key: &AuthorityKey, person: EntityId, signer: &SigningKey) {
+        assert_eq!(self.bound_to(key), None, "{key:?} holds no binding yet");
+        let counted = append_signed_rows(
+            &self.vault,
+            vec![SignedRow {
+                op: AuthorityOp::BindActor {
+                    authority_key: key.clone(),
+                    actor_ref: person,
+                    actor_class: ACTOR_CLASS_HUMAN.into(),
+                    epoch: 1,
+                },
+                signer: AuthorityKey::Ed25519(public(signer)),
+                cosigners: Vec::new(),
+            }],
+            |_, transcript| signer.sign(transcript).to_bytes().to_vec(),
+        )
+        .expect("the door stores the binding");
+        assert_eq!(counted, vec![true], "the fold counts the binding");
+        assert_eq!(self.bound_to(key), Some(person));
+    }
+
+    /// The stored `RevokeActor` rows that end a binding on `key`.
+    fn binding_revokes_of(&self, key: &AuthorityKey) -> Vec<AuthorityLogEntry> {
+        self.vault
+            .export_signed_authority_history()
+            .expect("the signed history")
+            .iter()
+            .map(|bytes| decode_authority_log_entry_body(bytes).expect("a row"))
+            .filter(|row| match &row.op {
+                AuthorityOp::RevokeActor { authority_key, .. } => authority_key == key,
+                _ => false,
+            })
+            .collect()
     }
 
     /// The stored `RevokeDevice` row that ends `public_key`.
@@ -743,4 +802,144 @@ fn a_plan_is_answered_only_once_the_act_has_completed() {
     );
     let refused = planned.expect_err("no plan while the act's objection window is open");
     assert!(refused.to_string().contains("not completed"), "{refused}");
+}
+
+/// The removed co-Owner's key signed a `human` binding of the owner on the
+/// owner's second key, which the removal keeps. A managed host's root ends
+/// no person's binding, so the owner's device ends it: its rows are the
+/// binding's `RevokeActor`, then the co-Owner key's `RevokeDevice`, and the
+/// confirmed removal writes no binding revoke of its own.
+#[test]
+fn a_binding_the_removed_owners_key_signed_is_ended_by_the_executors_device() {
+    let hosted = hosted();
+    let owner_key = hosted.enrol_device_key(hosted.owner, OWNER_SEED);
+    let co_key = hosted.enrol_device_key(hosted.co_owner, CO_OWNER_SEED);
+    let second = hosted.enrol_device_key(hosted.owner, OWNER_SECOND_SEED);
+    let bound = AuthorityKey::Ed25519(public(&second));
+    hosted.bind_signed_by(&bound, hosted.owner, &co_key);
+    let act = hosted.propose_removal(hosted.owner, hosted.co_owner);
+
+    let plan = hosted.plan(hosted.owner, &act);
+    let rows = sign(&plan, &owner_key);
+    let signed: Vec<AuthorityLogEntry> = rows
+        .iter()
+        .map(|row| decode_authority_log_entry_body(row).expect("a row"))
+        .collect();
+    assert_eq!(signed.len(), 2, "{signed:?}");
+    let AuthorityOp::RevokeActor {
+        authority_key,
+        epoch,
+    } = &signed[0].op
+    else {
+        panic!("the device ends the binding first: {signed:?}");
+    };
+    assert_eq!((authority_key, *epoch), (&bound, 1), "{signed:?}");
+    let AuthorityOp::RevokeDevice { revoked_key } = &signed[1].op else {
+        panic!("then the co-Owner's key: {signed:?}");
+    };
+    assert_eq!(
+        *revoked_key,
+        AuthorityKey::Ed25519(public(&co_key)),
+        "{signed:?}"
+    );
+    hosted
+        .confirm(hosted.owner, &act, &rows)
+        .expect("the confirmed removal runs");
+
+    assert!(!hosted.key_is_live(public(&co_key)), "the key is ended");
+    assert_eq!(hosted.bound_to(&bound), None, "the binding is ended");
+    assert!(hosted.key_is_live(public(&second)), "the bound key stays");
+    let revokes = hosted.binding_revokes_of(&bound);
+    assert_eq!(revokes.len(), 1, "only the device's revoke: {revokes:?}");
+    assert_eq!(
+        revokes[0].signer.public_key,
+        AuthorityKey::Ed25519(public(&owner_key)),
+        "the owner's device key signs it as its primary signer"
+    );
+    assert!(revokes[0].cosigns.is_empty(), "{revokes:?}");
+}
+
+/// The co-Owner holds no owner key, only a binding on the owner's second
+/// key that the owner's key signed. Their removal is refused on the managed
+/// host with the step "confirm on your device", as for an owner key, and the
+/// owner's device ends the binding with the plan's one `RevokeActor`. On the
+/// base the plain run writes a host-signed `RevokeActor` the fold does not
+/// count, and no plan can be signed.
+#[test]
+fn an_owner_with_only_a_binding_is_removed_on_the_executors_device() {
+    let hosted = hosted();
+    let owner_key = hosted.enrol_device_key(hosted.owner, OWNER_SEED);
+    let second = hosted.enrol_device_key(hosted.owner, OWNER_SECOND_SEED);
+    let bound = AuthorityKey::Ed25519(public(&second));
+    hosted.bind_signed_by(&bound, hosted.co_owner, &owner_key);
+    let act = hosted.propose_removal(hosted.owner, hosted.co_owner);
+
+    let refusal = hosted
+        .run(hosted.owner, &act)
+        .expect_err("the host's root does not end the binding");
+    assert_eq!(refusal.kind(), ErrorKind::OwnerKeyRequired, "{refusal}");
+    assert_eq!(
+        reason_codes(refusal),
+        vec![
+            "owner_key_required".to_owned(),
+            "next_step:confirm_on_owner_device".to_owned(),
+            format!("member:{}", hosted.co_owner.to_hex()),
+            format!("act:{act}"),
+        ],
+        "the refusal names the step, the member and the act"
+    );
+    assert_eq!(
+        hosted.bound_to(&bound),
+        Some(hosted.co_owner),
+        "nothing moved yet"
+    );
+
+    let plan = hosted.plan(hosted.owner, &act);
+    assert!(plan.revoked.is_empty(), "{plan:?}");
+    let rows = sign(&plan, &owner_key);
+    assert_eq!(rows.len(), 1, "one revoke of the binding");
+    hosted
+        .confirm(hosted.owner, &act, &rows)
+        .expect("the confirmed removal runs");
+    assert_eq!(hosted.bound_to(&bound), None, "the binding is ended");
+    let revokes = hosted.binding_revokes_of(&bound);
+    assert_eq!(revokes.len(), 1, "only the device's revoke: {revokes:?}");
+    assert_eq!(
+        revokes[0].signer.public_key,
+        AuthorityKey::Ed25519(public(&owner_key)),
+        "{revokes:?}"
+    );
+}
+
+/// A binding the move ends that is made after the plan stales it: the
+/// confirm of the old plan is refused and writes nothing, and a new plan's
+/// confirm ends the binding with the key. On the base the old rows land and
+/// the move's host-signed `RevokeActor` does not count.
+#[test]
+fn a_binding_made_after_the_plan_stales_it() {
+    let hosted = hosted();
+    let owner_key = hosted.enrol_device_key(hosted.owner, OWNER_SEED);
+    let co_key = hosted.enrol_device_key(hosted.co_owner, CO_OWNER_SEED);
+    let second = hosted.enrol_device_key(hosted.owner, OWNER_SECOND_SEED);
+    let act = hosted.propose_removal(hosted.owner, hosted.co_owner);
+    let old = sign(&hosted.plan(hosted.owner, &act), &owner_key);
+    let bound = AuthorityKey::Ed25519(public(&second));
+    hosted.bind_signed_by(&bound, hosted.co_owner, &owner_key);
+
+    let refused = hosted
+        .confirm(hosted.owner, &act, &old)
+        .expect_err("a binding the plan does not name");
+    assert!(
+        refused.to_string().contains(OWNER_KEY_MOVE_PLAN_STALE),
+        "{refused}"
+    );
+    assert!(hosted.key_is_live(public(&co_key)), "nothing was written");
+    assert_eq!(hosted.bound_to(&bound), Some(hosted.co_owner));
+
+    let rows = sign(&hosted.plan(hosted.owner, &act), &owner_key);
+    hosted
+        .confirm(hosted.owner, &act, &rows)
+        .expect("the new plan's confirm runs");
+    assert_eq!(hosted.bound_to(&bound), None, "the binding is ended");
+    assert!(!hosted.key_is_live(public(&co_key)), "the key is ended");
 }

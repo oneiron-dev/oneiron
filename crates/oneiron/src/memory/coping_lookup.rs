@@ -42,20 +42,23 @@ impl Memory<'_> {
     ) -> MemoryResult<CopingLookup> {
         let person = self.resolve_ref(&input.affected_person_ref)?;
         let turn = self.resolve_ref(&input.current_turn_ref)?;
+        // Built before the read transaction: the lane opens its own, and LMDB
+        // keeps one reader per thread (COPING-LOOKUP-PROOF-SETUP-MDB-BAD-RSLOT).
+        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
         let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
         self.affect_owner_in_txn(&txn, owner)?;
-        self.coping_lookup_in_txn(&txn, person, turn, input.scope.as_ref())
+        self.coping_lookup_in_txn(&txn, &lane, person, turn, input.scope.as_ref())
     }
 
     fn coping_lookup_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
+        lane: &ScopedRead<'_>,
         person: EntityId,
         turn: EntityId,
         scope: Option<&ClaimScope>,
     ) -> MemoryResult<CopingLookup> {
-        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
-        require_readable(&lane, txn, &[person, turn])?;
+        require_readable(lane, txn, &[person, turn])?;
         if self.vault.get_entity_type_in_txn(txn, &person)? != Some(ENTITY_TYPE_PERSON) {
             return Err(MemoryError::bad_request("coping lookup requires a PERSON"));
         }
@@ -70,7 +73,7 @@ impl Memory<'_> {
                 "coping lookup state must be a turn the PERSON spoke in",
             ));
         }
-        let current = self.coping_state_in_txn(txn, &lane, turn)?.ok_or_else(|| {
+        let current = self.coping_state_in_txn(txn, lane, turn)?.ok_or_else(|| {
             MemoryError::bad_request("coping lookup state turn has no VAD annotation")
         })?;
         // The owner's manifest row `affect_lookup`, or its starting values.
@@ -81,10 +84,10 @@ impl Memory<'_> {
             strategy_ref,
             learned_at,
             outcome,
-        } in self.admitted_coping_heads_in_txn(txn, &lane, person, scope)?
+        } in self.admitted_coping_heads_in_txn(txn, lane, person, scope)?
         {
             // A head whose baseline turn has no live VAD names no state.
-            let Some(state) = self.coping_state_in_txn(txn, &lane, strategy_ref)? else {
+            let Some(state) = self.coping_state_in_txn(txn, lane, strategy_ref)? else {
                 continue;
             };
             observed_n = observed_n

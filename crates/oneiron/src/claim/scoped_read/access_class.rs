@@ -322,7 +322,7 @@ fn class_judge_in(
 ) -> Result<bool> {
     let key = reader.key;
     let record = view.record();
-    if reader.grant.is_none() && key.relationship_gated_in(vault, txn)? {
+    if reader.grant.is_none() && key.relationship_gated_held_in(vault, txn, authority)? {
         let read = RelationshipRead::Gated {
             kind: ENTITY_TYPE_CLAIM,
             space: view.rel.clone(),
@@ -336,7 +336,7 @@ fn class_judge_in(
         }
     }
     if !key.guest_bound_admits_at(vault, txn, || Ok(Some(record.clone())))
-        || !key.facets_allow_placed_in(vault, txn, &view.facets)?
+        || !key.facets_allow_placed_in(vault, txn, &view.facets, Some(authority))?
         || !key.admits_principal(view.principal)
         || (view.mined_preference && view.principal.is_none())
         || !reader.status.admits_status(
@@ -401,7 +401,7 @@ impl ScopedRead<'_> {
         if !self.reads_by_class() || raw.len() <= ENTITY_METADATA_HEADER_LEN {
             return Ok(None);
         }
-        if !self.row_stands_in(rtxn, id, raw, header, authority.asks_use_of(id))? {
+        if !self.row_stands_in(rtxn, id, raw, header, authority)? {
             return Ok(Some(false));
         }
         let Ok(body) = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true) else {
@@ -491,7 +491,12 @@ impl ScopedRead<'_> {
         principal: Option<EntityId>,
         authority: &HeldAuthority,
     ) -> Result<bool> {
-        if !crate::claim::has_live_support_in_txn(&self.store_read(), rtxn, body)? {
+        if !crate::claim::evidence_support::has_live_support_under_in_txn(
+            &self.store_read(),
+            rtxn,
+            body,
+            self.cited_support,
+        )? {
             return Ok(false);
         }
         // A mined preference with no principal is the class's to refuse.

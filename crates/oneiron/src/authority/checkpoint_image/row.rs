@@ -54,7 +54,9 @@ pub struct AuthorityCheckpointRow {
 /// and each row a store door past it reads whole to judge a new row: the
 /// genesis and each device enrollment the consent structure rests on (an
 /// owner's own device key enrollment among them, FIX 4920), the root records
-/// that name owner anchors, the actor revocations a signer's
+/// that name owner anchors and the root appointments those anchors sign, the
+/// owner's joins of restored machines (each names the held enrolment it
+/// joins; row RESTORED-COPIES-ENROL-EACH-OTHER), the actor revocations a signer's
 /// revocations count, and the world edits, grant travel choices, frontier
 /// joins and custody permit pieces (FIX 11866) that may be a stranger's; each owner handover, whose signed
 /// grant ids a restore across it reads (FIX 5765), and each membership
@@ -64,8 +66,10 @@ pub struct AuthorityCheckpointRow {
 /// fold under another pin or peer set judges again (a home candidacy, a
 /// full-copy mark, a federation lifecycle act; FIX 3004, 3005); and each residence directive
 /// and result, which a machine's directive reader reads past the image (FIX
-/// 5412). An image past the optional-compaction trigger drops its residence
-/// bodies for [`super::AUTHORITY_RESIDENCE_BODY_OVERFLOW`] (FIX 11400).
+/// 5412); and each recovery hold and answer, which the hold view and the
+/// answer doors read past the image (OPUS-WAYBACK). An image past the
+/// optional-compaction trigger drops its residence bodies for
+/// [`super::AUTHORITY_RESIDENCE_BODY_OVERFLOW`] (FIX 11400).
 fn carries_body(op: &AuthorityOp) -> bool {
     crate::authority::fold_resume::is_projected(op)
         || matches!(
@@ -74,6 +78,8 @@ fn carries_body(op: &AuthorityOp) -> bool {
                 | AuthorityOp::EnrollDevice { .. }
                 | AuthorityOp::OwnerKeyEnroll(_)
                 | AuthorityOp::OwnerRoot(_)
+                | AuthorityOp::RootAppointment(_)
+                | AuthorityOp::RestoredMachineJoin(_)
                 | AuthorityOp::RevokeActor { .. }
                 | AuthorityOp::WorldPrivacy(_)
                 | AuthorityOp::GrantTravelSet(_)
@@ -86,6 +92,8 @@ fn carries_body(op: &AuthorityOp) -> bool {
                 | AuthorityOp::AgentGrantAct(_)
                 | AuthorityOp::GrantAct(_)
                 | AuthorityOp::PolicySettingSet(_)
+                | AuthorityOp::SettingCopy(_)
+                | AuthorityOp::SettingPackHead(_)
                 | AuthorityOp::ExportAct(_)
                 | AuthorityOp::FrontierJoin(_)
                 | AuthorityOp::CustodyPermitPiece(_)
@@ -96,6 +104,8 @@ fn carries_body(op: &AuthorityOp) -> bool {
                 | AuthorityOp::FederationLifecycle(_)
                 | AuthorityOp::ResidenceDirective(_)
                 | AuthorityOp::ResidenceResult(_)
+                | AuthorityOp::RecoveryHold(_)
+                | AuthorityOp::RecoveryHoldAnswer(_)
         )
 }
 

@@ -33,7 +33,7 @@ pub(crate) fn write_config(
     models: &str,
 ) -> std::path::PathBuf {
     let path = dir.join("oneiron.toml");
-    std::fs::write(
+    crate::owner_only_file::write_owner_only_file(
         &path,
         format!(
             "vault_path = \"{vault}\"\nhost = \"127.0.0.1\"\nport = {port}\ndimensions = 8\n{models}",

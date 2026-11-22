@@ -22,7 +22,7 @@ use crate::{EntityId, Vault, consent::AuthenticatedOwner, error::Result, tempora
 /// pins to install a first-party pack folder. A floating branch or network
 /// lookup never changes an opened vault's skill source.
 const HUB_COMMIT: &str = "cb5c8bed81981161e70db3668776dc8d34abcce9";
-/// Library data, deliberately not a fifth build-embedded bootstrap skill.
+/// Library data, deliberately not a sixth build-embedded bootstrap skill.
 pub const REVIEW_BUNDLE_EXPLAINER_SUBTREE: &str = "skills/review-bundle-explainer";
 /// The library skill that teaches an agent to write a watcher (FIX 19855,
 /// ARCH-0053): a TASK with a due time, and a hook on its `schedule.tick` or
@@ -658,7 +658,5 @@ impl Vault {
     }
 }
 
-// FIX [LIBTEST-QUARANTINE-SKILL-HUB-DEFAULT-HUB-TESTS]: the lib test target's type check fails here (2 errors: E0061 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;

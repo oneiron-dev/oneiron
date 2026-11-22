@@ -183,6 +183,7 @@ fn witness(
             },
             turn_ref: turn.map(|turn| turn.to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: None,
                 author: WitnessAuthor::User,

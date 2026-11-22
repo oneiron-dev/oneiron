@@ -142,7 +142,7 @@ pub(super) fn persist_hnsw_config_if_missing(store: &Store, requested: &VaultCon
     Ok(())
 }
 
-pub(super) fn persist_model_id_if_missing(store: &Store, requested: &str) -> Result<()> {
+pub(crate) fn persist_model_id_if_missing(store: &Store, requested: &str) -> Result<()> {
     validate_embedding_model_id(requested)?;
     let mut wtxn = store.env.write_txn()?;
     match store.port_index_meta_with_raw(&wtxn, IndexMetaKey::ModelId, parse_utf8_bytes)? {

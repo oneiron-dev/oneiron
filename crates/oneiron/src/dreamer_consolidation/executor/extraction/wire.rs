@@ -72,6 +72,17 @@ pub(in crate::dreamer_consolidation) fn extraction_reply(
     contract_reply(reply_json(response)?)
 }
 
+/// Why an extraction reply is refused when its text is no JSON, even after
+/// [`reply_json`]'s one mend.
+const NOT_JSON: &str = "extraction response must be JSON";
+
+/// Whether a refused extraction step's `errors` say its reply failed the
+/// JSON parse, as [`reply_json`] refuses it: not a cut reply, a contract
+/// fault or a citation fault, whose JSON parsed.
+pub(in crate::dreamer_consolidation) fn failed_json_parse(errors: &[String]) -> bool {
+    errors.iter().any(|error| error.ends_with(NOT_JSON))
+}
+
 /// `response`'s text as JSON, mended only as [`extraction_reply`] says.
 pub(in crate::dreamer_consolidation) fn reply_json(
     response: &LlmResponse,
@@ -94,10 +105,9 @@ pub(in crate::dreamer_consolidation) fn reply_json(
                 && text.starts_with('{')
                 && text.ends_with(']') =>
         {
-            serde_json::from_str(&format!("{text}}}"))
-                .map_err(|_| invalid_consolidation("extraction response must be JSON"))
+            serde_json::from_str(&format!("{text}}}")).map_err(|_| invalid_consolidation(NOT_JSON))
         }
-        Err(_) => Err(invalid_consolidation("extraction response must be JSON")),
+        Err(_) => Err(invalid_consolidation(NOT_JSON)),
     }
 }
 
@@ -183,7 +193,7 @@ pub(in crate::dreamer_consolidation) fn check_extraction_reply(
 
 /// Whether `response` is a deterministic fallback's reply, whose candidates
 /// were authored before its call (FIX 7577).
-pub(super) fn authored_fallback(response: &LlmResponse) -> bool {
+pub(in crate::dreamer_consolidation) fn authored_fallback(response: &LlmResponse) -> bool {
     matches!(
         &response.finish_reason,
         FinishReason::Other { name } if name.starts_with("fallback:")
@@ -253,7 +263,10 @@ fn contract_fault(candidate: &serde_json::Value, authored: bool) -> Option<&'sta
     .find_map(|(field, met)| (!met).then_some(field))
 }
 
-fn prospective_queries(candidate: &serde_json::Value) -> Result<Vec<String>> {
+/// Reads and normalizes a candidate's optional prospective query hints.
+pub(in crate::dreamer_consolidation) fn prospective_queries(
+    candidate: &serde_json::Value,
+) -> Result<Vec<String>> {
     let Some(queries) = candidate.get("prospective_queries") else {
         return Ok(Vec::new());
     };
@@ -271,29 +284,11 @@ fn prospective_queries(candidate: &serde_json::Value) -> Result<Vec<String>> {
     crate::claim::normalize_lexical_query_hints(&hints)
 }
 
-/// A 32-hex id. Only a candidate's `rel` that names no listed relationship
-/// label still reads one (FIX 7575).
-pub(super) fn entity_id_from_hex(hex: &str) -> Option<EntityId> {
-    let hex = hex.trim();
-    if hex.len() != 32 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return None;
-    }
-    let mut raw = [0_u8; 16];
-    for (index, chunk) in hex.as_bytes().chunks_exact(2).enumerate() {
-        let high = hex_nibble(chunk[0])?;
-        let low = hex_nibble(chunk[1])?;
-        raw[index] = (high << 4) | low;
-    }
-    EntityId::from_bytes(raw).ok()
-}
-
-const fn hex_nibble(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        b'A'..=b'F' => Some(byte - b'A' + 10),
-        _ => None,
-    }
+/// A 32-hex id of either case, untrimmed (a model's output is foreign
+/// input, HEX-CASE-POLICY = A). Only a candidate's `rel` that names no
+/// listed relationship label still reads one (FIX 7575).
+pub(crate) fn entity_id_from_hex(hex: &str) -> Option<EntityId> {
+    EntityId::from_bytes(oneiron_hex::decode_any_case(hex)?).ok()
 }
 
 /// A TURN extraction call's sources: its labels over its branch's pinned

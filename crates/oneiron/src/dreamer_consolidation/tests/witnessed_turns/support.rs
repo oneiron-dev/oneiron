@@ -30,13 +30,21 @@ fn attached(vault: &Vault) -> Result<Attached> {
     let (turn, _) = witness(vault, 0x91, vec![said, thanks]);
     super::super::prior_heads::policy(vault, vault.dreamer_authority()?.entity_ref(), true)?;
     let subject = EntityId::now();
-    vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
+    let named = owen_body()?;
+    vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, &named)?;
     let head = put_head(vault, subject)?;
-    let mut name = nickname(subject, turn, name_range());
+    let mut name = nickname_quote("P1", "Owen");
     name["predicate"] = "profile.name".into();
-    let outcome = land(vault, vec![name], |admitted| {
-        Ok(Some(head_scope(vault, admitted, head)?.2))
-    })?;
+    let outcome = land_packed(
+        vault,
+        vec![name],
+        serde_json::json!({"Q1": {"none": 1.0, "C1": 0.0}}),
+        |admitted| {
+            let (_, _, mut scope) = head_scope(vault, admitted, head)?;
+            scope.readable.insert(document_version(subject, &named));
+            Ok(Some(scope))
+        },
+    )?;
     assert_eq!(outcome.landed, vec![head], "{outcome:?}");
     let [wrapper] = claims_with(vault, PREDICATE_EDGE_PROVENANCE)?[..] else {
         panic!("one attachment")
@@ -380,6 +388,7 @@ fn support_stays_while_a_live_attachment_still_justifies_it() -> Result<()> {
                     actor_class: actor.actor_class(),
                     learned_at,
                     explicit_prior: None,
+                    scope_project: None,
                     imported_evidence: None,
                     generated_evidence: None,
                 },

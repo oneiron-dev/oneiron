@@ -42,7 +42,7 @@ const ADDRESSED: &str = "addressed/";
 
 /// An id in its one canonical spelling.
 fn named(hex: &str) -> Option<EntityId> {
-    EntityId::from_hex(hex).ok().filter(|id| id.to_hex() == hex)
+    EntityId::from_lower_hex(hex).ok()
 }
 
 /// Where the turn row under `key` goes.

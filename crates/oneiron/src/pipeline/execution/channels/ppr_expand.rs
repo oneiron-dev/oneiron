@@ -55,7 +55,12 @@ impl PipelineBuilder<'_> {
     // Implicit seed selection reads the PRELIMINARY blend above,
     // whose scores are decay-free, so seed choice depends only on
     // relevance. The D19 gate has already run, so a dead claim
-    // still never seeds; decay simply does not participate.
+    // still never seeds; decay simply does not participate. Every
+    // list that blend fused holds only the call's made_by slice, so
+    // a row the call drops never seeds implicitly; an explicit seed
+    // is the caller's own and stays. A row a clamped pack's sweep
+    // refuses takes no implicit seed slot either
+    // ([`Self::clamp_refuses_implicit_seed`]).
     //
     // Returns `None` when `expand_ppr` is not configured.
     pub(super) fn expand_ppr_stage(
@@ -84,7 +89,21 @@ impl PipelineBuilder<'_> {
         } else {
             self.result_limit
         };
-        for scored in scores.iter().take(implicit_seed_limit) {
+        let mut implicit_slots = implicit_seed_limit;
+        for scored in scores {
+            if implicit_slots == 0 {
+                break;
+            }
+            if self.clamp_refuses_implicit_seed(
+                rtxn,
+                &scored.id,
+                inputs.filter_config.disclosure,
+                metadata_cache,
+                claim_gate,
+            )? {
+                continue;
+            }
+            implicit_slots -= 1;
             if seen.insert(scored.id) {
                 seeds.push(scored.id);
             }
@@ -97,6 +116,10 @@ impl PipelineBuilder<'_> {
             // specificity weighting is search_ppr-only. A narrowed walk is
             // compute-only and takes no shared cache; its community prior,
             // when configured, comes from the admitted scope alone.
+            // The walk alone, for `oneiron-bench ppr-walk-share`
+            // (UNBUILT3-06): a span no subscriber listens to costs a level
+            // check and changes no output.
+            let walk = tracing::trace_span!("ppr_expand_walk").entered();
             let ppr = match pipeline_ppr_visibility(self, inputs.filter_config, &*claim_gate) {
                 Some(visibility) if self.ppr_community.beta != 0.0 && !self.read.is_union() => {
                     // A hidden seed takes no place in the evidence order:
@@ -208,6 +231,7 @@ impl PipelineBuilder<'_> {
                     result
                 }
             };
+            drop(walk);
             if !state.diagnostics.succeeded.contains(&RetrievalSignal::Ppr) {
                 state.diagnostics.succeeded.push(RetrievalSignal::Ppr);
             }
@@ -230,6 +254,7 @@ impl PipelineBuilder<'_> {
                 metadata_cache,
                 claim_gate,
             )?;
+            self.retain_made_by_slice(rtxn, &mut ppr_results, metadata_cache, claim_gate)?;
             state
                 .blend_allowed_ids
                 .extend(ppr_results.iter().map(|scored| scored.id));
@@ -307,5 +332,40 @@ impl PipelineBuilder<'_> {
                 ppr_expand_executed: false,
             }))
         }
+    }
+
+    /// Whether a clamped pack's sweep refuses `id`, the sources of its words
+    /// included ([`crate::context_pack::retained_copies::clamp_admits`]).
+    /// A list no bounded fetch asked keeps a row the audience could read by
+    /// its own row (`PipelineBuilder::retain_rows_the_clamp_admits`), so a
+    /// row whose words come from a row it may not read can rank in the
+    /// preliminary blend until the sweep drops it. Such a row takes no
+    /// implicit seed slot, so the readable rows below it still seed the walk
+    /// (REVIEW-10215 round 1; the exact phonetic hits ask the sources of
+    /// their words before the blend since round 2). False with no clamp, and for a row with
+    /// no parseable envelope.
+    fn clamp_refuses_implicit_seed(
+        &self,
+        rtxn: &RoTxn<'_>,
+        id: &EntityId,
+        clamp: Option<&crate::disclosure::DisclosureContext>,
+        metadata_cache: &mut EntityMetadataCache,
+        claim_gate: &ClaimStatusGateCache,
+    ) -> Result<bool> {
+        let Some(clamp) = clamp else {
+            return Ok(false);
+        };
+        let Some(meta) = metadata_cache.get(&self.read, rtxn, id)? else {
+            return Ok(false);
+        };
+        Ok(!crate::context_pack::retained_copies::clamp_admits(
+            clamp,
+            self.vault,
+            &self.read,
+            rtxn,
+            id,
+            meta.entity_type,
+            claim_gate.decisions.get(id).and_then(Option::as_ref),
+        )?)
     }
 }

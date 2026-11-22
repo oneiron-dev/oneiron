@@ -52,6 +52,13 @@ pub struct VoiceRecognitionWithdrawReceipt {
     pub subject: String,
     /// The acting person, lowercase hex.
     pub recorded_by: String,
+    /// The date the consent log holds for the withdrawal, in unix seconds:
+    /// the asked date, or the vault's clock when the asked date was later (a
+    /// withdrawal is never refused for its date). On a replay, the date
+    /// recorded first.
+    pub occurred_at: u64,
+    /// The date the request asked for, in unix seconds.
+    pub requested_occurred_at: u64,
     pub replayed: bool,
     pub already_absent: bool,
     pub deleted_print: bool,

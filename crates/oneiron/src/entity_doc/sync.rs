@@ -133,7 +133,9 @@ pub(crate) fn edit_sync_text_in_txn(
     let actor = edit.actor;
     super::forks::validate_actor(vault, txn, actor)?;
     // A shared vault's role and record scope (FIX 9846).
-    vault.authorize_shared_content_write_in_txn(txn, *entity, &actor)?;
+    super::bound_room::authorize_content_write_in_txn(vault, txn, *entity, &actor)?;
+    // A bound room's TURN or MESSAGE: its two writers only (WORK-TALK-DOC-EDIT = A).
+    super::bound_room::require_bound_writer_in_txn(vault, txn, entity, actor)?;
     let mut h = match plane_in(vault, txn, entity)? {
         Plane::Document(h) => h,
         Plane::Unborn => birth_in_txn(vault, txn, entity)?,

@@ -75,6 +75,19 @@ pub struct RoomClaimReceipt {
     pub actor: String,
     pub receipt_ref: String,
     pub at: u64,
+    /// How many held claims of the turn this one replaced: 0 for its first
+    /// claim. A claimant takes over a claim whose holder the turn no longer
+    /// speaks to, one above the held claim's (ROOM-CLAIM-TAKEOVER = A).
+    /// Replicas keep the highest, then the lowest `(at, receipt_ref)`.
+    /// Absent on a first claim, so such a row reads and encodes as before.
+    #[serde(default, skip_serializing_if = "is_first_claim")]
+    pub generation: u32,
+}
+
+/// Whether a claim's `generation` is a turn's first claim, which its row
+/// leaves out.
+const fn is_first_claim(generation: &u32) -> bool {
+    *generation == 0
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
