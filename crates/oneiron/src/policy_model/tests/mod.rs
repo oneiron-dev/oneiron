@@ -26,27 +26,20 @@ pub(super) use std::sync::{
     Mutex,
     atomic::{AtomicUsize, Ordering},
 };
-pub(super) use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+pub(super) use std::task::{Context, Poll};
 pub(super) use tempfile::TempDir;
 
 mod anonymous_chat;
 mod cloud_dual;
-// FIX [LIBTEST-QUARANTINE-POLICY-MODEL-TESTS-DIAL-PATTERN-ROLES]: the lib test target's type check fails here (1 errors: E0063 x1); port it, then drop this gate
-#[cfg(any())]
 mod dial_pattern_roles;
 mod door_invariants;
 mod edge_identity;
 mod foundations;
-// FIX [LIBTEST-QUARANTINE-POLICY-MODEL-TESTS-HOSTED-REGISTRATION-RELAY]: the lib test target's type check fails here (1 errors: E0063 x1); port it, then drop this gate
-#[cfg(any())]
 mod hosted_registration_relay;
+mod hosted_self_host_route;
 mod outage_contracts;
-// FIX [LIBTEST-QUARANTINE-POLICY-MODEL-TESTS-OWNER-DECISIONS-LEDGER]: the lib test target's type check fails here (3 errors: E0063 x3); port it, then drop this gate
-#[cfg(any())]
 mod owner_decisions_ledger;
 mod owner_manifest_binding;
-// FIX [LIBTEST-QUARANTINE-POLICY-MODEL-TESTS-RECEIPT-BINDING-CITATIONS]: the lib test target's type check fails here (4 errors: E0599 x3, E0061 x1); port it, then drop this gate
-#[cfg(any())]
 mod receipt_binding_citations;
 mod skipped_verdicts;
 mod support;

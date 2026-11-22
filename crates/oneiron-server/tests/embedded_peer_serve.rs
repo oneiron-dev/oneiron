@@ -1,0 +1,216 @@
+#![cfg(all(oneiron_test_support, feature = "mesh"))]
+//! The macOS app's mesh peer path (L7-47, RULING L7-47-PR2-TESTS = A).
+//!
+//! PR2 carries the ruling's three tests, over one vault each: with a mesh bind the app's
+//! listener offers the sync ALPN alone and its server serves as a peer; with no bind the device
+//! sync still starts over the home URL with no listener and no peer dialer; and the link has a
+//! peer dialer exactly when its listener runs. A fourth, from the PR's blind review: the root
+//! the server exports names a window the link persisted after start. A fifth and a sixth, from
+//! its blind second review: an install whose host seed is not the vault's root still starts the
+//! link, and starting the link answers no takeover ask a run of its home raised. The
+//! two-machine serve/ask proof is FIX-LIST row [MESH-TWO-MACHINE-PEER-E2E], not these tests.
+//! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron-server
+//! --all-features --features oneiron/test-support --test embedded_peer_serve`.
+
+use std::future::Future;
+use std::net::SocketAddr;
+use std::sync::Arc;
+
+use oneiron::sync::mesh_path::SYNC_ALPN;
+use oneiron_server::ENGINE_THREAD_STACK_BYTES;
+use oneiron_server::test_doors::embedded_peer_fixture::{
+    enrolled_device, enrolled_device_holding_another_seed,
+};
+use oneiron_server::test_doors::embedded_peer_path::{
+    has_peer_dialer, listener_alpns, persist_link_learned_window, served_root_windows,
+    serves_as_peer, start_on_mesh_bind,
+};
+
+type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+
+/// Runs `test` on a multi-thread runtime whose threads have the engine's
+/// stack, driven from a thread that has it too, as the server's binary runs.
+fn on_engine_stack<F, Fut>(test: F) -> TestResult
+where
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: Future<Output = TestResult>,
+{
+    let driver = std::thread::Builder::new()
+        .stack_size(ENGINE_THREAD_STACK_BYTES)
+        .spawn(move || -> Result<(), String> {
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .thread_stack_size(ENGINE_THREAD_STACK_BYTES)
+                .enable_all()
+                .build()
+                .map_err(|error| error.to_string())?
+                .block_on(test())
+                .map_err(|error| error.to_string())
+        })?;
+    match driver.join() {
+        Ok(outcome) => Ok(outcome?),
+        // A failed assertion fails the test with its own message.
+        Err(panic) => std::panic::resume_unwind(panic),
+    }
+}
+
+#[test]
+fn embedded_device_with_a_mesh_bind_serves_sync_alone_as_a_peer() -> TestResult {
+    on_engine_stack(serves_sync_alone_as_a_peer)
+}
+
+async fn serves_sync_alone_as_a_peer() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let (vault, config) = enrolled_device(dir.path())?;
+    let bind: SocketAddr = "127.0.0.1:0".parse()?;
+    let sync = start_on_mesh_bind(vault, &config, Some(bind))
+        .await
+        .ok_or("the device sync did not start: the fixture's enrolment must dial a home")?;
+    assert_eq!(
+        listener_alpns(&sync),
+        Some(vec![SYNC_ALPN.to_vec()]),
+        "with a mesh bind the Mac app's listener offers the sync ALPN alone"
+    );
+    assert!(
+        serves_as_peer(&sync),
+        "with a mesh bind the Mac app's server serves as a peer, not as the elected home"
+    );
+    sync.stop().await;
+    Ok(())
+}
+
+#[test]
+fn embedded_device_without_a_mesh_bind_has_no_listener_and_no_peer_dialer() -> TestResult {
+    on_engine_stack(no_bind_has_no_listener_and_no_peer_dialer)
+}
+
+async fn no_bind_has_no_listener_and_no_peer_dialer() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let (vault, config) = enrolled_device(dir.path())?;
+    let sync = start_on_mesh_bind(vault, &config, None)
+        .await
+        .ok_or("the device sync did not start: the fixture's enrolment must dial a home")?;
+    assert!(
+        listener_alpns(&sync).is_none(),
+        "with no mesh bind the Mac app starts no listener"
+    );
+    assert!(
+        !has_peer_dialer(&sync),
+        "with no mesh bind the Mac app's link has no peer dialer"
+    );
+    sync.stop().await;
+    Ok(())
+}
+
+#[test]
+fn embedded_device_has_a_peer_dialer_exactly_when_its_listener_runs() -> TestResult {
+    on_engine_stack(peer_dialer_matches_listener)
+}
+
+async fn peer_dialer_matches_listener() -> TestResult {
+    let bound_dir = tempfile::tempdir()?;
+    let (bound_vault, bound_config) = enrolled_device(bound_dir.path())?;
+    let bind: SocketAddr = "127.0.0.1:0".parse()?;
+    let bound = start_on_mesh_bind(bound_vault, &bound_config, Some(bind))
+        .await
+        .ok_or("the device sync did not start: the fixture's enrolment must dial a home")?;
+    let plain_dir = tempfile::tempdir()?;
+    let (plain_vault, plain_config) = enrolled_device(plain_dir.path())?;
+    let plain = start_on_mesh_bind(plain_vault, &plain_config, None)
+        .await
+        .ok_or("the device sync did not start: the fixture's enrolment must dial a home")?;
+    assert_eq!(
+        has_peer_dialer(&bound),
+        listener_alpns(&bound).is_some(),
+        "with a mesh bind the Mac app's link has a peer dialer exactly when its listener runs"
+    );
+    assert_eq!(
+        has_peer_dialer(&plain),
+        listener_alpns(&plain).is_some(),
+        "with no mesh bind the Mac app's link has a peer dialer exactly when its listener runs"
+    );
+    assert!(
+        listener_alpns(&bound).is_some() && has_peer_dialer(&bound),
+        "with a mesh bind the Mac app has both a listener and a peer dialer"
+    );
+    bound.stop().await;
+    plain.stop().await;
+    Ok(())
+}
+
+#[test]
+fn embedded_device_serves_its_peers_the_windows_its_link_learned_after_start() -> TestResult {
+    on_engine_stack(serves_windows_learned_after_start)
+}
+
+async fn serves_windows_learned_after_start() -> TestResult {
+    const LEARNED: &str = "2019-04";
+    let dir = tempfile::tempdir()?;
+    let (vault, config) = enrolled_device(dir.path())?;
+    let bind: SocketAddr = "127.0.0.1:0".parse()?;
+    let sync = start_on_mesh_bind(Arc::clone(&vault), &config, Some(bind))
+        .await
+        .ok_or("the device sync did not start: the fixture's enrolment must dial a home")?;
+    assert!(
+        !served_root_windows(&sync)?.iter().any(|key| key == LEARNED),
+        "a fresh device's server names no window {LEARNED}"
+    );
+    persist_link_learned_window(&vault, LEARNED)?;
+    assert!(
+        served_root_windows(&sync)?.iter().any(|key| key == LEARNED),
+        "the Mac app's server names to its peers a window its link learned after start"
+    );
+    sync.stop().await;
+    Ok(())
+}
+
+#[test]
+fn embedded_device_whose_install_seed_is_not_the_vault_root_still_starts() -> TestResult {
+    on_engine_stack(another_seed_still_starts)
+}
+
+async fn another_seed_still_starts() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let (vault, config) = enrolled_device_holding_another_seed(dir.path())?;
+    let bind: SocketAddr = "127.0.0.1:0".parse()?;
+    let sync = start_on_mesh_bind(vault, &config, Some(bind))
+        .await
+        .ok_or("the device sync did not start on an install whose seed is not the vault's root")?;
+    assert!(
+        listener_alpns(&sync).is_some() && serves_as_peer(&sync),
+        "the Mac app's device link serves its peers whatever host seed its install holds"
+    );
+    sync.stop().await;
+    Ok(())
+}
+
+#[test]
+fn embedded_device_start_answers_no_takeover_ask_of_its_home_runs() -> TestResult {
+    on_engine_stack(start_answers_no_takeover_ask)
+}
+
+async fn start_answers_no_takeover_ask() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let (vault, config) = enrolled_device(dir.path())?;
+    vault
+        .ensure_embedded_owner_actor()
+        .map_err(|error| error.to_string())?;
+    let raised = vault.raise_takeover_ask(
+        "browser",
+        oneiron::EntityId::now(),
+        "a run on the home asks its owner",
+        1,
+        "take",
+    )?;
+    assert_eq!(raised.len(), 1, "the fixture's vault asks its one owner");
+    let sync = start_on_mesh_bind(Arc::clone(&vault), &config, None)
+        .await
+        .ok_or("the device sync did not start: the fixture's enrolment must dial a home")?;
+    assert_eq!(
+        vault.clear_open_takeover_asks()?,
+        1,
+        "starting the Mac app's device link answers no takeover ask a run of its home raised"
+    );
+    sync.stop().await;
+    Ok(())
+}

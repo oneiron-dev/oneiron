@@ -11,6 +11,7 @@ use super::{HousekeepingBudget, HousekeepingReport, HousekeepingSweep, SweepOutc
 use crate::config::VaultConfig;
 use crate::error::ErrorKind;
 use crate::ports::ManualClock;
+use crate::store::housekeeping_schedule::Runner;
 use crate::{
     ClaimApprovalStatus, ClaimCandidate, ClaimSource, ClaimSubject, EdgeActorClass, EntityId,
     TimeRange, Vault, WriteActor, WriteEnvelope, WriteProvenance,
@@ -46,18 +47,14 @@ fn inject(sweep: HousekeepingSweep, what: Injected) {
 
 const T0: u64 = 1_800_000_000;
 
-const ENGINE_SWEEPS: [HousekeepingSweep; 10] = [
-    HousekeepingSweep::SecretLeaseExpiry,
-    HousekeepingSweep::CriticalConfirmExpiry,
-    HousekeepingSweep::SymbolLeaseExpiry,
-    HousekeepingSweep::VoicePrintRetention,
-    HousekeepingSweep::EsignExpiry,
-    HousekeepingSweep::EsignSealBackstop,
-    HousekeepingSweep::CommitmentLapse,
-    HousekeepingSweep::GateDecisionRetention,
-    HousekeepingSweep::HardEraseSweep,
-    HousekeepingSweep::PprCacheEviction,
-];
+/// The sweeps the engine's pass runs itself, read from each sweep's runner, so a sweep added
+/// later is counted without an edit here; every other sweep is the host's.
+fn engine_sweeps() -> Vec<HousekeepingSweep> {
+    HousekeepingSweep::ALL
+        .into_iter()
+        .filter(|sweep| matches!(sweep.runner(), Runner::Engine))
+        .collect()
+}
 
 fn open(dir: &std::path::Path, clock: &Arc<ManualClock>) -> Vault {
     let mut config = VaultConfig::device();
@@ -87,9 +84,13 @@ fn not_due(report: &HousekeepingReport, sweep: HousekeepingSweep) -> bool {
 fn a_restart_in_the_middle_of_a_pass_resumes_the_unfinished_sweeps_and_reruns_none_early() {
     let dir = tempfile::tempdir().expect("tempdir");
     let clock = ManualClock::new(T0);
+    // Every sweep is first due at T0, and the runner takes rows due at one
+    // time in job-code order, so the crash at esign_seal_backstop comes after
+    // commitment_lapse, critical_confirm_expiry and esign_expiry finished and
+    // before the six later sweeps started.
     {
         let vault = open(dir.path(), &clock);
-        inject(HousekeepingSweep::VoicePrintRetention, Injected::Crash);
+        inject(HousekeepingSweep::EsignSealBackstop, Injected::Crash);
         let crashed = std::panic::catch_unwind(AssertUnwindSafe(|| {
             vault.housekeeping(HousekeepingBudget::unbounded())
         }));
@@ -100,9 +101,9 @@ fn a_restart_in_the_middle_of_a_pass_resumes_the_unfinished_sweeps_and_reruns_no
     let vault = open(dir.path(), &clock);
     let report = pass(&vault);
     for sweep in [
-        HousekeepingSweep::SecretLeaseExpiry,
+        HousekeepingSweep::CommitmentLapse,
         HousekeepingSweep::CriticalConfirmExpiry,
-        HousekeepingSweep::SymbolLeaseExpiry,
+        HousekeepingSweep::EsignExpiry,
     ] {
         assert!(
             not_due(&report, sweep),
@@ -110,12 +111,12 @@ fn a_restart_in_the_middle_of_a_pass_resumes_the_unfinished_sweeps_and_reruns_no
         );
     }
     for sweep in [
-        HousekeepingSweep::EsignExpiry,
-        HousekeepingSweep::EsignSealBackstop,
-        HousekeepingSweep::CommitmentLapse,
         HousekeepingSweep::GateDecisionRetention,
         HousekeepingSweep::HardEraseSweep,
         HousekeepingSweep::PprCacheEviction,
+        HousekeepingSweep::SecretLeaseExpiry,
+        HousekeepingSweep::SymbolLeaseExpiry,
+        HousekeepingSweep::VoicePrintRetention,
     ] {
         assert!(
             ran(&report, sweep),
@@ -125,14 +126,14 @@ fn a_restart_in_the_middle_of_a_pass_resumes_the_unfinished_sweeps_and_reruns_no
     // The interrupted run counts as a failure: retried after the first
     // backoff rather than first at every restart, and never dropped.
     assert_eq!(
-        outcome(&report, HousekeepingSweep::VoicePrintRetention),
+        outcome(&report, HousekeepingSweep::EsignSealBackstop),
         &SweepOutcome::NotDue { due_at: T0 + 60 }
     );
 
     clock.set(T0 + 60);
     let report = pass(&vault);
     assert!(
-        ran(&report, HousekeepingSweep::VoicePrintRetention),
+        ran(&report, HousekeepingSweep::EsignSealBackstop),
         "the interrupted sweep was skipped: {report:#?}"
     );
     assert!(
@@ -140,13 +141,14 @@ fn a_restart_in_the_middle_of_a_pass_resumes_the_unfinished_sweeps_and_reruns_no
         "{report:#?}"
     );
 
-    // Once it finished, it waits its whole cadence again.
+    // Once it finished, it is due at its next fifteen-minute occurrence: the
+    // retry served the T0 occurrence and left the cadence's grid where it was.
     clock.set(T0 + 61);
     let report = pass(&vault);
     assert_eq!(
-        outcome(&report, HousekeepingSweep::VoicePrintRetention),
+        outcome(&report, HousekeepingSweep::EsignSealBackstop),
         &SweepOutcome::NotDue {
-            due_at: T0 + 60 + 60 * 60
+            due_at: T0 + 15 * 60
         }
     );
 }
@@ -166,7 +168,8 @@ fn a_failing_or_panicking_sweep_is_reported_and_retried_and_never_stops_the_othe
         }
     );
     assert_eq!(report.failed(), 1, "{report:#?}");
-    for sweep in ENGINE_SWEEPS {
+    let engine = engine_sweeps();
+    for &sweep in &engine {
         if sweep != HousekeepingSweep::EsignExpiry {
             assert!(
                 ran(&report, sweep),
@@ -175,7 +178,7 @@ fn a_failing_or_panicking_sweep_is_reported_and_retried_and_never_stops_the_othe
         }
     }
     for sweep in HousekeepingSweep::ALL {
-        if !ENGINE_SWEEPS.contains(&sweep) {
+        if !engine.contains(&sweep) {
             assert!(
                 matches!(outcome(&report, sweep), SweepOutcome::HostOnly { .. }),
                 "{sweep:?} is the host's: {report:#?}"
@@ -201,7 +204,7 @@ fn a_failing_or_panicking_sweep_is_reported_and_retried_and_never_stops_the_othe
         outcome(&report, HousekeepingSweep::HardEraseSweep),
         &SweepOutcome::Panicked
     );
-    assert_eq!(report.ran(), ENGINE_SWEEPS.len() - 1, "{report:#?}");
+    assert_eq!(report.ran(), engine.len() - 1, "{report:#?}");
 }
 
 #[test]
@@ -209,8 +212,9 @@ fn the_owners_run_now_left_over_by_its_budget_runs_on_the_next_pass() {
     let dir = tempfile::tempdir().expect("tempdir");
     let clock = ManualClock::new(T0);
     let vault = open(dir.path(), &clock);
+    let engine = engine_sweeps();
     let report = pass(&vault);
-    assert_eq!(report.ran(), ENGINE_SWEEPS.len(), "{report:#?}");
+    assert_eq!(report.ran(), engine.len(), "{report:#?}");
 
     // Nothing is due; the owner asks for everything with no time to spare.
     clock.set(T0 + 1);
@@ -218,11 +222,12 @@ fn the_owners_run_now_left_over_by_its_budget_runs_on_the_next_pass() {
         .housekeeping_all(HousekeepingBudget::within(std::time::Duration::ZERO))
         .expect("the schedule reads");
     assert_eq!(report.ran(), 1, "{report:#?}");
-    let left: Vec<_> = ENGINE_SWEEPS
-        .into_iter()
+    let left: Vec<_> = engine
+        .iter()
+        .copied()
         .filter(|&sweep| matches!(outcome(&report, sweep), SweepOutcome::OutOfBudget))
         .collect();
-    assert_eq!(left.len(), ENGINE_SWEEPS.len() - 1, "{report:#?}");
+    assert_eq!(left.len(), engine.len() - 1, "{report:#?}");
 
     clock.set(T0 + 2);
     let report = pass(&vault);
@@ -326,23 +331,37 @@ fn a_confirm_walk_that_spans_passes_ends_and_retires_the_deadline_it_covered() {
     );
 }
 
-// FIX [LIBTEST-QUARANTINE-HOUSEKEEPING-TESTS-ITEMS]: the lib test target's type check fails here (1 errors: E0639 x1); port it, then drop this gate
-#[cfg(any())]
+/// The windows a report's erasure run walked: compacted, or found holding no history and left as
+/// they are. Only the owner's run walks a window when no obligation is due.
+#[cfg(feature = "sync")]
+fn erase_walk(report: &HousekeepingReport) -> u64 {
+    match outcome(report, HousekeepingSweep::HardEraseSweep) {
+        SweepOutcome::Ran {
+            work: super::SweepWork::HardErase(work),
+            ..
+        } => work.windows_compacted + work.windows_unchanged,
+        other => panic!("the erasure sweep did not run: {other:?}"),
+    }
+}
+
 /// Sol R4 F2 (#1456): an owner's erasure run cut short before it compacts is
-/// still the owner's when the next pass retries it, so the retry compacts the
-/// history the owner asked to drop, with no obligation due. A scheduled run
-/// would leave it.
+/// still the owner's when the next pass retries it, so the retry walks every
+/// window the owner asked to have cut, with no obligation due. A scheduled run
+/// walks none. The setup's own discharge already cut the window, so the walk
+/// finds it holding no history and leaves it as it is (#7908).
 #[cfg(feature = "sync")]
 #[test]
 fn an_owners_erasure_run_cut_short_is_retried_as_the_owners() {
     let dir = tempfile::tempdir().expect("tempdir");
     let clock = ManualClock::new(T0);
-    let config = || VaultConfig {
-        store_clock: clock.bundle(),
-        ..crate::test_util::embedding_test_config()
+    let config = || {
+        let mut config = crate::test_util::embedding_test_config();
+        config.store_clock = clock.bundle();
+        config
     };
     {
         let vault = Vault::open(dir.path(), config()).expect("open vault");
+        vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
         // A persisted window, and no obligation left: an erasure the owner's
         // own sweep has already discharged.
         let erased = EntityId::now();
@@ -371,32 +390,34 @@ fn an_owners_erasure_run_cut_short_is_retried_as_the_owners() {
 
     clock.set(T0 + 3_600);
     let vault = Vault::open(dir.path(), config()).expect("reopen vault");
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let report = pass(&vault);
-
     assert!(
-        matches!(
-            outcome(&report, HousekeepingSweep::HardEraseSweep),
-            SweepOutcome::Ran {
-                work: super::SweepWork::HardErase(super::HardEraseWork {
-                    windows_compacted: 1..,
-                    ..
-                }),
-                ..
-            }
-        ),
-        "{report:#?}"
+        erase_walk(&report) >= 1,
+        "the retry walked no window: {report:#?}"
+    );
+
+    // The next run is the schedule's, with no obligation due: it walks no window.
+    clock.set(T0 + 3_601);
+    let due_at = match outcome(&pass(&vault), HousekeepingSweep::HardEraseSweep) {
+        SweepOutcome::NotDue { due_at } => *due_at,
+        other => panic!("the retry left the erasure sweep {other:?}"),
+    };
+    clock.set(due_at);
+    let report = pass(&vault);
+    assert_eq!(
+        erase_walk(&report),
+        0,
+        "a scheduled run walked a window: {report:#?}"
     );
 }
 
-// FIX [LIBTEST-QUARANTINE-HOUSEKEEPING-TESTS-ITEMS]: the lib test target's type check fails here (1 errors: E0639 x1); port it, then drop this gate
-#[cfg(any())]
-/// Engine edge on Sol R4 F2 (#1456): a window a caller holds when the
-/// owner's erasure run comes is left out of it, and the run stays the
-/// owner's. Once the window is free, the retry compacts it, with no
-/// obligation due.
+/// Engine edge on Sol R4 F2 (#1456), census L6-05: a window a caller holds
+/// through the owner's erasure run is compacted while the caller keeps it,
+/// under its history-free pin, so the owner's run has nothing left to retry.
 #[cfg(feature = "sync")]
 #[test]
-fn a_window_held_through_the_owners_erasure_run_is_compacted_on_its_retry() {
+fn a_window_held_through_the_owners_erasure_run_is_compacted_while_held() {
     use crate::sync::bridge::Materializer;
     use crate::sync::manager::WindowManager;
     use crate::sync::types::WindowKey;
@@ -411,16 +432,10 @@ fn a_window_held_through_the_owners_erasure_run_is_compacted_on_its_retry() {
         };
     let dir = tempfile::tempdir().expect("tempdir");
     let clock = ManualClock::new(T0);
-    let vault = Arc::new(
-        Vault::open(
-            dir.path(),
-            VaultConfig {
-                store_clock: clock.bundle(),
-                ..crate::test_util::embedding_test_config()
-            },
-        )
-        .expect("open vault"),
-    );
+    let mut config = crate::test_util::embedding_test_config();
+    config.store_clock = clock.bundle();
+    let vault = Arc::new(Vault::open(dir.path(), config).expect("open vault"));
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     // A persisted window, and no obligation left.
     let erased = EntityId::now();
     vault
@@ -452,12 +467,8 @@ fn a_window_held_through_the_owners_erasure_run_is_compacted_on_its_retry() {
         .housekeeping_all(HousekeepingBudget::unbounded())
         .expect("the schedule reads");
     let work = erase_work(&owners);
-    assert_eq!(work.windows_compacted, 0);
-    assert!(work.windows_deferred_live >= 1, "{work:?}");
-
+    assert!(work.windows_compacted >= 1, "{work:?}");
+    assert!(work.windows_compacted_held >= 1, "{work:?}");
+    assert_eq!(work.windows_deferred_live, 0, "{work:?}");
     drop(held);
-    clock.set(T0 + 3_600);
-    let work = erase_work(&pass(&vault));
-    assert!(work.windows_unloaded >= 1, "{work:?}");
-    assert!(work.windows_compacted >= 1, "the retry was the owner's");
 }

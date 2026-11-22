@@ -19,6 +19,7 @@
 //! reads none.
 
 use heed::RwTxn;
+use oneiron_contracts::fingerprint::ContentHash;
 
 use super::super::super::replay_capsule::{StepContextRef, StepReplayCapsule};
 use super::super::super::replay_context::{StepContextCommit, StepReplayContext};
@@ -137,7 +138,7 @@ fn attach_in_txn(
     capsule.context = Some(StepContextRef {
         body,
         path,
-        digest: *blake3::hash(&bytes).as_bytes(),
+        digest: *ContentHash::of(&bytes).as_bytes(),
         erased: false,
     });
     capsule.fold_words.context.clone_from(&commit.fold_words);
@@ -209,5 +210,5 @@ pub(crate) fn capsule_context_body(
         Err(error) if body_drifted(&error) => return Ok(None),
         held => held?,
     };
-    Ok(held.filter(|bytes| *blake3::hash(bytes).as_bytes() == context.digest))
+    Ok(held.filter(|bytes| *ContentHash::of(bytes).as_bytes() == context.digest))
 }

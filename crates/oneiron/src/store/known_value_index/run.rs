@@ -181,7 +181,7 @@ impl RunKnownSource {
                 master,
                 entries
                     .iter()
-                    .map(|(handle, entry)| (entry, ValueOrigin::Person, (*handle).clone())),
+                    .map(|(handle, entry)| (entry, 0, ValueOrigin::Person, (*handle).clone())),
             )?
         };
         // Matchers, entries and prints drop before the snapshot and guard.

@@ -38,12 +38,36 @@ use super::{
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::side_table::SideKey;
-use crate::store::ManifestDbs;
-use crate::store::checkpoint_payload::rows::{
-    self, ActorPart, Captured, OpenedOwnerRows, OwnerRef, OwnerRows, Restored, RowLocator, RowPart,
-    TypedRow, Unresolved,
+use crate::store::checkpoint_payload::rows::descriptor::{
+    Adapter, Capture, CapturedByAdapter, Check, Join, Restore,
 };
+use crate::store::checkpoint_payload::rows::{
+    self, ActorPart, Captured, OpenedOwnerRows, OwnerRef, Restored, RowLocator, RowPart, TypedRow,
+    Unresolved,
+};
+use crate::store::{ManifestDbs, Store};
 use crate::typed_body::BodyActor;
+
+/// Every office row by artifact, each actor split out. The capture is the
+/// adapter's own: a waiting member's membership row holds while the opener
+/// its proposal names does, and the deck oracle's receipts and the live
+/// edit groups are read but never compartmented. The restore is its own:
+/// the export and author token refs move around the rows it writes.
+pub(crate) static ADAPTER: Adapter = Adapter {
+    tables: &[
+        &CapturedByAdapter(SOURCES),
+        &CapturedByAdapter(FORKS),
+        &CapturedByAdapter(EXPORTS),
+        &CapturedByAdapter(EXPORT_AUTHORS),
+        &CapturedByAdapter(PROPOSALS),
+        &CapturedByAdapter(MEMBERSHIP),
+    ],
+    capture: Capture::Own(capture),
+    check: Check::ByTable,
+    row_owner: None,
+    join: Join::Row(join),
+    restore: Restore::Own(restore_with_token_refs),
+};
 
 /// The field a deck fork's or a proposal's opener fills.
 const OPENER: &str = "opener";
@@ -228,36 +252,35 @@ fn split_export_author(
 }
 
 /// Every office row in `txn`, by artifact.
-pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Captured> {
-    let mut out = Captured::default();
-    for row in rows::typed_rows(dbs, txn, SOURCES, &mut out)? {
+fn capture(store: &Store, txn: &RoTxn<'_>, out: &mut Captured) -> Result<()> {
+    for row in rows::typed_rows(store, txn, SOURCES, out)? {
         out.exact(OwnerRef::entity(&row.key), row.at, row.bytes);
     }
-    for row in rows::typed_rows(dbs, txn, FORKS, &mut out)? {
+    for row in rows::typed_rows(store, txn, FORKS, out)? {
         let (artifact, fork) = row.key;
         if row.value.artifact != artifact || row.value.id != fork {
             out.unclassified(row.at, None, Unresolved::NoOwner);
             continue;
         }
         let owner = OwnerRef::entity(&artifact);
-        rows::split_actors(&mut out, owner, FORKS, row, take_fork_actors)?;
+        rows::split_actors(out, owner, FORKS, row, take_fork_actors)?;
     }
-    for row in rows::typed_rows(dbs, txn, EXPORTS, &mut out)? {
+    for row in rows::typed_rows(store, txn, EXPORTS, out)? {
         if row.key != version_key(&row.value.artifact, row.value.version) {
             out.unclassified(row.at, None, Unresolved::NoOwner);
             continue;
         }
         let owner = OwnerRef::entity(&row.value.artifact);
-        split_export(&mut out, owner, row)?;
+        split_export(out, owner, row)?;
     }
-    for row in rows::typed_rows(dbs, txn, EXPORT_AUTHORS, &mut out)? {
+    for row in rows::typed_rows(store, txn, EXPORT_AUTHORS, out)? {
         let owner = OwnerRef::entity(&row.key.0);
-        split_export_author(&mut out, owner, row)?;
+        split_export_author(out, owner, row)?;
     }
     // A waiting member's membership row goes with it when its opener is
     // erased.
     let mut waiting = BTreeMap::new();
-    for row in rows::typed_rows(dbs, txn, PROPOSALS, &mut out)? {
+    for row in rows::typed_rows(store, txn, PROPOSALS, out)? {
         let proposal = row.key;
         let header = &row.value.header;
         if header.proposal != proposal {
@@ -272,58 +295,22 @@ pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Capture
             }
         }
         let owner = OwnerRef::entity(&header.artifact);
-        rows::split_actors(&mut out, owner, PROPOSALS, row, take_proposal_actors)?;
+        rows::split_actors(out, owner, PROPOSALS, row, take_proposal_actors)?;
     }
-    for row in rows::typed_rows(dbs, txn, MEMBERSHIP, &mut out)? {
+    for row in rows::typed_rows(store, txn, MEMBERSHIP, out)? {
         let owner = OwnerRef::entity(&row.key.0);
         if let Some(opener) = waiting.get(&row.key) {
             out.depends(owner, &row.at, OwnerRef::entity(opener));
         }
         out.exact(owner, row.at, row.bytes);
     }
-    for row in rows::typed_rows(dbs, txn, ORACLE, &mut out)? {
+    for row in rows::typed_rows(store, txn, ORACLE, out)? {
         out.unclassified(row.at, None, Unresolved::NoOwner);
     }
-    for row in rows::typed_rows(dbs, txn, LIVE_EDIT_GROUPS, &mut out)? {
+    for row in rows::typed_rows(store, txn, LIVE_EDIT_GROUPS, out)? {
         out.unclassified(row.at, None, Unresolved::NoOwner);
     }
-    Ok(out)
-}
-
-fn owns(at: &RowLocator) -> bool {
-    [
-        SOURCES.decl(),
-        FORKS.decl(),
-        EXPORTS.decl(),
-        EXPORT_AUTHORS.decl(),
-        PROPOSALS.decl(),
-        MEMBERSHIP.decl(),
-    ]
-    .into_iter()
-    .any(|decl| at.in_table(decl))
-}
-
-/// The bundle framing of `rows`' office parts.
-pub(crate) fn bytes_for_owner(rows: &OwnerRows) -> Result<Vec<u8>> {
-    rows::frame_owner(rows, owns)
-}
-
-fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
-    if at.in_table(SOURCES.decl()) {
-        rows::check_row(SOURCES, at, value)
-    } else if at.in_table(FORKS.decl()) {
-        rows::check_row(FORKS, at, value)
-    } else if at.in_table(EXPORTS.decl()) {
-        rows::check_row(EXPORTS, at, value)
-    } else if at.in_table(EXPORT_AUTHORS.decl()) {
-        rows::check_row(EXPORT_AUTHORS, at, value)
-    } else if at.in_table(PROPOSALS.decl()) {
-        rows::check_row(PROPOSALS, at, value)
-    } else if at.in_table(MEMBERSHIP.decl()) {
-        rows::check_row(MEMBERSHIP, at, value)
-    } else {
-        Err(rows::bad_part())
-    }
+    Ok(())
 }
 
 /// An export with its actor and author back when its actor opened (both or
@@ -405,7 +392,8 @@ fn join_proposal(
 /// A no-one-form row with its opened actors back, as the erase leaves it
 /// for each actor that did not open.
 fn join(
-    dbs: &impl ManifestDbs,
+    store: &Store,
+    _: &RoTxn<'_>,
     at: &RowLocator,
     value: &[u8],
     parts: &[&ActorPart],
@@ -424,7 +412,7 @@ fn join(
         return join_export_author(value, parts).map(Some);
     }
     if at.in_table(PROPOSALS.decl()) {
-        return join_proposal(dbs, value, parts);
+        return join_proposal(store, value, parts);
     }
     Err(rows::bad_part())
 }
@@ -470,15 +458,15 @@ fn touched_export_keys(opened: &OpenedOwnerRows) -> TouchedExportKeys {
 /// restored rows' refs land after, through the same helpers the live
 /// writers use. A part the restore leaves out keeps its live row, whose
 /// ref is dropped and noted back unchanged.
-pub(crate) fn restore_in_txn(
-    dbs: &impl ManifestDbs,
+fn restore_with_token_refs(
+    store: &Store,
     txn: &mut RwTxn<'_>,
     opened: OpenedOwnerRows,
 ) -> Result<Restored> {
     let touched = touched_export_keys(&opened);
     let mut old_exports = Vec::new();
     for key in &touched.exports {
-        if let Some(record) = EXPORTS.get(dbs, txn, key)? {
+        if let Some(record) = EXPORTS.get(store, txn, key)? {
             if let Some(token) = record.token {
                 old_exports.push((token, key.clone()));
             }
@@ -486,29 +474,27 @@ pub(crate) fn restore_in_txn(
     }
     let mut old_authors = Vec::new();
     for key in &touched.authors {
-        if let Some(record) = EXPORT_AUTHORS.get(dbs, txn, key)? {
+        if let Some(record) = EXPORT_AUTHORS.get(store, txn, key)? {
             old_authors.push((record.token, *key));
         }
     }
     for (token, key) in &old_exports {
-        unref_export(dbs, txn, token, key)?;
+        unref_export(store, txn, token, key)?;
     }
     for (token, key) in &old_authors {
-        unref_author(dbs, txn, token, key)?;
+        unref_author(store, txn, token, key)?;
     }
-    let restored = rows::restore_parts(dbs, txn, &opened, check, |_, at, value, parts| {
-        join(dbs, at, value, parts)
-    })?;
+    let restored = ADAPTER.restore_parts(store, txn, &opened)?;
     for key in &touched.exports {
-        if let Some(record) = EXPORTS.get(dbs, txn, key)? {
+        if let Some(record) = EXPORTS.get(store, txn, key)? {
             if let Some(token) = record.token {
-                note_export_put(dbs, txn, key, &token)?;
+                note_export_put(store, txn, key, &token)?;
             }
         }
     }
     for key in &touched.authors {
-        if let Some(record) = EXPORT_AUTHORS.get(dbs, txn, key)? {
-            note_author_put(dbs, txn, key, &record.token)?;
+        if let Some(record) = EXPORT_AUTHORS.get(store, txn, key)? {
+            note_author_put(store, txn, key, &record.token)?;
         }
     }
     Ok(restored)

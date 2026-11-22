@@ -186,6 +186,16 @@ pub enum McpCodeExecutionError {
         "execute_code run stopped: no provider answered a model call; call again with the same run_ref in {retry_after} s"
     )]
     ProviderUnavailable { retry_after: u64 },
+    /// A resumed pending step's program changed an effect step (L8-23): the entry holds with the
+    /// walk's report line, and the owner answers once to re-fire or leave the drift.
+    #[error("execute_code run held with resume divergence: {0}")]
+    ResumeDivergence(String),
+    /// An off-record session refused an act the run took in it (FIX
+    /// OFF-RECORD-RUN-POLICY-REFUSAL-500): the caller's refusal, answered as
+    /// the session's other refusals are, never as a failure of the run.
+    /// Entering the run again meets it again.
+    #[error("execute_code run refused: {}", .0.message)]
+    Refused(Box<oneiron::MemoryError>),
 }
 
 impl McpCodeExecutionError {
@@ -198,6 +208,8 @@ impl McpCodeExecutionError {
             Self::RunBinding(_) => "code_run_binding_failed",
             Self::Run(_) => "code_run_failed",
             Self::ProviderUnavailable { .. } => "model_unavailable",
+            Self::ResumeDivergence(_) => "resume_divergence",
+            Self::Refused(_) => "code_run_refused",
         }
     }
 }

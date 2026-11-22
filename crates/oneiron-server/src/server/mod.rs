@@ -1,5 +1,4 @@
 //! Sync server state and maintenance jobs, split by concern.
-mod agent_wait_settle;
 mod artifact_previews;
 mod board_publisher;
 mod booking_calls;
@@ -15,8 +14,10 @@ mod core;
 mod courtesy_delete;
 mod deletion;
 mod desktop_seats;
+mod device_burst_drain;
 mod embedding;
 mod hook_regen_pass;
+pub(crate) mod hook_transcript_uploads;
 mod housekeeping;
 mod leases;
 mod lifecycle;
@@ -25,9 +26,10 @@ mod media_door;
 mod media_embedding;
 pub(crate) mod meeting_imports;
 mod merge_queue_checker;
+#[cfg(all(oneiron_test_support, unix))]
+pub(crate) use merge_queue_checker::run_empty_isolated_check;
 mod message_stream;
 mod mirror_pushes;
-mod model_settings;
 mod model_setup;
 mod note_editors;
 #[cfg(unix)]
@@ -35,6 +37,7 @@ mod organs;
 mod oversight;
 mod owner_program_rows;
 mod owner_work_drain;
+mod phonetic_embedding;
 mod policy_doors;
 mod presence;
 mod read_shape;

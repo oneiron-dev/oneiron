@@ -118,6 +118,22 @@ pub(super) const ENTITY_DOC_FORK_SNAPSHOT: SideTable<String, Vec<u8>, Raw> =
 /// Review bundle of every fork opened under one text-edit proposal.
 pub(super) const ENTITY_DOC_PROPOSAL_BUNDLE: SideTable<String, ProposalBundle, Named> =
     SideTable::new(&side_table::ENTITY_DOC_PROPOSAL_BUNDLE);
+
+/// Puts a fork's snapshot for the checkpoint-pins door: `full` cut at
+/// `base`, as `retain_fork` keeps it.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_pins_fork_snapshot_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    key: &str,
+    full: &[u8],
+    base: &[u8],
+) -> Result<()> {
+    let doc = EntityDoc::from_snapshot(full)?;
+    let shallow = doc.shallow_snapshot(base)?;
+    ENTITY_DOC_FORK_SNAPSHOT.put(store, txn, &key.to_owned(), &shallow)
+}
+
 /// Durable settlement receipt for one fork's merge/switch/reject verdict,
 /// keyed by entity then receipt id.
 pub(super) const ENTITY_DOC_RECEIPT: SideTable<HexPair, TextReceipt, Named> =
@@ -303,6 +319,11 @@ pub(super) fn covered(
     actor: WriteActor,
 ) -> Result<bool> {
     validate_actor(vault, txn, actor)?;
+    // A bound room's TURN or MESSAGE: only its two writers are covered; anyone
+    // else's change stays a proposal (WORK-TALK-DOC-EDIT = A).
+    if !super::bound_room::bound_writer_admits_in_txn(vault, txn, entity, actor)? {
+        return Ok(false);
+    }
     match auth {
         DocAuthorization::Owner(owner) => Ok(owner_in_txn(vault, txn, owner)?
             == actor.entity_ref()
@@ -437,7 +458,7 @@ impl Vault {
             for fork in bundle.pending() {
                 let entity = EntityId::from_hex(&fork.entity)?;
                 authorize(self, txn, authorization, &entity, actor)?;
-                self.authorize_shared_content_write_in_txn(txn, entity, &actor)?;
+                super::bound_room::authorize_content_write_in_txn(self, txn, entity, &actor)?;
                 settle_one(self, txn, &fork.fork, verb, actor, at)?;
             }
             let mut bundle = read_bundle(&self.store, txn, proposal)?;
@@ -492,7 +513,7 @@ pub(super) fn open_proposal_in_txn(
         validate_actor(vault, txn, req.actor)?;
         // A shared vault's role and record scope, in this writer, for a fork
         // retained for review as for one a grant lands (FIX 9846).
-        vault.authorize_shared_content_write_in_txn(txn, req.entity, &req.actor)?;
+        super::bound_room::authorize_content_write_in_txn(vault, txn, req.entity, &req.actor)?;
         if let Some(refusal) = vault.store.use_restricted_in_txn(txn, &req.entity)? {
             return Err(refusal);
         }

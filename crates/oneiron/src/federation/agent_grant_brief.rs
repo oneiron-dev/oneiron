@@ -91,9 +91,12 @@ impl Vault {
         actor: WriteActor,
     ) -> Result<BriefGrants> {
         let as_of_secs = self.instant_in_txn(txn)?.secs();
+        // `as_of_secs` reports the authority instant; each Grant's standing is
+        // judged on the grant-judgement clock (census L7-18).
+        let grant_now = self.grant_judgement_secs_in_txn(txn)?;
         Ok(BriefGrants {
             as_of_secs,
-            owner_agent_grants: self.owner_agent_grants_in_txn(txn, actor, as_of_secs)?,
+            owner_agent_grants: self.owner_agent_grants_in_txn(txn, actor, grant_now)?,
             other_federation_grants: None,
         })
     }

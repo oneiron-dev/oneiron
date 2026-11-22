@@ -11,5 +11,5 @@
   },
   "section": false,
   "host_door": true,
-  "host_door_proof": "owner"
+  "host_door_proof": "mailbox_person"
 }

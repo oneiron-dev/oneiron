@@ -4,12 +4,16 @@
 //!   caller names PDF artifacts it already registered
 //!   (`vault.artifacts.create`), places recipients and fields, and the draft
 //!   lands as the caller, person or agent. Drafting sends nothing.
+//! - `vault.esign.fields.place`: the draft's fields, placed again before it
+//!   is sent (SGN-07), with `vault.esign.create`'s authority; the owner's
+//!   field editor exports them in this row's shape.
 //! - `vault.esign.get`: the document's state and its audit trail, or why
 //!   its trail does not read, with its delivery receipts either way.
 //! - `vault.esign.links.issue`: the owner mints the recipients' signing
 //!   capabilities in DRAFT and receives them, once, to deliver.
 //! - `vault.esign.send_for_signature`, `vault.esign.remind`,
-//!   `vault.esign.void`: the outbound verbs, each one dispatch through the
+//!   `vault.esign.void`, `vault.esign.extend`: the outbound verbs, each one
+//!   dispatch through the
 //!   OF-327 gate as the caller ([`Vault::dispatch_esign`]); the gate's grants
 //!   and ceilings rule a person's send, and the signing principal's autonomy
 //!   dial an agent's.
@@ -43,18 +47,20 @@ use oneiron_delivery_vocabulary::delivery_window::types::DeliveryWindowDecision 
 use serde::{Deserialize, Serialize};
 
 mod draft;
+mod fields;
 mod links;
 mod preview;
 mod read;
 
+pub use fields::EsignFieldsPlaceRequest;
 pub use preview::{EsignSigningPreviewRequest, EsignSigningPreviewView, layout_esign_preview};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::blob_artifact::esign::door::{
-    EsignCreateRequest, EsignDispatchRequest, EsignGetRequest, EsignLinksIssueRequest,
-    EsignSealAttemptView, EsignSealGetRequest, EsignSealedItemView, EsignSealedView,
-    EsignSigningImageRequest, EsignSigningImageView, EsignSigningPdfRequest, EsignSigningPdfView,
-    EsignSigningSignatureRequest, EsignSigningSignatureView, EsignVoidRequest,
+    EsignCreateRequest, EsignDispatchRequest, EsignExtendRequest, EsignGetRequest,
+    EsignLinksIssueRequest, EsignSealAttemptView, EsignSealGetRequest, EsignSealedItemView,
+    EsignSealedView, EsignSigningImageRequest, EsignSigningImageView, EsignSigningPdfRequest,
+    EsignSigningPdfView, EsignSigningSignatureRequest, EsignSigningSignatureView, EsignVoidRequest,
 };
 
 /// A drafted signing document, as it landed.
@@ -108,7 +114,8 @@ pub struct EsignSigningRequest {
     /// ceremony's authority; a credential the call also presents only
     /// classes the caller (an agent's Complete is an automated sign act).
     pub token: String,
-    /// Load, save one field, complete with consent, or reject.
+    /// Load, save one field, review, complete with consent after a review
+    /// that still stands, or reject.
     pub action: super::SigningAction,
 }
 
@@ -134,7 +141,7 @@ pub struct EsignSealView {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EsignDispatchView {
     pub document_ref: String,
-    /// `send_for_signature`, `remind` or `void`.
+    /// `send_for_signature`, `remind`, `void` or `extend`.
     pub verb: String,
     /// The dispatch's intent ref; its retry key is the tail, the key a
     /// retry of a call that named none passes as `idempotency_key`.
@@ -380,6 +387,29 @@ impl Memory<'_> {
     pub fn esign_remind(&self, input: &EsignDispatchRequest) -> MemoryResult<EsignDispatchView> {
         self.esign_dispatch(
             EsignOutboundVerb::Remind,
+            &input.document_ref,
+            input.recipient_count,
+            None,
+            input.on_behalf_of.as_deref(),
+            input.idempotency_key.as_deref(),
+        )
+    }
+
+    /// `vault.esign.extend`: moves a pending document's signing window to
+    /// `expires_at`, through the dispatch gate, as the caller, on the rail
+    /// remind and void run on (RULING ESIGN-WINDOW-EXTEND-AUTHORITY = A): the
+    /// gate's grants and ceilings rule a person's act, the signing
+    /// principal's autonomy dial an agent's. Each live link is re-dated to
+    /// the new deadline, never past its own cap; a terminal document, or one
+    /// an unfinished recipient's window has already passed, does not move.
+    /// # Errors
+    /// See [`Memory::esign_void`]. A deadline no later than the document's
+    /// own is the act's refusal, an outcome in the view.
+    pub fn esign_extend(&self, input: &EsignExtendRequest) -> MemoryResult<EsignDispatchView> {
+        self.esign_dispatch(
+            EsignOutboundVerb::Extend {
+                expires_at: input.expires_at,
+            },
             &input.document_ref,
             input.recipient_count,
             None,

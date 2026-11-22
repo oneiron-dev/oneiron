@@ -2,7 +2,9 @@
 
 use super::CalendarError;
 use super::admission::{ingest_reason, refused};
-use super::claims::{PREDICATE_CALENDAR_ATTENDEE, decode_attendee_value};
+use super::claims::{
+    PREDICATE_CALENDAR_ATTENDEE, attendee_address_identity, decode_attendee_value,
+};
 use super::payload::{CALENDAR_INVITE_CHANNEL, CalendarInviteMethod, CalendarInvitePayload};
 use crate::Vault;
 use crate::booking::invite_grant::BookingInviteCoverage;
@@ -557,15 +559,7 @@ fn recipient_is_bound_attendee(
 
 /// `MAILTO:` prefixes are vendor spelling, not identity.
 fn attendee_matches(who: &str, recipient: &str) -> bool {
-    let strip = |value: &str| -> String {
-        let trimmed = value.trim();
-        let bare = trimmed
-            .strip_prefix("mailto:")
-            .or_else(|| trimmed.strip_prefix("MAILTO:"))
-            .unwrap_or(trimmed);
-        bare.to_ascii_lowercase()
-    };
-    strip(who) == strip(recipient)
+    attendee_address_identity(who) == attendee_address_identity(recipient)
 }
 
 /// The ACTIVE identity that will actually carry this send.

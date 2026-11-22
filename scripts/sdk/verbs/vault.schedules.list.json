@@ -1,0 +1,18 @@
+{
+  "name": "vault.schedules.list",
+  "description": "List the armed jobs the caller may see, each with its trigger, when it is due, its last finish and its failures in a row.",
+  "input": "crate::task_verb::sdk::ScheduleListRequest",
+  "output": "crate::task_verb::sdk::ScheduleList",
+  "call": "crate::task_verb::sdk::schedule_list_embedded(memory, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "host_door_caller": true,
+  "scope": "Read",
+  "act_class": "read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "facade_actor"
+}

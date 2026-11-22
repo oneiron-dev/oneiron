@@ -10,9 +10,11 @@
 //! only steps whose live `AGENT_DEF` stands so, and answers the run once
 //! enqueued with no model, runner or live run.
 //! P2 (arch-0053:41; llms-full.txt:345573) "Otherwise the agent holds at
-//! Proposed, as a deleted definition does." — proven only as the
-//! deleted-definition hold of a successor step, surfaced as the run's
-//! `release_refusal`.
+//! Proposed, as a deleted definition does." — proven for a successor step
+//! whose definition is deleted, made inactive or unapproved after admission:
+//! the run holds with its `release_refusal`, and an inactive or unapproved
+//! successor is released once the owner restores it. A successor switched off
+//! after admission stops the run instead (FIX 9567); either way it never runs.
 //! P3 (arch-0053:18; llms-full.txt:345550) "An `AGENT_DEF` is a skill hub with
 //! a persona hole" — not this family's surface: listed unproven, no test.
 //!
@@ -1278,6 +1280,425 @@ fn successor_hold_surfaces_as_release_refusal() {
             held_run["results"][0]["result_ref"].as_str(),
             Some("leg-s30-step-1-result"),
             "the kept step keeps its result: {held_run}"
+        );
+    });
+}
+
+/// A two-step run whose first step completed with a pinned result: the
+/// state a successor's release meets.
+#[cfg(oneiron_test_support)]
+struct SettledFirstStep {
+    root_hex: String,
+    root_id: oneiron::attempt_queue::AttemptId,
+    first_leaf: oneiron::attempt_queue::AttemptId,
+    second: EntityId,
+    second_hex: String,
+    now: u64,
+}
+
+/// The owner saves and dispatches a run of two good-standing agents, and the
+/// first step runs and completes through the `workflow_park` test door, as
+/// in [`successor_hold_surfaces_as_release_refusal`]. The successor is not
+/// released yet.
+#[cfg(oneiron_test_support)]
+async fn admit_and_settle_first_step(fixture: &Fixture, label: &str) -> SettledFirstStep {
+    let first = seed_good_agent(
+        &fixture.vault,
+        &fixture.owner_proof,
+        &format!("test.workflows.{label}.a"),
+    );
+    let second = seed_good_agent(
+        &fixture.vault,
+        &fixture.owner_proof,
+        &format!("test.workflows.{label}.b"),
+    );
+    let second_hex = second.to_hex();
+    let workflow_hex = EntityId::now().to_hex();
+    let (status, saved) = post_as_owner(
+        fixture,
+        "/v1/core/facade/vault.workflows.save",
+        json!({
+            "workflow_ref": workflow_hex.clone(),
+            "name": format!("successor-{label}"),
+            "steps": [first.to_hex(), second_hex.clone()],
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "owner saves two steps: {saved}");
+
+    let (status, run) = post_as_owner(
+        fixture,
+        "/v1/core/facade/vault.workflows.dispatch",
+        json!({
+            "workflow_ref": workflow_hex,
+            "intent_key": format!("successor-{label}-run"),
+            "briefing": format!("the successor is {label} after admission"),
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "owner dispatches: {run}");
+    let root_hex = run["root_attempt_ref"].as_str().expect("root").to_owned();
+    let root_id = oneiron::attempt_queue::AttemptId::from_bytes(
+        EntityId::from_hex(&root_hex).expect("root hex").as_bytes(),
+    )
+    .expect("root attempt");
+
+    let now = fixture.vault.now_recorded_at();
+    let held =
+        oneiron_server::test_doors::workflow_park::claim_step(&fixture.vault, root_id, now, 0)
+            .expect("claim the first step")
+            .expect("the first step runs");
+    oneiron::attempt_queue::AttemptQueue::new(&fixture.vault)
+        .set_result(oneiron::attempt_queue::SetAttemptResult {
+            id: held.leaf,
+            lease_owner: "workflow-park-door".to_owned(),
+            attempt_count: held.lease_count,
+            result_ref: oneiron::attempt_queue::AttemptResultRef::new(format!(
+                "successor-{label}-step-1-result"
+            ))
+            .expect("result ref"),
+            now,
+        })
+        .expect("the step pins its result");
+    oneiron::attempt_queue::AttemptQueue::new(&fixture.vault)
+        .complete(oneiron::attempt_queue::CompleteAttempt {
+            id: held.leaf,
+            lease_owner: "workflow-park-door".to_owned(),
+            attempt_count: held.lease_count,
+            now,
+        })
+        .expect("the step completes");
+    SettledFirstStep {
+        root_hex,
+        root_id,
+        first_leaf: held.leaf,
+        second,
+        second_hex,
+        now,
+    }
+}
+
+/// The owner reads `root_hex`'s run through the status door.
+#[cfg(oneiron_test_support)]
+async fn workflow_run(fixture: &Fixture, root_hex: &str) -> Value {
+    let (status, run) = post_as_owner(
+        fixture,
+        "/v1/core/facade/vault.workflows.status",
+        json!({"root_attempt_ref": root_hex}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "owner reads the run: {run}");
+    run
+}
+
+/// The hex the status door gives an attempt id.
+#[cfg(oneiron_test_support)]
+fn attempt_hex(id: oneiron::attempt_queue::AttemptId) -> String {
+    EntityId::from_bytes(*id.as_bytes())
+        .expect("attempt id is an entity id")
+        .to_hex()
+}
+
+/// The owner edits the stored definition `id` through the owner's typed door
+/// (`Vault::update_agent_definition_as`), at the next `version`. No served
+/// door sets a definition's lifecycle or approval; this is the owner's own
+/// edit, the one door that may also turn them back on.
+#[cfg(oneiron_test_support)]
+fn owner_edits_definition(
+    fixture: &Fixture,
+    id: EntityId,
+    version: &str,
+    edit: fn(&mut oneiron::agent_def::AgentDefinition),
+) {
+    let mut definition = fixture
+        .vault
+        .get_agent_definition(&id)
+        .expect("read the definition")
+        .expect("the definition stands");
+    definition.version = version.to_owned();
+    edit(&mut definition);
+    let at = fixture.vault.now_recorded_at();
+    fixture
+        .vault
+        .update_agent_definition_as(
+            &fixture.owner_proof,
+            &id,
+            &definition,
+            TimeRange { start: at, end: at },
+            at,
+        )
+        .expect("the owner's edit lands");
+}
+
+/// The run holds on a successor that lost `standing` after admission, a
+/// second pass writes nothing, and once the owner restores the definition the
+/// next pass releases the successor.
+#[cfg(oneiron_test_support)]
+async fn successor_holds_until_restored(
+    label: &str,
+    narrow: fn(&mut oneiron::agent_def::AgentDefinition),
+    restore: fn(&mut oneiron::agent_def::AgentDefinition),
+    standing: &str,
+) {
+    let fixture = setup().await;
+    let run = admit_and_settle_first_step(&fixture, label).await;
+    owner_edits_definition(&fixture, run.second, "1.0.1", narrow);
+
+    let dispatcher = oneiron::agent_dispatch::AgentDispatcher::new(&fixture.vault);
+    let progress = dispatcher
+        .advance_workflow(run.root_id, run.now + 1)
+        .unwrap_or_else(|error| panic!("the pump holds the {label} successor: {error}"));
+    assert_eq!(
+        progress,
+        oneiron::agent_dispatch::WorkflowProgress::Waiting(run.first_leaf),
+        "the {label} successor is not released"
+    );
+    let held = workflow_run(&fixture, &run.root_hex).await;
+    let refusal = held["release_refusal"].as_str().expect("a refusal");
+    assert!(
+        refusal.contains(standing),
+        "the hold names the {label} standing: {held}"
+    );
+    assert_eq!(
+        held["active_attempt_ref"].as_str(),
+        Some(attempt_hex(run.first_leaf).as_str()),
+        "the completed step is still the active one: {held}"
+    );
+    assert_eq!(
+        held["results"].as_array().map(Vec::len),
+        Some(1),
+        "the completed step is kept: {held}"
+    );
+    assert_eq!(
+        held["results"][0]["result_ref"].as_str(),
+        Some(format!("successor-{label}-step-1-result").as_str()),
+        "the kept step keeps its result: {held}"
+    );
+    let wrapper = oneiron::attempt_queue::AttemptQueue::new(&fixture.vault)
+        .get(run.root_id)
+        .expect("read the wrapper")
+        .expect("the wrapper stands");
+    assert_eq!(
+        wrapper.state,
+        oneiron::attempt_queue::AttemptState::Paused,
+        "the {label} hold keeps the wrapper paused, not stopped"
+    );
+
+    let again = dispatcher
+        .advance_workflow(run.root_id, run.now + 2)
+        .expect("a second pass");
+    assert_eq!(
+        again,
+        oneiron::agent_dispatch::WorkflowProgress::Waiting(run.first_leaf),
+        "a second pass still holds the {label} successor"
+    );
+    let still = workflow_run(&fixture, &run.root_hex).await;
+    assert_eq!(
+        still["release_refusal"], held["release_refusal"],
+        "a second pass keeps the refusal: {still}"
+    );
+    assert_eq!(
+        still["results"], held["results"],
+        "a second pass reports no step twice: {still}"
+    );
+
+    owner_edits_definition(&fixture, run.second, "1.0.2", restore);
+    let released = dispatcher
+        .advance_workflow(run.root_id, run.now + 3)
+        .expect("the pump releases the restored successor");
+    let oneiron::agent_dispatch::WorkflowProgress::Advanced(next) = released else {
+        panic!("the restored {label} successor is released: {released:?}");
+    };
+    assert_ne!(next, run.first_leaf, "the successor is a new step");
+    let moved = workflow_run(&fixture, &run.root_hex).await;
+    assert!(
+        moved["release_refusal"].is_null(),
+        "the release clears the refusal: {moved}"
+    );
+    assert_eq!(
+        moved["active_attempt_ref"].as_str(),
+        Some(attempt_hex(next).as_str()),
+        "the released successor is the active step: {moved}"
+    );
+    let successor = oneiron::attempt_queue::AttemptQueue::new(&fixture.vault)
+        .get(next)
+        .expect("read the successor")
+        .expect("the successor stands");
+    assert!(
+        matches!(
+            successor.state,
+            oneiron::attempt_queue::AttemptState::Queued
+                | oneiron::attempt_queue::AttemptState::Scheduled
+        ),
+        "the released {label} successor waits to run: {:?}",
+        successor.state
+    );
+    assert_eq!(
+        moved["results"], held["results"],
+        "the release reports no step twice: {moved}"
+    );
+}
+
+/// A successor whose definition is made inactive after admission holds the
+/// run with its refusal, and the owner's reactivation releases it.
+///
+/// Canon `oneiron/agents/oneiron-arch-0053-skills-agent-self-knowledge-v1.md:41`
+/// (llms-full.txt:345573) "The row must be Active, approved (Auto or Approved)
+/// and enabled. Otherwise the agent holds at Proposed, as a deleted definition
+/// does." — the inactive arm, after admission (FIX 10602: the release is tried
+/// again and the completed step stays saved once).
+#[cfg(oneiron_test_support)]
+#[test]
+fn successor_made_inactive_after_admission_holds_until_reactivated() {
+    run_on_engine_stack("workflows-hold-inactive", || async {
+        successor_holds_until_restored(
+            "inactive",
+            |definition| {
+                definition.lifecycle_status = oneiron::claim::ClaimLifecycleStatus::Superseded;
+            },
+            |definition| {
+                definition.lifecycle_status = oneiron::claim::ClaimLifecycleStatus::Active;
+            },
+            "agent definition is not active",
+        )
+        .await;
+    });
+}
+
+/// A successor whose definition loses its approval after admission holds the
+/// run with its refusal, and the owner's re-approval releases it.
+///
+/// Canon `oneiron/agents/oneiron-arch-0053-skills-agent-self-knowledge-v1.md:41`
+/// (llms-full.txt:345573) "The row must be Active, approved (Auto or Approved)
+/// and enabled. Otherwise the agent holds at Proposed, as a deleted definition
+/// does." — the unapproved arm, after admission (FIX 10602).
+#[cfg(oneiron_test_support)]
+#[test]
+fn successor_unapproved_after_admission_holds_until_reapproved() {
+    run_on_engine_stack("workflows-hold-unapproved", || async {
+        successor_holds_until_restored(
+            "unapproved",
+            |definition| {
+                definition.approval_status = oneiron::claim::ClaimApprovalStatus::Proposed;
+            },
+            |definition| {
+                definition.approval_status = oneiron::claim::ClaimApprovalStatus::Approved;
+            },
+            "agent definition is not approved",
+        )
+        .await;
+    });
+}
+
+/// A successor the owner switches off after admission, through the served
+/// `vault.agents.update` door, never runs: the run stops for good with the
+/// completed step kept, and switching the agent back on does not restart it.
+///
+/// Canon `oneiron/agents/oneiron-arch-0053-skills-agent-self-knowledge-v1.md:41`
+/// (llms-full.txt:345573) "The row must be Active, approved (Auto or Approved)
+/// and enabled." — the disabled arm, after admission. The engine stops the
+/// run here instead of holding it (FIX 9567: the wrapper fails with
+/// `workflow_step_agent_disabled` and nothing repeats it); either way the
+/// switched-off agent never acts.
+#[cfg(oneiron_test_support)]
+#[test]
+fn successor_switched_off_after_admission_stops_the_run() {
+    run_on_engine_stack("workflows-stop-disabled", || async {
+        let fixture = setup().await;
+        let run = admit_and_settle_first_step(&fixture, "disabled").await;
+        let switch = |version: &str, expected: &str, enabled: bool| {
+            json!({
+                "agent_def_ref": run.second_hex.clone(),
+                "expected_version": expected,
+                "definition": {
+                    "agent_id": "test.workflows.disabled.b",
+                    "desc": "vault workflows doors test agent",
+                    "version": version,
+                    "ceiling": "auto",
+                    "enabled": enabled,
+                },
+            })
+        };
+        let (status, off) = post_as_owner(
+            &fixture,
+            "/v1/core/facade/vault.agents.update",
+            switch("1.0.1", "1.0.0", false),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "owner switches the successor off: {off}"
+        );
+
+        let dispatcher = oneiron::agent_dispatch::AgentDispatcher::new(&fixture.vault);
+        let progress = dispatcher
+            .advance_workflow(run.root_id, run.now + 1)
+            .expect("the pump settles the run");
+        assert_eq!(
+            progress,
+            oneiron::agent_dispatch::WorkflowProgress::Stopped(run.root_id),
+            "a switched-off successor stops the run"
+        );
+        let wrapper = oneiron::attempt_queue::AttemptQueue::new(&fixture.vault)
+            .get(run.root_id)
+            .expect("read the wrapper")
+            .expect("the wrapper stands");
+        assert_eq!(
+            wrapper.state,
+            oneiron::attempt_queue::AttemptState::Failed,
+            "the stop is durable"
+        );
+        assert_eq!(
+            wrapper.last_error.as_deref(),
+            Some("workflow_step_agent_disabled"),
+            "the stop names the switched-off successor"
+        );
+        let stopped = workflow_run(&fixture, &run.root_hex).await;
+        assert!(
+            stopped["release_refusal"].is_null(),
+            "a stop is not a hold: {stopped}"
+        );
+        assert_eq!(
+            stopped["active_attempt_ref"].as_str(),
+            Some(attempt_hex(run.first_leaf).as_str()),
+            "no successor step was queued: {stopped}"
+        );
+        assert_eq!(
+            stopped["results"].as_array().map(Vec::len),
+            Some(1),
+            "the completed step is kept: {stopped}"
+        );
+        assert_eq!(
+            stopped["results"][0]["result_ref"].as_str(),
+            Some("successor-disabled-step-1-result"),
+            "the kept step keeps its result: {stopped}"
+        );
+
+        let (status, on) = post_as_owner(
+            &fixture,
+            "/v1/core/facade/vault.agents.update",
+            switch("1.0.2", "1.0.1", true),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "owner switches the successor on again: {on}"
+        );
+        let again = dispatcher
+            .advance_workflow(run.root_id, run.now + 2)
+            .expect("a later pass");
+        assert_eq!(
+            again,
+            oneiron::agent_dispatch::WorkflowProgress::Stopped(run.root_id),
+            "switching the agent on again does not restart the stopped run"
+        );
+        let still = workflow_run(&fixture, &run.root_hex).await;
+        assert_eq!(
+            still["active_attempt_ref"].as_str(),
+            Some(attempt_hex(run.first_leaf).as_str()),
+            "still no successor step: {still}"
         );
     });
 }

@@ -24,15 +24,18 @@ pub use crate::store::attempt_cancel::{
 /// "spent exactly the reserve" untestable.
 pub const LANDING_RESERVE_PERCENT: u64 = 10;
 
-/// Largest landing reserve a caller may dial. Past half the budget the
-/// "reserve" is the budget and ordinary execution is the exception.
+/// Largest landing reserve a caller may dial unless the owner sets
+/// `attempt_queue.landing.max_reserve_percent`: the key's default. Past half
+/// the budget the "reserve" is the budget and ordinary execution is the
+/// exception.
 pub const MAX_LANDING_RESERVE_PERCENT: u64 = 50;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::attempt_queue::cancel::types::SOFT_CANCEL_REJECTION_PATHOLOGY_THRESHOLD;
 
 /// Fraction of the lease timeout after which the runtime may WARN a worker to
-/// land. Distinct from expiry: the warning asks, expiry forces.
+/// land, unless the owner sets `attempt_queue.lease.warning_percent`: the
+/// key's default. Distinct from expiry: the warning asks, expiry forces.
 pub const LEASE_LANDING_WARNING_PERCENT: u64 = 80;
 
 impl CancelStanding {
@@ -64,6 +67,7 @@ impl ForceCancelGrounds {
             Self::LeaseExpiry => "lease_expiry",
             Self::Criticality => "criticality",
             Self::ErasedPayload => "erased_payload",
+            Self::OwnerDelegate => "owner_delegate",
         }
     }
 }
@@ -76,9 +80,11 @@ impl ForceCancelGrounds {
 /// declared themselves the authority and chosen the actor the terminal receipt
 /// names. The hard rung is therefore reachable only from a path that has
 /// ALREADY verified the owner against durable ownership provenance
-/// (`Self::owner`, used by the verified `Memory::cancel_force` door) or from a
-/// runtime ground the runtime itself establishes (lease expiry, criticality,
-/// or a sealed erase/restore continuation).
+/// (`Self::owner`, used by the verified `Memory::cancel_force` door), from a
+/// door that admitted the owner's delegate in the same transaction
+/// (`Self::owner_delegate`), or from a runtime ground the runtime itself
+/// establishes (lease expiry, criticality, or a sealed erase/restore
+/// continuation).
 ///
 /// Public callers keep the whole soft rung — request, reject, land — and the
 /// typed proposal path when they cannot establish authority.
@@ -101,6 +107,22 @@ impl ForceCancelAuthority {
         validate_cancel_actor(actor)?;
         Ok(Self {
             grounds: ForceCancelGrounds::Owner,
+            actor: actor.to_owned(),
+        })
+    }
+
+    /// Grants OWNER-DELEGATE force authority to an agent a door admitted in
+    /// the same transaction.
+    ///
+    /// Crate-private, like [`Self::owner`]: possession of this value is the
+    /// authorization, so minting one is exactly the capability that must not
+    /// be public. Only a door that ran
+    /// [`crate::authority::owner_delegate_in_txn`] in the same transaction
+    /// mints one, with the admitted agent's hex as the actor.
+    pub(crate) fn owner_delegate(actor: &str) -> Result<Self> {
+        validate_cancel_actor(actor)?;
+        Ok(Self {
+            grounds: ForceCancelGrounds::OwnerDelegate,
             actor: actor.to_owned(),
         })
     }

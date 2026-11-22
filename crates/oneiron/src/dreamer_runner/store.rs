@@ -103,19 +103,7 @@ impl<'a> DreamerRunnerStore<'a> {
         task_ref: Option<String>,
     ) -> Result<EnqueueDreamerAttemptOutcome> {
         validate_attempt_type(&input.attempt_type)?;
-        self.enqueue_scoped_kind_in_txn(
-            wtxn,
-            DREAMER_RUNNER_ATTEMPT_KIND,
-            DreamerAttemptPayload {
-                attempt_type: input.attempt_type,
-                input: input.input,
-                parent_attempt: input.parent_attempt,
-            },
-            input.dedupe_key,
-            input.run_id,
-            input.now,
-            task_ref,
-        )
+        self.enqueue_scoped_kind_in_txn(wtxn, DREAMER_RUNNER_ATTEMPT_KIND, input, task_ref)
     }
 
     /// Enqueues a local consolidation attempt on the advisory attempt-table floor.
@@ -188,12 +176,14 @@ impl<'a> DreamerRunnerStore<'a> {
     ) -> Result<EnqueueDreamerAttemptOutcome> {
         self.enqueue_kind_job_in_txn(
             wtxn,
-            DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND,
-            input.input,
-            input.parent_attempt,
-            input.dedupe_key,
-            input.run_id,
-            input.now,
+            EnqueueDreamerAttempt {
+                attempt_type: DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND.to_owned(),
+                input: input.input,
+                parent_attempt: input.parent_attempt,
+                dedupe_key: input.dedupe_key,
+                run_id: input.run_id,
+                now: input.now,
+            },
         )
     }
 
@@ -209,16 +199,18 @@ impl<'a> DreamerRunnerStore<'a> {
     ) -> Result<AttemptId> {
         let outcome = self.enqueue_kind_job_in_txn(
             wtxn,
-            super::COACH_HEAL_ATTEMPT_KIND,
-            rmpv::Value::from(case.case_ref.as_str()),
-            Some(case.failing_attempt_id),
-            Some(format!(
-                "{}:{}",
-                super::COACH_HEAL_ATTEMPT_KIND,
-                case.case_ref
-            )),
-            run_id,
-            now,
+            EnqueueDreamerAttempt {
+                attempt_type: super::COACH_HEAL_ATTEMPT_KIND.to_owned(),
+                input: rmpv::Value::from(case.case_ref.as_str()),
+                parent_attempt: Some(case.failing_attempt_id),
+                dedupe_key: Some(format!(
+                    "{}:{}",
+                    super::COACH_HEAL_ATTEMPT_KIND,
+                    case.case_ref
+                )),
+                run_id,
+                now,
+            },
         )?;
         let (EnqueueDreamerAttemptOutcome::Enqueued(status)
         | EnqueueDreamerAttemptOutcome::Existing(status)) = outcome;
@@ -239,12 +231,14 @@ impl<'a> DreamerRunnerStore<'a> {
             .map_err(|_| invalid_dreamer_runner("dreamer recipe wake input is not encodable"))?;
         self.enqueue_kind_job_in_txn(
             wtxn,
-            DREAMER_RECIPE_WAKE_ATTEMPT_KIND,
-            rmpv::Value::from(input),
-            None,
-            None,
-            None,
-            now,
+            EnqueueDreamerAttempt {
+                attempt_type: DREAMER_RECIPE_WAKE_ATTEMPT_KIND.to_owned(),
+                input: rmpv::Value::from(input),
+                parent_attempt: None,
+                dedupe_key: None,
+                run_id: None,
+                now,
+            },
         )
     }
 
@@ -315,12 +309,14 @@ impl<'a> DreamerRunnerStore<'a> {
         }
         self.enqueue_kind_job_in_txn(
             wtxn,
-            DREAMER_VAULT_CLEANUP_ATTEMPT_KIND,
-            input.input,
-            input.parent_attempt,
-            input.dedupe_key,
-            input.run_id,
-            input.now,
+            EnqueueDreamerAttempt {
+                attempt_type: DREAMER_VAULT_CLEANUP_ATTEMPT_KIND.to_owned(),
+                input: input.input,
+                parent_attempt: input.parent_attempt,
+                dedupe_key: input.dedupe_key,
+                run_id: input.run_id,
+                now: input.now,
+            },
         )
     }
 
@@ -337,12 +333,14 @@ impl<'a> DreamerRunnerStore<'a> {
     ) -> Result<EnqueueDreamerAttemptOutcome> {
         self.enqueue_kind_job_in_txn(
             wtxn,
-            DREAMER_NOTE_REVIEW_ATTEMPT_KIND,
-            rmpv::Value::Nil,
-            parent_attempt,
-            wake_key.map(|key| format!("{DREAMER_NOTE_REVIEW_ATTEMPT_KIND}:{key}")),
-            run_id,
-            now,
+            EnqueueDreamerAttempt {
+                attempt_type: DREAMER_NOTE_REVIEW_ATTEMPT_KIND.to_owned(),
+                input: rmpv::Value::Nil,
+                parent_attempt,
+                dedupe_key: wake_key.map(|key| format!("{DREAMER_NOTE_REVIEW_ATTEMPT_KIND}:{key}")),
+                run_id,
+                now,
+            },
         )
     }
 
@@ -360,17 +358,19 @@ impl<'a> DreamerRunnerStore<'a> {
     ) -> Result<EnqueueDreamerAttemptOutcome> {
         self.enqueue_kind_job_in_txn(
             wtxn,
-            DREAMER_RESIDENT_DREAM_ATTEMPT_KIND,
-            crate::dreamer_consolidation::resident_dream_input(resident),
-            parent_attempt,
-            wake_key.map(|key| {
-                format!(
-                    "{DREAMER_RESIDENT_DREAM_ATTEMPT_KIND}:{}:{key}",
-                    resident.to_hex()
-                )
-            }),
-            run_id,
-            now,
+            EnqueueDreamerAttempt {
+                attempt_type: DREAMER_RESIDENT_DREAM_ATTEMPT_KIND.to_owned(),
+                input: crate::dreamer_consolidation::resident_dream_input(resident),
+                parent_attempt,
+                dedupe_key: wake_key.map(|key| {
+                    format!(
+                        "{DREAMER_RESIDENT_DREAM_ATTEMPT_KIND}:{}:{key}",
+                        resident.to_hex()
+                    )
+                }),
+                run_id,
+                now,
+            },
         )
     }
 
@@ -515,41 +515,27 @@ impl<'a> DreamerRunnerStore<'a> {
         );
         self.enqueue_kind_job_in_txn(
             wtxn,
-            DREAMER_WEAVE_LENS_ATTEMPT_KIND,
-            input,
-            None,
-            Some(dedupe),
-            None,
-            enqueued_at,
+            EnqueueDreamerAttempt {
+                attempt_type: DREAMER_WEAVE_LENS_ATTEMPT_KIND.to_owned(),
+                input,
+                parent_attempt: None,
+                dedupe_key: Some(dedupe),
+                run_id: None,
+                now: enqueued_at,
+            },
         )
     }
 
     /// Enqueues a job of a kind-scoped Dreamer lane whose job type is the
-    /// lane's own kind: [`Self::enqueue_kind_in_txn`] with the payload's
-    /// `attempt_type` set to `queue_kind`, so a door names its kind once.
-    #[allow(clippy::too_many_arguments)]
+    /// lane's own kind: `job.attempt_type` is also the queue kind, so a door
+    /// names its kind once. The queue law is [`Self::enqueue_kind_in_txn`]'s.
     pub(crate) fn enqueue_kind_job_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
-        queue_kind: &str,
-        input: rmpv::Value,
-        parent_attempt: Option<AttemptId>,
-        dedupe_key: Option<String>,
-        run_id: Option<String>,
-        now: u64,
+        job: EnqueueDreamerAttempt,
     ) -> Result<EnqueueDreamerAttemptOutcome> {
-        self.enqueue_kind_in_txn(
-            wtxn,
-            queue_kind,
-            DreamerAttemptPayload {
-                attempt_type: queue_kind.to_owned(),
-                input,
-                parent_attempt,
-            },
-            dedupe_key,
-            run_id,
-            now,
-        )
+        let queue_kind = job.attempt_type.clone();
+        self.enqueue_scoped_kind_in_txn(wtxn, &queue_kind, job, None)
     }
 
     /// The one enqueue law for a kind-scoped Dreamer lane: encode the payload,
@@ -564,7 +550,19 @@ impl<'a> DreamerRunnerStore<'a> {
         run_id: Option<String>,
         now: u64,
     ) -> Result<EnqueueDreamerAttemptOutcome> {
-        self.enqueue_scoped_kind_in_txn(wtxn, queue_kind, payload, dedupe_key, run_id, now, None)
+        self.enqueue_scoped_kind_in_txn(
+            wtxn,
+            queue_kind,
+            EnqueueDreamerAttempt {
+                attempt_type: payload.attempt_type,
+                input: payload.input,
+                parent_attempt: payload.parent_attempt,
+                dedupe_key,
+                run_id,
+                now,
+            },
+            None,
+        )
     }
 
     /// The one enqueue law behind every Dreamer enqueue door
@@ -572,17 +570,26 @@ impl<'a> DreamerRunnerStore<'a> {
     /// encode the payload, take the advisory dedupe floor under the owning
     /// TASK's backlink when there is one, stamp the attempt's authority, and
     /// co-commit the private run-tree row whichever way the queue answered.
-    #[allow(clippy::too_many_arguments)]
     fn enqueue_scoped_kind_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         queue_kind: &str,
-        payload: DreamerAttemptPayload,
-        dedupe_key: Option<String>,
-        run_id: Option<String>,
-        now: u64,
+        attempt: EnqueueDreamerAttempt,
         task_ref: Option<String>,
     ) -> Result<EnqueueDreamerAttemptOutcome> {
+        let EnqueueDreamerAttempt {
+            attempt_type,
+            input,
+            parent_attempt,
+            dedupe_key,
+            run_id,
+            now,
+        } = attempt;
+        let payload = DreamerAttemptPayload {
+            attempt_type,
+            input,
+            parent_attempt,
+        };
         let encoded_payload = encode_dreamer_attempt_payload(&payload)?;
 
         let outcome = crate::ports::JobQueue::port_job_enqueue_scoped(
@@ -795,6 +802,16 @@ impl<'a> DreamerRunnerStore<'a> {
                     now: input.now,
                 },
             )?;
+            let record = match &outcome {
+                CompleteOutcome::Completed(record) | CompleteOutcome::AlreadyCompleted(record) => {
+                    record
+                }
+            };
+            // A Coach job can move between its worker and a wake pass. Its
+            // terminal write releases the accounting reservations both held.
+            if record.kind == super::maintenance::coach::COACH_HOST_QUEUE_KIND {
+                self.settle_ended_budget_in_txn(wtxn, attempt_id, input.now)?;
+            }
             self.cleanup_step_receipts_in_txn(wtxn, attempt_id)?;
             let reported = context.and_then(|context| {
                 let record = match &outcome {
@@ -823,11 +840,6 @@ impl<'a> DreamerRunnerStore<'a> {
             // A finished agent launch settles its spend lease (OF-532) in the
             // commit that finishes it: its parent pays what it spent and the
             // unused hold goes back. Settling twice is a no-op.
-            let record = match &outcome {
-                CompleteOutcome::Completed(record) | CompleteOutcome::AlreadyCompleted(record) => {
-                    record
-                }
-            };
             // FIX 1554: a report filed while a Coach Issues run held its
             // lease gets its successor in the commit that settles the run.
             self.redrive_coach_issues_in_txn(wtxn, record, input.now)?;
@@ -1009,6 +1021,9 @@ impl<'a> DreamerRunnerStore<'a> {
                     input.budget_refusal.as_ref(),
                     input.now,
                 )?;
+                if record.kind == super::maintenance::coach::COACH_HOST_QUEUE_KIND {
+                    self.settle_ended_budget_in_txn(wtxn, attempt_id, input.now)?;
+                }
                 self.cleanup_step_receipts_in_txn(wtxn, attempt_id)?;
                 Ok(outcome)
             })?;
@@ -1264,6 +1279,14 @@ impl<'a> DreamerRunnerStore<'a> {
         super::seat_wait::unindex_seat_wait_in_txn(self.vault, wtxn, &record)?;
         super::policy_wait::unindex_policy_wait_in_txn(self.vault, wtxn, &record)?;
         PARKED.delete(&self.vault.store, wtxn, &attempt_id)?;
+        // A woken budget trap park waits on no owner answer: its open ask is
+        // withdrawn in the wake's write (RUNBUDGET-SCOPE = B).
+        if matches!(
+            record.wait.as_ref().map(|wait| &wait.wait),
+            Some(DreamerParkWait::Budget { .. } | DreamerParkWait::ResidentShare { .. })
+        ) {
+            crate::agent_dispatch::withdraw_budget_trap_ask_in_txn(self.vault, wtxn, attempt_id)?;
+        }
         // FIX 4747: a resuming agent run keeps its executor lease until its
         // next claim takes it.
         crate::agent_dispatch::renew_agent_run_lease_in_txn(self.vault, wtxn, attempt_id)?;
