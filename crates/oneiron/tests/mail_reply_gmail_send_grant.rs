@@ -553,6 +553,7 @@ fn draft_google_reply(
             reply_all: false,
             cc: Vec::new(),
             request_key: "gmail-reply-fixture-1".to_owned(),
+            attachments: Vec::new(),
         },
         MailAddressHeaders {
             from: vec![COUNTERPARTY.to_owned()],
