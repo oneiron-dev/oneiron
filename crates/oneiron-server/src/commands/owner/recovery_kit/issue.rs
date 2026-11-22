@@ -40,6 +40,9 @@ struct Issued {
     kit_id: String,
     /// The root's fingerprint, to check on another machine.
     root: String,
+    /// The root's code, 26 symbols: what a question about this kit shows
+    /// (`recovery-kit requests`), for the owner to compare.
+    root_code: String,
     homes: [PieceHome; 3],
     coverage: KitCoverage,
     pieces: Vec<PieceFile>,
@@ -89,6 +92,7 @@ pub(super) fn issue(args: RecoveryKitIssueArgs) -> anyhow::Result<()> {
         vault_id: hex(&vault_id),
         kit_id: kit_id(manifest.kit_id),
         root: hex(&root.0),
+        root_code: oneiron::authority::recovery_root_code(&root),
         homes: manifest.homes,
         coverage: manifest.coverage,
         pieces: files,

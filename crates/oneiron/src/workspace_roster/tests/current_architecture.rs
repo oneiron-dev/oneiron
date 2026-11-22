@@ -77,6 +77,7 @@ pub(super) fn register_mailbox_custody(
         name: mailbox.custody_name.clone(),
         class: CustodyClass::CrossVault,
         device_only: true,
+        model_reveal_allowed: false,
         value_bytes: b"test-only-oauth-bytes".to_vec(),
         status: SecretCustodyStatus::Active,
         registered_at: AT,
@@ -216,7 +217,7 @@ fn a_second_onboarding_id_cannot_replace_a_principals_companion() -> Result<()> 
     let (_dir, vault, mut intent) = fixture("Antevon");
     let birth = companion_birth();
     intent.grant_bundle.companion_profile_grant_ref = Some(birth.profile_grant_ref);
-    intent.companion_birth = Some(birth);
+    intent.companion = CompanionChoice::Work(birth);
     vault.onboard_workspace_member_halting_after(
         intent.clone(),
         &admin_writer(WRITER),
@@ -416,7 +417,7 @@ fn mailbox_crash_resume_reopens_after_provision_lifecycle_apply_and_journal() ->
                     .action_grant
                     .as_ref()
                     .expect("draft grant")
-                    .read_frontier_hash,
+                    .policy_frontier,
                 policy
             );
         }
@@ -451,21 +452,26 @@ fn mailbox_crash_resume_reopens_after_provision_lifecycle_apply_and_journal() ->
         assert_eq!(type_count(&vault, ENTITY_TYPE_CHANNEL_IDENTITY), 1);
         assert_eq!(type_count(&vault, ENTITY_TYPE_COMPANION_REGISTER), 0);
         assert_eq!(
-            vault.get_entity_type(&intent.required_companion()?.person_ref)?,
+            vault.get_entity_type(&intent.companion.person_ref())?,
             Some(ENTITY_TYPE_PERSON)
         );
         assert_eq!(type_count(&vault, ENTITY_TYPE_ACCESS_GRANT), 2);
+        // The autonomy apply mints standing consent grants, never an
+        // OUTBOUND_GRANT entity (FIX 11874).
         assert_eq!(
             type_count(&vault, crate::registry::ENTITY_TYPE_OUTBOUND_GRANT),
-            1
+            0
         );
         hold_clock_floor(&vault)?;
-        let revision = vault.store.env.info().last_txn_id;
+        let before = super::authorization::durable_rows_without_authorization_clock(&vault)?;
         assert_eq!(
             vault.onboard_workspace_member(intent, &admin_writer(WRITER), Some(&owner))?,
             outcome
         );
-        assert_eq!(vault.store.env.info().last_txn_id, revision);
+        assert_eq!(
+            super::authorization::durable_rows_without_authorization_clock(&vault)?,
+            before
+        );
     }
     Ok(())
 }
@@ -630,14 +636,14 @@ fn authenticated_mailbox_apply_verify_and_exact_replay() -> Result<()> {
         );
         assert_eq!(type_count(&vault, ENTITY_TYPE_ACCESS_GRANT), 2);
         hold_clock_floor(&vault)?;
-        let revision = vault.store.env.info().last_txn_id;
+        let before = super::authorization::durable_rows_without_authorization_clock(&vault)?;
         assert_eq!(
             vault.onboard_workspace_member(intent.clone(), &admin_writer(WRITER), Some(&owner))?,
             first
         );
         assert_eq!(
-            vault.store.env.info().last_txn_id,
-            revision,
+            super::authorization::durable_rows_without_authorization_clock(&vault)?,
+            before,
             "replay writes no rows or receipts"
         );
         let journal = read_journal(&vault, &intent.onboarding_id)?.expect("journal");
@@ -680,7 +686,7 @@ fn authenticated_mailbox_apply_verify_and_exact_replay() -> Result<()> {
             assert!(vault.authorize_and_consume_channel_identity_grant(&action_ref, &effect)?);
             assert_eq!(
                 type_count(&vault, crate::registry::ENTITY_TYPE_OUTBOUND_GRANT),
-                1
+                0
             );
         } else {
             assert_eq!(

@@ -13,7 +13,10 @@
 //! name more than one claim gets one final choice over those claims (FIX
 //! 8693).
 
-use super::super::decisions::{FinalChoice, StatePart, id_options};
+use super::super::decisions::{
+    ChoiceSpec, DecisionKeyPart, FinalChoice, PartMark, StatePart, id_options, key_part_bytes,
+    page_or_whole,
+};
 use super::*;
 use crate::dreamer_consolidation::call_labels::{CallLabelMap, LabelKind};
 use crate::dreamer_consolidation::evidence::EvidenceLocator;
@@ -21,11 +24,192 @@ use crate::dreamer_consolidation::settle::decision_pages::{json_len, measure_sta
 use crate::dreamer_consolidation::value_projection::rmpv_to_json;
 use crate::error::Result;
 use crate::model_decision::catalogue::CORRECTION;
-use crate::model_decision::{AnswerContract, DecisionQuestion, MAX_DECISION_STATE_BYTES};
+use crate::model_decision::{AnswerContract, DecisionQuestion};
 
 /// One claim the listing shows that a candidate may correct: its id, its
 /// subject, and its predicate and value as the listing writes them.
 type Listed<'r> = (EntityId, EntityId, &'r str, &'r str);
+
+/// The shared key parts of one correction group question: the candidate
+/// position with its group number, then the page marker and number on a paged
+/// read.
+pub(in crate::dreamer_consolidation) fn correction_key_parts(
+    position: usize,
+    group: usize,
+    page: Option<usize>,
+) -> Vec<DecisionKeyPart> {
+    let mut parts = vec![
+        DecisionKeyPart::Number(position),
+        DecisionKeyPart::Number(group),
+    ];
+    if let Some(page) = page {
+        parts.extend([DecisionKeyPart::Text("page"), DecisionKeyPart::Number(page)]);
+    }
+    parts
+}
+
+/// The asks over `entries` against `listed_ids`: each asked candidate
+/// position with the listed ids it pairs, both in first-seen entry order,
+/// with the shown listed indexes. Native correction reads and the bound
+/// rebuild group their pairs here.
+pub(in crate::dreamer_consolidation) fn group_correction_asks(
+    entries: &[(usize, usize)],
+    listed_ids: &[EntityId],
+) -> (Vec<(usize, Vec<EntityId>)>, Vec<usize>) {
+    let mut asked: Vec<(usize, Vec<EntityId>)> = Vec::new();
+    let mut shown: Vec<usize> = Vec::new();
+    for &(position, at) in entries {
+        if !shown.contains(&at) {
+            shown.push(at);
+        }
+        let Some(id) = listed_ids.get(at).copied() else {
+            continue;
+        };
+        match asked.iter_mut().find(|row| row.0 == position) {
+            Some(row) => row.1.push(id),
+            None => asked.push((position, vec![id])),
+        }
+    }
+    (asked, shown)
+}
+
+/// One read's prepared correction choices: each asked position with one
+/// choice per option group over its listed ids, keyed by position and group
+/// (and page, on a paged read), each group with the shown texts its
+/// question registers. Every group offers `none`, as native always did.
+pub(in crate::dreamer_consolidation) fn correction_choice_specs(
+    asked: &[(usize, Vec<EntityId>)],
+    page: Option<usize>,
+    labels: &mut CallLabelMap,
+) -> Vec<(usize, Vec<ChoiceSpec>)> {
+    asked
+        .iter()
+        .map(|(position, ids)| {
+            let specs = id_options(ids, true, labels)
+                .into_iter()
+                .enumerate()
+                .map(|(group, (options, shown))| ChoiceSpec {
+                    key: correction_key_parts(*position, group, page),
+                    options,
+                    shown: Some(shown),
+                })
+                .collect();
+            (*position, specs)
+        })
+        .collect()
+}
+
+/// One asked candidate as a shared state render takes it: its question labels
+/// already assigned, with its subject label, predicate and value text.
+#[derive(Debug, Clone)]
+pub(in crate::dreamer_consolidation) struct NumberedCorrectionCandidate {
+    /// The question labels of its groups, such as `Q1`.
+    pub(in crate::dreamer_consolidation) questions: Vec<String>,
+    /// The subject label the read assigned, such as `P1`.
+    pub(in crate::dreamer_consolidation) subject: String,
+    /// The candidate predicate, when it meets the claim grammar.
+    pub(in crate::dreamer_consolidation) predicate: Option<String>,
+    /// The candidate value as JSON text.
+    pub(in crate::dreamer_consolidation) value_text: String,
+}
+
+/// One listed claim as a shared state render takes it: its claim and subject
+/// labels already assigned, with its predicate and value text.
+#[derive(Debug, Clone)]
+pub(in crate::dreamer_consolidation) struct NumberedListedClaim {
+    /// The claim label the read assigned, such as `C1`.
+    pub(in crate::dreamer_consolidation) claim: String,
+    /// The subject label the read assigned, such as `P2`.
+    pub(in crate::dreamer_consolidation) subject: String,
+    /// The listed predicate.
+    pub(in crate::dreamer_consolidation) predicate: String,
+    /// The listed value as JSON text.
+    pub(in crate::dreamer_consolidation) value_text: String,
+}
+
+/// The correction state over `candidates` and `listed`: each asked candidate
+/// with its questions, subject, predicate and value, and each listed claim,
+/// every value whole as its JSON text, marked as `mark`'s. Native correction
+/// reads and the bound rebuild render through this function with the same
+/// label order, so both measure the same bytes.
+pub(in crate::dreamer_consolidation) fn render_correction_state(
+    candidates: Vec<NumberedCorrectionCandidate>,
+    listed: Vec<NumberedListedClaim>,
+    mark: PartMark,
+) -> serde_json::Value {
+    let candidates: Vec<serde_json::Value> = candidates
+        .into_iter()
+        .map(|row| {
+            serde_json::json!({
+                "questions": row.questions,
+                "subject": row.subject,
+                "predicate": row.predicate,
+                "value": row.value_text,
+            })
+        })
+        .collect();
+    let listed: Vec<serde_json::Value> = listed
+        .into_iter()
+        .map(|row| {
+            serde_json::json!({
+                "claim": row.claim,
+                "subject": row.subject,
+                "predicate": row.predicate,
+                "value": row.value_text,
+            })
+        })
+        .collect();
+    mark.apply(serde_json::json!({
+        "candidates": candidates,
+        "listed": listed,
+    }))
+}
+
+/// The bytes one asked candidate adds to a correction page: its row with its
+/// full subject id, plus one separator byte. Native paging and the bound
+/// rebuild share this measure.
+pub(in crate::dreamer_consolidation) fn correction_candidate_bytes(
+    subject_hex: &str,
+    predicate: Option<&str>,
+    value_text: &str,
+) -> usize {
+    json_len(&serde_json::json!({
+        "questions": ["Q0000"],
+        "subject": subject_hex,
+        "predicate": predicate,
+        "value": value_text,
+    }))
+    .saturating_add(1)
+}
+
+/// The bytes one listed claim adds to a correction page: its row with full
+/// ids, plus one separator byte. Native paging and the bound rebuild share
+/// this measure.
+pub(in crate::dreamer_consolidation) fn correction_listed_bytes(
+    claim_hex: &str,
+    subject_hex: &str,
+    predicate: &str,
+    value_text: &str,
+) -> usize {
+    json_len(&serde_json::json!({
+        "claim": claim_hex,
+        "subject": subject_hex,
+        "predicate": predicate,
+        "value": value_text,
+    }))
+    .saturating_add(1)
+}
+
+/// The bytes a correction page carries beside its rows: the empty state
+/// marked as page one of two. Native paging and the bound rebuild share this
+/// frame.
+pub(in crate::dreamer_consolidation) fn correction_frame_bytes() -> usize {
+    json_len(&render_correction_state(
+        Vec::new(),
+        Vec::new(),
+        PartMark::Page { page: 0, pages: 2 },
+    ))
+}
 
 /// One read of the correction pack: its questions, the candidate each asks
 /// about by position, the call's labels and the state it reads.
@@ -141,11 +325,10 @@ impl ConsolidationExecutor<'_> {
                 corrections.push(Correction::none());
                 continue;
             }
-            let position_key = position.to_string();
-            let key_parts: [&[u8]; 1] = [position_key.as_bytes()];
+            let base = [DecisionKeyPart::Number(position)];
             let choice = FinalChoice {
                 family: &CORRECTION,
-                key: &key_parts,
+                base: &base,
                 wording: &self.decisions.correction_wording,
                 none: true,
             };
@@ -209,59 +392,41 @@ impl ConsolidationExecutor<'_> {
         listed: &[Listed<'_>],
     ) -> Result<Vec<CorrectionRead>> {
         let whole = self.correction_read(parsed, entries, listed, StatePart::Whole)?;
-        if json_len(&whole.state) <= MAX_DECISION_STATE_BYTES {
-            return Ok(vec![whole]);
-        }
         let candidate_bytes = |position: usize| {
             parsed.get(position).map_or(0, |candidate| {
-                json_len(&serde_json::json!({
-                    "questions": ["Q0000"],
-                    "subject": candidate.subject.to_hex(),
-                    "predicate": candidate.predicate.as_deref(),
-                    "value": candidate.value.to_string(),
-                }))
-                .saturating_add(1)
+                correction_candidate_bytes(
+                    &candidate.subject.to_hex(),
+                    candidate.predicate.as_deref(),
+                    &candidate.value.to_string(),
+                )
             })
         };
         let listed_bytes = |at: usize| {
-            listed
-                .get(at)
-                .map_or(0, |(claim, subject, predicate, value)| {
-                    json_len(&serde_json::json!({
-                        "claim": claim.to_hex(),
-                        "subject": subject.to_hex(),
-                        "predicate": predicate,
-                        "value": value,
-                    }))
-                    .saturating_add(1)
-                })
+            listed.get(at).map_or(0, |row| {
+                correction_listed_bytes(&row.0.to_hex(), &row.1.to_hex(), row.2, row.3)
+            })
         };
-        let frame = json_len(&correction_state(
-            parsed,
-            &[],
-            &[],
-            &[],
-            StatePart::Page { page: 0, pages: 2 },
-            &mut CallLabelMap::default(),
-        ));
-        let pages = split_pages(
-            frame,
-            entries,
-            |page, (position, at)| {
-                let candidate = if page.iter().any(|entry| entry.0 == position) {
-                    0
-                } else {
-                    candidate_bytes(position)
-                };
-                let claim = if page.iter().any(|entry| entry.1 == at) {
-                    0
-                } else {
-                    listed_bytes(at)
-                };
-                candidate.saturating_add(claim)
-            },
-            |_, _| true,
-        );
+        let frame = correction_frame_bytes();
+        let pages = page_or_whole(json_len(&whole.state), entries, || {
+            split_pages(
+                frame,
+                entries,
+                |page, (position, at)| {
+                    let candidate = if page.iter().any(|entry| entry.0 == position) {
+                        0
+                    } else {
+                        candidate_bytes(position)
+                    };
+                    let claim = if page.iter().any(|entry| entry.1 == at) {
+                        0
+                    } else {
+                        listed_bytes(at)
+                    };
+                    candidate.saturating_add(claim)
+                },
+                |_, _| true,
+            )
+        });
         if pages.len() == 1 {
             return Ok(vec![whole]);
         }
@@ -292,49 +457,35 @@ impl ConsolidationExecutor<'_> {
         part: StatePart,
     ) -> Result<CorrectionRead> {
         let page = match part {
-            StatePart::Page { page, .. } => Some(page.to_string()),
+            StatePart::Page { page, .. } => Some(page),
             StatePart::Whole | StatePart::Final => None,
         };
-        let mut positions: Vec<usize> = Vec::new();
-        let mut shown: Vec<usize> = Vec::new();
-        for &(position, at) in entries {
-            if !positions.contains(&position) {
-                positions.push(position);
-            }
-            if !shown.contains(&at) {
-                shown.push(at);
-            }
-        }
+        let listed_ids: Vec<EntityId> = listed.iter().map(|row| row.0).collect();
+        let (asked, shown) = group_correction_asks(entries, &listed_ids);
         let mut labels = CallLabelMap::default();
         let mut questions = Vec::new();
         let mut owners = Vec::new();
         let mut asks: Vec<(usize, Vec<usize>)> = Vec::new();
-        for position in positions {
-            let ids: Vec<EntityId> = entries
-                .iter()
-                .filter(|entry| entry.0 == position)
-                .filter_map(|entry| listed.get(entry.1).map(|row| row.0))
-                .collect();
-            let mut asked = Vec::new();
-            for (group, (options, wire_options)) in
-                id_options(&ids, true, &mut labels).into_iter().enumerate()
-            {
-                let (position_key, group_key) = (position.to_string(), group.to_string());
-                let mut key: Vec<&[u8]> = vec![position_key.as_bytes(), group_key.as_bytes()];
-                if let Some(page) = &page {
-                    key.extend([b"page".as_slice(), page.as_bytes()]);
-                }
+        for (position, specs) in correction_choice_specs(&asked, page, &mut labels) {
+            let mut questioned = Vec::new();
+            for spec in specs {
+                let owned: Vec<Vec<u8>> = spec.key.iter().map(key_part_bytes).collect();
+                let key: Vec<&[u8]> = owned.iter().map(Vec::as_slice).collect();
                 let question = CORRECTION.question(
                     &key,
                     self.decisions.correction_wording.clone(),
-                    AnswerContract::Choice { options },
+                    AnswerContract::Choice {
+                        options: spec.options,
+                    },
                 )?;
-                labels.show_choices(question.id, wire_options);
-                asked.push(questions.len());
+                if let Some(shown) = spec.shown {
+                    labels.show_choices(question.id, shown);
+                }
+                questioned.push(questions.len());
                 owners.push(position);
                 questions.push(question);
             }
-            asks.push((position, asked));
+            asks.push((position, questioned));
         }
         // Every question is labelled before the state names any, so each
         // request the read splits into reads the same labels.
@@ -400,14 +551,30 @@ fn correction_sources(
     evidence: &[EntityId],
     labels: &CallLabelMap,
 ) -> Vec<EntityId> {
+    let row_sources: Vec<&[EntityId]> = parsed.iter().map(ParsedCandidate::sources).collect();
+    let label_rows: Vec<EntityId> = labels.rows().collect();
+    correction_source_rows(&row_sources, owners, evidence, &label_rows)
+}
+
+/// The rows one correction read sends under (FIX 11526) over plain rows:
+/// the `owners`' extraction rows from `row_sources`, the pack's evidence,
+/// and the stored `label_rows`, sorted and deduped. The bound rebuild sends
+/// no sources, so only native calls this; it stays a shared plain helper so
+/// wording-free preparation never needs the parsed type.
+pub(in crate::dreamer_consolidation) fn correction_source_rows(
+    row_sources: &[&[EntityId]],
+    owners: &[usize],
+    evidence: &[EntityId],
+    label_rows: &[EntityId],
+) -> Vec<EntityId> {
     let mut set: Vec<EntityId> = Vec::new();
     for position in owners {
-        if let Some(candidate) = parsed.get(*position) {
-            set.extend(candidate.sources().iter().copied());
+        if let Some(sources) = row_sources.get(*position) {
+            set.extend(sources.iter().copied());
         }
     }
     set.extend(evidence.iter().copied());
-    set.extend(labels.rows());
+    set.extend(label_rows.iter().copied());
     set.sort_unstable();
     set.dedup();
     set
@@ -439,26 +606,21 @@ fn correction_state(
         let subject = labels
             .assign(LabelKind::Entity, candidate.subject)
             .to_string();
-        candidates.push(serde_json::json!({
-            "questions": refs,
-            "subject": subject,
-            "predicate": candidate.predicate.as_deref(),
-            "value": candidate.value.to_string(),
-        }));
+        candidates.push(NumberedCorrectionCandidate {
+            questions: refs,
+            subject,
+            predicate: candidate.predicate.clone(),
+            value_text: candidate.value.to_string(),
+        });
     }
-    let listed: Vec<serde_json::Value> = listed
+    let listed: Vec<NumberedListedClaim> = listed
         .iter()
-        .map(|(claim, subject, predicate, value)| {
-            serde_json::json!({
-                "claim": labels.assign(LabelKind::Claim, *claim).to_string(),
-                "subject": labels.assign(LabelKind::Entity, *subject).to_string(),
-                "predicate": predicate,
-                "value": value,
-            })
+        .map(|(claim, subject, predicate, value)| NumberedListedClaim {
+            claim: labels.assign(LabelKind::Claim, *claim).to_string(),
+            subject: labels.assign(LabelKind::Entity, *subject).to_string(),
+            predicate: (*predicate).to_owned(),
+            value_text: (*value).to_owned(),
         })
         .collect();
-    part.mark(serde_json::json!({
-        "candidates": candidates,
-        "listed": listed,
-    }))
+    render_correction_state(candidates, listed, PartMark::from(part))
 }

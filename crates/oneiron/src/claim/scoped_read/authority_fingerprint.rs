@@ -24,6 +24,7 @@ use std::collections::BTreeSet;
 
 use sha2::{Digest, Sha256};
 
+use super::frozen::SavedCredential;
 use super::{RoomTurnCeiling, ScopedReadActorKey};
 use crate::authority::{HostActionGuard, VerifiedSlip};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -55,6 +56,16 @@ impl ScopedReadActorKey {
         hasher.update(b"oneiron.scoped_read.authority_fingerprint.v1");
         fold_scope(&mut hasher, &self.world_ceiling())?;
         fold_record_bound(&mut hasher, self.record_bound.as_ref());
+        // Only when set, so a key no saved lane bound keeps its fingerprint:
+        // each credential a saved lane froze, and whether it holds now (FIX
+        // OWN-DEVICE-GRANT-NOT-RECHECKED).
+        if !self.saved_credentials.is_empty() {
+            fold_len(&mut hasher, self.saved_credentials.len());
+            for credential in &self.saved_credentials {
+                hasher.update(credential.slip_id());
+                hasher.update([u8::from(credential.holds_in(vault, &txn)?)]);
+            }
+        }
         if let Some(owner) = self.vault_owner_ref() {
             hasher.update([0u8]);
             hasher.update(owner.as_bytes());
@@ -113,6 +124,15 @@ impl ScopedReadActorKey {
                 fold_scope(&mut hasher, bound)?;
             }
         }
+        // A key a saved lane's basis lifted the relationship gate of on its
+        // owner's live binding alone (blind review P1 on #9716): that owner,
+        // and whether the binding lifts the gate in this snapshot. Any other
+        // key folds nothing more, so its fingerprint is as before.
+        if let Some(owner) = self.relationship_gate_owner {
+            hasher.update(b"relationship_gate_owner");
+            fold_id(&mut hasher, Some(owner));
+            hasher.update([u8::from(!self.relationship_gated_in(vault, &txn)?)]);
+        }
         // A reader homed in no conversation of this vault reads no stamped
         // claim outside a room (RULING SECREAD-HOME-READ-DOORS = B); any
         // other key folds nothing more, so its fingerprint is as before.
@@ -121,6 +141,12 @@ impl ScopedReadActorKey {
             // The room its reader stands in, which it reads stamped claims
             // inside.
             fold_id(&mut hasher, self.standing_room);
+            // A Connect guest's envelope fetch reads stamped claims up to its
+            // grant's ceiling (ANSWER FED-CONNECT-STAMPED-HOME = A).
+            if let Some(ceiling) = self.connect_home_ceiling() {
+                hasher.update(b"connect_home_ceiling");
+                fold_str(&mut hasher, &format!("{ceiling:?}"));
+            }
         }
         Ok(hasher.finalize().into())
     }
@@ -348,12 +374,68 @@ impl ScopedReadActorKey {
         if let Some(holder) = self.agent_grant_holder() {
             key_fold_id(&mut hasher, Some(holder));
         }
-        // Last, and only when set, so every other key keeps its fingerprint:
-        // a reader homed in no conversation of this vault reads no stamped
-        // claim outside a room (RULING SECREAD-HOME-READ-DOORS = B).
+        // The trailing folds, each only when set, so every other key keeps
+        // its fingerprint. First, the credentials saved lanes froze, each
+        // judged in every serving txn (FIX OWN-DEVICE-GRANT-NOT-RECHECKED),
+        // and the earlier end a caveat set one (FIX
+        // SAVED-LANE-OUTLIVES-CAVEAT-EXPIRY).
+        if !self.saved_credentials.is_empty() {
+            key_fold_len(&mut hasher, self.saved_credentials.len());
+            for credential in &self.saved_credentials {
+                let judged = match credential {
+                    SavedCredential::Live {
+                        expires_at: None, ..
+                    } => 0u8,
+                    SavedCredential::Standing(_) => 1u8,
+                    SavedCredential::Live {
+                        expires_at: Some(_),
+                        ..
+                    } => 2u8,
+                };
+                hasher.update(&[judged]);
+                hasher.update(&credential.slip_id());
+                if let Some(end) = credential.expires_at() {
+                    hasher.update(&end.to_be_bytes());
+                }
+            }
+        }
+        // Then a key whose reader's own owner authority is withheld (Sol F3
+        // on #8065).
+        if self.owner_authority_withheld() {
+            hasher.update(b"owner_authority_withheld");
+        }
+        // Then a key rebuilt under a saved lane's floor basis, beside which
+        // the owner alternative stands (blind review round 1 P1 on #8065).
+        if self.rebuilt_under_floor_basis() {
+            hasher.update(b"rebuilt_under_floor_basis");
+        }
+        // Then a reader homed in no conversation of this vault, which reads
+        // no stamped claim outside a room (RULING SECREAD-HOME-READ-DOORS =
+        // B).
         if self.is_homed_unnamed() {
             hasher.update(KEY_FINGERPRINT_HOME_UNNAMED);
             key_fold_id(&mut hasher, self.standing_room);
+            // And the Connect ceiling a guest's envelope fetch reads stamped
+            // claims under (ANSWER FED-CONNECT-STAMPED-HOME = A).
+            if let Some(ceiling) = self.connect_home_ceiling() {
+                hasher.update(KEY_FINGERPRINT_CONNECT_HOME_CEILING);
+                key_fold_json(&mut hasher, &ceiling);
+            }
+        }
+        // Then a key a saved lane's basis took the owner's floor from, which
+        // proves that owner's binding at each read (FIX
+        // SAVED-LANE-MEET-DROPS-OWNER-LIVENESS).
+        if self.vault_owner_ref().is_none()
+            && let Some(owner) = self.owner_binding_ref()
+        {
+            hasher.update(b"withdrawn_floor_owner");
+            key_fold_id(&mut hasher, Some(owner));
+        }
+        // Then a key a saved lane's basis lifted the relationship gate of on
+        // that owner's live binding alone (blind review P1 on #9716).
+        if let Some(owner) = self.relationship_gate_owner {
+            hasher.update(b"relationship_gate_owner");
+            key_fold_id(&mut hasher, Some(owner));
         }
         *hasher.finalize().as_bytes()
     }
@@ -366,6 +448,12 @@ const KEY_FINGERPRINT_DOMAIN: &[u8] = b"oneiron.scoped_read.actor_key_fingerprin
 /// conversation of this vault (`ScopedReadActorKey::homed_unnamed`).
 const KEY_FINGERPRINT_HOME_UNNAMED: &[u8] =
     b"oneiron.scoped_read.actor_key_fingerprint.home_unnamed";
+
+/// [`ScopedReadActorKey::key_fingerprint`]'s fold of the Connect ceiling such
+/// a key reads stamped claims under
+/// (`ScopedReadActorKey::home_cleared_to_connect_ceiling`).
+const KEY_FINGERPRINT_CONNECT_HOME_CEILING: &[u8] =
+    b"oneiron.scoped_read.actor_key_fingerprint.connect_home_ceiling";
 
 fn key_fold_len(hasher: &mut blake3::Hasher, len: usize) {
     hasher.update(&(len as u64).to_be_bytes());

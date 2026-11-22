@@ -171,7 +171,7 @@ impl<'r> RoleCall<'r> {
 /// The level a Dreamer call carries when the vault authors none, and the
 /// thinking budget that goes with it: the pair measured best for extraction.
 const DEFAULT_EFFORT: ReasoningEffort = ReasoningEffort::Medium;
-const DEFAULT_BUDGET_TOKENS: u64 = 4_096;
+pub(super) const DEFAULT_BUDGET_TOKENS: u64 = 4_096;
 
 /// Pins `request`'s reasoning level, for the backend that will serve it: the
 /// vault's authored level for the purpose the call is admitted as, else

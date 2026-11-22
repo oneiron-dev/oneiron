@@ -14,15 +14,17 @@ use crate::sync::loro_support::replicated_deep_value;
 use crate::sync::schema::create_root_doc;
 use crate::temporal::TimeRange;
 
-fn test_manager() -> Arc<WindowManager> {
+fn test_manager() -> (tempfile::TempDir, Arc<WindowManager>) {
     let dir = tempfile::tempdir().unwrap();
     let config = crate::config::VaultConfig::device();
     let vault = Arc::new(Vault::open(dir.path(), config).unwrap());
-    Arc::new(WindowManager::new(
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    let manager = Arc::new(WindowManager::new(
         vault,
         Arc::new(Materializer::new()),
         "test-user",
-    ))
+    ));
+    (dir, manager)
 }
 
 fn test_client(manager: &Arc<WindowManager>) -> (SyncClient, mpsc::UnboundedReceiver<SyncEvent>) {
@@ -74,15 +76,51 @@ fn sync_state_values_with_prefix(vault: &Vault, prefix: &str) -> Vec<(String, Ve
         .collect()
 }
 
-fn read_u_seq(vault: &Vault, key: &str) -> Option<u32> {
+fn read_u_seq(vault: &Vault, key: &str) -> Option<u64> {
     vault
         .sync_state_get(&format!("m:u_seq:w:{key}"))
         .unwrap()
-        .map(|raw| u32::from_le_bytes(raw.try_into().unwrap()))
+        .map(|raw| u64::from_le_bytes(raw.try_into().unwrap()))
 }
 
 fn task_body() -> Vec<u8> {
     crate::habit::task_body_for_test(crate::habit::TaskRole::Task)
+}
+
+/// Wraps window bytes in the pad-free window pad envelope the engine requires
+/// (FIX 7107): every UPDATE frame carries its bytes in an envelope.
+fn pad_update(payload: &[u8]) -> Vec<u8> {
+    transport::WindowPadEnvelope {
+        kind: transport::WindowPadKind::Update,
+        form: transport::WindowPadForm::PadFree,
+        queue_seq: None,
+        payload: payload.to_vec(),
+        refs: Vec::new(),
+        sidecar: None,
+    }
+    .encode()
+    .unwrap()
+}
+
+/// Wraps a snapshot in the pad-free replacement envelope.
+fn pad_replacement(payload: &[u8]) -> Vec<u8> {
+    transport::WindowPadEnvelope {
+        kind: transport::WindowPadKind::Replacement,
+        form: transport::WindowPadForm::PadFree,
+        queue_seq: None,
+        payload: payload.to_vec(),
+        refs: Vec::new(),
+        sidecar: None,
+    }
+    .encode()
+    .unwrap()
+}
+
+/// Unwraps a pad-free envelope's payload (client outbound UPDATEs are enveloped).
+fn unpad_update(enveloped: &[u8]) -> Vec<u8> {
+    transport::decode_window_pad_envelope(enveloped)
+        .unwrap()
+        .payload
 }
 
 fn commit_local_entity(
@@ -96,6 +134,7 @@ fn commit_local_entity(
         ENTITY_TYPE_TASK,
         TimeRange { start: 1, end: 1 },
         learned_at,
+        0,
         body,
     );
     window
@@ -227,7 +266,13 @@ fn test_selector() -> SyncSelector {
 
 fn federated_claim_update(id: &EntityId, body: &ClaimBody) -> Vec<u8> {
     let data = crate::claim::encode_claim_body(body).expect("claim encode");
-    let blob = entity_blob(ENTITY_TYPE_CLAIM, TimeRange { start: 5, end: 5 }, 5, &data);
+    let blob = entity_blob(
+        ENTITY_TYPE_CLAIM,
+        TimeRange { start: 5, end: 5 },
+        5,
+        0,
+        &data,
+    );
     let doc = server_window_doc();
     doc.get_map("entities")
         .insert(id.to_hex().as_str(), blob.as_slice())
@@ -249,7 +294,7 @@ fn federated_tombstone_update(id: &EntityId) -> Vec<u8> {
 
 #[test]
 fn trusted_manifest_world_ceiling_caps_sync_all_and_rejects_unfollowed_updates() {
-    let manager = test_manager();
+    let (_dir_manager, manager) = test_manager();
     let vault = manager.vault();
     let (a, b) = (EntityId::now(), EntityId::now());
     let key_a = WindowKey::for_world(1_771_027_200, a);
@@ -339,7 +384,7 @@ fn trusted_manifest_world_ceiling_caps_sync_all_and_rejects_unfollowed_updates()
 
 #[test]
 fn followed_world_rejects_foreign_payload_at_update_and_both_bulk_doors() {
-    let manager = test_manager();
+    let (_dir_manager, manager) = test_manager();
     let vault = manager.vault();
     let month = WindowKey::new("2026-03");
     let at = month.start_timestamp().unwrap() + 60;
@@ -369,6 +414,7 @@ fn followed_world_rejects_foreign_payload_at_update_and_both_bulk_doors() {
             ClaimLifecycleStatus::Active,
         )
         .unwrap();
+        crate::test_util::stamp_vault_default_facet(vault, &mut body);
         body.world = Some(world);
         vault.put_claim(&claim, &body, occurred, at).unwrap();
     }
@@ -681,8 +727,9 @@ fn sync_all_discovers_unopened_world_and_old_base_windows_between_independent_va
             )
             .unwrap()
             .into_bytes();
+            let enveloped = pad_update(&payload);
             let frame =
-                transport::encode_window_sync(key.as_str(), window_sub_tags::UPDATE, &payload)
+                transport::encode_window_sync(key.as_str(), window_sub_tags::UPDATE, &enveloped)
                     .into_result()
                     .unwrap();
             peer_client
@@ -736,10 +783,14 @@ fn sync_all_discovers_unopened_world_and_old_base_windows_between_independent_va
             )
             .unwrap()
             .into_bytes();
-            let frame =
-                transport::encode_window_sync(next_key.as_str(), window_sub_tags::UPDATE, &payload)
-                    .into_result()
-                    .unwrap();
+            let enveloped = pad_update(&payload);
+            let frame = transport::encode_window_sync(
+                next_key.as_str(),
+                window_sub_tags::UPDATE,
+                &enveloped,
+            )
+            .into_result()
+            .unwrap();
             peer_client.handle_server_message(&frame).unwrap();
             assert_eq!(
                 peer.get(&next_claim).unwrap(),
@@ -754,7 +805,7 @@ fn sync_all_discovers_unopened_world_and_old_base_windows_between_independent_va
 
 #[test]
 fn thin_item_writes_refuse_until_canonical_window_promotion() {
-    let manager = test_manager();
+    let (_dir_manager, manager) = test_manager();
     let vault = manager.vault();
     let id = crate::test_util::entity(0x5e);
     let at = WindowKey::new("2026-09").start_timestamp().unwrap();
@@ -809,7 +860,7 @@ fn thin_item_writes_refuse_until_canonical_window_promotion() {
 
 #[test]
 fn opened_item_residence_rejects_unsolicited_full_window_updates() {
-    let manager = test_manager();
+    let (_dir_manager, manager) = test_manager();
     let (mut client, _rx) = SyncClient::new(manager.clone(), SyncClientConfig::default()).unwrap();
     let doc = server_window_doc();
     doc.get_map("entities")
@@ -836,6 +887,7 @@ fn a_home_promotion_snapshot_carrying_custody_lands_nowhere() {
         crate::registry::ENTITY_TYPE_SECRET_CUSTODY,
         TimeRange { start: at, end: at },
         at,
+        0,
         b"placeholder custody body",
     );
     let carrier = EntityId::now().to_hex();
@@ -868,7 +920,7 @@ fn a_home_promotion_snapshot_carrying_custody_lands_nowhere() {
 
 #[test]
 fn sync_client_generate_initial_sync() {
-    let manager = test_manager();
+    let (_dir_manager, manager) = test_manager();
     let (client, _rx) = SyncClient::new(
         manager,
         SyncClientConfig {
@@ -919,7 +971,7 @@ fn sync_client_generate_initial_sync() {
 /// asserted smaller than the corresponding `all_updates` export.
 #[test]
 fn binary_vv_delta_round_trip_converges_with_smaller_payloads() {
-    let manager = test_manager();
+    let (_dir_manager, manager) = test_manager();
     let (mut client, _rx) = test_client(&manager);
     let key = "2026-03";
     client.ensure_window(key).unwrap();
@@ -932,7 +984,8 @@ fn binary_vv_delta_round_trip_converges_with_smaller_payloads() {
         .unwrap();
     server_doc.commit();
     let base = server_doc.export(ExportMode::all_updates()).unwrap();
-    let base_msg = transport::encode_window_sync(key, window_sub_tags::UPDATE, &base);
+    let base_enveloped = pad_update(&base);
+    let base_msg = transport::encode_window_sync(key, window_sub_tags::UPDATE, &base_enveloped);
     assert!(client.handle_server_message(&base_msg).unwrap().is_empty());
 
     // Diverge: client writes one key, server writes another.
@@ -978,7 +1031,8 @@ fn binary_vv_delta_round_trip_converges_with_smaller_payloads() {
         client_delta.len(),
         client_all.len()
     );
-    server_doc.import(client_delta).unwrap();
+    let client_inner = unpad_update(client_delta);
+    server_doc.import(&client_inner).unwrap();
 
     // responses[1]: client VV for the reverse leg.
     let (k1, sub1, client_vv) = transport::decode_window_sync(&responses[1][1..]).unwrap();
@@ -995,7 +1049,8 @@ fn binary_vv_delta_round_trip_converges_with_smaller_payloads() {
         server_delta.len(),
         server_all.len()
     );
-    let update_msg = transport::encode_window_sync(key, window_sub_tags::UPDATE, &server_delta);
+    let server_enveloped = pad_update(&server_delta);
+    let update_msg = transport::encode_window_sync(key, window_sub_tags::UPDATE, &server_enveloped);
     assert!(
         client
             .handle_server_message(&update_msg)
@@ -1012,7 +1067,7 @@ fn binary_vv_delta_round_trip_converges_with_smaller_payloads() {
 
 #[test]
 fn noop_echo_after_hard_delete_writes_no_uw_carrier() {
-    let manager = test_manager();
+    let (_dir_manager, manager) = test_manager();
     let vault = Arc::clone(manager.vault());
     let (mut client, _rx) = test_client(&manager);
     let key = "2026-03";
@@ -1032,7 +1087,7 @@ fn noop_echo_after_hard_delete_writes_no_uw_carrier() {
         "Observer B materialized the live payload before the hard delete"
     );
 
-    vault.sync_state_put(&seq_key, &0u32.to_le_bytes()).unwrap();
+    vault.sync_state_put(&seq_key, &0u64.to_le_bytes()).unwrap();
     let outcome = vault
         .delete_entity_with_reason(&id, crate::DeleteReason::UserHardDelete)
         .unwrap();
@@ -1049,7 +1104,8 @@ fn noop_echo_after_hard_delete_writes_no_uw_carrier() {
     let prefix = format!("u:w:{key}:");
     let rows_before_echo = sync_state_values_with_prefix(&vault, &prefix);
     let seq_before_echo = read_u_seq(&vault, key);
-    let echo = transport::encode_window_sync(key, window_sub_tags::UPDATE, &payload_update);
+    let echo_enveloped = pad_update(&payload_update);
+    let echo = transport::encode_window_sync(key, window_sub_tags::UPDATE, &echo_enveloped);
     assert!(client.handle_server_message(&echo).unwrap().is_empty());
 
     let rows_after_echo = sync_state_values_with_prefix(&vault, &prefix);
@@ -1076,7 +1132,7 @@ fn noop_echo_after_hard_delete_writes_no_uw_carrier() {
 
 #[test]
 fn noop_echo_after_snapshot_subsumes_writes_no_uw_row() {
-    let manager = test_manager();
+    let (_dir_manager, manager) = test_manager();
     let vault = Arc::clone(manager.vault());
     let (mut client, _rx) = test_client(&manager);
     let key = "2026-03";
@@ -1107,7 +1163,8 @@ fn noop_echo_after_snapshot_subsumes_writes_no_uw_row() {
         "all rows subsumed leaves svf fresh"
     );
 
-    let echo = transport::encode_window_sync(key, window_sub_tags::UPDATE, &payload_update);
+    let echo_enveloped = pad_update(&payload_update);
+    let echo = transport::encode_window_sync(key, window_sub_tags::UPDATE, &echo_enveloped);
     assert!(client.handle_server_message(&echo).unwrap().is_empty());
     assert!(
         sync_state_values_with_prefix(&vault, &prefix).is_empty(),
@@ -1136,7 +1193,7 @@ fn noop_echo_after_snapshot_subsumes_writes_no_uw_row() {
 #[test]
 fn device_vector_arms_rebase_a_pinned_window_on_the_server_and_keep_unsent_rows() {
     for arm in [window_sub_tags::VV_REQUEST, window_sub_tags::VV_RESPONSE] {
-        let manager = test_manager();
+        let (_dir_manager, manager) = test_manager();
         let (mut client, _rx) = test_client(&manager);
         let key = "2026-03";
         let at = WindowKey::new(key).start_timestamp().unwrap() + 60;
@@ -1147,15 +1204,13 @@ fn device_vector_arms_rebase_a_pinned_window_on_the_server_and_keep_unsent_rows(
             .get_map("entities")
             .insert(
                 &shared,
-                entity_blob(ENTITY_TYPE_TASK, range, at, b"shared").as_slice(),
+                entity_blob(ENTITY_TYPE_TASK, range, at, 0, b"shared").as_slice(),
             )
             .unwrap();
         server_doc.commit();
-        let base = transport::encode_window_sync(
-            key,
-            window_sub_tags::UPDATE,
-            &server_doc.export(ExportMode::all_updates()).unwrap(),
-        );
+        let base_raw = server_doc.export(ExportMode::all_updates()).unwrap();
+        let base_enveloped = pad_update(&base_raw);
+        let base = transport::encode_window_sync(key, window_sub_tags::UPDATE, &base_enveloped);
         assert!(client.handle_server_message(&base).unwrap().is_empty());
 
         // The device writes two rows it never sends, and holds a carrier its export scrubs.
@@ -1169,14 +1224,19 @@ fn device_vector_arms_rebase_a_pinned_window_on_the_server_and_keep_unsent_rows(
                     .get_map("entities")
                     .insert(
                         row,
-                        entity_blob(ENTITY_TYPE_TASK, range, at + 1 + n as u64, b"unsent")
+                        entity_blob(ENTITY_TYPE_TASK, range, at + 1 + n as u64, 0, b"unsent")
                             .as_slice(),
                     )
                     .unwrap();
                 window.doc.commit();
             }
-            let diagnostic =
-                entity_blob(crate::registry::ENTITY_TYPE_DIAGNOSTIC, range, at, b"diag");
+            let diagnostic = entity_blob(
+                crate::registry::ENTITY_TYPE_DIAGNOSTIC,
+                range,
+                at,
+                0,
+                b"diag",
+            );
             window
                 .doc
                 .get_map("entities")
@@ -1209,7 +1269,9 @@ fn device_vector_arms_rebase_a_pinned_window_on_the_server_and_keep_unsent_rows(
         let snapshot = server_doc
             .export(ExportMode::shallow_snapshot(&server_doc.oplog_frontiers()))
             .unwrap();
-        let frame = transport::encode_window_sync(key, window_sub_tags::REPLACEMENT, &snapshot);
+        let snapshot_enveloped = pad_replacement(&snapshot);
+        let frame =
+            transport::encode_window_sync(key, window_sub_tags::REPLACEMENT, &snapshot_enveloped);
         let responses = client.handle_server_message(&frame).unwrap();
         let (_, tag, vv) = transport::decode_window_sync(&responses[0][1..]).unwrap();
         assert_eq!(
@@ -1242,7 +1304,8 @@ fn device_vector_arms_rebase_a_pinned_window_on_the_server_and_keep_unsent_rows(
             window_sub_tags::UPDATE,
             "arm {arm}: the rebased device sends history"
         );
-        let status = server_doc.import(delta).unwrap();
+        let inner = unpad_update(delta);
+        let status = server_doc.import(&inner).unwrap();
         assert!(
             status.pending.is_none(),
             "arm {arm}: the server cannot apply the device's history"
@@ -1274,7 +1337,7 @@ fn device_vector_arms_rebase_a_pinned_window_on_the_server_and_keep_unsent_rows(
 fn vv_response_triggers_local_diff_update() {
     // Client sent VV_REQUEST earlier; the server's VV_RESPONSE must be
     // consumed (not a no-op) — the client computes and sends its diff.
-    let manager = test_manager();
+    let (_dir_manager, manager) = test_manager();
     let (mut client, _rx) = test_client(&manager);
     let key = "2026-04";
     client.ensure_window(key).unwrap();
@@ -1298,7 +1361,8 @@ fn vv_response_triggers_local_diff_update() {
     let (k, sub, delta) = transport::decode_window_sync(&responses[0][1..]).unwrap();
     assert_eq!(k, key);
     assert_eq!(sub, window_sub_tags::UPDATE);
-    server_doc.import(delta).unwrap();
+    let inner = unpad_update(delta);
+    server_doc.import(&inner).unwrap();
     assert_eq!(
         replicated_deep_value(&client.window(key).unwrap().doc),
         replicated_deep_value(&server_doc)
@@ -1310,7 +1374,7 @@ fn vv_response_triggers_local_diff_update() {
 /// treated as NOT converged by callers — fail-closed.
 #[test]
 fn window_converged_requires_server_witness_and_vv_equality() {
-    let manager = test_manager();
+    let (_dir_manager, manager) = test_manager();
     let (mut client, _rx) = test_client(&manager);
     let key = "2026-03";
     client.ensure_window(key).unwrap();
@@ -1345,7 +1409,8 @@ fn window_converged_requires_server_witness_and_vv_equality() {
         &client.window(key).unwrap().doc.oplog_vv().encode(),
     )
     .unwrap();
-    let update = transport::encode_window_sync(key, window_sub_tags::UPDATE, &delta);
+    let enveloped = pad_update(&delta);
+    let update = transport::encode_window_sync(key, window_sub_tags::UPDATE, &enveloped);
     client.handle_server_message(&update).unwrap();
     assert_eq!(client.window_converged(key), Some(true));
 
@@ -1387,7 +1452,7 @@ fn window_converged_requires_server_witness_and_vv_equality() {
 /// garbage bytes fail closed with the typed transport error.
 #[test]
 fn import_queued_update_applies_ops_and_rejects_garbage() {
-    let manager = test_manager();
+    let (_dir_manager, manager) = test_manager();
     let (mut client, _rx) = test_client(&manager);
     let key = "2026-03";
 
@@ -1418,7 +1483,7 @@ fn import_queued_update_applies_ops_and_rejects_garbage() {
 
 #[test]
 fn federated_import_seam_restamps_before_observed_import() {
-    let manager = test_manager();
+    let (_dir_manager, manager) = test_manager();
     let vault = Arc::clone(manager.vault());
     let (mut client, _rx) = test_federated_client(&manager);
     let key = "2026-03";
@@ -1456,7 +1521,7 @@ fn federated_import_seam_restamps_before_observed_import() {
 
 #[test]
 fn federated_generated_auto_claim_restamps_but_stays_non_consolidatable() {
-    let manager = test_manager();
+    let (_dir_manager, manager) = test_manager();
     let vault = Arc::clone(manager.vault());
     let (mut client, _rx) = test_federated_client(&manager);
     let key = "2026-03";
@@ -1494,7 +1559,7 @@ fn federated_generated_auto_claim_restamps_but_stays_non_consolidatable() {
 
 #[test]
 fn federated_selector_guest_response_cannot_auto_approve_above_local_ceiling() {
-    let manager = test_manager();
+    let (_dir_manager, manager) = test_manager();
     let vault = Arc::clone(manager.vault());
     let (mut client, _rx) = test_federated_client(&manager);
     let key = "2026-03";
@@ -1542,7 +1607,7 @@ fn federated_selector_guest_response_cannot_auto_approve_above_local_ceiling() {
 /// untouched.
 #[test]
 fn selector_request_builder_refuses_an_unbound_client_and_records_nothing() {
-    let manager = test_manager();
+    let (_dir_manager, manager) = test_manager();
     let vault = Arc::clone(manager.vault());
     let (mut client, _rx) = test_client(&manager);
     let key = "2026-03";
@@ -1576,9 +1641,10 @@ fn selector_request_builder_refuses_an_unbound_client_and_records_nothing() {
         .expect("a bound client retries the deferred selector");
     assert_eq!(retry.len(), 1);
 
-    let response = transport::encode_window_sync(key, window_sub_tags::UPDATE, &update)
-        .into_result()
-        .expect("full-window update encodes");
+    let response =
+        transport::encode_window_sync(key, window_sub_tags::UPDATE, &pad_update(&update))
+            .into_result()
+            .expect("full-window update encodes");
 
     client
         .handle_server_message(&response)
@@ -1596,7 +1662,7 @@ fn selector_request_builder_refuses_an_unbound_client_and_records_nothing() {
 
 #[test]
 fn federated_import_seam_denies_preapproved_untrusted_claim() {
-    let manager = test_manager();
+    let (_dir_manager, manager) = test_manager();
     let vault = Arc::clone(manager.vault());
     let (mut client, _rx) = test_federated_client(&manager);
     let key = "2026-03";
@@ -1626,7 +1692,7 @@ fn federated_import_seam_denies_preapproved_untrusted_claim() {
 
 #[test]
 fn federated_import_seam_denial_preserves_open_durable_window() {
-    let manager = test_manager();
+    let (_dir_manager, manager) = test_manager();
     let vault = Arc::clone(manager.vault());
     let (mut client, _rx) = test_federated_client(&manager);
     let key = "2026-03";
@@ -1694,7 +1760,7 @@ fn federated_import_seam_denial_preserves_open_durable_window() {
 
 #[test]
 fn federated_import_seam_rejects_tombstone_updates_until_delete_admission() {
-    let manager = test_manager();
+    let (_dir_manager, manager) = test_manager();
     let vault = Arc::clone(manager.vault());
     let (mut client, _rx) = test_federated_client(&manager);
     let key = "2026-03";
@@ -1724,7 +1790,7 @@ fn federated_import_seam_rejects_tombstone_updates_until_delete_admission() {
 
 #[test]
 fn federated_import_seam_rejects_oversized_update_before_window_open() {
-    let manager = test_manager();
+    let (_dir_manager, manager) = test_manager();
     let (mut client, _rx) = test_federated_client(&manager);
     let key = "2026-03";
     let update = vec![0u8; MAX_DECODED_PAYLOAD_BYTES + 1];
@@ -1745,7 +1811,7 @@ fn malformed_vv_payloads_fail_closed() {
     // The dead JSON encoding and arbitrary garbage must both be REJECTED
     // with the typed error — never silently treated as an empty VV (an
     // empty-VV fallback would ship the full history to a malformed peer).
-    let manager = test_manager();
+    let (_dir_manager, manager) = test_manager();
     let (mut client, _rx) = test_client(&manager);
 
     let json_vv: &[u8] = b"{}";
@@ -1793,7 +1859,7 @@ fn malformed_vv_payloads_fail_closed() {
 
 #[test]
 fn oversized_window_update_fails_closed_before_window_open() {
-    let manager = test_manager();
+    let (_dir_manager, manager) = test_manager();
     let (mut client, _rx) = test_client(&manager);
     let key = "2026-03";
     let update = vec![0u8; MAX_DECODED_PAYLOAD_BYTES + 1];
@@ -1815,7 +1881,7 @@ fn oversized_window_update_fails_closed_before_window_open() {
 
 #[test]
 fn sync_client_mints_client_id_once_and_keeps_it_stable() {
-    let manager = test_manager();
+    let (_dir_manager, manager) = test_manager();
     let (client, _rx) = test_client(&manager);
 
     let raw = manager
@@ -1848,7 +1914,7 @@ fn sync_client_mints_client_id_once_and_keeps_it_stable() {
 
 #[test]
 fn sync_client_fails_closed_on_zero_client_id_row() {
-    let manager = test_manager();
+    let (_dir_manager, manager) = test_manager();
     manager
         .vault()
         .sync_state_put(KEY_CLIENT_ID, &0u64.to_le_bytes())
@@ -1875,7 +1941,7 @@ fn persist_root_state_reverts_in_memory_root_on_txn_failure() {
     use crate::sync::loro_support::export_snapshot;
     use crate::sync::schema::create_root_doc;
 
-    let manager = test_manager();
+    let (_dir_manager, manager) = test_manager();
     let (mut client, _rx) = test_client(&manager);
     let frontiers_before = client.root_doc().state_frontiers();
 
@@ -1916,7 +1982,7 @@ fn server_windows_reads_schema_written_root_doc() {
     use crate::sync::loro_support::export_snapshot;
     use crate::sync::schema::create_root_doc;
 
-    let manager = test_manager();
+    let (_dir_manager, manager) = test_manager();
     let (mut client, _rx) = test_client(&manager);
 
     let server_root = create_root_doc(
@@ -1970,7 +2036,7 @@ fn real_staged_import(
 
 #[test]
 fn conflicting_confirm_fails_closed() {
-    let manager = test_manager();
+    let (_dir_manager, manager) = test_manager();
     let staged = real_staged_import(&manager, 0x50);
     let id = staged.receipt.receipt_id;
     let actor = test_entity_id(0x55);
@@ -1995,7 +2061,7 @@ fn conflicting_confirm_fails_closed() {
 }
 #[test]
 fn crash_window_restart_retry_is_safe() {
-    let manager = test_manager();
+    let (_dir_manager, manager) = test_manager();
     let vault = manager.vault();
     let policy = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 0)]);
     put_policy_manifest_bytes(vault, test_entity_id(0x61), &policy).unwrap();
@@ -2066,7 +2132,7 @@ fn crash_window_restart_retry_is_safe() {
 }
 #[test]
 fn staged_confirm_does_not_admit_twice() {
-    let manager = test_manager();
+    let (_dir_manager, manager) = test_manager();
     let staged = real_staged_import(&manager, 0x70);
     let retry = staged.clone();
     let actor = test_entity_id(0x75);
@@ -2139,7 +2205,7 @@ fn gate_rejected_stage_is_retryable_and_writes_no_receipt() {
 
     // Probe vault, permit granted. Because receipt_id excludes trust state, the
     // id minted here is exactly the id the rejecting vault below derives.
-    let probe_manager = test_manager();
+    let (_dir_probe_manager, probe_manager) = test_manager();
     let probe_vault = probe_manager.vault();
     let granted = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 0)]);
     put_policy_manifest_bytes(probe_vault, test_entity_id(0xE3), &granted).unwrap();
@@ -2156,7 +2222,7 @@ fn gate_rejected_stage_is_retryable_and_writes_no_receipt() {
 
     // Rejecting vault: a well-formed manifest that simply carries no Imported
     // permit, so the Imported restamp is refused rather than malformed.
-    let manager = test_manager();
+    let (_dir_manager, manager) = test_manager();
     let vault = manager.vault();
     let unpermitted = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Observed, 0)]);
     put_policy_manifest_bytes(vault, test_entity_id(0xE3), &unpermitted).unwrap();
@@ -2220,7 +2286,7 @@ fn gate_rejected_stage_heals_to_pending_under_same_receipt_id() {
     );
     let manifest_id = test_entity_id(0xE5);
 
-    let manager = test_manager();
+    let (_dir_manager, manager) = test_manager();
     let vault = manager.vault();
     let unpermitted = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Observed, 0)]);
     put_policy_manifest_bytes(vault, manifest_id, &unpermitted).unwrap();
@@ -2310,7 +2376,7 @@ fn confirm_revalidates_policy_tightened_after_stage() {
     );
     let manifest_id = test_entity_id(0xF1);
 
-    let manager = test_manager();
+    let (_dir_manager, manager) = test_manager();
     let vault = manager.vault();
     let permissive = encode_policy_manifest(vec![source_trust_entry(ClaimSource::Imported, 2)]);
     put_policy_manifest_bytes(vault, manifest_id, &permissive).unwrap();
@@ -2423,6 +2489,7 @@ fn bound_wire_federation_burst_is_durable_before_import_and_replays_after_restar
                     crate::registry::ENTITY_TYPE_PERSON,
                     TimeRange { start: 1, end: 1 },
                     1,
+                    0,
                     b"person",
                 )
                 .as_slice(),
@@ -2431,7 +2498,8 @@ fn bound_wire_federation_burst_is_durable_before_import_and_replays_after_restar
     }
     remote.commit();
     let update = remote.export(ExportMode::all_updates()).unwrap();
-    let frame = transport::encode_window_sync(key, window_sub_tags::UPDATE, &update)
+    let enveloped = pad_update(&update);
+    let frame = transport::encode_window_sync(key, window_sub_tags::UPDATE, &enveloped)
         .into_result()
         .unwrap();
     client.handle_server_message(&frame).unwrap();
@@ -2463,7 +2531,7 @@ fn bound_wire_federation_burst_is_durable_before_import_and_replays_after_restar
 
 #[test]
 fn malformed_federation_update_is_not_queued_and_streak_reaches_the_next_decision() {
-    let manager = test_manager();
+    let (_dir_manager, manager) = test_manager();
     let (mut client, mut rx) = test_federated_client(&manager);
     let key = "2026-01";
     assert!(matches!(
@@ -2489,6 +2557,7 @@ fn malformed_federation_update_is_not_queued_and_streak_reaches_the_next_decisio
                     crate::registry::ENTITY_TYPE_PERSON,
                     TimeRange { start: 1, end: 1 },
                     1,
+                    0,
                     b"person",
                 )
                 .as_slice(),
@@ -2520,7 +2589,7 @@ fn malformed_federation_update_is_not_queued_and_streak_reaches_the_next_decisio
 
 #[test]
 fn bound_federation_lane_refuses_full_window_receive_bypasses() {
-    let manager = test_manager();
+    let (_dir_manager, manager) = test_manager();
     let (mut client, _) = test_federated_client(&manager);
     for tag in [window_sub_tags::VV_REQUEST, window_sub_tags::VV_RESPONSE] {
         let frame = transport::encode_window_sync("2026-01", tag, &VersionVector::new().encode())
@@ -2544,7 +2613,7 @@ fn bound_federation_lane_refuses_full_window_receive_bypasses() {
 
 #[test]
 fn federation_import_needs_authenticated_principal_not_an_auth_token_string() {
-    let manager = test_manager();
+    let (_dir_manager, manager) = test_manager();
     let (mut client, _) = SyncClient::new(
         manager,
         SyncClientConfig {
@@ -2611,6 +2680,8 @@ fn note_session_bind_frame_carries_a_holder_proof_the_vault_accepts() {
 /// A claim of a portable world whose text this device edited, its client, and
 /// a server document UPDATE whose reply would carry the edit.
 struct JournaledClaimText {
+    /// The vault's directory: the caller keeps it for the test body.
+    dir: tempfile::TempDir,
     vault: Arc<Vault>,
     world: EntityId,
     claim: EntityId,
@@ -2620,7 +2691,7 @@ struct JournaledClaimText {
 }
 
 fn journaled_claim_text() -> JournaledClaimText {
-    let manager = test_manager();
+    let (dir, manager) = test_manager();
     let vault = Arc::clone(manager.vault());
     let at = TimeRange { start: 1, end: 1 };
     let world = EntityId::from_bytes([0x61; 16]).unwrap();
@@ -2654,7 +2725,13 @@ fn journaled_claim_text() -> JournaledClaimText {
         .documents()
         .open(claim)
         .unwrap()
-        .edit_text(0, 0, "private text")
+        .edit_text(
+            crate::write_envelope::WriteActor::new(person, crate::edge::EdgeActorClass::Human),
+            1,
+            0,
+            0,
+            "private text",
+        )
         .unwrap();
     let home = LoroDoc::new();
     home.get_text("body").insert(0, "home ").unwrap();
@@ -2667,6 +2744,7 @@ fn journaled_claim_text() -> JournaledClaimText {
     .into_result()
     .unwrap();
     JournaledClaimText {
+        dir,
         vault,
         world,
         claim,
@@ -2682,6 +2760,7 @@ fn journaled_claim_text() -> JournaledClaimText {
 #[test]
 fn device_only_claim_text_stays_journaled_until_the_flag_clears() {
     let JournaledClaimText {
+        dir: _dir,
         vault,
         world,
         mut client,
@@ -2708,6 +2787,7 @@ fn claim_text_whose_world_cannot_be_read_stays_journaled_while_a_flag_stands() {
     // Never MessagePack, and no body at all.
     for tail in [&[0xc1][..], &[][..]] {
         let JournaledClaimText {
+            dir: _dir,
             vault,
             world,
             claim,
@@ -2747,7 +2827,7 @@ fn claim_text_whose_world_cannot_be_read_stays_journaled_while_a_flag_stands() {
 #[test]
 fn a_flag_committed_while_the_raw_guard_inspects_withholds_the_update() {
     use crate::sync::window::{UpdateVerdict, raw_update_verdict};
-    let manager = test_manager();
+    let (_dir_manager, manager) = test_manager();
     let vault = Arc::clone(manager.vault());
     let learned = 1_772_323_260;
     let at = TimeRange {
@@ -2809,7 +2889,7 @@ fn a_standing_that_expires_while_the_raw_guard_inspects_withholds_the_update() {
     };
     use crate::sync::window::{UpdateVerdict, raw_update_verdict};
     use ed25519_dalek::Signer;
-    let manager = test_manager();
+    let (_dir_manager, manager) = test_manager();
     let vault = Arc::clone(manager.vault());
     let learned = 1_772_323_260;
     let at = TimeRange {

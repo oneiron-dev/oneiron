@@ -1,30 +1,18 @@
-// FIX [LIBTEST-QUARANTINE-OUTBOUND-TESTS-CONNECTOR-QUALIFICATION]: the lib test target's type check fails here (2 errors: E0063 x2); port it, then drop this gate
-#[cfg(any())]
 mod connector_qualification;
-// FIX [LIBTEST-QUARANTINE-OUTBOUND-TESTS-CONNECTOR-SCHEDULE]: the lib test target's type check fails here (2 errors: E0639 x1, E0063 x1); port it, then drop this gate
-#[cfg(any())]
 mod connector_schedule;
-// FIX [LIBTEST-QUARANTINE-OUTBOUND-TESTS-DISPATCH-BUDGET]: the lib test target's type check fails here (2 errors: E0061 x2); port it, then drop this gate
-#[cfg(any())]
 mod dispatch_budget;
-// FIX [LIBTEST-QUARANTINE-OUTBOUND-TESTS-SENDER-SELECTION-FACET-SELECTION]: the lib test target's type check fails here (1 errors: E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[path = "sender_selection/facet_selection.rs"]
 mod facet_selection;
 mod gate_window;
-// FIX [LIBTEST-QUARANTINE-OUTBOUND-TESTS-LINKEDIN-CONNECT]: the lib test target's type check fails here (2 errors: E0063 x1, E0061 x1); port it, then drop this gate
-#[cfg(any())]
 mod linkedin_connect;
 mod linkedin_send;
-// FIX [LIBTEST-QUARANTINE-OUTBOUND-TESTS-PIPELINE-CONTRACT]: the lib test target's type check fails here (3 errors: E0639 x2, E0063 x1); port it, then drop this gate
-#[cfg(any())]
+mod owner_declined_resend_ack;
 mod pipeline_contract;
 mod quiet_window;
+mod refailed_send_settlement;
 mod retry_audit;
 mod sender_selection;
 mod space_posting;
-// FIX [LIBTEST-QUARANTINE-OUTBOUND-TESTS-STEP-FAILURE]: the lib test target's type check fails here (3 errors: E0063 x3); port it, then drop this gate
-#[cfg(any())]
 mod step_failure;
 
 use super::*;
@@ -78,6 +66,11 @@ fn temp_vault() -> (tempfile::TempDir, TimedVault) {
     let mut config = VaultConfig::device();
     config.store_clock = clock.bundle();
     let vault = Vault::open(tmp.path(), config).expect("open vault");
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    // Keep seeded policy rows; these tests cover outbound behavior, not the built-in pack gate.
+    vault
+        .remove_builtin_pack_seed_marker_for_test()
+        .expect("FIXTURE: drop the built-in pack seed marker (OF-519 gate is not under test here)");
     (tmp, TimedVault { vault, clock })
 }
 

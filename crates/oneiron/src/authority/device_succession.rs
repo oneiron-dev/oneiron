@@ -110,6 +110,7 @@ pub(super) fn apply_device_succession(
     hash: AuthorityEntryHash,
     counting: (Option<&PinnedRoot>, InstallCounted<'_>),
     restriction_only: bool,
+    needs_proof_off_the_line: bool,
 ) -> std::result::Result<(), AuthorityFoldIssue> {
     let choice = DeviceSuccessionChoice {
         successor: succession.successor,
@@ -119,6 +120,7 @@ pub(super) fn apply_device_succession(
         machine: succession.machine,
         choice: Some(&choice),
         context: DEVICE_SUCCESSION_REVISION_CONTEXT,
+        needs_proof_off_the_line,
         persons_own_narrowing: false,
     };
     let landing = owner_choice_landing(
@@ -214,7 +216,12 @@ impl Vault {
         let public_key = key.verifying_key().to_bytes();
         let signer = AuthorityKey::Ed25519(public_key);
         let target = device_succession_target(client, &device_key)?;
-        if !super::owner_act_signer_admits(before.machine(machine), &before.roster, &public_key) {
+        if !super::owner_act_signer_admits(
+            before.machine(machine),
+            &before.roster,
+            &public_key,
+            before.pinned_root.as_ref(),
+        ) {
             return Err(authority_refused(NO_CARRIER));
         }
         let seen = before.device_successions.revision(target);
@@ -243,7 +250,7 @@ impl Vault {
                 successor: machine,
             }),
             now,
-            self.owner_proof_signer(fold).as_deref(),
+            self.owner_proof_signer(fold).as_ref(),
         )?;
         let hash = authority_entry_hash(&entry)?;
         let at = TimeRange {

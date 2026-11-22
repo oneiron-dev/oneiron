@@ -698,7 +698,6 @@ impl Vault {
             .restore_kit_here(own, KitSecretKind::VaultKey, &given, passphrase)
             .map_err(kit_refused)?;
         let key = committed_key(&own, &commitment, secret)?;
-        self.hold_vault_key(key);
-        Ok(())
+        self.hold_vault_key(key)
     }
 }

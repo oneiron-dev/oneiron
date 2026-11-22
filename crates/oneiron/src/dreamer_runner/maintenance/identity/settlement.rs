@@ -12,7 +12,8 @@ use super::{
 };
 use crate::claim::ClaimSource;
 use crate::identity_topology::{
-    AssertDistinctOp, EngineCause, IdentityOpWrite, IdentityTopologyOp, TopologySeal,
+    AssertDistinctOp, DistinctClaimPlace, EngineCause, IdentityOpWrite, IdentityTopologyOp,
+    TopologySeal,
 };
 use crate::{EntityId, Result, Vault};
 
@@ -99,13 +100,27 @@ fn assert_distinct_in_txn(
             }
         }
     }
-    // The fact is derived from the ask's MESSAGE: it keeps that MESSAGE's
-    // audience (OPUS-LEAKS).
+    // The fact is derived from the ask's MESSAGE: it is born with that
+    // MESSAGE's audience (OPUS-LEAKS), in the project and world the MESSAGE
+    // is read at (FIX INTENT-DISTINCT-PROJECT-WORLD). A MESSAGE with no place
+    // has no audience either, and is refused above.
     let (relationships, private) = message_audience_in_txn(vault, txn, &ask.message)?;
+    let (project, world) = vault
+        .derivation_project_and_world_in_txn(txn, ask.message)?
+        .ok_or_else(|| {
+            crate::Error::InvalidConfig(
+                "an identity ask's MESSAGE has no place a reader resolves".into(),
+            )
+        })?;
+    let place = DistinctClaimPlace {
+        relationships,
+        private,
+        project,
+        world,
+    };
     let write = IdentityOpWrite::auto(source);
     for head in real {
-        let held = vault.distinct_claims_for_pair_in_txn(txn, &fresh, &head)?;
-        vault.apply_identity_topology_op_as_in_txn(
+        vault.apply_identity_topology_op_placed_in_txn(
             txn,
             &IdentityTopologyOp::AssertDistinct(AssertDistinctOp {
                 a: fresh,
@@ -114,13 +129,9 @@ fn assert_distinct_in_txn(
             }),
             &write,
             seal,
+            Some(&place),
             now,
         )?;
-        for claim in vault.distinct_claims_for_pair_in_txn(txn, &fresh, &head)? {
-            if !held.contains(&claim) {
-                vault.narrow_distinct_claim_in_txn(txn, &claim, relationships.clone(), private)?;
-            }
-        }
     }
     Ok(())
 }
@@ -191,9 +202,23 @@ pub(super) fn apply_in_txn(
         Answer::SomeoneNew => {
             let fresh = match ask.provisional {
                 Some(own) => own,
-                None => crate::tagging::mint_for_span_in_txn(
-                    vault, txn, ask.kind, &ask.name, ask.turn, now,
-                )?,
+                None => {
+                    let possessor = crate::tagging::possessor_in_txn(
+                        vault,
+                        txn,
+                        ask.kind,
+                        &ask.name,
+                        &ask.message,
+                    )?;
+                    crate::tagging::mint_for_span_in_txn(
+                        vault,
+                        txn,
+                        (ask.kind, &ask.name),
+                        ask.turn,
+                        possessor,
+                        now,
+                    )?
+                }
             };
             crate::tagging::settle_mention_in_txn(vault, txn, &ask.turn, span, fresh)?;
             crate::tagging::confirm_provisional_in_txn(vault, txn, &fresh)?;

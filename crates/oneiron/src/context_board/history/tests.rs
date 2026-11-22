@@ -49,7 +49,7 @@ fn changed_turn_claims_carry_anchor_unchanged_turns_write_nothing_and_fold_exact
     for id in &receipt.changed_claims {
         let claim = vault.get_claim(id).unwrap().unwrap();
         assert_eq!(
-            super::claims::decode_value(&claim.value).unwrap().1,
+            super::claims::decode_value(&claim.value).unwrap().2,
             receipt.source_revision_ref
         );
     }
@@ -98,7 +98,7 @@ fn changed_turn_claims_carry_anchor_unchanged_turns_write_nothing_and_fold_exact
         .unwrap();
     assert_eq!(active.predicate, "world_access.active");
     assert_eq!(
-        super::claims::decode_value(&active.value).unwrap().1,
+        super::claims::decode_value(&active.value).unwrap().2,
         changed.source_revision_ref
     );
     assert_eq!(vault.reconstruct_board(&middle).unwrap(), expected_middle);
@@ -132,7 +132,11 @@ fn generic_claim_door_cannot_forge_board_authority_or_frontier() {
     let mut body = ClaimBody::new(
         "world_access.active",
         ClaimSubject::Entity(owner),
-        super::claims::value(&BTreeSet::new(), crate::vault::RevisionRef([1; 16])),
+        super::claims::value(
+            &BTreeSet::new(),
+            Some(false),
+            crate::vault::RevisionRef([1; 16]),
+        ),
         1.0,
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
@@ -300,7 +304,11 @@ fn board_claim_frontier_is_authenticated_without_rewriting_unchanged_families() 
     );
     let id = receipt.changed_claims[0];
     let mut body = vault.get_claim(&id).unwrap().unwrap();
-    body.value = super::claims::value(&selection.pinned, crate::vault::RevisionRef([0xFF; 16]));
+    body.value = super::claims::value(
+        &selection.pinned,
+        None,
+        crate::vault::RevisionRef([0xFF; 16]),
+    );
     let mut txn = vault.store.env.write_txn().unwrap();
     vault
         .put_reserved_claim_in_txn(
@@ -556,11 +564,11 @@ fn another_actors_capability_cannot_record_a_board_in_the_authors_name() {
     assert!(as_reader.is_entity_readable(&turn).unwrap());
 
     assert!(matches!(
-        vault.record_board_turn_now(turn, author, None, &as_reader, |_| true),
+        vault.record_board_turn_now(turn, author, None, None, &as_reader, |_| true),
         Err(BoardHistoryError::NotTurnAuthor(id)) if id == turn
     ));
     let recorded = vault
-        .record_board_turn_now(turn, author, None, &read_as(&vault, author), |_| true)
+        .record_board_turn_now(turn, author, None, None, &read_as(&vault, author), |_| true)
         .unwrap();
     assert!(recorded.is_some());
     assert_eq!(vault.board_turn_owner(&turn).unwrap(), Some(author));
@@ -604,7 +612,7 @@ fn a_pin_changed_before_its_record_replays_the_served_revision() {
         )
         .unwrap();
     let recorded = vault
-        .record_board_turn_now(turn, owner, Some(&memories), &caller, |_| true)
+        .record_board_turn_now(turn, owner, Some(&memories), None, &caller, |_| true)
         .unwrap();
     assert!(recorded.is_some());
 

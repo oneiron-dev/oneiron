@@ -266,6 +266,10 @@ pub struct Vault {
     /// ([`Vault::set_lfs_read_room`]); none until it lends one.
     pub(crate) lfs_read_room:
         std::sync::RwLock<Option<std::sync::Arc<dyn crate::origin::lfs::LfsReadRoom>>>,
+    /// The text embedder this vault's live pending-text reconciler runs, which
+    /// `vault.worlds.vectors` judges each world by (FIX [WORLD-VECTORS-FACT]).
+    /// In memory only; none until a host builds a reconciler.
+    pub(crate) host_text_embedder: crate::embed::world_vectors::HostTextEmbedderSlot,
     /// Each published LFS object's verdict for a peer no read authority
     /// admits, by its OID and its manifest's BLAKE3 (EXPORTDOORS Q3). In
     /// memory only: what the object's bytes release, never who may read.
@@ -380,8 +384,6 @@ impl Vault {
 }
 
 pub(crate) mod tables;
-// FIX [LIBTEST-QUARANTINE-VAULT-TESTS]: the lib test target's type check fails here (3 errors: E0639 x3); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

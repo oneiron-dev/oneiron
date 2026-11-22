@@ -20,6 +20,10 @@ pub use oneiron_records::booking::anti_abuse::rules::{
     BookingAntiAbuseOwnerConfig, BookingAntiAbuseRule, BookingRuleOwnerStampBinding,
     BookingRuleScope,
 };
+#[doc(hidden)]
+pub(crate) use oneiron_records::booking::anti_abuse::rules::{
+    email_prompt_at_failed_checks_default, email_quarantine_at_failed_checks_default,
+};
 
 /// One versioned rule row.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -82,14 +86,42 @@ mod opt_entity_ref_serde {
 // Validation
 // -------------------------------------------------------------------------
 
-/// Validates one row: row-id shape, version, and the ratified per-variant
-/// ranges. Ranges live in the validator — never as module constants an owner
-/// could mistake for a picked threshold.
+/// Validates one row a write door would store (seed rows, an amendment's
+/// proposal): every check of `validate_stored_rule_row`, and the
+/// per-session active hold cap is one. Storage keys a hold by the session
+/// digest, so a new hold for a session replaces the prior one (canon
+/// ARCH-0062 "1 active hold/session"; Engine RULING
+/// PACK-KEYS-HOLDS-PER-SESSION = A, 15 Nov 23:20).
 ///
 /// # Errors
 ///
 /// [`BookingError::InvalidConstraint`] when any field is out of range.
 pub fn validate_rule_row(row: &BookingAntiAbuseRuleRow) -> Result<(), BookingError> {
+    validate_stored_rule_row(row)?;
+    if let BookingAntiAbuseRule::HoldRate {
+        max_active_per_session,
+        ..
+    } = &row.rule
+        && *max_active_per_session != 1
+    {
+        return Err(refused(
+            "the per-session active hold cap is one: a new hold for a session replaces the prior one",
+        ));
+    }
+    Ok(())
+}
+
+/// Validates one row a vault already holds: row-id shape, version, and the
+/// ratified per-variant ranges. Ranges live in the validator — never as module
+/// constants an owner could mistake for a picked threshold. A stored hold row
+/// keeps the range it was written under (a cap of 1-255), so a manifest that
+/// holds a cap above one still decodes and acts as before (stored change:
+/// keep; Engine RULING HOLD-CAP-STORED-MANIFEST = A, 16 Nov 00:48).
+///
+/// # Errors
+///
+/// [`BookingError::InvalidConstraint`] when any field is out of range.
+pub(super) fn validate_stored_rule_row(row: &BookingAntiAbuseRuleRow) -> Result<(), BookingError> {
     if row.row_id.is_empty() || row.row_id.len() > ROW_ID_MAX_LEN {
         return Err(refused("booking anti-abuse row id must be 1-128 chars"));
     }
@@ -113,6 +145,17 @@ pub fn validate_rule_row(row: &BookingAntiAbuseRuleRow) -> Result<(), BookingErr
             if normal_secs > high_value_secs {
                 return Err(refused(
                     "normal minimum notice may not exceed the high-value notice",
+                ));
+            }
+        }
+        BookingAntiAbuseRule::EmailPromptToCorrect {
+            prompt_at_failed_checks,
+            quarantine_at_failed_checks,
+            ..
+        } => {
+            if prompt_at_failed_checks > quarantine_at_failed_checks {
+                return Err(refused(
+                    "the email prompt count may not exceed the email quarantine count",
                 ));
             }
         }
@@ -142,7 +185,6 @@ pub fn validate_rule_row(row: &BookingAntiAbuseRuleRow) -> Result<(), BookingErr
         BookingAntiAbuseRule::RequiredIntake { .. }
         | BookingAntiAbuseRule::SlotListRate { .. }
         | BookingAntiAbuseRule::HoneypotAndSubmitFloor { .. }
-        | BookingAntiAbuseRule::EmailPromptToCorrect { .. }
         | BookingAntiAbuseRule::QuarantineBorderline
         | BookingAntiAbuseRule::EmailOtpReserve { .. }
         | BookingAntiAbuseRule::TentativeConfirmLinkReserve { .. } => {}
@@ -240,6 +282,8 @@ pub fn default_booking_anti_abuse_rows(
             check_syntax: true,
             check_mx: true,
             check_disposable_domain: true,
+            prompt_at_failed_checks: email_prompt_at_failed_checks_default(),
+            quarantine_at_failed_checks: email_quarantine_at_failed_checks_default(),
         },
         BookingAntiAbuseRule::QuarantineBorderline,
         BookingAntiAbuseRule::EmailOtpReserve { enabled: false },

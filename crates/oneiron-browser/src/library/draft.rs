@@ -40,6 +40,7 @@ use std::collections::BTreeMap;
 mod from_steps;
 
 pub use from_steps::draft_from_steps;
+#[cfg(feature = "driver")]
 pub(crate) use from_steps::draft_with_secrets;
 
 /// Drafts a proposal from the attached run's own effects on its open page

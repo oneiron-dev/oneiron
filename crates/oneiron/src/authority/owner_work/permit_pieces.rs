@@ -100,12 +100,12 @@ pub(super) fn apply_permit_piece(
 /// Keeps `piece` under `key`, or the lesser of it and the piece kept there.
 /// True when the piece kept under `key` changed.
 pub(super) fn keep_piece(
-    pieces: &mut BTreeMap<PermitPieceKey, Arc<CustodyPermitPiece>>,
+    pieces: &mut PersistentMap<PermitPieceKey, Arc<CustodyPermitPiece>>,
     key: PermitPieceKey,
     piece: &Arc<CustodyPermitPiece>,
 ) -> bool {
     match pieces.entry(key) {
-        std::collections::btree_map::Entry::Occupied(mut held) => {
+        oneiron_persistent_collections::Entry::Occupied(mut held) => {
             if **piece < **held.get() {
                 held.insert(Arc::clone(piece));
                 true
@@ -113,7 +113,7 @@ pub(super) fn keep_piece(
                 false
             }
         }
-        std::collections::btree_map::Entry::Vacant(slot) => {
+        oneiron_persistent_collections::Entry::Vacant(slot) => {
             slot.insert(Arc::clone(piece));
             true
         }

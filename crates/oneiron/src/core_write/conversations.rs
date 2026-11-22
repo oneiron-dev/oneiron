@@ -67,6 +67,23 @@ impl Vault {
             );
             expected = Some(project);
         }
+        // Nor does it drop the pin records the room's unpins removed, which
+        // only the room pin doors write (ROOM-PINS-LWW-MERGE): the
+        // memberless put carries them over, so the pin guard refuses it only
+        // where it did before they were kept, a room with pins or a pin
+        // policy. A body that names them itself is the guard's to judge.
+        if let Ok(existing) = self.conversation_body(id)
+            && !existing.unpinned.is_empty()
+            && let Some(object) = body_value.as_object_mut()
+            && !object.contains_key(crate::store::conversation_body::ROOM_UNPINNED_KEY)
+        {
+            let unpinned = serde_json::to_value(&existing.unpinned)
+                .map_err(|_| MemoryError::bad_request("invalid conversation body"))?;
+            object.insert(
+                crate::store::conversation_body::ROOM_UNPINNED_KEY.to_owned(),
+                unpinned,
+            );
+        }
         let body: ConversationBody = serde_json::from_value(input.body.clone())
             .map_err(|_| MemoryError::bad_request("invalid conversation body"))?;
         let admitted = |txn: &heed::RoTxn<'_>, expected: Option<EntityId>| -> crate::Result<()> {

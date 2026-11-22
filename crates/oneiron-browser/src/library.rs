@@ -77,9 +77,9 @@ pub use propose::{ProposeInput, ProposeOutput, WorkflowCheck, WorkflowProof};
 pub(crate) use propose::{check_solved, no_fresh_guest, replay_and_file, supersedes_refused};
 pub use secret_slots::SecretParam;
 
-use crate::{BatchStep, BrowserError, ExpectInput};
+use crate::BrowserError;
 #[cfg(feature = "driver")]
-use crate::{BrowserDriver, CheckReceipt};
+use crate::{BatchStep, BrowserDriver, CheckReceipt, ExpectInput};
 use std::collections::BTreeMap;
 
 /// Fills every `{{name}}` slot in `value`'s strings from `args`.

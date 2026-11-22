@@ -158,6 +158,7 @@ mod tests {
         let outside = tempfile::tempdir().expect("tempdir");
         std::fs::write(outside.path().join("secret"), b"outside").expect("fixture");
         std::os::unix::fs::symlink(outside.path(), root.path().join("escape")).expect("fixture");
-        assert!(files(root.path()).is_err());
+        let deadline = Instant::now() + std::time::Duration::from_secs(3);
+        assert!(files(root.path(), None, &StepCancellation::never(), deadline).is_err());
     }
 }

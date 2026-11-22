@@ -20,6 +20,7 @@ use serde_json::{Value, json};
 
 use super::{ExecutorCallSite, HostSelfDispatcher};
 use crate::claim::ScopedReadActorKey;
+use crate::code_run::CompareKnown;
 use crate::code_run::replay::CodeRunBridgeCall;
 use crate::code_run::storage::ExecutorStorage;
 use crate::code_run::types::{
@@ -300,13 +301,15 @@ impl HostSelfDispatcher<'_> {
     /// no note: the same call made again meets that note and reads the error.
     pub(super) fn observe_parked_hooks(&self, bridge_calls: &[CodeRunBridgeCall]) {
         let mut parked = self.parked_hooks.borrow_mut();
+        let base_known = || self.base_known_values();
+        let known = CompareKnown::new(Some(&base_known));
         for row in bridge_calls {
             let parks = ParkedHook::of(row);
             // With nothing parked, a row that parks nothing has nothing to clear.
             if parks.is_none() && parked.is_empty() {
                 continue;
             }
-            parked.retain(|held| !matches!(held.meets(ParkedOffer::Row(row)), Ok(true)));
+            parked.retain(|held| !matches!(held.meets(ParkedOffer::Row(row), &known), Ok(true)));
             parked.extend(parks);
         }
     }
@@ -531,4 +534,47 @@ fn outcome_view(outcome: &SelfDispatchOutcome) -> Option<Value> {
         SelfDispatchOutcome::Team(result) => json!({"output": result.answer}),
         SelfDispatchOutcome::TeamSubmitted(answer) => json!({"output": answer}),
     })
+}
+
+/// The outcome a pre-hook's ask that stopped a call of `effect` before it
+/// ran records: the call parked on the ask `ask`, under `invocation`. Door
+/// seam for `test_doors::parked_hook_custody` (FIX
+/// PARKED-HOOK-LIVE-EXACT-COMPARE), at the file's end, clear of its imports.
+#[cfg(oneiron_test_support)]
+pub(crate) fn hook_parked_outcome_for_test(
+    effect: SelfEffect,
+    invocation: InvocationId,
+    ask: EntityId,
+) -> SelfDispatchOutcome {
+    stopped(
+        effect,
+        VerbHookStop::Pending {
+            invocation: invocation.to_hex(),
+            ask: ask.to_hex(),
+        },
+    )
+}
+
+/// Whether the note `row` leaves, when a hook's ask parked its call, is
+/// resumed by `call`, the same call made again, read with the values
+/// `base_known` gives, as the run's next try reads it, with the ask's saved
+/// args those of `saved`. `None` for a row that parked nothing. Door seam for
+/// `test_doors::parked_hook_custody`.
+///
+/// # Errors
+///
+/// A request the side-row wall cannot read, one that does not encode, the
+/// read of base custody's values, or a call's args.
+#[cfg(oneiron_test_support)]
+pub(crate) fn parked_note_resumed_for_test(
+    row: &CodeRunBridgeCall,
+    call: &SelfCall,
+    base_known: crate::code_run::BaseKnownRead<'_>,
+    saved: &SelfCall,
+) -> Result<Option<bool>> {
+    let known = CompareKnown::new(Some(base_known));
+    let saved = hook_args(saved)?;
+    ParkedHook::of(row)
+        .map(|parked| parked.resumed_by(call, &known, || Ok(Some(saved))))
+        .transpose()
 }

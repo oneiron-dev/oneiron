@@ -2,6 +2,7 @@ use uuid::Uuid;
 
 use crate::Vault;
 use crate::batch::EntityMetadataHeader;
+use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::store::GateDecisionRecord;
@@ -33,6 +34,7 @@ impl Vault {
         id: &EntityId,
         reason: DeleteReason,
         gate: &Option<GatedDeletion<'_>>,
+        owner: Option<&AuthenticatedOwner>,
         requested_at: u64,
         header: EntityMetadataHeader,
     ) -> Result<DeletePlan> {
@@ -47,7 +49,7 @@ impl Vault {
         self.prepare_install_signing()?;
         signal_after_delete_probe(self);
         signal_delete_rendezvous(self, DeleteRendezvous::BeforeFirstDeletionTxn, id, None);
-        self.reserve_user_brief_delete(id, reason, gate.as_ref())?;
+        self.reserve_user_brief_delete(id, reason, gate.as_ref(), owner)?;
         // ONE-1132: ONE deletion request UUID correlates the CRDT tombstone's
         // `request_id` with the REDACTION_AUDIT receipt's `request_id`.
         // ONE-1149: minted only AFTER the header read proves there is

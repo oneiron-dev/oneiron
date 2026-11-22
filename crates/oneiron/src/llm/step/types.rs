@@ -54,6 +54,11 @@ pub(super) const KEY_RESPONSE_HASH: &str = "response_hash";
 
 pub(super) const KEY_AT: &str = "at";
 
+/// The source versions a bound step's request was read from, as one JSON
+/// string: the request carries them in its host provider options under the
+/// same key, and the terminal record keeps them.
+pub(super) const KEY_INPUT_VERSIONS: &str = "input_versions";
+
 pub(super) const KEY_TRAP_KIND: &str = "trap_kind";
 
 pub(super) const KEY_STATE: &str = "state";

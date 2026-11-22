@@ -404,6 +404,36 @@ pub(crate) fn machine_claim_needs_history_observing(
     names_machine_observing(store, txn, entries, observe)
 }
 
+/// [`machine_claim_read_admitted`] for `id`, a control of `kind` in the
+/// target history `history` reads: the stored bytes of `id` are `body`, and
+/// the verified history admits it as that kind
+/// ([`crate::claim::history_projection::TargetHistory::admits_control`]). A
+/// [`crate::claim::history_projection::MachineHistoryReadCache`] passes the
+/// history it resolves once for its whole read (FIX
+/// MACHINE-HISTORY-PAGE-PER-CONTROL-RESOLVE).
+pub(crate) fn history_control_read_admitted(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    fold: &super::AuthorityFold,
+    history: &crate::claim::history_projection::TargetHistory,
+    id: &EntityId,
+    body: &ClaimBody,
+    kind: crate::claim::history_store::MachineHistoryKind,
+) -> Result<bool> {
+    // Selector/guest export operates on RAW CRDT bytes. A control row
+    // travels only if these exact bytes match a locally verified row and
+    // its id belongs to the authenticated target closure.
+    let Some(raw) = EntityStoreRead::port_entity_raw(store, txn, id)? else {
+        return Ok(false);
+    };
+    if raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+        != Some(crate::claim::encode_claim_body(body)?.as_slice())
+    {
+        return Ok(false);
+    }
+    Ok(history.admits_control(store, txn, fold, kind, id))
+}
+
 /// Read-time machine identity is derived from the CURRENT entity kind and
 /// folded authority, not from a peer-supplied class or cached roster. A claim
 /// that arrived before its MACHINE row cannot become visible unsigned later.
@@ -418,61 +448,15 @@ pub(crate) fn machine_claim_read_admitted(
         let crate::claim::ClaimSubject::Entity(target) = body.subject else {
             return Ok(false);
         };
-        // Selector/guest export operates on RAW CRDT bytes. A control row
-        // travels only if these exact bytes match a locally verified row and
-        // its id belongs to the authenticated target closure.
-        let Some(raw) = EntityStoreRead::port_entity_raw(store, txn, id)? else {
-            return Ok(false);
-        };
-        if raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
-            != Some(crate::claim::encode_claim_body(body)?.as_slice())
-        {
-            return Ok(false);
-        }
-        let Ok(rows) = crate::claim::history_projection::machine_history_rows(store, txn, target)
-        else {
-            return Ok(false);
-        };
-        let Ok(packet) =
-            crate::claim::history_projection::trusted_machine_handoff(store, txn, target)
-        else {
-            return Ok(false);
-        };
-        if packet.births.len() != 1
-            || packet.births[0].digest != rows.birth.digest
-            || fold.vault_id != Some(rows.birth.vault_id)
-            || crate::claim::history_projection::resolved_machine_history(store, txn, fold, target)
-                .is_err()
-        {
-            return Ok(false);
-        }
-        return Ok(match kind {
-            crate::claim::history_store::MachineHistoryKind::Birth => {
-                rows.birth.event_id().is_ok_and(|birth_id| birth_id == *id)
-            }
-            // Membership in the whole history: the chain's union, not the
-            // tip's delta.
-            crate::claim::history_store::MachineHistoryKind::Transition => {
-                rows.transitions.keys().any(|listed| {
-                    rows.events.iter().any(|event| {
-                        crate::claim::transition::machine_claim_transition_event_hash(event)
-                            .is_ok_and(|hash| hash == *listed)
-                            && crate::claim::transition::machine_claim_transition_event_id(event)
-                                .is_ok_and(|event_id| event_id == *id)
-                    })
-                })
-            }
-            crate::claim::history_store::MachineHistoryKind::Handoff => {
-                crate::claim::history_projection::verified_handoff_chain(store, txn, &packet, fold)
-                    .is_ok_and(|chain| {
-                        chain.iter().any(|packet| {
-                            packet.content_hash().ok().and_then(|hash| {
-                                EntityId::from_bytes(hash[..16].try_into().ok()?).ok()
-                            }) == Some(*id)
-                        })
-                    })
-            }
-        });
+        return history_control_read_admitted(
+            store,
+            txn,
+            fold,
+            &crate::claim::history_projection::TargetHistory::new(target),
+            id,
+            body,
+            kind,
+        );
     }
     let mut verified_history: Option<crate::claim::transition::ClaimTransitionProjection> = None;
     // An id that already has machine history stays machine-owned even if an

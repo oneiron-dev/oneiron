@@ -26,10 +26,9 @@ pub mod source_ranking;
 mod telemetry;
 mod types;
 mod validation;
+mod working_set;
 mod world_partition;
 
-// FIX [LIBTEST-QUARANTINE-CONTEXT-PACK-TESTS]: the lib test target's type check fails here (5 errors: E0061 x4, E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 
@@ -52,6 +51,8 @@ pub use types::{
     PackStats, PackTokenStats, TokenAllocation,
 };
 pub(crate) use types::{PackCriticalAccounting, PackWorldShare};
+pub(crate) use working_set::dedupe_working_set;
+pub use working_set::{MAX_WORKING_SET_REFS, PackWorkingSetStats};
 pub use world_partition::{BASE_WORLD_SECTION, WORLD_SECTION_FIELD, WORLD_STALE_FIELD};
 
 pub(crate) use validation::disclosure_admits_target;

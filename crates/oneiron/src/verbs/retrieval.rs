@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::consent::AuthenticatedOwner;
+use crate::dreamer_runner::maintenance::retrieval_skill_review::RetrievalSlowLoopView;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::store::{
     RetrievalBlendTuningConfig, RetrievalBlendWeightTableEntry, RetrievalBlendWeights,
@@ -355,6 +356,11 @@ pub struct RetrievalPolicyView {
     pub posterior_observations: usize,
     pub routing_manifest_digest: Option<String>,
     pub routing: Vec<RetrievalRoutingPin>,
+    /// The slow loop's last nightly status and its receipts (census
+    /// L1-18): each proposal the Coach offered or refused. Nothing in it
+    /// was applied.
+    #[serde(default)]
+    pub slow_loop: RetrievalSlowLoopView,
 }
 
 /// The outcome of one declared policy update: the trained candidate, whether
@@ -409,6 +415,7 @@ fn policy_view(memory: &Memory<'_>) -> MemoryResult<RetrievalPolicyView> {
         posterior_observations: posterior.observation_count(),
         routing_manifest_digest,
         routing,
+        slow_loop: vault.retrieval_slow_loop()?,
     })
 }
 

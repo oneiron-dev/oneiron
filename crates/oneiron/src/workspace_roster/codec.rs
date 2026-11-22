@@ -1,9 +1,12 @@
 //! Roster reads, journal records, and canonical onboarding encodings.
 
+use oneiron_contracts::msgpack::{self, Entries, MsgpackError};
+
 use super::records::PresetRow;
 use super::*;
 use crate::error::{GateError, RecordError};
 use crate::ports::EntityStoreRead;
+use crate::side_table::NulFreeText;
 
 // ---------------------------------------------------------------------------
 // Roster reads
@@ -148,29 +151,24 @@ pub(super) fn write_journal(
 /// `workspace_ref` then a NUL separator then the raw member-person id — the
 /// same shape [`super::records::RosterMemberKey`] uses, differing only in how
 /// the tail id is spelled (raw bytes here, hex there).
+#[derive(SideKey)]
+#[side_key(sep = b'\0')]
 pub(super) struct MemberIntentKey {
+    #[side_key(rest, with = NulFreeText)]
     pub(super) workspace_ref: String,
     pub(super) person_ref: EntityId,
 }
 
-impl SideKey for MemberIntentKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(self.workspace_ref.as_bytes());
-        out.push(ROSTER_KEY_SEPARATOR);
-        out.extend_from_slice(self.person_ref.as_bytes());
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let separator = bytes
-            .iter()
-            .position(|&byte| byte == ROSTER_KEY_SEPARATOR)?;
-        let workspace_ref = String::from_utf8(bytes[..separator].to_vec()).ok()?;
-        let person_ref = EntityId::decode_key(&bytes[separator + 1..])?;
-        Some(Self {
-            workspace_ref,
-            person_ref,
-        })
-    }
+/// One [`MemberIntentKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn member_intent_key_pin_for_test(
+    workspace_ref: &str,
+    person_ref: EntityId,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&MemberIntentKey {
+        workspace_ref: workspace_ref.to_owned(),
+        person_ref,
+    })
 }
 
 /// Guards one member's workspace-onboarding slot against a second onboarding
@@ -792,30 +790,33 @@ pub(super) fn read_federation_grant_in_txn(
 }
 
 pub(super) fn encode_value(value: &Value) -> Result<Vec<u8>> {
-    let mut buf = Vec::new();
-    rmpv::encode::write_value(&mut buf, value)
-        .map_err(|_| invalid("workspace roster MessagePack encode failed"))?;
-    Ok(buf)
+    Ok(msgpack::encode(value))
 }
 
 pub(super) fn decode_map(bytes: &[u8]) -> Result<Vec<(Value, Value)>> {
-    let mut cursor = Cursor::new(bytes);
-    let value = rmpv::decode::read_value(&mut cursor)
-        .map_err(|_| invalid("workspace roster MessagePack decode failed"))?;
-    if cursor.position() != bytes.len() as u64 {
-        return Err(invalid("workspace roster body has trailing bytes"));
-    }
-    match value {
-        Value::Map(entries) => Ok(entries),
-        _ => Err(invalid("workspace roster body must be a map")),
-    }
+    msgpack::decode_map(bytes).map_err(|error| {
+        invalid(match error {
+            MsgpackError::Trailing => "workspace roster body has trailing bytes",
+            MsgpackError::NotMap => "workspace roster body must be a map",
+            _ => "workspace roster MessagePack decode failed",
+        })
+    })
 }
 
+/// A repeated key is refused.
 pub(super) fn required<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&'a Value> {
-    entries
-        .iter()
-        .find_map(|(candidate, value)| (candidate.as_str() == Some(key)).then_some(value))
-        .ok_or_else(|| invalid("workspace roster body is missing a required key"))
+    Entries::new(entries).require(key).map_err(|error| {
+        invalid(match error {
+            MsgpackError::DuplicateKey(_) => "workspace roster body repeats a key",
+            _ => "workspace roster body is missing a required key",
+        })
+    })
+}
+
+/// [`required`] for the repeated-key test door (`test_doors::lib_rows_b_repeated_key`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn roster_required_for_test(entries: &[(Value, Value)], key: &str) -> Result<Value> {
+    required(entries, key).cloned()
 }
 
 pub(super) fn required_str(entries: &[(Value, Value)], key: &str) -> Result<String> {

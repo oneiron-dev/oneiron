@@ -3,7 +3,7 @@
 use super::base::SyncClient;
 use crate::authority::PeerMachine;
 use crate::batch::export::{
-    OwedBody, StagedImportBodyWork, StagedVaultImport, VaultImportConfirmation,
+    OwedBody, StagedImportBodyWork, StagedVaultImport, VaultImportConfirmation, VaultImportFailure,
     VaultImportStageReceipt, VaultImportStageStatus,
 };
 use crate::error::SyncProtocolValidation;
@@ -11,13 +11,13 @@ use crate::federation::PactDelivery;
 use crate::sync::asset_body::references::bound_refs;
 use crate::sync::asset_body::session::{AssetBodyLane, land_carried_body, with_manager_peer};
 use crate::sync::federation_burst::{
-    FederationBurstDecision, WorkKind, admit_work, record_outcome,
+    BurstPeer, FederationBurstDecision, WorkKind, admit_work, record_outcome,
 };
 use crate::sync::ingest::{Delivery, watch_births, with_delivery, with_placements};
 use crate::sync::selector::{
     AdmittedUpdate, FederationAdmissionRole, SyncSelector, admit_peer_window_update_as,
-    encode_selector_vv_request, revalidate_admitted_facet_stamps,
-    revalidate_admitted_federated_claims, staged_births,
+    encode_selector_vv_request, is_peer_task_authority_fact_refusal,
+    revalidate_admitted_facet_stamps, revalidate_admitted_federated_claims, staged_births,
 };
 use crate::sync::transport;
 use crate::sync::transport::{
@@ -197,6 +197,7 @@ impl SyncClient {
                 SyncProtocolValidation::FederationPeerUnbound,
             ))
         })?;
+        let burst_peer = BurstPeer::Federated(&peer);
         // The grant is revalidated and the peer's standing read over it before
         // admission: no standing refuses the update (FIX 360).
         let standing = peer
@@ -207,10 +208,13 @@ impl SyncClient {
             FederationAdmissionRole::Guest => WorkKind::GuestUpdate,
         };
         let (batch_id, _) =
-            crate::sync::federation_burst::DeferredWork::identity(&peer, &key, kind, update)
+            crate::sync::federation_burst::DeferredWork::identity(burst_peer, &key, kind, update)
                 .map_err(map_federated_admission_err)?;
         let batch_ref = blake3::Hash::from(batch_id).to_hex().to_string();
-        match self.vault.federation_burst_disposition(&peer, &batch_ref) {
+        match self
+            .vault
+            .federation_burst_disposition(burst_peer, &batch_ref)
+        {
             Ok(receipt) if receipt.state.is_settled() => return Ok(receipt),
             Ok(_) | Err(crate::Error::EntityNotFound) => {}
             Err(error) => return Err(map_federated_admission_err(error)),
@@ -233,7 +237,7 @@ impl SyncClient {
             Err(error) => {
                 let error = map_federated_admission_err(error);
                 if matches!(error, TransportError::InvalidPayload(_)) {
-                    record_outcome(&self.vault, &peer, true)
+                    record_outcome(&self.vault, burst_peer, true)
                         .map_err(map_federated_admission_err)?;
                 }
                 return Err(error);
@@ -260,12 +264,12 @@ impl SyncClient {
         let carried = carried.into_iter().collect::<Vec<_>>();
         let (decision, work) = admit_work(
             &self.vault,
-            &peer,
+            burst_peer,
             &key,
             kind,
             update,
             (writes, carried.as_slice()),
-            Some(parts.as_slice()),
+            (Some(parts.as_slice()), None),
         )
         .map_err(map_federated_admission_err)?;
         if let FederationBurstDecision::Defer { request_id, inputs }
@@ -282,7 +286,7 @@ impl SyncClient {
                 });
             return self
                 .vault
-                .federation_burst_disposition(&peer, &batch_ref)
+                .federation_burst_disposition(burst_peer, &batch_ref)
                 .map_err(map_federated_admission_err);
         }
         let work = work.ok_or(TransportError::InvalidPayload(
@@ -296,10 +300,10 @@ impl SyncClient {
             &work.authority_digest,
             || self.import_peer_update(&admitted, peer.grant(), delivery),
         )?;
-        work.complete(&self.vault, &peer)
+        work.complete(&self.vault, burst_peer)
             .map_err(map_federated_admission_err)?;
         self.vault
-            .federation_burst_disposition(&peer, &batch_ref)
+            .federation_burst_disposition(burst_peer, &batch_ref)
             .map_err(map_federated_admission_err)
     }
 
@@ -435,6 +439,12 @@ impl SyncClient {
         // artifact permanently unimportable under its re-derived id even after the
         // operator installs the missing permit. Leaving the receipt Pending lets a
         // re-stage under the same receipt id re-evaluate once policy relaxes.
+        //
+        // One refusal is terminal: a peer's TASK authority fact in the bytes. It
+        // reads nothing but the digest-pinned bytes, so no policy change admits
+        // them, and a Pending receipt left behind would never settle. It settles
+        // Failed(AdmissionRejected), as the stage leg's refusal of the same bytes
+        // does (FIX TASK-FACT-STAGED-CONFIRM-NEVER-SETTLES).
         let mut carried = Vec::with_capacity(parts.len());
         // Each part's by-ref bodies, and every row the parts carry: the
         // bodies left unlanded stay owed under the receipt (FIX 12408).
@@ -442,8 +452,17 @@ impl SyncClient {
         let mut carried_rows = Vec::new();
         for part in &parts {
             let (admission_key, update) = (&part.key, &part.update);
-            revalidate_admitted_federated_claims(&self.vault, admission_key, update, durable.role)
-                .map_err(map_federated_admission_err)?;
+            if let Err(error) = revalidate_admitted_federated_claims(
+                &self.vault,
+                admission_key,
+                update,
+                durable.role,
+            ) {
+                if is_peer_task_authority_fact_refusal(&error) {
+                    fail_pending_staged_import(&self.vault, &durable)?;
+                }
+                return Err(map_federated_admission_err(error));
+            }
             revalidate_admitted_facet_stamps(admission_key, update)
                 .map_err(map_federated_admission_err)?;
             let admitted =
@@ -725,6 +744,27 @@ impl SyncClient {
             .discard(&self.vault)
             .map_err(map_federated_admission_err)
     }
+}
+
+/// Settles the Pending staged import `pending` `Failed(AdmissionRejected)`,
+/// dropping its staged content and its record of staged stamps in the same
+/// write, as a confirmation that owes no body drops them. The caller holds the
+/// staged-import confirm lock; a writer that moved the receipt first keeps its
+/// outcome.
+fn fail_pending_staged_import(
+    vault: &crate::Vault,
+    pending: &VaultImportStageReceipt,
+) -> std::result::Result<(), TransportError> {
+    // A Failed receipt holds no admitted bytes and no staged stamps: the codec
+    // refuses one that names either, so both digests go with the content.
+    let mut failed = pending.clone();
+    failed.status = VaultImportStageStatus::Failed;
+    failed.failure = Some(VaultImportFailure::AdmissionRejected);
+    failed.admitted_update_digest = None;
+    failed.staged_stamps_digest = None;
+    crate::batch::export::vault_import_confirm_if_pending(vault, pending, &failed, None)
+        .map(|_| ())
+        .map_err(|error| TransportError::Storage(error.to_string()))
 }
 
 pub(super) fn map_federated_admission_err(e: crate::error::Error) -> TransportError {

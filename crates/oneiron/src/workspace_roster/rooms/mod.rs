@@ -32,8 +32,6 @@ mod pins;
 mod private_threads;
 mod replica;
 mod speaking;
-// FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-ROOMS-TESTS]: the lib test target's type check fails here (13 errors: E0308 x8, E0063 x3, E0639 x1, E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 mod thread_delete;
@@ -131,6 +129,8 @@ pub use offer_settle::{OfferAnswer, OfferAnswerRequest, OfferSettlement};
 pub use offers::{OfferCard, OfferDraft, OfferState, OfferVoteTally, OffersPage, OffersRequest};
 pub use participants::{ParticipantView, ParticipantsPage, ParticipantsRequest};
 pub use participation::JoinCause;
+#[cfg(oneiron_test_support)]
+pub(crate) use participation::fact_key_pin_for_test;
 pub(super) use participation::record_bound_task_in_txn;
 pub(in crate::workspace_roster) use participation::stands_in_thread_in;
 pub(crate) use participation::{
@@ -221,9 +221,11 @@ pub(super) fn room_in(vault: &Vault, txn: &heed::RoTxn<'_>, room: EntityId) -> R
     }
     room.member_ids = effective.seat_list(project.members());
     room.claims_scope_ref = effective.claims_scope_ref;
-    // The view never carries the room's shared pins: a reader gets them only
-    // through the room's admitted projection (ROOM-SCOPED-PINS).
+    // The view never carries the room's shared pins, nor the records its
+    // unpins removed: a reader gets pins only through the room's admitted
+    // projection (ROOM-SCOPED-PINS).
     room.pins.clear();
+    room.unpinned.clear();
     Ok(room)
 }
 /// `room`'s access for `actor` on its roster, in any room: a home room's
@@ -391,6 +393,33 @@ pub(crate) fn room_join_audience_in(
     Ok(participation::joined(receipt)?.is_some())
 }
 
+/// The live vault owner who alone reads the ordinary room `room`, or `None`:
+/// no project room, one current member, that member a live vault owner, no
+/// Ready join filed for anyone else in the room or its threads, and no voice
+/// speaker entered it (OF-365). A speaker's entry reads the room's records
+/// from its entry on and takes no seat; while the index that finds them is
+/// incomplete, no room reads as its owner's alone.
+pub(crate) fn room_sole_owner_reader_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+) -> Result<Option<EntityId>> {
+    if project_room_audience_in(vault, txn, room, &[])?.is_some() {
+        return Ok(None);
+    }
+    let [owner] = vault.members_in_txn(txn, room)?[..] else {
+        return Ok(None);
+    };
+    if !crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &owner)?
+        || super::join_receipt::room_ready_join_for_other_in(&vault.store, txn, room, owner)?
+        || crate::task_verb::speaker_entry_index::speaker_entered_in(vault, txn, room)?
+            != Some(false)
+    {
+        return Ok(None);
+    }
+    Ok(Some(owner))
+}
+
 /// The validated project room `room` is, or `None` for an ordinary
 /// Conversation, whose membership ledger stays authoritative.
 fn project_room_of(
@@ -452,7 +481,8 @@ impl Vault {
     }
 
     /// [`Self::room_audience_members`] as `read` reads the room, in one
-    /// snapshot: a room `read` cannot read is a missing room, unless
+    /// snapshot: a room `read` cannot read, its row or its own admission
+    /// ([`Self::room_structure_admitted`], L9-52), is a missing room, unless
     /// `member` is one of its members, who reads its roster by membership as
     /// its room turns do. Membership never widens the credential: one
     /// narrowed on any read axis or whose records leave the room out, or a
@@ -466,7 +496,9 @@ impl Vault {
         read.persist_grant_clock()?;
         let txn = self.store.env.read_txn()?;
         let policy = read.live_policy_manifest_in(&txn)?;
-        if read.is_ref_readable_with_policy_in(&txn, &policy, &room)? {
+        if read.is_ref_readable_with_policy_in(&txn, &policy, &room)?
+            && self.room_structure_admitted_in_txn(read, &txn, &room)?
+        {
             return self.room_audience_members_in_txn(&txn, room);
         }
         if !read.reaches_by_membership_in(&txn, &room)? {

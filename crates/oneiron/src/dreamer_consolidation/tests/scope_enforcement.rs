@@ -255,7 +255,16 @@ fn narrowed_route_refuses_teacher_before_transcript_reaches_backend() -> Result<
     )?;
     vault.set_model_manifest_with_teacher_approval(&manifest, &approval)?;
     // Other served roles may narrow, but the teacher has no approved local checkpoint.
-    vault.set_model_route(ModelSlot::Llm, ModelLocality::OnDevice)?;
+    vault.set_setting(
+        crate::setting::SettingCaller::Owner(&crate::test_util::embedded_owner_proof(&vault)),
+        crate::setting::SetSetting {
+            item: Some("llm".to_owned()),
+            ..crate::setting::SetSetting::vault_value(
+                "models.resident_route",
+                serde_json::to_value(ModelLocality::OnDevice).unwrap(),
+            )
+        },
+    )?;
 
     let backend = ScriptedBackend::new(Vec::new());
     let guard = crate::BudgetGuard::with_reserve_units(
@@ -303,16 +312,29 @@ fn narrowed_route_refuses_teacher_before_transcript_reaches_backend() -> Result<
 fn production_executor_carries_scope_and_refuses_unlisted_evidence_and_output() -> Result<()> {
     let (_dir, vault) = open_vault();
     let store = DreamerRunnerStore::new(&vault);
-    let (attempt, turns, conversation) =
-        admitted_attempt_fixture(&vault, &store, 0x43, &[("user", "a scoped extraction")])?;
+    let (attempt, turns, conversation) = admitted_attempt_fixture(
+        &vault,
+        &store,
+        0x43,
+        &[("user", "a scoped extraction Owen")],
+    )?;
     let subject = EntityId::now();
-    vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
-    let outside = seed_turn(&vault, &conversation, "user", "not in the attempt", 12);
+    let named =
+        super::super::support::encode_value(&Value::Map(vec![("name".into(), "Owen".into())]))?;
+    vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, &named)?;
+    let _outside = seed_turn(&vault, &conversation, "user", "not in the attempt", 12);
     let backend = ScopeBackend {
         seen: Mutex::new(Vec::new()),
         inner: ScriptedBackend::new(vec![
             Ok(extraction_response(&subject, &turns[0])),
-            Ok(extraction_response(&subject, &outside)),
+            Ok(text_response(
+                serde_json::json!({"candidates": [{
+                    "subject": "P1", "predicate": "profile.name", "value": "Owen",
+                    "confidence": 0.8,
+                    "evidence_refs": [{"source": "T2", "quote": "not in the attempt"}],
+                }]})
+                .to_string(),
+            )),
         ]),
     };
     let guard = crate::BudgetGuard::with_reserve_units(
@@ -355,13 +377,17 @@ fn production_executor_carries_scope_and_refuses_unlisted_evidence_and_output() 
     executor.inference.binding = crate::llm::HostInferenceBinding::Advertised {
         model: executor.model.clone(),
         locality: crate::ModelLocality::OwnServer,
+        keyless: false,
     };
-    // A candidate citing a turn outside the attempt is not written. Since
-    // Bugbot on #1427 decode skips it rather than failing the attempt.
-    assert!(matches!(
-        block_on_ready(executor.execute(&attempt, &mut ctx))?,
-        DreamerAttemptExecution::Completed { .. }
-    ));
+    // A candidate citing a turn outside the attempt is not written: the bound wire refuses its unshown T2 at the citation check and parks.
+    let parked = block_on_ready(executor.execute(&attempt, &mut ctx))?;
+    assert!(
+        matches!(&parked, DreamerAttemptExecution::ParkWithSpend { reason, .. }
+            if reason.starts_with("extraction reply refused")
+                && reason.contains("cites outside its source")
+                && reason.contains("UnknownSourceLabel")),
+        "{parked:?}"
+    );
     drop(executor);
     assert_eq!(sink.accepted.len(), 1);
     assert_eq!(sink.accepted[0].evidence_turn_refs, turns);
@@ -426,7 +452,7 @@ fn derive_id(
         &facts.value,
         facts.world,
         facts.facet,
-        facts.rel,
+        facts.rel.as_ref(),
         facts.project,
         facts.topic.as_deref(),
     )?;
@@ -486,16 +512,22 @@ fn scoped_signals_preserve_ranking_and_filter_foreign_and_private_refs() -> Resu
         b"private author",
     )?;
     let diary = EntityId::now();
-    let diary_body = crate::note::encode_note_body(&crate::note::NoteBody {
+    let diary_body = crate::note::encode_note_core(&crate::note::NoteCore {
         kind: crate::note::NoteKind::parse("diary").expect("shipped kind"),
-        author_ref: author,
-        markdown: "private graph evidence".to_owned(),
+        author_ref: crate::note::NoteActor::Actor(author),
         source_revision_ref: [1; 16],
     })?;
     vault.with_write_txn(|txn| {
         vault
             .batch_in()
-            .put_authored_note(&diary, &author, occurred(1), 1, &diary_body)
+            .put_authored_note(
+                &diary,
+                &author,
+                occurred(1),
+                1,
+                &diary_body,
+                "private graph evidence",
+            )
             .edge(&diary, EdgeKind::AuthoredBy, &author, 1.0)
             .edge(&diary, EdgeKind::About, &subject, 1.0)
             .apply(txn)
@@ -575,10 +607,12 @@ fn production_scoped_embeddings_nominate_only_the_judge() -> Result<()> {
         authorize_test_inference(&vault)?;
         install_shipped_policy(&vault)?;
         let store = DreamerRunnerStore::new(&vault);
-        let (attempt, turns, _) =
-            admitted_attempt_fixture(&vault, &store, 0x46, &[("user", "two related facts")])?;
+        let (attempt, _turns, _) =
+            admitted_attempt_fixture(&vault, &store, 0x46, &[("user", "two related facts Owen")])?;
         let subject = EntityId::now();
-        vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"subject")?;
+        let named =
+            super::super::support::encode_value(&Value::Map(vec![("name".into(), "Owen".into())]))?;
+        vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, &named)?;
         let mut items = Vec::new();
         let mut selected_id = EntityId::now();
         for predicate in ["profile.name", "profile.alias"] {
@@ -589,8 +623,8 @@ fn production_scoped_embeddings_nominate_only_the_judge() -> Result<()> {
             }
             vault.put_vector(&output.claim_id, &vec![1.0; vault.config.dimensions])?;
             items.push(
-                serde_json::json!({"subject": subject.to_hex(), "predicate": predicate,
-            "value": "same text", "confidence": 0.5, "evidence_refs": [{"source_id":turns[0].to_hex(), "byte_range":[0,1]}]}),
+                serde_json::json!({"subject": "P1", "predicate": predicate,
+            "value": "same text", "confidence": 0.5, "evidence_refs": [{"source": "T1", "quote": "Owen"}]}),
             );
         }
         let judge = text_response(match resolution {
@@ -683,7 +717,7 @@ fn queued_four_axis_scope_is_inherited_and_cannot_be_erased() -> Result<()> {
         &vault,
         &store,
         0x47,
-        &[("user", "one project relationship slice")],
+        &[("user", "one project relationship slice Owen")],
     )?;
     let world = EntityId::now();
     let facet = EntityId::now();
@@ -691,7 +725,7 @@ fn queued_four_axis_scope_is_inherited_and_cannot_be_erased() -> Result<()> {
     let project = EntityId::now();
     let mut source = super::super::support::decode_value(&turn_body(
         "user",
-        "one project relationship slice",
+        "one project relationship slice Owen",
         Some(&facet),
     ))?;
     let Value::Map(source_entries) = &mut source else {
@@ -712,6 +746,10 @@ fn queued_four_axis_scope_is_inherited_and_cannot_be_erased() -> Result<()> {
     vault.with_write_txn_grouped(|txn| {
         crate::federation::record_scope::stamp_leader_project(&vault.store, txn, turns[0], project)
     })?;
+    let subject = EntityId::now();
+    let named =
+        super::super::support::encode_value(&Value::Map(vec![("name".into(), "Owen".into())]))?;
+    vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, &named)?;
     let partition = ConsolidationPartitionKey {
         conversation_ref: conversation,
         world_ref: Some(world),
@@ -726,7 +764,7 @@ fn queued_four_axis_scope_is_inherited_and_cannot_be_erased() -> Result<()> {
         None,
     )?;
     let mut scope = initial.scope().clone();
-    scope.relationship = Some(relationship);
+    scope.relationship = Some(BTreeSet::from([relationship]));
     scope.project = Some(project);
     // Gap storage is sliced too; project does not change partition/claim ids.
     scope
@@ -741,6 +779,10 @@ fn queued_four_axis_scope_is_inherited_and_cannot_be_erased() -> Result<()> {
             &one_part_branch(&partition, &turns),
             &scope,
         ));
+    // The queued scope is authority: the listed person needs its exact read.
+    scope
+        .readable
+        .insert(super::super::resources::document_version(subject, &named));
     let plan = ConsolidationPartitionPlan {
         key: partition,
         turns: vec![WorkingSetTurn {
@@ -880,8 +922,7 @@ fn queued_four_axis_scope_is_inherited_and_cannot_be_erased() -> Result<()> {
         )
         .is_err()
     );
-    let subject = EntityId::now();
-    vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"subject")?;
+    // `subject` (named Owen above) is already listed under the queued scope.
     let mut absent_rel = candidate(subject, "profile.name", "name", Some(facet));
     absent_rel.candidate = absent_rel.candidate.with_world(world);
     absent_rel.evidence_turn_refs = turns.clone();
@@ -949,7 +990,12 @@ fn queued_four_axis_scope_is_inherited_and_cannot_be_erased() -> Result<()> {
     let facts = super::super::conflict::candidate_facts(&sink.accepted[0].candidate)?;
     assert_eq!(
         (facts.world, facts.facet, facts.rel, facts.project),
-        (Some(world), Some(facet), Some(relationship), project)
+        (
+            Some(world),
+            Some(facet),
+            crate::claim::relationship_scope_of(Some(relationship)),
+            project,
+        )
     );
     // The durable codec refuses ambiguity rather than silently dropping scope.
     let mut duplicate = attempt.status.payload.input.clone();
@@ -997,7 +1043,7 @@ fn graph_signals_enforce_relationship_and_exact_project_slice() -> Result<()> {
         None,
     )?;
     let mut scope = initial.scope().clone();
-    scope.relationship = Some(relationship);
+    scope.relationship = Some(BTreeSet::from([relationship]));
     // A project bound admits only its own project's sources: the turn and
     // the reference claims sit in the default project.
     scope.project = Some(crate::claim::default_project_id());
@@ -1276,6 +1322,7 @@ fn scheduled_selection_retry_reextracts_new_admitted_evidence() -> Result<()> {
         let DreamerAttemptExecution::Deferred {
             completed_units,
             retry_at,
+            step_bindings,
         } = result
         else {
             panic!("selection hold must defer");
@@ -1290,6 +1337,7 @@ fn scheduled_selection_retry_reextracts_new_admitted_evidence() -> Result<()> {
                 now: 21,
             },
             retry_at,
+            &step_bindings,
         )?;
         let next_turn = seed_turn(
             &vault,
@@ -1423,16 +1471,22 @@ fn dreamer_consolidation_reads_keep_their_receipts() -> Result<()> {
     let author = EntityId::now();
     vault.put_entity(&author, ENTITY_TYPE_PERSON, occurred(1), 1, b"author")?;
     let diary = EntityId::now();
-    let diary_body = crate::note::encode_note_body(&crate::note::NoteBody {
+    let diary_body = crate::note::encode_note_core(&crate::note::NoteCore {
         kind: crate::note::NoteKind::parse("diary").expect("shipped kind"),
-        author_ref: author,
-        markdown: "private graph evidence".to_owned(),
+        author_ref: crate::note::NoteActor::Actor(author),
         source_revision_ref: [1; 16],
     })?;
     vault.with_write_txn(|txn| {
         vault
             .batch_in()
-            .put_authored_note(&diary, &author, occurred(1), 1, &diary_body)
+            .put_authored_note(
+                &diary,
+                &author,
+                occurred(1),
+                1,
+                &diary_body,
+                "private graph evidence",
+            )
             .edge(&diary, EdgeKind::AuthoredBy, &author, 1.0)
             .edge(&diary, EdgeKind::About, &subject, 1.0)
             .apply(txn)
@@ -1489,23 +1543,27 @@ fn two_projects_in_one_partition_never_merge_and_keep_their_source_project() -> 
     let (project_a, project_b) = (EntityId::now(), EntityId::now());
     let conversation = seed_session(&vault, 0x5a, 1);
     let turn_a = seed_project_turn(&vault, &conversation, "call me Owen", 10, project_a)?;
-    let turn_b = seed_project_turn(&vault, &conversation, "call me Alex", 11, project_b)?;
+    let turn_b = seed_project_turn(&vault, &conversation, "call me Alex Owen", 11, project_b)?;
     let attempt = admit_seeded_attempt(&vault, &store)?;
     let subject = EntityId::now();
-    vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, b"person")?;
-    let cite =
-        |turn: EntityId| serde_json::json!({"source_id": turn.to_hex(), "byte_range": [0, 1]});
+    let named =
+        super::super::support::encode_value(&Value::Map(vec![("name".into(), "Owen".into())]))?;
+    vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, &named)?;
+    // Both turns name Owen, so one slice shows T1/T2 and P1; Alex stays the
+    // T2 quote. The mixed-project Al still spans projects and is not written.
+    let cite_a = serde_json::json!({"source": "T1", "quote": "Owen"});
+    let cite_b = serde_json::json!({"source": "T2", "quote": "Alex"});
     let candidate = |predicate: &str, value: &str, refs: Vec<serde_json::Value>| {
-        serde_json::json!({"subject": subject.to_hex(), "predicate": predicate,
+        serde_json::json!({"subject": "P1", "predicate": predicate,
             "value": value, "confidence": 0.8, "evidence_refs": refs})
     };
     let extraction = text_response(
         serde_json::json!({"candidates": [
-            candidate("profile.name", "Owen", vec![cite(turn_a)]),
-            candidate("profile.name", "Alex", vec![cite(turn_b)]),
-            candidate("profile.city", "Kyiv", vec![cite(turn_a)]),
-            candidate("profile.city", "Kyiv", vec![cite(turn_b)]),
-            candidate("profile.nickname", "Al", vec![cite(turn_a), cite(turn_b)]),
+            candidate("profile.name", "Owen", vec![cite_a.clone()]),
+            candidate("profile.name", "Alex", vec![cite_b.clone()]),
+            candidate("profile.city", "Kyiv", vec![cite_a.clone()]),
+            candidate("profile.city", "Kyiv", vec![cite_b.clone()]),
+            candidate("profile.nickname", "Al", vec![cite_a.clone(), cite_b.clone()]),
         ]})
         .to_string(),
     );

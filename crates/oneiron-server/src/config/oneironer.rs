@@ -208,7 +208,9 @@ pub struct OneironerConfig {
     /// Model relation label to the claim predicate the Dreamer's child files
     /// a relation with that label under (`works_at = "work.employer"`). A
     /// label absent here files nothing; an empty table, the default, leaves
-    /// every slice to the extraction model.
+    /// every slice to the extraction model. The table is never sent to the
+    /// tagger: the labels a relation head returns are fixed by its stack
+    /// card, so editing the table re-tags no turn.
     pub relations: BTreeMap<String, String>,
     /// Request timeout per tagger call.
     pub timeout_ms: u64,

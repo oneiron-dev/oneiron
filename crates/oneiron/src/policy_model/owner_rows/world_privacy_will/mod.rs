@@ -30,9 +30,9 @@ mod agent;
 mod answer;
 mod carry;
 mod foreign;
-mod record;
+pub(super) mod record;
 mod sdk;
-mod unanimity;
+pub(super) mod unanimity;
 mod undo;
 
 pub use answer::WorldPrivacyAnswer;

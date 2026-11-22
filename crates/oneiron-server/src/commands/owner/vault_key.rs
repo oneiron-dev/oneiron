@@ -60,6 +60,7 @@ use crate::owner::vault_key::{self as view, SignerPin, hex, secret32};
 /// The most a secret read is: a password is at most 1024 bytes.
 const SECRET_LIMIT: usize = 4096;
 
+mod data_key_generation;
 mod fresh_restore;
 mod host_unlock;
 mod unlocked_open;
@@ -90,6 +91,7 @@ pub fn vault_key(command: VaultKeyCommand) -> anyhow::Result<()> {
         VaultKeyCommand::AddPasskey(args) => add_passkey(*args),
         VaultKeyCommand::AddEscrow(args) => add_escrow(*args),
         VaultKeyCommand::AddDevice(args) => add_device(*args),
+        VaultKeyCommand::NewGeneration(args) => data_key_generation::new_generation(*args),
         VaultKeyCommand::Remove(args) => {
             let vault = open(&args.serve, &UnlockRequest::of(&args.unlock), KeyNeed::Open)?;
             let owner = local_owner(&vault)?;

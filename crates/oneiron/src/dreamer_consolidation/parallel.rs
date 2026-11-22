@@ -35,7 +35,7 @@ use crate::dreamer_tournament::{
     DreamerTournamentCandidate, DreamerTournamentJudgeClaim, DreamerTournamentRound,
     DreamerTournamentRun, DreamerTournamentSynthesisArtifact, run_dreamer_claim_tournament,
 };
-use crate::dreamer_wake::{BoundClaimAuthoringSelector, WakeAttemptContext};
+use crate::dreamer_wake::{BoundClaimAuthoringSelector, WakeAttemptContext, build_boxed_future};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::learning::{LearningCell, LearningPredicate, TypeRef};
 use crate::model_step_context::{DurableStepContext, StepOutcome};
@@ -97,15 +97,27 @@ impl ConsolidationExecutor<'_> {
         charges: &mut StepChargeTally,
         stages: &mut PartitionStages,
     ) -> DurableStepResult<PartitionRun> {
-        let prefix = self
-            .extract_partition_prefix(payload_input, resources, ctx, attempt_id, run_id, charges)
-            .await?;
+        let prefix = build_boxed_future(|| {
+            self.extract_partition_prefix(
+                payload_input,
+                resources,
+                ctx,
+                attempt_id,
+                run_id,
+                charges,
+            )
+        })
+        .await?;
         stages.mark_prefix_ended(Instant::now());
         match prefix {
             PartitionPrefix::Done(run) => Ok(run),
             PartitionPrefix::Extracted(extracted) => {
-                self.finish_partition_run(*extracted, resources, ctx, attempt_id, charges, stages)
-                    .await
+                build_boxed_future(|| {
+                    self.finish_partition_run(
+                        *extracted, resources, ctx, attempt_id, charges, stages,
+                    )
+                })
+                .await
             }
         }
     }
@@ -242,7 +254,9 @@ impl ConsolidationExecutor<'_> {
                 citations: &citations,
                 attempt_id,
             };
-            if let ThingPassEnd::Run(run) = self.thing_agent_pass(&pass, charges).await? {
+            if let ThingPassEnd::Run(run) =
+                build_boxed_future(|| self.thing_agent_pass(&pass, charges)).await?
+            {
                 return Ok(PartitionPrefix::Done(run));
             }
         }
@@ -464,9 +478,10 @@ impl ConsolidationExecutor<'_> {
             wake_pass_bound: true,
         };
         let corrections_started = Instant::now();
-        let decided = self
-            .decide_corrections(&step_ctx, ctx.deadline, &parsed, resources, charges)
-            .await;
+        let decided = build_boxed_future(|| {
+            self.decide_corrections(&step_ctx, ctx.deadline, &parsed, resources, charges)
+        })
+        .await;
         stages.corrections_ms = ms_since(corrections_started);
         let corrects = match decided {
             Ok(Some(corrects)) => corrects,
@@ -495,8 +510,8 @@ impl ConsolidationExecutor<'_> {
         // Assembly verifies and collapses evidence across ALL child slots
         // before counting corroboration or routing coupled conflicts.
         let resolve_started = Instant::now();
-        let run = self
-            .resolve_conflicts(
+        let run = build_boxed_future(|| {
+            self.resolve_conflicts(
                 candidates,
                 resources,
                 ctx,
@@ -504,7 +519,8 @@ impl ConsolidationExecutor<'_> {
                 charges,
                 stages,
             )
-            .await;
+        })
+        .await;
         stages.resolve_ms = ms_since(resolve_started).saturating_sub(stages.gap_ms);
         let run = run?;
         // The tournament arm (FIX 9009) refines survivors only when the

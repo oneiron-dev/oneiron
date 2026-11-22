@@ -333,11 +333,12 @@ fn hooks_stay_per_host_and_the_shared_root_carries_none() {
     );
 
     // Cursor reads hooks only from a Cursor plugin: a folder of its own with
-    // its manifest and its hooks, the same plugin's name aside.
+    // its manifest, its hooks and its MCP entry (`agent_plugins_package.rs`
+    // checks that one), the same plugin's name aside.
     let cursor = repo_root().join("plugins/cursor");
     assert_eq!(
         files_under(&cursor),
-        names([".cursor-plugin/plugin.json", "hooks/hooks.json"])
+        names([".cursor-plugin/plugin.json", "hooks/hooks.json", "mcp.json"])
     );
     let cursor_manifest = read_json(&cursor.join(".cursor-plugin/plugin.json"));
     assert_eq!(cursor_manifest["hooks"], "./hooks/hooks.json");

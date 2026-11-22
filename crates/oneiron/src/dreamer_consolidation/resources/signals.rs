@@ -2,20 +2,25 @@
 //! A projection grant is mandatory. Model-selected ids never grant vector access.
 
 use super::{BranchResources, document_version};
-use crate::claim::{PointRead, ReadRow, decode_claim_body};
+use crate::attempt_queue::AttemptId;
+use crate::claim::{
+    ClaimApprovalStatus, ClaimBody, PointRead, ReadRow, ScopedRead, decode_claim_body,
+};
 use crate::dreamer_consolidation::conflict::candidate_facts;
+use crate::dreamer_consolidation::executor::extraction::claim_id_for_identity;
 use crate::dreamer_consolidation::provenance::PromotionCandidate;
 use crate::dreamer_consolidation::reviewed::{names, reviewed_output};
 use crate::dreamer_consolidation::support::{
     TURN_BODY_FACET_REF_KEY, TURN_BODY_WORLD_REF_KEY, invalid_consolidation,
 };
 use crate::dreamer_consolidation::watermark::entity_ref_from_value;
-use crate::edge::EdgeKind;
+use crate::edge::{EdgeInfo, EdgeKind};
 use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN,
 };
-use crate::{EntityId, Result};
-use oneiron_model::llm::Scope;
+use crate::write_envelope::ClaimCandidate;
+use crate::{EntityId, Result, Vault};
+use oneiron_model::llm::{Scope, ScopeResource};
 use rmpv::Value;
 
 /// The door a consolidation's promotion stamps its claims' births with:
@@ -43,26 +48,20 @@ impl BranchResources<'_> {
         // An arbitrary model-supplied claim id cannot select a stored vector.
         self.validate_candidates(scope, std::slice::from_ref(candidate))?;
         let facts = candidate_facts(&candidate.candidate)?;
-        let mut fan_in = 0;
-        let mut new_refs = 0;
         // The target must itself be actor-readable. A genuinely new subject has
         // no stored graph yet; that is absence of data, not absence of rights.
-        if self.read.is_entity_readable(&facts.subject)? {
+        let (fan_in, new_refs) = if self.read.is_entity_readable(&facts.subject)? {
             // A reference is fresh when it came after the subject's last
             // completed consolidation review (FIX 8699); a subject never
             // reviewed counts from this candidate's own time, as before.
             let since = self
                 .last_reviewed(&facts.subject)?
                 .unwrap_or(candidate.learned_at);
-            for edge in self.read.vault().edges_in(&facts.subject)? {
-                // edges_in uses `target` for the incoming source. Do not expose
-                // a raw count first: private and other-slice rows never count.
-                if self.graph_source_in_slice(scope, &edge.target)? {
-                    fan_in += 1;
-                    new_refs += u64::from(edge.created_at > since);
-                }
-            }
-        }
+            let edges = self.read.vault().edges_in(&facts.subject)?;
+            count_graph_signals(&edges, since, |id| self.graph_source_in_slice(scope, id))?
+        } else {
+            (0, 0)
+        };
         // The candidate projection also permits host-materialized vector-only
         // rows under engine-derived output ids. If an entity exists at that id,
         // it must be an actor-readable matching claim, never another resource;
@@ -113,21 +112,11 @@ impl BranchResources<'_> {
     fn last_reviewed(&self, subject: &EntityId) -> Result<Option<u64>> {
         let vault = self.read.vault();
         let txn = vault.store.env.read_txn()?;
-        let mut newest = None;
-        for id in vault.claims_for_subject_in_txn(&txn, subject)? {
-            let Some(birth) = crate::provenance::birth::row_birth_in_txn(&vault.store, &txn, &id)?
-            else {
-                continue;
-            };
-            if birth.made_by.process.identity == PROMOTION_DOOR
-                && self.read.is_entity_readable_in(&txn, &id)?
-            {
-                newest = newest.max(Some(birth.made_by.at));
-            }
-        }
-        Ok(newest)
+        last_reviewed_in_txn(vault, &txn, &self.read, subject)
     }
 
+    /// Whether graph source `id` stands in `scope` slice for mechanical ranking.
+    /// Private and other-slice rows never count.
     fn graph_source_in_slice(&self, scope: &Scope, id: &EntityId) -> Result<bool> {
         // Type check avoids asking the generic byte door for custody records.
         let Some(kind) = self.read.vault().get_entity_type(id)? else {
@@ -147,29 +136,23 @@ impl BranchResources<'_> {
         let pinned = scope.allows_read(&document_version(*id, &bytes));
         // Project is a caller-defined exact document slice. It is NOT a claim
         // identity coordinate or a fictitious project column on a TURN.
-        if scope.project.is_some() && !pinned {
+        if !project_slice_admits(scope, pinned) {
             return Ok(false);
         }
         match kind {
             ENTITY_TYPE_CLAIM => {
                 let body = decode_claim_body(&bytes, true)?;
-                Ok(body.world == scope.world
-                    && facet(body.scope.as_ref())? == scope.facet
-                    && (scope.relationship.is_none() || body.rel.as_ref().is_some_and(|rel| {
-                        scope.relationship
-                            .as_ref()
-                            .is_some_and(|bound| rel.iter().eq(bound.iter()))
-                    }))
-                    // A claim awaiting its owner's confirmation ranks nothing.
-                    && self.read.vault().claim_consolidation_eligible(
+                claim_graph_source_in_slice(&body, scope, || {
+                    self.read.vault().claim_consolidation_eligible(
                         id,
                         crate::gate::ConsolidationReader::GraphSignal,
-                    )?)
+                    )
+                })
             }
             ENTITY_TYPE_TURN => {
                 // TURNs have no relationship column. An explicit relationship
                 // scope binds them only via its real document-version grants.
-                if scope.relationship.is_some() && !pinned {
+                if !relationship_slice_admits(scope, pinned) {
                     return Ok(false);
                 }
                 // Membership is the ChildOf edge alone, as for a branch turn:
@@ -191,17 +174,14 @@ impl BranchResources<'_> {
                     return Ok(false);
                 }
                 let (_, parent) = self.source(scope, &parents[0].target)?;
-                let (world, facet) = turn_axes(&bytes)?;
-                let (parent_world, parent_facet) = turn_axes(&parent)?;
-                Ok(world.or(parent_world) == scope.world && facet.or(parent_facet) == scope.facet)
+                turn_graph_axes_in_slice(&bytes, &parent, scope)
             }
             ENTITY_TYPE_SESSION | ENTITY_TYPE_CONVERSATION => {
                 if !self.is_part_parent(id) {
                     return Ok(false);
                 }
                 self.source(scope, id)?;
-                let (world, facet) = turn_axes(&bytes)?;
-                Ok(world == scope.world && facet == scope.facet)
+                session_graph_axes_in_slice(&bytes, scope)
             }
             // Non-claim/non-turn rows carry no common world/facet/rel columns.
             // Only a caller's exact grant can place one in this slice. ScopedRead
@@ -270,6 +250,181 @@ fn axis(entries: &[(Value, Value)], name: &str) -> Result<Option<EntityId>> {
         }
     }
     Ok(found)
+}
+
+/// When consolidation last completed a review of `subject` in the caller transaction, in Unix seconds.
+/// The newest birth among the claims about it the promotion door wrote that `read` may read.
+/// `None` when there is none.
+pub(super) fn last_reviewed_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    read: &ScopedRead<'_>,
+    subject: &EntityId,
+) -> Result<Option<u64>> {
+    let mut newest = None;
+    for id in vault.claims_for_subject_in_txn(txn, subject)? {
+        let Some(birth) = crate::provenance::birth::row_birth_in_txn(&vault.store, txn, &id)?
+        else {
+            continue;
+        };
+        if birth.made_by.process.identity == PROMOTION_DOOR
+            && read.is_entity_readable_in(txn, &id)?
+        {
+            newest = newest.max(Some(birth.made_by.at));
+        }
+    }
+    Ok(newest)
+}
+
+/// Count actor- and slice-admitted inbound references and the fresh ones among them.
+/// `edges_in` uses `target` for the incoming source.
+/// A reference is fresh when its creation time is after `since`.
+pub(super) fn count_graph_signals(
+    edges: &[EdgeInfo],
+    since: u64,
+    mut in_slice: impl FnMut(&EntityId) -> Result<bool>,
+) -> Result<(u64, u64)> {
+    let mut fan_in = 0;
+    let mut new_refs = 0;
+    for edge in edges {
+        // Do not expose a raw count first: private and other-slice rows never count.
+        if in_slice(&edge.target)? {
+            fan_in += 1;
+            new_refs += u64::from(edge.created_at > since);
+        }
+    }
+    Ok((fan_in, new_refs))
+}
+
+/// Whether a decoded claim body stands in `scope` slice for mechanical ranking.
+/// The caller supplies the consolidation eligibility check, evaluated only after the axes match.
+pub(super) fn claim_graph_source_in_slice(
+    body: &ClaimBody,
+    scope: &Scope,
+    eligible: impl FnOnce() -> Result<bool>,
+) -> Result<bool> {
+    Ok(body.world == scope.world
+        && facet(body.scope.as_ref())? == scope.facet
+        && (scope.relationship.is_none()
+            || body.rel.as_ref().is_some_and(|rel| {
+                scope
+                    .relationship
+                    .as_ref()
+                    .is_some_and(|bound| rel.iter().eq(bound.iter()))
+            }))
+        // A claim awaiting its owner's confirmation ranks nothing.
+        && eligible()?)
+}
+
+/// Whether a turn and its part parent stand in `scope` slice by their axes.
+/// Either row may carry the axes, with the turn winning when both do.
+pub(super) fn turn_graph_axes_in_slice(
+    turn_bytes: &[u8],
+    parent_bytes: &[u8],
+    scope: &Scope,
+) -> Result<bool> {
+    let (world, facet) = turn_axes(turn_bytes)?;
+    let (parent_world, parent_facet) = turn_axes(parent_bytes)?;
+    Ok(world.or(parent_world) == scope.world && facet.or(parent_facet) == scope.facet)
+}
+
+/// Whether a session or conversation body stands in `scope` slice by its axes.
+pub(super) fn session_graph_axes_in_slice(bytes: &[u8], scope: &Scope) -> Result<bool> {
+    let (world, facet) = turn_axes(bytes)?;
+    Ok(world == scope.world && facet == scope.facet)
+}
+
+/// Whether a project-bound scope admits a source with the given pin.
+/// An unbound scope admits every source, a bound one only its exact grant.
+pub(super) fn project_slice_admits(scope: &Scope, pinned: bool) -> bool {
+    scope.project.is_none() || pinned
+}
+
+/// Whether a relationship-bound scope admits a turn with the given pin.
+/// Turns carry no relationship column, so a bound scope needs the exact grant.
+pub(super) fn relationship_slice_admits(scope: &Scope, pinned: bool) -> bool {
+    scope.relationship.is_none() || pinned
+}
+
+/// The stored vector `claim_id` names for one bound candidate, read in
+/// the caller's transaction: the engine-derived `candidate_signals` vector
+/// leg for a branch the bound projection rebuilt. The grant, identity and
+/// reviewed-output guards match native `candidate_signals` exactly; only the
+/// transaction changes. The projection grant is mandatory: a candidate the
+/// branch signals do not name reads nothing, and an arbitrary model-supplied
+/// id never selects a stored vector. A missing vector is `None`: absence of
+/// data, not an error.
+pub(super) fn candidate_vector_in_txn(
+    read: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    scope: &Scope,
+    signals: &ScopeResource,
+    attempt: AttemptId,
+    claim_id: EntityId,
+    candidate: &ClaimCandidate,
+) -> Result<Option<Vec<f32>>> {
+    if !scope.allows_read(signals) {
+        return Err(invalid_consolidation(
+            "branch signals projection read refused",
+        ));
+    }
+    // Recompute the output id from this attempt and the semantic identity
+    // through the one native id function. An arbitrary model-supplied claim
+    // id cannot select a stored vector.
+    if claim_id_for_identity(attempt, candidate)? != claim_id {
+        return Err(invalid_consolidation("candidate crossed its branch scope"));
+    }
+    let vault = read.vault();
+    // The candidate projection also permits host-materialized vector-only
+    // rows under engine-derived output ids. If an entity exists at that id,
+    // it must be an actor-readable matching claim, never another resource;
+    // or this attempt's own output, which an earlier pass committed into
+    // the owner's review and `reviewed_output` matched to this candidate.
+    if vault.get_entity_type_in_txn(txn, &claim_id)?.is_some()
+        && !reviewed_output_in_txn(vault, txn, &claim_id, candidate)?
+    {
+        let mut rows = read.get_entities_parts_in_txn(txn, std::slice::from_ref(&claim_id))?;
+        let Some((kind, _, bytes)) = rows.pop().flatten() else {
+            return Err(invalid_consolidation(
+                "candidate vector entity is not readable",
+            ));
+        };
+        if kind != ENTITY_TYPE_CLAIM {
+            return Err(invalid_consolidation(
+                "candidate vector identity is not a claim",
+            ));
+        }
+        let body = decode_claim_body(&bytes, true)?;
+        if !names(&candidate_facts(candidate)?, &body)? {
+            return Err(invalid_consolidation("candidate vector identity changed"));
+        }
+    }
+    crate::ports::RetrievalIndex::port_retrieval_vector_get(vault, txn, &claim_id)
+}
+
+/// Whether the claim at `claim_id` is one an earlier pass of this attempt
+/// committed into the owner's review, read in the caller's transaction: the
+/// `reviewed_output` check over the bound candidate's own facts. The attempt
+/// owns the id, so a different claim stored there is an error.
+fn reviewed_output_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    claim_id: &EntityId,
+    candidate: &ClaimCandidate,
+) -> Result<bool> {
+    if vault.get_entity_type_in_txn(txn, claim_id)? != Some(ENTITY_TYPE_CLAIM) {
+        return Ok(false);
+    }
+    let Some(stored) = vault.get_claim_in_txn(txn, claim_id)? else {
+        return Ok(false);
+    };
+    if stored.approval == ClaimApprovalStatus::Auto {
+        return Ok(false);
+    }
+    if !names(&candidate_facts(candidate)?, &stored)? {
+        return Err(invalid_consolidation("candidate identity changed"));
+    }
+    Ok(true)
 }
 
 impl crate::Vault {

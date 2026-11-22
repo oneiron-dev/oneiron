@@ -1,7 +1,5 @@
 //! Room-backed completion of a loaded goal-intake skill interview.
 use super::{GoalRecord, invalid};
-// FIX [LIBTEST-QUARANTINE-WORKSPACE-ROSTER-PROJECT-GOAL-INTERVIEW-TESTS]: the lib test target's type check fails here (2 errors: E0063 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 use crate::attempt_queue::{AttemptId, AttemptQueue, ManifestKind};

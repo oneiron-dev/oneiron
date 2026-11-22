@@ -228,6 +228,17 @@ pub enum AuthorityOp {
     /// slips of each Grant it names and carries an Owner act's handover. A
     /// main-log entry, so every machine the owner admits folds it.
     MembershipExecution(MembershipExecution),
+    /// The anchor of an owner root appoints a successor root key when the
+    /// roster holds no live root key (OWNER-ANCHOR-ROOT-RECOVERY). Signed by
+    /// that anchor alone, with no cosign. A main-log entry; the fold judges
+    /// its ancestry, and the install's pin decides whether it counts.
+    RootAppointment(RootAppointment),
+    /// The owner's word that no other machine of the vault is left, which
+    /// joins one held enrolment of a machine born of a restore (row
+    /// RESTORED-COPIES-ENROL-EACH-OTHER). Signed by a key the vault trusts
+    /// as the owner's, alone, with no cosign and no carrier. A main-log
+    /// entry, so every machine the owner admits folds it.
+    RestoredMachineJoin(RestoredMachineJoin),
 }
 
 /// A canonical, signed AUTHORITY_LOG entry.
@@ -301,6 +312,8 @@ impl AuthorityLogEntry {
             AuthorityOp::OriginCut(cut) => cut.validate_entry(self)?,
             AuthorityOp::DeviceSuccession(succession) => succession.validate_entry(self)?,
             AuthorityOp::FullCopyMark(mark) => mark.validate_entry(self)?,
+            AuthorityOp::RootAppointment(appointment) => appointment.validate_entry(self)?,
+            AuthorityOp::RestoredMachineJoin(join) => join.validate_entry(self)?,
             _ => {}
         }
         self.signer.validate()?;
@@ -556,6 +569,8 @@ pub fn validate_op(op: &AuthorityOp) -> Result<()> {
         AuthorityOp::OriginCut(cut) => cut.validate(),
         AuthorityOp::DeviceSuccession(succession) => succession.validate(),
         AuthorityOp::MembershipExecution(record) => record.validate(),
+        AuthorityOp::RootAppointment(appointment) => appointment.validate(),
+        AuthorityOp::RestoredMachineJoin(join) => join.validate(),
     }
 }
 

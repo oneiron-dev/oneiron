@@ -26,6 +26,7 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::skill_attribution::displacing_revision_in_txn;
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 /// Domain of a cause's source id: one id per receipt and judge-revision slot.
 const SOURCE_DOMAIN: &[u8] = b"oneiron:amendment-cause:v1";
@@ -269,8 +270,17 @@ fn cause_record_in_txn(
     }))
 }
 
+/// The key `receipt`'s causes are kept under. Stored, so it keeps its bytes
+/// (K, PLAN-UC-04 stage 5).
 fn receipt_key(receipt: &str) -> [u8; 32] {
-    *blake3::hash(receipt.as_bytes()).as_bytes()
+    LegacyDigest::new(purposes::learning::AMENDMENT_CAUSE_RECEIPT_KEY)
+        .raw(receipt.as_bytes())
+        .finish()
+}
+
+#[cfg(oneiron_test_support)]
+pub(crate) fn receipt_key_for_test(receipt: &str) -> [u8; 32] {
+    receipt_key(receipt)
 }
 
 fn source_id(receipt: &str, slot: &str) -> Result<EntityId> {

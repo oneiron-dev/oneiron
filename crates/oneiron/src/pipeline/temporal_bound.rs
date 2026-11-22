@@ -28,7 +28,9 @@ use super::types::{
 /// other channels, but at most [`temporal_widening_bound`].
 /// Unbounded, every scoped recall reads, scores and sorts every row of the
 /// vault (ARCH-0004 #temporal-bound); bounded, its rankings may differ from
-/// that scan only past the bound.
+/// that scan only past the bound. The count itself stops at the bound: past
+/// it the limit is the bound whatever the count, and a room or session union
+/// counts by walking its merged rows.
 pub(super) fn scoped_temporal_channel_limit(
     store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
@@ -39,11 +41,11 @@ pub(super) fn scoped_temporal_channel_limit(
     if !scope_widening_active || requested == 0 {
         return Ok(requested);
     }
-    let entity_count = usize::try_from(store.port_entity_count(rtxn)?)
+    let bound = temporal_widening_bound(requested, params);
+    let cap = u64::try_from(bound).unwrap_or(u64::MAX);
+    let entity_count = usize::try_from(store.port_entity_count_at_most(rtxn, cap)?)
         .map_err(|_| Error::IndexOverflow("entity count"))?;
-    Ok(requested
-        .max(entity_count)
-        .min(temporal_widening_bound(requested, params)))
+    Ok(requested.max(entity_count).min(bound))
 }
 
 /// How far a scoped temporal channel asking for `requested` rows widens at

@@ -11,7 +11,8 @@
 //! lease alone, in no row.
 
 use super::super::type_diagnostics::{
-    StepKey, StoredStepFeedback, put_in, row_in, rows_in, runs_program_steps_in_txn,
+    StepKey, StoredStepFeedback, put_in, release_step_body_in_txn, row_in, rows_in,
+    runs_program_steps_in_txn,
 };
 use super::*;
 use crate::code_run::ProgramStepFeedback;
@@ -187,8 +188,9 @@ impl ExecutorStorage<'_> {
             .unwrap_or_default()
     }
 
-    /// Writes a step's feedback on the run's route: a pending row never
-    /// takes the place of a check that has already landed. A stretch that
+    /// Writes a step's feedback on the run's route: an earlier check's row
+    /// never takes the place of a later check's, and a pending row never
+    /// takes the place of its own check's landed result. A stretch that
     /// records nothing keeps none.
     ///
     /// # Errors
@@ -203,11 +205,19 @@ impl ExecutorStorage<'_> {
         match self {
             Self::Canonical(vault) => vault.put_type_diagnostics(key, row),
             Self::Session(binding) if binding.route.target() == RouteTarget::Discard => Ok(()),
+            // A body the write leaves no row naming goes in the same
+            // transaction where the route registered it: in base, on an
+            // on-record stretch. An overlay registers none; its bodies go
+            // with the session.
             Self::Session(binding) => binding.answered(|| {
                 binding
                     .session
                     .routed_side_txn(&binding.route, |wtxn, read, write| {
-                        put_in(&read, &write, wtxn, key, row)
+                        let gone = put_in(&read, &write, wtxn, key, row)?;
+                        if let (Some(body), RoutedDbs::Base(vault)) = (gone, &write) {
+                            release_step_body_in_txn(vault, wtxn, key.0, &body)?;
+                        }
+                        Ok(())
                     })
             }),
         }

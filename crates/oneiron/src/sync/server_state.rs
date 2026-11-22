@@ -83,12 +83,57 @@ pub fn persist_admitted_window_update(
     landings: &super::selector::RepoSyncLandings,
     session_is_live: impl FnOnce(&heed::RwTxn<'_>) -> bool,
 ) -> Result<u64> {
-    vault.with_write_txn_grouped(|wtxn| {
+    persist_window_update_in(vault, key, update_bytes, inserts, landings, |wtxn| {
         if !session_is_live(wtxn) {
             return Err(Error::sync_protocol(
                 SyncProtocolValidation::DocumentAdmissionDenied,
             ));
         }
+        Ok(())
+    })
+}
+
+/// [`persist_admitted_window_update`] for a promoted window's write: the
+/// entities `update_bytes` lands on `source` must still reach `peer`'s
+/// machine in the committing transaction, judged as a document's writer
+/// judges its destination (world privacy may have changed since the
+/// pre-write check).
+pub fn persist_promoted_window_update(
+    vault: &Vault,
+    key: &WindowKey,
+    update_bytes: &[u8],
+    inserts: &crate::sync::window::UpdateInserts,
+    landings: &super::selector::RepoSyncLandings,
+    session_is_live: impl FnOnce(&heed::RwTxn<'_>) -> bool,
+    peer: crate::authority::PeerMachine,
+    source: &LoroDoc,
+) -> Result<u64> {
+    let rows = super::residence::promoted_window_update_rows(source, update_bytes)?;
+    persist_window_update_in(vault, key, update_bytes, inserts, landings, |wtxn| {
+        if !session_is_live(wtxn) {
+            return Err(Error::sync_protocol(
+                SyncProtocolValidation::DocumentAdmissionDenied,
+            ));
+        }
+        super::residence::admit_promoted_window_destination_in_txn(vault, wtxn, peer, &rows)
+    })
+}
+
+/// The writer behind [`persist_imported_window_update`] and
+/// [`persist_promoted_window_update`]: `admit` judges the write in the
+/// committing transaction, before a sequence number is taken, then the
+/// update appends as today and `inserts` owe their compaction in it. A
+/// refusal writes nothing.
+fn persist_window_update_in(
+    vault: &Vault,
+    key: &WindowKey,
+    update_bytes: &[u8],
+    inserts: &crate::sync::window::UpdateInserts,
+    landings: &super::selector::RepoSyncLandings,
+    admit: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
+) -> Result<u64> {
+    vault.with_write_txn_grouped(|wtxn| {
+        admit(wtxn)?;
         // FIX 7608 slice 4 (FIX 10732, L04 05:5x): the new bytes a translated
         // copy edit lands carry its mark in this writer, never committed
         // unmarked.
@@ -351,10 +396,10 @@ mod tests {
 
     #[test]
     fn persist_imported_window_update_writes_contract_key_literals() {
-        // ARCH-0023b "sync_state key layout" literals:
-        //   u:w:2026-02:{seq:08x}  Loro update (pending window update)
-        //   m:u_seq:w:2026-02      u32 LE (4 bytes) monotonic counter
-        //   svf:w:2026-02          1 byte (1 = fresh, 0 = stale)
+        // ARCH-0023b "sync_state key layout" literals, at the widths FIX 8883 set:
+        //   u:w:2026-02:{seq:016x}  Loro update (pending window update)
+        //   m:u_seq:w:2026-02       u64 LE (8 bytes) monotonic counter
+        //   svf:w:2026-02           1 byte (1 = fresh, 0 = stale)
         let (_dir, vault) = test_vault();
         let key = WindowKey::new("2026-02");
 
@@ -363,14 +408,14 @@ mod tests {
         assert_eq!(seq, 1);
         assert_eq!(
             vault
-                .sync_state_get("u:w:2026-02:00000001")
+                .sync_state_get("u:w:2026-02:0000000000000001")
                 .unwrap()
                 .unwrap(),
             b"update-one"
         );
         assert_eq!(
             vault.sync_state_get("m:u_seq:w:2026-02").unwrap().unwrap(),
-            1u32.to_le_bytes()
+            1u64.to_le_bytes()
         );
         assert_eq!(
             vault.sync_state_get("svf:w:2026-02").unwrap().unwrap(),
@@ -383,14 +428,14 @@ mod tests {
         assert_eq!(seq, 2);
         assert_eq!(
             vault
-                .sync_state_get("u:w:2026-02:00000002")
+                .sync_state_get("u:w:2026-02:0000000000000002")
                 .unwrap()
                 .unwrap(),
             b"update-two"
         );
         assert_eq!(
             vault.sync_state_get("m:u_seq:w:2026-02").unwrap().unwrap(),
-            2u32.to_le_bytes()
+            2u64.to_le_bytes()
         );
     }
 
@@ -398,7 +443,7 @@ mod tests {
     fn persist_imported_window_update_rejects_corrupt_seq_row() {
         // A malformed seq row must NOT silently reset to 0 — next_seq = 1
         // would overwrite whatever was already persisted at
-        // u:w:{key}:00000001. Same policy as Observer A.
+        // u:w:{key}:0000000000000001. Same policy as Observer A.
         let (_dir, vault) = test_vault();
         let key = WindowKey::new("2026-02");
 
@@ -412,7 +457,7 @@ mod tests {
         assert_matches!(err, Error::CorruptedIndex(_), "got {err:?}");
         assert_eq!(
             vault
-                .sync_state_get("u:w:2026-02:00000001")
+                .sync_state_get("u:w:2026-02:0000000000000001")
                 .unwrap()
                 .unwrap(),
             b"first",

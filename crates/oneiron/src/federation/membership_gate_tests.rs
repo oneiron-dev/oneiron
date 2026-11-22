@@ -38,6 +38,7 @@ fn install(vault: &Vault, actor: EntityId, role: FederationGrantRole, scope: Sco
             crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
             TimeRange { start: 1, end: 1 },
             1,
+            None,
             &encode_federation_grant_body(&grant).unwrap(),
         )
         .commit()

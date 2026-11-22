@@ -2,17 +2,46 @@
 //! grants no authority; the owner must enrol it before loss through OwnerKeyEnroll.
 
 use ed25519_dalek::{Signer, SigningKey};
+use zeroize::Zeroizing;
 
 use super::{RecoveryRootId, RecoveryRootSeed};
 use crate::authority::{
     AUTHORITY_TRANSCRIPT_DOMAIN, AuthorityKey, AuthorityVaultId, LEAVE_NOTICE_DELEGATION_DOMAIN,
-    OwnerKeyEnrollment, invalid_authority, owner_key_enrollment_challenge,
+    OwnerKeyEnrollment, invalid_authority, recovery_authority_enrollment_challenge,
 };
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::store::recovery_kit::RestoredKitSecret;
 
 const RECOVERY_AUTHORITY_CONTEXT: &str = "oneiron/owner-recovery-authority/v1";
+
+/// R's authority seed, handed out once by the kit's activation for the box
+/// deposit (pass 27 R4 PR 2, WAYBACK-BOX-AUTHORITY-SEED = A). Holds
+/// `Zeroizing<[u8; 32]>`: no `Serialize`, a `Debug` that prints no bytes.
+/// `Clone` only because [`crate::world_keys::ActivatedRoot`] derives it.
+#[derive(Clone, PartialEq, Eq)]
+pub struct RecoveryAuthoritySeed(Zeroizing<[u8; 32]>);
+
+impl std::fmt::Debug for RecoveryAuthoritySeed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("RecoveryAuthoritySeed(<redacted>)")
+    }
+}
+
+impl RecoveryAuthoritySeed {
+    /// The seed bytes, for OPUS-WAYBACK-BOX's deposit. Public so the server
+    /// crate reads it; the server drops it until that lands.
+    #[must_use]
+    pub fn bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+
+    /// The seed from its guarded bytes, in-crate only. The producer is
+    /// [`RecoveryAuthoritySigner::authority_seed`].
+    pub(crate) fn from_guarded(seed: Zeroizing<[u8; 32]>) -> Self {
+        Self(seed)
+    }
+}
 
 /// A distinct authority key derived from an owner's recovery seed and the
 /// consuming vault's identity. It is neither the world-recovery key nor the owner
@@ -41,12 +70,40 @@ impl RecoveryAuthoritySigner {
     /// No root activation, enrollment or keystore write happens here.
     pub fn from_seed(seed: &RecoveryRootSeed, vault_id: &AuthorityVaultId) -> Result<Self> {
         let source_root = seed.public(vault_id)?.id;
-        let derived = crate::key_material::derive_guarded(
+        Self::from_released_seed(Self::authority_seed(seed, vault_id), vault_id, source_root)
+    }
+
+    /// The key's own 32-byte seed, derived from the root's seed for
+    /// `vault_id`: what the recovery box keeps (WAYBACK-BOX-AUTHORITY-SEED =
+    /// A), never the root's seed. It stays in guarded memory.
+    pub(crate) fn authority_seed(
+        seed: &RecoveryRootSeed,
+        vault_id: &AuthorityVaultId,
+    ) -> Zeroizing<[u8; 32]> {
+        crate::key_material::derive_guarded(
             RECOVERY_AUTHORITY_CONTEXT,
             &[&seed.bytes[..], &vault_id[..]],
-        );
+        )
+    }
+
+    /// Rebuilds the key from its own seed as the recovery box releases it.
+    /// `source_root` is the public binding the box keeps beside the seed. No
+    /// door trusts it, since the roster names no root for the key: the
+    /// root's door checks the derived key on the roster
+    /// ([`crate::Vault::recover_owner_root`]).
+    ///
+    /// # Errors
+    /// An authority error for an all-zero seed, which no kit derives.
+    pub fn from_released_seed(
+        seed: Zeroizing<[u8; 32]>,
+        vault_id: &AuthorityVaultId,
+        source_root: RecoveryRootId,
+    ) -> Result<Self> {
+        if seed.iter().all(|byte| *byte == 0) {
+            return Err(invalid_authority());
+        }
         Ok(Self {
-            signing: SigningKey::from_bytes(&derived),
+            signing: SigningKey::from_bytes(&seed),
             vault_id: *vault_id,
             source_root,
         })
@@ -83,9 +140,11 @@ impl RecoveryAuthoritySigner {
         &self.source_root
     }
 
-    /// Pure proof of possession for the existing enrollment door. Its owner act,
-    /// predecessor, carrying install and counted writer are still required there.
-    /// This value is not an enrollment receipt or a successful material issue.
+    /// Pure proof of possession for the recovery-authority kind's enrollment
+    /// door, over [`recovery_authority_enrollment_challenge`]: it verifies only
+    /// on a row of that kind, never on a device's. Its owner act, predecessor,
+    /// carrying install and counted writer are still required there. This
+    /// value is not an enrollment receipt or a successful material issue.
     pub(crate) fn enrollment(
         &self,
         machine: EntityId,
@@ -93,7 +152,7 @@ impl RecoveryAuthoritySigner {
     ) -> Result<OwnerKeyEnrollment> {
         let public_key = self.public_key();
         let challenge =
-            owner_key_enrollment_challenge(&self.vault_id, machine, &public_key, owner)?;
+            recovery_authority_enrollment_challenge(&self.vault_id, machine, &public_key, owner)?;
         Ok(OwnerKeyEnrollment {
             machine,
             public_key,

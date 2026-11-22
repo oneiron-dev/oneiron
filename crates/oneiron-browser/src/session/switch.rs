@@ -343,7 +343,7 @@ pub(super) fn hold(
         return;
     }
     if let Some(origin) = &state.origin {
-        let stores = std::mem::replace(&mut state.stores, [None, None]);
+        let stores = std::mem::take(&mut state.stores);
         not_held(origin, stores, losses);
     }
     if charge.resize(cookie_bytes) {

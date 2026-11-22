@@ -636,6 +636,19 @@ impl SyncConnection {
                 })?;
         }
 
+        // Each followed world's tombstone id set (FOLLOWED-WORLD-TIER1-
+        // TOMBSTONE-IDS; ARCH-0023b :500): every delete the home lets this
+        // device read writes its marker here, even of a window the home
+        // refuses to it or that it never held. A fault never fails the
+        // session: the residence upkeep asks again.
+        if peer.is_none()
+            && let Err(error) = client.fetch_followed_tombstones().await
+        {
+            let _ = event_tx.send(SyncEvent::Error(format!(
+                "Followed tombstone fetch failed: {error}"
+            )));
+        }
+
         // A followed world's window asked as a follow waits for the home's
         // answer before the queue replays: a granted window's queued writes
         // go now, a refused one's stay owed, and the socket stays open. A home
@@ -760,7 +773,10 @@ impl SyncConnection {
             && client.config.residence_mode == crate::sync::SyncResidenceMode::All
         {
             let vault = Arc::clone(self.manager.vault());
-            match tokio::task::spawn_blocking(move || vault.declare_full_copy(true)).await {
+            let configured = self.config.client_config.residence_mode;
+            match tokio::task::spawn_blocking(move || vault.mark_first_round_full_copy(configured))
+                .await
+            {
                 Ok(Ok(_)) => {}
                 Ok(Err(error)) => tracing::warn!(
                     kind = ?error.kind(),
