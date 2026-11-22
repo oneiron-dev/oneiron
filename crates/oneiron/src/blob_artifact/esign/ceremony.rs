@@ -601,8 +601,10 @@ impl Vault {
                         });
                     }
                     // 2k6b: a credentialed person's sign act as the vault's
-                    // principal checks in after every gate above, so a spent
-                    // check-in and the signature commit together.
+                    // principal checks in after every gate above, over the
+                    // values it signs, so a spent check-in and the signature
+                    // commit together.
+                    let values = state.recipient_values(&recipient.id);
                     let judged = sign_check_in_in_txn(
                         self,
                         txn,
@@ -611,6 +613,7 @@ impl Vault {
                             verified_actor,
                             document,
                             recipient: &recipient,
+                            values: &values,
                             check_in_ref: check_in_ref.as_deref(),
                         },
                     )?;

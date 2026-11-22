@@ -25,6 +25,8 @@
 //! 3). An agent reaches these acts through `vault.check_in.open`; PR 3's act
 //! gate admits agents at these doors.
 
+use std::collections::BTreeMap;
+
 use super::act_class::ActClass;
 use super::chain::{NoAgentVerdict, VerifiedChain};
 use super::mode::CheckInMode;
@@ -38,6 +40,7 @@ use super::role_preset::RolePreset;
 use super::waits::refuse;
 use crate::Vault;
 use crate::authority::{RootChange, StepUpFactor};
+use crate::blob_artifact::esign::FieldValue;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::federation::FederationGrantRole;
@@ -672,16 +675,45 @@ pub fn legal_send_effect_digest(document: &EntityId, recipient_count: usize) -> 
 }
 
 /// The digest of completing recipient `recipient`'s signature on signing
-/// document `document` as the vault's principal: the effect a member's
+/// document `document` as the vault's principal, over `values`, the
+/// recipient's field values the Complete signs: the effect a member's
 /// `vault.esign.signing.act` Complete is judged over (2k6b; P25-SHAPE Q1 =
-/// A). BLAKE3, key derived from `oneiron check_in esign sign v1`, over the
-/// document's 16 id bytes, then the recipient id's length as eight
-/// big-endian bytes and its UTF-8 bytes.
+/// A). An approval binds those values, so a value saved after it is another
+/// effect and asks again. BLAKE3, key derived from
+/// `oneiron check_in esign sign v1`, over the document's 16 id bytes, the
+/// recipient id, the number of values as eight big-endian bytes, then each
+/// value in field order: the field id, a kind byte (1 text, 2 checked, 3
+/// signature) and the value (the text or image ref, or one byte 0 or 1). Each
+/// string is its UTF-8 length as eight big-endian bytes, then its bytes.
 #[must_use]
-pub fn sign_effect_digest(document: &EntityId, recipient: &str) -> [u8; 32] {
+pub fn sign_effect_digest(
+    document: &EntityId,
+    recipient: &str,
+    values: &BTreeMap<String, FieldValue>,
+) -> [u8; 32] {
+    fn string(hasher: &mut blake3::Hasher, text: &str) {
+        hasher.update(&(text.len() as u64).to_be_bytes());
+        hasher.update(text.as_bytes());
+    }
     let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in esign sign v1");
     hasher.update(document.as_bytes());
-    hasher.update(&(recipient.len() as u64).to_be_bytes());
-    hasher.update(recipient.as_bytes());
+    string(&mut hasher, recipient);
+    hasher.update(&(values.len() as u64).to_be_bytes());
+    for (field, value) in values {
+        string(&mut hasher, field);
+        match value {
+            FieldValue::Text(text) => {
+                hasher.update(&[1]);
+                string(&mut hasher, text);
+            }
+            FieldValue::Checked(checked) => {
+                hasher.update(&[2, u8::from(*checked)]);
+            }
+            FieldValue::Signature { image_ref } => {
+                hasher.update(&[3]);
+                string(&mut hasher, image_ref);
+            }
+        }
+    }
     *hasher.finalize().as_bytes()
 }
