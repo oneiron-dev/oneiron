@@ -678,6 +678,13 @@ impl AuthorityFold {
             .map(|profile| profile.machine_key)
     }
 
+    /// The role the profile [`Self::machine_proof_key`] reads gives
+    /// `machine`: what it is to this vault while it proves that key here.
+    #[must_use]
+    pub(crate) fn machine_proof_role(&self, machine: EntityId) -> Option<MachineRole> {
+        self.proving_profile(machine).map(|profile| profile.role)
+    }
+
     /// The key a residence result from `machine` must be signed by
     /// ([`FoldedMachine::residence_signer_key`]), read on the roster view as
     /// the result judge reads it: this install's projections (a chain gone

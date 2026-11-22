@@ -341,6 +341,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "AUTHORITY_ERASED_ROW",
         "AUTHORITY_ERASED_SUBJECT",
         "AUTHORITY_HELD_ANSWER_DISMISSED",
+        "AUTHORITY_HISTORY_OFFLOAD",
         "AUTHORITY_HOST_ROOT_SLIP_CACHE",
         "AUTHORITY_MESH_MACHINE",
         "AUTHORITY_OVERLAY",

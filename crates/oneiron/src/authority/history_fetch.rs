@@ -14,9 +14,11 @@
 //! rows and [`AUTHORITY_HISTORY_PAGE_BYTES`] signed bytes), every row in its
 //! original signed bytes, the page naming the selection it served. What the
 //! holder lacks as well it names as unheld, a claim and not evidence: an
-//! asker never reads it as erased or as permission. The whole log is kept
-//! hot for now, so every row a holder serves is a hot row; an archive
-//! manifest is an inventory of rows the custodian holds, not an offload.
+//! asker never reads it as erased or as permission. A device that offloaded
+//! covered rows to a proved custodian ([`Vault::offload_authority_history`])
+//! names them unheld too, as a freshly paired device does; an archive
+//! manifest stays an inventory of rows the custodian holds, and the asker's
+//! `offloaded` set is its own record, never a custodian's claim.
 //!
 //! The asker trusts none of the page. It checks each row's bytes, signatures
 //! and vault itself ([`Vault::verify_authority_history_page`]) and reports
@@ -635,7 +637,7 @@ impl Vault {
     /// [`AUTHORITY_HISTORY_PAGE_BYTES`] from its cursor, in their original
     /// signed bytes; what it lacks too is named unheld. A covered selection
     /// reads this vault's kept image at its id; an unknown image or archive
-    /// refuses. Hot rows only: the whole log is kept. Serves any caller:
+    /// refuses. Held rows only: a row this vault offloaded is unheld. Serves any caller:
     /// delivery admits the asker first (`residence.authority.range` serves a
     /// machine of the owner's alone), and a fetch naming another vault is
     /// refused.
