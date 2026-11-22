@@ -221,8 +221,9 @@ impl Vault {
             // A peer's user delete of an actor releases its code runs'
             // replies here too, before the body is truncated, even when no
             // body is left: rows the actor owned may remain (FIX 15532). A
-            // hold refuses first, as the scrub below would.
-            self.store.reject_legal_hold_in_txn(wtxn, id.as_bytes())?;
+            // restriction refuses first, as the scrub below would.
+            self.store
+                .reject_restricted_record_in_txn(wtxn, id.as_bytes())?;
             #[cfg(unix)]
             crate::code_run::soft_delete_actor_responses_in_txn(self, wtxn, id)?;
             let (existed, had_vector, ledger_changed) =
@@ -280,7 +281,8 @@ impl Vault {
             ));
         }
 
-        self.store.reject_legal_hold_in_txn(wtxn, id.as_bytes())?;
+        self.store
+            .reject_restricted_record_in_txn(wtxn, id.as_bytes())?;
         let marker_key = HexId(*id);
         let marker_value = decoded.local_hard_delete_marker_value();
         // Probe the FULL delete scope (entity row, vectors, text, phonetic,
@@ -403,7 +405,8 @@ impl Vault {
         // (BLOB-VERSION-HELD-PURGE, Engine 15 Nov 19:25), before anything here is destroyed.
         if let Some(released) = released_version.as_ref() {
             for held in released.legal_hold_ids()? {
-                self.store.reject_legal_hold_in_txn(wtxn, held.as_bytes())?;
+                self.store
+                    .reject_restricted_record_in_txn(wtxn, held.as_bytes())?;
             }
         }
         // ARCH-0055 §9 (r6) on the RECEIVING side: a remote hard erase must

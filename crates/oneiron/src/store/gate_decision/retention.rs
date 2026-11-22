@@ -335,8 +335,8 @@ impl Vault {
     /// copy of the partition's decisions to the hold store, as an owner's
     /// hold does, and the age sweep runs as it would without it. Releasing it
     /// lifts that hold alone, never another hold naming the same claim, and
-    /// destroys its copy. Once a release commits, the due legal-hold pass
-    /// settles the decision scrubs (FIX 7993, 7994).
+    /// destroys its copy. Once a release commits, the settle pass settles
+    /// what the restriction kept from an erase (FIX 7993, 7994).
     pub fn set_gate_decision_partition_hold(
         &self,
         claim_partition: Option<[u8; 16]>,

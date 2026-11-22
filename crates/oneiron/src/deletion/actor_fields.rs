@@ -79,8 +79,8 @@ impl<'write, 'env> ActorErasureWriter<'write, 'env> {
     }
 
     /// Records that `intents`, relayed ask intents of this erase's target a
-    /// legal hold kept from it, are owed their retirement and their results'
-    /// (FIX 20468). The due legal-hold pass that finds neither row held
+    /// restriction kept from it, are owed their retirement and their
+    /// results' (FIX 20468). The settle pass that finds neither row held
     /// retires both, and the erase is not complete until then.
     pub(crate) fn owe_held_ask_forward_intents(
         &mut self,

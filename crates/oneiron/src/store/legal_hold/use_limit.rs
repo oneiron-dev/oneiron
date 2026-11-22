@@ -38,8 +38,7 @@ pub(crate) fn cooperative_restriction_active_in_txn(
 /// under LEGAL-HOLD-USE = B only a cooperative review restriction limits a
 /// record's use, so this is one table probe, and a door that would ask
 /// [`use_limit_in_txn`] of every row it ranks asks it only where one can
-/// answer. It is also the gate of the owed births read
-/// (`deletion::legal_hold::held_scrubs`), which scans every `ROW_BIRTH` row.
+/// answer.
 pub(crate) fn any_record_use_limit_in_txn(
     dbs: &impl SideTableDbs,
     txn: &RoTxn<'_>,

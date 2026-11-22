@@ -29,7 +29,6 @@ use super::{ResidenceRpc, SyncClient, refused, residence_budgets};
 use crate::EntityId;
 use crate::deletion::decode_tombstone_value;
 use crate::side_table::{self, Raw, SideTable};
-use crate::store::legal_hold::HoldActor;
 use crate::sync::client::{SyncClientConfig, SyncResidenceMode};
 use crate::sync::manager::WindowManager;
 use crate::sync::selector::encode_sync_selector;
@@ -295,9 +294,7 @@ fn drop_soft_deleted_thin_copy(
         }
         // No legal hold refuses (LEGAL-HOLD-USE = B); a cooperative
         // restriction answers with absence, which fails the tick, as it did.
-        vault
-            .store
-            .reject_legal_holds_in_txn(txn, &[item], &HoldActor::UNATTRIBUTED)?;
+        vault.store.reject_restricted_records_in_txn(txn, &[item])?;
         if let Some(raw) = vault.store.sync_state.get(txn, &format!("ri:b:{hex}"))?
             && crate::world_keys::held_pad_world_in_txn(&vault.store, txn, &raw)?
         {

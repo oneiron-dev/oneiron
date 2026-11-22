@@ -62,8 +62,8 @@ side_tables! {
         [restore: live] [family: unclassified] [tier: canonical];
     /// Sweep refs a hard delete captured from a provenance Claim before its SoftErase emptied the
     /// body, and the ids of the rows an erase retired with the entity (FIX 7494), held until a
-    /// purge queues its sweep; and the relayed ask intents a legal hold kept from the entity's
-    /// erase, held until a due legal-hold pass retires them (FIX 20468). Key: hex32 (entity id).
+    /// purge queues its sweep; and the relayed ask intents a restriction kept from the entity's
+    /// erase, held until a settle pass retires them (FIX 20468). Key: hex32 (entity id).
     DELETION_PENDING_SWEEP_REFS: SyncState b"m:sr:" Raw
         [restore: content] [family: unclassified] [tier: canonical];
     /// Configured thresholds for the wire call-volume observation counters. Key: ().
