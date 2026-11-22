@@ -2,6 +2,7 @@ use super::*;
 use crate::code_artifact::{
     CODE_ARTIFACT_SUMMARY_HASH_LEN, CodeArtifactBody, encode_code_artifact_body,
 };
+use crate::codebase::RepoIdentity;
 use crate::edge::EdgeKind;
 use crate::error::ErrorKind;
 use crate::registry::ENTITY_TYPE_CODE_SYMBOL;
@@ -39,8 +40,11 @@ fn manifest_with_blame(
     ];
     let fingerprint =
         derive_symbol_fingerprint("src/lib.rs", "answer", "function", &[chunks[0].clone()])?;
+    let repo_ref = repo_ref();
+    let repo_identity = RepoIdentity::from_location(&repo_ref);
     CodeSymbolManifest::new(
-        repo_ref(),
+        repo_ref,
+        repo_identity,
         Some("9d561405a81ffbf29d1369cd848e0ef9fca4f277".to_owned()),
         chunks,
         vec![CodeSymbolRevision::new(
@@ -57,10 +61,10 @@ fn manifest_with_blame(
 
 #[test]
 fn manifest_wire_fixture_pins_sorted_indexes_and_provenance() -> Result<()> {
-    const FROZEN: &[u8] = b"\x84\xa8repo_ref\xd93github:a/b#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\xabcommit_hash\xd9(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\xa6chunks\x92\x85\xa4path\xa4a.rs\xaastart_line\x01\xa8end_line\x01\xaccontent_hash\xc4 \x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\xb4producing_operations\x90\x85\xa4path\xa4a.rs\xaastart_line\x0a\xa8end_line\x0c\xaccontent_hash\xc4 \x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\xb4producing_operations\x91\x95\xc4\x10\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\xc4\x10\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\xc4\x10\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\xc4\x10\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\xc4\x10\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f\xa7symbols\x91\x88\xa4path\xa4a.rs\xa4name\xa1f\xa4kind\xa8function\xabfingerprint\xc4 33333333333333333333333333333333\xadchunk_indexes\x91\x01\xb3provenance_claim_id\xc4\x10QQQQQQQQQQQQQQQQ\xaesource_session\xadsession-alpha\xb4producing_operations\x91\x95\xc4\x10\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\xc4\x10\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\xc4\x10\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\xc4\x10\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\xc4\x10\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f";
+    const FROZEN: &[u8] = b"\x86\xa8repo_ref\xd93github:a/b#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\xabcommit_hash\xd9(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\xa6chunks\x92\x85\xa4path\xa4a.rs\xaastart_line\x01\xa8end_line\x01\xaccontent_hash\xc4 \x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\xb4producing_operations\x90\x85\xa4path\xa4a.rs\xaastart_line\x0a\xa8end_line\x0c\xaccontent_hash\xc4 \x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\x22\xb4producing_operations\x91\x95\xc4\x10\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\xc4\x10\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\xc4\x10\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\xc4\x10\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\xc4\x10\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f\xa7symbols\x91\x8a\xa4path\xa4a.rs\xa4name\xa1f\xa4kind\xa8function\xabfingerprint\xc4 33333333333333333333333333333333\xadchunk_indexes\x91\x01\xb3provenance_claim_id\xc4\x10QQQQQQQQQQQQQQQQ\xaesource_session\xadsession-alpha\xb4producing_operations\x91\x95\xc4\x10\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\x0b\xc4\x10\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\x0c\xc4\x10\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\x0d\xc4\x10\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\x0e\xc4\x10\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f\x0f\xa8document\xc0\xa7ordinal\x00\xadrepo_identity\xaagithub:a/b\xa9relations\x90";
     let op = CodeProducingOperation {
         operation: entity(11),
-        actor: entity(12),
+        actor: Some(entity(12)),
         turn: entity(13),
         activity: entity(14),
         intent: entity(15),
@@ -78,8 +82,11 @@ fn manifest_wire_fixture_pins_sorted_indexes_and_provenance() -> Result<()> {
         Some("session-alpha".to_owned()),
     );
     revision.producing_operations = vec![op];
+    let wire_repo_ref = RepoRef::parse("github:a/b#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")?;
+    let wire_repo_identity = RepoIdentity::from_location(&wire_repo_ref);
     let manifest = CodeSymbolManifest::new(
-        RepoRef::parse("github:a/b#aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")?,
+        wire_repo_ref,
+        wire_repo_identity,
         Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned()),
         vec![late, early],
         vec![revision],
@@ -125,8 +132,11 @@ fn code_symbol_manifest_rejects_symbol_chunks_from_another_path() -> Result<()> 
         "fn other() {}\n",
     )?];
 
+    let repo_ref = repo_ref();
+    let repo_identity = RepoIdentity::from_location(&repo_ref);
     let err = CodeSymbolManifest::new(
-        repo_ref(),
+        repo_ref,
+        repo_identity,
         Some("9d561405a81ffbf29d1369cd848e0ef9fca4f277".to_owned()),
         chunks,
         vec![CodeSymbolRevision::new(
@@ -156,7 +166,8 @@ fn incremental_code_embeddings_reembed_only_changed_ast_chunk_and_search_top5() 
     let new = "pub fn budget_depletion() -> &'static str { \"budget depletion handled here\" }\n\
                    pub fn unrelated() -> &'static str { \"unchanged\" }\n";
 
-    let inputs = derive_code_embedding_inputs_from_text_diff(&repo_ref, path, old, new)?;
+    let repo_identity = RepoIdentity::from_location(&repo_ref);
+    let inputs = derive_code_embedding_inputs_from_text_diff(&repo_identity, path, old, new)?;
 
     assert_eq!(inputs.len(), 1);
     assert_eq!(inputs[0].path, path);
@@ -181,6 +192,7 @@ fn incremental_code_embeddings_reembed_only_changed_ast_chunk_and_search_top5() 
 
     let graph = derive_code_symbol_graph_from_sources(
         repo_ref.clone(),
+        RepoIdentity::from_location(&repo_ref),
         Some("9d561405a81ffbf29d1369cd848e0ef9fca4f277".to_owned()),
         [CodeSymbolSource::new(path, new)],
     )?;
@@ -214,6 +226,7 @@ fn code_symbol_graph_persists_entities_refs_callers_and_ppr_neighbors() -> Resul
     let repo_ref = repo_ref();
     let graph = derive_code_symbol_graph_from_sources(
         repo_ref.clone(),
+        RepoIdentity::from_location(&repo_ref),
         Some("9d561405a81ffbf29d1369cd848e0ef9fca4f277".to_owned()),
         [CodeSymbolSource::new(
             "src/lib.rs",
@@ -315,7 +328,7 @@ fn symbol_blame_returns_provenance_claim_and_source_session_when_available() -> 
     let mut manifest = manifest_with_blame(Some(claim_id), Some("codex-session-001".to_owned()))?;
     let op = CodeProducingOperation {
         operation: entity(11),
-        actor: entity(12),
+        actor: Some(entity(12)),
         turn: entity(13),
         activity: entity(14),
         intent: entity(15),

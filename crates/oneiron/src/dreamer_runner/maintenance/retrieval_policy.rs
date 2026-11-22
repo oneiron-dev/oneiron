@@ -1,8 +1,11 @@
-//! The Coach's retrieval-policy update on the shared nightly maintenance lane.
+//! The Coach's retrieval-policy update on the shared nightly maintenance lane:
+//! the fast loop, then the slow loop's queue (ARCH-0053 #tune-retrieval:
+//! "automatic bandit updates and then dreamer reviews").
 
+use super::super::DreamerAdmittedAttempt;
 use crate::{Result, Vault};
 
-pub(super) fn run(vault: &Vault) -> Result<()> {
+pub(super) fn run(vault: &Vault, attempt: &DreamerAdmittedAttempt, now: u64) -> Result<()> {
     // Label the runs the user's later words corrected or confirmed first, so
     // this night's update learns from them (census L9-06).
     vault.produce_natural_retrieval_outcomes()?;
@@ -11,5 +14,5 @@ pub(super) fn run(vault: &Vault) -> Result<()> {
     let _ = vault
         .store
         .tune_retrieval_blend_weights_when_ready(Default::default())?;
-    Ok(())
+    super::retrieval_skill_review::queue_after_tune(vault, attempt, now)
 }

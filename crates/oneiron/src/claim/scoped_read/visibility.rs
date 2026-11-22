@@ -4,6 +4,47 @@ use super::owner_authority::OwnAdmission;
 use super::*;
 use crate::federation::record_scope::asset_text;
 
+thread_local! {
+    /// The derived rows each reader on this thread is judging now, keyed by
+    /// the reader's address. A row met again inside its own judgement sits
+    /// on a cycle of `DerivedFrom` edges or response holders, which a caller
+    /// can write, so that judgement refuses instead of recursing without end
+    /// (#8590 review r2 P1).
+    static DERIVED_READS_IN_PROGRESS: std::cell::RefCell<Vec<(usize, EntityId)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// One derived row's judgement in progress on this thread; it ends when the
+/// judgement returns or unwinds.
+struct DerivedReadInProgress {
+    key: (usize, EntityId),
+}
+
+impl DerivedReadInProgress {
+    /// `None` when the reader at `reader` is already judging `id` here.
+    fn enter(reader: usize, id: EntityId) -> Option<Self> {
+        DERIVED_READS_IN_PROGRESS.with(|rows| {
+            let mut rows = rows.borrow_mut();
+            if rows.contains(&(reader, id)) {
+                return None;
+            }
+            rows.push((reader, id));
+            Some(Self { key: (reader, id) })
+        })
+    }
+}
+
+impl Drop for DerivedReadInProgress {
+    fn drop(&mut self) {
+        DERIVED_READS_IN_PROGRESS.with(|rows| {
+            let mut rows = rows.borrow_mut();
+            if let Some(at) = rows.iter().rposition(|key| *key == self.key) {
+                rows.remove(at);
+            }
+        });
+    }
+}
+
 impl<'v> ScopedRead<'v> {
     /// Whether this lane reads `id` now, an owner lane's standing rechecked
     /// in the snapshot it reads (see `Self::live_policy_manifest_in`).
@@ -25,47 +66,70 @@ impl<'v> ScopedRead<'v> {
     }
 
     /// Whether every one of `ids` resolves for this lane, judged in one
-    /// snapshot as [`Self::is_ref_readable`] judges each.
+    /// snapshot as [`Self::is_ref_readable`] judges each, by one held
+    /// authority for the whole call ([`Self::refs_readable_held_in`]).
     pub fn all_refs_readable(&self, ids: &[EntityId]) -> Result<bool> {
         let rtxn = self.grant_read_txn()?;
         let policy = self.live_policy_manifest_in(&rtxn)?;
-        for id in ids {
-            if !self.is_ref_readable_with_policy_in(&rtxn, &policy, id)? {
-                return Ok(false);
-            }
-        }
-        Ok(true)
+        let authority = HeldAuthority::for_request(None);
+        self.refs_readable_held_in(&rtxn, &policy, ids, &authority)
     }
 
     /// Which of `sets` resolve whole for this lane, one answer for each set:
     /// each judged as [`Self::all_refs_readable`] judges its ids, every set
-    /// in one snapshot under one policy, so a listing that admits its rows
-    /// one by one admits them all at one instant (FIX 7645).
+    /// in one snapshot under one policy and one held authority, so a listing
+    /// that admits its rows one by one admits them all at one instant (FIX
+    /// 7645).
     pub fn refs_readable_each(&self, sets: &[Vec<EntityId>]) -> Result<Vec<bool>> {
         let rtxn = self.grant_read_txn()?;
         self.refs_readable_each_in(&rtxn, sets)
     }
 
     /// [`Self::refs_readable_each`] in the caller's snapshot `rtxn`, opened
-    /// as [`Self::grant_read_txn`] opens one.
-    pub(super) fn refs_readable_each_in(
+    /// as [`Self::with_grant_read_snapshot`] opens one, so a door that reads
+    /// its items and judges their rows does both at one instant.
+    pub(crate) fn refs_readable_each_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
         sets: &[Vec<EntityId>],
     ) -> Result<Vec<bool>> {
         let policy = self.live_policy_manifest_in(rtxn)?;
-        let mut each = Vec::with_capacity(sets.len());
-        for ids in sets {
-            let mut readable = true;
-            for id in ids {
-                if !self.is_ref_readable_with_policy_in(rtxn, &policy, id)? {
-                    readable = false;
-                    break;
-                }
-            }
-            each.push(readable);
+        let authority = HeldAuthority::for_request(None);
+        sets.iter()
+            .map(|ids| self.refs_readable_held_in(rtxn, &policy, ids, &authority))
+            .collect()
+    }
+
+    /// Whether every one of `ids` resolves for this lane in `rtxn` under
+    /// `policy`, each judged as [`Self::is_ref_readable_with_policy_in`]
+    /// judges it, by the row checks `authority` holds for the call's serving
+    /// txn: the reader's relationship context and the owner's exemption are
+    /// judged at the first ref that needs them and shared by every later
+    /// one, as a search's hits share them (FIX 7462), not judged again per
+    /// ref (FIX REFS-READABLE-EACH-FRESH-AUTHORITY-PER-ROW); the context only
+    /// while the authorization time stands where it was loaded. Each ref's
+    /// Grants and CLAIM class verdicts are its own, as a lone ref check
+    /// judges them ([`HeldAuthority::judge_ref`]).
+    fn refs_readable_held_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        ids: &[EntityId],
+        authority: &HeldAuthority,
+    ) -> Result<bool> {
+        if ids.is_empty() {
+            return Ok(true);
         }
-        Ok(each)
+        let filter = self.actor_retrieval_floor(policy)?;
+        for id in ids {
+            let readable = authority.judge_ref(self.vault, rtxn, |one| {
+                self.is_ref_readable_held_in(rtxn, policy, id, &filter, one)
+            })?;
+            if !readable {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// [`Self::is_ref_readable`] in the caller's snapshot, under `policy`
@@ -76,10 +140,45 @@ impl<'v> ScopedRead<'v> {
         policy: &PolicyManifestResolution,
         id: &EntityId,
     ) -> Result<bool> {
-        match self.is_entity_readable_with_policy_in(rtxn, policy, id) {
+        let filter = self.actor_retrieval_floor(policy)?;
+        let authority = HeldAuthority::for_request(None);
+        self.is_ref_readable_held_in(rtxn, policy, id, &filter, &authority)
+    }
+
+    /// [`Self::is_entity_readable_held_in`] for a ref a caller names: sealed
+    /// secret custody reads as absent, as [`Self::is_ref_readable`] says.
+    fn is_ref_readable_held_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        id: &EntityId,
+        filter: &ResolvedRetrievalFilter,
+        authority: &HeldAuthority,
+    ) -> Result<bool> {
+        match self.is_entity_readable_held_in(rtxn, policy, id, filter, authority) {
             Err(error) if error.kind() == crate::ErrorKind::InvalidSecretCustodyBody => Ok(false),
             readable => readable,
         }
+    }
+
+    /// [`Self::is_ref_readable_with_policy_in`] for a stored record a
+    /// resolver names, read through its cleanup archive (ARCH-0055 section
+    /// 10, archive-visible: "The archive stays visible to the resolver"):
+    /// only `id`'s own archive conjuncts are lifted
+    /// ([`HeldAuthority::reading_archive_of`]). A removal, a stale mark, a
+    /// legal-hold use limit, a stale body or a withdrawn source still refuses
+    /// it, and the lane's scope, grants, credential, facets, relationship and
+    /// audience judge it as for any row. A record that is not archived reads
+    /// as [`Self::is_ref_readable_with_policy_in`] reads it.
+    pub(crate) fn is_ref_readable_through_archive_with_policy_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        id: &EntityId,
+    ) -> Result<bool> {
+        let filter = self.actor_retrieval_floor(policy)?;
+        let authority = HeldAuthority::for_request(None).reading_archive_of(*id);
+        self.is_ref_readable_held_in(rtxn, policy, id, &filter, &authority)
     }
 
     pub(crate) fn is_entity_readable_in(
@@ -99,7 +198,7 @@ impl<'v> ScopedRead<'v> {
     ) -> Result<bool> {
         // A read by id matches no meaning, so it takes the row predicate
         // alone; the doors that find rows take the TURN rule as well
-        // (`is_entity_retrievable_with_policy_in`).
+        // (`is_entity_retrievable_held_in`).
         let filter = self.actor_retrieval_floor(policy)?;
         let authority = HeldAuthority::for_request(None);
         self.is_entity_readable_held_in(rtxn, policy, id, &filter, &authority)
@@ -110,11 +209,7 @@ impl<'v> ScopedRead<'v> {
         &self,
         policy: &PolicyManifestResolution,
     ) -> Result<ResolvedRetrievalFilter> {
-        Ok(crate::gate::narrow_retrieval_filter(
-            &policy.retrieval_floor_for_actor(Some(&self.actor_key)),
-            None,
-        )?
-        .under_credential_of(&self.actor_key))
+        self.filter_under(policy, None)
     }
 
     pub(super) fn is_entity_readable_with_filter_in(
@@ -203,6 +298,8 @@ impl<'v> ScopedRead<'v> {
     /// policy and its own floor (ARCH-0006a); a request's narrowing applies
     /// to the row, not to what it was written from. Each source is judged by
     /// its own row admission; a body whose sources no longer resolve refuses.
+    /// So does a row reached again while it is being judged: a cycle of
+    /// `DerivedFrom` edges or response holders (#8590 review r2 P1).
     fn derived_sources_readable_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -211,7 +308,14 @@ impl<'v> ScopedRead<'v> {
         raw: &[u8],
         authority: &HeldAuthority,
     ) -> Result<bool> {
+        let Some(_in_progress) = DerivedReadInProgress::enter(std::ptr::from_ref(self).addr(), *id)
+        else {
+            return Ok(false);
+        };
         if !self.reminder_wording_asset_sources_readable_in(rtxn, id, raw)? {
+            return Ok(false);
+        }
+        if !self.compaction_response_bytes_readable_in(rtxn, id, raw)? {
             return Ok(false);
         }
         // An owner key the conversation home binds (a saved outside lane
@@ -247,6 +351,12 @@ impl<'v> ScopedRead<'v> {
         {
             return Ok(admitted);
         }
+        if crate::llm::is_compaction_step_row(
+            header.entity_type,
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+        )? {
+            return self.compaction_step_sources_readable_in(rtxn, policy, id, authority);
+        }
         let sources = match crate::scope_summary::word_sources_in(self.vault, rtxn, id, raw)? {
             crate::scope_summary::WordSources::Own => return Ok(true),
             crate::scope_summary::WordSources::Unresolved => return Ok(false),
@@ -279,7 +389,7 @@ impl<'v> ScopedRead<'v> {
     /// withdrawn, unplaced or otherwise unreadable sources do not (the owner
     /// shortcut's policy still skips every other gate). `Ok(false)` for a row
     /// with no sources of its own.
-    fn owner_sources_use_limited_in(
+    pub(super) fn owner_sources_use_limited_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,
@@ -313,7 +423,26 @@ impl<'v> ScopedRead<'v> {
                 return self.owner_epoch_sources_use_limited_in(rtxn, id);
             }
         }
-        match crate::scope_summary::word_sources_in(self.vault, rtxn, id, raw)? {
+        // A filed compaction step's words came from its `DerivedFrom` targets
+        // through any nested epoch summary, as an epoch summary's did, so the
+        // owner's use-limit conjunct walks that same lineage (review P1 on
+        // #8489): a limit behind a nested epoch summary binds the step too.
+        if crate::llm::is_compaction_step_row(
+            header.entity_type,
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+        )? {
+            return self.owner_epoch_sources_use_limited_in(rtxn, id);
+        }
+        // Through this read's own view, so a room step or summary staged in a
+        // session names the lineage its overlay holds (Astra r2 on #8489,
+        // finding 4).
+        match crate::scope_summary::word_sources_through_in(
+            self.vault,
+            &self.store_read(),
+            rtxn,
+            id,
+            raw,
+        )? {
             crate::scope_summary::WordSources::From(sources) => {
                 for source in &sources {
                     if crate::store::legal_hold::use_limit_in_txn(&self.vault.store, rtxn, source)?
@@ -392,12 +521,14 @@ impl<'v> ScopedRead<'v> {
         Ok(false)
     }
 
-    /// Whether any record an epoch summary's words came from, through nested
-    /// epoch summaries, carries a standing C6 use limit (FIX 1496 S8). The
-    /// walk skips rows that no longer resolve instead of refusing (owner
-    /// policy), and expands through nested epoch summaries with Yes or
-    /// Unresolved keyframes, mirroring `epoch_sources_admitted_in`'s
-    /// expansion with a use-limit-only predicate.
+    /// Whether any record an epoch summary's or a filed compaction step's
+    /// words came from, through nested epoch summaries, carries a standing C6
+    /// use limit (FIX 1496 S8). The walk skips rows that no longer resolve
+    /// instead of refusing (owner policy), and expands through nested epoch
+    /// summaries with Yes or Unresolved keyframes, mirroring
+    /// `derived_from_sources_admitted_in`'s expansion with a use-limit-only
+    /// predicate, and through nested filed compaction steps, whose words came
+    /// from their own `DerivedFrom` targets (#8590 review r2 P1).
     fn owner_epoch_sources_use_limited_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -420,6 +551,9 @@ impl<'v> ScopedRead<'v> {
                     continue;
                 };
                 if row.entity_type != crate::registry::ENTITY_TYPE_SUMMARY {
+                    if crate::llm::is_compaction_step_row(row.entity_type, &row.body)? {
+                        pending.push(source);
+                    }
                     continue;
                 }
                 let epoch = match self.session_view {
@@ -459,42 +593,125 @@ impl<'v> ScopedRead<'v> {
     ) -> Result<Option<bool>> {
         let floor = self.actor_retrieval_floor(policy)?;
         let admit = |source: &EntityId, row: &crate::ports::EntityRecord| {
-            // A source the room serves is placed as the common loader places
-            // it (FIX 5161).
-            if !self.room_row_placed_in(rtxn, source, row.entity_type, &row.body)? {
-                return Ok(false);
-            }
-            let raw = row.encode();
-            let floor_only = AskedFilter::Known(None);
-            if !self.is_entity_raw_readable_own_in(
-                rtxn,
-                policy,
-                source,
-                &raw,
-                &floor,
-                authority,
-                &floor_only,
+            self.walked_source_admitted_in(rtxn, policy, &floor, authority, source, row)
+        };
+        crate::compaction::epoch_sources_admitted_in(&self.store_read(), rtxn, id, body, admit)
+    }
+
+    /// A filed compaction step's claim or response artifact carries the
+    /// compactor's words about every record its call read: its `DerivedFrom`
+    /// targets, the summary's own lineage (FIX 5977). So this reader takes
+    /// one only while it takes each of them, by the summary's own walk
+    /// (COMPACTION-STEP-CLAIM-READS-WITHOUT-SOURCES).
+    fn compaction_step_sources_readable_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        id: &EntityId,
+        authority: &HeldAuthority,
+    ) -> Result<bool> {
+        let floor = self.actor_retrieval_floor(policy)?;
+        let admit = |source: &EntityId, row: &crate::ports::EntityRecord| {
+            self.walked_source_admitted_in(rtxn, policy, &floor, authority, source, row)
+        };
+        crate::compaction::derived_from_sources_admitted_in(&self.store_read(), rtxn, id, admit)
+    }
+
+    /// A filed compaction step's response bytes, as the content ASSET of its
+    /// response artifact's version, carry the compactor's words as that
+    /// artifact does. So this reader takes such an ASSET only while it reads
+    /// every response artifact holding those bytes, each by its own row read,
+    /// which walks the step's sources (COMPACTION-STEP-CLAIM-READS-WITHOUT-
+    /// SOURCES). The holders are found through this read's own view, so a
+    /// response a room's overlay staged holds its ASSET there too
+    /// (STEPREAD-OVERLAY-RESPONSE-ASSET). A base response a room's row
+    /// shadows is judged by its base row, so a room never reads those bytes
+    /// wider than base does (Sol r1 on #8590). Every other row reads as
+    /// before.
+    fn compaction_response_bytes_readable_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        raw: &[u8],
+    ) -> Result<bool> {
+        let holders =
+            crate::llm::compaction_response_holders_in(&self.store_read(), rtxn, id, raw)?;
+        if holders.is_empty() {
+            return Ok(true);
+        }
+        let filed: Vec<EntityId> = holders
+            .iter()
+            .filter(|holder| holder.base_row.is_none())
+            .map(|holder| holder.id)
+            .collect();
+        if !self
+            .entities_readable_in_txn(rtxn, &filed)?
+            .iter()
+            .all(|readable| *readable)
+        {
+            return Ok(false);
+        }
+        let mut shadowed = holders
+            .iter()
+            .filter_map(|holder| Some((holder.id, holder.base_row.as_deref()?)))
+            .peekable();
+        if shadowed.peek().is_none() {
+            return Ok(true);
+        }
+        let (filter, policy) = self.resolve_retrieval_filter_in(rtxn, None)?;
+        let authority = self.held_for(None);
+        for (holder, base_row) in shadowed {
+            if !self.is_entity_raw_readable_held_in(
+                rtxn, &policy, &holder, base_row, &filter, &authority,
             )? {
                 return Ok(false);
             }
-            // The walk itself expands a nested epoch summary, in any form.
-            if row.entity_type == crate::registry::ENTITY_TYPE_SUMMARY
-                && match self.session_view {
-                    Some(view) => crate::compaction::stored_epoch_in(view, rtxn, source, &row.body),
-                    None => crate::compaction::stored_epoch_in(
-                        &self.vault.store,
-                        rtxn,
-                        source,
-                        &row.body,
-                    ),
-                }?
-                .may_be()
-            {
-                return Ok(true);
-            }
-            self.derived_sources_readable_in(rtxn, policy, source, &raw, authority)
-        };
-        crate::compaction::epoch_sources_admitted_in(&self.store_read(), rtxn, id, body, admit)
+        }
+        Ok(true)
+    }
+
+    /// One record a summary's or a compaction step's words came from, as
+    /// their walk admits it: placed as the common loader places a room's row
+    /// (FIX 5161), admitted by its own row under this reader's floor, and a
+    /// source that carries words of its own sources keeping that conjunct. A
+    /// nested epoch summary the walk itself expands.
+    fn walked_source_admitted_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        floor: &ResolvedRetrievalFilter,
+        authority: &HeldAuthority,
+        source: &EntityId,
+        row: &crate::ports::EntityRecord,
+    ) -> Result<bool> {
+        if !self.room_row_placed_in(rtxn, source, row.entity_type, &row.body)? {
+            return Ok(false);
+        }
+        let raw = row.encode();
+        let floor_only = AskedFilter::Known(None);
+        if !self.is_entity_raw_readable_own_in(
+            rtxn,
+            policy,
+            source,
+            &raw,
+            floor,
+            authority,
+            &floor_only,
+        )? {
+            return Ok(false);
+        }
+        if row.entity_type == crate::registry::ENTITY_TYPE_SUMMARY
+            && match self.session_view {
+                Some(view) => crate::compaction::stored_epoch_in(view, rtxn, source, &row.body),
+                None => {
+                    crate::compaction::stored_epoch_in(&self.vault.store, rtxn, source, &row.body)
+                }
+            }?
+            .may_be()
+        {
+            return Ok(true);
+        }
+        self.derived_sources_readable_in(rtxn, policy, source, &raw, authority)
     }
 
     /// Facet rule C: an ASSET_TEXT written from source ASSETs is read only
@@ -544,6 +761,52 @@ impl<'v> ScopedRead<'v> {
         };
         let admitted = asset_text::sources_admitted_in(&self.store_read(), rtxn, id, admit)?;
         Ok(admitted.unwrap_or(true))
+    }
+
+    /// Whether every row the row `raw` of `id` was written from passes
+    /// `source_readable`, the rows listed as the row gate lists them for a
+    /// reader that is not the owner ([`Self::derived_sources_readable_in`]):
+    /// for a check that judges a row and each of its sources under one live
+    /// Grant alone (`agent_grants`), so that no other Grant of the reader's
+    /// lends a source (RULING GRANT-COMBINE Q1 = A; review round 1 of #9929).
+    /// A text asset or a summary, whose sources the row gate reads over the
+    /// whole held authority, reads as written from rows this check does not
+    /// judge, and so as not readable.
+    ///
+    /// # Errors
+    /// A store or decode failure reading the row's sources, or
+    /// `source_readable`'s.
+    pub(super) fn written_from_each_readable_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        raw: &[u8],
+        mut source_readable: impl FnMut(&EntityId, &[u8]) -> Result<bool>,
+    ) -> Result<bool> {
+        if !self.reminder_wording_asset_sources_readable_in(rtxn, id, raw)? {
+            return Ok(false);
+        }
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type == crate::registry::ENTITY_TYPE_ASSET_TEXT
+            || header.entity_type == crate::registry::ENTITY_TYPE_SUMMARY
+        {
+            return Ok(false);
+        }
+        let sources = match crate::scope_summary::word_sources_in(self.vault, rtxn, id, raw)? {
+            crate::scope_summary::WordSources::Own => return Ok(true),
+            crate::scope_summary::WordSources::Unresolved => return Ok(false),
+            crate::scope_summary::WordSources::From(sources) => sources,
+        };
+        for source in &sources {
+            let Some(raw) = self.entity_record_in(rtxn, source)?.map(|row| row.encode()) else {
+                return Ok(false);
+            };
+            if !source_readable(source, &raw)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// The row's own admission, before what it was written from: today's
@@ -630,13 +893,42 @@ impl<'v> ScopedRead<'v> {
         }
         let header =
             EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        if filter.deny_all
-            || self
-                .vault
-                .store
-                .validate_entity_type(header.entity_type)
-                .is_err()
-            || !filter.read_scope().bands.contains(&header.entity_type)
+        // A work-talk binding is row authority for a reader who holds no
+        // read scope of its own (L7-05, ANSWER L7-05-BINDING-READ = A): a
+        // bound reader with no Grant is floored to deny-all, so the binding
+        // is judged here, before the scope gates refuse the row. It lifts
+        // only those two gates, and only for a reader with no explicit
+        // credential or Grant Scope under a policy that has not failed
+        // closed; every later gate still binds, and the record stage below
+        // judges the binding again with the row's scope. A filter from the
+        // binding-only floor (WORK-TALK-BINDING-RECALL-FLOOR) reads no row
+        // but its own talk's: each row its kinds let through must sit in
+        // that talk under a binding that admits the reader, and the deny-all
+        // exception never applies to it, so a request that leaves it no
+        // kind reads nothing.
+        let scope_refuses =
+            filter.deny_all || !filter.read_scope().bands.contains(&header.entity_type);
+        let binding_may_lift = !policy.is_fail_closed()
+            && !policy.diagnostics().loaded_manifest_forces_fail_closed()
+            && grant.or(self.actor_key.authority_scope()).is_none();
+        let work_talk_bound = match filter.work_talk_room {
+            Some(room) => {
+                !scope_refuses
+                    && binding_may_lift
+                    && self.work_talk_row_room_in(rtxn, id, header.entity_type) == Some(room)
+            }
+            None => {
+                scope_refuses
+                    && binding_may_lift
+                    && self.work_talk_row_readable_in(rtxn, id, header.entity_type)
+            }
+        };
+        if self
+            .vault
+            .store
+            .validate_entity_type(header.entity_type)
+            .is_err()
+            || ((scope_refuses || filter.work_talk_room.is_some()) && !work_talk_bound)
         {
             return Ok(false);
         }
@@ -682,7 +974,7 @@ impl<'v> ScopedRead<'v> {
                 admitted && self.retained_copy_readable_in(rtxn, id, raw, header.entity_type)?
             );
         }
-        if !self.row_stands_in(rtxn, id, raw, &header, use_asked)? {
+        if !self.row_stands_in(rtxn, id, raw, &header, authority)? {
             return Ok(false);
         }
         if grant.is_none() && !self.relationship_raw_allowed_in(rtxn, id, raw, authority)? {
@@ -694,7 +986,7 @@ impl<'v> ScopedRead<'v> {
         if !self.credential_allows_row_in(rtxn, id)
             || !self.proof_live_in(rtxn)?
             || !self.guest_bound_admits_in(rtxn, id, raw)
-            || !self.facets_allow_in(rtxn, id, raw)?
+            || !self.facets_allow_held_in(rtxn, id, raw, authority)?
         {
             return Ok(false);
         }
@@ -731,15 +1023,34 @@ impl<'v> ScopedRead<'v> {
                     allowed && self.retained_copy_readable_in(rtxn, id, raw, header.entity_type)?
                 );
             }
-            match grant {
-                None => crate::gate::scoped_read_record_allowed(policy, &self.actor_key, &scope),
-                Some(grant) => crate::gate::scoped_read_record_allowed_with_scope(
-                    policy,
-                    &self.actor_key,
-                    &scope,
-                    Some(grant),
-                ),
+            // The binding-only floor's row sat in its talk under the binding
+            // above, in this snapshot: the binding is its one record
+            // authority, and no policy row or Grant judges it.
+            if filter.work_talk_room.is_some() {
+                return Ok(work_talk_bound
+                    && self.retained_copy_readable_in(rtxn, id, raw, header.entity_type)?);
             }
+            // A work-talk binding supplies row authority, never an escape
+            // from a failed policy or an explicit credential/Grant ceiling.
+            let explicit_scope = grant.or(self.actor_key.authority_scope());
+            let bound = !policy.is_fail_closed()
+                && !policy.diagnostics().loaded_manifest_forces_fail_closed()
+                && explicit_scope.is_none_or(|ceiling| {
+                    ceiling.admits("read", &scope, &crate::federation::Scope::top())
+                })
+                && self.work_talk_row_readable_in(rtxn, id, header.entity_type);
+            bound
+                || match grant {
+                    None => {
+                        crate::gate::scoped_read_record_allowed(policy, &self.actor_key, &scope)
+                    }
+                    Some(grant) => crate::gate::scoped_read_record_allowed_with_scope(
+                        policy,
+                        &self.actor_key,
+                        &scope,
+                        Some(grant),
+                    ),
+                }
         };
         Ok(admitted && self.retained_copy_readable_in(rtxn, id, raw, header.entity_type)?)
     }
@@ -770,17 +1081,34 @@ impl<'v> ScopedRead<'v> {
     /// archived and no deleted shell. A non-CLAIM body carries its own
     /// `stale: true` once withdrawn; a CLAIM's staleness is judged by its
     /// claim read. A recorded source that no longer stands withdraws the row,
-    /// the owner's too. `use_asked`: the named read asks the row's legal
-    /// non-use conjunct on its own (FIX 5226).
+    /// the owner's too. A named read that asks the row's legal non-use
+    /// conjunct on its own leaves it out here (FIX 5226;
+    /// [`HeldAuthority::asks_use_of`]). A named read of the row through its
+    /// cleanup archive ([`HeldAuthority::reads_archive_of`]) lifts only the
+    /// archive and reads the row as the owner's whole-vault export does
+    /// (`raw_exportable_in_txn`), its legal-hold use limit included.
     pub(super) fn row_stands_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,
         raw: &[u8],
         header: &EntityMetadataHeader,
-        use_asked: bool,
+        authority: &HeldAuthority,
     ) -> Result<bool> {
-        let readable = match (self.session_view, use_asked) {
+        if authority.reads_archive_of(id) {
+            let readable = match self.session_view {
+                Some(view) => crate::ports::raw_exportable_in_txn(view, rtxn, id, raw)?,
+                None => crate::ports::raw_exportable_in_txn(&self.vault.store, rtxn, id, raw)?,
+            };
+            return Ok(readable
+                && (raw.len() != ENTITY_METADATA_HEADER_LEN
+                    || !self.vault.store.entity_deletion_present_in_txn(
+                        rtxn,
+                        id,
+                        header.learned_at,
+                    )?));
+        }
+        let readable = match (self.session_view, authority.asks_use_of(id)) {
             (Some(view), false) => crate::ports::raw_readable_in_txn(view, rtxn, id, raw)?,
             (None, false) => crate::ports::raw_readable_in_txn(&self.vault.store, rtxn, id, raw)?,
             (Some(view), true) => {
@@ -806,8 +1134,12 @@ impl<'v> ScopedRead<'v> {
     /// it names under the CURRENT rule a root is read by (FIX 5545), in its
     /// audience now and still in the room or the vault's Owner or an Admin.
     /// The notice names the thread, who acted and what happened, so no broad
-    /// credential reads it, the owner's included. Every other row, every
-    /// other notice included, is `true` here.
+    /// credential reads it, the owner's included. A member's notice that
+    /// someone else logged the withdrawal of their voice
+    /// (VOICE-CONSENT-LOG-MEMBERS) is read by its recipient alone, likewise
+    /// the owner's included: it names what was withdrawn and deleted, and
+    /// each owner holds a notice of their own (REVIEW-10022 P1). Every other
+    /// row, every other notice included, is `true` here.
     pub(super) fn thread_notice_readable_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -823,12 +1155,21 @@ impl<'v> ScopedRead<'v> {
         let Ok(notice) = crate::inbox::decode_notification_body(body) else {
             return Ok(true);
         };
+        let id = |text: Option<&str>| text.and_then(|text| EntityId::from_hex(text).ok());
+        let recipient = id(notice.recipient.as_deref());
+        let recipient_reads = recipient.is_some()
+            && !viewers.is_empty()
+            && viewers.iter().all(|viewer| Some(*viewer) == recipient);
+        if matches!(
+            notice.kind,
+            crate::inbox::NotificationKind::VoiceRecognitionWithdrawalLoggedForSubject
+        ) {
+            return Ok(recipient_reads);
+        }
         if notice.source.producer != crate::store::conversation_body::THREAD_NOTICE_PRODUCER {
             return Ok(true);
         }
-        let id = |text: Option<&str>| text.and_then(|text| EntityId::from_hex(text).ok());
-        let recipient = id(notice.recipient.as_deref());
-        if !viewers.is_empty() && viewers.iter().all(|viewer| Some(*viewer) == recipient) {
+        if recipient_reads {
             return Ok(true);
         }
         let Some(root) = id(notice.source.result.as_deref()) else {

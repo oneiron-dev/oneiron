@@ -228,7 +228,7 @@ fn calibration_asks_batch_under_minutes_and_only_human_picks_label() -> Result<(
     let digest = vault.proactivity_digest(&owner, 11, None)?.unwrap();
     assert_eq!(digest.judge_asks.len(), 1);
     assert_eq!(
-        vault.read_proactivity_digest(digest.id)?,
+        vault.proactivity_digest_view(&owner, digest.id)?,
         Some(digest.clone())
     );
     let delivered = digest.judge_asks[0].id;
@@ -243,13 +243,23 @@ fn calibration_asks_batch_under_minutes_and_only_human_picks_label() -> Result<(
         judge_label_anchor(&vault, skill, "campaign-1")?,
         vec![picked]
     );
-    vault.set_proactivity_cadence(
-        &owner,
-        &ProactivityCadence {
-            period_secs: 1,
-            group_by_facet: false,
-            urgent_breakthrough: false,
-        },
+    vault.set_setting(
+        crate::setting::SettingCaller::Owner(&owner),
+        crate::setting::SetSetting::vault_value(
+            "dreamer.proactivity.period",
+            serde_json::to_value(ProactivityPeriod(1)).unwrap(),
+        ),
+    )?;
+    vault.set_setting(
+        crate::setting::SettingCaller::Owner(&owner),
+        crate::setting::SetSetting::vault_value(
+            "dreamer.proactivity.delivery",
+            serde_json::to_value(ProactivityDelivery {
+                group_by_facet: false,
+                urgent_breakthrough: false,
+            })
+            .unwrap(),
+        ),
     )?;
     assert!(vault.proactivity_digest(&owner, 12, None)?.is_none());
     set_judge_digest_minutes(&vault, &owner, 1)?;
@@ -312,7 +322,7 @@ fn deleted_or_archived_owner_cannot_pick_or_refund_a_delivered_ask() -> Result<(
     };
     for archived in [false, true] {
         let (_dir, vault) = open_test_vault_with(embedding_test_config());
-        crate::test_util::provision_engine_machines(&vault);
+        let issuer = crate::test_util::provision_engine_machines(&vault);
         // The digest is the owner's: the judge whose asks it delivers is the
         // vault's owner.
         let person = vault.ensure_embedded_owner_actor().expect("embedded owner");
@@ -353,7 +363,16 @@ fn deleted_or_archived_owner_cannot_pick_or_refund_a_delivered_ask() -> Result<(
                 Ok(())
             })?;
         } else {
-            vault.delete_entity_with_reason(&person, crate::deletion::DeleteReason::UserDelete)?;
+            // The last-owner guard refuses deleting the bound owner (L9-52
+            // b): the owner is deleted under a stand-in binding and bound
+            // again.
+            crate::test_util::delete_bound_person(
+                &vault,
+                &issuer,
+                person,
+                "human",
+                crate::deletion::DeleteReason::UserDelete,
+            );
         }
         assert_eq!(
             record_judge_pick(&vault, &owner, ask.id, false, 20)

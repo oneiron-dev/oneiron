@@ -93,7 +93,8 @@ impl SyncClient {
         request: ConnectExportRequest,
     ) -> Result<ConnectDelivery> {
         let vault = manager.vault();
-        let (local, state) = active(vault, owner, &id(&request.pact)?)?;
+        let pact = id(&request.pact)?;
+        let (local, state) = active(vault, owner, &pact)?;
         let by = owner.actor_for_read(vault)?;
         let local_world = crate::entity_id::LocalWorldId::try_from(request.world_ref)?;
         let grant = grant(vault, state.grant_ref)?;
@@ -109,12 +110,15 @@ impl SyncClient {
             return Err(refused());
         }
         let window = manager.open_window(&key)?;
+        // The owner's delete of a row this vault released to the peer travels
+        // under the live pact (CROSS-VAULT-DELETE-NEVER-ADMITTED = A).
         let (envelope, rows, travelled) = crate::sync::selector::guest_share_envelope_body_listing(
             vault,
             &window.doc,
             &key,
             grant.scope,
             &selector,
+            crate::sync::selector::GuestTombstones::Released,
         )?;
         let update = match crate::federation::record_scope::witness_connect_positions(
             vault,
@@ -128,6 +132,25 @@ impl SyncClient {
                 None
             }
         };
+        // The delivery leaves only under the standing it was filtered by: a
+        // disconnect, re-pact or grant change meanwhile refuses it, as the
+        // guest-document door rereads its context before it signs.
+        let (local_now, state_now) = active(vault, owner, &pact)?;
+        if local_now != local || state_now != state || self::grant(vault, state.grant_ref)? != grant
+        {
+            return Err(refused());
+        }
+        // The selector is authorized again at this clock: a grant that lapsed
+        // while the window was filtered signs nothing.
+        crate::sync::selector::authorize_sync_selector(vault, grant.scope, &selector)?;
+        // The rows it releases are recorded before it is signed, so the
+        // owner's later delete of each follows them to the peer
+        // (CROSS-VAULT-DELETE-SELECTOR-ANSWER-RELEASE): a record that fails
+        // signs nothing.
+        vault.record_peer_release(&crate::share_travel::PeerRelease::new(
+            state.grant_ref,
+            rows.clone(),
+        ))?;
         let body = ConnectWindow {
             pact: request.pact,
             epoch: state.pact_epoch,

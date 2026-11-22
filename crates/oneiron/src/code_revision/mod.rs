@@ -27,6 +27,10 @@ mod types;
 pub(crate) use self::keys::{
     ArchivedRevisionTable, archive_revision_rows, archive_revision_tables,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use self::keys::{
+    put_pins_code_revision_frontier_in_txn, put_pins_code_revision_integrity_in_txn,
+};
 pub(crate) use self::promotion::archive_promotion_table;
 pub(crate) use self::proposals::archive_proposal_table;
 // The author is erasable attribution (FIX 6258).
@@ -61,8 +65,6 @@ pub(crate) use self::import_types::{
 };
 
 pub(crate) mod tables;
-// FIX [LIBTEST-QUARANTINE-CODE-REVISION-TESTS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

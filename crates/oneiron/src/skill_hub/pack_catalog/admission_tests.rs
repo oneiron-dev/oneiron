@@ -54,6 +54,7 @@ fn assert_bundled_source_line(
             },
             legend: &crate::context_board::BoardLegend::canonical(),
             sections: &[],
+            you: None,
             changes: Some(&changed),
         },
         crate::context_board::BoardBudgetRequest {
@@ -113,6 +114,7 @@ fn fixture(
     // legacy helper deindexes it and cannot serve this fixture.
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), config)?;
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let owner = vault.ensure_embedded_owner_actor().unwrap();
     let at = TimeRange { start: 1, end: 1 };
     let owner = vault.authenticate_owner(
@@ -1705,6 +1707,7 @@ impl PackQualifier for QualifiedScript {
                 runtime_id: crate::code_sandbox::SANDBOX_JS_COMPONENT_NAME.into(),
                 runtime_hash: "23".repeat(32),
             }),
+            connector: None,
         })
     }
 }
@@ -1899,6 +1902,7 @@ fn pack_update_runs_the_drift_ladder_on_saved_queries() -> Result<()> {
         crate::saved_query::create_saved_query(
             &vault,
             owner.actor(),
+            crate::EdgeActorClass::Human,
             &CreateSavedQueryRequest {
                 schema_version: SAVED_QUERY_SCHEMA_VERSION,
                 scope: QueryScope::default(),
@@ -2282,6 +2286,7 @@ fn save_claim_query(
     crate::saved_query::create_saved_query(
         vault,
         owner.actor(),
+        crate::EdgeActorClass::Human,
         &CreateSavedQueryRequest {
             schema_version: SAVED_QUERY_SCHEMA_VERSION,
             scope: QueryScope::default(),

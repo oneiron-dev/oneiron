@@ -94,6 +94,7 @@ pub(crate) fn arm_turn_program_in_txn(
             ProgramTrigger::Timer { first_at, .. } => Some(first_at),
             _ => None,
         },
+        paused_at: None,
     };
     ARM.put(vault, txn, &(actor, arming.registration), &arming)?;
     super::trigger::index_trigger_in_txn(vault, txn, &arming)?;
@@ -126,8 +127,10 @@ pub(crate) fn disarm_turn_program_in_txn(
 
 /// An erased actor arms nothing and is owed nothing (FIX 3520): its armings
 /// and the wakes its turns left go in the erase's own writer, and so do the
-/// bodies its programs' steps keep (FIX 5710) and the signed instrument each
-/// of its admissions sealed (FIX 10668). Admission receipts, attempt
+/// bodies its programs' steps keep (FIX 5710), the signed instrument each
+/// of its admissions sealed (FIX 10668) and each decision another machine
+/// made of one of its wakes, where this machine learned whose it is (FIX
+/// TURNPROGRAM-ERASE-KEEPS-DECIDED). Admission receipts, attempt
 /// stamps and each step's evidence stay, as every runner stamp does. An
 /// owner's erase never fails on a row that does not decode (FIX 5736): an
 /// arming under the actor's key, a wake keyed to one of its armings and a
@@ -141,24 +144,27 @@ pub(crate) fn erase_turn_program_actor_in_txn(
     actor: &EntityId,
 ) -> Result<()> {
     let scope = actor_scope_in_txn(vault, txn, actor)?;
-    // Each arming that decodes leaves its trigger index with it; one that does
-    // not leaves its index row to the next release, which drops it.
-    let mut armed = Vec::new();
-    for row in ARM.iter_raw_from(vault, &*txn, actor.as_bytes())? {
-        let (_, bytes) = row?;
-        if let Ok(arming) = ARM.decode_value(&bytes) {
-            armed.push(arming);
-        }
-    }
-    for arming in &armed {
-        super::trigger::unindex_trigger_in_txn(vault, txn, arming)?;
-    }
+    // The actor's trigger index rows go with its armings, whether or not each
+    // arming decodes: each idle or feed row under its kind's tag, and the
+    // actor's timer row once, so no row lingers past the erase.
+    super::trigger::unindex_actor_triggers_in_txn(vault, txn, *actor)?;
     ARM.delete_from(vault, txn, actor.as_bytes())?;
     DISARMED.delete_from(vault, txn, actor.as_bytes())?;
     for key in &scope.wakes {
         WAKE.delete(vault, txn, key)?;
         super::index::unindex_wake_in_txn(vault, txn, *actor, *key)?;
     }
+    // And each mark and release kept for one of its wakes, with or without
+    // an owed wake here.
+    #[cfg(feature = "sync")]
+    super::retraction::erase_actor_in_txn(vault, txn, actor)?;
+    // And each decision another machine made of one of its wakes, with the
+    // actor kept beside it (FIX TURNPROGRAM-ERASE-KEEPS-DECIDED). No row
+    // that names the actor brings one back: its merge refuses it
+    // (`decided`). A decision row that names no actor is kept as before,
+    // under none.
+    #[cfg(feature = "sync")]
+    super::index::erase_actor_decisions_in_txn(vault, txn, actor)?;
     scrub_actor_admission_instruments_in_txn(vault, txn, actor)?;
     scrub_actor_step_bodies_in_txn(vault, txn, actor).map(drop)
 }
@@ -295,7 +301,8 @@ fn pin_in_txn(
 /// `args` as the JSON text the secret write-wall admits for `registration`,
 /// read as a body so a credential-valued member is read structurally (FIX
 /// 8718): with the owner's scanning on, each secret goes to custody and
-/// leaves its handle; a hit the wall cannot place refuses the arming, before
+/// leaves its handle; a hit no span places is sealed whole at its smallest
+/// value (`seal_whole`), and one no seal clears refuses the arming, before
 /// anything is pinned. With scanning off the text is the caller's own.
 fn admitted_args_in_txn(
     vault: &Vault,

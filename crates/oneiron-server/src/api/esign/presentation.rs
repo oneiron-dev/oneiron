@@ -1,5 +1,5 @@
 //! Stateless field editor and capability-scoped ceremony presentation adapters.
-use super::editor_auth::{EditorDesk, EditorIngress};
+use super::editor_auth::{EditorDesk, EditorIngress, Purpose};
 use super::parse_lease;
 use super::*;
 use axum::extract::{FromRequest, Request};
@@ -175,9 +175,12 @@ pub(super) async fn preview(
 
 /// The owner's editor shell is not a public signing capability: loading it
 /// needs an owner-grade caller, as before. It mints that caller an
-/// editor-computation token (FIX 5618, `editor_auth`) into the no-store
-/// page; the page's script reads it, removes it from the document and sends
-/// it only in the `x-oneiron-esign-editor` header of its computation POSTs.
+/// editor-computation token (FIX 5618, `editor_auth`) and a draft-fields
+/// token (RULING ESIGN-EDITOR-SAVES-DRAFT) into the no-store page, each in
+/// its own meta tag; the page's script reads both, removes them from the
+/// document and sends each only in the `x-oneiron-esign-editor` header of
+/// its own doors: the computation POSTs, and `POST /sign/fields`, which
+/// saves the pack's fields to a draft the owner names by reference.
 /// Its scripts are inline and hash-pinned, as the ceremony's are, so no other
 /// script on the API's origin runs in it (ARCH-0050 #artifact-origin-open).
 pub(super) async fn editor(
@@ -187,14 +190,15 @@ pub(super) async fn editor(
     if !auth.is_owner_grade() {
         return StatusCode::UNAUTHORIZED.into_response();
     }
-    let token = desk.mint(auth);
+    let token = desk.mint(auth.clone(), Purpose::EditorComputation);
+    let fields_token = desk.mint(auth, Purpose::EditorDraftFields);
     let script = [include_str!("field-renderer.js"), include_str!("editor.js")].join("\n");
     let source = super::super::first_party_html::inline_script_source(&script);
     let csp = format!(
         "default-src 'none'; script-src {source}; connect-src 'self'; style-src 'unsafe-inline'; img-src blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
     );
     let html = format!(
-        "<!doctype html><html lang=en><meta charset=utf-8><meta name=referrer content=no-referrer><meta id=editor-capability name=oneiron-esign-editor content=\"{token}\"><title>Field geography editor</title><main><h1>Field geography editor</h1><p>Load a PDF and a field geography pack. Positions are percentages of the visible page after rotation.</p><label>PDF <input id=pdf-file type=file accept=application/pdf></label><label>Pack JSON <input id=pack-file type=file accept=application/json></label><label>Item <input id=current-item type=number min=0 value=0></label><label>Recipient reference <input id=recipient></label><label>Field type <select id=field-kind><option>signature</option><option>initials</option><option>name</option><option>email</option><option>date</option><option>text</option><option>checkbox</option><option>select</option></select></label><label>Select options (one per line)<textarea id=select-options></textarea></label><button id=add>Add field</button><section id=fields></section><section id=preview></section><button id=save>Export geography pack</button><p id=status></p></main><script>{script}</script></html>"
+        "<!doctype html><html lang=en><meta charset=utf-8><meta name=referrer content=no-referrer><meta id=editor-capability name=oneiron-esign-editor content=\"{token}\"><meta id=editor-fields-capability name=oneiron-esign-editor-fields content=\"{fields_token}\"><title>Field geography editor</title><main><h1>Field geography editor</h1><p>Load a PDF and a field geography pack. Positions are percentages of the visible page after rotation. Export the pack, or save its fields to a document still in draft.</p><label>PDF <input id=pdf-file type=file accept=application/pdf></label><label>Pack JSON <input id=pack-file type=file accept=application/json></label><label>Item <input id=current-item type=number min=0 value=0></label><label>Recipient reference <input id=recipient></label><label>Field type <select id=field-kind><option>signature</option><option>initials</option><option>name</option><option>email</option><option>date</option><option>text</option><option>checkbox</option><option>select</option></select></label><label>Select options (one per line)<textarea id=select-options></textarea></label><button id=add>Add field</button><section id=fields></section><section id=preview></section><button id=save>Export geography pack</button><label>Draft document reference <input id=document-ref></label><button id=save-draft>Save fields to the draft</button><p id=status></p></main><script>{script}</script></html>"
     );
     super::super::first_party_html::isolated_html(csp, html)
 }

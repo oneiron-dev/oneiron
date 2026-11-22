@@ -96,12 +96,18 @@ pub(crate) use self::lifecycle::{
 };
 // FIX 6225: a step response's exact version, released by its last pin.
 pub(crate) use self::lifecycle::{archive_version_stands_in_txn, release_archive_version_in_txn};
-pub(crate) use self::lifecycle::{release_response_version_in_txn, response_version_stands_in_txn};
+pub(crate) use self::lifecycle::{
+    release_claimed_version_in_txn, release_response_version_in_txn, response_version_stands_in_txn,
+};
+pub(crate) use self::lifecycle::{
+    release_replayed_claim_version_in_txn, replayed_claim_version_in_txn,
+};
 pub use self::provenance::BlobVersionProvenance;
 pub(crate) use self::references::archive_version_claim_tables;
 pub(crate) use self::references::{
-    archive_claimed_versions, artifacts_claiming, claimed_hash_rows_exist, record_version_claim,
-    version_claim_rows,
+    archive_claimed_versions, artifacts_claiming, claimed_hash_rows_exist,
+    live_version_claim_reference, lone_version_claim_refusal, record_version_claim,
+    reject_lone_version_claim_delete, reject_version_claim_retarget, version_claim_rows,
 };
 #[cfg(feature = "sync")]
 pub(crate) use self::references::{
@@ -121,6 +127,8 @@ pub use self::verbs::{
 pub(crate) use self::versions::RoomResponseVersion;
 pub(crate) use self::versions::archive_version_tables;
 pub(crate) use self::versions::read_blob_artifact_head_in_txn;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::versions::version_content_hash_for_test;
 // FIX 7227: the queue-check completion writer (token-only, no raw bytes/ids),
 // minted/bound in the merge-queue finish writer; the MQ child names these via
 // this BLOB parent alias, never via the private versions child path.

@@ -200,6 +200,12 @@ pub enum SweepWork {
         /// a code no exchange redeemed (FIX 22142).
         grants: u64,
     },
+    /// The floor backfill (READ-LINEAGE L1, #9289 review 2 P1-2).
+    SourceFloorBackfill {
+        /// Rows whose floor this run raised, each with the not yet raised
+        /// rows it was written from.
+        raised: u64,
+    },
 }
 
 impl SweepWork {
@@ -265,6 +271,7 @@ impl SweepWork {
             Self::AnnotationBodyAnchors { moved, failed } => moved == 0 && failed == 0,
             Self::DrafterCorpora { removed } => removed == 0,
             Self::ModelPackRetirement { notices, migrated } => notices == 0 && !migrated,
+            Self::SourceFloorBackfill { raised } => raised == 0,
             Self::OAuthRows {
                 requests,
                 codes,

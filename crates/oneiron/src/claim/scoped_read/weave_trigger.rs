@@ -10,13 +10,16 @@ pub use oneiron_verb_wire::claim::scoped_read::weave_trigger::WeaveDigestRendere
 impl Memory<'_> {
     /// Publish the bound reader's due period through the same live scoped
     /// lens. The engine rechecks the report and advances the schedule in
-    /// the publication transaction. No due schedule means no write.
+    /// the publication transaction. No due schedule means no write. Its
+    /// saved receipt names the live Grants that admitted its rows.
     pub fn weave_digest_render(
         &self,
         owner: Option<&AuthenticatedOwner>,
     ) -> MemoryResult<Option<WeaveDigestRendered>> {
         let reader = self.weave_reader(owner)?;
-        let read = self.read_lane(ClaimReadStatus::Surfaceable)?;
+        let read = self
+            .read_lane(ClaimReadStatus::Surfaceable)?
+            .with_live_grant_receipts();
         Ok(read
             .render_due_weave_digest(reader, self.vault().now_recorded_at())?
             .map(|stored| WeaveDigestRendered {

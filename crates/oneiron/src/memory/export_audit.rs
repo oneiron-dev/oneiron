@@ -39,9 +39,17 @@ use serde::{Deserialize, Serialize};
 
 use super::export_audit_owed::ExportAuditOwed;
 use crate::Vault;
-use crate::authority::{HolderExportBasis, HolderExportNeed, HolderExportRequest, OwnerAct};
-use crate::batch::export::{ExportDiaryRead, WholeVaultExportReceipt};
-use crate::consent::AuthenticatedOwner;
+use crate::authority::{
+    HolderExportBasis, HolderExportNeed, HolderExportRequest, OwnerAct, OwnerActKind,
+};
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
+use crate::batch::export::{
+    ArchiveRetainedSideRow, ExportDiaryRead, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
+    WholeVaultExportReceipt,
+};
+use crate::consent::{AuthenticatedOwner, OwnerAuthoredWrite};
 use crate::entity_id::EntityId;
 use crate::side_table::{self, Named, SideTable};
 use crate::workspace_roster::{ExportThreadRoots, NoticeDelivery, notify_exported_threads_in_txn};
@@ -127,6 +135,13 @@ pub(crate) struct ExportCopy {
     pub(crate) holder_requests: Vec<HolderExportRequest>,
     /// The machine the owner named to receive their sealed copies.
     pub(crate) recipient: Option<EntityId>,
+    /// The export door's proof of the owner whose act this is, revalidated
+    /// in the audit write as his own write
+    /// ([`AuthenticatedOwner::owner_answer_in_txn`]): the signed record and
+    /// the holder requests then carry the owner key's proof this install
+    /// holds (row OWNER-RESERVE-CROSS-INSTALL-COSIGN-REFUSALS). `None` from a
+    /// door that records no act.
+    pub(crate) authenticated: Option<AuthenticatedOwner>,
 }
 
 impl ExportCopy {
@@ -151,6 +166,7 @@ impl ExportCopy {
             thread_roots,
             holder_requests: Vec::new(),
             recipient: None,
+            authenticated: None,
         }
     }
 
@@ -170,6 +186,7 @@ impl ExportCopy {
             thread_roots,
             holder_requests: Vec::new(),
             recipient: None,
+            authenticated: None,
         }
     }
 }
@@ -265,6 +282,7 @@ fn record_copy(
         thread_roots,
         holder_requests,
         recipient,
+        authenticated,
     } = copy;
     let export = match vault.new_entity_id() {
         Ok(export) => export,
@@ -299,8 +317,17 @@ fn record_copy(
         threads: thread_roots,
     };
     let strict = super::export_audit_owed::owe(vault, &mut owed);
-    let written =
-        vault.with_write_txn(|txn| write_audit_in_txn(vault, txn, owed, &needs, recipient, strict));
+    let written = vault.with_write_txn(|txn| {
+        write_audit_in_txn(
+            vault,
+            txn,
+            owed,
+            &needs,
+            recipient,
+            authenticated.as_ref(),
+            strict,
+        )
+    });
     match written {
         Ok(holder_requests) => holder_requests,
         Err(error) => {
@@ -324,7 +351,9 @@ fn record_copy(
 
 /// [`record_export`]'s write, in `txn`: the owner's act signed and the
 /// custody values the copy carried as their handles recorded for their
-/// holders (`needs`, sealed to `recipient`), each best effort in a
+/// holders (`needs`, sealed to `recipient`), both carrying the owner key's
+/// proof when the door's proof of him, `authenticated`, still holds
+/// ([`owner_authored_in_txn`]), each best effort in a
 /// savepoint of its own, then `owed`'s row and its threads' notices. With
 /// `strict`, the copy's owed row stands: the row and each notice are
 /// written or the write fails, and the owed row goes in it; a row a
@@ -341,6 +370,7 @@ fn write_audit_in_txn(
     owed: ExportAuditOwed,
     needs: &[HolderExportNeed],
     recipient: Option<EntityId>,
+    authenticated: Option<&AuthenticatedOwner>,
     strict: bool,
 ) -> crate::Result<Vec<HolderExportRequest>> {
     #[cfg(oneiron_test_support)]
@@ -368,13 +398,14 @@ fn write_audit_in_txn(
             }
         };
     }
+    let owner_authored = owner_authored_in_txn(vault, txn, authenticated);
     // The signed record goes before the holder requests, which link it, and
     // both before the row, which lists them: each in a savepoint of its own,
     // so a fault leaves the write as it was.
     let export_act = receipt.act.and_then(|act| {
         vault.record_export_act_op_in_txn(
             txn,
-            act,
+            (act, owner_authored.as_ref()),
             export,
             &receipt.format,
             receipt.bytes,
@@ -385,6 +416,7 @@ fn write_audit_in_txn(
         txn,
         HolderExportBasis {
             act: receipt.act,
+            owner_authored: owner_authored.as_ref(),
             export,
             digest: receipt
                 .digest
@@ -432,6 +464,47 @@ pub(super) fn append_in_txn(
             .ok_or(crate::Error::IndexOverflow("export receipt sequence"))?,
     };
     EXPORT_RECEIPTS.put(&vault.store, txn, &sequence, receipt)
+}
+
+/// The owner's own write, the export door's proof of him `authenticated`
+/// revalidated in the audit write `txn`
+/// ([`AuthenticatedOwner::owner_answer_in_txn`]): the signed record and the
+/// holder requests then carry the owner key's proof. A proof that no longer
+/// holds, a narrowed or delegated one, or one that does not read (logged)
+/// carries them unproven, as before.
+fn owner_authored_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    authenticated: Option<&AuthenticatedOwner>,
+) -> Option<OwnerAuthoredWrite> {
+    authenticated?
+        .owner_answer_in_txn(vault, txn)
+        .unwrap_or_else(|error| {
+            tracing::warn!(
+                %error,
+                "export audit: the owner's proof did not read; the act is carried unproven"
+            );
+            None
+        })
+}
+
+/// Whether a whole-vault copy was made here at or after `since`, vault clock
+/// seconds, read in `txn`: an owner archive carries every custody value it
+/// opens, so a record minted before such a copy left this install in it
+/// (FILE-CUSTODY-MERGE-AFTER-REWRAP).
+///
+/// # Errors
+///
+/// The store's.
+pub(crate) fn whole_vault_exported_since_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    since: u64,
+) -> crate::Result<bool> {
+    Ok(EXPORT_RECEIPTS
+        .scan(store, txn)?
+        .into_iter()
+        .any(|(_, receipt)| receipt.scope == ExportAuditScope::WholeVault && receipt.at >= since))
 }
 
 /// The audit of the whole-vault copy a raw `Vault` door made as `format`
@@ -574,6 +647,7 @@ pub(crate) fn record_member_mail_export(
         thread_roots,
         holder_requests,
         recipient,
+        authenticated,
     } = copy;
     let export = vault.new_entity_id()?;
     let needs: Vec<_> = holder_requests
@@ -590,13 +664,14 @@ pub(crate) fn record_member_mail_export(
             let at = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
             let told =
                 crate::mail_pack::tell_member_mailboxes_in_txn(vault, txn, mailboxes, export, at)?;
+            let owner_authored = owner_authored_in_txn(vault, txn, authenticated.as_ref());
             // The signed record goes before the holder requests, which link
             // it, and both before the row, which lists them, as
             // [`record_export`] writes them.
             let export_act = act.and_then(|act| {
                 vault.record_export_act_op_in_txn(
                     txn,
-                    act,
+                    (act, owner_authored.as_ref()),
                     export,
                     &format,
                     bytes,
@@ -607,6 +682,7 @@ pub(crate) fn record_member_mail_export(
                 txn,
                 HolderExportBasis {
                     act,
+                    owner_authored: owner_authored.as_ref(),
                     export,
                     digest: digest
                         .as_deref()
@@ -684,4 +760,43 @@ pub(crate) fn turn_thread_root(entity_type: u8, body: &[u8]) -> Option<EntityId>
         .ok()
         .flatten()
         .map(|binding| binding.root)
+}
+
+/// Lands one archived `EXPORT_RECEIPT` envelope in `txn`: canonical decode and the credential
+/// predicate, then the writer's own audit shape (non-empty format, hex-or-host actor, hex
+/// digest where read back, export-kind act where recorded, hex diary agents). The copy's
+/// signed act, holder requests and thread notices are never replayed here.
+///
+/// # Errors
+/// Storage faults; validation stays in the returned outcome.
+pub(super) fn land_archived_export_receipt_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> crate::Result<ArchivedSideRowOutcome> {
+    let (key, value) = match decode_archived_row(&EXPORT_RECEIPTS, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    if value.format.is_empty()
+        || (value.by != "host" && EntityId::from_hex(&value.by).is_err())
+        || value
+            .digest
+            .as_deref()
+            .is_some_and(|digest| blake3::Hash::from_hex(digest).is_err())
+        || value
+            .act
+            .as_ref()
+            .is_some_and(|act| act.act != OwnerActKind::Export)
+        || value
+            .diary_reads
+            .iter()
+            .any(|read| EntityId::from_hex(&read.agent).is_err() || read.reason.is_empty())
+    {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidValue,
+        ));
+    }
+    install_archived_row(&EXPORT_RECEIPTS, vault, txn, permit, &key, row)
 }

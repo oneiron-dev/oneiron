@@ -88,6 +88,11 @@ impl Vault {
     /// are excluded; a record a cleanup archive filed away goes with its
     /// retained body (FIX 21912). No caller can disable nulling.
     ///
+    /// Each TASK's authority facts go with it byte-exact: one true archive
+    /// keeps them, where a sync window bound for another vault withholds
+    /// them, and another chain's import refuses them (Engine ruling
+    /// TASK-FACT-ARCHIVE-CROSSING = A; `ForeignAuthorityChain`).
+    ///
     /// The owner's own archive carries custody secret values unless
     /// `include_secrets` is false (owner ruling 2026-10-17: "all your data is
     /// all your data"); then each custody record goes as its handle only.
@@ -406,7 +411,7 @@ impl Vault {
         {
             let (id, raw) = entry?;
             if only.is_some_and(|only| !only.contains(&id))
-                || whole_vault_export_excludes_entity_in_txn(&self.store, &rtxn, &id)?
+                || whole_vault_export_excludes_entity_in_txn(self, &rtxn, &id)?
             {
                 continue;
             }
@@ -484,6 +489,29 @@ impl Vault {
             {
                 continue;
             }
+            // NO-SECRETS-ARCHIVE-MULTIPART-TOPOLOGY-DECISION: an operation
+            // part carries its decision's record, so it goes out only where
+            // the decision's own row goes, and tainted when that row is.
+            let part_root = if header.entity_type
+                == crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT
+            {
+                crate::identity_topology::operation_part_root(&raw[ENTITY_METADATA_HEADER_LEN..])
+            } else {
+                None
+            };
+            if let Some(root) = &part_root
+                && !operation_root_carried(
+                    self,
+                    &rtxn,
+                    only,
+                    scope == ExportScope::WholeVault,
+                    &device_only,
+                    root,
+                    owner_export,
+                )?
+            {
+                continue;
+            }
             // FIX 1496 S5: an epoch summary stays home when any transitive
             // source is excluded (use-limited or off-record), same as the
             // JSON bundle door, or is of a member's mailbox the copy does not
@@ -495,7 +523,7 @@ impl Vault {
                 &raw[ENTITY_METADATA_HEADER_LEN..],
                 |source, _| {
                     Ok(
-                        !whole_vault_export_excludes_entity_in_txn(&self.store, &rtxn, source)?
+                        !whole_vault_export_excludes_entity_in_txn(self, &rtxn, source)?
                             && lineage.folds(judge.as_mut(), id, Some(source))?,
                     )
                 },
@@ -537,13 +565,9 @@ impl Vault {
                 // with the skill only when the carrier passes the filter every
                 // listed row passes, and the carrier is then a source.
                 let carrier = self.export_hub_package_carrier_in_txn(&rtxn, &id, &record)?;
-                if let Some(barred) = carrier_admitted(
-                    &self.store,
-                    &rtxn,
-                    &device_only,
-                    carrier.as_ref(),
-                    owner_export,
-                )? && lineage.folds(judge.as_mut(), id, carrier.as_ref())?
+                if let Some(barred) =
+                    carrier_admitted(self, &rtxn, &device_only, carrier.as_ref(), owner_export)?
+                    && lineage.folds(judge.as_mut(), id, carrier.as_ref())?
                 {
                     barred_carried.extend(barred);
                     sources.extend(carrier);
@@ -571,9 +595,12 @@ impl Vault {
             {
                 agent_fork_hashes.insert(id, hash.to_hex());
             }
-            let tainted =
-                !crate::secret_rotation::exhaust_taint_refs_in_txn(&self.store, &rtxn, &id)?
-                    .is_empty();
+            let mut tainted = false;
+            for row in std::iter::once(&id).chain(&part_root) {
+                tainted = tainted
+                    || !crate::secret_rotation::exhaust_taint_refs_in_txn(&self.store, &rtxn, row)?
+                        .is_empty();
+            }
             let mut task_receipts = BTreeMap::new();
             let mut archived_receipts = None;
             if !tainted
@@ -590,7 +617,7 @@ impl Vault {
                     &id,
                     |carrier| {
                         let admitted = carrier_admitted(
-                            &self.store,
+                            self,
                             &rtxn,
                             &device_only,
                             Some(carrier),
@@ -713,7 +740,7 @@ impl Vault {
         // list row 15416).
         if scope == ExportScope::WholeVault {
             let floors = super::epoch_floors::write_epoch_floors_in_txn(
-                &self.store,
+                self,
                 &rtxn,
                 &device_only,
                 owner_export,
@@ -735,12 +762,16 @@ impl Vault {
         // the copy leaves out or a row whose words came from one, and so is a
         // code document whose history does (fix list row 15416). The rows a
         // side row names count as carried once the writer serializes it.
+        let mut side_table_omissions = Vec::new();
+        let mut current_identity_topology_events = Vec::new();
         if cut == ExportCut::Archive {
+            let include_vault_wide =
+                only.is_none() && (owner_export || locality == CallerLocality::OnDevice);
             let (rows, withheld) = super::archive_side_rows_in_txn(
                 &self.store,
                 &rtxn,
                 &included,
-                only.is_none() && (owner_export || locality == CallerLocality::OnDevice),
+                include_vault_wide,
                 judge.as_mut().zip(Some(&mut lineage)),
             )?;
             for mut row in rows {
@@ -750,6 +781,58 @@ impl Vault {
                 }
             }
             writer.side_rows_withheld(withheld);
+            // SIDE-1: the retained rows go only with an unscoped whole-vault archive, under
+            // the same vault-wide gate as the other vault-wide families; a records, OKF,
+            // scoped or projected export gets none. Collected into memory like the 41-family
+            // writer.
+            if scope == ExportScope::WholeVault && include_vault_wide {
+                // In an Owner's copy, a retained row about a row of a member's
+                // mailbox the copy leaves out, or a row whose words came from
+                // one, stays here, as one about a record the export keeps out
+                // does; the records a written one is about count as carried
+                // (fix list row 15416).
+                let retained =
+                    super::archive_retained_side_rows::collect_retained_side_rows_in_txn(
+                        self, &rtxn,
+                    )?;
+                for mut row in retained {
+                    if let Some(judge) = judge.as_mut() {
+                        let Some(records) =
+                            super::archive_retained_side_rows::retained_side_row_records(&row)
+                        else {
+                            continue;
+                        };
+                        if !lineage.side_names_carried(judge, &records)? {
+                            continue;
+                        }
+                        row.names = records;
+                    }
+                    let names = std::mem::take(&mut row.names);
+                    if writer.side_row(row)? {
+                        lineage.ships(names);
+                    }
+                }
+                side_table_omissions =
+                    super::archive_retained_side_rows::omitted_side_table_counts_in_txn(
+                        &self.store,
+                        &rtxn,
+                    )?
+                    .into_iter()
+                    .map(|(table, reason, rows)| super::ArchiveSideTableOmission {
+                        table: table.to_owned(),
+                        reason,
+                        rows,
+                    })
+                    .collect();
+                // RESTORE-KEEPS-MERGES-AND-SPLITS: the merges and splits this
+                // snapshot's effective ledger holds current, for the owner's
+                // restore to decide again; only those whose record the
+                // archive carries, so none it keeps out is named here
+                // (REVIEW-9756 round 2 P1-3).
+                current_identity_topology_events =
+                    crate::identity_topology::current_merge_and_split_events_in_txn(self, &rtxn)?;
+                current_identity_topology_events.retain(|event| included.contains(event));
+            }
         }
         // FIX 11844: a custody secret only the fold knows here is named for
         // its holder too, as a held row's unopened value is above.
@@ -806,6 +889,8 @@ impl Vault {
                         && cut == ExportCut::Archive,
                     fold_only_secrets,
                     embedding_setup,
+                    side_table_omissions,
+                    current_identity_topology_events,
                     sources: sources.into_iter().collect(),
                     signer,
                 },
@@ -999,14 +1084,51 @@ fn archive_custody_secret(
     )))
 }
 
+/// Whether this export carries the row of `root`, the decision an operation
+/// part belongs to, judged as the entity loop judges each row it reads: the
+/// export's selection, the egress door, the world filter and the row's own
+/// deletion state (`whole_vault`: the whole-vault archive's). A decision this
+/// vault holds no row of is withheld by none of those, so its part is judged
+/// on its own row alone.
+fn operation_root_carried(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    only: Option<&BTreeSet<EntityId>>,
+    whole_vault: bool,
+    device_only: &BTreeSet<EntityId>,
+    root: &EntityId,
+    owner_export: bool,
+) -> Result<bool> {
+    if only.is_some_and(|only| !only.contains(root))
+        || whole_vault_export_excludes_entity_in_txn(vault, rtxn, root)?
+    {
+        return Ok(false);
+    }
+    let store = &vault.store;
+    if crate::ports::EntityStoreRead::port_entity_record(store, rtxn, root)?.is_none() {
+        return Ok(true);
+    }
+    if barred_worlds_carried(store, rtxn, device_only, root, None, owner_export)?.is_none() {
+        return Ok(false);
+    }
+    if whole_vault {
+        row_exported_in_txn(store, rtxn, root)
+    } else {
+        row_live_in_txn(store, rtxn, root)
+    }
+}
+
 /// Whether the export's filter admits `carrier`, a row another row's section
 /// is folded from (SCAN C022): the filter every listed row passes, judged on
-/// the carrier's own row ([`barred_worlds_carried`]), and a carrier under a
-/// use limit withheld. `None` when it is withheld, else the barred worlds the
+/// the carrier's own row ([`barred_worlds_carried`]), and a carrier the
+/// whole-vault egress door keeps out (a use limit, a held-back lineage, a
+/// session overlay, a withheld PERSON it is about) withheld, so its bytes
+/// never ship inside the section it would fold into (REVIEW-9874 P1 2).
+/// `None` when it is withheld, else the barred worlds the
 /// owner's own export carries it in spite of. No carrier is withheld when
 /// none was read.
 fn carrier_admitted(
-    store: &crate::store::Store,
+    vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     device_only: &BTreeSet<EntityId>,
     carrier: Option<&EntityId>,
@@ -1015,10 +1137,10 @@ fn carrier_admitted(
     let Some(carrier) = carrier else {
         return Ok(Some(BTreeSet::new()));
     };
-    if crate::store::legal_hold::use_limit_in_txn(store, rtxn, carrier)?.is_some() {
+    if whole_vault_export_excludes_entity_in_txn(vault, rtxn, carrier)? {
         return Ok(None);
     }
-    barred_worlds_carried(store, rtxn, device_only, carrier, None, owner_export)
+    barred_worlds_carried(&vault.store, rtxn, device_only, carrier, None, owner_export)
 }
 
 /// Whether the export's world filter admits `id` toward `barred`, every world
