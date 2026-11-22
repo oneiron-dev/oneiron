@@ -46,6 +46,11 @@ pub(super) fn apply_delete_arm(
     // A FEDERATION_GRANT row torn here is withdrawn: marked, and its hard
     // erasure staged for sync, since a batch delete stages none (FIX 11779).
     crate::authority::withdraw_grant_row_in_txn(store, wtxn, id)?;
+    // Every taking back of a Grant is a counted end (pass 28 R2c; Engine
+    // RULING GRANT-ROW-DELETE-NO-END = A): a delete below any vault door
+    // owes it, and the next pass that can carry ends the line by its own
+    // family, or finds a writer's own end already counted.
+    crate::federation::owe_torn_grant_end_in_txn(store, wtxn, id)?;
     // A PERSON or MACHINE row torn here is hard-deleted, marked as a hard
     // delete marks it, so a slip it holds stops standing (RULING
     // DELETED-SLIP-BATCH-DELETE = A).

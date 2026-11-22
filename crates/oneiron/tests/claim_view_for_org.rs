@@ -65,9 +65,8 @@ fn bound_house() -> TestResult<BoundHouse> {
     config.store_clock = clock.bundle();
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), config)?;
-    let owner = vault.ensure_embedded_owner_actor()?;
-    let issuer = oneiron::test_support::provision_engine_machines(&vault);
-    oneiron::test_support::bind_host_owner(&vault, &issuer, owner)?;
+    // The bind is the binder's giving, an act this install's key carries (pass 28 R2c).
+    let (issuer, owner) = oneiron::test_support::provision_act_carrier(&vault);
     let owner_proof =
         vault.authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())?;
     let signer = vault.owner_project_signer(&issuer)?;

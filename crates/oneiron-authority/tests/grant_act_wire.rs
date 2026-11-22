@@ -1,7 +1,8 @@
 //! The general grant act's wire and rule (Fable pass 28 R2): seven keys always, a nil act for a
 //! rule's end and a nil `terms` for any end, and one rule per decider. A person gives or ends a
 //! Grant of any family but the owner's agent Grant, whose mint and revoke are his own act; a
-//! rule only ends that Grant; no giving commits to all-zero terms.
+//! rule ends a Grant of any family (a lapse, a direct delete, an owed end whose person was
+//! erased) and gives none; no giving commits to all-zero terms.
 
 use oneiron_authority::authority::{
     ActBy, ActSurface, AuthorityOp, GRANT_ACT_SEEN, GrantActChange, GrantActRecord, GrantDecider,
@@ -175,7 +176,9 @@ fn a_grant_act_in_any_other_form_does_not_decode() {
 }
 
 /// Catches a rule that lets a person give or end the owner's agent Grant by this act, lets a
-/// rule give or end any other Grant, or lets a giving commit to nothing.
+/// rule give any Grant, refuses a rule's end of any family (a direct delete of a member row or
+/// a house link ends it by rule, GRANT-ROW-DELETE-NO-END = A), or lets a giving commit to
+/// nothing.
 #[test]
 fn each_decider_gives_and_ends_only_what_its_rule_admits() {
     for family in FAMILIES {
@@ -194,10 +197,9 @@ fn each_decider_gives_and_ends_only_what_its_rule_admits() {
             by_rule(family, GIVE).validate().is_err(),
             "a rule gives {family:?}"
         );
-        assert_eq!(
+        assert!(
             by_rule(family, GrantActChange::End).validate().is_ok(),
-            family == GrantFamily::OwnerAgent,
-            "a rule ends {family:?}"
+            "a rule cannot end {family:?}"
         );
     }
     let nothing = GrantActChange::Give { terms: [0; 32] };
