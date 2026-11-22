@@ -68,6 +68,7 @@ pub(crate) fn qualify_connector(
         })
         .map_err(engine)??;
     }
+    baseline_route_issuer(vault, owner, &name, &catalog, &endpoint);
     let record = vault
         .get_connector_key(&catalog.key)?
         .ok_or_else(|| OwnerError::NotFound("connector key", catalog.key.to_hex()))?;
@@ -92,18 +93,28 @@ pub(super) async fn attest(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     payload: OwnerJsonBody<AttestRequest>,
-) -> OwnerReply<KeyView> {
+) -> OwnerReply<Attested> {
     let owner = owner(&auth, &server)?;
     let request = payload.read(&server).await?;
     let reply = blocking(move || attest_connector(&server, &owner, &request)).await?;
     Ok(Json(reply))
 }
 
+/// The attest answer: the key as attested, and what a stdio connector runs
+/// and where it sends a credential, which the owner attests for it.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub(super) struct Attested {
+    #[serde(flatten)]
+    key: KeyView,
+    /// None for an HTTP connector.
+    stdio: Option<StdioInstalled>,
+}
+
 fn attest_connector(
     server: &SyncServer,
     owner: &AuthenticatedOwner,
     request: &AttestRequest,
-) -> OwnerResult<KeyView> {
+) -> OwnerResult<Attested> {
     let vault = server.vault();
     let name = normalize_name(&request.connector);
     let installed = installed_config(server, &name).ok_or_else(not_installed)?;
@@ -143,12 +154,50 @@ fn attest_connector(
         vault.attest_connector_key(owner, &catalog.key, &revision, now)
     }
     .map_err(engine)?;
+    // A stdio connector serves no protected-resource metadata over HTTP, so
+    // its admission records no route issuer (row L8-27).
+    if let Some(endpoint) = installed.http_endpoint() {
+        baseline_route_issuer(vault, owner, &name, &catalog, endpoint);
+    }
+    let stdio = StdioInstalled::of(installed);
     // The attested listing may change no manifest: nothing is left to approve.
     if record.pending_manifest.is_none() && record.retained_manifest.is_some() {
-        return Ok(KeyView::new(catalog.key, record)?);
+        return Ok(Attested {
+            key: KeyView::new(catalog.key, record)?,
+            stdio,
+        });
     }
     let approved = approve(vault, owner, catalog.key)?;
-    Ok(KeyView::new(catalog.key, approved)?)
+    Ok(Attested {
+        key: KeyView::new(catalog.key, approved)?,
+        stdio,
+    })
+}
+
+/// Records, inside the owner's admission act, the issuer the connector's
+/// route answers for, from its protected-resource metadata (Engine ruling
+/// L5-11-BASELINE = C): the baseline a later refusal's metadata is compared
+/// with. Both owner admissions record it for a connector installed over
+/// HTTP, `/qualify` (the default) and `/attest`; a stdio connector has none
+/// (row L8-27). A failed read or write leaves the admission as it is; the
+/// connector then has no baseline, as before.
+fn baseline_route_issuer(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    name: &str,
+    catalog: &Catalog,
+    endpoint: &str,
+) {
+    if let Err(error) = crate::connector_call_host::issuer_watch::baseline_at_admission(
+        vault,
+        owner,
+        name,
+        &catalog.key,
+        endpoint,
+        catalog.record.secret_ref.as_deref(),
+    ) {
+        tracing::warn!(%error, "connector issuer baseline not recorded");
+    }
 }
 
 /// The connector's tools, as `discovery` listed them again at the pinned

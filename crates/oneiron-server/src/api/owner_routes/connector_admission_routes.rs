@@ -56,8 +56,8 @@ use super::{OwnerReply, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::{query_params, unix_seconds_now};
 use crate::auth::CoreAuth;
-use crate::config::ConnectorHostConfig;
 use crate::config::connectors::normalize_name;
+use crate::config::{ConnectorHostConfig, ConnectorTransport};
 use crate::connector_admission_host::{self as host, QualificationKit, ToolClass};
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
@@ -176,6 +176,9 @@ struct Refreshed {
 struct Registered {
     connector: String,
     endpoint: String,
+    /// What a stdio connector runs and where it sends a credential; none
+    /// for an HTTP connector.
+    stdio: Option<StdioInstalled>,
     key: String,
     status: &'static str,
     protocol_revision: Option<String>,
@@ -191,11 +194,43 @@ struct Setup {
     summary: String,
     /// The endpoint this host installed; none: no transport.
     endpoint: Option<String>,
+    /// What a stdio connector runs and where it sends a credential; none
+    /// for an HTTP connector, or no transport.
+    stdio: Option<StdioInstalled>,
     key: KeyView,
     slate: Option<SlateView>,
     /// A refresh's slate staged beside `slate`, which the key routes on
     /// until this one qualifies (FIX 11677); none: no slate waits.
     staged_slate: Option<SlateView>,
+}
+
+/// What a stdio connector this host installed runs, and the origin its
+/// upstream door sends the credential a call presents to: what the digest
+/// in its `stdio:` endpoint stands for, so the owner sees where a credential
+/// goes before granting it (FIX [STDIO-IDENTITY-64-BIT-ORIGIN-UNSHOWN]).
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub(super) struct StdioInstalled {
+    /// The child's program and its arguments.
+    command: Vec<String>,
+    /// The directory it starts in; none: its own temp directory.
+    cwd: Option<String>,
+    /// The API origin its calls' credentials are sent to; none: it names no
+    /// upstream, and no call presents it a credential.
+    upstream_origin: Option<String>,
+}
+
+impl StdioInstalled {
+    /// `installed`'s, when it is a stdio connector.
+    pub(super) fn of(installed: &ConnectorHostConfig) -> Option<Self> {
+        (installed.transport == ConnectorTransport::McpStdio).then(|| Self {
+            command: installed.command.clone(),
+            cwd: installed.cwd.as_ref().map(|cwd| cwd.display().to_string()),
+            upstream_origin: installed
+                .upstream
+                .as_ref()
+                .map(|upstream| upstream.origin.clone()),
+        })
+    }
 }
 
 /// An engine refusal as the owner reads it: a fixed sentence about the
@@ -214,7 +249,10 @@ pub(super) fn engine(error: oneiron::Error) -> OwnerError {
 }
 
 /// The section this host installed under the connector's normalized name.
-fn installed_config<'a>(server: &'a SyncServer, name: &str) -> Option<&'a ConnectorHostConfig> {
+pub(super) fn installed_config<'a>(
+    server: &'a SyncServer,
+    name: &str,
+) -> Option<&'a ConnectorHostConfig> {
     server
         .config
         .connectors
@@ -476,6 +514,7 @@ fn register_connector(
     Ok(Registered {
         connector: name,
         endpoint,
+        stdio: StdioInstalled::of(installed),
         key: key.to_hex(),
         status: record.status.as_str(),
         protocol_revision: record.protocol_revision,
@@ -512,6 +551,7 @@ async fn setup(
             .transpose()?;
         Ok(Setup {
             endpoint: installed_endpoint(&server, &name),
+            stdio: installed_config(&server, &name).and_then(StdioInstalled::of),
             connector: name,
             summary: catalog.summary,
             key: KeyView::new(catalog.key, catalog.record)?,

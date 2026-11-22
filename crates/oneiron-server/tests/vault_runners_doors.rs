@@ -48,14 +48,14 @@ use oneiron::authority::{ActSurface, CapabilitySlip, HostSlipIssuer, MachineRole
 use oneiron::checkout::CheckoutId;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::dispatch_byoa::{
-    BYOA_ATTEMPT_KIND, BindRunnerWork, ByoEndpointBackendFactory, ByoEndpointSpec, ByoaDispatcher,
-    ByoaEgressLease, ByoaEgressPort, ByoaError, ByoaExhaust, ByoaResult, ByoaStream,
-    ByoaTerminalDisposition, CaptureByoaExhaust, OnSeatSpent, ProviderAdapterRegistry, RunnerSeat,
-    RunnerSeatChoice, RunnerSeatPolicy, RunnerWork, RunnerWorkBound, SeatAuth, SeatRoute,
-    SeatSpent,
+    BYOA_ATTEMPT_KIND, BindRunnerWork, ByoEndpointBackendFactory, ByoEndpointBinding,
+    ByoEndpointSpec, ByoaDispatcher, ByoaEgressLease, ByoaEgressPort, ByoaError, ByoaExhaust,
+    ByoaResult, ByoaStream, ByoaTerminalDisposition, CaptureByoaExhaust, OnSeatSpent,
+    ProviderAdapterRegistry, RunnerSeat, RunnerSeatChoice, RunnerSeatPolicy, RunnerWork,
+    RunnerWorkBound, SeatAuth, SeatRoute, SeatSpent,
 };
 use oneiron::federation::{Scope, ScopeAxis};
-use oneiron::llm::{LlmBackend, SpentKind};
+use oneiron::llm::SpentKind;
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::verbs::{
@@ -77,7 +77,7 @@ const RESUME_PATH: &str = "/v1/core/facade/vault.runners.seats.resume";
 struct StubEndpoints;
 
 impl ByoEndpointBackendFactory for StubEndpoints {
-    fn resolve_backend(&self, _spec: &ByoEndpointSpec) -> ByoaResult<Arc<dyn LlmBackend>> {
+    fn resolve_backend(&self, _spec: &ByoEndpointSpec) -> ByoaResult<ByoEndpointBinding> {
         Err(ByoaError::Backend(
             "runner door tests run CLI seats only".to_owned(),
         ))

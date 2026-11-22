@@ -759,7 +759,9 @@ pub(crate) fn register_turn_program_observers(
 }
 
 /// Subscribes to a map's changes, filtering out bridge-origin events and
-/// delegating to a materializer function under the materializer lock.
+/// delegating to a materializer function under the materializer lock. The
+/// tombstones map's scrub of the deleted NOTEs out of the other live windows
+/// runs once that lock is down (FIX 25183).
 fn subscribe_map_observer(
     doc: &LoroDoc,
     map: &LoroMap,
@@ -827,7 +829,7 @@ fn subscribe_map_observer(
             let _import = crate::sync::manager::import_scope();
             for cdiff in &event.events {
                 if let Some(map_delta) = cdiff.diff.as_map() {
-                    let (replayed_entities, changes) = {
+                    let (replayed_entities, changes, deleted) = {
                         let _guard = materializer.lock();
                         if live_query.0 == "entities" {
                             let (committed, changes) =
@@ -838,7 +840,17 @@ fn subscribe_map_observer(
                                     &window_key,
                                     lease_vault_id,
                                 );
-                            (committed.then(Vec::new), changes)
+                            (committed.then(Vec::new), changes, Vec::new())
+                        } else if live_query.0 == "tombstones" {
+                            match super::tombstones::materialize_tombstones_with_deletes(
+                                &callback_doc,
+                                map_delta,
+                                &vault,
+                                &window_key,
+                            ) {
+                                Some(batch) => (Some(batch.affected), Vec::new(), batch.applied),
+                                None => (None, Vec::new(), Vec::new()),
+                            }
                         } else {
                             (
                                 materialize(
@@ -849,9 +861,18 @@ fn subscribe_map_observer(
                                     lease_vault_id,
                                 ),
                                 Vec::new(),
+                                Vec::new(),
                             )
                         }
                     };
+                    // A deleted NOTE's attachments leave the other live
+                    // windows once the lock is down (FIX 12128): the scrub
+                    // lists them through the window registry lock, and a
+                    // replacement holds that lock while it takes this one
+                    // (FIX 25183).
+                    if !deleted.is_empty() {
+                        crate::sync::note::deleted_elsewhere(&vault, &window_key, deleted);
+                    }
                     if let Some(replayed_entities) = replayed_entities {
                         let path = format!("w:{window_key}/{}", live_query.0);
                         let mut diff = entity_document_diff(&path, live_query.0, map_delta);

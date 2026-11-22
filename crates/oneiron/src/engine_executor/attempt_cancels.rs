@@ -88,6 +88,16 @@ impl AttemptRoot<'_> {
         }
     }
 
+    /// The root of a loop no attempt lease binds that its holder may cancel: a test door's
+    /// (`test_doors::resume_preflight`, L8-23).
+    #[cfg(oneiron_test_support)]
+    fn cancellable_unbound() -> Self {
+        Self {
+            registered: None,
+            root: StepCancellation::new(),
+        }
+    }
+
     /// The loop's root: every step it runs, and every skill those steps
     /// call, descends from it.
     pub(crate) fn token(&self) -> &StepCancellation {
@@ -128,6 +138,10 @@ impl<'a> EngineNativeExecutor<'a> {
                     .runtime()
                     .attempt_cancels()
                     .register(attempt, generation)
+            }
+            #[cfg(oneiron_test_support)]
+            _ if crate::test_doors::resume_preflight::take_cancellable_unbound_root() => {
+                AttemptRoot::cancellable_unbound()
             }
             _ => AttemptRoot::unbound(),
         }

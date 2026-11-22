@@ -82,8 +82,7 @@ impl DesktopSession {
         let (app, title) = listed
             .iter()
             .find(|listed| listed.key == to)
-            .map(|listed| (listed.app.clone(), listed.title.clone()))
-            .unwrap_or_default();
+            .map_or_default(|listed| (listed.app.clone(), listed.title.clone()));
         self.switched = Some(WindowSwitch {
             window,
             app,
@@ -139,10 +138,10 @@ impl DesktopSession {
             // (wait_for) keep the whole bound so an in-flight walk finishes
             // and supplies its cut result.
             let mut bound = CALL + Duration::from_millis(asked.unwrap_or(0));
-            if self.polling {
-                if let Some(until) = until {
-                    bound = bound.min(until.saturating_duration_since(Instant::now()));
-                }
+            if self.polling
+                && let Some(until) = until
+            {
+                bound = bound.min(until.saturating_duration_since(Instant::now()));
             }
             let reply = self
                 .mcp

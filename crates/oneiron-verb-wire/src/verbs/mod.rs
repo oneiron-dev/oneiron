@@ -22,6 +22,7 @@ pub use crate::verbs::calendar::*;
 pub use crate::verbs::campaign_enrollment::*;
 pub use crate::verbs::campaign_split::*;
 pub use crate::verbs::can::*;
+pub use crate::verbs::code_run_resume_divergence::*;
 pub use crate::verbs::comm_widen::*;
 pub use crate::verbs::connect_proposal::*;
 pub use crate::verbs::connector::*;
@@ -36,6 +37,7 @@ pub use crate::verbs::coreference::*;
 pub use crate::verbs::courtesy_delete::*;
 pub use crate::verbs::credential::*;
 pub use crate::verbs::custody_drain::*;
+pub use crate::verbs::data_key_generation::*;
 pub use crate::verbs::diary::*;
 pub use crate::verbs::diary_pinned::*;
 pub use crate::verbs::disclosure::*;
@@ -218,6 +220,20 @@ pub struct WorkspaceRefRequest {
     pub workspace_ref: String,
 }
 
+/// The member opens work talk for their own roster row in this workspace.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WorkTalkOpenRequest {
+    pub workspace_ref: String,
+}
+
+/// The member acknowledges the one-vault notice for their own roster row.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OneVaultAcknowledgeRequest {
+    pub workspace_ref: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TaskRequest {
@@ -355,6 +371,7 @@ pub mod campaign_enrollment;
 pub mod campaign_split;
 pub mod can;
 pub mod claim_refinement;
+pub mod code_run_resume_divergence;
 pub mod comm_widen;
 pub mod connect_proposal;
 pub mod connector;
@@ -369,6 +386,7 @@ pub mod coreference;
 pub mod courtesy_delete;
 pub mod credential;
 pub mod custody_drain;
+pub mod data_key_generation;
 pub mod diary;
 pub mod diary_pinned;
 pub mod disclosure;
