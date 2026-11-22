@@ -38,7 +38,10 @@ use oneiron::task_verb::{
     TaskAskWord,
 };
 use oneiron::task_verb::{TaskAskElectorate, TaskAskNeed};
-use oneiron::test_doors::ask_answer_proof::mint_code_consent_ask;
+use oneiron::test_doors::ask_answer_proof::{
+    leave_code_consent_wait_answered, leave_code_consent_wait_settled, mint_code_consent_ask,
+    mint_code_consent_wait_and_ask,
+};
 use oneiron::test_doors::ask_word_presence::tasks_answer_asked_as;
 use oneiron::test_doors::owner_device_answer::{OwnerDeviceVault, open_owner_device_vault};
 use oneiron::test_doors::verb_hook_ask::{HookAsk, SavedAsk};
@@ -1331,4 +1334,69 @@ fn a_repeated_attendee_word_is_judged_by_the_selected_word() {
         .tasks_answer(&control, &repeated)
         .expect("the same word approves a live contact on the control");
     assert_eq!(presence.prompts(), 1);
+}
+
+#[test]
+fn an_approving_word_on_a_settled_code_consent_wait_raises_no_prompt() {
+    let fx = Fixture::open();
+    fx.device
+        .enrol_owner_key()
+        .expect("The owner key is enrolled for signing.");
+    let vault = &fx.device.vault;
+    let (settled_wait, settled) = mint_code_consent_wait_and_ask(vault, fx.device.owner, &[])
+        .expect("The ask of the wait that settles addresses the owner.");
+    let open = fx.code_consent_ask();
+    leave_code_consent_wait_settled(vault, settled_wait)
+        .expect("The wait settles refused with no answer.");
+
+    let memory = fx.owner_device();
+    let presence = scripted_gate(vault, []);
+    memory
+        .tasks_answer(&settled, &option_word(put_turn(vault), "approve_once"))
+        .expect("An approving word on a settled wait is recorded with nobody asked.");
+    assert_eq!(
+        presence.prompts(),
+        0,
+        "A word no answer of the wait can stand on asks nobody."
+    );
+
+    let presence = scripted_gate(vault, [Ok(())]);
+    memory
+        .tasks_answer(&open, &option_word(put_turn(vault), "approve_once"))
+        .expect("The same choice on the open wait's ask is admitted.");
+    assert_eq!(
+        presence.prompts(),
+        1,
+        "The open wait's approval prompts once."
+    );
+}
+
+#[test]
+fn an_approving_word_on_an_answered_code_consent_wait_raises_no_prompt() {
+    let fx = Fixture::open();
+    fx.device
+        .enrol_owner_key()
+        .expect("The owner key is enrolled for signing.");
+    let vault = &fx.device.vault;
+    let (wait, handle) = mint_code_consent_wait_and_ask(vault, fx.device.owner, &[])
+        .expect("The ask of the wait addresses the owner.");
+
+    let memory = fx.owner_device();
+    let presence = scripted_gate(vault, [Ok(())]);
+    let first = memory
+        .tasks_answer(&handle, &option_word(put_turn(vault), "approve_once"))
+        .expect("The first approving word is admitted once the person confirms.");
+    assert_eq!(presence.prompts(), 1, "The first approval prompts once.");
+    leave_code_consent_wait_answered(vault, wait, fx.device.owner, first.word_ref)
+        .expect("The wait takes the first word as its answer.");
+
+    let presence = scripted_gate(vault, []);
+    memory
+        .tasks_answer(&handle, &option_word(put_turn(vault), "approve_once"))
+        .expect("A later approving word on the answered wait is recorded with nobody asked.");
+    assert_eq!(
+        presence.prompts(),
+        0,
+        "A word the wait's answer never reads asks nobody."
+    );
 }

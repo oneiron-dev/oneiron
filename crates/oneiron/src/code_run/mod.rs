@@ -424,3 +424,10 @@ pub use self::dispatcher::workflow_operations;
 // above, so no other re-export edit meets this one.
 #[cfg(oneiron_test_support)]
 pub(crate) use self::dispatcher::{hook_parked_outcome_for_test, parked_note_resumed_for_test};
+
+// Door seams for `test_doors::ask_answer_proof`, apart from the blocks
+// above, so no other re-export edit meets this one.
+#[cfg(oneiron_test_support)]
+pub(crate) use self::consent_wait::{
+    answer_code_consent_wait_for_test, settle_code_consent_wait_refused_for_test,
+};

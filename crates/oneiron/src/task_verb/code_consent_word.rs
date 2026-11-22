@@ -200,6 +200,25 @@ pub(super) fn offered_in(
     Ok(Some(asked_party(&row)))
 }
 
+/// Whether a word on the code consent ask `id` can still become its wait's
+/// answer: the wait names this ask and still takes its first answer
+/// ([`CodeConsentWaitRow::takes_an_answer`]). The wait's answer reads the
+/// word past its ask's own cut, so the ask's result does not close it. The
+/// wait's first answer or its settlement does, for good: the answer's
+/// writers then return before they read any word ([`super::ask_guard`]).
+pub(super) fn answer_open_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    group: &AskGroup,
+) -> Result<bool> {
+    let Some(wait_id) = intent_wait(&group.requested.intent_key) else {
+        return Ok(false);
+    };
+    Ok(read_code_consent_wait_in_txn(vault, txn, wait_id)?
+        .is_some_and(|row| row.ask == Some(id) && row.takes_an_answer()))
+}
+
 /// The people a code consent wait asks: its question's owners, and the
 /// holders its holder settlement froze.
 fn asked_party(row: &CodeConsentWaitRow) -> AskedParty {

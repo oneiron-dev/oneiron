@@ -114,6 +114,10 @@ type OfferedIn =
 /// stands.
 type ActStandsIn = fn(&Vault, &heed::RoTxn<'_>, EntityId, &AskGroup, &TaskAskWord) -> Result<()>;
 
+/// Whether an approving word on one ask can still make the kind's act run,
+/// read in the transaction.
+type WordActsIn = fn(&Vault, &heed::RoTxn<'_>, EntityId, &AskGroup) -> Result<bool>;
+
 /// How one ask kind's approving word is told from its other words, and
 /// what the device's prompt shows for it.
 #[derive(Clone, Copy)]
@@ -124,10 +128,13 @@ struct AskApproval {
     /// The one line the device's prompt shows for an approving word
     /// ([`owner_presence_reasons`]).
     reason: &'static str,
-    /// Whether a word can still act once the ask's decision is closed
-    /// ([`ask_settlement::decision_open_in`]): it has its result, or its
-    /// settlement here cuts it Stale.
-    acts_past_the_cut: bool,
+    /// Whether an approving word can still act. The ask's own settlement
+    /// applies the act of every kind but one, so their word acts while the
+    /// ask's decision is open ([`ask_settlement::decision_open_in`]). A code
+    /// consent word is evidence its wait's answer reads past the ask's cut,
+    /// so it acts while the wait still takes its first answer
+    /// ([`super::code_consent_word::answer_open_in`]).
+    acts: WordActsIn,
     /// The kind's own read of whether the approved act still stands
     /// ([`approved_act_stands_in`]); `None` for a kind whose writer refuses
     /// an admitted approving word on no fact a read holds.
@@ -156,7 +163,7 @@ const ASK_KINDS: [AskKind; 7] = [
         approval: Some(AskApproval {
             approves: super::attendee_answer::approves,
             reason: owner_presence_reasons::ANSWER_ATTENDEE_ASK,
-            acts_past_the_cut: false,
+            acts: ask_settlement::decision_open_in,
             stands: Some(super::attendee_answer::approved_act_stands_in),
         }),
         reasons: AskKindReasons {
@@ -171,7 +178,7 @@ const ASK_KINDS: [AskKind; 7] = [
         approval: Some(AskApproval {
             approves: super::training_offer_ask::approves,
             reason: owner_presence_reasons::ANSWER_TRAINING_OFFER_ASK,
-            acts_past_the_cut: false,
+            acts: ask_settlement::decision_open_in,
             stands: Some(super::training_offer_ask::approved_act_stands_in),
         }),
         reasons: AskKindReasons {
@@ -186,7 +193,7 @@ const ASK_KINDS: [AskKind; 7] = [
         approval: Some(AskApproval {
             approves: super::training_swap_ask::approves,
             reason: owner_presence_reasons::ANSWER_TRAINING_SWAP_ASK,
-            acts_past_the_cut: false,
+            acts: ask_settlement::decision_open_in,
             stands: None,
         }),
         reasons: AskKindReasons {
@@ -211,7 +218,7 @@ const ASK_KINDS: [AskKind; 7] = [
         approval: Some(AskApproval {
             approves: crate::office_body::live_edit_option_grants,
             reason: owner_presence_reasons::ANSWER_LIVE_EDIT_ASK,
-            acts_past_the_cut: false,
+            acts: ask_settlement::decision_open_in,
             stands: None,
         }),
         reasons: AskKindReasons {
@@ -226,7 +233,7 @@ const ASK_KINDS: [AskKind; 7] = [
         approval: Some(AskApproval {
             approves: super::comm_widen::approves,
             reason: owner_presence_reasons::ANSWER_COMM_WIDEN_ASK,
-            acts_past_the_cut: false,
+            acts: ask_settlement::decision_open_in,
             stands: None,
         }),
         reasons: AskKindReasons {
@@ -241,7 +248,7 @@ const ASK_KINDS: [AskKind; 7] = [
         approval: Some(AskApproval {
             approves: super::code_consent_word::approves,
             reason: owner_presence_reasons::ANSWER_CODE_CONSENT_ASK,
-            acts_past_the_cut: true,
+            acts: super::code_consent_word::answer_open_in,
             stands: None,
         }),
         reasons: AskKindReasons {
@@ -366,8 +373,7 @@ fn approval_in(
                 && word.option.as_ref().is_some_and(approval.approves)
         });
         if let Some(approval) = approval
-            && !approval.acts_past_the_cut
-            && !ask_settlement::decision_open_in(vault, txn, id, group)?
+            && !(approval.acts)(vault, txn, id, group)?
         {
             return Ok(ApprovalRoute::Routed(None));
         }
@@ -387,10 +393,14 @@ fn approval_in(
 /// The answer door reads this before it asks for the person at the device
 /// and again in its write (`super::ask_word_presence`). The kind of an ask
 /// is its intent key's, and an option's meaning is its kind's. Once the
-/// ask has its result, only a kind that can act past the cut still approves.
-/// The same holds for an ask this node's settlement cuts Stale on its next
-/// word ([`ask_settlement::decision_open_in`]): that cut decides nothing, so
-/// a word on it approves no act and releases no stopped call.
+/// ask has its result, a word of a kind whose act the ask's settlement
+/// applies approves nothing. The same holds for an ask this node's
+/// settlement cuts Stale on its next word
+/// ([`ask_settlement::decision_open_in`]): that cut decides nothing, so a
+/// word on it approves no act and releases no stopped call. A code consent
+/// word approves while its wait still takes its first answer, whatever its
+/// ask's result, and nothing once the wait has an answer or a settlement:
+/// the wait keeps its first answer and reads no later word.
 ///
 /// # Errors
 ///

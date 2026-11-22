@@ -474,7 +474,7 @@ pub(crate) fn prove_code_consent_holder_act_in_txn(
     {
         return Err(Error::ConcurrentWrite("code consent wait target changed"));
     }
-    if row.answer.is_some() || row.settlement.is_some() {
+    if !row.takes_an_answer() {
         return Ok(None);
     }
     if input.choice == CodeConsentChoice::ApproveAndStopAsking {

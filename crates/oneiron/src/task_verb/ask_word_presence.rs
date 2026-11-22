@@ -28,7 +28,8 @@
 //! TASKs and pending waiter traps before asking. A `proceed` word releasing a
 //! durable verb hook asks for the person; after an ask has its result, and on
 //! an ask its settlement here cuts stale, which decides nothing, only a
-//! code consent word can still ask. The read never asks whether an owner key
+//! code consent word can still ask, and only while its wait still takes its
+//! first answer. The read never asks whether an owner key
 //! proves now: a key that rests under a device PIN proves only inside the
 //! window the ask's PIN step opens, so the mint answers that after the ask.
 //! The write admits the word under the signed proof, derives the importance
