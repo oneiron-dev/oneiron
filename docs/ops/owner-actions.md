@@ -2899,8 +2899,12 @@ Routes take targets as `{"record": "<hex>"}`, `{"gate_partition": "<hex>"}` or
   routes, a courtesy delete's hold answer and the SDK verbs (`INVALID_STATE`). Nothing is held;
   hold the records that remain instead.
 - `GET /v1/owner/legal-holds/log` reads the log, oldest first.
-- `POST /v1/owner/legal-holds/lift` with `{"hold_id": "<hex>"}` lifts the hold and destroys its
-  sealed copy. Nothing in the vault is erased by it.
+- `POST /v1/owner/legal-holds/lift` with `{"hold_id": "<hex>", "confirm": "<hex>"}` lifts the hold
+  and destroys its sealed copy. The lift is one-way, so it takes your confirm: preview it first
+  with the verb `vault.owner_confirm.preview` and
+  `{"verb": "vault.legal_holds.lift", "input": {"hold_id": "<hex>"}}`, which shows the hold as it
+  stands and answers the `confirm`. A hold widened since that preview is not lifted. Nothing in the
+  vault is erased by it. `oneiron legal-holds lift` previews, prints the hold, and confirms it.
 - `POST /v1/owner/legal-holds/produce` with `{"hold_id": "<hex>", "recipient_public_key": "<base64>"}`
   re-seals the hold's sealed copy to the recipient public key you name, and logs the access.
 
