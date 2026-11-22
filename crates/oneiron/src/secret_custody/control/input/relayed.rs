@@ -6,8 +6,8 @@ use super::{PART_BYTES, refused, splits};
 use crate::authority::AuthorityEntryHash;
 #[cfg(feature = "sync")]
 use crate::authority::{
-    AuthorityFold, AuthorityFoldIssue, AuthorityKey, AuthorityOp, OwnerWorkBody, OwnerWorkRequest,
-    authority_entry_hash, decode_authority_log_entry_body,
+    AuthorityEntryRead, AuthorityFold, AuthorityFoldIssue, AuthorityKey, AuthorityOp,
+    OwnerWorkBody, OwnerWorkRequest, authority_entry_hash, read_authority_log_entry_body,
 };
 #[cfg(feature = "sync")]
 use crate::error::Result;
@@ -212,7 +212,10 @@ impl RelayedInput {
     /// CUSTODY_INPUT_PRUNE, FIX 5405).
     #[cfg(feature = "sync")]
     pub(crate) fn witnessed(&self) -> Option<Witnessed> {
-        let entry = decode_authority_log_entry_body(&self.witness).ok()?;
+        let AuthorityEntryRead::Open(entry) = read_authority_log_entry_body(&self.witness).ok()?
+        else {
+            return None;
+        };
         if authority_entry_hash(&entry).ok()? != self.request {
             return None;
         }

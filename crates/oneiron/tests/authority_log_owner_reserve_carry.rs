@@ -272,12 +272,15 @@ fn world_edit_a_carries(rooted: &Rooted, cosign: Cosign) -> AuthorityLogEntry {
         Cosign::OwnerKey => oneiron::test_support::test_host_issuer().public_key(),
         Cosign::Stranger(signing) => AuthorityKey::Ed25519(signing.verifying_key().to_bytes()),
     };
+    let overlay_seed = oneiron_authority::authority::authority_overlay_seed_for(&op)
+        .expect("authority overlay seed");
     let mut entry = AuthorityLogEntry {
         schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
         vault_id: Some(rooted.vault_id),
         seq,
         parent_hashes: heads_of_a(rooted),
         op,
+        overlay_seed,
         signer: signature_slot(key),
         cosigns: vec![signature_slot(cosigner)],
         ts: seq + 1,
@@ -400,12 +403,15 @@ fn a_carried_cancel_or_install_join_takes_one_cosign_by_shape() {
             .map(|cosigner| AuthorityKey::Ed25519(cosigner.verifying_key().to_bytes()))
             .collect();
         keys.sort();
+        let overlay_seed = oneiron_authority::authority::authority_overlay_seed_for(&op)
+            .expect("authority overlay seed");
         let mut row = AuthorityLogEntry {
             schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
             vault_id: Some([0x7A; 32]),
             seq: 1,
             parent_hashes: vec![[0x01; 32], [0x02; 32]],
             op,
+            overlay_seed,
             signer: signature_slot(AuthorityKey::Ed25519(carrier.verifying_key().to_bytes())),
             cosigns: keys.into_iter().map(signature_slot).collect(),
             ts: 1,

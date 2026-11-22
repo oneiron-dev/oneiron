@@ -300,7 +300,7 @@ fn verify_entry_signatures_with_transcript(entry: &AuthorityLogEntry, transcript
 /// [`verify_authority_signature`], and a P-256 key's passkey assertion over
 /// the transcript in its envelope (row WEB-PASSKEY-OWNER-KEY), whose
 /// context the fold then pins per key.
-fn verify_entry_signature(signature: &AuthoritySignature, transcript: &[u8]) -> bool {
+pub(super) fn verify_entry_signature(signature: &AuthoritySignature, transcript: &[u8]) -> bool {
     match (&signature.public_key, signature.suite) {
         (AuthorityKey::P256(public_key), AuthoritySignatureSuite::P256)
             if signature.signature.len() != 64 =>

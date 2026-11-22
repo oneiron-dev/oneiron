@@ -44,8 +44,11 @@ impl<'a> HeldRows<'a> {
                 folded += 1;
                 continue;
             }
-            let entry =
-                decode_stored_authority_log_body(&authority_log_body_in_txn(store, txn, &id)?)?;
+            let entry = decode_stored_authority_log_body(
+                store,
+                txn,
+                &authority_log_body_in_txn(store, txn, &id)?,
+            )?;
             let hash = authority_entry_hash(&entry)?;
             rest.insert(hash);
             tail.push((hash, entry));
@@ -99,7 +102,8 @@ impl<'a> HeldRows<'a> {
             let Ok(body) = authority_log_body_in_txn(store, txn, id) else {
                 return Ok(None);
             };
-            let Ok(entry) = decode_authority_log_entry_body(&body) else {
+            let Ok(entry) = crate::authority::open_vault_authority_body_in_txn(store, txn, &body)
+            else {
                 return Ok(None);
             };
             let Ok(hash) = authority_entry_hash(&entry) else {

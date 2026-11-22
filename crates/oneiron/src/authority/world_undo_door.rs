@@ -12,7 +12,8 @@ use super::{
     MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass, MachineEncryptionKey,
     MachineEnrolmentRequest, MachineOwnership, MachineProfile, MachineRole, OwnerAct, OwnerActKind,
     ROLE_ADMIN, ROLE_OWNER, ReadLocation, WorldPrivacy, WorldPrivacyEdit, authority_entry_hash,
-    authority_transcript, fold_authority_log, genesis_vault_id, machine_profile_proof_transcript,
+    authority_overlay_seed_for, authority_transcript, fold_authority_log, genesis_vault_id,
+    machine_profile_proof_transcript,
 };
 use crate::entity_id::EntityId;
 
@@ -327,6 +328,7 @@ fn unsigned_entry(
     signer_key: AuthorityKey,
     ts: u64,
 ) -> AuthorityLogEntry {
+    let overlay_seed = authority_overlay_seed_for(&op).expect("authority overlay seed");
     AuthorityLogEntry {
         schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
         vault_id,
@@ -340,6 +342,7 @@ fn unsigned_entry(
         },
         cosigns: Vec::new(),
         ts,
+        overlay_seed,
     }
 }
 

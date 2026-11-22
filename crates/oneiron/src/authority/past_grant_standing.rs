@@ -85,7 +85,7 @@ fn load_history(store: &Store, txn: &heed::RoTxn<'_>) -> Result<LoadedHistory> {
     let mut parents: BTreeMap<AuthorityEntryHash, Vec<AuthorityEntryHash>> = BTreeMap::new();
     let mut bodies: BTreeMap<AuthorityEntryHash, AuthorityLogEntry> = BTreeMap::new();
     for (_, body) in authority_log_rows_in_txn(store, txn)? {
-        let entry = decode_stored_authority_log_body(&body)?;
+        let entry = decode_stored_authority_log_body(store, txn, &body)?;
         let hash = authority_entry_hash(&entry)?;
         if let Some(prior) = parents.get(&hash) {
             if *prior != entry.parent_hashes {
@@ -110,7 +110,8 @@ fn load_history(store: &Store, txn: &heed::RoTxn<'_>) -> Result<LoadedHistory> {
                     ));
                 }
                 if let Some(body) = row.body.as_ref() {
-                    let adopted_entry = decode_authority_log_entry_body(body)?;
+                    let adopted_entry =
+                        crate::authority::open_vault_authority_body_in_txn(store, txn, body)?;
                     if authority_entry_hash(&adopted_entry)? != *hash
                         || adopted_entry.parent_hashes != row.parents
                     {
@@ -130,7 +131,7 @@ fn load_history(store: &Store, txn: &heed::RoTxn<'_>) -> Result<LoadedHistory> {
             }
             parents.insert(*hash, row.parents.clone());
             if let Some(body) = row.body.as_ref() {
-                let entry = decode_authority_log_entry_body(body)?;
+                let entry = crate::authority::open_vault_authority_body_in_txn(store, txn, body)?;
                 if authority_entry_hash(&entry)? != *hash || entry.parent_hashes != row.parents {
                     return Err(Error::CorruptedIndex(
                         "past grant standing: adopted carried body mismatches its row",

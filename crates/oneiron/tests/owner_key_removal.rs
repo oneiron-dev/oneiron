@@ -1009,7 +1009,10 @@ impl RemovalVault {
                 signature: vec![0; 64],
             }],
             ts: timestamp,
+            overlay_seed: None,
         };
+        entry.overlay_seed = oneiron_authority::authority::authority_overlay_seed_for(&entry.op)
+            .expect("authority overlay seed");
         let transcript = authority_transcript(&entry).expect("the transcript");
         entry.signer.signature = predecessor_signing_key
             .sign(&transcript)
@@ -1088,6 +1091,7 @@ impl RemovalVault {
             },
             cosigns: Vec::new(),
             ts: timestamp,
+            overlay_seed: None,
         };
         let transcript = authority_transcript(&entry).expect("the transcript");
         entry.signer.signature = signer.sign(&transcript).to_bytes().to_vec();
@@ -2559,7 +2563,10 @@ impl RemovalVault {
             },
             cosigns: Vec::new(),
             ts: timestamp,
+            overlay_seed: None,
         };
+        entry.overlay_seed = oneiron_authority::authority::authority_overlay_seed_for(&entry.op)
+            .expect("authority overlay seed");
         sign_authority_row_as_host_root(&self.issuer, &mut entry)
             .expect("the permitted host root signs the handoff");
         let handoff = authority_entry_hash(&entry).expect("the handoff's hash");

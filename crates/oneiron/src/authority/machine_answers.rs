@@ -955,6 +955,7 @@ impl Vault {
             },
             cosigns: Vec::new(),
             ts: now,
+            overlay_seed: None,
         };
         entry.signer.signature = sign(&authority_transcript(&entry)?)?;
         let hash = authority_entry_hash(&entry)?;

@@ -242,7 +242,10 @@ impl Fixture {
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("a clock after 1970")
                 .as_secs(),
+            overlay_seed: None,
         };
+        row.overlay_seed = oneiron_authority::authority::authority_overlay_seed_for(&row.op)
+            .expect("authority overlay seed");
         let transcript = authority_transcript(&row).expect("the transcript");
         row.signer.signature = signing.sign(&transcript).to_bytes().to_vec();
         row

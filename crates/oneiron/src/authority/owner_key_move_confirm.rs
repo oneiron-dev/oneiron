@@ -165,12 +165,14 @@ where
         .collect();
     let mut rows = Vec::with_capacity(ops.len());
     for op in ops {
+        let overlay_seed = oneiron_authority::authority::authority_overlay_seed_for(&op)?;
         let mut row = AuthorityLogEntry {
             schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
             vault_id: Some(plan.vault_id),
             seq,
             parent_hashes: parents.into_iter().collect(),
             op,
+            overlay_seed,
             signer: AuthoritySignature {
                 suite: signer_key.suite(),
                 public_key: signer_key.clone(),

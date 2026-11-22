@@ -650,12 +650,15 @@ fn signed_authority_row(
     op: AuthorityOp,
 ) -> AuthorityLogEntry {
     let public_key = AuthorityKey::Ed25519(signer.verifying_key().to_bytes());
+    let overlay_seed = oneiron_authority::authority::authority_overlay_seed_for(&op)
+        .expect("authority overlay seed");
     let mut row = AuthorityLogEntry {
         schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
         vault_id: Some(vault_id),
         seq,
         parent_hashes: parents,
         op,
+        overlay_seed,
         signer: AuthoritySignature {
             suite: public_key.suite(),
             public_key,

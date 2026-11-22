@@ -195,6 +195,9 @@ pub(super) fn bind_room_actor(server: &SyncServer, actor: oneiron::EntityId, cla
         },
         cosigns: vec![],
         ts: now,
+        // `op` comes from `test_credentials::binding_op` only, which mints
+        // BindActor/RebindActor: neither kind has an overlay leaf.
+        overlay_seed: None,
     };
     entry.signer.signature = signing
         .sign(&authority_transcript(&entry).unwrap())

@@ -77,8 +77,13 @@ pub(crate) fn authority_side_entry_world(raw: &[u8]) -> Option<crate::EntityId> 
         return None;
     }
     let body = raw.get(ENTITY_METADATA_HEADER_LEN..)?;
-    let entry = crate::authority::decode_authority_log_entry_body(body).ok()?;
-    crate::authority::side_world(&entry.op)
+    let read = crate::authority::read_authority_log_entry_body(body).ok()?;
+    match read {
+        crate::authority::AuthorityEntryRead::Open(entry) => {
+            crate::authority::side_world(&entry.op)
+        }
+        crate::authority::AuthorityEntryRead::Sealed(_) => None,
+    }
 }
 
 /// Validate residence before replay/export. A malformed CLAIM cannot be

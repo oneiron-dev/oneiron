@@ -982,6 +982,8 @@ impl Vault {
             return Ok(head);
         }
         let entry = super::readonly_fold::decode_stored_authority_log_body(
+            &self.store,
+            txn,
             &raw[ENTITY_METADATA_HEADER_LEN..],
         )?;
         if authority_entry_hash(&entry)? != hash {
@@ -1356,12 +1358,14 @@ impl Vault {
         let fold = self.authority_fold()?;
         let signer = AuthorityKey::Ed25519(key.verifying_key().to_bytes());
         let seq = fold.append_sequences.get(&signer).map_or(1, |seq| seq + 1) + ahead;
+        let overlay_seed = oneiron_authority::authority::authority_overlay_seed_for(&op)?;
         let mut entry = AuthorityLogEntry {
             schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
             vault_id: fold.vault_id,
             seq,
             parent_hashes: frontier.parents.iter().copied().collect(),
             op,
+            overlay_seed,
             signer: AuthoritySignature {
                 suite: signer.suite(),
                 public_key: signer,

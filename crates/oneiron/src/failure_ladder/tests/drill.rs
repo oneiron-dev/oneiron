@@ -112,6 +112,7 @@ fn bind_owner_with_revocation(
         ROLE_ADMIN, ROLE_OWNER,
     };
     use ed25519_dalek::{Signer, SigningKey};
+    use oneiron_authority::authority::authority_overlay_seed_for;
 
     let signing = SigningKey::from_bytes(&[0x76; 32]);
     let key = AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
@@ -122,19 +123,23 @@ fn bind_owner_with_revocation(
             .to_vec();
         entry
     };
-    let entry = |seq, vault_id, parents, op| AuthorityLogEntry {
-        schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
-        vault_id,
-        seq,
-        parent_hashes: parents,
-        op,
-        signer: AuthoritySignature {
-            suite: key.suite(),
-            public_key: key.clone(),
-            signature: vec![0; 64],
-        },
-        cosigns: Vec::new(),
-        ts: 100 + seq,
+    let entry = |seq, vault_id, parents, op| {
+        let overlay_seed = authority_overlay_seed_for(&op).expect("authority overlay seed");
+        AuthorityLogEntry {
+            schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+            vault_id,
+            seq,
+            parent_hashes: parents,
+            op,
+            signer: AuthoritySignature {
+                suite: key.suite(),
+                public_key: key.clone(),
+                signature: vec![0; 64],
+            },
+            cosigns: Vec::new(),
+            ts: 100 + seq,
+            overlay_seed,
+        }
     };
     let genesis = sign(entry(
         0,

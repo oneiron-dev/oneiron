@@ -373,7 +373,7 @@ impl Vault {
         let stored =
             super::readonly_fold::find_in_authority_log_rows_in_txn(&self.store, txn, |body| {
                 rows_read += 1;
-                let entry = decode_authority_log_entry_body(body)?;
+                let entry = open_vault_authority_body_in_txn(&self.store, txn, body)?;
                 let live = enrols_live_key(fold, &entry)
                     && fold.valid_entries.contains(&authority_entry_hash(&entry)?);
                 Ok(if live {
@@ -494,7 +494,7 @@ fn head_re_roots_to(
             let body = raw
                 .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
                 .ok_or(Error::CorruptedIndex("authority head header"))?;
-            decode_authority_log_entry_body(body)?
+            open_vault_authority_body_in_txn(store, txn, body)?
         }
         None => match super::adopted_evidence::CarriedRows::default().get(store, txn, head)? {
             Some(entry) => entry,
@@ -548,8 +548,10 @@ impl Vault {
         let (enrolled, rows_read) = self.live_owner_key_enrolment_in_txn(&txn, &fold)?;
         let mut stored = Vec::new();
         for (_, body) in super::readonly_fold::authority_log_rows_in_txn(&self.store, &txn)? {
-            let entry = decode_authority_log_entry_body(&body)?;
-            stored.push(authority_entry_hash(&entry)?);
+            stored.push(match read_authority_log_entry_body(&body)? {
+                AuthorityEntryRead::Open(entry) => authority_entry_hash(&entry)?,
+                AuthorityEntryRead::Sealed(scaffold) => scaffold.hash,
+            });
         }
         Ok((enrolled, rows_read, stored))
     }

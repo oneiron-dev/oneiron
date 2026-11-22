@@ -42,8 +42,8 @@ use super::part_signature::{OutputPartBinding, parts_verify};
 use crate::Vault;
 use crate::authority::{AuthorityEntryHash, AuthorityVaultId};
 use crate::authority::{
-    AuthorityFold, AuthorityKey, AuthorityOp, SealedWorkOutput, authority_entry_hash,
-    decode_authority_log_entry_body, owner_act_signer_admits,
+    AuthorityEntryRead, AuthorityFold, AuthorityKey, AuthorityOp, SealedWorkOutput,
+    authority_entry_hash, owner_act_signer_admits, read_authority_log_entry_body,
 };
 #[cfg(feature = "sync")]
 use crate::authority::{OwnerWorkBody, encode_authority_log_entry_body, stored_authority_row};
@@ -470,7 +470,10 @@ pub(crate) fn assess_witness(
     if witness.len() > MAX_EXPORT_OUTPUT_WITNESS_BYTES {
         return WitnessAssessment::Disproven;
     }
-    let Ok(entry) = decode_authority_log_entry_body(witness) else {
+    let Ok(read) = read_authority_log_entry_body(witness) else {
+        return WitnessAssessment::Disproven;
+    };
+    let AuthorityEntryRead::Open(entry) = read else {
         return WitnessAssessment::Disproven;
     };
     let (AuthorityOp::OwnerWorkResult(result), AuthorityKey::Ed25519(key)) =

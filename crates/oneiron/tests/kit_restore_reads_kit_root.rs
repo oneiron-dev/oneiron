@@ -54,12 +54,15 @@ fn signed(
     op: AuthorityOp,
     signer: &SigningKey,
 ) -> AuthorityLogEntry {
+    let overlay_seed = oneiron_authority::authority::authority_overlay_seed_for(&op)
+        .expect("authority overlay seed");
     let mut row = AuthorityLogEntry {
         schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
         vault_id: Some(vault_id),
         seq,
         parent_hashes,
         op,
+        overlay_seed,
         signer: signature_slot(key_of(signer)),
         cosigns: Vec::new(),
         ts: 1,

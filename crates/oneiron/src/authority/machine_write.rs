@@ -669,12 +669,15 @@ fn stored_authority_parents_by_hash(
         let body = raw
             .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
             .ok_or(Error::CorruptedIndex("authority history header"))?;
-        let entry = super::decode_authority_log_entry_body(body)?;
-        let hash = super::authority_entry_hash(&entry)?;
+        let read = super::read_authority_log_entry_body(body)?;
+        let hash = match &read {
+            super::AuthorityEntryRead::Open(entry) => super::authority_entry_hash(entry)?,
+            super::AuthorityEntryRead::Sealed(scaffold) => scaffold.hash,
+        };
         if super::authority_log_entity_id_from_hash(&hash)? != id {
             return Err(Error::CorruptedIndex("authority history key"));
         }
-        by_hash.insert(hash, entry.parent_hashes);
+        by_hash.insert(hash, read.parent_hashes().to_vec());
     }
     Ok(by_hash)
 }

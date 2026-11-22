@@ -79,7 +79,8 @@ use oneiron::verbs::{RepoAnchorBindInput, bind_repo_anchor_as};
 use oneiron::{EntityId, Error, HostingPrivacyPosture, Vault, VaultConfig};
 use oneiron_authority::authority::{
     ConversationTrainingSet, ConversationTrainingVaultSet, HomeNodePick,
-    conversation_training_vault_target, home_pick_target, machine_answer_revision,
+    authority_overlay_seed_for, conversation_training_vault_target, home_pick_target,
+    machine_answer_revision,
 };
 use p256::ecdsa::{Signature as P256Signature, SigningKey as P256SigningKey};
 
@@ -141,6 +142,7 @@ fn signed(
 ) -> AuthorityLogEntry {
     let mut cosigners = cosigners.to_vec();
     cosigners.sort_by_key(|cosigner| key_of(cosigner));
+    let overlay_seed = authority_overlay_seed_for(&op).expect("authority overlay seed");
     let mut row = AuthorityLogEntry {
         schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
         vault_id,
@@ -153,6 +155,7 @@ fn signed(
             .map(|cosigner| signature_slot(key_of(cosigner)))
             .collect(),
         ts: 1,
+        overlay_seed,
     };
     let transcript = authority_transcript(&row).expect("the transcript");
     row.signer.signature = signer.sign(&transcript).to_bytes().to_vec();
@@ -219,6 +222,7 @@ fn signed_by_p256(
     op: AuthorityOp,
     signer: &P256SigningKey,
 ) -> AuthorityLogEntry {
+    let overlay_seed = authority_overlay_seed_for(&op).expect("authority overlay seed");
     let mut row = AuthorityLogEntry {
         schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
         vault_id,
@@ -228,6 +232,7 @@ fn signed_by_p256(
         signer: signature_slot(p256_key_of(signer)),
         cosigns: Vec::new(),
         ts: 1,
+        overlay_seed,
     };
     let transcript = authority_transcript(&row).expect("the transcript");
     let mut signature: P256Signature = signer.sign(&transcript);

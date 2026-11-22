@@ -30,7 +30,7 @@
 use crate::Vault;
 use crate::authority::{
     AgentGrantChange, AuthorityEntryHash, AuthorityLogEntry, AuthorityOp, authority_entry_hash,
-    decode_authority_log_entry_body,
+    open_vault_authority_body_in_txn,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -118,7 +118,7 @@ pub(crate) fn backfill_agent_grant_member_index(vault: &Vault, force: bool) -> R
         if row.entity_type != ENTITY_TYPE_AUTHORITY_LOG || row.body.is_empty() {
             continue;
         }
-        let Ok(entry) = decode_authority_log_entry_body(&row.body) else {
+        let Ok(entry) = open_vault_authority_body_in_txn(store, &wtxn, &row.body) else {
             continue;
         };
         if let Some((member, grant)) = owner_agent_mint(&entry) {

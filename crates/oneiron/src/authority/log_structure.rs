@@ -188,7 +188,7 @@ pub(crate) fn carried_rows_never_applied_in_txn(
     }
     let mut held = BTreeMap::new();
     for (_, body) in authority_log_rows_in_txn(store, txn)? {
-        let entry = decode_stored_authority_log_body(&body)?;
+        let entry = decode_stored_authority_log_body(store, txn, &body)?;
         held.insert(authority_entry_hash(&entry)?, entry);
     }
     let resident: BTreeSet<AuthorityEntryHash> = held.keys().copied().collect();

@@ -981,6 +981,7 @@ fn bind_artifact_member_to_divergent_pacts(
             },
             cosigns: Vec::new(),
             ts: vault.now_recorded_at(),
+            overlay_seed: None,
         };
         row.signer.signature = signing
             .sign(&authority_transcript(&row).unwrap())

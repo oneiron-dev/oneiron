@@ -78,6 +78,7 @@ use oneiron::store::GateDecisionId;
 use oneiron::temporal::TimeRange;
 use oneiron::test_support::bind_host_owner;
 use oneiron::{EdgeActorClass, EntityId, ErrorKind, Vault, VaultConfig};
+use oneiron_authority::authority::authority_overlay_seed_for;
 
 const SHARED: u64 = 44;
 /// The seed of the co-Owner's own owner key ([`Shared::bound_co_owner_key`]).
@@ -533,6 +534,7 @@ impl Shared {
     fn withheld_co_owner_row(&self, op: AuthorityOp) -> Vec<u8> {
         let signing = SigningKey::from_bytes(&[CO_OWNER_SEED; 32]);
         let signer = AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
+        let overlay_seed = authority_overlay_seed_for(&op).expect("authority overlay seed");
         let mut row = AuthorityLogEntry {
             schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
             vault_id: self.vault.authority_fold().expect("the fold").vault_id,
@@ -546,6 +548,7 @@ impl Shared {
             },
             cosigns: Vec::new(),
             ts: now_secs(),
+            overlay_seed,
         };
         let transcript = authority_transcript(&row).expect("the transcript");
         row.signer.signature = signing.sign(&transcript).to_bytes().to_vec();

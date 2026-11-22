@@ -178,7 +178,7 @@ fn authority_root(
     };
     let signing = ed25519_dalek::SigningKey::from_bytes(&[seed; 32]);
     let key = AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
-    let entry = AuthorityLogEntry {
+    let mut entry = AuthorityLogEntry {
         schema_version: crate::authority::AUTHORITY_LOG_SCHEMA_VERSION,
         vault_id: None,
         seq: 0,
@@ -204,7 +204,10 @@ fn authority_root(
         },
         cosigns: Vec::new(),
         ts: 100,
+        overlay_seed: None,
     };
+    entry.overlay_seed = oneiron_authority::authority::authority_overlay_seed_for(&entry.op)
+        .expect("authority overlay seed");
     (sign_authority(entry, &signing), signing)
 }
 
@@ -229,6 +232,8 @@ fn root_binding_with_pending_revocation(
     let key = AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
     let genesis_hash = crate::authority::authority_entry_hash(&genesis).expect("genesis hash");
     let owner_entry = |seq: u64, op: AuthorityOp, parents: Vec<[u8; 32]>| {
+        let overlay_seed = oneiron_authority::authority::authority_overlay_seed_for(&op)
+            .expect("authority overlay seed");
         sign_authority(
             AuthorityLogEntry {
                 schema_version: crate::authority::AUTHORITY_LOG_SCHEMA_VERSION,
@@ -236,6 +241,7 @@ fn root_binding_with_pending_revocation(
                 seq,
                 parent_hashes: parents,
                 op,
+                overlay_seed,
                 signer: AuthoritySignature {
                     suite: key.suite(),
                     public_key: key.clone(),

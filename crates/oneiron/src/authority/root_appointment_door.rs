@@ -238,6 +238,7 @@ fn unsigned_appointment(
         },
         cosigns: Vec::new(),
         ts: now,
+        overlay_seed: None,
     };
     entry.validate_shape().map_err(|_| invalid_authority())?;
     Ok(entry)
@@ -375,6 +376,7 @@ impl Vault {
             },
             cosigns: Vec::new(),
             ts: now,
+            overlay_seed: None,
         };
         bind.signer.signature = successor.sign_successor_binding(&bind)?;
         let binding = authority_entry_hash(&bind)?;

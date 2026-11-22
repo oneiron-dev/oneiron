@@ -249,12 +249,15 @@ fn the_flooders_request(
         signature: vec![0; 64],
     };
     let owner_key = oneiron::test_support::test_host_issuer();
+    let overlay_seed = oneiron_authority::authority::authority_overlay_seed_for(&op)
+        .expect("authority overlay seed");
     let mut entry = AuthorityLogEntry {
         schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
         vault_id: Some(rooted.vault_id),
         seq: 1,
         parent_hashes: vec![flooder.admission],
         op,
+        overlay_seed,
         signer: slot(AuthorityKey::Ed25519(
             flooder.signing.verifying_key().to_bytes(),
         )),

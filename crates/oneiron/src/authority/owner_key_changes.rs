@@ -161,7 +161,7 @@ impl Vault {
         let mut rows = Vec::new();
         let mut stored = BTreeSet::new();
         for (_, body) in super::readonly_fold::authority_log_rows_in_txn(&self.store, txn)? {
-            let entry = decode_authority_log_entry_body(&body)?;
+            let entry = open_vault_authority_body_in_txn(&self.store, txn, &body)?;
             let hash = authority_entry_hash(&entry)?;
             stored.insert(hash);
             rows.push((hash, entry));

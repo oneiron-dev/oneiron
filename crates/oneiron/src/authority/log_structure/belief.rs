@@ -89,7 +89,7 @@ pub(in crate::authority) fn fold_belief_structure_in_txn(
         {
             continue;
         }
-        entries.push(decode_authority_log_entry_body(&body)?);
+        entries.push(open_vault_authority_body_in_txn(store, txn, &body)?);
     }
     entries.extend(arriving.values().cloned());
     STAGED_BATCH.with(|staged| entries.extend(staged.borrow().iter().flatten().cloned()));

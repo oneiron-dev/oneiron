@@ -916,6 +916,7 @@ impl Vault {
                 signature: vec![0; 64],
             }],
             ts: now,
+            overlay_seed: None,
         };
         verify_unsigned(&entry)?;
         Ok((entry, carrier_key, fold))
@@ -1460,12 +1461,14 @@ impl Vault {
                 public_key: key,
                 signature: vec![0; 64],
             };
+            let overlay_seed = oneiron_authority::authority::authority_overlay_seed_for(&op)?;
             let mut entry = AuthorityLogEntry {
                 schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
                 vault_id: Some(vault_id),
                 seq,
                 parent_hashes: parents.clone(),
                 op,
+                overlay_seed,
                 signer: unsigned(signer),
                 cosigns: cosigners.into_iter().map(unsigned).collect(),
                 ts: now,
@@ -1620,7 +1623,9 @@ impl Vault {
                 signature: vec![0; 64],
             }],
             ts: now,
+            overlay_seed: None,
         };
+        entry.overlay_seed = oneiron_authority::authority::authority_overlay_seed_for(&entry.op)?;
         let transcript = authority_transcript(&entry)?;
         if let Some(cosign) = entry.cosigns.first_mut() {
             cosign.signature = carrier_key.sign(&transcript).to_bytes().to_vec();
@@ -1693,6 +1698,7 @@ impl Vault {
             },
             cosigns: Vec::new(),
             ts: now,
+            overlay_seed: None,
         };
         let transcript = authority_transcript(&entry)?;
         entry.signer.signature = sign_predecessor(bind.fold, &transcript)?;
@@ -1830,7 +1836,7 @@ impl Vault {
         let fold: &AuthorityFold = &view;
         let mut stored = BTreeSet::new();
         for (_, body) in super::readonly_fold::authority_log_rows_in_txn(&self.store, txn)? {
-            let entry = decode_authority_log_entry_body(&body)?;
+            let entry = open_vault_authority_body_in_txn(&self.store, txn, &body)?;
             let hash = authority_entry_hash(&entry)?;
             stored.insert(hash);
             visit(fold, hash, &entry);

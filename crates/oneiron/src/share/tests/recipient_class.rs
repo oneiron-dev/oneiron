@@ -5,6 +5,7 @@ use crate::authority::{
     authority_entry_hash, authority_transcript, genesis_vault_id,
 };
 use ed25519_dalek::{Signer, SigningKey};
+use oneiron_authority::authority::authority_overlay_seed_for;
 
 fn sign(mut entry: AuthorityLogEntry, key: &SigningKey) -> Result<AuthorityLogEntry> {
     entry.signer.signature = key.sign(&authority_transcript(&entry)?).to_bytes().to_vec();
@@ -18,26 +19,28 @@ fn bind_recipient(
 ) -> Result<(SigningKey, AuthorityLogEntry)> {
     let signing = SigningKey::from_bytes(&[0xA1; 32]);
     let key = AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
+    let op = AuthorityOp::Genesis {
+        device: DeviceAuthority {
+            key: key.clone(),
+            transport_key_binding: [7; 32],
+            attestation: AuthorityAttestation {
+                kind: "SoftwareArgon2id".to_owned(),
+                evidence: vec![1, 2, 3],
+            },
+            tier: AuthorityTier::Software,
+            roles: ROLE_OWNER | ROLE_ADMIN,
+        },
+        genesis_nonce: [0xA2; 32],
+        recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
+    };
+    let overlay_seed = authority_overlay_seed_for(&op).expect("authority overlay seed");
     let genesis = sign(
         AuthorityLogEntry {
             schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
             vault_id: None,
             seq: 0,
             parent_hashes: Vec::new(),
-            op: AuthorityOp::Genesis {
-                device: DeviceAuthority {
-                    key: key.clone(),
-                    transport_key_binding: [7; 32],
-                    attestation: AuthorityAttestation {
-                        kind: "SoftwareArgon2id".to_owned(),
-                        evidence: vec![1, 2, 3],
-                    },
-                    tier: AuthorityTier::Software,
-                    roles: ROLE_OWNER | ROLE_ADMIN,
-                },
-                genesis_nonce: [0xA2; 32],
-                recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
-            },
+            op,
             signer: AuthoritySignature {
                 suite: key.suite(),
                 public_key: key.clone(),
@@ -45,6 +48,7 @@ fn bind_recipient(
             },
             cosigns: Vec::new(),
             ts: 100,
+            overlay_seed,
         },
         &signing,
     )?;
@@ -60,6 +64,7 @@ fn bind_recipient(
                 epoch: 1,
             },
             ts: 101,
+            overlay_seed: None,
             ..genesis.clone()
         },
         &signing,
@@ -199,6 +204,7 @@ fn class_scoped_reads_require_live_verified_recipient_class() -> Result<()> {
                 epoch: 2,
             },
             ts: 102,
+            overlay_seed: None,
             ..binding
         },
         &signing,
@@ -216,6 +222,7 @@ fn class_scoped_reads_require_live_verified_recipient_class() -> Result<()> {
                 epoch: 2,
             },
             ts: 103,
+            overlay_seed: None,
             ..rebound
         },
         &signing,

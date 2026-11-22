@@ -32,6 +32,7 @@ mod foundations;
 mod hosted_consent;
 mod instant_widen;
 mod observation_safety;
+mod overlay_rows;
 mod peer_roster;
 mod readonly_fold;
 mod retired_device_ops;

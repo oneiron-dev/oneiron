@@ -121,12 +121,15 @@ fn signed(
 ) -> AuthorityLogEntry {
     let mut cosigners = cosigners.to_vec();
     cosigners.sort_by_key(|cosigner| key_of(cosigner));
+    let overlay_seed = oneiron_authority::authority::authority_overlay_seed_for(&op)
+        .expect("authority overlay seed");
     let mut row = AuthorityLogEntry {
         schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
         vault_id,
         seq,
         parent_hashes,
         op,
+        overlay_seed,
         signer: signature_slot(key_of(signer)),
         cosigns: cosigners
             .iter()

@@ -6,6 +6,7 @@ use crate::authority::{
 use crate::temporal::TimeRange;
 use crate::{Vault, VaultConfig};
 use ed25519_dalek::{Signer, SigningKey};
+use oneiron_authority::authority::authority_overlay_seed_for;
 
 #[test]
 fn export_manifest_stable_fixture_records_data_shape_and_secret_nulling() {
@@ -146,25 +147,27 @@ fn open_rooted_vault(seed: u8) -> Result<(tempfile::TempDir, Vault)> {
 fn genesis_entry(seed: u8) -> AuthorityLogEntry {
     let signing = SigningKey::from_bytes(&[seed; 32]);
     let key = AuthorityKey::Ed25519(signing.verifying_key().to_bytes());
+    let op = AuthorityOp::Genesis {
+        device: DeviceAuthority {
+            key: key.clone(),
+            transport_key_binding: [0; 32],
+            attestation: AuthorityAttestation {
+                kind: "SoftwareArgon2id".to_owned(),
+                evidence: vec![1, 2, 3],
+            },
+            tier: AuthorityTier::Software,
+            roles: ROLE_OWNER,
+        },
+        genesis_nonce: [seed.wrapping_add(1); 32],
+        recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
+    };
+    let overlay_seed = authority_overlay_seed_for(&op).expect("authority overlay seed");
     let mut entry = AuthorityLogEntry {
         schema_version: 1,
         vault_id: None,
         seq: 0,
         parent_hashes: Vec::new(),
-        op: AuthorityOp::Genesis {
-            device: DeviceAuthority {
-                key: key.clone(),
-                transport_key_binding: [0; 32],
-                attestation: AuthorityAttestation {
-                    kind: "SoftwareArgon2id".to_owned(),
-                    evidence: vec![1, 2, 3],
-                },
-                tier: AuthorityTier::Software,
-                roles: ROLE_OWNER,
-            },
-            genesis_nonce: [seed.wrapping_add(1); 32],
-            recovery: crate::authority::GenesisRecoveryStep::Saved([1; 32]),
-        },
+        op,
         signer: AuthoritySignature {
             suite: key.suite(),
             public_key: key,
@@ -172,6 +175,7 @@ fn genesis_entry(seed: u8) -> AuthorityLogEntry {
         },
         cosigns: Vec::new(),
         ts: u64::from(seed),
+        overlay_seed,
     };
     let transcript = authority_transcript(&entry).expect("genesis transcript");
     entry.signer.signature = signing.sign(&transcript).to_bytes().to_vec();

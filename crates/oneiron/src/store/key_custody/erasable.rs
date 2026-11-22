@@ -67,6 +67,9 @@ pub(crate) enum ErasablePurpose {
     DrafterArtifact,
     /// A person's authenticator-app enrollment; incarnation = enrollment id.
     TotpEnrollment,
+    /// The erasable overlay of the authority entries that name one subject
+    /// (census L5-22): parent = the subject, one key per subject.
+    AuthorityOverlay,
 }
 
 impl ErasablePurpose {
@@ -76,6 +79,7 @@ impl ErasablePurpose {
             Self::GrantScope => 2,
             Self::DrafterArtifact => 3,
             Self::TotpEnrollment => 4,
+            Self::AuthorityOverlay => 5,
         }
     }
 
@@ -85,6 +89,7 @@ impl ErasablePurpose {
             2 => Some(Self::GrantScope),
             3 => Some(Self::DrafterArtifact),
             4 => Some(Self::TotpEnrollment),
+            5 => Some(Self::AuthorityOverlay),
             _ => None,
         }
     }

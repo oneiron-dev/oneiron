@@ -270,3 +270,87 @@ fn forged_peer_entry_signed_off_roster_never_enters_the_peer_roster() {
         "the forgery leaves the derived roster byte-identical"
     );
 }
+
+/// A relayed peer row that seals a value (census L5-22) is admitted by its
+/// verified scaffold and stored, but its overlay is the peer's and never
+/// opens here: the peer's roster read answers overlay-unavailable, and its
+/// consent roots leave the map, since a fold around the row would miss every
+/// row after it. An open peer's roots stay.
+#[test]
+fn a_peer_holding_a_sealed_row_gives_no_consent_roots_and_no_roster() {
+    let fixture = peer_log_fixture(190);
+    let control = peer_log_fixture(200);
+    let host = ed_key(190);
+    let admin = ed_key(191);
+    let mut enrolled = device(
+        authority_key_from_ed(&ed_key(195)),
+        ROLE_ADMIN,
+        AuthorityTier::Software,
+    );
+    enrolled.attestation = AuthorityAttestation {
+        kind: "device-attestation".to_owned(),
+        evidence: vec![9, 10, 11],
+    };
+    assert!(!NON_IDENTIFYING_ATTESTATION_KINDS.contains(&enrolled.attestation.kind.as_str()));
+    let sealed = cosign_ed(
+        unsigned_entry(
+            Some(fixture.vault_id),
+            5,
+            vec![authority_entry_hash(fixture.entries.last().unwrap()).unwrap()],
+            AuthorityOp::EnrollDevice { device: enrolled },
+            fixture.host_key.clone(),
+            6,
+        ),
+        &host,
+        &admin,
+    );
+    assert!(
+        sealed.overlay_seed.is_some(),
+        "an identifying attestation seals"
+    );
+    let sealed_body = encode_authority_log_entry_body(&sealed).unwrap();
+    assert!(authority_body_is_sealed(&sealed_body).unwrap());
+
+    let (_dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::default());
+    let admit = |peer: &PeerLogFixture| {
+        for entry in &peer.entries {
+            crate::federation::admit_peer_authority_log_entry(
+                &vault,
+                &peer.vault_id,
+                &encode_authority_log_entry_body(entry).unwrap(),
+            )
+            .unwrap();
+        }
+    };
+    admit(&fixture);
+    admit(&control);
+    let roots = |vault: &crate::Vault| {
+        let rtxn = vault.store.env.read_txn().unwrap();
+        crate::federation::admitted_peer_consent_roots_in_txn(vault, &rtxn).unwrap()
+    };
+    assert!(
+        roots(&vault)[&fixture.vault_id].contains(&fixture.host_key),
+        "before the sealed row the peer's host root is a consent root"
+    );
+
+    crate::federation::admit_peer_authority_log_entry(&vault, &fixture.vault_id, &sealed_body)
+        .unwrap();
+    crate::federation::admit_peer_authority_log_entry(&vault, &fixture.vault_id, &sealed_body)
+        .expect("admitting the same sealed row again is idempotent");
+
+    let error = crate::federation::peer_authority_roster(&vault, &fixture.vault_id)
+        .expect_err("a peer holding a sealed row has no roster here");
+    assert!(
+        is_authority_overlay_unavailable(&error),
+        "unexpected error: {error:?}"
+    );
+    let after = roots(&vault);
+    assert!(!after.contains_key(&fixture.vault_id));
+    assert!(after[&control.vault_id].contains(&control.host_key));
+    assert_eq!(
+        crate::federation::peer_authority_roster(&vault, &control.vault_id)
+            .unwrap()
+            .vault_id,
+        Some(control.vault_id)
+    );
+}

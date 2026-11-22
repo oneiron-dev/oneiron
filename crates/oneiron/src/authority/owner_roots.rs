@@ -147,7 +147,11 @@ pub(super) fn owner_root_records_in_txn(
     let mut records = BTreeMap::new();
     let mut stored = BTreeSet::new();
     for (_, body) in authority_log_rows_in_txn(store, txn)? {
-        let entry = decode_stored_authority_log_body(&body)?;
+        let read = read_authority_log_entry_body(&body)
+            .map_err(|_| crate::error::Error::CorruptedIndex("stored authority log row"))?;
+        let AuthorityEntryRead::Open(entry) = read else {
+            continue;
+        };
         let hash = authority_entry_hash(&entry)?;
         let AuthorityOp::OwnerRoot(record) = entry.op else {
             continue;
@@ -230,6 +234,7 @@ pub(crate) fn anchor_signed_entry(
     if fold.vault_id.is_none() || parents.is_empty() {
         return Err(invalid_authority());
     }
+    let overlay_seed = authority_overlay_seed_for(&op)?;
     let mut entry = AuthorityLogEntry {
         schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
         vault_id: fold.vault_id,
@@ -243,6 +248,7 @@ pub(crate) fn anchor_signed_entry(
         },
         cosigns: Vec::new(),
         ts: now,
+        overlay_seed,
     };
     entry.signer.signature = signer
         .sign(&authority_transcript(&entry)?)
