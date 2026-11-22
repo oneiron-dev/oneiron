@@ -7,7 +7,7 @@
 //! counted exactly as before, and a legally held body is never projected or
 //! used to decide it.
 use super::access_gate::HeldAuthority;
-use super::point_reads::{PointRead, ReadRow, ReadTarget};
+use super::point_reads::{PointRead, ReadRow, ReadTarget, records_served};
 use super::{RetrievalFilter, ScopedRead, ScopedReadResult};
 use crate::gate::{PolicyManifestResolution, ResolvedRetrievalFilter};
 use crate::vault::ReadMode;
@@ -109,12 +109,11 @@ impl ScopedRead<'_> {
             suppressed,
             Some(&authority),
         );
-        self.charge_served(
+        self.charge_served(records_served(
             value
                 .iter()
-                .filter_map(|slot| slot.as_ref().ok().and_then(Option::as_ref))
-                .map(|row| row.id),
-        );
+                .filter_map(|slot| slot.as_ref().ok().and_then(Option::as_ref)),
+        ));
         Ok(ScopedReadResult {
             value: project(txn, value)?,
             receipt,

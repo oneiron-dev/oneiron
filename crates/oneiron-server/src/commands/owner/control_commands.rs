@@ -332,6 +332,10 @@ pub fn legal_holds(command: crate::cli::LegalHoldsCommand) -> anyhow::Result<()>
                 },
             )?;
             eprintln!("{}", serde_json::to_string_pretty(&preview.takes)?);
+            anyhow::ensure!(
+                args.yes,
+                "nothing was lifted; run it again with --yes to lift the hold shown above"
+            );
             request.confirm = Some(preview.confirm);
             hooked_row(
                 &vault,

@@ -2875,7 +2875,7 @@ oneiron legal-holds place --record HEX [--record HEX] [--gate-partition HEX|none
 oneiron legal-holds widen HOLD --record HEX
 oneiron legal-holds list
 oneiron legal-holds log
-oneiron legal-holds lift --hold HEX
+oneiron legal-holds lift --hold HEX --yes   # prints the hold; lifts it only with --yes
 oneiron legal-holds produce --hold HEX --recipient-key BASE64
 ```
 
@@ -2895,7 +2895,8 @@ Routes take targets as `{"record": "<hex>"}`, `{"gate_partition": "<hex>"}` or
   with the verb `vault.owner_confirm.preview` and
   `{"verb": "vault.legal_holds.lift", "input": {"hold_id": "<hex>"}}`, which shows the hold as it
   stands and answers the `confirm`. A hold widened since that preview is not lifted. Nothing in the
-  vault is erased by it. `oneiron legal-holds lift` previews, prints the hold, and confirms it.
+  vault is erased by it. `oneiron legal-holds lift` previews and prints the hold; it lifts only
+  with `--yes`.
 - `POST /v1/owner/legal-holds/produce` with `{"hold_id": "<hex>", "recipient_public_key": "<base64>"}`
   re-seals the hold's sealed copy to the recipient public key you name, and logs the access.
 
