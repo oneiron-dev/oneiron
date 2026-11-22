@@ -813,9 +813,9 @@
      "path": "src/agent_def/plan_mode.rs",
      "purpose": "An agent's plan mode (agent-runtime-v1.md, \"Plan mode reuses built review parts\": \"Per-agent plan_mode…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 1,
-      "fn": 3,
+      "fn": 4,
       "struct": 2
      }
     },
@@ -10862,6 +10862,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/blob_artifact/esign/door/legal_send.rs",
+     "purpose": "The check-in of a person's send for signature (ROLES-CHECKIN P2.5, row 2k6a; ARCH-0082 #act-table \"Legal…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/blob_artifact/esign/door/links.rs",
      "purpose": "`vault.esign.links.issue` for a narrowed credential (FIX 6403)",
      "surface": {
@@ -11126,7 +11136,7 @@
      "path": "src/blob_artifact/esign/principals.rs",
      "purpose": "Owner-editable principal set and the legal-reality-gated D6 action dial",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 2,
       "struct": 1
@@ -11409,6 +11419,16 @@
      "purpose": "E-sign's pack Setting keys (owner ruling PACK-SETTINGS-ALL = B)",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/blob_artifact/esign/sign_check_in.rs",
+     "purpose": "The check-in of a sign act as the vault's principal (ROLES-CHECKIN P2.5, row 2k6b; ARCH-0082 #act-table…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -17119,7 +17139,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/check_in/effect.rs",
@@ -17127,7 +17147,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 13,
-      "fn": 17,
+      "fn": 22,
       "re-export": 1
      }
     },
@@ -17139,7 +17159,7 @@
      "purpose": "Check-in: one mechanism for every act that may need an ask (ONEIRON-ARCH-0082; owner ruling ROLES-CHECKIN =…",
      "surface": {
       "crate-vis": 17,
-      "re-export": 15
+      "re-export": 19
      }
     },
     {
@@ -25626,6 +25646,21 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "HttpMethod",
+      "HttpOperation"
+     ],
+     "path": "src/connector_key/http_operation.rs",
+     "purpose": "Where one call of an HTTP API connector's tool goes (L8-31): the method, the path under the installed…",
+     "surface": {
+      "enum": 1,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/connector_key/lifecycle/budgets.rs",
      "purpose": "Owner budget-row ops: append active row, stage suggestion, accept suggestion",
@@ -25920,8 +25955,8 @@
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01",
      "surface": {
       "crate-vis": 24,
-      "mod": 3,
-      "re-export": 18
+      "mod": 4,
+      "re-export": 19
      }
     },
     {
@@ -26312,6 +26347,17 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/connector_key/typescript.rs",
+     "purpose": "A resolved tool schema as TypeScript (L8-31; agent runtime `#code-mode-translation` and `#d10-built-state`…",
+     "surface": {
+      "const": 1,
+      "fn": 3
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -26694,9 +26740,9 @@
      "path": "src/consent/lifecycle.rs",
      "purpose": "Typed public consent lifecycle calls",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
-      "fn": 6,
+      "fn": 7,
       "re-export": 2,
       "struct": 2
      }
@@ -26950,7 +26996,7 @@
      "path": "src/consent_graduation/api.rs",
      "purpose": "Typed consent-graduation public door",
      "surface": {
-      "fn": 9,
+      "fn": 10,
       "re-export": 1,
       "struct": 10
      }
@@ -31385,7 +31431,7 @@
      "path": "src/disclosure/disclosable_set.rs",
      "purpose": "The ILDF2 room rule (ONE-1592, ratified 2026-09-23): `disclosable_set = public ∪ (∩ clearances of all…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 5,
       "fn": 5,
       "re-export": 1,
       "struct": 1
@@ -33483,7 +33529,7 @@
      "purpose": "The owner's standing grant that lets the Dreamer apply the SameAs links its nightly continuations propose…",
      "surface": {
       "crate-vis": 1,
-      "fn": 1,
+      "fn": 2,
       "re-export": 1
      }
     },
@@ -39437,7 +39483,7 @@
      "path": "src/edit_distance/graduation/answers.rs",
      "purpose": "Offer answers and the snooze-state machine",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 3,
       "fn": 7
      }
@@ -39449,7 +39495,7 @@
      "path": "src/edit_distance/graduation/mod.rs",
      "purpose": "ED-05 (ONE-1761, ARCH-0056 §6 · OF-399 · DEC-0006): the graduation POLICY and the offer-answer UX above…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "re-export": 6
      }
     },
@@ -43978,7 +44024,7 @@
      "path": "src/federation/org_admin.rs",
      "purpose": "Closed organization-administration powers",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 7,
       "re-export": 2,
       "struct": 1
@@ -44630,7 +44676,7 @@
      "path": "src/federation/system_agent_grant.rs",
      "purpose": "The Steward grant a base agent holds by default (untangle 6.3; ARCH-0043's Steward role, owner 9 Nov 2026…",
      "surface": {
-      "crate-vis": 29,
+      "crate-vis": 31,
       "fn": 5,
       "re-export": 2
      }
@@ -46281,7 +46327,7 @@
      "path": "src/gate/dreamer_grant.rs",
      "purpose": "The Dreamer's weave rows, the owner's grant that adds them to a vault seeded without them, and the read-only…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 3,
       "struct": 1
      }
@@ -47768,7 +47814,7 @@
      "surface": {
       "crate-vis": 5,
       "enum": 1,
-      "fn": 1,
+      "fn": 2,
       "struct": 1
      }
     },
@@ -94818,7 +94864,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/task_verb/lifecycle_facade.rs",
@@ -97309,7 +97355,7 @@
      "path": "src/test_doors/disclosure_word_sources.rs",
      "purpose": "Doors for `tests/disclosure_summary_word_sources.rs` (census L5-13): the general disclosure clamp, as a…",
      "surface": {
-      "fn": 8
+      "fn": 9
      }
     },
     {
@@ -102807,7 +102853,7 @@
      "purpose": "The inputs and answers of the owner's agent grant rows (FIX 5628): `vault.agents.grants.mint` and `.revoke`…",
      "surface": {
       "enum": 1,
-      "fn": 10,
+      "fn": 12,
       "re-export": 1,
       "struct": 9
      }
@@ -103204,7 +103250,7 @@
      "path": "src/verbs/connector_witness_read_grant.rs",
      "purpose": "`vault.connectors.read_grants.revoke` (FIX 10895): the owner revokes an agent's witness-read grant over a…",
      "surface": {
-      "fn": 2,
+      "fn": 3,
       "re-export": 1
      }
     },
@@ -103219,7 +103265,7 @@
      "path": "src/verbs/coreference.rs",
      "purpose": "Typed cross-vault identity links",
      "surface": {
-      "fn": 5,
+      "fn": 6,
       "re-export": 1,
       "struct": 3
      }
@@ -103574,7 +103620,7 @@
      "purpose": "The inputs and answers of the owner's `git_push` Grant rows (FIX 6867, G1-PUSH): `vault.repo.git_push.mint`…",
      "surface": {
       "const": 1,
-      "fn": 4,
+      "fn": 5,
       "re-export": 1
      }
     },
@@ -103968,7 +104014,7 @@
      "path": "src/verbs/mod.rs",
      "purpose": "Shared typed agent-verb inputs and generated transport dispatch",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 9,
       "mod": 1,
       "re-export": 152,
@@ -104678,7 +104724,7 @@
      "path": "src/verbs/shared_admin.rs",
      "purpose": "Named organization administration, one-hop Delegate grants and scoped member projections",
      "surface": {
-      "fn": 5,
+      "fn": 6,
       "re-export": 1,
       "struct": 4
      }
@@ -110666,6 +110712,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/check_in_agent_grant_effects.rs",
+     "purpose": "ROLES-CHECKIN P2.5, rows 2k7a and 2k7b (ARCH-0082 #act-table \"Widen another's grant\" and #owner-own-acts…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -110687,6 +110741,14 @@
      "notable": [],
      "path": "tests/check_in_closed_room.rs",
      "purpose": "An add into a closed room (ARCH-0082 #closed-room; Engine ruling P26-SHAPE Q5 = A): any add asks the room's…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/check_in_consent_grant_effects.rs",
+     "purpose": "ROLES-CHECKIN P2.5, row 2k8a (ARCH-0082 #act-table \"Widen another's grant\" and #owner-own-acts; Engine…",
      "surface": {}
     },
     {
@@ -110733,6 +110795,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/check_in_engine_controls_git_push_effects.rs",
+     "purpose": "ROLES-CHECKIN P2.5, row 2k7c (ARCH-0082 #act-table \"Widen another's grant\" and #owner-own-acts; Engine…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/check_in_erase_effects.rs",
      "purpose": "ROLES-CHECKIN P2.5, row 2k2a (ARCH-0082 #act-table \"Erase (C)\" and #owner-own-acts; Engine ruling P25-SHAPE…",
      "surface": {}
@@ -110757,6 +110827,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/check_in_legal_send.rs",
+     "purpose": "ROLES-CHECKIN P2.5, row 2k6a (ARCH-0082 #act-table \"Legal: prepare and send for signature\", #role-defaults…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/check_in_mail_compliance_effects.rs",
      "purpose": "ROLES-CHECKIN P2.5, row 2k4b (ARCH-0082 #act-table \"Disable a security control (C)\", #role-defaults and…",
      "surface": {}
@@ -110767,6 +110845,14 @@
      "notable": [],
      "path": "tests/check_in_membership_effects.rs",
      "purpose": "ROLES-CHECKIN P2.4b, piece 2i (ARCH-0082 #composing and #role-defaults; Engine ruling P24-SHAPE Q3, Q4, Q5…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/check_in_org_admin_coreference_effects.rs",
+     "purpose": "ROLES-CHECKIN P2.5, row 2k8b (ARCH-0082 #act-table \"Widen another's grant\" and #owner-own-acts; Engine…",
      "surface": {}
     },
     {
@@ -110837,8 +110923,24 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/check_in_sign.rs",
+     "purpose": "ROLES-CHECKIN P2.5, row 2k6b (ARCH-0082 #act-table \"Sign act (C)\", \"Sign: anyone signs in their own name",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/check_in_spawn_parent.rs",
      "purpose": "FIX CHECK-IN-SPAWN-PARENT-PRINCIPAL (UNBUILT-09; ARCH-0082 #ladder, rung 2: \"The parent of a spawned child\"…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/check_in_witness_read_plan_mode_effects.rs",
+     "purpose": "ROLES-CHECKIN P2.5, row 2k8c (ARCH-0082 #act-table \"Widen another's grant\" and #owner-own-acts; Engine…",
      "surface": {}
     },
     {
@@ -111563,6 +111665,14 @@
      "notable": [],
      "path": "tests/connector_thread_session.rs",
      "purpose": "OWN-VOICE-EPOCHS = C, Engine ruling UNBUILT-02-SITTING = A: \"A connector thread keeps its own SESSION.\"",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/connector_typed_signatures.rs",
+     "purpose": "Typed code-mode signatures for admitted connectors (L8-31, PR 1; agent runtime `#code-mode-translation`…",
      "surface": {}
     },
     {
@@ -115701,6 +115811,14 @@
      "notable": [],
      "path": "tests/microvm_intermediate_symlink.rs",
      "purpose": "[MICROVM-INTERMEDIATE-SYMLINK-NOTFOUND]: a base-mount read whose path crosses a symlinked directory is…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/model_step_row_times.rs",
+     "purpose": "A model step's rows are stamped in Unix seconds, as every claim and entity row is (FIX…",
      "surface": {}
     },
     {
@@ -120821,7 +120939,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 96,
+     "files": 98,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -120928,7 +121046,7 @@
     "check_in": {
      "files": 17,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Check-in: one mechanism for every act that may need an ask (ONEIRON-ARCH-0082; owner ruling ROLES-CHECKIN =…"
     },
@@ -121094,7 +121212,7 @@
      "purpose": "Connect delivery and rejoin wire vocabulary"
     },
     "connector_key": {
-     "files": 64,
+     "files": 66,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -122466,10 +122584,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 274,
+   "over_bar": 276,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8540,
-   "test_files": 2250
+   "source_files": 8544,
+   "test_files": 2259
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -167708,7 +167826,7 @@
      "path": "src/api/owner_routes/connector_admission_routes.rs",
      "purpose": "`/v1/owner/connectors/register`, `/setup`, `/slate/accept` and `/qualify`: the owner's first admission of a…",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -173161,7 +173279,17 @@
      "path": "src/connector_admission_host.rs",
      "purpose": "The host half of a generic MCP catalog connector's first admission (OF-189): discovery at the endpoint…",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 19
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/connector_admission_host/api_document.rs",
+     "purpose": "The tools an installed connector lists, whichever way it was installed (L8-31 D6, D8): an MCP connector's…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -173197,6 +173325,16 @@
       "fn": 1,
       "mod": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/connector_call_host/http_api.rs",
+     "purpose": "One call of a tool translated from an API document (L8-31 D7): the request its stamped [`HttpOperation`] and…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -173398,6 +173536,36 @@
      "notable": [],
      "path": "src/connector_elicitation/status.rs",
      "purpose": "Live questions joined to an already-authorized native status snapshot",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [],
+     "path": "src/connector_translate/discovery.rs",
+     "purpose": "Google Discovery documents as connector tools (L8-31 D5; canon agent-runtime `#translator-inputs`: \"The…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/connector_translate/mod.rs",
+     "purpose": "API documents as connector tools (L8-31, canon agent-runtime `#translator-inputs`: \"The generic translator…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [],
+     "path": "src/connector_translate/openapi.rs",
+     "purpose": "OpenAPI 3.0 and 3.1 documents as connector tools (L8-31 D4)",
      "surface": {
       "crate-vis": 1
      }
@@ -184502,8 +184670,24 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/connector_discovery_source.rs",
+     "purpose": "A Google API its Discovery document describes is a connector (L8-31 PR 3, canon agent-runtime…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/connector_issuer_prm_refusal.rs",
      "purpose": "L5-11 (ARCH-0054 #auth \"PRM 401 bootstrap\"; ARCH-0072 #drift): the issuer watch a connector send runs at a…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/connector_openapi_source.rs",
+     "purpose": "An HTTP API its OpenAPI document describes is a connector (L8-31 PR 2, canon agent-runtime…",
      "surface": {}
     },
     {
@@ -187419,14 +187603,14 @@
      "purpose": "Server configuration: resolved types, CLI flags, and the file/env/argv merge"
     },
     "connector_admission_host": {
-     "files": 3,
+     "files": 4,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "The host half of a generic MCP catalog connector's first admission (OF-189): discovery at the endpoint…"
     },
     "connector_call_host": {
-     "files": 14,
+     "files": 15,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -187445,6 +187629,13 @@
      "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "The questions a connector asks mid-call, kept live for their caller, and the caller's answers (ONE-2510)"
+    },
+    "connector_translate": {
+     "files": 3,
+     "impl_vault": false,
+     "largest_src_bucket": "L",
+     "layout": "dir",
+     "purpose": "API documents as connector tools (L8-31, canon agent-runtime `#translator-inputs`: \"The generic translator…"
     },
     "control_keys": {
      "files": 3,
@@ -187937,10 +188128,10 @@
      "purpose": "The host's precision recalculator (ARCH-0075 xlsx row; FIX 2462, OF-505 = A): LibreOffice Calc headless…"
     }
    },
-   "over_bar": 65,
+   "over_bar": 67,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 2114,
-   "test_files": 569
+   "source_files": 2119,
+   "test_files": 571
   },
   "oneiron-setting-contract": {
    "files": [
@@ -189705,6 +189896,7 @@
       "DocumentStatus",
       "EsignAuditActor",
       "EsignAuthenticationMethod",
+      "EsignCheckInDecision",
       "EsignField",
       "EsignItem",
       "EsignRecipient",
@@ -189724,7 +189916,7 @@
       "const": 2,
       "enum": 10,
       "fn": 2,
-      "struct": 8
+      "struct": 9
      }
     },
     {
