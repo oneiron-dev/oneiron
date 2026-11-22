@@ -7,9 +7,9 @@ use crate::entity_id::EntityId;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::deletion::legal_hold::types::{
-    ErasePendingReason, EraseWithdrawal, LIFT_AND_ERASE_PROMPT, LIFT_AND_ERASE_TITLE, LegalHold,
-    LegalHoldActorKind, LegalHoldEvent, LegalHoldEventKind, LegalHoldKind, LegalHoldReason,
-    LegalHoldTarget,
+    ErasePendingReason, EraseWithdrawal, HoldCloneCapture, LIFT_AND_ERASE_PROMPT,
+    LIFT_AND_ERASE_TITLE, LegalHold, LegalHoldActorKind, LegalHoldEvent, LegalHoldEventKind,
+    LegalHoldKind, LegalHoldReason, LegalHoldTarget,
 };
 
 /// What an owner erase shows until its deletion receipt completes or its

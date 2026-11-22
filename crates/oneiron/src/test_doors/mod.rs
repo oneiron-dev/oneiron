@@ -231,6 +231,7 @@ pub mod kept_image_holders;
 pub mod label_writers;
 pub mod learning_claim_value;
 pub mod learning_setting_sourced;
+pub mod legal_hold;
 pub mod lib_rows_b_repeated_key;
 pub mod lifted_text;
 pub mod linkedin_seat_settings;

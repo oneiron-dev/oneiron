@@ -21,7 +21,7 @@
 
 /// Owner-permitted customer hold archive landing.
 pub(crate) mod archive;
-mod events;
+pub(crate) mod events;
 mod notice;
 mod pending;
 mod person_content;
@@ -697,6 +697,7 @@ pub(crate) fn set_partition_hold_in_txn(
                 lifted_at: None,
                 owner_told: true,
                 requires_non_use: false,
+                clone_captures: Vec::new(),
             };
             put_hold_in_txn(dbs, txn, &hold)?;
             log_in_txn(

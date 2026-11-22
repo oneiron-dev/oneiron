@@ -73,6 +73,15 @@ pub enum LegalHoldActorKind {
     Unattributed,
 }
 
+/// One sealed capture of an owner's hold in the install's hold store:
+/// the capture's id and the fingerprint of its sealed frames.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HoldCloneCapture {
+    pub capture: EntityId,
+    pub fingerprint: [u8; 32],
+}
+
 /// One hold row.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -110,6 +119,10 @@ pub struct LegalHold {
     /// (FIX 8849).
     #[serde(default)]
     pub requires_non_use: bool,
+    /// The sealed captures of this hold in the install's hold store, oldest
+    /// first. Empty on rows written before the sealed copy.
+    #[serde(default)]
+    pub clone_captures: Vec<HoldCloneCapture>,
 }
 
 impl LegalHold {
@@ -226,6 +239,11 @@ pub struct LegalHoldEvent {
     pub matter_ref: Option<String>,
     /// The ARCH-0038 receipt's `request_id`, on "erase completed".
     pub request_id: Option<String>,
+    /// The fingerprint of the sealed capture this event placed or widened;
+    /// `None` on rows written before the sealed copy and on events that
+    /// wrote none.
+    #[serde(default)]
+    pub clone_fingerprint: Option<[u8; 32]>,
 }
 
 /// What an erase that ran still waits on (C4).
