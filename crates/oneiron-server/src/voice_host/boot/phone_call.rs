@@ -19,7 +19,27 @@ use crate::voice_host::backend::CallBackend;
 use crate::voice_host::phone::PhoneCallRead;
 use crate::voice_host::{
     ChatBrain, ChatBrainBindings, VoiceHost, VoiceHostBindings, VoiceWireBindings,
+    phone_call_opening, phone_call_record,
 };
+
+/// The voice session of the phone call `call_ref` the line agent `agent`
+/// answers: its one other party an unknown speaker, its policy caller the
+/// agent.
+pub(crate) fn phone_call_session(call_ref: &str, agent: EntityId) -> VoiceSessionConfig {
+    let mut session = VoiceSessionConfig::new(
+        call_ref.to_owned(),
+        InterlocutorResolutionInput {
+            owner_session: false,
+            parties: vec![InterlocutorPartyInput::UnknownLabel {
+                label: call_ref.to_owned(),
+                claimed_owner: false,
+            }],
+            voice_session_ref: None,
+        },
+    );
+    session.policy_caller_ref = Some(agent.to_hex());
+    session
+}
 
 pub(in crate::voice_host) fn prepare_phone_call(
     server: &Arc<SyncServer>,
@@ -41,18 +61,7 @@ pub(in crate::voice_host) fn prepare_phone_call(
         .clone()
         .filter(|text| !text.trim().is_empty());
     let call_ref = format!("voice-call:{}", EntityId::now().to_hex());
-    let mut session = VoiceSessionConfig::new(
-        call_ref.clone(),
-        InterlocutorResolutionInput {
-            owner_session: false,
-            parties: vec![InterlocutorPartyInput::UnknownLabel {
-                label: call_ref.clone(),
-                claimed_owner: false,
-            }],
-            voice_session_ref: None,
-        },
-    );
-    session.policy_caller_ref = Some(agent.to_hex());
+    let session = phone_call_session(&call_ref, agent);
     let units = settings.call_budget_units;
     let line = vault
         .policy_budget_guard(
@@ -108,15 +117,19 @@ pub(in crate::voice_host) fn prepare_phone_call(
         payer,
         funding: None,
         out,
-        // A phone call keeps no turn yet: a stranger's words, under the
-        // owner's call-transcript settings, are UNBUILT-02 PR 3.
-        record: None,
+        // The caller's words and the answers, kept as the agent's thread
+        // with that number under the owner's call-transcript setting
+        // (UNBUILT-02 PR 3).
+        record: phone_call_record(vault, agent, phone.caller(), &call_ref),
     })
     .map_err(failed)?;
     let render = settings
         .render
         .clone()
         .ok_or_else(|| failed("no voice to speak in"))?;
+    // The owner's announcement, said before the caller's first words when
+    // `voice.call_transcripts.announce` is on (UNBUILT-02 PR 3B).
+    let opening = phone_call_opening(vault, phone.definition());
     Ok(PreparedCall {
         session_ref: call_ref,
         host,
@@ -132,5 +145,6 @@ pub(in crate::voice_host) fn prepare_phone_call(
             queue_capacity: settings.queue_capacity,
         },
         live: None,
+        opening,
     })
 }

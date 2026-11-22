@@ -30,7 +30,7 @@ use oneiron::llm::decision::{
     DecisionRung, HeldLadder, ProviderDecision, ProviderPin,
 };
 use oneiron::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
-use oneiron::registry::ENTITY_TYPE_ORG;
+use oneiron::registry::{ENTITY_TYPE_ORG, ENTITY_TYPE_RELATIONSHIP};
 use oneiron::store::GateDecisionId;
 use oneiron::verbs::{AgentGrantMintRequest, mint_agent_grant_as};
 use oneiron::workspace_roster::{WorkCompanionPolicy, WorkspaceRosterPreset};
@@ -116,6 +116,7 @@ fn owner_turn(vault: &Vault, owner: EntityId, metadata: serde_json::Value) {
             conversation_ref: EntityId::now().to_hex(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             occurred_at: 1,
             messages: vec![WitnessMessage {
                 id: Some(EntityId::now().to_hex()),
@@ -166,10 +167,18 @@ fn a_relationship_scoped_message_stays_withheld_from_the_house() -> Result<()> {
     let decider = CountingDecider::new();
 
     // The MESSAGE names a relationship the house holds no grant over.
+    let relationship = EntityId::now();
+    vault.put_entity(
+        &relationship,
+        ENTITY_TYPE_RELATIONSHIP,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"relationship",
+    )?;
     owner_turn(
         &vault,
         owner,
-        serde_json::json!({ "rel": EntityId::now().to_hex() }),
+        serde_json::json!({ "rel": relationship.to_hex() }),
     );
     assert_eq!(
         ask(&vault, &decider),

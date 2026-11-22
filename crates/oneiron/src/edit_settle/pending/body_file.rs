@@ -15,6 +15,8 @@
 
 use std::io::{Cursor, Read};
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use crate::Vault;
 use crate::blob_artifact::BlobContent;
 use crate::entity_id::EntityId;
@@ -204,7 +206,7 @@ impl Vault {
         let mut bytes = Vec::with_capacity(usize::try_from(file.body.bytes).unwrap_or(0));
         reader.read_to_end(&mut bytes)?;
         if bytes.len() as u64 != file.body.bytes
-            || blake3::hash(&bytes).as_bytes() != &file.body.blake3
+            || ContentHash::of(&bytes).as_bytes() != &file.body.blake3
         {
             return Err(Error::CorruptedIndex("pending output digest"));
         }

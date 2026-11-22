@@ -43,6 +43,17 @@ pub(crate) fn record_item_touch_in_txn(
 /// Stamp one opened item's last touch. An item with no read cache has
 /// nothing to age, so the stamp is skipped.
 pub fn record_item_touch(vault: &Vault, item: EntityId) -> Result<()> {
+    record_item_touch_with(vault, item, |_| Ok(()))
+}
+
+/// [`record_item_touch`], with `finish` run in the stamp's transaction: an
+/// owner's open directive records its result there, so the stamp commits
+/// only with it (row SEQ-FLOOR-S-WITHHELD-COSIGN).
+pub(crate) fn record_item_touch_with(
+    vault: &Vault,
+    item: EntityId,
+    finish: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
+) -> Result<()> {
     let now = vault.store.clock.wall_now();
     vault.with_write_txn_grouped(|txn| {
         if vault
@@ -53,7 +64,7 @@ pub fn record_item_touch(vault: &Vault, item: EntityId) -> Result<()> {
         {
             record_item_touch_in_txn(vault, txn, item, now)?;
         }
-        Ok(())
+        finish(txn)
     })
 }
 

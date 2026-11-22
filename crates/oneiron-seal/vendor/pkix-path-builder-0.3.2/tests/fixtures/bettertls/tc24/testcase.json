@@ -1,0 +1,9 @@
+{
+  "anchors_count": 1,
+  "bucket": "no-path-to-anchor",
+  "description": "Testcase `24` from the BetterTLS `pathbuilding` suite.",
+  "expected_result": "SUCCESS",
+  "id": "bettertls::pathbuilding::tc24",
+  "intermediates_count": 2,
+  "validation_time": "2026-01-19T17:25:55+00:00"
+}

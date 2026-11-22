@@ -802,6 +802,16 @@ impl<'a> DreamerRunnerStore<'a> {
                     now: input.now,
                 },
             )?;
+            let record = match &outcome {
+                CompleteOutcome::Completed(record) | CompleteOutcome::AlreadyCompleted(record) => {
+                    record
+                }
+            };
+            // A Coach job can move between its worker and a wake pass. Its
+            // terminal write releases the accounting reservations both held.
+            if record.kind == super::maintenance::coach::COACH_HOST_QUEUE_KIND {
+                self.settle_ended_budget_in_txn(wtxn, attempt_id, input.now)?;
+            }
             self.cleanup_step_receipts_in_txn(wtxn, attempt_id)?;
             let reported = context.and_then(|context| {
                 let record = match &outcome {
@@ -830,11 +840,6 @@ impl<'a> DreamerRunnerStore<'a> {
             // A finished agent launch settles its spend lease (OF-532) in the
             // commit that finishes it: its parent pays what it spent and the
             // unused hold goes back. Settling twice is a no-op.
-            let record = match &outcome {
-                CompleteOutcome::Completed(record) | CompleteOutcome::AlreadyCompleted(record) => {
-                    record
-                }
-            };
             // FIX 1554: a report filed while a Coach Issues run held its
             // lease gets its successor in the commit that settles the run.
             self.redrive_coach_issues_in_txn(wtxn, record, input.now)?;
@@ -1016,6 +1021,9 @@ impl<'a> DreamerRunnerStore<'a> {
                     input.budget_refusal.as_ref(),
                     input.now,
                 )?;
+                if record.kind == super::maintenance::coach::COACH_HOST_QUEUE_KIND {
+                    self.settle_ended_budget_in_txn(wtxn, attempt_id, input.now)?;
+                }
                 self.cleanup_step_receipts_in_txn(wtxn, attempt_id)?;
                 Ok(outcome)
             })?;
@@ -1271,6 +1279,14 @@ impl<'a> DreamerRunnerStore<'a> {
         super::seat_wait::unindex_seat_wait_in_txn(self.vault, wtxn, &record)?;
         super::policy_wait::unindex_policy_wait_in_txn(self.vault, wtxn, &record)?;
         PARKED.delete(&self.vault.store, wtxn, &attempt_id)?;
+        // A woken budget trap park waits on no owner answer: its open ask is
+        // withdrawn in the wake's write (RUNBUDGET-SCOPE = B).
+        if matches!(
+            record.wait.as_ref().map(|wait| &wait.wait),
+            Some(DreamerParkWait::Budget { .. } | DreamerParkWait::ResidentShare { .. })
+        ) {
+            crate::agent_dispatch::withdraw_budget_trap_ask_in_txn(self.vault, wtxn, attempt_id)?;
+        }
         // FIX 4747: a resuming agent run keeps its executor lease until its
         // next claim takes it.
         crate::agent_dispatch::renew_agent_run_lease_in_txn(self.vault, wtxn, attempt_id)?;

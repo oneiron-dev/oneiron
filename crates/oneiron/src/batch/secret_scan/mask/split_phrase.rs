@@ -16,6 +16,7 @@ use rmpv::Value;
 use zeroize::Zeroizing;
 
 use super::super::{byte_values, shapes};
+use super::body::BodyForm;
 use super::wipe::PlanTree;
 use crate::file_secret_marks::FILLER;
 
@@ -33,7 +34,7 @@ pub(super) struct SplitPhrase {
 /// lossy text, as the text rules read a body that is no valid UTF-8.
 pub(super) fn split_phrases(leaf: &[u8]) -> Vec<SplitPhrase> {
     let mut phrases = Vec::new();
-    if let Some((tree, node)) = decoded(leaf) {
+    if let Some((tree, node, _)) = decoded(leaf) {
         read_part(&tree.0, &node, &mut phrases);
         // The whole read: every text the leaf carries, one per line.
         read_text(&mut phrases, |text| {
@@ -455,22 +456,69 @@ fn phrases_in(text: &str) -> Vec<(Zeroizing<Vec<u8>>, Range<usize>)> {
 }
 
 /// `leaf` decoded as the door decodes a body (`decode_members`: JSON, else
-/// one whole MessagePack value), with where each of its parts sits.
-fn decoded(leaf: &[u8]) -> Option<(PlanTree, Node)> {
+/// one whole MessagePack value), with where each of its parts sits and the
+/// form it read in.
+pub(super) fn decoded(leaf: &[u8]) -> Option<(PlanTree, Node, BodyForm)> {
     if let Ok(value) = serde_json::from_slice::<Value>(leaf) {
         let tree = PlanTree(value);
-        return json::node(leaf).map(|node| (tree, node));
+        return json::node(leaf).map(|node| (tree, node, BodyForm::Json));
     }
     let mut cursor = std::io::Cursor::new(leaf);
     let tree = PlanTree(rmpv::decode::read_value(&mut cursor).ok()?);
     if cursor.position() != leaf.len() as u64 {
         return None;
     }
-    messagepack::node(leaf).map(|node| (tree, node))
+    messagepack::node(leaf).map(|node| (tree, node, BodyForm::MessagePack))
+}
+
+/// The bytes the part of `node` at `path` (`part_at`'s steps: an array's
+/// item by its index, a map's key at `2i` and its member at `2i + 1`) spans
+/// in the leaf, from the first byte its parts write to the last; `None` when
+/// the path names no part, or the part writes none (nil, a boolean, a
+/// float).
+pub(super) fn part_span(node: &Node, path: &[usize]) -> Option<Range<usize>> {
+    let mut at = node;
+    for &step in path {
+        at = match at {
+            Node::Array(items) => items.get(step)?,
+            Node::Map(fields) => {
+                let (key, member) = fields.get(step / 2)?;
+                if step.is_multiple_of(2) { key } else { member }
+            }
+            _ => return None,
+        };
+    }
+    let mut span: Option<Range<usize>> = None;
+    written_spans(at, &mut |part| {
+        span = Some(match span.take() {
+            Some(held) => held.start.min(part.start)..held.end.max(part.end),
+            None => part,
+        });
+    });
+    span
+}
+
+/// Each span `node` and the parts under it write their values at.
+fn written_spans(node: &Node, each: &mut dyn FnMut(Range<usize>)) {
+    match node {
+        Node::Bytes { span, .. } | Node::Number(span) => each(span.clone()),
+        Node::Array(items) => {
+            for item in items {
+                written_spans(item, each);
+            }
+        }
+        Node::Map(fields) => {
+            for (key, member) in fields {
+                written_spans(key, each);
+                written_spans(member, each);
+            }
+        }
+        Node::Other => {}
+    }
 }
 
 /// Where one decoded part sits in the leaf.
-enum Node {
+pub(super) enum Node {
     /// A string, binary or extension value: its payload's span, and whether
     /// those bytes are its value as written (a JSON string with an escape
     /// is not).
@@ -808,9 +856,8 @@ fn reads_as_text(item: &Value, node: &Node) -> bool {
 /// the door decodes `leaf` as neither JSON nor one MessagePack value: it
 /// reads that leaf, and the leaf filled, as text alone.
 pub(super) fn filled_in_place(leaf: &[u8], marks: &[Range<usize>]) -> Option<Zeroizing<Vec<u8>>> {
-    let (_, node) = decoded(leaf)?;
-    // `decoded` takes JSON first.
-    let json = serde_json::from_slice::<Value>(leaf).map(PlanTree).is_ok();
+    let (_, node, form) = decoded(leaf)?;
+    let json = matches!(form, BodyForm::Json);
     let mut copy = Zeroizing::new(leaf.to_vec());
     fill_in_place(&node, json, leaf, marks, &mut copy);
     Some(copy)

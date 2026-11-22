@@ -47,8 +47,7 @@ struct Config {
 fn print_usage() {
     eprintln!(
         "usage: vector_row_codec [--repeats N] [--dims D] [--rows R]\n\
-         defaults: repeats={} dims={} rows={}",
-        DEFAULT_REPEATS, DEFAULT_DIMS, DEFAULT_ROWS
+         defaults: repeats={DEFAULT_REPEATS} dims={DEFAULT_DIMS} rows={DEFAULT_ROWS}"
     );
 }
 

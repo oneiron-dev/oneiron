@@ -23,6 +23,7 @@
 //! restore (KS7-5) do, once [`super::CHECKPOINT_PAYLOADS_ENABLED`] is on.
 
 mod class;
+pub(crate) mod descriptor;
 mod frame;
 mod restore;
 mod typed;

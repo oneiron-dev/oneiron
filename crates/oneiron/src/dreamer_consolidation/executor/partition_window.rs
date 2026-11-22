@@ -645,28 +645,31 @@ impl ConsolidationExecutor<'_> {
                     SlotWork::Panicked => Err(crate::dreamer_wake::executor_panic_error()),
                     SlotWork::Finished { run, live } => match (stopped, run) {
                         // The window stopped ahead of this slot: only a
-                        // checkpoint, a trap, a spent seat's refusal or an
-                        // error settles, as a stopped prefix's do (review
-                        // round 2 of #7340); a run that would land parks
-                        // uncommitted, its spend accounted.
+                        // checkpoint, a trap, a spent seat's or the window's
+                        // refusal or an error settles, as a stopped prefix's
+                        // do (review round 2 of #7340); a run that would
+                        // land parks uncommitted, its spend accounted.
                         (
                             Some(_),
                             run @ (Ok(PartitionRun::Checkpoint
                             | PartitionRun::Trapped
-                            | PartitionRun::SeatRefused { .. })
+                            | PartitionRun::SeatRefused { .. }
+                            | PartitionRun::WindowRefused { .. })
                             | Err(_)),
                         )
-                        // A checkpoint, a trap or a seat refusal lands
-                        // nothing: it stands whatever an earlier slot
+                        // A checkpoint, a trap or a seat or window refusal
+                        // lands nothing: it stands whatever an earlier slot
                         // committed, and a re-run would ask the spent seat
-                        // again before its available write. Its held rows
-                        // drop: the resumed attempt replays its memoized
-                        // steps and writes them in its place.
+                        // again before its available write, or resend the
+                        // call refused for its window (Engine 21 Nov 07:38).
+                        // Its held rows drop: the resumed attempt replays
+                        // its memoized steps and writes them in its place.
                         | (
                             None,
                             run @ Ok(PartitionRun::Checkpoint
                             | PartitionRun::Trapped
-                            | PartitionRun::SeatRefused { .. }),
+                            | PartitionRun::SeatRefused { .. }
+                            | PartitionRun::WindowRefused { .. }),
                         ) => {
                             self.boxed_settle_partition_run(
                                 &resources,
@@ -791,12 +794,16 @@ impl ConsolidationExecutor<'_> {
                     SlotWork::Prefix(Ok(PartitionPrefix::Done(run))) => {
                         stages.close_model_run(run_started);
                         if let Some(stop) = stopped
-                            && !matches!(run, PartitionRun::Checkpoint)
+                            && !matches!(
+                                run,
+                                PartitionRun::Checkpoint | PartitionRun::WindowRefused { .. }
+                            )
                         {
                             // A running slot's Done is its cancel
-                            // checkpoint; never settle any other run
-                            // past the stop - Completed and Held
-                            // commit.
+                            // checkpoint (or a thing branch's window
+                            // refusal, which lands nothing and ends the
+                            // try); never settle any other run past the
+                            // stop - Completed and Held commit.
                             Ok(charges.park_for(stop.park_reason(), DreamerParkCause::Retry))
                         } else {
                             self.boxed_settle_partition_run(
@@ -819,9 +826,9 @@ impl ConsolidationExecutor<'_> {
                             // account the prefix and park without
                             // finishing - the serial pass never reaches
                             // its commit. A slice that already decided
-                            // the try (a trap, or a spent seat's refusal)
-                            // settles as the finish would have settled it
-                            // (review round 2 of #7340).
+                            // the try (a trap, a spend scope's or a window
+                            // refusal, a spent seat's) settles as the finish
+                            // would have settled it (review round 2 of #7340).
                             stages.close_model_run(run_started);
                             match super::super::step_charge::tally_extracted_outcomes(
                                 ctx.vault,
@@ -974,6 +981,10 @@ impl ConsolidationExecutor<'_> {
                         }
                     }
                 };
+                // A slot the window stopped parks unsettled: its line still
+                // counts the parse retries its slices sent (#10269 review,
+                // round 2).
+                stages.parse_retries = charges.parse_retries;
                 stages.log(attempt, turns, &executed);
                 executed
             }

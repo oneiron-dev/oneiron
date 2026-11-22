@@ -186,8 +186,8 @@
       "rows": [
         "OF-545"
       ],
-      "todo_reason": "waits on the canon producers: a Coach archive-axes job with its proposal receipt, a typed placement judgment and an archive quality score; install and record take those receipts from the caller unchecked",
-      "binding_note": "vault.research.archive.install/record/best/get/coverage/repropose and promotion_basis with a CampaignArchivePin exist; their proposal, placement and score receipts have no public producer (archive/records.rs ReceiptedRecipe/ReceiptedPlacement)."
+      "todo_reason": "waits on FIX 24827: no public client can complete the witnessed goal interview (vault.projects.goal.intake.complete) whose authenticated goal the archive reads; the archive producers propose_axes and judge exist",
+      "binding_note": "vault.research.archive.install/record/best/get/coverage/repropose and promotion_basis with a CampaignArchivePin exist; vault.research.archive.propose_axes and vault.research.archive.judge produce the proposal, placement and score receipts, and install and record check each one. The project's authenticated goal has no public producer (FIX 24827)."
     },
     {
       "id": "LEARNING-06",

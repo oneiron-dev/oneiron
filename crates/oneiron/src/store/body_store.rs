@@ -33,6 +33,7 @@ use rustix::io::Errno;
 use super::Store;
 use crate::store::known_value_index::{KnownSource, KnownSweep, KnownValues, RunKnownSource};
 use crate::{Error, Result};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 mod finish_pinned;
 mod finish_scanned;
@@ -751,8 +752,20 @@ impl Store {
     }
 }
 
-/// A session's body directory name: its reference's BLAKE3, so no session
-/// reference can name a path.
+/// A session's body directory name: its reference's BLAKE3
+/// (`purposes::store::SESSION_SPILL_DIR`), so no session reference can name
+/// a path.
 fn session_spill_name(session_ref: &str) -> String {
-    blake3::hash(session_ref.as_bytes()).to_hex().to_string()
+    oneiron_hex::encode(
+        &LegacyDigest::new(purposes::store::SESSION_SPILL_DIR)
+            .raw(session_ref.as_bytes())
+            .finish(),
+    )
+}
+
+/// [`session_spill_name`] for the K door
+/// (`test_doors::fingerprint_keep_store_digests`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn session_spill_name_for_test(session_ref: &str) -> String {
+    session_spill_name(session_ref)
 }

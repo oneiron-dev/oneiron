@@ -644,6 +644,8 @@ fn topological_order(tasks: &BTreeMap<String, PlannedTask>) -> WaveResult<Vec<St
     Ok(order)
 }
 
+pub mod setting_keys;
+
 #[cfg(test)]
 mod tests;
 

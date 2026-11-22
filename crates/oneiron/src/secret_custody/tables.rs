@@ -24,6 +24,12 @@ crate::side_table::side_tables! {
         [restore: live] [family: dispatch Credential] [tier: canonical];
     SECRET_CUSTODY_INPUT: VaultMeta b"secret_custody:input:v1:" Raw Ciphertext
         [restore: live] [family: dispatch Credential] [tier: canonical];
+    /// A custody record this install minted for a file's key, merged into the synced record of
+    /// the same value once that record opened here (FILE-CUSTODY-MERGE-AFTER-REWRAP): the record
+    /// that holds the value now and when the merge was written. The merged record is revoked
+    /// here, its value erased. Holds no value. Key: id16 (the merged record).
+    SECRET_CUSTODY_MERGE: VaultMeta b"secret_custody:merge:v1:" Named Engine
+        [restore: live] [family: unclassified] [tier: canonical];
     /// What one custody request's executor committed (WILL L04 row 04): the digest of the custody
     /// transition it signed and the rotation receipt it wrote, immutable once written, beside the
     /// latest transition by id. A retry finds it and changes nothing. Key: hash32 (the request's
