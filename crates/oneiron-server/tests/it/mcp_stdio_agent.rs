@@ -26,15 +26,29 @@ use std::time::{Duration, Instant};
 use ed25519_dalek::SigningKey;
 use oneiron::authority::{CapabilitySlip, holder_proof};
 use oneiron::federation::{Scope, ScopeAxis};
+use oneiron::sync::transport;
 use oneiron_remote::unix_seconds_now;
 use serde_json::{Value, json};
+
+use crate::fake_llm::{FakeLlm, Reply};
 
 const SECRET: &str = "mcp-stdio-issuer-key-not-a-bearer";
 const TEXT: &str = "The Vellichor ferry to Ost Marren leaves pier nine at a quarter past six.";
 
-/// The bridge's limits on one client message and one server answer.
-const FRAME_LIMIT: usize = 2 * 1024 * 1024;
+/// The bridge's limits on one client message (the least body the server's
+/// MCP routes read) and one server answer.
+const FRAME_LIMIT: usize = 64 * 1024 * 1024;
 const REPLY_LIMIT: usize = 16 * 1024 * 1024;
+/// The server's default bound on one inbound socket frame: its sync frame
+/// floor in base64, plus a window pad's header and a window frame's lead.
+const SOCKET_FRAME_LIMIT: usize = transport::MAX_DECODED_PAYLOAD_BYTES.div_ceil(3) * 4
+    + transport::WINDOW_PAD_HEADER_BYTES
+    + 3
+    + transport::MAX_WINDOW_KEY_LEN;
+/// The longest app payload the server's socket decodes behind a frame's tag
+/// byte, under [`SOCKET_FRAME_LIMIT`]: the bridge sends no longer request on
+/// its socket.
+const SOCKET_PAYLOAD_LIMIT: usize = transport::MAX_DECODED_PAYLOAD_BYTES;
 
 /// A running `oneiron serve`; dropping it kills the process.
 struct Server(Child);
@@ -881,6 +895,163 @@ fn an_agent_holds_its_latest_tier_at_every_write_door() {
     scout_bridge.close();
 }
 
+/// The one-liner the composer test asks for.
+const ONE_LINER: &str = "Find out why the dawn tide readings run high";
+
+/// Every string in `value`, depth first.
+fn strings_in(value: &Value, found: &mut Vec<String>) {
+    match value {
+        Value::String(text) => found.push(text.clone()),
+        Value::Array(items) => items.iter().for_each(|item| strings_in(item, found)),
+        Value::Object(fields) => fields.values().for_each(|field| strings_in(field, found)),
+        _ => {}
+    }
+}
+
+/// The fake local reasoner's draft: a brief for the one-liner, its type
+/// `research` when the request lists it, else the first type it lists.
+fn drafted_brief(request: &Value) -> String {
+    let mut found = Vec::new();
+    strings_in(request, &mut found);
+    let types: Vec<String> = found
+        .iter()
+        .filter_map(|text| text.split_once("Task types (id: name):\n"))
+        .flat_map(|(_, rest)| {
+            rest.lines()
+                .map_while(|line| line.strip_prefix("- "))
+                .filter_map(|line| line.split_once(": ").map(|(id, _)| id.to_owned()))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    let node = types
+        .iter()
+        .find(|id| *id == "research")
+        .or_else(|| types.first())
+        .cloned()
+        .unwrap_or_default();
+    json!({
+        "objective": "Explain the high dawn tide readings",
+        "need": "The harbour log's dawn readings disagree with the gauge.",
+        "type": node,
+        "notes": ["Read the harbour log before the gauge data."],
+        "question": "Is the cause of the high dawn readings found?",
+        "yes_if_all": ["The cause is named with the log rows that show it."],
+        "no_if_any": []
+    })
+    .to_string()
+}
+
+/// L8-07 PR 2 (RULING L8-07-DOOR = A, 14 Nov 09:11): an agent's
+/// `tasks.create` over MCP that names a one-liner instead of a brief is
+/// composed by the server's `[models.roles.local_reasoner]` seat, here a
+/// keyless local-openai-compat fake. The seat gets one call: the engine's
+/// instruction, the one-liner, and the reply schema as the request's JSON
+/// response format. The post parks as a proposal whatever the caller's
+/// ceiling (L8-07-APPROVAL = A). On a tree without the host's composer the
+/// tool refuses the `one_liner` field, so the first assert fails.
+#[test]
+fn a_one_liner_task_is_composed_by_the_local_reasoner_seat() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let model = runtime.block_on(FakeLlm::start(
+        Vec::new(),
+        Some(Reply::Computed(Arc::new(drafted_brief))),
+    ));
+    let dir = tempfile::tempdir().unwrap();
+    let config = init_vault(dir.path());
+    let models = format!(
+        "\n[models.dreamer]\nenabled = false\n[models.workflows]\nenabled = false\n\
+         [models.providers.house]\nkind = \"local-openai-compat\"\nbase_url = \"{}\"\n\
+         [models.roles.local_reasoner]\nmodel = \"house:test-model\"\n",
+        model.base_url
+    );
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(&config)
+        .unwrap()
+        .write_all(models.as_bytes())
+        .unwrap();
+    let composer = Minted::new(
+        &config,
+        dir.path().join("composer.cred"),
+        "composer",
+        "full-access",
+    );
+    let port = free_port();
+    let origin = format!("http://127.0.0.1:{port}");
+    let curl_dir = argv_recording_curl(dir.path(), &dir.path().join("curl-argv.log"));
+    let _server = serve(&config, port, &dir.path().join("serve.log"));
+    let mut bridge = Bridge::spawn(
+        &origin,
+        &composer.file,
+        &curl_dir,
+        &dir.path().join("composer.stderr"),
+    );
+    let listed = bridge.call(1, "tools/list", json!({}));
+    let tool = listed["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["name"] == "tasks.create")
+        .unwrap_or_else(|| panic!("no tasks.create: {listed:#}"))
+        .clone();
+    let version = tool["inputSchema"]["properties"]["schema_version"]["const"].clone();
+
+    let (id, params) = tool_call(
+        2,
+        "tasks.create",
+        &version,
+        json!({ "spec": {}, "intent_key": "dawn-tide/composed", "one_liner": ONE_LINER }),
+    );
+    let created = bridge.call(id, "tools/call", params);
+    assert!(
+        created.get("error").is_none() && created["result"]["isError"] != json!(true),
+        "a one-liner create composes its brief: {created:#}\nserver log: {}",
+        std::fs::read_to_string(dir.path().join("serve.log")).unwrap_or_default()
+    );
+    let receipt = output(&created);
+    assert_eq!(
+        (&receipt["approval"], &receipt["task_ref"]),
+        (&json!("proposed"), &Value::Null),
+        "a composed brief parks as a proposal: {created:#}"
+    );
+    assert!(
+        receipt["proposal_ref"].is_string(),
+        "the parked proposal: {created:#}"
+    );
+
+    let calls: Vec<Value> = model
+        .seen()
+        .into_iter()
+        .filter(|seen| {
+            let mut found = Vec::new();
+            strings_in(&seen.body, &mut found);
+            found.iter().any(|text| text.contains(ONE_LINER))
+        })
+        .map(|seen| seen.body)
+        .collect();
+    assert_eq!(calls.len(), 1, "one seat call composes the brief");
+    assert_eq!(
+        calls[0]["response_format"]["type"],
+        json!("json_schema"),
+        "the seat answers to the engine's reply schema: {:#}",
+        calls[0]
+    );
+    let required = &calls[0]["response_format"]["json_schema"]["schema"]["required"];
+    assert!(
+        required
+            .as_array()
+            .is_some_and(|fields| fields.contains(&json!("yes_if_all"))),
+        "the reply schema is the brief draft's: {:#}",
+        calls[0]
+    );
+    let schema = tool["inputSchema"].to_string();
+    assert!(
+        schema.contains("\"one_liner\"") && schema.contains("\"lens_refs\""),
+        "tasks.create lists the one-liner fields: {schema}"
+    );
+    bridge.close();
+}
+
 /// What a fake endpoint saw: each request's path and JSON-RPC body.
 type Seen = Arc<Mutex<Vec<(String, Value)>>>;
 
@@ -1172,6 +1343,118 @@ fn the_bridge_bounds_every_request_and_keeps_its_credential_from_curl() {
     );
 }
 
+/// A message past the bridge's old 2 MiB cap and within the server's request
+/// floor reaches the server: over the socket while the socket decodes it,
+/// its body read up to the request floor there as over HTTP; and over HTTP
+/// past the socket's payload bound (under its frame bound, as past it),
+/// which the server would answer by closing the socket under every request
+/// in flight. The socket carries the next call. FIX
+/// MCP-BRIDGE-FRAME-CAP-BELOW-SERVER-BODY-LIMIT; review round 1 of #9786.
+#[test]
+fn a_message_within_the_request_floor_reaches_the_server_on_either_carrier() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = init_vault(dir.path());
+    let credential_file = dir.path().join("codex.cred");
+    stdout(oneiron(
+        &[
+            "token",
+            "agent",
+            "--name",
+            "codex",
+            "--tier",
+            "read-only",
+            "--out",
+            credential_file.to_str().unwrap(),
+        ],
+        &config,
+    ));
+    let port = free_port();
+    let origin = format!("http://127.0.0.1:{port}");
+    let _server = serve(&config, port, &dir.path().join("serve.log"));
+    let curl_dir = argv_recording_curl(dir.path(), &dir.path().join("curl-argv.log"));
+    let stderr = dir.path().join("mcp.stderr");
+    let mut bridge = Bridge::spawn(&origin, &credential_file, &curl_dir, &stderr);
+    // `tools/list` reads no params, so the pad changes only the length.
+    let socket_sized = 3 * 1024 * 1024;
+    // Past the socket's payload bound and under its frame bound (9 MiB vs
+    // about 10.7 MiB): the frame alone would pass the socket's codec.
+    let past_payload = SOCKET_PAYLOAD_LIMIT + 1024 * 1024;
+    let past_frame = SOCKET_FRAME_LIMIT + 1024 * 1024;
+    for (id, pad) in [(1, socket_sized), (2, past_payload), (3, past_frame)] {
+        let listed = bridge.call(id, "tools/list", json!({ "pad": "x".repeat(pad) }));
+        assert!(
+            listed["result"]["tools"].is_array(),
+            "a {pad}-byte pad: {}",
+            head(&listed)
+        );
+    }
+    let listed = bridge.call(4, "tools/list", json!({}));
+    assert!(listed["result"]["tools"].is_array(), "{}", head(&listed));
+    bridge.close();
+    let stderr = std::fs::read_to_string(&stderr).unwrap();
+    assert!(
+        !stderr.contains("holding one pooled HTTP connection instead"),
+        "the server's socket carried the session: {stderr}"
+    );
+}
+
+/// A tool call as long as the least request floor, naming no invocation,
+/// reaches its tool on a vault set to that floor: the invocation the bridge
+/// would add to its `_meta` takes the body past the floor, so the bridge
+/// sends the call as the client wrote it. Review round 2 of #9786.
+#[test]
+fn a_call_as_long_as_the_request_floor_goes_as_the_client_wrote_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = init_vault(dir.path());
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&config)
+        .unwrap();
+    writeln!(file, "\n[limits]\nrequest_body_bytes = {FRAME_LIMIT}").unwrap();
+    drop(file);
+    let credential_file = dir.path().join("claude-code.cred");
+    stdout(oneiron(
+        &[
+            "token",
+            "agent",
+            "--name",
+            "claude-code",
+            "--tier",
+            "full-access",
+            "--out",
+            credential_file.to_str().unwrap(),
+        ],
+        &config,
+    ));
+    let port = free_port();
+    let origin = format!("http://127.0.0.1:{port}");
+    let _server = serve(&config, port, &dir.path().join("serve.log"));
+    let curl_dir = argv_recording_curl(dir.path(), &dir.path().join("curl-argv.log"));
+    let stderr = dir.path().join("mcp.stderr");
+    let mut bridge = Bridge::spawn(&origin, &credential_file, &curl_dir, &stderr);
+    let version = schema_version(&mut bridge);
+    let query = json!({ "spec": { "query": "Vellichor ferry pier nine", "limit": 10 } });
+    let (id, mut params) = tool_call(2, "vault.recall", &version, query);
+    params["_meta"] = json!({ "pad": "" });
+    let line = |params: &Value| {
+        json!({ "jsonrpc": "2.0", "id": id, "method": "tools/call", "params": params })
+            .to_string()
+            .len()
+    };
+    let unpadded = line(&params);
+    params["_meta"]["pad"] = Value::String("x".repeat(FRAME_LIMIT - unpadded));
+    assert_eq!(line(&params), FRAME_LIMIT);
+    let recalled = bridge.call(id, "tools/call", params);
+    assert!(recalled.get("error").is_none(), "{}", head(&recalled));
+    assert_ne!(
+        recalled["result"]["isError"],
+        json!(true),
+        "{}",
+        head(&recalled)
+    );
+    bridge.close();
+}
+
 /// On the stopped vault: a task of `writer`'s whose realization failed, and a
 /// project room of the owner's with the agents on its roster, where the
 /// owner has opened a turn that names no one. Returns the task, the room and
@@ -1196,6 +1479,8 @@ fn seed_failed_task_and_open_turn(
             assignee: None,
             intent_key: None,
             brief: None,
+            one_liner: None,
+            lens_refs: Vec::new(),
             ttl: None,
             parent_ref: None,
             due_at: None,

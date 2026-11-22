@@ -42,7 +42,9 @@ use super::connector_call::{
     ConnectorCallHost, ConnectorCallInvocation, ConnectorCallOutcome, PENDING_CALLS,
     PendingConnectorCall, SettledConnectorCall, Step, connector_call_ref, refused,
 };
-use super::connector_call_pending::CONNECTOR_CALL_PENDING_TTL_MS;
+use super::connector_call_pending::{
+    connector_call_lifetime_words, connector_call_pending_ttl_secs_in_txn,
+};
 use super::scope::ScopedMcpCallContext;
 use super::tool_call::PreparedToolCall;
 
@@ -385,7 +387,10 @@ impl Vault {
             .map(|choice| choice.as_str().replace('_', " "))
             .collect::<Vec<_>>()
             .join(", ");
-        let days = CONNECTOR_CALL_PENDING_TTL_MS / (24 * 60 * 60 * 1000);
+        let lifetime = connector_call_lifetime_words(connector_call_pending_ttl_secs_in_txn(
+            &self.store,
+            &txn,
+        )?);
         let standing = row
             .binding
             .standing_offer
@@ -396,7 +401,7 @@ impl Vault {
         Ok(format!(
             "A code run asks before it calls tool \"{tool}\" on connector \"{name}\" (code \
              consent wait {wait}). Its own gate held the call because: {reasons}. Answer one of: \
-             {choices}. Nothing is sent until you answer, and the call expires {days} days after \
+             {choices}. Nothing is sent until you answer, and the call expires {lifetime} after \
              it was held.{standing}",
             tool = clip(&call.tool),
             name = clip(&call.name),
@@ -422,6 +427,20 @@ impl Vault {
         // wait settled when the questions came (FIX 3837).
         if let Some(outcome) = pending.input_outcome(*call_ref) {
             return Ok((outcome, pending.source_rows));
+        }
+        // A copy restored and not joined keeps code-owned calls held (row
+        // RESTORED-UNJOINED-STARTS-NO-WORK). Calls and their waits stay as
+        // they are until a resume after the join can drive or settle them.
+        if self.restored_unjoined()? {
+            return Ok((
+                ConnectorCallOutcome::Held {
+                    call_ref: *call_ref,
+                    decision_ref: None,
+                    reasons: vec!["restored_not_joined".to_owned()],
+                    approval_digest: None,
+                },
+                pending.source_rows,
+            ));
         }
         let Some(wait_id) = pending.code_consent_wait else {
             return self.drive_connector_call(Some(*call_ref), None, pending, host);
@@ -566,11 +585,15 @@ impl Vault {
     /// original caller's instrument no longer stands (its current scope no
     /// longer meets the one it was admitted under, or the slip is gone). A
     /// refusal that names no credential (the host could not check) settles
-    /// nothing: the wait stays settling for the host's next pass.
+    /// nothing: the wait stays settling for the host's next pass. On a copy
+    /// restored and not joined, a refusal settles nothing either (row
+    /// RESTORED-UNJOINED-STARTS-NO-WORK): the call and its wait stay as they
+    /// are for the host's first pass after the join, which checks the
+    /// instrument again.
     ///
     /// # Errors
     ///
-    /// An unknown wait, or storage errors.
+    /// An unknown wait, the restored-copy test's errors, or storage errors.
     pub fn refuse_answered_code_consent_wait(
         &self,
         wait_id: EntityId,
@@ -578,6 +601,9 @@ impl Vault {
         refusal: VerbAskRefusal,
     ) -> Result<CodeConsentWaitView, IntentLedgerError> {
         if refusal.names_credential() {
+            if self.restored_unjoined()? {
+                return Ok(self.code_consent_wait_view(wait_id, false)?);
+            }
             let code = refusal.code().to_ascii_lowercase();
             self.with_write_txn(|txn| {
                 let answered =

@@ -11,6 +11,7 @@ use crate::write_envelope::ClaimCandidate;
 fn fixture() -> Result<(tempfile::TempDir, Vault, WriteActor)> {
     let dir = tempfile::tempdir().expect("temporary vault");
     let vault = Vault::open(dir.path(), crate::config::VaultConfig::default())?;
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let actor = WriteActor::new(entity(0x61), EdgeActorClass::Human);
     for id in [actor.entity_ref(), entity(0x62), entity(0x63)] {
         vault.put_entity(

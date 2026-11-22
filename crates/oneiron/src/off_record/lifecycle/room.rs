@@ -334,8 +334,8 @@ impl OffRecordSession<'_> {
         if suggestions.len() >= MAX_ROOM_NOTICES {
             suggestions.remove(0);
         }
-        // It waits even where no notice posts: the owner alone with their
-        // own agent still answers it.
+        // It waits for an answer whether or not its notice posts:
+        // `post_notice` posts only where someone in the room hears it.
         suggestions.push(OffRecordSaveSuggestion {
             by: *agent.as_bytes(),
             at: hearing.at,

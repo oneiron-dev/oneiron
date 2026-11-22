@@ -154,7 +154,8 @@ impl PreparedRebootstrap {
                 ));
             }
             self.holds.reject_held_in_txn(&vault.store, wtxn, actor)?;
-            persist_window_doc_in_txn(vault, wtxn, &self.key, &self.state, &self.version)?;
+            // A strict cut: history-free by construction (census L6-05).
+            persist_window_doc_in_txn(vault, wtxn, &self.key, &self.state, &self.version, true)?;
             WINDOW_UPDATE.delete_from(&vault.store, wtxn, prefix.as_bytes())?;
             WINDOW_FULL_RESYNC_MARKER.put(&vault.store, wtxn, &window, &[1u8])?;
             if self.owes_compaction {

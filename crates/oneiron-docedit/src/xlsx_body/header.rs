@@ -17,7 +17,7 @@ use crate::xlsx_shift::rename_table_column;
 /// paired with the cell's own write. `None` for any other cell or text: a
 /// cell outside every table's header row, one another read-only range or a
 /// formula holds, a query or XML table's header, a value that is not text,
-/// or a name [`column_name_free`] refuses.
+/// or a name `column_name_free` refuses.
 #[must_use]
 pub fn header_rename(
     sheet: &XlsxSheet,

@@ -42,7 +42,7 @@ mod attachments;
 mod caldav_calendar;
 mod calendar;
 pub(crate) mod claim_recheck;
-mod compliance;
+pub(crate) mod compliance;
 mod credential;
 mod dav_xml;
 mod doors;
@@ -68,13 +68,18 @@ pub mod pack;
 mod provider_delete;
 mod reply;
 mod reply_ask;
+mod reply_attachments;
+mod reply_custody;
+mod reply_erase;
 mod reply_mime;
 mod reply_recipients;
 mod reply_send;
+mod reply_smtp;
 mod rest;
 #[cfg(oneiron_test_support)]
 pub(crate) use rest::GrantIssuer;
 mod search;
+pub(crate) mod setting_keys;
 mod share;
 mod smtp_client;
 #[doc(hidden)]
@@ -91,7 +96,7 @@ pub use caldav_calendar::{CALDAV_CALENDAR_CONNECTOR_EFFECTOR, HttpCalDavCalendar
 pub use calendar::{MailCalendarFeed, MailCalendarPull, MailCalendarRead, MailCalendarWire};
 pub(crate) use calendar::{
     calendar_source_landing_in, calendar_source_occupancy, calendar_source_of_system_in,
-    calendar_source_person_in, merge_busy,
+    calendar_source_person_in, merge_busy, refuse_calendar_source_system,
 };
 pub(crate) use claim_recheck::{claim_recheck_current_in, erase_claim_recheck_ids_in_txn};
 pub(crate) use compliance::erase_compliance_actor_in_txn;
@@ -108,6 +113,8 @@ pub use gmail::HttpGmailMailWire;
 pub use google_calendar::{GOOGLE_CALENDAR_CONNECTOR_EFFECTOR, HttpGoogleCalendarWire};
 pub use ics_calendar::{HttpIcsCalendarWire, ICS_CALENDAR_CONNECTOR_EFFECTOR};
 #[cfg(oneiron_test_support)]
+pub(crate) use imap::imap_folder_digest_for_test;
+#[cfg(oneiron_test_support)]
 pub(crate) use imap::imap_landed_headers;
 pub use imap::{IMAP_CONNECTOR_EFFECTOR, ImapMailWire};
 pub use importer::{MailSyncBudget, MailSyncReport};
@@ -120,6 +127,8 @@ pub(crate) use mbox_import::mbox_landed_headers;
 pub use mbox_import::{MailMboxImportReport, MailMboxImportRequest};
 pub use microsoft365::{HttpGraphMailWire, MICROSOFT365_CONNECTOR_EFFECTOR};
 pub use microsoft365_calendar::{HttpGraphCalendarWire, MICROSOFT365_CALENDAR_CONNECTOR_EFFECTOR};
+#[cfg(oneiron_test_support)]
+pub(crate) use microsoft365_calendar::{graph_calendar_cursor_covers, graph_calendar_opening};
 pub use pack::{
     MAIL_CALENDAR_PACK_NAME, install_mail_calendar_pack_embedded, mail_calendar_pack_files,
 };
@@ -128,8 +137,16 @@ pub use reply::{
     MailReplyDraftState, MailReplyDraftView, MailReplyDraftsRequest,
 };
 pub(crate) use reply::{approved_source_reply_in_txn, erase_reply_drafter_in_txn};
+#[cfg(oneiron_test_support)]
+pub(crate) use reply::{mail_reply_draft_as_stored_for_test, reply_draft_manifest_digest_for_test};
 pub(crate) use reply_ask::MAIL_REPLY_ASK_PRODUCER;
+pub use reply_attachments::{MailReplyAttachment, MailReplyAttachmentView};
+pub(crate) use reply_erase::erase_reply_attachment_dependents_in_txn;
 pub use reply_send::SMTP_SUBMISSION_CONNECTOR_EFFECTOR;
+pub(crate) use reply_smtp::MailHostSlot;
+pub use reply_smtp::{
+    DEFAULT_SMTP_MAX_MESSAGE_OCTETS_UNADVERTISED, MailBlockingRunner, MailHostSettings,
+};
 pub use search::{MailSearchReport, MailSourceSearchRequest};
 pub use share::{MailThreadShareReceipt, MailThreadShareRequest};
 pub use source::{

@@ -37,6 +37,7 @@ mod levels;
 mod media;
 mod planner;
 mod provider;
+mod role_trainers;
 pub mod sessions;
 pub mod snapshots;
 #[cfg(test)]
@@ -66,10 +67,12 @@ pub use provider::{
     OutputLimitField, ProviderConfig, ProviderKind, RequestCodec, RequestCompression,
     ResponseFormatWire, ResponsesSocket, SiwcProvider,
 };
+pub use role_trainers::RoleTrainerSettings;
 pub use training::{TRAINING_SERVICE_UNIT, TrainingConnectorSettings, TrainingSettings};
 pub use voice::VoiceSettings;
 pub use workers::{
     ArtifactSource, ManagedLaunch, NativeServer, WorkerArtifact, WorkerConfig, WorkerEnvelope,
+    WorkerListen,
 };
 
 use levels::{RoleFile, Shorthand};
@@ -657,6 +660,7 @@ impl ModelsFile {
         let planner = self.planner.resolve()?;
         let training = self.training.resolve()?;
         let workers = workers::resolve(self.workers, &providers, base)?;
+        workers::refuse_socket_provider_off_reranker(&workers, &roles, &media)?;
         let mut models = ModelsConfig {
             providers,
             roles,
@@ -733,9 +737,11 @@ impl CodeCheckFile {
 
 impl ModelsConfig {
     /// A `[models]` section's body on its own, as a host that embeds this
-    /// crate writes it. `base` resolves relative prompt files.
+    /// crate writes it. `base` resolves relative prompt files. A body that
+    /// does not parse names the place, never the parser's message, which
+    /// quotes the line (FIX CONFIG-SIDE-FILE-PARSE-ERRORS-PRINT-PARSER-MESSAGE).
     pub fn from_toml(text: &str, base: Option<&Path>) -> anyhow::Result<Self> {
-        let file: ModelsFile = toml::from_str(text)?;
+        let file: ModelsFile = crate::config::diagnostics::parse_toml_text(text)?;
         file.resolve(base)
     }
 

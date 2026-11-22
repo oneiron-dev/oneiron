@@ -9,6 +9,8 @@ mod account_args;
 pub use account_args::{
     AccountCommand, AccountLoginArgs, AccountLogoutArgs, AccountServeArgs, AccountStatusArgs,
 };
+mod continue_args;
+pub use continue_args::ContinueArgs;
 mod deployment_args;
 pub use deployment_args::HostRelayArgs;
 mod files_args;
@@ -20,7 +22,10 @@ mod hook_args;
 mod hosted_args;
 pub use graph_fs_args::GraphFsCommand;
 pub use hosted_args::{HostedCommand, HostedLoginArgs, HostedLogoutArgs, HostedSelectArgs};
+pub use user_service_args::{UserServiceCommand, UserServiceInstallArgs};
 mod learning_setting_args;
+mod link_args;
+pub use link_args::{LinkArgs, LinkCommand, UnlinkArgs};
 mod model_workers_args;
 pub use model_workers_args::ModelWorkersArgs;
 mod owner_args;
@@ -31,6 +36,7 @@ mod vault_unlock_args;
 mod vm_args;
 pub use vm_args::HostVmArgs;
 mod seat_args;
+mod user_service_args;
 mod wake_args;
 mod widen_proposal_args;
 pub use hook_args::{
@@ -61,10 +67,10 @@ pub use owner_args::{
     GuestRevokeArgs, GuestsCommand, SecretRevealArgs, SecretRevokeArgs, SecretRewrapArgs,
 };
 pub use owner_args::{
-    LegalHoldLiftArgs, LegalHoldPlaceArgs, LegalHoldTargetArgs, LegalHoldWidenArgs,
-    LegalHoldsCommand, RecoveryPresetArg, SecretSourceArgs, UnlockMethod, VaultKeyAddDeviceArgs,
-    VaultKeyArgs, VaultKeyCommand, VaultKeyNamedArgs, VaultKeyRecoveryPresetArgs,
-    VaultKeyResealArgs,
+    KeptEscrowArg, KeptPasskeyArg, LegalHoldLiftArgs, LegalHoldPlaceArgs, LegalHoldTargetArgs,
+    LegalHoldWidenArgs, LegalHoldsCommand, RecoveryPresetArg, SecretSourceArgs, UnlockMethod,
+    VaultKeyAddDeviceArgs, VaultKeyArgs, VaultKeyCommand, VaultKeyNamedArgs,
+    VaultKeyNewGenerationArgs, VaultKeyRecoveryPresetArgs, VaultKeyResealArgs,
 };
 pub use owner_args::{
     PackRemoveArgs, PacksCommand, SubscriptionListArgs, SubscriptionPutArgs,
@@ -228,6 +234,12 @@ pub enum Command {
     /// refresh and logout.
     #[command(subcommand)]
     Account(AccountCommand),
+    /// Link a hosted peer of this vault on the running server: the cloud's
+    /// always-on machine, never yours; `link status` shows where it stands.
+    Link(Box<LinkArgs>),
+    /// Unlink the vault's hosted peer on the running server: it is revoked
+    /// at once, and the cloud erases its copy and keys.
+    Unlink(Box<UnlinkArgs>),
     /// Make short curl-shaped calls against the existing HTTP API.
     Api(ApiArgs),
     /// The git credential helper an official CLI seat runs (FIX 10624 step
@@ -250,6 +262,18 @@ pub enum Command {
     /// selected one at its step 3.
     #[command(subcommand)]
     Hosted(HostedCommand),
+    /// Move the Claude Code session working in this repo to the selected
+    /// hosted vault (`--cloud`): check that its node runs the runner, land
+    /// the session's log, push a hand-off commit of the working tree to the
+    /// custody repo, and start the run there. It says "safe to close this
+    /// machine" only once the run is bound; any failure leaves the session
+    /// here as it was.
+    Continue(ContinueArgs),
+    /// This user's service for the local vault `oneiron hook` starts: write
+    /// it and start it through the person's own supervisor, stop and remove
+    /// it, or show it. Optional; without it the hook starts the vault.
+    #[command(subcommand)]
+    UserService(UserServiceCommand),
     /// Read or acknowledge a host instance wake inbox.
     Wake(WakeArgs),
     /// Scaffold a self-host node from the shipped deployment templates.
@@ -364,6 +388,12 @@ pub enum HostCommand {
     /// the vault id stays, and every credential the old secret minted stops
     /// working. Run it after a host secret leaks, or to change it.
     ReRoot(Box<HostReRootArgs>),
+    /// Recover a stopped self-host vault's root after this install lost it,
+    /// with the recovery kit enrolled before the loss (`recovery-kit
+    /// enroll-authority`): the kit's key moves the root to a new issuer seed,
+    /// in-chain, so the vault id stays, and every credential the lost root
+    /// minted stops working.
+    RecoverRoot(Box<HostRecoverRootArgs>),
     /// Run one vault as a Firecracker VM behind a unix socket: start it on
     /// the first connection or a due wake, and sleep it when idle.
     Vm(Box<HostVmArgs>),
@@ -391,6 +421,21 @@ pub struct HostReRootArgs {
     /// instead of `ONEIRON_NEW_AUTH_SECRET`.
     #[arg(long, value_name = "FILE")]
     pub new_secret_file: Option<PathBuf>,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+/// The kit's pieces come from owner-only `--piece` files and its passphrase
+/// from `--secret-file` or stdin; the host secret from the config or
+/// `ONEIRON_AUTH_SECRET`. None is read from argv or printed.
+#[derive(Args, Clone, Debug)]
+pub struct HostRecoverRootArgs {
+    #[command(flatten)]
+    pub kit: KitPieceArgs,
+
+    #[command(flatten)]
+    pub unlock: VaultUnlockArgs,
 
     #[command(flatten)]
     pub serve: ServeArgs,
@@ -474,7 +519,9 @@ pub struct TokenPairArgs {
     #[arg(long, env = "ONEIRON_URL", default_value = "http://127.0.0.1:9090")]
     pub url: String,
 
-    /// Environment variable holding a logged owner-grade capability slip.
+    /// Environment variable holding the owner's own logged full slip (one
+    /// paired to his PERSON with `--actor-class human`): a link mints a slip,
+    /// so only the vault owner makes one.
     #[arg(long, default_value = "ONEIRON_TOKEN")]
     pub token_env: String,
 
@@ -494,6 +541,8 @@ pub struct TokenPairArgs {
 
     /// D13 actor class the slip binds write identity to: `human`, `agent`,
     /// or `system`. Required by `/v1/core/facade` routes; absent by default.
+    /// A slip the owner pairs for himself takes `human`: owner acts (pairing
+    /// links, slip revocation, full sync) admit only his human-class slip.
     #[arg(long = "actor-class")]
     pub actor_class: Option<String>,
 
@@ -760,7 +809,10 @@ pub struct McpArgs {
     /// below, with a holder proof signed for each request. `owner` is the
     /// vault's owner himself, by the sign-in an authenticated surface wrote
     /// to `--owner-upgrade-headers-file`: it takes no slip, and rides the
-    /// server's socket alone, with no HTTP fallback.
+    /// server's socket alone, with no HTTP fallback. `oauth` is the OAuth
+    /// sign-in `oneiron hosted login` made, from `--oauth-token-file`: its
+    /// access token goes over HTTP alone, and is refreshed when it expires
+    /// or the vault refuses it.
     #[arg(long, value_enum, default_value_t = McpAuthMode::Slip)]
     pub auth_mode: McpAuthMode,
 
@@ -778,6 +830,12 @@ pub struct McpArgs {
     /// its seed come from the two environment variables below.
     #[arg(long, value_name = "FILE")]
     pub credential_file: Option<PathBuf>,
+
+    /// OAuth mode's sign-in: the file `oneiron hosted login` wrote when it
+    /// signed in to this vault. Only its owner may be able to read it. A
+    /// refresh rewrites it in place.
+    #[arg(long, value_name = "FILE")]
+    pub oauth_token_file: Option<PathBuf>,
 
     /// Run this instance's wake adapter while the MCP bridge is alive. The
     /// TOML file's parent is the harness config-dir instance. `inbox = true`
@@ -830,6 +888,9 @@ pub enum McpAuthMode {
     /// The vault's owner, by an authenticated surface's sign-in, over the
     /// server's socket alone.
     Owner,
+    /// The OAuth sign-in `oneiron hosted login` made, over HTTP alone.
+    #[value(name = "oauth")]
+    OAuth,
 }
 
 /// The two MCP endpoints a server registers.
@@ -1097,6 +1158,13 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Account(command) => {
             crate::logging::off_runtime("account", move || commands::account(command)).await?
         }
+        // Blocking: the running server is asked over blocking HTTP.
+        Command::Link(args) => {
+            crate::logging::off_runtime("link", move || commands::link(*args)).await?
+        }
+        Command::Unlink(args) => {
+            crate::logging::off_runtime("unlink", move || commands::unlink(*args)).await?
+        }
         Command::Api(args) => commands::api(args).await,
         // Blocking: one curl call for git, which waits on this process.
         Command::CredentialHelper(args) => commands::credential_helper(args),
@@ -1109,8 +1177,19 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Hosted(command) => {
             crate::logging::off_runtime("hosted", move || commands::hosted(command)).await?
         }
+        // Blocking: it calls its verbs through a spawned `oneiron mcp` and
+        // runs git.
+        Command::Continue(args) => {
+            crate::logging::off_runtime("continue", move || commands::continue_work(args)).await?
+        }
+        // Blocking: it waits on the person's supervisor.
+        Command::UserService(command) => {
+            crate::logging::off_runtime("user-service", move || commands::user_service(command))
+                .await?
+        }
         Command::Host(HostCommand::Init(args)) => commands::host_init(args),
         Command::Host(HostCommand::ReRoot(args)) => commands::host_re_root(*args),
+        Command::Host(HostCommand::RecoverRoot(args)) => commands::host_recover_root(*args),
         Command::Host(HostCommand::RecoverSharedOwner(args)) => {
             commands::host_recover_shared_owner(*args)
         }

@@ -12,6 +12,7 @@
 //! list and read log ([`Memory::diary_reader_list`], [`Memory::diary_reads`]).
 
 use super::scratchpad::clip;
+use super::setting_keys::{READERS_REASON_BYTES, READERS_ROWS_SHOWN, read_count};
 use super::{BoardSection, PeopleView, SectionPolicy, ShedRank, quoted_leaf};
 use crate::EntityId;
 use crate::memory::{
@@ -19,12 +20,12 @@ use crate::memory::{
     SealedPadReader,
 };
 
-/// The newest logged reads the block shows; the rest are counted.
-const READS_SHOWN: u32 = 4;
-/// The review asks the block shows, newest first.
-const ASKS_SHOWN: u32 = 4;
-/// Longest stated reason a row quotes, in bytes.
-const REASON_SHOWN_BYTES: usize = 160;
+/// The newest logged reads the block shows, and the newest review asks,
+/// until the owner sets `context_board.readers.rows_shown`.
+pub(super) const ROWS_SHOWN: u32 = 4;
+/// Longest stated reason a row quotes, in bytes, until the owner sets
+/// `context_board.readers.reason_bytes`.
+pub(super) const REASON_SHOWN_BYTES: usize = 160;
 
 /// The `pads:` token of each ruled sealed-pad reader.
 fn pad_reader_token(reader: SealedPadReader) -> &'static str {
@@ -74,9 +75,11 @@ impl Memory<'_> {
     /// The READERS block of this agent's board, naming each reader as
     /// `people` names it.
     pub fn board_readers_section(&self, people: &PeopleView<'_>) -> MemoryResult<BoardSection> {
+        let rows_shown = read_count(self.vault(), &READERS_ROWS_SHOWN);
+        let reason_bytes = read_count(self.vault(), &READERS_REASON_BYTES) as usize;
         let list = self.diary_reader_list()?;
         let log = self.diary_reads(&DiaryReadsRequest {
-            limit: Some(READS_SHOWN.max(ASKS_SHOWN)),
+            limit: Some(rows_shown),
             include_used: false,
         })?;
         let pinned = vec![
@@ -106,7 +109,7 @@ impl Memory<'_> {
                 )
             })
             .collect();
-        rows.extend(log.reads.iter().take(READS_SHOWN as usize).map(|read| {
+        rows.extend(log.reads.iter().take(rows_shown as usize).map(|read| {
             format!(
                 "read: {} source={}{} class={} at={} {}",
                 people.label(read.reader),
@@ -114,17 +117,17 @@ impl Memory<'_> {
                 ruled_reader_token(read.ruled_reader),
                 read.reader_class,
                 read.at,
-                quoted_leaf(clip(&read.reason, REASON_SHOWN_BYTES))
+                quoted_leaf(clip(&read.reason, reason_bytes))
             )
         }));
-        rows.extend(log.requests.iter().take(ASKS_SHOWN as usize).map(|ask| {
+        rows.extend(log.requests.iter().take(rows_shown as usize).map(|ask| {
             format!(
                 "ask: {} {} {}{} {}",
                 ask.request.to_hex(),
                 state_token(ask.state),
                 people.label(ask.reader),
                 ruled_reader_token(ask.ruled_reader),
-                quoted_leaf(clip(&ask.reason, REASON_SHOWN_BYTES))
+                quoted_leaf(clip(&ask.reason, reason_bytes))
             )
         }));
         BoardSection::new(

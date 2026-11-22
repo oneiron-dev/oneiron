@@ -16,6 +16,8 @@
 
 use std::io::Cursor;
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use crate::authority::{
     AuthorityEntryHash, AuthorityFold, AuthorityKey, PinnedRoot, RecoveryRootId,
 };
@@ -101,7 +103,7 @@ pub fn classify_archive_under_pinned_anchor(
     };
     folded.anchored.insert(anchor_key, revision);
     fold.pinned_root = Some(PinnedRoot {
-        id: RecoveryRootId(*blake3::hash(&anchor_key).as_bytes()),
+        id: RecoveryRootId(ContentHash::of(&anchor_key).into_bytes()),
         anchor_key,
     });
     let verifier = ArchiveVerifierState {

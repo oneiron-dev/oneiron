@@ -248,10 +248,11 @@ pub(crate) fn validate_replicated_authority_log_beside_for_local_vault(
             id: *id,
         }));
     }
-    // Structure, signature and vault are not standing: a key a handoff
-    // retired signs nothing new here, and nothing new stands on a row one
-    // signed, so its fork never reaches the log. An adopted checkpoint image
-    // answers for the history it covers.
+    // Structure, signature and vault are not standing: a retired key (one a
+    // handoff, a counted root appointment or a revocation retired) signs
+    // nothing new here, and nothing new stands on a row one signed, so its
+    // fork never reaches the log. An adopted checkpoint image answers for
+    // the history it covers.
     let evidence = if resident {
         None
     } else {
@@ -260,6 +261,7 @@ pub(crate) fn validate_replicated_authority_log_beside_for_local_vault(
     if !resident
         && crate::authority::door_refuses_retired_standing(
             store,
+            posture,
             &local_fold,
             &entry_hash,
             &entry,
@@ -267,8 +269,27 @@ pub(crate) fn validate_replicated_authority_log_beside_for_local_vault(
         )?
     {
         return Err(Error::Record(RecordError::InvalidAuthorityLogBody(
-            "authority row signed by a key a handoff retired",
+            "authority row standing on a retired key",
         )));
+    }
+    // A hosted vault whose host still serves refuses a ReRoot by a key the
+    // host does not hold, judged against the fold before this row lands. A
+    // host's move signed by the root its earlier move in the same window
+    // named waits above as signer-pending until that move is stored, and
+    // then the fold holds its stamp. A row already stored stays open, as does
+    // a gap-closing row with no fold before it (OF-469).
+    if let Some(re_root) = crate::authority::arriving_re_root(&entry, entry_hash, resident) {
+        match crate::authority::authority_fold_readonly_for_store_in_txn(store, posture, wtxn) {
+            Ok(before) => {
+                re_root.refuse_on(&before).map_err(|_| {
+                    Error::Record(RecordError::InvalidAuthorityLogBody(
+                        "a ReRoot by a key the host does not hold",
+                    ))
+                })?;
+            }
+            Err(error) if crate::authority::is_history_incomplete(&error) => {}
+            Err(error) => return Err(error),
+        }
     }
     Ok(local_fold)
 }

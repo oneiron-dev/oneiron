@@ -53,6 +53,21 @@ pub(super) struct CoreferenceExportContext {
 }
 
 impl CoreferenceExportContext {
+    /// Records the link between `source` and `target` as one the export
+    /// carries, with each pact it was let into, for the release basis of the
+    /// answer being made on this thread (SELECTOR-RELEASE-COREFERENCE-CONSENT
+    /// = A). Called only where the link's edge or one of its claims is
+    /// written out: a link the answer does not carry never drops it (NOT C).
+    pub(super) fn record_carried(&self, source: EntityId, target: EntityId) {
+        let link = normalized_coreference_pair(source, target);
+        if !self.allowed_links.contains(&link) {
+            return;
+        }
+        super::release_basis::record_coreference_shares(
+            self.pact_ids.iter().map(|pact| (link, *pact)),
+        );
+    }
+
     pub(super) fn allows(&self, source: EntityId, target: EntityId) -> bool {
         self.allowed_links
             .contains(&normalized_coreference_pair(source, target))
@@ -262,6 +277,9 @@ pub(super) struct FacetScope {
 pub(super) struct EntitySelectorDecision {
     pub(super) facet_visible: bool,
     pub(super) facet_seed: bool,
+    /// The `same_as` link a coreference claim travels on: the export
+    /// carries that link when it writes the claim out.
+    pub(super) coreference_link: Option<(EntityId, EntityId)>,
 }
 
 /// Builds the per-source facet scope a facet-limited peer's export is filtered
@@ -482,6 +500,18 @@ pub(super) fn band_filter(
     (position.bands != ScopeAxis::All).then_some(&position.bands)
 }
 
+/// The band a row of type `entity_type` sits in: its registry identity, or
+/// the family of its structural kind registration. `None` for a type with
+/// neither, which no selector carries.
+pub(super) fn selector_identity(vault: &Vault, entity_type: u8) -> Option<SelectorRange> {
+    selector_range_of(entity_type).or_else(|| {
+        vault
+            .structural_kind_registration(entity_type)
+            .and_then(|registration| registration.family)
+            .map(SelectorRange::Family)
+    })
+}
+
 /// A SUMMARY a run settled (an epoch summary) travels only where the
 /// selector, under its pact ceiling, selects the position it was born at:
 /// shared-base residence is not base-world disclosure, and a SUMMARY has no
@@ -526,9 +556,7 @@ pub(super) fn entity_selector_decision(
     if !claim_sync_allowed(blob) {
         return None;
     }
-    if !coreference_claim_passes(header.entity_type, blob, coreference) {
-        return None;
-    }
+    let coreference_link = coreference_claim_passes(header.entity_type, blob, coreference)?;
     // Diagnostics and credentials are local-only.
     if header.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC
         || header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY
@@ -537,12 +565,7 @@ pub(super) fn entity_selector_decision(
     }
     // Registration is mandatory even for an unfiltered selector. Unknown
     // bytes do not gain a scope from their numeric position.
-    let identity = selector_range_of(header.entity_type).or_else(|| {
-        vault
-            .structural_kind_registration(header.entity_type)
-            .and_then(|registration| registration.family)
-            .map(crate::federation::SelectorRange::Family)
-    })?;
+    let identity = selector_identity(vault, header.entity_type)?;
     if band_filter(position).is_some_and(|bands| !bands.contains(&identity)) {
         return None;
     }
@@ -582,6 +605,7 @@ pub(super) fn entity_selector_decision(
     Some(EntitySelectorDecision {
         facet_visible,
         facet_seed,
+        coreference_link,
     })
 }
 
@@ -606,16 +630,37 @@ pub(super) fn entity_selector_decision(
 ///
 /// Nothing legitimate is lost: an undecodable CLAIM is a row no reader can
 /// interpret, and withholding it discloses strictly less than shipping it.
+///
+/// `None` withholds the blob. `Some` lets it travel, with the `same_as` link
+/// it travels on when it is coreference material.
 fn coreference_claim_passes(
     entity_type: u8,
     blob: &[u8],
     coreference: &CoreferenceExportContext,
-) -> bool {
+) -> Option<Option<(EntityId, EntityId)>> {
     if entity_type != ENTITY_TYPE_CLAIM {
-        return true;
+        return Some(None);
     }
-    crate::claim::decode_claim_body(&blob[ENTITY_METADATA_HEADER_LEN..], true)
-        .is_ok_and(|body| coreference.claim_travels(&body))
+    let body = crate::claim::decode_claim_body(&blob[ENTITY_METADATA_HEADER_LEN..], true).ok()?;
+    if !coreference.claim_travels(&body) {
+        return None;
+    }
+    if !body
+        .predicate
+        .starts_with(crate::claim::PREDICATE_COREFERENCE_PREFIX)
+    {
+        return Some(None);
+    }
+    // `claim_travels` let a coreference claim through only on an allowed
+    // `same_as` EdgeRef.
+    match body.subject {
+        crate::claim::ClaimSubject::Edge {
+            source,
+            kind: EdgeKind::SameAs,
+            target,
+        } => Some(Some((source, target))),
+        _ => None,
+    }
 }
 
 fn world_passes(entity_type: u8, body: &[u8], world: SyncSelectorWorld) -> bool {

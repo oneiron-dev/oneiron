@@ -149,6 +149,10 @@ fn escaped_byte(digits: &[u8]) -> Option<u8> {
 }
 
 #[cfg(unix)]
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "the off-Unix implementation refuses through this same signature"
+)]
 fn os_string_of_bytes(bytes: Vec<u8>) -> Result<OsString> {
     use std::os::unix::ffi::OsStringExt;
     Ok(OsString::from_vec(bytes))

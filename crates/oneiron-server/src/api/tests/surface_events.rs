@@ -178,6 +178,10 @@ async fn v1_core_surface_event_rejection_receipt_names_which_identity_failed() {
         auth_secret: Some("secret".to_owned()),
         ..Default::default()
     });
+    // OF-519: this test seeds its identity by hand (no seed_surface_identity),
+    // so it drops the built-in pack seed marker itself; see seed_surface_identity.
+    oneiron::test_doors::builtin_pack_seed::remove_builtin_pack_seed_marker(&server.vault)
+        .expect("remove the built-in pack seed marker");
 
     // A resolved but vault-bound identity. Routing knows exactly which record
     // refused and why, and the receipt carries both — the previous flattened
@@ -390,6 +394,10 @@ async fn v1_core_surface_event_rejection_is_not_cached_under_the_idempotency_key
         auth_secret: Some("secret".to_owned()),
         ..Default::default()
     });
+    // OF-519: this test seeds its identity by hand (no seed_surface_identity),
+    // so it drops the built-in pack seed marker itself; see seed_surface_identity.
+    oneiron::test_doors::builtin_pack_seed::remove_builtin_pack_seed_marker(&server.vault)
+        .expect("remove the built-in pack seed marker");
     let identity_ref = seeded_test_entity_id(0x1259_0090);
     let agent_ref = seeded_test_entity_id(0x1259_0091);
     let address = "surface-provisioning@example.com";

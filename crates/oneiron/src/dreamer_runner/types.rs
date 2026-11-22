@@ -650,11 +650,14 @@ pub use oneiron_wake_contract::dreamer_runner::types::DreamerParkCause;
 /// The cause of a park a failed model call made (FIX 7382, Engine
 /// 10-21): a provider outage when its provider is down; a private park
 /// for a failure only an owner act clears (the wake driver's owner-act
-/// check names them); and a Retry, resumed after its delay, for any other.
+/// check names them) or refused for its window (no later pass clears
+/// the same input, Engine 21 Nov 07:38); else a Retry after its delay.
 #[must_use]
 pub fn dreamer_park_cause_of_llm(error: &oneiron_model::llm::LlmError) -> DreamerParkCause {
     if error.is_provider_unavailable() {
         DreamerParkCause::ProviderUnavailable
+    } else if crate::dreamer_wake::llm_refuses_window(error) {
+        DreamerParkCause::Other
     } else if crate::dreamer_wake::llm_waits_on_owner_act(error) {
         DreamerParkCause::Other
     } else {
@@ -683,9 +686,10 @@ pub fn dreamer_park_cause_of_response(
 /// The cause of a park a failed durable step made (FIX 7382, Engine
 /// 10-21): a checkpoint at the wake-pass deadline; a provider outage for
 /// a model call whose provider is down; a private park for a failure
-/// only an owner act clears (the model failures and engine error kinds
-/// the wake driver's owner-act checks name); and a Retry, resumed after
-/// its delay, for any other.
+/// only an owner act clears or refused for its window (the wake driver's
+/// checks name them) or that refuses the attempt's own input for good
+/// (`refuses_attempt_input`); and a Retry, resumed after its delay, for
+/// any other.
 #[must_use]
 pub fn dreamer_park_cause_of_step(
     error: &crate::model_step_error::DurableStepError,
@@ -698,7 +702,10 @@ pub fn dreamer_park_cause_of_step(
             crate::dreamer_runner::dreamer_park_cause_of_llm(source)
         }
         DurableStepError::Engine(engine) => {
-            if crate::dreamer_wake::waits_on_owner_act(engine.kind()) {
+            let kind = engine.kind();
+            if crate::dreamer_wake::waits_on_owner_act(kind)
+                || crate::dreamer_wake::refuses_attempt_input(engine)
+            {
                 DreamerParkCause::Other
             } else {
                 DreamerParkCause::Retry
@@ -711,11 +718,13 @@ pub fn dreamer_park_cause_of_step(
     }
 }
 
-/// The end of a try whose durable step a spend scope refused for good: `Failed`, with the step
-/// error's text as its reason and the typed refusal beside it, settling `completed_units` the
-/// try already spent with the receipts of its paid `step_bindings`. Nothing parks: no write
-/// refills a closed boundary or a ceiling, and an unbound step has no write to wait for
-/// (BUDGET-TRAP-UNTYPED-NO-SENDER). `None` for every other step error, which parks as
+/// The end of a try whose durable step is refused for good: `Failed`, with the step
+/// error's text as its reason, settling `completed_units` the try already spent with
+/// the receipts of its paid `step_bindings`. A spend scope's refusal keeps the typed
+/// refusal beside it; nothing parks, since no write refills a closed boundary or a
+/// ceiling (BUDGET-TRAP-UNTYPED-NO-SENDER). A window refusal ends the try Failed
+/// with its text, once, and no typed refusal: the same input meets it on every
+/// call (Engine 21 Nov 07:38). `None` for every other step error, which parks as
 /// [`dreamer_park_cause_of_step`] says.
 #[must_use]
 pub fn dreamer_failed_on_refused_step(
@@ -723,15 +732,23 @@ pub fn dreamer_failed_on_refused_step(
     completed_units: u64,
     step_bindings: &[crate::model_step_context::StepEffectBinding],
 ) -> Option<crate::dreamer_wake::DreamerAttemptExecution> {
-    let crate::model_step_error::DurableStepError::BudgetRefused(refusal) = error else {
-        return None;
-    };
-    Some(crate::dreamer_wake::DreamerAttemptExecution::Failed {
-        reason: error.to_string(),
-        completed_units,
-        budget_refusal: Some(refusal.clone()),
-        step_bindings: step_bindings.to_vec(),
-    })
+    if let crate::model_step_error::DurableStepError::BudgetRefused(refusal) = error {
+        return Some(crate::dreamer_wake::DreamerAttemptExecution::Failed {
+            reason: error.to_string(),
+            completed_units,
+            budget_refusal: Some(refusal.clone()),
+            step_bindings: step_bindings.to_vec(),
+        });
+    }
+    if crate::dreamer_wake::step_refuses_window(error) {
+        return Some(crate::dreamer_wake::DreamerAttemptExecution::Failed {
+            reason: error.to_string(),
+            completed_units,
+            budget_refusal: None,
+            step_bindings: step_bindings.to_vec(),
+        });
+    }
+    None
 }
 
 /// The spent model seat a failed durable step waits on, with the reset its refusal stated

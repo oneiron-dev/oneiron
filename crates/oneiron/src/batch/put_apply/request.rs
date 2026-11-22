@@ -111,6 +111,10 @@ pub(in crate::batch) struct DecisionRecording {
     pub(in crate::batch) internal_lexical_query_hint: bool,
     /// The receipt a same-transaction preflight already recorded for it.
     pub(in crate::batch) preflight: Option<GateDecisionId>,
+    /// The claim diff of the body that receipt judged, when the mask on write
+    /// rewrote the candidate after it: the gate reads the receipt against it
+    /// (CHECKER-PREVIEW-READS-UNMASKED-CANDIDATE).
+    pub(in crate::batch) pre_mask_diff: Option<[u8; 32]>,
     /// This exact Pending-Auto occurrence belongs to a rollback-only bound probe.
     pub(in crate::batch) pending_auto_probe: Option<crate::batch::gate_mode::PendingAutoProbe>,
 }

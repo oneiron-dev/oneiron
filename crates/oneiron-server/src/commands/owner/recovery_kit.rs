@@ -47,6 +47,7 @@ mod custody;
 mod issue;
 mod live;
 
+pub(in crate::commands) use self::authority_recovery::open_material;
 pub(super) use self::custody::{kit_custody_root, kit_custody_seed};
 
 /// The most a piece file is: an export is 89 bytes, a code 99 characters.
@@ -143,7 +144,9 @@ fn read_kit(
     Ok((pieces, passphrase))
 }
 
-fn read_kit_args(args: &KitPieceArgs) -> anyhow::Result<(Vec<KitPiece>, Option<KitPassphrase>)> {
+pub(crate) fn read_kit_args(
+    args: &KitPieceArgs,
+) -> anyhow::Result<(Vec<KitPiece>, Option<KitPassphrase>)> {
     read_kit(&args.pieces, args.secret_file.as_deref(), false)
 }
 
@@ -263,6 +266,9 @@ fn confirm(args: RecoveryKitConfirmArgs) -> anyhow::Result<()> {
     let owner = local_owner(&vault)?;
     let pieces: Vec<&KitPiece> = pieces.iter().collect();
     let confirmed = vault.confirm_world_kit(&owner, &pieces, passphrase.as_ref(), &carry)?;
+    // OPUS-WAYBACK-BOX's deposit takes R's authority seed later; the server
+    // drops it for now.
+    let _ = &confirmed.activated.authority_seed;
     let vault_id = vault.vault_key_vault_id();
     let keys = &confirmed.activated.keys;
     emit(&Confirmed {
@@ -621,22 +627,36 @@ fn read_sealed(path: &Path) -> anyhow::Result<Vec<u8>> {
 /// escrow wrap. A kit that does not open the wrap opens nothing. A data-key
 /// kit's pieces rebuild the vault data key itself (FIX 5614).
 pub(super) fn kit_unlock(args: &RestoreArgs) -> anyhow::Result<HostUnlock> {
-    let passkey = match (&args.kit_passkey_prf_file, &args.credential) {
-        (Some(file), Some(credential)) => {
-            let prf = secret32(
-                &super::vault_key::read_secret_file(file, "the passkey's PRF output")?,
-                "a PRF output",
-            )?;
-            Some((credential.clone(), prf))
-        }
-        _ => None,
-    };
+    let passkey = kit_passkey(
+        args.kit_passkey_prf_file.as_deref(),
+        args.credential.as_deref(),
+    )?;
     kit_unlock_with(
         args.vault_id.as_deref(),
         &args.pieces,
         args.secret.secret_file.as_deref(),
         passkey,
     )
+}
+
+/// The synced passkey a data-key kit unlock names (census L10-18): its
+/// credential name and its PRF output, read from the owner-only `prf_file`.
+/// `None` when no PRF file is named.
+pub(super) fn kit_passkey(
+    prf_file: Option<&Path>,
+    credential: Option<&str>,
+) -> anyhow::Result<Option<(String, Zeroizing<[u8; 32]>)>> {
+    let Some(file) = prf_file else {
+        return Ok(None);
+    };
+    let credential = credential.ok_or_else(|| {
+        anyhow::anyhow!("the kit passkey's PRF output names its passkey: --credential")
+    })?;
+    let prf = secret32(
+        &super::vault_key::read_secret_file(file, "the passkey's PRF output")?,
+        "a PRF output",
+    )?;
+    Ok(Some((credential.to_owned(), prf)))
 }
 
 /// A fresh restore's kit unlock, bound to the owner-given `vault_id`, never
@@ -704,11 +724,18 @@ pub(super) fn kit_unlock_with(
 /// An existing plain or sealed vault's kit unlock. Count its exact kept
 /// piece before checking stdin demand and reading a passphrase, then carry
 /// the same pieces to the engine (FIX 11974, FIX 12055, FIX 12396).
+/// With the synced `passkey`, the data-key kit's piece the vault seals under
+/// it counts as one more and joins them in the engine, so one piece file
+/// and the passkey unlock, or the passkey and the kit passphrase with no
+/// piece file (census L10-18; FIX [KIT-PASSKEY-UNLOCK-ON-EXISTING-VAULT-CLI]).
+/// With no piece file no kit is named, so no kept piece is counted and the
+/// passphrase is read, as a fresh restore reads it.
 /// Fresh restores use [`kit_unlock_with`] instead.
 pub(super) fn kit_unlock_existing(
     vault_id: Option<&str>,
     files: &[PathBuf],
     secret_file: Option<&Path>,
+    passkey: Option<(String, Zeroizing<[u8; 32]>)>,
     keeps_piece: impl FnOnce(KitSecretKind, KitId) -> anyhow::Result<bool>,
     before_secret: impl FnOnce(bool) -> anyhow::Result<()>,
 ) -> anyhow::Result<HostUnlock> {
@@ -717,27 +744,37 @@ pub(super) fn kit_unlock_existing(
     })?;
     let vault_id = secret32(vault_id.as_bytes(), "a vault id")?;
     anyhow::ensure!(
-        !files.is_empty(),
-        "--unlock kit reads the kit's pieces: --piece"
+        !files.is_empty() || passkey.is_some(),
+        "--unlock kit reads the kit's pieces: --piece, or the kit passkey's \
+         --kit-passkey-prf-file with the kit passphrase"
     );
     let pieces = read_kit_pieces(files)?;
-    let kind = pieces[0].kind();
-    let kit = pieces[0].kit_id();
-    let kept = keeps_piece(kind, kit)?;
-    before_secret(secret_file.is_none() && pieces.len() + usize::from(kept) == 1)?;
-    let passphrase = read_kit_passphrase(secret_file, pieces.len(), kept)?;
-    if kind == KitSecretKind::VaultKey {
-        return Ok(HostUnlock::VaultKeyKit {
+    // No piece file: the passkey's piece alone, a data-key kit's.
+    let named = pieces.first().map(|piece| (piece.kind(), piece.kit_id()));
+    let kind = named.map_or(KitSecretKind::VaultKey, |(kind, _)| kind);
+    anyhow::ensure!(
+        passkey.is_none() || kind == KitSecretKind::VaultKey,
+        "a passkey is a piece of the data-key kit only, never of the world kit"
+    );
+    let kept = match named {
+        Some((kind, kit)) => keeps_piece(kind, kit)?,
+        None => false,
+    };
+    let given = pieces.len() + usize::from(passkey.is_some());
+    before_secret(secret_file.is_none() && given + usize::from(kept) == 1)?;
+    let passphrase = read_kit_passphrase(secret_file, given, kept)?;
+    match named {
+        Some((KitSecretKind::RecoveryRoot, kit)) => Ok(HostUnlock::WorldKit {
+            vault_id: *vault_id,
+            kit,
+            pieces,
+            passphrase,
+        }),
+        Some((KitSecretKind::VaultKey, _)) | None => Ok(HostUnlock::VaultKeyKit {
             vault_id: *vault_id,
             pieces,
             passphrase,
-            passkey: None,
-        });
+            passkey,
+        }),
     }
-    Ok(HostUnlock::WorldKit {
-        vault_id: *vault_id,
-        kit,
-        pieces,
-        passphrase,
-    })
 }

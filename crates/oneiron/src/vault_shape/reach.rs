@@ -28,6 +28,7 @@ use crate::consent::{
 use crate::error::Result;
 use crate::reaction::person_name_in;
 use crate::{EntityId, Vault};
+use oneiron_contracts::fingerprint::LegacyDigest;
 use std::collections::BTreeMap;
 
 /// The verb class an outbound send is consented under, as the send door
@@ -112,52 +113,109 @@ pub(super) struct ReachRows {
     pub(super) outbound: Vec<ReachOutbound>,
 }
 
+/// The rows a test door names (PLAN-UC-04 3.4c), field for field.
+#[cfg(oneiron_test_support)]
+impl From<&crate::test_doors::fingerprint_keep_typed_feeds::ReachRows> for ReachRows {
+    fn from(rows: &crate::test_doors::fingerprint_keep_typed_feeds::ReachRows) -> Self {
+        Self {
+            actors: rows
+                .actors
+                .iter()
+                .map(|actor| ReachActor {
+                    entity: actor.entity,
+                    agent_id: actor.agent_id.clone(),
+                    enabled: actor.enabled,
+                })
+                .collect(),
+            grants: rows.grants.clone(),
+            senders: rows
+                .senders
+                .iter()
+                .map(|sender| ReachSender {
+                    entity: sender.entity,
+                    actor: sender.actor,
+                    channel: sender.channel.clone(),
+                    address: sender.address.clone(),
+                    may_send: sender.may_send,
+                })
+                .collect(),
+            connectors: rows
+                .connectors
+                .iter()
+                .map(|tool| ReachConnector {
+                    key: tool.key,
+                    connector: tool.connector.clone(),
+                    actor: tool.actor,
+                    except: tool.except.clone(),
+                    tool: tool.tool.clone(),
+                    setting: tool.setting,
+                    held: tool.held,
+                })
+                .collect(),
+            outbound: rows
+                .outbound
+                .iter()
+                .map(|grant| ReachOutbound {
+                    grant: grant.grant,
+                    principal: grant.principal.clone(),
+                    scope: grant.scope.clone(),
+                    digest: grant.digest,
+                })
+                .collect(),
+        }
+    }
+}
+
 impl ReachRows {
     /// Feeds these rows to a frontier, so a plan pins the reach it showed.
-    pub(super) fn hash_into(&self, hasher: &mut blake3::Hasher) {
-        hasher.update(b"reach\0");
+    /// The plan frontier and the approval pin it feeds are compared with
+    /// stored and returned values, so it keeps its bytes (K, PLAN-UC-04
+    /// 3.4c): each text is a u64 big-endian length and its bytes.
+    pub(super) fn hash_into(&self, hasher: &mut LegacyDigest) {
+        hasher.raw(b"reach\0");
         for actor in &self.actors {
-            hasher.update(actor.entity.as_bytes());
-            hasher.update(&(actor.agent_id.len() as u64).to_be_bytes());
-            hasher.update(actor.agent_id.as_bytes());
-            hasher.update(&[u8::from(actor.enabled)]);
+            hasher
+                .raw(actor.entity.as_bytes())
+                .len_u64_be(actor.agent_id.len())
+                .raw(actor.agent_id.as_bytes())
+                .raw(&[u8::from(actor.enabled)]);
         }
-        hasher.update(b"\0");
+        hasher.raw(b"\0");
         for grant in &self.grants {
-            hasher.update(grant.digest().as_bytes());
+            hasher.raw(grant.digest().as_bytes());
         }
-        hasher.update(b"\0");
+        hasher.raw(b"\0");
         for sender in &self.senders {
-            hasher.update(sender.entity.as_bytes());
-            hasher.update(sender.actor.as_bytes());
+            hasher
+                .raw(sender.entity.as_bytes())
+                .raw(sender.actor.as_bytes());
             for text in [&sender.channel, &sender.address] {
-                hasher.update(&(text.len() as u64).to_be_bytes());
-                hasher.update(text.as_bytes());
+                hasher.len_u64_be(text.len()).raw(text.as_bytes());
             }
-            hasher.update(&[u8::from(sender.may_send)]);
+            hasher.raw(&[u8::from(sender.may_send)]);
         }
-        hasher.update(b"\0");
+        hasher.raw(b"\0");
         for tool in &self.connectors {
-            hasher.update(tool.key.as_bytes());
-            hasher.update(&[u8::from(tool.actor.is_some())]);
+            hasher
+                .raw(tool.key.as_bytes())
+                .raw(&[u8::from(tool.actor.is_some())]);
             if let Some(actor) = tool.actor {
-                hasher.update(actor.as_bytes());
+                hasher.raw(actor.as_bytes());
             }
-            hasher.update(&(tool.except.len() as u64).to_be_bytes());
+            hasher.len_u64_be(tool.except.len());
             for actor in &tool.except {
-                hasher.update(actor.as_bytes());
+                hasher.raw(actor.as_bytes());
             }
             for text in [&tool.connector, &tool.tool] {
-                hasher.update(&(text.len() as u64).to_be_bytes());
-                hasher.update(text.as_bytes());
+                hasher.len_u64_be(text.len()).raw(text.as_bytes());
             }
-            hasher.update(tool.setting.as_str().as_bytes());
-            hasher.update(&[u8::from(tool.held)]);
+            hasher
+                .raw(tool.setting.as_str().as_bytes())
+                .raw(&[u8::from(tool.held)]);
         }
-        hasher.update(b"\0");
+        hasher.raw(b"\0");
         for grant in &self.outbound {
-            hasher.update(grant.grant.as_bytes());
-            hasher.update(&grant.digest);
+            hasher.raw(grant.grant.as_bytes()).raw(&grant.digest);
         }
     }
 

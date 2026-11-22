@@ -13,8 +13,8 @@ use oneiron_store::serialize::field_profile_table;
 pub(crate) use oneiron_store::serialize::grant_fields;
 use oneiron_store::serialize::group_labels;
 use oneiron_store::serialize::value_json;
-pub(crate) use value_json::msgpack_value_projection;
-pub use value_json::{msgpack_value_from_json, msgpack_value_to_json};
+pub use value_json::{json_to_msgpack_value, msgpack_value_from_json, msgpack_value_to_json};
+pub(crate) use value_json::{msgpack_value_projection, msgpack_value_to_exact_json};
 mod handles;
 mod item_budget;
 mod json_format;
@@ -33,8 +33,6 @@ mod toon_format;
 use oneiron_store::serialize::types;
 mod yaml_format;
 
-// FIX [LIBTEST-QUARANTINE-SERIALIZE-TESTS]: the lib test target's type check fails here (9 errors: E0063 x9); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 // The L2 producer must render the same safe value projection as ranked rows.
@@ -82,5 +80,6 @@ mod hub_source_archive;
 pub use hub_source_archive::ExportHubSource;
 
 mod export_actor_references;
+mod export_identity_topology_references;
 
 pub(crate) use oneiron_store::serialize::person_identity;

@@ -352,8 +352,7 @@ fn past_its_budget_a_project_freezes_lands_removals_and_the_owners_seal_converge
     authority.roster = Some(BTreeSet::from([leader.to_hex(), z.to_hex()]));
     let base = head_of(id, &s2)?;
     let (issuer, slip) = host_slip(&vault)?;
-    let wire = slip.to_token()?;
-    let signer = |challenge: &[u8]| issuer.binding_proof(&slip, challenge);
+    let signer = crate::workspace_roster::OwnerProjectSigner::new(&issuer, slip)?;
     let seal_clock = || -> Result<u64> {
         let txn = vault.store.env.read_txn()?;
         let floor = crate::authority::AUTHORITY_FIRST_SEEN
@@ -375,9 +374,8 @@ fn past_its_budget_a_project_freezes_lands_removals_and_the_owners_seal_converge
         while seal_clock()? == start {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
-        first =
-            Some(vault.seal_project(&sealer, id, authority.clone(), base, wire.clone(), signer)?);
-        match vault.seal_project(&sealer, id, authority.clone(), base, wire.clone(), signer) {
+        first = Some(vault.seal_project(&sealer, &signer, id, authority.clone(), base)?);
+        match vault.seal_project(&sealer, &signer, id, authority.clone(), base) {
             Err(error) => {
                 assert_eq!(error.kind(), ErrorKind::ProjectAuthorityUnresolved);
                 break;
@@ -387,7 +385,7 @@ fn past_its_budget_a_project_freezes_lands_removals_and_the_owners_seal_converge
     }
     let first = first.ok_or_else(invalid)?;
     std::thread::sleep(std::time::Duration::from_millis(1100));
-    let second = vault.seal_project(&sealer, id, authority, base, wire, signer)?;
+    let second = vault.seal_project(&sealer, &signer, id, authority, base)?;
     assert_ne!(first, second);
 
     // (h) Both replicas serve the sealed view; raising the policy clears a
@@ -527,8 +525,9 @@ fn revoking_a_settlement_a_frozen_view_rested_on_serves_no_authority() -> Result
 
 /// Bug repro (Astra #1434 r10 F3): L removes Y (A) over S0; over A, B2 drops
 /// B1 (D) or lowers the depth (E), and B3 signs two resolutions of A's tie
-/// that build on neither, one for D and one for E. Neither stands, so D
-/// excludes no one and B1's removal of X over S0 (C) holds in the tie.
+/// that build on neither, one for D and one for E. Neither resolution stands,
+/// but D's deposition excludes B1's removal of X over S0 (C). A wins alone
+/// at S0, and X stays seated in the D/E meet (well-founded deposition ruling).
 /// Past the budget the frozen view rests on both resolutions: revoking
 /// either one's slip serves no authority.
 #[cfg(feature = "sync")]
@@ -564,7 +563,8 @@ fn revoking_a_conflicting_resolution_a_frozen_view_rested_on_serves_no_authority
             );
             put_companion(&vault, &envelope(id, settle), at)?;
         }
-        assert!(!seats_of(&vault, id).contains(&x));
+        // Well-founded deposition ruling: D excludes C, so A wins and X stays seated.
+        assert!(seats_of(&vault, id).contains(&x));
         vault.set_project_history_policy(
             &owner(&vault)?,
             ProjectHistoryPolicy {

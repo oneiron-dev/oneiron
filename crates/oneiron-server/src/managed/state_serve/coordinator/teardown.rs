@@ -31,12 +31,14 @@ pub(super) struct StartingHandles {
     pub(super) connector_events: Option<JoinHandle<()>>,
     pub(super) connector_sends: Option<JoinHandle<()>>,
     pub(super) builtin_host: Option<JoinHandle<()>>,
+    pub(super) deposit_settlement: Option<JoinHandle<()>>,
     pub(super) hosted_imports: Option<JoinHandle<()>>,
     pub(super) coach_host: Option<JoinHandle<()>>,
     pub(super) failure_signals: Option<JoinHandle<()>>,
     pub(super) tagging: Option<JoinHandle<()>>,
     pub(super) ladder_workers: Vec<JoinHandle<()>>,
     pub(super) ledger_report: Option<JoinHandle<()>>,
+    pub(super) owner_key_change_report: Option<JoinHandle<()>>,
     pub(super) ctl_owned_path: Option<PathBuf>,
     pub(super) http_owned_path: Option<PathBuf>,
     pub(super) artifacts_owned_path: Option<PathBuf>,
@@ -90,6 +92,7 @@ pub(super) async fn stop(mut handles: StartingHandles) -> (anyhow::Result<()>, a
         handles.connector_events,
         handles.connector_sends,
         handles.builtin_host,
+        handles.deposit_settlement,
         handles.hosted_imports,
         handles.coach_host,
         handles.failure_signals,
@@ -169,9 +172,13 @@ pub(super) async fn stop(mut handles: StartingHandles) -> (anyhow::Result<()>, a
     if let Some(path) = handles.artifacts_owned_path {
         unlink(path, "artifact socket unlink failed");
     }
-    // Stop the report task before the final push re-reads current facts. A
+    // Stop the report tasks before the final push re-reads current facts. A
     // loaded ledger also reports a failed start before ManagedState exists.
     if let Some(report) = handles.ledger_report {
+        report.abort();
+        let _ = report.await;
+    }
+    if let Some(report) = handles.owner_key_change_report {
         report.abort();
         let _ = report.await;
     }
@@ -184,6 +191,7 @@ pub(super) async fn stop(mut handles: StartingHandles) -> (anyhow::Result<()>, a
         // Keep every env in the final full-replacement wake snapshot, then
         // stop. A start that never opened them stops nothing.
         server.stop_shared_envs().await;
+        server.stop_connector_stdio().await;
     }
     (stopped, telemetry_drained)
 }

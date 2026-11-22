@@ -204,6 +204,7 @@ impl Memory<'_> {
             conversation_ref: plan.nudge.room.to_hex(),
             turn_ref: Some(plan.turn.to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: Some(plan.message.to_hex()),
                 author: WitnessAuthor::Companion,

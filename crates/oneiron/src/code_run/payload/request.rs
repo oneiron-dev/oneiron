@@ -173,13 +173,21 @@ pub(in crate::code_run) fn self_call_request_value(call: &SelfCall) -> Result<Va
         SelfCall::Context(call) => {
             request_map(vec![("spec", Value::from(context_spec_json(&call.spec)?))])
         }
-        SelfCall::Speak(call) | SelfCall::Think(call) | SelfCall::Express(call) => {
-            request_map(vec![
-                ("text", Value::from(call.text.as_str())),
-                ("order", Value::from(u64::from(call.order))),
-                ("occurred_at", Value::from(call.occurred_at)),
-            ])
-        }
+        SelfCall::Speak(call)
+        | SelfCall::Think(call)
+        | SelfCall::ThinkAloud(call)
+        | SelfCall::Express(call) => request_map(vec![
+            ("text", Value::from(call.text.as_str())),
+            ("order", Value::from(u64::from(call.order))),
+            ("occurred_at", Value::from(call.occurred_at)),
+        ]),
+        // The guest's ref, not the result the host bound to it: a replay
+        // resolves nothing, and two refs never alias one row.
+        SelfCall::SayResult(call) => request_map(vec![
+            ("result", Value::from(call.result.as_str())),
+            ("order", Value::from(u64::from(call.order))),
+            ("occurred_at", Value::from(call.occurred_at)),
+        ]),
         // The guest's call: the source the host bound to it is not the
         // guest's, and a replay resolves it again.
         SelfCall::ReaderSpawn(call) => {
@@ -297,20 +305,20 @@ fn repo_request_value(call: &crate::code_run::RepoRunCall) -> Result<Value> {
     ]))
 }
 
-/// The request value of a summarize call: the guest call alone.
+/// The request value of a summarize call: the guest call alone. Its NOTEs
+/// are named only when it names some, so a call that names none keeps the
+/// request value it always had.
 fn summarize_request_value(call: &crate::code_run::SelfSummarizeCall) -> Value {
-    request_map(vec![(
-        "call",
-        Value::from(
-            serde_json::json!({
-                "ref": call.reference,
-                "effort": call.effort.map(super::SummarizeEffort::as_str),
-                "group": call.group,
-                "defer": call.defer,
-            })
-            .to_string(),
-        ),
-    )])
+    let mut guest = serde_json::json!({
+        "ref": call.reference,
+        "effort": call.effort.map(super::SummarizeEffort::as_str),
+        "group": call.group,
+        "defer": call.defer,
+    });
+    if let Some(note_refs) = &call.note_refs {
+        guest["note_refs"] = serde_json::json!(note_refs);
+    }
+    request_map(vec![("call", Value::from(guest.to_string()))])
 }
 
 /// The request value of a leader split call: its leader and its slice.

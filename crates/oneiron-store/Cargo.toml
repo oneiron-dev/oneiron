@@ -67,8 +67,10 @@ windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
 tempfile = "3"
 
 [features]
-# Forwarded by `oneiron/sync`: the overlay's sync-only string-range accessor.
-sync = []
+# Forwarded by `oneiron/sync`: the CRDT document modules and the sync-only parts of the others.
+# They name oneiron-base's and oneiron-contracts' sync items, so this feature turns those on too
+# and the crate builds alone with --all-features.
+sync = ["oneiron-contracts/sync", "oneiron-base/sync"]
 # Forwarded by `oneiron/test-support`: the test-only seams core's tests call
 # (the session overlay's allocation observer and snapshot reads, and the
 # fault, race and raw-key hooks of the store modules moved out of core). Never

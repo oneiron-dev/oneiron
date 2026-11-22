@@ -59,6 +59,7 @@
 //! after every serialized assembly.
 
 use crate::ports::EntityStoreRead;
+mod carry;
 mod check_material;
 mod conversation;
 mod driver;
@@ -85,6 +86,7 @@ pub use folds::{
     FoldUnfoldInput, FoldUnfolded, FoldsInput, SelfFoldCall, fold_handle, parse_fold_handle,
 };
 
+pub(crate) use carry::{carried_rows_in, is_epoch_summary_in};
 pub use check_material::CompactionCheckMaterialRef;
 pub(crate) use check_material::{
     CheckMaterialFault, CompactionCheckMaterial, admit_check_material_in_txn,
@@ -92,6 +94,8 @@ pub(crate) use check_material::{
     compaction_check_material_accepts_masked, erase_check_material_in_txn,
     put_check_material_in_txn,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use conversation::thread_turn_order_in;
 pub use conversation::{
     ChatLog, ChatLogCut, ChatLogLine, ConversationCompactionUnavailable, ConversationEvidence,
     ConversationFlight, ConversationFlightOutcome, ConversationTurnSpan, capture_conversation_fork,
@@ -99,21 +103,24 @@ pub use conversation::{
     seal_conversation_flight,
 };
 pub(crate) use conversation::{
-    FoldedTurnSummary, chat_log_room, conversation_receipt_in, folded_turn_summary_in,
-    put_conversation_receipt_in_txn, select_action_turns, summary_stands_in,
+    ConversationTurnReading, FoldedTurnSummary, chat_log_room, conversation_covered_end_in,
+    conversation_receipt_in, conversation_turns_in, entry_piece_summaries, folded_turn_summary_in,
+    put_conversation_receipt_in_txn, select_action_turns, summary_stands_in, thread_turn_key_in,
 };
 pub use driver::{
     CompactionBackend, CompactionBackendRegistry, CompactionDirective, CompactionDriver,
     CompactionProduct, CompactionRequest, CompactionSignal, CompactionTierClass,
     CompactionWatermark, CompactionWindowMessage, MarginLaw, SwapPlan,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use epoch::prior_epoch_in_txn_for_test_door;
 pub use epoch::{
     EPOCH_SUMMARY_BODY_KEYS, EPOCH_SUMMARY_BODY_VERSION, EPOCH_SUMMARY_LEVEL, EpochSummaryBody,
     decode_epoch_summary_body, encode_epoch_summary_body,
 };
 pub(crate) use epoch::{
-    EpochMint, EpochPlacement, EpochScope, PriorEpoch, epoch_disclosable_in, epoch_exportable_in,
-    epoch_sources_admitted_in,
+    EpochMint, EpochPlacement, EpochScope, PriorEpoch, derived_from_sources_admitted_in,
+    epoch_disclosable_in, epoch_exportable_in, epoch_sources_admitted_in,
 };
 pub(crate) use epoch_floor::{
     epoch_floors_in_txn, raise_epoch_floor_in_txn, raise_epoch_scope_floor_in_txn,
@@ -145,7 +152,7 @@ pub(crate) use hooks::{
 pub use packet_source::{CompactionHostLog, CompactionSource, admit_compaction_source};
 pub(crate) use self_writer::{
     COMPACTION_STEP_RESPONSE_NAME, SelfLanding, admit_self_landing, admit_self_landing_on,
-    is_epoch_summary,
+    is_epoch_summary, refused_pass_execution,
 };
 pub use self_writer::{
     CompactionCall, CompactionEvidence, CompactionExecution, CompactionHomeRef, CompactionLanding,
