@@ -13,6 +13,7 @@ use crate::error::{Error, Result};
 use crate::receipt::{CALL_RECEIPT_REF_PREFIX, CallReceipt, ReceiptRecord};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::{GateDecisionId, RetrievalRunId, RetrievalRunRecord, Store};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 /// The call receipt ledger, read in place (FIX 2449): an MCP refusal's
 /// witness is its stored receipt.
@@ -52,10 +53,19 @@ fn ineligible() -> Error {
     Error::InvalidConfig("failure signal lacks a verified on-record source".into())
 }
 
+/// A source row's pin (`purposes::self_heal::TIER1_SOURCE`).
 fn digest<T: serde::Serialize>(value: &T) -> Result<[u8; 32]> {
     let bytes = rmp_serde::to_vec_named(value)
         .map_err(|_| Error::InvariantViolation("tier-1 source encoding failed"))?;
-    Ok(*blake3::hash(&bytes).as_bytes())
+    Ok(LegacyDigest::new(purposes::self_heal::TIER1_SOURCE)
+        .raw(&bytes)
+        .finish())
+}
+
+/// [`digest`] for the K door (`test_doors::fingerprint_keep_self_heal_digests`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn digest_for_test<T: serde::Serialize>(value: &T) -> Result<[u8; 32]> {
+    digest(value)
 }
 
 /// The stored call receipt `id`, while its row still names itself.

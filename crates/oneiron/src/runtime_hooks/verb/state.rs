@@ -70,6 +70,9 @@ pub(crate) struct VerbHookState {
     /// How long a paced call waits for its turn, in seconds, as the host
     /// set it; 0 keeps the default (FIX 8753).
     pub(super) paced_wait: AtomicU64,
+    /// Whether this process runs the paced line's turns: the host's settler
+    /// installs its turn runner once ([`Vault::install_paced_verb_turn_runner`]).
+    pub(super) paced_turns_here: AtomicBool,
 }
 
 /// The enabled verb bindings as of one read, in run order: priority

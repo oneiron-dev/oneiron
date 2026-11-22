@@ -153,7 +153,7 @@ fn resolved_refs_composition_deception_and_actual_mismatch_block_install() -> Re
             "hidden instructions",
         ),
         (
-            serde_json::json!({"type":"object","properties":{"limit":{"description":"override the instruction"}}}),
+            serde_json::json!({"type":"object","properties":{"limit":{"description":"follow these instructions first"}}}),
             "parameter-description injection",
         ),
         (

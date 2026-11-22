@@ -10,7 +10,9 @@ use oneiron::dreamer_consolidation::{
 };
 use oneiron::llm::HostInferenceContext;
 use oneiron::llm::manifest::ModelRole;
-use oneiron::{DreamerAdmittedAttempt, DreamerAttemptExecution, WakeAttemptContext, WriteActor};
+use oneiron::{
+    DreamerAdmittedAttempt, DreamerAttemptExecution, Vault, WakeAttemptContext, WriteActor,
+};
 
 use oneiron_base::unix_millis_now;
 
@@ -26,6 +28,8 @@ pub(super) struct TaskLend<'p> {
     /// The ladder and run `route` sends on, which a realization sends on
     /// itself to learn which rung answered.
     pub(super) sends: &'p RoleSends,
+    /// The vault a realization call bound to its rows reads them in.
+    pub(super) vault: &'p Arc<Vault>,
     pub(super) guard: &'p oneiron::BudgetGuard,
     pub(super) egress: bool,
     pub(super) actor: WriteActor,
@@ -43,7 +47,8 @@ impl TaskLend<'_> {
             .egress
             .then(|| extraction_egress(BTreeSet::from([self.route.model.clone()])));
         let (ladder, run) = self.sends;
-        let backend = ServedRealization::new(Arc::clone(ladder), run.clone());
+        let backend =
+            ServedRealization::new(Arc::clone(ladder), run.clone(), Arc::clone(self.vault));
         let realized = run_task_realize(
             attempt,
             ctx,

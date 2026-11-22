@@ -1,7 +1,7 @@
 //! The code sandbox's owner Setting keys (DESIGN 15-setting-primitive): rows the setting
 //! catalogue reads from this file.
 
-use crate::setting::{Kind, lower_is_tighter};
+use crate::setting::Kind;
 
 /// Off: a foreign `execute_code` run is lent no network.
 fn no_foreign_egress() -> bool {
@@ -20,6 +20,6 @@ crate::setting::setting_keys! {
     pub(crate) FOREIGN_EXECUTE_CODE_EGRESS: bool = "code_sandbox.foreign.execute_code_egress" {
         kind: Kind::new(no_foreign_egress)
             .strictest(no_foreign_egress)
-            .tighter(lower_is_tighter::<bool>),
+            .lower(),
     };
 }

@@ -25,8 +25,8 @@ use oneiron::connector_key::typescript::{
 use oneiron::connector_key::{
     ConnectorCallClass, ConnectorCatalogEntry, ConnectorConsentTarget, ConnectorDriftKind,
     ConnectorKeySpec, ConnectorKeyStatus, ConnectorManifestDrift, ConnectorToolConsent,
-    ConnectorToolConsentRow, ConnectorToolSchema, ResolvedConnectorManifest, SlateDataClass,
-    SlateToolManifest, draft_connector_slate,
+    ConnectorToolConsentRow, ConnectorToolSchema, PendingConnectorManifest,
+    ResolvedConnectorManifest, SlateDataClass, SlateToolManifest, draft_connector_slate,
 };
 use oneiron::consent::tool_scope::DataClass;
 use oneiron::store::GateDecisionId;
@@ -101,7 +101,7 @@ fn typed_signatures_render_args_and_structured_content() {
             "mode": {"enum": ["fast", "exact"]},
             "cursor": {"type": ["string", "null"], "format": "byte"},
             "x-trace": {"const": 7, "description": "Ends a comment */ early."},
-            "pair": {"type": "array", "prefixItems": [{"type": "string"}, {"type": "boolean"}], "items": false},
+            "pair": {"type": "array", "prefixItems": [{"type": "string"}, {"type": "boolean"}], "items": false, "minItems": 2},
             "either": {"anyOf": [{"type": "string"}, {"type": "array", "items": {"type": "number"}}]},
             "free": {"type": "object", "additionalProperties": {"type": "integer"}}
         },
@@ -134,6 +134,88 @@ fn typed_signatures_render_args_and_structured_content() {
     assert_eq!(input_typescript(&huge), "object");
     assert_eq!(output_typescript(&huge), "unknown");
     assert!(input_typescript(&search_input()).len() <= MAX_TYPESCRIPT_BYTES);
+}
+
+/// A tuple guarantees only the prefix elements `minItems` requires; each
+/// later one reads optional, since `prefixItems` alone allows an empty array
+/// (REVIEW-7972 round 2, P1 1).
+#[test]
+fn a_tuple_prefix_past_min_items_reads_optional() {
+    let output = json!({
+        "type": "object",
+        "properties": {"v": {"type": "array", "prefixItems": [{"type": "string"}], "items": false}},
+        "required": ["v"]
+    });
+    assert_eq!(output_typescript(&output), "{\n  v: [string?];\n}");
+    assert_eq!(
+        input_typescript(&json!({
+            "type": "array",
+            "prefixItems": [{"type": "string"}, {"type": ["number", "null"]}],
+            "minItems": 1
+        })),
+        "[string, (number | null)?, ...unknown[]]"
+    );
+    assert_eq!(
+        input_typescript(&json!({
+            "type": "array",
+            "prefixItems": [{"type": "string"}, {"type": "boolean"}],
+            "items": {"type": "integer"},
+            "minItems": 3
+        })),
+        "[string, boolean, ...number[]]"
+    );
+}
+
+/// The write bound every connector key record holds its staged manifest to:
+/// `MAX_CONNECTOR_MANIFEST_BYTES` (connector_key record, crate-private).
+const TYPED_SIGNATURES_MANIFEST_BOUND: usize = 4_194_304;
+
+/// Optional output schemas give way to the aggregate bound: a manifest whose
+/// tools fit without their outputs resolves and stages with as many outputs
+/// as fit, never a refusal (REVIEW-7972 round 2, P1 2).
+#[test]
+fn output_schemas_give_way_to_the_aggregate_manifest_bound() -> TestResult {
+    let description = "x".repeat(60_000);
+    let tools: Vec<ConnectorToolSchema> = (0..70)
+        .map(|n| {
+            tool_row(
+                &format!("tool_{n:02}"),
+                json!({"type": "object"}),
+                Some(json!({"type": "object", "description": description})),
+            )
+        })
+        .collect();
+    let manifest = ResolvedConnectorManifest::resolve(tools)?.with_elicitation(true);
+    let kept = manifest
+        .tools()
+        .iter()
+        .filter(|tool| tool.output_schema.is_some())
+        .count();
+    assert!(kept > 0, "outputs that fit are kept");
+    assert!(kept < 70, "outputs past the bound are dropped");
+    // Each kept output is the declared one, resolved.
+    for tool in manifest.tools() {
+        if let Some(output) = &tool.output_schema {
+            assert_eq!(output["description"], json!(description));
+        }
+    }
+    // The resolved form is the snapshot admission stores and hashes.
+    let again =
+        ResolvedConnectorManifest::resolve(manifest.tools().to_vec())?.with_elicitation(true);
+    assert_eq!(again, manifest);
+    manifest.hash()?;
+    // The staged wrapper fits the write bound with the drift rows naming
+    // every tool twice.
+    let pending = PendingConnectorManifest {
+        candidate_id: [7; 32],
+        manifest: manifest.clone(),
+        protocol_revision: TYPED_SIGNATURES_REVISION.to_owned(),
+        drift: ConnectorManifestDrift::first_registration(&manifest),
+        qualification_report_hash: Some("a".repeat(64)),
+    };
+    assert!(serde_json::to_vec(&manifest)?.len() <= TYPED_SIGNATURES_MANIFEST_BOUND);
+    assert!(serde_json::to_vec(&pending)?.len() <= TYPED_SIGNATURES_MANIFEST_BOUND);
+    Ok(())
 }
 
 #[test]

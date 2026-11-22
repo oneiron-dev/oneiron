@@ -1,38 +1,116 @@
 //! The host adapter for the Dreamer's job crate (untangle 6.9c PR 4,
 //! S69-RUN = A): a strength attempt runs `oneiron_dreamer::strength_archive`
 //! over a client bound to that attempt, never over a `&Vault`.
+//!
+//! A conflict settlement attempt (untangle 6.9d S69D4) runs
+//! `oneiron_dreamer::conflict_settle` over the client of its own binding,
+//! with the host's lent decisions, on a scoped thread the job joins.
+//!
+//! A psych profile attempt (untangle 6.9i) runs
+//! `oneiron_dreamer::psych_profile_job` over the client of its own binding,
+//! with the pass's narrative role lent for its one bound step.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
+use oneiron::dreamer_runner::DreamerDecisionLender;
 use oneiron::dreamer_runner::DreamerParkCause;
-use oneiron::dreamer_runner::maintenance::{MAINTENANCE_QUEUE_KIND, strength};
+use oneiron::dreamer_runner::maintenance::psych_profile::{self, psych_profile_key_of_input};
+use oneiron::dreamer_runner::maintenance::{MAINTENANCE_QUEUE_KIND, conflict_settle, strength};
 use oneiron::{
     DreamerAdmittedAttempt, DreamerAttemptExecution, DreamerAttemptExecutor, Result, Vault,
     WakeAttemptContext,
 };
-use oneiron_dreamer::strength_archive;
+use oneiron_dreamer::{conflict_settle as conflict_job, psych_profile_job, strength_archive};
 use oneiron_remote::OneironClient;
+
+use super::extraction_decisions::{ExtractionAttemptLender, ExtractionDecisionResources};
+use super::psych_profile_decisions::PsychProfileAttemptLender;
+
+/// The cursor after the last conflict a settlement run asked about, shared by
+/// every factory the host builds with it. A run starts after the held cursor
+/// and stores where it left off, so the next run resumes there. Cloned handles
+/// share one cursor. The default holds no cursor, so the first run starts at
+/// the first conflict.
+#[derive(Clone, Default)]
+pub struct ConflictSettleCursor {
+    inner: Arc<Mutex<Option<String>>>,
+}
 
 /// Wraps a pass's executor chain with the Dreamer's job arms. A strength
 /// attempt (`dreamer.maintenance` / `dreamer.consolidation_strength`) runs
 /// the strength archive job over the client of its own binding
 /// (`Vault::bind_dreamer_attempt`, `OneironClient::for_dreamer_attempt`),
-/// which the engine proves at every call; every other attempt goes to
-/// `inner`.
+/// which the engine proves at every call. A conflict settlement attempt
+/// (`dreamer.maintenance` / `dreamer.conflict_settle`) runs the conflict
+/// settle job over the client of its own binding, with the host's lent
+/// decisions when one is lent, on a scoped thread the attempt joins. Every
+/// other attempt goes to `inner`.
 ///
 /// Installed by the production factory always. With no vault lent
-/// (`ConsolidationExecutorFactory::with_dreamer_job_vault`), a strength
-/// attempt parks, resumable, like the other host facets
-/// (`oneiron::dreamer_runner::maintenance::strength::unlent`).
+/// (`ConsolidationExecutorFactory::with_dreamer_job_vault`), a strength or
+/// conflict settlement attempt parks, resumable, like the other host facets
+/// (`oneiron::dreamer_runner::maintenance::strength::unlent`,
+/// `oneiron::dreamer_runner::maintenance::conflict_settle::unlent`).
 pub struct DreamerJobsExecutor<E> {
     inner: E,
     vault: Option<Arc<Vault>>,
+    conflict_lender: Option<Arc<dyn DreamerDecisionLender>>,
+    conflict_cursor: ConflictSettleCursor,
+    /// Retains prepared pass resources without changing native extraction dispatch.
+    extraction_resources: Option<Arc<ExtractionDecisionResources>>,
 }
 
 impl<E> DreamerJobsExecutor<E> {
     #[must_use]
     pub fn new(inner: E, vault: Option<Arc<Vault>>) -> Self {
-        Self { inner, vault }
+        Self {
+            inner,
+            vault,
+            conflict_lender: None,
+            conflict_cursor: ConflictSettleCursor::default(),
+            extraction_resources: None,
+        }
+    }
+
+    /// Retains this pass's extraction resources for explicitly requested attempt loans.
+    #[must_use]
+    pub(crate) fn with_extraction_resources(
+        mut self,
+        resources: Option<Arc<ExtractionDecisionResources>>,
+    ) -> Self {
+        self.extraction_resources = resources;
+        self
+    }
+
+    /// Prepares one lender with the admitted attempt's clock and its own charge sink.
+    ///
+    /// The later extraction job binds this lender explicitly and drains its tally into
+    /// the attempt outcome. Native extraction never calls this preparation seam.
+    #[must_use]
+    pub fn extraction_lender(
+        &self,
+        context: &WakeAttemptContext<'_>,
+    ) -> Option<Arc<ExtractionAttemptLender>> {
+        self.extraction_resources
+            .as_ref()
+            .map(|resources| Arc::new(ExtractionAttemptLender::new(Arc::clone(resources), context)))
+    }
+
+    /// Lends the conflict settlement arm its host decisions and shared cursor.
+    /// The factory calls this with what it holds, so every pass shares one
+    /// cursor. A direct user that never calls it keeps no lender and its own
+    /// default cursor.
+    #[must_use]
+    pub(crate) fn with_conflict_settle(
+        self,
+        lender: Option<Arc<dyn DreamerDecisionLender>>,
+        cursor: ConflictSettleCursor,
+    ) -> Self {
+        Self {
+            conflict_lender: lender,
+            conflict_cursor: cursor,
+            ..self
+        }
     }
 }
 
@@ -57,13 +135,33 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for DreamerJobsExecutor<E
         attempt: &DreamerAdmittedAttempt,
         ctx: &mut WakeAttemptContext<'_>,
     ) -> Result<DreamerAttemptExecution> {
-        if !is_strength_attempt(attempt) {
-            return self.inner.execute(attempt, ctx).await;
+        if is_strength_attempt(attempt) {
+            let Some(vault) = self.vault.as_ref() else {
+                return Ok(strength::unlent());
+            };
+            return Ok(run_strength_archive(vault, attempt, ctx.now_ms));
         }
-        let Some(vault) = self.vault.as_ref() else {
-            return Ok(strength::unlent());
-        };
-        Ok(run_strength_archive(vault, attempt, ctx.now_ms))
+        if is_conflict_settle_attempt(attempt) {
+            let Some(vault) = self.vault.as_ref() else {
+                return Ok(conflict_settle::unlent());
+            };
+            return Ok(run_conflict_settle(
+                vault,
+                attempt,
+                self.conflict_lender.clone(),
+                &self.conflict_cursor,
+            ));
+        }
+        if is_psych_profile_attempt(attempt) {
+            let Some(vault) = self.vault.as_ref() else {
+                return Ok(psych_profile::unlent());
+            };
+            let lender = self.extraction_resources.as_ref().map(|resources| {
+                Arc::new(PsychProfileAttemptLender::new(Arc::clone(resources), ctx))
+            });
+            return Ok(run_psych_profile(vault, attempt, lender));
+        }
+        self.inner.execute(attempt, ctx).await
     }
 }
 
@@ -71,6 +169,107 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for DreamerJobsExecutor<E
 fn is_strength_attempt(attempt: &DreamerAdmittedAttempt) -> bool {
     attempt.status.attempt.kind == MAINTENANCE_QUEUE_KIND
         && attempt.status.payload.attempt_type == strength::CONSOLIDATION_STRENGTH_FACET
+}
+
+/// Whether `attempt` is a conflict settlement job on the maintenance lane.
+fn is_conflict_settle_attempt(attempt: &DreamerAdmittedAttempt) -> bool {
+    attempt.status.attempt.kind == MAINTENANCE_QUEUE_KIND
+        && attempt.status.payload.attempt_type == conflict_settle::CONFLICT_SETTLE_FACET
+}
+
+/// Whether `attempt` is a psych profile job on the maintenance lane.
+fn is_psych_profile_attempt(attempt: &DreamerAdmittedAttempt) -> bool {
+    attempt.status.attempt.kind == MAINTENANCE_QUEUE_KIND
+        && attempt.status.payload.attempt_type == psych_profile::PSYCH_PROFILE_FACET
+}
+
+/// Binds `attempt`, lends the pass's narrative role when the host lends
+/// one, runs the psych profile job over the bound client for the key the
+/// attempt names, and settles the attempt with every unit its step spent:
+/// completed when the job ran (a profile landed, or the key served no claim
+/// or its commit was refused), failed when the reply was refused, so the
+/// next daily sweep asks again, and parked for a retry when the engine
+/// refused the binding or the job stopped (no loan, a cited claim moved).
+/// An input naming no key can never run: it fails.
+fn run_psych_profile(
+    vault: &Arc<Vault>,
+    attempt: &DreamerAdmittedAttempt,
+    lender: Option<Arc<PsychProfileAttemptLender>>,
+) -> DreamerAttemptExecution {
+    let key = match psych_profile_key_of_input(&attempt.status.payload.input) {
+        Ok(key) => key,
+        Err(error) => {
+            return DreamerAttemptExecution::Failed {
+                reason: format!("the psych profile attempt names no profile key: {error}"),
+                completed_units: 0,
+                budget_refusal: None,
+                step_bindings: Vec::new(),
+            };
+        }
+    };
+    let binding = match vault.bind_dreamer_attempt(attempt) {
+        Ok(binding) => binding,
+        Err(error) => {
+            return psych_retry_park(
+                format!(
+                    "the psych profile attempt's binding was refused ({}): {}",
+                    error.code, error.message
+                ),
+                0,
+                Vec::new(),
+            );
+        }
+    };
+    let binding = match &lender {
+        Some(lender) => {
+            binding.lend_decisions(Arc::clone(lender) as Arc<dyn DreamerDecisionLender>)
+        }
+        None => binding,
+    };
+    let client = OneironClient::for_dreamer_attempt(binding);
+    let input = psych_profile_job::Input {
+        person: key.person.to_hex(),
+        facet: key.facet.map(|facet| facet.to_hex()),
+        world: key.world.map(|world| world.to_hex()),
+    };
+    let result = psych_profile_job::run(&client, &input);
+    let (mut units, mut bindings) = (0, Vec::new());
+    if let Some(lender) = &lender {
+        lender
+            .charges()
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .drain_into(&mut units, &mut bindings);
+    }
+    match result {
+        Ok(outcome) => {
+            tracing::info!(
+                facet = psych_profile::PSYCH_PROFILE_FACET,
+                served = outcome.served,
+                chosen = outcome.chosen,
+                landed = outcome.landed,
+                refusals = outcome.refusals.len(),
+                "psych profile job ran"
+            );
+            match outcome.reply_refused {
+                Some(reason) => DreamerAttemptExecution::Failed {
+                    reason: format!("the psych profile reply was refused: {reason}"),
+                    completed_units: units,
+                    budget_refusal: None,
+                    step_bindings: bindings,
+                },
+                None => DreamerAttemptExecution::Completed {
+                    completed_units: units,
+                    step_bindings: bindings,
+                },
+            }
+        }
+        Err(error) => psych_retry_park(
+            format!("the psych profile job stopped: {error}"),
+            units,
+            bindings,
+        ),
+    }
 }
 
 /// Binds `attempt`, runs the strength archive over the bound client at the
@@ -111,9 +310,116 @@ fn run_strength_archive(
     }
 }
 
+/// Binds `attempt`, lends the host decisions when one is lent, and runs the
+/// conflict settle job over the bound client from the shared cursor, on a
+/// scoped thread the attempt joins. The ladder may block on the server
+/// runtime, so the job runs off the pass thread with no runtime passed in.
+/// A run that settles stores where it left off and completes at zero units,
+/// as the native arm was. A refused binding, a stopped job, a thread that
+/// did not spawn, or a thread that panicked parks for a retry with the
+/// cursor unchanged.
+fn run_conflict_settle(
+    vault: &Arc<Vault>,
+    attempt: &DreamerAdmittedAttempt,
+    lender: Option<Arc<dyn DreamerDecisionLender>>,
+    cursor: &ConflictSettleCursor,
+) -> DreamerAttemptExecution {
+    let binding = match vault.bind_dreamer_attempt(attempt) {
+        Ok(binding) => binding,
+        Err(error) => {
+            return conflict_retry_park(format!(
+                "the conflict settlement attempt's binding was refused ({}): {}",
+                error.code, error.message
+            ));
+        }
+    };
+    let binding = match lender {
+        Some(lender) => binding.lend_decisions(lender),
+        None => binding,
+    };
+    let client = OneironClient::for_dreamer_attempt(binding);
+    let after = cursor
+        .inner
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone();
+    let input = conflict_job::Input {
+        after: after.clone(),
+    };
+    let joined = std::thread::scope(|scope| {
+        let handle = match std::thread::Builder::new()
+            .name("conflict-settle".to_owned())
+            .spawn_scoped(scope, move || conflict_job::run(&client, &input))
+        {
+            Ok(handle) => handle,
+            Err(error) => {
+                return Err(format!("the conflict settle thread did not spawn: {error}"));
+            }
+        };
+        handle
+            .join()
+            .map_err(|_| "the conflict settle thread panicked".to_owned())
+    });
+    match joined {
+        Err(reason) => conflict_retry_park(reason),
+        Ok(Err(error)) => conflict_retry_park(format!("the conflict settle job stopped: {error}")),
+        Ok(Ok(outcome)) => {
+            *cursor.inner.lock().unwrap_or_else(PoisonError::into_inner) =
+                outcome.last.clone().or(after);
+            tracing::info!(
+                facet = conflict_settle::CONFLICT_SETTLE_FACET,
+                asked = outcome.asked,
+                settled = outcome.settled,
+                refused = outcome.refused,
+                left_parked = outcome.left_parked,
+                batches = outcome.batches,
+                "conflict settle job ran"
+            );
+            DreamerAttemptExecution::Completed {
+                completed_units: 0,
+                step_bindings: Vec::new(),
+            }
+        }
+    }
+}
+
 /// A refusal park: the attempt resumes as the same try after its retry delay.
 fn retry_park(reason: String) -> DreamerAttemptExecution {
     tracing::warn!(%reason, "strength attempt parked");
+    DreamerAttemptExecution::Park {
+        reason,
+        cause: DreamerParkCause::Retry,
+    }
+}
+
+/// A psych profile park: the attempt resumes as the same try after its
+/// retry delay, keeping what its step already spent.
+fn psych_retry_park(
+    reason: String,
+    completed_units: u64,
+    step_bindings: Vec<oneiron::model_step_context::StepEffectBinding>,
+) -> DreamerAttemptExecution {
+    tracing::warn!(
+        facet = psych_profile::PSYCH_PROFILE_FACET,
+        %reason,
+        "psych profile attempt parked"
+    );
+    DreamerAttemptExecution::ParkWithSpend {
+        reason,
+        cause: DreamerParkCause::Retry,
+        completed_units,
+        step_bindings,
+    }
+}
+
+/// A conflict settlement refusal park: the attempt resumes as the same try
+/// after its retry delay, with the shared cursor unchanged.
+fn conflict_retry_park(reason: String) -> DreamerAttemptExecution {
+    tracing::warn!(
+        facet = conflict_settle::CONFLICT_SETTLE_FACET,
+        %reason,
+        "conflict settle attempt parked"
+    );
     DreamerAttemptExecution::Park {
         reason,
         cause: DreamerParkCause::Retry,

@@ -27,6 +27,8 @@ use std::collections::BTreeMap;
 
 mod evidence_pins;
 mod store;
+#[cfg(oneiron_test_support)]
+pub(crate) use evidence_pins::unhex;
 use evidence_pins::{EngineSpan, cited_lifecycle, engine_span, hex, note_pin, pins, pins_mut};
 pub(crate) use store::outline_pins;
 

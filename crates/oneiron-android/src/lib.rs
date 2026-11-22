@@ -9,6 +9,9 @@
 //! reads (`reads`, `search_vector`) lower to the core reads the C ABI runs:
 //! a vault bound to a session reads its room over base while the room is
 //! live, every other vault reads base (FIX 8119, FIX 10759, FIX 11586).
+//! The open names the vault's embedding model and a vector put carries the
+//! device mark of the runtime that computed it, as the C, N-API and Swift
+//! opens and puts do (census L9-28, ARCH-0036 device mark).
 use jni::{
     JNIEnv,
     objects::{JByteArray, JFloatArray, JObject, JString, JValue},
@@ -16,7 +19,8 @@ use jni::{
 };
 use oneiron::{
     EdgeActorClass, EdgeInfo, EdgeKind, EntityId, Memory, RawEntityPut, ScoredEntity, TimeRange,
-    Vault, VaultConfig, authority::MachineDeviceClass, limit_ask::EngineLimit, parse_actor_key,
+    Vault, VaultConfig, authority::MachineDeviceClass, embed::EmbeddingProvenance,
+    limit_ask::EngineLimit, parse_actor_key,
 };
 use std::sync::{Arc, MutexGuard};
 
@@ -27,6 +31,8 @@ pub mod engine;
 pub mod reads;
 // Public so its JNI export is a reachable item, as this file's are.
 pub mod limit_questions;
+#[cfg(test)]
+mod vector_mark_tests;
 
 struct NativeVault {
     vault: Arc<Vault>,
@@ -114,13 +120,35 @@ impl NativeVault {
     }
     /// Opens `path` as the class its Kotlin host declared, set before the
     /// install enrols (FIX 3833; CALLS: HOST_OPEN_DEVICE_CLASS =
-    /// ExplicitHostInput): never read off the operating system.
-    fn open(path: &str, device_class: MachineDeviceClass) -> Result<Self, String> {
+    /// ExplicitHostInput): never read off the operating system. The reported
+    /// name and model are what the host declares this install reports for
+    /// itself; display only (FIX [DEVICE-DISPLAY-NAME]).
+    ///
+    /// `embedding_model` is the id, `org/name@revision`, of the model that
+    /// computes this vault's vectors (census L9-28, ruling
+    /// L9-28-HOST-EMBEDDING-MODEL = A); a malformed id refuses the open.
+    /// Without one, every vector put is refused ("embedding model is required
+    /// before writing vectors"). The vault records the first model an open
+    /// names: a later open naming another model is refused, and so is one
+    /// naming none once the vault holds vectors.
+    fn open(
+        path: &str,
+        device_class: MachineDeviceClass,
+        machine_reported_name: Option<String>,
+        machine_reported_model: Option<String>,
+        embedding_model: Option<String>,
+    ) -> Result<Self, String> {
         // Crash output never carries world text: the engine's hook goes in before
         // any vault opens (owner ruling 2026-10-14, fix 6).
         oneiron::panic_report::install_panic_hook();
+        if let Some(model) = embedding_model.as_deref() {
+            oneiron::store::validate_embedding_model_id(model).map_err(display)?;
+        }
         let mut config = VaultConfig::device();
         config.machine_device_class = device_class;
+        config.machine_reported_name = machine_reported_name;
+        config.machine_reported_model = machine_reported_model;
+        config.embedding_model = embedding_model;
         Vault::open(path, config)
             .map(|vault| Self::opened(Arc::new(vault)))
             .map_err(display)
@@ -191,12 +219,26 @@ impl NativeVault {
             (None, false) => self.vault.edges_out(id).map_err(display),
         }
     }
-    /// Puts `id`'s vector; the vault refuses one of another width.
-    fn put_vector(&self, id: &str, vector: &[f32]) -> Result<(), String> {
+    /// Puts `id`'s vector, marked with the device and runtime that computed
+    /// it when `mark` is given (ARCH-0036 device mark); an unmarked vector
+    /// reads device `unknown`. The vault refuses one of another width.
+    fn put_vector(
+        &self,
+        id: &str,
+        vector: &[f32],
+        mark: Option<EmbeddingProvenance>,
+    ) -> Result<(), String> {
         let id = EntityId::from_hex(id).map_err(display)?;
-        match self.bound_memory() {
-            Some(memory) => memory.raw_put_vector(&id, vector).map_err(display),
-            None => self.vault.put_vector(&id, vector).map_err(display),
+        match (self.bound_memory(), mark) {
+            (Some(memory), Some(mark)) => memory
+                .raw_put_vector_with_provenance(&id, vector, mark)
+                .map_err(display),
+            (Some(memory), None) => memory.raw_put_vector(&id, vector).map_err(display),
+            (None, Some(mark)) => self
+                .vault
+                .put_vector_with_provenance(&id, vector, mark)
+                .map_err(display),
+            (None, None) => self.vault.put_vector(&id, vector).map_err(display),
         }
     }
     /// The `limit` nearest entities to `query`, however many it asks for.
@@ -210,6 +252,21 @@ impl NativeVault {
 }
 fn display(error: impl std::fmt::Display) -> String {
     error.to_string()
+}
+/// The device mark a Kotlin host hands in with a vector (`VectorProvenance`):
+/// both its device and its runtime, or neither for an unmarked put. A mark
+/// the engine cannot store is refused (`EmbeddingProvenance::from_host`).
+fn vector_mark(
+    device: Option<String>,
+    runtime: Option<String>,
+) -> Result<Option<EmbeddingProvenance>, String> {
+    match (device, runtime) {
+        (None, None) => Ok(None),
+        (Some(device), Some(runtime)) => EmbeddingProvenance::from_host(&device, &runtime)
+            .map(Some)
+            .map_err(|reason| format!("provenance: {reason}")),
+        _ => Err("provenance: a device mark names both its device and its runtime".to_owned()),
+    }
 }
 /// A Kotlin `FloatArray`'s values.
 fn float_values(env: &JNIEnv<'_>, array: &JFloatArray<'_>) -> Result<Vec<f32>, String> {
@@ -313,12 +370,17 @@ fn run<T: Default>(
 
 /// JNI implementation of the private Kotlin constructor hook. `phone` is
 /// the class the Kotlin host declared (FIX 3833): a phone, else a computer.
+/// The reported name and model and the embedding model are nullable, as
+/// `bindNative`'s keys are.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_org_oneiron_EmbeddedVault_openNative(
     mut env: JNIEnv<'_>,
     object: JObject<'_>,
     path: JString<'_>,
     phone: jboolean,
+    machine_reported_name: JString<'_>,
+    machine_reported_model: JString<'_>,
+    embedding_model: JString<'_>,
 ) {
     run(&mut env, |env| {
         let path: String = env.get_string(&path).map_err(display)?.into();
@@ -327,7 +389,16 @@ pub extern "system" fn Java_org_oneiron_EmbeddedVault_openNative(
         } else {
             MachineDeviceClass::Computer
         };
-        let vault = NativeVault::open(&path, device_class)?;
+        let machine_reported_name = reads::optional_string(env, &machine_reported_name)?;
+        let machine_reported_model = reads::optional_string(env, &machine_reported_model)?;
+        let embedding_model = reads::optional_string(env, &embedding_model)?;
+        let vault = NativeVault::open(
+            &path,
+            device_class,
+            machine_reported_name,
+            machine_reported_model,
+            embedding_model,
+        )?;
         // SAFETY: Kotlin owns the private long field, initialized to zero.
         // All native hooks execute under that instance's synchronized monitor.
         unsafe { env.set_rust_field(&object, "nativeHandle", vault) }.map_err(display)
@@ -467,21 +538,27 @@ pub extern "system" fn Java_org_oneiron_EmbeddedVault_edgesNative(
         edge_array(env, &own, inbound, edges)
     })
 }
-/// JNI vector put; a bound vault puts it as its caller (OF-063).
+/// JNI vector put; a bound vault puts it as its caller (OF-063). `device`
+/// and `runtime` are the nullable halves of the vector's device mark.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_org_oneiron_EmbeddedVault_putVectorNative(
     mut env: JNIEnv<'_>,
     object: JObject<'_>,
     id: JString<'_>,
     vector: JFloatArray<'_>,
+    device: JString<'_>,
+    runtime: JString<'_>,
 ) {
     run(&mut env, |env| {
         let id: String = env.get_string(&id).map_err(display)?.into();
         let vector = float_values(env, &vector)?;
+        let device = reads::optional_string(env, &device)?;
+        let runtime = reads::optional_string(env, &runtime)?;
+        let mark = vector_mark(device, runtime)?;
         // SAFETY: same synchronized, private instance field as putNative.
         let vault: MutexGuard<'_, NativeVault> =
             unsafe { env.get_rust_field(&object, "nativeHandle") }.map_err(display)?;
-        vault.put_vector(&id, &vector)
+        vault.put_vector(&id, &vector, mark)
     });
 }
 /// JNI vector search: the `limit` nearest entities to `query`.

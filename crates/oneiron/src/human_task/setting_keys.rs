@@ -14,7 +14,7 @@ use oneiron_base::human_task_followup::{
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
-use crate::setting::{Kind, SettingValue, higher_is_tighter};
+use crate::setting::{Kind, SettingValue};
 
 /// The longest interval: about 285 million years, so never in practice, and a number every SDK
 /// carries exactly. An unreadable row reads as this.
@@ -64,7 +64,7 @@ crate::setting::setting_keys! {
         "human_task.followup.reminder_after_secs" {
         kind: Kind::new(reminder_after)
             .strictest(never)
-            .tighter(higher_is_tighter::<FollowupIntervalSecs>),
+            .higher(),
     };
     /// Seconds from the first nudge to the open-loop digest entry (default 3 days). Longer is
     /// tighter: the digest is sent no sooner than this after the nudge (the follow-up driver's
@@ -73,7 +73,7 @@ crate::setting::setting_keys! {
         "human_task.followup.digest_after_secs" {
         kind: Kind::new(digest_after)
             .strictest(never)
-            .tighter(higher_is_tighter::<FollowupIntervalSecs>),
+            .higher(),
     };
     /// Seconds from the digest to the first escalation, and between escalations (default 7
     /// days). Longer is tighter: each escalation is sent no sooner than this after the stage
@@ -82,7 +82,7 @@ crate::setting::setting_keys! {
         "human_task.followup.escalation_after_secs" {
         kind: Kind::new(escalation_after)
             .strictest(never)
-            .tighter(higher_is_tighter::<FollowupIntervalSecs>),
+            .higher(),
     };
 }
 

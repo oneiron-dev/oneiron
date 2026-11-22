@@ -97,8 +97,9 @@ fn guest_component_rejects_write_and_unknown_imports_at_construction() {
     );
 }
 
-#[test]
-fn guest_executes_imports_under_principal_scoped_read_and_host_backing() -> crate::Result<()> {
+#[tokio::test]
+async fn guest_executes_imports_under_principal_scoped_read_and_host_backing() -> crate::Result<()>
+{
     use crate::pipeline::WorldAuthoritySet;
     let (_dir, vault) = test_vault();
     let target = test_entity_id(67);
@@ -127,26 +128,28 @@ fn guest_executes_imports_under_principal_scoped_read_and_host_backing() -> crat
     );
     assert!(
         guest
-            .run(&bound, &read)?
+            .run(&bound, &read)
+            .await?
             .html
             .contains("&lt;script&gt;person")
     );
     assert!(
         guest
             .run(&bound, &vault.scoped_read(actor_key("other")))
+            .await
             .is_err()
     );
     // The same host row cannot cross into a narrower WorldSet.
     let denied = bound.with_world_set(WorldAuthoritySet::new(false, [])?);
-    assert!(guest.run(&denied, &read).is_err());
+    assert!(guest.run(&denied, &read).await.is_err());
     // An unbound handle cannot be supplied by the component itself.
     let empty = frame("viewer").with_world_set(WorldAuthoritySet::new(true, [])?);
-    assert!(guest.run(&empty, &read).is_err());
+    assert!(guest.run(&empty, &read).await.is_err());
     Ok(())
 }
 
-#[test]
-fn shared_renderer_resolves_now_and_escapes_closed_atoms() -> crate::Result<()> {
+#[tokio::test]
+async fn shared_renderer_resolves_now_and_escapes_closed_atoms() -> crate::Result<()> {
     let (_dir, vault) = test_vault();
     let target = test_entity_id(61);
     put_person(&vault, &target)?;
@@ -196,7 +199,7 @@ fn shared_renderer_resolves_now_and_escapes_closed_atoms() -> crate::Result<()> 
     );
     assert!(InstrumentAtoms::decode(br#"[{"kind":"raw_html","html":"<script>"}]"#).is_err());
     let runtime = LensExecutionRuntime::from_component(&lens_component(false))?;
-    assert!(runtime.run(&frame, &read).is_err()); // an unscoped frame is not a lens frame
+    assert!(runtime.run(&frame, &read).await.is_err()); // an unscoped frame is not a lens frame
     assert!(
         LensExecutionBoundary::read_only(vec![
             LensHostImport::ScopedRead,
@@ -207,8 +210,8 @@ fn shared_renderer_resolves_now_and_escapes_closed_atoms() -> crate::Result<()> 
     Ok(())
 }
 
-#[test]
-fn lenses_read_only_their_own_codebase_set() -> crate::Result<()> {
+#[tokio::test]
+async fn lenses_read_only_their_own_codebase_set() -> crate::Result<()> {
     use crate::codebase::{CodebaseSnapshot, RepoRef};
     let (_dir, vault) = test_vault();
     let a = test_entity_id(81);
@@ -239,12 +242,18 @@ fn lenses_read_only_their_own_codebase_set() -> crate::Result<()> {
     assert!(fb.scoped_body(&read, &a)?.is_none());
     assert!(fb.scoped_body(&read, &b)?.is_some());
     let runtime = LensExecutionRuntime::from_component(&lens_component(false))?;
-    assert!(runtime.run(&fa, &read)?.html.contains("&lt;script&gt;"));
+    assert!(
+        runtime
+            .run(&fa, &read)
+            .await?
+            .html
+            .contains("&lt;script&gt;")
+    );
     Ok(())
 }
 
-#[test]
-fn ordinary_world_sets_constrain_lens_reads_backing_refs_and_pipeline() -> crate::Result<()> {
+#[tokio::test]
+async fn ordinary_world_sets_constrain_lens_reads_backing_refs_and_pipeline() -> crate::Result<()> {
     use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
     use crate::pipeline::{WorldAuthoritySet, WorldScope};
     let (_dir, vault) = test_vault();
@@ -314,7 +323,13 @@ fn ordinary_world_sets_constrain_lens_reads_backing_refs_and_pipeline() -> crate
         &a
     );
     let runtime = LensExecutionRuntime::from_component(&lens_component(false))?;
-    assert!(runtime.run(&fa, &read)?.html.contains("data-instrument"));
+    assert!(
+        runtime
+            .run(&fa, &read)
+            .await?
+            .html
+            .contains("data-instrument")
+    );
     let empty = frame("viewer").with_world_set(WorldAuthoritySet::default());
     for id in [a, b, base, subject] {
         assert!(empty.scoped_body(&read, &id)?.is_none());

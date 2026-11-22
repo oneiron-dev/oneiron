@@ -21,7 +21,13 @@ pub(crate) mod tables;
 
 use serde::{Deserialize, Serialize};
 
-use crate::authority::{ActSurface, OwnerAct, OwnerActKind, PolicySettingAct};
+use crate::authority::{ActBy, ActSurface, OwnerAct, OwnerActKind, PolicySettingAct};
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
+use crate::batch::export::{
+    ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
+};
 use crate::claim::ScopedReadActorKey;
 use crate::code_run::actions::{
     ActionArgument, ActionDispatch, ActionHostBinding, ActionRegistry, AgentActionCall,
@@ -231,7 +237,7 @@ pub fn inference_defaults_replace_embedded(
 
 // The setting an owner act changes and the reserved target of a vault-wide
 // one live beside the signed op that carries them (FIX 4624).
-pub use oneiron_authority::authority::{PolicySetting, owner_act_target};
+pub use oneiron_authority::authority::{PolicySetting, owner_act_target, policy_setting_target};
 
 #[doc(hidden)]
 pub use oneiron_records::policy_setting_doors::PolicySettingActReceipt;
@@ -310,7 +316,7 @@ pub(crate) fn record_policy_setting_act_in_txn<P: Serialize, V: Serialize>(
     )?;
     Ok(signable.map(|(_, value)| PolicySettingAct {
         act,
-        setting,
+        setting: setting.wire().to_owned(),
         prior,
         value: Some(value),
     }))
@@ -329,5 +335,65 @@ impl Vault {
             .into_iter()
             .map(|(_, receipt)| receipt)
             .collect())
+    }
+}
+
+/// Lands one archived `POLICY_SETTING_ACT` envelope in `txn`: canonical decode and the
+/// credential predicate, then the writer's own receipt shape (kind `policy_setting` on the
+/// setting's reserved target, the owner's own act). The signed `PolicySettingSet` and the
+/// setting's live value are never replayed here.
+///
+/// # Errors
+/// Storage faults; validation stays in the returned outcome.
+fn land_archived_policy_setting_act_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> Result<ArchivedSideRowOutcome> {
+    let (key, value) = match decode_archived_row(&ACTS, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    let expected = match owner_act_target(value.setting.as_str()) {
+        Ok(target) => target,
+        Err(_) => {
+            return Ok(ArchivedSideRowOutcome::HeldBack(
+                RetainedSideHeldBackReason::InvalidValue,
+            ));
+        }
+    };
+    if value.act.act != OwnerActKind::PolicySetting
+        || value.act.target != expected
+        || value.act.by != ActBy::Owner
+        || value.act.answer.is_some()
+    {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidValue,
+        ));
+    }
+    install_archived_row(&ACTS, vault, txn, permit, &key, row)
+}
+
+impl Vault {
+    /// Lands the owner's archived `POLICY_SETTING_ACT` envelopes in input order, one outcome
+    /// per row: an absent act installs, an identical act is unchanged, and a different act
+    /// stays live. Never replays the signed op or the setting's value.
+    ///
+    /// # Errors
+    /// Storage faults; validation stays in the returned outcomes.
+    pub(crate) fn land_archived_policy_setting_rows_in_txn(
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        permit: &OwnerArchiveRestorePermit,
+        rows: &[ArchiveRetainedSideRow],
+    ) -> Result<Vec<ArchivedSideRowOutcome>> {
+        let mut outcomes = Vec::with_capacity(rows.len());
+        for row in rows {
+            outcomes.push(land_archived_policy_setting_act_row_in_txn(
+                vault, txn, permit, row,
+            )?);
+        }
+        Ok(outcomes)
     }
 }

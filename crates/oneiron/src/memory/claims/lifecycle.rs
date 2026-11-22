@@ -53,7 +53,7 @@ fn carried_proposal_admitted(
 impl Memory<'_> {
     pub(in crate::memory) fn evaluate_deletion_gate(&self) -> MemoryResult<DeletionGateContext> {
         let rtxn = self.vault.store.env.read_txn().map_err(Error::from)?;
-        verify_deletion_authority_in_txn(self.vault, &rtxn, self.actor, self.actor_class)?;
+        self.verify_own_deletion_authority_in(&rtxn)?;
         let policy = crate::gate::resolve_policy_manifest(&self.vault.store, &rtxn)?;
         Ok(DeletionGateContext::new(
             self.actor,
@@ -163,7 +163,7 @@ impl Memory<'_> {
         producers: &[EntityId],
         read: &[&[u8]],
     ) -> MemoryResult<CommitReceipt> {
-        if input.predicate != "integration.exchange"
+        if input.predicate != crate::connector_key::PROXY_EXCHANGE_PREDICATE
             || input.subject_ref != self.actor.to_hex()
             || input.source != "tool_output"
         {
@@ -173,22 +173,9 @@ impl Memory<'_> {
         }
         let birth = self.prompted_birth(input, door, producers, read)?;
         let guard = |txn: &heed::RoTxn<'_>| -> Result<(), Error> {
-            let registered = self
-                .vault
-                .live_connector_registration_in_txn(
-                    txn,
-                    crate::connector_key::PROXY_CONNECTOR,
-                    &self.actor,
-                )?
-                .is_some_and(|registration| {
-                    use crate::connector_key::SlateDisposition::{AlwaysAsk, NeverAllow};
-                    let setting = |tool| registration.slate.tool_setting(tool);
-                    // A write the owner set to always ask is never made: the
-                    // proxy cannot ask the owner per call (FIX 4843).
-                    setting("vault.recall") != NeverAllow
-                        && !matches!(setting("vault.remember"), NeverAllow | AlwaysAsk)
-                });
-            if !registered {
+            // A write the owner set to always ask is never made: the proxy
+            // cannot ask the owner per call (FIX 4843).
+            if !self.vault.proxy_exchange_open_in_txn(txn, &self.actor)? {
                 return Err(Error::Claim(
                     crate::error::ClaimError::ActorLacksClaimAuthority {
                         reason: "the proxy's read or write grant is revoked, or its write asks per call",
@@ -334,7 +321,9 @@ impl Memory<'_> {
             // owner binding; retracting SOMEONE ELSE'S is, so it gets the
             // authority-log teeth.
             if !owns_claim && self.actor_class != EdgeActorClass::System {
-                if self.actor_class != EdgeActorClass::Human {
+                // A credential handed on to another key is its holder's
+                // act, never the owner's (HANDED-ON-SLIP-PERSON).
+                if !self.acts_as_own_person() {
                     return Err(MemoryError::new(
                         MEMORY_CODE_FORBIDDEN,
                         format!(
@@ -345,6 +334,7 @@ impl Memory<'_> {
                         &[
                             "Only the writing actor or a human-class owner actor may retract.",
                             "Bind the owner actor key for cross-actor retraction.",
+                            "A credential handed on to another key retracts only its own claims.",
                         ],
                     ));
                 }
@@ -360,6 +350,12 @@ impl Memory<'_> {
                 );
                 self.vault.store.record_gate_receipt_in_txn(wtxn, receipt)?;
             }
+            // A retract of a row that restricts someone lifts it: a live
+            // owner's alone, its own author's self-grant included (FIX
+            // [RESTRICTION-CLAIM-OVERWRITE-AND-SELF-RETRACT] F2).
+            require_live_owner_to_lift_restriction_in_txn(
+                self.vault, &*wtxn, self.write_actor(), &body, "retract",
+            )?;
             if body.predicate == crate::booking::BOOKING_PUBLIC_PAGE_PREDICATE {
                 super::booking_publication::stage_publication_write(self.vault, wtxn, id)?;
             }
@@ -370,9 +366,30 @@ impl Memory<'_> {
                 self.vault
                     .retract_own_claim_or_park_in_txn(wtxn, &id, now, self.write_actor())?
             } else {
+                // The owner's own retract of an Approved claim carries the
+                // owner's proof, revalidated here, to the Gate: it confirms
+                // the close in person where a declared critical class asks for
+                // it (FIX OWNER-CLOSE-DOORS-DECLARED-CRITICAL-APPROVED-CLOSE-PENDS).
+                // A narrowed or delegated credential, or a surface that writes
+                // for someone else, carries none.
+                let owner = match self.owner_authorship() {
+                    Some(owner)
+                        if self.actor_class == EdgeActorClass::Human
+                            && body.approval == crate::claim::ClaimApprovalStatus::Approved =>
+                    {
+                        owner.owner_answer_in_txn(self.vault, &*wtxn)?
+                    }
+                    _ => None,
+                };
                 crate::claim::OwnClaimRetract::Landed(
                     self.vault
-                        .retract_claim_in_txn_as(wtxn, &id, now, Some(self.write_actor()))?
+                        .retract_claim_in_txn_as_owner(
+                            wtxn,
+                            &id,
+                            now,
+                            Some(self.write_actor()),
+                            owner,
+                        )?
                         .map(|record| record.decision_id),
                 )
             };
