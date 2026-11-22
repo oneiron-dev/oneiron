@@ -25,6 +25,14 @@
 //! itself, its dependencies included, not only its row (Sol review round 2
 //! of #7692).
 //!
+//! A room's P7 rule judges the same closure under the room's clearance, and
+//! it skipped the copied summary's own row: a room cleared for every record
+//! a summary was written from, but not for the summary row, was disclosed
+//! the reply that copies it and the header that names it (FIX
+//! COPY-SUMMARY-ROW-UNJUDGED). The summary is now one of the copy's word
+//! sources (`scope_summary::word_sources_in`), so every reader of a copy
+//! judges it.
+//!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test disclosure_summary_word_sources`.
 #![cfg(oneiron_test_support)]
@@ -38,7 +46,7 @@ use oneiron::registry::ENTITY_TYPE_SUMMARY;
 use oneiron::test_doors::disclosure_word_sources::{
     clamp_admits_claim_revision_with_contact, clamp_admits_owner_alone, clamp_admits_with_contact,
     install_shipped_policy_with_ordinary_predicate, mark_tier_a, register_editor_source,
-    seed_cleared_contact,
+    room_discloses, seed_cleared_contact,
 };
 use oneiron::test_doors::scope_summary::mint_scope_summary;
 use oneiron::{
@@ -212,6 +220,46 @@ fn summaries_only() -> Scope {
     clearance
 }
 
+/// A room clearance whose kind band takes every kind of row but SUMMARY
+/// rows: each record the fixture's summary was written from, and its copies,
+/// but not the summary row itself.
+fn every_kind_but_summaries() -> Scope {
+    let mut clearance = Scope::top();
+    clearance.bands = ScopeAxis::Some(
+        (0..=u8::MAX)
+            .filter(|kind| *kind != ENTITY_TYPE_SUMMARY)
+            .collect(),
+    );
+    clearance
+}
+
+/// Whether a room cleared for every kind of row discloses `record`, and one
+/// cleared for every kind but SUMMARY discloses the fixture's records and
+/// refuses its summary: the walk `record` is judged on, and what each
+/// clearance holds.
+fn assert_room_holds_the_sources_but_not_the_summary(
+    fixture: &Fixture,
+    record: &EntityId,
+) -> TestResult {
+    let vault = &fixture.vault;
+    assert!(
+        room_discloses(vault, &Scope::top(), record)?,
+        "a room cleared for every row is disclosed the copy"
+    );
+    let clearance = every_kind_but_summaries();
+    for source in fixture.trunk {
+        assert!(
+            room_discloses(vault, &clearance, &source)?,
+            "the room holds every record the summary was written from"
+        );
+    }
+    assert!(
+        !room_discloses(vault, &clearance, &fixture.summary)?,
+        "the room may not hold the summary row"
+    );
+    Ok(())
+}
+
 #[test]
 fn a_summary_is_refused_to_a_contact_whose_clearance_takes_it_but_not_its_sources() -> TestResult {
     let fixture = open()?;
@@ -369,6 +417,30 @@ fn a_merge_header_is_refused_once_a_record_its_summary_was_edited_from_is_tier_a
     assert!(
         !clamp_admits_with_contact(vault, contact, COUNTERPARTY, &header)?,
         "the header serves the summary's words, the edited-from record's included"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_room_that_may_not_hold_a_summary_is_not_disclosed_a_reply_copying_it() -> TestResult {
+    let fixture = open()?;
+    let (_, reply) = land_with_reply(&fixture)?;
+    assert_room_holds_the_sources_but_not_the_summary(&fixture, &reply)?;
+    assert!(
+        !room_discloses(&fixture.vault, &every_kind_but_summaries(), &reply)?,
+        "the reply carries the summary's own words"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_room_that_may_not_hold_a_summary_is_not_disclosed_a_merge_header_naming_it() -> TestResult {
+    let fixture = open()?;
+    let (header, _) = land_with_reply(&fixture)?;
+    assert_room_holds_the_sources_but_not_the_summary(&fixture, &header)?;
+    assert!(
+        !room_discloses(&fixture.vault, &every_kind_but_summaries(), &header)?,
+        "the header serves the summary's own words"
     );
     Ok(())
 }
