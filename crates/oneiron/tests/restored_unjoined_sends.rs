@@ -608,6 +608,7 @@ fn stage_esign_notice(host: &Host) -> (EsignNoticeGroup, AttemptId) {
             recipient_count: 1,
             on_behalf_of: None,
             idempotency_key: Some("restored-notice-document".to_owned()),
+            check_in_ref: None,
         })
         .unwrap();
     assert_eq!(
