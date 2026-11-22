@@ -574,14 +574,9 @@ struct Forward {
 }
 
 impl Forward {
-    /// Sends an encoded ask back to the asking node and reads what it
-    /// answered. Neither rides as one message past the inline bound (FIX
-    /// 8023): an ask that large is offered from this connection's staging,
-    /// for the asking node to get in pieces, and its answer comes back as
-    /// bytes it staged here, taken once this machine holds their memory.
-    async fn ask(&self, ask: &Carried) -> Result<Carried, MeshError> {
+    async fn ask(&self, peer: &PeerAsk) -> Result<PeerAnswer, MeshError> {
         let mut stream = self.conn.open_stream().await?;
-        stream.send(&encode(ask)?).await?;
+        stream.send(&encode(peer)?).await?;
         decode(&stream.recv().await?)
     }
 }
@@ -601,33 +596,18 @@ impl AskHandler for Forward {
             max_bytes: ask.max_bytes,
         };
         let failed = |detail: String| AskRefusal::new(AskCode::Failed, detail).retryable();
-        let offered = encode(&peer)
-            .map_err(|err| err.to_string())
-            .and_then(|bytes| self.staging.offer(&bytes))
-            .map_err(|detail| failed(format!("the ask: {detail}")))?;
         let asked = async {
             tokio::select! {
-                answered = tokio::time::timeout(remaining, self.ask(&offered)) => Some(answered),
+                answered = tokio::time::timeout(remaining, self.ask(&peer)) => Some(answered),
                 () = self.cancel.cancelled() => None,
             }
         };
-        let carried = match self.runtime.block_on(asked) {
-            Some(Ok(Ok(carried))) => carried,
+        let answer = match self.runtime.block_on(asked) {
+            Some(Ok(Ok(answer))) => answer,
             Some(Ok(Err(err))) => return Err(failed(format!("the asking node: {err}"))),
             Some(Err(_)) => return Err(failed("the asking node did not answer in time".into())),
             None => return Err(failed("this node is stopping".into())),
         };
-        // An answer past the inline bound was staged here: this machine's
-        // memory holds it before it is read back and decoded (FIX 8023).
-        let _envelope = self
-            .service
-            .hold_taken(&carried, ask.deadline)
-            .map_err(failed)?;
-        let answer: PeerAnswer = self
-            .staging
-            .take(&carried)
-            .and_then(|bytes| decode(&bytes).map_err(|err| err.to_string()))
-            .map_err(|detail| failed(format!("the asking node: {detail}")))?;
         if let Some(signed) = answer.signed {
             ask.record_signing(signed);
         }
