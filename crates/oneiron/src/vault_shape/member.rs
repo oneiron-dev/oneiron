@@ -149,12 +149,10 @@ impl ShapeSeed {
     ///
     /// # Errors
     ///
-    /// A zero vault id, or a founding member named twice or naming the
-    /// creator.
+    /// A vault id no shared vault takes (zero, or the own-device residence's),
+    /// or a founding member named twice or naming the creator.
     pub fn for_preset(pick: &ShapePresetPick, creator: EntityId) -> Result<Self> {
-        if pick.vault_id == 0 {
-            return Err(invalid("a shared vault's id is not zero"));
-        }
+        crate::federation::require_shared_vault_id(pick.vault_id)?;
         let preset = SharedVaultPreset::from(pick.preset);
         let default_role = ShapeMemberRole::of(preset.default_member_role())
             .ok_or_else(|| invalid("the preset's default role is not a member role"))?;
