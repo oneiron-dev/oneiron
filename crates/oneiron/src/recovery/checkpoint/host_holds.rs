@@ -13,11 +13,11 @@
 //! gone, a hosted vault's checkpoint carries the family itself, sealed to its
 //! host's recipient and never to the owner (`seal`, FIX 6598).
 //!
-//! A backup holds every record its image carries, so while a customer hold
-//! stands none expires ([`Vault::legal_hold_keeps_backups`]). A host order
-//! keeps no backup: what it covers is copied into the host's separate
-//! legal-hold store (LEGAL-HOLD-USE = B as a clone, owner 2026-11-05), so
-//! only that clone and its custody outlive the vault's own expiry.
+//! A backup holds every record its image carries, but no legal hold keeps a
+//! backup any more (LEGAL-HOLD-USE = B, ARCH-0038 #legal-hold-clone-ruling):
+//! every hold keeps its sealed copy outside the vault, and ordinary backup
+//! expiry runs as it would without one. Only that clone and its custody
+//! outlive the vault's own expiry.
 //! An expiry that unlinks reads the holds under the LMDB writer and unlinks
 //! inside it ([`Vault::with_backup_hold_exclusion`]): a hold placed meanwhile
 //! commits before the read or after the unlink, never between (FIX 1488).
@@ -125,22 +125,20 @@ impl Vault {
         })
     }
 
-    /// Whether a standing customer hold keeps every backup of this vault: one
-    /// that expires a backup asks first, and keeps them all while it does. A
-    /// host order keeps none ([`crate::deletion::LegalHold::keeps_vault_data`]).
+    /// Whether a legal hold keeps every backup of this vault: none does
+    /// (LEGAL-HOLD-USE = B, ARCH-0038 #legal-hold-clone-ruling). Kept for its
+    /// callers; a later PR deletes it.
     pub fn legal_hold_keeps_backups(&self) -> Result<bool> {
-        let txn = self.store.env.read_txn()?;
-        Ok(backup_holds_in_txn(self, &txn)?.keeps_backups())
+        let _ = self;
+        Ok(false)
     }
 
-    /// How many holds keep this vault's data, read as
-    /// [`Self::legal_hold_keeps_backups`] reads them: the standing customer
-    /// holds, what a host asks before it erases the whole vault. A host order
-    /// is not counted: its clone lives in the host's own legal-hold store,
-    /// which the host consults itself. A count, nothing of any hold.
+    /// How many holds keep this vault's data: none (LEGAL-HOLD-USE = B,
+    /// ARCH-0038 #legal-hold-clone-ruling). Kept for its callers; a later PR
+    /// deletes it. A count, nothing of any hold.
     pub fn standing_legal_holds(&self) -> Result<u64> {
-        let txn = self.store.env.read_txn()?;
-        Ok(backup_holds_in_txn(self, &txn)?.standing)
+        let _ = self;
+        Ok(0)
     }
 
     /// Runs `expire` with the standing holds that keep this vault's backups,
@@ -234,14 +232,11 @@ impl BackupHolds {
 }
 
 fn backup_holds_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<BackupHolds> {
-    let standing = crate::store::legal_hold::holds_in_txn(&vault.store, txn)?
-        .iter()
-        .filter(|hold| hold.keeps_vault_data())
-        .count() as u64;
-    let held_visibility = (standing > 0).then_some(BackupHoldVisibility::Visible);
+    // No legal hold keeps a backup (LEGAL-HOLD-USE = B, ARCH-0038
+    // #legal-hold-clone-ruling): no hold is counted.
     Ok(BackupHolds {
-        standing,
-        held_visibility,
+        standing: 0,
+        held_visibility: None,
         vault_deleted: vault.shared_vault_deletion_in_txn(txn)?.is_some(),
     })
 }

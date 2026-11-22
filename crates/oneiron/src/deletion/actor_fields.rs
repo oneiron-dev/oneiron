@@ -320,28 +320,15 @@ pub(crate) fn rerun_actor_scrubs_in_txn(
     crate::attempt_queue::ForceCancelAuthority::erase_restored_payloads_in_txn(&mut restore)
 }
 
-/// A legal hold's release, in its own transaction (FIX 6280): the births a
-/// hold kept from an erased actor's scrub, and their window carriers, go
-/// once nothing holds their rows, a carrier whose birth never landed here
-/// too (FIX 6386), and so do the stamp tokens a hold kept, a held record's
-/// document's among them (FIX 10930, 11040, 11965); no other scrub runs
-/// again. The `dt:` markers and the
-/// holds as they now stand say what is owed. A vault that keeps no hold row,
-/// standing or released, owes nothing: only a hold keeps a birth past its
-/// actor's scrub, and a released one keeps its row for 24 months, well past
-/// the release pass that settles it.
+/// A legal hold's release, in its own transaction (FIX 6280): no legal hold
+/// keeps a birth or stamp token from an erased actor's scrub any more
+/// (LEGAL-HOLD-USE = B, ARCH-0038 #legal-hold-clone-ruling), so only work a
+/// cooperative restriction still holds stays; the rest goes. No other scrub
+/// runs again.
 pub(super) fn rerun_birth_actor_scrubs_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
 ) -> Result<()> {
-    // Kept gate (lead, 10-22): a hold row outlives its owed birth work. Only
-    // `store::legal_hold::expire_in_txn` removes hold rows, called only by
-    // `Vault::sweep_legal_hold_log`, whose one caller (deletion/legal_hold/
-    // mod.rs:613, `maintain_legal_holds`) runs it after that pass's due run
-    // (:611) succeeded.
-    if crate::store::legal_hold::holds_in_txn(&vault.store, wtxn)?.is_empty() {
-        return Ok(());
-    }
     let erased = hard_erased_ids_in_txn(vault, wtxn)?;
     crate::provenance::birth::release_held_births_in_txn(vault, wtxn, &erased)?;
     crate::provenance::release_held_actor_stamps_in_txn(vault, wtxn, &erased)
