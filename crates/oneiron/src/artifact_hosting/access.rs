@@ -309,8 +309,16 @@ impl Vault {
                 continue;
             }
             let grant = decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+            // Only a Grant the fold stands behind reads (pass 28 R3), never a row alone.
             if grant.scope == FederationGrantScope::vault(world_id)
                 && grant.member_ref == principal
+                && crate::federation::shared_grant_row_in_fold(
+                    &fold,
+                    id,
+                    &raw[ENTITY_METADATA_HEADER_LEN..],
+                    now,
+                )
+                .is_some()
                 && grant.confers_at(now)
                 && matches!(
                     crate::authority::federation_grant_activation(&fold, &id),

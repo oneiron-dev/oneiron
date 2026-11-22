@@ -5,18 +5,19 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::federation::{
     FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope,
-    encode_federation_grant_body,
 };
-use crate::temporal::TimeRange;
 use crate::vault::Vault;
 
 /// Stands `member`'s live grant at `role` over shared vault `vault_id`, at
 /// the scope the vault's policy resolves for the role, as a founding grant
-/// is written. Only the Steward and Member roles are served here.
+/// is written: the vault's creator gives it by its counted act (pass 28 R2),
+/// so the fold stands behind it (R3). Only the Steward and Member roles are
+/// served here.
 ///
 /// # Errors
 ///
-/// Another role (`InvalidConfig`), and the vault's.
+/// Another role (`InvalidConfig`), a vault with no shared creation record, an
+/// install that cannot carry the act, and the vault's.
 pub fn stand_member_grant(
     vault: &Vault,
     member: EntityId,
@@ -32,24 +33,20 @@ pub fn stand_member_grant(
             )));
         }
     };
-    let scope = {
+    let (scope, creator) = {
         let txn = vault.store.env.read_txn()?;
-        vault.grant_default_scope_in_txn(&txn, role, vault_id, member)?
+        let creation = vault
+            .shared_vault_creation_in_txn(&txn)?
+            .ok_or_else(|| Error::InvalidConfig("no shared vault here".to_owned()))?;
+        (
+            vault.grant_default_scope_in_txn(&txn, role, vault_id, member)?,
+            EntityId::from_hex(&creation.owner_ref)?,
+        )
     };
     let mut grant =
         FederationGrant::new(FederationGrantScope::vault(vault_id), member, role, preset);
     grant.authority_scope = scope;
     let id = EntityId::now();
-    vault
-        .batch()
-        .put_replicated(
-            &id,
-            crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
-            TimeRange { start: 1, end: 1 },
-            1,
-            None,
-            &encode_federation_grant_body(&grant)?,
-        )
-        .commit()?;
+    super::grant_act::give_member_grant_as_writer(vault, id, &grant, creator)?;
     Ok(id)
 }

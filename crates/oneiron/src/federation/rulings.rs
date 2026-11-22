@@ -80,6 +80,7 @@ impl Vault {
                 continue;
             }
             let grant = decode_federation_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+            // Only a Grant the fold stands behind rules (pass 28 R3), never a row alone.
             if !grant.role.is_guest()
                 && grant.scope == FederationGrantScope::vault(vault_id)
                 && grant.member_ref == holder_actor
@@ -88,6 +89,13 @@ impl Vault {
                 && fold.pact_for_grant(&id).is_none_or(|pact| {
                     pact.status == crate::authority::FederationPactStatus::Active
                 })
+                && super::shared_grant_row_in_fold(
+                    &fold,
+                    id,
+                    &raw[ENTITY_METADATA_HEADER_LEN..],
+                    at,
+                )
+                .is_some()
                 && crate::vault::live_entity_row_in_txn(&self.store, &txn, &id)?.is_live()
             {
                 grant_ref = Some(id.to_hex());

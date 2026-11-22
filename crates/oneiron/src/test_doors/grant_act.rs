@@ -183,6 +183,34 @@ pub fn put_keyed_member_grant(
     })
 }
 
+/// The stored data of row `id` rewritten to `grant`, as a writer that rewrites a member's
+/// grant writes it: while a counted general grant act gives the row, its giver gives the
+/// new terms by a new act in the same family (pass 28 R2), so the row still stands (R3);
+/// any other row is re-encoded alone.
+///
+/// # Errors
+///
+/// The act's refusal or a store failure.
+pub(crate) fn rewritten_grant_data_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    grant: &FederationGrant,
+) -> Result<Vec<u8>> {
+    let given = {
+        let fold = vault.authority_view_readonly_in_txn(txn)?;
+        fold.grant_line(id).and_then(|line| {
+            line.family
+                .zip(line.committed_giver())
+                .filter(|_| !line.ended)
+        })
+    };
+    match given {
+        Some((family, giver)) => vault.give_grant_in_txn(txn, giver, id, family, grant),
+        None => encode_federation_grant_body(grant),
+    }
+}
+
 fn put_grant_row_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,

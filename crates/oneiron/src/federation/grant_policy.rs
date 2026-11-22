@@ -430,6 +430,20 @@ impl crate::Vault {
         if self.shared_vault_deletion_in_txn(txn)?.is_some() || fold.vault_root_is_conflicted() {
             return Err(Error::InvalidConfig("delegate vault is not active".into()));
         }
+        // The parent confers only while the fold stands behind it (pass 28 R3): a row no
+        // counted act gives parents no Delegate.
+        if super::shared_grant_row_in_fold(
+            &fold,
+            parent_grant_id,
+            &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+            now,
+        )
+        .is_none()
+        {
+            return Err(Error::InvalidConfig(
+                "delegate parent or member is not active".into(),
+            ));
+        }
         if matches!(
             crate::authority::federation_grant_activation(&fold, &parent_grant_id),
             crate::authority::FederationGrantActivation::Inactive(_),
