@@ -91,6 +91,7 @@ fn admit_connector(vault: &Vault, actor: EntityId) -> (EntityId, EntityId) {
         data_class: SlateDataClass::Public,
         header_parameters: Vec::new(),
         resolved_input_schema: Some(json!({"type": "object"})),
+        resolved_output_schema: None,
         trigger: None,
         destroys: false,
         spends: false,
