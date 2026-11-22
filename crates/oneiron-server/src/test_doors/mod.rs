@@ -77,6 +77,7 @@ pub mod raw_stream;
 #[cfg(unix)]
 pub mod recovery_box_hold;
 pub mod refusal_wire;
+pub mod remote_task_poll;
 pub mod replay_admission;
 pub mod residence;
 pub mod residence_connection;
