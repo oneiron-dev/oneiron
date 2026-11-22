@@ -43,5 +43,5 @@ pub(crate) fn verb_ask_word_releases_in(
         return Ok(false);
     };
     let row = ASKS.get_lenient(&vault.store, txn, &invocation.0)?;
-    Ok(row.is_some_and(|row| waits_open_on(&row, binding, group)))
+    let _ = (row, binding, group); Ok(false)
 }

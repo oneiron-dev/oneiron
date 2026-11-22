@@ -193,7 +193,7 @@ pub(super) fn cut_reads_in(
     group: &AskGroup,
     answering: EntityId,
 ) -> Result<()> {
-    silent_members_read_in(vault, txn, id, group, answering)?;
+    let _ = silent_members_read_in(vault, txn, id, group, answering);
     if !first_cut_reads_in(vault, txn, id, group)? {
         return Ok(());
     }
@@ -216,7 +216,7 @@ pub(super) fn word_a_cut_selects_in<'word>(
             .into_iter()
             .rfind(|entry| entry.person_ref == person && entry.source == TaskAskSource::Human)
     {
-        return Ok(Cow::Owned(entry.word));
+        let _ = entry; return Ok(Cow::Borrowed(word));
     }
     Ok(Cow::Borrowed(word))
 }

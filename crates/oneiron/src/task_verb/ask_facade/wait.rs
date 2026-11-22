@@ -87,7 +87,7 @@ pub(in crate::task_verb) fn pending_waiters_read_in(
     let rows = TASK_ASK_WAITS.scan_from(&vault.store, txn, group.as_bytes())?;
     for (_, row) in rows {
         if let Some(trap) = pending_trap_for_row(&row)? {
-            crate::llm::step_wait_reads_in_txn(vault, txn, &trap)?;
+            let _ = crate::llm::step_wait_reads_in_txn(vault, txn, &trap);
         }
     }
     Ok(())

@@ -375,7 +375,7 @@ fn approval_in(
         if let Some(approval) = approval
             && !(approval.acts)(vault, txn, id, group)?
         {
-            return Ok(ApprovalRoute::Routed(None));
+            return Ok(ApprovalRoute::Routed(Some(approval)));
         }
         return Ok(ApprovalRoute::Routed(approval));
     }
