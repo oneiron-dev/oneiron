@@ -118,7 +118,7 @@ fn missing_custody_leaves_resumable_journal_and_no_identity() -> Result<()> {
     let err = vault
         .onboard_workspace_member(
             intent.clone(),
-            &writer(WRITER),
+            &admin_writer(WRITER),
             Some(&mailbox_owner(&vault)?),
         )
         .expect_err("request must be refused");
@@ -133,7 +133,7 @@ fn missing_custody_leaves_resumable_journal_and_no_identity() -> Result<()> {
     assert_eq!(journal.completed_at, None);
     register_mailbox_custody(&vault, &requested, &requested.address)?;
     let err = vault
-        .onboard_workspace_member(intent, &writer(WRITER), Some(&mailbox_owner(&vault)?))
+        .onboard_workspace_member(intent, &admin_writer(WRITER), Some(&mailbox_owner(&vault)?))
         .expect_err("request must be refused");
     assert_eq!(err.kind(), ErrorKind::WorkspaceMailboxAutonomyNotReady);
     assert!(
@@ -151,7 +151,7 @@ fn custody_for_another_mailbox_is_not_authority() -> Result<()> {
     register_mailbox_custody(&vault, &requested, "other@example.test")?;
     intent.delegated_mailbox = Some(requested.clone());
     let err = vault
-        .onboard_workspace_member(intent, &writer(WRITER), Some(&mailbox_owner(&vault)?))
+        .onboard_workspace_member(intent, &admin_writer(WRITER), Some(&mailbox_owner(&vault)?))
         .expect_err("request must be refused");
     assert_eq!(err.kind(), ErrorKind::SecretBindingDenied);
     assert!(
@@ -170,7 +170,7 @@ fn an_occupied_identity_id_cannot_be_adopted() -> Result<()> {
         vault.create_own_app_channel_identity(&requested.identity_ref, entity(OUTSIDER), AT)?;
     intent.delegated_mailbox = Some(requested.clone());
     let err = vault
-        .onboard_workspace_member(intent, &writer(WRITER), Some(&mailbox_owner(&vault)?))
+        .onboard_workspace_member(intent, &admin_writer(WRITER), Some(&mailbox_owner(&vault)?))
         .expect_err("request must be refused");
     assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
     assert_eq!(
@@ -192,7 +192,7 @@ fn existing_actor_composition_must_match_without_overwriting_owner_edits() -> Re
         TimeRange { start: AT, end: AT },
         AT,
     )?;
-    vault.onboard_workspace_member(intent.clone(), &writer(WRITER), None)?;
+    vault.onboard_workspace_member(intent.clone(), &admin_writer(WRITER), None)?;
     assert_eq!(
         vault.get_agent_definition(&intent.actor_ref)?,
         Some(existing)
@@ -206,7 +206,7 @@ fn existing_actor_composition_must_match_without_overwriting_owner_edits() -> Re
         AT,
     )?;
     let err = other
-        .onboard_workspace_member(intent2, &writer(WRITER), None)
+        .onboard_workspace_member(intent2, &admin_writer(WRITER), None)
         .expect_err("request must be refused");
     assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
     Ok(())
@@ -220,7 +220,7 @@ fn a_second_onboarding_id_cannot_replace_a_principals_companion() -> Result<()> 
     intent.companion = CompanionChoice::Work(birth);
     vault.onboard_workspace_member_halting_after(
         intent.clone(),
-        &writer(WRITER),
+        &admin_writer(WRITER),
         None,
         MemberOnboardingStep::ActorLinked,
     )?;
@@ -229,11 +229,11 @@ fn a_second_onboarding_id_cannot_replace_a_principals_companion() -> Result<()> 
     changed.actor_ref = entity(0xD1);
     changed.grant_bundle.federation_grant_ref = entity(0xD2);
     let err = vault
-        .onboard_workspace_member(changed, &writer(WRITER), None)
+        .onboard_workspace_member(changed, &admin_writer(WRITER), None)
         .expect_err("principal slot belongs to the unfinished journal");
     assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
     assert!(vault.get_entity_type(&entity(0xD1))?.is_none());
-    vault.onboard_workspace_member(intent, &writer(WRITER), None)?;
+    vault.onboard_workspace_member(intent, &admin_writer(WRITER), None)?;
     assert_eq!(vault.workspace_roster("antevon-slack", AT)?.len(), 2);
     Ok(())
 }
@@ -244,7 +244,7 @@ fn minted_kind_collision_is_rejected_before_the_first_effect() -> Result<()> {
     let occupied = seed_plain(&vault, 0xD3, ENTITY_TYPE_PERSON);
     intent.grant_bundle.federation_grant_ref = occupied;
     let err = vault
-        .onboard_workspace_member(intent.clone(), &writer(WRITER), None)
+        .onboard_workspace_member(intent.clone(), &admin_writer(WRITER), None)
         .expect_err("maintenance grant id cannot alias a person");
     assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
     assert!(read_journal(&vault, &intent.onboarding_id)?.is_none());
@@ -257,7 +257,7 @@ fn resumed_onboarding_requires_current_admin_authority() -> Result<()> {
     let (_dir, vault, intent) = fixture("Antevon");
     vault.onboard_workspace_member_halting_after(
         intent.clone(),
-        &writer(WRITER),
+        &admin_writer(WRITER),
         None,
         MemberOnboardingStep::ActorLinked,
     )?;
@@ -272,7 +272,7 @@ fn resumed_onboarding_requires_current_admin_authority() -> Result<()> {
         ),
     );
     let err = vault
-        .onboard_workspace_member(intent.clone(), &writer(WRITER), None)
+        .onboard_workspace_member(intent.clone(), &admin_writer(WRITER), None)
         .expect_err("a demoted writer cannot resume membership minting");
     assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
     assert!(
@@ -300,7 +300,7 @@ fn existing_grant_must_match_exactly_and_is_never_rewritten() -> Result<()> {
     );
     seed_federation_grant(&vault, MEMBER_GRANT, &occupied);
     let err = vault
-        .onboard_workspace_member(intent, &writer(WRITER), None)
+        .onboard_workspace_member(intent, &admin_writer(WRITER), None)
         .expect_err("an occupied grant id is not an invitation to overwrite it");
     assert_eq!(err.kind(), ErrorKind::InvalidClaimBody);
     let txn = vault.store.env.read_txn()?;
@@ -351,7 +351,7 @@ fn mailbox_crash_resume_reopens_after_provision_lifecycle_apply_and_journal() ->
                 vault
                     .onboard_workspace_member_halting_after(
                         intent.clone(),
-                        &writer(WRITER),
+                        &admin_writer(WRITER),
                         Some(&owner),
                         MemberOnboardingStep::MailboxBound,
                     )?
@@ -429,7 +429,7 @@ fn mailbox_crash_resume_reopens_after_provision_lifecycle_apply_and_journal() ->
             fulfill_mailbox(&vault, requested.identity_ref)?;
         }
         let outcome =
-            vault.onboard_workspace_member(intent.clone(), &writer(WRITER), Some(&owner))?;
+            vault.onboard_workspace_member(intent.clone(), &admin_writer(WRITER), Some(&owner))?;
         let state = vault.verify_channel_identity_autonomy(&requested.autonomy, &owner)?;
         if let Some(applied) = applied {
             assert_eq!(state, applied, "resume must preserve existing exact grants");
@@ -465,7 +465,7 @@ fn mailbox_crash_resume_reopens_after_provision_lifecycle_apply_and_journal() ->
         hold_clock_floor(&vault)?;
         let before = super::authorization::durable_rows_without_authorization_clock(&vault)?;
         assert_eq!(
-            vault.onboard_workspace_member(intent, &writer(WRITER), Some(&owner))?,
+            vault.onboard_workspace_member(intent, &admin_writer(WRITER), Some(&owner))?,
             outcome
         );
         assert_eq!(
@@ -481,14 +481,14 @@ fn every_autonomy_request_axis_is_digest_pinned_on_incomplete_and_complete_repla
     for complete in [false, true] {
         let (_dir, vault, intent, owner) = mailbox_fixture()?;
         assert!(matches!(
-            vault.onboard_workspace_member(intent.clone(), &writer(WRITER), Some(&owner)),
+            vault.onboard_workspace_member(intent.clone(), &admin_writer(WRITER), Some(&owner)),
             Err(Error::Record(
                 RecordError::WorkspaceMailboxAutonomyNotReady { .. }
             ))
         ));
         if complete {
             activate_mailbox(&vault, entity(MAILBOX_IDENTITY))?;
-            vault.onboard_workspace_member(intent.clone(), &writer(WRITER), Some(&owner))?;
+            vault.onboard_workspace_member(intent.clone(), &admin_writer(WRITER), Some(&owner))?;
         }
         hold_clock_floor(&vault)?;
         let revision = vault.store.env.info().last_txn_id;
@@ -562,7 +562,7 @@ fn every_autonomy_request_axis_is_digest_pinned_on_incomplete_and_complete_repla
                 _ => unreachable!(),
             }
             let err = vault
-                .onboard_workspace_member(changed, &writer(WRITER), Some(&owner))
+                .onboard_workspace_member(changed, &admin_writer(WRITER), Some(&owner))
                 .expect_err("changed desired bounds cannot replay");
             if !matches!(axis, 0 | 1 | 8 | 9) {
                 assert_eq!(err.kind(), ErrorKind::InvalidClaimBody, "axis {axis}");
@@ -621,7 +621,7 @@ fn authenticated_mailbox_apply_verify_and_exact_replay() -> Result<()> {
         assert_eq!(assert_mailbox_waiting(&vault, &intent, &owner)?, waiting);
         fulfill_mailbox(&vault, requested.identity_ref)?;
         let first =
-            vault.onboard_workspace_member(intent.clone(), &writer(WRITER), Some(&owner))?;
+            vault.onboard_workspace_member(intent.clone(), &admin_writer(WRITER), Some(&owner))?;
         let state = vault.verify_channel_identity_autonomy(&requested.autonomy, &owner)?;
         assert_eq!(state.mode.rung, rung);
         assert_eq!(state.read_envelope, requested.autonomy.read_envelope);
@@ -638,7 +638,7 @@ fn authenticated_mailbox_apply_verify_and_exact_replay() -> Result<()> {
         hold_clock_floor(&vault)?;
         let before = super::authorization::durable_rows_without_authorization_clock(&vault)?;
         assert_eq!(
-            vault.onboard_workspace_member(intent.clone(), &writer(WRITER), Some(&owner))?,
+            vault.onboard_workspace_member(intent.clone(), &admin_writer(WRITER), Some(&owner))?,
             first
         );
         assert_eq!(

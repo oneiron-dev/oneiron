@@ -75,13 +75,17 @@ impl Memory<'_> {
                     )
                     .into());
                 }
-                vault.authorize_shared_vault_write_in_txn(
+                // An Admin's reset stands on the step-up of the credential
+                // this handle's caller presented (L7-17).
+                let writer = self.presented_credential().map_or_else(
+                    || crate::federation::OrgAdminWriter::from(caller),
+                    |request| crate::federation::OrgAdminWriter::on_slip(caller, request),
+                );
+                vault.authorize_org_admin_act_in_txn(
                     txn,
                     vault_id,
-                    &caller,
-                    &crate::federation::SharedVaultWrite::Admin(
-                        crate::federation::OrgAdminPower::ResetSharedProjectAccess,
-                    ),
+                    &writer,
+                    crate::federation::OrgAdminPower::ResetSharedProjectAccess,
                 )?;
             } else {
                 self.verify_actor_write_in_txn(txn)?;

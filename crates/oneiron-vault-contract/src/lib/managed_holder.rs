@@ -459,6 +459,9 @@ impl ManagedOwnerAction {
 }
 
 const PERSON_DOMAIN: &str = "oneiron/managed-account-person/v1";
+/// A person action that also claims MFA signs under its own key, so a
+/// flipped claim never verifies (L7-17).
+const PERSON_MFA_DOMAIN: &str = "oneiron/managed-account-person-mfa/v1";
 
 /// The header a supervisor sends a [`ManagedPersonAction`] in.
 pub const MANAGED_PERSON_ACTION_HEADER: &str = "x-oneiron-managed-person-action";
@@ -471,11 +474,19 @@ pub const MANAGED_PERSON_ACTION_HEADER: &str = "x-oneiron-managed-person-action"
 /// holder as the request's person only on this assertion, and only at the
 /// member doors it serves that way; its own roster and Grant checks then
 /// judge that person. It never makes the holder an owner.
+///
+/// `mfa_verified` is the supervisor's explicit claim that the person passed
+/// MFA in the session this request comes from (L7-17): the vault takes it
+/// as the org Admin step-up of this one act, and never assumes it. It is
+/// signed under its own key, so a claim added to an action signed without
+/// it fails verification; an action without it reads `false`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ManagedPersonAction {
     pub holder_ref: String,
     pub mac: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub mfa_verified: bool,
 }
 
 impl ManagedPersonAction {
@@ -491,6 +502,23 @@ impl ManagedPersonAction {
         Self {
             holder_ref: holder_ref.to_owned(),
             mac: sign_request(PERSON_DOMAIN, spawn_token, vault, holder_ref, request),
+            mfa_verified: false,
+        }
+    }
+
+    /// [`Self::sign_after_account_auth`] with the `mfa_verified` claim:
+    /// called by the supervisor ONLY when the person passed MFA in the
+    /// session this request comes from.
+    pub fn sign_after_account_mfa(
+        spawn_token: &TokenHex,
+        vault: &str,
+        holder_ref: &str,
+        request: &ManagedOwnerRequest<'_>,
+    ) -> Self {
+        Self {
+            holder_ref: holder_ref.to_owned(),
+            mac: sign_request(PERSON_MFA_DOMAIN, spawn_token, vault, holder_ref, request),
+            mfa_verified: true,
         }
     }
 
@@ -505,7 +533,12 @@ impl ManagedPersonAction {
         if !action_well_formed(&self.holder_ref, &self.mac) {
             return false;
         }
-        let expected = sign_request(PERSON_DOMAIN, spawn_token, vault, &self.holder_ref, request);
+        let domain = if self.mfa_verified {
+            PERSON_MFA_DOMAIN
+        } else {
+            PERSON_DOMAIN
+        };
+        let expected = sign_request(domain, spawn_token, vault, &self.holder_ref, request);
         bool::from(self.mac.as_bytes().ct_eq(expected.as_bytes()))
     }
 }
@@ -574,5 +607,44 @@ mod tests {
         let mut other = action;
         other.holder_ref = "b".repeat(32);
         assert!(!other.verify(&token, "vault-a", b"proposal A"));
+    }
+
+    /// L7-17: the supervisor's `mfa_verified` claim verifies only as it was
+    /// signed. A claim added to an action signed without it fails, and so
+    /// does one taken off; an action without the field reads `false`.
+    #[test]
+    fn a_person_actions_mfa_claim_verifies_only_as_signed() {
+        let token = TokenHex::from_token(&[5; 32]);
+        let request = ManagedOwnerRequest {
+            method: "POST",
+            path: "/v1/core/facade/vault.members.add",
+            query: "",
+            headers: ["", "", ""],
+            body: b"{}",
+        };
+        let holder = "c".repeat(32);
+        let plain =
+            ManagedPersonAction::sign_after_account_auth(&token, "vault-a", &holder, &request);
+        assert!(!plain.mfa_verified);
+        assert!(plain.verify(&token, "vault-a", &request));
+        let mut claimed = plain.clone();
+        claimed.mfa_verified = true;
+        assert!(!claimed.verify(&token, "vault-a", &request));
+
+        let verified =
+            ManagedPersonAction::sign_after_account_mfa(&token, "vault-a", &holder, &request);
+        assert!(verified.mfa_verified);
+        assert!(verified.verify(&token, "vault-a", &request));
+        let mut dropped = verified.clone();
+        dropped.mfa_verified = false;
+        assert!(!dropped.verify(&token, "vault-a", &request));
+
+        let wire = serde_json::to_string(&plain).expect("encodes");
+        assert!(!wire.contains("mfa_verified"));
+        let read: ManagedPersonAction = serde_json::from_str(&wire).expect("decodes");
+        assert!(!read.mfa_verified && read.verify(&token, "vault-a", &request));
+        let wire = serde_json::to_string(&verified).expect("encodes");
+        let read: ManagedPersonAction = serde_json::from_str(&wire).expect("decodes");
+        assert!(read.mfa_verified && read.verify(&token, "vault-a", &request));
     }
 }

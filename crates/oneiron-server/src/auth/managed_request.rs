@@ -311,6 +311,7 @@ impl CoreAuth {
             off_record_session: None,
             managed_owner: Some(holder),
             managed_person: None,
+            managed_person_mfa_verified: false,
         }
     }
 

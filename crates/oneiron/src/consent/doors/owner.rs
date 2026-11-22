@@ -98,6 +98,7 @@ impl Vault {
             person_credential: None,
             request_credential: None,
             host_action: None,
+            managed_mfa_verified: false,
             owner_key: None,
         })
     }
@@ -131,6 +132,7 @@ impl Vault {
             person_credential: None,
             request_credential: None,
             host_action: Some(Box::new(action.guard().clone())),
+            managed_mfa_verified: false,
             owner_key: None,
         };
         self.recheck_owner(&owner)?;

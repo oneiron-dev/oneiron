@@ -43,6 +43,9 @@ use oneiron::workspace_roster::{WorkCompanionPolicy, WorkspaceRosterPreset};
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 use serde_json::{Value, json};
 
+#[path = "admin_step_up/fixture.rs"]
+mod admin_step_up;
+
 const SHARED: u64 = 43;
 /// The stored workspace whose settings the settings case changes.
 const WORKSPACE: &str = "admin-act-notice-workspace";
@@ -54,6 +57,10 @@ struct Org {
     owner: EntityId,
     deputy: EntityId,
     admin: EntityId,
+    /// The Admin's proof on its own credential, stepped up with TOTP: an
+    /// org Admin's act stands on a current MFA step-up (L7-17), and one
+    /// person steps up once, so every Admin act reuses it.
+    admin_proof: AuthenticatedOwner,
     steward: EntityId,
     member_a: EntityId,
     member_b: EntityId,
@@ -130,6 +137,9 @@ impl Org {
         accept(&vault, steward, Role::Steward);
         accept(&vault, member_a, Role::Member);
         accept(&vault, member_b, Role::Member);
+        bind_host_actor(&vault, &issuer, admin, "human").expect("the host key bound to the Admin");
+        let admin_proof = admin_step_up::stepped_up_proof(&vault, &issuer, admin);
+        bind_host_owner(&vault, &issuer, owner).expect("the owner's binding again");
         Self {
             _dir: dir,
             vault,
@@ -137,6 +147,7 @@ impl Org {
             owner,
             deputy,
             admin,
+            admin_proof,
             steward,
             member_a,
             member_b,
@@ -254,7 +265,7 @@ fn an_admins_membership_change_is_told_to_every_admin() {
     let moved = org
         .as_person(org.admin, || {
             org.vault.change_shared_member_role(
-                &proof(&org.vault, org.admin),
+                &org.admin_proof,
                 SHARED,
                 org.member_b,
                 Role::Viewer,
@@ -300,7 +311,7 @@ fn a_workspace_setting_is_logged_to_every_admin() {
         org.vault.set_workspace_work_companion(
             WORKSPACE,
             WorkCompanionPolicy::Require,
-            &proof(&org.vault, org.admin),
+            &org.admin_proof,
         )
     })
     .expect("the Admin sets the work-companion policy");
@@ -325,7 +336,7 @@ fn a_workspace_setting_is_logged_to_every_admin() {
         org.vault.set_workspace_work_companion(
             WORKSPACE,
             WorkCompanionPolicy::Require,
-            &proof(&org.vault, org.admin),
+            &org.admin_proof,
         )
     })
     .expect("the Admin sets the same policy again");
@@ -348,13 +359,8 @@ fn an_admins_delegate_mint_is_told_to_every_admin() {
         .as_secs();
     let delegate = org
         .as_person(org.admin, || {
-            org.vault.create_federation_delegate(
-                &proof(&org.vault, org.admin),
-                parent,
-                helper,
-                now,
-                now + 3600,
-            )
+            org.vault
+                .create_federation_delegate(&org.admin_proof, parent, helper, now, now + 3600)
         })
         .expect("the Admin mints a delegate");
     let minted = json!({
@@ -387,7 +393,7 @@ fn a_house_seated_at_deputy_is_told_of_each_admin_act() {
         org.vault.set_workspace_work_companion(
             WORKSPACE,
             WorkCompanionPolicy::Require,
-            &proof(&org.vault, org.admin),
+            &org.admin_proof,
         )
     })
     .expect("the Admin sets the work-companion policy");
@@ -400,7 +406,7 @@ fn a_house_seated_at_deputy_is_told_of_each_admin_act() {
     let moved = org
         .as_person(org.admin, || {
             org.vault.change_shared_member_role(
-                &proof(&org.vault, org.admin),
+                &org.admin_proof,
                 SHARED,
                 org.member_b,
                 Role::Viewer,

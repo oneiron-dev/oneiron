@@ -3,8 +3,14 @@
 //! the delegated Owner Grant). Only an Owner of the vault gives Deputy, as
 //! the house door already refuses it (HOUSE-UNBIND-AUTHORITY = A).
 //!
+//! An Admin acts here on a session that passed MFA (L7-17), so each refusal
+//! is the role's, never the missing step-up's.
+//!
 //! Runs on public paths: `cargo test -p oneiron --all-features --test
 //! admin_is_not_deputy`.
+#[path = "admin_step_up/fixture.rs"]
+mod admin_step_up;
+
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{FederationGrantRole as Role, InitialSharedMember};
 use oneiron::registry::{ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_PERSON};
@@ -99,12 +105,13 @@ fn shared_with(vault: &Vault, second: EntityId, role: Role) -> EntityId {
 #[test]
 fn an_admin_cannot_make_itself_a_deputy() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let vault = Vault::open(dir.path(), VaultConfig::default()).expect("vault");
+    let (vault, issuer, _) = admin_step_up::rooted_vault(dir.path());
     let admin = EntityId::now();
     shared_with(&vault, admin, Role::Admin);
+    admin_step_up::bind_human_writer(&vault, &issuer, admin);
+    let admin_proof = admin_step_up::stepped_up_proof(&vault, &issuer, admin);
 
-    let refused =
-        vault.change_shared_member_role(&proof(&vault, admin), SHARED, admin, Role::Deputy, None);
+    let refused = vault.change_shared_member_role(&admin_proof, SHARED, admin, Role::Deputy, None);
     assert!(
         refused.is_err(),
         "an Admin's AssignRole must not reach the Deputy role: {refused:?}"
@@ -115,12 +122,13 @@ fn an_admin_cannot_make_itself_a_deputy() {
 #[test]
 fn an_admin_cannot_give_the_deputy_role_to_a_member() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let vault = Vault::open(dir.path(), VaultConfig::default()).expect("vault");
+    let (vault, issuer, _) = admin_step_up::rooted_vault(dir.path());
     let admin = EntityId::now();
     shared_with(&vault, admin, Role::Admin);
     let member = EntityId::now();
     person(&vault, member);
-    let admin_proof = proof(&vault, admin);
+    admin_step_up::bind_human_writer(&vault, &issuer, admin);
+    let admin_proof = admin_step_up::stepped_up_proof(&vault, &issuer, admin);
 
     // An Admin's AddMember stops at Deputy, and no invitation is written ...
     let refused = vault.add_shared_member(&admin_proof, SHARED, member, Some(Role::Deputy));
