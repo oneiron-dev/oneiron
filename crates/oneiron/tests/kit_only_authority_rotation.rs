@@ -1239,6 +1239,7 @@ impl CheckpointRootSigner for KeySigner {
         &self,
         _vault: &Vault,
         _fold: &oneiron::authority::AuthorityFold,
+        _ground: &oneiron::authority::OwnerProofGround,
         transcript: &[u8],
     ) -> oneiron::Result<Vec<u8>> {
         Ok(self.0.sign(transcript).to_bytes().to_vec())

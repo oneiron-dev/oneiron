@@ -42,7 +42,7 @@ pub(super) use live_edit::LIVE_EDIT_GROUPS;
 pub(crate) use live_edit::put_pins_live_edit_route_in_txn;
 pub(crate) use live_edit::{
     LiveEditAskOutcome, live_edit_asked_owners_in, live_edit_offered_owners_in,
-    resolve_live_edit_holder_ask_in_txn,
+    live_edit_option_grants, resolve_live_edit_holder_ask_in_txn,
 };
 #[cfg(oneiron_test_support)]
 pub(crate) use live_edit::{LiveEditRoute, is_live_edit_ask, live_edit_intent_key};

@@ -18,6 +18,7 @@ mod outcome;
 mod saved_args;
 pub(super) mod session;
 mod wait;
+pub(super) mod word_release;
 
 pub(in crate::runtime_hooks) use erase::scrub_erased_asks_in_txn;
 use outcome::completed;
@@ -539,7 +540,7 @@ pub(super) fn settled_in_txn(
     let Some(mut row) = ASKS.get_lenient(&vault.store, txn, &key)? else {
         return Ok(());
     };
-    if row.ask != group || row.binding != binding || row.state != VerbAskState::Open {
+    if !word_release::waits_open_on(&row, binding, group) {
         return Ok(());
     }
     let first_settlement = row.settled_at.is_none();

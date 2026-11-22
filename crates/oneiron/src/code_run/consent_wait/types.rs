@@ -224,6 +224,14 @@ impl CodeConsentWaitRow {
         }
     }
 
+    /// Whether the wait still takes its first answer: it has neither an
+    /// answer nor a settlement. The first answer stands and a settled wait
+    /// takes none, and no writer takes either fact back, so a word given on
+    /// the wait's ask once this is false becomes no answer.
+    pub(crate) const fn takes_an_answer(&self) -> bool {
+        self.answer.is_none() && self.settlement.is_none()
+    }
+
     /// Whether the first answer approved and the wait has not settled.
     pub(crate) fn approved_unsettled(&self) -> bool {
         self.settlement.is_none()

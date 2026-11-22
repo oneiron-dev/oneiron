@@ -147,10 +147,11 @@ impl Vault {
     /// revalidation also requires the fold to still trust it, and `actor`
     /// to be a live owner of this vault.
     ///
-    /// This is the one call that mints an owner key's proof for an ask word:
-    /// the owner confirm sheet (FREE-ROWS OWNER-CONFIRM-SHEET) wraps it.
-    /// Until that row lands it asks for no user presence, the same as the
-    /// choice doors and machine answers that use this key.
+    /// This is the one call that mints an owner key's proof for an ask word.
+    /// The key signs on `ground` (row OWNER-CONFIRM-SHEET): the answer door
+    /// checks the person at this device first, at the importance of the act
+    /// the word approves ([`Vault::owner_presence`]), and hands the ground of
+    /// that check. This call asks nobody and reads no importance.
     ///
     /// # Errors
     ///
@@ -164,13 +165,14 @@ impl Vault {
         &self,
         actor: EntityId,
         decision_id: GateDecisionId,
+        ground: &crate::authority::OwnerProofGround,
     ) -> Result<AuthenticatedOwner> {
         // The read transaction ends before the key signs: the signer reads
         // the roster from the fold it was picked on and opens none.
         let (fold, signer) = {
             let txn = self.store.env.read_txn()?;
             let fold = self.authority_view_readonly_in_txn(&txn)?;
-            let signer = self.ask_word_proof_signer(&fold);
+            let signer = self.ask_word_proof_signer(&fold, ground);
             (fold, signer)
         };
         let signer = signer.ok_or(Error::Record(crate::error::RecordError::OwnerKeyRequired))?;
@@ -197,6 +199,48 @@ impl Vault {
         owner.owner_key = Some(key);
         self.recheck_owner(&owner)?;
         Ok(owner)
+    }
+
+    /// `actor` as [`Self::authenticate_owner_device`] authenticates the
+    /// person who gives an ask word, with no owner key in the proof and
+    /// nothing signed: a live person who owns this vault. An answer door
+    /// runs the word's admission checks under it on the read it makes
+    /// before it asks for the person (`task_verb::ask_word_presence`), so a
+    /// word the admission refuses raises no prompt. It never reaches a
+    /// write: the word is admitted and cut only under the proof the key
+    /// signs after the ask.
+    ///
+    /// # Errors
+    ///
+    /// [`GateError::ConsentOwnerNotAuthenticated`](crate::error::GateError::ConsentOwnerNotAuthenticated)
+    /// when `actor` is no live owner of this vault.
+    pub(crate) fn owner_device_answerer(
+        &self,
+        actor: EntityId,
+        decision_id: GateDecisionId,
+    ) -> Result<AuthenticatedOwner> {
+        let owner = self.authenticate_owner(actor, &actor.to_hex(), true, decision_id)?;
+        self.recheck_owner(&owner)?;
+        Ok(owner)
+    }
+
+    /// Refuses where [`Self::authenticate_owner_device`] would find no key
+    /// to sign an ask word with now, and signs nothing. For the preview of
+    /// an answer alone (`can`): a door that asks for the person never reads
+    /// this before its ask, because a key that rests under a device PIN
+    /// proves only inside the window the ask's PIN step opens.
+    ///
+    /// # Errors
+    ///
+    /// [`RecordError::OwnerKeyRequired`](crate::error::RecordError::OwnerKeyRequired).
+    pub(crate) fn require_ask_word_proof_key(&self) -> Result<()> {
+        let txn = self.store.env.read_txn()?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        if self.holds_proving_owner_key(&fold) {
+            Ok(())
+        } else {
+            Err(Error::Record(crate::error::RecordError::OwnerKeyRequired))
+        }
     }
 
     /// Binds `owner` to the verified, full owner-grade capability its request

@@ -53,8 +53,16 @@ pub(in crate::task_verb) fn admit_link_word(
     )
 }
 
+/// Whether admitting the word records it or keeps its original answer.
+#[derive(Clone, Copy)]
+pub(in crate::task_verb) enum WordStanding {
+    New,
+    GivenBefore,
+}
+
 /// [`admit_word`]'s checks alone, read in `txn`: `Ok` when `writer`'s word
-/// would be admitted now. Nothing is recorded. `can({verb})` answers
+/// would be admitted now. It reports whether the word was given before.
+/// Nothing is recorded. `can({verb})` answers
 /// `tasks.answer` from these, the checks the call itself meets first (FIX
 /// [UI-GATE-PREVIEW]).
 #[expect(
@@ -70,7 +78,7 @@ pub(in crate::task_verb) fn check_word(
     word: &TaskAskWord,
     owner: Option<&crate::consent::AuthenticatedOwner>,
     now: u64,
-) -> Result<()> {
+) -> Result<WordStanding> {
     check_word_in_txn(
         vault,
         txn,
@@ -81,7 +89,10 @@ pub(in crate::task_verb) fn check_word(
         owner,
         now,
     )
-    .map(drop)
+    .map(|checked| match checked {
+        CheckedWord::New(_) => WordStanding::New,
+        CheckedWord::Given(_) => WordStanding::GivenBefore,
+    })
 }
 
 enum WordWriter {

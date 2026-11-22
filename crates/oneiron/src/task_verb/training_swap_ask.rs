@@ -724,6 +724,12 @@ fn routed_in(
     Ok(Some((key, route)))
 }
 
+/// Whether `option` approves what a training swap ask asks for: the swap to
+/// the trained model. Keep leaves the current one ([`super::ask_guard`]).
+pub(super) fn approves(option: &TaskAskOptionId) -> bool {
+    offered_answer(option) == Some(SwapAnswer::Swap)
+}
+
 /// Who a training swap ask asks: the owner its reservation names; `None`
 /// for every other ask ([`super::ask_guard`]).
 pub(super) fn asked_in(

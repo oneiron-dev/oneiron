@@ -41,6 +41,7 @@ use crate::{EdgeActorClass, EntityId, Result, Vault};
 use super::block::HookTurnTarget;
 pub(crate) use ask::VERB_HOOK_INTENT;
 pub(super) use ask::scrub_erased_asks_in_txn;
+pub(crate) use ask::word_release::verb_ask_word_releases_in;
 pub use ask::{HOOK_OUTCOME_UNCERTAIN, HOOK_RESULT_NOT_RETAINED, VerbHookWaitStatus};
 pub use call_scope::VerbCallScope;
 pub(super) use chain::admit_verb_outcome;

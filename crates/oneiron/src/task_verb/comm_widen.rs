@@ -294,6 +294,14 @@ const fn recipient_source(recipient: CommWidenRecipient) -> TaskAskSource {
     }
 }
 
+/// Whether `option` is one of the owner's two approvals of a widen ask:
+/// each widens the child's reach. The owner's deny keeps it; an agent
+/// parent's words are its own, under no person's proof
+/// ([`super::ask_guard`]).
+pub(super) fn approves(option: &TaskAskOptionId) -> bool {
+    matches!(option.as_str(), APPROVE_ONCE | APPROVE_AND_STOP_ASKING)
+}
+
 /// Who a comm widen ask asks: its request's recipient, an agent parent or
 /// the owner; `None` for every other ask, and for an erased recipient
 /// ([`super::ask_guard`]).
