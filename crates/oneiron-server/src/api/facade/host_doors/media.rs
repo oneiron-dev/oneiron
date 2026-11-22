@@ -199,7 +199,13 @@ pub(super) async fn answered(
         return ai_media_for_run(server, &line, operation, None, input).await;
     }
     owner_or_granted(server, auth, operation, MEDIA_OWNERS)?;
-    ai_media_as_owner(server, operation, input).await
+    // A caller verified in an off-record session that keeps no model-call
+    // record names no rows on the call's run (census L5-25).
+    let off_record = server.vault().model_call_keeps_no_record_for(
+        auth.off_record_session(),
+        crate::api::call_receipt::request_principal(auth),
+    );
+    ai_media_as_owner(server, operation, input, off_record).await
 }
 
 /// [`owner_grade`]'s check at the owner's door for `operation`, which also
@@ -221,16 +227,23 @@ fn owner_or_granted(
 /// [`answered`] past its credential check, for a caller its own door proved
 /// the vault's live recorded owner with no credential behind it: an owner's
 /// own program whose run binds no line (FIX 5911). It bills the vault
-/// owner, as his call does.
+/// owner, as his call does. `off_record`: the caller's off-record session
+/// keeps no model-call record, so the run names no rows (census L5-25).
 pub(crate) async fn ai_media_as_owner(
     server: &SyncServer,
     operation: AiOperation,
     input: AiCallRequest,
+    off_record: bool,
 ) -> MemoryResult<AiAnswer> {
-    // Its parts come inline; a banked voice is read from its person.
-    let sources = match &input.voice {
-        Some(AiVoice::Bank { voice_id, .. }) => voice_owner(server, voice_id),
-        Some(AiVoice::Stock { .. }) | None => Some(Vec::new()),
+    // Its parts come inline; a banked voice is read from its person. The
+    // media run is sourced here alone, so an off-record caller's names none.
+    let sources = if off_record {
+        None
+    } else {
+        match &input.voice {
+            Some(AiVoice::Bank { voice_id, .. }) => voice_owner(server, voice_id),
+            Some(AiVoice::Stock { .. }) | None => Some(Vec::new()),
+        }
     };
     let key = input.idempotency_key.clone();
     let (request, voices) = prepare(server, operation, input)?;

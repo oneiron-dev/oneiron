@@ -43,6 +43,7 @@ fn witness(memory: &Memory<'_>, content: &str) {
             conversation_ref: EntityId::now().to_hex(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: None,
                 author: WitnessAuthor::User,

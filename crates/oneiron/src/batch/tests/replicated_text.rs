@@ -21,7 +21,14 @@ fn replicated_overwrite_deindexes_storage_managed_text() -> Result<()> {
 
     vault
         .batch()
-        .put_replicated(&id, ENTITY_TYPE_TURN, test_time_range(2, 2), 2, b"winner")
+        .put_replicated(
+            &id,
+            ENTITY_TYPE_TURN,
+            test_time_range(2, 2),
+            2,
+            None,
+            b"winner",
+        )
         .commit()?;
     vault.with_write_txn(|txn| {
         let row = vault.store.entities.get(txn, id.as_bytes())?.unwrap();

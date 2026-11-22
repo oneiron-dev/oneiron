@@ -3,6 +3,7 @@ use super::host_doors::support::{Listed, internal, owner_proof};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 use oneiron::disclosure::{
+    CallSpeakerBindReceipt, CallSpeakerBindRequest, CallSpeakerUnbindRequest,
     DisclosureCeilingRequest, DisclosureCeilingSet, DisclosureCeilingView, HomeClearanceRequest,
     HomeClearanceSet, HomeClearanceView,
 };
@@ -133,6 +134,48 @@ pub(crate) async fn vault_disclosure_home_clear(
         })
         .await
         .map_err(|_| internal("vault.disclosure.home.clear"))?
+    }
+    .await;
+    (answer, Vec::new())
+}
+
+pub(crate) async fn vault_calls_speakers_bind(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: CallSpeakerBindRequest,
+) -> Listed<CallSpeakerBindReceipt> {
+    let answer = async {
+        let owner = owner_proof(auth, server, "vault.calls.speakers.bind")?;
+        let server = Arc::clone(server);
+        super::clock_ingress::run_blocking(move || {
+            server
+                .vault()
+                .bind_call_speaker(&owner, input)
+                .map_err(Into::into)
+        })
+        .await
+        .map_err(|_| internal("vault.calls.speakers.bind"))?
+    }
+    .await;
+    (answer, Vec::new())
+}
+
+pub(crate) async fn vault_calls_speakers_unbind(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: CallSpeakerUnbindRequest,
+) -> Listed<CallSpeakerBindReceipt> {
+    let answer = async {
+        let owner = owner_proof(auth, server, "vault.calls.speakers.unbind")?;
+        let server = Arc::clone(server);
+        super::clock_ingress::run_blocking(move || {
+            server
+                .vault()
+                .unbind_call_speaker(&owner, input)
+                .map_err(Into::into)
+        })
+        .await
+        .map_err(|_| internal("vault.calls.speakers.unbind"))?
     }
     .await;
     (answer, Vec::new())

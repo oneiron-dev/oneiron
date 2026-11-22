@@ -25,7 +25,7 @@ impl Vault {
     /// [`Vault::prefilter_config`] through a caller-owned write transaction,
     /// so the in-transaction session-close planner screens under exactly the
     /// policy its own commit will be judged by.
-    pub(super) fn prefilter_config_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<PrefilterConfig> {
+    pub(crate) fn prefilter_config_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<PrefilterConfig> {
         // The value is checked on the way out as well as on the way in: a corrupt or foreign
         // row must not hand the planner a NaN threshold.
         let config = super::setting_keys::PREFILTER

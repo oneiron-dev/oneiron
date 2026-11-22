@@ -16,6 +16,7 @@ use crate::attempt_queue::validate::{
 use crate::error::Result;
 
 use super::AttemptQueue;
+use super::unjoined_hold::UnjoinedHold;
 
 impl AttemptQueue<'_> {
     /// Leases the try `id` of the TASK `task_ref` in the caller's
@@ -23,9 +24,10 @@ impl AttemptQueue<'_> {
     ///
     /// `Empty` when the row is not ready yet (a retry still backing off, or
     /// a TASK whose symbols are held), and when its TASK waits on an
-    /// unattached comment, which the claim pauses for that hold (OF-368). A
-    /// row of another TASK or kind, or one past readiness, is refused rather
-    /// than leased.
+    /// unattached comment, which the claim pauses for that hold (OF-368), and
+    /// on a copy restored and not joined when `kind` is held
+    /// ([`UnjoinedHold`]). A row of another TASK or kind, or one past
+    /// readiness, is refused rather than leased.
     pub(crate) fn claim_for_task_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -51,6 +53,7 @@ impl AttemptQueue<'_> {
             .min(crate::ports::recorded_at_in_txn(self.store, wtxn)?);
         let record_ready_at = ready_at(&record);
         if record_ready_at > now
+            || UnjoinedHold::default().holds(self.store, &*wtxn, kind)?
             || !crate::task_verb::task_dispatch_ready(self.store, &*wtxn, Some(task_ref), now)?
         {
             return Ok(ClaimOutcome::Empty);

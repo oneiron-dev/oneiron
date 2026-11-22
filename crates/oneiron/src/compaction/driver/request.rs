@@ -156,6 +156,45 @@ impl CompactionRequest {
         }
     }
 
+    /// One piece of this sealed request's single turn (FIX-LIST
+    /// COMPACTION-FIRST-TURN-PAST-INPUT-ROOM-STALLS): the same SESSION,
+    /// watermark, sources and log, its one message `content` in place of the
+    /// turn's text, no pins and a summary held to `summary_token_budget`. It
+    /// is sent and judged as any pass is, under its own job identity, and
+    /// never lands: only the turn's entry, re-sealed from the piece
+    /// summaries, does.
+    pub(in crate::compaction) fn for_piece(
+        &self,
+        vault: &Vault,
+        content: String,
+        summary_token_budget: u64,
+    ) -> Result<Self> {
+        let [message] = self.window.as_slice() else {
+            return Err(Error::InvariantViolation(
+                "a piece is cut from a window of one turn",
+            ));
+        };
+        Ok(Self {
+            request_id: vault.store.clock.entity_id()?,
+            session_ref: self.session_ref,
+            window: vec![CompactionWindowMessage {
+                message_id: message.message_id,
+                turn_id: message.turn_id,
+                tokens: crate::count_context_pack_tokens(&content) as u64,
+                content,
+                turn: message.turn,
+            }],
+            summary_token_budget,
+            turn_start: self.turn_start,
+            watermark: self.watermark,
+            pins: Vec::new(),
+            sources: self.sources.clone(),
+            window_read_from_sources: self.window_read_from_sources,
+            note: None,
+            log: self.log,
+        })
+    }
+
     /// The lineage the request's epoch counts in (FIX 5029): its bound
     /// conversation's within its SESSION, else the SESSION's own.
     pub(crate) const fn epoch_scope(&self) -> EpochScope {
@@ -400,6 +439,47 @@ impl CompactionDriver {
             request: Some(Box::new(request.clone())),
         };
         Ok(request)
+    }
+}
+
+impl CompactionDriver {
+    /// The flight's sealed request with each window message's text replaced
+    /// by `texts`, in order (FIX-LIST
+    /// COMPACTION-FIRST-TURN-PAST-INPUT-ROOM-STALLS: a turn read in pieces
+    /// is judged on its entry), and each row of `read_from` the new texts
+    /// were also read from added to its sources (#10050 review, round 2).
+    /// Every other field, the job identity, the watermark and the turns
+    /// included, stays the one sealed, and the result is the request the
+    /// flight now lands.
+    pub(in crate::compaction) fn reseal_window_texts(
+        &mut self,
+        texts: Vec<String>,
+        read_from: &[EntityId],
+    ) -> Result<CompactionRequest> {
+        let CompactionState::Compacting {
+            request: Some(request),
+            ..
+        } = &mut self.state
+        else {
+            return Err(Error::InvariantViolation(
+                "only a sealed flight's window can be re-sealed",
+            ));
+        };
+        if texts.len() != request.window.len() {
+            return Err(Error::InvariantViolation(
+                "a re-sealed window keeps its messages",
+            ));
+        }
+        for (message, content) in request.window.iter_mut().zip(texts) {
+            message.tokens = crate::count_context_pack_tokens(&content) as u64;
+            message.content = content;
+        }
+        for row in read_from {
+            if !request.sources.contains(row) {
+                request.sources.push(*row);
+            }
+        }
+        Ok((**request).clone())
     }
 }
 

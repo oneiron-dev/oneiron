@@ -83,7 +83,7 @@ fn part_titles(bytes: &[u8], tree: &XmlTree, moves: &TitleMoves<'_>) -> Option<V
         .filter(|(_, node)| node.is(VT, "variant"))
         .map(|(at, _)| at)
         .collect();
-    if variants.len() % 2 != 0 {
+    if !variants.len().is_multiple_of(2) {
         return None;
     }
     let groups = variants

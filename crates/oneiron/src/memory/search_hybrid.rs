@@ -179,6 +179,7 @@ impl Memory<'_> {
             .reading(lane.store_read())
             .authority_filter(candidates)
             .scoped_note_reader(lane.actor_key().clone())
+            .statistics_read(&lane)
             .for_destination(lane.actor_key().destination())
             .filter_candidates(&admitted)
             .gate_candidates(&gate)
