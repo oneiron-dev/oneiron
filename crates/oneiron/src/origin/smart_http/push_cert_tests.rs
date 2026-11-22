@@ -6,7 +6,9 @@
 
 use std::process::{Command, Stdio};
 
-use super::tests::{CapturingSink, advertise, commit_file, git, served_repo, temp_vault};
+use super::tests::{
+    CapturingSink, advertise, commit_file, git, owner_principal, served_repo, temp_vault,
+};
 use super::*;
 use crate::error::CodeError;
 
@@ -27,7 +29,7 @@ fn receive_pack(
         content_length: Some(body.len() as u64),
         content_encoding: content_encoding.map(str::to_owned),
         git_protocol: None,
-        remote_user: Some(EntityId::now().to_hex()),
+        remote_user: Some(owner_principal(vault).to_hex()),
         remote_addr: Some("127.0.0.1".into()),
     };
     let mut sink = CapturingSink::default();

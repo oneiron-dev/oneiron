@@ -8,7 +8,7 @@ use std::fmt;
 
 use xmltree::Element;
 
-use crate::docx_package::DocxPackage;
+use crate::docx_package::{DocxPackage, relationship_target_from};
 use crate::serialize::build_people_xml;
 
 pub const PEOPLE_PART: &str = "word/people.xml";
@@ -49,9 +49,8 @@ impl VerifiedGeneratedPeopleOperation {
         let mut next = output.clone();
         next.set_part(PEOPLE_PART, self.people_xml.clone());
         if self.creates_binding {
-            let actual_relationship_id = next
-                .document_rels
-                .add(PEOPLE_RELATIONSHIP_TYPE, "people.xml");
+            let target = relationship_target_from(next.main_document_part_name(), PEOPLE_PART);
+            let actual_relationship_id = next.document_rels.add(PEOPLE_RELATIONSHIP_TYPE, &target);
             if actual_relationship_id != self.relationship_id {
                 return Err(GeneratedPeopleOperationError::RelationshipIdChanged {
                     planned: self.relationship_id.clone(),
@@ -137,9 +136,10 @@ pub fn plan_generated_people_operation(
         let people_xml = build_people_xml(authors).into_bytes();
         let mut expected = base.clone();
         expected.set_part(PEOPLE_PART, people_xml.clone());
+        let target = relationship_target_from(expected.main_document_part_name(), PEOPLE_PART);
         let relationship_id = expected
             .document_rels
-            .add(PEOPLE_RELATIONSHIP_TYPE, "people.xml");
+            .add(PEOPLE_RELATIONSHIP_TYPE, &target);
         (people_xml, relationship_id)
     };
     Element::parse(people_xml.as_slice()).map_err(|error| {

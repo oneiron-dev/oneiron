@@ -9,10 +9,10 @@
 //! machine's descriptor floor: a call or reply carries any number of
 //! regions across its frames (protocol 2.0, FIX 6190), and the runtime
 //! closes each input's descriptor once it has mapped it. On Linux every
-//! organ then starts under a seccomp deny-list (`syscall_filter`, census
-//! L4-09): ptrace, mount, bpf, kexec, module load, perf_event_open, the
-//! keyring, userfaultfd and process_vm_* kill it. Not built: the canon's
-//! syscall allow-list (FIX [ORGAN-SECCOMP-ALLOW-LIST]). No parent-death
+//! organ then starts under a seccomp allow-list (`syscall_filter`, FIX
+//! [ORGAN-SECCOMP-ALLOW-LIST]): the image and seal organs and the probe
+//! under their own traced lists, every other organ under the fixed tier
+//! list; any other call kills it. No parent-death
 //! signal: Linux ties it to the spawning thread, which may be a short-lived
 //! worker; the organ runtime exits at EOF on its socket.
 //!
@@ -26,6 +26,16 @@
 //! A fence that does not apply fails the start, so the organ never runs
 //! unfenced; a host with no fence refuses third-party organs
 //! (`Unavailable::ThirdPartyUnconfined`, [`filesystem_confined`]).
+//!
+//! On a Linux host with that fence a first-party organ starts inside it
+//! too (FIX [FIRST-PARTY-ORGAN-PROC-REACH]), with no scratch dir: it reads
+//! what a third-party organ reads and writes only the null device and its
+//! spec's write dirs. Unfenced it ran as the engine's uid and could open
+//! the engine's `/proc/<pid>/environ` and descriptors, its OOM score, and
+//! the vault's files. As for a third-party organ, a fence that does not
+//! apply fails its start. On a host with no Landlock, and on macOS, a
+//! first-party organ starts unfenced, as reviewed code on the protections
+//! that are built (ARCH-0075).
 //!
 //! A first-party organ's data and file-size limits start at its memory
 //! grant and grow with what its own buffers are granted (`memory.grow`):
@@ -61,9 +71,14 @@ mod scratch;
 mod seatbelt;
 #[cfg(target_os = "linux")]
 mod syscall_filter;
+#[cfg(all(target_os = "linux", oneiron_test_support))]
+mod syscall_trace;
 
 pub(crate) use fence::Cell;
 pub(crate) use scratch::Scratch;
+
+/// The descriptor the organ's socket takes in the child.
+const ORGAN_FD: RawFd = 3;
 
 /// Limits as the kernel takes them, worked out before the fork.
 #[derive(Debug)]
@@ -75,17 +90,18 @@ struct Plan {
     file_size: libc::rlim_t,
     /// The hard data and file-size limits.
     hard: libc::rlim_t,
-    /// Where the child writes its outcomes, before exec.
+    /// Where the child writes its outcomes, before exec: above
+    /// [`ORGAN_FD`] (`above_organ_fd`), as is every descriptor it uses.
     #[cfg(target_os = "linux")]
     status: Option<i32>,
     /// The `cgroup.procs` of the organ's cell, which the child joins first.
     join: Option<std::ffi::CString>,
-    /// A third-party organ's Landlock ruleset, which the child restricts
-    /// itself to before exec (FIX 7885).
+    /// The organ's Landlock ruleset, where it has one (`landlock::fence`),
+    /// which the child restricts itself to before exec.
     #[cfg(target_os = "linux")]
     landlock: Option<std::os::fd::OwnedFd>,
-    /// Every organ's syscall filter, which the child installs after
-    /// `no_new_privs` (census L4-09).
+    /// The organ's syscall allow-list, which the child installs after
+    /// `no_new_privs`, last before exec (FIX [ORGAN-SECCOMP-ALLOW-LIST]).
     #[cfg(target_os = "linux")]
     syscalls: syscall_filter::SyscallFilter,
 }
@@ -98,6 +114,10 @@ pub(crate) struct Confined {
     cell: Result<Cell, String>,
     /// A third-party organ's scratch dir, which lives as long as it does.
     scratch: Option<Scratch>,
+    /// In a trace run, the child's end of its recorder's bootstrap socket,
+    /// held until the child has exec'd (`syscall_trace`).
+    #[cfg(all(target_os = "linux", oneiron_test_support))]
+    _trace_bootstrap: Option<std::os::unix::net::UnixStream>,
 }
 
 /// The command that starts `spec`'s organ confined, with `socket` on its
@@ -105,9 +125,9 @@ pub(crate) struct Confined {
 /// organ gets its scratch dir here, before its fence is built around it.
 ///
 /// # Errors
-/// A third-party organ on a platform with no fence; or its scratch dir or
-/// its filesystem fence could not be made, or the pipe the child reports
-/// its isolation on; the error names which.
+/// A third-party organ on a platform with no fence; or a third-party
+/// organ's scratch dir, any organ's filesystem fence, or the pipe the child
+/// reports its isolation on could not be made; the error names which.
 pub(crate) fn command(spec: &OrganSpec, socket: RawFd) -> io::Result<(Command, Confined)> {
     let first_party = spec.tier == OrganTier::FirstParty;
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
@@ -122,7 +142,7 @@ pub(crate) fn command(spec: &OrganSpec, socket: RawFd) -> io::Result<(Command, C
         Some(Scratch::new()?)
     };
     let (program, args) = argv(spec, scratch.as_ref());
-    let mut command = oneiron_spawn::command_with_fds(&program, &[(socket, 3)]);
+    let mut command = oneiron_spawn::command_with_fds(&program, &[(socket, ORGAN_FD)]);
     command.args(&args);
     let confined = confine(&mut command, spec, scratch)?;
     Ok((command, confined))
@@ -140,15 +160,28 @@ fn confine(
     let first_party = spec.tier == OrganTier::FirstParty;
     let cell = fence::cell();
     #[cfg(target_os = "linux")]
-    let status = Some(io::pipe()?);
+    let status = {
+        let (reader, writer) = io::pipe()?;
+        Some((reader, above_organ_fd(writer)?))
+    };
     #[cfg(target_os = "linux")]
-    let landlock = scratch
-        .as_ref()
-        .map(|scratch| landlock::ruleset(spec, scratch.path()))
+    let landlock = landlock::fence(spec, scratch.as_ref().map(Scratch::path))?
+        .map(above_organ_fd)
         .transpose()?;
     #[cfg(target_os = "linux")]
-    let syscalls = syscall_filter::SyscallFilter::deny_list()?;
-    let plan = Plan {
+    let syscalls = syscall_filter::SyscallFilter::for_organ(spec)?;
+    // A trace run records the organ's calls in place of filtering them.
+    #[cfg(all(target_os = "linux", oneiron_test_support))]
+    let (syscalls, trace_bootstrap) = match syscall_trace::trace_file() {
+        Some(file) => {
+            let theirs = above_organ_fd(syscall_trace::start(&spec.name, file)?)?;
+            let recording =
+                syscall_filter::SyscallFilter::recording(std::os::fd::AsRawFd::as_raw_fd(&theirs))?;
+            (recording, Some(theirs))
+        }
+        None => (syscalls, None),
+    };
+    let mut plan = Plan {
         #[cfg(target_os = "linux")]
         data: grant,
         // Elsewhere nothing can raise it while the organ runs: lifted.
@@ -185,9 +218,10 @@ fn confine(
     }
     // SAFETY: the closure runs in the child between fork and exec, after the
     // descriptors are in place. It only makes async-signal-safe calls
-    // (open, write, close, setpgid, setrlimit, prctl, landlock_restrict_self,
-    // unshare, setpriority) on values computed before the fork, the syscall
-    // filter's program included, and allocates nothing.
+    // (open, write, close, setpgid, setrlimit, setpriority, prctl,
+    // landlock_restrict_self, unshare, getpid; in a trace run seccomp and
+    // sendmsg) on values computed before the fork, the syscall filter's
+    // program included, into which it writes its pid, and allocates nothing.
     unsafe {
         command.pre_exec(move || plan.apply());
     }
@@ -196,7 +230,39 @@ fn confine(
         status,
         cell,
         scratch,
+        #[cfg(all(target_os = "linux", oneiron_test_support))]
+        _trace_bootstrap: trace_bootstrap,
     })
+}
+
+/// `fd`, renumbered above [`ORGAN_FD`] where it sits on or below it. The
+/// child has its standard streams (std, before any `pre_exec` step) and
+/// then the organ socket on fd 3 (`oneiron_spawn::command_with_fds`, the
+/// first step) before [`Plan::apply`] runs, so a descriptor the plan uses
+/// that was numbered 0 to 3 here is by then one of those. The engine's
+/// other threads open and close descriptors while an organ starts, so
+/// fd 3 can be free when one is made: a status writer made there sent the
+/// child's eight status bytes down the organ socket, where the host read
+/// them as an empty frame and refused the handshake ("the encoding is cut
+/// short", FIX [MESH-ASK-CARRIED-HANDSHAKE-CUT-SHORT]).
+#[cfg(target_os = "linux")]
+fn above_organ_fd<F>(fd: F) -> io::Result<F>
+where
+    F: From<std::os::fd::OwnedFd> + Into<std::os::fd::OwnedFd>,
+{
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    let fd: OwnedFd = fd.into();
+    if fd.as_raw_fd() > ORGAN_FD {
+        return Ok(fd.into());
+    }
+    // SAFETY: fcntl on a descriptor this process holds; F_DUPFD_CLOEXEC
+    // makes a new one, the lowest free number above ORGAN_FD.
+    let moved = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_DUPFD_CLOEXEC, ORGAN_FD + 1) };
+    if moved < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: `moved` was just made by fcntl, and nothing else holds it.
+    Ok(unsafe { OwnedFd::from_raw_fd(moved) }.into())
 }
 
 /// A byte count as the kernel's limit: none past what it can say.
@@ -219,9 +285,11 @@ fn argv(spec: &OrganSpec, scratch: Option<&Scratch>) -> (PathBuf, Vec<OsString>)
     (spec.program.clone(), spec.args.clone())
 }
 
-/// Whether this host can fence a third-party organ's filesystem (FIX
-/// 7885): Landlock ABI 3 or later on Linux, Seatbelt's `sandbox-exec` on
-/// macOS. Where it cannot, the host refuses third-party organs.
+/// Whether this host can fence an organ's filesystem (FIX 7885): Landlock
+/// ABI 3 or later on Linux, Seatbelt's `sandbox-exec` on macOS. Where it
+/// cannot, the host refuses third-party organs. On Linux it also decides
+/// whether a first-party organ starts fenced (FIX
+/// [FIRST-PARTY-ORGAN-PROC-REACH]).
 #[must_use]
 pub fn filesystem_confined() -> bool {
     static CONFINED: OnceLock<bool> = OnceLock::new();
@@ -244,7 +312,7 @@ fn fence_available() -> bool {
 }
 
 impl Plan {
-    fn apply(&self) -> io::Result<()> {
+    fn apply(&mut self) -> io::Result<()> {
         // The cell first, while the child has the engine's own credentials
         // and has started nothing: whatever it starts is in it.
         let joined = self.join.as_ref().map_or(-1, |procs| fence::join(procs));
@@ -255,27 +323,29 @@ impl Plan {
         }
         limit(libc::RLIMIT_CORE, 0, 0)?;
         limit(libc::RLIMIT_FSIZE, self.file_size, self.hard)?;
-        #[cfg(target_os = "linux")]
-        self.linux(joined)?;
-        #[cfg(not(target_os = "linux"))]
-        let _ = joined;
+        // Before the syscall filter, whose lists hold no `setpriority`: it
+        // can name another process.
         // SAFETY: setpriority on this process only; a failure leaves the
         // default priority and is not fatal.
         unsafe {
             libc::setpriority(libc::PRIO_PROCESS, 0, 10);
         }
+        #[cfg(target_os = "linux")]
+        self.linux(joined)?;
+        #[cfg(not(target_os = "linux"))]
+        let _ = joined;
         Ok(())
     }
 
     #[cfg(target_os = "linux")]
-    fn linux(&self, joined: i32) -> io::Result<()> {
+    fn linux(&mut self, joined: i32) -> io::Result<()> {
         limit(libc::RLIMIT_DATA, self.data, self.hard)?;
         // SAFETY: prctl with constant arguments on this process.
         if unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) } != 0 {
             return Err(io::Error::last_os_error());
         }
-        // A third-party organ's filesystem fence: an error fails the start,
-        // so the organ never runs unfenced (FIX 7885).
+        // The organ's filesystem fence: an error fails the start, so an
+        // organ whose fence was built never runs unfenced.
         if let Some(ruleset) = &self.landlock {
             oneiron_container::landlock_restrict(std::os::fd::AsFd::as_fd(ruleset))?;
         }
@@ -295,9 +365,9 @@ impl Plan {
             }
         }
         // The syscall filter, after `no_new_privs` and once the namespaces
-        // are made: nothing the child still does before exec is a denied
-        // call. An error fails the start, so the organ never runs
-        // unfiltered (census L4-09).
+        // are made: what the child still does before exec (the exec) is on
+        // every organ's list. An error fails the start, so the organ never
+        // runs unfiltered.
         self.syscalls.install()
     }
 }

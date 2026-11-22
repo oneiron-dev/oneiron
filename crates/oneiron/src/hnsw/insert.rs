@@ -1,5 +1,7 @@
 //! Insert, localized refresh, and backlink attachment.
 
+use std::collections::HashMap;
+
 use heed::{RoTxn, RwTxn};
 
 use crate::config::VaultConfig;
@@ -23,8 +25,8 @@ use super::rebuild::{
 use super::search::{beam_search, beam_search_logged, score_dims_for};
 use super::slim_drop::hnsw_is_dropped;
 use super::storage::{
-    decode_neighbors, load_neighbors, load_vector, prune_neighbors_for_node, read_count,
-    read_entry_point, write_neighbors,
+    decode_neighbors, keep_sole_link_candidates, load_neighbors, load_vector,
+    prune_neighbors_for_node, read_count, read_entry_point, write_neighbors,
 };
 use super::types::{BeamOptions, ExpandedLists, HeapEntry, InsertOutcome, neighbor_list_hash};
 
@@ -558,9 +560,11 @@ fn attach_backlinks_legacy(
 
 /// Symmetric backlink attachment (ONE-325): every link written here exists
 /// in both directions. When adding `id` to a neighbor's list overflows
-/// `m_max_0`, the pruned-out victims also lose their reverse link — except a
-/// victim whose list would become empty keeps its link one-way (orphan
-/// protection), so no prune ever disconnects a node's outgoing side.
+/// `m_max_0`, a candidate whose only link is that neighbor takes the place of
+/// a kept entry that stays joined to the neighbor through another kept entry
+/// (`keep_sole_link_candidates`). Pruned-out victims also lose their reverse
+/// link, except a sole-link victim keeps its link one-way as the
+/// orphan-protection fallback.
 fn attach_backlinks_symmetric(
     store: &impl VectorIndexDbs,
     config: &VaultConfig,
@@ -569,7 +573,7 @@ fn attach_backlinks_symmetric(
     selected: &[EntityId],
     ops: &mut u64,
 ) -> Result<()> {
-    for neighbor_id in selected {
+    for (position, neighbor_id) in selected.iter().enumerate() {
         let mut neighbors = load_neighbors(store, &*wtxn, neighbor_id)?;
         *ops += 1;
         if !neighbors.contains(id) {
@@ -587,6 +591,34 @@ fn attach_backlinks_symmetric(
                 config.dimensions,
                 ops,
             )?;
+            // The lists are read in this write transaction, including when the
+            // neighbor selection came from an insert plan. Only a pruned-out
+            // candidate can be orphaned, so the kept entries' lists (the swap
+            // and bridge checks) are read only when one of those is a
+            // sole-link candidate (an overflow usually prunes one entry, which
+            // usually has other links).
+            let mut lists = HashMap::new();
+            for candidate in neighbors.iter().filter(|entry| !pruned.contains(entry)) {
+                *ops += 1;
+                lists.insert(*candidate, load_neighbors(store, &*wtxn, candidate)?);
+            }
+            if lists
+                .values()
+                .any(|list| list.as_slice() == std::slice::from_ref(neighbor_id))
+            {
+                for kept in &pruned {
+                    *ops += 1;
+                    lists.insert(*kept, load_neighbors(store, &*wtxn, kept)?);
+                }
+            }
+            let pruned = keep_sole_link_candidates(
+                neighbor_id,
+                pruned,
+                &neighbors,
+                &selected[position + 1..],
+                &lists,
+                config.hnsw.m_max_0,
+            );
             let removed: Vec<EntityId> = neighbors
                 .iter()
                 .filter(|candidate| !pruned.contains(candidate))

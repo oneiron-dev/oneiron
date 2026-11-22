@@ -62,7 +62,7 @@ impl Vault {
         checkpoint_id: String,
         mut bodies: artifact::SealedBodies<'_>,
         destination: &Path,
-        config: VaultConfig,
+        mut config: VaultConfig,
         reason: RestoreReason,
         restored_at: u64,
         custody: Custody<'_>,
@@ -204,6 +204,15 @@ impl Vault {
                     .flat_map(super::removal_files::LiveArchives::landing_lens),
             );
         room.admit()?;
+        // A copy beside a sealed vault goes under the key its restored rows
+        // name, so its own mirror opens it after a close; refused before
+        // anything is made when the live seal holds no such key.
+        config.page_seal = config
+            .page_seal
+            .take()
+            .map(|seal| Self::restored_copy_page_seal(seal, &image.databases["vault_meta"]))
+            .transpose()
+            .map_err(Rejected::landing)?;
         let mut made = MadeDestination::make(destination, home)?;
         // A sealed copy's open writes its page-seal mirror beside it, outside
         // the directory: a refusal removes that too.
@@ -290,6 +299,15 @@ impl Vault {
             }
             if fork {
                 forked.0 = vault.store.fork_gate_custody_in_txn(txn, &gate_custody)?;
+                // A copy served beside its source holds the source's timer, feed and idle
+                // programs, and both would release them: the copy's start paused, in the write
+                // that lands them (FIX TURNPROGRAM-OCCURRENCE-ARMINGS-LIVE-ON-A-VAULT-COPY).
+                // After a merge of live rows these are the armings the live vault holds now.
+                crate::dreamer_runner::pause_occurrence_armings_in_txn(
+                    &vault.store,
+                    txn,
+                    restored_at,
+                )?;
             }
             if let Some(home) = home {
                 vault
@@ -380,6 +398,20 @@ impl Vault {
             // quote, history included, as the live erase scrubs it (FIX
             // 18270). Every row it reads is back by now.
             crate::note::erase_restored_citations_in_txn(&vault, txn, &erased)?;
+            // A Gate decision dropped above takes the unclear row the image
+            // filed under its receipt with it, and the label proposals that
+            // copied its notes and wait on their owner, now their index rows
+            // are back (FIX [GATE-RECEIPT-UNCLEAR-ROW-OUTLIVES-RECORD-REMOVAL]).
+            let dropped: Vec<_> = gate_custody
+                .dropped()
+                .into_iter()
+                .map(|(id, _)| id)
+                .collect();
+            crate::skill_attribution::delete_gate_receipt_unclear_in_txn(
+                &crate::secret_custody::CustodyWrite::of(&vault),
+                txn,
+                &dropped,
+            )?;
             #[cfg(test)]
             fail_at(RestoreStep::ImageWrite)?;
             Ok(cancelled)

@@ -25,7 +25,7 @@ use oneiron::store::GateDecisionId;
 use oneiron::test_doors::pairing_pending_rows::{
     pending_machine_approvals, rewrite_pending_machine_approvals,
 };
-use oneiron::test_support::{bind_host_owner, provision_engine_machines};
+use oneiron::test_support::{bind_host_owner, provision_engine_machines, test_host_issuer};
 use oneiron::{Vault, VaultConfig};
 
 /// The keys main's approval of a machine link held, in sorted order.
@@ -61,6 +61,10 @@ fn answered_host() -> Host {
     let owner = vault
         .authenticate_owner(person, &person.to_hex(), true, GateDecisionId::now())
         .expect("FIXTURE: the owner's proof");
+    // The handle holds the host root as a serving host does, so the owner's
+    // carried Yours answer for this install is proven by an owner key (row
+    // CARRIER-OWNER-PROOF) and stands, not held for an owner device.
+    vault.hold_checkpoint_root_signer(Arc::new(test_host_issuer()));
     let landing = vault
         .set_machine_role(
             &owner,

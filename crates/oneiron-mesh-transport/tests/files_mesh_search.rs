@@ -368,6 +368,7 @@ fn enrolment_request(vault_id: [u8; 32], peer: &Device) -> MachineEnrolmentReque
         device_class,
         encryption_key,
         machine_proof,
+        restored_from: None,
     }
 }
 

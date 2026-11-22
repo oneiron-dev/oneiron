@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use heed::types::Bytes;
+use oneiron_contracts::fingerprint::ContentHash;
 use oneiron_crypto::backup::{
     BackupEvidence, CheckpointFact, HostHoldsAvailability, SignedCheckpointFact,
 };
@@ -348,7 +349,7 @@ impl Vault {
                 kind,
                 &carried,
                 snapshot,
-                *blake3::hash(&bytes).as_bytes(),
+                *ContentHash::of(&bytes).as_bytes(),
                 &payload.streams.section,
             )
             .inspect_err(|error| {

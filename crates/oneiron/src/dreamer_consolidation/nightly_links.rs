@@ -478,7 +478,7 @@ impl ConsolidationExecutor<'_> {
             }
             Err(error) => {
                 return Ok(ControlFlow::Break(
-                    charges.end_on_step_error(&error.to_string(), &error),
+                    charges.end_on_step_error_with_spend(&error.to_string(), &error),
                 ));
             }
         };

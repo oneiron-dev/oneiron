@@ -64,6 +64,10 @@ fn anchor_admission_rejects_wrong_types_and_values_without_overwriting_history()
         let place = seed(&vault, entity(0xB4), ENTITY_TYPE_PLACE);
         let id = anchor_actor_subject(&vault, actor, person, writer(), 100)?;
         let before = vault.get(&id)?;
+        // The creation door already anchored the house to its model PERSON;
+        // hostile admits must leave that history (auto anchor plus the
+        // explicit anchor) unchanged.
+        let baseline = vault.claims_for_subject(&actor)?;
         let new_id = entity(0xB5);
         for (subject, value) in [
             (actor, Value::Nil),
@@ -81,7 +85,7 @@ fn anchor_admission_rejects_wrong_types_and_values_without_overwriting_history()
                 assert_eq!(vault.get(&id)?, before);
                 assert!(vault.get(&new_id)?.is_none());
                 assert!(vault.edges_out(&new_id)?.is_empty());
-                assert_eq!(vault.claims_for_subject(&actor)?, vec![id]);
+                assert_eq!(vault.claims_for_subject(&actor)?, baseline);
                 assert!(vault.claims_for_subject(&wrong_actor)?.is_empty());
                 assert!(vault.claims_for_subject(&place)?.is_empty());
                 assert_eq!(actor_subject_anchor(&vault, &actor, 100)?, Some(person));
@@ -171,7 +175,7 @@ fn anchor_replicated_batch_validates_at_each_op_and_rolls_back_earlier_dependenc
                 batch = match op {
                     0 => batch.put(&actor, ENTITY_TYPE_PERSON, occurred, 100, b"actor"),
                     1 => batch.put(&subject, subject_kind, occurred, 100, b"subject"),
-                    _ => batch.put_replicated(&id, ENTITY_TYPE_CLAIM, occurred, 100, &data),
+                    _ => batch.put_replicated(&id, ENTITY_TYPE_CLAIM, occurred, 100, None, &data),
                 };
             }
             let result = batch.edge(&id, EdgeKind::ClaimOf, &actor, 1.0).commit();

@@ -2,6 +2,8 @@
 //! rest on beside it, judged by the scope law a written answer is held to,
 //! and the ones it leaves out, named with why.
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use super::super::records::{OmittedNeighbor, SourceConflict};
 use super::super::standing::{ScopeFold, Source};
 use super::{GraphContextSource, GraphUnitContext, asker, source, source_eligible};
@@ -123,7 +125,7 @@ pub(super) fn source_in_txn(
     // hash the supplied row; an older revision's manifest bytes miss the
     // recorded hash and read as changed (FIX 5398).
     if kind != shown.entity_type
-        || *blake3::hash(&raw[ENTITY_METADATA_HEADER_LEN..]).as_bytes() != shown.hash
+        || *ContentHash::of(&raw[ENTITY_METADATA_HEADER_LEN..]).as_bytes() != shown.hash
         || !source_eligible(lane.vault(), txn, &shown.id, kind)?
     {
         return Ok(None);
@@ -143,5 +145,15 @@ pub(super) fn source_in_txn(
         scope,
         &[&lane.actor_key().world_ceiling().worlds],
     );
-    Source::fitted(kind, &raw, &scope).map(Some)
+    Source::fitted(
+        lane.vault(),
+        &lane.store_read(),
+        txn,
+        shown.id,
+        kind,
+        &raw,
+        &scope,
+        &[lane.actor_key()],
+    )
+    .map(Some)
 }
