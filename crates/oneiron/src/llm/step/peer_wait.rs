@@ -198,12 +198,17 @@ pub fn register_peer_result_wait(
 /// TASK-side caller on the vault's Unix-second clock multiplies it by 1,000
 /// first, as the step-only wait callers do; a second here would lose to the
 /// head's milliseconds and backdate the signal to the wait's start.
+///
+/// An ask handle's signal is never dated before the ask's own cut: the
+/// caller's clock may be another TASK's settling second, or a pass clock
+/// read before the cut, so the ask's settlement second floors it.
 pub fn send_peer_result_signal(
     vault: &Vault,
     task_ref: EntityId,
     now_ms: u64,
 ) -> Result<Option<EntityId>> {
     crate::task_verb::settle_ask_if_due(vault, task_ref)?;
+    let now_ms = now_ms.max(ask_settled_ms(vault, task_ref)?);
     let terminal = crate::task_verb::task_is_terminal(vault, task_ref)?;
     let unobserved_void = crate::task_verb::has_option_link_void(vault, task_ref)?;
     let mut first = None;
@@ -238,6 +243,14 @@ pub fn send_peer_result_signal(
         first.get_or_insert(signal);
     }
     Ok(first)
+}
+
+/// The second the ask `task_ref` was cut, in milliseconds; zero for a TASK
+/// that is no ask handle, and for an ask not cut yet.
+fn ask_settled_ms(vault: &Vault, task_ref: EntityId) -> Result<u64> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(crate::task_verb::ask_settlement_in(vault, &txn, task_ref)?
+        .map_or(0, |result| result.settlement.at.saturating_mul(1000)))
 }
 
 /// Replays the terminal-write→signal edge for every local delegation binding
