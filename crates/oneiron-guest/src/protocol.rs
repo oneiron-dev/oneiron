@@ -11,6 +11,8 @@ use std::{
 
 pub(crate) const MAX_FRAME: usize = oneiron_sandbox_contract::MAX_FRAME_BYTES;
 pub(crate) const MAX_COMPONENT: usize = oneiron_sandbox_contract::MAX_COMPONENT_BYTES;
+/// Read only by the Linux boot path (a child's file-size limit) and the tests.
+#[cfg(any(target_os = "linux", test))]
 pub(crate) const MAX_FILE: usize = oneiron_sandbox_contract::MAX_FILE_BYTES;
 pub(crate) const MAX_CHUNK: usize = oneiron_sandbox_contract::MAX_CHUNK_BYTES;
 pub(crate) const MAX_SOURCE: usize = oneiron_sandbox_contract::MAX_PROGRAM_BYTES;

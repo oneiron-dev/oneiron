@@ -5,7 +5,7 @@
 use crate::{
     Error, Result,
     filesystem::{Workspace, validate_files},
-    protocol::{Input, MAX_CHUNK, MAX_COMPONENT, MAX_FILE, MAX_SOURCE, Session, Snapshot},
+    protocol::{Input, MAX_CHUNK, MAX_COMPONENT, MAX_SOURCE, Session, Snapshot},
 };
 use oneiron_sandbox_contract::{ShapeError, WorkspacePath, WorkspaceShape};
 use serde::Deserialize;
@@ -56,13 +56,6 @@ impl<T> State<T> {
     fn count_call(&mut self) -> wasmtime::Result<()> {
         if self.poisoned {
             return Err(wasmtime::Error::msg("guest host calls are poisoned"));
-        }
-        Ok(())
-    }
-
-    fn count_bytes(&mut self, bytes: usize) -> wasmtime::Result<()> {
-        if bytes > MAX_FILE {
-            return Err(wasmtime::Error::msg("guest read-byte budget exhausted"));
         }
         Ok(())
     }
