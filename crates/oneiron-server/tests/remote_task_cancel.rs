@@ -271,6 +271,7 @@ impl CancelFixture {
             ConnectorHostConfig {
                 transport: ConnectorTransport::McpHttp,
                 endpoint: endpoint.clone(),
+                document: None,
                 command: Vec::new(),
                 env: BTreeMap::new(),
                 cwd: None,

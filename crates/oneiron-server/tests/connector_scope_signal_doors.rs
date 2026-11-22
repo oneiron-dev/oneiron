@@ -170,6 +170,7 @@ async fn setup() -> Fixture {
                     ConnectorHostConfig {
                         transport: ConnectorTransport::McpHttp,
                         endpoint: Some(REQUESTED_ENDPOINT.to_owned()),
+                        document: None,
                         command: Vec::new(),
                         env: BTreeMap::new(),
                         cwd: None,
