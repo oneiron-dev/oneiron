@@ -6,9 +6,13 @@
 //! Grant, the project membership a draft for a project asks of its drafter,
 //! and, for a narrowed credential, its lane's reach to the document and every
 //! item the draft pins (FIX 6403), judged before the write and again in it.
+//! An agent places fields only on a draft for a principal the owner gave it
+//! a live rung above `scoped_read` for, as it drafts one (SGN06-WHO-MAY-SEND
+//! = B); a human places them as before.
 //! The draft lands again whole with the new fields in place of its own, as
 //! one more `esign.drafted` event by the caller. Once the document has left
 //! Draft its content is frozen and the door is refused.
+use super::super::autonomy::admit_drafter_in;
 use super::super::lane_scope::{self, EsignScope};
 use super::super::ledger::{inspect_placed_pages, place_fields_in, state_in};
 use super::super::model::EsignAuditActor;
@@ -47,6 +51,7 @@ impl Memory<'_> {
         let now = vault.now_recorded_at();
         let inspected = inspect_placed_pages(vault, document, &input.fields);
         vault.try_with_write_txn_grouped(|txn| -> MemoryResult<()> {
+            self.admit_placer_in(txn, document)?;
             place_fields_in(vault, txn, document, &input.fields, actor, now, &inspected)?;
             Ok(())
         })?;
@@ -77,12 +82,30 @@ impl Memory<'_> {
             if !lane_scope::reaches_signing_document(lane, vault, txn, document, false)? {
                 return Err(lane_scope::unreached().into());
             }
+            self.admit_placer_in(txn, document)?;
             place_fields_in(vault, txn, document, &input.fields, actor, now, &inspected)?;
             Ok(())
         })?;
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
         lane_scope::reaches_in(lane, &txn, document)?;
         Ok(draft_view(document, state_in(vault, &txn, document)?))
+    }
+
+    /// The bound actor may place fields on `document`'s draft: an agent only
+    /// for the principal the draft names, on its live rung above
+    /// `scoped_read` (SGN06-WHO-MAY-SEND = B), as [`admit_drafter_in`] judges
+    /// a draft.
+    fn admit_placer_in(&self, txn: &heed::RoTxn<'_>, document: EntityId) -> MemoryResult<()> {
+        let vault = self.vault();
+        let state = state_in(vault, txn, document)?;
+        admit_drafter_in(
+            vault,
+            txn,
+            self.actor(),
+            self.actor_class(),
+            &state.document,
+        )?;
+        Ok(())
     }
 
     /// The bound actor as a draft event names it: its id, with no network

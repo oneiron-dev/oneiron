@@ -12,7 +12,8 @@ use std::sync::Arc;
 use oneiron::authority::HostSlipIssuer;
 use oneiron::blob_artifact::esign::{
     DocumentStatus, EsignAutonomy, EsignAutonomyRequest, EsignCreateRequest, EsignDispatchRequest,
-    EsignDispatchView, EsignDocument, EsignDraftView, EsignSendEnvelope, SigningAutonomy,
+    EsignDispatchView, EsignDocument, EsignDraftView, EsignField, EsignFieldsPlaceRequest,
+    EsignSendEnvelope, FieldGeometry, FieldMeta, SigningAutonomy,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::MemoryResult;
@@ -190,6 +191,44 @@ impl Fixture {
         self.vault
             .issue_esign_capabilities(&self.proof()?, document)?;
         Ok(document)
+    }
+
+    /// `actor`'s placement of one signature field for `recipient` on the
+    /// first page of `document`'s draft, with the host key bound to it for
+    /// the call.
+    fn place_as(
+        &self,
+        actor: EntityId,
+        class: EdgeActorClass,
+        document: EntityId,
+        recipient: &str,
+    ) -> TestResult<MemoryResult<EsignDraftView>> {
+        let field = EsignField {
+            id: EntityId::now().to_hex(),
+            item: 0,
+            recipient: recipient.into(),
+            required: true,
+            geometry: FieldGeometry {
+                page: 1,
+                x_percent: 10.0,
+                y_percent: 70.0,
+                width_percent: 30.0,
+                height_percent: 8.0,
+            },
+            meta: FieldMeta::Signature,
+        };
+        if class != EdgeActorClass::Human {
+            bind_host_actor(&self.vault, &self.issuer, actor, "agent")?;
+        }
+        let placed = self
+            .vault
+            .memory(actor, class)
+            .esign_place_fields(&EsignFieldsPlaceRequest {
+                document_ref: document.to_hex(),
+                fields: vec![field],
+            });
+        bind_host_owner(&self.vault, &self.issuer, self.owner)?;
+        Ok(placed)
     }
 
     /// The owner's rung for `agent` acting for the principal.
@@ -475,6 +514,48 @@ fn an_agent_drafts_only_for_a_principal_its_grant_names() -> TestResult {
         owner_draft.is_ok(),
         "the owner drafts as before: {owner_draft:?}"
     );
+    Ok(())
+}
+
+#[test]
+fn an_agent_places_fields_only_on_a_rung_that_drafts() -> TestResult {
+    let fx = Fixture::new()?;
+    let document = fx.artifact()?;
+    fx.create_as(
+        fx.owner,
+        EdgeActorClass::Human,
+        document,
+        Some(fx.principal),
+    )??;
+    let recipient = fx.vault.esign_document(document)?.document.recipients[0]
+        .id
+        .clone();
+    let fields = |fx: &Fixture| -> TestResult<usize> {
+        Ok(fx.vault.esign_document(document)?.document.fields.len())
+    };
+
+    let none = fx.place_as(fx.agent, EdgeActorClass::Agent, document, &recipient)?;
+    assert!(none.is_err(), "no rung, no placement: {none:?}");
+    fx.apply(fx.agent, SigningAutonomy::ScopedRead, None)?;
+    let read_only = fx.place_as(fx.agent, EdgeActorClass::Agent, document, &recipient)?;
+    assert!(
+        read_only.is_err(),
+        "scoped_read places nothing: {read_only:?}"
+    );
+    assert_eq!(
+        fields(&fx)?,
+        0,
+        "the refused placements left the draft as it was"
+    );
+
+    fx.apply(fx.agent, SigningAutonomy::Draft, None)?;
+    let drafted = fx.place_as(fx.agent, EdgeActorClass::Agent, document, &recipient)?;
+    assert!(drafted.is_ok(), "the draft rung places fields: {drafted:?}");
+    assert_eq!(fields(&fx)?, 1);
+
+    // The human who sends may move a field the agent placed (ARCH-0064 :137).
+    let owner = fx.place_as(fx.owner, EdgeActorClass::Human, document, &recipient)?;
+    assert!(owner.is_ok(), "the owner places as before: {owner:?}");
     Ok(())
 }
 
