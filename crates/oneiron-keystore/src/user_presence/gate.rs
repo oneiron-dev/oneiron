@@ -2,7 +2,7 @@
 //! with the window one confirm opens, counts wrong typed secrets, and
 //! watches the screen lock.
 
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::Duration;
 use std::{io, thread};
 
@@ -90,6 +90,18 @@ impl PresenceGate {
     #[must_use]
     pub fn platform() -> Self {
         Self::new(platform_user_presence(), PresenceWindow::system())
+    }
+
+    /// This process's one gate over the platform's prompt
+    /// ([`Self::platform`]), made at the first call. Every later call
+    /// answers that same gate. A host installs it on each vault handle it
+    /// opens, so one confirm serves them all, acts that arrive together
+    /// share one prompt, and one screen-lock watch runs. The gate lives as
+    /// long as the process.
+    #[must_use]
+    pub fn process_wide() -> Arc<Self> {
+        static PROCESS_WIDE: OnceLock<Arc<PresenceGate>> = OnceLock::new();
+        Arc::clone(PROCESS_WIDE.get_or_init(|| Arc::new(Self::platform())))
     }
 
     /// A gate over `presence` on the system's clocks, with its watch started

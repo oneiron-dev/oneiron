@@ -3153,6 +3153,40 @@ The ledger records the authenticated owner and a digest of the returned receipt.
 slot deletes its active selection but keeps this audit record. These records grant no standing
 consent and change no revision, installation or expected-active checks.
 
+## Confirm it's you
+
+An important change to your vault asks you to confirm that it is you, with whatever unlocks the
+device: Touch ID, your watch or your account password on a Mac; Windows Hello (face, fingerprint
+or the Hello PIN) on Windows 11. A change is important when it widens what somebody may do, or
+touches your identity: adding a device that can approve changes, a recovery kit act, a setting
+that opens more than it closes. A change that narrows, or moves no authority, does not ask.
+
+One confirm serves every important change of the next 15 minutes in the same program. Locking
+the screen ends that time.
+
+It asks today in a program that opens the vault itself (the embedded SDK clients for Rust, Node
+and Python, the C library, the macOS recorder) and in the `oneiron` commands that work on a
+stopped vault. A running server (`oneiron serve`, a managed vault) does not ask yet: whoever
+calls it is usually not at its screen.
+
+A device with no such prompt does not ask, and the change goes through: Linux, a process with
+no screen session, Windows before 11, Windows without Hello. Where the keystore is off
+(`[keystore] backend = "off"`) nothing asks either.
+
+When the confirm does not happen, nothing is changed and the refusal says why. A command prints
+the sentence. An SDK client gets `INVALID_STATE` with two reason codes,
+`owner_presence_required` and one of these:
+
+| Reason code | What happened | What to do |
+| --- | --- | --- |
+| `here:declined` | The prompt was cancelled, or the unlock failed. | Stop. Start the change again if you meant it. |
+| `here:no_answer` | Nobody answered the prompt within 60 seconds. | Try again when you can answer. |
+| `here:screen_locked` | The screen is locked, or it locked while the prompt was up. | Unlock this device, then try again here. |
+| `here:prompt_failed` | The device's prompt failed. | Try again when the device's unlock prompt works. |
+
+A command run over ssh on a Mac whose screen is locked gets `here:screen_locked`: unlock that
+Mac first.
+
 ## Calling the owner routes
 
 Every `/v1/owner` route needs a verified, unattenuated owner slip held by a live human owner of

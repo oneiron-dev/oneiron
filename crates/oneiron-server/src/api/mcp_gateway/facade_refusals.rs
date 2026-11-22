@@ -174,3 +174,14 @@ pub(crate) fn mcp_refusal_for_test(code: &str) -> (i64, &'static str) {
     let refusal = mcp_facade_error(oneiron::MemoryError::new(code, "a pinned refusal", &[]));
     (refusal.code, refusal.kind)
 }
+
+/// The JSON-RPC number, stable kind and reason codes the gateway answers a
+/// raw engine error with, through `mcp_engine_error`: the integration tests'
+/// door (row OWNER-CONFIRM-SHEET).
+#[cfg(oneiron_test_support)]
+pub(crate) fn mcp_engine_refusal_for_test(
+    error: oneiron::Error,
+) -> (i64, &'static str, Vec<String>) {
+    let refusal = super::tasks_response::mcp_engine_error("a pinned call", error);
+    (refusal.code, refusal.kind, refusal.reason_codes)
+}

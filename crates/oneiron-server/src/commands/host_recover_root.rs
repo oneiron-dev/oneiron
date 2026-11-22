@@ -57,7 +57,9 @@ pub fn host_recover_root(args: HostRecoverRootArgs) -> anyhow::Result<()> {
     // take back. A slot that holds a retired seed is not refilled: the
     // escrow is not read for it (FIX-LIST 25945).
     if vault.device_keystore_assurance().is_none() {
-        config.keystore.install_on(&vault, &config.vault_path);
+        config
+            .keystore
+            .install_for_command(&vault, &config.vault_path);
     }
     let moved = vault.recover_host_root_to_new_seed(secret)?;
     let mut steps = vec![

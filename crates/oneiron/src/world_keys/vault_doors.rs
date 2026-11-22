@@ -44,10 +44,16 @@ impl Vault {
     /// `KeystoreUnavailable`; reads and sync go on. True when the keys loaded.
     /// Once they load, this install's enrolled owner signing key is held for
     /// the device sync's checkpoint pass (FIX 4921).
+    ///
+    /// Beside an installed keystore the handle takes the process's presence
+    /// gate ([`Vault::install_process_presence_gate`]): such a host opened
+    /// the vault in its own process, so its caller is at this device, and an
+    /// important owner act asks through the device's own unlock prompt.
     pub fn install_default_keystore(&self, vault_dir: &Path) -> bool {
         match oneiron_keystore::default_platform_keystore(&[vault_dir]) {
             Ok(keystore) => {
                 self.install_device_keystore(keystore);
+                self.install_process_presence_gate();
                 let loaded = self.prepare_install_signing_logged();
                 if loaded {
                     self.hold_device_owner_signer_logged();

@@ -252,7 +252,7 @@ pub(in crate::commands::owner) fn restore_fresh(
     let mut added = None;
     let (vault, mut restored) =
         backup::restore_fresh(backup, path, target, &key, &custody, |vault| {
-            installed = config.keystore.install_on(vault, path);
+            installed = config.keystore.install_for_command(vault, path);
             unlock.unlock_live(vault)?;
             // A device unlock of a plain vault wraps the key to this install on
             // its own; a sealed vault's key is already held from its page seal.

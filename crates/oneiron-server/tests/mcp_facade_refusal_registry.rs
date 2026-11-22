@@ -8,7 +8,8 @@
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron-server
 //! --all-features --features oneiron/test-support --test mcp_facade_refusal_registry`.
 
-use oneiron_server::test_doors::mcp_refusal_status::mcp_refusal;
+use oneiron::error::{OwnerPresenceRefusal, RecordError};
+use oneiron_server::test_doors::mcp_refusal_status::{mcp_engine_refusal, mcp_refusal};
 
 /// Each engine code, and the number and kind the gateway answers it with.
 const PINNED: &[(&str, i64, &str)] = &[
@@ -72,4 +73,33 @@ fn gateway_answers_each_code_with_its_pinned_number_and_kind() {
         moved.is_empty(),
         "codes answered off their pins: {moved:#?}"
     );
+}
+
+/// Row OWNER-CONFIRM-SHEET, PR 4b-5. An owner act the device's prompt
+/// refused reaches some tools as a raw engine error. The gateway answers it
+/// as the facade's door does: a typed refusal with both reason codes, never
+/// the generic engine error, so a caller tells a declined prompt from a
+/// locked screen.
+#[test]
+fn gateway_answers_a_raw_presence_refusal_with_its_reason_codes() {
+    for (here, reason) in [
+        (OwnerPresenceRefusal::Declined, "here:declined"),
+        (OwnerPresenceRefusal::NoAnswer, "here:no_answer"),
+        (OwnerPresenceRefusal::ScreenLocked, "here:screen_locked"),
+        (OwnerPresenceRefusal::PromptFailed, "here:prompt_failed"),
+    ] {
+        let (number, kind, reason_codes) =
+            mcp_engine_refusal(RecordError::OwnerPresenceRequired { here }.into());
+        assert_eq!((number, kind), (-32020, "facade_error"), "{reason}");
+        assert_eq!(reason_codes, ["owner_presence_required", reason]);
+    }
+}
+
+/// The control: a raw engine error with no row of its own keeps the generic
+/// kind and carries no reason codes.
+#[test]
+fn gateway_answers_another_raw_engine_error_as_the_generic_engine_error() {
+    let (number, kind, reason_codes) = mcp_engine_refusal(RecordError::OwnerKeyRequired.into());
+    assert_eq!((number, kind), (-32603, "engine_error"));
+    assert!(reason_codes.is_empty());
 }

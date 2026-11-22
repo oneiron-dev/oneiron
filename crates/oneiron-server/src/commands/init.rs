@@ -528,7 +528,9 @@ fn open_vault(answers: &InitArgs, config: &ServeConfig) -> anyhow::Result<oneiro
             .is_ok_and(|fold| fold.vault_id.is_some())
     {
         if !vault.vault_pages_sealed() {
-            config.keystore.install_on(&vault, &config.vault_path);
+            config
+                .keystore
+                .install_for_command(&vault, &config.vault_path);
         }
         vault.ensure_serving_install_profile_at_start(Some(&issuer), "init");
     }
@@ -563,7 +565,9 @@ fn turn_on_learning(
     };
     vault.ensure_host_root_slip(&issuer)?;
     if !vault.vault_pages_sealed() {
-        config.keystore.install_on(vault, &config.vault_path);
+        config
+            .keystore
+            .install_for_command(vault, &config.vault_path);
     }
     vault.ensure_serving_install_profile(&issuer, MachineRole::Unanswered)?;
     let owner = crate::owner::local_owner(vault)?;

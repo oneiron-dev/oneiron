@@ -114,7 +114,9 @@ pub(super) fn open_stopped_vault_with(
     let vault = open_stopped_vault_unprovisioned(config, vault_config, instead)?;
     // A command that signs (a delete's receipt, a settings edit) needs this
     // install's keys from the keystore.
-    config.keystore.install_on(&vault, &config.vault_path);
+    config
+        .keystore
+        .install_for_command(&vault, &config.vault_path);
     // And this install's own machine profile, under the configured host root
     // as `serve` ensures it, to carry the owner's acts (FIX 4648). No root is
     // minted here, and the command goes on without one.
@@ -181,7 +183,9 @@ pub(super) fn host_issuer(
     may_root: bool,
 ) -> anyhow::Result<oneiron::authority::HostSlipIssuer> {
     if vault.device_keystore_assurance().is_none() {
-        config.keystore.install_on(vault, &config.vault_path);
+        config
+            .keystore
+            .install_for_command(vault, &config.vault_path);
     }
     let issuer = if may_root {
         vault.bootstrap_host_slip_issuer()
