@@ -247,9 +247,10 @@ const BLOCKED_SOURCE_GROUP: &str =
     "blocked_source_group: its roots already belong to different eval families";
 
 /// The reason an eval-set door refused, or the error when it was no refusal.
-fn refusal(error: Error) -> Result<&'static str> {
+fn refusal(error: Error) -> Result<String> {
     match error {
-        Error::Artifact(ArtifactError::InvalidSkillBody(reason)) => Ok(reason),
+        Error::Artifact(ArtifactError::InvalidSkillBody(reason)) => Ok(reason.to_owned()),
+        Error::Artifact(ArtifactError::SkillVersionKept(reason)) => Ok(reason),
         error => Err(error),
     }
 }

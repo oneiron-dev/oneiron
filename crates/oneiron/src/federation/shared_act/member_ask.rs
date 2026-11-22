@@ -359,6 +359,15 @@ impl Vault {
     /// their name and wrote them its outcome notice, which a person outside
     /// the vault then read with the receipt. The applier declines such an
     /// ask, or makes the change as their own.
+    ///
+    /// An ask that is no longer open is refused here too (review of #10358).
+    /// [`Self::apply_shared_member_ask_with_check_in`] reads the ask open
+    /// before it calls the door, and [`Self::apply_member_ask_in_txn`]
+    /// refuses a closed ask only after the change. An applier's decline can
+    /// land between the two. This check meets it first: on the read a door
+    /// makes before it asks the person at the device, so a closed ask raises
+    /// no prompt, and in the writer before the check-in judge, so a closed
+    /// ask files no wait.
     pub(super) fn member_ask_steward_stands_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -368,7 +377,10 @@ impl Vault {
     ) -> Result<()> {
         let id = EntityId::from_hex(ask)?;
         let ask = MEMBER_ASK.get(&self.store, txn, &id)?.ok_or_else(invalid)?;
-        if ask.vault_id != vault_id || !is_steward(holders, EntityId::from_hex(&ask.steward)?) {
+        if ask.status != MemberAskStatus::Open
+            || ask.vault_id != vault_id
+            || !is_steward(holders, EntityId::from_hex(&ask.steward)?)
+        {
             return Err(invalid());
         }
         Ok(())

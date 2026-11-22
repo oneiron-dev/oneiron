@@ -6,13 +6,16 @@ use crate::attempt_queue::types::{AttemptId, AttemptRecord};
 use crate::error::Result;
 
 use super::super::AttemptQueue;
+use super::super::unjoined_hold::UnjoinedHold;
 use super::ClaimKindReadScan;
 
 impl AttemptQueue<'_> {
     /// The scan of [`Self::claim_matching_in_txn`], read through `txn`: the
     /// index repairs and holds it makes up to the first row it leases, and
     /// that row with its ready key and id, not yet leased. Writes nothing, so a
-    /// read transaction can tell an idle claim before any writer is taken.
+    /// read transaction can tell an idle claim before any writer is taken. A
+    /// copy restored and not joined passes over every row of a held kind
+    /// ([`UnjoinedHold`]).
     pub(super) fn claim_matching_scan_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -25,6 +28,7 @@ impl AttemptQueue<'_> {
         Option<(Vec<u8>, AttemptId, AttemptRecord)>,
     )> {
         let mut scan = ClaimKindReadScan::default();
+        let mut hold = UnjoinedHold::default();
         for row in self.store.attempt_ready.iter(txn)? {
             let (key, value) = row?;
             let Ok((key_ready_at, key_id)) = decode_ready_key(&key) else {
@@ -66,6 +70,7 @@ impl AttemptQueue<'_> {
             }
             if kind_filter.is_some_and(|kind| record.kind != kind)
                 || !record.accepts_worker(lease_owner)
+                || hold.holds(self.store, txn, &record.kind)?
             {
                 if record_ready_at != key_ready_at {
                     scan.ready_replacements

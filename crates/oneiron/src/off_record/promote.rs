@@ -46,6 +46,9 @@ pub(crate) struct FloorWrites<'store> {
     /// hold are its rows and files until the save brings them into base
     /// (FIX 365). `None` on a floor that saves no turn.
     room: Option<Arc<SessionOverlay>>,
+    /// What the save carries of the room's result bodies
+    /// (ROOM-CUSTODY-REPLY-BODIES).
+    carried: std::sync::Mutex<result_holds::CarriedBodies>,
     _seal: floor_writes_seal::Seal,
 }
 
@@ -55,6 +58,7 @@ impl<'store> FloorWrites<'store> {
         Self {
             store,
             room: None,
+            carried: std::sync::Mutex::default(),
             _seal: floor_writes_seal::Seal,
         }
     }
@@ -73,6 +77,41 @@ impl<'store> FloorWrites<'store> {
         self.room.clone().ok_or(Error::InvariantViolation(
             "a saved result MESSAGE needs the room it was said in",
         ))
+    }
+
+    /// `ops`, this save's writes, with each room handle (`[secret r1]`) a
+    /// row they write names moved into the vault's custody in `wtxn`
+    /// (ROOM-LOCAL-CUSTODY): the value the room keeps under it takes a base
+    /// custody record, and only that teaches the known-value index its
+    /// fingerprint. A floor that saves out of no room writes `ops` as given.
+    fn carry_room_secrets_in_txn(
+        &self,
+        vault: &Vault,
+        wtxn: &mut RwTxn<'_>,
+        ops: Vec<BatchOp>,
+    ) -> Result<Vec<BatchOp>> {
+        match &self.room {
+            Some(room) => {
+                crate::batch::secret_scan::carry_room_secrets_in_txn(vault, wtxn, room, ops)
+            }
+            None => Ok(ops),
+        }
+    }
+
+    /// The carry of the room this floor saves out of, for the NOTE, CLAIM
+    /// and conversation shell a selected save lands
+    /// (ROOM-CUSTODY-SAVED-ARTIFACTS): each room handle they name takes a
+    /// base custody record, as a saved turn's rows do. `None` for a floor
+    /// that saves out of no room, or out of one that keeps no secret.
+    ///
+    /// # Errors
+    ///
+    /// A poisoned room custody lock.
+    pub(crate) fn room_carry(&self) -> Result<Option<crate::batch::secret_scan::RoomCarry>> {
+        match &self.room {
+            Some(room) => crate::batch::secret_scan::RoomCarry::of(room),
+            None => Ok(None),
+        }
     }
 
     /// Floor operation 1/3 (K1): append one evaluated EGRESS gate decision.
@@ -411,6 +450,9 @@ impl FloorWrites<'_> {
         let grant = PromoteReplayGrant::mint(plan);
         let stream_messages = self.promoted_stream_messages_in_txn(vault, wtxn, plan, None)?;
         let replay_ops = repo_projection::projected_replay_ops(vault, wtxn, plan.ops.iter())?;
+        let replay_ops = self.carry_room_secrets_in_txn(vault, wtxn, replay_ops)?;
+        let (replay_ops, carried) =
+            self.carry_message_results_in_txn(vault, wtxn, session_ref, replay_ops)?;
         let replay_ops =
             crate::batch::secret_scan::seal_promoted_message_ops_in_txn(vault, wtxn, replay_ops)?;
         crate::conversation_dag::promote_replay_in_txn(vault, wtxn, plan, replay_ops, &grant)?;
@@ -427,7 +469,7 @@ impl FloorWrites<'_> {
         )?;
         crate::embed::mark_turn_in_txn(vault, wtxn, turn)?;
         // A result MESSAGE lands with its hold on the body (FIX 365).
-        self.keep_message_results_in_txn(vault, wtxn, &message_results(&plan.ops))?;
+        self.keep_message_results_in_txn(vault, wtxn, &message_results(&plan.ops), &carried)?;
         self.keep_promoted_stream_receipts_in_txn(vault, wtxn, plan, &stream_messages)?;
 
         let mut short_id_mapping = Vec::with_capacity(plan.temporary_short_ids.len());
@@ -656,6 +698,9 @@ impl FloorWrites<'_> {
         let stream_messages =
             self.promoted_stream_messages_in_txn(vault, wtxn, plan, Some(&fresh))?;
         let replay_ops = repo_projection::projected_replay_ops(vault, wtxn, fresh_ops())?;
+        let replay_ops = self.carry_room_secrets_in_txn(vault, wtxn, replay_ops)?;
+        let (replay_ops, carried) =
+            self.carry_message_results_in_txn(vault, wtxn, session_ref, replay_ops)?;
         let replay_ops =
             crate::batch::secret_scan::seal_promoted_message_ops_in_txn(vault, wtxn, replay_ops)?;
         crate::conversation_dag::promote_replay_in_txn(vault, wtxn, plan, replay_ops, &grant)?;
@@ -669,7 +714,7 @@ impl FloorWrites<'_> {
         crate::embed::mark_turn_in_txn(vault, wtxn, turn)?;
         let mut results = message_results(&plan.ops);
         results.retain(|(id, _)| fresh.contains(id));
-        self.keep_message_results_in_txn(vault, wtxn, &results)?;
+        self.keep_message_results_in_txn(vault, wtxn, &results, &carried)?;
         self.keep_promoted_stream_receipts_in_txn(vault, wtxn, plan, &stream_messages)?;
 
         let replayed: Vec<EntityId> = plan

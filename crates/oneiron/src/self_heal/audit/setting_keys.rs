@@ -2,7 +2,7 @@
 //! reads from this file.
 
 use crate::check_in::ActClass;
-use crate::setting::{Kind, ScopeKind, lower_is_tighter};
+use crate::setting::{Kind, ScopeKind};
 
 /// Off: the owner alone reads seal audits.
 fn owner_alone() -> bool {
@@ -19,7 +19,7 @@ crate::setting::setting_keys! {
     pub(crate) SEAL_AUDIT_DELEGATE_READ: bool = "self_heal.audit.delegate_read" {
         kind: Kind::new(owner_alone)
             .strictest(owner_alone)
-            .tighter(lower_is_tighter::<bool>),
+            .lower(),
         scopes: &[ScopeKind::Agent],
         act: ActClass::GrantWiden,
     };

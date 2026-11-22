@@ -109,6 +109,13 @@ crate::side_table::side_tables! {
     TASK_REPORT_JOURNAL: VaultMeta b"tasks.report.journal.v1/" Named
         [restore: content] [family: unclassified] [tier: canonical]
         => crate::task_verb::erase_report_actor_in_txn;
+    /// The voice speakers' entry facts by the container they entered (OF-365), derived from the
+    /// TASK rows. Key: id16 (container) + id16 (entry fact).
+    TASK_SPEAKER_ENTRY_BY_CONTAINER: VaultMeta b"tasks.speaker_entry.by_container.v1:" Raw
+        [restore: not_imaged] [family: not_imaged] [tier: derived];
+    /// Completeness flag of the speaker-entry index above (u64 version). Key: ().
+    TASK_SPEAKER_ENTRY_INDEX_STATE: VaultMeta b"tasks.speaker_entry.index_state.v1" Raw
+        [restore: not_imaged] [family: not_imaged] [tier: derived];
     /// Task symbol-overlap declaration. Key: id16.
     TASK_SYMBOL_LEASE: VaultMeta b"tasks.symbol_lease.v1/" LegacyJson
         [restore: content] [family: unclassified] [tier: canonical];

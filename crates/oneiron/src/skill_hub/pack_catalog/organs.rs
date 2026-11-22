@@ -16,6 +16,7 @@ use crate::{
     EntityId, TimeRange, Vault,
     error::{Error, Result},
 };
+use oneiron_contracts::fingerprint::ContentHash;
 use serde::{Deserialize, Serialize};
 
 const ORGAN_DIR: &str = "organs/";
@@ -182,7 +183,7 @@ impl PackOrganBuild {
     }
 
     fn verify(&self, bytes: &[u8]) -> Result<[u8; 32]> {
-        self.verify_digest(bytes.len() as u64, blake3::hash(bytes).as_bytes())
+        self.verify_digest(bytes.len() as u64, ContentHash::of(bytes).as_bytes())
     }
 
     /// [`Self::verify`] of a build measured as it streamed: its length and

@@ -11,9 +11,8 @@ use crate::dreamer_wake::SpanKind;
 use crate::dreamer_wake::follower::{CacheResidency, CallEvidence};
 use crate::dreamer_wake::sieve::follower::SpanReading;
 use crate::model_step_error::DurableStepError;
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use oneiron_model::llm::{FatalLlmError, LlmError, LlmResponse};
-
-const CACHE_DOMAIN: &[u8] = b"oneiron:dreamer-follower:cache-identity:v1";
 
 /// A suffix's reply as the model writes it.
 #[derive(Deserialize)]
@@ -115,13 +114,15 @@ pub(super) fn reported_cache(response: &LlmResponse, memoized: bool) -> Option<[
         .map(|call| call.identity)
         .find(|identity| !identity.is_empty())?;
     let bytes = serde_json::to_vec(&identity).ok()?;
-    Some(
-        *blake3::Hasher::new()
-            .update(CACHE_DOMAIN)
-            .update(&bytes)
-            .finalize()
-            .as_bytes(),
-    )
+    Some(cache_identity_digest(&bytes))
+}
+
+/// A reported cache identity's JSON bytes after the tag
+/// (`purposes::dreamer_consolidation::FOLLOWER_REPORTED_CACHE`).
+fn cache_identity_digest(bytes: &[u8]) -> [u8; 32] {
+    LegacyDigest::new(purposes::dreamer_consolidation::FOLLOWER_REPORTED_CACHE)
+        .raw(bytes)
+        .finish()
 }
 
 /// A context refusal hands its spans back to their own rungs. Bare request
@@ -143,4 +144,11 @@ pub(super) fn refused_request(error: &DurableStepError) -> bool {
             ..
         }
     )
+}
+
+/// [`cache_identity_digest`] for the K door
+/// (`test_doors::fingerprint_keep_dreamer_consolidation_digests`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn cache_identity_digest_for_test(bytes: &[u8]) -> [u8; 32] {
+    cache_identity_digest(bytes)
 }

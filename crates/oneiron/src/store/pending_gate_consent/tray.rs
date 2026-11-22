@@ -11,6 +11,7 @@ use crate::store::EngineScan;
 use crate::store::gate_reason::GateReceiptOutcome;
 use crate::store::scan_count::ScanCount;
 use crate::store::{GateReceipt, PolicyBasis, ReceiptActor};
+use crate::write_envelope::WriteActor;
 
 use super::Store;
 use super::records::{
@@ -269,6 +270,37 @@ impl Store {
         grant_ref: Option<String>,
         removal: TrayRemoval,
     ) -> Result<Option<GateDecisionRecord>> {
+        self.close_pending_gate_consent_closed_by_in_txn(
+            wtxn,
+            claim_id,
+            outcome,
+            reason_codes,
+            grant_ref,
+            removal,
+            None,
+        )
+    }
+
+    /// [`Self::close_pending_gate_consent_as_in_txn`], receipted as the
+    /// `closer` its typed door verified when it names one: the owner's
+    /// retract of a claim still in the tray is the owner's act, not the
+    /// proposal author's (review 10097 P1). The receipt still answers the
+    /// original decision, with its binding and read context. With no
+    /// `closer`, it carries the original decision's actor.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the tray close's arguments plus the door's verified closer"
+    )]
+    pub(crate) fn close_pending_gate_consent_closed_by_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        claim_id: &EntityId,
+        outcome: GateReceiptOutcome,
+        reason_codes: Vec<String>,
+        grant_ref: Option<String>,
+        removal: TrayRemoval,
+        closer: Option<WriteActor>,
+    ) -> Result<Option<GateDecisionRecord>> {
         let Some(pending) = self.pending_gate_consent_in_txn(wtxn, claim_id)? else {
             return Ok(None);
         };
@@ -283,14 +315,18 @@ impl Store {
         let context = crate::store::GateDecisionContext::answering(&original);
         // A resolution is a NEW decision, born unredacted: the draft has no
         // `redacted_at`, so `original.redacted_at` never propagates.
+        let actor = closer.map_or_else(
+            || ReceiptActor::Verbatim {
+                class: original.actor_class,
+                actor_ref: original.actor_ref,
+            },
+            ReceiptActor::Row,
+        );
         let mut receipt = GateReceipt::with_reasons(
             outcome,
             original.content_kind,
             reason_codes,
-            ReceiptActor::Verbatim {
-                class: original.actor_class,
-                actor_ref: original.actor_ref,
-            },
+            actor,
             pending.diff_handle,
             PolicyBasis::versioned(pending.read_frontier_hash, original.policy_manifest_version),
         );

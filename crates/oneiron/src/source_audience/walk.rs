@@ -11,7 +11,12 @@
 //! - the records and MESSAGEs a summary, a merge header or a copied reply
 //!   carries words from ([`crate::scope_summary::word_sources_in`]), and a
 //!   scope summary's covers;
-//! - a CLAIM's entity subject.
+//! - a CLAIM's entity subject, and for a machine birth control also the
+//!   entity subject of the signed initial body it embeds (FIX
+//!   MACHINE-HISTORY-SOURCE-LINEAGE-SUBJECT-MOVE);
+//! - the records a PSYCH_PROFILE's typed sources name: each CLAIM it read,
+//!   which profile landing names in the body and the dependency index,
+//!   never as an edge (FIX SOURCE-AUDIENCE-WALK-MISSES-PSYCH-PROFILE-SOURCES).
 //!
 //! Each of those must read: a summary of a private thread is as private as
 //! the thread. A CLAIM is the one union: its supporting sources (`Supports`
@@ -52,7 +57,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::EdgeKind;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{Error, Result};
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
+use crate::registry::{
+    ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_PSYCH_PROFILE, ENTITY_TYPE_TURN,
+};
 use crate::{EntityId, Vault};
 pub(super) mod export_verdicts;
 
@@ -117,17 +124,79 @@ fn word_sources(
     {
         every.extend(covers);
     }
+    // A reply TURN or a merge header carries a summary's words: the summary
+    // is one more word source, as the disclosure walk takes it, so a held
+    // summary holds the copy too (REVIEW-9874 P1 1).
+    if let Ok(Some(summary)) = crate::scope_summary::carried_summary(bytes) {
+        every.push(summary);
+    }
+    // A profile is as private as each claim it copies, as a summary is as
+    // private as its thread; a cited CLAIM keeps its own support union.
+    if header.entity_type == ENTITY_TYPE_PSYCH_PROFILE {
+        every.extend(profile_sources(body));
+    }
     let mut supports = Vec::new();
     if header.entity_type == ENTITY_TYPE_CLAIM {
-        if let Ok(claim) = crate::claim::decode_claim_body(body, true)
-            && let crate::claim::ClaimSubject::Entity(subject) = claim.subject
-        {
-            every.push(subject);
+        if let Ok(claim) = crate::claim::decode_claim_body(body, true) {
+            // A machine birth control carries the birth's signed body, whose
+            // subject a same-id successor of the target may have left (FIX
+            // MACHINE-HISTORY-SOURCE-LINEAGE-SUBJECT-MOVE): that subject's
+            // words are the control's too, beside the target's.
+            if let Some(Ok(initial)) =
+                crate::claim::history_store::machine_birth_initial_body(&claim)
+                && let Ok(birth) = crate::claim::decode_claim_body(&initial, true)
+                && let crate::claim::ClaimSubject::Entity(subject) = birth.subject
+            {
+                every.push(subject);
+            }
+            if let crate::claim::ClaimSubject::Entity(subject) = claim.subject {
+                every.push(subject);
+            }
         }
         supports =
             crate::conversation_dag::counted_edge_ids(dbs, txn, &id, EdgeKind::Supports, true)?;
     }
     Ok((every, supports))
+}
+
+impl Vault {
+    /// What the words of the row `id` (bytes `bytes`) came from, as this
+    /// walk reads them ([`word_sources`]): the rows each of which must read,
+    /// then a CLAIM's supports. The phone lineage walks the same rows
+    /// (`voice_call::phone_words_in`).
+    ///
+    /// # Errors
+    ///
+    /// Storage failures, and bytes with no readable header.
+    pub(crate) fn lineage_word_sources_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: EntityId,
+        bytes: &[u8],
+    ) -> Result<(Vec<EntityId>, Vec<EntityId>)> {
+        word_sources(self, &self.store.read(), txn, id, bytes)
+    }
+}
+
+/// The records a PSYCH_PROFILE row's `body` read its words from: each typed
+/// source's record and revision. Profile landing names them in the body and
+/// the dependency index, never as a `DerivedFrom` edge, so a profile that
+/// copies a CLAIM's prose reads where the claim does and is held with it
+/// (REVIEW-9874 round 2). A profile of an earlier schema, whose sources
+/// name no record, and a body that does not decode, name none.
+fn profile_sources(body: &[u8]) -> Vec<EntityId> {
+    let mut sources: Vec<EntityId> = crate::psych_profile::decode_psych_profile_body(body)
+        .map(|profile| {
+            profile
+                .sources
+                .iter()
+                .flat_map(|source| [source.document_ref, source.revision_ref])
+                .collect()
+        })
+        .unwrap_or_default();
+    sources.sort_unstable();
+    sources.dedup();
+    sources
 }
 
 /// The lane a row would leave this vault on.
@@ -157,8 +226,8 @@ pub(crate) fn withheld_from_replication_in(
 }
 
 /// Whether the row `id`, or any row its words came from (every support of a
-/// CLAIM included), is held back here. A vault that holds no row back
-/// answers at once.
+/// CLAIM and every typed source of a PSYCH_PROFILE included), is held back
+/// here. A vault that holds no row back answers at once.
 ///
 /// # Errors
 ///
@@ -565,6 +634,14 @@ pub(crate) fn readable_with_read_in(
 /// its own binding and carried policies and nothing more. A vault that
 /// holds no policy answers none.
 ///
+/// A row it walks whose floor is not known whole here
+/// ([`super::floor_waits_in`]) was read only because every one of `viewers`
+/// reads every source policy this vault holds
+/// ([`super::waiting_floor_readable_in`]): that read met each of them, and
+/// a row derived from it waits too and reads under them, so each is named
+/// (FLOOR-PREFLIGHT-AUDIENCE-IGNORES-WAIT). Once its floor settles, its
+/// floor names its policies as for any other row.
+///
 /// The caller names every row its read met: a witnessed TURN and each
 /// MESSAGE row its projected text was read from (review of #6985, round 2);
 /// the TURN's own lineage reaches the rows `PartOf` it as well. It names the
@@ -588,9 +665,21 @@ pub(crate) fn read_audience_in(
     let mut judge = Judge::new(vault, dbs, txn, Ask::Read(viewers));
     let mut seen: BTreeSet<EntityId> = roots.iter().copied().collect();
     let mut pending: Vec<EntityId> = seen.iter().copied().collect();
+    let mut every_policy_named = false;
     while let Some(row) = pending.pop() {
+        // A row whose floor waits read only to viewers who read every
+        // source policy here, whatever its floor will name once whole.
+        if !every_policy_named && super::floor_waits_in(vault, txn, &row)? {
+            policies.extend(super::POLICIES.scan_keys(&vault.store, txn, &[])?);
+            every_policy_named = true;
+        }
         if let Some(carried) = super::derived_policies_in(vault, txn, &row)? {
-            policies.extend(carried);
+            // A phone thread on a floor is no policy a read meets here.
+            for source in carried {
+                if super::floor_source_in(vault, txn, &source)? != super::FloorSource::Thread {
+                    policies.insert(source);
+                }
+            }
         }
         if let Some(policy) = super::binding_in(vault, txn, &row)? {
             policies.insert(policy);
@@ -747,6 +836,11 @@ struct Judge<'a, 's, 't> {
     /// The settled verdicts that hold whatever row asks. A [`LineagePass`]
     /// keeps them across its rows (see [`Judge::row_readable`]).
     rows: BTreeMap<EntityId, bool>,
+    /// Whether the viewers read a row whose floor waits, once asked
+    /// ([`super::waiting_floor_readable_in`]); for an export's judge,
+    /// whether its copy carries every source this vault holds
+    /// ([`Judge::waiting_floor_carried`]).
+    waiting_readable: Option<bool>,
     /// What an export's judge met; nothing for any other ask.
     met: ExportMet,
     /// What an export's judge keeps beside its verdicts ([`ExportReach`]);
@@ -782,6 +876,7 @@ impl<'a, 's, 't> Judge<'a, 's, 't> {
             txn,
             ask,
             policies: BTreeMap::new(),
+            waiting_readable: None,
             rows: BTreeMap::new(),
             met: ExportMet::default(),
             export: matches!(ask, Ask::Export(_)).then(ExportReach::default),
@@ -1072,16 +1167,54 @@ impl Judge<'_, '_, '_> {
         // The carried members' mailboxes the row's own policies are of, for
         // an export's judge.
         let mut reached = BTreeSet::new();
+        // A row whose floor is not known whole here (READ-LINEAGE L1; #9289
+        // review 2 P1-1, P1-2) reads only to an owner who reads every source
+        // this vault holds, whatever its floor would name; and it does not
+        // travel on a restricted lane, which carries no audience (#9289
+        // review 3 P1-3). An Owner's export carries it only when its copy
+        // carries every source this vault holds (fix list row 15416). The owner's full window carries it, and the vault
+        // it lands in raises its floor from what that vault holds.
+        let restricted = matches!(
+            self.ask,
+            Ask::Travel {
+                every_support: true,
+                ..
+            }
+        );
+        if (matches!(self.ask, Ask::Read(_) | Ask::Export(_)) || restricted)
+            && super::floor_waits_in(self.vault, self.txn, &id)?
+        {
+            let admitted = match self.ask {
+                Ask::Read(viewers) => self.waiting_floor_readable(viewers)?,
+                Ask::Export(audience) => self.waiting_floor_carried(audience)?,
+                Ask::Travel { .. } => false,
+            };
+            if !admitted {
+                self.met.unidentified |= matches!(self.ask, Ask::Export(_));
+                return Ok(Opened::Decided(false));
+            }
+        }
         // The policies a full-window carrier brought for a derived row (fix
-        // list row 17207): every one of them reads, whatever the row's own
-        // lineage here says, before anything else; an unknown one reads to
-        // no one. A replication walk ships such a row only with its carried
-        // policies, as its own sets them (`travel_closure_in`).
+        // list row 17207), and the floor its own write raised (READ-LINEAGE
+        // L1): every policy on it reads, whatever the row's own lineage here
+        // says, before anything else; an id that names no source reads to no
+        // one. A phone thread on it is the scoped read's floor conjunct's to
+        // judge, by its grant. A replication walk ships such a row only with
+        // its carried policies, as its own sets them (`travel_closure_in`).
         if let Some(policies) = super::derived_policies_in(self.vault, self.txn, &id)? {
             match self.ask {
                 Ask::Read(viewers) => {
                     for policy in policies {
-                        if !self.policy_readable(policy, viewers)? {
+                        // A policy's own people (`SourceReaders`).
+                        let admitted = match super::SOURCE_READERS {
+                            super::SourceReaders::OwnSourceReaders => {
+                                self.policy_readable(policy, viewers)?
+                            }
+                        };
+                        if !admitted
+                            && super::floor_source_in(self.vault, self.txn, &policy)?
+                                != super::FloorSource::Thread
+                        {
                             return Ok(Opened::Decided(false));
                         }
                     }
@@ -1153,6 +1286,32 @@ impl Judge<'_, '_, '_> {
         self.export.as_ref()?.members.get(&policy).copied()
     }
 
+    fn waiting_floor_readable(&mut self, viewers: &[EntityId]) -> Result<bool> {
+        if let Some(known) = self.waiting_readable {
+            return Ok(known);
+        }
+        let verdict = super::waiting_floor_readable_in(self.vault, self.txn, viewers)?;
+        self.waiting_readable = Some(verdict);
+        Ok(verdict)
+    }
+
+    /// Whether an Owner's export carries a row whose floor waits (fix list
+    /// row 15416), once asked: the exporter is a live owner of this vault,
+    /// and the copy carries the rows of every source policy it holds, so no
+    /// source the floor could name (a member's mailbox the copy leaves out)
+    /// is one the copy withholds. A policy that does not resolve carries
+    /// nothing, so a vault holding one carries such a row nowhere. It asks
+    /// no policy's verdict through [`Judge::export_carries`], so what the
+    /// judge met stays what its rows reached.
+    fn waiting_floor_carried(&mut self, audience: &ExportAudience) -> Result<bool> {
+        if let Some(known) = self.waiting_readable {
+            return Ok(known);
+        }
+        let verdict = waiting_floor_carried_in(self.vault, self.txn, audience)?;
+        self.waiting_readable = Some(verdict);
+        Ok(verdict)
+    }
+
     fn policy_readable(&mut self, policy: EntityId, viewers: &[EntityId]) -> Result<bool> {
         if let Some(known) = self.policies.get(&policy) {
             return Ok(*known);
@@ -1219,4 +1378,33 @@ impl Judge<'_, '_, '_> {
         self.policies.insert(policy, verdict);
         Ok(verdict)
     }
+}
+
+/// [`Judge::waiting_floor_carried`], over the vault's source policies.
+fn waiting_floor_carried_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    audience: &ExportAudience,
+) -> Result<bool> {
+    if !crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &audience.exporter)?
+        && super::embedded_owner_person_in(vault, txn, audience.exporter)?.is_none()
+    {
+        return Ok(false);
+    }
+    for entry in super::POLICIES.iter_from(&vault.store, txn, &[])? {
+        let (policy, _) = entry?;
+        let source = match super::policy_in(vault, txn, &policy)?.map(|row| row.kind) {
+            Some(super::SourceAudienceKind::Source { .. }) => policy,
+            Some(super::SourceAudienceKind::Thread { source, .. }) => source,
+            None => return Ok(false),
+        };
+        let carried = match audience.sources.get(&source).copied() {
+            Some(carried) => carried,
+            None => super::actor_reads_in(vault, txn, &policy, audience.exporter)?,
+        };
+        if !carried {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }

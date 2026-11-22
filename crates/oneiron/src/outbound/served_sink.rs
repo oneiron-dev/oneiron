@@ -229,6 +229,22 @@ impl<'a> ServedChannelSink<'a> {
 
     fn text(&self, request: &OutboundExecutionRequest<'_>) -> Option<String> {
         let content_ref = request.intent.content_ref.as_deref()?;
+        // FIX [BK-EMERGENCY-APOLOGY-BLOB-HOLDS-RAW-PICK-TOKENS]: an emergency apology's own send
+        // carries the booker's raw pick links, filled in here from the home's checkpoint and
+        // stored nowhere; every other send's content resolves as before.
+        match crate::booking::emergency_reschedule::emergency_apology_send_text(
+            self.vault,
+            request.intent_ref,
+            &request.intent.target,
+            content_ref,
+        ) {
+            Ok(Some(text)) => return Some(text),
+            Ok(None) => {}
+            Err(error) => {
+                tracing::info!(%error, "emergency apology send is not sendable");
+                return None;
+            }
+        }
         match self.vault.outbound_content_text(content_ref) {
             Ok(text) => text,
             Err(error) => {

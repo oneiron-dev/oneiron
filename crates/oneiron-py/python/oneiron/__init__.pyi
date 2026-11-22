@@ -416,6 +416,7 @@ class OneironError(RuntimeError):
     reason_codes: tuple[str, ...] | None
     legal_hold: Facade.LegalHoldNotice | None
     room_join_hold: Facade.RoomJoinHold | None
+    pending: Facade.MemoryPending | None
     def __init__(
         self,
         code: str,
@@ -428,6 +429,7 @@ class OneironError(RuntimeError):
         reason_codes: list[str] | None = None,
         legal_hold: Facade.LegalHoldNotice | None = None,
         room_join_hold: Facade.RoomJoinHold | None = None,
+        pending: Facade.MemoryPending | None = None,
     ) -> None: ...
 
 class Oneiron(_FacadeVerbs):

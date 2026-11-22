@@ -198,6 +198,7 @@ impl Memory<'_> {
             ExportBy {
                 name: &name,
                 act: Some(export_act(self.actor, surface)?),
+                authenticated: self.export_owner_of_slip(proof),
             },
             &self.destination,
             WriteActor::new(self.actor, EdgeActorClass::Human),
@@ -239,10 +240,17 @@ impl Memory<'_> {
         act: Option<OwnerAct>,
     ) -> MemoryResult<MemoryExport> {
         let name = self.actor.to_hex();
+        let authenticated = proof
+            .filter(|_| act.is_some())
+            .and_then(|proof| self.export_owner_of_slip(proof));
         let (export, sources) = render_export(
             self.vault,
             opts,
-            ExportBy { name: &name, act },
+            ExportBy {
+                name: &name,
+                act,
+                authenticated,
+            },
             &self.destination,
             WriteActor::new(self.actor, EdgeActorClass::Human),
             |txn| self.export_admitted_in_txn(txn, proof),
@@ -381,6 +389,7 @@ impl Vault {
         let by = ExportBy {
             name: "host",
             act: Some(export_act(owner, surface)?),
+            authenticated: super::owner_door::export_owner_of_host_root(self, proof),
         };
         render_export_to(
             self,
@@ -443,6 +452,7 @@ impl Vault {
         let by = ExportBy {
             name: "host",
             act: Some(export_act(action.actor().entity_ref(), surface)?),
+            authenticated: super::owner_door::export_owner_of_host_action(self, action),
         };
         render_export_to(
             self,
@@ -518,6 +528,7 @@ impl Vault {
         let by = ExportBy {
             name: &name,
             act: Some(export_act(actor, surface)?),
+            authenticated: Some(owner.clone()),
         };
         render_export_to(
             self,
@@ -629,12 +640,18 @@ fn validate_verified_owner(
 pub(super) struct ExportBy<'a> {
     pub(super) name: &'a str,
     pub(super) act: Option<OwnerAct>,
+    /// The door's proof of the act's owner ([`ExportCopy::authenticated`]).
+    pub(super) authenticated: Option<AuthenticatedOwner>,
 }
 
 impl<'a> ExportBy<'a> {
     /// An export by `name` that records no owner act.
     fn plain(name: &'a str) -> Self {
-        Self { name, act: None }
+        Self {
+            name,
+            act: None,
+            authenticated: None,
+        }
     }
 }
 
@@ -760,6 +777,7 @@ fn render_export_to<W: Read + Write + Seek>(
             thread_roots: std::mem::take(&mut export.thread_roots),
             holder_requests: std::mem::take(&mut export.holder_requests),
             recipient: opts.secrets_recipient,
+            authenticated: by.authenticated,
         },
     );
     // The owner's notices ride his own answer alone, each naming its world

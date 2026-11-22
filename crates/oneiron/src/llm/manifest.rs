@@ -287,18 +287,30 @@ impl Vault {
             return Ok(fallback.clone());
         };
         let binding = manifest.binding(role)?;
-        let widest = *manifest
-            .routes
-            .get(&binding.slot)
-            .ok_or_else(|| invalid("missing slot route"))?;
-        let route = read_routes(self, txn, &manifest)?
-            .get(&binding.slot)
-            .copied()
-            .unwrap_or(widest);
-        if route_rank(route) > route_rank(widest) {
-            return Err(invalid("resident route cannot widen manifest pin"));
-        }
-        Ok(model_for_route(binding, route, widest)?.clone())
+        let routes = read_routes(self, txn, &manifest)?;
+        let (model, _) = model_at_effective_route(&manifest, &routes, binding)?;
+        Ok(model.clone())
+    }
+    /// The model the vault's manifest binds `role` to and the slot's
+    /// effective route (the pin, narrowed by any resident route), both read
+    /// in one snapshot: the rung that serves the role answers only with that
+    /// model on that route or a narrower one. `None` when no manifest is set
+    /// or the manifest leaves the role unbound, so the caller keeps its own
+    /// seat for an optional role.
+    pub fn bound_model_for_role(
+        &self,
+        role: ModelRole,
+    ) -> Result<Option<(ModelId, ModelLocality)>> {
+        let txn = self.store.env.read_txn()?;
+        let Some(manifest) = read_manifest(&self.store, &txn)? else {
+            return Ok(None);
+        };
+        let Some(binding) = manifest.roles.get(&role) else {
+            return Ok(None);
+        };
+        let routes = read_routes(self, &txn, &manifest)?;
+        let (model, route) = model_at_effective_route(&manifest, &routes, binding)?;
+        Ok(Some((model.clone(), route)))
     }
     /// Effective per-vault route, including a resident narrowing if present.
     pub fn model_route(&self, slot: ModelSlot) -> Result<Option<ModelLocality>> {
@@ -335,6 +347,23 @@ pub(super) fn route_admits(
     }
     Ok(())
 }
+/// `binding`'s model at its slot's effective route, and that route: the
+/// slot's pin, narrowed by a resident route in `routes`, never widened.
+fn model_at_effective_route<'m>(
+    manifest: &ModelManifest,
+    routes: &BTreeMap<ModelSlot, ModelLocality>,
+    binding: &'m ModelBinding,
+) -> Result<(&'m ModelId, ModelLocality)> {
+    let widest = *manifest
+        .routes
+        .get(&binding.slot)
+        .ok_or_else(|| invalid("missing slot route"))?;
+    let route = routes.get(&binding.slot).copied().unwrap_or(widest);
+    if route_rank(route) > route_rank(widest) {
+        return Err(invalid("resident route cannot widen manifest pin"));
+    }
+    Ok((model_for_route(binding, route, widest)?, route))
+}
 pub(super) fn effective_route(
     manifest: &ModelManifest,
     routes: &BTreeMap<ModelSlot, ModelLocality>,
@@ -369,8 +398,6 @@ pub(super) fn read_routes(
     }
     Ok(routes)
 }
-// FIX [LIBTEST-QUARANTINE-LLM-MANIFEST-TESTS]: the lib test target's type check fails here (5 errors: E0063 x5); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

@@ -2,7 +2,7 @@
 //! each row in the setting catalogue.
 
 use super::rows::{ACTOR_NOTE_MAX_BYTES, ActorNoteMaxBytes};
-use crate::setting::{Kind, lower_is_tighter};
+use crate::setting::Kind;
 
 fn default_note_max_bytes() -> ActorNoteMaxBytes {
     ActorNoteMaxBytes(u32::try_from(ACTOR_NOTE_MAX_BYTES).unwrap_or(u32::MAX))
@@ -14,6 +14,6 @@ crate::setting::setting_keys! {
     /// size. Every stored row is held to the fixed 16384 ceiling, so lowering the cap leaves the
     /// notes already written readable.
     pub(crate) NOTE_MAX_BYTES: ActorNoteMaxBytes = "actor_claims.note.max_bytes" {
-        kind: Kind::new(default_note_max_bytes).tighter(lower_is_tighter::<ActorNoteMaxBytes>),
+        kind: Kind::new(default_note_max_bytes).lower(),
     };
 }

@@ -1,8 +1,8 @@
-//! OF-329's hydrate doors: a text-only agent that hydrates a
-//! generated image, on `/v1` core hydrate and on MCP's `memory.hydrate`, is
-//! served the image's ASSET_TEXT and never its bytes, with no routing of its
-//! own. An image with no text it reads keeps the body it had: its fields, its
-//! bytes nulled.
+//! OF-329's hydrate doors: a text-only agent that hydrates a generated image
+//! is served the image's ASSET_TEXT and never its bytes, with no routing of its
+//! own. An image with no text it reads keeps its stored fields, its bytes nulled,
+//! on `/v1` core hydrate; on MCP's `memory.hydrate` a changed ASSET is withheld
+//! whole from a reader that is not the owner (EXPORTDOORS Q4 = A).
 
 use super::*;
 
@@ -186,10 +186,12 @@ async fn a_text_only_agent_hydrates_a_generated_image_as_its_asset_text_on_v1() 
 
 /// OF-329 on MCP: a connector agent that declared no image input calls
 /// `memory.hydrate` and `memory.hydrate_many` on the generated image and is
-/// served its ASSET_TEXT. On main the item's body was the image body with its
+/// served its ASSET_TEXT. A bare image with no text it reads is withheld whole
+/// (EXPORTDOORS Q4 = A): on main the item's body was the image body with its
 /// bytes nulled.
 #[tokio::test]
-async fn a_text_only_mcp_agent_hydrates_a_generated_image_as_its_asset_text() {
+async fn a_text_only_mcp_agent_reads_a_generated_image_as_asset_text_but_a_bare_image_is_withheld()
+{
     let assets = Assets::new();
     // The seeded manifest's agent ceiling names the first-party connector
     // actor; MCP resolves an agent connector only under one.
@@ -235,14 +237,15 @@ async fn a_text_only_mcp_agent_hydrates_a_generated_image_as_its_asset_text() {
         assets.text_form(),
         "{batch}"
     );
-    // An image with no text this reader reads keeps its stored body.
+    // EXPORTDOORS Q4 = A: a changed ASSET is withheld whole from a
+    // reader that is not the owner on MCP hydrate, never rewritten.
     assert_eq!(results[1]["outcome"], "live", "{batch}");
-    assert_stored_image(&results[1]["result"]["item"]["body"]);
+    assert_eq!(results[1]["result"]["item"]["body"], Value::Null, "{batch}");
 
     let (_, stored) = call("memory.hydrate", json!({ "ref": bare })).await;
     assert!(stored.get("error").is_none(), "{stored}");
     let response = &stored["result"]["structuredContent"]["output"]["response"];
-    assert_stored_image(&response["item"]["body"]);
+    assert_eq!(response["item"]["body"], Value::Null, "{stored}");
 }
 
 /// Sol on #1517: a batch's body budget bounds the text it serves too. An

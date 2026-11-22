@@ -19,14 +19,17 @@ use crate::store::Store;
 
 /// Writes every lineage's floor read in `rtxn`, each id it names a source.
 /// A floor whose session or conversation the archive leaves here stays here,
-/// as that row does: one a world in `device_only` keeps, outside the owner's
-/// own export (`owner_export` false); his own export carries one his
-/// recipient choice alone keeps (owner ruling 1-EXPORT = B). One whose
-/// session or conversation `carries` refuses stays here too: an Owner's copy
-/// judges each by the members' mailbox rule (fix list row 15416). Answers
-/// the ids of every floor written.
+/// as that row does: one the whole-vault egress door keeps out (a use limit,
+/// a held-back lineage, a session overlay, a withheld PERSON; REVIEW-9874
+/// P1 3), so the archive names neither its id nor its counts, and one a world
+/// in `device_only` keeps, outside the owner's own export (`owner_export`
+/// false); his own export carries one his recipient choice alone keeps
+/// (owner ruling 1-EXPORT = B). One whose session or conversation `carries`
+/// refuses stays here too: an Owner's copy judges each by the members'
+/// mailbox rule (fix list row 15416). Answers the ids of every floor
+/// written.
 pub(super) fn write_epoch_floors_in_txn(
-    store: &Store,
+    vault: &crate::Vault,
     rtxn: &RoTxn<'_>,
     device_only: &BTreeSet<EntityId>,
     owner_export: bool,
@@ -34,6 +37,7 @@ pub(super) fn write_epoch_floors_in_txn(
     writer: &mut DocumentWriter<'_>,
     mut carries: impl FnMut(EntityId) -> Result<bool>,
 ) -> Result<Vec<EntityId>> {
+    let store = &vault.store;
     let mut written = Vec::new();
     for (scope, epoch, turn_end) in crate::compaction::epoch_floors_in_txn(store, rtxn)? {
         let ids: Vec<EntityId> = std::iter::once(scope.session)
@@ -41,15 +45,16 @@ pub(super) fn write_epoch_floors_in_txn(
             .collect();
         let mut withheld = false;
         for id in &ids {
-            withheld |= super::document_snapshot::barred_worlds_carried(
-                store,
-                rtxn,
-                device_only,
-                id,
-                None,
-                owner_export,
-            )?
-            .is_none();
+            withheld |= super::whole_vault_export_excludes_entity_in_txn(vault, rtxn, id)?
+                || super::document_snapshot::barred_worlds_carried(
+                    store,
+                    rtxn,
+                    device_only,
+                    id,
+                    None,
+                    owner_export,
+                )?
+                .is_none();
         }
         for id in &ids {
             if withheld {

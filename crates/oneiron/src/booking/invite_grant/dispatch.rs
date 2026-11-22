@@ -24,7 +24,9 @@ use crate::outbound::{
     OutboundDispatchRequest, OutboundExecutionOutcome, OutboundExecutionRequest,
     OutboundExecutionSink, OutboundIntent, OutboundIntentDraft, OutboundIntentTrigger,
 };
-use crate::outbound_intent_ledger::{IntentId, intent_ledger_records};
+use crate::outbound_intent_ledger::{
+    IntentId, IntentLedgerRecord, IntentState, intent_ledger_records,
+};
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY;
 use crate::temporal::TimeRange;
@@ -61,8 +63,9 @@ impl OutboundExecutionSink for NoConfirmInviteSink {
 ///    receipt's current SEQUENCE.
 /// 4. Admit through [`admit_calendar_invite`], so vault-only hygiene
 ///    hydration and the UID/SEQUENCE law run BEFORE the gate. A replay
-///    (the same revision, same content) sends nothing and answers with the
-///    intent the first pass recorded.
+///    (the same revision, same content) of a settled send answers with the
+///    intent the first pass recorded and sends nothing; a replay of a
+///    still-Pending send retries through dispatch (FIX 351).
 /// 5. Dispatch. Gate, opt-out wall, rate/budget, intent ledger, and connector
 ///    are the ordinary ones; a denied invite records no intent and therefore
 ///    fails here.
@@ -194,14 +197,23 @@ fn enqueue_booking_invite_outcome(
     }
     if !admission.moves_state() {
         // A replay of the exact revision. One booking earns one REQUEST, so
-        // this answers with the intent already recorded rather than sending a
-        // second copy of it.
-        let intent_id = recorded_intent_id(vault, &payload)?
-            .ok_or_else(|| refused("this invite replayed with no recorded outbound intent"))?;
-        return Ok(ConfirmInviteOutcome {
-            intent_id: Some(intent_id),
-            approval_digest: None,
-        });
+        // a settled send answers with the intent already recorded rather
+        // than sending a second copy of it. A still-Pending send falls
+        // through to dispatch below: the same intent ref replays the
+        // recorded row and retries its transport instead of leaving the
+        // invite stuck (FIX 351).
+        if let Some(record) = recorded_invite_record(vault, &payload)? {
+            if record.state != IntentState::Pending {
+                return Ok(ConfirmInviteOutcome {
+                    intent_id: Some(record.id),
+                    approval_digest: None,
+                });
+            }
+        } else {
+            return Err(refused(
+                "this invite replayed with no recorded outbound intent",
+            ));
+        }
     }
 
     let intent_ref = confirm_invite_intent_ref(&invite.booking_ref, invite.uid, invite.sequence);
@@ -233,7 +245,7 @@ fn enqueue_booking_invite_outcome(
     // Success IS the durable intent: a gate denial or hold records none, so
     // nothing moved; a hold names the digest the owner's press carries.
     Ok(ConfirmInviteOutcome {
-        intent_id: recorded_intent_id(vault, &payload)?,
+        intent_id: recorded_invite_record(vault, &payload)?.map(|record| record.id),
         approval_digest: result.approval_digest,
     })
 }
@@ -388,15 +400,15 @@ fn dispatch_booking_invite_outcome(
     )
 }
 
-/// The intent-ledger id whose frozen body is exactly this invite.
+/// The intent-ledger row whose frozen body is exactly this invite.
 ///
 /// `OutboundDispatchResult` carries no intent id, so the ledger is read back
 /// and matched on the exact five-field body. UID + SEQUENCE + recipient are
 /// unique to one booking's first REQUEST, so the match is unambiguous.
-fn recorded_intent_id(
+fn recorded_invite_record(
     vault: &Vault,
     payload: &CalendarInvitePayload,
-) -> Result<Option<IntentId>, BookingError> {
+) -> Result<Option<IntentLedgerRecord>, BookingError> {
     let records = intent_ledger_records(vault)
         .map_err(|error| refused(format!("intent ledger read failed: {error}")))?;
     for record in records {
@@ -407,7 +419,7 @@ fn recorded_intent_id(
             continue;
         };
         if &frozen == payload {
-            return Ok(Some(record.id));
+            return Ok(Some(record));
         }
     }
     Ok(None)

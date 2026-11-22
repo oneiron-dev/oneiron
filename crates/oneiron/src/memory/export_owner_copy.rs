@@ -59,6 +59,7 @@ pub(super) fn render_owner_copy(
             thread_roots: std::mem::take(&mut export.thread_roots),
             holder_requests: std::mem::take(&mut export.holder_requests),
             recipient: opts.secrets_recipient,
+            authenticated: by.authenticated.clone(),
         },
     )?;
     let export = &mut copy.receipt;

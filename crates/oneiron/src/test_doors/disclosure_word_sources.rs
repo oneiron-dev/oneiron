@@ -123,6 +123,28 @@ pub fn clamp_admits_with_contact(
     clamp_admits(vault, contact_audience(contact, counterparty), record, None)
 }
 
+/// Whether that clamp admits the stored `record` by its own row alone, not
+/// the sources of its words (`DisclosureContext::admits`): the test a
+/// bounded window asked before
+/// PACK-PRESELECT-CLAMP-ROW-ONLY-DISPLACES-READABLE-HIT.
+///
+/// # Errors
+/// A record the vault does not hold, or a read error.
+pub fn row_admits_with_contact(
+    vault: &Vault,
+    contact: EntityId,
+    counterparty: &str,
+    record: &EntityId,
+) -> Result<bool> {
+    let ctx = DisclosureContext::resolve(vault, contact_audience(contact, counterparty))?;
+    let rtxn = vault.store.env.read_txn()?;
+    let row = vault
+        .store
+        .port_entity_record(&rtxn, record)?
+        .ok_or(Error::EntityNotFound)?;
+    ctx.admits(&vault.store, &rtxn, record, row.entity_type, None)
+}
+
 /// Whether the general clamp of an assembly the owner holds with `contact`
 /// (named `counterparty`) present admits the claim `record` served as
 /// `body`, a revision other than its live row, as a pinned hydration or a
