@@ -341,10 +341,14 @@ fn two_acts_at_once_share_the_refusal_of_one_prompt() {
 fn a_screen_lock_while_a_prompt_is_up_refuses_its_answer_and_opens_no_window() {
     let (shown, prompts) = mpsc::channel();
     let (answer, answers) = mpsc::channel();
+    let (lock_readings, readings) = mpsc::channel();
     let gate = Arc::new(PresenceGate::new(
-        Arc::new(HeldPrompt {
-            shown: Mutex::new(shown),
-            answer: Mutex::new(answers),
+        Arc::new(WatchedHeldPrompt {
+            held: HeldPrompt {
+                shown: Mutex::new(shown),
+                answer: Mutex::new(answers),
+            },
+            lock_readings: Mutex::new(lock_readings),
         }),
         PresenceWindow::new(clock()),
     ));
@@ -355,8 +359,14 @@ fn a_screen_lock_while_a_prompt_is_up_refuses_its_answer_and_opens_no_window() {
 
     let first = spawn_act();
     prompts.recv().expect("the first act's prompt shows");
-    // A second act arrives while that prompt is up and waits behind it.
+    // A second act arrives while that prompt is up and waits behind it: the
+    // first act read the screen lock twice, the second once.
     let second = spawn_act();
+    for reading in 1..=3 {
+        readings
+            .recv()
+            .unwrap_or_else(|_| panic!("screen lock reading {reading} of 3"));
+    }
 
     // The screen locks with the prompt still up, and the answer lands after.
     gate.end_window();
@@ -371,10 +381,11 @@ fn a_screen_lock_while_a_prompt_is_up_refuses_its_answer_and_opens_no_window() {
         "an answer from before the lock opened the window"
     );
 
-    // The act that waited does not ride on the refused answer: it asks for
-    // itself, after the lock, and its confirm opens the window.
+    // The act that waited does not ride on the refused answer, and does
+    // not take its refusal either: it asks for itself, after the lock, and
+    // its confirm opens the window.
     prompts
-        .recv()
+        .recv_timeout(Duration::from_secs(5))
         .expect("the second act shows a prompt of its own");
     answer.send(()).expect("the second prompt takes its answer");
     assert_eq!(

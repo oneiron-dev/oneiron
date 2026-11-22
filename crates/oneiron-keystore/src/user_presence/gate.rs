@@ -31,8 +31,8 @@ pub struct PresenceGate {
     window: Arc<PresenceWindow>,
     /// Held while a prompt shows or a typed secret is checked, so acts that
     /// arrive together share one prompt. It keeps the refusal of the last
-    /// prompt, `None` after a confirm, for the acts that waited while that
-    /// prompt was up.
+    /// prompt for the acts that waited while that prompt was up: `None`
+    /// after a confirm, and after an answer that a screen lock voided.
     prompting: Mutex<Option<PresenceError>>,
     /// How many prompts have been answered. An act reads it when it arrives;
     /// a higher count once it holds `prompting` says that a prompt was
@@ -240,11 +240,13 @@ impl PresenceGate {
     /// A confirm opens the window; a refusal opens nothing. Never call it
     /// while holding a lock other work waits on.
     ///
-    /// Acts that arrive together share one prompt, whatever its answer: an
-    /// act that waited while another act's prompt was up takes that
-    /// prompt's refusal as its own and shows no second prompt, as it takes
-    /// the window a confirm opened. An act that comes after the refusal
-    /// asks again.
+    /// Acts that arrive together share one prompt and the person's answer
+    /// to it: an act that waited while another act's prompt was up takes
+    /// that prompt's refusal as its own (declined, no answer, a fault of the
+    /// prompt) and shows no second prompt, as it takes the window a confirm
+    /// opened. An act that comes after the refusal asks again. An answer
+    /// that a screen lock voided is nobody's answer: each act that waited
+    /// asks for itself once the screen reads unlocked.
     ///
     /// The answer is true when it is read. A screen lock after that is not
     /// seen here, so the caller signs at once.
@@ -278,7 +280,9 @@ impl PresenceGate {
             return Err(refusal);
         }
         let answer = self.prompt(reason);
-        *last_refusal = answer.err();
+        // A screen lock voids the answer, so it is no refusal to share.
+        let voided = answer == Err(PresenceError::ScreenLocked);
+        *last_refusal = if voided { None } else { answer.err() };
         self.prompts_answered.fetch_add(1, Ordering::AcqRel);
         answer.map(|()| PresenceConfirmation::Prompted)
     }
