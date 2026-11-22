@@ -350,7 +350,7 @@ impl Vault {
         if header.entity_type != ENTITY_TYPE_AUTHORITY_LOG {
             return Err(Error::InvalidEntityType(header.entity_type));
         }
-        decode_stored_authority_log_body(&self.store, &rtxn, &raw[ENTITY_METADATA_HEADER_LEN..])
+        decode_stored_authority_log_body(&self.store, txn, &raw[ENTITY_METADATA_HEADER_LEN..])
             .map(Some)
     }
 
