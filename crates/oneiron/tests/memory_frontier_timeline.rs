@@ -10,7 +10,7 @@
 
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::test_doors::claim_value_redaction::redact_claim_value_fields;
-use oneiron::test_doors::memory_frontier::{frontier_now, raw_at, revision_at};
+use oneiron::test_doors::memory_frontier::{MemoryFrontier, frontier_now, raw_at, revision_at};
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EntityId, TimeRange, Vault,
     VaultConfig,
@@ -188,4 +188,51 @@ fn a_redaction_rewrites_the_revision_a_frontier_names() {
         contains(&bytes, b"likes tea"),
         "the rest of the row reads as it stood: {bytes:?}"
     );
+}
+
+/// Review 8945 round 1, P1 1: a frontier a caller supplies may name any
+/// sequence up to the head, so every one of them must name the rows as one
+/// commit left them. One write transaction that moves two rows takes one
+/// step: no sequence names the first row moved and the second not.
+#[test]
+fn every_sequence_names_a_state_a_commit_left() {
+    let (_dir, vault) = open();
+    let (first, second) = (EntityId::now(), EntityId::now());
+    let write_both = |first_body: &[u8], second_body: &[u8]| {
+        vault
+            .batch()
+            .put(&first, ENTITY_TYPE_PERSON, range(1), 1, first_body)
+            .put(&second, ENTITY_TYPE_PERSON, range(1), 1, second_body)
+            .commit()
+            .expect("one write transaction moves both rows");
+    };
+    write_both(b"first before", b"second before");
+    let before = frontier_now(&vault).expect("frontier");
+    write_both(b"first after", b"second after");
+    let after = frontier_now(&vault).expect("frontier");
+    assert!(
+        after.sequence > before.sequence,
+        "the second batch moved the timeline"
+    );
+
+    for sequence in before.sequence..=after.sequence {
+        let frontier = MemoryFrontier {
+            sequence,
+            recorded_at: after.recorded_at,
+        };
+        let read = |id: &EntityId| {
+            let revision = revision_at(&vault, id, frontier)
+                .expect("timeline read")
+                .expect("the row stood at the frontier");
+            raw_at(&vault, id, revision)
+                .expect("pinned read")
+                .expect("the revision reads")
+        };
+        let (first_bytes, second_bytes) = (read(&first), read(&second));
+        assert_eq!(
+            first_bytes.ends_with(b"after"),
+            second_bytes.ends_with(b"after"),
+            "sequence {sequence} names a state no commit left: {first_bytes:?} / {second_bytes:?}"
+        );
+    }
 }

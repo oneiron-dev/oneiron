@@ -66,8 +66,6 @@ mod wire_store;
 mod wire_worktree;
 
 pub(crate) mod tables;
-// FIX [LIBTEST-QUARANTINE-GIT-WIRE-TESTS]: the lib test target's type check fails here (1 errors: E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 
@@ -103,6 +101,8 @@ pub use self::wire_reads::GitWire;
 pub(crate) use self::bridge::{redact_bridged_failure, run_bridged_git_argv};
 pub(crate) use self::mirror_push::MIRROR_PUSH_REFSPECS;
 use self::process::GitWireProcessOutput;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::projected_checkout::RepoProjectedCheckoutBinding;
 pub(crate) use self::projected_object::{GitObjectEdge, git_object_edges};
 #[cfg(test)]
 pub(crate) use self::repo::repository_hold_for_test;

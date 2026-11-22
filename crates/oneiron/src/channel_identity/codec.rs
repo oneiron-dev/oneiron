@@ -2,6 +2,7 @@
 
 use std::io::Cursor;
 
+use oneiron_contracts::msgpack::{self, Entries};
 use rmpv::Value;
 
 use crate::claim::{ClaimBody, ClaimSubject, MAX_PREDICATE_BYTES};
@@ -442,29 +443,16 @@ pub(super) fn required_string<'a>(entries: &'a [(Value, Value)], key: &str) -> R
 }
 
 pub(super) fn validate_keys(entries: &[(Value, Value)], keys: &[&str]) -> Result<()> {
-    let mut seen = vec![false; keys.len()];
-    for (key, _) in entries {
-        let key = key.as_str().ok_or_else(invalid_identity)?;
-        let Some(index) = keys.iter().position(|known| *known == key) else {
-            return Err(invalid_identity());
-        };
-        if seen[index] {
-            return Err(invalid_identity());
-        }
-        seen[index] = true;
-    }
-    if seen.into_iter().all(|value| value) {
-        Ok(())
-    } else {
-        Err(invalid_identity())
-    }
+    Entries::new(entries)
+        .exact_keys(keys, &[])
+        .map(drop)
+        .map_err(|_| invalid_identity())
 }
 
 pub(super) fn required_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&'a Value> {
-    entries
-        .iter()
-        .find_map(|(candidate, value)| (candidate.as_str() == Some(key)).then_some(value))
-        .ok_or_else(invalid_identity)
+    Entries::new(entries)
+        .require(key)
+        .map_err(|_| invalid_identity())
 }
 
 pub(super) fn validate_non_empty_bounded(
@@ -492,10 +480,9 @@ pub(super) fn validate_claim_string(value: &Value, max: usize, reason: &'static 
     }
 }
 
-pub(super) fn encode_msgpack_value(value: &Value, context: &'static str) -> Result<Vec<u8>> {
-    let mut out = Vec::new();
-    rmpv::encode::write_value(&mut out, value).map_err(|_| Error::InvariantViolation(context))?;
-    Ok(out)
+/// The context named a write error, which writing into a Vec cannot raise; kept for the callers.
+pub(super) fn encode_msgpack_value(value: &Value, _context: &'static str) -> Result<Vec<u8>> {
+    Ok(msgpack::encode(value))
 }
 
 pub(super) fn invalid_identity() -> Error {

@@ -17,6 +17,8 @@ pub struct OwnedScopedRead {
     records_cover: records_cover::ArtifactRecordsCover,
     judged_at: Option<u64>,
     read_filter: Option<RetrievalFilter>,
+    receipts_include_live_grants: bool,
+    cited_support: crate::claim::evidence_support::CitedSupport,
     vault: Arc<crate::Vault>,
 }
 
@@ -47,6 +49,9 @@ impl ScopedRead<'_> {
             records_cover,
             judged_at,
             read_filter,
+            receipts_include_live_grants,
+            cited_support,
+            source_floor_waived: _,
         } = self;
         Ok(OwnedScopedRead {
             actor_key,
@@ -62,6 +67,8 @@ impl ScopedRead<'_> {
             records_cover,
             judged_at,
             read_filter,
+            receipts_include_live_grants,
+            cited_support,
             vault,
         })
     }
@@ -85,6 +92,8 @@ impl OwnedScopedRead {
             records_cover,
             judged_at,
             read_filter,
+            receipts_include_live_grants,
+            cited_support,
             vault,
         } = self;
         let read = ScopedRead {
@@ -104,6 +113,9 @@ impl OwnedScopedRead {
             records_cover,
             judged_at,
             read_filter,
+            receipts_include_live_grants,
+            cited_support,
+            source_floor_waived: false,
         };
         let result = operation(&read);
         let ScopedRead {
@@ -123,6 +135,9 @@ impl OwnedScopedRead {
             records_cover,
             judged_at,
             read_filter,
+            receipts_include_live_grants,
+            cited_support,
+            source_floor_waived: _,
         } = read;
         (
             Self {
@@ -139,6 +154,8 @@ impl OwnedScopedRead {
                 records_cover,
                 judged_at,
                 read_filter,
+                receipts_include_live_grants,
+                cited_support,
                 vault,
             },
             result,
@@ -192,6 +209,8 @@ impl OwnedScopedRead {
             records_cover,
             judged_at,
             read_filter,
+            receipts_include_live_grants,
+            cited_support,
             vault: _,
         } = self;
         Ok(ScopedRead {
@@ -211,6 +230,9 @@ impl OwnedScopedRead {
             records_cover,
             judged_at,
             read_filter,
+            receipts_include_live_grants,
+            cited_support,
+            source_floor_waived: false,
         })
     }
 }

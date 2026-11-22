@@ -27,25 +27,11 @@ fn context(
     input: &GuestDocumentShareRequest,
 ) -> Result<(FederationGrant, GuestDocumentContext)> {
     let txn = vault.store.env.read_txn()?;
-    let LiveEntityRow::Live {
-        entity_type: ENTITY_TYPE_FEDERATION_GRANT,
-        body,
-    } = live_entity_row_in_txn(&vault.store, &txn, &input.grant_ref)?
-    else {
-        return Err(Error::EntityNotFound);
-    };
-    let now = vault.store.clock.now_recorded_at();
     let fold = vault.authority_fold_readonly_in_txn(&txn)?;
-    // The guest's Grant as the fold stands behind it (pass 28 R3d): its counted
-    // giving, no counted end, its act's terms, unexpired, and one Active
-    // operative pact with its peer. The disclosure below carries those terms
-    // as its record ceiling.
-    let grant = crate::federation::guest_grant_in_fold(&fold, input.grant_ref, &body, now)
-        .ok_or_else(refused)?
-        .into_grant();
-    if !matches!(grant.scope, FederationGrantScope::Connect { .. })
-        || !grant.confers_at(now)
-        || input.world_ref == crate::claim::base_world_id()
+    // The guest's Grant as the fold stands behind it (pass 28 R3d): the
+    // disclosure below carries its act's terms as its record ceiling.
+    let grant = guest_connect_grant_in(vault, &txn, &fold, &input.grant_ref)?;
+    if input.world_ref == crate::claim::base_world_id()
         || LocalWorldId::try_from(input.world_ref).is_err()
         || !grant
             .authority_scope
@@ -69,12 +55,75 @@ fn context(
     Ok((grant, context))
 }
 
+/// The live guest grant `grant_ref` names, under Connect scope and
+/// conferring now, as `fold` stands behind it (pass 28 R3d): its counted
+/// giving, no counted end, its act's terms, unexpired, and one Active
+/// operative pact with its peer. A missing row is not found and any other
+/// grant refuses: a row alone confers nothing.
+fn guest_connect_grant_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    fold: &crate::authority::AuthorityFold,
+    grant_ref: &EntityId,
+) -> Result<FederationGrant> {
+    let LiveEntityRow::Live {
+        entity_type: ENTITY_TYPE_FEDERATION_GRANT,
+        body,
+    } = live_entity_row_in_txn(&vault.store, txn, grant_ref)?
+    else {
+        return Err(Error::EntityNotFound);
+    };
+    let now = vault.store.clock.now_recorded_at();
+    let grant = crate::federation::guest_grant_in_fold(fold, *grant_ref, &body, now)
+        .ok_or_else(refused)?
+        .into_grant();
+    if !grant.role.is_guest()
+        || !matches!(grant.scope, FederationGrantScope::Connect { .. })
+        || !grant.confers_at(now)
+    {
+        return Err(refused());
+    }
+    Ok(grant)
+}
+
+/// Whether `proof` is a live, untransferred read credential its member
+/// holds for the guest grant `grant_ref` names, bound to no channel.
+fn holds_guest_grant(
+    vault: &Vault,
+    proof: &VerifiedSlip,
+    grant_ref: &EntityId,
+    grant: &FederationGrant,
+) -> Result<bool> {
+    Ok(
+        proof.claims().grant_ref.as_deref() == Some(grant_ref.to_hex().as_str())
+            && proof.claims().holder_ref == grant.member_ref.to_hex()
+            && !proof.is_transferred()
+            && proof.allows_verb("read")
+            && proof.claims().channels.is_empty()
+            && vault.capability_slip_is_live(proof)?,
+    )
+}
+
+/// The read key the recipient's fetch judges its rows with: the credential's
+/// own key, its conversation home cleared up to the Connect grant's ceiling
+/// (ANSWER FED-CONNECT-STAMPED-HOME = A), every other check it makes kept.
+fn guest_fetch_read_key(
+    vault: &Vault,
+    proof: &VerifiedSlip,
+    grant: &FederationGrant,
+) -> Result<crate::claim::ScopedReadActorKey> {
+    Ok(vault
+        .credential_read_key(proof)?
+        .ok_or_else(refused)?
+        .home_cleared_to_connect_ceiling(grant.authority_scope.sensitivity))
+}
+
 fn export(
     manager: &Arc<WindowManager>,
     issuer: &HostSlipIssuer,
     input: &GuestDocumentShareRequest,
     admit: impl Fn(&Vault, &FederationGrant) -> Result<EntityId>,
-    readable: impl Fn(&Vault, &[EntityId]) -> Result<bool>,
+    readable: impl Fn(&Vault, &FederationGrant, &[EntityId]) -> Result<bool>,
 ) -> Result<(GuestDocumentEnvelope, Vec<EntityId>)> {
     let vault = manager.vault();
     let (grant, before) = context(vault, input)?;
@@ -93,16 +142,18 @@ fn export(
         return Err(refused());
     }
     let window = manager.open_window(&key)?;
+    // A guest document carries no tombstone (CROSS-VAULT-DELETE-NEVER-ADMITTED).
     let (body, rows, travelled) = super::codec::guest_share_envelope_body_listing(
         vault,
         &window.doc,
         &key,
         grant.scope,
         &selector,
+        super::GuestTombstones::Omitted,
     )?;
     // A narrower credential never exports bytes around its own read lane.
     // If any selected row is withheld for this caller, the whole export refuses.
-    if !readable(vault, &rows)? {
+    if !readable(vault, &grant, &rows)? {
         return Err(refused());
     }
     let (current, after) = context(vault, input)?;
@@ -110,6 +161,15 @@ fn export(
     if current != grant || before != after {
         return Err(refused());
     }
+    // A guest document carries no tombstone, but the rows it releases are
+    // recorded before it is signed, so a later Connect delivery or socket
+    // answer under the grant carries the owner's delete of each
+    // (CROSS-VAULT-DELETE-SELECTOR-ANSWER-RELEASE): a record that fails signs
+    // nothing.
+    vault.record_peer_release(&crate::share_travel::PeerRelease::new(
+        input.grant_ref,
+        rows.clone(),
+    ))?;
     let mut envelope = issuer.sign_guest_document_envelope(after, body)?;
     envelope.travel_receipt = Some(vault.record_guest_window_travel(
         &input.grant_ref,
@@ -142,7 +202,7 @@ pub fn share_guest_document_as_owner(
             vault.recheck_owner(owner)?;
             owner.actor_for_read(vault)
         },
-        |_, _| Ok(true),
+        |_, _, _| Ok(true),
     )
 }
 
@@ -160,20 +220,61 @@ pub fn export_guest_document_for_guest(
         issuer,
         input,
         |vault, grant| {
-            if proof.claims().grant_ref.as_deref() != Some(input.grant_ref.to_hex().as_str())
-                || proof.claims().holder_ref != grant.member_ref.to_hex()
-                || proof.is_transferred()
-                || !proof.allows_verb("read")
-                || !proof.claims().channels.is_empty()
-                || !vault.capability_slip_is_live(proof)?
-            {
+            if !holds_guest_grant(vault, proof, &input.grant_ref, grant)? {
                 return Err(refused());
             }
             Ok(grant.member_ref)
         },
-        |vault, rows| {
-            let key = vault.credential_read_key(proof)?.ok_or_else(refused)?;
+        |vault, grant, rows| {
+            // The fetch reads what the export selected under this Connect
+            // grant: its stamped claims up to the grant's own ceiling, which
+            // the credential's conversation home alone would withhold,
+            // refusing the fetch.
+            let key = guest_fetch_read_key(vault, proof, grant)?;
             vault.scoped_read(key.at(locality)).all_refs_readable(rows)
         },
     )
+}
+
+/// The recipient's fetch answered again (an HTTP invocation replay, FIX
+/// 8212): whether `proof` still reads every one of `rows`, the rows its
+/// first answer listed, through the fetch's own check
+/// ([`export_guest_document_for_guest`]). The grant its credential names
+/// must still be a live Connect guest grant its pact admits and the
+/// credential holds, and the fetch's read key, met with `destination`, must
+/// read each row. Anything else, a fault included, reads nothing: the
+/// replay then keeps its details on the device.
+pub fn guest_document_rows_still_readable(
+    vault: &Vault,
+    proof: &VerifiedSlip,
+    destination: &crate::settings::ReadDestination,
+    rows: &[EntityId],
+) -> bool {
+    let readable = || -> Result<bool> {
+        let Some(grant_ref) = proof
+            .claims()
+            .grant_ref
+            .as_deref()
+            .and_then(|grant_ref| EntityId::from_hex(grant_ref).ok())
+        else {
+            return Ok(false);
+        };
+        let grant = {
+            let txn = vault.store.env.read_txn()?;
+            let fold = vault.authority_fold_readonly_in_txn(&txn)?;
+            let grant = guest_connect_grant_in(vault, &txn, &fold, &grant_ref)?;
+            if !crate::federation::pact_admits_grant(&fold, &grant_ref, &grant) {
+                return Ok(false);
+            }
+            grant
+        };
+        if !holds_guest_grant(vault, proof, &grant_ref, &grant)? {
+            return Ok(false);
+        }
+        let key = guest_fetch_read_key(vault, proof, &grant)?;
+        vault
+            .scoped_read(key.for_destination(destination))
+            .all_refs_readable(rows)
+    };
+    readable().unwrap_or(false)
 }

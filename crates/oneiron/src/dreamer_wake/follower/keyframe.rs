@@ -126,6 +126,11 @@ pub(crate) struct FoldWork {
     pub(crate) prior: Option<ResultKey>,
     pub(crate) turns: Vec<EntityId>,
     pub(crate) pins: Vec<Pin>,
+    /// The rows its parts were read from, sorted: `turns`, and each folded
+    /// frame's chunk sources (a MESSAGE whose TURN stays). Every call of the
+    /// fold sends on them, so a resend asks them first
+    /// ([DREAMER-STEP-RESENDS-ERASED-SOURCE-WORDS]).
+    pub(crate) sources: Vec<EntityId>,
 }
 
 /// Whether the session holds anything to fold through `through`.
@@ -143,6 +148,7 @@ pub(super) fn fold_work(
 ) -> FoldWork {
     let mut parts = Vec::new();
     let mut turns = BTreeSet::new();
+    let mut sources = BTreeSet::new();
     let mut pins = BTreeSet::new();
     if let Some(standing) = standing {
         parts.push(standing.bytes.clone());
@@ -151,8 +157,10 @@ pub(super) fn fold_work(
     for held in log.frames.iter().filter(|held| held.ordinal <= through) {
         parts.push(held.frame.bytes.clone());
         turns.insert(held.frame.turn);
+        sources.extend(held.frame.chunks.iter().map(|chunk| chunk.source));
         pins.extend(held.frame.pins.iter().cloned());
     }
+    sources.extend(turns.iter().copied());
     let seq = session.state.next_seq;
     session.state.next_seq = seq.saturating_add(1);
     FoldWork {
@@ -162,6 +170,7 @@ pub(super) fn fold_work(
         prior: session.state.keyframe,
         turns: turns.into_iter().collect(),
         pins: pins.into_iter().collect(),
+        sources: sources.into_iter().collect(),
     }
 }
 

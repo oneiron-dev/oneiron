@@ -26,6 +26,16 @@ fn fixture() -> (
     let vault = Vault::open(dir.path(), crate::VaultConfig::device()).expect("vault");
     crate::test_util::provision_engine_machines(&vault);
     let owner_ref = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let issuer = crate::test_support::test_host_issuer();
+    vault.ensure_host_root_slip(&issuer).expect("host root");
+    vault
+        .bind_host_owner_for_test(&issuer, owner_ref)
+        .expect("bind host owner");
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    vault.prepare_install_signing().expect("install signing");
+    vault
+        .ensure_serving_install_profile(&issuer, crate::authority::MachineRole::Unanswered)
+        .expect("serving install profile");
     let owner = vault
         .authenticate_owner(
             owner_ref,

@@ -11,6 +11,12 @@
 //! keep local `/a/`, a `*.localhost` name of another vault serves nothing,
 //! and the unauthenticated `/api/health` names no vault.
 //!
+//! FIX LOCALHOST-VAULT-NAME-HELP: the config refuses the vault name
+//! `localhost`, which would answer only at `localhost.localhost` (red at
+//! main: it resolves). FIX LOCALHOST-HOST-DISCOVERY: serve's start line
+//! names the `*.localhost` host the listener serves, and none it does not
+//! (`SyncServerConfig::local_artifact_vault_host`, new here, so no red).
+//!
 //! `cargo test --locked -p oneiron-server --features oneiron/test-support,oneiron/test-hooks
 //! --test artifact_localhost_origins`.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
@@ -26,6 +32,7 @@ use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use oneiron::artifact_hosting::ArtifactServeTier;
 use oneiron::{TimeRange, Vault, VaultConfig};
+use oneiron_server::config::{EnvConfig, ServeArgs, resolve_serve_config_with_sources};
 use oneiron_server::managed::ManagedShutdown;
 use oneiron_server::managed::ShutdownSignal;
 use oneiron_server::managed::preview::{
@@ -399,5 +406,89 @@ fn local_run_serves_preview_shape_on_localhost() {
 
         lease.close();
         host_stop.trigger();
+    });
+}
+
+/// `localhost` names no vault: the bare `localhost` keeps local `/a/`, so a
+/// vault served by that name would answer only at `localhost.localhost`. The
+/// config refuses it in any case; a DNS label still resolves.
+#[test]
+fn the_vault_name_localhost_is_refused() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let resolve = |name: &str| {
+        resolve_serve_config_with_sources(
+            &ServeArgs {
+                vault_path: Some(dir.path().join("vault")),
+                artifact_vault_name: Some(name.to_owned()),
+                ..ServeArgs::default()
+            },
+            EnvConfig::default(),
+            None,
+        )
+    };
+    for name in ["localhost", "LocalHost", " localhost "] {
+        let refusal = resolve(name).err().map(|error| format!("{error:#}"));
+        assert!(
+            refusal
+                .as_deref()
+                .is_some_and(|refusal| refusal.contains("artifact_vault_name")),
+            "{name:?} resolved: {refusal:?}"
+        );
+    }
+    let config = resolve("Quarry").expect("a DNS label resolves");
+    assert_eq!(config.artifact_vault_name.as_deref(), Some("quarry"));
+}
+
+/// The host serve's start line names is the one the listener serves: the
+/// vault's artifacts there by path, and each app on its own host. It names
+/// none on a managed vault, with no vault name, for a name that is no app
+/// label, or when a configured artifact domain claims the host first: the
+/// listener serves none of those there.
+#[test]
+fn the_start_line_names_the_served_localhost_host() {
+    let named = |name: Option<&str>| SyncServerConfig {
+        artifact_vault_name: name.map(str::to_owned),
+        ..Default::default()
+    };
+    assert_eq!(named(None).local_artifact_vault_host(), None);
+    assert_eq!(named(Some("two--labels")).local_artifact_vault_host(), None);
+    let managed = SyncServerConfig {
+        artifact_internal_vault_id: Some("vault-id".to_owned()),
+        ..named(Some("quarry"))
+    };
+    assert_eq!(managed.local_artifact_vault_host(), None);
+    let claimed = SyncServerConfig {
+        artifact_domains: vec!["quarry.localhost".to_owned()],
+        ..named(Some("quarry"))
+    };
+    assert_eq!(claimed.local_artifact_vault_host(), None);
+    let beside = SyncServerConfig {
+        artifact_domains: vec!["oneiron.page".to_owned()],
+        ..named(Some("quarry"))
+    };
+    assert_eq!(
+        beside.local_artifact_vault_host().as_deref(),
+        Some("quarry.localhost")
+    );
+    let host = named(Some("Quarry"))
+        .local_artifact_vault_host()
+        .expect("a served name has a host");
+    assert_eq!(host, "quarry.localhost");
+    on_engine_stack(move || async move {
+        let (_dir, server) = served(Some("Quarry"));
+        let vault_host = format!("{host}:{ARTIFACT_PORT}");
+        let (status, body) = open(&server, &vault_host, "/site/_s/c/published/").await;
+        assert_eq!(status, StatusCode::OK, "{vault_host}: {body}");
+        assert!(
+            body.contains(APP_PAGE),
+            "the app's page on {vault_host}: {body}"
+        );
+        let app_host = format!("site--{host}:{ARTIFACT_PORT}");
+        let (status, body) = open(&server, &app_host, "/_s/c/published/").await;
+        assert_eq!(status, StatusCode::OK, "{app_host}: {body}");
+        assert!(
+            body.contains(APP_PAGE),
+            "the app's page on {app_host}: {body}"
+        );
     });
 }

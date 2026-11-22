@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
-use crate::setting::{Kind, SettingValue, lower_is_tighter};
+use crate::setting::{Kind, SettingValue};
 
 /// The shipped lifetime of a held connector call: seven days.
 pub(crate) const DEFAULT_CONNECTOR_CALL_PENDING_TTL_SECS: u64 = 7 * 24 * 60 * 60;
@@ -58,6 +58,6 @@ crate::setting::setting_keys! {
         "connectors.calls.pending_ttl_secs" {
         kind: Kind::new(shipped_pending_ttl)
             .strictest(shipped_pending_ttl)
-            .tighter(lower_is_tighter::<ConnectorCallPendingSecs>),
+            .lower(),
     };
 }

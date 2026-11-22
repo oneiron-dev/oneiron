@@ -4,7 +4,8 @@
 //! a sibling branch, which the fold judges.
 
 use crate::authority::{
-    ActAuthority, AuthorityEntryHash, AuthorityKey, AuthorityOp, HostSlipIssuer, OwnerKeyEnrollment,
+    ActAuthority, AuthorityEntryHash, AuthorityKey, AuthorityOp, HostSlipIssuer,
+    OwnerKeyEnrollment, OwnerPasskeyEnrollment,
 };
 use crate::{Result, Vault};
 
@@ -103,6 +104,29 @@ where
     S: FnOnce(&[u8]) -> Vec<u8>,
 {
     vault.enrol_owner_key_on_parents_for_test(authority, input, parents, predecessor, sign)
+}
+
+/// The passkey enrollment of `input` on `parents`, a sibling branch of
+/// every row stored since, as [`enrol_owner_key_on`] stores a device key's:
+/// another owner's enrolment of the same passkey that the main-log one
+/// never names (REVIEW-10307 P1). True when the fold counted it.
+///
+/// # Errors
+///
+/// As [`enrol_owner_key_on`]; a key, a credential id or an assertion that
+/// does not decode.
+pub fn enrol_owner_passkey_on<S>(
+    vault: &Vault,
+    authority: &ActAuthority,
+    input: &OwnerPasskeyEnrollment,
+    parents: Vec<AuthorityEntryHash>,
+    predecessor: AuthorityKey,
+    sign: S,
+) -> Result<bool>
+where
+    S: FnOnce(&[u8]) -> Vec<u8>,
+{
+    vault.enrol_owner_passkey_on_parents_for_test(authority, input, parents, predecessor, sign)
 }
 
 /// The vault's main-log heads now, the parents a row appended now names.

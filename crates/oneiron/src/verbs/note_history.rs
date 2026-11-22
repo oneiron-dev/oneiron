@@ -3,6 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::owner_confirm;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_doc::{PurgeReceipt, TextHistoryErase};
 use crate::memory::{MemoryError, MemoryResult};
@@ -37,7 +38,7 @@ impl From<PurgeReceipt> for NoteHistoryPurgeReceipt {
     }
 }
 
-fn note_id(vault: &Vault, note_ref: &str) -> MemoryResult<EntityId> {
+pub(crate) fn note_id(vault: &Vault, note_ref: &str) -> MemoryResult<EntityId> {
     let note = crate::memory::resolve_entity_ref(vault, note_ref)?;
     if vault.get_entity_type(&note)? != Some(crate::registry::ENTITY_TYPE_NOTE) {
         return Err(MemoryError::bad_request("entity is not a NOTE"));
@@ -46,8 +47,14 @@ fn note_id(vault: &Vault, note_ref: &str) -> MemoryResult<EntityId> {
 }
 
 /// Start the engine's owner-only erase without inventing a caller's floor.
-/// With `input.check_in_ref` the Owner applies an asker's approved check-in
-/// for this erase (2k2).
+/// Where the purge erases at once (no veto vault, so one Owner) it takes
+/// the shared confirm; a purge that opens a veto window is not yet one-way,
+/// so its start takes none and its `_execute` keeps erase and its confirm
+/// (PURGE-START, Engine 11:34). The confirm binds the NOTE and the frontier
+/// the purge runs through now, and the purge runs through exactly that one:
+/// an edit after the preview refuses the old confirm, and one after the
+/// confirm is kept (review P1 on #7861). With `input.check_in_ref` the Owner
+/// applies an asker's approved check-in for this erase (2k2).
 pub fn purge_note_history_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
@@ -57,7 +64,12 @@ pub fn purge_note_history_as_owner(
     let note = note_id(vault, &input.note_ref)?;
     let check_in_ref = super::shared::check_in_ref(input.check_in_ref.as_deref())?;
     let (erase, decision) =
-        vault.start_text_history_erase_with_check_in(owner, &note, None, check_in_ref)?;
+        vault.start_text_history_erase_with_check_in(owner, &note, None, check_in_ref, || {
+            let ask = owner_confirm::asked("vault.notes.history_purge", &input)?;
+            let range = vault.note_history_erase_range(&note)?;
+            owner_confirm::admit(vault, owner, ask, &range)?;
+            Ok(Some(range.through))
+        })?;
     Ok(match erase {
         TextHistoryErase::Erased(receipt) => NoteHistoryPurgeOutcome::Erased {
             receipt: receipt.into(),
@@ -72,14 +84,20 @@ pub fn purge_note_history_as_owner(
 }
 
 /// The engine checks the act's starter, target, veto window and execution
-/// receipt in its own transaction; a retry returns that same receipt.
+/// receipt in its own transaction; a retry returns that same receipt. The
+/// call takes the shared confirm of its act first, which binds the act's
+/// history and the frontier it runs through now; the erase runs through
+/// exactly that one.
 pub fn execute_note_history_purge_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: NoteHistoryPurgeExecuteRequest,
 ) -> MemoryResult<NoteHistoryPurgeReceipt> {
+    let ask = owner_confirm::asked("vault.notes.history_purge_execute", &input)?;
+    let range = vault.text_history_erase_act_range(owner, &input.act_id)?;
+    owner_confirm::admit(vault, owner, ask, &range)?;
     Ok(vault
-        .execute_completed_text_history_erase(owner, &input.act_id)?
+        .execute_confirmed_text_history_erase(owner, &input.act_id, &range.through)?
         .into())
 }
 

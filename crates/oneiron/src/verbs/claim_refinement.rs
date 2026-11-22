@@ -77,7 +77,7 @@ fn branch_proposal(
     let mut proposal = ClaimBody::new(
         base.predicate.clone(),
         base.subject,
-        crate::ingest::json_to_msgpack_value(&input.value),
+        crate::serialize::json_to_msgpack_value(&input.value),
         input.confidence as f32,
         ClaimApprovalStatus::Proposed,
         ClaimLifecycleStatus::Active,
@@ -95,6 +95,6 @@ fn branch_proposal(
     proposal.evidence = input
         .evidence
         .as_ref()
-        .map(crate::ingest::json_to_msgpack_value);
+        .map(crate::serialize::json_to_msgpack_value);
     Ok(proposal)
 }

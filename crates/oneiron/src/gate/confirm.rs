@@ -700,9 +700,32 @@ pub(super) fn critical_claim_can_land_auto_with_confirm(
     pending: &[GateReasonCode],
     predicate: &str,
 ) -> bool {
+    critical_claim_floor_pend_only(input, pending) && !predicate.starts_with("comm.")
+}
+
+/// Whether the vault owner's in-person proof may lift the criticality floor
+/// on an Approved claim write: the floor is its only pend, and the write is
+/// no `comm.*` projector output
+/// ([`critical_claim_can_land_auto_with_confirm`]). An exact close writes no
+/// projector output: it changes only its row's lifecycle, so the owner's
+/// retract or supersede of an Approved `comm.*` claim lands on the proof as
+/// any other does (review 10161 P1). A new `comm.*` write or approval keeps
+/// its floor.
+pub(super) fn owner_proof_lifts_criticality_floor(
+    input: &GateEvaluatorInput,
+    pending: &[GateReasonCode],
+    predicate: &str,
+    verified_close: bool,
+) -> bool {
+    critical_claim_floor_pend_only(input, pending)
+        && (verified_close || !predicate.starts_with("comm."))
+}
+
+/// Whether a critical claim write with no consent pends on the criticality
+/// floor alone.
+fn critical_claim_floor_pend_only(input: &GateEvaluatorInput, pending: &[GateReasonCode]) -> bool {
     input.content_kind == GateContentKind::Claim
         && input.criticality == PolicyCriticality::Critical
         && input.consent.is_none()
         && pending == [GateReasonCode::PendingCriticalityFloor]
-        && !predicate.starts_with("comm.")
 }
