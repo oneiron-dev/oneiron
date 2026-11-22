@@ -22,6 +22,13 @@
 //! the same id): the newest giving by ancestry is the Grant's terms. An end is forever. An end
 //! no person decided (a lapse, or a row's direct delete) carries no owner act: its decider is
 //! the rule, and only an end may be one.
+//!
+//! One family is no Grant row: an agent definition's switches (pass 28 R2d, Engine RULING
+//! AGENT-DEF-OWN-LANE-FIX = B, 16 Nov 02:21). Turning a definition back on or moving its
+//! models is the owner's alone, so the owner's door states the switches it writes in an act
+//! of this family ([`GrantActChange::State`]), in clear, and every install lands a widening
+//! row only within the switches the owner last stated. Turning a definition off is any
+//! writer's and takes no act, and an agent definition's line never ends.
 
 use rmpv::Value;
 
@@ -42,6 +49,20 @@ const GRANT_ACT_KEYS: [&str; 7] = [
 ];
 const CHANGE_GIVE: &str = "give";
 const CHANGE_END: &str = "end";
+const CHANGE_STATE: &str = "state";
+const SWITCH_KEYS: [&str; 7] = [
+    "enabled",
+    "approval",
+    "active",
+    "models",
+    "compaction_model",
+    "model_tier",
+    "dreaming_model",
+];
+/// The most model choices one statement lists: a definition names a handful.
+pub const MAX_STATED_MODELS: usize = 64;
+/// The longest model id or tier a statement names, in bytes.
+pub const MAX_STATED_MODEL_LEN: usize = 256;
 
 /// A grant act's `seen`: zero for both kinds. A giving names the row's whole new terms, and an
 /// end always lands, never refused as stale.
@@ -70,6 +91,9 @@ pub enum GrantFamily {
     /// act's revoke, so a grant act of this family is a rule's end alone (a lapse, or a direct
     /// delete of its row).
     OwnerAgent,
+    /// An agent definition's switches (an AGENT_DEF row, not a Grant row): the owner states
+    /// them ([`GrantActChange::State`]); no act of this family gives terms or ends.
+    AgentDefinition,
 }
 
 impl GrantFamily {
@@ -82,6 +106,7 @@ impl GrantFamily {
             Self::HouseLink => "house_link",
             Self::InquiryEdge => "inquiry_edge",
             Self::OwnerAgent => "owner_agent",
+            Self::AgentDefinition => "agent_definition",
         }
     }
 
@@ -94,6 +119,7 @@ impl GrantFamily {
             "house_link" => Self::HouseLink,
             "inquiry_edge" => Self::InquiryEdge,
             "owner_agent" => Self::OwnerAgent,
+            "agent_definition" => Self::AgentDefinition,
             _ => return None,
         })
     }
@@ -112,23 +138,107 @@ pub enum GrantDecider {
 }
 
 /// What a grant act does to its row's standing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GrantActChange {
     /// Gives the row the terms `terms` commits to ([`grant_terms_commitment`]), replacing every
     /// giving the act's parents carry.
     Give { terms: [u8; 32] },
     /// Ends the row's standing, for good.
     End,
+    /// States an agent definition's switches as its owner set them, replacing every statement
+    /// the act's parents carry: the most a row at that definition may widen to. Family
+    /// [`GrantFamily::AgentDefinition`] alone.
+    State { switches: AgentSwitches },
 }
 
 impl GrantActChange {
-    /// The owner act kind a person's act of this change carries.
+    /// The owner act kind a person's act of this change carries: a statement of switches
+    /// gives authority.
     #[must_use]
     pub fn act_kind(&self) -> OwnerActKind {
         match self {
-            Self::Give { .. } => OwnerActKind::GrantGive,
+            Self::Give { .. } | Self::State { .. } => OwnerActKind::GrantGive,
             Self::End => OwnerActKind::GrantEnd,
         }
+    }
+}
+
+/// An agent definition's approval, least authority first.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
+pub enum AgentApproval {
+    Rejected,
+    Proposed,
+    Approved,
+    Auto,
+}
+
+impl AgentApproval {
+    /// The wire tag.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Rejected => "rejected",
+            Self::Proposed => "proposed",
+            Self::Approved => "approved",
+            Self::Auto => "auto",
+        }
+    }
+
+    /// The approval a wire tag names; `None` for any other text.
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "rejected" => Self::Rejected,
+            "proposed" => Self::Proposed,
+            "approved" => Self::Approved,
+            "auto" => Self::Auto,
+            _ => return None,
+        })
+    }
+}
+
+/// The switches that decide whether an agent definition runs and which models read its
+/// context: what turning it back on or moving its models changes. Every other field of a
+/// definition is any writer's.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct AgentSwitches {
+    /// The definition is on.
+    pub enabled: bool,
+    /// Its approval.
+    pub approval: AgentApproval,
+    /// Its lifecycle is active.
+    pub active: bool,
+    /// The models it lists, by id, sorted, each once.
+    pub models: Vec<String>,
+    /// Its compaction model.
+    pub compaction_model: Option<String>,
+    /// Its model tier.
+    pub model_tier: Option<String>,
+    /// Its dreaming model.
+    pub dreaming_model: Option<String>,
+}
+
+impl AgentSwitches {
+    /// Every model id and tier is 1 to [`MAX_STATED_MODEL_LEN`] bytes, the list holds at most
+    /// [`MAX_STATED_MODELS`], sorted and each once, so one statement has one byte form.
+    fn validate(&self) -> Result<()> {
+        let named = |name: &String| (1..=MAX_STATED_MODEL_LEN).contains(&name.len());
+        let sorted_once = self.models.windows(2).all(|pair| pair[0] < pair[1]);
+        let options = [
+            &self.compaction_model,
+            &self.model_tier,
+            &self.dreaming_model,
+        ];
+        if self.models.len() > MAX_STATED_MODELS
+            || !sorted_once
+            || !self.models.iter().all(named)
+            || !options.into_iter().flatten().all(named)
+        {
+            return Err(invalid_authority());
+        }
+        Ok(())
     }
 }
 
@@ -199,7 +309,18 @@ impl GrantActRecord {
         {
             return Err(invalid_authority());
         }
-        Ok(())
+        // An agent definition's act states switches and nothing else: a statement gives no
+        // Grant terms, and no act ends the line, since turning a definition off is any
+        // writer's and an ended line would refuse the owner's every later statement.
+        match (&self.change, self.family) {
+            (GrantActChange::State { switches }, GrantFamily::AgentDefinition) => {
+                switches.validate()
+            }
+            (GrantActChange::State { .. }, _) | (_, GrantFamily::AgentDefinition) => {
+                Err(invalid_authority())
+            }
+            _ => Ok(()),
+        }
     }
 }
 
@@ -227,6 +348,7 @@ pub(super) fn grant_act_value(record: &GrantActRecord) -> Value {
     let (change, terms) = match &record.change {
         GrantActChange::Give { terms } => (CHANGE_GIVE, binary_value(*terms)),
         GrantActChange::End => (CHANGE_END, Value::Nil),
+        GrantActChange::State { switches } => (CHANGE_STATE, switches_value(switches)),
     };
     Value::Map(vec![
         (Value::from(OP_KEY_KIND), Value::from(OP_KIND_GRANT_ACT)),
@@ -239,8 +361,79 @@ pub(super) fn grant_act_value(record: &GrantActRecord) -> Value {
     ])
 }
 
-/// Seven keys, always: a rule's end carries a nil act, an end a nil `terms`. The envelope's
-/// canonical re-encode then pins every value's form.
+/// A statement's switches under `terms`: seven keys, always, a choice not made as nil.
+fn switches_value(switches: &AgentSwitches) -> Value {
+    let text = |value: &Option<String>| value.as_deref().map_or(Value::Nil, Value::from);
+    Value::Map(vec![
+        (Value::from("enabled"), Value::from(switches.enabled)),
+        (
+            Value::from("approval"),
+            Value::from(switches.approval.as_str()),
+        ),
+        (Value::from("active"), Value::from(switches.active)),
+        (
+            Value::from("models"),
+            Value::Array(
+                switches
+                    .models
+                    .iter()
+                    .map(|model| Value::from(model.as_str()))
+                    .collect(),
+            ),
+        ),
+        (
+            Value::from("compaction_model"),
+            text(&switches.compaction_model),
+        ),
+        (Value::from("model_tier"), text(&switches.model_tier)),
+        (
+            Value::from("dreaming_model"),
+            text(&switches.dreaming_model),
+        ),
+    ])
+}
+
+fn decode_switches(value: &Value) -> Result<AgentSwitches> {
+    let entries = map_entries(value)?;
+    validate_keys(entries, &SWITCH_KEYS)?;
+    let flag = |name: &str| -> Result<bool> {
+        required(entries, name)?
+            .as_bool()
+            .ok_or_else(invalid_authority)
+    };
+    let text = |value: &Value| -> Result<String> {
+        value
+            .as_str()
+            .map(str::to_owned)
+            .ok_or_else(invalid_authority)
+    };
+    let choice = |name: &str| -> Result<Option<String>> {
+        Ok(match required(entries, name)? {
+            Value::Nil => None,
+            value => Some(text(value)?),
+        })
+    };
+    let Value::Array(models) = required(entries, "models")? else {
+        return Err(invalid_authority());
+    };
+    let switches = AgentSwitches {
+        enabled: flag("enabled")?,
+        approval: required(entries, "approval")?
+            .as_str()
+            .and_then(AgentApproval::from_name)
+            .ok_or_else(invalid_authority)?,
+        active: flag("active")?,
+        models: models.iter().map(text).collect::<Result<_>>()?,
+        compaction_model: choice("compaction_model")?,
+        model_tier: choice("model_tier")?,
+        dreaming_model: choice("dreaming_model")?,
+    };
+    switches.validate()?;
+    Ok(switches)
+}
+
+/// Seven keys, always: a rule's end carries a nil act, an end a nil `terms`, a statement its
+/// switches. The envelope's canonical re-encode then pins every value's form.
 pub(super) fn decode_grant_act(entries: &[(Value, Value)]) -> Result<AuthorityOp> {
     validate_keys(entries, &GRANT_ACT_KEYS)?;
     let decider = match required(entries, OP_KEY_ACT)? {
@@ -257,6 +450,9 @@ pub(super) fn decode_grant_act(entries: &[(Value, Value)]) -> Result<AuthorityOp
             terms: decode_hash(terms)?,
         },
         Some(CHANGE_END) if terms.is_nil() => GrantActChange::End,
+        Some(CHANGE_STATE) => GrantActChange::State {
+            switches: decode_switches(terms)?,
+        },
         _ => return Err(invalid_authority()),
     };
     Ok(AuthorityOp::GrantAct(GrantActRecord {

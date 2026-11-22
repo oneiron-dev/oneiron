@@ -75,6 +75,13 @@ pub struct BatchBuilder<'a> {
     /// answers ([`Self::authored_through`]). `None` writes each body as
     /// staged.
     agent_authoring: Option<crate::agent_def::AgentAuthoring>,
+    /// The human the batch's door bound it to ([`Self::with_owner_statement_person`]): an
+    /// owner-grade batch states its agent definitions' switches in this person's name when the
+    /// person is a counted owner of the vault (pass 28 R2d review finding 5).
+    owner_statement_person: Option<EntityId>,
+    /// The reach of each agent definition an owner-grade batch put, for the door's answer
+    /// ([`Self::agent_switches_reaches`]).
+    agent_switches_reaches: crate::agent_def::AgentSwitchesReaches,
     /// Each ASSET `put_marked_carrier` queued, bound to the BLAKE3 of its
     /// exact bytes: a marked carrier's content its writer already scanned
     /// (FIX 9034), set by that door alone.
@@ -147,6 +154,8 @@ impl<'a> BatchBuilder<'a> {
             prepared_person_substrate: None,
             prepared_agent_birth: None,
             agent_authoring: None,
+            owner_statement_person: None,
+            agent_switches_reaches: crate::agent_def::AgentSwitchesReaches::default(),
             marked_carriers: std::collections::BTreeMap::new(),
             #[cfg(feature = "sync")]
             import_tier: crate::store::window_protocol::ImportTier::OwnDevice,
@@ -208,6 +217,25 @@ impl<'a> BatchBuilder<'a> {
             .as_ref()
             .map(crate::agent_def::AgentAuthoring::receipts)
             .unwrap_or_default()
+    }
+
+    /// Names `writer`, the actor the batch's door bound it to, as the person an owner-grade
+    /// batch's statement of its agent definitions' switches speaks for when `writer` is a human
+    /// who is a counted owner of the vault when the batch commits (pass 28 R2d review finding
+    /// 5). Any other writer names no one: the statement speaks for the vault's one recorded
+    /// owner, as with no writer.
+    pub(crate) fn with_owner_statement_person(mut self, writer: &crate::WriteActor) -> Self {
+        self.owner_statement_person = (writer.actor_class() == crate::edge::EdgeActorClass::Human)
+            .then(|| writer.entity_ref());
+        self
+    }
+
+    /// The reach each AGENT_DEF put of an owner-grade batch took, by the id it was written at,
+    /// readable once the batch has committed: a put the owner's other installs will hold has
+    /// [`crate::agent_def::AgentSwitchesReach::notice`] (Engine RULING R2D-NO-CARRIER-POLICY =
+    /// B). Empty for every other batch.
+    pub(crate) fn agent_switches_reaches(&self) -> crate::agent_def::AgentSwitchesReaches {
+        self.agent_switches_reaches.clone()
     }
 
     /// Gates and applies `id`'s raw CLAIM put under `envelope`, its verified
