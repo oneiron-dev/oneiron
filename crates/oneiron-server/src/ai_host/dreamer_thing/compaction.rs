@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use oneiron::EntityId;
 use oneiron::code_run::{ScopedChildGeneration, ScopedChildGenerationCall, ScopedChildStop};
 use oneiron::llm::WorkContext;
 use oneiron::llm::manifest::ModelRole;
@@ -13,6 +14,9 @@ pub(super) struct Generation {
     count: Arc<GenerationCount>,
     stop: ScopedChildStop,
     context: WorkContext,
+    /// The rows the child's lent slices were read from: its compaction
+    /// sends nothing once one is withdrawn, as its own calls do.
+    sources: Arc<[EntityId]>,
 }
 
 impl Generation {
@@ -20,11 +24,13 @@ impl Generation {
         count: Arc<GenerationCount>,
         stop: ScopedChildStop,
         context: WorkContext,
+        sources: Vec<EntityId>,
     ) -> Self {
         Self {
             count,
             stop,
             context,
+            sources: sources.into(),
         }
     }
 }
@@ -43,6 +49,10 @@ impl ScopedChildGeneration for Generation {
 
     fn live_role(&self) -> ModelRole {
         DREAMER_EXTRACTION_ROLE
+    }
+
+    fn source_rows(&self) -> Arc<[EntityId]> {
+        Arc::clone(&self.sources)
     }
 }
 

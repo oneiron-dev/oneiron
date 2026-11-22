@@ -129,7 +129,7 @@ impl SyncPayloadOwners for RegistryOwners<'_> {
 /// The receipt's reason for a row the sync projection names.
 fn unresolved(reason: SyncUnclassified) -> Unresolved {
     match reason {
-        SyncUnclassified::Undecodable => Unresolved::Undecodable,
+        SyncUnclassified::Undecodable | SyncUnclassified::KeyMismatch => Unresolved::Undecodable,
         SyncUnclassified::UnknownKind => Unresolved::UnknownKind,
         SyncUnclassified::UnknownRoot
         | SyncUnclassified::NoOwner

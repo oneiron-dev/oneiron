@@ -21,6 +21,7 @@ use crate::outbound::dispatch_pipeline::retry_after::{
 };
 use crate::receipt::ReceiptRecord;
 use crate::receipt::outbound_intent_receipt;
+use oneiron_contracts::lifecycle::LifecycleWords;
 
 pub(crate) use crate::receipt::dispatch_identity::APPROVAL_DIGEST_FIELD;
 
@@ -416,7 +417,7 @@ pub(super) fn dispatch_result_receipt(
     if let Some(effect_state) = effect_state {
         receipt
             .fields
-            .insert("intent_state".to_owned(), effect_state.as_str().to_owned());
+            .insert("intent_state".to_owned(), effect_state.word().to_owned());
     }
     // GOV-02 (ONE-1418) budget legibility: stamped only when a governing
     // connector key's budget stage ran. `budget_debit`/`budget` are the

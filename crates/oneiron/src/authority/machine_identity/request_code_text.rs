@@ -17,25 +17,32 @@ const SYMBOLS: usize = 26;
 /// The bits the last symbol carries past the code's 128.
 const TRAILING_BITS: u32 = (SYMBOLS as u32) * 5 - 128;
 
+/// 128 bits as the owner reads them: 26 upper-case symbols. The one encoder
+/// of a request code and of a recovery root's code
+/// ([`crate::authority::recovery_root_code`]).
+pub(in crate::authority) fn code_text(code: &[u8; 16]) -> String {
+    let mut text = String::with_capacity(SYMBOLS);
+    let (mut acc, mut bits) = (0u16, 0u32);
+    for byte in code {
+        acc = (acc << 8) | u16::from(*byte);
+        bits += 8;
+        while bits >= 5 {
+            bits -= 5;
+            text.push(char::from(ALPHABET[usize::from((acc >> bits) & 31)]));
+        }
+        acc &= (1 << bits) - 1;
+    }
+    text.push(char::from(
+        ALPHABET[usize::from((acc << TRAILING_BITS) & 31)],
+    ));
+    text
+}
+
 impl RequestCode {
     /// The code as a joining machine shows it: 26 upper-case symbols.
     #[must_use]
     pub fn to_text(&self) -> String {
-        let mut text = String::with_capacity(SYMBOLS);
-        let (mut acc, mut bits) = (0u16, 0u32);
-        for byte in self.0 {
-            acc = (acc << 8) | u16::from(byte);
-            bits += 8;
-            while bits >= 5 {
-                bits -= 5;
-                text.push(char::from(ALPHABET[usize::from((acc >> bits) & 31)]));
-            }
-            acc &= (1 << bits) - 1;
-        }
-        text.push(char::from(
-            ALPHABET[usize::from((acc << TRAILING_BITS) & 31)],
-        ));
-        text
+        code_text(&self.0)
     }
 
     /// Reads a typed code back, as recovery codes read: case, `-` and

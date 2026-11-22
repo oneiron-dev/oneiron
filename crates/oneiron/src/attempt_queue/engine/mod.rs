@@ -20,6 +20,7 @@ mod redirect;
 mod requeue;
 mod successor;
 mod task_lease;
+mod unjoined_hold;
 mod workflow;
 
 use crate::scan_check::{EngineScan, ScanCount};

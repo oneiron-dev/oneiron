@@ -28,70 +28,104 @@ impl Vault {
     /// returns [`ClaimError::EngineIdentitiesNotProvisioned`] and writes
     /// nothing.
     ///
+    /// This door carries no actor and no owner proof, so it never lifts a
+    /// restriction. A weakening or a stale mark of a claim that restricts
+    /// someone's access (a delivery window, an opt-out, a held campaign
+    /// member, ...: [`crate::federation::claim_removal_widens_in`]) takes it
+    /// out of its readers' fold, which is a live vault owner's act. Unless
+    /// its class is critical, it is refused with
+    /// [`ClaimError::ActorLacksClaimAuthority`] and writes nothing. The owner
+    /// demotes it through `vault.claims.demote` on the owner's own handle. A
+    /// decay only moves the claim's weight and lands as before.
+    ///
     /// [`ClaimError::EngineIdentitiesNotProvisioned`]: crate::error::ClaimError::EngineIdentitiesNotProvisioned
+    /// [`ClaimError::ActorLacksClaimAuthority`]: crate::error::ClaimError::ActorLacksClaimAuthority
     pub fn apply_claim_demotion(
         &self,
         claim_id: &EntityId,
         action: ClaimDemotionAction,
         now: u64,
     ) -> Result<ClaimDemotion> {
-        let mut wtxn = self.store.env.write_txn()?;
-        let (body, _) = self.claim_for_lifecycle_in(&wtxn, claim_id)?;
-        Self::require_active_claim(&body)?;
-        match action {
-            ClaimDemotionAction::Decay {
-                new_claim_of_weight,
-            } => validate_edge_weight(new_claim_of_weight)?,
-            ClaimDemotionAction::Weaken { new_confidence }
-                if !new_confidence.is_finite() || !(0.0..=1.0).contains(&new_confidence) =>
-            {
-                return Err(Error::InvalidClaimBody(
-                    "confidence must be finite in [0, 1]",
-                ));
-            }
-            _ => {}
-        }
-        if matches!(action, ClaimDemotionAction::Weaken { .. }) {
-            self.dreamer_successor_writer_in_txn(&mut wtxn, now)?
-                .require_may_succeed(&body)?;
-        }
-        let policy = crate::gate::resolve_policy_manifest(&self.store, &wtxn)?;
-        if policy.criticality_for_predicate(&body.predicate)
-            == crate::gate::PolicyCriticality::Critical
-        {
-            let deferred_action = match action {
+        // Through the vault's write door, a group of its own on the calling
+        // thread as the bare transaction was, so the queued rows reach the
+        // live windows' post-commit mirror.
+        let outcome: Result<ClaimDemotion> = self.with_write_txn(|wtxn| {
+            let (body, _) = self.claim_for_lifecycle_in(&*wtxn, claim_id)?;
+            Self::require_active_claim(&body)?;
+            match action {
                 ClaimDemotionAction::Decay {
                     new_claim_of_weight,
-                } => super::deferred::DeferredAction::Decay(new_claim_of_weight),
-                ClaimDemotionAction::Weaken { new_confidence } => {
-                    super::deferred::DeferredAction::Weaken(new_confidence)
+                } => validate_edge_weight(new_claim_of_weight)?,
+                ClaimDemotionAction::Weaken { new_confidence }
+                    if !new_confidence.is_finite() || !(0.0..=1.0).contains(&new_confidence) =>
+                {
+                    return Err(Error::InvalidClaimBody(
+                        "confidence must be finite in [0, 1]",
+                    ));
                 }
-                ClaimDemotionAction::MarkStale => super::deferred::DeferredAction::Stale,
-            };
-            // The target body stays untouched while the bound human action waits.
-            super::deferred::put_pending(
-                self,
-                &mut wtxn,
-                claim_id,
-                &body,
-                super::deferred::DeferredClaim {
-                    action: deferred_action,
-                    body_hash: super::deferred::body_hash(&body)?,
-                    frontier: policy.read_frontier_hash()?,
-                    critical: true,
-                },
-                None,
-                now,
-            )?;
-            wtxn.commit()?;
-            return Err(Error::Gate(crate::error::GateError::GateWriteRejected {
-                outcome: "pending",
-                reason_codes: vec![crate::gate::GateReasonCode::PendingCriticalityFloor.as_str()],
-            }));
-        }
-        let next = self.apply_claim_demotion_in_txn(&mut wtxn, claim_id, action, now)?;
-        wtxn.commit()?;
-        Ok(next)
+                _ => {}
+            }
+            if matches!(action, ClaimDemotionAction::Weaken { .. }) {
+                self.dreamer_successor_writer_in_txn(wtxn, now)?
+                    .require_may_succeed(&body)?;
+            }
+            let policy = crate::gate::resolve_policy_manifest(&self.store, &*wtxn)?;
+            if policy.criticality_for_predicate(&body.predicate)
+                == crate::gate::PolicyCriticality::Critical
+            {
+                let deferred_action = match action {
+                    ClaimDemotionAction::Decay {
+                        new_claim_of_weight,
+                    } => super::deferred::DeferredAction::Decay(new_claim_of_weight),
+                    ClaimDemotionAction::Weaken { new_confidence } => {
+                        super::deferred::DeferredAction::Weaken(new_confidence)
+                    }
+                    ClaimDemotionAction::MarkStale => super::deferred::DeferredAction::Stale,
+                };
+                // The target body stays untouched while the bound human action waits.
+                super::deferred::put_pending(
+                    self,
+                    wtxn,
+                    claim_id,
+                    &body,
+                    super::deferred::DeferredClaim {
+                        action: deferred_action,
+                        body_hash: super::deferred::body_hash(&body)?,
+                        frontier: policy.read_frontier_hash()?,
+                        critical: true,
+                    },
+                    None,
+                    now,
+                )?;
+                // Commits the pending row, then refuses with the same typed error.
+                return Ok(Err(Error::Gate(
+                    crate::error::GateError::GateWriteRejected {
+                        outcome: "pending",
+                        reason_codes: vec![
+                            crate::gate::GateReasonCode::PendingCriticalityFloor.as_str(),
+                        ],
+                    },
+                )));
+            }
+            // A critical target parked above for the owner's Clear. A noncritical
+            // one that restricts someone is refused here, under the rule the
+            // Memory door and delete apply (the Engine's RULING
+            // RESTRICTION-FIX-SCOPE = A; FIX [RESTRICTION-CLOSE-BY-NATIVE-DEMOTION]).
+            if !matches!(action, ClaimDemotionAction::Decay { .. })
+                && crate::federation::claim_removal_widens_in(self, &*wtxn, &body)?
+            {
+                return Err(Error::Claim(
+                    crate::error::ClaimError::ActorLacksClaimAuthority {
+                        reason: "a native weakening or stale mark of a claim that restricts \
+                                 someone's access is refused: lifting a restriction is a live \
+                                 vault owner's act, through vault.claims.demote",
+                    },
+                ));
+            }
+            let next = self.apply_claim_demotion_in_txn(wtxn, claim_id, action, now)?;
+            Ok(Ok(next))
+        })?;
+        outcome
     }
 
     pub(crate) fn apply_claim_demotion_in_txn(
@@ -168,6 +202,11 @@ impl Vault {
                 }
                 let successor = EntityId::now();
                 let writer = self.dreamer_successor_writer_in_txn(wtxn, now)?;
+                // The owner's open question follows the claim (S17-1 = A):
+                // the weakened successor is the item they answer now, and the
+                // supersession below closes the old claim's row silently.
+                let question =
+                    super::held_question::open_owner_question_in_txn(&self.store, wtxn, claim_id)?;
                 crate::batch::ClaimMaterialization::apply_successor(
                     self,
                     wtxn,
@@ -179,7 +218,22 @@ impl Vault {
                     writer,
                     now,
                 )?;
+                if let Some(question) = &question {
+                    super::held_question::restate_owner_question_in_txn(
+                        &self.store,
+                        wtxn,
+                        question,
+                        &successor,
+                    )?;
+                }
                 self.supersede_claim_in_txn_as(wtxn, &successor, claim_id, now, writer.actor())?;
+                // The successor row and its edges, for the live windows' mirror.
+                #[cfg(feature = "sync")]
+                crate::batch::queue_committed_rows(
+                    self,
+                    wtxn,
+                    std::collections::BTreeSet::from([*claim_id, successor]),
+                );
                 return Ok(ClaimDemotion {
                     rung: ClaimDemotionRung::Weakened,
                     claim: successor,
@@ -244,6 +298,14 @@ impl Vault {
             });
         }
         crate::batch::ClaimMaterialization::apply_demotion(self, wtxn, ops)?;
+        // The demoted row, for the live windows' mirror (FIX
+        // CLAIM-RAW-TXN-DOORS-DROP-LIVE-WINDOW-ROWS).
+        #[cfg(feature = "sync")]
+        crate::batch::queue_committed_rows(
+            self,
+            wtxn,
+            std::collections::BTreeSet::from([*claim_id]),
+        );
         Ok(ClaimDemotion {
             rung: next,
             claim: *claim_id,

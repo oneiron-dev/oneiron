@@ -15,7 +15,7 @@ use crate::vault::Vault;
 use crate::write_envelope::WriteActor;
 
 use super::act_admission::{EngineCause, ResolvedSeal, TopologySeal, resolve_seal_in_txn};
-use super::distinct_claim::distinct_pair_key;
+use super::distinct_claim::{DistinctClaimPlace, distinct_pair_key};
 use super::encode_identity_topology_event_body;
 use super::lifecycle_state::EntityLifecycleState;
 use super::op_vocabulary::{FacetOp, IdentityOpEvidence, IdentityTopologyOp};
@@ -203,6 +203,23 @@ impl Vault {
         seal: &TopologySeal,
         now: u64,
     ) -> Result<IdentityOpOutcome> {
+        self.apply_identity_topology_op_placed_in_txn(wtxn, op, write, seal, None, now)
+    }
+
+    /// [`Vault::apply_identity_topology_op_as_in_txn`] for an op derived
+    /// from words that have a place: an `assert_distinct` that mints its
+    /// claim mints it at `place` (FIX INTENT-DISTINCT-PROJECT-WORLD). A
+    /// claim's place is fixed at its birth (`stamp_put` refuses a restamp),
+    /// so it is never moved there afterwards.
+    pub(crate) fn apply_identity_topology_op_placed_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        op: &IdentityTopologyOp,
+        write: &IdentityOpWrite,
+        seal: &TopologySeal,
+        place: Option<&DistinctClaimPlace>,
+        now: u64,
+    ) -> Result<IdentityOpOutcome> {
         if write.approval == ClaimApprovalStatus::Rejected {
             return Ok(IdentityOpOutcome::Noop);
         }
@@ -210,7 +227,7 @@ impl Vault {
         // effect (FACET mints, distinct CLAIM writes); the op's event is
         // minted here, so its revision is zero.
         let seal = resolve_seal_in_txn(self, wtxn, seal, None)?;
-        self.apply_identity_topology_op_resolved_in_txn(wtxn, op, write, &seal, now)
+        self.apply_identity_topology_op_resolved_placed_in_txn(wtxn, op, write, &seal, place, now)
     }
 
     /// [`Vault::apply_identity_topology_op_as_in_txn`] under a seal context
@@ -222,6 +239,20 @@ impl Vault {
         op: &IdentityTopologyOp,
         write: &IdentityOpWrite,
         seal: &ResolvedSeal,
+        now: u64,
+    ) -> Result<IdentityOpOutcome> {
+        self.apply_identity_topology_op_resolved_placed_in_txn(wtxn, op, write, seal, None, now)
+    }
+
+    /// [`Vault::apply_identity_topology_op_resolved_in_txn`] minting a
+    /// distinct claim at `place` ([`Vault::apply_identity_topology_op_placed_in_txn`]).
+    fn apply_identity_topology_op_resolved_placed_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        op: &IdentityTopologyOp,
+        write: &IdentityOpWrite,
+        seal: &ResolvedSeal,
+        place: Option<&DistinctClaimPlace>,
         now: u64,
     ) -> Result<IdentityOpOutcome> {
         if write.approval == ClaimApprovalStatus::Rejected {
@@ -445,7 +476,7 @@ impl Vault {
             }
             IdentityTopologyOp::AssertDistinct(distinct) => {
                 let pair = distinct_pair_key(distinct.a, distinct.b);
-                let claim = self.assert_distinct_claim_in_txn(wtxn, write, pair, now)?;
+                let claim = self.assert_distinct_claim_in_txn(wtxn, write, pair, place, now)?;
                 self.write_identity_event_in_txn(
                     wtxn,
                     event_id,

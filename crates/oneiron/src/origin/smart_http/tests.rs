@@ -3,12 +3,45 @@
 
 use std::process::Command as StdCommand;
 
+use super::protected_ref_confirm::ProtectedRefPasses;
 use super::*;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::config::VaultConfig;
 use crate::entity_id::ENTITY_ID_LEN;
+use crate::federation::GitPushCaller;
+use crate::federation::git_push::ServedPushRepo;
 use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
 use crate::store::Store;
+
+/// The vault's owner: the principal every in-process push fixture pushes
+/// as. A push no host transport authenticated is the owner's alone (the
+/// G1-PUSH owner-only arm), so a fixture pushing as anyone else is refused
+/// before the behavior it means to pin.
+pub(super) fn owner_principal(vault: &Vault) -> EntityId {
+    vault.ensure_embedded_owner_actor().expect("vault owner")
+}
+
+/// A receive-pack admission stamp as the vault's owner, carrying the real
+/// G1-PUSH admission for `repo_dir`: what production's `stamp_admission`
+/// mints (push_admission.rs). A fixture intent recorded under it passes the
+/// intent writer's push-authority check.
+pub(super) fn owner_admission_stamp(vault: &Vault, repo_dir: &Path) -> DoorAdmissionStamp {
+    let owner = owner_principal(vault);
+    let caller = GitPushCaller::in_process(&owner.to_hex()).expect("owner in-process caller");
+    let served = ServedPushRepo::resolve(vault, "demo", repo_dir);
+    let txn = vault.store.env.read_txn().expect("read txn");
+    let push = vault
+        .admit_git_receive_pack_in_txn(&txn, &caller, &served, None)
+        .expect("owner push admission")
+        .into_stamp();
+    let mut stamp = DoorAdmissionStamp::from_principal(
+        EntityId::now(),
+        &owner.to_hex(),
+        crate::unix_seconds_now(),
+    );
+    stamp.push = Some(push);
+    stamp
+}
 
 pub(super) fn fixture_intent(vault: &Vault, root: &Path, updates: Vec<RefUpdate>) -> EntityId {
     fixture_intent_with_pointers(vault, root, updates, Vec::new())
@@ -21,11 +54,7 @@ pub(super) fn fixture_intent_with_pointers(
     updates: Vec<RefUpdate>,
     lfs_pointers: Vec<LfsPushedPointer>,
 ) -> EntityId {
-    let stamp = DoorAdmissionStamp::from_principal(
-        EntityId::now(),
-        &EntityId::now().to_hex(),
-        crate::unix_seconds_now(),
-    );
+    let stamp = owner_admission_stamp(vault, root);
     vault
         .record_receive_pack_admission(root, &stamp, DoorSeam::Landed)
         .expect("admission");
@@ -37,7 +66,13 @@ pub(super) fn fixture_intent_with_pointers(
         quarantine_path: None,
     };
     vault
-        .record_receive_pack_intent(&unpinned_repo_ref(root), &stamp, &door, None)
+        .record_receive_pack_intent(
+            &unpinned_repo_ref(root),
+            &stamp,
+            &door,
+            None,
+            &ProtectedRefPasses::default(),
+        )
         .expect("pre-effect durable intent");
     stamp.operation_id
 }
@@ -353,7 +388,9 @@ pub(super) fn try_advertise(
         // A stock client asks for v2; the gate declines it so the ref list
         // stays in this response, where it can be projected.
         git_protocol: Some("version=2".to_owned()),
-        remote_user: Some("principal:tester".to_owned()),
+        // A receive-pack advertisement is part of a push (G1-PUSH), so it is
+        // admitted as the vault's owner, like every in-process push fixture.
+        remote_user: Some(owner_principal(vault).to_hex()),
         remote_addr: None,
     };
     let mut body = io::empty();

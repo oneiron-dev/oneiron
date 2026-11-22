@@ -66,7 +66,9 @@ pub fn open_auto_promotion_vault(path: &std::path::Path) -> Result<Vault> {
     Ok(vault)
 }
 
-fn auto_permitting_manifest() -> Result<Vec<u8>> {
+/// The policy manifest [`open_auto_promotion_vault`] puts: it grants the
+/// Dreamer's Auto request.
+pub(crate) fn auto_permitting_manifest() -> Result<Vec<u8>> {
     let source_row = || {
         Mp::Map(vec![
             (Mp::from("max_auto_sensitivity"), Mp::from(3_u64)),

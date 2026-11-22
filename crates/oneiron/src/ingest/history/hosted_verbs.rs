@@ -22,6 +22,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::federation::{SubstrateRead, admit_substrate_read_by};
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::{Vault, WriteActor};
+use oneiron_contracts::lifecycle::Lifecycle;
 
 /// The read verb's name, as a refusal names it.
 const GET_VERB: &str = "vault.imports.get";
@@ -140,7 +141,7 @@ pub fn hosted_import_cancel_as(
         .hosted_import_cancel(canceller, id)?
         .map(|row| HostedImportCancel {
             import: id.to_hex(),
-            state: row.state.status(),
+            state: row.state.kind(),
         }))
 }
 

@@ -25,6 +25,7 @@ use crate::{
     git_wire::{GitWire, GitWireRepo, lock_repository},
     merge_queue::{LandingPermit, MergeBatch, SpeculativePath, TestedBatch},
 };
+use oneiron_contracts::fingerprint::ContentHash;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -659,7 +660,7 @@ impl Vault {
                 )?
                 .ok_or(Error::EntityNotFound)?;
             let raw = SNAPSHOT.encode_value(&snapshot)?;
-            if blake3::hash(&raw).as_bytes() != &stack.pre_snapshot {
+            if ContentHash::of(&raw).as_bytes() != &stack.pre_snapshot {
                 return Err(Error::CorruptedIndex("reviewed stack snapshot hash"));
             }
             super::snapshot::require_snapshot_schema(snapshot)?

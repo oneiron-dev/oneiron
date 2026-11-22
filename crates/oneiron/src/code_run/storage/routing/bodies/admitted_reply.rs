@@ -9,13 +9,14 @@
 //!
 //! The base vault decides the admission on either route. On record the body
 //! lands in base, and base custody mints a fresh key's record, as on the
-//! vault. Off record the room holds no custody door: a value base custody
-//! already holds still takes its handle there, but a reply that holds a
-//! fresh key is withheld until room-local custody exists. Its typed
+//! vault. Off record a value base custody already holds still takes its
+//! base handle, and the room keeps a fresh key in its own custody, in memory
+//! only, so the reply holds its room handle (ROOM-LOCAL-CUSTODY). A hit the
+//! wall cannot place withholds the reply on either route: its typed
 //! unavailable content stands in for it, and nothing of it is stored.
 
 use super::*;
-use crate::code_run::storage::records::{ReplyAdmission, ReplySpool, finish_output};
+use crate::code_run::storage::records::{ReplyAdmission, ReplySpool, finish_output_sourced};
 
 /// What one routed writer made of a reply body.
 enum RoutedReply {
@@ -41,6 +42,8 @@ impl SessionBinding<'_> {
     /// (see the module notes). An on-record body that the admission makes
     /// spill where its spool did not takes a new routed writer, with a vault
     /// instance reserved before it opens: a writer never mints one.
+    /// `input_rows` are the occurrence's complete input rows, or `None` when
+    /// any constituent is unknown (FIX 7104).
     ///
     /// # Errors
     ///
@@ -52,6 +55,7 @@ impl SessionBinding<'_> {
         path: String,
         sink: BodySink,
         owner: EntityId,
+        input_rows: Option<Vec<EntityId>>,
     ) -> Result<ReplyBody> {
         let reply = ReplySpool::of(sink, owner, &path, self.reply_inline_bound())?;
         let target = self.route.target();
@@ -86,9 +90,14 @@ impl SessionBinding<'_> {
                         let mut sink = BodySink::new(dir, reply.bound(), mint);
                         admitted.feed(&mut sink)?;
                         let watch = self.session.limit_watch();
-                        let finished = finish_output(path.clone(), sink, true, watch, |digest| {
-                            self.session.pin_result_body(digest)
-                        })?;
+                        let finished = finish_output_sourced(
+                            path.clone(),
+                            sink,
+                            true,
+                            input_rows.clone(),
+                            watch,
+                            |digest| self.session.pin_result_body(digest),
+                        )?;
                         mark_secret_in_txn(txn, write, &finished, owner)?;
                         let output = &finished.output;
                         let rows = (read, write);

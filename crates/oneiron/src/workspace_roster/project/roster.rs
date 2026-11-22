@@ -102,6 +102,19 @@ impl Memory<'_> {
             }
             let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
             let outcome = vault.write_project_in_txn(txn, project, record, now)?;
+            if let Some(vault_id) = reset_vault
+                && matches!(outcome, ProjectWriteOutcome::Installed(_))
+            {
+                vault.record_admin_act_in_txn(
+                    txn,
+                    vault_id,
+                    caller.entity_ref(),
+                    crate::federation::SharedVaultChange::ProjectAccessReset {
+                        project: project.to_hex(),
+                    },
+                    now,
+                )?;
+            }
             let mut invitations = Vec::new();
             if matches!(outcome, ProjectWriteOutcome::Installed(_))
                 && let Some((installed, after)) = vault.effective_project_in_txn(txn, project)?
