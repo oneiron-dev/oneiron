@@ -566,7 +566,12 @@ impl Vault {
                 refused("this install has no machine identity to sign the new generation")
             })?;
         let public_key = key.verifying_key().to_bytes();
-        if !owner_act_signer_admits(fold.machine(machine), &fold.roster, &public_key) {
+        if !owner_act_signer_admits(
+            fold.machine(machine),
+            &fold.roster,
+            &public_key,
+            fold.pinned_root.as_ref(),
+        ) {
             return Err(refused(
                 "this install has no live machine profile in the vault's roster to sign the new generation",
             ));
