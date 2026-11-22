@@ -234,35 +234,53 @@ pub fn coreference_share_consent(
     Ok(claim_id)
 }
 
-/// [`coreference_share_consent`] at an owner door: the actor is `owner`'s,
-/// and the writer revalidates `owner` before it writes (FIX 5950).
+/// [`coreference_share_consent`] at an owner door, the consent occurring
+/// from `now` on and learned at `now`: the actor is `owner`'s, and the
+/// writer revalidates `owner` before it writes (FIX 5950). Consent to export
+/// a link widens what the pact's peer reads, so it is the owner's own act on
+/// their own proof, and with `applied` they apply another asker's approved
+/// check-in for this exact consent, spent in the same writer
+/// (ROLES-CHECKIN 2k8; P25-SHAPE Q1 = A). The consent claim and the
+/// decision.
 pub(crate) fn coreference_share_consent_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     local_person: EntityId,
     other_person: EntityId,
     pact_id: &[u8; COREFERENCE_PACT_ID_LEN],
-    occurred: TimeRange,
-    learned_at: u64,
-) -> Result<EntityId> {
+    now: u64,
+    applied: Option<&crate::check_in::AppliedCheckIn<'_>>,
+) -> Result<(EntityId, crate::check_in::CheckInDecision)> {
     let (claim_id, body, ops) = coreference_share_ops(
         vault,
         &owner_actor(vault, owner)?,
         local_person,
         other_person,
         pact_id,
-        occurred,
-        learned_at,
+        TimeRange {
+            start: now,
+            end: u64::MAX,
+        },
+        now,
     )?;
-    apply_coreference_ops_as_owner(
-        vault,
-        owner,
-        claim_id,
-        &body,
-        ops,
-        "federation.coreference_share_consent",
-    )?;
-    Ok(claim_id)
+    let decision = vault.with_write_txn_grouped(|wtxn| {
+        apply_coreference_ops_as_owner_in_txn(
+            vault,
+            wtxn,
+            owner,
+            claim_id,
+            &body,
+            ops,
+            "federation.coreference_share_consent",
+        )?;
+        crate::check_in::owner_act_decision_in_txn(
+            vault,
+            wtxn,
+            crate::check_in::ActClass::GrantWiden,
+            applied,
+        )
+    })?;
+    Ok((claim_id, decision))
 }
 
 /// The consent claim id, its body, and the ops of [`coreference_share_consent`],
@@ -624,71 +642,85 @@ fn apply_coreference_ops_as_owner(
     op_name: &'static str,
 ) -> Result<()> {
     vault.with_write_txn_grouped(|wtxn| {
-        let actor = WriteActor::new(
-            owner.revalidate_in_txn(vault, wtxn)?,
-            crate::edge::EdgeActorClass::Human,
-        );
-        let proof = owner.owner_answer_in_txn(vault, wtxn)?;
-        let envelope = WriteEnvelope::new(
-            actor,
-            ClaimSource::UserStated,
-            WriteProvenance::new(Value::Map(vec![
-                (Value::from("op"), Value::from(op_name)),
-                (
-                    Value::from("authentication"),
-                    Value::from(format!("{:?}", owner.decision_id())),
-                ),
-            ]))?,
-            body.approval,
-        );
-        let candidate = ClaimCandidate::new(
-            body.predicate.clone(),
-            body.subject,
-            body.value.clone(),
-            body.confidence,
-        )
-        .with_scope_stamps(body.scope_facet, body.scope_project);
-        let mut mapped = Vec::with_capacity(ops.len());
-        let mut replaced = false;
-        for op in ops {
-            match op {
-                BatchOp::Put {
+        apply_coreference_ops_as_owner_in_txn(vault, wtxn, owner, claim_id, body, ops, op_name)
+    })
+}
+
+/// [`apply_coreference_ops_as_owner`] in `wtxn`, the caller's writer, so a
+/// door can commit its check-in decision with the ops.
+fn apply_coreference_ops_as_owner_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    owner: &AuthenticatedOwner,
+    claim_id: EntityId,
+    body: &ClaimBody,
+    ops: Vec<BatchOp>,
+    op_name: &'static str,
+) -> Result<()> {
+    let actor = WriteActor::new(
+        owner.revalidate_in_txn(vault, wtxn)?,
+        crate::edge::EdgeActorClass::Human,
+    );
+    let proof = owner.owner_answer_in_txn(vault, wtxn)?;
+    let envelope = WriteEnvelope::new(
+        actor,
+        ClaimSource::UserStated,
+        WriteProvenance::new(Value::Map(vec![
+            (Value::from("op"), Value::from(op_name)),
+            (
+                Value::from("authentication"),
+                Value::from(format!("{:?}", owner.decision_id())),
+            ),
+        ]))?,
+        body.approval,
+    );
+    let candidate = ClaimCandidate::new(
+        body.predicate.clone(),
+        body.subject,
+        body.value.clone(),
+        body.confidence,
+    )
+    .with_scope_stamps(body.scope_facet, body.scope_project);
+    let mut mapped = Vec::with_capacity(ops.len());
+    let mut replaced = false;
+    for op in ops {
+        match op {
+            BatchOp::Put {
+                id,
+                entity_type: crate::registry::ENTITY_TYPE_CLAIM,
+                occurred,
+                learned_at,
+                ..
+            } if id == claim_id => {
+                replaced = true;
+                mapped.push(BatchOp::ClaimCandidate {
                     id,
-                    entity_type: crate::registry::ENTITY_TYPE_CLAIM,
+                    candidate: Box::new(candidate.clone()),
+                    envelope: envelope.clone(),
                     occurred,
                     learned_at,
-                    ..
-                } if id == claim_id => {
-                    replaced = true;
-                    mapped.push(BatchOp::ClaimCandidate {
-                        id,
-                        candidate: Box::new(candidate.clone()),
-                        envelope: envelope.clone(),
-                        occurred,
-                        learned_at,
-                        internal_lexical_query_hint: false,
-                    });
-                }
-                other => mapped.push(other),
+                    internal_lexical_query_hint: false,
+                });
             }
+            other => mapped.push(other),
         }
-        if !replaced {
-            return Err(Error::InvariantViolation(
-                "a coreference owner write carries its claim put",
-            ));
-        }
-        crate::batch::apply_ops_with_gate_mode(
-            &vault.store,
-            &vault.config,
-            &vault.analyzer,
-            wtxn,
-            mapped,
-            vault
-                .text_index_trusted
-                .load(std::sync::atomic::Ordering::Acquire),
-            crate::batch::ApplyOpsGateMode::new(false, true).with_owner_authored(proof),
-        )
-    })
+    }
+    if !replaced {
+        return Err(Error::InvariantViolation(
+            "a coreference owner write carries its claim put",
+        ));
+    }
+    crate::batch::apply_ops_with_gate_mode(
+        &vault.store,
+        &vault.config,
+        &vault.analyzer,
+        wtxn,
+        mapped,
+        vault
+            .text_index_trusted
+            .load(std::sync::atomic::Ordering::Acquire),
+        crate::batch::ApplyOpsGateMode::new(false, true).with_owner_authored(proof),
+    )
 }
 
 fn require_person_pair(vault: &Vault, a: EntityId, b: EntityId) -> Result<()> {

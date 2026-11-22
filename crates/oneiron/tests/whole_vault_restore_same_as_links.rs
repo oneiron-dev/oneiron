@@ -215,6 +215,7 @@ fn linked_archive(status: CoreferenceStatus, beside: Beside) -> Linked {
                 local_person: local,
                 other_person: other,
                 pact: "ab".repeat(COREFERENCE_PACT_ID_LEN),
+                check_in_ref: None,
             },
         )
         .expect("the owner's share consent lands")
@@ -816,6 +817,7 @@ fn a_link_from_a_consent_kept_out_is_counted() {
             local_person: source.local,
             other_person: source.other,
             pact: "ab".repeat(COREFERENCE_PACT_ID_LEN),
+            check_in_ref: None,
         },
     )
     .expect("the owner's share consent lands")
