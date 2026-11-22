@@ -107,7 +107,7 @@ fn word_presence_in(
     Ok(
         match ask_guard::approved_act_in(vault, txn, id, group, word)? {
             Some(reason) => (OwnerActImportance::Important, reason),
-            None => (OwnerActImportance::Ordinary, ""),
+            None => (OwnerActImportance::Important, "answer an ask"),
         },
     )
 }
