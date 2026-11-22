@@ -72,6 +72,9 @@ pub(crate) struct Sender {
     gzip: AtomicBool,
 }
 
+/// What the one plain resend carries if a 400 or 415 answers.
+type PlainResend = Option<Zeroizing<Vec<u8>>>;
+
 impl Sender {
     pub(crate) fn new(policy: &SendPolicy) -> io::Result<Self> {
         let roots = extra_roots(policy)?;
@@ -127,6 +130,10 @@ impl Sender {
     /// body is the reply, or the outcome that ends the call before one. Each
     /// request gets only the send's time left, to the last reply byte; a call
     /// with none left is not sent (FIX 8559).
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one parameter per part of a send: the call, its URL, its bodies, the release state, the key, the daemon's stream and the deadline"
+    )]
     async fn reach<W: AsyncRead + AsyncWrite + Unpin>(
         &self,
         call: &CallHeader,
@@ -244,7 +251,7 @@ impl Sender {
             }
             let Some(executed) = while_daemon_waits(
                 if call.shape.relays_events() {
-                    release.as_deref_mut()
+                    release
                 } else {
                     None
                 },
@@ -276,7 +283,7 @@ impl Sender {
         mut body: Zeroizing<Vec<u8>>,
         secret: &[u8],
         left: Duration,
-    ) -> Result<(reqwest::Request, Option<Zeroizing<Vec<u8>>>), Refusal> {
+    ) -> Result<(reqwest::Request, PlainResend), Refusal> {
         let builder = self.head(call, url, secret, left)?;
         // A bodyless read or removal sends no body, not an empty one.
         if body.is_empty() {

@@ -7,7 +7,7 @@ use super::connector_task::{
     ConnectorSendAttemptPayload, ConnectorSendTask, ConnectorSendTaskOutcome,
     SEND_EXECUTOR_FENCE_FIELD, SEND_EXECUTOR_STOOD_DOWN, SendExecutorFence, SendExecutorLease,
     SendExecutorLeaseTake, log_send_executor_stand_down, mark_send_lookup_cleared,
-    project_connector_send_task_outcome, project_connector_send_task_outcome_in_txn,
+    project_connector_send_task_attempt_failure_in_txn, project_connector_send_task_outcome,
     renew_send_executor_lease_in_txn, send_receipt_exists_for_task, take_send_executor_lease,
 };
 use super::dispatch_pipeline::{
@@ -20,9 +20,9 @@ use super::dispatch_types::{
 };
 use super::receipt_fields::{PROVIDER_WAIT_FIELD, append_connector_task_window_receipt};
 use super::retry_audit::{
-    complete_degraded_connector_task, persist_failed_send_receipt_and_retry,
-    persist_send_receipt_and_retry, reconcile_connector_task, settle_suppressed_send,
-    stop_owner_declined_send,
+    complete_degraded_connector_task, fail_connector_send_attempt_in_txn,
+    persist_failed_send_receipt_and_retry, persist_send_receipt_and_retry,
+    reconcile_connector_task, settle_suppressed_send, stop_owner_declined_send,
 };
 use super::send_lookup::{
     SENT_LOOKUP_CANNOT_TELL, SENT_LOOKUP_FIELD, SENT_LOOKUP_NOT_SENT,
@@ -102,13 +102,24 @@ impl Vault {
 
     /// When the next connector-send attempt becomes claimable, the instant a
     /// served worker sleeps until (OF-187): the same readiness instant the
-    /// claim reads. `None` while nothing is queued.
+    /// claim reads. `None` while nothing is queued, and while the queue holds
+    /// every send of a copy restored and not joined: its join wakes the worker.
     pub fn next_connector_send_ready_at(&self) -> Result<Option<u64>, Error> {
         // Only the outbound kind's rows are read (FIX 11940).
         let rows = {
             let txn = self.store.env.read_txn()?;
-            AttemptQueue::new(self)
-                .kind_working_rows_in_txn(&txn, crate::outbound::BRIDGE_OUTBOUND_ATTEMPT_KIND)?
+            let queue = AttemptQueue::new(self);
+            let rows = queue
+                .kind_working_rows_in_txn(&txn, crate::outbound::BRIDGE_OUTBOUND_ATTEMPT_KIND)?;
+            if !rows.is_empty()
+                && queue.kind_held_while_unjoined_in_txn(
+                    &txn,
+                    crate::outbound::BRIDGE_OUTBOUND_ATTEMPT_KIND,
+                )?
+            {
+                return Ok(None);
+            }
+            rows
         };
         Ok(rows
             .into_iter()
@@ -720,17 +731,15 @@ fn fail_connector_task_attempt_and_project(
     outcome: ConnectorSendTaskOutcome,
 ) -> Result<(), Error> {
     vault.with_write_txn_grouped(|wtxn| {
-        project_connector_send_task_outcome_in_txn(vault, wtxn, task_ref, outcome, now)?;
-        queue.fail_in_txn(
-            wtxn,
-            FailAttempt {
-                id: attempt.id,
-                lease_owner: CONNECTOR_TASK_EXECUTOR_LEASE_OWNER.to_owned(),
-                attempt_count: attempt.attempt_count,
-                reason: reason.to_owned(),
-                now,
-            },
-        )?;
+        // Fail first: the TASK's outcome takes the instant the queue stamped
+        // on the failure, and a replay leaves a newer failure's stamp alone.
+        if let Some(failed_at) =
+            fail_connector_send_attempt_in_txn(queue, wtxn, attempt, reason, now)?
+        {
+            project_connector_send_task_attempt_failure_in_txn(
+                vault, wtxn, task_ref, outcome, failed_at,
+            )?;
+        }
         Ok(())
     })
 }

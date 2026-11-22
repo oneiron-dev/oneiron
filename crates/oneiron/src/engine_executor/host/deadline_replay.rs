@@ -1,25 +1,47 @@
 //! The calls a resumed pending step already made (FIX 7703): answered from
 //! their rows, in the order its program makes them, before any call runs
-//! live, and why the step holds once one does not line up.
+//! live, and the resume preflight the walk keeps over them (L8-23): each call
+//! the program makes while recorded calls remain is replay free, changed or
+//! past the walk's end, and a tail holding an effect step turns the replay dry.
 //! Entry: `RecordingJsHost::answer_from_pending_prefix`.
 //! `RecordingJsHost` state is defined by `engine_executor::host`.
 
-use std::borrow::Cow;
 use std::collections::VecDeque;
 
+use super::super::resume_divergence::ResumeDivergenceChoice;
+use super::resume_preflight::{
+    ChangedStep, ResumePreflightReport, ResumeVerdict, UnreachedStep, call_verb, effect_step,
+    request_digest,
+};
 use super::*;
+use crate::code_run::BaseKnownRead;
+
+mod recorded_answers;
+
+/// One recorded program call popped from a pending step's rows: its row and the rows a
+/// callable it called made (L8-23).
+type PoppedProgramCall = (CodeRunBridgeCall, Vec<CodeRunBridgeCall>);
 
 /// What a resumed step's guest reads once its replay holds: the call ran
 /// nowhere, and the step commits nothing.
 const PENDING_STEP_HELD: &str = "pending_step_held";
 
-const DIVERGED: &str = "the resumed program made another call where its pending step recorded one";
+/// What a resumed step's guest reads once its walk turned dry (L8-23): the call ran nowhere,
+/// and the entry holds with the walk's report. A result call there answers it too: a dry walk
+/// stores and reads nothing live.
+pub(super) const RESUME_PREFLIGHT_HELD: &str = "resume_preflight_held";
+
+/// What a resumed step's guest reads for a changed effect step the owner left (L8-23): the call
+/// ran nowhere, the recorded row stands, and the step goes on without it.
+const EFFECT_CHANGED_LEFT: &str = "effect_changed_left";
+
 const HOOK_VIEW: &str = "a recorded call's guest read a verb hook's view, which no row keeps";
 const ROWS_MISSING: &str = "a recorded call's row is not where its pending step lists it";
 const WITHHELD: &str = "the bound door no longer releases a recorded call's answer to its caller";
 
 /// The calls one pending step's program already made (FIX 7703), each row
-/// as the record kept it, answered in the order the program makes them.
+/// as the record kept it, answered in the order the program makes them, and
+/// the preflight report the walk keeps over them (L8-23).
 pub(in crate::engine_executor) struct DeadlineReplay {
     /// The step's rows not answered yet, in bridge order: each recorded
     /// program call's own row, then the rows a callable it called made.
@@ -29,6 +51,61 @@ pub(in crate::engine_executor) struct DeadlineReplay {
     guest_calls: VecDeque<u64>,
     /// Why the replay holds, once a call did not line up.
     held: Option<&'static str>,
+    /// The run whose step resumed, for the report.
+    run_id: EntityId,
+    /// The resumed step's seq, for the report.
+    step_seq: u64,
+    /// The pending step's bridge frontier, for the report.
+    frontier: u64,
+    /// Seqs that met their rows, in order.
+    replay_free: Vec<u64>,
+    /// Changed calls, in order.
+    changed: Vec<ChangedStep>,
+    /// Unreached recorded calls, in order.
+    unreached: Vec<UnreachedStep>,
+    /// The guest boundary changed since the step parked.
+    boundary_changed: bool,
+    /// The program prepares to other JavaScript than the parked one ran as.
+    preparation_changed: bool,
+    /// Whether the walk turned dry: an effect step changed or went unreached,
+    /// so nothing runs live for the rest of the pass.
+    dry: bool,
+    /// Whether the walk ended on a tail holding an effect step: the positions past it no longer
+    /// compare, so every later call holds and the tail stays unreached (L8-23).
+    walk_ended: bool,
+    /// The owner's answer to the ask this pass resumes under, when the run's row still waits on
+    /// this step: the answered report and the choice, applied entry by entry (L8-23).
+    answer: Option<(ResumePreflightReport, ResumeDivergenceChoice)>,
+    /// Seqs whose recorded rows this pass dropped to run live under a refire answer, rows and
+    /// nested rows alike: their kept outputs go before the commit or park appends the new ones
+    /// (L8-23).
+    refired: Vec<u64>,
+    /// Whether the owner left the drifted tail: this call and every later call of the pass answer
+    /// `effect_changed_left`, and the kept tail joins the step's rows at the commit (L8-23).
+    left: bool,
+}
+
+/// What one call of the resumed program meets in the walk (L8-23).
+enum PreflightTake {
+    /// Answered from its rows: replay free, or dry from its recorded outcome.
+    Row(Box<RecordedCall>),
+    /// Runs live: a pure change, a refired change, or past dropped rows.
+    Live,
+    /// A changed effect step the owner left: its recorded rows stand, and the guest reads the
+    /// typed `effect_changed_left` failure.
+    Left(Box<RecordedCall>),
+    /// A call past a left tail: no row, no seq, the typed `effect_changed_left` failure.
+    LeftTail,
+    /// The guest-visible typed failure: an integrity hold, or the dry hold.
+    Held(PreflightHeld),
+}
+
+/// Why the walk refuses one call (L8-23).
+enum PreflightHeld {
+    /// An integrity fault, answered as `pending_step_held`; the replay keeps its reason.
+    Integrity,
+    /// The dry tail, answered as `resume_preflight_held`.
+    Preflight,
 }
 
 /// One recorded program call a resumed step meets again: its own row, the
@@ -80,49 +157,473 @@ fn outcome_sources(outcome: &SelfDispatchOutcome) -> Vec<EntityId> {
     }
 }
 
+/// Whether the record still holds outputs of the recorded row at `seq` (L8-23): a bridge result
+/// the park kept, which a later live call at the same seq would shadow with its own (this
+/// step's, or the next step's once a dropped tail frees the seq).
+fn output_owned(results: &[CodeRunRawOutput], seq: u64) -> bool {
+    let path = bridge_result_output_path(seq);
+    results.iter().any(|output| output.path == path)
+}
+
+/// Whether a recorded program call left behind counts as an effect step (L8-23): it, or a row a
+/// callable it called made, is not a read, or still owns a kept output.
+fn tail_call_holds_effect(
+    row: &CodeRunBridgeCall,
+    nested: &[CodeRunBridgeCall],
+    results: &[CodeRunRawOutput],
+) -> bool {
+    std::iter::once(row).chain(nested).any(|made| {
+        effect_step(made.effect, made.recorded_verb()) || output_owned(results, made.seq)
+    })
+}
+
+/// Whether a call of `effect` and `verb` is an agent verb write, or an agent verb whose verb is
+/// unknown (L8-23). Its write receipt keeps the call it made, so an owner's refire never re-runs
+/// it: such a drift is only left.
+fn agent_verb_write(effect: SelfEffect, verb: Option<&str>) -> bool {
+    effect == SelfEffect::AgentVerb && effect_step(effect, verb)
+}
+
+/// Whether a recorded program call, or a row a callable it called made, is an agent verb write
+/// (L8-23).
+fn tail_call_holds_agent_verb_write(row: &CodeRunBridgeCall, nested: &[CodeRunBridgeCall]) -> bool {
+    std::iter::once(row)
+        .chain(nested)
+        .any(|made| agent_verb_write(made.effect, made.recorded_verb()))
+}
+
+/// Whether a call of `effect` runs a callable skill's body through the host (L8-23): only a
+/// callable's calls take bridge positions past their caller, so only its effect makes nested rows.
+/// The match is exhaustive with no wildcard arm, so a new variant forces a choice.
+fn runs_callable(effect: SelfEffect) -> bool {
+    match effect {
+        SelfEffect::SkillsCall => true,
+        SelfEffect::AgentsSpawn
+        | SelfEffect::TasksAsk
+        | SelfEffect::TasksWait
+        | SelfEffect::TasksRefuse
+        | SelfEffect::ConsultResult
+        | SelfEffect::MemorySearch
+        | SelfEffect::MemoryWriteFixture
+        | SelfEffect::MemoryPutClaim
+        | SelfEffect::MemorySupersedeClaim
+        | SelfEffect::MemoryPutEdge
+        | SelfEffect::Ask
+        | SelfEffect::DestructiveFixture
+        | SelfEffect::OutboundFixture
+        | SelfEffect::TaskDelegate
+        | SelfEffect::Context
+        | SelfEffect::Speak
+        | SelfEffect::Think
+        | SelfEffect::ThinkAloud
+        | SelfEffect::Express
+        | SelfEffect::ReportBlocked
+        | SelfEffect::AgentsPut
+        | SelfEffect::InferenceDefaultsRead
+        | SelfEffect::InferenceDefaultsReplace
+        | SelfEffect::WakePolicyWrite
+        | SelfEffect::AgentVerb
+        | SelfEffect::ConnectorAnswer
+        | SelfEffect::WorldPrivacySet
+        | SelfEffect::Fold
+        | SelfEffect::ReaderSpawn
+        | SelfEffect::ReaderReport
+        | SelfEffect::TasksWaitSet
+        | SelfEffect::Summarize
+        | SelfEffect::Leader
+        | SelfEffect::LeaderSplit
+        | SelfEffect::Team
+        | SelfEffect::WorkflowDispatch
+        | SelfEffect::RepoSnapshotsGet
+        | SelfEffect::RepoSnapshotsRead
+        | SelfEffect::RepoSymbolsDefinitions
+        | SelfEffect::RepoSymbolsNeighbors
+        | SelfEffect::RepoViewsGet
+        | SelfEffect::RepoViewsRead
+        | SelfEffect::RepoMergeQueueObserve
+        | SelfEffect::RepoSnapshotsIngest
+        | SelfEffect::RepoWorkOpen
+        | SelfEffect::RepoSymbolsDeclare
+        | SelfEffect::RepoSymbolsRenew
+        | SelfEffect::RepoSymbolsRelease
+        | SelfEffect::RepoProposalSubmit
+        | SelfEffect::RepoProposalResolve
+        | SelfEffect::RepoMergeQueueEnqueue
+        | SelfEffect::RepoCheckoutBind
+        | SelfEffect::RepoExport
+        | SelfEffect::RepoSymbolsObserve => false,
+    }
+}
+
 impl DeadlineReplay {
     /// The replay of `rows`, a pending step's rows from its first bridge
     /// position to its frontier, whose program called `guest_calls`.
     pub(in crate::engine_executor) fn new(
         rows: Vec<CodeRunBridgeCall>,
         guest_calls: Vec<u64>,
+        run_id: EntityId,
+        step_seq: u64,
+        frontier: u64,
     ) -> Self {
         Self {
             rows: rows.into(),
             guest_calls: guest_calls.into(),
             held: None,
+            run_id,
+            step_seq,
+            frontier,
+            replay_free: Vec::new(),
+            changed: Vec::new(),
+            unreached: Vec::new(),
+            boundary_changed: false,
+            preparation_changed: false,
+            dry: false,
+            walk_ended: false,
+            answer: None,
+            refired: Vec::new(),
+            left: false,
         }
     }
 
-    /// The recorded program call at bridge position `at` for `call`: its
-    /// own row, the rows a callable it called made, and the row's stored
-    /// outcome, matched as the replay cursor matches (position, effect and
-    /// request; a spawn's miss is a mismatch, never a live call). A call
-    /// that does not line up holds the replay: it and every call after it
-    /// get the reason.
+    /// The replay under the owner's answer to this step's ask (L8-23): the answered report and the
+    /// choice, applied entry by entry at the moment the walk would turn dry.
+    pub(in crate::engine_executor) fn with_answer(
+        mut self,
+        report: ResumePreflightReport,
+        choice: ResumeDivergenceChoice,
+    ) -> Self {
+        self.answer = Some((report, choice));
+        self
+    }
+
+    /// The walk's boundary and preparation flags, decided before the pass runs (L8-23).
+    pub(in crate::engine_executor) fn set_preflight_flags(
+        &mut self,
+        boundary_changed: bool,
+        preparation_changed: bool,
+    ) {
+        self.boundary_changed = boundary_changed;
+        self.preparation_changed = preparation_changed;
+    }
+
+    /// What the call at bridge position `at` meets in the walk (L8-23): its recorded rows
+    /// when it lines up, a live run when it is a pure change past dropped rows, or the
+    /// guest-visible typed failure. An integrity fault holds the replay as it always has; a
+    /// tail holding an effect step turns it dry instead.
     fn take(
         &mut self,
         at: u64,
         call: &SelfCall,
-    ) -> std::result::Result<RecordedCall, &'static str> {
-        if let Some(held) = self.held {
-            return Err(held);
+        results: &[CodeRunRawOutput],
+        base_known: BaseKnownRead<'_>,
+    ) -> PreflightTake {
+        if self.held.is_some() {
+            return PreflightTake::Held(PreflightHeld::Integrity);
         }
-        let Some(row) = self
-            .rows
-            .front()
-            .filter(|row| self.guest_calls.front() == Some(&at) && row.seq == at)
-        else {
-            return Err(self.hold(ROWS_MISSING));
+        if self.left {
+            return PreflightTake::LeftTail;
+        }
+        // A held call takes no position, so a later call could line up with the kept tail again
+        // and read as replay free (L8-23).
+        if self.walk_ended {
+            return PreflightTake::Held(PreflightHeld::Preflight);
+        }
+        match (
+            self.guest_calls.front().copied(),
+            self.rows.front().map(|row| row.seq),
+        ) {
+            (None, None) => {
+                if self.dry {
+                    PreflightTake::Held(PreflightHeld::Preflight)
+                } else {
+                    self.hold(ROWS_MISSING)
+                }
+            }
+            (Some(guest), Some(seq)) if seq == guest && guest == at => {
+                self.take_aligned(at, call, results, base_known)
+            }
+            (Some(guest), Some(seq)) if seq == guest => self.end_walk(results),
+            _ => self.hold(ROWS_MISSING),
+        }
+    }
+
+    /// The front recorded call at this position (L8-23): replay free when it meets its row, a
+    /// changed call when only its request differs, or the walk's end when its effect differs.
+    fn take_aligned(
+        &mut self,
+        at: u64,
+        call: &SelfCall,
+        results: &[CodeRunRawOutput],
+        base_known: BaseKnownRead<'_>,
+    ) -> PreflightTake {
+        let Some(row) = self.rows.front() else {
+            return self.hold(ROWS_MISSING);
         };
         if row.hook_view_served {
-            return Err(self.hold(HOOK_VIEW));
+            return self.hold(HOOK_VIEW);
         }
-        let Ok(outcome) = row.strict_replay_answer(at, call.clone()) else {
-            return Err(self.hold(DIVERGED));
+        let same_effect = row.effect == call.effect();
+        let replayed = row.strict_replay_answer(at, call.clone(), Some(base_known));
+        match replayed {
+            Ok(outcome) => {
+                let Some((row, nested)) = self.pop_front_call() else {
+                    return self.hold(ROWS_MISSING);
+                };
+                self.replay_free.push(at);
+                PreflightTake::Row(Box::new(RecordedCall {
+                    row,
+                    nested,
+                    outcome,
+                }))
+            }
+            Err(_) if same_effect => self.take_changed(at, call, results),
+            Err(_) => self.end_walk(results),
+        }
+    }
+
+    /// Same position, same effect, another request (L8-23): a pure change drops its row and runs
+    /// live at the same seq; an effect change answers from the recorded outcome and the replay
+    /// turns dry. Past a dry tail every change answers from its recorded outcome. Under the
+    /// owner's answer, an approved changed effect step re-fires live once or answers left.
+    fn take_changed(
+        &mut self,
+        at: u64,
+        call: &SelfCall,
+        results: &[CodeRunRawOutput],
+    ) -> PreflightTake {
+        let Some(row) = self.rows.front() else {
+            return self.hold(ROWS_MISSING);
         };
+        let recorded_is_effect = effect_step(row.effect, row.recorded_verb());
+        let recorded_writes = agent_verb_write(row.effect, row.recorded_verb());
+        let recorded_digest = request_digest(&row.request);
+        // The value the strict match compared; empty when the call does not encode.
+        let reentered_digest = row
+            .replay_request_value(call.clone())
+            .map_or_else(|_| String::new(), |value| request_digest(&value));
+        let outcome = row.recorded_outcome().ok();
+        let reentered_is_effect = effect_step(call.effect(), call_verb(call));
+        let nested_len = self.front_nested_len();
+        let owns_output = output_owned(results, at);
+        let entry_is_effect =
+            recorded_is_effect || reentered_is_effect || nested_len > 0 || owns_output;
+        if !entry_is_effect && !self.dry {
+            if self.pop_front_call().is_none() {
+                return self.hold(ROWS_MISSING);
+            }
+            self.changed.push(ChangedStep {
+                seq: at,
+                effect: call.effect(),
+                recorded_request_digest: recorded_digest,
+                reentered_request_digest: reentered_digest,
+                effect_step: false,
+            });
+            return PreflightTake::Live;
+        }
+        if entry_is_effect && !self.dry {
+            let approved = self.answer.as_ref().and_then(|(report, choice)| {
+                report
+                    .changed
+                    .iter()
+                    .any(|step| {
+                        step.effect_step
+                            && step.seq == at
+                            && step.effect == call.effect()
+                            && step.recorded_request_digest == recorded_digest
+                            && step.reentered_request_digest == reentered_digest
+                    })
+                    .then_some(*choice)
+            });
+            if let Some(choice) = approved {
+                match choice {
+                    ResumeDivergenceChoice::Refire
+                        if nested_len == 0
+                            && !runs_callable(call.effect())
+                            && !recorded_writes
+                            && !agent_verb_write(call.effect(), call_verb(call)) =>
+                    {
+                        let Some((row, _)) = self.pop_front_call() else {
+                            return self.hold(ROWS_MISSING);
+                        };
+                        self.changed.push(ChangedStep {
+                            seq: at,
+                            effect: row.effect,
+                            recorded_request_digest: recorded_digest,
+                            reentered_request_digest: reentered_digest,
+                            effect_step: true,
+                        });
+                        self.refired.push(at);
+                        return PreflightTake::Live;
+                    }
+                    ResumeDivergenceChoice::Leave => {
+                        let Some((row, nested)) = self.pop_front_call() else {
+                            return self.hold(ROWS_MISSING);
+                        };
+                        let Ok(outcome) = row.recorded_outcome() else {
+                            return self.hold(ROWS_MISSING);
+                        };
+                        self.changed.push(ChangedStep {
+                            seq: at,
+                            effect: row.effect,
+                            recorded_request_digest: recorded_digest,
+                            reentered_request_digest: reentered_digest,
+                            effect_step: entry_is_effect,
+                        });
+                        return PreflightTake::Left(Box::new(RecordedCall {
+                            row,
+                            nested,
+                            outcome,
+                        }));
+                    }
+                    ResumeDivergenceChoice::Refire => {}
+                }
+            }
+        }
+        let Some(outcome) = outcome else {
+            return self.hold(ROWS_MISSING);
+        };
+        let Some((row, nested)) = self.pop_front_call() else {
+            return self.hold(ROWS_MISSING);
+        };
+        self.dry = true;
+        self.changed.push(ChangedStep {
+            seq: at,
+            effect: row.effect,
+            recorded_request_digest: recorded_digest,
+            reentered_request_digest: reentered_digest,
+            effect_step: entry_is_effect,
+        });
+        PreflightTake::Row(Box::new(RecordedCall {
+            row,
+            nested,
+            outcome,
+        }))
+    }
+
+    /// The walk ends here (L8-23): every recorded program call left is unreached and classified.
+    /// A tail holding an effect step turns the replay dry, and this call and every later one
+    /// hold; a pure tail drops its rows and this call runs live. Under the owner's answer, an
+    /// approved effect tail drops to re-fire or stays kept while the pass answers left.
+    fn end_walk(&mut self, results: &[CodeRunRawOutput]) -> PreflightTake {
+        if self.dry {
+            self.walk_ended = true;
+            return PreflightTake::Held(PreflightHeld::Preflight);
+        }
+        let mut tail: Vec<PoppedProgramCall> = Vec::new();
+        while self.guest_calls.front().is_some() {
+            let Some(popped) = self.pop_front_call() else {
+                self.restore_tail(tail);
+                return self.hold(ROWS_MISSING);
+            };
+            tail.push(popped);
+        }
+        let holds_effect = tail
+            .iter()
+            .any(|(row, nested)| tail_call_holds_effect(row, nested, results));
+        if holds_effect {
+            let approved = self.answer.as_ref().and_then(|(report, choice)| {
+                tail.iter()
+                    .all(|(row, nested)| {
+                        !tail_call_holds_effect(row, nested, results)
+                            || report.unreached.iter().any(|step| {
+                                step.effect_step && step.seq == row.seq && step.effect == row.effect
+                            })
+                    })
+                    .then_some(*choice)
+            });
+            if let Some(choice) = approved {
+                // A write the tail already made keeps its receipt: no refire drops it (L8-23).
+                let refires = !tail
+                    .iter()
+                    .any(|(row, nested)| tail_call_holds_agent_verb_write(row, nested));
+                match choice {
+                    ResumeDivergenceChoice::Refire if refires => {
+                        for (row, nested) in &tail {
+                            self.unreached.push(UnreachedStep {
+                                seq: row.seq,
+                                effect: row.effect,
+                                effect_step: tail_call_holds_effect(row, nested, results),
+                            });
+                        }
+                        for (row, nested) in tail {
+                            self.refired.push(row.seq);
+                            for made in nested {
+                                self.refired.push(made.seq);
+                            }
+                        }
+                        return PreflightTake::Live;
+                    }
+                    ResumeDivergenceChoice::Leave => {
+                        self.restore_tail(tail);
+                        self.left = true;
+                        return PreflightTake::LeftTail;
+                    }
+                    ResumeDivergenceChoice::Refire => {}
+                }
+            }
+            self.restore_tail(tail);
+            self.dry = true;
+            self.walk_ended = true;
+            PreflightTake::Held(PreflightHeld::Preflight)
+        } else {
+            for (row, _) in &tail {
+                self.unreached.push(UnreachedStep {
+                    seq: row.seq,
+                    effect: row.effect,
+                    effect_step: false,
+                });
+            }
+            PreflightTake::Live
+        }
+    }
+
+    /// A body no recorded store holds is about to publish while recorded calls remain (L8-23):
+    /// the walk ends there, as at a call past its rows, so no later turn of it can leave the body
+    /// committed beside a pending step that never names it. A tail holding an effect step turns
+    /// the walk dry; a pure tail is dropped. Whether the pass holds after it.
+    fn end_walk_at_new_output(&mut self, results: &[CodeRunRawOutput]) -> bool {
+        if self.held.is_none() && !self.dry && self.unreached() {
+            self.end_walk(results);
+        }
+        self.dry || self.held.is_some()
+    }
+
+    /// The program ended with recorded calls unreached, under the owner's answer to this step's
+    /// ask (L8-23): the walk ends there as at a call past its rows, so an approved effect tail
+    /// drops to re-fire or stays kept as left, as it would at a later call. An unapproved effect
+    /// tail turns the walk dry and holds as before.
+    fn end_walk_at_program_end(&mut self, results: &[CodeRunRawOutput]) {
+        if self.answer.is_some()
+            && self.held.is_none()
+            && !self.dry
+            && !self.left
+            && self.unreached()
+        {
+            self.end_walk(results);
+        }
+    }
+
+    /// Puts a drained tail back where the walk left it, in order (L8-23).
+    fn restore_tail(&mut self, tail: Vec<PoppedProgramCall>) {
+        for (row, nested) in tail.into_iter().rev() {
+            for made in nested.into_iter().rev() {
+                self.rows.push_front(made);
+            }
+            let seq = row.seq;
+            self.rows.push_front(row);
+            self.guest_calls.push_front(seq);
+        }
+    }
+
+    /// Pops the front recorded program call: its row and the rows a callable it called made
+    /// (L8-23). `None` when the rows and the program calls disagree.
+    fn pop_front_call(&mut self) -> Option<PoppedProgramCall> {
+        let guest = self.guest_calls.front().copied()?;
+        if self.rows.front()?.seq != guest {
+            return None;
+        }
         self.guest_calls.pop_front();
-        let row = self.rows.pop_front().ok_or(ROWS_MISSING)?;
+        let row = self.rows.pop_front()?;
         let next = self.guest_calls.front().copied();
         let mut nested = Vec::new();
         while self
@@ -132,16 +633,79 @@ impl DeadlineReplay {
         {
             nested.extend(self.rows.pop_front());
         }
-        Ok(RecordedCall {
-            row,
-            nested,
-            outcome,
-        })
+        Some((row, nested))
     }
 
-    fn hold(&mut self, why: &'static str) -> &'static str {
+    /// How many rows the front recorded call's callables made (L8-23).
+    fn front_nested_len(&self) -> usize {
+        let next = self.guest_calls.iter().nth(1).copied();
+        self.rows
+            .iter()
+            .skip(1)
+            .take_while(|made| next.is_none_or(|next| made.seq < next))
+            .count()
+    }
+
+    /// The pass ended with recorded calls unreached: each joins the report (L8-23). Whether any
+    /// is an effect step, and the drained tail in order, for a park that keeps it. The rows stay
+    /// drained; a pure tail's step commits without them, so its seqs go to the next step's calls,
+    /// and a row that still owns a kept output counts as an effect step.
+    fn finalize_tail(&mut self, results: &[CodeRunRawOutput]) -> (bool, Vec<PoppedProgramCall>) {
+        let mut holds_effect = false;
+        let mut tail = Vec::new();
+        while self.guest_calls.front().is_some() {
+            let Some((row, nested)) = self.pop_front_call() else {
+                break;
+            };
+            let is_effect = tail_call_holds_effect(&row, &nested, results);
+            holds_effect |= is_effect;
+            self.unreached.push(UnreachedStep {
+                seq: row.seq,
+                effect: row.effect,
+                effect_step: is_effect,
+            });
+            tail.push((row, nested));
+        }
+        (holds_effect, tail)
+    }
+
+    /// The walk's report as it stands (L8-23).
+    fn report(&self) -> ResumePreflightReport {
+        let changed_effects = self.changed.iter().filter(|step| step.effect_step).count();
+        let unreached_effects = self
+            .unreached
+            .iter()
+            .filter(|step| step.effect_step)
+            .count();
+        let effect_steps_would_refire =
+            u64::try_from(changed_effects.saturating_add(unreached_effects)).unwrap_or(u64::MAX);
+        ResumePreflightReport {
+            run_id: self.run_id,
+            step_seq: self.step_seq,
+            frontier: self.frontier,
+            replay_free: self.replay_free.clone(),
+            changed: self.changed.clone(),
+            unreached: self.unreached.clone(),
+            boundary_changed: self.boundary_changed,
+            preparation_changed: self.preparation_changed,
+            effect_steps_would_refire,
+            verdict: if effect_steps_would_refire == 0 {
+                ResumeVerdict::Pure
+            } else {
+                ResumeVerdict::EffectTail
+            },
+        }
+    }
+
+    /// Whether the walk turned dry: nothing runs live for the rest of the pass (L8-23).
+    fn dry(&self) -> bool {
+        self.dry
+    }
+
+    /// Holds the replay on an integrity fault and returns the take the call reads.
+    fn hold(&mut self, why: &'static str) -> PreflightTake {
         self.held = Some(why);
-        why
+        PreflightTake::Held(PreflightHeld::Integrity)
     }
 
     /// Whether the program has recorded calls it did not reach yet.
@@ -153,192 +717,5 @@ impl DeadlineReplay {
     /// that parks again before its frontier.
     fn into_unreached(self) -> (Vec<CodeRunBridgeCall>, Vec<u64>) {
         (self.rows.into(), self.guest_calls.into())
-    }
-}
-
-impl RecordingJsHost<'_, '_> {
-    /// Lends a resumed pending step's recorded calls to this host (FIX
-    /// 7703): its program's calls meet them first, in order.
-    pub(in crate::engine_executor) fn with_deadline_replay(
-        mut self,
-        replay: Option<DeadlineReplay>,
-    ) -> Self {
-        self.deadline_replay = replay;
-        self
-    }
-
-    /// Answers `call` from a resumed pending step's recorded rows while its
-    /// program has recorded calls left (FIX 7703). Nothing is dispatched and
-    /// no row is made: the rows join this step's calls as the record kept
-    /// them, at their own positions, and the names their stored answers were
-    /// bound to are bound again. A call that does not line up holds the
-    /// step: it and every call after it are refused, nothing runs live, and
-    /// the step commits nothing. `None` once every recorded call is
-    /// answered: the call runs live, at the step's frontier.
-    ///
-    /// A recorded answer reaches the guest only as the bound door rules
-    /// now (FIX 7703). The door admits the read, as at a write's kept
-    /// answer. The rows the answer was served from must not stay on this
-    /// device for the door's caller. A refusal of either holds the step in
-    /// the same way.
-    pub(super) fn answer_from_pending_prefix(
-        &mut self,
-        call: &SelfCall,
-    ) -> Option<SelfDispatchResponse> {
-        let replay = self.deadline_replay.as_mut()?;
-        if replay.held.is_none() && !replay.unreached() {
-            return None;
-        }
-        let taken = match replay.take(self.next_seq, call) {
-            Ok(recorded)
-                if !self.gated_write.releases_recorded_answer(
-                    recorded.served_rows(&self.callable_rows).as_deref(),
-                ) =>
-            {
-                Err(replay.hold(WITHHELD))
-            }
-            taken => taken,
-        };
-        let RecordedCall {
-            row,
-            nested,
-            outcome,
-        } = match taken {
-            Ok(recorded) => recorded,
-            Err(_) => {
-                if self.hard_failure.is_none() {
-                    self.hard_failure = Some(Error::InvalidConfig(PENDING_STEP_HELD.to_owned()));
-                }
-                let outcome = SelfDispatchOutcome::Failed(SelfFailedResult {
-                    effect: call.effect(),
-                    error: PENDING_STEP_HELD.to_owned(),
-                    code: None,
-                    disk_floor: None,
-                });
-                // No row answers it: the replay context is incomplete.
-                return Some(self.respond(call, None, outcome, None));
-            }
-        };
-        let (seq, started_at_ms) = (row.seq, row.started_at_ms);
-        let call = call.clone().with_bridge_stamp(seq, started_at_ms);
-        // A callable's calls bound their stored answers before its own
-        // answer was bound, as they ran.
-        for made in &nested {
-            if let Ok(made_outcome) = made.recorded_outcome() {
-                self.rebind_recorded_card(made.seq, &made_outcome);
-            }
-        }
-        self.rebind_recorded_card(seq, &outcome);
-        if matches!(call, SelfCall::SkillsCall(_)) {
-            let cause = crate::code_run::ReadWorldUnknown::CallableSkill;
-            self.gated_write.read_worlds_unknown(self.run_id, cause);
-        }
-        if self.durable_wait.is_none()
-            && let SelfDispatchOutcome::DurableWait(wait) = &outcome
-        {
-            self.durable_wait = Some(wait.clone());
-        }
-        if let SelfDispatchOutcome::TaskRefusal(refusal) = &outcome
-            && refusal.declined()
-        {
-            self.declined = Some(refusal.task_ref);
-        }
-        self.guest_calls.push(seq);
-        self.next_seq = seq.saturating_add(1).saturating_add(nested.len() as u64);
-        self.bridge_calls.push(row);
-        self.bridge_calls.extend(nested);
-        // A granted `reveal.wait` reads its value again under its own lease,
-        // for the guest's view only, as a pinned entry's replay does (FIX
-        // 2360); its row keeps its value-free answer.
-        let view = self
-            .gated_write
-            .replay_reveal_view(&call, &outcome)
-            .ok()
-            .flatten();
-        Some(self.respond(&call, Some(seq), outcome, view))
-    }
-
-    /// Binds again the stored answer a recorded row's outcome hands its
-    /// guest by card, under the name the call that stored it bound (FIX
-    /// 7703), so the resumed program's names stand as its first slice left
-    /// them and its later calls meet their rows. Only a body the call stored
-    /// for itself binds: a verb's, a skill's, a fold's or the leader's answer
-    /// at the call's bridge result path, or a spilled typed reply, whose
-    /// stored path a later store of the same bytes no longer reuses.
-    fn rebind_recorded_card(&mut self, seq: u64, outcome: &SelfDispatchOutcome) {
-        let card: Option<Cow<'_, serde_json::Value>> = match outcome {
-            SelfDispatchOutcome::AgentVerb(answer) => Some(Cow::Borrowed(&answer.output)),
-            SelfDispatchOutcome::SkillCall(result) => Some(Cow::Borrowed(&result.output)),
-            SelfDispatchOutcome::StoredReply(reply) => Some(Cow::Borrowed(&reply.output)),
-            SelfDispatchOutcome::Fold(answer) => {
-                serde_json::from_str(&answer.json).ok().map(Cow::Owned)
-            }
-            SelfDispatchOutcome::Leader(json) => serde_json::from_str(json).ok().map(Cow::Owned),
-            _ => None,
-        };
-        let Some(card) = card else {
-            return;
-        };
-        let (Some(reference), Some(name)) = (
-            card.get("ref").and_then(serde_json::Value::as_str),
-            card.get("name").and_then(serde_json::Value::as_str),
-        ) else {
-            return;
-        };
-        if !reference.starts_with("occurrence:") {
-            return;
-        }
-        let Some((output, _)) = self.resolve_result(&JsResultRef::Handle(reference.to_owned()))
-        else {
-            return;
-        };
-        let spilled = matches!(outcome, SelfDispatchOutcome::StoredReply(_));
-        if !spilled && output.path != bridge_result_output_path(seq) {
-            return;
-        }
-        if spilled && !self.replayed_stores.contains(&output.path) {
-            self.replayed_stores.push(output.path.clone());
-        }
-        self.bind(name.to_owned(), output.handle, output.path);
-    }
-
-    /// Whether the step parks at its deadline (FIX 7703): its runtime
-    /// stopped it there, and nothing else ended it (a hard failure, a gap,
-    /// a wait or a declined TASK each end the step as they always have).
-    pub(in crate::engine_executor) fn parks_at_deadline(&self) -> bool {
-        self.step_deadline
-            && self.hard_failure.is_none()
-            && !self.left_a_gap
-            && self.durable_wait.is_none()
-            && self.declined.is_none()
-    }
-
-    /// Why a resumed step's replay holds; `None` while it lines up, or for
-    /// a step that is not a resumed one.
-    pub(in crate::engine_executor) fn pending_replay_held(&self) -> Option<&'static str> {
-        self.deadline_replay.as_ref().and_then(|replay| replay.held)
-    }
-
-    /// Whether a resumed step's program left recorded calls it never reached.
-    pub(in crate::engine_executor) fn pending_replay_unreached(&self) -> bool {
-        self.deadline_replay
-            .as_ref()
-            .is_some_and(DeadlineReplay::unreached)
-    }
-
-    /// The step's calls for its park (FIX 7703): its rows, replayed and live,
-    /// then the recorded ones its program did not reach yet, and its
-    /// program's calls in the same order.
-    pub(in crate::engine_executor) fn take_parked_calls(
-        &mut self,
-    ) -> (Vec<CodeRunBridgeCall>, Vec<u64>) {
-        let mut rows = std::mem::take(&mut self.bridge_calls);
-        let mut guest_calls = std::mem::take(&mut self.guest_calls);
-        if let Some(replay) = self.deadline_replay.take() {
-            let (unreached_rows, unreached_calls) = replay.into_unreached();
-            rows.extend(unreached_rows);
-            guest_calls.extend(unreached_calls);
-        }
-        (rows, guest_calls)
     }
 }

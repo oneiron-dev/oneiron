@@ -45,7 +45,15 @@ fn persisted_reask_is_recoverable_after_restart_until_acknowledged() {
     let (dir, vault) = crate::test_util::open_test_vault_with(crate::VaultConfig::device());
     let mut configured = policy();
     configured.models[1].model = model("test/strong@r2");
-    vault.set_description_policy(&configured).unwrap();
+    vault
+        .set_setting(
+            crate::setting::SettingCaller::Owner(&crate::test_util::embedded_owner_proof(&vault)),
+            crate::setting::SetSetting::vault_value(
+                "models.description_policy",
+                serde_json::to_value(&configured).unwrap(),
+            ),
+        )
+        .unwrap();
     let original = vault.check_description_drift().unwrap();
     assert_eq!(original.len(), 1);
     drop(vault); // simulate a crash before the host has queued the owner ask

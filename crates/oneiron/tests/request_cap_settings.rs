@@ -167,6 +167,7 @@ fn long_turn(memory: &Memory<'_>) -> Result<EntityId, Box<dyn std::error::Error>
             conversation_ref: EntityId::now().to_hex(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: None,
                 author: WitnessAuthor::User,

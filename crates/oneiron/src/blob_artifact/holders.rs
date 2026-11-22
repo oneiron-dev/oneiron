@@ -10,7 +10,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_BLOB_ARTIFACT};
-use crate::store::Store;
+use crate::store::{ManifestDbs, Store};
 
 use super::made_by::default_version_made_by;
 use super::references::{claimed_hashes, live_claim_holders};
@@ -97,7 +97,7 @@ pub(crate) fn held_content_hashes_in_txn(
 /// its body's manifest, not the body, so the hash is the one that manifest names, read through
 /// the file plane; an inline body is hashed as its row holds it (FIX 5394).
 pub(crate) fn carrier_content_hash(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     id: &EntityId,
     raw: &[u8],
@@ -115,9 +115,10 @@ pub(crate) fn carrier_content_hash(
 }
 
 /// Every record that keeps the bytes under `hash` from release, sorted: each `asset_ref` row's
-/// artifact and each live artifact a version claim names.
+/// artifact and each live artifact a version claim names, as `store` reads them (a room's view
+/// reads its overlay's rows with base's).
 pub(crate) fn content_holders_in_txn(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     hash: &ContentHash,
 ) -> Result<Vec<EntityId>> {

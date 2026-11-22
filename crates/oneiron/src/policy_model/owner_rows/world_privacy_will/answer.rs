@@ -155,9 +155,10 @@ impl Vault {
                     return Ok((WorldPrivacyAnswer::Collected(stored), None));
                 }
             }
+            let owner_authored = owner.owner_answer_in_txn(self, txn)?;
             let author = WorldEditAuthor {
                 answer: Some(request),
-                ..WorldEditAuthor::holder(actor, surface)
+                ..WorldEditAuthor::holder(actor, surface, owner_authored.as_ref())
             };
             let agent = stored.agent_id()?;
             let receipt = self.write_world_privacy_in_txn(
@@ -169,7 +170,13 @@ impl Vault {
                 agent,
             )?;
             let key_owner = key_owner_in_txn(self, txn, actor)?;
-            let receipt = self.finish_world_key_work_in_txn(txn, key_owner, receipt, secret)?;
+            let receipt = self.finish_world_key_work_in_txn(
+                txn,
+                key_owner,
+                receipt,
+                secret,
+                owner_authored.as_ref(),
+            )?;
             stored.status = WorldPrivacyRequestStatus::Applied {
                 receipt_id: receipt.receipt_id.clone(),
                 holder: actor.to_hex(),

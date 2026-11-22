@@ -88,7 +88,7 @@ pub struct ModelStepFailure {
 pub enum ModelStepResult {
     Finished {
         response: LlmResponse,
-        /// Present only for ResponseFormat::Json, parsed after the engine's validation.
+        /// Holds validated JSON for a JSON request, or the decoded reply of a bound extraction submit.
         json: Option<serde_json::Value>,
         memoized: bool,
         fallback_source: Option<FatalLlmError>,

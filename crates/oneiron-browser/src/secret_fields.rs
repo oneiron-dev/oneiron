@@ -285,7 +285,7 @@ fn card_alone(value: &str) -> bool {
             (_, doubled) => doubled,
         })
         .sum();
-    sum % 10 == 0
+    sum.is_multiple_of(10)
 }
 
 /// What a secret field's row shows in its value's place

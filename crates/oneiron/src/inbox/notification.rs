@@ -23,6 +23,7 @@ use crate::edge::EdgeKind;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;
+use crate::provenance::birth::RowBirth;
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_NOTIFICATION};
 use crate::scan_check::{EngineScan, ScanCount};
 use crate::store::attempt_hold::BUDGET_HOLD_ACTOR;
@@ -251,6 +252,25 @@ impl Vault {
         event: &NotificationEvent,
     ) -> Result<EntityId> {
         Ok(self.stage_notification_in_txn(txn, event)?.0)
+    }
+
+    /// [`Self::record_notification_in_txn`] for a notice whose words come
+    /// from rows: the write that births it stamps `birth`, which names those
+    /// rows, and raises the notice's floor over them (READ-LINEAGE L1), so
+    /// it reads to a reader of every one of them, the vault's owner
+    /// included (RECIPIENT-NOTICE-READ-BY-ANY-READER, owner half). A replay
+    /// finds its row and stamps nothing, and a deleted row stays deleted.
+    pub(crate) fn record_derived_notification_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        event: &NotificationEvent,
+        birth: &RowBirth,
+    ) -> Result<EntityId> {
+        let (id, fresh) = self.stage_notification_in_txn(txn, event)?;
+        if fresh {
+            crate::provenance::birth::stamp_birth_with_floor_in_txn(self, txn, &id, birth)?;
+        }
+        Ok(id)
     }
 
     /// [`Self::record_notification_in_txn`], also saying whether this call

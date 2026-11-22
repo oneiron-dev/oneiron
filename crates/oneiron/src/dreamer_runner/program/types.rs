@@ -96,6 +96,14 @@ pub(super) struct TurnProgramArming {
     /// wakes once has woken, and for every other trigger.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) next_due: Option<u64>,
+    /// When the store that holds this row was made a copy served beside its source (FIX
+    /// TURNPROGRAM-OCCURRENCE-ARMINGS-LIVE-ON-A-VAULT-COPY): while it is set no due time, idle
+    /// stretch or feed entry is released for the program, and a timer keeps the due time it had.
+    /// Only an arming a turn does not wake is ever paused, and only in the write that makes the
+    /// copy ([`super::trigger::pause_occurrence_armings_in_txn`]); it stays until the owner
+    /// resumes the program on that copy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) paused_at: Option<u64>,
 }
 
 impl TurnProgramArming {

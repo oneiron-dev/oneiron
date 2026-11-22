@@ -2,7 +2,10 @@
 
 use std::collections::HashMap;
 
-use crate::batch::ENTITY_METADATA_HEADER_LEN;
+use loro::LoroDoc;
+
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::claim::history_projection::MachineHistoryReadCache;
 use crate::error::Result;
 use crate::federation::{FederationGrantScope, Position, Scope, decode_federation_grant_body};
 use crate::{EntityId, Vault};
@@ -49,17 +52,119 @@ pub(in crate::sync) fn machine_history_controls(
     Ok(Some(required))
 }
 
+/// Packs each machine CLAIM carrier of `doc`'s `entities` map's history
+/// controls that the map lacks, from this vault's live stored rows (FIX
+/// SELECTOR-MACHINE-HISTORY-CROSS-MONTH-TARGET-WITHHELD). A machine CLAIM
+/// learned in month M keeps M's window while a later transition signs its
+/// event and handoff controls in month M+1, so M's window never carries
+/// them; the export's incomplete-target check would withhold the target for
+/// controls no window of its month holds. Packing runs before the export
+/// judges any row, into its detached window copy, so every packed control
+/// goes through the export's whole per-row judgement unchanged and the
+/// incomplete check then finds it kept and in the doc.
+///
+/// Targets are selected exactly as that check selects them
+/// (`authorize/filter.rs`: a CLAIM header, a body that decodes,
+/// [`crate::authority::machine_claim_needs_history`]). A target whose
+/// history does not resolve whole packs nothing, as does a control the map
+/// already carries (a present-but-unkept control failed authorization; its
+/// stored bytes must not overrule that verdict), a control with no live
+/// stored row (absent or a deleted shell) and one whose stored bytes are
+/// gone: each leaves the target withheld as today. Only the `entities`
+/// carrier is packed, with
+/// [`crate::sync::loro_support::map_insert_bytes`], the helper the window
+/// pack writes its carriers with (`window/reverse.rs`); no birth, binding,
+/// position or reference companion is: every mirror of those opens a read
+/// transaction of its own, which the export's single-snapshot read forbids
+/// (`authorize/filter.rs`, the `BadRslot` comment), and the candidate loop
+/// lays no birth requirement on a row, so a packed control ships birthless
+/// like an owed-fetch replay (`sync/replay.rs`, `birth: None`) while the
+/// stored-lineage checks still judge its binding. Commits when it packed.
+///
+/// # Errors
+///
+/// Storage errors; a target body that fails the history-need read; a live
+/// row whose canonical wire form fails to build; the map write's.
+pub(in crate::sync) fn pack_absent_history_controls(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    doc: &LoroDoc,
+) -> Result<()> {
+    use crate::sync::loro_support::{
+        map_contains_binary, map_for_each_value_bytes, map_insert_bytes,
+    };
+
+    let entities = doc.get_map("entities");
+    let mut targets = Vec::new();
+    map_for_each_value_bytes(&entities, |raw_key, maybe_blob| {
+        let Some(blob) = maybe_blob else {
+            return;
+        };
+        let Ok(id) = EntityId::from_hex(raw_key) else {
+            return;
+        };
+        if id.to_hex() != raw_key {
+            return;
+        }
+        if !EntityMetadataHeader::parse(blob)
+            .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_CLAIM)
+        {
+            return;
+        }
+        targets.push((id, blob.to_vec()));
+    });
+    let mut wrote = false;
+    for (id, blob) in &targets {
+        let Ok(body) = crate::claim::decode_claim_body(&blob[ENTITY_METADATA_HEADER_LEN..], true)
+        else {
+            continue;
+        };
+        if !crate::authority::machine_claim_needs_history(&vault.store, rtxn, &body)? {
+            continue;
+        }
+        let Some(required) = machine_history_controls(vault, rtxn, *id)? else {
+            continue;
+        };
+        for control in &required {
+            let hex = control.to_hex();
+            if map_contains_binary(&entities, &hex) {
+                continue;
+            }
+            if !crate::vault::live_entity_row_in_txn(&vault.store, rtxn, control)?.is_live() {
+                continue;
+            }
+            let Some(raw) = vault.get_raw_in(rtxn, control)? else {
+                continue;
+            };
+            // The window pack mirrors the canonical wire bytes, not the
+            // receiver-local materialization (`window/reverse.rs`).
+            let bytes = crate::sync::pack_sync::canonical_outbound_blob(&raw)?.unwrap_or(raw);
+            map_insert_bytes(&entities, &hex, &bytes)?;
+            wrote = true;
+        }
+    }
+    if wrote {
+        doc.commit();
+    }
+    Ok(())
+}
+
 /// How a selector's window export judges each control of a machine CLAIM's
 /// history before it ships the target (RULING SECREAD-HOME-MACHINE-HISTORY =
 /// A). The export ships a target only when it keeps every control
 /// (`authorize/filter.rs`, the incomplete-target check); the home's history
 /// pages (FIX 3820) serve a history only when this gate carries every control
-/// of it, so the page refuses what the export refuses.
+/// of it, so the page refuses what the export refuses. The gate resolves the
+/// target's history once for all its controls (FIX
+/// MACHINE-HISTORY-PAGE-PER-CONTROL-RESOLVE), so one page is linear in the
+/// history, not quadratic.
 pub(in crate::sync) struct HistoryControlGate<'v, 's> {
     selector: &'s SyncSelector,
     member: MemberAccess<'v>,
     authority: Scope,
     position: Position,
+    /// The histories the gate's read resolves, each once.
+    history: MachineHistoryReadCache<'v>,
 }
 
 impl<'v, 's> HistoryControlGate<'v, 's> {
@@ -93,6 +198,7 @@ impl<'v, 's> HistoryControlGate<'v, 's> {
             member,
             authority: grant.authority_scope,
             position,
+            history: MachineHistoryReadCache::new(vault),
         }))
     }
 
@@ -103,7 +209,8 @@ impl<'v, 's> HistoryControlGate<'v, 's> {
     /// labels) and the grant's selection ([`source_selected`]), as the export
     /// judges each row it ships (`authorize/filter.rs`). A control is not a
     /// facet seed of the window, so the selection judges its own recorded
-    /// facets, as it judges a text's source.
+    /// facets, as it judges a text's source. Ask it only in the read the gate
+    /// was built in: its history cache holds that read's.
     ///
     /// # Errors
     ///
@@ -141,6 +248,7 @@ impl<'v, 's> HistoryControlGate<'v, 's> {
                 self.selector,
                 self.position.as_scope(),
                 &HashMap::new(),
+                &self.history,
             )?)
     }
 }

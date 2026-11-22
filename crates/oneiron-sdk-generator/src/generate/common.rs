@@ -547,6 +547,98 @@ pub(crate) fn js_method(name: &str) -> String {
     out
 }
 
+/// The names a JavaScript binding (a parameter, a destructured name, a `const`, a `function`) cannot take in module
+/// code, which is strict: ECMAScript's reserved words, the ones strict mode adds, and `arguments` and `eval`, which
+/// strict code does not bind (ECMA-262, 13.1.1). Each stays valid as a property name, an object key or a type member.
+pub(crate) const JS_RESERVED_WORDS: [&str; 48] = [
+    "arguments",
+    "await",
+    "break",
+    "case",
+    "catch",
+    "class",
+    "const",
+    "continue",
+    "debugger",
+    "default",
+    "delete",
+    "do",
+    "else",
+    "enum",
+    "eval",
+    "export",
+    "extends",
+    "false",
+    "finally",
+    "for",
+    "function",
+    "if",
+    "implements",
+    "import",
+    "in",
+    "instanceof",
+    "interface",
+    "let",
+    "new",
+    "null",
+    "package",
+    "private",
+    "protected",
+    "public",
+    "return",
+    "static",
+    "super",
+    "switch",
+    "this",
+    "throw",
+    "true",
+    "try",
+    "typeof",
+    "var",
+    "void",
+    "while",
+    "with",
+    "yield",
+];
+
+/// Whether a name is one of [`JS_RESERVED_WORDS`].
+pub(crate) fn is_js_reserved(name: &str) -> bool {
+    JS_RESERVED_WORDS.contains(&name)
+}
+
+/// The names one JavaScript binding list (a parameter list, a destructure) binds, in list order. A name binds as it
+/// is unless it is a reserved word or one of `fixed`, the names the emitter itself binds or reads in that scope; such
+/// a name takes a trailing underscore (`default_`, as the Python emitter gives a Python keyword one), and one more
+/// until no other name of the list or `fixed` has it. A list with neither keeps every name.
+pub(crate) fn js_binding_names(names: &[String], fixed: &[&str]) -> Vec<String> {
+    let keeps = |name: &str| !is_js_reserved(name) && !fixed.contains(&name);
+    let mut taken: IndexSet<String> = fixed.iter().map(|name| (*name).to_owned()).collect();
+    taken.extend(names.iter().filter(|name| keeps(name)).cloned());
+    names
+        .iter()
+        .map(|name| {
+            if keeps(name) {
+                return name.clone();
+            }
+            let mut binding = format!("{name}_");
+            while !taken.insert(binding.clone()) {
+                binding.push('_');
+            }
+            binding
+        })
+        .collect()
+}
+
+/// A callable member of a TypeScript interface or type literal: `name(params): result`, except for `new`, which there
+/// opens a construct signature, so that member is a property of function type, `new: (params) => result`.
+pub(crate) fn ts_callable_member(name: &str, params: &str, result: &str) -> String {
+    if name == "new" {
+        format!("{name}: ({params}) => {result}")
+    } else {
+        format!("{name}({params}): {result}")
+    }
+}
+
 /// `('Option' | 'Vec', inner)` for a text that starts with `<container><` and ends with `>`, else
 /// `(None, the last `::` segment)`.
 pub(crate) fn container_type(value: &str) -> (Option<&'static str>, &str) {
@@ -773,7 +865,7 @@ export type TaskAssignee = "dreamer" | {agent_def: {agent_def_ref: string}} | {p
 export type ConsultPayloadRef = {claim: string} | {turn: string};
 export type TaskAskOptionId = string;
 export type TaskAskTarget = {responder: TaskAssignee} | {people: string[]} | {authority: {class: string; selectors: string[]; target: string | null; budget: number | null; receipt_required: boolean}} | {role: {role: {role: "responsible"; actor: string; project?: string | null} | {role: "board"; project: string} | {role: "owner"}; ceiling: "responsible" | "board" | "owner"; act: "judgment"}};
-export interface TaskAskLadderPrediction { option: TaskAskOptionId; rung: "rule" | "system_one"; probability: number | null }
+export interface TaskAskLadderPrediction { option: TaskAskOptionId; rung: "rule" | "system_one" | "precision" | "escalation"; probability: number | null }
 export interface TaskAskQuestion { reference: ConsultPayloadRef; revision: number; options: Record<TaskAskOptionId, string>; context_refs: ConsultPayloadRef[]; label?: string | null; outcome_binding?: OutcomeBinding | null; ladder_answer?: TaskAskLadderPrediction | null; class_key?: string | null }
 export type TaskAskElectorate = "any" | {people: string[]};
 export interface TaskAskNeed {count: number; of?: TaskAskElectorate}
@@ -813,6 +905,84 @@ mod tests {
     // The expected values below were printed by Python 3.14.7 on nelly with the Python generator's definitions
     // copied verbatim into a probe (main e79eb76df3e):
     //   print(repr(n), repr(js_method(n)))  /  print(repr(v), repr(container_type(v)))  /  ... rust_type(v) ...
+
+    #[test]
+    fn js_binding_names_suffix_exactly_the_reserved_and_fixed_names() {
+        // FIX-LIST [SDK-TS-RESERVED-WORD-IDENTIFIERS]: each reserved word takes the underscore; a name that only
+        // holds or extends one, a different case, a TypeScript contextual word (`type`, `declare`, `async`) and a
+        // global (`undefined`) bind as they are.
+        let one =
+            |name: &str, fixed: &[&str]| js_binding_names(&[name.to_owned()], fixed).remove(0);
+        for word in JS_RESERVED_WORDS {
+            assert!(is_js_reserved(word), "{word}");
+            assert_eq!(one(word, &[]), format!("{word}_"));
+        }
+        for name in [
+            "input",
+            "request",
+            "defaults",
+            "default_",
+            "deleteJson",
+            "Default",
+            "NEW",
+            "type",
+            "declare",
+            "async",
+            "of",
+            "undefined",
+            "",
+        ] {
+            assert!(!is_js_reserved(name), "{name}");
+            assert_eq!(one(name, &[]), name);
+        }
+        // Within one list no two names bind alike: a name that binds as it is keeps it, a suffixed one takes the
+        // next free name; a fixed name (one the emitter binds or reads there) is renamed like a reserved word.
+        let list = |names: &[&str], fixed: &[&str]| {
+            let names: Vec<String> = names.iter().map(|name| (*name).to_owned()).collect();
+            js_binding_names(&names, fixed)
+        };
+        assert_eq!(
+            list(&["default", "default_"], &[]),
+            ["default__", "default_"]
+        );
+        assert_eq!(
+            list(&["default_", "default"], &[]),
+            ["default_", "default__"]
+        );
+        assert_eq!(list(&["new", "new"], &[]), ["new_", "new__"]);
+        assert_eq!(
+            list(
+                &["rest", "requestId", "request"],
+                &["host", "rest", "result", "request"]
+            ),
+            ["rest_", "requestId", "request_"]
+        );
+        assert_eq!(list(&["host", "host_"], &["host"]), ["host__", "host_"]);
+        assert_eq!(
+            list(&["query", "limit"], &["host", "opts"]),
+            ["query", "limit"]
+        );
+        let mut sorted = JS_RESERVED_WORDS;
+        sorted.sort_unstable();
+        assert_eq!(sorted, JS_RESERVED_WORDS, "sorted, without repeats");
+        assert!(sorted.windows(2).all(|pair| pair[0] < pair[1]));
+    }
+
+    #[test]
+    fn a_member_named_new_is_a_property_not_a_construct_signature() {
+        assert_eq!(
+            ts_callable_member("vaultRecall", "query: string", "Out"),
+            "vaultRecall(query: string): Out"
+        );
+        assert_eq!(
+            ts_callable_member("delete", "input: unknown", "unknown"),
+            "delete(input: unknown): unknown"
+        );
+        assert_eq!(
+            ts_callable_member("new", "input: unknown", "unknown"),
+            "new: (input: unknown) => unknown"
+        );
+    }
 
     #[test]
     fn js_method_titles_every_later_segment() {

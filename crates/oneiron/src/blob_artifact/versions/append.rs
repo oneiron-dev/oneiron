@@ -365,8 +365,8 @@ impl Vault {
         // The first version is the artifact's birth: its envelope is the
         // artifact row's Rule A birth, read backwards by `rows_born_from`.
         if place.previous_version == 0 && births_row(&record.made_by) {
-            crate::store::birth_record::stamp_row_birth_in_txn(
-                &self.store,
+            crate::provenance::birth::stamp_birth_with_floor_in_txn(
+                self,
                 wtxn,
                 artifact_id,
                 &crate::store::row_birth::RowBirth {
