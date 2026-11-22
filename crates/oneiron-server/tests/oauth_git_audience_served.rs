@@ -359,6 +359,7 @@ impl Served {
                 member: agent,
                 repos: BTreeSet::from([self.push_repo]),
                 expires_at: None,
+                check_in_ref: None,
             },
         )
         .expect("the owner grants the agent git_push on the repo");
