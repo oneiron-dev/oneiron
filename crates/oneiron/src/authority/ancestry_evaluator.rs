@@ -22,22 +22,40 @@ pub(super) enum EvaluationPhase<'a> {
 }
 
 pub(super) fn evaluate_entry(
-    entry: &AuthorityLogEntry,
+    row: &FoldRow,
     hash: AuthorityEntryHash,
-    entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    entries: &BTreeMap<AuthorityEntryHash, FoldRow>,
     states: &BTreeMap<AuthorityEntryHash, FoldState>,
     context: FoldContext<'_>,
     phase: EvaluationPhase<'_>,
 ) -> EntryFold {
-    let result = fold_entry_state(entry, hash, states, context);
+    let result = fold_row_state(row, hash, states, context);
     let EvaluationPhase::Stalled(rejected) = phase else {
         return result;
     };
     if !matches!(result, EntryFold::Waiting) {
         return result;
     }
+    // Only a withdrawal crosses, and a row that passes through withdraws
+    // nothing.
+    let Some(entry) = row.open() else {
+        return result;
+    };
     stalled_actor_revoke(entry, hash, entries, states, rejected, context)
         .map_or(EntryFold::Waiting, EntryFold::Ready)
+}
+
+/// [`skippable_permissive`] for a stored row. A slip mint or an enrollment
+/// that passes through is as permissive as its op: it grants, never
+/// withdraws. Every other sealed kind is not crossed.
+pub(super) fn row_skippable_permissive(row: &FoldRow) -> bool {
+    match row {
+        FoldRow::Open(entry) => skippable_permissive(&entry.op),
+        FoldRow::PassThrough(row) => matches!(
+            row.standing(),
+            PublicStanding::SlipMint | PublicStanding::EnrollDevice { .. }
+        ),
+    }
 }
 
 /// Rejected entries may only be crossed when they are permissive. The
@@ -71,7 +89,7 @@ pub(super) fn skippable_permissive(op: &AuthorityOp) -> bool {
 fn stalled_actor_revoke(
     entry: &AuthorityLogEntry,
     hash: AuthorityEntryHash,
-    entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    entries: &BTreeMap<AuthorityEntryHash, FoldRow>,
     states: &BTreeMap<AuthorityEntryHash, FoldState>,
     rejected: &BTreeSet<AuthorityEntryHash>,
     context: FoldContext<'_>,
@@ -101,7 +119,7 @@ fn stalled_actor_revoke(
 /// Explicit outcomes for EACH missing parent.
 enum ParentOutcome<'a> {
     Ready(&'a FoldState),
-    RejectedAncestry(&'a AuthorityLogEntry),
+    RejectedAncestry(&'a FoldRow),
     Unavailable,
 }
 
@@ -109,7 +127,7 @@ enum ParentOutcome<'a> {
 /// even when its raw entry is not in the tail (FIX 3008).
 fn parent_outcome<'a>(
     hash: AuthorityEntryHash,
-    entry: Option<&'a AuthorityLogEntry>,
+    entry: Option<&'a FoldRow>,
     states: &'a BTreeMap<AuthorityEntryHash, FoldState>,
     rejected: &BTreeSet<AuthorityEntryHash>,
 ) -> ParentOutcome<'a> {
@@ -117,7 +135,7 @@ fn parent_outcome<'a>(
         return ParentOutcome::Ready(state);
     }
     match entry {
-        Some(entry) if rejected.contains(&hash) && skippable_permissive(&entry.op) => {
+        Some(entry) if rejected.contains(&hash) && row_skippable_permissive(entry) => {
             ParentOutcome::RejectedAncestry(entry)
         }
         _ => ParentOutcome::Unavailable,
@@ -131,7 +149,7 @@ fn parent_outcome<'a>(
 /// the whole restrictive proof.
 fn resolve_parent(
     start: AuthorityEntryHash,
-    entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    entries: &BTreeMap<AuthorityEntryHash, FoldRow>,
     states: &BTreeMap<AuthorityEntryHash, FoldState>,
     rejected: &BTreeSet<AuthorityEntryHash>,
     context: FoldContext<'_>,
@@ -161,15 +179,15 @@ fn resolve_parent(
                 });
             }
             ParentOutcome::RejectedAncestry(entry) => {
-                if entry.parent_hashes.is_empty() {
+                if entry.parent_hashes().is_empty() {
                     return None;
                 }
-                crossed_vaults.push(entry.vault_id);
+                crossed_vaults.push(entry.vault_id());
                 crossed_seqs
                     .entry(entry.signer_key().clone())
-                    .and_modify(|seq| *seq = (*seq).max(entry.seq))
-                    .or_insert(entry.seq);
-                frontier.extend(entry.parent_hashes.iter().copied());
+                    .and_modify(|seq| *seq = (*seq).max(entry.seq()))
+                    .or_insert(entry.seq());
+                frontier.extend(entry.parent_hashes().iter().copied());
             }
             ParentOutcome::Unavailable => return None,
         }

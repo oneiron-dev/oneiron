@@ -53,16 +53,20 @@ impl ImageFold {
             fold,
         } = parts;
         let final_merged = final_merged?;
+        // A row that passes through keeps no world, as `RowMeta::of_row`
+        // reads it: it stands on the main log.
         let is_main = |hash: &AuthorityEntryHash| {
-            by_hash.get(hash).is_some_and(|entry| {
-                crate::authority::world_privacy::side_world(&entry.op).is_none()
+            by_hash.get(hash).is_some_and(|row| {
+                row.op()
+                    .and_then(crate::authority::world_privacy::side_world)
+                    .is_none()
             })
         };
         let issuers =
             crate::authority::log_structure::authority_structure(by_hash.values()).issuers;
         let uncounted = by_hash
             .iter()
-            .filter(|(_, entry)| crate::authority::log_budget::is_uncounted(entry, &issuers))
+            .filter(|(_, row)| crate::authority::log_budget::is_uncounted(row, &issuers))
             .map(|(hash, _)| *hash)
             .collect::<BTreeSet<_>>();
         let mut writers = BTreeMap::<_, BTreeSet<_>>::new();
@@ -73,8 +77,10 @@ impl ImageFold {
             if is_main(hash) {
                 add_bound_keys(&mut bound_keys, state);
             }
-            if let Some(AuthorityOp::FederationConfirm(action)) =
-                by_hash.get(hash).map(|entry| &entry.op)
+            if let Some(AuthorityOp::FederationConfirm(action)) = by_hash
+                .get(hash)
+                .and_then(FoldRow::open)
+                .map(|entry| &entry.op)
             {
                 confirm_ids.insert(action.confirm_id);
                 confirm_nonces.insert(action.nonce);
@@ -83,8 +89,9 @@ impl ImageFold {
         let marks = valid_entries
             .iter()
             .filter_map(|hash| {
-                let profile =
-                    super::super::stale_roster::filed_machine_profile(&by_hash.get(hash)?.op)?;
+                let profile = super::super::stale_roster::filed_machine_profile(
+                    &by_hash.get(hash)?.open()?.op,
+                )?;
                 let chain = states
                     .get(hash)?
                     .machines
@@ -97,7 +104,7 @@ impl ImageFold {
             .collect();
         let missing_parents = by_hash
             .values()
-            .flat_map(|entry| entry.parent_hashes.iter())
+            .flat_map(|row| row.parent_hashes().iter())
             .filter(|parent| !by_hash.contains_key(*parent))
             .copied()
             .collect();
@@ -158,14 +165,14 @@ impl ImageFold {
 /// The replay points of every judged row off `frontier`, from the settled
 /// states; [`AUTHORITY_REPLAY_OVERFLOW`] where a state does not encode.
 fn replay_of(
-    by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    by_hash: &BTreeMap<AuthorityEntryHash, FoldRow>,
     states: &BTreeMap<AuthorityEntryHash, FoldState>,
     frontier: &BTreeSet<AuthorityEntryHash>,
 ) -> ReplayEvidence {
     let parents: BTreeMap<_, _> = by_hash
         .iter()
         .filter(|(hash, _)| !frontier.contains(*hash))
-        .map(|(hash, entry)| (*hash, entry.parent_hashes.clone()))
+        .map(|(hash, row)| (*hash, row.parent_hashes().to_vec()))
         .collect();
     ReplayEvidence::points_of(
         &parents_first_of(&parents),

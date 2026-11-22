@@ -1671,11 +1671,12 @@ fn repact_accepted(
     repact: &AuthorityLogEntry,
     peer_roots: &BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>,
 ) -> std::result::Result<(), FederationLifecycleRejection> {
+    use oneiron_authority::authority::FoldRow;
     let fold = fold_authority_log_with_peer_consent_roots(
         &[
-            fixture.genesis.clone(),
-            fixture.connect.clone(),
-            repact.clone(),
+            FoldRow::Open(fixture.genesis.clone()),
+            FoldRow::Open(fixture.connect.clone()),
+            FoldRow::Open(repact.clone()),
         ],
         &BTreeMap::new(),
         0,

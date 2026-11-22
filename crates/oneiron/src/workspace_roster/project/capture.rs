@@ -108,7 +108,7 @@ pub(crate) fn projects_touched_by_put(
     txn: &mut heed::RwTxn<'_>,
     (id, kind): (EntityId, u8),
     revision: Option<&RevisionPut>,
-    entry: Option<&crate::authority::AuthorityLogEntry>,
+    row: Option<&crate::authority::FoldRow>,
 ) -> Result<BTreeSet<EntityId>> {
     let mut touched = BTreeSet::new();
     if let Some(put) = revision {
@@ -120,19 +120,21 @@ pub(crate) fn projects_touched_by_put(
     } else if is_project_type(store, kind) {
         touched.insert(id);
     }
-    if let Some(entry) = entry {
-        touched.extend(projects_touched_by_authority_entry(store, txn, entry)?);
+    if let Some(row) = row {
+        touched.extend(projects_touched_by_authority_entry(store, txn, row)?);
     }
     Ok(touched)
 }
 
 /// The projects an authority-log entry may change: those with a revision
 /// waiting for the slip it mints, and every parent project a frozen
-/// descendant waits on.
+/// descendant waits on. A row whose record does not open here still touches
+/// the parents; the mint's slip id is in its record, so its waiting
+/// revisions wait for the row to open.
 fn projects_touched_by_authority_entry(
     store: &Store,
     txn: &heed::RoTxn<'_>,
-    entry: &crate::authority::AuthorityLogEntry,
+    row: &crate::authority::FoldRow,
 ) -> Result<BTreeSet<EntityId>> {
     // Any entry can change a slip's standing, and with it a parent project's
     // view: its refresh retries the frozen descendants waiting on it (Wonder
@@ -142,7 +144,7 @@ fn projects_touched_by_authority_entry(
         .into_iter()
         .map(|(parent, _)| parent)
         .collect();
-    if let crate::authority::AuthorityOp::SlipMint(action) = &entry.op {
+    if let Some(crate::authority::AuthorityOp::SlipMint(action)) = row.op() {
         touched.extend(
             REVISION_AWAITING_MINT
                 .scan_keys(store, txn, &action.claims.slip_id)?

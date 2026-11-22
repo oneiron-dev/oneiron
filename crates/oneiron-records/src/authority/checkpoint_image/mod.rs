@@ -135,7 +135,9 @@ use serde::Serialize;
 /// grant travel choice it carried (FIX ACT-STANDS-RAW-HEAD-SKIPS-KEY-ROTATION, FIX
 /// MACHINE-CROSSING-REMOVALS-UNMAKE-CARRIED-OWNER-ACTS, FIX
 /// MACHINE-CROSSING-REMOVALS-UNMAKE-CARRIED-OWNER-CHOICES).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 60;
+/// 61: each covered row's summary marks its kind and whether it is sealed, and an image that
+/// covers a sealed row carries every covered row's body (census L5-22 1a-iii).
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 61;
 
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";

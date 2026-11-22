@@ -18,9 +18,10 @@ use super::ancestry_evaluator::{EvaluationPhase, evaluate_entry};
 use super::*;
 
 /// Folds every entry of `by_hash` it can, and records why each other entry
-/// never folds.
+/// never folds. A row that passes through folds as structure only
+/// ([`fold_row_state`]), and its children wait on it as on any row.
 pub(super) fn fold_entry_states(
-    by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    by_hash: &BTreeMap<AuthorityEntryHash, FoldRow>,
     context: FoldContext<'_>,
     issues: &mut Vec<AuthorityFoldIssue>,
 ) -> BTreeMap<AuthorityEntryHash, FoldState> {
@@ -33,23 +34,24 @@ pub(super) fn fold_entry_states(
 /// still passes its own transition's checks. The states returned hold the
 /// seed's too. A full fold seeds nothing.
 pub(super) fn fold_entry_states_seeded(
-    by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    by_hash: &BTreeMap<AuthorityEntryHash, FoldRow>,
     seed: &BTreeMap<AuthorityEntryHash, FoldState>,
     context: FoldContext<'_>,
     issues: &mut Vec<AuthorityFoldIssue>,
 ) -> BTreeMap<AuthorityEntryHash, FoldState> {
     let mut children = BTreeMap::<AuthorityEntryHash, Vec<AuthorityEntryHash>>::new();
-    for (hash, entry) in by_hash {
-        for parent in &entry.parent_hashes {
+    for (hash, row) in by_hash {
+        for parent in row.parent_hashes() {
             children.entry(*parent).or_default().push(*hash);
         }
     }
-    // A revoke whose parent just landed goes before any ready grant.
+    // A revoke whose parent just landed goes before any ready grant. A row
+    // that passes through is never a revoke.
     let order = |hash: &AuthorityEntryHash| {
         (
             !matches!(
-                by_hash[hash].op,
-                AuthorityOp::RevokeActor { .. } | AuthorityOp::RevokeDevice { .. }
+                by_hash[hash].op(),
+                Some(AuthorityOp::RevokeActor { .. } | AuthorityOp::RevokeDevice { .. })
             ),
             *hash,
         )
@@ -84,9 +86,7 @@ pub(super) fn fold_entry_states_seeded(
                     // valid folded revoke. Other rejected grants keep the
                     // separate, restriction-only proof path: their children
                     // do not become ordinary valid entries.
-                    if matches!(entry.op, AuthorityOp::EnrollDevice { .. })
-                        && entry_is_retired(entry, hash, context)
-                    {
+                    if row_is_enrollment(entry) && row_is_retired(entry, hash, context) {
                         rejected_retired.insert(hash);
                     }
                     issues.push(issue);
@@ -109,7 +109,7 @@ pub(super) fn fold_entry_states_seeded(
             .copied()
             .filter(|hash| {
                 matches!(
-                    fold_entry_state(
+                    fold_row_state(
                         &by_hash[hash],
                         *hash,
                         &states,
@@ -148,4 +148,13 @@ pub(super) fn fold_entry_states_seeded(
         issues.push(AuthorityFoldIssue::InvalidAncestry(hash));
     }
     states
+}
+
+/// Whether a stored row enrolls a device, by its op or, when it passes
+/// through, by its kind.
+fn row_is_enrollment(row: &FoldRow) -> bool {
+    match row {
+        FoldRow::Open(entry) => matches!(entry.op, AuthorityOp::EnrollDevice { .. }),
+        FoldRow::PassThrough(row) => matches!(row.standing(), PublicStanding::EnrollDevice { .. }),
+    }
 }

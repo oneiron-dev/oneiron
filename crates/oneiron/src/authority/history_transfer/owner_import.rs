@@ -118,7 +118,7 @@ impl Vault {
         txn: &mut heed::RwTxn<'_>,
         ordered: &[DecodedRow],
         resident: &BTreeSet<AuthorityEntryHash>,
-        staged_rows: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+        staged_rows: &BTreeMap<AuthorityEntryHash, FoldRow>,
         now: u64,
     ) -> Result<BTreeSet<AuthorityEntryHash>> {
         let mut held = BTreeSet::new();
@@ -133,7 +133,7 @@ impl Vault {
                 let (hash, _, entry) = &ordered[end];
                 if !resident.contains(hash)
                     && entry
-                        .parent_hashes
+                        .parent_hashes()
                         .iter()
                         .any(|parent| held.contains(parent))
                 {

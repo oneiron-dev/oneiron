@@ -25,18 +25,20 @@ use super::*;
 /// row (k at most) or finds a same-scope ancestor pair the index already
 /// holds, so the scan costs k plus those pairs, each one index lookup.
 pub(super) fn rows_sequence_floors(
-    by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    by_hash: &BTreeMap<AuthorityEntryHash, FoldRow>,
     ancestors: &AncestorIndex,
 ) -> BTreeMap<AuthorityEntryHash, u64> {
     let mut scopes = BTreeMap::<_, Vec<(u64, AuthorityEntryHash)>>::new();
-    for (hash, entry) in by_hash {
+    // A row that passes through keys on its signer's main log: no sealed
+    // kind is a side entry (census L5-22 1a-iii).
+    for (hash, row) in by_hash {
         scopes
             .entry((
-                entry.signer_key(),
-                super::world_privacy::side_world(&entry.op),
+                row.signer_key(),
+                row.op().and_then(super::world_privacy::side_world),
             ))
             .or_default()
-            .push((entry.seq, *hash));
+            .push((row.seq(), *hash));
     }
     let below = |lower: &AuthorityEntryHash, upper: &AuthorityEntryHash| {
         ancestors

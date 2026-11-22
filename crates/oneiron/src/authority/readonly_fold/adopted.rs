@@ -11,7 +11,10 @@ use super::*;
 /// row the stale-roster window reads); no other clock is read for a covered
 /// row. None where the image cannot answer yet every covered row is held:
 /// the stored log then folds whole. Each `arriving` row folds as a stored row
-/// first seen now (FIX 2535).
+/// first seen now (FIX 2535). A tail row, stored or arriving, that does not
+/// open here leaves the image nothing to fold past (census L5-22 1a-iii): the
+/// fold then asks for every covered row not held, or folds the stored log
+/// whole.
 pub(super) fn fold_adopted_in_txn(
     store: &Store,
     posture: HostingPrivacyPosture,
@@ -19,7 +22,7 @@ pub(super) fn fold_adopted_in_txn(
     key: AuthorityCacheKey,
     adopted: &VerifiedAuthorityCheckpoint,
     required: &BTreeSet<AuthorityEntryHash>,
-    arriving: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    arriving: &BTreeMap<AuthorityEntryHash, FoldRow>,
 ) -> Result<Option<AuthorityTailFold>> {
     let image = adopted.image();
     // The store id is the row's content hash: a held covered row is known
@@ -34,31 +37,48 @@ pub(super) fn fold_adopted_in_txn(
     // install's own row, with its own first-seen receipt.
     let mut stored_covered = BTreeSet::new();
     let mut tail = Vec::new();
+    // The fold past the image takes whole entries: a tail row that does not
+    // open here sends the fold to the stored log.
+    let mut passes_through = false;
     for id in authority_log_ids_in_txn(store, txn)? {
         if let Some(hash) = covered_ids.get(&id) {
             held_covered.insert(*hash);
             stored_covered.insert(*hash);
             continue;
         }
-        let entry = decode_stored_authority_log_body(
+        let row = decode_stored_authority_fold_row(
             store,
             txn,
             &authority_log_body_in_txn(store, txn, &id)?,
         )?;
-        let hash = authority_entry_hash(&entry)?;
+        let hash = row.hash()?;
         if image.rows.contains_key(&hash) {
             held_covered.insert(hash);
             stored_covered.insert(hash);
+        } else if let Some(entry) = row.open() {
+            tail.push((hash, entry.clone()));
         } else {
-            tail.push((hash, entry));
+            passes_through = true;
         }
     }
-    for (hash, entry) in arriving {
+    for (hash, row) in arriving {
         if image.rows.contains_key(hash) {
             held_covered.insert(*hash);
         } else if !tail.iter().any(|(stored, _)| stored == hash) {
-            tail.push((*hash, entry.clone()));
+            match row.open() {
+                Some(entry) => tail.push((*hash, entry.clone())),
+                None => passes_through = true,
+            }
         }
+    }
+    if passes_through {
+        let request = crate::authority::adopted_fold::whole_history(
+            adopted,
+            &BTreeSet::new(),
+            &held_covered,
+            None,
+        );
+        return Ok((!request.missing.is_empty()).then_some(AuthorityTailFold::NeedHistory(request)));
     }
     let backfilled = AUTHORITY_FIRST_SEEN_BACKFILLED.contains(
         store,

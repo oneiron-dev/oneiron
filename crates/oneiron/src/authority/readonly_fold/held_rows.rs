@@ -29,7 +29,7 @@ impl<'a> HeldRows<'a> {
         store: &Store,
         txn: &heed::RoTxn<'_>,
         baseline: Option<&'a AuthorityContinuation>,
-        tail: &mut Vec<(AuthorityEntryHash, AuthorityLogEntry)>,
+        tail: &mut Vec<(AuthorityEntryHash, FoldRow)>,
     ) -> Result<Self> {
         if let Some(held) = Self::scan_indexed_in_txn(store, txn, baseline, tail)? {
             return Ok(held);
@@ -44,14 +44,14 @@ impl<'a> HeldRows<'a> {
                 folded += 1;
                 continue;
             }
-            let entry = decode_stored_authority_log_body(
+            let row = decode_stored_authority_fold_row(
                 store,
                 txn,
                 &authority_log_body_in_txn(store, txn, &id)?,
             )?;
-            let hash = authority_entry_hash(&entry)?;
+            let hash = row.hash()?;
             rest.insert(hash);
-            tail.push((hash, entry));
+            tail.push((hash, row));
         }
         // The type index holds each id once, so the count is of distinct
         // rows of the baseline.
@@ -78,7 +78,7 @@ impl<'a> HeldRows<'a> {
         store: &Store,
         txn: &heed::RoTxn<'_>,
         baseline: Option<&'a AuthorityContinuation>,
-        tail: &mut Vec<(AuthorityEntryHash, AuthorityLogEntry)>,
+        tail: &mut Vec<(AuthorityEntryHash, FoldRow)>,
     ) -> Result<Option<Self>> {
         let Some(baseline) = baseline else {
             return Ok(None);
@@ -102,6 +102,9 @@ impl<'a> HeldRows<'a> {
             let Ok(body) = authority_log_body_in_txn(store, txn, id) else {
                 return Ok(None);
             };
+            // The indexed scan stays whole-entry (R9): a row that does
+            // not open here declines the index, and the type-index scan
+            // reads it as a row.
             let Ok(entry) = crate::authority::open_vault_authority_body_in_txn(store, txn, &body)
             else {
                 return Ok(None);
@@ -115,7 +118,7 @@ impl<'a> HeldRows<'a> {
             if baseline.ids.contains_key(id) || !rest.insert(hash) {
                 return Ok(None);
             }
-            fresh.push((hash, entry));
+            fresh.push((hash, FoldRow::Open(entry)));
         }
         tail.extend(fresh);
         Ok(Some(Self {

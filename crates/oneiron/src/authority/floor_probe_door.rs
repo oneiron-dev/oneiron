@@ -16,7 +16,7 @@ use super::ancestor_index::AncestorIndex;
 use super::entry_transition::{EntryFold, fold_entry_state};
 use super::fold_engine::{FoldContext, JudgedRows};
 use super::fold_state::FoldState;
-use super::{AuthorityEntryHash, AuthorityLogEntry};
+use super::{AuthorityEntryHash, AuthorityLogEntry, FoldRow};
 
 /// The probe asked both ways of every row of one log under each floor map.
 #[derive(Debug)]
@@ -41,7 +41,8 @@ pub struct ProbeEquivalence {
 /// # Panics
 /// When a row's hash does not compute.
 pub fn probe_both_ways(entries: &[AuthorityLogEntry]) -> ProbeEquivalence {
-    let (by_hash, _) = super::fold_engine::judged_entries(entries);
+    let rows = super::fold_engine::open_rows(entries);
+    let (by_hash, _) = super::fold_engine::judged_entries(&rows);
     let (ancestors, _) = super::ancestor_index::entry_ancestor_index(&by_hash, u64::MAX)
         .expect("no memory floor refuses");
     let original = super::rows_floor::rows_sequence_floors(&by_hash, &ancestors);
@@ -118,7 +119,7 @@ fn folds_in_rounds(
         let hashes: Vec<_> = pending.iter().copied().collect();
         let mut progressed = false;
         for hash in hashes {
-            let Some(entry) = by_hash.get(&hash) else {
+            let Some(entry) = by_hash.get(&hash).and_then(FoldRow::open) else {
                 return false;
             };
             match fold_entry_state(

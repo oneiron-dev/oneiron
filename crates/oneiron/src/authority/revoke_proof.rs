@@ -181,16 +181,16 @@ pub(super) use oneiron_records::authority::revoke_proof::{
 /// evaluator as the ordinary fold, with only global winner selection removed.
 /// Neither input arrival order nor a persisted node-local marker is involved.
 pub(super) fn derive_revoke_facts(
-    entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    entries: &BTreeMap<AuthorityEntryHash, FoldRow>,
     ancestors: &AncestorIndex,
     context: FoldContext<'_>,
 ) -> RevokeFacts {
     let mut facts = RevokeFacts::default();
     let mut proofs = SignedBranches::new(entries, ancestors, context);
-    for (hash, entry) in entries {
-        let removal = match &entry.op {
-            AuthorityOp::RevokeActor { .. } | AuthorityOp::RevokeDevice { .. } => false,
-            op if removes_machine(op) => true,
+    for (hash, row) in entries {
+        let removal = match row.op() {
+            Some(AuthorityOp::RevokeActor { .. } | AuthorityOp::RevokeDevice { .. }) => false,
+            Some(op) if removes_machine(op) => true,
             _ => continue,
         };
         // A removal is terminal on every replica. It vouches for its own
@@ -239,18 +239,18 @@ pub(super) fn derive_revoke_facts(
             continue;
         };
         let (vault_id, routed) = (state.vault_id, state.anchor_entries.to_btree_set());
-        let kind = match &entry.op {
-            AuthorityOp::RevokeActor {
+        let kind = match row.op() {
+            Some(AuthorityOp::RevokeActor {
                 authority_key,
                 epoch,
-            } => Restriction::Actor {
+            }) => Restriction::Actor {
                 authority_key: authority_key.clone(),
                 epoch: *epoch,
             },
-            AuthorityOp::RevokeDevice { revoked_key } => {
+            Some(AuthorityOp::RevokeDevice { revoked_key }) => {
                 Restriction::DeviceRevoke(revoked_key.clone())
             }
-            AuthorityOp::MachineProfile(profile) => {
+            Some(AuthorityOp::MachineProfile(profile)) => {
                 let Some(removal) = machine_removal(&state, profile.machine, hash) else {
                     continue;
                 };
@@ -318,22 +318,24 @@ impl RevokeFacts {
     /// on its own signed branch, as an actor revocation is.
     pub(super) fn add_dropped_slip_restrictions(
         &mut self,
-        entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+        entries: &BTreeMap<AuthorityEntryHash, FoldRow>,
         ancestors: &AncestorIndex,
         context: FoldContext<'_>,
         survivors: &BTreeMap<AuthorityEntryHash, FoldState>,
     ) {
         let mut proofs = SignedBranches::new(entries, ancestors, context);
-        for (hash, entry) in entries {
+        for (hash, row) in entries {
             if survivors.contains_key(hash) {
                 continue;
             }
-            let restriction = match &entry.op {
-                AuthorityOp::SlipRevoke { slip_id } => Restriction::SlipRevoke(*slip_id),
-                AuthorityOp::SlipGrantRevoke { grant_ref, .. } => {
+            let restriction = match row.op() {
+                Some(AuthorityOp::SlipRevoke { slip_id }) => Restriction::SlipRevoke(*slip_id),
+                Some(AuthorityOp::SlipGrantRevoke { grant_ref, .. }) => {
                     Restriction::SlipGrantRevoke(grant_ref.to_hex())
                 }
-                AuthorityOp::MembershipExecution(record) if !record.withdrawn_grants.is_empty() => {
+                Some(AuthorityOp::MembershipExecution(record))
+                    if !record.withdrawn_grants.is_empty() =>
+                {
                     Restriction::GrantsWithdrawn(
                         record
                             .withdrawn_grants
@@ -342,9 +344,9 @@ impl RevokeFacts {
                             .collect(),
                     )
                 }
-                AuthorityOp::SlipConsume { .. } | AuthorityOp::RemovalArchiveConsume { .. } => {
-                    Restriction::SlipBurn(BTreeSet::new())
-                }
+                Some(
+                    AuthorityOp::SlipConsume { .. } | AuthorityOp::RemovalArchiveConsume { .. },
+                ) => Restriction::SlipBurn(BTreeSet::new()),
                 _ => continue,
             };
             let Some(state) = proofs.verify(*hash) else {
@@ -465,7 +467,7 @@ impl RevokeFacts {
     pub(super) fn forget_retired(
         &mut self,
         retirements: &super::retired_signers::Retirements,
-        entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+        entries: &BTreeMap<AuthorityEntryHash, FoldRow>,
         ancestors: &AncestorIndex,
     ) {
         self.by_hash
@@ -511,7 +513,7 @@ impl RevokeFacts {
     pub(super) fn forget_revokes_above_refused_enrolments(
         &mut self,
         lines: Option<&super::owner_key_line::OwnerKeyLines>,
-        entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+        entries: &BTreeMap<AuthorityEntryHash, FoldRow>,
         ancestors: &AncestorIndex,
     ) {
         let Some(lines) = lines else {
@@ -536,7 +538,7 @@ impl RevokeFacts {
     pub(super) fn forget_unsettled(
         &mut self,
         settled: &BTreeMap<AuthorityEntryHash, FoldState>,
-        entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+        entries: &BTreeMap<AuthorityEntryHash, FoldRow>,
         ancestors: &AncestorIndex,
     ) {
         let below_unsettled = ancestors.marks(|row| {
@@ -545,8 +547,8 @@ impl RevokeFacts {
             !settled.contains_key(row)
                 && entries.get(row).is_some_and(|entry| {
                     matches!(
-                        entry.op,
-                        AuthorityOp::ReRoot { .. } | AuthorityOp::RootAppointment(_)
+                        entry.op(),
+                        Some(AuthorityOp::ReRoot { .. } | AuthorityOp::RootAppointment(_))
                     )
                 })
         });
@@ -567,7 +569,7 @@ impl RevokeFacts {
 /// ([`verify_signed_branch`]), since its rescue crosses rows by the
 /// branch's own pending set.
 struct SignedBranches<'a> {
-    entries: &'a BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    entries: &'a BTreeMap<AuthorityEntryHash, FoldRow>,
     ancestors: &'a AncestorIndex,
     /// The context [`verify_signed_branch`] would prove each branch under.
     context: FoldContext<'a>,
@@ -581,7 +583,7 @@ struct SignedBranches<'a> {
 
 impl<'a> SignedBranches<'a> {
     fn new(
-        entries: &'a BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+        entries: &'a BTreeMap<AuthorityEntryHash, FoldRow>,
         ancestors: &'a AncestorIndex,
         context: FoldContext<'a>,
     ) -> Self {
@@ -629,7 +631,7 @@ impl<'a> SignedBranches<'a> {
         if refused.peek().is_none()
             || refused.any(|hash| {
                 *hash == target
-                    || !super::ancestry_evaluator::skippable_permissive(&self.entries[hash].op)
+                    || !super::ancestry_evaluator::row_skippable_permissive(&self.entries[hash])
             })
         {
             return None;
@@ -642,7 +644,7 @@ impl<'a> SignedBranches<'a> {
 /// none is its own ancestor.
 fn signed_branch(
     target: AuthorityEntryHash,
-    entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    entries: &BTreeMap<AuthorityEntryHash, FoldRow>,
     ancestors: &AncestorIndex,
 ) -> Option<BTreeSet<AuthorityEntryHash>> {
     let mut branch = ancestors.get(&target)?.to_set();
@@ -658,11 +660,11 @@ fn signed_branch(
 /// Each row of `rows` that is a parent of rows of `rows`, with those rows.
 fn children_within(
     rows: &BTreeSet<AuthorityEntryHash>,
-    entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    entries: &BTreeMap<AuthorityEntryHash, FoldRow>,
 ) -> BTreeMap<AuthorityEntryHash, Vec<AuthorityEntryHash>> {
     let mut children = BTreeMap::<AuthorityEntryHash, Vec<AuthorityEntryHash>>::new();
     for hash in rows {
-        for parent in &entries[hash].parent_hashes {
+        for parent in entries[hash].parent_hashes() {
             if rows.contains(parent) {
                 children.entry(*parent).or_default().push(*hash);
             }
@@ -683,7 +685,7 @@ fn children_within(
 fn fold_normal_rounds(
     mut woken: BTreeSet<AuthorityEntryHash>,
     children: &BTreeMap<AuthorityEntryHash, Vec<AuthorityEntryHash>>,
-    entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    entries: &BTreeMap<AuthorityEntryHash, FoldRow>,
     states: &mut BTreeMap<AuthorityEntryHash, FoldState>,
     refused: &mut BTreeSet<AuthorityEntryHash>,
     context: FoldContext<'_>,
@@ -719,7 +721,7 @@ fn fold_normal_rounds(
 /// siblings cannot erase a verified restrictive fact on this branch.
 fn verify_signed_branch(
     target: AuthorityEntryHash,
-    entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    entries: &BTreeMap<AuthorityEntryHash, FoldRow>,
     ancestors: &AncestorIndex,
     context: FoldContext<'_>,
 ) -> Option<FoldState> {
@@ -747,7 +749,7 @@ fn verify_signed_branch(
         // Only a rejected permissive row other than the target may be
         // crossed; any other refused row refuses the proof.
         if rejected.iter().any(|hash| {
-            *hash == target || !super::ancestry_evaluator::skippable_permissive(&entries[hash].op)
+            *hash == target || !super::ancestry_evaluator::row_skippable_permissive(&entries[hash])
         }) {
             return None;
         }
@@ -760,7 +762,7 @@ fn verify_signed_branch(
             .copied()
             .chain(pending.iter().copied().filter(|hash| {
                 *hash != target
-                    && super::ancestry_evaluator::skippable_permissive(&entries[hash].op)
+                    && super::ancestry_evaluator::row_skippable_permissive(&entries[hash])
                     && ancestors
                         .get(hash)
                         .is_some_and(|past| past.intersects(&rejected))
@@ -769,7 +771,7 @@ fn verify_signed_branch(
         let mut rescued = false;
         woken = BTreeSet::new();
         for hash in pending.clone() {
-            if !restrictive_withdrawal(&entries[&hash].op) {
+            if !entries[&hash].op().is_some_and(restrictive_withdrawal) {
                 continue;
             }
             note_proof_try();

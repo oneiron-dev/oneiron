@@ -10,7 +10,7 @@ pub(super) fn refuse_retired_standing(
     store: &crate::store::Store,
     posture: crate::HostingPrivacyPosture,
     fold: &AuthorityFold,
-    merged: &BTreeMap<AuthorityEntryHash, (Vec<u8>, AuthorityLogEntry)>,
+    merged: &BTreeMap<AuthorityEntryHash, (Vec<u8>, FoldRow)>,
     evidence: Option<&AdoptedEvidence>,
     arriving: &[AuthorityEntryHash],
 ) -> Result<()> {
@@ -28,17 +28,21 @@ pub(super) fn refuse_retired_standing(
 /// not flag lands as before.
 pub(super) fn flags_retired_standing(
     fold: &AuthorityFold,
-    merged: &BTreeMap<AuthorityEntryHash, (Vec<u8>, AuthorityLogEntry)>,
+    merged: &BTreeMap<AuthorityEntryHash, (Vec<u8>, FoldRow)>,
     evidence: Option<&AdoptedEvidence>,
     arriving: &[AuthorityEntryHash],
 ) -> Result<bool> {
     for hash in arriving {
-        let Some((_, entry)) = merged.get(hash) else {
+        let Some((_, row)) = merged.get(hash) else {
             continue;
         };
-        if fold.stands_on_retired_key(hash, entry, &mut |parent| match merged.get(parent) {
+        if fold.stands_on_retired_key(hash, row, &mut |parent| match merged.get(parent) {
             Some((_, row)) => Ok(Some(row.clone())),
-            None => evidence.map_or(Ok(None), |evidence| evidence.ancestor(parent)),
+            None => evidence.map_or(Ok(None), |evidence| {
+                evidence
+                    .ancestor(parent)
+                    .map(|entry| entry.map(FoldRow::Open))
+            }),
         })? {
             return Ok(true);
         }
@@ -70,12 +74,12 @@ pub(super) fn retired_standing(
     store: &crate::store::Store,
     posture: crate::HostingPrivacyPosture,
     fold: &AuthorityFold,
-    merged: &BTreeMap<AuthorityEntryHash, (Vec<u8>, AuthorityLogEntry)>,
+    merged: &BTreeMap<AuthorityEntryHash, (Vec<u8>, FoldRow)>,
     evidence: Option<&AdoptedEvidence>,
     arriving: &[AuthorityEntryHash],
 ) -> Result<Option<AuthorityEntryHash>> {
     for hash in arriving {
-        let Some((_, entry)) = merged.get(hash) else {
+        let Some((_, row)) = merged.get(hash) else {
             continue;
         };
         if crate::authority::door_refuses_retired_standing(
@@ -83,10 +87,14 @@ pub(super) fn retired_standing(
             posture,
             fold,
             hash,
-            entry,
+            row,
             &mut |parent| match merged.get(parent) {
                 Some((_, row)) => Ok(Some(row.clone())),
-                None => evidence.map_or(Ok(None), |evidence| evidence.ancestor(parent)),
+                None => evidence.map_or(Ok(None), |evidence| {
+                    evidence
+                        .ancestor(parent)
+                        .map(|entry| entry.map(FoldRow::Open))
+                }),
             },
         )? {
             return Ok(Some(*hash));

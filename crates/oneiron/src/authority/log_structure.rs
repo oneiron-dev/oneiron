@@ -16,15 +16,16 @@ pub(super) use belief::{fold_belief_structure_in_txn, stage_batch_for_belief};
 
 /// The key an admission names: an enrollment, a rotation, a re-root, or the
 /// owner's enrollment of a device's own owner signing key (FIX 4920), which
-/// its primary signer, an owner root, vouches for.
-pub(super) fn admits_device(op: &AuthorityOp) -> Option<&DeviceAuthority> {
-    match op {
-        AuthorityOp::EnrollDevice { device }
-        | AuthorityOp::RotateKey {
+/// its primary signer, an owner root, vouches for. A row whose record does
+/// not open here names none: it is structure.
+pub(super) fn admits_device(row: &FoldRow) -> Option<&DeviceAuthority> {
+    match row.op() {
+        Some(AuthorityOp::EnrollDevice { device })
+        | Some(AuthorityOp::RotateKey {
             new_device: device, ..
-        }
-        | AuthorityOp::ReRoot { new_device: device }
-        | AuthorityOp::OwnerKeyEnroll(OwnerKeyEnroll { device, .. }) => Some(device),
+        })
+        | Some(AuthorityOp::ReRoot { new_device: device })
+        | Some(AuthorityOp::OwnerKeyEnroll(OwnerKeyEnroll { device, .. })) => Some(device),
         _ => None,
     }
 }
@@ -106,21 +107,31 @@ impl LocalRoots {
 }
 
 /// A root record its own anchor signed, alone and verifiably: it names its
-/// anchor, as a genesis names its root.
-pub(super) fn self_signed_root(entry: &AuthorityLogEntry) -> Option<[u8; 32]> {
-    let AuthorityOp::OwnerRoot(record) = &entry.op else {
+/// anchor, as a genesis names its root. Open rows only: a row whose record
+/// does not open here vouches for no root.
+pub(super) fn self_signed_root(row: &FoldRow) -> Option<[u8; 32]> {
+    let Some(AuthorityOp::OwnerRoot(record)) = row.op() else {
         return None;
     };
-    (*entry.signer_key() == AuthorityKey::Ed25519(record.anchor_key)
-        && entry.cosigns.is_empty()
-        && verify_entry_signatures(entry).is_ok())
+    (*row.signer_key() == AuthorityKey::Ed25519(record.anchor_key)
+        && row.cosigns().is_empty()
+        && row_signatures_verified(row))
     .then_some(record.anchor_key)
 }
 
-pub(super) fn signed_by(entry: &AuthorityLogEntry, keys: &BTreeSet<AuthorityKey>) -> bool {
-    std::iter::once(&entry.signer)
-        .chain(&entry.cosigns)
+pub(super) fn signed_by(row: &FoldRow, keys: &BTreeSet<AuthorityKey>) -> bool {
+    std::iter::once(row.signer())
+        .chain(row.cosigns())
         .any(|signature| keys.contains(&signature.public_key))
+}
+
+/// Whether `row`'s signatures verify: an open row's as today; a row whose
+/// record does not open here verified at decode, so always.
+pub(super) fn row_signatures_verified(row: &FoldRow) -> bool {
+    match row.open() {
+        Some(entry) => verify_entry_signatures(entry).is_ok(),
+        None => true,
+    }
 }
 
 pub(super) fn is_consent_device(device: &DeviceAuthority) -> bool {
@@ -136,11 +147,11 @@ pub(super) fn is_consent_device(device: &DeviceAuthority) -> bool {
 /// signer of a log without exactly one genesis row count as any other
 /// signer.
 pub(super) fn authority_structure<'a>(
-    entries: impl Iterator<Item = &'a AuthorityLogEntry>,
+    rows: impl Iterator<Item = &'a FoldRow>,
 ) -> AuthorityStructure {
-    let mut builder: StructureBuilder<&'a AuthorityLogEntry> = StructureBuilder::default();
-    for entry in entries {
-        builder.push(entry);
+    let mut builder: StructureBuilder<&'a FoldRow> = StructureBuilder::default();
+    for row in rows {
+        builder.push(row);
     }
     builder.settle();
     builder.structure
@@ -149,12 +160,12 @@ pub(super) fn authority_structure<'a>(
 /// [`authority_structure`] as this install's store gate reads it, taking
 /// `local`'s anchors as its own.
 pub(super) fn authority_structure_under<'a>(
-    entries: impl IntoIterator<Item = &'a AuthorityLogEntry>,
+    rows: impl IntoIterator<Item = &'a FoldRow>,
     local: LocalRoots,
 ) -> AuthorityStructure {
-    let mut builder: StructureBuilder<&'a AuthorityLogEntry> = StructureBuilder::under(local);
-    for entry in entries {
-        builder.push(entry);
+    let mut builder: StructureBuilder<&'a FoldRow> = StructureBuilder::under(local);
+    for row in rows {
+        builder.push(row);
     }
     builder.settle();
     builder.structure
@@ -179,7 +190,7 @@ pub(super) fn authority_structure_under<'a>(
 pub(crate) fn carried_rows_never_applied_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
-    carried: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    carried: &BTreeMap<AuthorityEntryHash, FoldRow>,
 ) -> crate::error::Result<BTreeSet<AuthorityEntryHash>> {
     if carried.is_empty()
         || super::checkpoint_adopt::cached_adopted_evidence_in_txn(store, txn)?.is_some()
@@ -188,16 +199,16 @@ pub(crate) fn carried_rows_never_applied_in_txn(
     }
     let mut held = BTreeMap::new();
     for (_, body) in authority_log_rows_in_txn(store, txn)? {
-        let entry = decode_stored_authority_log_body(store, txn, &body)?;
-        held.insert(authority_entry_hash(&entry)?, entry);
+        let row = decode_stored_authority_fold_row(store, txn, &body)?;
+        held.insert(row.hash()?, row);
     }
     let resident: BTreeSet<AuthorityEntryHash> = held.keys().copied().collect();
-    for (hash, entry) in carried {
-        held.entry(*hash).or_insert_with(|| entry.clone());
+    for (hash, row) in carried {
+        held.entry(*hash).or_insert_with(|| row.clone());
     }
     let geneses = held
         .values()
-        .filter(|entry| matches!(entry.op, AuthorityOp::Genesis { .. }))
+        .filter(|row| super::history_transfer::is_genesis_row(row))
         .count();
     if geneses != 1 {
         return Ok(BTreeSet::new());
@@ -206,18 +217,18 @@ pub(crate) fn carried_rows_never_applied_in_txn(
     let rooted = ancestry_held(&held);
     let mut left_out: BTreeSet<AuthorityEntryHash> = carried
         .iter()
-        .filter(|(hash, entry)| {
+        .filter(|(hash, row)| {
             !resident.contains(*hash)
                 && rooted.contains(*hash)
-                && !structure.vouches_for(entry)
-                && verify_entry_signatures(entry).is_ok()
+                && !structure.vouches_for(row)
+                && row_signatures_verified(row)
         })
         .map(|(hash, _)| *hash)
         .collect();
     let mut children: BTreeMap<AuthorityEntryHash, Vec<AuthorityEntryHash>> = BTreeMap::new();
-    for (hash, entry) in carried {
+    for (hash, row) in carried {
         if !resident.contains(hash) {
-            for parent in &entry.parent_hashes {
+            for parent in row.parent_hashes() {
                 children.entry(*parent).or_default().push(*hash);
             }
         }
@@ -235,14 +246,12 @@ pub(crate) fn carried_rows_never_applied_in_txn(
 
 /// The rows of `held` whose whole ancestry `held` holds: each row naming no
 /// parent, and each row whose parents are all such rows.
-fn ancestry_held(
-    held: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
-) -> BTreeSet<AuthorityEntryHash> {
+fn ancestry_held(held: &BTreeMap<AuthorityEntryHash, FoldRow>) -> BTreeSet<AuthorityEntryHash> {
     let mut unrooted_parents = BTreeMap::new();
     let mut children: BTreeMap<AuthorityEntryHash, Vec<AuthorityEntryHash>> = BTreeMap::new();
     let mut ready = Vec::new();
-    for (hash, entry) in held {
-        let parents: BTreeSet<&AuthorityEntryHash> = entry.parent_hashes.iter().collect();
+    for (hash, row) in held {
+        let parents: BTreeSet<&AuthorityEntryHash> = row.parent_hashes().iter().collect();
         if parents.iter().any(|parent| !held.contains_key(*parent)) {
             continue;
         }
@@ -331,21 +340,26 @@ impl<R> Default for StructureBuilder<R> {
     }
 }
 
-/// Whether [`StructureBuilder::push`] files `entry`: a genesis, a root
+/// Whether [`StructureBuilder::push`] files `row`: a genesis, a root
 /// record, a machine revision, a root appointment or a consent admission.
 /// It leaves the builder as it was for any other row, so the structure of a
-/// log with such rows added is the structure without them.
-pub(super) fn structure_reads(entry: &AuthorityLogEntry) -> bool {
-    match &entry.op {
-        AuthorityOp::Genesis { .. }
-        | AuthorityOp::MachineProfile(_)
-        | AuthorityOp::OwnerRoot(_)
-        | AuthorityOp::RootAppointment(_) => true,
-        op => admits_device(op).is_some_and(is_consent_device),
+/// log with such rows added is the structure without them. A row whose
+/// record does not open here is none: it admits nothing, it is structure
+/// (census L5-22 1a-iii).
+pub(super) fn structure_reads(row: &FoldRow) -> bool {
+    match row.op() {
+        Some(
+            AuthorityOp::Genesis { .. }
+            | AuthorityOp::MachineProfile(_)
+            | AuthorityOp::OwnerRoot(_)
+            | AuthorityOp::RootAppointment(_),
+        ) => true,
+        Some(_) => admits_device(row).is_some_and(is_consent_device),
+        None => false,
     }
 }
 
-impl<R: Clone + std::ops::Deref<Target = AuthorityLogEntry>> StructureBuilder<R> {
+impl<R: Clone + std::ops::Deref<Target = FoldRow>> StructureBuilder<R> {
     /// A builder that takes `local`'s anchors as this install's own.
     pub(super) fn under(local: LocalRoots) -> Self {
         let mut builder = Self::default();
@@ -354,19 +368,23 @@ impl<R: Clone + std::ops::Deref<Target = AuthorityLogEntry>> StructureBuilder<R>
         builder
     }
 
-    /// Adds `entry` unsettled.
-    pub(super) fn push(&mut self, entry: R) {
+    /// Adds `row` unsettled. A row whose record does not open here admits
+    /// nothing: it is structure.
+    pub(super) fn push(&mut self, row: R) {
+        let Some(entry) = row.open() else {
+            return;
+        };
         if let AuthorityOp::Genesis { device, .. } = &entry.op {
             if device.key == *entry.signer_key()
                 && is_consent_device(device)
-                && !self.structure.roots.contains(&entry)
-                && verify_entry_signatures(&entry).is_ok()
+                && !self.structure.roots.contains(entry)
+                && verify_entry_signatures(entry).is_ok()
             {
-                self.structure.roots.push(AuthorityLogEntry::clone(&entry));
+                self.structure.roots.push(entry.clone());
                 self.root_roles |= device.roles;
             }
-        } else if structure_reads(&entry) {
-            self.fresh.push(entry);
+        } else if structure_reads(&row) {
+            self.fresh.push(row);
         }
     }
 
@@ -397,9 +415,13 @@ impl<R: Clone + std::ops::Deref<Target = AuthorityLogEntry>> StructureBuilder<R>
         if self.structure.admitters.insert(root.clone()) {
             admitted.push(root);
         }
-        for entry in std::mem::take(&mut self.fresh) {
+        for row in std::mem::take(&mut self.fresh) {
+            // Every fresh row opens: `push` files no other.
+            let Some(entry) = row.open() else {
+                continue;
+            };
             if let AuthorityOp::OwnerRoot(record) = &entry.op {
-                let Some(anchor) = self_signed_root(&entry) else {
+                let Some(anchor) = self_signed_root(&row) else {
                     continue;
                 };
                 if self.structure.local.roots.contains(&record.root)
@@ -411,7 +433,7 @@ impl<R: Clone + std::ops::Deref<Target = AuthorityLogEntry>> StructureBuilder<R>
                     anchored.push(AuthorityKey::Ed25519(anchor));
                 }
             } else if matches!(entry.op, AuthorityOp::MachineProfile(_)) {
-                self.file_profile(entry);
+                self.file_profile(row);
             } else if let AuthorityOp::RootAppointment(appointment) = &entry.op {
                 // The pinned root's anchor's appointment admits its
                 // successor, a root key (OWNER-ANCHOR-ROOT-RECOVERY); the
@@ -422,25 +444,25 @@ impl<R: Clone + std::ops::Deref<Target = AuthorityLogEntry>> StructureBuilder<R>
                 if self.structure.is_own_anchor(entry.signer_key())
                     && entry.cosigns.is_empty()
                     && entry.validate_shape().is_ok()
-                    && verify_entry_signatures(&entry).is_ok()
+                    && verify_entry_signatures(entry).is_ok()
                 {
                     self.admit_key(&appointment.successor, &mut admitted, &mut issued);
                 }
-            } else if signed_by(&entry, &self.structure.admitters) {
-                self.admit(&entry, &mut admitted, &mut issued);
+            } else if signed_by(&row, &self.structure.admitters) {
+                self.admit(&row, &mut admitted, &mut issued);
             } else {
                 for signature in std::iter::once(&entry.signer).chain(&entry.cosigns) {
                     self.admissions
                         .entry(signature.public_key.clone())
                         .or_default()
-                        .push(entry.clone());
+                        .push(row.clone());
                 }
             }
         }
         loop {
             if let Some(key) = admitted.pop() {
-                for entry in self.admissions.remove(&key).unwrap_or_default() {
-                    self.admit(&entry, &mut admitted, &mut issued);
+                for row in self.admissions.remove(&key).unwrap_or_default() {
+                    self.admit(&row, &mut admitted, &mut issued);
                 }
                 self.grown.push(Grant::Admitter(key));
             } else if let Some(key) = issued.pop() {
@@ -470,14 +492,14 @@ impl<R: Clone + std::ops::Deref<Target = AuthorityLogEntry>> StructureBuilder<R>
     /// Admits the key an admission an admitter signed names.
     fn admit(
         &mut self,
-        entry: &AuthorityLogEntry,
+        row: &FoldRow,
         admitted: &mut Vec<AuthorityKey>,
         issued: &mut Vec<AuthorityKey>,
     ) {
-        let Some(device) = admits_device(&entry.op) else {
+        let Some(device) = admits_device(row) else {
             return;
         };
-        if verify_entry_signatures(entry).is_err() {
+        if !row_signatures_verified(row) {
             return;
         }
         self.admit_key(device, admitted, issued);
@@ -508,7 +530,10 @@ impl<R: Clone + std::ops::Deref<Target = AuthorityLogEntry>> StructureBuilder<R>
     /// revision taken as own files its removal (FIX
     /// [STRANGER-REMOVED-MARK-GLOBAL]). An answer taken as a stranger's is
     /// filed again once its carrier's key is taken as own (REVIEW-9555 P1).
-    fn file_profile(&mut self, entry: R) {
+    fn file_profile(&mut self, row: R) {
+        let Some(entry) = row.open() else {
+            return;
+        };
         let AuthorityOp::MachineProfile(profile) = &entry.op else {
             return;
         };
@@ -532,10 +557,10 @@ impl<R: Clone + std::ops::Deref<Target = AuthorityLogEntry>> StructureBuilder<R>
             self.profiles
                 .entry(signer.clone())
                 .or_default()
-                .push(entry.clone());
+                .push(row.clone());
             return;
         }
-        if verify_entry_signatures(&entry).is_err() {
+        if verify_entry_signatures(entry).is_err() {
             return;
         }
         if own && profile.role == MachineRole::Removed {
@@ -545,7 +570,7 @@ impl<R: Clone + std::ops::Deref<Target = AuthorityLogEntry>> StructureBuilder<R>
             self.stranger_answers
                 .entry(signer.clone())
                 .or_default()
-                .push(entry.clone());
+                .push(row.clone());
         }
         let key = (profile.machine, AuthorityKey::Ed25519(profile.machine_key));
         let vouched = self.structure.vouching_key(&key);
@@ -570,7 +595,7 @@ impl AuthorityStructure {
         self.roots.len() == 1
     }
 
-    /// Whether a key that may vouch for `entry` signed or cosigned it: an
+    /// Whether a key that may vouch for `row` signed or cosigned it: an
     /// admitter, or, for a world edit, a world key record, a residence result,
     /// a grant travel choice or an owner work request or result, the install
     /// key of the machine it names (a request's carrier, a result's
@@ -580,161 +605,198 @@ impl AuthorityStructure {
     /// rules have it, an anchor vouches for nothing else. A genesis vouches
     /// for itself only in a log that holds none, or as the one it holds: any
     /// other, even from the root key with a new nonce, would fork the root.
-    /// The caller verifies the signatures.
-    pub(super) fn vouches_for(&self, entry: &AuthorityLogEntry) -> bool {
+    /// The caller verifies the signatures. A row whose record does not open
+    /// here is judged by its public standing as its open kind is: an agent
+    /// grant, a residence result or an owner work result by its machine's or
+    /// executor's install key, a genesis by the same self-signed root bind,
+    /// any other standing by the admitters.
+    pub(super) fn vouches_for(&self, row: &FoldRow) -> bool {
         let install_key =
-            |machine: crate::EntityId| self.vouching_key(&(machine, entry.signer_key().clone()));
-        match &entry.op {
-            AuthorityOp::Genesis { device, .. } => {
-                device.key == *entry.signer_key()
-                    && is_consent_device(device)
-                    && self.roots.iter().all(|root| root == entry)
-            }
-            AuthorityOp::WorldPrivacy(edit) => install_key(edit.machine),
-            AuthorityOp::WorldKeyWraps(record) => install_key(record.machine),
-            AuthorityOp::ResidenceResult(result) => install_key(result.machine),
-            AuthorityOp::GrantTravelSet(set) => install_key(set.machine),
-            AuthorityOp::CheckpointPolicySet(set) => install_key(set.machine),
-            AuthorityOp::HomeNodePick(pick) => install_key(pick.machine),
-            AuthorityOp::OriginCut(cut) => install_key(cut.machine),
-            AuthorityOp::DeviceSuccession(succession) => install_key(succession.machine),
-            AuthorityOp::ConversationTrainingSet(set) => install_key(set.machine),
-            AuthorityOp::ConversationTrainingVaultSet(set) => install_key(set.machine),
-            AuthorityOp::HomeCandidacy(declaration) => install_key(declaration.machine),
-            AuthorityOp::FullCopyMark(mark) => install_key(mark.machine),
-            AuthorityOp::AgentGrantAct(record) => install_key(record.machine),
-            AuthorityOp::MembershipExecution(record) => install_key(record.machine),
-            AuthorityOp::PolicySettingSet(set) => install_key(set.machine),
-            AuthorityOp::SettingCopy(copy) => install_key(copy.machine),
-            AuthorityOp::SettingPackHead(head) => install_key(head.machine),
-            AuthorityOp::ExportAct(record) => install_key(record.machine),
-            // A frontier join: its carrier's install key, as for the act it
-            // leads to, a stranger's once its carrier is removed
-            // ([`Self::is_stranger`]); the host issuer's falls to the
-            // admitters below; an owner anchor's, as its own rows, a stored
-            // root's anchor alone (FIX 8498).
-            AuthorityOp::FrontierJoin(FrontierJoin {
-                family: FrontierJoinFamily::Install(carrier),
-                ..
-            }) => install_key(*carrier),
-            AuthorityOp::FrontierJoin(FrontierJoin {
-                family: FrontierJoinFamily::Anchor,
-                ..
-            }) => self.is_anchor(entry.signer_key()) && entry.cosigns.is_empty(),
-            // The owner's kit push (FIX 6053): a stored root's anchor signs
-            // it alone, as an anchored machine revision; no machine carries it.
-            AuthorityOp::OwnerWorkRequest(request) if request.kit_root().is_some() => {
-                self.is_anchor(entry.signer_key()) && entry.cosigns.is_empty()
-            }
-            AuthorityOp::OwnerWorkRequest(request) => install_key(request.carrier),
-            AuthorityOp::OwnerWorkResult(result) => install_key(result.executor),
-            AuthorityOp::OwnerWorkCancel(cancel) => install_key(cancel.carrier),
-            AuthorityOp::ExportSupplementImported(mark) => install_key(mark.carrier),
-            // A custody request's permit piece (FIX 11866): its carrier's
-            // install key, as for the request it leads to; with no carrier, a
-            // stored root's anchor alone, as for the kit push it leads to.
-            AuthorityOp::CustodyPermitPiece(piece) => match piece.carrier {
-                Some(carrier) => install_key(carrier),
-                None => self.is_anchor(entry.signer_key()) && entry.cosigns.is_empty(),
+            |machine: crate::EntityId| self.vouching_key(&(machine, row.signer_key().clone()));
+        match row {
+            FoldRow::Open(entry) => match &entry.op {
+                AuthorityOp::Genesis { device, .. } => {
+                    device.key == *row.signer_key()
+                        && is_consent_device(device)
+                        && self.roots.iter().all(|root| root == entry)
+                }
+                AuthorityOp::WorldPrivacy(edit) => install_key(edit.machine),
+                AuthorityOp::WorldKeyWraps(record) => install_key(record.machine),
+                AuthorityOp::ResidenceResult(result) => install_key(result.machine),
+                AuthorityOp::GrantTravelSet(set) => install_key(set.machine),
+                AuthorityOp::CheckpointPolicySet(set) => install_key(set.machine),
+                AuthorityOp::HomeNodePick(pick) => install_key(pick.machine),
+                AuthorityOp::OriginCut(cut) => install_key(cut.machine),
+                AuthorityOp::DeviceSuccession(succession) => install_key(succession.machine),
+                AuthorityOp::ConversationTrainingSet(set) => install_key(set.machine),
+                AuthorityOp::ConversationTrainingVaultSet(set) => install_key(set.machine),
+                AuthorityOp::HomeCandidacy(declaration) => install_key(declaration.machine),
+                AuthorityOp::FullCopyMark(mark) => install_key(mark.machine),
+                AuthorityOp::AgentGrantAct(record) => install_key(record.machine),
+                AuthorityOp::MembershipExecution(record) => install_key(record.machine),
+                AuthorityOp::PolicySettingSet(set) => install_key(set.machine),
+                AuthorityOp::SettingCopy(copy) => install_key(copy.machine),
+                AuthorityOp::SettingPackHead(head) => install_key(head.machine),
+                AuthorityOp::ExportAct(record) => install_key(record.machine),
+                // A frontier join: its carrier's install key, as for the act it
+                // leads to, a stranger's once its carrier is removed
+                // ([`Self::is_stranger`]); the host issuer's falls to the
+                // admitters below; an owner anchor's, as its own rows, a stored
+                // root's anchor alone (FIX 8498).
+                AuthorityOp::FrontierJoin(FrontierJoin {
+                    family: FrontierJoinFamily::Install(carrier),
+                    ..
+                }) => install_key(*carrier),
+                AuthorityOp::FrontierJoin(FrontierJoin {
+                    family: FrontierJoinFamily::Anchor,
+                    ..
+                }) => self.is_anchor(row.signer_key()) && row.cosigns().is_empty(),
+                // The owner's kit push (FIX 6053): a stored root's anchor signs
+                // it alone, as an anchored machine revision; no machine carries it.
+                AuthorityOp::OwnerWorkRequest(request) if request.kit_root().is_some() => {
+                    self.is_anchor(row.signer_key()) && row.cosigns().is_empty()
+                }
+                AuthorityOp::OwnerWorkRequest(request) => install_key(request.carrier),
+                AuthorityOp::OwnerWorkResult(result) => install_key(result.executor),
+                AuthorityOp::OwnerWorkCancel(cancel) => install_key(cancel.carrier),
+                AuthorityOp::ExportSupplementImported(mark) => install_key(mark.carrier),
+                // A custody request's permit piece (FIX 11866): its carrier's
+                // install key, as for the request it leads to; with no carrier, a
+                // stored root's anchor alone, as for the kit push it leads to.
+                AuthorityOp::CustodyPermitPiece(piece) => match piece.carrier {
+                    Some(carrier) => install_key(carrier),
+                    None => self.is_anchor(row.signer_key()) && row.cosigns().is_empty(),
+                },
+                AuthorityOp::OwnerRoot(_) => self_signed_root(row).is_some(),
+                // A root appointment (OWNER-ANCHOR-ROOT-RECOVERY): a stored
+                // root's anchor signs it alone, as its marks.
+                AuthorityOp::RootAppointment(_) => {
+                    self.is_anchor(row.signer_key()) && row.cosigns().is_empty()
+                }
+                // An owner answer: its carrier's install key, alone or beside one
+                // owner key's proof, which the fold judges (mesh PR1b, row
+                // CARRIER-OWNER-PROOF).
+                AuthorityOp::MachineProfile(profile) if profile.carrier.is_some() => {
+                    row.cosigns().len() <= 1 && profile.carrier.is_some_and(install_key)
+                }
+                AuthorityOp::MachineProfile(_)
+                    if self.is_anchor(row.signer_key()) && row.cosigns().is_empty() =>
+                {
+                    true
+                }
+                _ => signed_by(row, &self.admitters),
             },
-            AuthorityOp::OwnerRoot(_) => self_signed_root(entry).is_some(),
-            // A root appointment (OWNER-ANCHOR-ROOT-RECOVERY): a stored
-            // root's anchor signs it alone, as its marks.
-            AuthorityOp::RootAppointment(_) => {
-                self.is_anchor(entry.signer_key()) && entry.cosigns.is_empty()
-            }
-            // An owner answer: its carrier's install key, alone or beside one
-            // owner key's proof, which the fold judges (mesh PR1b, row
-            // CARRIER-OWNER-PROOF).
-            AuthorityOp::MachineProfile(profile) if profile.carrier.is_some() => {
-                entry.cosigns.len() <= 1 && profile.carrier.is_some_and(install_key)
-            }
-            AuthorityOp::MachineProfile(_)
-                if self.is_anchor(entry.signer_key()) && entry.cosigns.is_empty() =>
-            {
-                true
-            }
-            _ => signed_by(entry, &self.admitters),
+            // A row whose record does not open here is structure: its signer
+            // and cosigns judge it as its open kind judges them, and nothing
+            // it made admits anything.
+            FoldRow::PassThrough(public) => match public.standing() {
+                PublicStanding::AgentGrantAct { machine } => install_key(*machine),
+                PublicStanding::ResidenceResult { machine, .. } => install_key(*machine),
+                PublicStanding::OwnerWorkResult { executor, .. } => install_key(*executor),
+                PublicStanding::Genesis { key, roles, .. } => {
+                    key == row.signer_key()
+                        && *roles & (ROLE_OWNER | ROLE_ADMIN) != 0
+                        && self.roots.iter().all(|root| {
+                            authority_entry_hash(root)
+                                .is_ok_and(|hash| hash == public.scaffold().hash)
+                        })
+                }
+                PublicStanding::SlipMint
+                | PublicStanding::EnrollDevice { .. }
+                | PublicStanding::RotateKey { .. }
+                | PublicStanding::ReRoot { .. } => signed_by(row, &self.admitters),
+            },
         }
     }
 
-    /// Whether `entry`, which a key may vouch for, vouches only as a
+    /// Whether `row`, which a key may vouch for, vouches only as a
     /// stranger's: a root record of an anchor this install does not take as
     /// its own, unless its id is the pin's or an awaited root's; such an
     /// anchor's mark or frontier join, unless a pin door awaits its root; or
     /// a world row, a residence result or an owner work row of an install key
     /// only such marks name. Every such row counts toward one shared bound
-    /// (r23).
-    pub(super) fn is_stranger(&self, entry: &AuthorityLogEntry) -> bool {
-        let signer = entry.signer_key();
-        if signed_by(entry, &self.admitters) {
+    /// (r23). A row whose record does not open here counts as its open kind
+    /// counts: an agent grant, a residence result or an owner work result of
+    /// an install key only a stranger's marks name is a stranger's; any other
+    /// standing is not.
+    pub(super) fn is_stranger(&self, row: &FoldRow) -> bool {
+        let signer = row.signer_key();
+        if signed_by(row, &self.admitters) {
             return false;
         }
         let machine_key =
             |machine: crate::EntityId| !self.machine_keys.contains(&(machine, signer.clone()));
-        match &entry.op {
-            AuthorityOp::OwnerRoot(record) => self_signed_root(entry).is_some_and(|anchor| {
-                !self.own_anchors.contains(&anchor) && !self.local.roots.contains(&record.root)
-            }),
-            AuthorityOp::MachineProfile(profile) => match profile.carrier {
-                Some(carrier) => machine_key(carrier),
-                None => {
+        match row {
+            FoldRow::Open(entry) => match &entry.op {
+                AuthorityOp::OwnerRoot(record) => self_signed_root(row).is_some_and(|anchor| {
+                    !self.own_anchors.contains(&anchor) && !self.local.roots.contains(&record.root)
+                }),
+                AuthorityOp::MachineProfile(profile) => match profile.carrier {
+                    Some(carrier) => machine_key(carrier),
+                    None => {
+                        !self.is_own_anchor(signer)
+                            && !matches!(signer, AuthorityKey::Ed25519(anchor)
+                                if self.awaited_anchors.contains(anchor))
+                    }
+                },
+                AuthorityOp::WorldPrivacy(edit) => machine_key(edit.machine),
+                AuthorityOp::WorldKeyWraps(record) => machine_key(record.machine),
+                AuthorityOp::ResidenceResult(result) => machine_key(result.machine),
+                AuthorityOp::GrantTravelSet(set) => machine_key(set.machine),
+                AuthorityOp::CheckpointPolicySet(set) => machine_key(set.machine),
+                AuthorityOp::HomeNodePick(pick) => machine_key(pick.machine),
+                AuthorityOp::OriginCut(cut) => machine_key(cut.machine),
+                AuthorityOp::DeviceSuccession(succession) => machine_key(succession.machine),
+                AuthorityOp::ConversationTrainingSet(set) => machine_key(set.machine),
+                AuthorityOp::ConversationTrainingVaultSet(set) => machine_key(set.machine),
+                AuthorityOp::HomeCandidacy(declaration) => machine_key(declaration.machine),
+                AuthorityOp::FullCopyMark(mark) => machine_key(mark.machine),
+                AuthorityOp::AgentGrantAct(record) => machine_key(record.machine),
+                AuthorityOp::MembershipExecution(record) => machine_key(record.machine),
+                AuthorityOp::PolicySettingSet(set) => machine_key(set.machine),
+                AuthorityOp::SettingCopy(copy) => machine_key(copy.machine),
+                AuthorityOp::SettingPackHead(head) => machine_key(head.machine),
+                AuthorityOp::ExportAct(record) => machine_key(record.machine),
+                AuthorityOp::FrontierJoin(FrontierJoin {
+                    family: FrontierJoinFamily::Install(carrier),
+                    ..
+                }) => machine_key(*carrier) || self.removed.contains(carrier),
+                AuthorityOp::FrontierJoin(FrontierJoin {
+                    family: FrontierJoinFamily::Anchor,
+                    ..
+                }) => {
                     !self.is_own_anchor(signer)
                         && !matches!(signer, AuthorityKey::Ed25519(anchor)
                             if self.awaited_anchors.contains(anchor))
                 }
-            },
-            AuthorityOp::WorldPrivacy(edit) => machine_key(edit.machine),
-            AuthorityOp::WorldKeyWraps(record) => machine_key(record.machine),
-            AuthorityOp::ResidenceResult(result) => machine_key(result.machine),
-            AuthorityOp::GrantTravelSet(set) => machine_key(set.machine),
-            AuthorityOp::CheckpointPolicySet(set) => machine_key(set.machine),
-            AuthorityOp::HomeNodePick(pick) => machine_key(pick.machine),
-            AuthorityOp::OriginCut(cut) => machine_key(cut.machine),
-            AuthorityOp::DeviceSuccession(succession) => machine_key(succession.machine),
-            AuthorityOp::ConversationTrainingSet(set) => machine_key(set.machine),
-            AuthorityOp::ConversationTrainingVaultSet(set) => machine_key(set.machine),
-            AuthorityOp::HomeCandidacy(declaration) => machine_key(declaration.machine),
-            AuthorityOp::FullCopyMark(mark) => machine_key(mark.machine),
-            AuthorityOp::AgentGrantAct(record) => machine_key(record.machine),
-            AuthorityOp::MembershipExecution(record) => machine_key(record.machine),
-            AuthorityOp::PolicySettingSet(set) => machine_key(set.machine),
-            AuthorityOp::SettingCopy(copy) => machine_key(copy.machine),
-            AuthorityOp::SettingPackHead(head) => machine_key(head.machine),
-            AuthorityOp::ExportAct(record) => machine_key(record.machine),
-            AuthorityOp::FrontierJoin(FrontierJoin {
-                family: FrontierJoinFamily::Install(carrier),
-                ..
-            }) => machine_key(*carrier) || self.removed.contains(carrier),
-            AuthorityOp::FrontierJoin(FrontierJoin {
-                family: FrontierJoinFamily::Anchor,
-                ..
-            }) => {
-                !self.is_own_anchor(signer)
-                    && !matches!(signer, AuthorityKey::Ed25519(anchor)
-                        if self.awaited_anchors.contains(anchor))
-            }
-            AuthorityOp::OwnerWorkRequest(request) if request.kit_root().is_some() => {
-                !self.is_own_anchor(signer)
-                    && !matches!(signer, AuthorityKey::Ed25519(anchor)
-                        if self.awaited_anchors.contains(anchor))
-            }
-            AuthorityOp::OwnerWorkRequest(request) => machine_key(request.carrier),
-            AuthorityOp::OwnerWorkResult(result) => machine_key(result.executor),
-            AuthorityOp::OwnerWorkCancel(cancel) => machine_key(cancel.carrier),
-            AuthorityOp::ExportSupplementImported(mark) => machine_key(mark.carrier),
-            AuthorityOp::CustodyPermitPiece(piece) => match piece.carrier {
-                Some(carrier) => machine_key(carrier),
-                None => {
+                AuthorityOp::OwnerWorkRequest(request) if request.kit_root().is_some() => {
                     !self.is_own_anchor(signer)
                         && !matches!(signer, AuthorityKey::Ed25519(anchor)
                             if self.awaited_anchors.contains(anchor))
                 }
+                AuthorityOp::OwnerWorkRequest(request) => machine_key(request.carrier),
+                AuthorityOp::OwnerWorkResult(result) => machine_key(result.executor),
+                AuthorityOp::OwnerWorkCancel(cancel) => machine_key(cancel.carrier),
+                AuthorityOp::ExportSupplementImported(mark) => machine_key(mark.carrier),
+                AuthorityOp::CustodyPermitPiece(piece) => match piece.carrier {
+                    Some(carrier) => machine_key(carrier),
+                    None => {
+                        !self.is_own_anchor(signer)
+                            && !matches!(signer, AuthorityKey::Ed25519(anchor)
+                                if self.awaited_anchors.contains(anchor))
+                    }
+                },
+                // Only the pinned root's anchor appoints a root here: another
+                // anchor's appointment admits no successor.
+                AuthorityOp::RootAppointment(_) => !self.is_own_anchor(signer),
+                _ => false,
             },
-            // Only the pinned root's anchor appoints a root here: another
-            // anchor's appointment admits no successor.
-            AuthorityOp::RootAppointment(_) => !self.is_own_anchor(signer),
-            _ => false,
+            FoldRow::PassThrough(public) => match public.standing() {
+                PublicStanding::AgentGrantAct { machine } => machine_key(*machine),
+                PublicStanding::ResidenceResult { machine, .. } => machine_key(*machine),
+                PublicStanding::OwnerWorkResult { executor, .. } => machine_key(*executor),
+                _ => false,
+            },
         }
     }
 

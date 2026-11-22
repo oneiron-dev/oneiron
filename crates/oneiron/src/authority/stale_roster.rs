@@ -664,16 +664,19 @@ pub(super) fn apply_stale_roster_window<E: LogRow>(
 /// renews no roster-signed revision.
 pub(super) fn accepted_roster_marks(
     merged: &FoldState,
-    entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    entries: &BTreeMap<AuthorityEntryHash, FoldRow>,
     states: &BTreeMap<AuthorityEntryHash, FoldState>,
     valid: &ValidEntries,
 ) -> BTreeSet<AuthorityEntryHash> {
     valid
         .iter()
         .filter(|hash| {
+            // A row that passes through has no op, so it is never a machine
+            // profile (census L5-22 1a-iii).
             let Some(profile) = entries
                 .get(*hash)
-                .and_then(|entry| filed_machine_profile(&entry.op))
+                .and_then(FoldRow::op)
+                .and_then(filed_machine_profile)
             else {
                 return false;
             };

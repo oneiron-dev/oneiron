@@ -12,7 +12,7 @@
 //! erased: its scaffold still verifies, and nothing it made counts
 //! ("Missing history never counts as permission").
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use heed::{RoTxn, RwTxn};
 use zeroize::Zeroizing;
@@ -106,34 +106,23 @@ pub(super) fn delete_overlay_in_txn(
     Ok(())
 }
 
-/// What one signed AUTHORITY_LOG body of this vault reads as here.
-// A short-lived per-row read result, as `AuthorityEntryRead` is.
-#[allow(clippy::large_enum_variant)]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum VaultAuthorityBody {
-    /// The whole entry: unsealed, or sealed and opened with its record.
-    Open(AuthorityLogEntry),
-    /// A sealed row whose record is not here, or whose subject's key is
-    /// retired: its scaffold verifies, and nothing it made counts.
-    Erased(AuthorityEntryScaffold),
-}
-
-/// Decodes `body`, a signed AUTHORITY_LOG body of this vault, in `txn`: an
-/// unsealed row as before, a sealed one opened with its `AUTHORITY_OVERLAY`
-/// record.
+/// Decodes `body`, a signed AUTHORITY_LOG body of this vault, in `txn`, as
+/// the fold takes it: an unsealed row, or a sealed one opened with its
+/// `AUTHORITY_OVERLAY` record, whole; a sealed row whose record does not
+/// open here as structure only.
 ///
 /// # Errors
-/// A body that does not verify; an overlay row that does not open under a
-/// live key, or names another subject than the row's op does.
-pub(crate) fn decode_vault_authority_body_in_txn(
+/// A body that does not verify; an overlay row that is not a sealed overlay
+/// row, or names another subject than the row's op does.
+pub(crate) fn decode_vault_authority_fold_row_in_txn(
     store: &Store,
     txn: &RoTxn<'_>,
     body: &[u8],
-) -> Result<VaultAuthorityBody> {
+) -> Result<FoldRow> {
     decode_authority_body_with_overlays_in_txn(store, txn, body, None)
 }
 
-/// [`decode_vault_authority_body_in_txn`] for a body that arrives with the
+/// [`decode_vault_authority_fold_row_in_txn`] for a body that arrives with the
 /// overlay rows its route carried (census L5-22 1a-ii): a sealed body's
 /// record is this vault's `AUTHORITY_OVERLAY` row when one is held here,
 /// else its carried row, opened under this vault's custody. Nothing is
@@ -141,32 +130,33 @@ pub(crate) fn decode_vault_authority_body_in_txn(
 /// [`stage_carried_overlays_in_txn`].
 ///
 /// # Errors
-/// As [`decode_vault_authority_body_in_txn`], and a carried row that is not
+/// As [`decode_vault_authority_fold_row_in_txn`], and a carried row that is not
 /// a sealed overlay row.
-pub(crate) fn decode_carried_authority_body_in_txn(
+pub(crate) fn decode_carried_authority_fold_row_in_txn(
     store: &Store,
     txn: &RoTxn<'_>,
     body: &[u8],
     overlays: &CarriedOverlays,
-) -> Result<VaultAuthorityBody> {
+) -> Result<FoldRow> {
     decode_authority_body_with_overlays_in_txn(store, txn, body, Some(overlays))
 }
 
-/// [`decode_carried_authority_body_in_txn`] for a door that needs the whole
+/// [`decode_carried_authority_fold_row_in_txn`] for a door that needs the whole
 /// entry: a sealed body whose record does not open here answers the
 /// overlay-unavailable error (`is_authority_overlay_unavailable`).
 ///
 /// # Errors
-/// As [`decode_carried_authority_body_in_txn`], and an erased row.
+/// As [`decode_carried_authority_fold_row_in_txn`], and a row whose record
+/// does not open here.
 pub(crate) fn open_carried_authority_body_in_txn(
     store: &Store,
     txn: &RoTxn<'_>,
     body: &[u8],
     overlays: &CarriedOverlays,
 ) -> Result<AuthorityLogEntry> {
-    match decode_carried_authority_body_in_txn(store, txn, body, overlays)? {
-        VaultAuthorityBody::Open(entry) => Ok(entry),
-        VaultAuthorityBody::Erased(_) => Err(authority_overlay_unavailable()),
+    match decode_carried_authority_fold_row_in_txn(store, txn, body, overlays)? {
+        FoldRow::Open(entry) => Ok(entry),
+        FoldRow::PassThrough(_) => Err(authority_overlay_unavailable()),
     }
 }
 
@@ -175,11 +165,9 @@ fn decode_authority_body_with_overlays_in_txn(
     txn: &RoTxn<'_>,
     body: &[u8],
     carried: Option<&CarriedOverlays>,
-) -> Result<VaultAuthorityBody> {
+) -> Result<FoldRow> {
     if !authority_body_is_sealed(body)? {
-        return Ok(VaultAuthorityBody::Open(open_authority_log_entry_body(
-            body, None,
-        )?));
+        return Ok(FoldRow::Open(open_authority_log_entry_body(body, None)?));
     }
     // Each path verifies the body's signatures once: with its record, or
     // over its scaffold when the record does not open here.
@@ -196,32 +184,31 @@ fn decode_authority_body_with_overlays_in_txn(
         None => None,
     };
     let Some((sealed, record)) = opened else {
-        return Ok(VaultAuthorityBody::Erased(
-            verify_authority_log_entry_scaffold(body)?,
-        ));
+        return Ok(FoldRow::PassThrough(verify_authority_public_row(body)?));
     };
     let record = decode_authority_overlay_record(&record)?;
     let entry = open_authority_log_entry_body(body, Some(&record))?;
     if authority_overlay_subject(&entry.op)? != sealed.subject {
         return Err(Error::CorruptedIndex("authority overlay subject"));
     }
-    Ok(VaultAuthorityBody::Open(entry))
+    Ok(FoldRow::Open(entry))
 }
 
-/// [`decode_vault_authority_body_in_txn`] for a door or reader that needs
+/// [`decode_vault_authority_fold_row_in_txn`] for a door or reader that needs
 /// the whole entry: a sealed row whose record does not open here answers
 /// the overlay-unavailable error (`is_authority_overlay_unavailable`).
 ///
 /// # Errors
-/// As [`decode_vault_authority_body_in_txn`], and an erased row.
+/// As [`decode_vault_authority_fold_row_in_txn`], and a row whose record
+/// does not open here.
 pub(crate) fn open_vault_authority_body_in_txn(
     store: &Store,
     txn: &RoTxn<'_>,
     body: &[u8],
 ) -> Result<AuthorityLogEntry> {
-    match decode_vault_authority_body_in_txn(store, txn, body)? {
-        VaultAuthorityBody::Open(entry) => Ok(entry),
-        VaultAuthorityBody::Erased(_) => Err(authority_overlay_unavailable()),
+    match decode_vault_authority_fold_row_in_txn(store, txn, body)? {
+        FoldRow::Open(entry) => Ok(entry),
+        FoldRow::PassThrough(_) => Err(authority_overlay_unavailable()),
     }
 }
 
@@ -295,4 +282,124 @@ pub(crate) fn stage_carried_overlays_in_txn<'b>(
         }
     }
     Ok(())
+}
+
+/// Each sealed row of `subject` this vault holds an overlay row for: its
+/// entry hash and its overlay row. No index by subject: a key event reads
+/// every overlay row's head, and key events are rare.
+#[cfg_attr(not(feature = "sync"), allow(dead_code))]
+fn subject_overlays_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    subject: &EntityId,
+) -> Result<Vec<(AuthorityEntryHash, SealedOverlay)>> {
+    let mut rows = Vec::new();
+    for (hash, bytes) in AUTHORITY_OVERLAY.scan(store, txn)? {
+        let sealed = SealedOverlay::from_bytes(&bytes)?;
+        if sealed.subject == *subject {
+            rows.push((hash, sealed));
+        }
+    }
+    Ok(rows)
+}
+
+/// The projects the rows of `rows` that are stored here and open in `txn`
+/// may change, each row as a put of it would touch them; with `index`, each
+/// such row's agent-grant member posting is staged too. Both hooks are keyed
+/// upserts and sets: running them again for a row changes nothing.
+#[cfg_attr(not(feature = "sync"), allow(dead_code))]
+fn open_row_hooks_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    rows: &[(AuthorityEntryHash, SealedOverlay)],
+    index: bool,
+) -> Result<BTreeSet<EntityId>> {
+    let mut touched = BTreeSet::new();
+    for (hash, _) in rows {
+        let Some(entry) = stored_authority_row(store, txn, hash)? else {
+            continue;
+        };
+        if index {
+            crate::federation::index_agent_grant_member_in_txn(store, txn, &entry, hash)?;
+        }
+        touched.extend(crate::workspace_roster::projects_touched_by_put(
+            store,
+            txn,
+            (
+                authority_log_entity_id_from_hash(hash)?,
+                crate::registry::ENTITY_TYPE_AUTHORITY_LOG,
+            ),
+            None,
+            Some(&FoldRow::Open(entry)),
+        )?);
+    }
+    Ok(touched)
+}
+
+/// Installs in `txn` the overlay key of `subject` under ref `key_ref` that
+/// key custody delivered here (census L5-22 1a-iii; RULING 11:52, "the row
+/// opens and the fold counts it from then on, with no reimport and no
+/// stall"): the key, its ref row and its ready mark
+/// (`store::authority_overlay_custody`), then the openness epoch and the
+/// authority generation, so no cached fold answers past it and none resumes
+/// from a base folded before it. The rows the key opens get the Open-only
+/// hooks their puts left waiting: the agent-grant member posting and the
+/// project touches, whose frontiers refresh once. Nothing a put already did
+/// runs again: no sequence observation, first-seen time, total, store order
+/// or signature.
+///
+/// Every call moves the epoch and runs the hooks, the same key delivered
+/// again included: a delivery an aborted writer left half done (the key
+/// file live, no mark) completes on its retry.
+///
+/// # Errors
+/// As `store::authority_overlay_custody::install_key_in_txn`; a stored row
+/// of `subject` whose hooks fail.
+#[cfg_attr(not(feature = "sync"), allow(dead_code))]
+pub(crate) fn install_authority_overlay_key_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    subject: &EntityId,
+    key_ref: &[u8; 32],
+    secret: &crate::store::CustodySecret,
+) -> Result<()> {
+    custody::install_key_in_txn(store, txn, subject, key_ref, secret)?;
+    note_authority_overlay_openness_change_in_txn(store, txn)?;
+    let rows = subject_overlays_in_txn(store, txn, subject)?;
+    let touched = open_row_hooks_in_txn(store, txn, &rows, true)?;
+    store
+        .project_writes
+        .refresh_project_frontiers(store, txn, store.privacy_posture, &touched)
+}
+
+/// Retires `subject` in `txn` (census L5-22 1a-iii; RULING 11:52, "an erased
+/// row stays a pass-through for good"): every overlay key of it this
+/// install knows, and the delivered `refs` of keys retired elsewhere, held
+/// here or not, are staged to retire and lose their ready marks
+/// (`store::authority_overlay_custody`), and the openness epoch and the
+/// authority generation move, so from the commit on no row of `subject`
+/// opens and nothing it made counts. The projects its open rows touched are
+/// gathered before they close and refresh once after. A later install of
+/// any key of `subject` is refused. The caller commits, then runs custody's
+/// finisher (`Store::finish_erasable_retirements`). Agent-grant member
+/// postings stay: their reader counts only rows the fold holds valid.
+///
+/// # Errors
+/// As `store::authority_overlay_custody::retire_subject_keys_in_txn`;
+/// storage faults.
+#[cfg_attr(not(feature = "sync"), allow(dead_code))]
+pub(crate) fn retire_authority_overlay_subject_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    subject: &EntityId,
+    refs: &[[u8; 32]],
+) -> Result<()> {
+    let rows = subject_overlays_in_txn(store, txn, subject)?;
+    let touched = open_row_hooks_in_txn(store, txn, &rows, false)?;
+    let heads: Vec<SealedOverlay> = rows.into_iter().map(|(_, sealed)| sealed).collect();
+    custody::retire_subject_keys_in_txn(store, txn, subject, &heads, refs)?;
+    note_authority_overlay_openness_change_in_txn(store, txn)?;
+    store
+        .project_writes
+        .refresh_project_frontiers(store, txn, store.privacy_posture, &touched)
 }

@@ -85,9 +85,13 @@ pub(super) fn stage_put_projections(
             crate::authority::note_new_authority_row_in_txn(store, wtxn, hash, data.len())?;
         }
         // Every agent an owner-agent Grant mint names, kept past its revoke
-        // (PAIR-GRANT-DESIGN Q2 = A): every authority-log row stages here.
+        // (PAIR-GRANT-DESIGN Q2 = A): every authority-log row whose record
+        // opens here stages here.
         if let (Some(entry), Some(hash)) = (
-            dispatch.authority_entry_observation.as_ref(),
+            dispatch
+                .authority_entry_observation
+                .as_ref()
+                .and_then(oneiron_authority::authority::FoldRow::open),
             dispatch.authority_entry_hash_pin.as_ref(),
         ) {
             crate::federation::index_agent_grant_member_in_txn(store, wtxn, entry, hash)?;

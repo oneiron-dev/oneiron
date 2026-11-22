@@ -40,7 +40,8 @@ use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::store::Store;
 
-use super::retired_signers::entry_signer_keys;
+use super::log_structure::row_signatures_verified;
+use super::retired_signers::row_signer_keys;
 use super::*;
 
 /// A key that a closed handoff or root appointment fence holds signed a row,
@@ -341,19 +342,21 @@ pub(crate) fn door_refuses_retired_standing(
     posture: crate::HostingPrivacyPosture,
     fold: &AuthorityFold,
     hash: &AuthorityEntryHash,
-    entry: &AuthorityLogEntry,
-    row: &mut dyn FnMut(&AuthorityEntryHash) -> Result<Option<AuthorityLogEntry>>,
+    entry: &FoldRow,
+    row: &mut dyn FnMut(&AuthorityEntryHash) -> Result<Option<FoldRow>>,
 ) -> Result<bool> {
     if !fold.stands_on_retired_key(hash, entry, row)? {
         return Ok(false);
     }
-    if entry.validate_shape().is_err()
-        || verify_entry_signatures(entry).is_err()
+    if entry
+        .open()
+        .is_some_and(|entry| entry.validate_shape().is_err())
+        || !row_signatures_verified(entry)
         || !of_fold_vault(fold, entry)?
     {
         return Ok(true);
     }
-    let fenced_signers: Vec<_> = entry_signer_keys(entry)
+    let fenced_signers: Vec<_> = row_signer_keys(entry)
         .filter(|key| fold.handoff_or_appointment_retired_keys.contains(*key))
         .collect();
     if fenced_signers.is_empty() {
@@ -377,7 +380,7 @@ pub(crate) fn door_refuses_retired_standing(
             // fold counts rows beside the judged one that its `row` does not
             // read, and on an adopted vault that read answers a history error.
             if row(candidate).is_ok_and(|read| {
-                read.is_some_and(|handoff| entry_signer_keys(&handoff).any(|key| key == signer))
+                read.is_some_and(|handoff| row_signer_keys(&handoff).any(|key| key == signer))
             }) {
                 signed_handoff = true;
                 if before.handoffs.contains(candidate) {
@@ -402,13 +405,24 @@ pub(crate) fn door_refuses_retired_standing(
     Ok(true)
 }
 
-/// Whether `entry` belongs to the vault `fold` folds: a genesis founds the
-/// vault its own hash names, and every other row names its vault. A fold with
-/// no settled root holds no vault to match.
-fn of_fold_vault(fold: &AuthorityFold, entry: &AuthorityLogEntry) -> Result<bool> {
-    let vault_id = match entry.op {
-        AuthorityOp::Genesis { .. } => Some(genesis_vault_id(entry)?),
-        _ => entry.vault_id,
+/// Whether `row` belongs to the vault `fold` folds: a genesis founds the
+/// vault its own hash names, and every other row names its vault. A sealed
+/// row whose record does not open here reads both from its envelope. A fold
+/// with no settled root holds no vault to match.
+fn of_fold_vault(fold: &AuthorityFold, row: &FoldRow) -> Result<bool> {
+    let vault_id = match row {
+        FoldRow::Open(entry) if matches!(entry.op, AuthorityOp::Genesis { .. }) => {
+            Some(genesis_vault_id(entry)?)
+        }
+        FoldRow::PassThrough(public)
+            if matches!(public.standing(), PublicStanding::Genesis { .. }) =>
+        {
+            if row.vault_id().is_some() {
+                return Err(invalid_authority());
+            }
+            Some(row.hash()?)
+        }
+        _ => row.vault_id(),
     };
     Ok(fold.vault_id.is_some() && vault_id == fold.vault_id)
 }

@@ -19,7 +19,7 @@ pub(in crate::authority) fn authority_view_with_rows_for_store_in_txn(
     store: &Store,
     posture: HostingPrivacyPosture,
     txn: &heed::RoTxn<'_>,
-    arriving: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    arriving: &BTreeMap<AuthorityEntryHash, FoldRow>,
 ) -> Result<ArrivingFold> {
     let key = authority_cache_key(store, posture, txn)?;
     Ok(

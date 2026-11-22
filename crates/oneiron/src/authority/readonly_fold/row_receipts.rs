@@ -27,7 +27,7 @@ impl RowReceipts {
         store: &Store,
         txn: &heed::RoTxn<'_>,
         rows: &[RowMeta<'_>],
-        arriving: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+        arriving: &BTreeMap<AuthorityEntryHash, FoldRow>,
         backfilled: bool,
         now_secs: u64,
     ) -> Result<Self> {
@@ -60,8 +60,8 @@ impl RowReceipts {
         store: &Store,
         txn: &heed::RoTxn<'_>,
         base: &FoldBase,
-        tail: &[(AuthorityEntryHash, &AuthorityLogEntry)],
-        arriving: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+        tail: &[(AuthorityEntryHash, &FoldRow)],
+        arriving: &BTreeMap<AuthorityEntryHash, FoldRow>,
         backfilled: bool,
         now_secs: u64,
     ) -> Result<Self> {
