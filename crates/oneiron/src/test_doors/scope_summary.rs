@@ -2,6 +2,8 @@
 //! a summary minted as the Dreamer writes one, so the test lands it through
 //! `Vault::land_header` with no model.
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use crate::Vault;
 use crate::conversation_dag::ScopeSelector;
 use crate::entity_id::EntityId;
@@ -53,8 +55,8 @@ pub fn mint_born_scope_summary(
             sources: Vec::new(),
             previous: None,
             recorded_at: now,
-            generated_text_hash: *blake3::hash(text.as_bytes()).as_bytes(),
-            generated_keep_hash: *blake3::hash(b"").as_bytes(),
+            generated_text_hash: ContentHash::of(text.as_bytes()).into_bytes(),
+            generated_keep_hash: ContentHash::of(b"").into_bytes(),
             source_set: None,
             line_sources: None,
         },
