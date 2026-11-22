@@ -332,6 +332,7 @@ pub mod research_continuation;
 #[cfg(feature = "sync")]
 pub mod residence_directive_run;
 pub mod resident_wake_hold;
+pub mod resume_preflight;
 pub mod restored_code_consent_waits;
 pub mod restored_enrolment;
 pub mod retrieval_policy_default_floor;
