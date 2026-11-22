@@ -24,6 +24,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use oneiron_persistent_collections::PersistentMap;
+
 use crate::entity_id::EntityId;
 use crate::federation::{
     FederationGrant, FederationGrantKind, FederationGrantPreset, FederationGrantRole,
@@ -143,7 +145,7 @@ impl OwnerAgentMint {
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct GrantLines {
     /// Each Grant's counted givings: the live ones and every one a later giving replaced.
-    givings: BTreeMap<EntityId, WorldFrontier<GrantTerms>>,
+    givings: PersistentMap<EntityId, WorldFrontier<GrantTerms>>,
     /// Each Grant's counted ends.
     ends: BTreeMap<EntityId, BTreeSet<AuthorityEntryHash>>,
     /// Well-signed grant acts whose carrier or owner did not stand at their parents: valid
