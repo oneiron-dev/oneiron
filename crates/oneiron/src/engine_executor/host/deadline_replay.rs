@@ -199,6 +199,7 @@ fn runs_callable(effect: SelfEffect) -> bool {
         | SelfEffect::Context
         | SelfEffect::Speak
         | SelfEffect::Think
+        | SelfEffect::ThinkAloud
         | SelfEffect::Express
         | SelfEffect::ReportBlocked
         | SelfEffect::AgentsPut

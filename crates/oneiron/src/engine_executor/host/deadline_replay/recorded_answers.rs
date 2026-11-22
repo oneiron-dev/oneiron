@@ -255,6 +255,15 @@ impl RecordingJsHost<'_, '_> {
         })
     }
 
+    /// Ends an open walk at a body no recorded store holds (L8-23), as at a call past its rows:
+    /// whether the pass holds after it.
+    pub(in crate::engine_executor::host) fn end_walk_at_new_output(&mut self) -> bool {
+        let results = &self.results;
+        self.deadline_replay
+            .as_mut()
+            .is_some_and(|replay| replay.end_walk_at_new_output(results))
+    }
+
     /// Whether a resumed step's replay turned dry: an effect step changed or went unreached
     /// (L8-23).
     pub(in crate::engine_executor) fn pending_replay_dry(&self) -> bool {
