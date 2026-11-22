@@ -204,6 +204,7 @@ pub struct HumanResponseSignal {
     pub task_ref: EntityId,
     pub responder_ref: EntityId,
     pub surface_event_ref: EntityId,
+    /// When the response occurred, in Unix seconds.
     pub occurred_at: u64,
 }
 

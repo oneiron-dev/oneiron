@@ -146,10 +146,15 @@ pub(super) fn log_terminal_step(
     let params_hash = request_params_hash(request)?;
     let input_records = step_input_records(request)?;
     let claim_id = ctx.vault.store.clock.entity_id()?;
+    // The rows this step files are stamped in Unix seconds, as every claim
+    // and entity row is (FIX MODEL-STEP-ROW-TIMES-IN-MILLISECONDS): the
+    // source's `at` and the pass clock are milliseconds, which the claim's
+    // own `at` and the step's private row keep.
     let occurred = TimeRange {
-        start: source.at,
-        end: source.at,
+        start: source.at / 1_000,
+        end: source.at / 1_000,
     };
+    let now = ctx.now_ms / 1_000;
     let envelope = runtime_envelope(binding.attempt_id, source.actor, source.run_id.as_deref())?;
     let inline = payload.len() <= DREAMER_STEP_INLINE_RESPONSE_MAX_BYTES;
     let inline_response = if inline {
@@ -216,7 +221,7 @@ pub(super) fn log_terminal_step(
                         &artifact_id,
                         ENTITY_TYPE_BLOB_ARTIFACT,
                         occurred,
-                        ctx.now_ms,
+                        now,
                         &encoded,
                     )
                     .apply(wtxn)?;
@@ -231,7 +236,7 @@ pub(super) fn log_terminal_step(
                     &BlobVersionProvenance::AgentRun { run_ref },
                     source.actor,
                     occurred,
-                    ctx.now_ms,
+                    now,
                 )?;
                 Some(StepResponseRef {
                     artifact_id,
@@ -276,7 +281,7 @@ pub(super) fn log_terminal_step(
             )?;
             ctx.vault
                 .batch_in()
-                .claim_candidate(&claim_id, candidate, &envelope, occurred, ctx.now_ms)
+                .claim_candidate(&claim_id, candidate, &envelope, occurred, now)
                 .apply(wtxn)?;
             // The step claim is a new mention of its context subject: about
             // a PERSON under a cleanup archive, which the owner-gone fence
