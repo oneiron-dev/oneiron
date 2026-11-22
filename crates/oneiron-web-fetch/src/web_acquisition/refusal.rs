@@ -21,8 +21,8 @@ pub enum HostedEgressRefusal {
     /// Hosted infrastructure: loopback, "this host", link-local, a cloud
     /// metadata endpoint or one of the node's own addresses.
     Infrastructure,
-    /// A private network (RFC1918, CGNAT, ULA) no operator origin admits
-    /// (FIX 7657).
+    /// A private network (RFC1918, CGNAT, ULA) that no operator network or
+    /// origin admits (FIX 7657).
     PrivateNetwork,
 }
 
@@ -84,6 +84,21 @@ impl HostedEgressRefusal {
         }
     }
 
+    /// The suggestion a door serves beside this refusal: its reason, tenant
+    /// isolation, a kept reason that no size lifts, and the self-host route
+    /// (DEC-0005 #will-sweep; RULING L9-61-ISOLATION = A, Engine 14 Nov 11:03).
+    #[must_use]
+    pub const fn suggestion(self) -> &'static str {
+        match self {
+            Self::Infrastructure => {
+                "For tenant isolation, a hosted node never fetches the infrastructure it runs on; a self-hosted node fetches this address."
+            }
+            Self::PrivateNetwork => {
+                "For tenant isolation, a hosted node refuses private-network addresses (RFC1918, CGNAT 100.64.0.0/10, IPv6 ULA fc00::/7) outside the private networks and origins its hosting operator allows; a self-hosted node fetches this address, or the hosting operator can allow its private network or its named private origin."
+            }
+        }
+    }
+
     /// The fetch error refusing `url`, the requested page, credential-redacted.
     pub(crate) fn fetch_error(self, url: &str) -> WebFetchError {
         let url = redact_url_credentials(url);
@@ -99,11 +114,11 @@ impl std::fmt::Display for HostedEgressRefusal {
         match self {
             Self::Infrastructure => write!(
                 f,
-                "web fetch refused ({HOSTED_INFRASTRUCTURE_REASON}): on a hosted node, the destination resolves to the hosting infrastructure (loopback, link-local, this node's own address or a cloud metadata endpoint); a self-hosted node fetches it"
+                "web fetch refused ({HOSTED_INFRASTRUCTURE_REASON}): on a hosted node, the destination resolves to the hosting infrastructure (loopback, link-local, this node's own address or a cloud metadata endpoint), which hosted nodes refuse for tenant isolation; a self-hosted node fetches it"
             ),
             Self::PrivateNetwork => write!(
                 f,
-                "web fetch refused ({HOSTED_PRIVATE_NETWORK_REASON}): on a hosted node, the destination is a private-network address outside the hosting operator's allowed origins, and hosted nodes refuse private-network addresses (RFC1918, CGNAT 100.64.0.0/10, IPv6 ULA fc00::/7); a self-hosted node fetches it, or the hosting operator can allow its named private origin"
+                "web fetch refused ({HOSTED_PRIVATE_NETWORK_REASON}): on a hosted node, the destination is a private-network address outside the private networks and origins the hosting operator allows, and for tenant isolation hosted nodes refuse private-network addresses (RFC1918, CGNAT 100.64.0.0/10, IPv6 ULA fc00::/7); a self-hosted node fetches it, or the hosting operator can allow its private network or its named private origin"
             ),
         }
     }
@@ -165,6 +180,63 @@ impl RendererError {
         Self {
             kind: RendererErrorKind::UnsafeRedirect,
             message: message.into(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A hosted egress refusal names its reason, tenant isolation, and the
+    /// self-host route in its message, its fetch error and its suggestion,
+    /// and never calls itself capacity: no size lifts it (census L9-61;
+    /// RULING L9-61-ISOLATION = A).
+    #[test]
+    fn a_hosted_egress_refusal_names_tenant_isolation_and_the_self_host_route() {
+        for refused in [
+            HostedEgressRefusal::Infrastructure,
+            HostedEgressRefusal::PrivateNetwork,
+        ] {
+            let error = refused.fetch_error("https://example.com/page");
+            let texts = [
+                refused.to_string(),
+                error.to_string(),
+                refused.suggestion().to_owned(),
+            ];
+            for text in &texts[..2] {
+                assert!(text.contains(refused.reason()), "{text}");
+            }
+            for text in &texts {
+                assert!(text.contains("tenant isolation"), "{text}");
+                assert!(text.contains("a self-hosted node fetches"), "{text}");
+                assert!(!text.contains("capacity"), "{text}");
+            }
+        }
+    }
+
+    /// A hosted private-network refusal names both things the hosting
+    /// operator can allow: a private network (`--hosted-private-network`)
+    /// and a named private origin (`--hosted-private-origin`), in its
+    /// message, its fetch error and its suggestion.
+    #[test]
+    fn a_hosted_private_network_refusal_names_the_operator_networks_and_origins() {
+        let refused = HostedEgressRefusal::PrivateNetwork;
+        for text in [
+            refused.to_string(),
+            refused.fetch_error("https://example.com/page").to_string(),
+            refused.suggestion().to_owned(),
+        ] {
+            assert!(
+                text.contains("outside the private networks and origins"),
+                "{text}"
+            );
+            assert!(
+                text.contains(
+                    "the hosting operator can allow its private network or its named private origin"
+                ),
+                "{text}"
+            );
         }
     }
 }

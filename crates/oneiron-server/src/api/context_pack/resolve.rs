@@ -711,19 +711,37 @@ fn read_reaction_signals(
     checkpoint()?;
     let page = paging.page(kept);
     checkpoint()?;
-    let signals = page
-        .signals
-        .into_iter()
-        .map(|signal| CoreReactionSignal {
+    // A signal names its reactor only to a reader who may read their PERSON
+    // row, judged as the signal itself was: a scoped read under its own
+    // admission and clamp, a raw feed off this device under the world judge.
+    // Another reader hears of the reaction with no `by` (Engine ANSWER
+    // REACTION-REACTOR-ID-SURFACES = A).
+    let mut signals = Vec::with_capacity(page.signals.len());
+    for signal in page.signals {
+        checkpoint()?;
+        let by = if scoped {
+            scoped_read
+                .reaction_signal_reactor_under(&signal, disclosure)
+                .map_err(|e| core_engine_error("reaction signal reactor scope failed", e))?
+        } else if let Some(destination) = &raw_destination {
+            server
+                .vault
+                .rows_may_leave_for(&[signal.by], destination)
+                .map_err(|e| core_engine_error("reaction signal reactor judge failed", e))?
+                .then_some(signal.by)
+        } else {
+            Some(signal.by)
+        };
+        signals.push(CoreReactionSignal {
             event: signal.event(),
             reaction: signal.reaction.to_hex(),
             message: signal.message.to_hex(),
-            by: signal.by.to_hex(),
+            by: by.map(|by| by.to_hex()),
             glyph: signal.glyph,
             occurred_at: signal.occurred_at,
             recorded_at: signal.recorded_at,
-        })
-        .collect();
+        });
+    }
     checkpoint()?;
     response.signals_next = page.next;
     response.signals = signals;

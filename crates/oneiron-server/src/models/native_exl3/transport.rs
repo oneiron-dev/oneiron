@@ -111,16 +111,9 @@ impl Channel {
     /// Connects to the socket at `path`; refused unless the process that
     /// answers runs as this process's own user.
     pub(super) async fn connect(path: &Path) -> io::Result<Self> {
-        let stream = UnixStream::connect(path).await?;
-        let peer = stream.peer_cred()?;
-        if peer.uid() != rustix::process::geteuid().as_raw() {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "the worker's socket answers as another user",
-            ));
-        }
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
-        let peer_pid = peer.pid().and_then(|pid| u32::try_from(pid).ok());
+        let (stream, peer_pid) = super::super::peer_socket::connect_own_user(path).await?;
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        let _ = peer_pid;
         let (reader, writer) = stream.into_split();
         Ok(Self {
             reader: BufReader::new(reader),

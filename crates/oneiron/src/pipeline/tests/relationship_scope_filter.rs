@@ -12,7 +12,7 @@ fn relationship_body(rel: Option<EntityId>) -> ClaimBody {
         crate::claim::ClaimLifecycleStatus::Active,
     )
     .unwrap();
-    body.rel = rel;
+    body.rel = crate::claim::relationship_scope_of(rel);
     body
 }
 
@@ -95,7 +95,7 @@ fn relationship_claim_body_key_is_strict_16_byte_binary() -> Result<()> {
     let hand_built = body_with_relationship(Some(singleton(relationship)));
     assert_eq!(
         crate::claim::decode_claim_body(&hand_built, true)?.rel,
-        Some(relationship)
+        Some(crate::claim::RelationshipSet::from([relationship]))
     );
     // The `all` string is the other legal shape for the same None.
     assert_eq!(
@@ -109,7 +109,7 @@ fn relationship_claim_body_key_is_strict_16_byte_binary() -> Result<()> {
     let round_trip = crate::claim::encode_claim_body(&relationship_body(Some(relationship)))?;
     assert_eq!(
         crate::claim::decode_claim_body(&round_trip, true)?.rel,
-        Some(relationship)
+        Some(crate::claim::RelationshipSet::from([relationship]))
     );
     // Missing scopeRelationshipId is corruption, not a relaxed claim.
     assert_matches!(

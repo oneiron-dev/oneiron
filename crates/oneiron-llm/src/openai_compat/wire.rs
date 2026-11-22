@@ -48,7 +48,8 @@ pub fn build_openai_chat_request(
     validate_capabilities(catalog, request, &provider_options, stream)?;
 
     let mut body = JsonMap::new();
-    for (key, value) in &request.params {
+    // A param only an own server is sent leaves a hosted API's body here.
+    for (key, value) in request.wire_params()? {
         body.insert(key.clone(), value.clone());
     }
     for (key, value) in provider_options.to_wire_fields() {

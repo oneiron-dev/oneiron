@@ -1,0 +1,155 @@
+//! A deposit refund the provider ended with nothing paid back
+//! (FIX [BK-DEPOSIT-FAILED-REFUND-SURFACE]).
+//!
+//! Stripe can end a refund `failed` or `canceled` (a closed card, say): the
+//! money stays owed to the visitor, and the deposit stays refund-due. Its
+//! settle row asks again hourly under the same idempotency key, which finds
+//! the same ended refund, so nothing moves it on but a hand refund in the
+//! Stripe dashboard that covers what is owed. The settle row notes the ended
+//! refund on the deposit ([`note_refund_ended_unpaid`]); the owner's card
+//! says so, and Return deposit (`vault.booking.deposit.refund`) asks the
+//! provider for the same refund again under the next retry count, which the
+//! refund's idempotency key names, so the provider makes a new refund rather
+//! than answering the ended one. The note goes once a refund of the deposit
+//! settles. Where refunds made by hand in the Stripe dashboard cover a part
+//! of what is owed, no refund is made here (a refund made by hand is never
+//! refunded again here): the note says so, the card asks for a hand refund
+//! of the rest, and Return deposit asks Stripe nothing (review round 1 of
+//! #10149). So it is where they cover a part and Stripe holds no refund under
+//! the row's keys at all, since the owner refunded by hand before the row
+//! asked: the note says no refund was asked
+//! (FIX [BK-DEPOSIT-SHORT-HAND-REFUND-NO-OWNER-LINE]).
+
+use serde::{Deserialize, Serialize};
+
+use super::super::storage::{booking_writer, engine_failure};
+use super::home_fence::{SettleStanding, settle_standing_in_txn};
+use super::{DEPOSIT, DepositProviderFailure, DepositSettleMove, DepositState, put_deposit};
+use crate::Vault;
+use crate::booking::BookingError;
+
+/// The refund a deposit owes now that the provider ended with nothing paid
+/// back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RefundEndedUnpaid {
+    /// The deposit's retry count when the ended refund was asked: the owner
+    /// may ask again only while it is still the deposit's own, so a second
+    /// Return deposit before the new refund ends changes nothing.
+    pub(super) retry: u32,
+    /// When a settle row first found it ended.
+    pub(super) noted_at: u64,
+    /// Refunds made by hand in the provider's dashboard cover a part of what
+    /// is owed, as the provider's last answer said: only a hand refund pays
+    /// the rest, and the owner's return asks the provider nothing.
+    pub(super) part_refunded_by_hand: bool,
+    /// The provider holds no refund under the row's keys: refunds made by
+    /// hand covered a part of what is owed before the row asked, so it asked
+    /// for none, and none ended. Set only with `part_refunded_by_hand`; unset
+    /// on every note of a refund the provider ended
+    /// (FIX [BK-DEPOSIT-SHORT-HAND-REFUND-NO-OWNER-LINE]).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub(super) no_keyed_refund: bool,
+}
+
+/// One move a settle row asked the provider for: the move, what was
+/// refunded before it, and the retry count its key named.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct AskedRefund {
+    pub(super) movement: DepositSettleMove,
+    pub(super) refunded_before: u64,
+    pub(super) retry: u32,
+}
+
+/// Whether a deposit's retry count is unset, so a row that never retried a
+/// refund encodes as before. Serde's `skip_serializing_if` hands the field
+/// by reference.
+pub(super) const fn is_zero(retry: &u32) -> bool {
+    *retry == 0
+}
+
+/// Whether a note's flag is unset, so a note that sets none encodes as
+/// before. Serde's `skip_serializing_if` hands the field by reference.
+const fn is_false(flag: &bool) -> bool {
+    !*flag
+}
+
+/// Notes, in its own booking writer, that the provider's `failure` ended
+/// the refund `asked` with nothing paid back, or that refunds made by hand
+/// cover only a part of it while the provider holds none under the row's
+/// keys. An answer that the provider holds a refund paying back what is owed
+/// removes a note standing at the same retry count, since the refund is on
+/// its way (review round 1 of #10267). Any other failure or move notes
+/// nothing. Only while the deposit still owes exactly that refund,
+/// after the same earlier refunds and under the same retry count, so an
+/// answer that a later refund or a retry overtook notes nothing, nor does
+/// one on a refund the owner marked refunded outside the provider. A note
+/// already standing at that retry count stays dated by its first finding, so
+/// the hourly ask writes nothing, unless the answer changes whether refunds
+/// made by hand cover a part of it, or whether a refund under the row's keys
+/// exists. A node that froze its booking rows for a
+/// home move notes nothing: the new home asks the same refund and notes it
+/// there.
+///
+/// # Errors
+///
+/// [`BookingError::SlotOracle`] on a store failure.
+pub(super) fn note_refund_ended_unpaid(
+    vault: &Vault,
+    key: &[u8; 32],
+    asked: AskedRefund,
+    failure: &DepositProviderFailure,
+    now_utc: u64,
+) -> Result<(), BookingError> {
+    let DepositSettleMove::Refund { amount_minor } = asked.movement else {
+        return Ok(());
+    };
+    let noted = match failure {
+        DepositProviderFailure::RefundEndedUnpaid {
+            part_refunded_by_hand,
+            ..
+        } => Some((*part_refunded_by_hand, false)),
+        DepositProviderFailure::PartRefundedByHand { .. } => Some((true, true)),
+        DepositProviderFailure::RefundHeld { .. } => None,
+        _ => return Ok(()),
+    };
+    booking_writer(vault, |wtxn| {
+        if settle_standing_in_txn(vault, &*wtxn)? != SettleStanding::Settles {
+            return Ok(());
+        }
+        let Some(mut row) = DEPOSIT
+            .get(&vault.store, &*wtxn, key)
+            .map_err(|error| engine_failure("meta read", error))?
+        else {
+            return Ok(());
+        };
+        let owes_it = row.state == (DepositState::RefundDue { amount_minor })
+            && row.refunded_minor == asked.refunded_before
+            && row.refund_retry == asked.retry
+            && !row.marks_owed_refund();
+        if !owes_it {
+            return Ok(());
+        }
+        let standing = row
+            .refund_ended_unpaid
+            .filter(|ended| ended.retry == asked.retry);
+        row.refund_ended_unpaid = match (noted, standing) {
+            (None, None) => return Ok(()),
+            (None, Some(_)) => None,
+            (Some((part_refunded_by_hand, no_keyed_refund)), Some(ended))
+                if ended.part_refunded_by_hand == part_refunded_by_hand
+                    && ended.no_keyed_refund == no_keyed_refund =>
+            {
+                return Ok(());
+            }
+            (Some((part_refunded_by_hand, no_keyed_refund)), standing) => Some(RefundEndedUnpaid {
+                retry: asked.retry,
+                noted_at: standing.map_or(now_utc, |ended| ended.noted_at),
+                part_refunded_by_hand,
+                no_keyed_refund,
+            }),
+        };
+        row.updated_at = now_utc;
+        put_deposit(vault, wtxn, key, &row)
+    })
+}

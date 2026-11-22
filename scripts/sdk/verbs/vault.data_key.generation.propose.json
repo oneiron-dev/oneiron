@@ -1,0 +1,14 @@
+{
+  "name": "vault.data_key.generation.propose",
+  "description": "An agent whose live owner Grant lists this verb asks each owner to start a new vault data-key generation: one inbox ask per owner and generation. The owner confirms and presents the secrets; it changes no key.",
+  "input": "crate::task_verb::sdk::DataKeyGenerationProposeRequest",
+  "output": "crate::world_keys::DataKeyGenerationProposal",
+  "call": "crate::task_verb::sdk::propose_data_key_generation(memory, input)?",
+  "scope": "Write",
+  "act_class": "reversible_work",
+  "admission": {
+    "lane_record_scope": true,
+    "require_granted_scope": true
+  },
+  "section": false
+}

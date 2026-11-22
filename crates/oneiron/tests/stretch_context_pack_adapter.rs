@@ -95,6 +95,7 @@ fn owner_turn(content: String, occurred_at: u64) -> WitnessTurn {
         conversation_ref: String::new(),
         turn_ref: None,
         thread_audience: None,
+        project: None,
         messages: vec![WitnessMessage {
             id: None,
             author: WitnessAuthor::User,

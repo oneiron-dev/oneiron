@@ -238,8 +238,9 @@ impl AgentDispatcher<'_> {
                 now,
             },
         )?;
-        match crate::ports::JobQueue::port_job_claim_id(
-            self.vault,
+        // The wrapper's own bookkeeping, settled here: a copy restored and not
+        // joined holds the leaf it leads to, not this row.
+        match queue.claim_id_to_settle_in_txn(
             txn,
             root,
             ClaimAttempt {

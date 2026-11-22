@@ -123,6 +123,7 @@ impl PolicyDecisions {
             self.ladder.rule.as_ref(),
             self.ladder.local.as_ref(),
             self.ladder.system_one.as_ref(),
+            self.ladder.precision.as_ref(),
             self.ladder.escalation.as_ref(),
             self.ladder.big.as_ref(),
         ];

@@ -39,7 +39,9 @@ const RECEIPT_TAIL_KINDS: [ReceiptKind; 16] = [
 /// of each room Hook receipt in it, by its ref: a hook reads one only while
 /// its own view shows them all (FIX 5429). A chain in a room also reads the
 /// room's own Hook receipts, which base's family does not hold. A tail that
-/// does not read is empty.
+/// does not read is empty. No tail holds a receipt the vault owner alone
+/// reads, on the owner's own call either
+/// ([`crate::memory::Memory::hook_tail_receipts`]).
 pub(super) fn receipt_tail(
     vault: &Vault,
     storage: VerbHookStorage<'_>,
@@ -48,7 +50,7 @@ pub(super) fn receipt_tail(
     let kinds = RECEIPT_TAIL_KINDS.map(|kind| kind.as_str().to_owned());
     let base = vault
         .memory(call.actor, filter::edge_class(call.class))
-        .receipts_of_kinds(RECEIPT_TAIL, &kinds)
+        .hook_tail_receipts(RECEIPT_TAIL, &kinds)
         .ok();
     let (records, sources): (Vec<_>, Vec<_>) = match storage {
         VerbHookStorage::Session(hooks) => hooks

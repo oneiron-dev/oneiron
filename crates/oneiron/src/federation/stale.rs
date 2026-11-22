@@ -328,6 +328,10 @@ impl<'v> StaleSweepWatch<'v> {
         // authority this commit stored (OF-420, an L02 seam): a no-op unless
         // the commit stored an authority row; a failure waits for its tick.
         self.vault.reconcile_training_after_authority_ingest(noted);
+        // Setting rows whose signed acts moved are written again from the fold (stage 7a-2, an
+        // L02 seam): a no-op unless the commit stored an authority row; a failure waits for the
+        // next such commit or the next open.
+        self.vault.project_settings_after_authority_ingest(noted);
         Ok(())
     }
 }
@@ -439,7 +443,7 @@ pub(crate) fn world_registered_to_pact_in(
 }
 
 /// The worlds registered to one pact.
-fn registered_worlds(
+pub(super) fn registered_worlds(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     pact_id: &[u8; 32],

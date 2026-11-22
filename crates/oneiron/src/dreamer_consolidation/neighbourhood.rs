@@ -699,18 +699,19 @@ fn listable(
     })
 }
 
-/// An entity's `name`, when its body carries one.
+/// An entity's label, when its body carries one: its `name`, else its
+/// `display_name`, which alone labels a confirmed role person (`my
+/// manager`; FIX LINKER-ROLE-CONFIRMED-PERSON-KEY-ACROSS-SPEAKERS).
 fn label(body: &[u8]) -> Option<String> {
     let mut cursor = body;
     let value = rmpv::decode::read_value(&mut cursor).ok()?;
-    let name = rmpv_to_json(&value)
-        .get("name")?
-        .as_str()?
-        .trim()
-        .to_owned();
+    let value = rmpv_to_json(&value);
     // The name rides whole (Rule 5, FIX 10518): a wide one widens its line,
     // and a line wider than a page has a page of its own.
-    (!name.is_empty()).then_some(name)
+    ["name", "display_name"].iter().find_map(|field| {
+        let name = value.get(*field)?.as_str()?.trim();
+        (!name.is_empty()).then(|| name.to_owned())
+    })
 }
 
 impl Vault {

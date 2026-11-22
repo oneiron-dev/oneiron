@@ -6,6 +6,7 @@ use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Vault};
 use heed::RwTxn;
+use oneiron_contracts::fingerprint::ContentHash;
 
 /// Permanent tombstone (empty marker) for one deleted LFS object id, blocking resurrection. Key:
 /// oid.
@@ -295,7 +296,7 @@ pub(crate) fn is_lfs_chunk_blob(id: &EntityId, blob: &[u8]) -> bool {
     }
     let body = &blob[crate::batch::ENTITY_METADATA_HEADER_LEN..];
     body.len() <= super::LFS_CHUNK_MAX
-        && chunks::chunk_id(blake3::hash(body).as_bytes())
+        && chunks::chunk_id(ContentHash::of(body).as_bytes())
             .ok()
             .as_ref()
             == Some(id)
@@ -342,7 +343,7 @@ pub(crate) fn guard_lfs_asset_put(
         if chunks::chunk_id(&hash)? != *id {
             return Err(Error::CorruptedIndex("lfs chunk marker id"));
         }
-        if data.len() > super::LFS_CHUNK_MAX || blake3::hash(data).as_bytes() != &hash {
+        if data.len() > super::LFS_CHUNK_MAX || ContentHash::of(data).as_bytes() != &hash {
             return Err(chunks::invalid(
                 "restored lfs chunk must match its content id",
             ));

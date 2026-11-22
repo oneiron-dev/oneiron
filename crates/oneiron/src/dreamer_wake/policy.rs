@@ -1,5 +1,12 @@
 //! Row-backed wake admission. The host supplies liveness; the vault owns the decision.
 use crate::Vault;
+use crate::authority::OwnerProofGround;
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
+use crate::batch::export::{
+    ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
+};
 use crate::claim::{ClaimLifecycleStatus, ClaimSource, decode_claim_body};
 use crate::dreamer_runner::{
     DreamerRunnerStore, DreamerTurnRole, EnqueueDreamerAttemptOutcome, dreamer_turn_role,
@@ -8,6 +15,7 @@ use crate::error::{Error, Result};
 use crate::ports::{ChangeLogStoreRead, EntityStoreRead, TombstoneStore};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TURN};
 use crate::side_table::{self, LegacyJson, SideTable};
+use crate::world_keys::{OwnerActImportance, owner_presence_reasons};
 use crate::{agent_def::AgentDefinition, store::agent_record::AgentWakeCadence};
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::Ordering;
@@ -518,6 +526,11 @@ impl Vault {
         policy: DreamerWakePolicy,
     ) -> Result<()> {
         policy.validate()?;
+        let witness = self.owner_presence(
+            OwnerActImportance::Ordinary,
+            owner_presence_reasons::DREAMER_WAKE_POLICY,
+        )?;
+        let ground = OwnerProofGround::witnessed(&witness);
         self.with_write_txn_grouped(|txn| {
             let actor =
                 crate::dreamer_runner::maintenance::validate_owner_in_txn(self, txn, owner)?;
@@ -536,7 +549,7 @@ impl Vault {
             )?;
             // The signed record goes last, best effort (FIX 4624).
             if let Some(act) = signed {
-                self.record_policy_setting_op_in_txn(txn, act);
+                self.record_policy_setting_op_in_txn(txn, Some(&ground), act);
             }
             Ok(())
         })
@@ -608,6 +621,27 @@ impl Vault {
     }
 }
 
+/// Lands one archived `DREAMER_WAKE_POLICY` envelope: the writer's
+/// [`DreamerWakePolicy::validate`] rules, then an absent-key exact-bytes install, never recording
+/// an act. Each evaluation re-reads the row, so nothing goes stale.
+pub(super) fn land_archived_dreamer_wake_policy_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> Result<ArchivedSideRowOutcome> {
+    let (key, value) = match decode_archived_row(&POLICY, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    if value.validate().is_err() {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidValue,
+        ));
+    }
+    install_archived_row(&POLICY, vault, txn, permit, &key, row)
+}
+
 #[cfg(test)]
 impl Vault {
     /// The explicit records a wake would count now, without moving its state,
@@ -620,8 +654,6 @@ impl Vault {
     }
 }
 
-// FIX [LIBTEST-QUARANTINE-DREAMER-WAKE-POLICY-TESTS]: the lib test target's type check fails here (1 errors: E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 #[path = "policy/tests.rs"]
 mod tests;

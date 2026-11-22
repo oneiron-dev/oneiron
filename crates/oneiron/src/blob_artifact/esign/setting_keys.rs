@@ -47,6 +47,6 @@ crate::setting::setting_keys! {
     /// does not decode fails the read, and the hold waits on, as with `never`.
     pub(crate) ESIGN_HELD_SIGNING_OWNER_LAPSE: HeldSigningLapse =
         "esign.held_signing.owner_lapse" {
-        kind: Kind::new(thirty_days).tighter(sooner_is_tighter),
+        kind: Kind::new(thirty_days).custom(sooner_is_tighter),
     };
 }

@@ -18,6 +18,7 @@
 //! bytes' BLAKE3 or null for a removal, and the envelope's content hash is
 //! the BLAKE3 of that list's canonical JSON.
 
+use oneiron_contracts::fingerprint::{LegacyDigest, LegacyPurpose, purposes};
 use rmpv::Value;
 use serde::Serialize;
 
@@ -25,7 +26,7 @@ use super::{RepoMutationOperation, RepoMutationRequest, invalid};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
-use crate::entity_id::EntityId;
+use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Result;
 use crate::repo_mutation::RepoBundleFile;
 use crate::repo_mutation::trailer::{
@@ -54,6 +55,47 @@ impl OwnerRequestAttribution {
             .map_err(|_| invalid("an owner proposal's input does not serialize"))?;
         Ok(Self { verb, input })
     }
+}
+
+/// Why an owner request's hash input has no hash.
+const REQUEST_HASH_INPUT_REFUSAL: &str = "an owner request's hash input does not serialize";
+
+/// The lowercase hex of the plain BLAKE3 of `value`'s sorted JSON, with no tag,
+/// or `refusal` when `value` does not encode. The owner request's claim stores
+/// its request hash and its bundle's content hash, so each keeps its bytes (K,
+/// PLAN-UC-04 stage 6.4).
+fn sorted_json_hex(
+    purpose: LegacyPurpose,
+    value: &serde_json::Value,
+    refusal: &'static str,
+) -> Result<String> {
+    let bytes = crate::llm::canonical_json_bytes(value).map_err(|_| invalid(refusal))?;
+    Ok(bytes_to_hex_lower(
+        &LegacyDigest::new(purpose).raw(&bytes).finish(),
+    ))
+}
+
+/// The content hash a native bundle of `files` stages, or `None` when the bundle
+/// is refused. For the K-proof
+/// (`tests/fingerprint_keep_query_swap_piece_packet_repo_digests.rs`).
+#[cfg(oneiron_test_support)]
+pub(crate) fn bundle_content_hash_for_test(files: &[RepoBundleFile]) -> Option<String> {
+    StagedChange::bundle(files)
+        .ok()
+        .map(|staged| staged.content_hash().to_owned())
+}
+
+/// The request hash of an owner request whose hash input is `preimage`, or `None`
+/// when it does not encode. For the K-proof
+/// (`tests/fingerprint_keep_query_swap_piece_packet_repo_digests.rs`).
+#[cfg(oneiron_test_support)]
+pub(crate) fn owner_request_hash_for_test(preimage: &serde_json::Value) -> Option<String> {
+    sorted_json_hex(
+        purposes::repo_mutation::OWNER_REQUEST,
+        preimage,
+        REQUEST_HASH_INPUT_REFUSAL,
+    )
+    .ok()
 }
 
 /// The change an owner request stages, as its claim binds it.
@@ -105,9 +147,11 @@ impl StagedChange {
                 .map(|(path, hash)| serde_json::json!({ "path": path, "content_hash": hash }))
                 .collect(),
         );
-        let listed = crate::llm::canonical_json_bytes(&listed)
-            .map_err(|_| invalid("an owner request's bundle does not serialize"))?;
-        let content_hash = blake3::hash(&listed).to_hex().to_string();
+        let content_hash = sorted_json_hex(
+            purposes::repo_mutation::OWNER_BUNDLE,
+            &listed,
+            "an owner request's bundle does not serialize",
+        )?;
         Ok(Self::Bundle {
             files,
             content_hash,
@@ -197,9 +241,11 @@ impl Vault {
             "base_commit": base_commit,
             "effective_content_hash": staged.content_hash(),
         });
-        let preimage = crate::llm::canonical_json_bytes(&preimage)
-            .map_err(|_| invalid("an owner request's hash input does not serialize"))?;
-        let request_hash = blake3::hash(&preimage).to_hex().to_string();
+        let request_hash = sorted_json_hex(
+            purposes::repo_mutation::OWNER_REQUEST,
+            &preimage,
+            REQUEST_HASH_INPUT_REFUSAL,
+        )?;
         let mut body = ClaimBody::new(
             REPO_PROVENANCE_PREDICATE,
             ClaimSubject::Entity(session),

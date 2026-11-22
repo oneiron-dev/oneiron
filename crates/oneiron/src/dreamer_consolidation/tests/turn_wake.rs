@@ -25,7 +25,7 @@ fn micro_rounds(vault: &Vault) -> Result<Vec<Vec<EntityId>>> {
         .iter()
         .map(|row| {
             let payload = decode_dreamer_attempt_payload(&row.payload)?;
-            Ok(decode_partition_payload(&payload.input)?.1)
+            Ok(decode_partition_payload(&payload.input)?.turn_ids())
         })
         .collect()
 }
@@ -244,7 +244,7 @@ fn a_repeat_while_its_round_is_queued_queues_its_own_round() -> Result<()> {
         .filter(|row| row.state == crate::attempt_queue::AttemptState::Queued)
         .map(|row| {
             let payload = decode_dreamer_attempt_payload(&row.payload)?;
-            Ok(decode_partition_payload(&payload.input)?.1)
+            Ok(decode_partition_payload(&payload.input)?.turn_ids())
         })
         .collect::<Result<_>>()?;
     assert!(
@@ -290,6 +290,9 @@ fn witness_into(
             turn_ref: Some(turn.to_hex()),
             messages,
             occurred_at: 10,
+            thread_audience: None,
+            project: None,
+            assertions: Default::default(),
         })
         .expect("witnessed turn");
     turn
@@ -345,11 +348,18 @@ fn a_turn_the_screen_skipped_is_not_held_by_the_round_that_left_it_out() -> Resu
         novelty: 0.0,
         role: 0.0,
     };
-    vault.set_prefilter_config(PrefilterConfig {
-        enabled: true,
-        threshold: 0.1,
-        weights,
-    })?;
+    vault.set_setting(
+        crate::setting::SettingCaller::Owner(&crate::test_util::embedded_owner_proof(&vault)),
+        crate::setting::SetSetting::vault_value(
+            "dreamer.prefilter",
+            serde_json::to_value(PrefilterConfig {
+                enabled: true,
+                threshold: 0.1,
+                weights,
+            })
+            .expect("prefilter setting value"),
+        ),
+    )?;
     let at = vault.now_recorded_at();
     let session = seed_session(&vault, 13, at);
     let kept = seed_turn(
@@ -364,11 +374,18 @@ fn a_turn_the_screen_skipped_is_not_held_by_the_round_that_left_it_out() -> Resu
     assert_eq!(micro_rounds(&vault)?, vec![vec![kept]]);
     complete(&vault, &claim_micro(&vault, at + 1)?, at + 2)?;
 
-    vault.set_prefilter_config(PrefilterConfig {
-        enabled: false,
-        threshold: 0.1,
-        weights,
-    })?;
+    vault.set_setting(
+        crate::setting::SettingCaller::Owner(&crate::test_util::embedded_owner_proof(&vault)),
+        crate::setting::SetSetting::vault_value(
+            "dreamer.prefilter",
+            serde_json::to_value(PrefilterConfig {
+                enabled: false,
+                threshold: 0.1,
+                weights,
+            })
+            .expect("prefilter setting value"),
+        ),
+    )?;
     reopen_prefilter_rescan(&vault, DreamerConsolidationScope::Micro, at)?;
     assert!(vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, at + 3)?);
     let rounds = micro_rounds(&vault)?;

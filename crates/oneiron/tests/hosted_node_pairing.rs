@@ -26,7 +26,7 @@ use oneiron::authority::{
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::Scope;
 use oneiron::store::GateDecisionId;
-use oneiron::test_support::{bind_host_owner, provision_engine_machines};
+use oneiron::test_support::{bind_host_owner, provision_engine_machines, test_host_issuer};
 use oneiron::{EntityId, Vault, VaultConfig};
 
 /// The person's own machine, serving the vault.
@@ -80,6 +80,11 @@ fn host() -> Host {
 /// his acts.
 fn answered_host() -> Host {
     let host = host();
+    // The handle holds the host root as a serving host does, so the owner's
+    // carried Yours answer for this install is proven by an owner key (row
+    // CARRIER-OWNER-PROOF) and stands, not held for an owner device.
+    host.vault
+        .hold_checkpoint_root_signer(Arc::new(test_host_issuer()));
     let landing = host
         .vault
         .set_machine_role(
