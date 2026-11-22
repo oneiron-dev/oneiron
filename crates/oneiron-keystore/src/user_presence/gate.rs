@@ -136,7 +136,7 @@ impl PresenceGate {
             return Arc::clone(gate);
         }
         let gate = Arc::new(Self::for_hosts());
-        if let Some((_, inherited)) = held.replace((process, Arc::clone(&gate))) {
+        if let Some((_, inherited)) = held.take() {
             // Another process made it: this one is its forked child. Its
             // drop would end the window under a lock that only a thread of
             // the parent could release.
