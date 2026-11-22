@@ -31,7 +31,7 @@ mod engine_stack;
 
 use std::collections::BTreeSet;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use axum::{
@@ -85,6 +85,10 @@ struct Side {
     slip: CapabilitySlip,
     token: String,
     owner: EntityId,
+    /// The owner's own human slip, which writes the owner's claims: the
+    /// host root slip names no holder, so the claim door refuses its writes
+    /// (`memory/claim_admission.rs` `admit_claim_position`).
+    owner_writer: OnceLock<Principal>,
 }
 
 /// A caller other than the owner, on its own slip, signed by its own key.
@@ -208,6 +212,7 @@ impl Side {
             slip,
             token,
             owner,
+            owner_writer: OnceLock::new(),
         }
     }
 
@@ -412,15 +417,17 @@ impl Side {
     async fn say(&self, world: &str, words: &str) -> String {
         let mut scope = self.base_claim_scope().await;
         scope["world_id"] = json!(world);
-        self.ok(
+        self.send(
+            Caller::As(self.owner_writer()),
             "vault.claims.upsert",
-            json!({
+            &json!({
                 "predicate": PREDICATE, "subject_ref": self.owner.to_hex(), "value": words,
                 "confidence": 0.9, "source": "user_stated", "sensitivity": 1, "scope": scope,
                 "occurred_at": LEARNED_AT, "learned_at": LEARNED_AT
             }),
         )
-        .await;
+        .await
+        .ok("vault.claims.upsert");
         for _ in 0..50 {
             if let Some(claim) = self.listed(world, words).await {
                 return claim;
@@ -486,6 +493,12 @@ impl Side {
             )
             .expect("the person's PERSON row");
         id
+    }
+
+    /// The owner's own human slip, minted on first use.
+    fn owner_writer(&self) -> &Principal {
+        self.owner_writer
+            .get_or_init(|| self.principal(self.owner, "human", 0x7e))
     }
 
     /// `holder`'s own read-and-write slip as a `class` caller, signed by the

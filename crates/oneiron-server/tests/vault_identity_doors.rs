@@ -41,7 +41,7 @@
 #[path = "support/engine_stack.rs"]
 mod engine_stack;
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use axum::{
     Router,
@@ -53,8 +53,10 @@ use engine_stack::run_on_engine_stack;
 use oneiron::authority::{
     AgentTier, CapabilitySlip, HostSlipIssuer, MachineRole, holder_proof_challenge,
 };
+use oneiron::edge::EdgeActorClass;
 use oneiron::federation::{Scope, ScopeAxis};
-use oneiron::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_PERSON};
+use oneiron::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
+use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
@@ -101,6 +103,10 @@ struct Host {
     slip: CapabilitySlip,
     token: String,
     owner: EntityId,
+    /// The owner's own human slip, which writes the owner's claims: the
+    /// host root slip names no holder, so the claim door refuses its writes
+    /// (`memory/claim_admission.rs` `admit_claim_position`).
+    owner_writer: OnceLock<Principal>,
 }
 
 /// A caller on its own slip, signed by its own key.
@@ -261,6 +267,7 @@ impl Host {
             slip,
             token,
             owner,
+            owner_writer: OnceLock::new(),
         }
     }
 
@@ -362,10 +369,34 @@ impl Host {
         self.row(ENTITY_TYPE_PERSON, "name", name).to_hex()
     }
 
-    /// A witnessed MESSAGE saying `words`, the evidence a topology op cites;
-    /// answers its hex id.
+    /// A witnessed MESSAGE saying `words`, the evidence a topology op cites,
+    /// written through the witness door (a raw put of a MESSAGE is refused,
+    /// ONE-1686); answers its hex id.
     fn witnessed(&self, words: &str) -> String {
-        self.row(ENTITY_TYPE_MESSAGE, "content", words).to_hex()
+        let receipt = self
+            .vault
+            .memory(self.owner, EdgeActorClass::Human)
+            .witness(&WitnessTurn {
+                conversation_ref: EntityId::now().to_hex(),
+                turn_ref: None,
+                thread_audience: None,
+                project: None,
+                messages: vec![WitnessMessage {
+                    id: None,
+                    author: WitnessAuthor::User,
+                    message_type: "dialogue".to_owned(),
+                    content: words.to_owned(),
+                    metadata: None,
+                    is_visible: true,
+                    order: 0,
+                    parts: None,
+                    quote: None,
+                }],
+                occurred_at: self.vault.now_recorded_at(),
+                assertions: Default::default(),
+            })
+            .expect("the owner's witnessed MESSAGE");
+        receipt.messages[0].id.clone()
     }
 
     /// The scope a fresh vault's own claims take: base reality, the owner's
@@ -398,11 +429,15 @@ impl Host {
         panic!("a fresh vault has no readable owner substrate facet: {facets}");
     }
 
-    /// The owner's claim `predicate: value` about `subject`, in `scope`;
-    /// answers the claim's hex id.
+    /// The owner's claim `predicate: value` about `subject`, in `scope`,
+    /// written on the owner's own human slip; answers the claim's hex id.
     async fn claim(&self, scope: &Value, subject: &str, predicate: &str, value: &str) -> String {
+        let writer = self
+            .owner_writer
+            .get_or_init(|| self.principal(self.owner, "human", 0x6f, READ_WRITE));
         let written = self
-            .owner_ok(
+            .call(
+                Caller::As(writer),
                 "vault.claims.upsert",
                 json!({
                     "scope": scope, "subject_ref": subject, "predicate": predicate,
@@ -410,7 +445,8 @@ impl Host {
                     "occurred_at": OCCURRED_AT
                 }),
             )
-            .await;
+            .await
+            .ok("vault.claims.upsert");
         assert_eq!(written["approval"], "auto", "{written}");
         let read = self
             .owner_ok(

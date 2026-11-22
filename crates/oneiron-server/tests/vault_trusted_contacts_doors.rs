@@ -59,8 +59,10 @@ use engine_stack::run_on_engine_stack;
 use oneiron::authority::{
     AgentTier, CapabilitySlip, HostSlipIssuer, MachineRole, holder_proof_challenge,
 };
+use oneiron::edge::EdgeActorClass;
 use oneiron::federation::{Scope, ScopeAxis};
-use oneiron::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_PERSON};
+use oneiron::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
+use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
@@ -435,9 +437,33 @@ impl Host {
         assert_eq!(enabled["enabled"], true, "owner policy on: {enabled}");
     }
 
-    /// A conversation MESSAGE whose content is `text`; its ref.
+    /// A conversation MESSAGE whose content is `text`, written through the
+    /// witness door (a raw put of a MESSAGE is refused, ONE-1686); its ref.
     fn message(&self, text: &str) -> String {
-        self.row(ENTITY_TYPE_MESSAGE, "content", text).to_hex()
+        let receipt = self
+            .vault
+            .memory(self.owner, EdgeActorClass::Human)
+            .witness(&WitnessTurn {
+                conversation_ref: EntityId::now().to_hex(),
+                turn_ref: None,
+                thread_audience: None,
+                project: None,
+                messages: vec![WitnessMessage {
+                    id: None,
+                    author: WitnessAuthor::User,
+                    message_type: "dialogue".to_owned(),
+                    content: text.to_owned(),
+                    metadata: None,
+                    is_visible: true,
+                    order: 0,
+                    parts: None,
+                    quote: None,
+                }],
+                occurred_at: self.vault.now_recorded_at(),
+                assertions: Default::default(),
+            })
+            .expect("the owner's witnessed MESSAGE");
+        receipt.messages[0].id.clone()
     }
 
     /// `namer` names `contact`, reached through `sender`'s email, at `dial`.

@@ -47,8 +47,10 @@ use engine_stack::run_on_engine_stack;
 use oneiron::authority::{
     AgentTier, CapabilitySlip, HostSlipIssuer, MachineRole, holder_proof_challenge,
 };
+use oneiron::edge::EdgeActorClass;
 use oneiron::federation::{Scope, ScopeAxis};
-use oneiron::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_PERSON};
+use oneiron::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
+use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
@@ -360,14 +362,39 @@ impl Host {
         id
     }
 
+    /// The owner's MESSAGE saying `words`, written through the witness door
+    /// (a raw put of a MESSAGE is refused, ONE-1686): its id.
+    fn message(&self, words: &str) -> EntityId {
+        let receipt = self
+            .vault
+            .memory(self.owner, EdgeActorClass::Human)
+            .witness(&WitnessTurn {
+                conversation_ref: EntityId::now().to_hex(),
+                turn_ref: None,
+                thread_audience: None,
+                project: None,
+                messages: vec![WitnessMessage {
+                    id: None,
+                    author: WitnessAuthor::User,
+                    message_type: "dialogue".to_owned(),
+                    content: words.to_owned(),
+                    metadata: None,
+                    is_visible: true,
+                    order: 0,
+                    parts: None,
+                    quote: None,
+                }],
+                occurred_at: self.vault.now_recorded_at(),
+                assertions: Default::default(),
+            })
+            .expect("the owner's witnessed MESSAGE");
+        EntityId::from_hex(&receipt.messages[0].id).expect("the MESSAGE's id")
+    }
+
     /// A create input for `name` (and `aliases`), citing a witnessed message
     /// of its own: "A name alone is not identity evidence."
     fn person_input(&self, name: &str, aliases: &[&str]) -> Value {
-        let evidence = self.row(
-            ENTITY_TYPE_MESSAGE,
-            "content",
-            &format!("{name} introduced themself at the reading group"),
-        );
+        let evidence = self.message(&format!("{name} introduced themself at the reading group"));
         json!({
             "identity": {"name": name, "aliases": aliases},
             "identity_evidence_refs": [evidence.to_hex()],
