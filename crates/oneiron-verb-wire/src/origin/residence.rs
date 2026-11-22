@@ -19,4 +19,11 @@ pub struct OriginAuthority {
     pub writer: String,
     /// Mirrored repositories are read-only, including main and deletions.
     pub mirror: bool,
+    /// The git door base of the host that writes this epoch
+    /// (`https://host.example/git`), as the owner's cutover named it: where
+    /// this copy, when it is a mirror or a former origin, redirects a push
+    /// (RA7). Absent when the cutover named none; a row without it encodes
+    /// as before the field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub writer_door: Option<String>,
 }

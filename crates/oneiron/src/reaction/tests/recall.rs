@@ -148,7 +148,7 @@ fn a_direct_query_finds_a_reaction() {
         .vault
         .memory(room.alice, EdgeActorClass::Human)
         .recall(
-            "Erin",
+            "🎉",
             Effort::Medium,
             &RecallScope::default(),
             20,
@@ -191,7 +191,7 @@ fn a_reaction_never_outranks_an_ordinary_memory_of_equal_relevance() {
         crate::WriteProvenance::new(rmpv::Value::Map(vec![])).unwrap(),
         crate::claim::ClaimApprovalStatus::Auto,
     );
-    let text = "👍 Bob".to_owned();
+    let text = "👍".to_owned();
     room.vault
         .batch()
         .claim_candidate(
@@ -214,7 +214,7 @@ fn a_reaction_never_outranks_an_ordinary_memory_of_equal_relevance() {
         .vault
         .memory(room.alice, EdgeActorClass::Human)
         .recall(
-            "Bob",
+            "👍",
             Effort::Medium,
             &RecallScope::default(),
             20,

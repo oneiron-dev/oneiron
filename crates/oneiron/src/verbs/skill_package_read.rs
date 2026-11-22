@@ -11,9 +11,7 @@ use super::{
 };
 
 #[doc(hidden)]
-pub use oneiron_verb_wire::verbs::skill_package_read::{
-    SkillPackageFormatView, SkillPackageRecordView, SkillPackageView,
-};
+pub use oneiron_verb_wire::verbs::skill_package_read::{SkillPackageRecordView, SkillPackageView};
 
 /// The view of skill `entity` built from its runtime `package`: the package's
 /// stored record, files, capabilities and format. The native current record
@@ -71,7 +69,7 @@ fn skill_package_view_from(entity: EntityId, package: HubPackage) -> SkillPackag
             mcp: capabilities.mcp.into_iter().collect(),
             allowed_tools: capabilities.allowed_tools.into_iter().collect(),
         },
-        format: SkillPackageFormatView::from(format),
+        format,
     }
 }
 

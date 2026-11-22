@@ -28,7 +28,7 @@ use crate::store::canonical_document::CanonicalForkStatus;
 use crate::store::canonical_document::CanonicalSettleVerb;
 use crate::{EntityId, Result, Vault};
 use heed::{RoTxn, RwTxn};
-use loro::{ExportMode, Frontiers, UpdateOptions, VersionVector};
+use loro::{ExportMode, Frontiers, VersionVector};
 
 mod canonical_order;
 mod summary_meta;
@@ -120,6 +120,20 @@ fn origin(head: &storage::Head, doc: &EntityDoc) -> Option<CanonicalDocumentOrig
 struct Versions {
     frontiers: Vec<Frontiers>,
     vvs: Vec<VersionVector>,
+    /// Each version's index by its version vector's entries (FIX 275): a
+    /// lookup is one map read, never a scan of every version found so far.
+    by_vv: BTreeMap<Vec<(u64, i32)>, usize>,
+}
+
+/// The entries of `vv` that version vector equality compares: every peer
+/// with a positive counter, in peer order.
+fn vv_entries(vv: &VersionVector) -> Vec<(u64, i32)> {
+    let mut entries: Vec<(u64, i32)> = vv
+        .iter()
+        .filter_map(|(&peer, &counter)| (counter > 0).then_some((peer, counter)))
+        .collect();
+    entries.sort_unstable();
+    entries
 }
 
 impl Versions {
@@ -130,12 +144,15 @@ impl Versions {
         if !vv.includes_vv(&doc.doc.shallow_since_vv().to_vv()) {
             return None;
         }
-        if let Some(known) = self.vvs.iter().position(|known| known == &vv) {
+        let entries = vv_entries(&vv);
+        if let Some(&known) = self.by_vv.get(&entries) {
             return Some(known);
         }
         self.frontiers.push(frontier.clone());
         self.vvs.push(vv);
-        Some(self.vvs.len() - 1)
+        let index = self.vvs.len() - 1;
+        self.by_vv.insert(entries, index);
+        Some(index)
     }
 
     fn require(&mut self, doc: &EntityDoc, frontier: &[u8]) -> Result<usize> {
@@ -263,14 +280,21 @@ fn history(
         purge_rows.push((purge, requested, applied));
     }
 
+    // One checkout walk over the retained versions, not a fork per version (FIX 275).
     let mut texts = Vec::with_capacity(versions.frontiers.len());
     let mut metadata = Vec::with_capacity(versions.frontiers.len());
     let mut summaries = Vec::with_capacity(versions.frontiers.len());
-    for frontier in &versions.frontiers {
-        let version = doc.fork(&frontier.encode())?;
-        texts.push(version.text());
-        metadata.push(version.metadata_bytes()?);
-        summaries.push(summary_meta::bytes(&version.doc));
+    let read = doc.read_versions(&versions.frontiers, |version| {
+        Ok((
+            version.text(),
+            version.metadata_bytes()?,
+            summary_meta::bytes(&version.doc),
+        ))
+    })?;
+    for (text, fields, summary) in read {
+        texts.push(text);
+        metadata.push(fields);
+        summaries.push(summary);
     }
     let parents = hasse(&versions.vvs);
     let names = names(texts.len(), &pin_rows, &receipt_rows, &forks, &purge_rows)?;
@@ -584,9 +608,7 @@ fn replay(
             .doc
             .fork_at(&base)
             .map_err(|_| invalid("entity document version replay"))?;
-        branch
-            .get_text(BODY)
-            .update(text, UpdateOptions::default())
+        crate::text_diff::set_text(&branch.get_text(BODY), text)
             .map_err(|_| invalid("entity document version replay"))?;
         EntityDoc::replace_metadata(&branch, &version.metadata)?;
         summary_meta::write(&branch, &version.summary_meta)?;
@@ -756,10 +778,7 @@ fn bind_rows(
             // The output diverges from the replayed base in its own ops, so
             // a later MERGE or SWITCH lands it as the original would.
             let branch = doc.fork(&base)?;
-            branch
-                .doc
-                .get_text(BODY)
-                .update(output, UpdateOptions::default())
+            crate::text_diff::set_text(&branch.doc.get_text(BODY), output)
                 .map_err(|_| invalid("entity document fork replay"))?;
             EntityDoc::replace_metadata(
                 &branch.doc,

@@ -5,6 +5,7 @@
 //! kind. This module names the kinds and reads the contract's common views.
 
 use heed::RoTxn;
+use oneiron_contracts::fingerprint::ContentHash;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
@@ -204,7 +205,7 @@ impl Vault {
             return Ok(None);
         };
         file.bytes = self.resolve_docx_authors(std::mem::take(&mut file.bytes))?;
-        file.content_hash = *blake3::hash(&file.bytes).as_bytes();
+        file.content_hash = *ContentHash::of(&file.bytes).as_bytes();
         Ok(Some(file))
     }
 
@@ -220,7 +221,7 @@ impl Vault {
             let bytes = self
                 .read_blob_artifact_version_in_txn(&txn, id, record.version)?
                 .ok_or(Error::EntityNotFound)?;
-            if blake3::hash(&bytes).as_bytes() != &record.content_hash {
+            if ContentHash::of(&bytes).as_bytes() != &record.content_hash {
                 return Err(Error::CorruptedIndex("blob content hash"));
             }
             Ok(bytes)
@@ -494,7 +495,7 @@ impl Vault {
         self.record_export_travel(
             file.artifact_id.to_hex(),
             file.version,
-            hash_hex(blake3::hash(&file.bytes).as_bytes()),
+            hash_hex(ContentHash::of(&file.bytes).as_bytes()),
             by,
             &oneiron_authority::share_travel::BornWith::new(),
             Vec::new(),

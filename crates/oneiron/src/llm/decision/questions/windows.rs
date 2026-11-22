@@ -12,7 +12,6 @@ use super::{
         decode_family, family_prefix, secret_scan_before_put,
     },
 };
-use crate::claim::ScopedReadActorKey;
 use crate::gate::PolicyManifestResolution;
 use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::store::Store;
@@ -246,12 +245,24 @@ pub(super) fn standing_windows(
     question: EntityId,
 ) -> Result<Vec<StandingWindow>> {
     let txn = vault.store.env.read_txn()?;
-    super::store::owned_head(vault, &txn, principal, question)?;
-    let answers = super::outcomes::stored_answers(vault, &txn, question)?;
-    let policy = crate::gate::resolve_policy_manifest(&vault.store, &txn)?;
+    standing_windows_in_txn(vault, &txn, principal, question)
+}
+
+/// [`standing_windows`] in the caller's snapshot `txn`, so a reader that
+/// judges each window's rows does it at the instant it read the windows
+/// (FIX QUESTION-OUTCOMES-REPLY-SPANS-SNAPSHOTS).
+pub(super) fn standing_windows_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    principal: EntityId,
+    question: EntityId,
+) -> Result<Vec<StandingWindow>> {
+    super::store::owned_head(vault, txn, principal, question)?;
+    let answers = super::outcomes::stored_answers(vault, txn, question)?;
+    let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
     let labels = super::outcomes::standing_labels_in_txn(
         vault,
-        &txn,
+        txn,
         &policy,
         principal,
         question,
@@ -260,7 +271,7 @@ pub(super) fn standing_windows(
     )?;
     let mut standing = Vec::new();
     for (_, close) in
-        QUESTION_WINDOW.scan_from(&vault.store, &txn, &family_prefix(question, b"window"))?
+        QUESTION_WINDOW.scan_from(&vault.store, txn, &family_prefix(question, b"window"))?
     {
         let answer = answers.iter().find(|answer| answer.claim == close.answer);
         let rests_on: Vec<Vec<EntityId>> = match close.outcome {
@@ -270,7 +281,7 @@ pub(super) fn standing_windows(
                 .map(|label| label.derived_from.clone())
                 .collect(),
             WindowOutcome::Silence(_) => {
-                silence_rests_on(vault, &txn, &policy, principal, question, &close, answer)?
+                silence_rests_on(vault, txn, &policy, principal, question, &close, answer)?
             }
             WindowOutcome::Unknown => vec![answer.map_or_else(
                 || vec![question, close.answer],
@@ -419,7 +430,9 @@ pub(super) fn silence_stands(
     {
         return Ok(false);
     }
-    let actor = ScopedReadActorKey::new(record.principal.to_hex()).expect("canonical principal");
+    // The principal's key carries its live class, as at a fact's label
+    // (ARRIVAL-READER-KEY-CLASSLESS).
+    let actor = super::graph_ask::party_read_key_in_txn(store, txn, record.principal)?;
     // FIX 7461: the principal's bare read first, then its own live authority.
     let reader = Reader::new(store_home(store), record.principal, actor);
     Ok(reader.readable_in_txn(txn, policy, &answer.unit)?

@@ -1,13 +1,9 @@
 use std::collections::BTreeMap;
 
-// FIX [LIBTEST-QUARANTINE-SELF-HEAL-ADMISSION-TESTS]: the lib test target's type check fails here (6 errors: E0061 x5, E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[path = "admission_tests.rs"]
 mod admission_tests;
 #[path = "canonical_tests.rs"]
 mod canonical_tests;
-// FIX [LIBTEST-QUARANTINE-SELF-HEAL-REPAIR-TESTS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[path = "repair/tests.rs"]
 mod repair_tests;
 
@@ -52,6 +48,7 @@ fn event_for(scope_ref: &str, observation: &DiagnosticObservation) -> Diagnostic
     DiagnosticEvent {
         detector_id: "test.stub_detector".to_owned(),
         event_class: DiagnosticEventClass::TestFailure,
+        signal: None,
         actor_class: "system".to_owned(),
         actor_ref: Some(observation.source_ref),
         source: DiagnosticSourceKind::Receipt,
@@ -280,6 +277,7 @@ fn maintenance_door_validates_the_body() {
                     entity_type: ENTITY_TYPE_DIAGNOSTIC,
                     occurred: at(1_000),
                     learned_at: 1_001,
+                    row_version: None,
                     data: b"not-messagepack".to_vec(),
                     allow_maintenance: true,
                     allow_reserved_predicate: false,

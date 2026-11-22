@@ -18,7 +18,10 @@
 //! on its branch, and the run's executor takes it once the step it is
 //! running has committed its checkpoint, moving its row to a person's pause
 //! before its next model request (`attempt_queue::boundary_pause`). The
-//! answer lists each such branch as pausing at its next step. A branch it
+//! answer lists each such branch as pausing at its next step. A run parked
+//! on a durable wait is at that boundary already, so it takes the pause in
+//! the same write and is listed as paused (FIX PAUSE-BOUNDARY-PARKED-RUN);
+//! the wait's reply is kept for its resume. A branch it
 //! does not pause (a landing branch, one of no run, one whose pause another
 //! act has pending) is listed as running, and the existing branch cancel
 //! stops it.
@@ -46,7 +49,8 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_AGENT_DEF;
 use crate::run_tree::{
-    RunSignalInput, RunSignalKind, RunSignalState, RunTreeAdapter, takes_boundary_pause,
+    RunSignalInput, RunSignalKind, RunSignalState, RunTreeAdapter, pause_pending,
+    takes_boundary_pause,
 };
 use crate::side_table::{self, Named, SideTable};
 use crate::store::attempt_record::AttemptPause;
@@ -351,7 +355,20 @@ impl Vault {
                             },
                         },
                     )?;
-                    pausing.push(branch.to_owned());
+                    // A run parked on a durable wait is at its boundary
+                    // already: it takes the pause at once (FIX
+                    // PAUSE-BOUNDARY-PARKED-RUN).
+                    if signals.pause_parked_in_txn(txn, id)? {
+                        paused.branches.push(branch.to_owned());
+                    } else {
+                        pausing.push(branch.to_owned());
+                    }
+                    continue;
+                }
+                // A pause still pending on a parked run, as one posted
+                // before it parked, is taken there the same way.
+                if pause_pending(&record) && signals.pause_parked_in_txn(txn, id)? {
+                    paused.branches.push(branch.to_owned());
                     continue;
                 }
                 if record.state.is_running() {

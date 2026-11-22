@@ -113,9 +113,9 @@ to every person you matched in that workspace.
 oneiron import slack "Example Slack export Nov 1 2026.zip" --members members.json
 ```
 
-`--members` is required. It maps each Slack member id (as `users.json` lists
-it) to `"owner"` (your own account in the workspace: its words land as yours),
-a vault person's id in hex, or `null`. A member the map leaves out, or maps to
+`--members` or `--propose-members` is required. `--members` maps each Slack
+member id (as `users.json` lists it) to `"owner"` (your own account in the
+workspace: its words land as yours), a vault person's id in hex, or `null`. A member the map leaves out, or maps to
 `null`, is a contact: its name and its words are kept, it reads nothing, and no
 person is made for it. `{}` imports a workspace no one in the vault was in: it
 reads to you alone. A map naming a member the workspace does not list, or
@@ -124,6 +124,40 @@ naming `"owner"` twice, is refused before anything is written.
 ```json
 { "U012AB3CD": "owner", "U045EF6GH": "3f2a…", "U078IJ9KL": null }
 ```
+
+You confirm the map once per import, and the vault proposes it first:
+
+```bash
+oneiron import slack "Example Slack export Nov 1 2026.zip" --propose-members members.json
+```
+
+This lands nothing. It writes the proposed map to a new file only you can read
+(it refuses a path that exists) and prints counts only. A member an earlier
+import or `members set` mapped keeps that mapping. Any other member whose email
+address in `users.json` is, ignoring case, the address of exactly one person
+in the vault (a person the vault knows by that email address) is proposed as
+that person; an address two persons share proposes neither. Every other member
+is proposed as a contact, and your own member is never guessed: set it to
+`"owner"`. Each entry holds the member's name beside its mapping, and
+`--members` reads that form too, so you check the file and pass it back:
+
+```json
+{ "U012AB3CD": { "name": "owen", "person": "owner" },
+  "U045EF6GH": { "name": "yuki", "person": "3f2a…" } }
+```
+
+To map one member later, without the export:
+
+```bash
+oneiron import slack members set T0123ABCD U078IJ9KL 3f2a…
+```
+
+The first argument is the workspace's key, its Slack team id (`workspace.key`
+in the report). The member must be one an import of that workspace kept. Every
+conversation of the workspace the member is in then reads to that person, the
+messages already imported included. `contact` in place of the person's id
+makes the member a contact again: it reads none of them from then on. The
+report counts the conversations whose readers were set.
 
 Every turn the import lands is born under the workspace's own facet, named
 after the workspace and worn by you: the first import makes it, and every
@@ -134,8 +168,8 @@ their own facet, as for every source.
 
 The run ends with one line on the members, for example `Example: 0 of 7
 matched, kept as contacts, owner-only`. The JSON report adds a `workspace`
-object (`name`, `members`, `matched`, `contacts`, `owner_only`, and `facet`,
-the facet's id) and, on each
+object (`name`, `key`, `members`, `matched`, `contacts`, `owner_only`, and
+`facet`, the facet's id) and, on each
 conversation, `sharing` with the count of persons that read it (`readers`) and
 of contacts (`unmapped`). A later import of the same workspace with a longer
 map gives the newly mapped members their conversations, and one that maps a

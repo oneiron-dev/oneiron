@@ -52,14 +52,15 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 
 use super::api;
-use crate::cli::{McpArgs, McpSurface};
+use super::oauth_sign_in::OAuthSession;
+use crate::cli::{McpArgs, McpSurface, McpTransport};
 
 mod bridge_auth;
 mod call_meta;
 mod link;
 mod wake;
 
-use call_meta::{ClientSession, with_invocation};
+use call_meta::{ClientSession, named_invocation, with_invocation};
 use wake::WakePump;
 
 /// How many requests may be in flight at once. A client that sends more
@@ -67,10 +68,31 @@ use wake::WakePump;
 /// finishes within its deadline.
 const MAX_IN_FLIGHT: usize = 8;
 
-/// The longest message the bridge reads from the client: the server's own
-/// request-body limit on its MCP routes (axum's default), which nothing
-/// longer could pass anyway.
-const MAX_FRAME_BYTES: usize = 2 * 1024 * 1024;
+/// The longest message the bridge reads from the client: the least body the
+/// server's MCP routes read (`limits.request_body_bytes` never defaults
+/// under it). A server set to read less refuses a longer one itself, in its
+/// typed envelope. A message too long for the server's socket goes over HTTP
+/// ([`link`]). What the bridge adds to a call's `_meta` never takes its body
+/// past this bound: such a call goes as the client wrote it.
+pub(crate) const MAX_FRAME_BYTES: usize = crate::config::REQUEST_BODY_FLOOR_MIN_BYTES as usize;
+
+/// The longest request frame the bridge writes to the server's socket: the
+/// lesser of the server's default bound on an inbound socket frame and the
+/// longest app payload it decodes (`MAX_DECODED_PAYLOAD_BYTES`) behind the
+/// frame's tag byte. The server closes the socket on a frame past either,
+/// failing every request in flight on it, so a longer request goes over
+/// HTTP instead, which reads bodies up to the request floor; the owner's,
+/// with no other carrier, is refused unsent. A server set to a lower frame
+/// bound still closes on a frame between the two.
+pub(crate) const SOCKET_MAX_OUTBOUND_FRAME: usize = {
+    let frame = crate::config::server_config::DEFAULT_MAX_FRAME_SIZE;
+    let tagged_payload = oneiron::sync::transport::MAX_DECODED_PAYLOAD_BYTES + 1;
+    if tagged_payload < frame {
+        tagged_payload
+    } else {
+        frame
+    }
+};
 
 /// The largest answer the bridge takes from the server for one request.
 const MAX_REPLY_BYTES: usize = 16 * 1024 * 1024;
@@ -93,6 +115,17 @@ pub(crate) fn mint_invocation() -> String {
     rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut id);
     oneiron::runtime_hooks::InvocationId(id).to_hex()
 }
+
+/// The kinds (`data.kind`) of the bridge's own JSON-RPC errors that leave a
+/// request's fate unknown, as `Refusal::rpc_error` names them: the request
+/// may have reached the server, which may have acted on it, but no answer
+/// came in time, the one that came is not its JSON-RPC answer, or it was too
+/// long to read. A caller of a verb that changes state cannot learn from
+/// them whether it did. Read by `oneiron continue --cloud`, Unix-only as
+/// every hook command is.
+#[cfg(unix)]
+pub(crate) const UNANSWERED_ERROR_KINDS: [&str; 3] =
+    ["server_unreachable", "server_error", "reply_too_large"];
 
 /// What the bridge's pending-call memory keys one tool call by.
 type CallKey = [u8; 32];
@@ -389,7 +422,15 @@ impl Bridge {
         let base = api::normalized_base(&args.url)?;
         let auth = bridge_auth::Auth::from_args(args)?;
         Ok(Self {
-            link: link::Link::new(&base, args.transport)?,
+            // An OAuth sign-in's token goes over HTTP alone.
+            link: link::Link::new(
+                &base,
+                if auth.http_only() {
+                    McpTransport::Http
+                } else {
+                    args.transport
+                },
+            )?,
             pick: Mutex::new(Pick {
                 chosen: args.surface,
                 probing: false,
@@ -444,21 +485,23 @@ impl Bridge {
         let until = Instant::now() + deadline;
         let key = pending_call_key(&message);
         let offered = ClientSession::offered(&message);
+        let own = named_invocation(&message);
         let named = self.client_session.name_on_call(&mut message);
         // A call naming its own invocation keeps it; one naming none goes
         // under a pending same call's, else a fresh one.
-        let body = with_invocation(&mut message, || {
+        let added = with_invocation(&mut message, || {
             key.as_ref()
                 .and_then(|key| self.pending_call(key))
                 .unwrap_or_else(mint_invocation)
         })
-        .or_else(|| named.then(|| serde_json::to_vec(&message).ok()).flatten())
-        .unwrap_or_else(|| line.into_bytes());
-        let sent = message
-            .pointer("/params/_meta")
-            .and_then(|meta| meta.get(INVOCATION_META))
-            .and_then(Value::as_str)
-            .map(str::to_owned);
+        .or_else(|| named.then(|| serde_json::to_vec(&message).ok()).flatten());
+        // What the bridge adds never takes a call past the least body the
+        // server reads, which the line is within: such a call goes as the
+        // client wrote it, under only the invocation it named itself.
+        let (body, sent) = match added {
+            Some(body) if body.len() <= MAX_FRAME_BYTES => (body, named_invocation(&message)),
+            _ => (line.into_bytes(), own),
+        };
         let reply = self.post(body, until, deadline, tool);
         let id = message.get_mut("id").map(Value::take);
         drop(message);
@@ -643,6 +686,11 @@ impl Bridge {
         if until.saturating_duration_since(Instant::now()).is_zero() {
             return Err(self.refusal_for(surface, link::Cut::Deadline, deadline, tool));
         }
+        let bounds = link::Bounds {
+            until,
+            idle: self.idle,
+            max_reply_bytes: MAX_REPLY_BYTES,
+        };
         let sign;
         let credential = match &self.auth {
             bridge_auth::Auth::Slip { token, seed } => {
@@ -655,11 +703,9 @@ impl Bridge {
                 }
             }
             bridge_auth::Auth::Owner { headers_file } => link::Credential::Owner { headers_file },
-        };
-        let bounds = link::Bounds {
-            until,
-            idle: self.idle,
-            max_reply_bytes: MAX_REPLY_BYTES,
+            bridge_auth::Auth::OAuth { session } => {
+                return self.post_as_oauth(session, surface, body, &bounds, deadline, tool);
+            }
         };
         let exchange = self
             .link
@@ -668,6 +714,53 @@ impl Bridge {
         Ok(Reply {
             status: exchange.status,
             body: exchange.body,
+        })
+    }
+
+    /// One request as the OAuth sign-in: its access token, refreshed first
+    /// when it is due, and sent once more with a renewed token when the
+    /// vault refuses it (HTTP 401), as it refuses an expired or rotated one.
+    fn post_as_oauth(
+        &self,
+        session: &OAuthSession,
+        surface: McpSurface,
+        body: Vec<u8>,
+        bounds: &link::Bounds,
+        deadline: Duration,
+        tool: Option<&str>,
+    ) -> Result<Reply, Refusal> {
+        let refused =
+            |why: String| self.refusal_for(surface, link::Cut::Unauthorized(why), deadline, tool);
+        let cut = |cut: link::Cut| self.refusal_for(surface, cut, deadline, tool);
+        let bearer = session.bearer().map_err(refused)?;
+        let first = self
+            .link
+            .exchange(
+                surface,
+                &link::Credential::OAuth { bearer: &bearer },
+                body.clone(),
+                bounds,
+            )
+            .map_err(cut)?;
+        if first.status != Some(401) || Instant::now() >= bounds.until {
+            return Ok(Reply {
+                status: first.status,
+                body: first.body,
+            });
+        }
+        let bearer = session.renewed(&bearer).map_err(refused)?;
+        let again = self
+            .link
+            .exchange(
+                surface,
+                &link::Credential::OAuth { bearer: &bearer },
+                body,
+                bounds,
+            )
+            .map_err(cut)?;
+        Ok(Reply {
+            status: again.status,
+            body: again.body,
         })
     }
 
@@ -702,6 +795,7 @@ impl Bridge {
                 Refusal::Auth(json!({ "error": why }))
             }
             link::Cut::Unavailable(why) => Refusal::Unavailable(why),
+            link::Cut::FrameTooLarge => Refusal::FrameTooLarge,
         }
     }
 }
@@ -793,6 +887,9 @@ enum Refusal {
     Unavailable(String),
     /// An answer past [`MAX_REPLY_BYTES`], dropped unread.
     TooLarge,
+    /// Owner mode only: a message too long for the server's MCP socket, not
+    /// sent.
+    FrameTooLarge,
 }
 
 impl Refusal {
@@ -846,6 +943,17 @@ impl Refusal {
                 -32000,
                 "reply_too_large",
                 &format!("the server's answer is over {MAX_REPLY_BYTES} bytes; it was dropped"),
+                None,
+            ),
+            Self::FrameTooLarge => rpc_error(
+                id,
+                -32600,
+                "frame_too_large",
+                &format!(
+                    "a message framed for the server's MCP socket may be at most \
+                     {SOCKET_MAX_OUTBOUND_FRAME} bytes, and owner mode has no other carrier; \
+                     this one was not sent"
+                ),
                 None,
             ),
         }

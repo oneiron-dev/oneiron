@@ -5,12 +5,16 @@ use super::{
         MAX_DIMENSION_LEN, MAX_IDEMPOTENCY_KEY_LEN, validate_dimension, validate_optional_dimension,
     },
 };
+use oneiron_contracts::register::Register;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fmt, str::FromStr};
 use utoipa::ToSchema;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema, Register,
+)]
 #[serde(rename_all = "snake_case")]
+#[register("usage.mode")]
 pub enum UsageMode {
     #[default]
     Local,
@@ -23,14 +27,6 @@ pub enum UsageMode {
 impl UsageMode {
     pub fn debits_usage(self) -> bool {
         matches!(self, Self::OneironCloud)
-    }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Local => "local",
-            Self::Byo => "byo",
-            Self::OneironCloud => "oneiron_cloud",
-        }
     }
 }
 

@@ -25,10 +25,7 @@ use unicode_normalization::{UnicodeNormalization, char::is_combining_mark};
 /// Han reads as Mandarin only, so a Japanese kanji name still needs its
 /// reading passed separately rather than guessed from the written name.
 pub fn generate_phonetic_codes(name: &str) -> Vec<String> {
-    let mut codes = BTreeSet::new();
-    for reading in phonetic_readings(name) {
-        codes.insert(format!("ipa:{}:{}", reading.lang, reading.ipa()));
-    }
+    let mut codes: BTreeSet<String> = sound_keys(name).into_iter().collect();
     match spelling(&normalize(name)) {
         Spelling::Kana { folded, romaji } => {
             codes.insert(format!("kana:{folded}"));
@@ -46,6 +43,65 @@ pub fn generate_phonetic_codes(name: &str) -> Vec<String> {
         Spelling::Other => {}
     }
     codes.into_iter().collect()
+}
+
+/// The sound keys of a name, `ipa:<lang>:<ipa>`: one per reading of
+/// [`phonetic_readings`], each compared with stored sound keys by
+/// [`npd()`] rather than looked up as a posting (rung 1).
+pub fn sound_keys(name: &str) -> Vec<String> {
+    phonetic_readings(name)
+        .iter()
+        .map(|reading| format!("ipa:{}:{}", reading.lang, reading.ipa()))
+        .collect()
+}
+
+/// The Normalized Phonetic Distance within which one part of a name sounds
+/// like a part of another ([`every_part_sounds_like`]). It is tighter than
+/// the whole-name cut [`NPD_THRESHOLD`] because a part is short: "snow" is
+/// 0.167 from "smith" and "kristen" 0.149 from "christina", while a part
+/// misheard or spelled another way stays under 0.04 ("owan" 0.021 from
+/// "owen", "ewan" 0.036, "sadou" 0.008 from "satou", "katherine" 0 from
+/// "catherine").
+pub const PART_NPD_THRESHOLD: f32 = 0.1;
+
+/// Whether every part of `mention` sounds like a part of `name`: a reading
+/// of the part within [`PART_NPD_THRESHOLD`] of a reading of that part of
+/// `name`. A mention with no part sounds like nothing. Two names within the
+/// whole-name cut can share one part and differ in another ("Robert Jones"
+/// is 0.159 from "Robert Smith" taken whole, "Owen Snow" 0.083 from "Owen
+/// Smith"); the linker's code rung tells them apart by each part's Soundex
+/// code ([`LinkingCodes::every_part`]), and this is the same rule by sound.
+pub fn every_part_sounds_like(mention: &str, name: &str) -> bool {
+    let name = normalize(name);
+    let name_parts: Vec<Vec<Vec<Segment>>> = lettered_parts(&name).map(part_readings).collect();
+    let mention = normalize(mention);
+    let mut mention_parts = lettered_parts(&mention).peekable();
+    mention_parts.peek().is_some()
+        && mention_parts.all(|part| {
+            let readings = part_readings(part);
+            name_parts.iter().any(|other| {
+                readings.iter().any(|reading| {
+                    other
+                        .iter()
+                        .any(|held| npd(reading, held) <= PART_NPD_THRESHOLD)
+                })
+            })
+        })
+}
+
+/// The parts of a normalized name that hold more than marks: a part of
+/// marks alone is no part, as [`linking_codes`] counts the parts of a Latin
+/// name once its marks are stripped, and it has no reading.
+fn lettered_parts(name: &str) -> impl Iterator<Item = &str> {
+    parts(name).filter(|part| !part.chars().all(is_combining_mark))
+}
+
+/// The segments of each reading of one part of a name.
+fn part_readings(part: &str) -> Vec<Vec<Segment>> {
+    phonetic_readings(part)
+        .into_iter()
+        .map(|reading| reading.segments)
+        .collect()
 }
 
 /// The codes the entity linker matches a mention on (ARCH-0024 signal 2),
@@ -149,14 +205,41 @@ fn add_soundex(codes: &mut BTreeSet<String>, text: &str) {
 /// Only explicit name/alias/reading fields feed this index, never prose or
 /// secret custody. A reading can accompany a Han name without changing it.
 pub fn codes_for_body(entity_type: u8, data: &[u8]) -> Vec<String> {
+    let mut codes = BTreeSet::new();
+    for_each_name(entity_type, data, |name| {
+        codes.extend(generate_phonetic_codes(name));
+    });
+    codes.into_iter().collect()
+}
+
+/// The most names [`names_for_body`] returns for one entity.
+pub const NAMES_PER_ENTITY_CAP: usize = 16;
+
+/// The names the learned rung embeds for a body (CROSS-ARCH-0013 rung 2,
+/// names only): the fields [`codes_for_body`] reads, in field order, each
+/// NFC-normalized and otherwise as written (the model reads raw Unicode),
+/// without repeats. The caller caps them at [`NAMES_PER_ENTITY_CAP`].
+pub fn names_for_body(entity_type: u8, data: &[u8]) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    for_each_name(entity_type, data, |name| {
+        let name: String = name.trim().nfc().collect();
+        if !name.is_empty() && !names.contains(&name) {
+            names.push(name);
+        }
+    });
+    names
+}
+
+/// Calls `visit` with each name field of a body, in field order: one walk
+/// for both rungs, so they read one set of names.
+fn for_each_name(entity_type: u8, data: &[u8], mut visit: impl FnMut(&str)) {
     if entity_type == oneiron_base::registry::ENTITY_TYPE_SECRET_CUSTODY {
-        return Vec::new();
+        return;
     }
     let Ok(rmpv::Value::Map(fields)) = rmpv::decode::read_value(&mut std::io::Cursor::new(data))
     else {
-        return Vec::new();
+        return;
     };
-    let mut codes = BTreeSet::new();
     for (key, value) in fields {
         match key.as_str() {
             Some(
@@ -164,20 +247,19 @@ pub fn codes_for_body(entity_type: u8, data: &[u8]) -> Vec<String> {
                 | "name_reading",
             ) => {
                 if let Some(name) = value.as_str() {
-                    codes.extend(generate_phonetic_codes(name));
+                    visit(name);
                 }
             }
             Some("aliases") => {
                 if let Some(aliases) = value.as_array() {
                     for alias in aliases.iter().filter_map(rmpv::Value::as_str) {
-                        codes.extend(generate_phonetic_codes(alias));
+                        visit(alias);
                     }
                 }
             }
             _ => {}
         }
     }
-    codes.into_iter().collect()
 }
 
 fn is_separator(c: char) -> bool {
@@ -185,7 +267,7 @@ fn is_separator(c: char) -> bool {
 }
 
 fn add_romaji(codes: &mut BTreeSet<String>, text: &str) {
-    let compact: String = text.chars().filter(|c| c.is_ascii_alphabetic()).collect();
+    let compact: String = text.chars().filter(char::is_ascii_alphabetic).collect();
     if compact.is_empty() {
         return;
     }

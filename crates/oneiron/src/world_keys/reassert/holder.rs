@@ -286,20 +286,24 @@ impl Vault {
     /// this install wrapped itself, under the current settings and pin, to
     /// every recipient the settings allow that holds no counted wrap of it.
     /// Each record names `request`, the owner work request this holder does,
-    /// or none when the owner's re-assertion runs on this holder. Only an
-    /// eligible reader runs it: the owner's recipient choice, never a rule
-    /// on who decided. A conflicted key is left as it is. The fold is the
-    /// judge: every record written must count here.
+    /// or none when the owner's re-assertion runs on this holder; then, made
+    /// by the owner in person (`owner_authored`), each carries the owner
+    /// key's proof this install holds ([`Vault::owner_act_proof_signer`]).
+    /// Only an eligible reader runs it: the owner's recipient choice, never a
+    /// rule on who decided. A conflicted key is left as it is. The fold is
+    /// the judge: every record written must count here.
     pub(crate) fn reassert_held_world_keys_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         world: EntityId,
         secret: &MachineSecret,
         request: Option<AuthorityEntryHash>,
+        owner_authored: Option<&crate::consent::OwnerAuthoredWrite>,
     ) -> Result<Reasserted> {
         let Some(read) = self.holder_read_in_txn(txn, world, secret)? else {
             return Ok(Reasserted::Done);
         };
+        let proof = self.owner_act_proof_signer(&read.fold, owner_authored);
         let mut seq = SequenceCounter::new();
         let mut appended = Vec::new();
         let mut done = Reasserted::Done;
@@ -326,6 +330,7 @@ impl Vault {
                 &missing,
                 &mut seq,
                 request,
+                proof.as_ref(),
             )? {
                 Ok(records) => appended.extend(records),
                 Err(_wide) => done = Reasserted::Incomplete,

@@ -3,10 +3,10 @@
 use super::notice::{notify_reveal_ask_in_txn, settle_reveal_notices_in_txn};
 use super::replay::RevealCollection;
 use super::{
-    HandleReveal, READER_AGENT, REVEAL_ASK_TTL_SECS, REVEAL_LEASE_TTL_SECS, REVEALS, RevealAct,
-    RevealAsker, RevealAuthority, RevealRow, SecretHandleCard, SecretProvenance,
-    SecretRevealDecision, SecretRevealState, SecretRevealWait, append_reveal_decision_in_txn,
-    checked_text, resolve_handle_in_txn, reveal_class, unknown,
+    HandleReveal, READER_AGENT, REVEAL_LEASE_TTL_SECS, REVEALS, RevealAct, RevealAsker,
+    RevealAuthority, RevealRow, SecretHandleCard, SecretProvenance, SecretRevealDecision,
+    SecretRevealState, SecretRevealWait, append_reveal_decision_in_txn, checked_text,
+    resolve_handle_in_txn, reveal_class, unknown,
 };
 use crate::consent::{
     approve_once_authorization_in_txn, approve_once_decision_in_txn, load_active_standing_grants,
@@ -15,6 +15,7 @@ use crate::consent::{
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::secret_custody::run_bound::reveal_run_admission;
+use crate::secret_custody::setting_keys::reveal_ask_window_in_txn;
 use crate::secret_custody::{
     SecretCustodyFloor, read_secret_custody_admission_in_txn, secret_handle_label_in_txn,
     suggested_secret_handle_label_in_txn,
@@ -70,6 +71,7 @@ impl Vault {
                 (handle, secret, rec.class.as_str().to_owned(), None)
             };
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+            let window = reveal_ask_window_in_txn(self, txn)?;
             let mut row = RevealRow {
                 reader: READER_AGENT.to_owned(),
                 actor: Some(asker.agent),
@@ -83,7 +85,7 @@ impl Vault {
                 project: asker.project,
                 run: asker.run.clone(),
                 created_at: now,
-                expires_at: now.saturating_add(REVEAL_ASK_TTL_SECS),
+                expires_at: now.saturating_add(window),
                 state: SecretRevealState::Covered,
                 once_digest: None,
                 asked_decision: None,
@@ -333,7 +335,7 @@ pub(super) fn file_ask_in_txn(
     settle_reveal_notices_in_txn(vault, txn, row)?;
     row.state = SecretRevealState::Asked;
     row.answered_by = None;
-    row.expires_at = now.saturating_add(REVEAL_ASK_TTL_SECS);
+    row.expires_at = now.saturating_add(reveal_ask_window_in_txn(vault, txn)?);
     let digest = row.ask_digest(reveal);
     row.once_digest = Some(*digest.as_bytes());
     row.asked_decision = Some(append_reveal_decision_in_txn(

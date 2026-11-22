@@ -7,9 +7,11 @@
 //! owner, with no issuer.
 use serde::{Deserialize, Serialize};
 
-use crate::authority::{AuthorityHandoffAlarm, HostSlipIssuer};
+use super::owner_confirm;
+use crate::authority::{AuthorityHandoffAlarm, HostSlipIssuer, OWNER_KEY_MOVE_NOT_PLANNED};
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
+use crate::error::{Error, RecordError};
 use crate::federation::{
     FederationGrantRole as Role, MemberAskChange, OwnerRemoval, PendingAuthorityAct,
     RemovalExportDelivery, SharedActExecution, SharedActExecutionReceipt, SharedActKind,
@@ -18,15 +20,24 @@ use crate::federation::{
 use crate::memory::{MemoryError, MemoryResult, ProducerRows};
 use crate::{EntityId, Vault};
 
+use super::Offer;
+
+mod owner_key_move;
+
+pub use owner_key_move::{plan_shared_owner_key_move, sign_shared_owner_key_move};
+
 #[doc(hidden)]
 pub use oneiron_verb_wire::verbs::shared::{
-    HandoffAlarmRequest, SharedActRequest, SharedAddOwnerRequest, SharedMemberAskIdRequest,
-    SharedMemberAskKind, SharedMemberRequest, SharedOwnerChangeWaitSetRequest,
+    HandoffAlarmRequest, SharedActExecuteRequest, SharedActRequest, SharedAddOwnerRequest,
+    SharedMemberAskIdRequest, SharedMemberAskKind, SharedMemberRequest,
+    SharedOwnerChangeWaitSetRequest, SharedOwnerKeyMoveBinding, SharedOwnerKeyMoveConfirm,
+    SharedOwnerKeyMovePlan, SharedOwnerKeyMoveSignRequest, SharedOwnerKeyMoveSigner,
     SharedReceiptRequest, SharedVaultRequest,
 };
 
-/// `vault.shared.propose_delete`'s input: the shared vault, and the approved
-/// check-in of another asker the starting Owner applies, when one is named.
+/// `vault.shared.propose_delete`'s input: the shared vault, the approved
+/// check-in of another asker the starting Owner applies, when one is named,
+/// and the confirm the shared preview returned for this call.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SharedDeleteProposeRequest {
@@ -37,6 +48,9 @@ pub struct SharedDeleteProposeRequest {
     /// Owner applies it on their own proof, and the act names its asker.
     #[serde(default)]
     pub check_in_ref: Option<String>,
+    /// The confirm `vault.owner_confirm.preview` returned for this call.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confirm: Option<String>,
 }
 
 /// `vault.shared.propose_transfer`'s input: the starter, a live Owner, hands
@@ -136,6 +150,17 @@ pub struct InvitationSlip {
 pub struct SharedInvitationAcceptedWithCredential {
     pub receipt: SharedActExecutionReceipt,
     pub credential: MemberSlip,
+}
+
+/// `vault.members.accept_with_inquiry_edge`'s answer: the acceptance receipt
+/// and the company host's counter on the member's inquiry edge, both from
+/// the one writer that gave the seat (L7-04). The counter carries the pact's
+/// scope opening key: it is written to no receipt or log, and the member's
+/// vault applies it on its edge's grant.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SharedInvitationAcceptedWithInquiryEdge {
+    pub receipt: SharedActExecutionReceipt,
+    pub inquiry_edge_counter: Offer,
 }
 
 impl MemberSlip {
@@ -246,15 +271,18 @@ pub(super) fn check_in_ref(hex: Option<&str>) -> MemoryResult<Option<EntityId>> 
     .transpose()
 }
 
-/// `vault.shared.propose_delete`: start the vault's `delete_vault` act. The
-/// act records the Owner's check-in decision; with `check_in_ref` the Owner
-/// applies an asker's approved check-in for this delete (2j).
+/// `vault.shared.propose_delete`: start the vault's `delete_vault` act,
+/// once the shared confirm of this proposal is admitted. The act records
+/// the Owner's check-in decision; with `check_in_ref` the Owner applies an
+/// asker's approved check-in for this delete (2j).
 pub fn propose_shared_delete(
     vault: &Vault,
     starter: &AuthenticatedOwner,
     input: SharedDeleteProposeRequest,
 ) -> MemoryResult<PendingAuthorityAct> {
     let check_in = check_in_ref(input.check_in_ref.as_deref())?;
+    let ask = owner_confirm::asked("vault.shared.propose_delete", &input)?;
+    owner_confirm::admit(vault, starter, ask, &())?;
     Ok(vault.propose_delete_vault_with_check_in(starter, input.vault_id, check_in)?)
 }
 
@@ -341,11 +369,15 @@ pub fn read_shared_owner_change_wait(
 /// the same receipt, and a remaining Owner's re-run of an export-first
 /// removal delivers its archive to the removed Owner again (FIX 1300). A held
 /// `erase` act runs its own executor, then its receipt tells the Owners.
+/// The rows a device of `executor` signed for the act's owner-key move
+/// ([`sign_shared_owner_key_move`]) land in the act's writer before its move
+/// (row HOSTED-OWNER-MOVE-TWO-PHASE); an erase ends no Owner standing, so
+/// rows given for one are refused.
 pub fn execute_shared_act(
     vault: &Vault,
     executor: &AuthenticatedOwner,
     slips: Option<&HostSlipIssuer>,
-    input: SharedActRequest,
+    input: SharedActExecuteRequest,
 ) -> MemoryResult<SharedActExecuted> {
     execute_shared_act_listing(vault, executor, slips, input).0
 }
@@ -361,7 +393,7 @@ pub fn execute_shared_act_listing(
     vault: &Vault,
     executor: &AuthenticatedOwner,
     slips: Option<&HostSlipIssuer>,
-    input: SharedActRequest,
+    input: SharedActExecuteRequest,
 ) -> (MemoryResult<SharedActExecuted>, Option<Vec<EntityId>>) {
     let producers = ProducerRows::default();
     let mut export_listed = false;
@@ -386,14 +418,29 @@ fn execute_shared_act_into(
     vault: &Vault,
     executor: &AuthenticatedOwner,
     slips: Option<&HostSlipIssuer>,
-    input: SharedActRequest,
+    input: SharedActExecuteRequest,
     producers: &ProducerRows,
     export_listed: &mut bool,
 ) -> MemoryResult<SharedActExecuted> {
+    let owner_key_revokes = input
+        .owner_key_revokes
+        .iter()
+        .map(|row| {
+            oneiron_hex::decode_vec(row).ok_or_else(|| {
+                MemoryError::bad_request("owner_key_revokes holds a row that is not lowercase hex")
+            })
+        })
+        .collect::<MemoryResult<Vec<_>>>()?;
     let erase = vault
         .pending_authority_act(&input.act_id)?
         .is_some_and(|act| SharedActKind::parse(&act.act) == Some(SharedActKind::Erase));
     if erase {
+        if !owner_key_revokes.is_empty() {
+            return Err(Error::Record(RecordError::InvalidAuthorityLogBody(
+                OWNER_KEY_MOVE_NOT_PLANNED,
+            ))
+            .into());
+        }
         // A held erase runs through its own executor, which binds the
         // record; its receipt then tells the Owners (OF-150).
         let memory = vault
@@ -414,7 +461,12 @@ fn execute_shared_act_into(
             delivery: None,
         });
     }
-    let execution = vault.execute_completed_shared_act(executor, &input.act_id, slips)?;
+    let execution = vault.execute_completed_shared_act_with_owner_key_revokes(
+        executor,
+        &input.act_id,
+        slips,
+        &owner_key_revokes,
+    )?;
     if let Some(records) = &execution.export_records {
         producers.list(records.iter().copied());
         *export_listed = true;

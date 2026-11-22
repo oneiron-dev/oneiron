@@ -14,7 +14,7 @@ pub(crate) fn llm_description_measurements_accepts_masked(bytes: &[u8]) -> bool 
     crate::side_table::decodes::<BTreeMap<ModelId, MeasuredDescription>, LegacyJson>(bytes)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ModelDescription {
     pub model: ModelId,
@@ -27,8 +27,9 @@ pub struct ModelDescription {
     pub effort_ladder: Vec<ReasoningEffort>,
 }
 
-/// Hidden-by-default vault configuration; no UI or model names are shipped.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Hidden-by-default vault configuration; no UI or model names are shipped. The key
+/// `models.description_policy` holds it (`llm::setting_keys`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DescriptionPolicy {
     pub models: Vec<ModelDescription>,
@@ -39,8 +40,10 @@ pub struct DescriptionPolicy {
     pub global_effort: Option<ReasoningEffort>,
 }
 
-/// Whether a masked copy of a `LLM_DESCRIPTION_POLICY` row still decodes as its typed value,
-/// for the historical lift sweep (FIX 2680).
-pub(crate) fn llm_description_policy_accepts_masked(bytes: &[u8]) -> bool {
-    crate::side_table::decodes::<DescriptionPolicy, LegacyJson>(bytes)
+impl crate::setting::SettingValue for DescriptionPolicy {
+    /// A stored policy passes [`DescriptionPolicy::validate`].
+    fn check(self) -> crate::error::Result<Self> {
+        self.validate()?;
+        Ok(self)
+    }
 }

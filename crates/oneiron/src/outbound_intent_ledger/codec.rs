@@ -13,6 +13,7 @@ use crate::attempt_queue::AttemptId;
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::side_table::{CodecError, RawValue};
+use oneiron_contracts::lifecycle::LifecycleWords;
 
 mod nested;
 
@@ -40,7 +41,7 @@ impl RawValue for IntentLedgerRecord {
 }
 
 /// Pinned MessagePack key set for device-local outbound intent rows.
-pub const INTENT_LEDGER_VALUE_KEYS: [&str; 24] = [
+pub const INTENT_LEDGER_VALUE_KEYS: [&str; 25] = [
     "schema_version",
     "id",
     "attempt_id",
@@ -65,6 +66,7 @@ pub const INTENT_LEDGER_VALUE_KEYS: [&str; 24] = [
     "pinned_approval",
     "authorizing_owner",
     "content_digest",
+    "idempotency_attempt_id",
 ];
 
 pub(super) const INTENT_LEDGER_PRIVATE_PREFIX: &[u8] = b"outbound:intent_ledger:v2:"; // + id(32)
@@ -130,10 +132,16 @@ pub(super) const KEY_AUTHORIZING_OWNER: &str = INTENT_LEDGER_VALUE_KEYS[22];
 
 pub(super) const KEY_CONTENT_DIGEST: &str = INTENT_LEDGER_VALUE_KEYS[23];
 
+/// Written only on a row whose provider-native key names another attempt
+/// ([`IntentLedgerRecord::idempotency_attempt_id`]): every other row encodes,
+/// and digests, exactly as before this key existed.
+pub(super) const KEY_IDEMPOTENCY_ATTEMPT_ID: &str = INTENT_LEDGER_VALUE_KEYS[24];
+
 /// The canonical intent body used as the digest preimage.
 ///
 /// Entries are exactly `INTENT_LEDGER_VALUE_KEYS[0..23]`, in that order, with
-/// `KEY_CONTENT_DIGEST` absent. This is the single source of every stored body
+/// `KEY_CONTENT_DIGEST` absent, then `KEY_IDEMPOTENCY_ATTEMPT_ID` on a row
+/// that names one. This is the single source of every stored body
 /// value — raw payload, authorization binding, nested budget accounting, typed
 /// capability provenance, recorded outcome, state, timestamps, and the owner
 /// whose word admitted the send — so the
@@ -209,7 +217,7 @@ fn record_entries_without_digest(record: &IntentLedgerRecord) -> Vec<(Value, Val
             (Value::from(RECORDED_OUTCOME_KEYS[1]), reason),
         ])
     });
-    vec![
+    let mut entries = vec![
         (
             Value::from(KEY_SCHEMA_VERSION),
             Value::from(INTENT_LEDGER_SCHEMA_VERSION),
@@ -268,7 +276,7 @@ fn record_entries_without_digest(record: &IntentLedgerRecord) -> Vec<(Value, Val
             Value::from(KEY_DELIVERY_UNCERTAIN),
             Value::Boolean(record.delivery_uncertain),
         ),
-        (Value::from(KEY_STATE), Value::from(record.state.as_str())),
+        (Value::from(KEY_STATE), Value::from(record.state.word())),
         (Value::from(KEY_CREATED_MS), Value::from(record.created_ms)),
         (Value::from(KEY_UPDATED_MS), Value::from(record.updated_ms)),
         (
@@ -291,7 +299,14 @@ fn record_entries_without_digest(record: &IntentLedgerRecord) -> Vec<(Value, Val
                 .as_ref()
                 .map_or(Value::Nil, |owner| Value::Binary(owner.as_bytes().to_vec())),
         ),
-    ]
+    ];
+    if let Some(attempt) = record.idempotency_attempt_id {
+        entries.push((
+            Value::from(KEY_IDEMPOTENCY_ATTEMPT_ID),
+            Value::Binary(attempt.as_bytes().to_vec()),
+        ));
+    }
+    entries
 }
 
 fn approval_value(proof: super::types::AdmittedApproval) -> Value {
@@ -309,11 +324,12 @@ fn approval_value(proof: super::types::AdmittedApproval) -> Value {
 
 /// Encodes `Value::Map(record_entries_without_digest(record))`.
 ///
-/// The 23-entry MessagePack map header is part of the preimage, and so are the
-/// raw `payload` bytes: the preimage is definitionally the stored body minus
-/// the digest key, and carving `payload` out would reintroduce a second body
-/// representation. The O(payload) cost per encode/decode is accepted;
-/// `payload_hash` stays separately validated by `validate_record`.
+/// The 23-entry (24 with an idempotency attempt) MessagePack map header is
+/// part of the preimage, and so are the raw `payload` bytes: the preimage is
+/// definitionally the stored body minus the digest key, and carving `payload`
+/// out would reintroduce a second body representation. The O(payload) cost
+/// per encode/decode is accepted; `payload_hash` stays separately validated by
+/// `validate_record`.
 pub(super) fn encode_record_digest_preimage(
     record: &IntentLedgerRecord,
 ) -> IntentLedgerResult<Vec<u8>> {
@@ -358,9 +374,9 @@ pub(super) fn id_from_ledger_key(key: &[u8]) -> Option<[u8; 32]> {
     key[INTENT_LEDGER_PRIVATE_PREFIX.len()..].try_into().ok()
 }
 
-/// Encodes the canonical 24-entry row: the digest preimage body plus the
-/// content digest computed over exactly those bytes, appended as the final
-/// `content_digest` entry.
+/// Encodes the canonical 24-entry row (25 with an idempotency attempt): the
+/// digest preimage body plus the content digest computed over exactly those
+/// bytes, appended as the final `content_digest` entry.
 pub(super) fn encode_record(record: &IntentLedgerRecord) -> IntentLedgerResult<Vec<u8>> {
     let digest = record_content_digest(record)?;
     let mut entries = record_entries_without_digest(record);
@@ -426,6 +442,7 @@ fn decode_record_fields(raw: &[u8]) -> IntentLedgerResult<IntentLedgerRecord> {
     let mut admitted_approval = None;
     let mut pinned_approval = None;
     let mut authorizing_owner = None;
+    let mut idempotency_attempt_id = None;
     let mut seen = [false; INTENT_LEDGER_VALUE_KEYS.len()];
 
     for (entry_key, value) in entries {
@@ -496,9 +513,9 @@ fn decode_record_fields(raw: &[u8]) -> IntentLedgerResult<IntentLedgerRecord> {
             }
             KEY_STATE => {
                 state = Some(
-                    IntentState::parse(value.as_str().ok_or(IntentLedgerError::InvalidRecord(
-                        "outbound intent state must be a string",
-                    ))?)
+                    IntentState::kind_from_word(value.as_str().ok_or(
+                        IntentLedgerError::InvalidRecord("outbound intent state must be a string"),
+                    )?)
                     .ok_or(IntentLedgerError::InvalidRecord(
                         "unknown outbound intent state",
                     ))?,
@@ -526,6 +543,10 @@ fn decode_record_fields(raw: &[u8]) -> IntentLedgerResult<IntentLedgerRecord> {
                 });
             }
             KEY_CONTENT_DIGEST => content_digest = Some(expect_binary_array::<32>(&value)?),
+            KEY_IDEMPOTENCY_ATTEMPT_ID => {
+                let bytes = expect_binary_array::<16>(&value)?;
+                idempotency_attempt_id = Some(AttemptId::from_bytes(&bytes)?);
+            }
             _ => {
                 return Err(IntentLedgerError::InvalidRecord(
                     "outbound intent pinned key has no decoder",
@@ -549,6 +570,7 @@ fn decode_record_fields(raw: &[u8]) -> IntentLedgerResult<IntentLedgerRecord> {
         payload_hash: required(payload_hash, "missing outbound intent payload_hash")?,
         payload: required(payload, "missing outbound intent payload")?,
         idempotency_key: required(idempotency_key, "missing outbound intent idempotency_key")?,
+        idempotency_attempt_id,
         idempotency_supported: required(
             idempotency_supported,
             "missing outbound intent idempotency_supported",
@@ -645,9 +667,11 @@ pub(super) fn decode_call_accounting(raw: &[u8]) -> IntentLedgerResult<CallAccou
                 .is_some(),
             KEY_STATE => state
                 .replace(
-                    IntentState::parse(value.as_str().ok_or(IntentLedgerError::InvalidRecord(
-                        "outbound call accounting state must be a string",
-                    ))?)
+                    IntentState::kind_from_word(value.as_str().ok_or(
+                        IntentLedgerError::InvalidRecord(
+                            "outbound call accounting state must be a string",
+                        ),
+                    )?)
                     .ok_or(IntentLedgerError::InvalidRecord(
                         "unknown outbound call accounting state",
                     ))?,

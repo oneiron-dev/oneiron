@@ -10,17 +10,18 @@
 mod admission;
 mod graph;
 #[cfg(feature = "sync")]
-pub(crate) use admission::{addressed_to_echo, addressed_to_echo_in_txn};
+pub(crate) use admission::addressed_to_echo;
 pub(crate) mod topology;
 #[cfg(test)]
 pub(crate) use admission::stored_body_pin_for_test;
-pub(crate) use admission::{
-    addressing, exact_core_turn_retry_in_txn, guard_record_put, guard_room_membership_delete,
-    guard_room_turn_delete, keep_membership_pin, landing_reply_waits_in, pin_membership,
-    pin_typed_record, record_is_append_only_in_txn, room_turn_owner, validate_local_membership,
-};
 #[cfg(feature = "sync")]
-pub(crate) use admission::{validate_received_edge, validate_received_parent_value};
+pub(crate) use admission::validate_received_parent_value;
+pub(crate) use admission::{
+    addressed_to_echo_in_txn, addressing, exact_core_turn_retry_in_txn, guard_record_put,
+    guard_room_membership_delete, guard_room_turn_delete, keep_membership_pin,
+    landing_reply_waits_in, pin_membership, pin_typed_record, record_is_append_only_in_txn,
+    room_turn_owner, validate_local_membership, validate_received_edge,
+};
 pub(crate) use topology::record_kind;
 mod membership;
 mod migration;
@@ -32,6 +33,8 @@ mod branch_scope;
 mod participation;
 mod policy;
 mod quote;
+#[cfg(oneiron_test_support)]
+pub(crate) use quote::quote_field_for_test;
 mod quote_birth;
 mod quote_strips;
 mod record_admission;
@@ -39,6 +42,7 @@ mod redacted;
 mod reply;
 pub(crate) mod retained_path;
 mod scopes;
+pub(crate) mod setting_keys;
 mod thread_projection;
 mod types;
 mod writes;
@@ -46,7 +50,7 @@ mod writes;
 pub(crate) use branch_scope::{prove_branch_anchor, prove_branch_span};
 pub(crate) use graph::{
     actor_in_txn, chain as retained_chain, conversation_of, counted_edge_ids, edge_ids,
-    is_sub_session_record, is_thread_record, keeps_dag_topology, named_room,
+    is_sub_session_record, is_thread_record, keeps_dag_topology, local_head_in, named_room,
     parent as retained_parent, record_has_dag_topology, require_type,
 };
 pub(crate) use participation::erased_thread_room_in_txn;
@@ -65,6 +69,7 @@ pub use quote::{QuoteAnchor, RoomQuote};
 pub use quote_strips::{
     QuoteReplyGroup, QuoteReplyStrip, QuoteStripStatus, ReplyStripsPage, ReplyStripsRequest,
 };
+pub(crate) use record_admission::RoomVerdicts;
 pub(crate) use redacted::capture_withdrawn_record_in_txn;
 #[cfg(feature = "sync")]
 pub(crate) use redacted::pin_shell_record_in_txn;
@@ -81,15 +86,13 @@ pub use types::{
     ResolvedScope, ScopePath, ScopeSelector,
 };
 pub(crate) use writes::{
-    append_composed_in_txn, append_in_txn, append_regenerated_turn_at_in_txn,
-    put_thread_event_in_txn,
+    append_composed_in_txn, append_in_txn, append_observed_at_in_txn,
+    append_regenerated_turn_at_in_txn, put_thread_event_in_txn,
 };
 
 #[cfg(test)]
 pub(crate) mod fixtures;
 
-// FIX [LIBTEST-QUARANTINE-CONVERSATION-DAG-TESTS]: the lib test target's type check fails here (168 errors: E0061 x159, E0599 x9); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 
