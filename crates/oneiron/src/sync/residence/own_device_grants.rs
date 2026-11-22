@@ -42,7 +42,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::authority_tail::require_owner_machine;
-use crate::authority::{ACTOR_CLASS_HUMAN, PeerMachine, grant_known_withdrawn_in_txn};
+use crate::authority::{ACTOR_CLASS_HUMAN, PeerMachine};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::deletion::{TombstoneReason, TombstoneValueV2};
 use crate::error::Result;
@@ -265,7 +265,9 @@ pub fn own_device_grant_states(
                 .to_vec(),
             ))
         };
-        if grant_known_withdrawn_in_txn(&vault.store, &txn, *id)
+        // A withdrawal is the counted end of the Grant's line; until it counts, the end is owed
+        // here (pass 28 R3e: the debt replaces the local withdrawal marker).
+        if crate::federation::grant_end_owed_in_txn(&vault.store, &txn, *id)
             || vault.local_hard_delete_marker_exists_in_txn(&txn, id)?
         {
             served.push((*id, withdrawn()?));

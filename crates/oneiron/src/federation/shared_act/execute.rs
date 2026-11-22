@@ -390,7 +390,7 @@ impl Vault {
                             &mut txn,
                             act.vault_id,
                             &receipt_id,
-                            actor,
+                            (actor, owner_authored.as_ref()),
                             now,
                             UnsignedExecution {
                                 cause: MembershipExecutionCause::HostHandover,
