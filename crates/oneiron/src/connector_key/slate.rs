@@ -153,6 +153,13 @@ pub struct SlateToolManifest {
     /// Unresolved refs/composition are refused rather than guessed at admission.
     #[serde(default)]
     pub resolved_input_schema: Option<serde_json::Value>,
+    /// Host-resolved output declaration (MCP `outputSchema`; L8-31): what the
+    /// caller is told a delivered reply holds, so the owner's stamp covers it
+    /// as it covers the input. Absent when the connector declares none, and
+    /// then absent from the serialized row, so a slate without one hashes as
+    /// it did before the field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_output_schema: Option<serde_json::Value>,
     #[serde(default)]
     pub trigger: Option<String>,
     pub destroys: bool,
@@ -504,6 +511,10 @@ fn validate(manifest: &SlateManifest, rows: &[SlateDraftRow]) -> Result<()> {
                     .resolved_input_schema
                     .as_ref()
                     .is_some_and(|schema| schema.is_object() && is_resolved_schema(schema))
+                    || tool
+                        .resolved_output_schema
+                        .as_ref()
+                        .is_some_and(|schema| !is_resolved_schema(schema))
                     || row.data_class != tool.row_data_class()
                 {
                     return Err(invalid());
@@ -515,8 +526,9 @@ fn validate(manifest: &SlateManifest, rows: &[SlateDraftRow]) -> Result<()> {
 }
 
 /// Whether the declaration itself reaches further than before: a richer data
-/// class, new headers or effects, a changed trigger, or a schema that is not a
-/// provable restriction.
+/// class, new headers or effects, a changed trigger, an input schema that is
+/// not a provable restriction, or any change to the output schema the caller
+/// reads (L8-31).
 pub(in crate::connector_key) fn declaration_expands(
     old: &SlateToolManifest,
     next: &SlateToolManifest,
@@ -539,6 +551,7 @@ pub(in crate::connector_key) fn declaration_expands(
             old.resolved_input_schema.as_ref(),
             next.resolved_input_schema.as_ref(),
         )
+        || next.resolved_output_schema != old.resolved_output_schema
 }
 
 /// Whether the elicitation declaration reaches further than before: a
@@ -1010,6 +1023,7 @@ mod tests {
         let mut manifest = Vec::new();
         for name in ["read", "send", "header", "legacy.ask"] {
             manifest.push(SlateToolManifest {
+                resolved_output_schema: None,
                 name: name.into(),
                 data_class: SlateDataClass::Personal,
                 header_parameters: if name == "header" {
@@ -1121,6 +1135,7 @@ mod revision_tests {
 
     fn tool(name: &str) -> SlateToolManifest {
         SlateToolManifest {
+            resolved_output_schema: None,
             name: name.into(),
             data_class: SlateDataClass::Public,
             header_parameters: vec![],
