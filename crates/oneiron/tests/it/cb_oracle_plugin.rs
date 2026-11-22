@@ -1134,10 +1134,23 @@ mod plugin_fixture {
                 .expect("read the suggestion knob")
         }
 
+        /// The owner sets the knob, the catalogue key `dreamer.plugin_suggestions`, as the verb
+        /// `vault.settings.set` does.
         pub(crate) fn set_suggestions_knob(&self, enabled: bool) {
-            self.vault
-                .set_plugin_suggestions_enabled(enabled)
+            let outcome = self
+                .vault
+                .set_setting(
+                    oneiron::setting::SettingCaller::Owner(self.admission.owner()),
+                    oneiron::setting::SetSetting::vault_value(
+                        "dreamer.plugin_suggestions",
+                        serde_json::Value::Bool(enabled),
+                    ),
+                )
                 .expect("persist the suggestion knob");
+            assert!(
+                matches!(outcome, oneiron::setting::SetSettingOutcome::Applied { .. }),
+                "the owner's change applies at once: {outcome:?}"
+            );
         }
 
         /// Seeds the entity the workflow notice cites. GATE-12's evidence

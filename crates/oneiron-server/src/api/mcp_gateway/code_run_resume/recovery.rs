@@ -47,6 +47,7 @@ use super::super::verb_hooks::mcp_adapter_ceiling;
 use super::{
     McpCodeRunContinuation, McpCodeRunContinuations, McpCodeRunSlot, precedes, reenter_if_ready,
 };
+use crate::api::write_facet::RequestSession;
 use crate::auth::CoreAuth;
 use crate::mcp::{McpConnectorActorResolutionError, McpSurfaceMode};
 use crate::server::SyncServer;
@@ -143,7 +144,7 @@ fn vacant(slot: &McpCodeRunSlot, key: &WaitKey, generation: &CodeRunReplayGenera
 struct CallerPlacement {
     mode: McpSurfaceMode,
     request_id: String,
-    session: Option<oneiron::EntityId>,
+    session: Option<RequestSession>,
     room_turn: Option<oneiron::EntityId>,
 }
 
@@ -198,7 +199,7 @@ impl McpCodeRunContinuation {
                 CodeConsentRunEndpoint::ToolFirst => McpSurfaceMode::ToolFirst,
             },
             request_id: format!("code-consent-resume-{}", run.key.wait_id.to_hex()),
-            session: origin.session,
+            session: origin.session.map(RequestSession::of_id),
             room_turn: origin.room_turn,
         };
         let (caller, registration) = match &reference.door {
@@ -306,7 +307,7 @@ fn paired_caller(
         auth,
         placement.mode,
         &placement.request_id,
-        placement.session,
+        placement.session.clone(),
         placement.room_turn,
     )
     .map_err(|_| VerbAskRefusal::CredentialChanged)
@@ -330,7 +331,7 @@ fn owner_caller(
         connection,
         placement.mode,
         &placement.request_id,
-        placement.session,
+        placement.session.clone(),
         placement.room_turn,
     )
     .ok_or(VerbAskRefusal::CredentialChanged)?

@@ -4,13 +4,18 @@ use crate::campaign::claims::{
     CampaignMemberState, CampaignMemberValue, PREDICATE_CAMPAIGN_MEMBER,
     decode_campaign_member_value,
 };
+use crate::campaign::member_index::{
+    indexed_campaign_member_claims, indexed_saved_query_member_claims,
+};
 use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimSubject, ScopedRead, decode_claim_body};
 use crate::edge::EdgeKind;
+use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::saved_query::{MembershipEvent, MembershipTransition, membership_events_in_txn};
 use crate::{EntityId, Vault};
+use oneiron_contracts::cursor_text::parse_hex_cursor;
 
 use self::manual::manual_membership_row;
 
@@ -134,11 +139,19 @@ fn membership_page(
     owner: MembershipOwner,
 ) -> Result<MembershipPage> {
     let limit = effective_limit(req.limit) as usize;
-    if let Some(cursor) = req.cursor.as_deref() {
-        validate_cursor(cursor)?;
-    }
+    let after = req.cursor.as_deref().map(resume_cursor).transpose()?;
     let vault = read.vault();
-    let candidates = vault.entities_by_type(ENTITY_TYPE_CLAIM)?;
+    // The member index nominates this axis's claims; any doubt scans every
+    // CLAIM, as the page did before the index (ARCH-0044 H202). Each opens
+    // and drops its own read txn before the page's own below.
+    let indexed = match owner {
+        MembershipOwner::Campaign => indexed_campaign_member_claims(vault, req.owner_ref),
+        MembershipOwner::SavedQuery => indexed_saved_query_member_claims(vault, req.owner_ref),
+    };
+    let candidates = match indexed {
+        Some(candidates) => candidates,
+        None => vault.entities_by_type(ENTITY_TYPE_CLAIM)?,
+    };
     let txn = vault.store.env.read_txn()?;
     let mut heads = membership_heads_in_txn(read, &txn, &candidates, req.owner_ref, owner)?;
     // Sorted on the same triple the cursor encodes, so "everything after the
@@ -148,7 +161,7 @@ fn membership_page(
     let mut rows = Vec::new();
     let mut last_token = None;
     let mut remaining = heads.iter().filter(|head| {
-        req.cursor
+        after
             .as_deref()
             .is_none_or(|cursor| head.cursor().as_str() > cursor)
     });
@@ -212,28 +225,26 @@ const fn effective_limit(requested: u32) -> u32 {
     }
 }
 
-/// A cursor is exactly three hex entity ids. Rejecting a malformed one is the
-/// difference between "you asked for a page that does not exist" and silently
-/// returning page one under a caller that believes it is paging.
-fn validate_cursor(cursor: &str) -> Result<()> {
-    const CURSOR_LEN: usize = 96;
-    if cursor.len() != CURSOR_LEN || !cursor.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return Err(Error::InvalidKey);
-    }
-    Ok(())
+/// A cursor is exactly three hex entity ids, read in either case and resumed
+/// in lowercase, the case `MembershipHead::cursor` writes: the resume
+/// compares the text, so an upper-case cursor would otherwise resume at
+/// another row. Rejecting a malformed one is the difference between "you
+/// asked for a page that does not exist" and silently returning page one
+/// under a caller that believes it is paging.
+fn resume_cursor(cursor: &str) -> Result<String> {
+    let triple = parse_hex_cursor::<48>(cursor).ok_or(Error::InvalidKey)?;
+    Ok(bytes_to_hex_lower(&triple))
 }
 
 /// Every live `campaign.member` head matching `owner_ref` on the chosen axis
 /// that `read` admits, together with the PERSON it names, in `txn`.
 ///
 /// CA-01 owns the head, and its value carries both the campaign it is scoped to
-/// and the query that derived it, so one predicate scan answers both directions.
-/// The CRM pack registers no membership index of its own — `registry.rs` is a
-/// hard non-claim for this lane — so this walks the CLAIM type index the way
-/// `/api/core/discover` walks it. Output is bounded by the page limit; the scan
-/// is not, and an index is the honest follow-up if cohorts get large.
+/// and the query that derived it. `candidates` are the claims the member index
+/// (`campaign::member_index`) names on this axis, or every CLAIM when the index
+/// is in any doubt; either way they are a superset of the heads this returns.
 ///
-/// The scan only nominates heads. Each is then read again through `read` in
+/// The candidates only nominate heads. Each is then read again through `read` in
 /// this same snapshot, and only the admitted body is trusted; a head whose
 /// claim or PERSON `read` withholds is not a head here at all (FIX 9668).
 fn membership_heads_in_txn(

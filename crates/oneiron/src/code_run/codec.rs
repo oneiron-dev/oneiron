@@ -8,7 +8,8 @@ use rmpv::Value;
 
 use crate::attempt_queue::AttemptId;
 use crate::claim::CallerLocality;
-use crate::{EdgeActorClass, EntityId, Error, Result};
+use crate::{EdgeActorClass, EntityId, Result};
+use oneiron_contracts::msgpack::{self, MsgpackError};
 
 use super::live_run::{CodeRunLiveRunBinding, LiveRunCredential};
 use super::payload::self_effect_from_str;
@@ -174,7 +175,17 @@ pub(crate) fn continuation_prefix_digest(
 /// Encodes a deterministic code-run replay record as pinned MessagePack.
 pub fn encode_code_run_replay_record(record: &CodeRunReplayRecord) -> Result<Vec<u8>> {
     validate_code_run_replay_record(record)?;
-    let value = replay_record_value(
+    encode_value(
+        &replay_record_value(record),
+        "code-run replay record MessagePack encode failed",
+    )
+}
+
+/// The pinned MessagePack tree of `record`, unvalidated: a fenced put's
+/// projection, its erased parts taken out, is no valid record (FIX
+/// FENCE-ERASED-FORM-THROUGH-WALL).
+pub(in crate::code_run) fn replay_record_value(record: &CodeRunReplayRecord) -> Value {
+    replay_record_value_with(
         record,
         Value::Array(record.bridge_calls.iter().map(encode_bridge_call).collect()),
         Value::Array(
@@ -186,13 +197,12 @@ pub fn encode_code_run_replay_record(record: &CodeRunReplayRecord) -> Result<Vec
         ),
         Value::Array(record.outputs.iter().map(encode_raw_output).collect()),
         Value::Array(record.bindings.iter().map(encode_binding).collect()),
-    );
-    encode_value(&value, "code-run replay record MessagePack encode failed")
+    )
 }
 
 /// The record's 12-entry top-level map with the four family values given.
 /// The whole encoding passes the full arrays; the shell passes empty ones.
-fn replay_record_value(
+fn replay_record_value_with(
     record: &CodeRunReplayRecord,
     bridge_calls: Value,
     step_checkpoints: Value,
@@ -259,7 +269,7 @@ fn replay_record_value(
 pub(crate) fn encode_code_run_replay_shell(
     record: &CodeRunReplayRecord,
 ) -> std::result::Result<Vec<u8>, crate::side_table::CodecError> {
-    let value = replay_record_value(
+    let value = replay_record_value_with(
         record,
         Value::Array(Vec::new()),
         Value::Array(Vec::new()),
@@ -319,7 +329,7 @@ impl crate::side_table::RawValue for CodeRunReplayRecord {
 
 /// Decodes a deterministic code-run replay record.
 pub fn decode_code_run_replay_record(bytes: &[u8]) -> Result<CodeRunReplayRecord> {
-    let record = decode_code_run_replay_fields(bytes)?;
+    let record = decode_code_run_replay_unvalidated(bytes)?;
     validate_code_run_replay_record(&record)?;
     Ok(record)
 }
@@ -329,7 +339,7 @@ pub fn decode_code_run_replay_record(bytes: &[u8]) -> Result<CodeRunReplayRecord
 /// its layout hash, the live run's lease owner), its four families are empty,
 /// and its pending step lies inside the head's `bridge_calls` calls.
 pub(crate) fn validate_code_run_replay_shell(shell: &[u8], bridge_calls: u64) -> Result<()> {
-    let mut record = decode_code_run_replay_fields(shell)?;
+    let mut record = decode_code_run_replay_unvalidated(shell)?;
     if !(record.bridge_calls.is_empty()
         && record.step_checkpoints.is_empty()
         && record.outputs.is_empty()
@@ -343,9 +353,14 @@ pub(crate) fn validate_code_run_replay_shell(shell: &[u8], bridge_calls: u64) ->
     validate_code_run_replay_record(&record)
 }
 
-/// The record `bytes` hold, each field decoded and checked on its own; the
-/// checks across fields are [`validate_code_run_replay_record`]'s.
-fn decode_code_run_replay_fields(bytes: &[u8]) -> Result<CodeRunReplayRecord> {
+/// [`decode_code_run_replay_record`] before its validation, each field
+/// decoded and checked on its own: a fenced put reads its projection so,
+/// puts its erased parts back, then validates, and a replay head's shell is
+/// checked so. The checks across fields are
+/// [`validate_code_run_replay_record`]'s.
+pub(in crate::code_run) fn decode_code_run_replay_unvalidated(
+    bytes: &[u8],
+) -> Result<CodeRunReplayRecord> {
     let value = decode_value(bytes)?;
     let fields = pinned_map(
         &value,
@@ -715,7 +730,9 @@ fn decode_live_run(value: &Value) -> Result<Option<CodeRunLiveRunBinding>> {
     }))
 }
 
-pub(crate) fn validate_code_run_replay_record(record: &CodeRunReplayRecord) -> Result<()> {
+pub(in crate::code_run) fn validate_code_run_replay_record(
+    record: &CodeRunReplayRecord,
+) -> Result<()> {
     let mut expected_seq = 0_u64;
     for call in &record.bridge_calls {
         if call.seq != expected_seq {
@@ -832,21 +849,17 @@ fn validate_abi_layout_check(check: &CodeRunAbiLayoutCheck) -> Result<()> {
 }
 
 fn decode_value(bytes: &[u8]) -> Result<Value> {
-    let mut cursor = bytes;
-    let value = rmpv::decode::read_value(&mut cursor)
-        .map_err(|_| invalid_code_run_replay("record is not valid MessagePack"))?;
-    if !cursor.is_empty() {
-        return Err(invalid_code_run_replay(
-            "trailing bytes after code-run replay record",
-        ));
-    }
-    Ok(value)
+    msgpack::decode(bytes).map_err(|error| {
+        invalid_code_run_replay(match error {
+            MsgpackError::Trailing => "trailing bytes after code-run replay record",
+            _ => "record is not valid MessagePack",
+        })
+    })
 }
 
-fn encode_value(value: &Value, context: &'static str) -> Result<Vec<u8>> {
-    let mut out = Vec::new();
-    rmpv::encode::write_value(&mut out, value).map_err(|_| Error::InvariantViolation(context))?;
-    Ok(out)
+/// The context named a write error, which writing into a Vec cannot raise; kept for the callers.
+fn encode_value(value: &Value, _context: &'static str) -> Result<Vec<u8>> {
+    Ok(msgpack::encode(value))
 }
 
 pub(crate) fn encode_code_run_replay_value(
@@ -855,3 +868,9 @@ pub(crate) fn encode_code_run_replay_value(
 ) -> Result<Vec<u8>> {
     encode_value(value, context)
 }
+
+// The pending-step K seam for the door
+// (`test_doors::fingerprint_keep_code_run_digests`), kept apart from the
+// import block above.
+#[cfg(oneiron_test_support)]
+pub(crate) use self::pending_step::pending_step_bytes_digest_for_test;

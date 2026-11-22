@@ -105,7 +105,15 @@ async fn row_hooks_pre_decided(
                 .map_or(Ok(()), |check| check(verb.as_str(), args))
         };
         let session = resume.session;
-        let credential = resume.credential;
+        // A verb whose answer no invocation claim keeps (a personal link's
+        // raw token, an inquiry edge's pact key) saves no credential beside
+        // its ask: settlement's drain would run it and save that answer in
+        // the ask's row for the retry. Its caller's retry under the same
+        // invocation runs it once the ask settles, and the answer goes only
+        // to that retry (review round 2 of #8571).
+        let credential = resume
+            .credential
+            .filter(|_| super::invocations::verb_reply_is_kept(&verb));
         let run = || match &session {
             Some(session) => {
                 verb_hook_boundary::session_pre(&server.vault, call, args, &admit, session, turn)
@@ -136,7 +144,7 @@ async fn row_hooks_pre_decided(
         Ok(pre)
     };
     clock_ingress::run_blocking(move || {
-        let (ended, decided) = crate::hook_verdict::collect_hook_decisions(chain);
+        let (ended, decided) = crate::hook_decisions::collect_hook_decisions(chain);
         ended.map(|pre| (pre, decided))
     })
     .await
@@ -208,7 +216,7 @@ async fn row_hooks_post_decided(
 ) -> Result<(serde_json::Value, Vec<serde_json::Value>), MemoryError> {
     let server = Arc::clone(server);
     clock_ingress::run_blocking(move || {
-        let (output, decided) = crate::hook_verdict::collect_hook_decisions(move || {
+        let (output, decided) = crate::hook_decisions::collect_hook_decisions(move || {
             verb_hook_boundary::row_post(&server.vault, pre, result)
         });
         output.map(|output| (output, decided))
@@ -250,6 +258,21 @@ pub(super) async fn facade_hooks_pre(
 ) -> Result<VerbHookPre, FacadeApiError> {
     let (pre, _) = facade_hooks_pre_counted(server, call, verb, value).await?;
     Ok(pre)
+}
+
+/// What a transport-only row (`host_door_transport_only`, FIX
+/// HOOK-TRANSCRIPT-IMPORT-PAST-CARRIER) meets in place of a pre chain: the
+/// hosted operator's refusal and the row's own door admission, as
+/// [`facade_hooks_pre_admitting`] checks them before any hook. The row
+/// crosses no hook chain: the verb call it carries crosses its own.
+pub(crate) fn facade_transport_admits(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    verb: &str,
+) -> Result<(), FacadeApiError> {
+    super::host_action::facade_host_action(server, auth)?;
+    host_doors::door_admits(server, auth, verb)?;
+    Ok(())
 }
 
 /// [`facade_hooks_pre`], beside each hook `ai.verdict` decision the chain

@@ -9,9 +9,17 @@
 //! let people opt out; a choice already made then stays, ignored. This
 //! install carries it under its own live machine profile, in any role the
 //! one carrier rule admits ([`super::super::owner_act_signer_admits`]).
+//! Letting their messages back in widens their own row: where the vault
+//! holds an owner key, an install that is not the owner's machine and holds
+//! no owner key cannot prove it, and the door refuses it, storing nothing
+//! (ruling CARRIER-PERSON-OPT-BACK-IN = A). Leaving them out lands from any
+//! install.
+
+use ed25519_dalek::SigningKey;
 
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
+use crate::world_keys::{OwnerActImportance, owner_presence_reasons};
 use crate::{TimeRange, Vault};
 
 use super::*;
@@ -34,6 +42,17 @@ const NOT_COUNTED: &str = "this install's fold does not count the conversation t
 
 #[doc(hidden)]
 pub use oneiron_records::authority::conversation_training::door::ConversationTrainingView;
+
+/// What [`Vault::set_conversation_training`]'s checks establish before the
+/// signature, on one snapshot.
+struct ConversationTrainingChecks {
+    person: EntityId,
+    fold: AuthorityView,
+    current: PolicyRevision,
+    machine: EntityId,
+    key: SigningKey,
+    importance: OwnerActImportance,
+}
 
 impl Vault {
     /// The authenticated person's own opt-out.
@@ -60,15 +79,23 @@ impl Vault {
     /// install's standing rows and every live choice of the person's (FIX
     /// 4987), so it supersedes all of them, and lands atomically or not at
     /// all. It stops new sharing of their messages; it withdraws nothing
-    /// already shared.
+    /// already shared. The door makes its checks on a read before it asks:
+    /// letting their messages back in while they are left out asks, and
+    /// every other choice asks nothing. The write derives the importance
+    /// again, and answers [`Error::ConcurrentWrite`] when the act became
+    /// more important since the person was asked.
     ///
     /// # Errors
     /// A refusal when the proof is no longer a live person of this vault;
     /// [`crate::error::RecordError::AuthorityRefused`] ("this vault does not
     /// allow opt-outs") while the vault does not let people opt out, and when
-    /// this install cannot carry the choice or its fold does not count it; [`Error::ConcurrentWrite`] when `seen` is not the current
-    /// revision; [`Error::InvalidConfig`] when the choice would name more
-    /// parents than one entry may.
+    /// this install cannot carry the choice or its fold does not count it;
+    /// [`crate::error::RecordError::OwnerKeyRequired`] when they let their
+    /// messages back in where the vault holds an owner key and this install
+    /// neither is the owner's machine nor holds one (nothing is stored);
+    /// [`Error::ConcurrentWrite`] when `seen` is not the current revision;
+    /// [`Error::InvalidConfig`] when the choice would name more parents than
+    /// one entry may.
     pub fn set_conversation_training(
         &self,
         owner: &AuthenticatedOwner,
@@ -76,26 +103,46 @@ impl Vault {
         leave_out: bool,
         seen: Option<PolicyRevision>,
     ) -> Result<ConversationTrainingView> {
+        self.set_conversation_training_between(owner, surface, leave_out, seen, || {})
+    }
+
+    /// [`Self::set_conversation_training`], with `between` run after the
+    /// door asked and before its write opens: the gap in which another
+    /// writer can commit first (the test door
+    /// `test_doors::owner_presence_between`).
+    pub(crate) fn set_conversation_training_between(
+        &self,
+        owner: &AuthenticatedOwner,
+        surface: ActSurface,
+        leave_out: bool,
+        seen: Option<PolicyRevision>,
+        between: impl FnOnce(),
+    ) -> Result<ConversationTrainingView> {
+        let importance = {
+            let txn = self.store.env.read_txn()?;
+            let checks = self.conversation_training_checks_in_txn(&txn, owner, leave_out, seen)?;
+            if checks.fold.append_heads.len() <= MAX_PARENTS {
+                let signer = AuthorityKey::Ed25519(checks.key.verifying_key().to_bytes());
+                next_sequence(&checks.fold, &signer)?;
+            }
+            checks.importance
+        };
+        let witness =
+            self.owner_presence(importance, owner_presence_reasons::CONVERSATION_TRAINING)?;
+        let ground = OwnerProofGround::witnessed(&witness);
+        between();
         let mut txn = self.store.env.write_txn()?;
-        let person = owner.revalidate_person_in_txn(self, &txn)?;
-        let fold = self.authority_view_readonly_in_txn(&txn)?;
-        if !fold.conversation_training_vault.allows_opt_out() {
-            return Err(authority_refused(OPT_OUTS_NOT_ALLOWED));
-        }
-        // Revision integrity (mesh contract §4): the person chose on what
-        // the surface showed them.
-        let current = fold.conversation_training.revision(person);
-        if seen.is_some_and(|seen| seen != current) {
-            return Err(Error::ConcurrentWrite(STALE));
-        }
-        let machine = crate::identity::read_machine_id_in_txn(self, &txn)?
-            .ok_or_else(|| authority_refused(NO_CARRIER))?;
-        let key = crate::identity::read_machine_signing_key_in_txn(self, &txn)?
-            .ok_or_else(|| authority_refused(NO_CARRIER))?;
+        let checks = self.conversation_training_checks_in_txn(&txn, owner, leave_out, seen)?;
+        ground.refuse_risen_importance(checks.importance)?;
+        let ConversationTrainingChecks {
+            person,
+            fold,
+            current,
+            machine,
+            key,
+            ..
+        } = checks;
         let public_key = key.verifying_key().to_bytes();
-        if !owner_act_signer_admits(fold.machine(machine), &fold.roster, &public_key) {
-            return Err(authority_refused(NO_CARRIER));
-        }
         // FIX 7908: join a frontier wider than one entry names, else today's path.
         let joiner = FrontierSigner::Install(machine, &key);
         let fold = self
@@ -117,7 +164,7 @@ impl Vault {
             current.0,
         );
         let now = self.instant_in_txn(&txn)?.secs();
-        let entry = sign_side_entry(
+        let entry = sign_side_entry_with_owner_proof(
             &fold,
             &key,
             seq,
@@ -128,6 +175,7 @@ impl Vault {
                 leave_out,
             }),
             now,
+            self.owner_proof_signer(&fold, &ground).as_ref(),
         )?;
         let entry_hash = authority_entry_hash(&entry)?;
         let at = TimeRange {
@@ -136,6 +184,9 @@ impl Vault {
         };
         self.put_authority_log_entries_in_txn(&mut txn, &[(entry, at, now)])?;
         let after = self.authority_view_readonly_in_txn(&txn)?;
+        // An opt back in this install cannot prove waits in the fold: the
+        // refusal drops the transaction, so nothing of it is stored.
+        after.refuse_waiting_choice(&entry_hash)?;
         let landed = after
             .conversation_training
             .persons
@@ -147,6 +198,60 @@ impl Vault {
         let view = opt_out_view(&after, person);
         txn.commit()?;
         Ok(view)
+    }
+
+    /// The person's revalidation, the fold, the opt-out rule, `seen`, the
+    /// carrier and the act's importance, on one snapshot. The door runs
+    /// these checks on a read before it asks, and again in its write.
+    ///
+    /// # Errors
+    /// A refusal when the proof is no longer a live person of this vault;
+    /// [`crate::error::RecordError::AuthorityRefused`] ("this vault does not
+    /// allow opt-outs") while the vault does not let people opt out, and when
+    /// this install cannot carry the choice;
+    /// [`Error::ConcurrentWrite`] when `seen` is not the current revision.
+    fn conversation_training_checks_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        owner: &AuthenticatedOwner,
+        leave_out: bool,
+        seen: Option<PolicyRevision>,
+    ) -> Result<ConversationTrainingChecks> {
+        let person = owner.revalidate_person_in_txn(self, txn)?;
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        if !fold.conversation_training_vault.allows_opt_out() {
+            return Err(authority_refused(OPT_OUTS_NOT_ALLOWED));
+        }
+        // Revision integrity (mesh contract §4): the person chose on what
+        // the surface showed them.
+        let current = fold.conversation_training.revision(person);
+        if seen.is_some_and(|seen| seen != current) {
+            return Err(Error::ConcurrentWrite(STALE));
+        }
+        let machine = crate::identity::read_machine_id_in_txn(self, txn)?
+            .ok_or_else(|| authority_refused(NO_CARRIER))?;
+        let key = crate::identity::read_machine_signing_key_in_txn(self, txn)?
+            .ok_or_else(|| authority_refused(NO_CARRIER))?;
+        let public_key = key.verifying_key().to_bytes();
+        if !owner_act_signer_admits(
+            fold.machine(machine),
+            &fold.roster,
+            &public_key,
+            fold.pinned_root.as_ref(),
+        ) {
+            return Err(authority_refused(NO_CARRIER));
+        }
+        let importance = OwnerActImportance::of_direction(
+            fold.conversation_training.direction_of(person, leave_out),
+        );
+        Ok(ConversationTrainingChecks {
+            person,
+            fold,
+            current,
+            machine,
+            key,
+            importance,
+        })
     }
 }
 

@@ -38,8 +38,8 @@ pub use self::parse::parse_constraint_with_backend;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::booking::constraint::{
-    BookingError, CONSTRAINT_SCHEMA_VERSION, ConstraintWeekday, EventTypeKey, LocalMinuteWindow,
-    RankedSlot,
+    BookingCapKind, BookingError, CONSTRAINT_SCHEMA_VERSION, ConstraintWeekday, EventTypeKey,
+    FullDay, LocalMinuteWindow, RankedSlot,
 };
 #[doc(hidden)]
 use oneiron_verb_wire::booking::constraint::{MINUTES_PER_DAY, is_strictly_ascending};
@@ -205,21 +205,6 @@ impl ConstraintObject {
         }
         Ok(())
     }
-
-    /// Canonical JSON bytes. Validation runs first, so a non-canonical object
-    /// can never produce bytes: field order is the declaration order and every
-    /// vector is proven strictly ascending.
-    pub fn canonical_bytes(&self) -> Result<Vec<u8>, BookingError> {
-        self.validate()?;
-        serde_json::to_vec(self).map_err(|error| {
-            BookingError::InvalidConstraint(format!("constraint serialization failed: {error}"))
-        })
-    }
-
-    /// BLAKE3 over [`Self::canonical_bytes`].
-    pub fn canonical_hash(&self) -> Result<[u8; 32], BookingError> {
-        Ok(*blake3::hash(&self.canonical_bytes()?).as_bytes())
-    }
 }
 
 /// What one bounded parse pass concluded. `OffTopic` is a terminal disposition:
@@ -248,41 +233,32 @@ pub struct SolveRequest {
     pub window: TimeRange,
     pub constraint: Option<ConstraintObject>,
     pub visitor_tz: String,
+    /// The meeting length asked, in minutes (BK-VARIABLE-DURATION). `None`:
+    /// the event type's default. A length the event type does not offer
+    /// solves to no slot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_min: Option<u16>,
 }
 
-/// Exact host choice made by routing for one half-open slot. This travels to
-/// confirmation, not to the public availability mask.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-pub struct SlotHostBinding {
-    pub start_utc: u64,
-    pub end_utc: u64,
-    /// One host for Either, every participating host for Both; canonical hex.
-    pub host_refs: Vec<String>,
-    /// IANA zone per host, in the same order as `host_refs`. This travels
-    /// with the solver choice into confirmation, not the public slot mask.
-    pub host_zones: Vec<String>,
+impl SolveRequest {
+    /// The length `slot` names, in whole minutes, for a solve over exactly
+    /// that slot: a hold, a confirm or a move asks its own slot's length. A
+    /// slot of no whole-minute length (or one too long) names none, and its
+    /// solve at the default length cannot offer it.
+    #[must_use]
+    pub fn slot_duration_min(slot: TimeRange) -> Option<u16> {
+        let secs = slot.end.checked_sub(slot.start)?;
+        if secs % 60 != 0 {
+            return None;
+        }
+        u16::try_from(secs / 60).ok()
+    }
 }
 
-/// What the oracle returned. Host bindings belong to this solve, never to a
-/// later configuration lookup. Confirmation refuses a slot without a binding.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct SolveResult {
-    pub slots: Vec<RankedSlot>,
-    pub flex_used: bool,
-    pub host_bindings: Vec<SlotHostBinding>,
-}
-
-/// The final availability mask shape, settled from day one. There is no
-/// artifact wrapper and no migration path: no consumer ships before it.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct SlotMask {
-    pub event_type: EventTypeKey,
-    pub window_start_utc: u64,
-    /// Half-open `[window_start_utc, window_end_utc)`.
-    pub window_end_utc: u64,
-    pub slots: Vec<RankedSlot>,
-    pub flex_used: bool,
-}
+#[doc(hidden)]
+pub use oneiron_records::booking::constraint::{
+    ConstraintSessionCaps, ConstraintSessionState, SlotHostBinding, SlotMask, SolveResult,
+};
 
 /// The deterministic chooser of times and their exact host bindings. Production
 /// wiring selects the implementation; confirmation consumes the same result.
@@ -309,6 +285,21 @@ pub trait SlotOracle: Send + Sync {
         _moving: crate::EntityId,
     ) -> Result<SolveResult, BookingError> {
         self.solve(req)
+    }
+
+    /// [`Self::solve`] with the event type's meeting caps lifted: the owner's
+    /// own hold past a full day, which a confirm records with its reason
+    /// (RULING BK-CAP-OVERRIDE-WHO = B). An oracle that cannot lift the caps
+    /// refuses, so no booking passes a cap it was never solved past.
+    ///
+    /// # Errors
+    ///
+    /// [`BookingError::SlotOracle`] here; as [`Self::solve`] where lifted.
+    fn solve_past_caps(&self, req: &SolveRequest) -> Result<SolveResult, BookingError> {
+        let _ = req;
+        Err(BookingError::SlotOracle(
+            "this slot oracle cannot solve past a meeting cap".to_owned(),
+        ))
     }
 
     /// Re-solves for the existing booking `moving`, kept on `hosts`.
@@ -400,38 +391,6 @@ pub struct ConstraintParseRequest {
     pub free_text: String,
     pub detected_visitor_tz: String,
     pub now_utc: u64,
-}
-
-/// Per-session dials. Caller-supplied values, not a new approval wall.
-pub struct ConstraintSessionCaps {
-    pub max_turns: u16,
-    pub max_model_calls: u16,
-}
-
-/// Per-session counters. Admission is checked BEFORE an LLM request is built or
-/// sent, and before the oracle is called.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ConstraintSessionState {
-    pub turns_used: u16,
-    pub model_calls_used: u16,
-}
-
-impl ConstraintSessionState {
-    pub fn admit_turn(&mut self, caps: &ConstraintSessionCaps) -> Result<(), BookingError> {
-        self.turns_used = admit(self.turns_used, caps.max_turns)?;
-        Ok(())
-    }
-
-    pub fn admit_model_call(&mut self, caps: &ConstraintSessionCaps) -> Result<(), BookingError> {
-        self.model_calls_used = admit(self.model_calls_used, caps.max_model_calls)?;
-        Ok(())
-    }
-}
-
-fn admit(used: u16, cap: u16) -> Result<u16, BookingError> {
-    used.checked_add(1)
-        .filter(|next| *next <= cap)
-        .ok_or(BookingError::SessionCapExhausted)
 }
 
 /// An IANA-shaped identifier: nonempty, of any length (ABC row 75), and

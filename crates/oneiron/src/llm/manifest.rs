@@ -1,4 +1,5 @@
 //! Manifest v2 role bindings, per-vault narrow-only route dials, and verdict floors.
+use super::setting_keys::{RESIDENT_ROUTE, ResidentRoute, slot_item};
 use super::{CallPurpose, LlmRequest, ModelId, ModelLocality};
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{
@@ -12,9 +13,6 @@ use std::{collections::BTreeMap, path::Path};
 /// The vault's pinned model-role manifest. Key: ().
 const MANIFEST: SideTable<(), ModelManifest, LegacyJson> =
     SideTable::new(&side_table::LLM_MANIFEST);
-/// Per-vault narrow-only resident route overrides. Key: ().
-const RESIDENT_ROUTES: SideTable<(), BTreeMap<ModelSlot, ModelLocality>, LegacyJson> =
-    SideTable::new(&side_table::LLM_RESIDENT_ROUTES);
 /// The passing extraction-teacher probe approval behind the pinned teacher. Key: ().
 const TEACHER_APPROVAL: SideTable<(), TeacherProbeApproval, LegacyJson> =
     SideTable::new(&side_table::LLM_EXTRACTION_TEACHER_PROBE);
@@ -260,21 +258,11 @@ impl Vault {
         if let Some(approval) = new_approval {
             TEACHER_APPROVAL.put(&self.store, txn, &(), approval)?;
         }
-        // Each resident narrowing the new pins still admit stays, so a bind on
-        // one slot leaves the owner's other narrowed slots as they were (FIX
-        // 9919). One the new pins widen past, or leave without a model at its
-        // route, clears in this transaction; so does a row that does not
-        // decode, as every write cleared it before.
-        let kept: BTreeMap<_, _> = read_routes(&self.store, txn)
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|(slot, route)| route_admits(manifest, *slot, *route).is_ok())
-            .collect();
-        if kept.is_empty() {
-            RESIDENT_ROUTES.delete(&self.store, txn, &())?;
-        } else {
-            RESIDENT_ROUTES.put(&self.store, txn, &(), &kept)?;
-        }
+        // The owner's resident narrowings (`models.resident_route`) stay as
+        // the owner set them: a bind on one slot leaves the other narrowed
+        // slots as they were (FIX 9919), and one the new pins widen past, or
+        // leave without a model at its route, reads as the slot's pin
+        // (`read_routes`).
         MANIFEST.put(&self.store, txn, &(), manifest)
     }
     pub fn model_manifest(&self) -> Result<Option<ModelManifest>> {
@@ -299,18 +287,30 @@ impl Vault {
             return Ok(fallback.clone());
         };
         let binding = manifest.binding(role)?;
-        let widest = *manifest
-            .routes
-            .get(&binding.slot)
-            .ok_or_else(|| invalid("missing slot route"))?;
-        let route = read_routes(&self.store, txn)?
-            .get(&binding.slot)
-            .copied()
-            .unwrap_or(widest);
-        if route_rank(route) > route_rank(widest) {
-            return Err(invalid("resident route cannot widen manifest pin"));
-        }
-        Ok(model_for_route(binding, route, widest)?.clone())
+        let routes = read_routes(self, txn, &manifest)?;
+        let (model, _) = model_at_effective_route(&manifest, &routes, binding)?;
+        Ok(model.clone())
+    }
+    /// The model the vault's manifest binds `role` to and the slot's
+    /// effective route (the pin, narrowed by any resident route), both read
+    /// in one snapshot: the rung that serves the role answers only with that
+    /// model on that route or a narrower one. `None` when no manifest is set
+    /// or the manifest leaves the role unbound, so the caller keeps its own
+    /// seat for an optional role.
+    pub fn bound_model_for_role(
+        &self,
+        role: ModelRole,
+    ) -> Result<Option<(ModelId, ModelLocality)>> {
+        let txn = self.store.env.read_txn()?;
+        let Some(manifest) = read_manifest(&self.store, &txn)? else {
+            return Ok(None);
+        };
+        let Some(binding) = manifest.roles.get(&role) else {
+            return Ok(None);
+        };
+        let routes = read_routes(self, &txn, &manifest)?;
+        let (model, route) = model_at_effective_route(&manifest, &routes, binding)?;
+        Ok(Some((model.clone(), route)))
     }
     /// Effective per-vault route, including a resident narrowing if present.
     pub fn model_route(&self, slot: ModelSlot) -> Result<Option<ModelLocality>> {
@@ -320,34 +320,19 @@ impl Vault {
         };
         Ok(Some(effective_route(
             &manifest,
-            &read_routes(&self.store, &txn)?,
+            &read_routes(self, &txn, &manifest)?,
             slot,
         )?))
-    }
-    pub fn set_model_route(&self, slot: ModelSlot, route: ModelLocality) -> Result<()> {
-        let mut txn = self.store.env.write_txn()?;
-        self.set_model_route_in_txn(&mut txn, slot, route)?;
-        txn.commit()?;
-        Ok(())
-    }
-    fn set_model_route_in_txn(
-        &self,
-        txn: &mut heed::RwTxn<'_>,
-        slot: ModelSlot,
-        route: ModelLocality,
-    ) -> Result<()> {
-        let manifest =
-            read_manifest(&self.store, txn)?.ok_or_else(|| invalid("manifest not configured"))?;
-        route_admits(&manifest, slot, route)?;
-        let mut routes = read_routes(&self.store, txn)?;
-        routes.insert(slot, route);
-        RESIDENT_ROUTES.put(&self.store, txn, &(), &routes)
     }
 }
 /// Whether `manifest` admits a resident narrowing of `slot` to `route`: no
 /// wider than the slot's pin, and every served role on the slot has a model
 /// at that route.
-fn route_admits(manifest: &ModelManifest, slot: ModelSlot, route: ModelLocality) -> Result<()> {
+pub(super) fn route_admits(
+    manifest: &ModelManifest,
+    slot: ModelSlot,
+    route: ModelLocality,
+) -> Result<()> {
     let pin = *manifest
         .routes
         .get(&slot)
@@ -362,6 +347,23 @@ fn route_admits(manifest: &ModelManifest, slot: ModelSlot, route: ModelLocality)
     }
     Ok(())
 }
+/// `binding`'s model at its slot's effective route, and that route: the
+/// slot's pin, narrowed by a resident route in `routes`, never widened.
+fn model_at_effective_route<'m>(
+    manifest: &ModelManifest,
+    routes: &BTreeMap<ModelSlot, ModelLocality>,
+    binding: &'m ModelBinding,
+) -> Result<(&'m ModelId, ModelLocality)> {
+    let widest = *manifest
+        .routes
+        .get(&binding.slot)
+        .ok_or_else(|| invalid("missing slot route"))?;
+    let route = routes.get(&binding.slot).copied().unwrap_or(widest);
+    if route_rank(route) > route_rank(widest) {
+        return Err(invalid("resident route cannot widen manifest pin"));
+    }
+    Ok((model_for_route(binding, route, widest)?, route))
+}
 pub(super) fn effective_route(
     manifest: &ModelManifest,
     routes: &BTreeMap<ModelSlot, ModelLocality>,
@@ -374,14 +376,28 @@ pub(super) fn effective_route(
     }
     Ok(route)
 }
+/// The owner's resident narrowings in force under `manifest` in `txn`: each
+/// slot's route from the key `models.resident_route` while `manifest` admits
+/// it. One it no longer admits reads as the slot's pin, so no reader sees a
+/// widening or a route with no model.
 pub(super) fn read_routes(
-    store: &Store,
+    vault: &Vault,
     txn: &heed::RoTxn<'_>,
+    manifest: &ModelManifest,
 ) -> Result<BTreeMap<ModelSlot, ModelLocality>> {
-    Ok(RESIDENT_ROUTES.get(store, txn, &())?.unwrap_or_default())
+    let mut routes = BTreeMap::new();
+    for &slot in manifest.routes.keys() {
+        let stored = RESIDENT_ROUTE
+            .read_in_txn(vault, txn, &[], Some(slot_item(slot)))?
+            .value;
+        if let Some(ResidentRoute(route)) = stored
+            && route_admits(manifest, slot, route).is_ok()
+        {
+            routes.insert(slot, route);
+        }
+    }
+    Ok(routes)
 }
-// FIX [LIBTEST-QUARANTINE-LLM-MANIFEST-TESTS]: the lib test target's type check fails here (5 errors: E0063 x5); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

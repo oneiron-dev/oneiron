@@ -568,7 +568,7 @@ rungs = [
             crate::ai_host::test_support::pin_every_role(
                 &vault,
                 "local/second@live",
-                ModelLocality::OwnServer,
+                ModelLocality::ThirdParty,
             );
         }
         let route = runtime

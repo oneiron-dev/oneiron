@@ -69,14 +69,6 @@ pub fn machine_placement_settings(
     }
 }
 
-fn revision_hex(revision: &PolicyRevision) -> String {
-    revision
-        .0
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
-}
-
 impl Vault {
     /// Reads where `world`'s copies live as one switch: whether it is read
     /// only on this install with no sealed copy, whether it syncs sealed to
@@ -104,7 +96,7 @@ impl Vault {
             this_machine_only,
             synced_sealed,
             settings,
-            revision: revision_hex(&revision),
+            revision: oneiron_hex::encode(&revision.0),
         })
     }
 

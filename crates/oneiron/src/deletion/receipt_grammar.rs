@@ -403,9 +403,7 @@ pub(super) fn validate_receipt_verification(value: rmpv::Value) -> Result<()> {
 }
 
 pub(super) fn is_lower_hex(s: &str) -> bool {
-    !s.is_empty()
-        && s.bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    oneiron_hex::is_lower_hex(s, None)
 }
 
 pub(super) fn validate_opaque_uuid(value: &rmpv::Value, reason: &'static str) -> Result<()> {

@@ -4,8 +4,9 @@
 //! erase and the row it scrubs. What this put writes is restricted by its
 //! argument: an [`Erased`] value, made only by the row type's actor-erasure
 //! transform ([`ErasedForm::into_erased`]) or a concrete content-removal
-//! projection, from a row as it was stored, admitted then. Every other put
-//! keeps the wall.
+//! projection, from a row as it was stored, admitted then; or a put fence's
+//! record, all of which but the erase's fixed words the wall admitted
+//! ([`Erased::code_run_fenced`]). Every other put keeps the wall.
 
 use heed::RwTxn;
 

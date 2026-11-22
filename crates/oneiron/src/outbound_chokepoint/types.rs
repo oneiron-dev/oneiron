@@ -152,6 +152,11 @@ pub(crate) struct PreparedEffect {
     /// admission is refused under the writer while the sibling's call may
     /// have gone.
     pub(crate) exclusive_route: Option<AttemptId>,
+    /// The attempt whose row id names this send's provider-native key, when
+    /// that is not its own (`OutboundDispatchRequest::idempotency_identity_ref`):
+    /// the admitted row keeps it (`IntentLedgerRecord::idempotency_attempt_id`).
+    /// `None` for every other effect.
+    pub(crate) idempotency_attempt: Option<AttemptId>,
 }
 
 /// A second actor one external mutation speaks for (OF-427): the verified

@@ -10,7 +10,17 @@ pub struct PublicBookingAuthority {
     )]
     pub page_ref: EntityId,
     pub publication: BookingPagePublication,
+    /// The personal link the attempt came through, by its `link_ref`
+    /// (BK-PERSONAL-LINKS). Every recheck then also needs that link live, so
+    /// a link ended while the attempt ran (revoked, or "not you?") stops it.
+    /// `None` for a page token, and absent from such a snapshot's JSON.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub personal_link_ref: Option<String>,
 }
+
+/// The refusal of an attempt whose personal link ended while it ran: the
+/// public routes answer it as the one 404 of a dead link.
+pub const PERSONAL_LINK_ENDED: &str = "personal booking link ended";
 
 fn serialize_page<S: serde::Serializer>(
     id: &EntityId,
@@ -47,7 +57,38 @@ impl PublicBookingAuthority {
                 "public booking authority ended".to_owned(),
             ));
         }
+        if let Some(link_ref) = &self.personal_link_ref
+            && !crate::booking::personal_link::personal_link_live_in_txn(
+                vault,
+                txn,
+                link_ref,
+                self.page_ref,
+            )?
+        {
+            return Err(BookingError::InvalidConstraint(
+                PERSONAL_LINK_ENDED.to_owned(),
+            ));
+        }
         Ok(())
+    }
+
+    /// [`Self::recheck_in_txn`] in one read of its own: the page's live
+    /// publication and, through a personal link, that link, both from the
+    /// same snapshot (BK-PERSONAL-LINKS). A slot read's final check runs
+    /// this, so a link ended while its slots were read or solved answers
+    /// none.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::recheck_in_txn`], and [`BookingError::Surface`] when the
+    /// read does not open.
+    pub fn recheck(&self, vault: &Vault, now: u64) -> std::result::Result<(), BookingError> {
+        let txn = vault
+            .store
+            .env
+            .read_txn()
+            .map_err(|error| BookingError::Surface(crate::Error::from(error).to_string()))?;
+        self.recheck_in_txn(vault, &txn, now)
     }
 
     pub(crate) fn check_in_txn(

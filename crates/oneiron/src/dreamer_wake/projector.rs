@@ -106,17 +106,10 @@ const RIDER_OF: SideTable<(EntityId, TurnKey), (), Raw> =
 const RIDES: SideTable<EntityId, TurnKey, Named> =
     SideTable::new(&side_table::DREAMER_PROJECTION_RIDES);
 
-/// A TURN's own temporal key, `(learned_at, id)`.
-type TurnKey = (u64, EntityId);
-
-/// The projector's policy row.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ProjectorPolicy {
-    /// New statements a due window needs before its wake writes. Zero writes
-    /// on every due wake. Above one, a window with fewer is consumed unread.
-    pub min_new_statements: u32,
-}
+#[doc(hidden)]
+pub use oneiron_records::dreamer_wake::projector::ProjectorPolicy;
+#[doc(hidden)]
+use oneiron_records::dreamer_wake::projector::TurnKey;
 
 /// The latest turn queued, vault-wide.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -261,6 +254,24 @@ impl Vault {
             policy,
         )
     }
+}
+
+/// Lands one archived DREAMER_PROJECTOR_POLICY row live: the singleton policy has no value
+/// bounds (zero is valid), so canonical decode plus the archive seam is the whole check.
+pub(super) fn land_archived_dreamer_projector_policy_row_in_txn(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &crate::batch::export::OwnerArchiveRestorePermit,
+    row: &crate::batch::export::ArchiveRetainedSideRow,
+) -> crate::Result<crate::batch::export::archive_side_install::ArchivedSideRowOutcome> {
+    use crate::batch::export::archive_side_install::{
+        ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+    };
+    let (key, _) = match decode_archived_row(&POLICY, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    install_archived_row(&POLICY, vault, txn, permit, &key, row)
 }
 
 /// Compares a due window's material with the held turn, in the wake's

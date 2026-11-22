@@ -243,19 +243,12 @@ fn be_u64(raw: &[u8]) -> Result<u64> {
 }
 
 pub(super) fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    oneiron_hex::encode(bytes)
 }
 
 /// `N` bytes spelled in lower-case hex, and nothing else.
 pub(super) fn unhex<const N: usize>(text: &str) -> Option<[u8; N]> {
-    if text.len() != N * 2 || !text.bytes().all(|c| matches!(c, b'0'..=b'9' | b'a'..=b'f')) {
-        return None;
-    }
-    let mut out = [0u8; N];
-    for (byte, pair) in out.iter_mut().zip(text.as_bytes().chunks(2)) {
-        *byte = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
-    }
-    Some(out)
+    oneiron_hex::decode::<N>(text)
 }
 
 /// A generation as the wire and the home's keys spell it: 48 lower-case hex

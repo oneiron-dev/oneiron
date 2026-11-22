@@ -78,19 +78,12 @@ pub(super) fn pins_mut(value: &mut Value, visit: &mut impl FnMut(&mut Value)) {
 }
 
 pub(super) fn hex(bytes: &[u8]) -> String {
-    use std::fmt::Write as _;
-    bytes.iter().fold(String::new(), |mut out, b| {
-        let _ = write!(out, "{b:02x}");
-        out
-    })
+    oneiron_hex::encode(bytes)
 }
 
-pub(super) fn unhex(text: &str) -> Option<Vec<u8>> {
+pub(crate) fn unhex(text: &str) -> Option<Vec<u8>> {
     if text.len() % 2 != 0 {
         return None;
     }
-    (0..text.len())
-        .step_by(2)
-        .map(|at| u8::from_str_radix(text.get(at..at + 2)?, 16).ok())
-        .collect()
+    oneiron_hex::decode_vec_any_case(text)
 }

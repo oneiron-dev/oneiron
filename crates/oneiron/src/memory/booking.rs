@@ -3,21 +3,15 @@
 use super::{Memory, MemoryError, MemoryResult};
 use crate::EntityId;
 use crate::booking::emergency_reschedule::{
-    self as emergency, EmergencyActionPolicy, EmergencyBatchPlan, EmergencyItem, EmergencyPlan,
+    self as emergency, EmergencyBatchPlan, EmergencyExecution, EmergencyPlan,
     EmergencyRescheduleRequest, OwnerInstructionRecord,
 };
 use crate::booking::{BookingLifecycleConsumerInput, CalendarRevision, OpaqueLifecycleToken};
-use crate::calendar::query::{CalendarRangeDto, CalendarSel};
+use crate::calendar::query::CalendarSel;
 use crate::outbound::OutboundExecutionSink;
 
-/// The bound Memory actor is the owner; an input never names a replacement actor.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct EmergencyInstructionInput {
-    pub affected_window: CalendarRangeDto,
-    pub reason: String,
-    pub action_policy: EmergencyActionPolicy,
-    pub recorded_at: u64,
-}
+#[doc(hidden)]
+pub use oneiron_records::memory::booking::EmergencyInstructionInput;
 
 pub(crate) fn booking_error(error: crate::booking::BookingError) -> MemoryError {
     use crate::booking::BookingError;
@@ -42,6 +36,52 @@ pub(crate) fn booking_error(error: crate::booking::BookingError) -> MemoryError 
 }
 
 impl Memory<'_> {
+    /// Mints a personal link to `page_ref` for `recipient`, as this actor
+    /// (BK-PERSONAL-LINKS), on the vault's clock. The raw token is in the
+    /// return value only.
+    ///
+    /// # Errors
+    ///
+    /// A bad request for an unusable recipient, an unpublished page or an
+    /// actor without live authority; an internal error for storage.
+    pub fn mint_personal_booking_link(
+        &self,
+        page_ref: EntityId,
+        recipient: &crate::booking::PersonalLinkRecipient,
+    ) -> MemoryResult<crate::booking::PersonalLinkMint> {
+        crate::booking::mint_personal_booking_link(
+            self,
+            page_ref,
+            recipient,
+            self.vault.now_recorded_at(),
+        )
+        .map_err(booking_error)
+    }
+
+    /// Ends the personal link `link_ref` names, as its minter or an owner.
+    /// `false` when it had already ended.
+    ///
+    /// # Errors
+    ///
+    /// A bad request for an unknown link or an actor who may not end it; an
+    /// internal error for storage.
+    pub fn revoke_personal_booking_link(&self, link_ref: &str) -> MemoryResult<bool> {
+        crate::booking::revoke_personal_booking_link(self, link_ref, self.vault.now_recorded_at())
+            .map_err(booking_error)
+    }
+
+    /// Every personal link minted to `page_ref`, live and ended.
+    ///
+    /// # Errors
+    ///
+    /// An internal error for storage.
+    pub fn personal_booking_links(
+        &self,
+        page_ref: EntityId,
+    ) -> MemoryResult<Vec<crate::booking::PersonalBookingLink>> {
+        crate::booking::personal_booking_links(self.vault, page_ref).map_err(booking_error)
+    }
+
     /// Logs the single lane-owned stamp under the existing owner-verb checks.
     /// Actor validity and owner authority are checked in the stamp transaction.
     pub fn record_emergency_instruction(
@@ -67,12 +107,7 @@ impl Memory<'_> {
             authority: record.clone(),
         };
         self.with_verified_actor_write_txn(|txn| {
-            super::support::verify_deletion_authority_in_txn(
-                self.vault,
-                &*txn,
-                self.actor,
-                self.actor_class,
-            )?;
+            self.verify_own_deletion_authority_in(&*txn)?;
             emergency::append_instruction_in_txn(self.vault, txn, &request).map_err(booking_error)
         })?;
         emergency::verify_logged_owner_instruction(self.vault, &request).map_err(booking_error)?;
@@ -91,12 +126,7 @@ impl Memory<'_> {
             .env
             .read_txn()
             .map_err(crate::Error::from)?;
-        super::support::verify_deletion_authority_in_txn(
-            self.vault,
-            &txn,
-            self.actor,
-            self.actor_class,
-        )
+        self.verify_own_deletion_authority_in(&txn)
     }
 
     pub fn plan_emergency_reschedule(
@@ -117,7 +147,7 @@ impl Memory<'_> {
         calendars: &[(EntityId, Vec<CalendarSel>)],
         input: &BookingLifecycleConsumerInput,
         sink: &mut impl OutboundExecutionSink,
-    ) -> MemoryResult<EmergencyItem> {
+    ) -> MemoryResult<EmergencyExecution> {
         self.verify_emergency_owner(request)?;
         emergency::execute_emergency_plan(self.vault, request, plan, calendars, input, sink)
             .map_err(booking_error)

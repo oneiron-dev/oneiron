@@ -25,11 +25,10 @@ use oneiron_model::llm::{CacheCallUsage, Scope, ScopeResource};
 
 use super::log::{Log, quote_in};
 
-/// A session's identity: the Dreamer authority and the read scope it reads
-/// under, hashed.
-pub(crate) type SessionKey = [u8; 32];
-/// A result row's key: the attempt that wrote it and the session's sequence.
-pub(crate) type ResultKey = (AttemptId, u64);
+#[doc(hidden)]
+pub(crate) use oneiron_records::dreamer_wake::follower::state::{
+    CacheResidency, ResultKey, SessionKey,
+};
 
 pub(super) const STATE: SideTable<SessionKey, FollowerState, Named> =
     SideTable::new(&side_table::DREAMER_FOLLOWER_STATE);
@@ -163,14 +162,6 @@ pub(super) fn frame_texts(frame: &FollowerFrame) -> Result<Vec<String>> {
     serde_json::from_str::<FrameView>(&frame.bytes)
         .map(|view| view.chunks)
         .map_err(|_| Error::CorruptedIndex("follower frame bytes"))
-}
-
-/// What a backend may say of its cache's hold on a prefix. Nothing at this
-/// head attests residency, so every record reads Unknown.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum CacheResidency {
-    Unknown,
 }
 
 /// What one physical model call reported (FIX 6567): its cache records, as

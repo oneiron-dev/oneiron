@@ -99,6 +99,89 @@ pub fn check_limit_nonzero(limit: usize) -> Result<(), MemoryError> {
     Ok(())
 }
 
+/// The rows one page of a list serves, after the list's limit rule.
+///
+/// A paged list resolves the `limit` it is asked for through one of five
+/// rules, each the rule some lists already have:
+/// [`page_limit_zero_refused`], [`page_limit_zero_as_one`],
+/// [`page_limit_zero_as_default`], [`page_limit_zero_as_empty`] and
+/// [`page_limit_absent_as_all`]. Each takes the list's own maximum, and the
+/// first four its default, which an absent ask is served. The rows are cut
+/// to the maximum; a list with no ceiling passes its integer type's `MAX`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PageLimit<T> {
+    /// The rows the page serves.
+    pub rows: T,
+    /// Whether the ask was over the list's maximum and was cut to it: what
+    /// a page's `limit_clamped` reports.
+    pub clamped: bool,
+}
+
+impl<T: Copy + Ord> PageLimit<T> {
+    fn at_most(asked: T, max: T) -> Self {
+        Self {
+            rows: asked.min(max),
+            clamped: asked > max,
+        }
+    }
+}
+
+/// A zero ask under [`page_limit_zero_refused`]. The list maps it to its
+/// own error, so the text a client reads stays the list's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ZeroLimitRefused;
+
+/// The refusing rule: a zero ask is refused, and any other ask is served
+/// at most `max` rows.
+pub fn page_limit_zero_refused<T: Copy + Ord + From<u8>>(
+    asked: Option<T>,
+    default: T,
+    max: T,
+) -> Result<PageLimit<T>, ZeroLimitRefused> {
+    let asked = asked.unwrap_or(default);
+    if asked == T::from(0) {
+        return Err(ZeroLimitRefused);
+    }
+    Ok(PageLimit::at_most(asked, max))
+}
+
+/// A zero ask is served one row, as `limit.clamp(1, max)` serves it.
+pub fn page_limit_zero_as_one<T: Copy + Ord + From<u8>>(
+    asked: Option<T>,
+    default: T,
+    max: T,
+) -> PageLimit<T> {
+    PageLimit::at_most(asked.unwrap_or(default).max(T::from(1)), max)
+}
+
+/// A zero ask is served the list's default, as an absent one is.
+pub fn page_limit_zero_as_default<T: Copy + Ord + From<u8>>(
+    asked: Option<T>,
+    default: T,
+    max: T,
+) -> PageLimit<T> {
+    let asked = match asked {
+        Some(asked) if asked != T::from(0) => asked,
+        _ => default,
+    };
+    PageLimit::at_most(asked, max)
+}
+
+/// A zero ask is served an empty page.
+pub fn page_limit_zero_as_empty<T: Copy + Ord + From<u8>>(
+    asked: Option<T>,
+    default: T,
+    max: T,
+) -> PageLimit<T> {
+    PageLimit::at_most(asked.unwrap_or(default), max)
+}
+
+/// An absent ask is served every row (`None`); a zero ask is served an
+/// empty page, and any other at most `max` rows.
+pub fn page_limit_absent_as_all<T: Copy + Ord>(asked: Option<T>, max: T) -> Option<PageLimit<T>> {
+    asked.map(|asked| PageLimit::at_most(asked, max))
+}
+
 /// Rejects an over-large entity/claim/message body.
 ///
 /// `label` names the field in the caller's own vocabulary so the message is

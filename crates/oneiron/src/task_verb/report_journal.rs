@@ -30,11 +30,8 @@ use super::task_actor::{TaskActor, names_no_actor};
 
 /// Domain of a journaled request's digest.
 const REQUEST_DIGEST_DOMAIN: &[u8] = b"oneiron.tasks.report.request.v1";
-/// Domain of the key digest one try's entry is stored under.
-const KEY_DIGEST_DOMAIN: &[u8] = b"oneiron.tasks.report.key.v1";
-
-/// The try, its count, and a digest of who reported what key on which TASK.
-type ReportKey = ([u8; 16], u64, [u8; 32]);
+#[doc(hidden)]
+use oneiron_records::task_verb::report_journal::{KEY_DIGEST_DOMAIN, ReportKey, digest};
 
 /// Try and key → the request first journaled under them, and its receipt.
 const REPORTS: SideTable<ReportKey, ReportEntry, Named> =
@@ -60,15 +57,6 @@ pub(super) struct ReportIdentity {
 struct ReportEntry {
     identity: ReportIdentity,
     receipt: TaskCallReceipt,
-}
-
-fn digest(domain: &[u8], value: &impl Serialize) -> MemoryResult<[u8; 32]> {
-    let bytes = rmp_serde::to_vec_named(value)
-        .map_err(|_| MemoryError::bad_request("the report does not encode"))?;
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(domain);
-    hasher.update(&bytes);
-    Ok(*hasher.finalize().as_bytes())
 }
 
 /// The journal identity of `report` by `actor` under `qualified_key`: the try

@@ -16,6 +16,7 @@ use super::decision::{
 };
 use super::registry::ModelWireFormat;
 use super::seat::{DescriptionSource, SeatLearningContext};
+use super::setting_keys::DESCRIPTION_POLICY;
 use super::{
     BudgetGuard, CallPurpose, ContentPart, DurableStepContext, DurableStepResult, LlmBackend,
     LlmMessage, LlmMessageRole, LlmRequest, ModelId, ModelLocality, ModelTierRef, ReasoningEffort,
@@ -38,9 +39,6 @@ mod readings;
 use readings::resolve;
 pub use readings::{DescriptionFitnessReadings, DescriptionGrading};
 
-const POLICY: SideTable<(), DescriptionPolicy, LegacyJson> =
-    SideTable::new(&side_table::LLM_DESCRIPTION_POLICY);
-
 const MEASUREMENTS: SideTable<(), BTreeMap<ModelId, MeasuredDescription>, LegacyJson> =
     SideTable::new(&side_table::LLM_DESCRIPTION_MEASUREMENTS);
 
@@ -54,9 +52,10 @@ pub(crate) fn llm_routed_seat_accepts_masked(bytes: &[u8]) -> bool {
     crate::side_table::decodes::<RoutedSeat, LegacyJson>(bytes)
 }
 
-fn invalid(reason: impl Into<String>) -> Error {
-    Error::InvalidConfig(reason.into())
-}
+#[doc(hidden)]
+pub use oneiron_records::llm::routing::{DescriptionReask, ReaskTrigger, SeatSettings};
+#[doc(hidden)]
+use oneiron_records::llm::routing::{apply_controls, invalid, validate_overrides};
 
 impl ModelDescription {
     /// The first available line in the seat policy's evidence order.
@@ -104,16 +103,6 @@ impl DescriptionPolicy {
         }
         Ok(())
     }
-}
-
-/// Overrides filter the description candidates; they never bypass judgment.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SeatSettings {
-    pub allowed_models: Option<Vec<ModelId>>,
-    pub effort: Option<ReasoningEffort>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub inference_overrides: BTreeMap<String, serde_json::Value>,
 }
 
 /// Inputs fixed when a generative seat is born.
@@ -220,24 +209,6 @@ fn verdict_messages(instructions: Option<&str>) -> Result<Vec<LlmMessage>> {
         .collect()
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ReaskTrigger {
-    RevisionChanged,
-    MeasuredContradiction,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct DescriptionReask {
-    pub identity: String,
-    pub owner_model: ModelId,
-    pub observed_model: ModelId,
-    pub trigger: ReaskTrigger,
-    #[serde(default)]
-    pub acknowledged: bool,
-}
-
 fn seat_key(id: &str) -> Result<Vec<u8>> {
     if id.is_empty()
         || id.len() > 128
@@ -261,157 +232,14 @@ pub fn purpose_key(purpose: &CallPurpose) -> String {
             .to_owned(),
     }
 }
-fn validate_overrides(overrides: &BTreeMap<String, serde_json::Value>) -> Result<()> {
-    if overrides.keys().any(|key| {
-        key.trim().is_empty()
-            || matches!(
-                key.as_str(),
-                "reasoning_effort"
-                    | "reasoning"
-                    | "thinking"
-                    | "model"
-                    | "messages"
-                    | "stream"
-                    | "response_format"
-                    | "tools"
-                    | "provider_options"
-                    | "output_config"
-                    | "system"
-                    | "cachedContent"
-                    | "thinkingConfig"
-                    | "thinking_config"
-            )
-    }) {
-        return Err(invalid("invalid routed inference override"));
-    }
-    Ok(())
-}
-
-/// The Gemini adapter spells these five public params differently on the
-/// wire. Seat overrides compare and write the effective wire field, not the
-/// caller's spelling, so a later alias cannot win during adapter iteration.
-fn gemini_wire_field(key: &str) -> &str {
-    match key {
-        "max_tokens" => "maxOutputTokens",
-        "top_p" => "topP",
-        "top_k" => "topK",
-        "presence_penalty" => "presencePenalty",
-        "frequency_penalty" => "frequencyPenalty",
-        other => other,
-    }
-}
-
-/// Reject fields that would win after the adapter merges provider options.
-/// Unknown provider-specific fields remain available, but cannot shadow a
-/// routed inference setting or carry a competing reasoning dial.
-fn apply_controls(
-    request: &mut LlmRequest,
-    wire: ModelWireFormat,
-    effort: ReasoningEffort,
-    overrides: &BTreeMap<String, serde_json::Value>,
-) -> Result<()> {
-    validate_overrides(overrides)?;
-    let mut resolved_overrides = BTreeMap::new();
-    for (key, value) in overrides {
-        let wire_key = if wire == ModelWireFormat::Gemini {
-            gemini_wire_field(key)
-        } else {
-            key
-        };
-        if resolved_overrides
-            .insert(wire_key.to_owned(), value.clone())
-            .is_some()
-        {
-            return Err(invalid("duplicate routed provider parameter"));
-        }
-    }
-    for options in request.provider_options.values() {
-        let fields = options
-            .as_object()
-            .ok_or_else(|| invalid("invalid provider options"))?;
-        if fields.keys().any(|key| {
-            resolved_overrides.contains_key(if wire == ModelWireFormat::Gemini {
-                gemini_wire_field(key)
-            } else {
-                key
-            }) || matches!(
-                key.as_str(),
-                "reasoning_effort"
-                    | "reasoning"
-                    | "thinking"
-                    | "thinkingConfig"
-                    | "thinking_config"
-                    | "output_config"
-                    | "model"
-            )
-        }) {
-            return Err(invalid("provider options shadow routed inference controls"));
-        }
-    }
-    // The Anthropic adapter merges output_config into its final wire JSON.
-    // Preserve independent format/limits, but never the call's effort.
-    let mut output_config = match request.params.get("output_config") {
-        Some(serde_json::Value::Object(fields)) if wire == ModelWireFormat::AnthropicMessages => {
-            Some(fields.clone())
-        }
-        Some(_) => return Err(invalid("invalid routed output_config")),
-        None => None,
-    };
-    // Gemini has no effort enum mapping without an owner-supplied budget.
-    // Refuse an unsupported non-None setting instead of misreporting it.
-    if effort != ReasoningEffort::None && wire == ModelWireFormat::Gemini {
-        return Err(invalid(
-            "Gemini effort requires an explicit provider policy",
-        ));
-    }
-    request.params.retain(|key, _| {
-        let wire_key = if wire == ModelWireFormat::Gemini {
-            gemini_wire_field(key)
-        } else {
-            key
-        };
-        !resolved_overrides.contains_key(wire_key)
-    });
-    request.params.extend(resolved_overrides);
-    request.params.remove("reasoning");
-    request.params.remove("thinking");
-    request.params.remove("thinkingConfig");
-    request.params.remove("thinking_config");
-    request.params.remove("reasoning_effort");
-    request.params.remove("output_config");
-    if let Some(fields) = output_config.as_mut() {
-        fields.remove("effort");
-    }
-    if effort != ReasoningEffort::None {
-        if wire == ModelWireFormat::AnthropicMessages {
-            output_config
-                .get_or_insert_with(serde_json::Map::new)
-                .insert("effort".into(), serde_json::json!(effort));
-        } else {
-            request
-                .params
-                .insert("reasoning_effort".into(), serde_json::json!(effort));
-        }
-    }
-    if let Some(fields) = output_config.filter(|fields| !fields.is_empty()) {
-        request
-            .params
-            .insert("output_config".into(), serde_json::Value::Object(fields));
-    }
-    Ok(())
-}
 impl Vault {
-    pub fn set_description_policy(&self, policy: &DescriptionPolicy) -> Result<()> {
-        policy.validate()?;
-        let mut txn = self.store.env.write_txn()?;
-        POLICY.put(self, &mut txn, &(), policy)?;
-        txn.commit()?;
-        Ok(())
-    }
+    /// The vault's description policy, the key `models.description_policy`, or `None` while
+    /// none is set. The owner sets it through `vault.settings.set`.
     pub fn description_policy(&self) -> Result<Option<DescriptionPolicy>> {
         let txn = self.store.env.read_txn()?;
-        POLICY
-            .get(&self.store, &txn, &())?
+        DESCRIPTION_POLICY
+            .read_in_txn(self, &txn, &[], None)?
+            .value
             .map(|policy| {
                 policy.validate()?;
                 Ok(policy)
@@ -436,7 +264,7 @@ impl Vault {
     /// per pinned owner line even when the measured score later fluctuates.
     pub fn check_description_drift(&self) -> Result<Vec<DescriptionReask>> {
         let mut txn = self.store.env.write_txn()?;
-        let Some(policy) = POLICY.get(&self.store, &txn, &())? else {
+        let Some(policy) = DESCRIPTION_POLICY.read_in_txn(self, &txn, &[], None)?.value else {
             return Ok(vec![]);
         };
         policy.validate()?;
@@ -540,10 +368,10 @@ impl Vault {
         } = birth;
         seat_key(id)?;
         validate_overrides(&settings.inference_overrides)?;
-        let (policy_bytes, measurement_bytes, existing) = {
+        let (policy_read, measurement_bytes, existing) = {
             let txn = self.store.env.read_txn()?;
             (
-                POLICY.get_bytes(&self.store, &txn, &())?,
+                DESCRIPTION_POLICY.read_in_txn(self, &txn, &[], None)?,
                 MEASUREMENTS.get_bytes(&self.store, &txn, &())?,
                 SEATS.get(&self.store, &txn, &id.to_owned())?,
             )
@@ -551,9 +379,10 @@ impl Vault {
         if let Some(seat) = existing {
             return Ok(seat);
         }
-        let policy_bytes =
-            policy_bytes.ok_or_else(|| invalid("description policy not configured"))?;
-        let policy: DescriptionPolicy = POLICY.decode_value(&policy_bytes)?;
+        let policy = policy_read
+            .value
+            .clone()
+            .ok_or_else(|| invalid("description policy not configured"))?;
         policy.validate()?;
         let measurements = measurement_bytes
             .as_deref()
@@ -603,7 +432,7 @@ impl Vault {
         if let Some(seat) = SEATS.get(&self.store, &txn, &id.to_owned())? {
             return Ok(seat);
         }
-        if POLICY.get_bytes(&self.store, &txn, &())?.as_deref() != Some(policy_bytes.as_slice())
+        if DESCRIPTION_POLICY.read_in_txn(self, &txn, &[], None)? != policy_read
             || MEASUREMENTS.get_bytes(&self.store, &txn, &())? != measurement_bytes
         {
             return Err(invalid("description evidence changed during seat birth"));

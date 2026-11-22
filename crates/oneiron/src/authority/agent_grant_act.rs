@@ -30,16 +30,18 @@ use super::*;
 
 /// This install cannot carry the owner's act: it has no machine identity or
 /// install key, or no live profile of it stands under that key. No roster
-/// key, the host root included, carries an owner act (FIX 2222).
-const NO_CARRIER: &str = "this install has no live machine profile in the vault's roster to carry \
+/// key, the host root included, carries an owner act (FIX 2222). Each
+/// `AGENT_GRANT_ACT_*` reason is public so a transport can name its refusal
+/// (FIX-LIST 23279).
+pub const AGENT_GRANT_ACT_NO_CARRIER: &str = "this install has no live machine profile in the vault's roster to carry \
                           the owner's agent Grant act";
 /// The act would name more rows than one authority entry may: the log's
 /// encoding bound, never a possession test.
-const TOO_MANY_HEADS: &str = "the authority log has more concurrent heads than one agent Grant act \
+pub const AGENT_GRANT_ACT_TOO_MANY_HEADS: &str = "the authority log has more concurrent heads than one agent Grant act \
                               may name; nothing was written";
 /// The fold did not count the signed act, so the caller's transaction must
 /// not commit the Grant change it records.
-const NOT_COUNTED: &str = "the authority fold did not count the owner's agent Grant act; nothing \
+pub const AGENT_GRANT_ACT_NOT_COUNTED: &str = "the authority fold did not count the owner's agent Grant act; nothing \
                            was written";
 
 /// The owner's act on an agent's Grant, as the mint and revoke doors pass it.
@@ -143,7 +145,7 @@ impl AgentGrantActRef {
 /// The `AgentGrantAct` transition, after the shape, signature, retired,
 /// sequence-floor, parent-merge and vault checks and before any roster
 /// check: its signer is a machine's install key, never a roster key (FIX
-/// 2222), and some chain of the machine must name the key. The shape check
+/// 2222), and the machine's roster chain must name the key. The shape check
 /// already refused an agent's act, an answered ask and a nonzero `seen`.
 /// It moves no fold state. Whether the one carrier rule admits the machine
 /// and whether its owner is live are the writer's to refuse; a record either
@@ -157,9 +159,6 @@ pub(super) fn apply_agent_grant_act(
     hash: AuthorityEntryHash,
     (pin, counted): (Option<&PinnedRoot>, InstallCounted<'_>),
 ) -> std::result::Result<(), AuthorityFoldIssue> {
-    if !entry.cosigns.is_empty() {
-        return Err(AuthorityFoldIssue::InvalidEntry(hash));
-    }
     let signer = entry.signer_key();
     let AuthorityKey::Ed25519(key) = signer else {
         return Err(AuthorityFoldIssue::SignerNotInAncestry(hash));
@@ -189,7 +188,10 @@ impl Vault {
     ///
     /// The act names the main-log heads alone, as every owner act does, and
     /// returns only once the fold in `txn` counted it. Nothing commits here:
-    /// the caller's commit lands the act and the Grant change together.
+    /// the caller's commit lands the act and the Grant change together. The
+    /// owner's own act, by an undelegated proof, carries the owner key's
+    /// proof this install holds, and so do its joins
+    /// ([`Vault::owner_act_proof_signer`]).
     ///
     /// # Errors
     /// An owner refusal when the proof is no longer the vault's live owner;
@@ -204,17 +206,24 @@ impl Vault {
         act: AgentGrantAct,
     ) -> Result<AgentGrantActRef> {
         let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+        let owner_authored = owner.owner_answer_in_txn(self, txn)?;
         let fold = self.authority_view_readonly_in_txn(txn)?;
         let machine = crate::identity::read_machine_id_in_txn(self, txn)?
-            .ok_or_else(|| authority_refused(NO_CARRIER))?;
+            .ok_or_else(|| authority_refused(AGENT_GRANT_ACT_NO_CARRIER))?;
         let key = crate::identity::read_machine_signing_key_in_txn(self, txn)?
-            .ok_or_else(|| authority_refused(NO_CARRIER))?;
+            .ok_or_else(|| authority_refused(AGENT_GRANT_ACT_NO_CARRIER))?;
         let public_key = key.verifying_key().to_bytes();
-        if !super::owner_act_signer_admits(fold.machine(machine), &fold.roster, &public_key) {
-            return Err(authority_refused(NO_CARRIER));
+        if !super::owner_act_signer_admits(
+            fold.machine(machine),
+            &fold.roster,
+            &public_key,
+            fold.pinned_root.as_ref(),
+        ) {
+            return Err(authority_refused(AGENT_GRANT_ACT_NO_CARRIER));
         }
+        let proof = self.owner_act_proof_signer(&fold, owner_authored.as_ref());
         // FIX 7908: join a frontier wider than one entry names, else today's path.
-        let joiner = FrontierSigner::Install(machine, &key);
+        let joiner = FrontierSigner::install(machine, &key, proof.as_ref());
         let fold = self
             .prepare_authority_frontier_in_txn(txn, &fold, joiner, MAX_PARENTS)?
             .unwrap_or(fold);
@@ -222,7 +231,7 @@ impl Vault {
         let seq = next_sequence(&fold, &signer)?;
         let parents = fold.append_heads.clone();
         if parents.len() > MAX_PARENTS {
-            return Err(authority_refused(TOO_MANY_HEADS));
+            return Err(authority_refused(AGENT_GRANT_ACT_TOO_MANY_HEADS));
         }
         let (grant, change) = act.into_change();
         let record = AgentGrantActRecord {
@@ -238,13 +247,14 @@ impl Vault {
             change,
         };
         let now = self.instant_in_txn(txn)?.secs();
-        let entry = sign_side_entry(
+        let entry = sign_side_entry_with_owner_proof(
             &fold,
             &key,
             seq,
             parents,
             AuthorityOp::AgentGrantAct(record),
             now,
+            proof.as_ref(),
         )?;
         let entry_hash = authority_entry_hash(&entry)?;
         let at = TimeRange {
@@ -256,7 +266,7 @@ impl Vault {
         if !after.valid_entries.contains(&entry_hash)
             || after.install.held_back.contains(&entry_hash)
         {
-            return Err(authority_refused(NOT_COUNTED));
+            return Err(authority_refused(AGENT_GRANT_ACT_NOT_COUNTED));
         }
         Ok(AgentGrantActRef(entry_hash))
     }

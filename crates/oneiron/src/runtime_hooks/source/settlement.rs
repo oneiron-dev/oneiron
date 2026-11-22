@@ -9,6 +9,7 @@
 use std::collections::BTreeSet;
 use std::ops::Bound;
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use serde::{Deserialize, Serialize};
 
 use crate::ports::EntityStoreRead;
@@ -54,14 +55,37 @@ pub(in crate::runtime_hooks) struct SettledRow {
 }
 
 impl SettledRow {
+    /// The settlement's input hash: the proposal, the outcome and the kind,
+    /// the settler and the body hash. The run key starts with it, so it
+    /// keeps its bytes (K, PLAN-UC-04 stage 6.3).
     fn input_hash(&self) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_derive_key("oneiron.hook-settlement.v1");
-        hasher.update(self.proposal.as_bytes());
-        hasher.update(&[self.outcome as u8, self.kind as u8]);
-        hasher.update(self.settled_by.as_bytes());
-        hasher.update(&self.body_hash.unwrap_or_default());
-        *hasher.finalize().as_bytes()
+        LegacyDigest::new(purposes::runtime_hooks::SETTLEMENT_INPUT)
+            .raw(self.proposal.as_bytes())
+            .raw(&[self.outcome as u8, self.kind as u8])
+            .raw(self.settled_by.as_bytes())
+            .raw(&self.body_hash.unwrap_or_default())
+            .finish()
     }
+}
+
+/// The input hash of `proposal`'s settlement.
+#[cfg(oneiron_test_support)]
+pub(crate) fn settlement_input_hash_for_test(
+    proposal: EntityId,
+    outcome: SettledOutcome,
+    settled_by: EntityId,
+    kind: SettlementKind,
+    body_hash: Option<[u8; 32]>,
+) -> [u8; 32] {
+    SettledRow {
+        proposal,
+        outcome,
+        settled_by,
+        kind,
+        body_hash,
+        recorded_at: 0,
+    }
+    .input_hash()
 }
 
 /// Appends one settlement to the feed, in the settling door's transaction.

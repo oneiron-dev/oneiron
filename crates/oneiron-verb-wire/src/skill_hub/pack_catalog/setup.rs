@@ -1,6 +1,7 @@
 //! Moved from `crates/oneiron/src/skill_hub/pack_catalog/setup.rs` (lib split W2: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+use oneiron_contracts::register::Register;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -55,8 +56,11 @@ pub struct PackSetupConnection {
 }
 
 /// How a connection signs in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Register,
+)]
 #[serde(rename_all = "snake_case")]
+#[register("pack.setup.auth")]
 pub enum PackSetupAuth {
     Oauth,
     ApiKey,
@@ -69,19 +73,6 @@ pub enum PackSetupAuth {
 }
 
 impl PackSetupAuth {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Oauth => "oauth",
-            Self::ApiKey => "api_key",
-            Self::BotToken => "bot_token",
-            Self::AppPassword => "app_password",
-            Self::Session => "session",
-            Self::Webhook => "webhook",
-            Self::Local => "local",
-        }
-    }
-
     /// The sign-in method in plain words.
     #[must_use]
     pub const fn label(self) -> &'static str {
@@ -155,24 +146,24 @@ pub struct PackSetupPermission {
 }
 
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+    Register,
 )]
 #[serde(rename_all = "snake_case")]
+#[register("pack.setup.risk")]
 pub enum PackSetupRisk {
     Low,
     Medium,
     High,
-}
-
-impl PackSetupRisk {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Low => "low",
-            Self::Medium => "medium",
-            Self::High => "high",
-        }
-    }
 }
 
 impl PackSetupConnection {

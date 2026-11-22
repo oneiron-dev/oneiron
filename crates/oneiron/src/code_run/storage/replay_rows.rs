@@ -8,13 +8,20 @@ use super::super::codec::{
     encode_code_run_replay_item, encode_code_run_replay_record, join_canonical, split_canonical,
     validate_bridge_call, validate_code_run_replay_record, validate_raw_output,
 };
-use super::super::replay::{CodeRunReplayGeneration, CodeRunReplayRecord, CodeRunResultBinding};
+use super::super::replay::{
+    CodeRunBridgeCall, CodeRunReplayGeneration, CodeRunReplayRecord, CodeRunResultBinding,
+    held_row_stands_for,
+};
 use super::super::wait_rows::{keep_wait_rows, wait_rows};
 use crate::side_table::{
     self, CodecError, Erased, Raw, RawValue, SideKey, SideTable, SideTableDbs,
 };
 use crate::store::{ResponseFamily, ResponseRead};
 use crate::{EntityId, Error, Result};
+
+mod fenced;
+
+pub(crate) use self::fenced::{ErasedFormProjection, admit_fenced, put_fenced};
 
 /// The replay head of one run, keyed by run id. Only this module's functions and three session-overlay
 /// sites take the table itself: `routing/replay.rs` (the routed compare-and-put), `read_worlds.rs` and
@@ -91,10 +98,14 @@ thread_local! {
     static WRITTEN_BYTES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
+/// Adds `len` to this thread's written replay bytes; nothing outside test support.
 #[cfg(oneiron_test_support)]
 fn note_written(len: usize) {
     WRITTEN_BYTES.with(|bytes| bytes.set(bytes.get().saturating_add(len as u64)));
 }
+
+#[cfg(not(oneiron_test_support))]
+fn note_written(_len: usize) {}
 
 /// This thread's total written replay bytes.
 #[cfg(oneiron_test_support)]
@@ -108,6 +119,37 @@ fn seam_error(decl: &'static crate::side_table::SideTableDecl, error: CodecError
         CodecError::Value(error) => error,
         CodecError::Row(problem) => decl.row_error(problem),
     }
+}
+
+/// How the side-row wall reads a call item as it is written (FIX FENCE-ERASED-FORM-THROUGH-WALL).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CallWall {
+    /// Every byte of it, as [`put`] writes a record.
+    Whole,
+    /// All but the erase's fixed words in each part it holds in its erased form, as
+    /// [`put_fenced`] writes a record.
+    Fenced,
+}
+
+/// The one MessagePack value an item's `bytes` hold, with nothing after it.
+fn item_value(bytes: &[u8]) -> Result<rmpv::Value> {
+    let mut cursor = bytes;
+    let value = rmpv::decode::read_value(&mut cursor)
+        .map_err(|_| Error::CorruptedIndex("code-run replay item bytes"))?;
+    if !cursor.is_empty() {
+        return Err(Error::CorruptedIndex("code-run replay item bytes"));
+    }
+    Ok(value)
+}
+
+/// The bridge call a stored call item's `bytes` hold.
+fn decode_call_item(bytes: &[u8]) -> Result<CodeRunBridgeCall> {
+    decode_bridge_call(&item_value(bytes)?)
+}
+
+/// `call`'s item bytes: the call as it sits inside the whole encoding.
+fn encode_call_item(call: &CodeRunBridgeCall) -> Result<Vec<u8>> {
+    encode_code_run_bridge_call_bytes(call).map_err(|error| seam_error(HEADS.decl(), error))
 }
 
 /// Whether `masked` still reads as one `family` element, for the wall's check of a masked copy.
@@ -166,7 +208,6 @@ fn put_raw_item(
 ) -> Result<Vec<u8>> {
     let full = ITEMS.key_bytes(key);
     dbs.side_vault_meta().put(wtxn, &full, bytes)?;
-    #[cfg(oneiron_test_support)]
     note_written(bytes.len());
     Ok(full)
 }
@@ -201,7 +242,6 @@ fn put_raw_head(
     let bytes = HEADS.encode_value(head)?;
     let full = HEADS.key_bytes(run);
     dbs.side_vault_meta().put(wtxn, &full, &bytes)?;
-    #[cfg(oneiron_test_support)]
     note_written(bytes.len());
     Ok(full)
 }
@@ -296,13 +336,15 @@ fn joined_bytes(
     }
 }
 
-/// Every item of `record` through the wall under its head's origin, stale items past its counts
-/// deleted; every full item key written or deleted. The caller validated `record` already.
+/// Every item of `record` through the wall under its head's origin, each call item as `wall`
+/// reads it, stale items past its counts deleted; every full item key written or deleted. The
+/// caller validated `record` already.
 fn write_items(
     dbs: &impl SideTableDbs,
     wtxn: &mut heed::RwTxn<'_>,
     run: &EntityId,
     record: &CodeRunReplayRecord,
+    wall: CallWall,
 ) -> Result<Vec<Vec<u8>>> {
     let head_key = HEADS.key_bytes(run);
     let mut keys = Vec::new();
@@ -324,7 +366,13 @@ fn write_items(
                 family,
                 index: uindex,
             };
-            keys.push(put_admitted_item(dbs, wtxn, &head_key, &key, &bytes)?);
+            let written = match (family, record.bridge_calls.get(index)) {
+                (ReplayFamily::BridgeCalls, Some(call)) => {
+                    fenced::put_call_item(dbs, wtxn, &head_key, &key, call, &bytes, wall)?
+                }
+                _ => put_admitted_item(dbs, wtxn, &head_key, &key, &bytes)?,
+            };
+            keys.push(written);
         }
     }
     let counts = [
@@ -410,6 +458,27 @@ pub(crate) fn generation(
     run: &EntityId,
 ) -> Result<Option<CodeRunReplayGeneration>> {
     Ok(head(dbs, txn, run)?.map(|head| head.generation()))
+}
+
+/// `run`'s stored bridge calls as the side-row wall stored them, read from its head and its call
+/// items alone: `None` for no row and for a marker.
+///
+/// # Errors
+///
+/// Storage errors, and a call item that does not decode.
+pub(crate) fn stored_bridge_calls(
+    dbs: &impl SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+    run: &EntityId,
+) -> Result<Option<Vec<CodeRunBridgeCall>>> {
+    let Some(head) = head(dbs, txn, run)? else {
+        return Ok(None);
+    };
+    family_items(dbs, txn, run, ReplayFamily::BridgeCalls, head.counts[0])?
+        .iter()
+        .map(|bytes| decode_call_item(bytes))
+        .collect::<Result<Vec<_>>>()
+        .map(Some)
 }
 
 /// The length of `run`'s canonical replay bytes, if present.
@@ -626,19 +695,16 @@ pub(crate) fn put_canonical_bytes_at(
     bytes: &[u8],
 ) -> Result<()> {
     if !is_row_key(key) {
-        #[cfg(oneiron_test_support)]
         note_written(bytes.len());
         return dbs.side_vault_meta().put(wtxn, key, bytes);
     }
     let Some(run) = run_id_of_key(key) else {
-        #[cfg(oneiron_test_support)]
         note_written(bytes.len());
         return dbs.side_vault_meta().put(wtxn, key, bytes);
     };
     let starts_map = matches!(bytes.first(), Some(0x80..=0x8f | 0xde | 0xdf));
     if !starts_map {
         dbs.side_vault_meta().put(wtxn, key, bytes)?;
-        #[cfg(oneiron_test_support)]
         note_written(bytes.len());
         delete_stale_items(dbs, wtxn, &run, [0, 0, 0, 0])?;
         return Ok(());
@@ -683,11 +749,6 @@ pub(crate) fn is_item_key(key: &[u8]) -> bool {
 pub(super) fn run_id_of_key(key: &[u8]) -> Option<EntityId> {
     key.strip_prefix(HEADS.decl().prefix)
         .and_then(<EntityId as SideKey>::decode_key)
-}
-
-/// The full stored key of `run`'s replay row.
-pub(crate) fn key_bytes(run: &EntityId) -> Vec<u8> {
-    HEADS.key_bytes(run)
 }
 
 /// The head key plus every item key for `record`'s counts, in family and index order.
@@ -786,8 +847,8 @@ pub(crate) fn iter_canonical_from<'txn>(
     }))
 }
 
-/// Persists `record` as `run`'s replay rows, through the wall: its head plus every item, stale items
-/// past its counts deleted. Every full key written or deleted.
+/// Persists `record` as `run`'s replay rows, with the side-row wall reading every byte: its head
+/// plus every item, stale items past its counts deleted. Every full key written or deleted.
 ///
 /// # Errors
 ///
@@ -798,13 +859,22 @@ pub(crate) fn put(
     run: &EntityId,
     record: &CodeRunReplayRecord,
 ) -> Result<Vec<Vec<u8>>> {
+    put_record(dbs, wtxn, run, record, CallWall::Whole)
+}
+
+/// [`put`], with each call item as `wall` reads it.
+fn put_record(
+    dbs: &impl SideTableDbs,
+    wtxn: &mut heed::RwTxn<'_>,
+    run: &EntityId,
+    record: &CodeRunReplayRecord,
+    wall: CallWall,
+) -> Result<Vec<Vec<u8>>> {
     encode(record)?;
     let head = ReplayHead::of(record)?;
-    let stored = HEADS.put_as_stored(dbs, wtxn, run, &head)?;
-    #[cfg(oneiron_test_support)]
-    note_written(stored.len());
+    note_written(HEADS.put_as_stored(dbs, wtxn, run, &head)?.len());
     let mut keys = vec![HEADS.key_bytes(run)];
-    keys.extend(write_items(dbs, wtxn, run, record)?);
+    keys.extend(write_items(dbs, wtxn, run, record, wall)?);
     Ok(keys)
 }
 
@@ -839,13 +909,15 @@ fn put_changed_items(
     Ok(keys)
 }
 
-/// Appends `fenced` onto `stored`, writing only what moved: the head, new items, fence-changed
-/// and changed calls, and each checkpoint, output and binding whose bytes differ from its stored
-/// item. A stored prefix call stays as the wall admitted it (OF-067), keeping any reply rows a
-/// delivery added since (FIX 5455), as `over_held` kept it; every other family is the caller's,
-/// as a whole put writes it, so a guarded write that replaces a stored checkpoint or output
-/// persists it. The bytes an append writes are flat in the run's length; it reads the stored
-/// checkpoint, output and binding items to diff them.
+/// Appends `fenced` onto `stored`, writing only what moved, as [`put_fenced`] lands it: the head,
+/// new items, fence-changed and changed calls, and each checkpoint, output and binding whose bytes
+/// differ from its stored item. A stored prefix call stays as the wall admitted it (OF-067) while
+/// it stands for the live call at its index ([`stored_call_over`]), keeping any reply rows a
+/// delivery added since (FIX 5455); a call the record marks changed that it no longer stands for
+/// gives way to the live call, the call that ran (L8-23). Every other family is the caller's, as
+/// a whole put writes it, so a guarded write that replaces a stored checkpoint or output persists
+/// it. The bytes an append writes are flat in the run's length; it reads the stored checkpoint,
+/// output and binding items to diff them, and the stored item of each call marked changed.
 ///
 /// # Errors
 ///
@@ -869,60 +941,47 @@ pub(crate) fn put_append(
     let head = ReplayHead::of(&fenced_for_head)?;
     let run = fenced.run_id;
     let head_key = HEADS.key_bytes(&run);
-    let stored_head = HEADS.put_as_stored(dbs, wtxn, &run, &head)?;
-    #[cfg(oneiron_test_support)]
-    note_written(stored_head.len());
+    note_written(HEADS.put_as_stored(dbs, wtxn, &run, &head)?.len());
     let mut keys = vec![head_key.clone()];
     let fenced_changed = !std::ptr::eq(fenced, written);
     let stored_calls = usize::try_from(stored.counts[0])
         .map_err(|_| Error::CorruptedIndex("code-run replay head count"))?;
     for (index, call) in fenced.bridge_calls.iter().enumerate() {
-        if index >= stored_calls {
-            let bytes = encode_code_run_replay_item(fenced, ReplayFamily::BridgeCalls, index)
-                .map_err(|error| seam_error(HEADS.decl(), error))?;
-            let key = ReplayItemKey {
-                run,
-                family: ReplayFamily::BridgeCalls,
-                index: index as u64,
-            };
-            keys.push(put_admitted_item(dbs, wtxn, &head_key, &key, &bytes)?);
-            continue;
-        }
-        if fenced_changed && written.bridge_calls.get(index) != Some(call) {
-            let bytes = encode_code_run_replay_item(fenced, ReplayFamily::BridgeCalls, index)
-                .map_err(|error| seam_error(HEADS.decl(), error))?;
-            let key = ReplayItemKey {
-                run,
-                family: ReplayFamily::BridgeCalls,
-                index: index as u64,
-            };
-            keys.push(put_admitted_item(dbs, wtxn, &head_key, &key, &bytes)?);
-            continue;
-        }
-        if !written.changed_calls.contains(index as u64) {
-            continue;
-        }
         let key = ReplayItemKey {
             run,
             family: ReplayFamily::BridgeCalls,
             index: index as u64,
         };
-        let Some(stored_bytes) = ITEMS.get_bytes(dbs, wtxn, &key)? else {
-            return Err(Error::CorruptedIndex("code-run replay item index"));
+        let new_or_fenced = index >= stored_calls
+            || (fenced_changed && written.bridge_calls.get(index) != Some(call));
+        let (landed, bytes) = if new_or_fenced {
+            (Cow::Borrowed(call), encode_call_item(call)?)
+        } else if written.changed_calls.contains(index as u64) {
+            let Some(stored_bytes) = ITEMS.get_bytes(dbs, wtxn, &key)? else {
+                return Err(Error::CorruptedIndex("code-run replay item index"));
+            };
+            match stored_call_over(call, decode_call_item(&stored_bytes)?)? {
+                Some(kept) => {
+                    let bytes = encode_call_item(&kept)?;
+                    if bytes == stored_bytes {
+                        continue;
+                    }
+                    (Cow::Owned(kept), bytes)
+                }
+                None => (Cow::Borrowed(call), encode_call_item(call)?),
+            }
+        } else {
+            continue;
         };
-        let mut cursor = stored_bytes.as_slice();
-        let value = rmpv::decode::read_value(&mut cursor)
-            .map_err(|_| Error::CorruptedIndex("code-run replay item bytes"))?;
-        if !cursor.is_empty() {
-            return Err(Error::CorruptedIndex("code-run replay item bytes"));
-        }
-        let mut kept = decode_bridge_call(&value)?;
-        if let Some(rows) = wait_rows(&call.outcome) {
-            keep_wait_rows(&mut kept.outcome, &rows);
-        }
-        let bytes = encode_code_run_bridge_call_bytes(&kept)
-            .map_err(|error| seam_error(HEADS.decl(), error))?;
-        keys.push(put_admitted_item(dbs, wtxn, &head_key, &key, &bytes)?);
+        keys.push(fenced::put_call_item(
+            dbs,
+            wtxn,
+            &head_key,
+            &key,
+            &landed,
+            &bytes,
+            CallWall::Fenced,
+        )?);
     }
     for (family, count) in [
         (ReplayFamily::StepCheckpoints, fenced.step_checkpoints.len()),
@@ -957,20 +1016,30 @@ pub(crate) fn put_append(
     Ok(keys)
 }
 
-/// Persists `record`'s items, through the wall, stale items past its counts deleted; every full
-/// item key written or deleted, no head.
+/// The stored call `kept`, with the reply rows a delivery added to `call` since (FIX 5455), when
+/// `kept` still stands for `call`, the live call at its index: the same seq, effect and stamps,
+/// and a request replay meets `call`'s request with (L8-23). `None` when the live call replaced
+/// it, a pure change or an owner's refire of a resumed step that ran live at its recorded seq.
 ///
 /// # Errors
 ///
-/// Storage errors.
-pub(crate) fn put_items(
-    dbs: &impl SideTableDbs,
-    wtxn: &mut heed::RwTxn<'_>,
-    run: &EntityId,
-    record: &CodeRunReplayRecord,
-) -> Result<Vec<Vec<u8>>> {
-    encode(record)?;
-    write_items(dbs, wtxn, run, record)
+/// A request the side-row wall cannot compare.
+fn stored_call_over(
+    call: &CodeRunBridgeCall,
+    mut kept: CodeRunBridgeCall,
+) -> Result<Option<CodeRunBridgeCall>> {
+    let stands = call.seq == kept.seq
+        && call.effect == kept.effect
+        && call.started_at_ms == kept.started_at_ms
+        && call.finished_at_ms == kept.finished_at_ms
+        && held_row_stands_for(call, &kept)?;
+    if !stands {
+        return Ok(None);
+    }
+    if let Some(rows) = wait_rows(&call.outcome) {
+        keep_wait_rows(&mut kept.outcome, &rows);
+    }
+    Ok(Some(kept))
 }
 
 /// Reads `record` as the wall will store it, before the writer derives anything from it.

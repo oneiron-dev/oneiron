@@ -15,6 +15,7 @@ pub(super) fn search(
     client: &Client,
     key: &str,
     input: &WebSearchInput,
+    count: u32,
 ) -> Result<ProviderAnswer, ProviderError> {
     let reply = get_json(
         client,
@@ -23,7 +24,7 @@ pub(super) fn search(
         key,
         &[("query", input.query.clone())],
     )?;
-    let limit = input.result_count() as usize;
+    let limit = usize::try_from(count).unwrap_or(usize::MAX);
     let hits = reply
         .get("results")
         .and_then(Value::as_array)

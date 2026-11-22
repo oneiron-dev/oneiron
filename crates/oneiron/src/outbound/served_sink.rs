@@ -173,11 +173,35 @@ impl<'a> ServedChannelSink<'a> {
     ///
     /// The client could not be built.
     pub fn client_with_timeout(timeout: Duration) -> Result<reqwest::blocking::Client> {
-        reqwest::blocking::Client::builder()
+        Self::guarded_client_with_timeout(timeout, None)
+    }
+
+    /// [`Self::client_with_timeout`] on a managed node: with `Some(guard)`,
+    /// every name the client connects to resolves through `guard`
+    /// ([`crate::web_fetch::hosted_dns_resolver`]), so a name that answers
+    /// with a private or node address fails its connection, as a web fetch
+    /// does (ARCH-0046, the one shared network boundary). An address-literal
+    /// URL never reaches a resolver: its caller checks it with
+    /// [`crate::web_fetch::HostedEgressGuard::refuses`] before it sends.
+    /// With `None`, exactly [`Self::client_with_timeout`].
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidConfig`] when the client cannot be built.
+    pub fn guarded_client_with_timeout(
+        timeout: Duration,
+        guard: Option<std::sync::Arc<crate::web_fetch::HostedEgressGuard>>,
+    ) -> Result<reqwest::blocking::Client> {
+        let builder = reqwest::blocking::Client::builder()
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(5))
-            .timeout(timeout)
+            .timeout(timeout);
+        let builder = match guard {
+            Some(guard) => builder.dns_resolver(crate::web_fetch::hosted_dns_resolver(guard)),
+            None => builder,
+        };
+        builder
             .build()
             .map_err(|_| Error::InvalidConfig("served send client unavailable".to_owned()))
     }
@@ -205,6 +229,22 @@ impl<'a> ServedChannelSink<'a> {
 
     fn text(&self, request: &OutboundExecutionRequest<'_>) -> Option<String> {
         let content_ref = request.intent.content_ref.as_deref()?;
+        // FIX [BK-EMERGENCY-APOLOGY-BLOB-HOLDS-RAW-PICK-TOKENS]: an emergency apology's own send
+        // carries the booker's raw pick links, filled in here from the home's checkpoint and
+        // stored nowhere; every other send's content resolves as before.
+        match crate::booking::emergency_reschedule::emergency_apology_send_text(
+            self.vault,
+            request.intent_ref,
+            &request.intent.target,
+            content_ref,
+        ) {
+            Ok(Some(text)) => return Some(text),
+            Ok(None) => {}
+            Err(error) => {
+                tracing::info!(%error, "emergency apology send is not sendable");
+                return None;
+            }
+        }
         match self.vault.outbound_content_text(content_ref) {
             Ok(text) => text,
             Err(error) => {

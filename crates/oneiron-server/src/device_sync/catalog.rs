@@ -12,19 +12,20 @@ use crate::server::HousekeepingAdmission;
 const MESH_CATALOG_EVERY: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// The device's view of the models the owner's other nodes offer
-/// ([`oneiron_llm_own_server::OwnServerBackend::refresh_from_mesh`]), over the
+/// ([`oneiron_llm::oneiron_rpc::OwnServerBackend::refresh_from_mesh`]), over the
 /// mesh listener's own transport.
 pub(super) struct MeshCatalog {
     vault: Arc<oneiron::Vault>,
     transport: Arc<dyn oneiron_mesh_transport::MeshTransport>,
     /// Built at the first refresh; a failed build is tried again at the next.
-    backend:
-        Option<oneiron_llm_own_server::OwnServerBackend<oneiron_llm_own_server::MeshLlmTransport>>,
+    backend: Option<
+        oneiron_llm::oneiron_rpc::OwnServerBackend<oneiron_llm::oneiron_rpc::MeshLlmTransport>,
+    >,
     /// The router's routes to those models (FIX 3229), published after each
     /// refresh.
     routes: crate::models::MeshRoutes,
     /// The vault's one mesh budget its transport's calls hold bytes on.
-    staging: oneiron_llm_own_server::StagingBudget,
+    staging: oneiron_llm::oneiron_rpc::StagingBudget,
     /// Each refresh's admission of the reap freeze; none while frozen.
     admit: HousekeepingAdmission,
 }
@@ -34,7 +35,7 @@ impl MeshCatalog {
         vault: Arc<oneiron::Vault>,
         transport: Arc<dyn oneiron_mesh_transport::MeshTransport>,
         routes: crate::models::MeshRoutes,
-        staging: oneiron_llm_own_server::StagingBudget,
+        staging: oneiron_llm::oneiron_rpc::StagingBudget,
         admit: HousekeepingAdmission,
     ) -> Self {
         Self {
@@ -77,7 +78,7 @@ impl MeshCatalog {
 
     /// One refresh, under an admission of its own: none while frozen.
     async fn refresh(&mut self, home: &str) {
-        use oneiron_llm_own_server::{MeshLlmTransport, OwnServerBackend, VaultLlmNodes};
+        use oneiron_llm::oneiron_rpc::{MeshLlmTransport, OwnServerBackend, VaultLlmNodes};
 
         let Some(_admitted) = (self.admit)() else {
             return;

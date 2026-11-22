@@ -103,6 +103,12 @@ pub struct TurnActionContext {
     pub user_sources: Option<Vec<EntityId>>,
     /// What the reply says now: exactly its saved text.
     pub saved: String,
+    /// The sitting the reply joined, by its actor and machine (FIX 1034),
+    /// read by the engine from the reply's TURN, never named by the caller
+    /// (as FIX G230-RETRY-OMITTED-SESSION-BAND places a room's Retry). The
+    /// action's answer binds it, so its end signals activity on that sitting
+    /// as the first reply's did. `None` when the reply joined none.
+    pub sitting: Option<crate::session_lifecycle::SessionKey>,
 }
 
 impl TurnActionAttempt {
@@ -612,6 +618,7 @@ impl Memory<'_> {
             .ok_or_else(|| invalid_state("no user turn comes before this turn"))?;
         // The turn's one generated MESSAGE: a companion reply a stream wrote.
         let txn = vault.store.env.read_txn().map_err(Error::from)?;
+        let sitting = vault.turn_sitting_key_in_txn(&txn, &assistant_turn)?;
         let mut generated = Vec::new();
         for message in turn
             .messages
@@ -667,6 +674,7 @@ impl Memory<'_> {
                 user_text,
                 user_sources,
                 saved: reply.text.clone(),
+                sitting,
             },
         })
     }

@@ -345,6 +345,7 @@ impl RunnerFenceOutcome {
             fence_proof,
             fence_unproven: !self.proven,
             image_release: crate::image_release::ImageReleaseObservation::default(),
+            guest_pressure: None,
         }
     }
 }

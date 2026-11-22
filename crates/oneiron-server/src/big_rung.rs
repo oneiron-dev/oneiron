@@ -526,6 +526,13 @@ impl DecisionModel for BigModel {
             self.vault
                 .model_call_keeps_no_record_for(c.session.as_deref(), Some(c.principal))
         });
+        // A caller whose off-record session keeps no model-call record: the
+        // run names none of the evidence rows, nor their worlds (census L5-25).
+        let run = if no_record_at_arrival {
+            run.off_record()
+        } else {
+            run
+        };
         // The admitted request, kept for the evidence row's digests when a
         // capture runs; the call below moves the original.
         let record_request = caller.is_some().then(|| request.clone());

@@ -1,6 +1,7 @@
 //! Moved from `crates/oneiron/src/batch/secret_scan/lift_history/mod.rs` (lib split W1: wire types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+use oneiron_contracts::register::Register;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -18,8 +19,11 @@ pub enum LiftTrigger {
 }
 
 /// Why the sweep filed a proposal instead of placing a hit.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Register,
+)]
 #[serde(rename_all = "snake_case")]
+#[register("lift.cause")]
 pub enum LiftCause {
     /// No rule the door has places it: a recovery phrase, a key split over
     /// fields, a masked copy the row's own reading refuses.
@@ -39,21 +43,17 @@ pub enum LiftCause {
 impl LiftCause {
     /// The cause's stable code.
     pub const fn code(self) -> &'static str {
-        match self {
-            Self::Unplaceable => "unplaceable",
-            Self::Immutable => "immutable",
-            Self::Held => "held",
-            Self::File => "file",
-            Self::NoDoor => "no_door",
-            Self::History => "history",
-        }
+        self.as_str()
     }
 }
 
 /// Why a proposal closed. The owner closes one as `not_a_secret`, `rotated`
 /// or `accepted`; the others close it on its own.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Register,
+)]
 #[serde(rename_all = "snake_case")]
+#[register("lift.close.reason")]
 pub enum LiftCloseReason {
     /// The owner: what the sweep found is no secret.
     NotASecret,
@@ -73,14 +73,7 @@ pub enum LiftCloseReason {
 impl LiftCloseReason {
     /// The reason's stable code.
     pub const fn code(self) -> &'static str {
-        match self {
-            Self::NotASecret => "not_a_secret",
-            Self::Rotated => "rotated",
-            Self::Accepted => "accepted",
-            Self::ReadClean => "read_clean",
-            Self::Answered => "answered",
-            Self::Deleted => "deleted",
-        }
+        self.as_str()
     }
 }
 

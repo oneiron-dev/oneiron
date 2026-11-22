@@ -52,6 +52,8 @@ The incident runbooks do not replace counsel review for jurisdiction-specific ca
   and Claude Code and Codex sessions: what lands, what is counted, and how re-imports dedup.
 - [Claude Code hooks](claude-code-hooks.md) — recall at session start and each session handed to
   the running `serve` for import (`[import] queue`, `oneiron import claude-code <log> --queue`).
+- [Session hooks for Codex, Cursor and GitHub Copilot](client-session-hooks.md) — the same lanes
+  per client: Codex's and Copilot's hook files in the shared package, Cursor's in `plugins/cursor/`.
 - [Forked dependencies](forked-dependencies.md) — the crates pinned by `rev` to the org forks
   (sudachi, formualizer): upstream base, fork branch, our commits, and how to change one.
 - [Documents API handoff](documents-api-handoff.md) — the document engine's contract

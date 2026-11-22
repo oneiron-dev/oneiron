@@ -104,6 +104,7 @@ fn a_restore_does_not_deliver_a_notification_to_a_recipient_taken_off_it() -> Re
     assert!(!delivered(&vault, &notification, "B")?);
     let Err(refused) = Vault::restore_checkpoint_keeping_authority(
         &image,
+        &vault.checkpoint_key()?,
         &backups.path().join("restored"),
         vault.config.clone(),
         &vault,

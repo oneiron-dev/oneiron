@@ -1,7 +1,5 @@
 //! Provider-neutral transport seam, change classification, and ICS render.
 
-use serde::{Deserialize, Serialize};
-
 use super::inbound::read_event_name;
 use super::outbound::{
     CalendarRemoteObjectObservation, CalendarRemoteObjectRow, CalendarWriteOutboxRow,
@@ -9,6 +7,7 @@ use super::outbound::{
 };
 use super::seat::CalendarConnectorError;
 
+use crate::batch::secret_scan::LiftedKeys;
 use crate::calendar::CalendarError;
 use crate::calendar::claims::{
     CalendarBusyTransparency, CalendarPassportPresence, CalendarPassportValue, CalendarStatus,
@@ -102,20 +101,8 @@ pub struct RemoteSyncBatch {
     pub changes: Vec<RemoteCalendarChange>,
 }
 
-/// One conditional remote write.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RemoteWriteRequest {
-    /// The resource to replace; `None` creates one.
-    pub href: Option<String>,
-    /// The precondition: CalDAV sends it as `If-Match`.
-    pub expected_etag: Option<String>,
-    /// The UID this write preserves.
-    pub uid: String,
-    /// The SEQUENCE this write intends.
-    pub sequence: u32,
-    /// The complete `VCALENDAR` document to store.
-    pub ics: Vec<u8>,
-}
+#[doc(hidden)]
+pub use oneiron_records::calendar::connectors::remote::RemoteWriteRequest;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::calendar::connectors::remote::{
@@ -164,7 +151,8 @@ pub trait CalendarRemoteTransport {
 
     /// `cursor`, the next cursor of a pull that left a change owed (an
     /// omission with a write of it in flight or its row moved since the
-    /// listing, or a booking move a pending emergency delivery held back):
+    /// listing, a booking move a pending emergency delivery held back, or a
+    /// cancelled version of a member a cancelled write in flight holds back):
     /// one from which the next pull lists the calendar whole again, so the
     /// owed change is read again and never dropped (fix list row 19192,
     /// FIX 22385). The default is `None`, no cursor: the next pull starts
@@ -478,13 +466,21 @@ fn escape_ics_text(value: &str) -> String {
 }
 
 /// The UID a sibling source already carries for this EVENT, lexicographically
-/// smallest so every node picks the same one.
+/// smallest so every node picks the same one. A UID the claim door stored as
+/// a custody handle is no UID a provider holds, and only the seat that holds
+/// the source's copy reads it, so it is never shared
+/// (CAL-MASKED-SYSTEM-LITERAL-COMPARES-OUTSIDE-KEYED-LOOKUP).
 pub(super) fn shared_uid(passports: &[(EntityId, CalendarPassportValue)]) -> Option<String> {
-    passports.iter().map(|(_, value)| value.uid.clone()).min()
+    passports
+        .iter()
+        .map(|(_, value)| &value.uid)
+        .filter(|uid| !LiftedKeys::holds_a_handle(uid))
+        .min()
+        .cloned()
 }
 
 /// The UID a locally originated EVENT gets on its first outbound write.
-pub(super) fn local_uid(event_ref: &EntityId) -> String {
+pub(in crate::calendar) fn local_uid(event_ref: &EntityId) -> String {
     format!("{}@{LOCAL_UID_DOMAIN}", event_ref.to_hex())
 }
 

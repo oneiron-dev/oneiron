@@ -87,7 +87,7 @@ impl CacheDigest {
     /// A digest from its hex form.
     pub fn new(hex: impl Into<String>) -> Result<Self, CacheEvidenceError> {
         let hex = hex.into();
-        if lower_hex(&hex, 64) {
+        if oneiron_hex::is_lower_hex(&hex, Some(64)) {
             Ok(Self(hex))
         } else {
             Err(CacheEvidenceError::Digest)
@@ -126,7 +126,7 @@ impl CacheEpoch {
     /// An epoch from its hex form.
     pub fn new(hex: impl Into<String>) -> Result<Self, CacheEvidenceError> {
         let hex = hex.into();
-        if lower_hex(&hex, 32) {
+        if oneiron_hex::is_lower_hex(&hex, Some(32)) {
             Ok(Self(hex))
         } else {
             Err(CacheEvidenceError::Epoch)
@@ -160,13 +160,6 @@ pub enum CacheEvidenceError {
     Digest,
     #[error("a backend epoch is 32 lowercase hex digits")]
     Epoch,
-}
-
-fn lower_hex(value: &str, len: usize) -> bool {
-    value.len() == len
-        && value
-            .bytes()
-            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 /// Which pass over the input a count is of.

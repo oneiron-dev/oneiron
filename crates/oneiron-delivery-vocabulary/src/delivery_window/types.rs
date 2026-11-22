@@ -1,5 +1,6 @@
 //! Claim predicates, key consts, decision/ladder enums and resolution structs.
 
+use oneiron_contracts::register::Register;
 use serde::{Deserialize, Serialize};
 
 pub const DELIVERY_WINDOW_SCHEMA_VERSION: u64 = 1;
@@ -109,9 +110,18 @@ impl DeliveryWindowAppliesTo {
 }
 
 #[derive(
-    Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    PartialEq,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+    Register,
 )]
 #[serde(rename_all = "snake_case")]
+#[register("delivery.window.context.condition")]
 pub enum DeliveryWindowContextCondition {
     CalendarBusy,
     FocusOn,
@@ -121,24 +131,8 @@ pub enum DeliveryWindowContextCondition {
 
 impl DeliveryWindowContextCondition {
     #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::CalendarBusy => "calendar_busy",
-            Self::FocusOn => "focus_on",
-            Self::Driving => "driving",
-            Self::Asleep => "asleep",
-        }
-    }
-
-    #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "calendar_busy" => Some(Self::CalendarBusy),
-            "focus_on" => Some(Self::FocusOn),
-            "driving" => Some(Self::Driving),
-            "asleep" => Some(Self::Asleep),
-            _ => None,
-        }
+        <Self as Register>::named(value)
     }
 }
 
@@ -205,8 +199,9 @@ impl DeliveryWindowApnsInterruptionLevel {
 /// from the string alone", and [`DeliveryWindowApnsInterruptionLevel`] only
 /// carries APNs pushes, so this is the non-APNs carrier the schedule context
 /// freezes onto the TASK. Absent, the manifest's interrupt class stands.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, Register)]
 #[serde(rename_all = "snake_case")]
+#[register("delivery.window.resolved.level")]
 pub enum DeliveryWindowResolvedLevel {
     /// Resolved to a plain in-thread chat message.
     PlainChat,
@@ -215,14 +210,6 @@ pub enum DeliveryWindowResolvedLevel {
 }
 
 impl DeliveryWindowResolvedLevel {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::PlainChat => "plain_chat",
-            Self::Push => "push",
-        }
-    }
-
     #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
         match value {

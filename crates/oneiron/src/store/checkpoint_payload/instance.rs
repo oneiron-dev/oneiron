@@ -36,19 +36,8 @@ use super::{
 const INSTANCES: SideTable<PayloadItem, InstanceRow, Named> =
     SideTable::new(&side_table::CHECKPOINT_PAYLOAD_INSTANCE);
 
-/// Where one incarnation stands.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum Lifecycle {
-    /// The owner's current incarnation: a capture seals the owner under it.
-    Active,
-    /// Released by an ordinary delete: nothing new is sealed under it, and
-    /// its leaf stays for the checkpoints holding it until their retention
-    /// ends.
-    Retained,
-    /// Erased: its leaf is retired, and no capture seals the owner again.
-    Erased,
-}
+#[doc(hidden)]
+pub(crate) use oneiron_records::store::checkpoint_payload::instance::Lifecycle;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -33,6 +33,7 @@ const OPEN: &str = "vault.artifacts.threads.open";
 const COMMENT: &str = "vault.artifacts.threads.comment";
 const READ: &str = "vault.artifacts.threads.read";
 const LIST: &str = "vault.artifacts.threads.list";
+const ASSIGN: &str = "vault.artifacts.threads.assign";
 
 /// The plan step the owner marks up.
 const MARKED_STEP: &str = "Merge the duplicate dawn readings";
@@ -379,5 +380,52 @@ fn a_note_that_is_no_plan_doc_takes_no_thread() {
     assert!(
         refused.is_err(),
         "a NOTE that is no plan-doc takes no thread: {refused:?}"
+    );
+}
+
+/// FIX PLAN-MARKUP-BRIEF-QUOTE: a brief made from a plan-doc thread keeps the
+/// text frontier the thread was opened on. A later read of the brief quotes
+/// the marked line there, as the assignment's own answer does, after an edit
+/// above the line has moved it at the head.
+#[test]
+fn a_plan_doc_brief_quotes_its_line_when_read_back() {
+    let fixture = fixture();
+    let plan_ref = propose(&fixture);
+    let plan = EntityId::from_hex(&plan_ref).expect("the plan-doc id");
+    let opened = mark_up_step(&fixture, &plan_ref).expect("the owner marks up a plan line");
+    let thread_ref = text(&opened, "/thread_id").to_owned();
+    let start = number(&opened, "/origin/locator/char_start");
+
+    let assigned = as_owner(
+        &fixture,
+        ASSIGN,
+        json!({
+            "artifact_ref": plan_ref,
+            "thread_ref": thread_ref,
+            "assignee_ref": fixture.agent.to_hex(),
+        }),
+    )
+    .expect("the owner hands the thread to the plan's agent");
+    assert_eq!(text(&assigned, "/anchor/quote"), MARKED_STEP, "{assigned}");
+
+    edit(&fixture, plan, |doc| NoteProgramEdit::InsertAfter {
+        anchor: doc.anchor(0).expect("the start anchor"),
+        text: "Draft plan.\n".to_owned(),
+    });
+    let thread = read_thread(&fixture, &plan_ref, &thread_ref);
+    assert_eq!(
+        text(&thread, "/brief/anchor/quote"),
+        MARKED_STEP,
+        "{thread}"
+    );
+    assert_eq!(
+        number(&thread, "/brief/anchor/locator/char_start"),
+        start,
+        "{thread}"
+    );
+    assert_eq!(
+        thread.pointer("/brief/anchor/body"),
+        opened.pointer("/origin/body"),
+        "the brief keeps the frontier its thread was opened on: {thread}"
     );
 }

@@ -11,7 +11,13 @@
 //! matches is refused and changes nothing. The handle is no authority: the
 //! settlement revalidates the owner's proof or the holder's explicit
 //! owner-issued Grant in its own writer. The actor that opened a proposal
-//! never settles it (DEC-0006).
+//! never settles it (DEC-0006). A holder that is no person never settles a
+//! proposal whose settlement closes a claim that restricts someone's access:
+//! a decline of a restricting proposal, an approval that supersedes a
+//! restricting head, the completion of a close parked on one, or the
+//! approval of a curator finding that retracts, weakens or marks stale a
+//! restricting claim. A person who holds a covering Grant, or the owner,
+//! settles those.
 //!
 //! An approval closes the supersession its proposal proposed (e2e
 //! MEMORY-01, ARCH-0040 `mcp:5`): the approved claim supersedes the standing
@@ -27,6 +33,7 @@ use super::*;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::consent::AuthenticatedOwner;
 use crate::consent::bundle_projection::GateConsentBundleAction;
+use crate::store::gate_reason::GateReceiptOutcome;
 
 mod authority;
 use authority::ClaimSettler;
@@ -34,6 +41,8 @@ mod conflict_head;
 pub(in crate::memory) use conflict_head::ConflictHeadIndex;
 use conflict_head::{ConflictHead, conflict_head_in_txn};
 mod restored_member;
+mod restriction_close;
+use restriction_close::{restriction_close_needs_a_person, settle_in_place_lifts_restriction_in};
 
 /// Key-derivation context of the review handle.
 const CLAIM_REVIEW_DOMAIN: &str = "oneiron.claim-settle.review.v1";
@@ -125,6 +134,9 @@ struct ReviewedProposal {
     /// The actors that opened it: its authenticated author and the actor its
     /// envelope names, unless the owner's whole-vault restore brought it back.
     openers: Vec<EntityId>,
+    /// The vault owner who opened it when it is his own composed task post,
+    /// which he settles though he opened it (RULING L8-07-OWNER-OPENER = A).
+    composed_post_owner: Option<EntityId>,
     /// Whether it is an active claim whose own author's retract waits for
     /// the holder's consent (ARCH-0040 `mcp:5`).
     parked_retract: bool,
@@ -235,6 +247,16 @@ impl ReviewedProposal {
         {
             openers.push(actor);
         }
+        let composed_post_owner = match crate::claim::session_claim_producer(&body) {
+            Some(producer)
+                if crate::task_verb::owner_settles_own_composed_post(
+                    vault, txn, &body, producer,
+                )? =>
+            {
+                Some(producer)
+            }
+            _ => None,
+        };
         Ok(Self {
             digest: *hasher.finalize().as_bytes(),
             frontier,
@@ -243,6 +265,7 @@ impl ReviewedProposal {
             prior,
             machine,
             openers,
+            composed_post_owner,
             parked_retract,
         })
     }
@@ -289,7 +312,7 @@ impl ReviewedProposal {
         if !self.review_id().eq_ignore_ascii_case(review_id) {
             return Err(stale_review());
         }
-        if self.openers.contains(&person) {
+        if self.openers.contains(&person) && self.composed_post_owner != Some(person) {
             return Err(MemoryError::new(
                 MEMORY_CODE_FORBIDDEN,
                 "the actor that opened a proposal never settles it",
@@ -304,6 +327,39 @@ impl ReviewedProposal {
             ));
         }
         Ok(())
+    }
+
+    /// Whether settling `id` by `action` closes a claim that restricts
+    /// someone's access ([`crate::federation::claim_removal_widens_in`]). A
+    /// decline closes the proposal itself (a Proposed `comm.do_not_contact`
+    /// already restricts), except a parked retract's decline, which closes
+    /// nothing. An approval closes the head it supersedes, and completes the
+    /// action parked on the claim: a retract, a weakening or a stale mark of
+    /// the claim, or the supersession of the claim it names. An approved
+    /// curator finding applies its rung to its target, so a finding that
+    /// retracts, weakens or marks stale a restricting target closes it too
+    /// (RULING RESTRICTION-CLOSE-BY-CURATOR-APPROVAL).
+    fn settle_lifts_restriction_in(
+        &self,
+        vault: &crate::Vault,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        action: GateConsentBundleAction,
+    ) -> crate::Result<bool> {
+        if action == GateConsentBundleAction::Approve
+            && let Some(prior) = &self.prior
+            && crate::federation::claim_removal_widens_in(vault, txn, &prior.body)?
+        {
+            return Ok(true);
+        }
+        settle_in_place_lifts_restriction_in(
+            vault,
+            txn,
+            id,
+            &self.body,
+            self.parked_retract,
+            action,
+        )
     }
 }
 
@@ -537,6 +593,23 @@ impl Memory<'_> {
                 let owner_answer = authorized.owner_answer;
                 let reviewed = ReviewedProposal::read_in_txn(self.vault, &*wtxn, &id)?;
                 reviewed.settleable(review_id, actor.entity_ref(), action, vetting)?;
+                // A holder that is no person never settles a close that lifts
+                // a restriction (the Engine's RULING RESTRICTION-HOLDER-SETTLE
+                // = A, 15 Nov; canon #widen-world-floor: "An agent's widen
+                // always asks the person affected ... No standing grant and
+                // no bypass grant covers it"; the lead's RULING
+                // WORLD-ACCESS-GRANT-DELETE = A: "deleting a restriction IS a
+                // widening"). A person who holds a covering Grant settles it
+                // as the owner's delegated act (DEC-0006 row 10); a person's
+                // slip handed on to an agent's key is no person's
+                // (`acts_as_own_person`), on the owner's arm too: the owner's
+                // proof answers for the owner, not for the key that holds the
+                // slip (RULING HANDED-ON-SLIP-PERSON Q1 = A).
+                if !self.acts_as_own_person()
+                    && reviewed.settle_lifts_restriction_in(self.vault, &*wtxn, &id, action)?
+                {
+                    return Err(restriction_close_needs_a_person(actor));
+                }
                 let settled = if vetting {
                     self.vault.vet_generated_claim_in_txn(
                         wtxn,
@@ -584,12 +657,25 @@ impl Memory<'_> {
                                         &prior.body,
                                     ))
                                 });
-                        self.vault.supersede_claim_in_txn_as(
+                        // The owner's approval closes the head as the owner: the
+                        // owner's proof, revalidated here, confirms the close of an
+                        // Approved head in person where a declared critical class
+                        // asks for it (FIX
+                        // OWNER-CLOSE-DOORS-DECLARED-CRITICAL-APPROVED-CLOSE-PENDS).
+                        // A Grant holder's close carries none.
+                        let owner = match authority {
+                            ClaimSettler::Owner(owner) => {
+                                owner.owner_answer_in_txn(self.vault, &*wtxn)?
+                            }
+                            ClaimSettler::Grant(_) => None,
+                        };
+                        self.vault.supersede_claim_in_txn_as_owner(
                             wtxn,
                             &id,
                             &prior.id,
                             now,
                             Some(actor),
+                            owner,
                         )?;
                         read
                     }
@@ -599,20 +685,19 @@ impl Memory<'_> {
                 if action == GateConsentBundleAction::Approve && (settled.dreamer_run || vetting) {
                     self.vault.owe_settled_claim_vads_in_txn(wtxn, &[id])?;
                 }
-                let mut record = crate::memory::authorship::decision(
+                let mut receipt = crate::memory::authorship::decision(
                     actor,
                     CLAIM_SETTLEMENT_CONTENT_KIND,
                     match action {
-                        GateConsentBundleAction::Approve => "approved",
-                        GateConsentBundleAction::Decline => "rejected",
+                        GateConsentBundleAction::Approve => GateReceiptOutcome::Approved,
+                        GateConsentBundleAction::Decline => GateReceiptOutcome::Rejected,
                     },
                     reason.as_str(),
                     Some(id),
                     reviewed.digest.to_vec(),
-                    now,
                 );
-                record.read_frontier_hash = reviewed.frontier;
-                record.grant_ref = authorized.grant_ref;
+                receipt.basis = crate::store::PolicyBasis::frontier(reviewed.frontier);
+                receipt.grant_ref = authorized.grant_ref;
                 // FIX 7499, 7500: the reviewed candidate's read context, and
                 // the loop links of the pending decision it answers.
                 let pending = reviewed.pending.as_ref().and_then(|pending| {
@@ -622,7 +707,7 @@ impl Memory<'_> {
                         .ok()
                         .flatten()
                 });
-                record.context = crate::store::GateDecisionContext {
+                receipt.context = crate::store::GateDecisionContext {
                     read: crate::store::GateDecisionReadContext::claim(&id, &reviewed.body)
                         .map(|read| {
                             let anchors = crate::conversation::gate_claim_anchors_in(
@@ -641,9 +726,7 @@ impl Memory<'_> {
                         .map(crate::store::GateDecisionContext::answering)
                         .unwrap_or_default()
                 };
-                self.vault
-                    .store
-                    .append_gate_decision_in_txn(wtxn, &record)?;
+                let record = self.vault.store.record_gate_receipt_in_txn(wtxn, receipt)?;
                 Ok((settled, record, reviewed.parked_retract))
             });
         let (settled, record, parked_retract) = written?;

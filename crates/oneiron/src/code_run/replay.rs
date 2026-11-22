@@ -7,14 +7,9 @@ use super::codec::{
     CODE_RUN_BRIDGE_CALL_KEYS, CODE_RUN_DETERMINISM_KEYS, CODE_RUN_OUTPUT_PREVIEW_KEYS,
     CODE_RUN_RAW_OUTPUT_KEYS, CODE_RUN_REPLAY_RECORD_KEYS, CODE_RUN_STEP_CHECKPOINT_KEYS,
 };
-use super::payload::{
-    decode_self_dispatch_outcome, self_call_request_value, self_dispatch_outcome_value,
-};
-use super::support::{
-    code_run_layout_hash, expect_map, invalid_code_run_replay, map_get, str_value, u64_value,
-    validate_text,
-};
-use super::types::{SelfCall, SelfDispatchOutcome, SelfEffect, SelfSpeechCall, SelfSpeechResult};
+use super::payload::decode_self_dispatch_outcome;
+use super::support::code_run_layout_hash;
+use super::types::{SelfDispatchOutcome, SelfEffect};
 // The bridge call's body names these by their `super::` paths.
 use super::{SelfStoredReply, SelfStoredReplyKind, spawn_replay};
 mod bridge;
@@ -28,10 +23,12 @@ pub use self::bridge::CodeRunBridgeCall;
 pub use self::checkpoint::CodeRunStepCheckpoint;
 pub use self::cursor::CodeRunReplayCursor;
 pub use self::pending_step::PendingCodeStep;
-pub(super) use self::request_identity::ErasedRequest;
+pub(super) use self::request_identity::{ErasedRequest, erased_identity_field};
 
 pub const CODE_RUN_REPLAY_SCHEMA_VERSION: u64 = 3;
-pub const CODE_RUN_RNG_SEED_LEN: usize = 32;
+#[doc(hidden)]
+pub use oneiron_records::code_run::replay::CODE_RUN_RNG_SEED_LEN;
+
 pub use crate::store::result_manifest::CODE_RUN_REPLAY_HASH_LEN;
 
 /// Frozen nondeterministic inputs for one code run.
@@ -282,6 +279,27 @@ fn cached_rows(
         }
     }
     cached.rows.clone()
+}
+
+/// Whether `kept`, the row the store holds at a live call's seq, stands for
+/// `call`, the call that ran there: the same request as replay meets it, so
+/// the form the side-row wall admitted the same request in (OF-067), an
+/// erased request by its identity, and a held input by its digests. A call
+/// whose request changed (a pure change or an owner's refire, L8-23) does not.
+/// The compare reads no custody values (FIX REPLAY-COMPARE-KNOWN-MATCHER): a
+/// row only that read would meet keeps the live call, which the side-row wall
+/// admits again at this put.
+pub(in crate::code_run) fn held_row_stands_for(
+    call: &CodeRunBridgeCall,
+    kept: &CodeRunBridgeCall,
+) -> Result<bool> {
+    if spawn_replay::replay_request_match(call.effect, &kept.request, &call.request, None)?.is_hit()
+    {
+        return Ok(true);
+    }
+    Ok(call.effect == SelfEffect::AgentVerb
+        && super::actions::held_request_form(&kept.request)
+            .is_some_and(|stored| Some(stored) == super::actions::held_request_form(&call.request)))
 }
 
 /// Persisted replay record for a first-party code run. Imported result

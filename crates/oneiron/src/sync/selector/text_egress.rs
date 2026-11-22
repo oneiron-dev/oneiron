@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 
 use crate::Vault;
+use crate::claim::history_projection::MachineHistoryReadCache;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::federation::record_scope::note_world;
@@ -48,7 +49,9 @@ pub(super) fn text_backed(
 /// under `authority` by a selector at `position`: causally admitted, held at
 /// the worlds the grant and the selector read, at a record position the grant
 /// reads and the selector selects, in a selected facet, and past every
-/// per-row selector rule.
+/// per-row selector rule. A machine history control is judged against its
+/// target's history as `history`, the cache of this read `rtxn`, resolves it.
+#[expect(clippy::too_many_arguments)]
 pub(super) fn source_selected(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
@@ -57,8 +60,9 @@ pub(super) fn source_selected(
     selector: &SyncSelector,
     position: &FederationDirectionScope,
     facet_scope: &HashMap<EntityId, FacetScope>,
+    history: &MachineHistoryReadCache<'_>,
 ) -> Result<bool> {
-    if !crate::authority::row_causal_admitted(vault, rtxn, source, raw)? {
+    if !crate::authority::row_causal_admitted_cached(history, rtxn, source, raw)? {
         return Ok(false);
     }
     // A source sits at one world it is in that the grant and the selector
@@ -66,7 +70,14 @@ pub(super) fn source_selected(
     // text in either (FIX 22223).
     let selected = note_world::selector_world_axis(selector.world);
     let held = [&authority.worlds, &selected];
-    let Some(record) = note_world::blob_scope_held_at(&vault.store, rtxn, *source, raw, &held)?
+    let Some(record) = note_world::blob_scope_held_at_with_history(
+        &vault.store,
+        history,
+        rtxn,
+        *source,
+        raw,
+        &held,
+    )?
     else {
         return Ok(false);
     };

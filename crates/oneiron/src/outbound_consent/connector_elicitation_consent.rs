@@ -32,12 +32,10 @@ use super::connector_elicitation_asks::{
 };
 use super::execution::{ConnectorElicitationBinding, ElicitationAnswerVerdict};
 
-/// The action class a stop-asking press remembers (FIX 8808).
-const CONNECTOR_ELICITATION_ANSWER_ACTION: &str = "outbound.connector_elicitation_answer";
-
-/// The derivation domain of the once digest an owner's press binds.
-const CONNECTOR_ELICITATION_CONSENT_DOMAIN: &[u8] =
-    b"oneiron:connector-elicitation-owner-consent:v1";
+#[doc(hidden)]
+use oneiron_records::outbound_consent::connector_elicitation_consent::{
+    CONNECTOR_ELICITATION_ANSWER_ACTION, CONNECTOR_ELICITATION_CONSENT_DOMAIN,
+};
 
 /// The option ids the decisive ask offers, by outcome.
 const OPTION_STOP_ASKING: &str = "approve_and_stop_asking";

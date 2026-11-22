@@ -9,11 +9,12 @@ mod peripheral;
 mod recorded;
 
 pub(crate) use claim_write::{
-    capture_claim_policy_for_write, check_claim_policy_for_write,
+    OwnerRevisionAmendment, capture_claim_policy_for_write, check_claim_policy_for_write,
     check_claim_policy_for_write_with_preflight_decision, check_claim_policy_for_write_with_record,
     check_claim_policy_for_write_with_record_with_reader,
     check_claim_policy_for_write_with_record_with_reader_reference_probe,
-    claim_source_trust_admits_auto, unresolved_claim_reference,
+    claim_source_trust_admits_auto, record_owner_revision_amendment_in_txn,
+    unresolved_claim_reference,
 };
 pub(super) use consent::{
     GateConsentBinding, claim_gate_input, enforce_gate_decision,
