@@ -10,7 +10,8 @@ use crate::graph_fs::{GraphFsOptions, GraphFsReference, GraphFsResolver};
 
 impl Memory<'_> {
     /// `lane.mount_graph_fs(reference, options)`, carrying whether this
-    /// handle reads repo bytes masked.
+    /// handle reads repo bytes masked and the leased attempt its host bound
+    /// (census L9-37), which each coreutils command's telemetry run names.
     ///
     /// # Errors
     /// The mount's own, or a failed recipient check.
@@ -23,6 +24,7 @@ impl Memory<'_> {
         let masked = self.repo_reads_masked()?;
         Ok(lane
             .mount_graph_fs(reference, options)?
-            .with_repo_masked(masked))
+            .with_repo_masked(masked)
+            .with_dispatch_attempt(self.dispatch_attempt()))
     }
 }

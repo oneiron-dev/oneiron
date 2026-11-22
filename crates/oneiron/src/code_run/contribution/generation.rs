@@ -116,6 +116,11 @@ impl Runner<'_> {
         Ok(Ok(Prepared {
             with_skill_hash: request_hash(&with_skill)?,
             without_skill_hash: request_hash(&without_skill)?,
+            // The fork with the skill is the captured request, so it reads
+            // the capsule's rows; the fork without it leaves the exposure
+            // out and adds nothing, so it reads no row outside them.
+            with_skill_rows: capsule.source_rows.clone(),
+            without_skill_rows: capsule.source_rows.clone(),
             exposure_revision,
             capsule,
             binding,
@@ -149,16 +154,24 @@ impl Runner<'_> {
         {
             return Ok(Err(ContributionReplayUnavailable::Unfinished));
         }
-        let (request, hash) = match treatment {
-            ForkTreatment::WithSkill => (&prepared.with_skill, prepared.with_skill_hash),
-            ForkTreatment::WithoutSkill => (&prepared.without_skill, prepared.without_skill_hash),
+        let (request, hash, rows) = match treatment {
+            ForkTreatment::WithSkill => (
+                &prepared.with_skill,
+                prepared.with_skill_hash,
+                prepared.with_skill_rows.as_deref(),
+            ),
+            ForkTreatment::WithoutSkill => (
+                &prepared.without_skill,
+                prepared.without_skill_hash,
+                prepared.without_skill_rows.as_deref(),
+            ),
         };
         // The route prompt, read again from its body before the call.
         let rung = match capsule_route_prompt(self.vault, &prepared.capsule)? {
             Ok(prompt) => ReplayRung::of(&prepared.binding, prompt),
             Err(unavailable) => return Ok(Err(prompt_unavailable(&unavailable))),
         };
-        let Some(response) = self.model.generate(request, &rung, self.clock)? else {
+        let Some(response) = self.model.generate(request, rows, &rung, self.clock)? else {
             return Ok(Err(ContributionReplayUnavailable::ModelUnavailable));
         };
         let capsule = &prepared.capsule;

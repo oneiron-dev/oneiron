@@ -430,7 +430,7 @@ fn owner_claim(
             value: json!(text),
             confidence: 1.0,
             source: "user_stated".to_owned(),
-            scope: claim_scope(vault, world),
+            scope: claim_scope(vault, world).into(),
             sensitivity: None,
             evidence_turn_refs: Vec::new(),
             valid_from: None,

@@ -193,6 +193,9 @@ impl Vault {
             next.board = authority.board.clone();
             next.roster = roster;
             next.room_facets = facets;
+            // A standing answer in a facet the room leaves is marked stale in
+            // this write's batch (FIX STANDING-ANSWER-STAYS-IN-LEFT-FACET; the
+            // room narrowing queue).
             let signed_at = owner_signed_at(self, txn)?;
             self.sign_owner_project_in_txn(
                 txn,

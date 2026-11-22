@@ -28,6 +28,7 @@ use crate::llm::call_as_step_checked;
 use crate::model_step_context::{DurableStepContext, StepOutcome};
 use crate::model_step_error::DurableStepError;
 use crate::scope_summary::{ComposedSummary, ScopeSummaryPlan, SummaryLineSpan};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use oneiron_model::llm::LlmResponse;
 use std::collections::BTreeMap;
 
@@ -40,6 +41,14 @@ impl<E> ScopeSummaryExecutor<'_, E> {
     /// page in order from the first, each a durable step a resume replays
     /// from its memo with no second call, and the lines of all of them
     /// landing as one body through the landing fence over the full evidence.
+    /// `refusal` is the window refusal that brought it to `window`, if one
+    /// did: when no smaller page fits after it, the try ends Failed with
+    /// both reasons, once, since a resume would start at the first size and
+    /// resend the refused call (Engine 21 Nov 07:38).
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "a paged composition joins the attempt, its plan, its evidence, its window and the refusal that set it"
+    )]
     pub(super) async fn compose_pages(
         &self,
         attempt: &DreamerAdmittedAttempt,
@@ -48,6 +57,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         evidence: &ScopeSummaryEvidence,
         instruction: &str,
         mut window: u64,
+        mut refusal: Option<String>,
         mut charges: StepChargeTally,
     ) -> Result<DreamerAttemptExecution> {
         let attempt_id = attempt.status.attempt.id;
@@ -59,7 +69,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         let result: Result<DreamerAttemptExecution> = async {
             'layouts: loop {
                 if ctx.deadline.expired() {
-                    return Ok(charges.checkpoint());
+                    return Ok(stop_or_fail(&charges, refusal.as_deref(), charges.checkpoint()));
                 }
                 let schema = output::session_schema();
                 let params = serde_json::to_vec(&(
@@ -70,7 +80,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                     window,
                 ))
                 .map_err(|_| invalid_consolidation("summary policy did not encode"))?;
-                let params_hash = *blake3::hash(&params).as_bytes();
+                let params_hash = session_pages_params_hash(&params);
                 let memo = plan.composition_memo(evidence, &params_hash)?;
                 // The same paged composition already stands: no page is asked again.
                 match ctx.vault.reuse_composed_scope_summary(
@@ -113,10 +123,11 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                     None => None,
                 };
                 let Some(pages) = pages else {
-                    return Ok(charges.park_for(
-                        &format!("session summary page does not fit: window_tokens={window} frame_tokens={frame}"),
-                        DreamerParkCause::Retry,
-                    ));
+                    let unfit = format!("session summary page does not fit: window_tokens={window} frame_tokens={frame}");
+                    return Ok(match &refusal {
+                        Some(refusal) => charges.fail_for(&format!("{refusal}; {unfit}")),
+                        None => charges.park_for(&unfit, DreamerParkCause::Retry),
+                    });
                 };
                 let count = pages.len() as u64;
                 let mut steps = Vec::with_capacity(pages.len());
@@ -157,7 +168,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 let mut replies = Vec::with_capacity(steps.len());
                 for (request, step_hash, labels) in steps {
                     if ctx.deadline.expired() {
-                        return Ok(charges.checkpoint());
+                        return Ok(stop_or_fail(&charges, refusal.as_deref(), charges.checkpoint()));
                     }
                     // Each page answers to the page contract inside its step.
                     let check_labels = labels.clone();
@@ -188,13 +199,14 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                         }
                         Err(DurableStepError::SpentFinalizeRefused { usage }) => {
                             charges.record_usage(&usage);
-                            return Ok(charges.checkpoint());
+                            return Ok(stop_or_fail(&charges, refusal.as_deref(), charges.checkpoint()));
                         }
-                        Err(DurableStepError::DeadlineHardCut) => return Ok(charges.checkpoint()),
+                        Err(DurableStepError::DeadlineHardCut) => {
+                            return Ok(stop_or_fail(&charges, refusal.as_deref(), charges.checkpoint()));
+                        }
                         Err(DurableStepError::FinalizeRefused) => {
-                            return Ok(
-                                charges.park_for("wake pass finalize window", DreamerParkCause::Checkpoint)
-                            );
+                            let stop = charges.park_for("wake pass finalize window", DreamerParkCause::Checkpoint);
+                            return Ok(stop_or_fail(&charges, refusal.as_deref(), stop));
                         }
                         Err(DurableStepError::Engine(error)) => return Ok(charges.park_on_error(&error)),
                         Err(other @ DurableStepError::SpentSchemaValidation { .. }) => {
@@ -213,6 +225,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                                 && let Some(smaller) = super::window::smaller_window(window)
                             {
                                 window = smaller;
+                                refusal = Some(other.to_string());
                                 continue 'layouts;
                             }
                             return Ok(
@@ -228,7 +241,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                     }
                 }
                 if ctx.deadline.expired() {
-                    return Ok(charges.checkpoint());
+                    return Ok(stop_or_fail(&charges, refusal.as_deref(), charges.checkpoint()));
                 }
                 let composition = match output::assemble(replies) {
                     Ok(composition) => composition,
@@ -277,6 +290,24 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             ctx.note_spend_before_error(charges.units, &charges.step_bindings);
         }
         result
+    }
+}
+
+/// `stop`, the park a paged composition makes on its pass's deadline or
+/// finalize window, unless a window refusal brought the sitting to this
+/// layout: a resume starts again at the first size and resends that refused,
+/// unmemoized call, so the try ends Failed with the refusal and its spend
+/// instead, once (Engine 21 Nov 07:38).
+fn stop_or_fail(
+    charges: &StepChargeTally,
+    refusal: Option<&str>,
+    stop: DreamerAttemptExecution,
+) -> DreamerAttemptExecution {
+    match refusal {
+        Some(refusal) => charges.fail_for(&format!(
+            "{refusal}; the wake pass ended before a smaller page layout landed"
+        )),
+        None => stop,
     }
 }
 
@@ -492,4 +523,20 @@ fn fits(label: &str, slice: &str, room: u64) -> Result<bool> {
 /// TURN, `[label] words` and a newline.
 fn render(label: &str, words: &str) -> String {
     format!("[{label}] {words}\n")
+}
+
+/// A sitting composed in pages: its params JSON (instruction, model,
+/// schema, `PAGES_DOMAIN`, window), with no tag written
+/// (`purposes::dreamer_consolidation::SESSION_PAGES_PARAMS`).
+fn session_pages_params_hash(params: &[u8]) -> [u8; 32] {
+    LegacyDigest::new(purposes::dreamer_consolidation::SESSION_PAGES_PARAMS)
+        .raw(params)
+        .finish()
+}
+
+/// [`session_pages_params_hash`] for the K door
+/// (`test_doors::fingerprint_keep_dreamer_consolidation_digests`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn session_pages_params_hash_for_test(params: &[u8]) -> [u8; 32] {
+    session_pages_params_hash(params)
 }

@@ -633,7 +633,7 @@ impl Vault {
                     self,
                     intent,
                     IntentEscalationReason::BindingInvalid,
-                    crate::unix_millis_now(),
+                    crate::unix_seconds_now(),
                 )?;
                 let settled = SettledConnectorCall::Refused {
                     decision_ref: None,

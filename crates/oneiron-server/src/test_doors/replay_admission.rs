@@ -5,7 +5,9 @@
 //! manifest pinning every role to one model, and the admission of an exact
 //! replay of a call of that role, as the replay callers (the
 //! code-fix exact replay, the contribution fork, the audit judge and the
-//! shadow arm) ask it.
+//! shadow arm) ask it. Also the widest route a live call of a role may take
+//! on the ladder its route hands out (FIX-LIST
+//! ROLE-LEAVE-DEVICE-LOST-ON-BARE-LADDER-FALLBACK).
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -149,6 +151,32 @@ pub fn admit_replay(
     runtime
         .admit_replay(vault, role, replay_request(model, locality))
         .map(|_| ())
+        .map_err(|refusal| refusal.to_string())
+}
+
+/// The widest route a call of `role` that comes with `seat_role`'s seat may
+/// take on the ladder the role's route hands out, the owner's fallbacks
+/// included: where its rungs send it and where every fallback the owner may
+/// name for them, now or later, could take it, under the ladder's scope
+/// (`OfferLadder::prompt_locality_bound`). For a role whose work never
+/// leaves the device, nothing past the device (FIX-LIST
+/// ROLE-LEAVE-DEVICE-LOST-ON-BARE-LADDER-FALLBACK).
+///
+/// # Errors
+///
+/// No seat serves `seat_role`; the route's refusal, as its text.
+pub fn route_locality_bound(
+    runtime: &ModelRuntime,
+    vault: &Vault,
+    role: ModelRole,
+    seat_role: ModelRole,
+) -> Result<ModelLocality, String> {
+    let seat = runtime
+        .seat(seat_role)
+        .ok_or_else(|| format!("no seat serves {seat_role:?}"))?;
+    runtime
+        .route_role(vault, role, seat)
+        .map(|route| route.ladder.prompt_locality_bound())
         .map_err(|refusal| refusal.to_string())
 }
 

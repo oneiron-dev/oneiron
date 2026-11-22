@@ -21,7 +21,7 @@ use super::{FederationGrant, Scope, ScopeAxis};
 use crate::error::Result;
 
 /// The verb a Grant lists to confer at all ([`FederationGrant::confers_at`]).
-const CONFERRING_VERB: &str = "read";
+pub(super) const CONFERRING_VERB: &str = "read";
 
 /// The owner's verb-class rows as one judgment reads them: each class and
 /// its member verbs.

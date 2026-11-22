@@ -8,7 +8,7 @@ use oneiron::attempt_queue::AttemptState;
 use oneiron::{
     BudgetGuard, DREAMER_EXECUTOR_ERROR_PARK_REASON, DreamerAdmittedAttempt,
     DreamerAttemptExecution, DreamerAttemptExecutor, DreamerConsolidationScope, DreamerRunnerStore,
-    Result, WakeAttemptContext, WakeCancellation, WakeTrigger,
+    Result, WakeAttemptContext, WakeTrigger,
 };
 
 #[test]
@@ -496,7 +496,7 @@ async fn zero_progress_budget_exhausted_backs_off_instead_of_hot_looping() {
 async fn digest_cadence_deadline_runs_without_caller_invoking_digest() {
     use oneiron::ClaimCandidate;
     use oneiron::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
-    use oneiron::dreamer_runner::maintenance::digest::ProactivityCadence;
+    use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
     use oneiron::store::GateDecisionId;
     use oneiron::temporal::TimeRange;
     use oneiron::write_envelope::{WriteEnvelope, WriteProvenance};
@@ -517,16 +517,26 @@ async fn digest_cadence_deadline_runs_without_caller_invoking_digest() {
     let owner = vault
         .authenticate_owner(owner_id, &owner_id.to_hex(), true, GateDecisionId::now())
         .unwrap();
-    vault
-        .set_proactivity_cadence(
-            &owner,
-            &ProactivityCadence {
-                period_secs: 100,
-                group_by_facet: true,
-                urgent_breakthrough: true,
-            },
-        )
-        .unwrap();
+    // The cadence is two settings since the Setting primitive's dreamer stage: the period, and
+    // the owner's delivery fields.
+    for (key, value) in [
+        ("dreamer.proactivity.period", serde_json::json!(100)),
+        (
+            "dreamer.proactivity.delivery",
+            serde_json::json!({"group_by_facet": true, "urgent_breakthrough": true}),
+        ),
+    ] {
+        let outcome = vault
+            .set_setting(
+                SettingCaller::Owner(&owner),
+                SetSetting::vault_value(key, value),
+            )
+            .unwrap();
+        assert!(
+            matches!(outcome, SetSettingOutcome::Applied { .. }),
+            "the owner sets {key} at once"
+        );
+    }
     let store = DreamerRunnerStore::new(&vault);
     let local = store
         .local_home_node_candidate(false, false, false)
@@ -666,10 +676,13 @@ async fn failed_digest_projection_does_not_block_due_attempt() {
     assert!(vault.next_proactivity_digest_at().is_err());
 }
 
+// The damaged presentation row is planted through a test door, which only the test cfg builds.
+#[cfg(oneiron_test_support)]
 #[tokio::test]
 async fn presentation_failure_does_not_repeat_digest_tick_or_starve_macro_and_push() {
     use crate::tick::{AttemptQueueDeadlines, HybridTick, TickSource, TimerTick};
     use oneiron::ClaimCandidate;
+    use oneiron::WakeCancellation;
     use oneiron::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
     use oneiron::temporal::TimeRange;
     use oneiron::write_envelope::{WriteEnvelope, WriteProvenance};
@@ -761,7 +774,12 @@ async fn presentation_failure_does_not_repeat_digest_tick_or_starve_macro_and_pu
     );
     // Corrupt after the first deadline snapshot: selection succeeded but
     // assembly fails. The error must suspend ONLY the digest lane.
-    vault.corrupt_proactivity_presentation_for_test().unwrap();
+    oneiron::test_doors::setting::plant_undecodable_row(
+        &vault,
+        "dreamer.proactivity.presentation",
+        oneiron::setting::SettingScope::Vault,
+    )
+    .unwrap();
     let mut config = test_config();
     config.local_node_id = local;
     let mut factory = TestExecFactory {

@@ -1,5 +1,7 @@
 //! Durable admission txn, attempt payload codec, dispatch handoff, and status reads.
 
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -10,9 +12,10 @@ use crate::attempt_queue::{
     RetryOutcome,
 };
 use crate::batch::secret_scan::{
-    SidePart, admit_side_parts, admitted_from, from_named_tree, named_tree,
+    SidePart, admit_side_parts, admitted_from_known, from_named_tree, named_tree,
 };
 use crate::error::{Error, Result};
+use crate::store::known_value_index::KnownValues;
 
 use super::inbound::{route_inbound_surface_event, route_inbound_surface_event_admitting_in_txn};
 use super::validate_non_blank;
@@ -418,7 +421,11 @@ pub(super) fn admit_surface_event_once_in_txn(
                     crate::thread_passport::canonical_thread_ref_in_txn(vault, wtxn, thread)
                 })
                 .transpose()?;
-            if requested != prior || !held_event_matches(&held.event, event)? {
+            if requested != prior
+                || !held_event_matches(&held.event, event, || {
+                    KnownValues::shared_in_writer(&vault.store, wtxn)
+                })?
+            {
                 return Err(Error::InvalidConfig(
                     "CC correlation already belongs to another message or thread".to_owned(),
                 ));
@@ -525,12 +532,19 @@ pub(crate) fn lift_intake_payload_in_txn(
 }
 
 /// Whether a replayed event is the one a row already holds, as the side-row
-/// wall stored it: a field whose secret it lifted holds a handle there.
-fn held_event_matches(held: &SurfaceEvent, offered: &SurfaceEvent) -> Result<bool> {
+/// wall stored it: a field whose secret it lifted holds a handle there, and
+/// so does a field holding a value base custody holds, `known`, which the
+/// wall read in the writer that admitted the row (FIX
+/// REPLAY-COMPARE-KNOWN-OTHER-CALLERS).
+fn held_event_matches(
+    held: &SurfaceEvent,
+    offered: &SurfaceEvent,
+    known: impl FnOnce() -> Result<Option<Arc<KnownValues>>>,
+) -> Result<bool> {
     if held == offered {
         return Ok(true);
     }
-    admitted_from(&named_tree(held)?, &named_tree(offered)?)
+    admitted_from_known(&named_tree(held)?, &named_tree(offered)?, known)
 }
 
 /// Reads a run's attempt rows inside the caller's write transaction.

@@ -13,7 +13,7 @@ use oneiron::{
 fn outbound_intent_ledger_exposes_one_complete_greenfield_format() {
     assert_eq!(INTENT_LEDGER_SCHEMA_VERSION, 6);
     assert_eq!(OUTBOUND_BINDING_VERSION, 2);
-    assert_eq!(INTENT_LEDGER_VALUE_KEYS.len(), 24);
+    assert_eq!(INTENT_LEDGER_VALUE_KEYS.len(), 25);
     assert_eq!(
         INTENT_LEDGER_VALUE_KEYS
             .iter()
@@ -37,6 +37,9 @@ fn outbound_intent_ledger_exposes_one_complete_greenfield_format() {
         // owner who authorized it (b98890ef37f, #5933).
         "pinned_approval",
         "authorizing_owner",
+        // The attempt a row's provider key names when it is not the row's own,
+        // written only on such a row (review round 2 of #10220).
+        "idempotency_attempt_id",
     ] {
         assert!(INTENT_LEDGER_VALUE_KEYS.contains(&required));
     }

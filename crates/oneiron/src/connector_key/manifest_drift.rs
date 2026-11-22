@@ -244,7 +244,7 @@ impl ConnectorManifestDrift {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use serde_json::{Value, json};
     fn manifest(schema: Value, permission: &str, trigger: &str) -> ResolvedConnectorManifest {
         ResolvedConnectorManifest::resolve(vec![ConnectorToolSchema {
             output_schema: None,

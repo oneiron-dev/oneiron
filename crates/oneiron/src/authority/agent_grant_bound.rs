@@ -11,7 +11,12 @@
 //! alone: Grants are never unioned (authority/principal_standing.rs,
 //! federation/repo_access.rs, FIX 7462). The verbs stay the slip's.
 //!
-//! - No Grant has ever named the holder: the slip reads as its Scope
+//! - The holder's AGENT_DEF does not stand (not enabled and Active, as
+//!   `live_agent_principal_in` judges an agent for the ordinary owner-grant
+//!   path): it reads nothing, however live its slip and Grants are, so
+//!   switching an agent off ends its credential reads as revoking its last
+//!   Grant does.
+//! - No Grant has ever named a standing holder: the slip reads as its Scope
 //!   allows, as before. That is an ordinary person, which no Grant can name
 //!   (Engine RULING PAIR-GRANT-DESIGN Q1 = A), or an agent paired before the
 //!   upgrade or without the owner's proof; the owner narrows it by minting a
@@ -43,9 +48,11 @@
 //! narrows; the key's own bound still binds.
 
 use crate::Vault;
+use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::federation::{AgentGrantStanding, AgentVerbClasses};
+use crate::registry::ENTITY_TYPE_AGENT_DEF;
 use oneiron_authority::federation::{Scope, ScopeAxis, SensitivityCeiling};
 
 /// What the owner's agent Grants that name a credential's holder bind its
@@ -63,10 +70,11 @@ pub(crate) struct AgentGrantReadBound {
 impl Vault {
     /// The bound the owner-agent Grants that name `holder` in `txn` put on a
     /// read under a credential of Scope `slip` that `holder` holds (module
-    /// docs); `None` when no Grant has ever named `holder`.
+    /// docs); `None` when no Grant has ever named a standing `holder`.
     ///
     /// # Errors
-    /// A store, fold or clock failure; never a refusal.
+    /// A store, fold or clock failure, or an agent definition that does not
+    /// decode; never a refusal.
     pub(crate) fn agent_grant_read_bound_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -87,17 +95,37 @@ impl Vault {
 
     /// What each owner-agent Grant naming `holder` that stands for `read` in
     /// `txn` lets a read reach, its verbs left open, in Grant id order; empty
-    /// when a Grant has named `holder` but none stands now (every one
-    /// revoked, expired, without `read`, its owner gone or its pact lapsed),
-    /// and `None` when no Grant has ever named `holder` (module docs).
+    /// when `holder`'s AGENT_DEF does not stand, or when a Grant has named
+    /// `holder` but none stands now (every one revoked, expired, without
+    /// `read`, its owner gone or its pact lapsed), and `None` when no Grant
+    /// has ever named a standing `holder` (module docs).
     ///
     /// # Errors
-    /// A store, fold or clock failure; never a refusal.
+    /// A store, fold or clock failure, or an agent definition that does not
+    /// decode; never a refusal.
     pub(crate) fn agent_grant_read_bounds_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         holder: EntityId,
     ) -> Result<Option<Vec<Scope>>> {
+        // A holder whose AGENT_DEF no longer stands reads nothing under its
+        // Grants, however live its slip and Grants are: the ordinary
+        // owner-grant path stands an agent only while its definition is
+        // enabled and Active (`live_agent_principal_in`), and a credential
+        // read is held to the same standing. An empty bound, as a revoked
+        // last Grant gives, so a fresh key and a held lane both read nothing
+        // and the slip's own Scope never widens it back.
+        if crate::vault::live_entity_row_in_txn(&self.store, txn, &holder)?.live_type()
+            == Some(ENTITY_TYPE_AGENT_DEF)
+            && !crate::authority::live_agent_principal_in(
+                &self.store,
+                txn,
+                holder,
+                EdgeActorClass::Agent,
+            )?
+        {
+            return Ok(Some(Vec::new()));
+        }
         let (grants, undecoded) = self.agent_grants_reporting_in_txn(txn)?;
         let naming: Vec<&AgentGrantStanding> = grants
             .iter()

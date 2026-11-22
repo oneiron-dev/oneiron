@@ -53,6 +53,12 @@ enum Request {
         handle: String,
         revision: u64,
         text: String,
+        /// The capture's session-local speaker key the final was heard
+        /// under, when the sibling names one (UNBUILT-02 PR 4). A key that
+        /// is empty, not trimmed, or longer than 128 bytes is dropped to
+        /// none: a key only labels.
+        #[serde(default)]
+        speaker: Option<String>,
     },
     Close {
         handle: String,
@@ -286,6 +292,9 @@ impl VoiceHost {
         let mut pending: Option<Pending<'_>> = None;
         // Whether `pending` enriches a final: words heard live after it wait.
         let mut pending_final = false;
+        // The speaker key `pending`'s final was heard under, when its Final
+        // named one.
+        let mut pending_speaker: Option<String> = None;
         // Frames still to write; a sentence's audio goes out in several
         // chunks, each with its generation's gate (FIX 9542).
         let mut outbox = PlayoutOutbox::new();
@@ -392,6 +401,7 @@ impl VoiceHost {
                                 if let Some((handle, work)) = self.heard(bridge, event, outputs) {
                                     pending = Some(Box::pin(async move { (handle, HEARD_REVISION, work.run().await) }));
                                     pending_final = true;
+                                    pending_speaker = None;
                                 }
                             }
                             MediaEvent::Live(Ok(updates)) => {
@@ -399,6 +409,7 @@ impl VoiceHost {
                                 if let Some(heard) = self.live_heard(bridge, updates, pending_final, outputs).work {
                                     pending_final = heard.final_text;
                                     pending = Some(heard_pending(heard));
+                                    pending_speaker = None;
                                 }
                             }
                             MediaEvent::Live(Err(error)) => {
@@ -423,6 +434,7 @@ impl VoiceHost {
                                 Ok(()) => {
                                     pending = None;
                                     pending_final = false;
+                                    pending_speaker = None;
                                     Response::Closed
                                 }
                                 Err(error) => response_error(&error),
@@ -438,13 +450,19 @@ impl VoiceHost {
                                         // future then releases only its own reservation.
                                         pending = Some(Box::pin(async move { (handle, revision, work.run().await) }));
                                         pending_final = false;
+                                        pending_speaker = None;
                                         continue;
                                     }
                                     Ok(None) => Response::Error { code: "stale_request" },
                                     Err(error) => response_error(&error),
                                 }
                             }
-                            Ok(Request::Final { handle, revision, text }) => {
+                            Ok(Request::Final {
+                                handle,
+                                revision,
+                                text,
+                                speaker,
+                            }) => {
                                 let mut stops = Vec::new();
                                 let prepared = self.prepare_words(&handle, revision, text, true, &mut stops);
                                 super::speech::interrupted(stops, bridge.as_deref_mut(), outputs);
@@ -452,6 +470,11 @@ impl VoiceHost {
                                     Ok(Some(work)) => {
                                         pending = Some(Box::pin(async move { (handle, revision, work.run().await) }));
                                         pending_final = true;
+                                        pending_speaker = speaker.filter(|key| {
+                                            !key.is_empty()
+                                                && key.trim() == key
+                                                && key.len() <= 128
+                                        });
                                         continue;
                                     }
                                     // A backchannel while the agent holds the floor closed its
@@ -459,6 +482,7 @@ impl VoiceHost {
                                     Ok(None) => {
                                         pending = None;
                                         pending_final = false;
+                                        pending_speaker = None;
                                         Response::Backchannel { handle, revision }
                                     }
                                     Err(error) => response_error(&error),
@@ -535,11 +559,19 @@ impl VoiceHost {
                                 context: partial.context,
                             },
                             Ok(AsrUpdate::Final(request)) => {
+                                // The final's speaker key, when its Final named one.
+                                let speaker = std::mem::take(&mut pending_speaker);
                                 // With the media seats, speech opens before the brain starts.
                                 let speaking = bridge
                                     .as_deref_mut()
                                     .is_none_or(|bridge| self.start_speech(request.generation, bridge, outputs));
                                 if speaking {
+                                    // The final's speaker key labels the turn this
+                                    // generation starts; it names no one.
+                                    outputs.brain.final_speaker(
+                                        request.generation,
+                                        speaker.as_deref(),
+                                    );
                                     // Refs remain non-authoritative. The existing brain must
                                     // use ordinary disclosure/tool gates when resolving them.
                                     // Submission is synchronous, outside the session lock.
@@ -575,6 +607,7 @@ impl VoiceHost {
                         {
                             pending_final = heard.final_text;
                             pending = Some(heard_pending(heard));
+                            pending_speaker = None;
                         }
                         response
                     }
