@@ -213,6 +213,19 @@ impl Vault {
             return Ok(None);
         };
         let grant_ref = EntityId::from_hex(grant_ref).map_err(|_| invalid_authority())?;
+        self.current_member_grant_scope_in_txn(txn, grant_ref, &claims.holder_ref)
+    }
+
+    /// The current full Scope of `holder`'s membership grant `grant_ref`, as
+    /// [`Self::current_member_slip_scope_in_txn`] reads a slip's: `None` for a
+    /// grant that is no ordinary vault membership (a Delegate's, an own
+    /// device's), refused when the grant does not stand for `holder` now.
+    pub(super) fn current_member_grant_scope_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        grant_ref: EntityId,
+        holder: &str,
+    ) -> Result<Option<oneiron_authority::federation::Scope>> {
         let LiveEntityRow::Live {
             entity_type: ENTITY_TYPE_FEDERATION_GRANT,
             body,
@@ -227,7 +240,7 @@ impl Vault {
         {
             return Ok(None);
         }
-        if grant.member_ref.to_hex() != claims.holder_ref
+        if grant.member_ref.to_hex() != holder
             || super::grant_known_withdrawn_in_txn(&self.store, txn, grant_ref)
             || WITHDRAWN.get(&self.store, txn, &grant_ref)?.is_some()
             || !grant.confers_at(self.instant_in_txn(txn)?.secs())
@@ -256,6 +269,33 @@ impl Vault {
         Ok(self
             .current_member_slip_scope_in_txn(txn, claims)?
             .is_none_or(|current| claims.scope.is_narrowing_of(&current)))
+    }
+
+    /// [`Self::member_slip_scope_is_current_in_txn`] for a credential a
+    /// saved read lane keeps (OF-506), which only reads: the mint's Scope
+    /// with its verbs met to `read` and `core:read` must lie inside the
+    /// current membership grant. A verb the grant no longer confers beside
+    /// those ends no saved read, as each fresh verification meets the proof
+    /// to the grant's verbs ([`Self::member_bounded_slip_view_in_txn`]); a
+    /// grant that stops conferring read, or narrows any other axis, ends it
+    /// (round 2 review P1 of #9583).
+    pub(super) fn member_slip_read_scope_is_current_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        claims: &SlipClaims,
+    ) -> Result<bool> {
+        let Some(current) = self.current_member_slip_scope_in_txn(txn, claims)? else {
+            return Ok(true);
+        };
+        let read_verbs = oneiron_authority::federation::ScopeAxis::Some(BTreeSet::from([
+            "read".to_owned(),
+            "core:read".to_owned(),
+        ]));
+        let read = oneiron_authority::federation::Scope {
+            verbs: claims.scope.verbs.meet(&read_verbs),
+            ..claims.scope.clone()
+        };
+        Ok(read.is_narrowing_of(&current))
     }
 
     /// Rebuild a proof-backed read key from the current membership bound in
@@ -552,7 +592,9 @@ impl Vault {
     /// shared vault `vault_id` releases (FIX 12555): the one selection policy
     /// over the owner's local binding, unchanged shared property bytes. Every
     /// grant is read; one whose body does not decode is no bound grant here.
-    fn live_bound_connect_grants_in_txn(
+    /// The inquiry edge's join reads the same selection as the seat's edges
+    /// (FIX INQUIRY-EDGE-ONE-PER-SEAT).
+    pub(crate) fn live_bound_connect_grants_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         vault_id: u64,

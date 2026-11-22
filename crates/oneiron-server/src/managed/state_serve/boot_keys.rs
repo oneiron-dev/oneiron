@@ -13,13 +13,19 @@ use super::super::restore::CheckedRecipients;
 /// A wrap is labelled by its recipient's fingerprint, so a restart adds
 /// nothing, and a recipient of a new epoch gets a wrap of its own.
 /// `checked` is a cold restore's begin-check bytes (FIX 11988): those seal
-/// as read and verified, never the files again.
+/// as read and verified, never the files again. A recipient this vault
+/// retired is skipped, and the start goes on ([`seal_boot_recipient`]).
 pub(super) fn escrow_vault_key(
     vault: &oneiron::Vault,
     managed: &ManagedArgs,
     checked: Option<&CheckedRecipients>,
 ) -> anyhow::Result<()> {
     let present = vault.vault_key_wraps()?;
+    let retired: BTreeSet<String> = vault
+        .vault_key_escrow_retirements()?
+        .into_iter()
+        .map(|retirement| retirement.label)
+        .collect();
     let (verified_managed, verified_break_glass) = match checked {
         Some(checked) => (checked.managed.as_deref(), checked.break_glass.as_deref()),
         None => (None, None),
@@ -36,7 +42,7 @@ pub(super) fn escrow_vault_key(
         // than the file again, which a swap in between would have replaced
         // unchecked.
         if let Some(verified) = verified {
-            seal_escrow_recipient(vault, &present, role, verified)?;
+            seal_boot_recipient(vault, &present, &retired, role, verified)?;
             continue;
         }
         let Some(path) = path else {
@@ -44,9 +50,44 @@ pub(super) fn escrow_vault_key(
         };
         let bytes = std::fs::read(path)
             .map_err(|error| anyhow::anyhow!("{role} escrow recipient unreadable: {error}"))?;
-        seal_escrow_recipient(vault, &present, role, &bytes)?;
+        seal_boot_recipient(vault, &present, &retired, role, &bytes)?;
     }
     Ok(())
+}
+
+/// Seals `role`'s recipient at start as [`seal_escrow_recipient`] does,
+/// except a recipient whose label is in `retired`: a recipient released and
+/// retired is never sealed to again (CUSTODY-1), and the vault refuses it.
+/// The start goes on without that role's wrap and says so, as the carrier
+/// watch does for a recipient it cannot seal, since a start never waits on
+/// the control plane (FIX 2856, RULING FIX-2856-RETIRED-ESCROW-BOOT = C).
+/// Until the supervisor installs a fresh recipient, which the argv watch
+/// seals with no restart, the vault key has that one custody path fewer.
+fn seal_boot_recipient(
+    vault: &oneiron::Vault,
+    present: &[oneiron::world_keys::VaultKeyWrapInfo],
+    retired: &BTreeSet<String>,
+    role: &str,
+    bytes: &[u8],
+) -> anyhow::Result<()> {
+    let label = escrow_label(role, bytes);
+    if retired.contains(&label) {
+        tracing::warn!(
+            reason = "managed_escrow_recipient_retired",
+            role,
+            %label,
+            "the {role} escrow recipient was released and retired; the vault serves on with no {role} escrow wrap until a fresh recipient arrives"
+        );
+        return Ok(());
+    }
+    seal_escrow_recipient(vault, present, role, bytes)?;
+    Ok(())
+}
+
+/// The label of `role`'s escrow wrap to the recipient `bytes`: the role and
+/// the first 16 hex of the recipient's fingerprint.
+fn escrow_label(role: &str, bytes: &[u8]) -> String {
+    format!("{role}.{}", &blake3::hash(bytes).to_hex()[..16])
 }
 
 /// Seals the vault's held data key to `role`'s escrow recipient, `bytes` of
@@ -60,8 +101,7 @@ pub(super) fn seal_escrow_recipient(
 ) -> anyhow::Result<bool> {
     let recipient = oneiron::world_keys::HybridPublicKey::from_bytes(bytes)
         .map_err(|_| anyhow::anyhow!("{role} escrow recipient is not a hybrid public key"))?;
-    let fingerprint = blake3::hash(bytes);
-    let label = format!("{role}.{}", &fingerprint.to_hex()[..16]);
+    let label = escrow_label(role, bytes);
     let sealed = present.iter().any(|wrap| {
         matches!(&wrap.kind, oneiron::world_keys::VaultKeyWrapKind::Escrow { label: held } if *held == label)
     });

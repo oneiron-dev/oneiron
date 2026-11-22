@@ -40,6 +40,10 @@ pub(crate) use self::verify_chain_gates::{
     VerifyCtx, issuer_permits_crl_sign, pkix_path_status, validate_chain, verify_document,
 };
 pub(crate) use self::verify_dss_core::EmbeddedCert;
+// Only the test doors name the rejection from here; the build without
+// `--cfg oneiron_test_support` would warn on an unused import.
+#[cfg(oneiron_test_support)]
+pub(crate) use self::verify_revocation::EvidenceRejection;
 pub(crate) use self::verify_revocation::{
     crl_complete_scope, evidence_fresh, gen_time_beyond_skew, issued_by, ocsp_entry_valid,
 };

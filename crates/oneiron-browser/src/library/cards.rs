@@ -64,8 +64,9 @@ pub struct LibraryCard {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_run_at: Option<u64>,
     /// Its strict runs in a row that missed their postcondition or a
-    /// locator: the third retires it `drift`, and a strict run that met it
-    /// starts the count again.
+    /// locator: the third (the vault owner's `browser.library.drift_misses`,
+    /// 3 by default) retires it `drift`, and a strict run that met it starts
+    /// the count again.
     pub strict_misses: u32,
 }
 

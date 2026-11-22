@@ -7,34 +7,45 @@ use heed::RoTxn;
 
 use crate::claim::ClaimBody;
 use crate::disclosure::DisclosureContext;
-use crate::store::Store;
+use crate::store::StoreRead;
 use crate::{EntityId, Result, Vault};
 
 /// The pack clamp uses the same admission as other disclosure consumers,
 /// including its owner-only exception, retained-copy world/epoch coverage
 /// and the sources of a summary's words (`DisclosureContext::admits_in`).
+/// It judges each row on the content the pack reads (`store`): a room pack's
+/// overlay ∪ base, so a stretch the pack is bound to is judged on its own
+/// staged rows ([`DisclosureContext::admits_in_from`]).
 pub(crate) fn clamp_admits(
     ctx: &DisclosureContext,
     vault: &Vault,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     id: &EntityId,
     entity_type: u8,
     claim_body: Option<&ClaimBody>,
 ) -> Result<bool> {
-    ctx.admits_in(vault, rtxn, id, entity_type, claim_body)
+    ctx.admits_in_from(vault, store, rtxn, id, entity_type, claim_body)
 }
 
-/// [`clamp_admits`] for a bounded channel's pre-filter, which holds only the
-/// store: the row's own test, without the sources of a summary's words
-/// (`DisclosureContext::admits`). Every row it keeps meets [`clamp_admits`]
-/// in the pack's candidate sweep.
+/// [`clamp_admits`] for a pre-filter that holds only the store: the row's
+/// own test, without the sources of a summary's words
+/// (`DisclosureContext::admits_from`), on the content the pack reads. A
+/// run's shared filter config asks it (the TURN fold, the reranker's words,
+/// L2 evidence, the trace); a bounded window's admission (vector, text,
+/// temporal, typed media, the phonetic sound match and learned walk), the
+/// rank pass over the phonetic code rung's exact hits, a narrowed PPR walk's
+/// visibility and its implicit seeds ask [`clamp_admits`]
+/// (PACK-PRESELECT-CLAMP-ROW-ONLY-DISPLACES-READABLE-HIT; REVIEW-10215
+/// rounds 1 and 2). The pack's candidate sweep still asks [`clamp_admits`]
+/// of every row it keeps.
 pub(crate) fn clamp_prefilter_admits(
     ctx: &DisclosureContext,
-    store: &Store,
+    store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     id: &EntityId,
     entity_type: u8,
     claim_body: Option<&ClaimBody>,
 ) -> Result<bool> {
-    ctx.admits(store, rtxn, id, entity_type, claim_body)
+    ctx.admits_from(store, rtxn, id, entity_type, claim_body)
 }

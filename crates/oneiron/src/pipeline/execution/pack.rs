@@ -347,7 +347,7 @@ impl PipelineBuilder<'_> {
         let mut media_evidence = attempt.media_evidence;
         let mut blend_components = attempt.blend_components;
         let mut access_factors = attempt.access_factors;
-        let mut rerank_merged_components = attempt.rerank_merged_components;
+        let mut rerank_components = attempt.rerank_components;
         let mut retrieval_trace = attempt.retrieval_trace;
         let mut replay_inputs_memory = attempt.replay_inputs_memory;
         let mut replay_inputs = attempt.replay_inputs;
@@ -435,7 +435,7 @@ impl PipelineBuilder<'_> {
                 media_evidence = retry.media_evidence;
                 blend_components = retry.blend_components;
                 access_factors = retry.access_factors;
-                rerank_merged_components = retry.rerank_merged_components;
+                rerank_components = retry.rerank_components;
                 retrieval_trace = retry.retrieval_trace;
                 replay_inputs = retry.replay_inputs;
                 replay_inputs_memory = retry.replay_inputs_memory;
@@ -536,9 +536,8 @@ impl PipelineBuilder<'_> {
         let score_breakdown = telemetry_score_breakdown(
             &scores,
             &signal_components,
-            rerank_merged_components
-                .as_ref()
-                .unwrap_or(&blend_components),
+            &blend_components,
+            rerank_components.as_ref(),
             &access_factors,
         );
         let ppr_search_executed = self
@@ -588,7 +587,7 @@ impl PipelineBuilder<'_> {
             .with_quality(&retrieval_quality)
             .with_query_expander_id(query_expander_id);
             let mut run_record = run_record;
-            run_record.reranker_id = rerank_merged_components
+            run_record.reranker_id = rerank_components
                 .as_ref()
                 .and(self.rerank.as_ref())
                 .map(|(reranker, _)| reranker.id().to_owned());
@@ -683,7 +682,10 @@ impl PipelineBuilder<'_> {
         for (requested, signal) in [
             (self.vector_search.is_some(), RetrievalSignal::Vector),
             (self.text_search.is_some(), RetrievalSignal::Text),
-            (self.phonetic_search.is_some(), RetrievalSignal::Phonetic),
+            (
+                self.phonetic_search.is_some() || self.phonetic_vector_search.is_some(),
+                RetrievalSignal::Phonetic,
+            ),
             (!self.media_search.is_empty(), RetrievalSignal::MediaVector),
             (self.temporal_search.is_some(), RetrievalSignal::Temporal),
             (
@@ -713,6 +715,7 @@ impl PipelineBuilder<'_> {
             .phonetic_search
             .as_ref()
             .is_some_and(|codes| !codes.is_empty())
+            || self.phonetic_vector_search.is_some()
         {
             signals.push(RetrievalSignal::Phonetic);
         }
@@ -745,6 +748,10 @@ impl PipelineBuilder<'_> {
                 .phonetic_search
                 .as_ref()
                 .is_some_and(|codes| !codes.is_empty())
+            || self
+                .phonetic_vector_search
+                .as_ref()
+                .is_some_and(|query| query.limit > 0)
             || self
                 .temporal_search
                 .as_ref()

@@ -26,6 +26,7 @@ use oneiron::{
     VaultConfig,
 };
 use oneiron_server::test_doors::one_click_wire_counter::while_wire_counter_held;
+use oneiron_server::test_doors::wire_thresholds::set_thresholds;
 use oneiron_server::wire_telemetry::{MAX_PENDING_COUNTS, WireTelemetry, WireThresholds};
 use oneiron_server::{
     ENGINE_THREAD_STACK_BYTES, build_app, config::SyncServerConfig, server::SyncServer,
@@ -225,13 +226,15 @@ async fn one_click_post_suppresses_member_at_once() {
 fn serve(dir: &tempfile::TempDir) -> (Arc<Vault>, Arc<SyncServer>) {
     let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
     let observer = WireTelemetry::new(Arc::clone(&vault));
-    observer
-        .set_thresholds(&WireThresholds {
+    set_thresholds(
+        &observer,
+        &WireThresholds {
             window_secs: WINDOW_SECS,
             per_verb: u64::MAX,
             per_actor: u64::MAX,
-        })
-        .unwrap();
+        },
+    )
+    .unwrap();
     drop(observer);
     let server = Arc::new(
         SyncServer::new(

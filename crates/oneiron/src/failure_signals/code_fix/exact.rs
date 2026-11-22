@@ -45,6 +45,11 @@ pub struct ExactReplayRequest {
     /// wall masked a secret in it, or in its rung's route prompt: the
     /// replay sends the custody handle, never the secret.
     pub as_sent: bool,
+    /// Every row the request was read from, as its call's capsule names
+    /// them (FIX 7104), for the replay's call to carry (FIX 5760); `None`
+    /// when any constituent is unknown: a copy only a report's or a durable
+    /// step's row keeps, or an older capsule.
+    pub source_rows: Option<Vec<EntityId>>,
 }
 
 impl ExactReplayRequest {
@@ -324,6 +329,7 @@ fn as_kept(
         request,
         rung,
         as_sent: stored == sent,
+        source_rows: None,
     })
 }
 
@@ -366,6 +372,7 @@ fn attempt_request(
                     request,
                     rung,
                     as_sent,
+                    source_rows: capsule.source_rows,
                 })),
                 None,
             ));
@@ -431,13 +438,15 @@ fn attempt_request(
 /// A step row's `copy` standing in for `capsule`'s request (FIX 6255): it
 /// sends on the capsule's `rung`, with the route prompt the capsule kept,
 /// never the one configured now, and it is the call as sent only while
-/// that prompt is too.
+/// that prompt is too. It is the same call, by its sent hash, so it names
+/// the rows the capsule names (FIX 7104).
 fn on_capsule_rung(
     mut copy: ExactReplayRequest,
     capsule: &StepReplayCapsule,
     rung: Option<ReplayRung>,
 ) -> ExactReplayRequest {
     copy.rung = rung;
+    copy.source_rows.clone_from(&capsule.source_rows);
     copy.as_sent &= capsule
         .binding
         .as_ref()
@@ -552,6 +561,7 @@ fn pinned_attempt_request(
             request,
             rung,
             as_sent,
+            source_rows: again.source_rows,
         })));
     }
     let copy = match pinned.step {

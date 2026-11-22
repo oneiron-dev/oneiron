@@ -56,6 +56,10 @@ tempfile = "3"
 tokio = { version = "1", features = ["rt", "macros"] }
 
 [[test]]
+name = "native_budget_wire"
+required-features = ["systemone"]
+
+[[test]]
 name = "remote_transport"
 required-features = ["oneiron-rpc"]
 

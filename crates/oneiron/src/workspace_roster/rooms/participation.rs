@@ -40,21 +40,24 @@ use super::{TURNS, audience, hosting, offers};
 use crate::error::{ClaimError, Error, RecordError, Result};
 use crate::memory::WitnessTurn;
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_PERSON};
-use crate::side_table::{self, LegacyJson, SideKey, SideTable};
+use crate::side_table::{self, FixedSideKey, LegacyJson, SideKey, SideTable};
 use crate::store::Store;
 use crate::workspace_roster::spend_scope::SpendScopeId;
 use crate::{EdgeActorClass, EntityId, Vault, WriteActor};
 
 mod admission;
+mod claimant;
 use self::admission::lacks;
 pub(super) use self::admission::{
-    addressable_agent_in_txn, admit_speech_in, joined, person_stands_in_txn,
-    record_addressed_in_txn, require_speaker_in_txn, require_thread_audience_in,
+    addressable_agent_in_txn, admit_speech_in, claim_holder_released_in_txn, joined,
+    leader_answers_turn_in_txn, person_stands_in_txn, record_addressed_in_txn,
+    require_speaker_in_txn, require_thread_audience_in,
 };
 pub(crate) use self::admission::{
     admit_participation_in_txn, agent_standing_in_txn, person_standing_in_txn,
     require_join_covering_in_txn,
 };
+pub(super) use claimant::Claimant;
 
 /// Why a participant takes part in a room or thread.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
@@ -113,7 +116,7 @@ const fn subject_kind(subject: &JoinSubject) -> u8 {
 
 /// One fact's key: room, thread (all zero for the room itself), subject kind
 /// and id, or no one's digest (FIX 4228), cause kind and id.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SideKey)]
 pub(super) struct FactKey {
     pub(super) room: EntityId,
     pub(super) branch: [u8; 16],
@@ -121,32 +124,25 @@ pub(super) struct FactKey {
     pub(super) cause: (u8, [u8; 16]),
 }
 
-const KEY_LEN: usize = 66;
+/// 66 bytes: room 16, thread 16, subject 17, cause 17.
+const KEY_LEN: usize = <FactKey as FixedSideKey>::WIDTH;
 
-impl SideKey for FactKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(self.room.as_bytes());
-        out.extend_from_slice(&self.branch);
-        out.push(self.subject.kind());
-        out.extend_from_slice(&self.subject.key_id());
-        out.push(self.cause.0);
-        out.extend_from_slice(&self.cause.1);
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() != KEY_LEN {
-            return None;
-        }
-        let id = |range: std::ops::Range<usize>| -> Option<[u8; 16]> {
-            bytes.get(range)?.try_into().ok()
-        };
-        Some(Self {
-            room: EntityId::from_bytes(id(0..16)?).ok()?,
-            branch: id(16..32)?,
-            subject: FactSubject::decode(bytes[32], id(33..49)?)?,
-            cause: (bytes[49], id(50..66)?),
-        })
-    }
+/// One [`FactKey`] for `test_doors::side_key_pins`; `subject` is a kind byte and id that
+/// [`FactSubject::decode`] reads.
+#[cfg(oneiron_test_support)]
+pub(crate) fn fact_key_pin_for_test(
+    room: EntityId,
+    branch: [u8; 16],
+    subject: (u8, [u8; 16]),
+    cause: (u8, [u8; 16]),
+) -> crate::test_doors::side_key_pins::Pin {
+    let subject = FactSubject::decode(subject.0, subject.1).expect("a fixture subject reads");
+    crate::test_doors::side_key_pins::Pin::of(&FactKey {
+        room,
+        branch,
+        subject,
+        cause,
+    })
 }
 
 /// The key bytes every fact of `room`, or of its thread `branch`, starts with.
@@ -577,114 +573,6 @@ pub(super) fn agent_off_room_in_txn(
     let subject = participant_in_txn(vault, txn, actor, vault.store.clock.now_recorded_at())?;
     Ok(matches!(subject, Some(JoinSubject::Agent(_)))
         && !reads_room_in_txn(vault, txn, room, &record.member_ids, actor, subject)?)
-}
-
-/// Who claims a room turn, and on what (OF-529).
-pub(super) struct Claimant {
-    room: EntityId,
-    actor: EntityId,
-    branch: Option<EntityId>,
-    /// `None` for a person, who claims from its seat or its own Ready join.
-    agent: Option<AgentStanding>,
-}
-
-impl Claimant {
-    /// A person claims from its seat, or on its own live Ready join for the
-    /// turn's thread or the room (OF-417). An agent claims on a Ready receipt
-    /// for the turn's thread or the room, or the seat its project gives it;
-    /// it never takes a seat to claim.
-    pub(super) fn admit_in_txn(
-        vault: &Vault,
-        txn: &heed::RoTxn<'_>,
-        room: EntityId,
-        turn: &RoomTurn,
-        actor: EntityId,
-    ) -> Result<Self> {
-        let branch = turn_root_in_txn(vault, txn, turn)?;
-        // A private thread's turn is claimed from its audience alone (FIX
-        // 2951), whatever seat or receipt the claimant holds.
-        require_thread_audience_in(vault, txn, room, branch, actor)?;
-        let now = vault.store.clock.now_recorded_at();
-        let agent = match participant_in_txn(vault, txn, actor, now)? {
-            Some(JoinSubject::Agent(agent)) => Some(
-                agent_standing_in_txn(vault, txn, room, branch, agent, None)?
-                    .ok_or_else(invalid)?,
-            ),
-            subject => {
-                if !person_stands_in_txn(vault, txn, room, branch, actor, subject)? {
-                    require_member(vault, txn, room, actor)?;
-                }
-                None
-            }
-        };
-        Ok(Self {
-            room,
-            actor,
-            branch,
-            agent,
-        })
-    }
-
-    /// Claiming a turn is speaking: see [`admit_speech_in`].
-    pub(super) fn admit_speech_in(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<()> {
-        admit_speech_in(vault, txn, self.room, self.actor, self.agent.as_ref())
-    }
-
-    /// Whether the claimant takes part as an agent, which claims only a
-    /// turn it is named on or whose thread task it holds.
-    pub(super) const fn is_agent(&self) -> bool {
-        self.agent.is_some()
-    }
-
-    /// The open TASK of the claimed turn's thread this agent holds now: the
-    /// task's stored assignee, re-read at every claim, so a reassigned or
-    /// terminal task authorizes nothing new. No signed room rule allows an
-    /// owner fallback, so the assignee alone holds it. A person holds none.
-    pub(super) fn held_task_in_txn(
-        &self,
-        vault: &Vault,
-        txn: &heed::RoTxn<'_>,
-        turn: &RoomTurn,
-    ) -> Result<Option<EntityId>> {
-        if self.agent.is_none() {
-            return Ok(None);
-        }
-        held_thread_task_in_txn(vault, txn, turn, self.actor)
-    }
-
-    /// Records the agent's participation once its claim passes: named on the
-    /// turn, and holding the thread's task. A person's claim records nothing.
-    pub(super) fn record_in_txn(
-        &self,
-        vault: &Vault,
-        txn: &mut heed::RwTxn<'_>,
-        turn: EntityId,
-        named: bool,
-        task: Option<EntityId>,
-    ) -> Result<()> {
-        let Some(standing) = &self.agent else {
-            return Ok(());
-        };
-        let subject = JoinSubject::Agent(self.actor);
-        let at = vault.store.clock.now_recorded_at();
-        let causes = named
-            .then_some(JoinCause::Addressed { turn })
-            .into_iter()
-            .chain(task.map(|task| JoinCause::Task { task }));
-        for cause in causes {
-            record_participation_in_txn(
-                vault,
-                txn,
-                self.room,
-                self.branch,
-                &subject,
-                &cause,
-                standing.receipt(),
-                at,
-            )?;
-        }
-        Ok(())
-    }
 }
 
 /// The open TASK of `turn`'s thread that `holder` holds now: the task's

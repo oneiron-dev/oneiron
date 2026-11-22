@@ -5,7 +5,7 @@ use super::*;
 fn config_file(body: &str) -> (tempfile::TempDir, ServeArgs) {
     let dir = tempfile::tempdir().expect("config dir");
     let path = dir.path().join("oneiron.toml");
-    std::fs::write(&path, body).expect("write config");
+    crate::owner_only_file::write_owner_only_file(&path, body).expect("write config");
     let args = ServeArgs {
         config: Some(path),
         ..Default::default()

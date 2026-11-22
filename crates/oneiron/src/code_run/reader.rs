@@ -31,9 +31,10 @@ pub use self::origins::{DelegatedSource, ReaderFindingRef, ResultOrigins};
 
 #[doc(hidden)]
 pub use oneiron_records::code_run::reader::{
-    DEFAULT_READER_FOLD_RESERVE_MS, ReaderActor, ReaderJobState, ReaderReportReceipt, ReaderRoute,
-    ReaderSpawnReceipt, RunDeadline, SummarizeEffort, SummarizeReply, TaskWaitFailure,
-    TaskWaitFinding, TaskWaitPolicy, TaskWaitSetCall, TaskWaitSetResult,
+    DEFAULT_READER_FOLD_RESERVE_MS, ReaderActor, ReaderJobState, ReaderJobStatus,
+    ReaderReportReceipt, ReaderRoute, ReaderSpawnReceipt, RunDeadline, SummarizeEffort,
+    SummarizeReply, TaskWaitFailure, TaskWaitFinding, TaskWaitPolicy, TaskWaitSetCall,
+    TaskWaitSetResult,
 };
 
 /// The longest spawn or wait key, in bytes.
@@ -216,16 +217,18 @@ pub enum ReaderJobKind {
     },
 }
 
-/// `summarize(r, {effort?, group?, defer?})`: the guest's ref, the members
-/// after it, its effort and whether it answers at once. `bound` is every
-/// member as the host resolved it in the run, in order; it is the host's,
-/// never the guest's, and the run's record keeps the guest's call without
-/// it.
+/// `summarize(r, {effort?, group?, note_refs?, defer?})`: the guest's ref,
+/// the results after it, the NOTEs it names by id, its effort and whether it
+/// answers at once. `bound` is every member as the host resolved it in the
+/// run, in order: the results, then each NOTE's text as the caller read it;
+/// it is the host's, never the guest's, and the run's record keeps the
+/// guest's call without it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SelfSummarizeCall {
-    pub reference: String,
+    pub reference: Option<String>,
     pub effort: Option<SummarizeEffort>,
     pub group: Option<Vec<String>>,
+    pub note_refs: Option<Vec<String>>,
     pub defer: bool,
     pub bound: Option<Vec<DelegatedSource>>,
     /// The recording host's frozen prompt, never decoded from guest input.
@@ -233,11 +236,14 @@ pub struct SelfSummarizeCall {
 }
 
 impl SelfSummarizeCall {
-    /// Every member the call names, in order: its ref, then its group.
+    /// Every result the call names, in order: its ref, then its group. The
+    /// NOTEs it names follow them as members ([`Self::note_refs`]).
     #[must_use]
     pub fn members(&self) -> Vec<&str> {
-        std::iter::once(self.reference.as_str())
-            .chain(self.group.iter().flatten().map(String::as_str))
+        self.reference
+            .iter()
+            .chain(self.group.iter().flatten())
+            .map(String::as_str)
             .collect()
     }
 }

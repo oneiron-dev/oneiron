@@ -358,6 +358,12 @@ pub(crate) fn stage_machine_claim_transition(
         text_index_trusted,
         crate::batch::ApplyOpsGateMode::new(false, false),
     )?;
+    // Both controls, for the live windows' post-commit mirror: a window's
+    // export drops a MACHINE claim whose history controls it lacks (review
+    // 10145 round 1; FIX CLAIM-RAW-TXN-DOORS-DROP-LIVE-WINDOW-ROWS). A
+    // transaction no write door owns drops the queue, as before.
+    #[cfg(feature = "sync")]
+    crate::batch::queue_committed_rows_in_txn(store, txn, BTreeSet::from([event_id, handoff_id]));
     store
         .vault_meta
         .put(txn, &pin_key(target), &handoff_bytes)?;

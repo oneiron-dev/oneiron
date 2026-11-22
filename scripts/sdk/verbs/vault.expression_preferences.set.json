@@ -1,0 +1,17 @@
+{
+  "name": "vault.expression_preferences.set",
+  "description": "Writes one expression preference for a subject (language, register, keigo or style), superseding the head its precedence rules replace; an explicit_user origin needs a human actor.",
+  "refs": [
+    "/subject_ref"
+  ],
+  "input": "crate::memory::ExpressionPreferenceInput",
+  "output": "crate::memory::ExpressionPreferenceReceipt",
+  "call": "memory.set_expression_preference(&input)?",
+  "scope": "Write",
+  "act_class": "unstated",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

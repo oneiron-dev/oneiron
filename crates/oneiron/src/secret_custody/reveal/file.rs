@@ -27,7 +27,10 @@
 //! file whole, as for one key of [`SEALED_FILE_CLASS`]: under a standing
 //! grant, or once the owner approves the read, the agent gets the stored
 //! bytes and the read leaves its reveal row. No lease is stamped, as no
-//! custody record holds a key of it.
+//! custody record holds a key of it. A file the write door sealed whole,
+//! whose mark says so, goes to the owner only: it holds a hit no mark
+//! places, so the keys its mark does name open no grant, and its read is
+//! masked.
 //!
 //! A typed body's read (OF-067, FIX 2941) is one read of one projection of
 //! the body, a deck's export or a body's view, whose lifted texts name keys
@@ -43,8 +46,8 @@
 
 use super::agent::{file_ask_in_txn, standing};
 use super::{
-    FileSight, READER_AGENT, REVEAL_ASK_TTL_SECS, REVEAL_LEASE_TTL_SECS, REVEALS, RevealAsker,
-    RevealAuthority, RevealGrantScope, RevealRow, SecretRevealState, checked_text, reveal_class,
+    FileSight, READER_AGENT, REVEAL_LEASE_TTL_SECS, REVEALS, RevealAsker, RevealAuthority,
+    RevealGrantScope, RevealRow, SecretRevealState, checked_text, reveal_class,
 };
 use crate::consent::{
     ApproveOnceAuthorization, StandingConsentGrant, approve_once_authorization_in_txn,
@@ -52,6 +55,7 @@ use crate::consent::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::secret_custody::setting_keys::reveal_ask_window_in_txn;
 use crate::secret_custody::{
     CustodyClass, SecretCustodyFloor, SecretCustodyStatus, SecretSight, masked_file_in_txn,
     read_secret_custody_admission_in_txn,
@@ -328,11 +332,12 @@ impl Vault {
             return Ok((SecretSight::Masked, Vec::new()));
         }
         let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+        let window = reveal_ask_window_in_txn(self, txn)?;
         let grants = load_active_standing_grants(&self.store, txn)?;
         let mut ready = Vec::with_capacity(read.groups.len());
         let mut asks = Vec::new();
         for group in &read.groups {
-            let ask = read.ask_in_txn(self, txn, group, now)?;
+            let ask = read.ask_in_txn(self, txn, group, now, window)?;
             let plan = match read.covering_grant(group, &grants)? {
                 Some((scope, grant_ref)) => GroupPlan::Ready(Ready::Covered(scope, grant_ref)),
                 None => asked_plan_in_txn(self, txn, &ask, now)?,
@@ -345,7 +350,7 @@ impl Vault {
         }
         if ready.len() < read.groups.len() {
             for (group, ask) in asks {
-                let mut asked = read.row(group, now, SecretRevealState::Asked);
+                let mut asked = read.row(group, now, window, SecretRevealState::Asked);
                 file_ask_in_txn(self, txn, &ask, &mut asked, now)?;
                 REVEALS.put(&self.store, txn, &ask, &asked)?;
             }
@@ -357,7 +362,7 @@ impl Vault {
                 Ready::Covered(scope, grant_ref) => {
                     // Each read under a grant is its own receipt.
                     let reveal = self.store.clock.entity_id()?;
-                    let mut row = read.row(group, now, SecretRevealState::Covered);
+                    let mut row = read.row(group, now, window, SecretRevealState::Covered);
                     let digest = row.ask_digest(&reveal);
                     row.once_digest = Some(*digest.as_bytes());
                     let used = self.record_standing_grant_use_in_txn(txn, &grant_ref, digest)?;
@@ -391,6 +396,7 @@ impl KeyRead<'_> {
         txn: &heed::RoTxn<'_>,
         group: &ReadGroup,
         now: u64,
+        window: u64,
     ) -> Result<EntityId> {
         let base = file_ask_id(
             self.asker,
@@ -398,7 +404,7 @@ impl KeyRead<'_> {
             &self.hash,
             self.per_class.then_some(group.class),
         )?;
-        let current = self.row(group, now, SecretRevealState::Asked);
+        let current = self.row(group, now, window, SecretRevealState::Asked);
         open_ask_id_in_txn(vault, txn, base, &current, now)
     }
 
@@ -428,8 +434,9 @@ impl KeyRead<'_> {
         }
     }
 
-    /// The reveal row `group` of this read writes, in `state`, at `now`.
-    fn row(&self, group: &ReadGroup, now: u64, state: SecretRevealState) -> RevealRow {
+    /// The reveal row `group` of this read writes, in `state`, at `now`, open for `window`
+    /// seconds.
+    fn row(&self, group: &ReadGroup, now: u64, window: u64, state: SecretRevealState) -> RevealRow {
         RevealRow {
             reader: READER_AGENT.to_owned(),
             actor: Some(self.asker.agent),
@@ -443,7 +450,7 @@ impl KeyRead<'_> {
             project: self.asker.project,
             run: self.asker.run.clone(),
             created_at: now,
-            expires_at: now.saturating_add(REVEAL_ASK_TTL_SECS),
+            expires_at: now.saturating_add(window),
             state,
             once_digest: None,
             asked_decision: None,
@@ -626,8 +633,9 @@ fn admitted_keys_in_txn(
 
 /// The keys the mark of the file `hash` names, each with its handle, in one
 /// group per custody class ([`class_groups`]), each group's keys in the
-/// file's order: `None` when no mark covers the file, it names no key, or a
-/// key is not admitted ([`admitted_keys_in_txn`]).
+/// file's order: `None` when no mark covers the file, it names no key, a
+/// key is not admitted ([`admitted_keys_in_txn`]), or the write door sealed
+/// the file whole (`MaskedFile.sealed`).
 fn marked_groups_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -636,6 +644,13 @@ fn marked_groups_in_txn(
     let Some(mark) = masked_file_in_txn(&vault.store, txn, hash)? else {
         return Ok(None);
     };
+    // A file sealed whole goes to the owner only (ARCH-0069
+    // #binary-secrets): it holds a hit no mark places, and a granted read is
+    // served the stored bytes whole, so its marked keys open no grant
+    // (REVIEW-7708 P1).
+    if mark.sealed {
+        return Ok(None);
+    }
     // Every key the mark places: in the stored bytes, and in each member of a
     // container.
     let marked = mark
@@ -650,6 +665,17 @@ fn marked_groups_in_txn(
         return Ok(None);
     }
     class_groups(admitted).map(Some)
+}
+
+#[cfg(oneiron_test_support)]
+impl Vault {
+    /// The test door's view of [`marked_groups_in_txn`]: how many key groups
+    /// an agent's read of the stored file `hash` asks for; `None` when no
+    /// grant reaches the file.
+    pub(crate) fn marked_file_key_groups_for_test(&self, hash: &[u8; 32]) -> Result<Option<usize>> {
+        let txn = self.store.env.read_txn()?;
+        Ok(marked_groups_in_txn(self, &txn, hash)?.map(|groups| groups.len()))
+    }
 }
 
 /// `keys` in one group per custody class: the groups in their class word's

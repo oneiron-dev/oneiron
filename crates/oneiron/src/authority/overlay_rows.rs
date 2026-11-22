@@ -111,6 +111,20 @@ pub(super) fn put_overlay_in_txn(
     AUTHORITY_OVERLAY.put(store, w, &overlay.hash, &row)
 }
 
+/// Deletes the overlay record kept under `hash`, if one is: a pending row's,
+/// once the evidence drops it.
+///
+/// # Errors
+/// Storage faults.
+pub(super) fn delete_overlay_in_txn(
+    store: &Store,
+    w: &mut RwTxn<'_>,
+    hash: &AuthorityEntryHash,
+) -> Result<()> {
+    AUTHORITY_OVERLAY.delete(store, w, hash)?;
+    Ok(())
+}
+
 /// Decodes `body`, a signed AUTHORITY_LOG body of this vault, in `txn`, as
 /// the fold takes it: an unsealed row, or a sealed one opened with its
 /// `AUTHORITY_OVERLAY` record, whole; a sealed row whose record does not

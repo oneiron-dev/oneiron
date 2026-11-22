@@ -3,6 +3,8 @@
 //! step outputs and kind marks, a return cell put as a rebuild writes one, and a wait's due and
 //! made idle call. Compiled only under `--cfg oneiron_test_support`; never API.
 
+use oneiron_contracts::register::Register;
+
 use crate::code_run::{
     CodeRunDeterminism, CodeRunRawOutput, CodeRunReplayRecord, CodeRunStepCheckpoint,
     ExecutorStorage, WaitKey,
@@ -88,13 +90,9 @@ fn kind_and_class(
     session_kind: &str,
     wait_class: &str,
 ) -> Result<(IdleSessionKind, IdleWaitClass)> {
-    let kind = IdleSessionKind::ALL
-        .into_iter()
-        .find(|kind| kind.as_str() == session_kind)
+    let kind = IdleSessionKind::named(session_kind)
         .ok_or(Error::InvalidConfig("unknown idle session kind".to_owned()))?;
-    let class = IdleWaitClass::ALL
-        .into_iter()
-        .find(|class| class.as_str() == wait_class)
+    let class = IdleWaitClass::named(wait_class)
         .ok_or(Error::InvalidConfig("unknown idle wait class".to_owned()))?;
     Ok((kind, class))
 }

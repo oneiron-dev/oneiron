@@ -35,6 +35,8 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | POLICY_SHARED_ACT_POLICIES_KEY
                 | POLICY_OWNER_CHANGE_WAIT_SECS_KEY
                 | crate::inquiry::INQUIRY_ROW_KEY
+                | crate::workspace_roster::ONE_VAULT_ROW_KEY
+                | crate::deletion::ERASE_REQUEST_REPLY_ROW_KEY
                 | crate::consent::CATASTROPHE_FLOOR_ROW_KEY
                 | crate::check_in::CHECK_IN_ROW_KEY
                 | POLICY_OWNER_POLICY_ROWS_KEY
@@ -92,6 +94,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | crate::gate::policy_manifest_doors::CLAIM_AGING_PROFILES_KEY
                 | crate::gate::policy_manifest_doors::RETRIEVAL_WEIGHTS_KEY
                 | crate::gate::policy_manifest_doors::AGENT_VERB_CLASSES_KEY
+                | crate::gate::policy_manifest_doors::AFFECT_LOOKUP_KEY
                 | crate::gate::weave_policy::KEY
                 | crate::gate::weave_policy::PRECEDENCE_KEY
                 | super::super::POLICY_RESIDENCE_OPERATION_BUDGETS_KEY
@@ -127,6 +130,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
     crate::gate::policy_manifest_doors::decode_claim_aging_profiles(&entries).ok()?;
     crate::gate::policy_manifest_doors::decode_retrieval_weights(&entries).ok()?;
     crate::gate::policy_manifest_doors::decode_agent_verb_classes(&entries).ok()?;
+    crate::gate::policy_manifest_doors::decode_affect_lookup(&entries).ok()?;
     validate_owner_policy_notify(&entries)?;
 
     let unsupported_schema = match single_map_value(&entries, POLICY_SCHEMA_VERSION_KEY) {
@@ -227,6 +231,24 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         MapValue::Duplicate => return None,
         MapValue::Present(value) => Some(crate::inquiry::InquiryPolicy::decode_row(value)?),
     };
+    // The company setting `one_vault_mode` (federation.md #one-vault-mode).
+    let one_vault_policy =
+        match single_map_value(&entries, crate::workspace_roster::ONE_VAULT_ROW_KEY) {
+            MapValue::Missing => None,
+            MapValue::Duplicate => return None,
+            MapValue::Present(value) => {
+                Some(crate::workspace_roster::OneVaultPolicy::decode_row(value)?)
+            }
+        };
+    // The owner's setting `erase_request_reply` (ARCH-0043 #leaving-a-company).
+    let erase_request_reply_policy =
+        match single_map_value(&entries, crate::deletion::ERASE_REQUEST_REPLY_ROW_KEY) {
+            MapValue::Missing => None,
+            MapValue::Duplicate => return None,
+            MapValue::Present(value) => {
+                Some(crate::deletion::EraseRequestReplyPolicy::decode_row(value)?)
+            }
+        };
     let catastrophe_floor =
         match single_map_value(&entries, crate::consent::CATASTROPHE_FLOOR_ROW_KEY) {
             MapValue::Missing => None,
@@ -774,6 +796,8 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         shared_act_policies,
         owner_change_wait_secs,
         inquiry_policy,
+        one_vault_policy,
+        erase_request_reply_policy,
         catastrophe_floor,
         check_in_policy,
         single_valued_predicates,
