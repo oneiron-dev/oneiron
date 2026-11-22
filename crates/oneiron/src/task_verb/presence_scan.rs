@@ -163,12 +163,23 @@ pub(super) fn task_presence_with_limits(
                 match task_page_slot_in(vault, &rtxn, task_ref, &task_hex, jobs, state.acked, now) {
                     Ok(Some(slot)) => slots.push((task_ref, slot)),
                     Ok(None) => {}
-                    Err(error) => record_read_failure(
-                        &mut read_failures,
-                        task_ref,
-                        TaskPresenceReadStage::PageSlot,
-                        &error,
-                    ),
+                    Err(error) => {
+                        // Its realizing jobs re-emit bare (P2 F7), and the
+                        // owner's acknowledgement still folds them there: a
+                        // dismissed failure stays off the board as it does
+                        // under a row that renders. Live jobs still show.
+                        if state.acked
+                            && let Some(jobs) = realizing.get_mut(&task_hex)
+                        {
+                            jobs.retain(|job| job.status != TaskBoardStatus::Failed);
+                        }
+                        record_read_failure(
+                            &mut read_failures,
+                            task_ref,
+                            TaskPresenceReadStage::PageSlot,
+                            &error,
+                        );
+                    }
                 }
             }
             slots

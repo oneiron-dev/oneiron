@@ -39,7 +39,7 @@ pub(super) struct Device {
     pub(super) owner: AuthenticatedOwner,
     pub(super) founder: EntityId,
     pub(super) granted: EntityId,
-    kept_home: EntityId,
+    pub(super) kept_home: EntityId,
 }
 
 impl Device {

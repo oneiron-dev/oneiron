@@ -20,6 +20,10 @@ impl Sender {
     /// then strips the key from what came back. `call` has passed
     /// [`CallHeader::check`] on `body`. The send ends by `deadline`'s send
     /// limit.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one parameter per part of a send: the call, its URL, its bodies, the release state, the key, the daemon's stream and the deadline"
+    )]
     pub(crate) async fn send<W: AsyncRead + AsyncWrite + Unpin>(
         &self,
         call: &CallHeader,
@@ -104,6 +108,10 @@ impl Sender {
     /// [`CallHeader::check`]. The send ends by `deadline`'s send limit, and
     /// each write within its frame allowance and the deadline; a daemon that
     /// takes longer is gone, and the reply is dropped.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one parameter per part of a send: the call, its URL, its bodies, the release state, the key, the daemon's stream and the deadline"
+    )]
     pub(crate) async fn stream<W: AsyncRead + AsyncWrite + Unpin>(
         &self,
         call: &CallHeader,
@@ -122,6 +130,10 @@ impl Sender {
             .await;
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one parameter per part of a send: the call, its URL, its bodies, the release state, the key, the daemon's stream and the deadline"
+    )]
     async fn stream_to<W: AsyncRead + AsyncWrite + Unpin>(
         &self,
         call: &CallHeader,

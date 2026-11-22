@@ -80,6 +80,8 @@ pub use self::receipts::{
 };
 pub use self::reconcile::TrainingUpkeep;
 pub use self::release::TrainingOfferPass;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::release::training_policy_digest_for_test;
 
 use std::collections::BTreeSet;
 

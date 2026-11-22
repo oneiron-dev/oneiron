@@ -125,6 +125,22 @@ pub fn bind_research(
     request: ResearchBindRequest,
     at: u64,
 ) -> Result<ResearchBinding> {
+    bind_research_with(vault, request, at, |_| Ok::<(), Error>(()))
+}
+
+/// [`bind_research`], running `in_writer` in the binding's own write
+/// transaction, after the bind-once check and before the binding's rows: an
+/// admission recheck and a caller's own rows (the claim-authoring
+/// campaign's) land with the binding, or nothing lands. `in_writer` refuses
+/// before it writes.
+/// # Errors
+/// `in_writer`'s refusal, and every refusal of [`bind_research`].
+pub(crate) fn bind_research_with<E: From<Error>>(
+    vault: &Vault,
+    request: ResearchBindRequest,
+    at: u64,
+    in_writer: impl FnOnce(&mut heed::RwTxn<'_>) -> std::result::Result<(), E>,
+) -> std::result::Result<ResearchBinding, E> {
     request.config.validate().map_err(campaign_error)?;
     request.incumbent.validate()?;
     if let Some(execution) = &request.execution {
@@ -170,7 +186,7 @@ pub fn bind_research(
             .find(|cohort| cohort.id == seat.cohort)
             .ok_or(invalid("the confirmation cohort is not the seat's"))?;
         if cohort.retired_at.is_some() {
-            return Err(invalid("a retired cohort cannot confirm a campaign"));
+            return Err(invalid("a retired cohort cannot confirm a campaign").into());
         }
     }
     let binding = ResearchBinding {
@@ -200,12 +216,11 @@ pub fn bind_research(
         pruned: None,
         recorded_at: at,
     };
-    vault.with_write_txn_grouped(|txn| {
+    vault.try_with_write_txn_grouped(|txn| {
         if BINDING.contains(&vault.store, txn, request.root.as_bytes())? {
-            return Err(invalid(
-                "a campaign root binds once; its ruler is never rewritten",
-            ));
+            return Err(invalid("a campaign root binds once; its ruler is never rewritten").into());
         }
+        in_writer(txn)?;
         BINDING.put(&vault.store, txn, request.root.as_bytes(), &binding)?;
         NODE.put(
             &vault.store,

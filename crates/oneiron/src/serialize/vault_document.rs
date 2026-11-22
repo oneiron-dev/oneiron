@@ -59,6 +59,10 @@ pub(crate) struct DocumentTail {
     /// SIDE-1: the omitted side tables this whole-vault export declares, with their reasons and
     /// row counts; empty outside a whole-vault export.
     pub(crate) side_table_omissions: Vec<ArchiveSideTableOmission>,
+    /// RESTORE-KEEPS-MERGES-AND-SPLITS: the merge and split decisions the
+    /// effective ledger holds current, read in the snapshot; empty outside
+    /// a whole-vault export.
+    pub(crate) current_identity_topology_events: Vec<EntityId>,
     /// The rows this export is derived from, as a host lists them beside it
     /// (DEC-0005): each row the snapshot read past its locality, the ones it
     /// carries, counts or folds into another section among them.
@@ -439,11 +443,12 @@ impl<'v> DocumentWriter<'v> {
 
     /// FIX 2768: one side row in its table's codec, read alone by the nulling
     /// pass at its depth; one the pass would change, one in its table's own
-    /// binary codec the release scan reads a credential in, or one that does
-    /// not read back through its table, is held out and named in the
-    /// manifest. A long binary value goes beside the document as a file. A
-    /// retained row whose source key or value reads as a credential is held
-    /// out before encoding, in every archive.
+    /// binary codec the release scan reads a credential in, one whose binary
+    /// value or tree-form binary payload the release scan reads a credential
+    /// in, or one that does not read back through its table, is held out and
+    /// named in the manifest. A long binary value goes beside the document
+    /// as a file. A retained row whose source key or value reads as a
+    /// credential is held out before encoding, in every archive.
     pub(crate) fn side_row(&mut self, raw: SideRowBytes) -> Result<()> {
         if raw.family == ArchiveSideFamily::RetainedSideRow
             && crate::batch::export::archive_retained_side_rows::retained_side_row_withholds_credential(
@@ -460,7 +465,10 @@ impl<'v> DocumentWriter<'v> {
             return Ok(());
         };
         let value = serde_json::to_value(&row).map_err(|_| encode_failed())?;
-        if raw.opaque_credential() || null_document_member("", &value, 2) != value {
+        if raw.opaque_credential()
+            || raw.payload_credential()
+            || null_document_member("", &value, 2) != value
+        {
             self.side_withheld
                 .push(raw.withheld(ArchiveSideWithheldReason::Credential));
             return Ok(());
@@ -609,6 +617,7 @@ impl<'v> DocumentWriter<'v> {
             embedding_setup_withheld,
             side_rows_withheld: self.side_withheld,
             side_table_omissions: tail.side_table_omissions,
+            current_identity_topology_events: Vec::new(),
             provenance: None,
         };
         // The manifest's strings go through the same pass, at its depth. The
@@ -619,6 +628,11 @@ impl<'v> DocumentWriter<'v> {
         // Ids only, added after the pass as the member lists are (FIX 12066).
         manifest.fold_only_secrets = tail
             .fold_only_secrets
+            .iter()
+            .map(EntityId::to_hex)
+            .collect();
+        manifest.current_identity_topology_events = tail
+            .current_identity_topology_events
             .iter()
             .map(EntityId::to_hex)
             .collect();

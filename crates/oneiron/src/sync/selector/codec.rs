@@ -19,9 +19,12 @@ use crate::federation::{
 use crate::sync::types::WindowKey;
 use crate::sync::window::Withhold;
 
-use super::authorize::{authorize_selector_export, filter_window_doc, strip_guest_share_metadata};
+use super::authorize::{
+    GuestTombstones, authorize_selector_export, filter_window_doc, strip_guest_share_metadata,
+};
 use super::born_with::{carry_born_with, row_born_with_fields};
 use crate::provenance::birth::WithheldKey;
+use crate::share_travel::PeerRelease;
 use crate::sync::row_birth::BirthReach;
 use oneiron_authority::share_travel::BornWithField;
 
@@ -303,6 +306,61 @@ pub fn filtered_window_doc_for_peer(
     selector: &SyncSelector,
     peer: crate::authority::PeerMachine,
 ) -> Result<LoroDoc> {
+    peer_window_doc(
+        vault,
+        source,
+        key,
+        grant_scope,
+        selector,
+        peer,
+        GuestTombstones::Omitted,
+    )
+}
+
+/// A selector socket answer as [`selector_answer_doc_for_peer`] makes it.
+pub struct SelectorAnswerDoc {
+    /// The filtered copy the answer sends.
+    pub doc: LoroDoc,
+    /// The rows the copy releases to another vault's machine, which the
+    /// socket records ([`Vault::record_peer_release`]) once the answer passed
+    /// its last door and before its bytes leave; `None` for a machine of this
+    /// vault's.
+    pub release: Option<PeerRelease>,
+}
+
+/// [`filtered_window_doc_for_peer`] for a selector socket's fetch answer
+/// (CROSS-VAULT-DELETE-SELECTOR-ANSWER-RELEASE). To another vault's machine
+/// the copy also carries the owner's delete of each row this vault released
+/// to the grant's peer, as a Connect delivery does, and names the rows it
+/// releases.
+pub fn selector_answer_doc_for_peer(
+    vault: &Vault,
+    source: &LoroDoc,
+    key: &WindowKey,
+    grant_scope: FederationGrantScope,
+    selector: &SyncSelector,
+    peer: crate::authority::PeerMachine,
+) -> Result<SelectorAnswerDoc> {
+    let other_vault = matches!(peer, crate::authority::PeerMachine::Unknown);
+    let tombstones = if other_vault {
+        GuestTombstones::Released
+    } else {
+        GuestTombstones::Omitted
+    };
+    let doc = peer_window_doc(vault, source, key, grant_scope, selector, peer, tombstones)?;
+    let release = other_vault.then(|| PeerRelease::new(selector.grant_id, released_rows(&doc)));
+    Ok(SelectorAnswerDoc { doc, release })
+}
+
+fn peer_window_doc(
+    vault: &Vault,
+    source: &LoroDoc,
+    key: &WindowKey,
+    grant_scope: FederationGrantScope,
+    selector: &SyncSelector,
+    peer: crate::authority::PeerMachine,
+    tombstones: GuestTombstones,
+) -> Result<LoroDoc> {
     let withheld;
     let reach = match peer {
         crate::authority::PeerMachine::Proven { .. } => BirthReach::OwnMachines,
@@ -321,6 +379,7 @@ pub fn filtered_window_doc_for_peer(
         &position,
         Withhold::Peer(peer),
         reach,
+        tombstones,
     )?;
     // Beside the masked births goes the text the grant's owner lets travel,
     // and each TASK's and SUMMARY's birth placement (FIX 3656).
@@ -363,6 +422,7 @@ pub fn filtered_window_doc_for(
         &position,
         withhold,
         BirthReach::OwnMachines,
+        GuestTombstones::Omitted,
     )
 }
 
@@ -389,6 +449,7 @@ pub(in crate::sync) fn granted_window_doc(
         &position,
         Withhold::Nothing,
         BirthReach::OwnMachines,
+        GuestTombstones::Omitted,
     )
 }
 
@@ -420,8 +481,15 @@ pub fn guest_share_envelope_body(
     grant_scope: FederationGrantScope,
     selector: &SyncSelector,
 ) -> Result<GuestShareEnvelopeBody> {
-    guest_share_envelope_body_listing(vault, source, key, grant_scope, selector)
-        .map(|(body, _, _)| body)
+    guest_share_envelope_body_listing(
+        vault,
+        source,
+        key,
+        grant_scope,
+        selector,
+        GuestTombstones::Omitted,
+    )
+    .map(|(body, _, _)| body)
 }
 
 /// The stripped body, its listed rows, and born-with field names keyed by
@@ -432,6 +500,7 @@ pub(crate) fn guest_share_envelope_body_listing(
     key: &WindowKey,
     grant_scope: FederationGrantScope,
     selector: &SyncSelector,
+    tombstones: GuestTombstones,
 ) -> Result<(
     GuestShareEnvelopeBody,
     Vec<EntityId>,
@@ -449,8 +518,9 @@ pub(crate) fn guest_share_envelope_body_listing(
         &position,
         Withhold::Unknown,
         BirthReach::OtherVault(&withheld),
+        tombstones,
     )?;
-    let stripped = strip_guest_share_metadata(&filtered, key, &withheld)?;
+    let stripped = strip_guest_share_metadata(&filtered, key, &withheld, tombstones)?;
     carry_born_with(
         vault,
         &stripped,
@@ -466,17 +536,7 @@ pub(crate) fn guest_share_envelope_body_listing(
         .export(ExportMode::all_updates())
         .map_err(|e| Error::sync_engine(SyncEngineContext::LoroExportAllUpdates, e))?;
     let selector_bytes = encode_sync_selector(selector)?;
-    let mut rows = Vec::new();
-    crate::sync::loro_support::map_for_each_value_bytes(
-        &stripped.get_map("entities"),
-        |key, value| {
-            if value.is_some()
-                && let Ok(id) = EntityId::from_hex(key)
-            {
-                rows.push(id);
-            }
-        },
-    );
+    let rows = released_rows(&stripped);
     // FIX 7608 slice 4: the guest gets a marked repo item's masked copy.
     // Projection can rekey or coalesce born-with rows. Observe its final doc;
     // an unchanged update uses the already-held stripped doc instead.
@@ -500,6 +560,20 @@ pub(crate) fn guest_share_envelope_body_listing(
         rows,
         travelled,
     ))
+}
+
+/// The rows a filtered copy carries: each live entity its `entities` map
+/// holds under an id key.
+fn released_rows(doc: &LoroDoc) -> Vec<EntityId> {
+    let mut rows = Vec::new();
+    crate::sync::loro_support::map_for_each_value_bytes(&doc.get_map("entities"), |key, value| {
+        if value.is_some()
+            && let Ok(id) = EntityId::from_hex(key)
+        {
+            rows.push(id);
+        }
+    });
+    rows
 }
 
 fn decode_selector_value(value: &Value) -> Result<SyncSelector> {

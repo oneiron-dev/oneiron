@@ -588,6 +588,61 @@ pub(crate) fn mark_withheld(doc: &LoroDoc, rows: &[EntityId], by: Option<&Entity
     Ok(())
 }
 
+/// The rows another machine's withholding marker in `doc` names and whose
+/// carrier `doc` does not carry, under any spelling: rows that machine
+/// withheld after they travelled, which every holder reads to no one
+/// (REVIEW-5911). A replacement names such a row by its marker alone.
+///
+/// # Errors
+///
+/// Storage failures.
+pub(crate) fn marked_elsewhere(vault: &Vault, doc: &LoroDoc) -> Result<BTreeSet<EntityId>> {
+    if !holds_map(doc) {
+        return Ok(BTreeSet::new());
+    }
+    let me = {
+        let rtxn = vault.store.env.read_txn()?;
+        crate::identity::read_machine_id_in_txn(vault, &rtxn)?
+    };
+    let mut carried = BTreeSet::new();
+    doc.get_map("entities").for_each(|map_key, _| {
+        carried.extend(EntityId::from_hex(map_key).ok());
+    });
+    Ok(carriers(&doc.get_map(SOURCE_AUDIENCES_MAP))
+        .into_iter()
+        .filter_map(|(_, carried_entry)| match carried_entry {
+            Carrier::Withheld { row, by } if by != me && !carried.contains(&row) => Some(row),
+            Carrier::Record { .. }
+            | Carrier::Policy { .. }
+            | Carrier::Withheld { .. }
+            | Carrier::Event { .. }
+            | Carrier::Derived { .. } => None,
+        })
+        .collect())
+}
+
+/// Holds back each of `rows` this vault holds live, as [`apply_map`] does
+/// for a landed marker of another machine's, in one writer: ahead of a pass
+/// that reads this vault's holds before the forward pass lands the marker
+/// (a replacement's carry-over).
+///
+/// # Errors
+///
+/// Storage failures.
+pub(crate) fn hold_back_withheld(vault: &Vault, rows: &BTreeSet<EntityId>) -> Result<()> {
+    if rows.is_empty() {
+        return Ok(());
+    }
+    vault.with_write_txn_grouped(|txn| {
+        for row in rows {
+            if crate::vault::live_entity_row_in_txn(&vault.store, txn, row)?.is_live() {
+                source_audience::hold_back_in_txn(vault, txn, row, HeldBack::Withheld)?;
+            }
+        }
+        Ok(())
+    })
+}
+
 /// Whether `doc` carries a binding for `row`, materialized here or not: an
 /// obligation a restricted lane honours (L02 2).
 pub(crate) fn carries_record(doc: &LoroDoc, row: &EntityId) -> bool {

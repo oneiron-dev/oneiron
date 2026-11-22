@@ -9,6 +9,7 @@ use super::scope::{CoreferenceExportContext, entity_selector_decision, facet_fil
 use super::text_egress::{source_selected, text_backed};
 use crate::authority::AuthorityFold;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::claim::history_projection::MachineHistoryReadCache;
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result, SyncSelectorValidation as SelectorError};
 use crate::federation::decode_federation_grant_body;
@@ -122,14 +123,17 @@ pub(super) fn authorize_at_in_txn(
 
 /// Authorize an exact existing item edit under a promoted canonical window.
 /// Read selection (facet closure) and write authority are independent checks.
+/// The grant's expiry is judged at `now_secs`, the one clock reading its
+/// update's admission takes (an own device's held burst is digested at it
+/// too: #9226 review round 2).
 pub(in crate::sync) fn admit_promoted_entity_write_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
     new_blob: &[u8],
     scope: FederationGrantScope,
-    selector: &SyncSelector,
-    proof: &crate::authority::VerifiedSlip,
+    (selector, proof): (&SyncSelector, &crate::authority::VerifiedSlip),
+    now_secs: u64,
 ) -> Result<()> {
     let old = vault.get_raw_in(txn, &id)?.ok_or_else(denied)?;
     let old_header = EntityMetadataHeader::parse(&old).ok_or_else(denied)?;
@@ -141,7 +145,14 @@ pub(in crate::sync) fn admit_promoted_entity_write_in_txn(
     {
         return Err(denied());
     }
-    let admission = authorize_in_txn(vault, txn, scope, selector, Some(selector.member_ref))?;
+    let admission = authorize_at_in_txn(
+        vault,
+        txn,
+        scope,
+        selector,
+        Some(selector.member_ref),
+        now_secs,
+    )?;
     admit_selected_in_txn(vault, txn, id, selector, &admission)?;
     // A NOTE sits at one world it is in that the grant and the proof both
     // hold (FIX-LIST 9433).
@@ -274,9 +285,27 @@ pub(super) fn admit_selected_in_txn(
     selector: &SyncSelector,
     admission: &DocumentGrant,
 ) -> Result<()> {
+    // VOICE-PHONE-AGENT-REACH R1 review C-F1: a phone thread's row, or a row
+    // whose words came from one, is no document a selector admits, read
+    // from the stored rows here; a window naming its id is no authority.
+    if crate::voice_call::phone_words_in(vault, txn, &id, None)? {
+        return Err(denied());
+    }
+    // REACH-ERASED-SOURCE-EGRESS = A (Engine 07:53; R1 review 5 N2): a row
+    // no read here serves (withdrawn, stale, or a source it is recorded as
+    // derived from withdrawn) is no text a selector reads, as the window
+    // filter withholds its core: a NOTE attached to another month's review
+    // bundle carries its proposal text. A write is judged by its own gates.
+    if admission.verb == "read"
+        && let Some(raw) = vault.get_raw_in(txn, &id)?
+        && !crate::ports::raw_readable_in_txn(&vault.store, txn, &id, &raw)?
+    {
+        return Err(denied());
+    }
     // Facet rule C: a text is written only by a reader of every source it
     // was written from, judged as an export reads them; no write authority
     // over a source is asked.
+    let history = MachineHistoryReadCache::new(vault);
     if !text_backed(vault, txn, &id, None, |source, raw| {
         source_selected(
             vault,
@@ -286,6 +315,7 @@ pub(super) fn admit_selected_in_txn(
             selector,
             admission.position.as_scope(),
             &Default::default(),
+            &history,
         )
     })? {
         return Err(denied());

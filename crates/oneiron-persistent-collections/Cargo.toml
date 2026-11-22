@@ -1,0 +1,24 @@
+[package]
+name = "oneiron-persistent-collections"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Ordered maps and sets that share structure between clones, with BTreeMap's order, equality and serde bytes"
+publish = false
+
+# A leaf crate on purpose: only im and serde, so every crate that holds fold
+# state can reach it.
+
+[dependencies]
+im = "15.1"
+serde = { workspace = true }
+
+[dev-dependencies]
+proptest = { version = "1", default-features = false, features = ["std"] }
+rmp-serde = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

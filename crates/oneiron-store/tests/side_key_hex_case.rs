@@ -37,7 +37,7 @@ fn encoded<K: SideKey>(key: &K) -> Vec<u8> {
 fn hash() -> [u8; 32] {
     let mut out = [0_u8; 32];
     for (index, byte) in out.iter_mut().enumerate() {
-        *byte = u8::try_from(index % 16).unwrap() * 0x11;
+        *byte = u8::try_from(index % 16).expect("a remainder of 16 fits a byte") * 0x11;
     }
     out
 }

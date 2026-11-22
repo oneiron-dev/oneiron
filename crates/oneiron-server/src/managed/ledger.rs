@@ -172,6 +172,18 @@ impl WakeLedger {
         )
     }
 
+    /// This vault's reporter of its owner key changes, on the same
+    /// supervisor socket and spawn identity (Engine ruling 21 Nov 06:00).
+    pub(super) fn owner_key_change_report(
+        &self,
+    ) -> super::owner_key_change_report::HypnosOwnerKeyChange {
+        super::owner_key_change_report::HypnosOwnerKeyChange::new(
+            self.hypnos_socket.clone(),
+            self.vault_name.clone(),
+            self.token.clone(),
+        )
+    }
+
     /// The existing widen transcript over a body's counted length and exact bytes.
     pub(super) fn widen_transcript(
         &self,

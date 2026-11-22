@@ -17,6 +17,7 @@
 mod answer;
 mod checkpoint;
 mod owed;
+mod paused;
 mod views;
 
 use std::collections::BTreeSet;
@@ -58,6 +59,11 @@ pub use self::views::{
     ProgramTryView, SettledProgramStepRequest, SettledProgramStepView, TurnProgramAdmissionItem,
     TurnProgramAdmissionRequest, TurnProgramAdmissionView, TurnProgramOwedWakeItem,
 };
+
+// FIX TURNPROGRAM-OCCURRENCE-ARMINGS-LIVE-ON-A-VAULT-COPY: the paused programs of a vault copy.
+pub use self::paused::paused_turn_programs;
+pub(super) use self::paused::{paused_armings_in_txn, paused_item, skills_now_in_txn};
+pub use self::views::{PausedTurnProgramItem, PausedTurnProgramsRequest, PausedTurnProgramsView};
 
 /// Items a page carries when the request names no limit, and the most one
 /// carries.
@@ -399,8 +405,9 @@ fn program_for(
 }
 
 /// `attempt`'s stamp and the admission it binds, in `txn`. A row that does
-/// not decode reads as absent.
-fn program_of_in_txn(
+/// not decode reads as absent. The delegate's program-hold release judges
+/// its read with this too (`release::delegate_reads_program_in_txn`).
+pub(super) fn program_of_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     attempt: AttemptId,
@@ -719,7 +726,7 @@ fn issue_view(issue: &StepIssue) -> ProgramStepIssueView {
 /// Of `ids`, the ones that read on the caller's own lane, each read listed
 /// as a producer. An unknown or withheld row does not read; it never fails
 /// the read.
-fn readable_on_lane(
+pub(super) fn readable_on_lane(
     memory: &Memory<'_>,
     ids: impl IntoIterator<Item = EntityId>,
 ) -> MemoryResult<BTreeSet<EntityId>> {

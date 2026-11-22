@@ -228,7 +228,10 @@ pub(crate) fn agent_id_pin_for_put_in_txn(
 /// Moves the pin at `id` to `def`'s ceiling, wider or not, keeping the
 /// lineage the id answers to. The owner's door
 /// (`Vault::update_agent_definition_as`) calls it in the transaction that
-/// writes `def`, after rechecking the owner's proof, and nothing else does.
+/// writes `def`, after rechecking the owner's proof. The ceiling writer
+/// (`Vault::write_agent_ceiling_at_version_in_txn`) calls it too, for the
+/// owner's apply of an action-mode patch and for the night's apply of one
+/// under the owner's `dreamer.action_mode.auto_apply_patch` (C22).
 ///
 /// # Errors
 ///
@@ -426,6 +429,42 @@ pub(crate) fn delegation_parent_in_txn(
     Ok(PIN
         .get(store, txn, id)?
         .and_then(|pin| pin.delegation_parent))
+}
+
+/// What an id's pin says it was born forked from, across a delete of its row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BornLineage {
+    /// No pin, seed or definition answers for the id: it is no agent's.
+    NoAgent,
+    /// A shell's pin, whose first definition put has not named the lineage.
+    Unread,
+    /// Born forked from this row, or from none.
+    Born(Option<EntityId>),
+}
+
+/// The lineage the agent at `id` was born with, as every later put at the id
+/// answers to it: its stored pin, else its seed or the row it holds. A pin
+/// outlives the row, so a deleted definition still names its parent.
+///
+/// # Errors
+///
+/// When the pin does not read.
+pub(crate) fn born_lineage_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<BornLineage> {
+    Ok(match bound_in_txn(store, txn, id)? {
+        None => BornLineage::NoAgent,
+        Some(AgentIdPin {
+            lineage: Lineage::Unread,
+            ..
+        }) => BornLineage::Unread,
+        Some(AgentIdPin {
+            lineage: Lineage::Born(parent),
+            ..
+        }) => BornLineage::Born(parent),
+    })
 }
 
 /// The ceiling a row at `id` may hold at most, when the id is pinned: what

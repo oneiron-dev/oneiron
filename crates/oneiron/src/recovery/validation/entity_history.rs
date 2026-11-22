@@ -4,6 +4,7 @@ use super::{id, invalid, strict, validate_document_metadata_field, validate_summ
 use crate::error::Result;
 use crate::recovery::canonical::{CanonicalEntityDocument, CanonicalForkStatus};
 use crate::store::canonical_document::CanonicalDocumentTexts;
+use oneiron_contracts::fingerprint::ContentHash;
 use std::collections::BTreeMap;
 use std::ops::Bound::{Excluded, Unbounded};
 
@@ -246,7 +247,7 @@ impl HistoryValidation {
                     if start > end
                         || end > self.pin_quote.chars
                         || self.pin_quote.quote != pin.quote
-                        || blake3::hash(self.pin_quote.quote.as_bytes()).as_bytes() != &pin.hash
+                        || ContentHash::of(self.pin_quote.quote.as_bytes()).as_bytes() != &pin.hash
                     {
                         return Err(invalid("entity document pin quote"));
                     }

@@ -293,6 +293,7 @@ fn post_with_take(fixture: &Fixture, rung: &TakeRung<'_>, post: TaskPost) -> Tas
             rule: None,
             local: Some(rung),
             system_one: None,
+            precision: None,
             escalation: None,
             big: None,
             human: &NoPerson,

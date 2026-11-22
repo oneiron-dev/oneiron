@@ -57,6 +57,9 @@ use crate::server::SyncServer;
 pub(crate) mod hook;
 mod model_calls;
 
+/// A rung's run, kept off record for a bound caller whose off-record
+/// session keeps no model-call record (census L5-25).
+pub(crate) use model_calls::run_for_caller;
 /// Binds the capture caller [`model_call_context`] reads back (FIX
 /// 12516/12742), on the decision's blocking thread.
 pub(crate) use model_calls::scoped as with_model_call_context;

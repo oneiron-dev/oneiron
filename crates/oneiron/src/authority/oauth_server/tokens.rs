@@ -70,7 +70,7 @@ pub enum OAuthTokenRefusal {
     /// Unknown, lapsed, spent or revoked; issued to another client or redirect URI; a PKCE
     /// verifier that does not match; or a grant that no longer stands.
     InvalidGrant,
-    /// A resource other than the one the code or family is bound to.
+    /// A resource none of those the code or family is bound to.
     InvalidTarget,
     /// A scope wider than the family's tier, or one that names no tier.
     InvalidScope,
@@ -282,7 +282,8 @@ impl Vault {
     }
 
     /// Redeems an authorization code once: its client, its redirect URI and the PKCE S256 of
-    /// the verifier must match, a resource the client sends must be the code's, and its grant
+    /// the verifier must match, a resource the client sends must be one the code's request
+    /// named (the family's tokens reach every one it named, RFC 8707 §2.2), and its grant
     /// must still stand. Answers a new token family's first pair once its access token's slip
     /// has landed. A code redeemed before revokes the family it minted; a lapsed code no
     /// exchange redeemed takes its grant back, and so does a code whose grant no longer stands,
@@ -334,7 +335,7 @@ impl Vault {
             }
             if exchange
                 .resource
-                .is_some_and(|resource| resource != code.resource)
+                .is_some_and(|resource| !code.names_resource(resource))
             {
                 return Ok(Decided::refused(OAuthTokenRefusal::InvalidTarget));
             }
@@ -354,6 +355,7 @@ impl Vault {
                 &TokenFamily {
                     client_id: code.client_id.clone(),
                     resource: code.resource.clone(),
+                    further_resources: code.further_resources.clone(),
                     grant: code.grant,
                     expires_at: refresh_expires_at,
                     revoked: false,
@@ -379,10 +381,10 @@ impl Vault {
     }
 
     /// Trades a refresh token for its family's next pair, spending it: its client must be the
-    /// family's, a resource the client sends must be the family's, a scope it sends must be no
-    /// wider than the family's tier, and the grant must still stand. The family's previous
-    /// access token and its slip retire, and the pair is answered once the new access token's
-    /// slip has landed. A spent refresh token presented again revokes its family.
+    /// family's, a resource the client sends must be one the family's sign-in named, a scope it
+    /// sends must be no wider than the family's tier, and the grant must still stand. The
+    /// family's previous access token and its slip retire, and the pair is answered once the new
+    /// access token's slip has landed. A spent refresh token presented again revokes its family.
     ///
     /// # Errors
     /// A store failure, or a failure minting the access token's slip, which revokes the family.
@@ -440,7 +442,7 @@ impl Vault {
             }
             if refresh
                 .resource
-                .is_some_and(|resource| resource != family.resource)
+                .is_some_and(|resource| !family.names_resource(resource))
             {
                 return Ok(Decided::refused(OAuthTokenRefusal::InvalidTarget));
             }
@@ -571,8 +573,9 @@ impl Vault {
     /// family and its slip, so a call that holds the slip stops too.
     ///
     /// `issuer` is the host issuer whose secret keys the token rows and derives the holder key
-    /// (`SyncServer::host_issuer`); `resource` is the `/mcp` URL the request reached
-    /// (`{origin}/mcp`).
+    /// (`SyncServer::host_issuer`); `resource` is the protected resource the request reached,
+    /// `{origin}/mcp` or `{origin}/git`: a token reaches only a resource its sign-in named
+    /// (CONTINUE-PUSH-NON-SLIP-SELECTION).
     ///
     /// # Errors
     /// A store failure reading the token's rows.
@@ -597,7 +600,7 @@ impl Vault {
             };
             let Some(family) = FAMILIES
                 .get(&self.store, &txn, &HexId(row.family))?
-                .filter(|family| !family.revoked && family.resource == resource)
+                .filter(|family| !family.revoked && family.names_resource(resource))
             else {
                 return Ok(None);
             };

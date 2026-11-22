@@ -639,8 +639,8 @@ mod tests {
                 edited[after.local.clone()],
                 "local record: {folder}"
             );
-            let mut original_cd = source[before.central.clone()].to_vec();
-            let mut edited_cd = edited[after.central.clone()].to_vec();
+            let mut original_cd = source[before.central].to_vec();
+            let mut edited_cd = edited[after.central].to_vec();
             original_cd[42..46].fill(0);
             edited_cd[42..46].fill(0);
             assert_eq!(original_cd, edited_cd, "central record: {folder}");

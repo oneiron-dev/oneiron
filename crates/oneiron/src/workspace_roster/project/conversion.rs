@@ -97,12 +97,13 @@ fn unread_source() -> Error {
     Error::InvalidConfig("a private thread converts only from a turn its converter reads".into())
 }
 
-fn thread_project_in(
+/// The project id a room thread's origin index names, read from the index
+/// alone: no PROJECT body is decoded here.
+fn thread_index_target(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     room: EntityId,
     thread: EntityId,
-    kind: u8,
 ) -> Result<Option<EntityId>> {
     let Some(owner) = vault
         .store
@@ -117,6 +118,19 @@ fn thread_project_in(
             .try_into()
             .map_err(|_| Error::CorruptedIndex("project origin index"))?,
     )?;
+    Ok(Some(id))
+}
+
+fn thread_project_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    thread: EntityId,
+    kind: u8,
+) -> Result<Option<EntityId>> {
+    let Some(id) = thread_index_target(vault, txn, room, thread)? else {
+        return Ok(None);
+    };
     let project = record::<ProjectRecord>(&vault.store, txn, id, kind)?
         .ok_or(Error::CorruptedIndex("project origin target"))?;
     if project.origin_room.as_deref() != Some(room.to_hex().as_str())
@@ -546,9 +560,9 @@ impl Vault {
                         None,
                         signed_at,
                     )?;
-                    self.batch_in()
-                        .put_engine_history(&project_id, kind, at, now, &encode(&project)?)
-                        .apply(txn)?;
+                    self.land_owner_project_birth_in_txn(txn, project_id, kind, at, now, &project)?;
+                    // A new project starts with its row of each `born` setting key (stage 7c-2).
+                    crate::setting::write_born_rows_in_txn(self, txn, project_id)?;
                     self.require_owner_head_in_txn(txn, project_id, &project)?;
                     // A house mind the roster seats joins the new home room
                     // through the three consents, filed by the owner (OF-417).
@@ -595,9 +609,9 @@ impl Vault {
                         None,
                         signed_at,
                     )?;
-                    self.batch_in()
-                        .put_engine_history(&project_id, kind, at, now, &encode(&project)?)
-                        .apply(txn)?;
+                    self.land_owner_project_birth_in_txn(txn, project_id, kind, at, now, &project)?;
+                    // A new project starts with its row of each `born` setting key (stage 7c-2).
+                    crate::setting::write_born_rows_in_txn(self, txn, project_id)?;
                     self.require_owner_head_in_txn(txn, project_id, &project)?;
                     // The house mind joins here too, as on the carded path.
                     let caller = crate::WriteActor::new(

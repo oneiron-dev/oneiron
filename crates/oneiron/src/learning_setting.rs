@@ -94,6 +94,8 @@ pub const SETTING_CATALOG: &[SettingSpec] = &[
     crate::dreamer_runner::maintenance::agent_health::HEALTH_TREND_PERIOD_DAYS,
     crate::dreamer_runner::maintenance::coach::TRADEOFF_REMINDER_HOURS,
     crate::dreamer_runner::maintenance::attribution_labels::ATTRIBUTION_LABEL_RECEIPTS,
+    crate::store::read_shape_policy::READ_SHAPE_TOKEN_COST,
+    crate::store::read_shape_policy::READ_SHAPE_EXPLORE_SHARE,
     crate::skill::EXPLORATION_ASK_CLIMB_HOURS,
     crate::skill::EXPLORATION_ASK_LAPSE_HOURS,
     crate::blob_artifact::esign::ESIGN_ASK_CLIMB_HOURS,
@@ -256,6 +258,24 @@ pub(crate) fn parse_row_key(stored_key: &str) -> Option<(&str, SettingMode, Sett
     Some((parts[0], mode, scope))
 }
 
+/// Refuses a row key [`parse_row_key`] does not read back as itself: a scope naming a reserved
+/// id would store a row no reader parses (FIX SETTING-SCOPE-RESERVED-ID-NOT-ROUND-TRIPPED).
+pub(crate) fn check_row_key_reads_back(
+    key: &str,
+    mode: SettingMode,
+    scope: &SettingScope,
+) -> Result<()> {
+    let stored = scoped_row_key(key, mode, scope);
+    parse_row_key(&stored)
+        .is_some_and(|(read_key, read_mode, read)| {
+            scoped_row_key(read_key, read_mode, &read) == stored
+        })
+        .then_some(())
+        .ok_or(invalid(
+            "a setting row's scope must name an id its key reads back",
+        ))
+}
+
 const fn invalid(reason: &'static str) -> Error {
     Error::InvalidClaimBody(reason)
 }
@@ -327,6 +347,7 @@ fn checked_spec(scope: &SettingScope, row: &SettingRow) -> Result<&'static Setti
         type_ref.validate()?;
     }
     let spec = setting_spec(&row.key).ok_or(invalid("no learned setting has this key"))?;
+    check_row_key_reads_back(spec.key, row.mode, scope)?;
     check_row_terms(row.mode, row.weight_runs, &row.why)?;
     if !row.value.is_finite() || row.value < spec.min || row.value > spec.max {
         return Err(invalid(

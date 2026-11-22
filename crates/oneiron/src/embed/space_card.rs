@@ -13,6 +13,8 @@
 
 use std::collections::BTreeMap;
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use super::space::{InputKind, space_setup_id, text_index_setup_id};
 use super::space_move::{
     KindProbeCheck, NotWorse, SPACE_PROBE_DEPTH, SPACE_PROBE_MIN_FAMILIES, SpaceMove,
@@ -50,7 +52,7 @@ pub(super) fn probe_versions(
     key.update(&[kind as u8]);
     for (id, probe) in probes.iter().filter(|(_, probe)| probe.kind == kind) {
         set.update(id);
-        set.update(blake3::hash(probe.query.as_bytes()).as_bytes());
+        set.update(ContentHash::of(probe.query.as_bytes()).as_bytes());
         key.update(id);
         key.update(&(probe.targets.len() as u64).to_le_bytes());
         for target in &probe.targets {

@@ -10,6 +10,7 @@ pub(super) fn index(
     server: &SyncServer,
     auth: &CoreAuth,
     peer: PeerMachine,
+    lane: &crate::handler::selector_scope::SelectorLane,
     params: Value,
     cache: &mut Option<ResidenceIndexCache>,
     budgets: ResidenceOperationBudgets,
@@ -28,8 +29,9 @@ pub(super) fn index(
         return Err(AppError::invalid_params());
     }
     let page_limit = input.limit.min(budgets.index_page_limit);
-    let (window, selector, doc) = selected_window(server, auth, &input.window, &input.selector)?;
-    let admission = admitted(server, auth, peer, &selector)?;
+    let (window, selector, doc) =
+        selected_window(server, auth, lane, &input.window, &input.selector)?;
+    let admission = admitted(server, auth, peer, lane, &selector)?;
     let destination = admission.destination();
     let current_vv = doc.oplog_vv().encode();
     let grant = server
@@ -45,17 +47,19 @@ pub(super) fn index(
         .map_err(|_| AppError::internal_server_error("index selection unavailable"))?;
 
     if after.is_none() {
-        let entries = window_index_projection_with(
-            &server.vault,
-            &doc,
-            &window,
-            crate::handler::selector_scope::selector_grant_scope(),
-            &selector,
-            admission.withhold(),
-            budgets.title_max_chars,
-            |id| admission.allows_item(id),
-        )
-        .map_err(|_| AppError::internal_server_error("index unavailable"))?;
+        let (entries, coreference) = oneiron::sync::recording_coreference_disclosure(|| {
+            window_index_projection_with(
+                &server.vault,
+                &doc,
+                &window,
+                lane.grant_scope(),
+                &selector,
+                admission.withhold(),
+                budgets.title_max_chars,
+                |id| admission.allows_item(id),
+            )
+        });
+        let entries = entries.map_err(|_| AppError::internal_server_error("index unavailable"))?;
         let bytes = entries
             .iter()
             .try_fold(0usize, |total, entry| {
@@ -115,6 +119,7 @@ pub(super) fn index(
             destination,
             selection_revision,
             items: entries,
+            coreference,
             pages: 0,
             budgets,
             _held: held,
@@ -137,6 +142,9 @@ pub(super) fn index(
         *cache = None;
         return Err(index_changed());
     }
+    // Every page carries rows the first page's filter decided: its answer
+    // stands only while that filter's coreference shares do.
+    retained.coreference.record();
     retained.pages = retained.pages.saturating_add(1);
     if retained.pages == budgets.max_index_pages.saturating_add(1) {
         // Rule 5: a read past its page row asks once and goes on.
@@ -260,6 +268,9 @@ pub(crate) struct ResidenceTouchStage {
     basis: TouchBasis,
     /// Each item the touch named by reference, with the BLAKE3 it named.
     items: Vec<(TouchItem, [u8; 32], Vec<u8>)>,
+    /// The coreference links the touch's filters let these bytes carry: a
+    /// part sliced from them stands only while they are still shared.
+    coreference: oneiron::sync::CoreferenceDisclosure,
     /// The staged bytes' charge on the server's retained-memory line.
     _held: crate::byte_line::HeldBytes,
 }
@@ -284,16 +295,21 @@ pub(super) fn touch(
     server: &SyncServer,
     auth: &CoreAuth,
     peer: PeerMachine,
+    lane: &crate::handler::selector_scope::SelectorLane,
     params: Value,
     stage: &mut Option<ResidenceTouchStage>,
 ) -> Result<Answer, AppError> {
     let input: TouchRequest =
         serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
     *stage = None;
-    let target = touch_target(server, auth, peer, &input)?;
+    let target = touch_target(server, auth, peer, lane, &input)?;
     // Read before the item, so the stage never names a basis newer than its bytes.
     let basis = touch_basis(server, &target)?;
-    let (blob, document, cache_worlds) = read_touch(server, &target, None)?;
+    // What the read's filters let the item carry is kept with any staged
+    // bytes; it is recorded into this answer's basis as well.
+    let (read, coreference) =
+        oneiron::sync::recording_coreference_disclosure(|| read_touch(server, &target, None));
+    let (blob, document, cache_worlds) = read?;
     let rows = touch_rows(server, target.id)?;
     // Where the row sits, kept beside the machine's copy (FIX 14534).
     let content_world = target
@@ -337,6 +353,7 @@ pub(super) fn touch(
                 id: target.id,
                 basis,
                 items: named,
+                coreference,
                 _held: held,
             });
     }
@@ -359,6 +376,7 @@ pub(super) fn touch_part(
     server: &SyncServer,
     auth: &CoreAuth,
     peer: PeerMachine,
+    lane: &crate::handler::selector_scope::SelectorLane,
     params: Value,
     stage: &Option<ResidenceTouchStage>,
 ) -> Result<Answer, AppError> {
@@ -370,10 +388,13 @@ pub(super) fn touch_part(
         selector: input.selector,
         entity_id: input.entity_id,
     };
-    let target = touch_target(server, auth, peer, &touch)?;
+    let target = touch_target(server, auth, peer, lane, &touch)?;
     let staged = match stage {
         Some(stage) => match stage.named(&target, input.item, &hash) {
             Some(bytes) if touch_basis(server, &target)?.as_ref() == Some(&stage.basis) => {
+                // The staged bytes carry what the touch's filters decided:
+                // this part stands only while those links are still shared.
+                stage.coreference.record();
                 Some(bytes)
             }
             _ => None,
@@ -451,6 +472,8 @@ fn touch_item(
 /// window and selector, the window's document, the admission and the id.
 struct TouchTarget<'v> {
     window: WindowKey,
+    /// The grant scope its selector was checked under (MEMBER-SYNC D2).
+    scope: oneiron::FederationGrantScope,
     selector: SyncSelector,
     doc: loro::LoroDoc,
     admission: ResidenceAdmission<'v>,
@@ -464,14 +487,16 @@ fn touch_target<'v>(
     server: &'v SyncServer,
     auth: &CoreAuth,
     peer: PeerMachine,
+    lane: &crate::handler::selector_scope::SelectorLane,
     input: &TouchRequest,
 ) -> Result<TouchTarget<'v>, AppError> {
     let id = EntityId::from_hex(&input.entity_id).map_err(|_| AppError::invalid_params())?;
-    let (window, selector, doc) = selected_window(server, auth, &input.window, &input.selector)?;
+    let (window, selector, doc) =
+        selected_window(server, auth, lane, &input.window, &input.selector)?;
     // A stored grant constrains the selector; the actor's live scoped-read
     // floor and the destination machine's world read settings must ALSO
     // admit the exact target. Either denial looks missing.
-    let admission = admitted(server, auth, peer, &selector)?;
+    let admission = admitted(server, auth, peer, lane, &selector)?;
     if !admission
         .allows_item(id)
         .map_err(|_| AppError::internal_server_error("item admission unavailable"))?
@@ -480,6 +505,7 @@ fn touch_target<'v>(
     }
     Ok(TouchTarget {
         window,
+        scope: lane.grant_scope(),
         selector,
         doc,
         admission,
@@ -525,6 +551,7 @@ fn read_touch(
 > {
     let TouchTarget {
         window,
+        scope,
         selector,
         doc,
         admission,
@@ -534,7 +561,7 @@ fn read_touch(
         &server.vault,
         doc,
         window,
-        crate::handler::selector_scope::selector_grant_scope(),
+        *scope,
         selector,
         admission.withhold(),
         *id,
@@ -553,7 +580,7 @@ fn read_touch(
                     .export_read_cache_document_in_window_with(
                         *id,
                         window,
-                        crate::handler::selector_scope::selector_grant_scope(),
+                        *scope,
                         selector,
                         admission.withhold(),
                         &loro::VersionVector::new().encode(),
@@ -565,7 +592,7 @@ fn read_touch(
                     .export_document_in_window_with(
                         *id,
                         window,
-                        crate::handler::selector_scope::selector_grant_scope(),
+                        *scope,
                         selector,
                         admission.withhold(),
                         &loro::VersionVector::new().encode(),
@@ -608,6 +635,7 @@ pub(super) fn promote(
     server: &SyncServer,
     auth: &CoreAuth,
     peer: PeerMachine,
+    lane: &crate::handler::selector_scope::SelectorLane,
     params: Value,
 ) -> Result<Answer, AppError> {
     let input: PromotionRequest =
@@ -617,8 +645,9 @@ pub(super) fn promote(
     let id = oneiron::sync::selector::RepoCopyAliases::read(&server.vault)
         .map_err(|_| AppError::internal_server_error("item aliases unavailable"))?
         .stored(&id);
-    let (window, selector, doc) = selected_window(server, auth, &input.window, &input.selector)?;
-    let admission = admitted(server, auth, peer, &selector)?;
+    let (window, selector, doc) =
+        selected_window(server, auth, lane, &input.window, &input.selector)?;
+    let admission = admitted(server, auth, peer, lane, &selector)?;
     if !admission
         .allows_item(id)
         .map_err(|_| AppError::internal_server_error("promotion admission unavailable"))?
@@ -626,7 +655,7 @@ pub(super) fn promote(
             &server.vault,
             &doc,
             &window,
-            crate::handler::selector_scope::selector_grant_scope(),
+            lane.grant_scope(),
             &selector,
             admission.withhold(),
             id,
@@ -643,7 +672,7 @@ pub(super) fn promote(
         &server.vault,
         &doc,
         &window,
-        crate::handler::selector_scope::selector_grant_scope(),
+        lane.grant_scope(),
         &selector,
         admission.withhold(),
         |item| {
@@ -682,17 +711,37 @@ pub(super) fn promote(
 /// its promoted copy only once this covers every op it holds (OF-534). It
 /// lists the rows the vector counts ops of ([`window_vv_rows`], FIX 9494),
 /// so the send door judges it as it judges every answer, and a vector whose
-/// rows may all leave reaches an off-device machine.
+/// rows may all leave reaches an off-device machine. On a member lane the
+/// selector must cover the whole window, as a promotion's does (MEMBER-SYNC
+/// threat F7): the vector counts ops of rows it may not read.
 pub(super) fn window_vv(
     server: &SyncServer,
     auth: &CoreAuth,
     peer: PeerMachine,
+    lane: &crate::handler::selector_scope::SelectorLane,
     params: Value,
 ) -> Result<Answer, AppError> {
     let input: WindowVvRequest =
         serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
-    let (window, selector, doc) = selected_window(server, auth, &input.window, &input.selector)?;
-    let _admitted = admitted(server, auth, peer, &selector)?;
+    let (window, selector, doc) =
+        selected_window(server, auth, lane, &input.window, &input.selector)?;
+    let admission = admitted(server, auth, peer, lane, &selector)?;
+    if lane.member().is_some() {
+        let covered = lane.scope_for(&selector).and_then(|scope| {
+            oneiron::sync::residence::promotion_covers_full_window_for(
+                &server.vault,
+                &doc,
+                &window,
+                scope,
+                &selector,
+                admission.withhold(),
+                |id| admission.allows_item(id),
+            )
+        });
+        if !matches!(covered, Ok(true)) {
+            return Err(AppError::not_found("item", None));
+        }
+    }
     Ok((
         json!({
             "window": window.as_str(),

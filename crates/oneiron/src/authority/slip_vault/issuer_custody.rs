@@ -73,7 +73,12 @@ fn seed_absent() -> Error {
 /// install's slot, writes its successor seed there, moves the root, and on a
 /// failure puts back the slot it read; two moves interleaved would let the
 /// losing one's put-back delete or overwrite the winner's live seed. Across
-/// processes, the vault's writer lease admits one opener at a time.
+/// processes, the vault's writer lease admits one opener at a time. The
+/// lock is the process's, not one store's: the slot is keyed by vault id and
+/// install, so a byte copy of the vault open at a second path, with its own
+/// store and writer lease, names the same slot, and two failed moves on the
+/// vault and its copy could leave there a seed that neither root takes
+/// (FIX-LIST 32277).
 static HOST_ROOT_MOVES: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Takes [`HOST_ROOT_MOVES`] for one move. A move that panicked while
