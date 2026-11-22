@@ -16,7 +16,8 @@ use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::legal_hold::open_clone;
 use oneiron::verbs::{
-    RecordEraseConfirmRequest, RecordEraseRequest, confirm_record_erase, preview_record_erase,
+    OwnerConfirmPreviewRequest, RecordEraseConfirmRequest, confirm_record_erase,
+    preview_owner_confirm,
 };
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
 use serde_json::json;
@@ -96,19 +97,25 @@ fn owner_hold_never_refuses_the_owners_erase() -> TestResult {
         .place_legal_hold(&fixture.owner, vec![LegalHoldTarget::Record(id)], None)
         .map_err(at("the owner's legal hold"))?;
     let memory = vault.memory(fixture.actor, EdgeActorClass::Human);
-    let preview = preview_record_erase(&memory, RecordEraseRequest { record: id })
-        .map_err(at("erase preview"))?;
-    let outcome = confirm_record_erase(
+    // The erase takes the owner's confirm of its shared preview (DEC-0006).
+    let mut input = RecordEraseConfirmRequest {
+        record: id,
+        confirm: None,
+        also_same_bytes: false,
+        check_in_ref: None,
+    };
+    let preview = preview_owner_confirm(
         &memory,
         &fixture.owner,
-        RecordEraseConfirmRequest {
-            record: id,
-            preview_digest: preview.preview_digest,
-            also_same_bytes: false,
-            check_in_ref: None,
+        OwnerConfirmPreviewRequest {
+            verb: "vault.records.erase_confirm".to_owned(),
+            input: serde_json::to_value(&input).map_err(at("encode the erase input"))?,
         },
     )
-    .map_err(at("erase confirm"))?;
+    .map_err(at("erase preview"))?;
+    input.confirm = Some(preview.confirm);
+    let outcome =
+        confirm_record_erase(&memory, &fixture.owner, input).map_err(at("erase confirm"))?;
     assert!(
         outcome.first.receipt_ref.is_some(),
         "the confirmed erase wrote a receipt"
