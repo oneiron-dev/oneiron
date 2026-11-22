@@ -145,6 +145,8 @@ impl RetryClaim {
             actor: self.agent.to_hex(),
             receipt_ref: format!("{RETRY_CLAIM_RECEIPT_PREFIX}{}", self.requester.to_hex()),
             at,
+            // The parent held no claim: this is its first.
+            generation: 0,
         };
         CLAIMS.put(&vault.store, txn, &self.parent, &receipt)?;
         RESPONSE.put(&vault.store, txn, &self.parent, &self.slot)?;

@@ -647,6 +647,7 @@ pub(crate) fn merge_replicated_side_row_in_txn(
                 // an id and give back a name (REVIEW-9153 round 2).
                 if held.at == claim.at
                     && held.room_id == claim.room_id
+                    && held.generation == claim.generation
                     && let Some(receipt_ref) =
                         super::witness::merged_receipt_ref(&held.receipt_ref, &claim.receipt_ref)
                     && let Some(actor) = crate::deletion::carrier_actor_merged(

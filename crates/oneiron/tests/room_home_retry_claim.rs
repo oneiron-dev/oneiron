@@ -646,6 +646,7 @@ mod erase {
             actor: holder.to_hex(),
             receipt_ref: format!("{RETRY_CLAIM_RECEIPT_PREFIX}{author}"),
             at,
+            generation: 0,
         }
     }
 
@@ -680,6 +681,7 @@ mod erase {
             actor: named.clone(),
             receipt_ref: format!("rooms.claim:{}", EntityId::now().to_hex()),
             at: 8,
+            generation: 0,
         };
         put_room_claim(&vault, &own_claim)?;
         assert_eq!(
