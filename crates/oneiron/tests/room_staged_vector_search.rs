@@ -23,11 +23,17 @@ use oneiron::registry::ENTITY_TYPE_ASSET;
 use oneiron::test_doors::untangle_regressions::{embedding_test_config, open_test_vault_with};
 use oneiron::{EdgeActorClass, EntityId, RawEntityPut, TimeRange};
 
-const STAGED: usize = 4_000;
+/// Staged rows. Staging is the test's cost, not the search: main's nightly
+/// (20 Nov, nextest profile `nightly`, a 120 s bound) killed the test at
+/// 4,000 rows before the staging loop ended. A page of ten over 500 staged
+/// rows still reads fifty times the rows it returns when every staged row is
+/// read first.
+const STAGED: usize = 500;
 const LIMIT: usize = 10;
 
 /// Row `index`'s vector: unit length, at an angle from the query that grows
-/// with `index` over 0.3..1.5 rad, so its score falls by at least ~1e-4 a row.
+/// with `index` over 0.3..1.5 rad, so its score falls by at least
+/// sin(0.3) x 1.2 / `STAGED` (~7e-4 at 500 rows) a row.
 fn vector_of(index: usize) -> Vec<f32> {
     let step = 1.2 / f32::from(u16::try_from(STAGED).expect("row count"));
     let angle = 0.3 + step * f32::from(u16::try_from(index).expect("row index"));

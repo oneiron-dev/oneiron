@@ -24,7 +24,11 @@ use oneiron::test_support::{bind_host_owner, provision_engine_machines, test_hos
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
 
 /// Merged updates the timed test captures after, each a retained version.
-const SIZES: [usize; 4] = [150, 300, 600, 1200];
+/// Building the updates is the test's cost, not the capture: main's nightly
+/// (21 Nov, nextest profile `nightly`, a 120 s bound) killed the old
+/// 150 / 300 / 600 / 1,200 sizes during the 1,200 build, after the 600 one
+/// had printed. Three doublings to 300 keep the scaling line well inside it.
+const SIZES: [usize; 3] = [75, 150, 300];
 
 struct Fixture {
     _directory: tempfile::TempDir,
@@ -146,6 +150,7 @@ fn capture(fixture: &Fixture) -> (Duration, CanonicalEntityDocumentHistory) {
 
 #[test]
 fn capture_reads_every_retained_version_at_each_size() {
+    let started = Instant::now();
     let fixture = fixture();
     let mut versions = 0;
     let mut timings = Vec::with_capacity(SIZES.len());
@@ -172,9 +177,10 @@ fn capture_reads_every_retained_version_at_each_size() {
     let (first, first_ms) = timings[0];
     let (last, last_ms) = timings[timings.len() - 1];
     println!(
-        "FIX275-SCALING updates {first}->{last} (x{}) capture x{:.1}",
+        "FIX275-SCALING updates {first}->{last} (x{}) capture x{:.1} test_ms={:.0}",
         last / first,
-        last_ms / first_ms
+        last_ms / first_ms,
+        started.elapsed().as_secs_f64() * 1000.0
     );
 }
 
