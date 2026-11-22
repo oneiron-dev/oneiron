@@ -1,17 +1,19 @@
+#![cfg(oneiron_test_support)]
 //! The whole-vault export keeps out the rows whose content is about a PERSON it keeps out (FIX
 //! WHOLE-VAULT-EXPORT-CARRIES-CONTENT-ABOUT-A-WITHHELD-PERSON; Engine ANSWER
 //! WITHHELD-PERSON-CONTENT-RULE = A, 20 Nov).
 //!
-//! Public doors only; neutral fixtures; vaults in tempdirs.
+//! Public doors beside the `oneiron::test_doors` cooperative restriction; neutral fixtures;
+//! vaults in tempdirs.
 //!
 //! * `a_whole_vault_export_keeps_out_the_content_about_a_use_limited_person`: on a hosted vault
-//!   two PERSONs, held and kept, each have a CLAIM about them, a CLAIM about a link they are an
-//!   end of, a FACET scenario mask, a PSYCH_PROFILE and a PERSONA_SNAPSHOT_EXPORT. A customer
-//!   hold then refuses held's privacy erase, which keeps held stored and use-limited. The export
-//!   carries none of held's five rows and every one of kept's.
+//!   two PERSONs, restricted and carried, each have a CLAIM about them, a CLAIM about a link they
+//!   are an end of, a FACET scenario mask, a PSYCH_PROFILE and a PERSONA_SNAPSHOT_EXPORT. A
+//!   cooperative review restriction then use-limits restricted. The export carries none of
+//!   restricted's five rows and every one of carried's.
 //! * `a_claim_about_a_link_to_a_use_limited_person_stays_out_from_either_end`: a CLAIM about a
-//!   link whose source is held, and one about a link whose target is held, both stay out; a
-//!   CLAIM about a link between two other PERSONs travels.
+//!   link whose source is restricted, and one about a link whose target is restricted, both stay
+//!   out; a CLAIM about a link between two other PERSONs travels.
 //!
 //! Both run red at main ec33a9efeaa, whose export door reads only each row's own id, and green
 //! at the fix.
@@ -19,20 +21,17 @@
 
 use std::collections::BTreeSet;
 
-use oneiron::consent::AuthenticatedOwner;
-use oneiron::deletion::LegalHoldTarget;
 use oneiron::federation::Sensitivity;
-use oneiron::memory::{EraseOptions, EraseReason};
 use oneiron::persona_snapshot::PersonaSnapshotExportRecord;
 use oneiron::psych_profile::{
     PsychProfile, PsychProfileConfidence, PsychProfileSource, PsychProfileSourceWords,
 };
 use oneiron::registry::ENTITY_TYPE_PERSON;
-use oneiron::store::GateDecisionId;
 use oneiron::store::revision_ref::RevisionRef;
+use oneiron::test_doors::campaign_member_index::restrict_record;
 use oneiron::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EdgeActorClass, EdgeKind,
-    EntityId, HostingPrivacyPosture, TimeRange, Vault, VaultConfig,
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EdgeKind, EntityId,
+    HostingPrivacyPosture, TimeRange, Vault, VaultConfig,
 };
 use rmpv::Value;
 use serde_json::json;
@@ -43,68 +42,19 @@ fn range() -> TimeRange {
     TimeRange { start: AT, end: AT }
 }
 
-/// A hosted vault with a device keystore, so a held privacy erase keeps its record
-/// use-limited.
+/// A hosted vault.
 fn open_hosted_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("temp dir for the hosted vault");
     let mut config = VaultConfig::default();
     config.privacy.posture = HostingPrivacyPosture::Hosted;
     let vault = Vault::open_owned(dir.path(), config).expect("open the hosted vault");
-    vault.install_device_keystore(std::sync::Arc::new(
-        oneiron_keystore::MemoryKeystore::default(),
-    ));
     (dir, vault)
 }
 
-fn owner_proof(vault: &Vault) -> AuthenticatedOwner {
-    let owner = vault
-        .ensure_embedded_owner_actor()
-        .expect("FIXTURE: the vault names its embedded owner actor");
-    vault
-        .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
-        .expect("FIXTURE: owner proof")
-}
-
-/// Places a customer hold on `record` and runs its privacy erase, which the hold refuses: the
-/// record stays stored and use-limited, and a whole-vault export keeps it out.
+/// Restricts `record` under a cooperative review, in the row the cooperative-deletion answer
+/// writes: every use-limited read hides the record, and a whole-vault export keeps it out.
 fn use_limit(vault: &Vault, record: EntityId) {
-    let hold = vault
-        .place_legal_hold(
-            &owner_proof(vault),
-            vec![LegalHoldTarget::Record(record)],
-            Some("matter-person-content".to_owned()),
-        )
-        .expect("FIXTURE: place the customer hold");
-    assert!(hold.stands(), "FIXTURE: the customer hold stands: {hold:?}");
-    let actor = vault
-        .ensure_embedded_owner_actor()
-        .expect("FIXTURE: the vault names its embedded owner actor");
-    let memory = vault.memory(actor, EdgeActorClass::Human);
-    let preview = memory
-        .preview_entity_delete(&record)
-        .expect("FIXTURE: preview the privacy erase");
-    let outcome = memory
-        .confirm_entity_erase(
-            &preview,
-            EraseOptions {
-                reason: EraseReason::GdprDelete,
-                also_same_bytes: false,
-                veto_starter: None,
-            },
-        )
-        .expect("FIXTURE: the privacy erase runs");
-    assert_eq!(
-        outcome.first.reason.as_str(),
-        "privacy_erase_kept",
-        "FIXTURE: the held privacy erase is kept: {outcome:?}"
-    );
-    assert!(
-        vault
-            .legal_hold_use_limit(&record)
-            .expect("FIXTURE: read the use limit")
-            .is_some(),
-        "FIXTURE: the kept erase use-limits the record"
-    );
+    restrict_record(vault, record).expect("FIXTURE: restrict the record");
 }
 
 fn put_person(vault: &Vault, name: &[u8]) -> EntityId {
@@ -285,7 +235,7 @@ fn a_whole_vault_export_keeps_out_the_content_about_a_use_limited_person() {
     for (kind, id) in held_content.rows().iter().chain(kept_content.rows().iter()) {
         assert!(
             before.contains(&id.to_hex()),
-            "FIXTURE: before the hold the export carries the {kind}"
+            "FIXTURE: before the restriction the export carries the {kind}"
         );
     }
 
@@ -296,7 +246,7 @@ fn a_whole_vault_export_keeps_out_the_content_about_a_use_limited_person() {
                 .get_entity_type(&id)
                 .expect("FIXTURE: read the row's type")
                 .is_some(),
-            "FIXTURE: the kept erase leaves the {kind} stored"
+            "FIXTURE: the restriction leaves the {kind} stored"
         );
     }
 
@@ -332,7 +282,7 @@ fn a_claim_about_a_link_to_a_use_limited_person_stays_out_from_either_end() {
     for id in [from_held, to_held, between_others] {
         assert!(
             before.contains(&id.to_hex()),
-            "FIXTURE: before the hold the export carries every link claim"
+            "FIXTURE: before the restriction the export carries every link claim"
         );
     }
 

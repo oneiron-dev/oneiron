@@ -139,12 +139,8 @@ const ROWS: &[Row] = &[
         check: None,
     },
     always!(
-        "vault.legal_holds.lift_and_erase",
-        [pin(&["records"], records), pin(&["confirm"], digest)],
-    ),
-    always!(
-        "vault.legal_holds.withdraw_erase",
-        [pin(&["records"], records)],
+        "vault.legal_holds.lift",
+        [pin(&["hold_id"], typed), pin(&["confirm"], digest)],
     ),
     always!(
         "vault.records.erase_confirm",

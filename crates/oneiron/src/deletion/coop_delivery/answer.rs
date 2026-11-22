@@ -4,10 +4,10 @@
 //! (FIX 9784). A legal hold choice places its customer hold there, on this
 //! pact's recipient copies the ask covers only (FIX 2927), and links it to
 //! the answer and the ask (FIX 2924). A delete choice names each record once
-//! (FIX 2925), is refused there before anything is deleted when a legal hold
-//! keeps any of its records, and saves its operation with the answer (FIX
-//! 2926). Its deletes then run one by one through the owner's own delete
-//! rail, outside that writer, each one's observed state saved as it goes.
+//! (FIX 2925), checks cooperative restrictions before anything is deleted,
+//! and saves its operation with the answer (FIX 2926). Its deletes then run
+//! one by one through the owner's own delete rail, outside that writer,
+//! each one's observed state saved as it goes.
 
 use std::collections::BTreeSet;
 
@@ -38,11 +38,11 @@ impl Vault {
     /// hold is linked to the answer and the ask, and an earlier choice's hold
     /// stays linked and standing (FIX 2924). A delete choice names each
     /// record once, in the order first named; an empty one deletes nothing
-    /// and is recorded (FIX 2925). A legal hold on any of its records, on a
-    /// pad's world or on a redirect shell its erase takes refuses the whole
-    /// choice in that writer, before anything is deleted, naming the held
-    /// records; otherwise the choice and its operation are saved before the
-    /// first delete runs (FIX 2926). The same delete choice again resumes the
+    /// and is recorded (FIX 2925). A cooperative restriction on any of its
+    /// records, on a pad's world or on a redirect shell its erase takes
+    /// refuses the whole choice in that writer, before anything is deleted.
+    /// Otherwise the choice and its operation are saved before the first
+    /// delete runs (FIX 2926). The same delete choice again resumes the
     /// records still pending. Retain-under-basis records only this ask's
     /// copies still present here, with the owner's basis and retention-class
     /// codes; non-copies and missing records are left out. Its existing B2
@@ -145,7 +145,7 @@ impl Vault {
             }
             // A new choice replaces the old one but lifts no hold an earlier
             // legal hold answer placed. The owner lifts that only through
-            // `confirm_lift_legal_hold_and_erase`.
+            // `vault.legal_holds.lift`.
             filed.disposition = Some(CooperativeDeletionDisposition {
                 kind: answer.kind,
                 reason_code: answer.reason_code.clone(),
@@ -165,8 +165,6 @@ impl Vault {
         let filed = match written {
             Ok(filed) => filed,
             Err(error) => {
-                // A hold's refusal reaches its log once the writer has ended.
-                self.flush_legal_hold_refusals_after_failure();
                 if let Some(hold_id) = courtesy_hold_id {
                     self.remove_uncommitted_hold_copy(&hold_id);
                 }
@@ -223,7 +221,6 @@ impl Vault {
             running_operation_in(self, &txn, key, operation_id)?
                 .map_or_else(Vec::new, |operation| operation.pending())
         };
-        let mut failed = false;
         for record in pending {
             let removed = {
                 let txn = self.store.env.read_txn()?;
@@ -239,7 +236,6 @@ impl Vault {
                     Ok(receipt) if receipt.existed => CooperativeDeleteRecordState::Removed,
                     Ok(_) => CooperativeDeleteRecordState::Missing,
                     Err(error) => {
-                        failed = true;
                         tracing::warn!(
                             record = %record.to_hex(),
                             error = %error.message,
@@ -250,9 +246,6 @@ impl Vault {
                 }
             };
             self.settle_courtesy_record(key, operation_id, record, state)?;
-        }
-        if failed {
-            self.flush_legal_hold_refusals_after_failure();
         }
         let txn = self.store.env.read_txn()?;
         INCOMING
@@ -491,10 +484,9 @@ fn check_hold_records(answer: &CooperativeDeletionAnswer) -> Result<()> {
 }
 
 /// Every record of a delete choice, in the answer's writer, before any is
-/// deleted (FIX 2926): a legal hold on it, on its world when it is a pad, or
-/// on a redirect shell its hard erase takes with it refuses the whole
-/// choice. The refusal is the hold's own, naming the held records; each is
-/// logged once the writer ends. Each delete's own writers check again.
+/// deleted (FIX 2926): a cooperative restriction on it, on its world when
+/// it is a pad, or on a redirect shell its hard erase takes refuses the
+/// whole choice. Each delete's own writers check again.
 fn preflight_delete_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,

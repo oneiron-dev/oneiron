@@ -134,12 +134,8 @@ pub(crate) const SIDE_TABLE_DISPOSITIONS: &[(&str, ArchiveSideDisposition)] = &[
     ("HOUSE_LINK_RECEIPT", ArchiveSideDisposition::Retained),
     ("INQUIRY_RECEIPT", ArchiveSideDisposition::Retained),
     ("LEARNING_SETTING", ArchiveSideDisposition::Retained),
-    ("LEGAL_HOLD_ERASE_LINK", ArchiveSideDisposition::Retained),
     ("LEGAL_HOLD_EVENT", ArchiveSideDisposition::Retained),
-    ("LEGAL_HOLD_PENDING_ERASE", ArchiveSideDisposition::Retained),
     ("LEGAL_HOLD_ROW", ArchiveSideDisposition::Retained),
-    ("LEGAL_HOLD_TARGET", ArchiveSideDisposition::Retained),
-    ("LEGAL_HOLD_USE_LIMIT", ArchiveSideDisposition::Retained),
     (
         "MAIL_PACK_COMPLIANCE_SETTING",
         ArchiveSideDisposition::Retained,

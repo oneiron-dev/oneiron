@@ -16,9 +16,9 @@
 //! Every door is reached by its verb name and every answer is read as JSON,
 //! so this file builds on main too. Red on main: `vault.owner_confirm.preview`
 //! is an unknown verb there, `vault.records.erase_confirm` takes
-//! `preview_digest`, `vault.legal_holds.lift_and_erase` takes `shown_state`,
-//! and the other one-way verbs land with no confirm, so each gated call below
-//! lands or answers another code.
+//! `preview_digest`, `vault.legal_holds.lift` is unknown, and the other
+//! one-way verbs land with no confirm, so each gated call below lands or
+//! answers another code.
 //!
 //! The vault is rooted, keyed and owned, as an embedded host opens it: an
 //! erase signs its receipt with this install's key, and the owner's verbs by
@@ -63,6 +63,8 @@ struct Fixture {
     clock: Arc<ManualClock>,
     // Dropped after the vault.
     _dir: tempfile::TempDir,
+    // The owner holds' sealed copies, outside the vault directory.
+    _holds: tempfile::TempDir,
 }
 
 /// A device vault this process owns (the writer lease), on a manual clock,
@@ -70,8 +72,9 @@ struct Fixture {
 /// owner bound as the human owner.
 fn fixture() -> Fixture {
     let dir = tempfile::tempdir().expect("a temporary vault directory");
+    let holds = tempfile::tempdir().expect("a hold store outside the vault");
     let clock = ManualClock::new(NOW);
-    let mut config = VaultConfig::device();
+    let mut config = VaultConfig::device().with_legal_hold_store(holds.path().to_path_buf());
     config.store_clock = clock.bundle();
     let vault = Vault::open_owned(dir.path(), config).expect("an owned vault");
     let issuer = provision_engine_machines(&vault);
@@ -88,6 +91,7 @@ fn fixture() -> Fixture {
         owner,
         clock,
         _dir: dir,
+        _holds: holds,
     }
 }
 
@@ -326,8 +330,8 @@ fn the_shared_preview_confirms_once_and_a_changed_state_is_refused() {
 }
 
 /// Every one-way verb meets the shared confirm, and no other row joins it.
-/// Red on main: `vault.legal_holds.lift_and_erase` asks its `shown_state`
-/// there, and `vault.notes.history_purge` is no erase row.
+/// Red on main: `vault.legal_holds.lift` is unknown there, and
+/// `vault.notes.history_purge` is no erase row.
 #[test]
 fn every_one_way_verb_meets_the_shared_confirm() {
     let fx = fixture();
@@ -337,7 +341,6 @@ fn every_one_way_verb_meets_the_shared_confirm() {
         "vault.legal_holds.lift",
         json!({ "hold_id": EntityId::now().to_hex() }),
     );
-    inputs.insert("vault.legal_holds.lift_and_erase", json!({ "records": [] }));
     // One Owner: the purge takes its erase-now branch, which is gated.
     inputs.insert("vault.notes.history_purge", json!({ "note_ref": note }));
     inputs.insert(
@@ -570,13 +573,15 @@ fn an_execute_confirm_of_the_old_history_is_refused() {
     );
 }
 
-/// A hold confirm older than the ten-minute row still lands with one press:
-/// its row never expires (FIX 1462, Engine 11:34).
-/// Red on main: the preview verb is unknown there.
+/// A hold lift's confirm older than the ten-minute row still lands with one
+/// press: the legal hold's row never expires (FIX 1462, Engine 11:34). The
+/// lift is the hold's one-way verb since lift-and-erase went (LEGAL-HOLD-USE
+/// = B), so it keeps the hold's row.
+/// Red on main: the lift verb is unknown there.
 #[test]
 fn a_legal_hold_confirm_older_than_the_ttl_still_lands_with_one_press() {
     let fx = fixture();
-    let verb = "vault.legal_holds.lift_and_erase";
+    let verb = "vault.legal_holds.lift";
     let record = fx.put_record("owen.bin", BYTES_A_B64);
     let placed = fx
         .call(
@@ -589,21 +594,68 @@ fn a_legal_hold_confirm_older_than_the_ttl_still_lands_with_one_press() {
         .and_then(Value::as_str)
         .expect("the place names its hold")
         .to_owned();
-    let shown = fx.preview(verb, json!({ "records": [record.clone()] }));
+    let shown = fx.preview(verb, json!({ "hold_id": hold.clone() }));
     fx.clock.set(NOW + 601);
     let out = fx
         .call(
             verb,
-            json!({ "records": [record], "confirm": confirm_of(&shown) }),
+            json!({ "hold_id": hold.clone(), "confirm": confirm_of(&shown) }),
         )
-        .expect("the hold confirm lands past ten minutes");
-    let holds = out
-        .get("holds")
-        .and_then(Value::as_array)
-        .expect("the lift names its holds");
+        .expect("the hold lift lands past ten minutes");
+    assert_eq!(
+        out.get("hold_id").and_then(Value::as_str),
+        Some(hold.as_str()),
+        "the answer is the lifted hold; got {out}"
+    );
     assert!(
-        holds.iter().any(|row| row.as_str() == Some(hold.as_str())),
-        "the answer names the hold as lifted; got {out}"
+        out.get("lifted_at").is_some_and(|at| !at.is_null()),
+        "the hold is lifted; got {out}"
+    );
+}
+
+/// A lift confirms the hold as it stood at its preview: a widen since then
+/// changes what the lift takes, so its confirm is refused and the hold stands.
+/// Red on main: the lift verb is unknown there.
+#[test]
+fn a_legal_hold_lift_refuses_the_confirm_of_a_hold_widened_since() {
+    let fx = fixture();
+    let verb = "vault.legal_holds.lift";
+    let first = fx.put_record("owen.bin", BYTES_A_B64);
+    let second = fx.put_record("rhys.bin", BYTES_B_B64);
+    let placed = fx
+        .call(
+            "vault.legal_holds.place",
+            json!({ "targets": [{ "record": first }] }),
+        )
+        .expect("the owner places the hold");
+    let hold = placed
+        .get("hold_id")
+        .and_then(Value::as_str)
+        .expect("the place names its hold")
+        .to_owned();
+    let shown = fx.preview(verb, json!({ "hold_id": hold.clone() }));
+    fx.call(
+        "vault.legal_holds.widen",
+        json!({ "hold_id": hold.clone(), "targets": [{ "record": second }] }),
+    )
+    .expect("the owner widens the hold");
+    let error = fx.refused(
+        verb,
+        json!({ "hold_id": hold.clone(), "confirm": confirm_of(&shown) }),
+    );
+    assert_confirm_refused(&error, "the confirm of the hold before its widen");
+    let holds = fx
+        .call("vault.legal_holds.list", json!({}))
+        .expect("the owner lists the holds");
+    let standing = holds
+        .as_array()
+        .expect("the list is an array")
+        .iter()
+        .find(|row| row.get("hold_id").and_then(Value::as_str) == Some(hold.as_str()))
+        .expect("the hold is listed");
+    assert!(
+        standing.get("lifted_at").is_none_or(Value::is_null),
+        "the refused lift leaves the hold standing; got {standing}"
     );
 }
 
@@ -640,10 +692,7 @@ fn a_preview_of_a_restriction_only_act_is_restriction_only() {
     };
     let preview_of = |verb: &str, input: &Value| json!({ "verb": verb, "input": input });
     for (verb, input) in [
-        (
-            "vault.legal_holds.lift_and_erase",
-            json!({ "records": [id] }),
-        ),
+        ("vault.legal_holds.lift", json!({ "hold_id": id })),
         ("vault.notes.history_purge", json!({ "note_ref": id })),
         ("vault.notes.history_purge_execute", json!({ "act_id": id })),
         ("vault.records.erase_confirm", json!({ "record": id })),

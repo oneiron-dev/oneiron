@@ -34,13 +34,9 @@ interface PrivacyFixtures {
       kind: "customer";
       refusalEvent: "delete_refused";
       refusalReason: "held_record";
-      confirmEvent: "lift_and_erase_confirmed";
       unprivilegedLiftStatus: 403;
       // Final completion via vault.records.erase_sweep (erase_complete_at +
-      // final_ref), not the immediate lift_and_erase state. Immediate may be
-      // erased (completed at once) or completion_pending (confirmed, sweep or
-      // custody still retiring). verbs/legal_hold.rs LegalHoldEraseState.
-      // Read via catalog.readJson("privacy-scenarios") ->
+      // final_ref). Read via catalog.readJson("privacy-scenarios") ->
       // tests/e2e/fixtures/privacy/scenarios.json (manifest map), not a
       // guessed filename. JSON value "erased" is the completed state.
       ownerEraseState: "erased";

@@ -11,7 +11,7 @@ use super::super::gate::{
 };
 use super::super::rendezvous::{DeleteRendezvous, signal_delete_rendezvous};
 use super::super::tombstone::DeleteReason;
-use super::{DeleteEntityOutcome, PendingConfirmedErase};
+use super::DeleteEntityOutcome;
 use crate::consent::AuthenticatedOwner;
 use crate::error::RegistryError;
 
@@ -93,7 +93,6 @@ impl Vault {
         reason: DeleteReason,
         gate: &Option<GatedDeletion<'_>>,
         allow_replay_test: bool,
-        due: Option<&PendingConfirmedErase>,
         owner: Option<&AuthenticatedOwner>,
     ) -> Result<DeleteGuard> {
         crate::store::base_agent::guard_actor_delete(id)?;
@@ -172,12 +171,6 @@ impl Vault {
                 .as_ref()
                 .map_or(HoldActor::UNATTRIBUTED, GatedDeletion::hold_actor)
                 .privacy(reason == DeleteReason::GdprDelete);
-            // A due confirmed erase that no longer waits ends here, before
-            // any writer, and a hold names the owner its row records.
-            let actor = match due {
-                Some(due) => due.prove_in(self, &txn, id)?,
-                None => actor,
-            };
             self.store.reject_legal_holds_in_txn(&txn, &[*id], &actor)?;
             // A pad is held by its world's holds too (OF-470), refused as
             // this actor (FIX 3059).
@@ -185,8 +178,8 @@ impl Vault {
             if reason.active_store_hard_purge_v1() {
                 self.guard_active_merge_hard_delete_in_txn(&txn, id)?;
             }
-            // A live artifact's lone version claim goes with its version, so the holds on the
-            // artifact and its bytes refuse it too.
+            // A live artifact's lone version claim goes with its version, so cooperative
+            // restrictions on the artifact and its bytes refuse it too.
             if let Some((artifact, hash)) =
                 crate::blob_artifact::live_version_claim_reference(&self.store, &txn, id)?
             {
@@ -195,7 +188,7 @@ impl Vault {
                     .reject_legal_holds_in_txn(&txn, &[artifact, asset], &actor)?;
             }
         }
-        if let Some(outcome) = self.delete_lone_version_claim(id, gate.as_ref(), due)? {
+        if let Some(outcome) = self.delete_lone_version_claim(id, gate.as_ref())? {
             return Ok(DeleteGuard::Done(outcome));
         }
         let requested_at = self.store.clock.now_recorded_at();
@@ -240,7 +233,6 @@ impl Vault {
         &self,
         id: &EntityId,
         gate: Option<&GatedDeletion<'_>>,
-        due: Option<&PendingConfirmedErase>,
     ) -> Result<Option<DeleteEntityOutcome>> {
         {
             let txn = self.store.env.read_txn()?;
@@ -255,9 +247,6 @@ impl Vault {
         let write = crate::secret_custody::CustodyWrite::of(self);
         let released = self.with_write_txn_grouped(|wtxn| {
             reverify_deletion_authority_before_publication(gate, wtxn)?;
-            if let Some(due) = due {
-                due.prove_in(self, wtxn, id)?;
-            }
             let Some((artifact, hash)) =
                 crate::blob_artifact::live_version_claim_reference(&self.store, wtxn, id)?
             else {
@@ -275,9 +264,9 @@ impl Vault {
                 turn_program_details: Vec::new(),
                 version_release: true,
             })),
-            // A hold placed after the refusal above was read keeps the version.
+            // A cooperative restriction can keep the version after preflight.
             Some(false) => Err(Error::ConcurrentWrite(
-                "a legal hold keeps the blob version this claim records",
+                "a cooperative restriction keeps the blob version this claim records",
             )),
         }
     }

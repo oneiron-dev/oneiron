@@ -10,7 +10,6 @@ use std::collections::BTreeSet;
 use heed::RoTxn;
 
 use crate::Vault;
-use crate::deletion::LegalHoldTarget;
 use crate::entity_id::EntityId;
 use crate::error::{ErasedHoldTarget, Error, RecordError, Result};
 use crate::side_table::{self, Raw, SideKey, SideTable};
@@ -61,8 +60,8 @@ fn intent_claim(intent: &RetirementIntent) -> Result<[u8; 16]> {
 }
 
 impl Store {
-    /// Whether a legal hold stands on the partition: the one hold store's
-    /// answer (OF-470), never a second marker.
+    /// Whether a cooperative restriction stands on the partition: the one
+    /// hold store's answer, never a second marker.
     pub(crate) fn gate_partition_held_in_txn(
         &self,
         txn: &RoTxn<'_>,
@@ -118,19 +117,17 @@ impl Store {
 }
 
 /// The `vault_meta` prefixes of the rows [`checkpoint_retirements`] reads.
-pub(super) fn retirement_prefixes() -> [&'static [u8]; 3] {
-    let [holds] = legal_hold::target_prefixes();
+pub(super) fn retirement_prefixes() -> [&'static [u8]; 2] {
     [
         retirement_prefix(),
-        holds,
         side_table::COOPERATIVE_RESTRICTION.prefix,
     ]
 }
 
 /// Each claim, body instance and known-value history key-retirement intent
 /// among a checkpoint's `vault_meta` rows, with whether the finisher would
-/// carry it out now: an erase's always, a sweep's unless its partition is
-/// held. A restore treats a carried-out one as done, so it never brings back
+/// carry it out now: a claim's always, since no legal hold keeps its
+/// partition any more (LEGAL-HOLD-USE = B). A restore treats a carried-out one as done, so it never brings back
 /// a key a vault has committed to destroy.
 pub(super) fn checkpoint_retirements(
     rows: &[(Vec<u8>, Vec<u8>)],
@@ -162,9 +159,11 @@ pub(super) fn checkpoint_retirements(
         if intent.subject.kind() != CustodyKind::ClaimDecision {
             continue;
         }
-        let held = legal_hold::rows_hold_claim(rows, &intent_claim(&intent)?);
-        let carried = intent.cause == RetireCause::Erase || !held;
-        retirements.push((intent, carried));
+        // The intent must name its claim, as before; no legal hold keeps the
+        // claim's partition any more, so a sweep's is carried out as an
+        // erase's is.
+        intent_claim(&intent)?;
+        retirements.push((intent, true));
     }
     Ok(retirements)
 }
@@ -329,32 +328,26 @@ impl Vault {
 
     /// Hold the entire exterior-key partition, not an individual decision.
     /// `None` names the plaintext, claim-free partition. A hold must be
-    /// released explicitly; the age sweep never clears it. A claim whose
-    /// erase committed refuses a hold until its key is destroyed. A
-    /// host-facing door: the partition's own row in the one legal-hold store
-    /// (OF-470), logged; releasing it lifts that hold alone, never another
-    /// hold naming the same claim. Once a release commits, the due legal-hold
-    /// pass settles what the hold kept from an erase (FIX 7993, 7994).
+    /// released explicitly. A claim whose erase committed refuses a hold
+    /// until its key is destroyed. A host-facing door: the partition's own
+    /// row in the one legal-hold store (OF-470), logged. No hold keeps a
+    /// decision in the vault (LEGAL-HOLD-USE = B): placing it writes a sealed
+    /// copy of the partition's decisions to the hold store, as an owner's
+    /// hold does, and the age sweep runs as it would without it. Releasing it
+    /// lifts that hold alone, never another hold naming the same claim, and
+    /// destroys its copy. Once a release commits, the due legal-hold pass
+    /// settles the decision scrubs (FIX 7993, 7994).
     pub fn set_gate_decision_partition_hold(
         &self,
         claim_partition: Option<[u8; 16]>,
         held: bool,
     ) -> Result<()> {
-        let claim = claim_partition.map(EntityId::from_bytes).transpose()?;
-        self.with_write_txn_grouped(|txn| {
-            if held && let Some(claim) = claim_partition.as_ref() {
-                self.store
-                    .refuse_hold_on_erased_partition_in_txn(txn, claim)?;
-            }
-            let now = self.store.clock.now_recorded_at();
-            let target = LegalHoldTarget::GatePartition(claim);
-            legal_hold::set_partition_hold_in_txn(&self.store, txn, target, held, now)
-        })?;
+        self.set_gate_partition_hold(claim_partition, held)?;
         // A released partition hold may free a deferred delete (FIX 1488),
         // and the decision scrubs it kept (FIX 7993, 7994).
         if !held {
             self.note_backup_hold_recheck();
-            self.run_due_legal_hold_erases()?;
+            self.settle_held_scrubs()?;
         }
         Ok(())
     }
@@ -531,20 +524,12 @@ impl Vault {
         let mut live_claims = BTreeSet::new();
         let mut removed_claims = BTreeSet::new();
         let mut held_partitions = BTreeSet::new();
-        // Held partitions with rows past the horizon: the sweep's refusal.
-        let mut refused_partitions = BTreeSet::new();
         self.store.for_each_gate_decision_in_txn(&txn, |record| {
             let claim = record.claim_id;
             if self
                 .store
                 .gate_partition_held_in_txn(&txn, claim.as_ref())?
             {
-                if policy
-                    .horizon_for(self.store.gate_retention_context_in_txn(&txn, &record)?)
-                    .is_some_and(|horizon| record.created_at < now.saturating_sub(horizon))
-                {
-                    refused_partitions.insert(claim);
-                }
                 held_partitions.insert(claim);
                 if let Some(claim) = claim {
                     live_claims.insert(claim);
@@ -587,11 +572,6 @@ impl Vault {
             }
             Ok(())
         })?;
-        for claim in refused_partitions {
-            let claim = claim.map(EntityId::from_bytes).transpose()?;
-            let target = LegalHoldTarget::GatePartition(claim);
-            legal_hold::log_timer_refusal_in_txn(&self.store, &mut txn, target, now)?;
-        }
         for claim in held_partitions {
             let partition = Partition(claim);
             let previous = RETAIN_UNTIL

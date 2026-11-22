@@ -518,8 +518,7 @@ pub(super) fn mcp_scoped_task_rows(
 /// the registered world/facet ceiling and the verified slip's worlds and
 /// facets: only such a withheld row may be counted. A credential that
 /// narrows neither excludes no TASK. Any other row cannot prove it, so it is
-/// not counted. A C6 use-limited TASK also adds no omission while its
-/// retaining hold stands.
+/// not counted.
 fn mcp_row_position_inside(
     vault: &oneiron::Vault,
     actor: &McpResolvedActor,
@@ -568,11 +567,7 @@ fn mcp_row_position_inside(
             stamped.is_narrowing_of(&projection(granted.worlds.clone(), granted.facets.clone()))
         })
     };
-    Ok(inside
-        && vault
-            .legal_hold_use_limit(&id)
-            .map_err(|error| mcp_engine_error("mcp board row use-limit read failed", error))?
-            .is_none())
+    Ok(inside)
 }
 
 /// The static wrong-root refusal for a `tools/call` name, decided before any

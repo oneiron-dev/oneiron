@@ -9,8 +9,8 @@
 //!   for that note's purge on their own proof: it is spent in the purge's
 //!   own writer, the outcome names the asker as requester, and it applies
 //!   once. A check-in for another note's history erases nothing and stays
-//!   unspent, and so does one whose purge a legal hold refuses
-//!   ([CHECK-IN-SPEND-BEFORE-ERASE]).
+//!   unspent ([CHECK-IN-SPEND-BEFORE-ERASE]); a legal hold refuses no purge
+//!   and keeps nothing (LEGAL-HOLD-USE = B).
 //! - With two Owners the purge waits on its `erase` act, and the act records
 //!   the decision. The act's start spends an applied check-in in its own
 //!   writer, so an erase whose act never starts leaves it unspent.
@@ -42,7 +42,7 @@ use oneiron::verbs::{
     preview_owner_confirm, purge_note_history_as_owner,
 };
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault};
-use owner_apply_fixture::{approved, owner_decision, proof, rooted, spent};
+use owner_apply_fixture::{approved, owner_decision, proof, rooted, rooted_with_hold_store, spent};
 
 const SHARED: u64 = 44;
 const HISTORY_PURGE: &str = "vault.notes.history_purge";
@@ -152,15 +152,15 @@ fn a_history_purge_held_by_the_veto_window_records_its_decision_on_its_act() {
     );
 }
 
-/// [CHECK-IN-SPEND-BEFORE-ERASE], erase at once: a purge that a legal hold
-/// refuses leaves the approved check-in it applied unspent, so the asker
-/// need not ask again.
+/// [CHECK-IN-SPEND-BEFORE-ERASE], erase at once, under LEGAL-HOLD-USE = B: a
+/// legal hold refuses no purge and keeps nothing, so the held note's purge
+/// runs and spends the approved check-in it applied.
 #[test]
-fn a_purge_a_legal_hold_refuses_leaves_the_applied_check_in_unspent() {
-    let (_dir, vault, owner, owner_proof) = rooted();
+fn a_held_notes_purge_runs_and_spends_the_applied_check_in() {
+    let (_dir, _hold_dir, vault, owner, owner_proof) = rooted_with_hold_store();
     let note = authored_note(&vault, owner);
     let digest = text_history_erase_effect_digest(&note, None);
-    let (asked, _asker) = approved(
+    let (asked, asker) = approved(
         &vault,
         owner,
         &owner_proof,
@@ -186,22 +186,27 @@ fn a_purge_a_legal_hold_refuses_leaves_the_applied_check_in_unspent() {
     )
     .expect("the owner previews the purge")
     .confirm;
-    let refused = purge_note_history_as_owner(
+    let erased = purge_note_history_as_owner(
         &vault,
         &owner_proof,
         NoteHistoryPurgeRequest {
             confirm: Some(confirm),
             ..input
         },
+    )
+    .expect("the hold refuses no purge");
+    let check_in = match erased {
+        NoteHistoryPurgeOutcome::Erased { check_in, .. } => check_in,
+        waiting @ NoteHistoryPurgeOutcome::Waiting { .. } => {
+            panic!("one Owner: the purge erases at once: {waiting:?}")
+        }
+    };
+    assert_eq!(
+        check_in,
+        Some(owner_decision(ActClass::Erase, Some(asked), Some(asker))),
+        "the outcome names the check-in it applied and its asker"
     );
-    assert!(
-        refused.is_err(),
-        "a held note keeps its history: {refused:?}"
-    );
-    assert!(
-        !spent(&vault, &asked),
-        "a purge the hold refuses leaves the approval unspent"
-    );
+    assert!(spent(&vault, &asked), "the purge spent the check-in");
 }
 
 /// [CHECK-IN-SPEND-BEFORE-ERASE], veto window: with two Owners the `erase`

@@ -14,7 +14,7 @@ use heed::{RoTxn, RwTxn};
 use crate::registry::ENTITY_TYPE_NOTE;
 use crate::store::Store;
 use crate::store::document_frame_tags::{TAG_DOCUMENT, document_sub_tags};
-use crate::store::legal_hold::{HoldActor, is_hold_refusal};
+use crate::store::legal_hold::HoldActor;
 use crate::{EntityId, Error, Result, Vault};
 
 /// The residence rows that hold a cached item's text document.
@@ -132,13 +132,12 @@ pub(crate) fn refuse_erased_residence_copy_in_txn(
     Ok(())
 }
 
-/// Whether a standing customer legal hold names `item`.
+/// Whether a standing customer legal hold names `item`: none does any more
+/// (LEGAL-HOLD-USE = B). The hold check still answers a cooperative
+/// restriction on `item` with absence, which fails the read.
 fn held(store: &Store, txn: &RoTxn<'_>, item: EntityId) -> Result<bool> {
-    match store.reject_legal_holds_in_txn(txn, &[item], &HoldActor::UNATTRIBUTED) {
-        Ok(()) => Ok(false),
-        Err(error) if is_hold_refusal(&error) => Ok(true),
-        Err(error) => Err(error),
-    }
+    store.reject_legal_holds_in_txn(txn, &[item], &HoldActor::UNATTRIBUTED)?;
+    Ok(false)
 }
 
 /// Whether `item`'s cached body is a NOTE's.

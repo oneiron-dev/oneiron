@@ -14,12 +14,13 @@ use oneiron::memory::MemoryError;
 use oneiron::task_verb::sdk::{self, OwnerConfirmPreview, OwnerConfirmPreviewRequest};
 
 use super::host_doors::support::{Listed, off_runtime_listing, refused};
-use super::legal_hold_doors::as_owner_naming;
+use super::legal_hold_doors::{as_owner_naming, hold_targets};
 use super::shared_act_doors::person;
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
-/// The rows a preview answer names: the records the legal-hold lift shows,
+/// The rows a preview answer names: the targets of the hold a legal-hold
+/// lift shows,
 /// and the SKILL rows the sheet of a turn-program resume shows (FIX
 /// TURNPROGRAM-OCCURRENCE-ARMINGS-LIVE-ON-A-VAULT-COPY).
 /// A record erase previews under the shared-person proof, whose handles
@@ -38,23 +39,23 @@ fn named_rows(preview: &OwnerConfirmPreview) -> Vec<oneiron::EntityId> {
             .map(|sheet| super::program_read_doors::resume_sheet_skills(&sheet.programs))
             .unwrap_or_default();
     }
-    if preview.verb != "vault.legal_holds.lift_and_erase" {
+    if preview.verb != "vault.legal_holds.lift" {
         return Vec::new();
     }
     preview
         .takes
         .as_ref()
         .and_then(|takes| {
-            serde_json::from_value::<oneiron::deletion::LiftAndEraseShownState>(takes.clone()).ok()
+            serde_json::from_value::<oneiron::deletion::LegalHold>(takes.clone()).ok()
         })
-        .map(|shown| shown.records)
+        .map(|hold| hold_targets(&hold.targets).collect())
         .unwrap_or_default()
 }
 
 /// `vault.owner_confirm.preview`: the owner's preview of one one-way act.
 /// A verb with no row is refused. An owner-only verb previews under the
 /// owner's proof; a shared-person verb under the person's own. Beside it,
-/// the record for a record erase and the records for a legal-hold lift.
+/// the record for a record erase and the targets of a legal-hold lift.
 pub(crate) async fn vault_owner_confirm_preview(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,

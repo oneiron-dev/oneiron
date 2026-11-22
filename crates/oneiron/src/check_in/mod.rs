@@ -117,10 +117,7 @@ pub(crate) use wake::due_rows;
 
 // The erase doors' apply shape (2k2; P25-SHAPE Q1 = A).
 pub(crate) use effect::{AppliedCheckIn, check_applied_check_in_in_txn, owner_act_decision_in_txn};
-pub use effect::{
-    legal_hold_erase_effect_digest, outbound_call_request_erase_effect_digest,
-    text_history_erase_effect_digest,
-};
+pub use effect::{outbound_call_request_erase_effect_digest, text_history_erase_effect_digest};
 // The key-recovery doors' effects (2k3; P25-SHAPE Q1 = A).
 pub(crate) use effect::run_owner_act_outside_vault_writer;
 pub use effect::{

@@ -16,10 +16,11 @@
 //! still holds, and then cuts its persisted rows. A refused late re-put of an
 //! erased row owes its window a compaction, which the next pass runs.
 //!
-//! A legal hold keeps a pinned window's history (OF-470): a persist or a
-//! tombstone publish that would store a cut stores the window whole while a
-//! hold keeps a row its history carries, read in the storing transaction, and
-//! owes the sweep a compaction. A re-put that inserts the erased row and
+//! A legal hold keeps no window's history in place (LEGAL-HOLD-USE = B: a
+//! hold keeps its sealed copy, written outside the vault when it is placed):
+//! the pass pins and cuts a window that carries a held row, and a persist or
+//! a tombstone publish under the pin stores the cut, as for any row. A re-put
+//! that inserts the erased row and
 //! deletes it again in one update owes its window a compaction in the
 //! transaction that makes it durable (census L6-05 round 1).
 //!
@@ -65,11 +66,26 @@ fn open_vault() -> (tempfile::TempDir, Arc<Vault>) {
     prepare_host_vault(dir, vault)
 }
 
-/// [`open_vault`] for an owned vault, whose owner can place a legal hold.
-fn open_owned_vault() -> (tempfile::TempDir, Arc<Vault>) {
+/// An owned vault's directory and its legal-hold store, which lies outside
+/// the vault.
+struct OwnedDirs {
+    _vault: tempfile::TempDir,
+    _hold_store: tempfile::TempDir,
+}
+
+/// [`open_vault`] for an owned vault, whose owner can place a legal hold: the
+/// hold's sealed copy lands in its store.
+fn open_owned_vault() -> (OwnedDirs, Arc<Vault>) {
     let dir = tempfile::tempdir().unwrap();
-    let vault = Vault::open_owned(dir.path(), config()).unwrap();
-    prepare_host_vault(dir, vault)
+    let hold_store = tempfile::tempdir().unwrap();
+    let config = config().with_legal_hold_store(hold_store.path().to_path_buf());
+    let vault = Vault::open_owned(dir.path(), config).unwrap();
+    let (dir, vault) = prepare_host_vault(dir, vault);
+    let dirs = OwnedDirs {
+        _vault: dir,
+        _hold_store: hold_store,
+    };
+    (dirs, vault)
 }
 
 fn prepare_host_vault(dir: tempfile::TempDir, vault: Vault) -> (tempfile::TempDir, Arc<Vault>) {
@@ -374,14 +390,14 @@ fn a_late_reput_of_an_erased_row_owes_its_window_a_compaction() {
     );
 }
 
-/// A legal hold on a row the held window carries keeps the window as it is
-/// (OF-470): the pass neither pins nor cuts it, so the holder's next persist
-/// stores the window's history whole, and the erasure obligation waits for
-/// the hold. At cdf9cc5b4fe2 the pass pinned the window before the cut's own
-/// hold check refused, and that persist stored a history-free snapshot, which
-/// dropped the held row's history as a cut would.
+/// A legal hold on a row the held window carries keeps nothing in place
+/// (LEGAL-HOLD-USE = B): the pass pins and cuts the window as it would
+/// without the hold, so the holder's next persist stores a history-free
+/// snapshot and the erasure obligation is discharged. On main at
+/// 68059c62ba73 the pass neither pinned nor cut such a window, and the
+/// obligation waited for the hold.
 #[test]
-fn a_held_window_a_legal_hold_keeps_is_neither_pinned_nor_cut() {
+fn a_held_window_a_legal_hold_names_is_still_pinned_and_cut() {
     let (_dir, vault) = open_owned_vault();
     let actor = vault.ensure_embedded_owner_actor().unwrap();
     let owner = vault
@@ -417,11 +433,11 @@ fn a_held_window_a_legal_hold_keeps_is_neither_pinned_nor_cut() {
     window.persist_state(&vault).unwrap();
 
     assert!(
-        !persisted_snapshot(&vault).is_shallow(),
-        "the held window was pinned or cut: {report:?}"
+        persisted_snapshot(&vault).is_shallow(),
+        "the hold kept the window from its pin or its cut: {report:?}"
     );
     assert!(
-        obligation_queued(&vault, &sweep_key),
+        !obligation_queued(&vault, &sweep_key),
         "the erasure obligation waits for the hold"
     );
 }
@@ -484,13 +500,12 @@ fn older_revision(doc: &LoroDoc, id: &EntityId) -> Vec<u8> {
 }
 
 /// A legal hold placed on a row after the pass pinned and cut its window
-/// keeps that row's history (OF-470, census L6-05 round 1): the holder's doc
-/// still holds the row's older revision, and its next persist stores the
-/// window whole, owing the sweep a compaction, rather than the cut the pin
-/// asks for. At 9a3a2919e8ea that persist stored the cut, which dropped the
-/// held row's older revision.
+/// keeps nothing in place (LEGAL-HOLD-USE = B): the holder's doc still holds
+/// the row's older revision, and its next persist stores the cut the pin asks
+/// for, which drops that revision as for any row. On main at 68059c62ba73
+/// that persist stored the window whole.
 #[test]
-fn a_hold_placed_after_the_pin_keeps_the_held_rows_history_through_its_holders_persist() {
+fn a_hold_placed_after_the_pin_leaves_the_holders_persist_a_cut() {
     let (_dir, vault) = open_owned_vault();
     let owner = owner_of(&vault);
     let held = EntityId::now();
@@ -504,26 +519,20 @@ fn a_hold_placed_after_the_pin_keeps_the_held_rows_history_through_its_holders_p
     vault
         .place_legal_hold(&owner, vec![LegalHoldTarget::Record(held)], None)
         .unwrap();
-    let raise_before_persist = owed_compaction_raise(&vault);
     window.persist_state(&vault).unwrap();
 
     assert!(
-        inserted_bodies(&persisted_snapshot(&vault), &held).contains(&first),
-        "the holder's persist dropped the held row's older revision"
-    );
-    let raise = owed_compaction_raise(&vault);
-    assert!(
-        raise.is_some() && raise != raise_before_persist,
-        "the window stored whole owes the sweep no compaction"
+        !inserted_bodies(&persisted_snapshot(&vault), &held).contains(&first),
+        "the holder's persist kept the held row's older revision"
     );
 }
 
-/// A hard delete published into a pinned window keeps the window whole while
-/// a legal hold keeps a row its history carries (OF-470, census L6-05 round
-/// 1), and owes the sweep a compaction. At 9a3a2919e8ea the publish stored
-/// the cut at the window's tip, which dropped the held row's older revision.
+/// A hard delete published into a pinned window stores the cut at the
+/// window's tip while a legal hold names a row its history carries
+/// (LEGAL-HOLD-USE = B): the cut drops the held row's older revision as for
+/// any row. On main at 68059c62ba73 the publish stored the window whole.
 #[test]
-fn a_hard_delete_published_into_a_pinned_window_keeps_a_held_rows_history() {
+fn a_hard_delete_published_into_a_pinned_window_drops_a_held_rows_older_revision() {
     let (_dir, vault) = open_owned_vault();
     let owner = owner_of(&vault);
     let held = EntityId::now();
@@ -551,12 +560,8 @@ fn a_hard_delete_published_into_a_pinned_window_keeps_a_held_rows_history() {
         "fixture: the delete published into the stored window"
     );
     assert!(
-        inserted_bodies(&stored, &held).contains(&first),
-        "the publish dropped the held row's older revision"
-    );
-    assert!(
-        owed_compaction_queued(&vault),
-        "the window stored whole owes the sweep no compaction"
+        !inserted_bodies(&stored, &held).contains(&first),
+        "the publish kept the held row's older revision"
     );
     drop(window);
 }

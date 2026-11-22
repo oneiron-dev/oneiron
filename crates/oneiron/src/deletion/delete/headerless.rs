@@ -23,7 +23,7 @@ use super::super::tombstone::{
 use super::super::topology_delete_intent::{
     TopologyDeletePhase, clear_own_topology_delete_in_txn, reserve_topology_delete_in_txn,
 };
-use super::{DeleteEntityOutcome, PendingConfirmedErase};
+use super::DeleteEntityOutcome;
 use crate::side_table::HexId;
 
 impl Vault {
@@ -35,7 +35,6 @@ impl Vault {
         reason: DeleteReason,
         requested_at: u64,
         gate: Option<&GatedDeletion<'_>>,
-        due: Option<&PendingConfirmedErase>,
         owner: Option<&AuthenticatedOwner>,
     ) -> Result<DeleteEntityOutcome> {
         refuse_claim(gate)?;
@@ -54,8 +53,7 @@ impl Vault {
         signal_after_delete_probe(self);
         signal_delete_rendezvous(self, DeleteRendezvous::BeforeFirstDeletionTxn, id, None);
         let fence = self.reserve_user_brief_delete(id, reason, gate, owner)?;
-        let outcome =
-            self.delete_reserved_without_header(id, reason, requested_at, gate, due, owner);
+        let outcome = self.delete_reserved_without_header(id, reason, requested_at, gate, owner);
         crate::deletion::conclude_brief_delete(fence, &self.store, outcome)
     }
 
@@ -68,7 +66,6 @@ impl Vault {
         reason: DeleteReason,
         requested_at: u64,
         gate: Option<&GatedDeletion<'_>>,
-        due: Option<&PendingConfirmedErase>,
         owner: Option<&AuthenticatedOwner>,
     ) -> Result<DeleteEntityOutcome> {
         // ONE-1149: the deletion request UUID is minted only AFTER the probe
@@ -112,19 +109,17 @@ impl Vault {
         let window_label = window_label_from_timestamp(requested_at);
         if reason.active_store_hard_purge_v1() {
             let txn = self.store.env.read_txn()?;
-            let requester = due.map(PendingConfirmedErase::requester);
-            self.reject_erase_hold_in_txn(&txn, id, requester.as_ref())?;
+            self.store.reject_legal_hold_in_txn(&txn, id.as_bytes())?;
             // A row may have landed since the header read (OF-470).
             crate::world_keys::reject_held_pad_world_in_txn(&self.store, &txn, &[*id])?;
         }
-        let crdt_persisted = self.write_crdt_tombstone_due(
+        let crdt_persisted = self.write_crdt_tombstone(
             id,
             requested_at,
             &window_label,
             &tombstone,
             gate_decision.as_ref(),
             gate,
-            due,
             owner.map(OwnerAtPublication::BeforeScrub),
         )?;
         #[cfg(all(test, feature = "sync"))]
@@ -158,13 +153,8 @@ impl Vault {
         if !crdt_persisted {
             self.refuse_last_bound_owner_delete_in(&wtxn, id)?;
         }
-        // A due confirmed erase nothing has published re-proves here that it
-        // still waits, before any marker, scrub or purge (FIX 6337).
-        let requester = due
-            .map(|due| due.prove_when_unpublished(self, &wtxn, id, crdt_persisted))
-            .transpose()?;
         if reason.active_store_hard_purge_v1() {
-            self.reject_erase_hold_in_txn(&wtxn, id, requester.as_ref())?;
+            self.store.reject_legal_hold_in_txn(&wtxn, id.as_bytes())?;
             crate::world_keys::reject_held_pad_world_in_txn(&self.store, &wtxn, &[*id])?;
         }
         if !crdt_persisted && reason.active_store_hard_purge_v1() {

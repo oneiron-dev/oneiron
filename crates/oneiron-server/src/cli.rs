@@ -67,11 +67,10 @@ pub use owner_args::{
     GuestRevokeArgs, GuestsCommand, SecretRevealArgs, SecretRevokeArgs, SecretRewrapArgs,
 };
 pub use owner_args::{
-    KeptEscrowArg, KeptPasskeyArg, LegalHoldLiftAndEraseArgs, LegalHoldLiftArgs,
-    LegalHoldPlaceArgs, LegalHoldProduceArgs, LegalHoldTargetArgs, LegalHoldWidenArgs,
-    LegalHoldsCommand, RecoveryPresetArg, SecretSourceArgs, UnlockMethod, VaultKeyAddDeviceArgs,
-    VaultKeyArgs, VaultKeyCommand, VaultKeyNamedArgs, VaultKeyNewGenerationArgs,
-    VaultKeyRecoveryPresetArgs, VaultKeyResealArgs,
+    KeptEscrowArg, KeptPasskeyArg, LegalHoldLiftArgs, LegalHoldPlaceArgs, LegalHoldProduceArgs,
+    LegalHoldTargetArgs, LegalHoldWidenArgs, LegalHoldsCommand, RecoveryPresetArg,
+    SecretSourceArgs, UnlockMethod, VaultKeyAddDeviceArgs, VaultKeyArgs, VaultKeyCommand,
+    VaultKeyNamedArgs, VaultKeyNewGenerationArgs, VaultKeyRecoveryPresetArgs, VaultKeyResealArgs,
 };
 pub use owner_args::{
     PackRemoveArgs, PacksCommand, SubscriptionListArgs, SubscriptionPutArgs,
@@ -209,8 +208,8 @@ pub enum Command {
     /// decline one as the board above.
     #[command(subcommand)]
     WidenProposals(WidenProposalsCommand),
-    /// Your legal holds: place, widen, list, read the log, or lift one
-    /// through the "Lift the hold and erase?" confirm.
+    /// Your legal holds: place, widen, list, read the log, lift one (its
+    /// sealed copy is destroyed), or produce its sealed copy.
     #[command(subcommand)]
     LegalHolds(LegalHoldsCommand),
     /// Your ask guests at this host: revoke one's access.
