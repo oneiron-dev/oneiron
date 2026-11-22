@@ -4,7 +4,14 @@
 //! maintenance evidence and replay bindings retain their exact bytes through
 //! the K door (K, PLAN-UC-04 stage 7).
 
-purposes! {}
+purposes! {
+    /// Where a Coach workaround capture stands (`dreamer_runner/maintenance/workaround_skills.rs`,
+    /// `place_digest`): an in-memory grouping key, never stored or sent, so captures that
+    /// stand apart never share a finding. Parts: the facet and project stamps; the world
+    /// flag, then the world id; the relationships flag, then their count and each id; the
+    /// claim scope flag, then its MessagePack bytes.
+    COACH_WORKAROUND_SKILL_PLACE = "oneiron.dreamer_runner.coach_workaround_skill_place.v1";
+}
 
 legacy_purposes! {
     /// Review state: the tag, raw 16-byte subject, one-byte signal (its index
@@ -82,4 +89,11 @@ legacy_purposes! {
     /// end when present, with no presence byte or length (None equals empty).
     /// All 32 result bytes are stored in StepState::Settled.result_digest.
     TURN_PROGRAM_STEP = (Blake3, HashedFirst, "oneiron:dreamer:turn-program-step:v1");
+
+    /// Workaround skill id: the tag, then the app, failure and repair names,
+    /// each a u64-BE byte length then its UTF-8 bytes. The first 12 lowercase
+    /// hex of the digest end the skill id (`workaround-<slug>-<hex>`), which the
+    /// skill record stores and the Coach's id-collision check compares
+    /// (#7648, merged 17 Nov; the stored-hash guard).
+    COACH_WORKAROUND_SKILL_ID = (Blake3, HashedFirst, "oneiron:coach-workaround-skill-id:v1");
 }
