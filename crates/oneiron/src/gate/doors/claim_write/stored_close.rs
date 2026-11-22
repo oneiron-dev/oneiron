@@ -95,8 +95,26 @@ fn closes_in_place(
         })
 }
 
+/// Whether the stored row is a MACHINE-born claim: a body its machine's
+/// signed history carries ([`crate::authority::machine_claim_needs_history`]).
+/// A row that is missing or does not decode is not one.
+pub(super) fn stored_claim_is_machine_born(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> crate::error::Result<bool> {
+    match stored_claim_body(store, txn, id) {
+        Some(stored) => crate::authority::machine_claim_needs_history(store, txn, &stored),
+        None => Ok(false),
+    }
+}
+
 /// The stored row's claim body, when it decodes.
-fn stored_claim_body(store: &Store, txn: &heed::RoTxn<'_>, id: &EntityId) -> Option<ClaimBody> {
+pub(super) fn stored_claim_body(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Option<ClaimBody> {
     let raw = store.port_entity_record(txn, id).ok().flatten()?.encode();
     decode_claim_body(raw.get(ENTITY_METADATA_HEADER_LEN..)?, true).ok()
 }

@@ -38,6 +38,12 @@ pub struct RunTreeNode {
     /// the payload snapshot; tolerant — a malformed inner input renders as
     /// `None`).
     pub agent_id: Option<String>,
+    /// The model id and revision the attempt's executor ran, as its lease
+    /// stamped it (`AttemptRecord::executor_model`); `None` when no run
+    /// stamped one. The seat and role stay off the node: a run tree's readers
+    /// see which model ran, not how it was configured (THREAD-PROVENANCE-READER
+    /// = C).
+    pub executor_model: Option<String>,
     pub status: RunTreeStatus,
     /// The artifact version this attempt's durable output lives in, copied
     /// from the backing queue row. Cross-executor: any executor kind that
@@ -73,6 +79,7 @@ impl RunTreeNode {
             worker_kind: self.worker_kind.clone(),
             worker: self.worker.clone(),
             agent_id: self.agent_id.clone(),
+            executor_model: self.executor_model.clone(),
             status: self.status,
             result_ref: self.result_ref.clone(),
             timestamps: self.timestamps,
@@ -90,6 +97,7 @@ impl RunTreeNode {
             && self.worker_kind == other.worker_kind
             && self.worker == other.worker
             && self.agent_id == other.agent_id
+            && self.executor_model == other.executor_model
             && self.status == other.status
             && self.result_ref == other.result_ref
             && self.timestamps == other.timestamps
@@ -189,6 +197,7 @@ impl std::fmt::Debug for NodeFields<'_> {
             .field("worker_kind", &node.worker_kind)
             .field("worker", &node.worker)
             .field("agent_id", &node.agent_id)
+            .field("executor_model", &node.executor_model)
             .field("status", &node.status)
             .field("result_ref", &node.result_ref)
             .field("timestamps", &node.timestamps)

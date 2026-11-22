@@ -4,9 +4,8 @@
 //!
 //! That admission is the vault's own: the base vault decides it on either
 //! route, and its custody door mints only on an on-record stretch, whose
-//! rows are written in base. An off-record room holds no custody of its own
-//! yet, so a reply there that holds a fresh key is withheld until room-local
-//! custody exists.
+//! rows are written in base. An off-record room keeps a fresh key in a reply
+//! there in its own custody, in memory only (ROOM-LOCAL-CUSTODY).
 
 use super::OffRecordSession;
 use crate::batch::secret_scan::AdmissionCustody;
@@ -76,7 +75,8 @@ impl OffRecordSession<'_> {
     /// transaction before it is published along `route` (FIX 6647, FIX 5718
     /// part 3): `f` also gets the custody that admission takes there. The
     /// base vault decides it on either arm; its door mints only when `route`
-    /// writes base. No room-derived record or fingerprint reaches base.
+    /// writes base, and the room keeps a fresh key otherwise. No
+    /// room-derived record or fingerprint reaches base.
     pub(crate) fn routed_admission_txn<T>(
         &self,
         route: &SessionWriteRoute,
@@ -88,7 +88,7 @@ impl OffRecordSession<'_> {
         ) -> Result<T>,
     ) -> Result<T> {
         self.routed_side_txn(route, |wtxn, read, write| {
-            let custody = AdmissionCustody::routed(self.vault, &write);
+            let custody = AdmissionCustody::routed(self.vault, write);
             f(wtxn, read, write, custody)
         })
     }

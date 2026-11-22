@@ -1042,7 +1042,6 @@ pub(crate) fn addressing(body: &[u8]) -> Result<Option<(&'static str, Vec<Entity
 
 /// Structural edge echo: only the stamped recipient set can mandate an
 /// AddressedTo edge. The edge carries metadata, never a search weight.
-#[cfg(feature = "sync")]
 pub(crate) fn addressed_to_echo(
     body: &[u8],
     learned_at: u64,
@@ -1057,7 +1056,6 @@ pub(crate) fn addressed_to_echo(
     )
 }
 
-#[cfg(feature = "sync")]
 pub(crate) fn addressed_to_echo_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -1196,7 +1194,6 @@ pub(crate) fn validate_received_parent_value(
     Ok(())
 }
 
-#[cfg(feature = "sync")]
 pub(crate) fn validate_received_edge_shape(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -1277,7 +1274,6 @@ pub(crate) fn validate_received_edge_shape(
     Ok(())
 }
 
-#[cfg(feature = "sync")]
 pub(crate) fn validate_received_edge(
     store: &Store,
     txn: &heed::RoTxn<'_>,

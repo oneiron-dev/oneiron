@@ -15,10 +15,11 @@ Outputs:
   packages  space-separated touched workspace packages (clippy and tests)
   dependents space-separated transitive workspace reverse dependents (clippy only)
   oneiron   true when crates/oneiron changed
-  modules   touched top-level oneiron modules, or ALL
+  modules   touched top-level oneiron modules, or ALL (ALL too when a touched name is no module name)
   it        true when oneiron's integration tests or their support changed
   deny      true when the dependency policy inputs changed
   pytools   true when CI or tooling scripts changed
+  stemma_fork true when the vendored stemma fork, or the script that runs its unit tests, changed
 """
 import argparse
 import json
@@ -37,11 +38,26 @@ RUST_PATHS = FULL_PATHS + ("deny.toml", "oneiron.skills.md", ".github/workflows/
 # Files at the crate root that every module sees.
 ONEIRON_ROOT_FILES = {"lib.rs", "error.rs", "prelude.rs"}
 MAX_MODULES = 12
+# A top-level module of the core crate is named by ASCII letters, digits and `_`. Only such a name goes into the
+# `modules` output: the output is one line of names with a space between them, and run_scoped.sh puts each name
+# into a test filter. A changed path can hold any byte but NUL, and a line break in a name would start a line of
+# its own in $GITHUB_OUTPUT.
+MODULE_NAME = re.compile(r"[A-Za-z0-9_]+")
+# The vendored stemma fork: two packages outside the workspace (root Cargo.toml `exclude`). No workspace run
+# compiles their own unit tests; STEMMA_FORK_RUNNER does.
+STEMMA_FORK_PREFIXES = ("crates/oneiron-docedit/vendor/stemma-engine/", "crates/oneiron-docedit/vendor/stemma-diff/")
+STEMMA_FORK_RUNNER = "scripts/docedit/run_stemma_fork_unit_tests.sh"
 
 
 def changed_files(base, head):
-    out = subprocess.run(["git", "diff", "--name-only", base, head], cwd=ROOT, capture_output=True, text=True, check=True)
-    return [line for line in out.stdout.splitlines() if line]
+    """The paths the diff touches, each as it is.
+
+    -z: git quotes a path that holds a non-ASCII byte unless the names end in NUL. --no-renames: a moved file is
+    listed at the path it left and at its new path, so the place it left counts as changed too.
+    """
+    out = subprocess.run(["git", "diff", "--no-renames", "--name-only", "-z", base, head], cwd=ROOT,
+                         capture_output=True, encoding="utf-8", errors="surrogateescape", check=True)
+    return [path for path in out.stdout.split("\0") if path]
 
 
 def package_of(crate_dir):
@@ -100,7 +116,7 @@ def reverse_dependents(touched):
 
 def scope(files, force_full):
     out = {"rust": False, "full": force_full, "packages": [], "dependents": [], "oneiron": False,
-           "modules": set(), "it": False, "deny": False, "pytools": False}
+           "modules": set(), "it": False, "deny": False, "pytools": False, "stemma_fork": False}
     for f in files:
         if f in FULL_PATHS or f.startswith(FULL_PREFIXES):
             out["full"] = True
@@ -110,6 +126,9 @@ def scope(files, force_full):
             out["deny"] = True
         if f.startswith(("scripts/", ".github/")):
             out["pytools"] = True
+        if f.startswith(STEMMA_FORK_PREFIXES) or f == STEMMA_FORK_RUNNER:
+            out["stemma_fork"] = True
+            out["rust"] = True  # the runner is a cargo test step: the test job must reach it
         parts = f.split("/")
         if parts[0] == "crates" and len(parts) > 2 and not workspace_excluded(parts[1]):
             pkg = package_of(parts[1])
@@ -122,7 +141,9 @@ def scope(files, force_full):
                     if len(parts) == 4 and top in ONEIRON_ROOT_FILES:
                         out["modules"].add("ALL")
                     else:
-                        out["modules"].add(top.removesuffix(".rs"))
+                        # A changed name that is no module name: every module's tests run.
+                        name = top.removesuffix(".rs")
+                        out["modules"].add(name if MODULE_NAME.fullmatch(name) else "ALL")
                 elif parts[2] == "tests":
                     out["it"] = True
                 elif parts[2] in ("Cargo.toml", "build.rs"):
@@ -160,6 +181,7 @@ def main():
         f"it={str(s['it']).lower()}",
         f"deny={str(s['deny']).lower()}",
         f"pytools={str(s['pytools']).lower()}",
+        f"stemma_fork={str(s['stemma_fork']).lower()}",
     ]
     for line in lines:
         print(line)

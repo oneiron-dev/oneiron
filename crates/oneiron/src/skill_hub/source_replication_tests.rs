@@ -92,12 +92,13 @@ fn replicated_asset_and_skill_replay_recovers_exact_source_in_both_orders() -> R
         let batch = target.batch();
         let batch = if carrier_first {
             batch
-                .put_replicated(&carrier, ENTITY_TYPE_ASSET, at(5), 5, &carrier_bytes)
+                .put_replicated(&carrier, ENTITY_TYPE_ASSET, at(5), 5, None, &carrier_bytes)
                 .put_replicated(
                     &id,
                     crate::registry::ENTITY_TYPE_SKILL,
                     at(5),
                     5,
+                    None,
                     &skill_bytes,
                 )
         } else {
@@ -107,9 +108,10 @@ fn replicated_asset_and_skill_replay_recovers_exact_source_in_both_orders() -> R
                     crate::registry::ENTITY_TYPE_SKILL,
                     at(5),
                     5,
+                    None,
                     &skill_bytes,
                 )
-                .put_replicated(&carrier, ENTITY_TYPE_ASSET, at(5), 5, &carrier_bytes)
+                .put_replicated(&carrier, ENTITY_TYPE_ASSET, at(5), 5, None, &carrier_bytes)
         };
         batch.commit()?;
         let txn = target.store.env.read_txn()?;
@@ -138,12 +140,13 @@ fn replicated_source_drift_and_carrier_overwrite_fail_closed() -> Result<()> {
     let (_target_dir, target) = open();
     target
         .batch()
-        .put_replicated(&carrier, ENTITY_TYPE_ASSET, at(5), 5, &carrier_bytes)
+        .put_replicated(&carrier, ENTITY_TYPE_ASSET, at(5), 5, None, &carrier_bytes)
         .put_replicated(
             &id,
             crate::registry::ENTITY_TYPE_SKILL,
             at(5),
             5,
+            None,
             &replayed_skill_body(&forged),
         )
         .commit()?;
@@ -167,7 +170,7 @@ fn replicated_source_drift_and_carrier_overwrite_fail_closed() -> Result<()> {
     assert_eq!(
         target
             .batch()
-            .put_replicated(&carrier, ENTITY_TYPE_ASSET, at(6), 6, b"replacement")
+            .put_replicated(&carrier, ENTITY_TYPE_ASSET, at(6), 6, None, b"replacement")
             .commit()
             .expect_err("replay cannot overwrite a carrier")
             .kind(),
@@ -190,9 +193,9 @@ fn carrier_is_credential_nulled_on_export_and_clean_source_roundtrips() -> Resul
     let body = crate::serialize::ExportBody::from_bytes(&bytes, ENTITY_TYPE_ASSET);
     body.validate(ENTITY_TYPE_ASSET)?;
     assert_eq!(body.to_bytes()?, bytes);
-    let exported = vault.export_whole_vault(crate::context_pack::PackFormat::Json)?;
+    let exported = vault.export_whole_vault(false)?;
     let (_target_dir, target) = open();
-    target.import_whole_vault_json(exported.bytes())?;
+    target.import_whole_vault_archive(exported.bytes())?;
     let txn = target.store.env.read_txn()?;
     assert_eq!(
         target

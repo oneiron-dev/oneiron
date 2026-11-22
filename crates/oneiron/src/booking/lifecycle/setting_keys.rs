@@ -13,7 +13,7 @@
 
 use crate::Vault;
 use crate::error::Result;
-use crate::setting::{Kind, lower_is_tighter};
+use crate::setting::Kind;
 
 const fn refused_after_start() -> bool {
     false
@@ -27,7 +27,7 @@ crate::setting::setting_keys! {
     pub(crate) BOOKING_RESCHEDULE_AFTER_START: bool = "booking.reschedule.after_start" {
         kind: Kind::new(refused_after_start)
             .strictest(refused_after_start)
-            .tighter(lower_is_tighter::<bool>),
+            .lower(),
     };
 }
 

@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use std::ops::Deref;
 use std::time::Instant;
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use oneiron_contracts::host_memory::{MachineMemory, MemoryLease};
 
 use super::{
@@ -212,7 +213,7 @@ impl WindowPadAssembly {
             window_key.to_owned(),
             Pending {
                 sub_tag,
-                id: *blake3::hash(&payload[..WINDOW_PAD_HEADER_BYTES]).as_bytes(),
+                id: envelope_id(&payload[..WINDOW_PAD_HEADER_BYTES]),
                 bytes,
                 total,
                 memory,
@@ -264,5 +265,19 @@ impl WindowPadAssembly {
     /// Drops every envelope still coming in: the socket is gone.
     pub fn clear(&mut self) {
         self.pending.clear();
+    }
+}
+
+/// The header identity compared with continuation frames (K, PLAN-UC-04 stage 7).
+pub(super) fn envelope_id(header: &[u8]) -> [u8; 32] {
+    LegacyDigest::new(purposes::sync::WINDOW_PAD_ENVELOPE_ID)
+        .raw(header)
+        .finish()
+}
+
+#[cfg(oneiron_test_support)]
+impl WindowPadAssembly {
+    pub(crate) fn envelope_id_for_test(header: &[u8]) -> [u8; 32] {
+        envelope_id(header)
     }
 }

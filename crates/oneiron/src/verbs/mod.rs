@@ -21,6 +21,7 @@ mod can;
 mod catalog_fragment;
 mod check_in;
 mod claim_refinement;
+mod code_run_resume_divergence;
 mod comm_widen;
 mod connect_proposal;
 mod connector;
@@ -34,14 +35,17 @@ mod coreference;
 mod courtesy_delete;
 mod credential;
 mod custody_drain;
+mod data_key_generation;
 mod describe;
 mod diary;
 mod diary_pinned;
 mod disclosure;
+mod display_edits;
 mod embedding_space;
 mod engine_controls;
 mod eval_cohort;
 mod explain;
+mod extraction_verdict;
 mod fanout_launch;
 mod federation;
 #[cfg(feature = "sync")]
@@ -63,11 +67,13 @@ pub(crate) mod host;
 mod hub;
 mod identity_topology;
 mod inquiry;
+mod leave;
 mod legal_hold;
 // The build-time closure of the verb table over linked `self.*` operations.
 mod linked_self_surface;
 mod live_run;
 mod live_voice;
+mod machine_names;
 mod mesh;
 mod model_manifest;
 mod model_pack;
@@ -79,6 +85,7 @@ mod off_record_rooms;
 mod off_record_runs;
 mod outbound_call_erase;
 mod outbox_diverged;
+mod owner_confirm;
 mod pack_preview;
 mod persona;
 mod proxy;
@@ -92,6 +99,7 @@ mod repo_copy_edit;
 mod repo_manifest_conflict;
 mod research;
 mod research_advance;
+mod research_authoring;
 mod research_root;
 mod reservoir_sources;
 mod residence;
@@ -110,6 +118,7 @@ mod self_actor;
 mod self_model_read;
 mod self_verbs;
 mod setting;
+pub(crate) mod setting_keys;
 mod share;
 mod shared;
 mod shared_admin;
@@ -132,7 +141,10 @@ mod support_grant;
 mod sync_outbox;
 #[cfg(feature = "sync")]
 mod sync_quarantine;
+// ROLE-TRAINING-RUN: the owner's role prepare and the bounded run read.
+mod training_runs;
 mod trusted_contact;
+mod turn_program_resume;
 mod uncertain_send;
 mod verb_table;
 mod voice_bank;
@@ -165,10 +177,11 @@ pub struct TaskAnswerRequest {
 pub use oneiron_verb_wire::verbs::{
     BoardFrameReply, BoardRefreshRequest, BoardSubscriptionReply, BoardSubscriptionRequest,
     BoardWakeReply, BoardWakeRequest, CompanionSharingRequest, EmptyRequest, InboxListRequest,
-    InboxMarkRequest, ProjectCardRequest, ProjectConversationRequest, ProjectGoalDismissRequest,
-    ProjectGoalDismissTarget, ProjectRefRequest, ProjectTradeoffRouteRequest, ReceiptsRequest,
-    RoomClaimRequest, RoomHostRequest, RoomRefRequest, RoomRequest, RoomTurnRequest, TaskRequest,
-    TaskWaveReceipt, TaskWaveRequest, WorkspaceRefRequest,
+    InboxMarkRequest, OneVaultAcknowledgeRequest, ProjectCardRequest, ProjectConversationRequest,
+    ProjectGoalDismissRequest, ProjectGoalDismissTarget, ProjectRefRequest,
+    ProjectTradeoffRouteRequest, ReceiptsRequest, RoomClaimRequest, RoomHostRequest,
+    RoomRefRequest, RoomRequest, RoomTurnRequest, TaskRequest, TaskWaveReceipt, TaskWaveRequest,
+    WorkTalkOpenRequest, WorkspaceRefRequest,
 };
 
 /// `vault.projects.goal.dismiss`'s result: `false` when an identical retry
@@ -258,6 +271,16 @@ pub struct TaskCreateRequest {
     /// The typed brief a post carries (OF-220).
     #[serde(default)]
     pub brief: Option<crate::task_verb::QueueTaskBrief>,
+    /// The one-line request the engine composes the post's brief from, in
+    /// place of `brief`, with `intent_key` (L8-07). A local model drafts it
+    /// and the post parks as a proposal, whatever the caller's ceiling.
+    #[serde(default)]
+    pub one_liner: Option<String>,
+    /// The rows, by short-id ref or 32-hex id, the composer reads as the
+    /// one-liner's context, each under the caller's own read. Only with
+    /// `one_liner`.
+    #[serde(default)]
+    pub lens_refs: Vec<String>,
     /// The TASK's absolute expiry.
     #[serde(default)]
     pub ttl: Option<crate::task_verb::TaskTtl>,
@@ -281,7 +304,9 @@ pub struct TaskCreateRequest {
 
 /// The create spec one `tasks.create` request names, owned by the
 /// surface's actor. A request naming an intent key and a brief is a post
-/// (OF-220); one naming only one of them is refused.
+/// (OF-220), and one naming an intent key and a one-liner is a post whose
+/// brief the engine composes (L8-07); any other mix of the three is
+/// refused, as are lens refs without a one-liner.
 pub fn task_create_spec(
     memory: &Memory<'_>,
     input: TaskCreateRequest,
@@ -302,9 +327,28 @@ pub fn task_create_spec(
     spec.due_at = input.due_at;
     spec.watch = input.watch;
     spec.parent_ref = parent_ref;
-    match (input.intent_key, input.brief) {
-        (Some(intent_key), Some(brief)) => Ok(spec.with_brief(intent_key, brief)),
-        (None, None) => Ok(spec),
+    if input.one_liner.is_none() && !input.lens_refs.is_empty() {
+        return Err(MemoryError::bad_request(
+            "lens refs name a one-liner's context; a create without a one-liner names none",
+        ));
+    }
+    match (input.intent_key, input.brief, input.one_liner) {
+        (Some(intent_key), Some(brief), None) => Ok(spec.with_brief(intent_key, brief)),
+        (Some(intent_key), None, Some(one_liner)) => {
+            let lens_refs = input
+                .lens_refs
+                .iter()
+                .map(|reference| crate::memory::resolve_entity_ref(memory.vault(), reference))
+                .collect::<MemoryResult<Vec<_>>>()?;
+            Ok(spec.with_one_liner(intent_key, one_liner, lens_refs))
+        }
+        (None, None, None) => Ok(spec),
+        (_, Some(_), Some(_)) => Err(MemoryError::bad_request(
+            "a create names its brief or a one-liner to compose it from, not both",
+        )),
+        (None, None, Some(_)) => Err(MemoryError::bad_request(
+            "a composed create names its intent key and its one-liner",
+        )),
         _ => Err(MemoryError::bad_request(
             "a briefed create names both its intent key and its brief",
         )),
@@ -373,6 +417,7 @@ pub use self::catalog_fragment::{
 };
 pub use self::check_in::*;
 pub use self::claim_refinement::*;
+pub use self::code_run_resume_divergence::*;
 pub use self::comm_widen::*;
 pub use self::connect_proposal::*;
 pub use self::connector::*;
@@ -386,14 +431,17 @@ pub use self::coreference::*;
 pub use self::courtesy_delete::*;
 pub use self::credential::*;
 pub use self::custody_drain::*;
+pub use self::data_key_generation::*;
 pub use self::describe::*;
 pub use self::diary::*;
 pub use self::diary_pinned::*;
 pub use self::disclosure::*;
+pub use self::display_edits::*;
 pub use self::embedding_space::*;
 pub use self::engine_controls::*;
 pub use self::eval_cohort::*;
 pub use self::explain::*;
+pub use self::extraction_verdict::*;
 pub use self::fanout_launch::*;
 pub use self::federation::*;
 #[cfg(feature = "sync")]
@@ -415,9 +463,11 @@ pub use self::host::*;
 pub use self::hub::*;
 pub use self::identity_topology::*;
 pub use self::inquiry::*;
+pub use self::leave::*;
 pub use self::legal_hold::*;
 pub use self::live_run::*;
 pub use self::live_voice::*;
+pub use self::machine_names::*;
 pub use self::mesh::*;
 pub use self::model_manifest::*;
 pub use self::model_pack::*;
@@ -429,6 +479,7 @@ pub use self::off_record_rooms::*;
 pub use self::off_record_runs::*;
 pub use self::outbound_call_erase::*;
 pub use self::outbox_diverged::*;
+pub use self::owner_confirm::*;
 pub use self::pack_preview::*;
 pub use self::persona::*;
 pub use self::proxy::*;
@@ -441,6 +492,7 @@ pub use self::repo_copy_edit::*;
 pub use self::repo_manifest_conflict::*;
 pub use self::research::*;
 pub use self::research_advance::*;
+pub use self::research_authoring::*;
 pub use self::research_root::*;
 pub use self::reservoir_sources::*;
 pub use self::residence::*;
@@ -479,7 +531,9 @@ pub use self::support_grant::*;
 pub use self::sync_outbox::*;
 #[cfg(feature = "sync")]
 pub use self::sync_quarantine::*;
+pub use self::training_runs::*;
 pub use self::trusted_contact::*;
+pub use self::turn_program_resume::*;
 pub use self::uncertain_send::*;
 pub use self::voice_bank::*;
 pub use self::voice_recognition::*;
@@ -663,8 +717,6 @@ fn verb_input_schema_is_built_once_per_process() {
     assert!(std::ptr::eq(first, second));
 }
 
-// FIX [LIBTEST-QUARANTINE-VERBS-ITEMS]: the lib test target's type check fails here (5 errors: E0599 x5); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 #[test]
 fn sdk_catalog_drives_scoped_projections_and_round_trips_names() {
@@ -680,11 +732,12 @@ fn sdk_catalog_drives_scoped_projections_and_round_trips_names() {
             verb.as_str()
         );
     }
-    assert!(AgentVerb::TasksAsk.is_section());
-    assert!(AgentVerb::RoomsSpeak.writes());
-    assert!(AgentVerb::RoomsList.is_facade());
-    assert!(!AgentVerb::BoardExpand.is_facade());
-    assert_eq!(AgentVerb::Recall.argument_fields(), &["spec"]);
+    assert!(AgentVerb::Ask.is_section());
+    assert!(AgentVerb::VaultRoomsSpeak.writes());
+    assert!(AgentVerb::VaultRoomsList.is_facade());
+    // A host-served row (the browser context) is no facade verb; board.expand, the old pin, is gone.
+    assert!(!AgentVerb::SelfBrowserClick.is_facade());
+    assert_eq!(AgentVerb::VaultRecall.argument_fields(), &["spec"]);
     assert!(AgentVerb::from_name("not.a.verb").is_none());
 }
 
@@ -753,6 +806,7 @@ fn a_recall_the_engine_refuses_never_embeds_its_query() {
         query_affect: None,
         telemetry: None,
         filter: None,
+        operation_id: None,
     };
     let call = |deadline_ms| RecallRequest {
         effort: Some(crate::memory::RecallEffort::Call),

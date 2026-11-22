@@ -1,8 +1,8 @@
 //! `vault.connectors.read_grants.revoke` (FIX 10895): the owner revokes an
-//! agent's witness-read grant over a connector conversation, the grant the
-//! engine issued when the agent first witnessed the conversation and the
-//! one the consent registry lists with this verb as its one-tap revoke. A
-//! revoked grant stays revoked: no later witness issues it again.
+//! agent's witness-read grant over a connector conversation or phone thread,
+//! the grant the engine issued when the agent first witnessed the conversation
+//! and the one the consent registry lists with this verb as its one-tap
+//! revoke. A revoked grant stays revoked: no later witness issues it again.
 //! `vault.connectors.read_grants.grant` (FIX 10962) is the owner's grant
 //! once more: it issues the grant anew at its same id.
 
@@ -45,13 +45,13 @@ pub fn revoke_connector_witness_read_grant_as(
 
 /// `vault.connectors.read_grants.grant` under the owner's proof. A revoked
 /// grant is issued anew; a repeat answers `changed: false`; an agent or a
-/// connector conversation the vault does not hold is not found. The grant
-/// widens the agent's reads: the owner's own grant goes on their own proof,
-/// never gated, and the answer records that decision (`check_in`). With
-/// `check_in_ref` the owner applies another asker's approved check-in for
-/// this exact grant, spent in the grant's writer (ROLES-CHECKIN 2k8; Engine
-/// RULING P25-SHAPE Q1 = A). A repeat that changes nothing spends nothing
-/// and records none.
+/// connector conversation or phone thread the vault does not hold is not
+/// found. The grant widens the agent's reads: the owner's own grant goes on
+/// their own proof, never gated, and the answer records that decision
+/// (`check_in`). With `check_in_ref` the owner applies another asker's
+/// approved check-in for this exact grant, spent in the grant's writer
+/// (ROLES-CHECKIN 2k8; Engine RULING P25-SHAPE Q1 = A). A repeat that changes
+/// nothing spends nothing and records none.
 pub fn grant_connector_witness_read_grant_as(
     vault: &Vault,
     owner: &AuthenticatedOwner,

@@ -240,7 +240,14 @@ enum Refresh {
     /// No PROJECT row, or over budget with no record: nothing to keep.
     Nothing,
     Within(Box<ProjectFrontierRecord>),
-    Frozen(Box<ProjectFrontierRecord>, Drained),
+    Frozen {
+        record: Box<ProjectFrontierRecord>,
+        drained: Drained,
+        /// Whether the reader serves the saved record's view: a frozen record
+        /// that no longer fits its parents or its seal serves nothing, though
+        /// it stays the same.
+        served: bool,
+    },
 }
 
 #[derive(Default)]
@@ -291,7 +298,7 @@ fn refresh_component(
         members = decided;
         let drained: BTreeSet<EntityId> = (plans.iter())
             .filter(|(_, (_, refresh))| {
-                matches!(refresh, Refresh::Frozen(_, drained) if !drained.applied.is_empty())
+                matches!(refresh, Refresh::Frozen { drained, .. } if !drained.applied.is_empty())
             })
             .map(|(member, _)| *member)
             .collect();
@@ -442,6 +449,7 @@ fn plan(
             frozen: None,
         }))
     } else if let Some(mut record) = old.clone() {
+        let served = decided.frontier.effective == record.effective;
         let held = held_in_txn(store, txn, project, kind)?;
         let cx = reader.door_cx(project, &held)?;
         let count = budget_count(&cx)?;
@@ -462,20 +470,29 @@ fn plan(
         {
             freeze.narrowed = true;
         }
-        Refresh::Frozen(Box::new(record), drained)
+        Refresh::Frozen {
+            record: Box::new(record),
+            drained,
+            served,
+        }
     } else {
         Refresh::Nothing
     };
     Ok((old, refresh))
 }
 
-/// Writes one member's planned record; whether its served view changed.
+/// Writes one member's planned record; whether its served view changed, or
+/// its frozen record no longer serves one.
 fn write(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     project: EntityId,
     (old, refresh): Plan,
 ) -> Result<bool> {
+    let (frozen, served) = match &refresh {
+        Refresh::Frozen { served, .. } => (true, *served),
+        Refresh::Nothing | Refresh::Within(_) => (false, true),
+    };
     let record = match refresh {
         Refresh::Nothing => return Ok(false),
         Refresh::Within(record) => {
@@ -484,7 +501,9 @@ fn write(
             }
             *record
         }
-        Refresh::Frozen(record, drained) => {
+        Refresh::Frozen {
+            record, drained, ..
+        } => {
             for hash in drained.applied {
                 PROJECT_FROZEN_APPLIED.put(store, txn, &(project, hash), &())?;
             }
@@ -495,8 +514,24 @@ fn write(
         }
     };
     let changed = old.as_ref().is_none_or(|old| !old.same_view(&record));
+    // A view that reads less may leave a standing answer wider than its row
+    // (FIX STANDING-ANSWER-LEFT-FACET-OTHER-WRITERS). A project with no view
+    // persisted before is new: no answer rests on its room yet. A frozen
+    // record's served view is checked again at each read, so it narrows
+    // with the record unchanged; and a raised budget serves the live fold
+    // over a frozen record that stays saved, so the old record need not be
+    // what the room read last (review round 1 on #9735).
+    if (changed || frozen)
+        && let Some(old) = &old
+    {
+        super::room_narrowing::queue_narrowed_room_in(store, txn, project, old, &record, frozen)?;
+    }
     PROJECT_FRONTIER.put(store, txn, &project, &record)?;
-    Ok(changed)
+    // A frozen record that no longer fits its parents serves nothing while
+    // it stays the same: every project that reads it reads less, so each is
+    // decided again, as after a change (FIX
+    // STANDING-ANSWER-LEFT-FACET-OTHER-WRITERS, review 2).
+    Ok(changed || !served)
 }
 
 /// The owner's question about a cycle past its bound (OF-520), kept under

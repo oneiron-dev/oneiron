@@ -315,7 +315,7 @@ fn clearing_a_pin_forgets_what_the_value_row_now_excludes() {
     let vault = &fixture.vault;
     let conversation = vault.new_entity_id().unwrap();
     let forgets = || {
-        dreamer_exclusion_forgets()
+        dreamer_exclusion_forgets(vault)
             .iter()
             .filter(|set| set.contains(&conversation))
             .count()

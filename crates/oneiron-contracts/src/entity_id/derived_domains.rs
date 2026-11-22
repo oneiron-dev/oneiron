@@ -63,6 +63,11 @@ pub const DREAMER_CLAIM: &[u8] = b"oneiron:dreamer-claim-id:v1";
 /// name's byte range in it (empty, or `0x01`, start and end as u64 big-endian).
 pub const DREAMER_PERSON: &[u8] = b"oneiron:dreamer-person:v1";
 
+/// A PERSON a derivation batch's Person item mints (`derive::person`, untangle
+/// 6.9h). Parts: the first try of the committing attempt's retry lineage, the
+/// normalized name, then the smallest TURN that names it.
+pub const DERIVE_PERSON: &[u8] = b"oneiron:derive-person:v1";
+
 /// A project's home room (`workspace_roster::project`). Parts: project.
 pub const PROJECT_HOME_ROOM: &[u8] = b"project.home_room.v1/";
 
@@ -325,6 +330,10 @@ pub const SIDE_ROW_MASK: &[u8] = b"oneiron.side_row.mask.v1\0";
 /// (`learning_setting::global_setting_subject`). Parts: the catalog key.
 pub const GLOBAL_SETTING_SUBJECT: &[u8] = b"oneiron.learning.setting.global_subject.v1\0";
 
+/// The ASSET row that holds a setting value beside its signed act (`setting::beside`, stage
+/// 7c-1). Parts: the act's target, the BLAKE3 of the value's JSON bytes.
+pub const SETTING_BESIDE_VALUE: &[u8] = b"oneiron.setting.beside_value.v1";
+
 /// The subproject a TASK wraps when its leader splits it
 /// (`code_run::dispatcher::leader`): one child per wrapper, so a retried split
 /// names the child the first try linked. Parts: the wrapper TASK.
@@ -347,6 +356,13 @@ pub const CONNECT_GUEST_ACTOR: &[u8] = b"oneiron/connect-guest-actor/v1";
 /// and a counter (u64 little-endian) from 0; the first id in the foreign range
 /// is the one.
 pub const FOREIGN_WORLD: &[u8] = b"oneiron.federation.foreign-world.v1";
+/// The company's WORLD of a member seat's inquiry edge, written when the
+/// seat is accepted (`inquiry::edge`, L7-04). Parts: the company vault's id
+/// and the Connect pact's id (32 bytes each), and a counter (u64
+/// little-endian) from 0; the first id outside the received-foreign range is
+/// the one. The member's host names it in its offer before the company
+/// writes it.
+pub const INQUIRY_JOIN_WORLD: &[u8] = b"oneiron/inquiry-join-world/v1";
 
 /// One statement of a copied inquiry answer, as the company vault lands it
 /// (`inquiry::landing`, INQUIRE-1 PR 6). Parts: the inquiry's id, the id of
@@ -484,9 +500,17 @@ pub const EXECUTOR_CONTINUATION_CHECKPOINT: &[u8] = b"oneiron:executor-continuat
 /// key.
 pub const RESIDENT_MESSAGE_ASK: &[u8] = b"oneiron.agent_dispatch.resident_message_ask.v1\0";
 
+/// The speaker of one call (`disclosure::speaker_bind`, UNBUILT-02-SPEAKER-BIND): the subject
+/// of its bind claim, a derived id with no row. Parts: the call ref, the speaker key.
+pub const CALL_SPEAKER: &[u8] = b"oneiron.disclosure.call_speaker.v1";
+
+/// The owner's bind claim of one call speaker (`disclosure::speaker_bind`). Parts: the call
+/// speaker id.
+pub const CALL_SPEAKER_BIND: &[u8] = b"oneiron.disclosure.call_speaker_bind.v1";
+
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
-pub(crate) const ALL: [&[u8]; 73] = [
+pub(crate) const ALL: [&[u8]; 78] = [
     PERSON_SUBSTRATE_FACET,
     KEY_VALUE,
     BOOTSTRAP_SKILL,
@@ -546,10 +570,12 @@ pub(crate) const ALL: [&[u8]; 73] = [
     COORDINATION_PATTERN,
     SIDE_ROW_MASK,
     GLOBAL_SETTING_SUBJECT,
+    SETTING_BESIDE_VALUE,
     TASK_SUBPROJECT,
     AGENT_PACK_TRAVEL,
     CONNECT_GUEST_ACTOR,
     FOREIGN_WORLD,
+    INQUIRY_JOIN_WORLD,
     INQUIRY_COPY_CLAIM,
     ASSET_BODY_FILE,
     ASSET_BODY_HELD,
@@ -560,4 +586,7 @@ pub(crate) const ALL: [&[u8]; 73] = [
     ESIGN_DOCUMENT_COMMITMENT,
     RESIDENT_MESSAGE_ASK,
     COMMITMENT_LAPSE_ACTOR,
+    DERIVE_PERSON,
+    CALL_SPEAKER,
+    CALL_SPEAKER_BIND,
 ];

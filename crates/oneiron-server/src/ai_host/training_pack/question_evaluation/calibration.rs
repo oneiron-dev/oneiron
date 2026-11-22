@@ -1,14 +1,15 @@
-//! One positive temperature fitted without the held-out answers.
+//! One positive temperature fitted without the held-out answers. The
+//! question and role evaluators share it.
 
 use serde::Serialize;
 
 // The engine's one bin count, shared with the per-route calibration report.
-pub(super) use oneiron::llm::decision::questions::ECE_BINS;
+pub(in crate::ai_host::training_pack) use oneiron::llm::decision::questions::ECE_BINS;
 const FIT_STEPS: usize = 96;
 
 #[derive(Serialize)]
-pub(super) struct Fit {
-    pub(super) temperature: f64,
+pub(in crate::ai_host::training_pack) struct Fit {
+    pub(in crate::ai_host::training_pack) temperature: f64,
     cases: usize,
     mean_nll: f64,
     uncalibrated_mean_nll: f64,
@@ -44,7 +45,7 @@ fn nll(rows: &[([f64; 2], bool)], temperature: f64) -> f64 {
 /// its monotone derivative, then bisect. Flat or boundary optima are kept
 /// within the representable normal-temperature range. T=1 is also scored
 /// and wins a tied objective; it is never reported as an unmeasured fit.
-pub(super) fn fit(rows: &[([f64; 2], bool)]) -> Fit {
+pub(in crate::ai_host::training_pack) fn fit(rows: &[([f64; 2], bool)]) -> Fit {
     let scale = rows
         .iter()
         .map(|(logits, _)| (logits[1] - logits[0]).abs())
@@ -113,7 +114,7 @@ pub(super) fn fit(rows: &[([f64; 2], bool)]) -> Fit {
 
 /// Binary Brier and equal-width reliability ECE, not confidence-accuracy ECE.
 /// P(yes)=1 belongs to the last bin; empty bins contribute zero.
-pub(super) fn metrics(rows: &[(f64, bool)]) -> (f64, f64) {
+pub(in crate::ai_host::training_pack) fn metrics(rows: &[(f64, bool)]) -> (f64, f64) {
     let mut brier = 0.0;
     let mut bins = [(0.0, 0.0); ECE_BINS];
     for &(probability, yes) in rows {

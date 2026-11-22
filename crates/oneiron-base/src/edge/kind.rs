@@ -185,4 +185,15 @@ edge_kinds! {
     Imports = 33 => "imports",
     /// A code symbol reads another lexically resolved code binding.
     Refs = 34 => "refs",
+    /// An epoch SUMMARY carries the target row across its compaction: the
+    /// host's working set, which seeds the pack that rehydrates from the
+    /// summary (CROSS-ARCH-0011 amendment "workingSet"; CROSS-ARCH-0002b
+    /// #ep-6-2-3 `packetId`). Its stored weight orders the set, first row
+    /// highest.
+    ///
+    /// Structural and never traversed: a carried row shares no retrieval
+    /// relevance with the summary. Only the epoch mint writes it
+    /// (`validate_public_edge_creation_kind` refuses it). Unlike
+    /// `derived_from`, erasing its target never retires the summary.
+    Carries = 35 => "carries",
 }

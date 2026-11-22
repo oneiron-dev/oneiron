@@ -103,7 +103,7 @@ fn planning_attempt_applies_cut_and_dispatch_reads_live_completion() -> WaveResu
         .set_consult_fanout_policy(
             &owner_proof,
             &oneiron::task_verb::ConsultFanOutPolicy {
-                mode: oneiron::task_verb::ConsultFanOutMode::FullAccess,
+                mode: oneiron::check_in::CheckInMode::NeverAsk,
                 ..Default::default()
             },
         )

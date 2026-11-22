@@ -84,25 +84,39 @@ fn warn_undecided(error: &crate::error::Error) {
     );
 }
 
-/// Reconciles, now a kit's pads landed, every restore epoch of `vault` that
-/// still owes a pad, then drops the carried pads (PAD-3) none owes once that
-/// committed. A fault leaves each as recorded, warned.
-pub(super) fn reconcile_owed_epochs(vault: &Vault) {
-    let reconciled = vault.with_write_txn_grouped(|txn| {
-        crate::recovery::checkpoint::reconcile_restore_pad_notes_in_txn(
-            vault,
-            txn,
-            None,
-            &BTreeSet::new(),
-        )
-    });
+/// Reconciles in `txn`, now a kit's pads landed there, every restore epoch of
+/// `vault` that still owes a pad, in a savepoint of its own: a fault leaves
+/// each as recorded, warned, and the rest of `txn` goes on. The pads, this
+/// and the world keys commit together (REVIEW-9488 round 2 P1 2). Answers
+/// whether it reconciled.
+pub(super) fn reconcile_owed_epochs_in_txn(vault: &Vault, txn: &mut heed::RwTxn<'_>) -> bool {
+    let reconciled = vault
+        .store
+        .env
+        .nested_write_txn(txn)
+        .map_err(crate::error::Error::from)
+        .and_then(|mut savepoint| {
+            crate::recovery::checkpoint::reconcile_restore_pad_notes_in_txn(
+                vault,
+                &mut savepoint,
+                None,
+                &BTreeSet::new(),
+            )?;
+            savepoint.commit().map_err(crate::error::Error::from)
+        });
     if let Err(error) = reconciled {
         tracing::warn!(
             kind = ?error.kind(),
             "a kit restore's owed pads did not reconcile; each epoch stays as recorded"
         );
-        return;
+        return false;
     }
+    true
+}
+
+/// Drops the carried pads (PAD-3) none owes once the reconcile committed.
+/// A fault leaves them, warned.
+pub(super) fn prune_carried_pads(vault: &Vault) {
     if let Err(error) = crate::recovery::checkpoint::prune_carried_pads(vault) {
         tracing::warn!(kind = ?error.kind(), "carried world pads not pruned after a kit restore");
     }

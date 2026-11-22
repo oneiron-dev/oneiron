@@ -30,8 +30,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lib/host_adapters.rs` | src | s | 2 struct · 2 trait · 2 fn · 5 re-export | EdgeBackend, MicroVmHost, SandboxBackend, WasmHost | Host adapters |
 | `src/lib/host_adapters/desktop.rs` | src | s | 4 re-export | — | The daemon position's adapters: systemd on Linux, launchd on macOS, and a plain bind when neither started… |
 | `src/lib/host_adapters/desktop/hosts.rs` | src | m | 2 struct · 3 enum · 10 fn | ActivatedListener, DesktopHost, LaunchdHost, SecretSource, SystemdHost | — |
-| `src/lib/host_adapters/desktop/keep_awake.rs` | src | s | 2 struct · 1 enum · 4 fn | AwakeGuard, AwakePolicy, KeepAwake | — |
-| `src/lib/host_adapters/desktop/keep_awake/power.rs` | src | s | 5 crate-vis | — | The power source a PluggedIn wake assertion follows (FIX 9547) |
+| `src/lib/host_adapters/desktop/keep_awake.rs` | src | s | 2 struct · 1 enum · 4 fn · 1 re-export | AwakeGuard, AwakePolicy, KeepAwake | — |
+| `src/lib/host_adapters/desktop/keep_awake/power.rs` | src | s | 1 fn · 5 crate-vis | — | The power source a PluggedIn wake assertion follows (FIX 9547) |
 | `src/lib/host_adapters/desktop/sleep_watch.rs` | src | s | 1 struct · 1 trait · 1 fn · 1 re-export | SleepHooks, SleepWatch | Watches this machine's sleep and wake so the host releases its executor leases before it sleeps and takes… |
 | `src/lib/host_adapters/desktop/sleep_watch/iokit.rs` | src | s | 2 crate-vis | — | IOKit's system power notifications, on a thread of its own running a run loop |
 | `src/lib/host_adapters/desktop/sleep_watch/logind.rs` | src | s | 1 fn · 2 crate-vis | — | logind's sleep signals: a delay lock the thread holds while awake and a signal monitor it reads line by line |
@@ -46,7 +46,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lib/managed_backup.rs` | src | s | 1 struct · 2 enum · 2 fn · 1 const · 1 re-export · 1 crate-vis | CheckpointSignerObservation, CheckpointSignerUnavailable, ManagedBackupFacts | What a managed vault reports of its backups on every `Ping` (Engine 10-20 row (b)): the vault id its… |
 | `src/lib/managed_backup/idle_reap.rs` | src | s | 4 struct · 2 enum · 5 fn · 2 const | BackupCoverageWire, IdleBackupFailure, IdleBackupState, IdleBackupWire, IdleReapInFlight, IdleReapWire | The answer to an idle reap's preparation (`prepare_idle_reap`, Engine 10-20 backup shipper row (a)… |
 | `src/lib/managed_holder.rs` | src | m | 7 struct · 18 fn · 1 type · 8 const | ManagedOwnerAction, ManagedOwnerHead, ManagedOwnerRequest, ManagedOwnerTranscript, ManagedPersonAction, ManagedWidenAction, ManagedWidenTranscript | Host-attested account actions: one managed widen request, one request the vault owner makes in person… |
-| `src/lib/mod.rs` | src | s | 23 mod · 14 re-export | — | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits |
+| `src/lib/mod.rs` | src | s | 23 mod · 15 re-export | — | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits |
+| `src/lib/owner_key_change.rs` | src | s | 2 struct · 4 fn · 3 const | OwnerKeyChangeReport, OwnerKeyChangeReportAck | One owner key change on a hosted vault, reported to its supervisor (Engine ruling 21 Nov 06:00: every owner… |
 | `src/lib/owner_signing_recovery.rs` | src | s | 2 struct · 2 fn · 2 const | OwnerSigningRecovery, OwnerSigningRecoveryAck | Owner-signing recovery (FIX 5260): an adopted vault proves, on its supervisor's challenge, that it still… |
 | `src/lib/preview.rs` | src | s | 6 struct · 1 enum · 3 fn · 1 const | PreviewEndpoint, PreviewPortDeclaration, PreviewRouteAck, PreviewRouteBinding, PreviewRouteRequest, PreviewSessionManifest, PreviewStage | A session's private, lease-bound live port, distinct from artifact publication |
 | `src/lib/recovery_box_hold.rs` | src | s | 2 struct · 3 fn · 2 const | RecoveryBoxKitOnly, RecoveryBoxKitOnlyAck | The kit-only hold on a hosted vault's recovery box (Fable pass 27 R7; Engine RULING WAYBACK-BOX-HOLD-RELAY =… |
@@ -77,6 +78,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lib/wake.rs` | src | s | 1 struct · 1 enum · 4 fn · 1 type · 1 crate-vis | Schedule, WakeEntry | Vault naming, timestamps, wake schedule and entry validation |
 | `tests/ctl_ping_process_readiness.rs` | test | s | — | — | L8-11: every `Ping` carries the vault process's live readiness as an optional `process` block… |
 | `tests/fingerprint_keep_restore_receipt_id.rs` | test | s | 1 fn | — | K-proof (oracle) for PLAN-UC-04 stage 6.3b: the managed restore receipt id keeps its bytes |
+| `tests/owner_key_change_wire.rs` | test | s | — | — | One owner key change's wire on the supervisor socket (Engine ruling 21 Nov 06:00): the request's exact line… |
 | `tests/recovery_box_hold_wire.rs` | test | s | — | — | The kit-only hold's wire on the supervisor socket (Fable pass 27 R7; Engine RULING WAYBACK-BOX-HOLD-RELAY =… |
 | `tests/sleep_watch_logind_line.rs` | test | s | — | — | — |
 | `tests/systemd_template_notify_without_socket.rs` | test | s | — | — | A `Type=notify` unit without socket activation still sets `NOTIFY_SOCKET`: the plain host reports `READY=1`… |

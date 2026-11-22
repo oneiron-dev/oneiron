@@ -12,7 +12,9 @@ use crate::entity_id::EntityId;
 use crate::registry::ENTITY_TYPE_EVENT;
 use crate::vault::Vault;
 
-/// Reconcile a raw, admitted passport against its sole active same-key peer.
+/// Reconcile a raw, admitted passport against its sole admitted same-key peer.
+/// A revision that waits for review or was rejected stays live beside its
+/// admitted head and carries no authority, so it is never the peer.
 /// Both rows must be un-attributed and share scope. Native supersession retains
 /// the losing assertion as history in the caller's transaction. A presence
 /// transition updates the head; otherwise the feed's sequence/hash rules decide.
@@ -56,7 +58,11 @@ pub(crate) fn settle_generic_calendar_claim_in_txn(
             continue;
         }
         let peer_value = decode_passport_value(&peer_body.value)?;
-        if peer_value.system != new_value.system || peer_value.uid != new_value.uid {
+        if peer_value.system != new_value.system
+            || peer_value.uid != new_value.uid
+            || !claim_surfaceable(&peer_body)
+            || !crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, txn, &peer_id)?
+        {
             continue;
         }
         if peer.is_some() {
@@ -69,8 +75,6 @@ pub(crate) fn settle_generic_calendar_claim_in_txn(
     };
     if peer_body.source.is_some()
         || peer_body.evidence.is_some()
-        || !claim_surfaceable(&peer_body)
-        || !crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, txn, &peer_id)?
         || peer_body.world.unwrap_or_else(base_world_id)
             != new_body.world.unwrap_or_else(base_world_id)
         || peer_body.rel != new_body.rel

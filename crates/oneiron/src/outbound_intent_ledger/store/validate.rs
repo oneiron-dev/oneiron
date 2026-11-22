@@ -95,11 +95,6 @@ pub(in crate::outbound_intent_ledger) fn validate_record(
             "outbound intent payload hash mismatch",
         ));
     }
-    if bytes_to_hex_lower(&record.id) != record.idempotency_key {
-        return Err(IntentLedgerError::InvalidRecord(
-            "outbound intent idempotency key mismatch",
-        ));
-    }
     let derived = derive_intent_id(
         record.attempt_id,
         record.call_seq,
@@ -110,6 +105,16 @@ pub(in crate::outbound_intent_ledger) fn validate_record(
     if derived != record.id {
         return Err(IntentLedgerError::InvalidRecord(
             "outbound intent identity hash mismatch",
+        ));
+    }
+    if record.idempotency_attempt_id == Some(record.attempt_id) {
+        return Err(IntentLedgerError::InvalidRecord(
+            "outbound intent names its own attempt as its idempotency attempt",
+        ));
+    }
+    if bytes_to_hex_lower(&record.idempotency_key_id()?) != record.idempotency_key {
+        return Err(IntentLedgerError::InvalidRecord(
+            "outbound intent idempotency key mismatch",
         ));
     }
     Ok(())
