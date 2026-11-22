@@ -36,7 +36,11 @@ const CUSTODY_AT: u64 = 1_780_000_000;
 const PASSES: u32 = 40;
 
 /// A rooted vault as a host starts one: the owner bound, this install
-/// profiled. Its directory, the vault and the owner's proof.
+/// profiled, the vault data key held. A head needs a recipient: with no data
+/// key and no pinned recovery root every pass fails its seal ("a custody head
+/// needs a recipient", store/key_custody/head.rs) before any member is owed a
+/// head, so the passes below would never reach the no-adapter member.
+/// Its directory, the vault and the owner's proof.
 fn rooted() -> (tempfile::TempDir, Vault, AuthenticatedOwner) {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), VaultConfig::device()).expect("open vault");
@@ -47,6 +51,7 @@ fn rooted() -> (tempfile::TempDir, Vault, AuthenticatedOwner) {
         .expect("this install's live machine profile");
     let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
     oneiron::test_support::bind_host_owner(&vault, &issuer, owner).expect("the owner's binding");
+    vault.ensure_vault_key().expect("mint the vault data key");
     let proof = vault
         .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
         .expect("an owner proof");
