@@ -194,13 +194,27 @@ mod fixture {
     impl Vault {
         /// TEST-ONLY: stands a Steward grant on this vault's root for
         /// `holder` with `verbs`, its audience narrowed to the one project
-        /// `project`, as a holder override row leaves a member's grant.
+        /// `project`, as a holder override row leaves a member's grant,
+        /// beside the rows that stand. For a holder that is no base agent it
+        /// is the embedded owner's signed mint of that scope (pass 28 R3b3:
+        /// on a personal vault a row alone gives it nothing), so the vault
+        /// needs an act carrier.
         pub(crate) fn stand_project_steward_grant_for_test(
             &self,
             holder: EntityId,
             verbs: &[&str],
             project: EntityId,
         ) -> Result<EntityId> {
+            if super::super::SystemAgent::of(holder).is_none() {
+                let mut axes = self.steward_row_axes_for_test(holder)?;
+                axes.audience = ScopeAxis::Some(BTreeSet::from([ScopeId(project)]));
+                return self.mint_steward_grant_for_test(
+                    holder,
+                    verbs.iter().map(|verb| (*verb).to_owned()).collect(),
+                    Some(&axes),
+                    false,
+                );
+            }
             self.with_write_txn_grouped(|txn| {
                 let mut grant = FederationGrant::new(
                     self.steward_root_scope_in_txn(txn)?,
