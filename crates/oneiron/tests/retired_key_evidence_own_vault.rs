@@ -111,6 +111,26 @@ fn enrollment(
     )
 }
 
+/// `signer` enrols the agent-only key `enrolled` on `parent`: the one
+/// `EnrollDevice` shape the vault door's fold counts.
+fn agent_only_enrollment(
+    vault_id: AuthorityVaultId,
+    parent: &AuthorityLogEntry,
+    signer: &SigningKey,
+    seq: u64,
+    enrolled: &SigningKey,
+) -> AuthorityLogEntry {
+    signed(
+        Some(vault_id),
+        seq,
+        Some(parent),
+        AuthorityOp::EnrollDevice {
+            device: device(key_of(enrolled), ROLE_AGENT),
+        },
+        signer,
+    )
+}
+
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
@@ -403,11 +423,15 @@ fn a_revoked_keys_row_refused_beside_an_arriving_handoff_adds_no_evidence_until_
     let genesis = genesis(&owner, 201);
     let vault_id = genesis_vault_id(&genesis).expect("FIXTURE: the genesis names its vault");
     put(&vault, &genesis).expect("FIXTURE: the genesis lands");
-    // The peer is admitted as an agent with the admin role and no cloud
-    // role, so the import's never-applied filter vouches for its row and the
-    // fold authorizes its solo enrollment; the helper's cloud role would do
-    // neither. The peer still signs its row alone.
-    let admission = signed(
+    // The peer is admitted as an agent alone, so the fold holds it live, and
+    // a second admission of the same key with the admin role and no cloud
+    // role makes the import's never-applied filter vouch for its row; the
+    // helper's cloud role would do neither. A non-agent EnrollDevice never
+    // counts in the fold: the vault door refuses it as a retired device-key
+    // op. The peer still signs its row alone.
+    let admission = agent_only_enrollment(vault_id, &genesis, &owner, 1, &peer);
+    put(&vault, &admission).expect("FIXTURE: the owner enrols the peer");
+    let admitter = signed(
         Some(vault_id),
         1,
         Some(&genesis),
@@ -416,15 +440,15 @@ fn a_revoked_keys_row_refused_beside_an_arriving_handoff_adds_no_evidence_until_
         },
         &owner,
     );
-    put(&vault, &admission).expect("FIXTURE: the owner enrols the peer");
+    put(&vault, &admitter).expect("FIXTURE: the same key gains the filter's vouch");
     let fold = vault
         .authority_fold()
         .expect("FIXTURE: the fold reads after admission");
     assert!(
         fold.roster
             .get(&key_of(&peer))
-            .is_some_and(|device| !device.revoked && device.roles == (ROLE_AGENT | ROLE_ADMIN)),
-        "FIXTURE: the peer stands live and can authorize the enrollment alone"
+            .is_some_and(|device| !device.revoked && device.roles == ROLE_AGENT),
+        "FIXTURE: the peer stands live as an agent"
     );
     let withheld = enrollment(vault_id, &admission, &peer, 1, &agent);
     let revocation = signed(
@@ -467,7 +491,7 @@ fn a_revoked_keys_row_refused_beside_an_arriving_handoff_adds_no_evidence_until_
         .expect("FIXTURE: the history exports");
     assert_eq!(
         before.len(),
-        3,
+        4,
         "FIXTURE: only the stored fixture rows are held"
     );
     let withheld_body =
@@ -549,7 +573,7 @@ fn a_live_keys_row_refused_beside_the_handoff_that_fences_it_adds_no_evidence_un
     let genesis = genesis(&owner, 202);
     let vault_id = genesis_vault_id(&genesis).expect("FIXTURE: the genesis names its vault");
     put(&vault, &genesis).expect("FIXTURE: the genesis lands");
-    let admission = enrollment(vault_id, &genesis, &owner, 1, &peer);
+    let admission = agent_only_enrollment(vault_id, &genesis, &owner, 1, &peer);
     put(&vault, &admission).expect("FIXTURE: the owner enrols the peer");
     let fold = vault.authority_fold().expect("FIXTURE: the fold reads");
     assert!(
