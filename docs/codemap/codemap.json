@@ -20299,7 +20299,7 @@
      "path": "src/code_run/consent_wait/mod.rs",
      "purpose": "Bound code consent waits (DOOR-079 1a, toward CODE-RUNTIME-03)",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "re-export": 6
      }
     },
@@ -20380,9 +20380,19 @@
      "path": "src/code_run/consent_wait/types.rs",
      "purpose": "The shapes of one bound code consent wait: the host-only call site the dispatcher carries, the control row…",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "re-export": 2,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/consent_wait/wait_facts_door.rs",
+     "purpose": "Test door (`--cfg oneiron_test_support`; never API): writes the fact that closes a code consent wait to a…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -21110,7 +21120,7 @@
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
-      "crate-vis": 76,
+      "crate-vis": 77,
       "mod": 8,
       "re-export": 39
      }
@@ -26584,7 +26594,7 @@
      "path": "src/consent/doors/owner.rs",
      "purpose": "The owner-proof doors: authenticate, bind, recheck and the proof's read key",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "fn": 7
      }
     },
@@ -31340,7 +31350,7 @@
      "purpose": "The unknown-attendee ask (OF-365, ILDF2 P4): a speaker the vault cannot place raises \"who is this?\" to the…",
      "surface": {
       "const": 1,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 6,
       "struct": 2
@@ -31418,7 +31428,7 @@
      "path": "src/disclosure/mod.rs",
      "purpose": "Interlocutor-scoped disclosure clamp substrate (OF-365 ILD-2)",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "mod": 1,
       "re-export": 10
      }
@@ -53922,7 +53932,7 @@
      "path": "src/llm/manifest.rs",
      "purpose": "Manifest v2 role bindings, per-vault narrow-only route dials, and verdict floors",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 14,
       "mod": 1,
       "re-export": 4,
@@ -55034,7 +55044,7 @@
      "path": "src/llm/step/step_only.rs",
      "purpose": "Transaction-composable C9 waits that suspend one step, never its attempt",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -62998,7 +63008,7 @@
      "path": "src/office_body/holder_ask/live_edit.rs",
      "purpose": "Live DOCX/XLSX edit holder asks and ACCEPT grant minting (FIX 596)",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -66967,7 +66977,7 @@
      "surface": {
       "crate-vis": 1,
       "enum": 2,
-      "fn": 5
+      "fn": 7
      }
     },
     {
@@ -74337,7 +74347,7 @@
      "purpose": "A pre-hook's Ask (ARCH-0080 §3 Ask)",
      "surface": {
       "const": 2,
-      "crate-vis": 30,
+      "crate-vis": 31,
       "re-export": 1
      }
     },
@@ -74393,6 +74403,16 @@
       "crate-vis": 3,
       "enum": 1,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime_hooks/verb/ask/word_release.rs",
+     "purpose": "Whether one word on a verb hook's ask lets its stopped call run (row OWNER-CONFIRM-SHEET): `proceed` on an…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -74529,7 +74549,7 @@
      "path": "src/runtime_hooks/verb/mod.rs",
      "purpose": "Verb hooks (ARCH-0080 §3, §5), slice 2: hooks that run inside a call, before and after one logical verb",
      "surface": {
-      "crate-vis": 29,
+      "crate-vis": 30,
       "fn": 14,
       "re-export": 11,
       "struct": 2,
@@ -74570,7 +74590,7 @@
      "purpose": "Door for `oneiron-server`'s `tests/workflow_park_save_retry.rs` ([WORKFLOW-PARK-FAIL-RETRYABLE]): a verb…",
      "surface": {
       "enum": 1,
-      "fn": 4,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -74621,7 +74641,7 @@
      "path": "src/runtime_hooks/verb/resume.rs",
      "purpose": "Settlement resumes a stopped call once (ARCH-0080 §3 Ask)",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 2
      }
     },
@@ -82051,7 +82071,7 @@
      "purpose": "The Coach's training offer (OF-577): a cheaper stock model or a custom one for a seat, which the owner…",
      "surface": {
       "const": 1,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 10,
       "re-export": 1
      }
@@ -82145,7 +82165,7 @@
      "path": "src/skill_optimize/offer_switch.rs",
      "purpose": "An approved training offer's stock switch (OF-577; ARCH-0053 #training-offers: a switch binds now, with undo)",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 4,
       "re-export": 2,
@@ -93653,7 +93673,7 @@
      "path": "src/task_verb/ask_facade/wait.rs",
      "purpose": "Durable ask waits and waiter signals",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -93700,7 +93720,7 @@
      "path": "src/task_verb/ask_guard.rs",
      "purpose": "One rule for who may answer or close an ask whose word is its asked party's own act (UC-05)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     },
     {
@@ -93880,7 +93900,7 @@
      "path": "src/task_verb/ask_record/word_admission.rs",
      "purpose": "Single answer admission path for authenticated actors and bearer-bound friends",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -93890,7 +93910,7 @@
      "path": "src/task_verb/ask_settlement.rs",
      "purpose": "Atomic ask cutoffs and the fixed human-word reducers",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 17
      }
     },
     {
@@ -93994,6 +94014,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/task_verb/ask_word_presence.rs",
+     "purpose": "The owner presence check of an ask word (row OWNER-CONFIRM-SHEET, PR 4b-4)",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/task_verb/ask_world_hold.rs",
      "purpose": "The ask path's world-setting refusals, named (FIX 7463a)",
      "surface": {
@@ -94007,7 +94037,7 @@
      "path": "src/task_verb/attendee_answer.rs",
      "purpose": "The owner-proof rule for an attendee ask's answer (OF-365, ILDF2 P4)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -94092,7 +94122,7 @@
      "path": "src/task_verb/code_consent_word.rs",
      "purpose": "The person's word a code consent answer stands on (DOOR-079 1a)",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 11
      }
     },
     {
@@ -94102,7 +94132,7 @@
      "path": "src/task_verb/comm_widen.rs",
      "purpose": "FIX 1380 phase 2: a comm refusal raises the one widen ask to the parent",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "re-export": 1
      }
     },
@@ -94784,7 +94814,7 @@
      "path": "src/task_verb/lifecycle_facade.rs",
      "purpose": "TASK lifecycle door: progress, results, cancellation, and settlement",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 10,
       "fn": 7
      }
     },
@@ -95590,7 +95620,17 @@
      "path": "src/task_verb/training_offer_ask.rs",
      "purpose": "A pending training offer asked as a real `tasks.ask` (OF-577, FIX 856)",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/training_offer_ask/approval.rs",
+     "purpose": "Which words of a training offer ask approve its act, and whether that act still stands (row…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -95602,7 +95642,7 @@
      "path": "src/task_verb/training_swap_ask.rs",
      "purpose": "A Scored training run's result asked as a real `tasks.ask` (OF-577, FIX 857)",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 1,
       "re-export": 1,
       "struct": 1
@@ -96268,7 +96308,7 @@
      "path": "src/test_doors/ask_answer_proof.rs",
      "purpose": "Doors for `tests/ask_answer_proof.rs` (UC-05 PR 2): a code consent ask minted and raised as its caller, a…",
      "surface": {
-      "fn": 3
+      "fn": 6
      }
     },
     {
@@ -96279,6 +96319,16 @@
      "purpose": "Doors for `tests/ask_intent_keys.rs` (UC-06 PR 8): each ask module's intent key for given parts, and that…",
      "surface": {
       "fn": 14
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/ask_word_presence.rs",
+     "purpose": "A door for `tests/owner_presence_ask_word.rs` (row OWNER-CONFIRM-SHEET, PR 4b-4): an answer on an…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -98742,7 +98792,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 394,
+      "mod": 395,
       "re-export": 3
      }
     },
@@ -108263,7 +108313,7 @@
      "path": "src/world_keys/owner_presence_reasons.rs",
      "purpose": "The one line each owner door hands the device's prompt (row OWNER-CONFIRM-SHEET): what the person at the…",
      "surface": {
-      "crate-vis": 42
+      "crate-vis": 49
      }
     },
     {
@@ -116088,6 +116138,14 @@
      "surface": {}
     },
     {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/owner_presence_ask_word.rs",
+     "purpose": "Owner-device ask words check admission before prompting, ask for presence only for approvals, and check that…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -120892,7 +120950,7 @@
      "purpose": "Code revisions, tested forks and reviewed import promotion"
     },
     "code_run": {
-     "files": 276,
+     "files": 277,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -121879,7 +121937,7 @@
      "purpose": "Run tree projection and control adapter over generic AttemptQueue rows"
     },
     "runtime_hooks": {
-     "files": 81,
+     "files": 82,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -122145,7 +122203,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 191,
+     "files": 193,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -122173,7 +122231,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 406,
+     "files": 407,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -122364,8 +122422,8 @@
    },
    "over_bar": 272,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8532,
-   "test_files": 2247
+   "source_files": 8537,
+   "test_files": 2248
   },
   "oneiron-agent-runtime": {
    "files": [
