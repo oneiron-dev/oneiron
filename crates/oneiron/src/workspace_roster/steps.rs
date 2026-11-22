@@ -231,6 +231,13 @@ pub(super) fn link_member_actor(
 /// from constants here, so the widening fence lives in exactly one place
 /// ([`MemberOnboardingIntent::validate_grant_bundle`]) and this writer cannot
 /// disagree with it.
+///
+/// The grant is a giving (pass 28 R2) by the principal whose stored
+/// `AddMember` power this writer judged (`shared_write_principal_in_txn`:
+/// a folder-import MACHINE's importer, else `writer`), by an act this install's
+/// key signs in the same transaction. An install with no live install key
+/// refuses the step (GRANT-ACT-FAILURE-POLICY = A); an exact replay gave it
+/// already and writes nothing.
 pub(super) fn grant_member_bundle(
     vault: &Vault,
     intent: &MemberOnboardingIntent,
@@ -263,15 +270,32 @@ pub(super) fn grant_member_bundle(
             intent.workspace.workspace_vault_id,
             expected.member_ref,
         )?;
-        let data = encode_federation_grant_body(&expected)?;
         if let Some(existing) = read_federation_grant_in_txn(vault, wtxn, &id)? {
             if existing != expected {
                 return Err(invalid(
                     "federation_grant_ref is already bound to a different grant",
                 ));
             }
-            return Ok(());
+            // A replay writes nothing only when the row stands on its counted giving: equal
+            // bytes alone prove no giving (a row synced ahead of its act, or put back after
+            // its end). Otherwise the step gives below, and an ended id refuses there
+            // (REVIEW r2b-sol P2-2).
+            let now = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
+            if vault
+                .standing_grant_in_txn(wtxn, id, crate::authority::GrantFamily::SharedMember, now)?
+                .is_some()
+            {
+                return Ok(());
+            }
         }
+        let giver = vault.shared_write_principal_in_txn(wtxn, writer)?;
+        let data = vault.give_grant_in_txn(
+            wtxn,
+            giver.entity_ref(),
+            id,
+            crate::authority::GrantFamily::SharedMember,
+            &expected,
+        )?;
         apply_ops(
             &vault.store,
             &vault.config,

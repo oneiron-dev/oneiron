@@ -40,9 +40,10 @@ fn proof(vault: &Vault, person: EntityId) -> AuthenticatedOwner {
         .expect("a person proof")
 }
 
-/// A shared vault whose one Owner is its embedded owner.
+/// A shared vault whose one Owner is its embedded owner. Sharing gives the
+/// Owner's Grant, whose act this install carries.
 fn shared(vault: &Vault) -> (AuthenticatedOwner, EntityId) {
-    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let (_, owner) = oneiron::test_support::provision_act_carrier(vault);
     vault
         .initialize_shared_vault(
             &proof(vault, owner),

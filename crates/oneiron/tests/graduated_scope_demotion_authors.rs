@@ -26,8 +26,6 @@
 //! --all-features --test graduated_scope_demotion_authors`.
 #![cfg(oneiron_test_support)]
 
-use std::sync::Arc;
-
 use oneiron::consent::{ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, GrantBound};
 use oneiron::consent_graduation::{
     DemotionReason, RAMP_DEMOTE_GRANT_TARGET, RampScope, RampState, is_ramp_demotion_receipt,
@@ -39,6 +37,7 @@ use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::consent_graduation_demotion as doors;
+use oneiron::test_support::provision_act_carrier;
 use oneiron::{DeleteReason, EdgeActorClass, EntityId, Vault, VaultConfig};
 
 const SHARED: u64 = 42;
@@ -72,7 +71,7 @@ struct Roster {
 }
 
 fn shared_roster(vault: &Vault) -> Roster {
-    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    let (_, owner) = provision_act_carrier(vault);
     doors::admit_policy_verb(vault, &proof(vault, owner), &[Role::Admin])
         .expect("the owner lets an Admin carry the policy verb");
     let admin = EntityId::now();
@@ -399,8 +398,7 @@ fn a_hard_erase_takes_the_demoter_out_of_the_demotion_receipt() {
         "FIXTURE: the receipt names the Admin"
     );
 
-    // Every delete signs as this install first.
-    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    // Every delete signs as this install first: `shared_roster` installed its keystore.
     vault
         .delete_entity_with_reason(&roster.admin, DeleteReason::UserHardDelete)
         .expect("FIXTURE: the Admin is hard-erased");

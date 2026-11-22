@@ -212,7 +212,20 @@ impl Fixture {
         config.dimensions = 4;
         config.embedding_model = None;
         let vault = Vault::open_owned(dir.path(), config)?;
+        // The host roots the vault before it shares: sharing and accepting
+        // give Grants, and this install carries their acts (its keystore,
+        // the engine's MACHINE writers, its live machine profile and the
+        // owner bound under the root).
+        vault.install_device_keystore(std::sync::Arc::new(
+            oneiron_keystore::MemoryKeystore::default(),
+        ));
+        let issuer = HostSlipIssuer::from_secret(b"oneiron-test-weave-admin-home-clearance")?;
+        let root = vault.ensure_host_root_slip(&issuer)?;
+        vault.provision_engine_machine_identities(&issuer)?;
+        vault
+            .ensure_serving_install_profile(&issuer, oneiron::authority::MachineRole::Unanswered)?;
         let owner = vault.ensure_embedded_owner_actor()?;
+        oneiron::test_support::bind_host_owner(&vault, &issuer, owner)?;
         let owner_proof = person_proof(&vault, owner)?;
         let admin = EntityId::now();
         person(&vault, admin, b"the weave admin")?;
@@ -249,11 +262,8 @@ impl Fixture {
         let unstamped = seed_claim(&vault, subject, "an unstamped note", None)?;
         let private_stamped = seed_claim(&vault, subject, "a private note", Some("private"))?;
 
-        // The host roots the vault and mints the Admin a credential of its
-        // own, a live PERSON's slip with no delegation, which the Admin
-        // proves with its key.
-        let issuer = HostSlipIssuer::from_secret(b"oneiron-test-weave-admin-home-clearance")?;
-        let root = vault.ensure_host_root_slip(&issuer)?;
+        // The host mints the Admin a credential of its own, a live PERSON's
+        // slip with no delegation, which the Admin proves with its key.
         let admin_key = SigningKey::from_bytes(&[0x68; 32]);
         let mut claims = root.claims;
         claims.slip_id = [0x68; 32];

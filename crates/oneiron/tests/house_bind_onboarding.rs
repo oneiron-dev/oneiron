@@ -15,6 +15,7 @@ use oneiron::federation::{FederationGrantPreset, FederationGrantRole};
 use oneiron::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON};
 use oneiron::store::GateDecisionId;
 use oneiron::subject_model::actor_subject_anchor;
+use oneiron::test_support::provision_act_carrier;
 use oneiron::{
     CompanionBirthIntent, CompanionChoice, EntityId, MemberGrantBundle, MemberOnboardingIntent,
     Result, TimeRange, Vault, VaultConfig, WorkspaceRosterPreset, WorkspaceRosterRole, WriteActor,
@@ -74,7 +75,7 @@ fn definition(agent_id: &str) -> AgentDefinition {
 fn a_workspace_whose_house_is_a_seeded_agent_onboards_its_first_member() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let vault = Vault::open(dir.path(), VaultConfig::default())?;
-    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let (_, owner) = provision_act_carrier(&vault);
     let owner_proof =
         vault.authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())?;
     let org = seed_row(&vault, ENTITY_TYPE_ORG)?;

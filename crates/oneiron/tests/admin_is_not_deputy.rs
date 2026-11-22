@@ -10,6 +10,7 @@ use oneiron::federation::{FederationGrantRole as Role, InitialSharedMember};
 use oneiron::registry::{ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_PERSON};
 use oneiron::store::GateDecisionId;
 use oneiron::temporal::TimeRange;
+use oneiron::test_support::provision_act_carrier;
 use oneiron::{EntityId, Vault, VaultConfig};
 
 const SHARED: u64 = 42;
@@ -100,6 +101,7 @@ fn shared_with(vault: &Vault, second: EntityId, role: Role) -> EntityId {
 fn an_admin_cannot_make_itself_a_deputy() {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), VaultConfig::default()).expect("vault");
+    provision_act_carrier(&vault);
     let admin = EntityId::now();
     shared_with(&vault, admin, Role::Admin);
 
@@ -116,6 +118,7 @@ fn an_admin_cannot_make_itself_a_deputy() {
 fn an_admin_cannot_give_the_deputy_role_to_a_member() {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), VaultConfig::default()).expect("vault");
+    provision_act_carrier(&vault);
     let admin = EntityId::now();
     shared_with(&vault, admin, Role::Admin);
     let member = EntityId::now();
@@ -153,6 +156,7 @@ fn an_admin_cannot_give_the_deputy_role_to_a_member() {
 fn the_owner_gives_the_deputy_role() {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), VaultConfig::default()).expect("vault");
+    provision_act_carrier(&vault);
     let admin = EntityId::now();
     let owner = shared_with(&vault, admin, Role::Admin);
     let owner_proof = proof(&vault, owner);
@@ -181,6 +185,7 @@ fn the_owner_gives_the_deputy_role() {
 fn a_deputy_invitation_is_refused_once_its_inviter_is_no_owner() {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), VaultConfig::default()).expect("vault");
+    provision_act_carrier(&vault);
     let co_owner = EntityId::now();
     let owner = shared_with(&vault, co_owner, Role::Owner);
     let member = EntityId::now();

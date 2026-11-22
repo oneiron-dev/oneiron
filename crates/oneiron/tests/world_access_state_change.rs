@@ -122,6 +122,15 @@ impl Fixture {
         vault
             .ensure_host_root_slip(&issuer)
             .expect("the host root binds the owner");
+        // Sharing gives Grants, whose acts this install carries: the
+        // engine's MACHINE writers and this install's live machine profile
+        // under the fixture's own root.
+        vault
+            .provision_engine_machine_identities(&issuer)
+            .expect("the engine's MACHINE writers");
+        vault
+            .ensure_serving_install_profile(&issuer, oneiron::authority::MachineRole::Unanswered)
+            .expect("this install's live machine profile, to carry the grant acts");
         let agent = vault
             .ensure_agent_principal("world-state-agent")
             .expect("agent");
@@ -576,6 +585,9 @@ impl AdminFixture {
         // A delete signs its receipt with this install's key.
         vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
         let issuer = oneiron::test_support::provision_engine_machines(&vault);
+        vault
+            .ensure_serving_install_profile(&issuer, oneiron::authority::MachineRole::Unanswered)
+            .expect("this install's live machine profile, to carry the grant acts");
         let owner = vault.ensure_embedded_owner_actor().expect("owner");
         bind_host_owner(&vault, &issuer, owner).expect("the owner's binding");
         let admin = EntityId::now();

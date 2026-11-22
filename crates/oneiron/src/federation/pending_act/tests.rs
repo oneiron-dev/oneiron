@@ -40,8 +40,9 @@ fn fixture_on(
     config.store_clock = store_clock;
     let vault = Vault::open(dir.path(), config).unwrap();
     let mut holders = Vec::new();
-    // The first is the personal vault's owner, who shares it.
-    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    // The first is the personal vault's owner, who shares it. Sharing gives
+    // Grants, whose acts this install carries.
+    let (_, owner) = crate::test_support::provision_act_carrier(&vault);
     for id in [owner, EntityId::now(), EntityId::now()] {
         if id != owner {
             vault
@@ -352,6 +353,18 @@ fn read_only_owner_cannot_start_or_edit_policy() -> Result<()> {
             continue;
         }
         grant.authority_scope = super::super::scope_codec::read_preset();
+        // A row stands only on a counted giving whose terms it matches: the
+        // narrowed Owner row is given anew, so it models a standing Owner
+        // with a read-only scope, not an Owner whose giving no longer counts.
+        let data = vault.with_write_txn(|txn| {
+            vault.give_grant_in_txn(
+                txn,
+                owner.actor(),
+                id,
+                crate::authority::GrantFamily::SharedMember,
+                &grant,
+            )
+        })?;
         vault
             .batch()
             .put_replicated(
@@ -360,7 +373,7 @@ fn read_only_owner_cannot_start_or_edit_policy() -> Result<()> {
                 TimeRange { start: 10, end: 10 },
                 10,
                 None,
-                &super::super::encode_federation_grant_body(&grant)?,
+                &data,
             )
             .commit()?;
     }

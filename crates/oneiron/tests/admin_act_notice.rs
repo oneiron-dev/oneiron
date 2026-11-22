@@ -99,6 +99,9 @@ impl Org {
         let vault = Vault::open(dir.path(), VaultConfig::device()).expect("vault");
         vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
         let issuer = oneiron::test_support::provision_engine_machines(&vault);
+        vault
+            .ensure_serving_install_profile(&issuer, oneiron::authority::MachineRole::Unanswered)
+            .expect("this install's live machine profile, to carry the grant acts");
         let owner = vault.ensure_embedded_owner_actor().expect("owner");
         bind_host_owner(&vault, &issuer, owner).expect("the owner's binding");
         let [deputy, admin, steward, member_a, member_b] = std::array::from_fn(|_| EntityId::now());

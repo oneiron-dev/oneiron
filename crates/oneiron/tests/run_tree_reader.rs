@@ -31,6 +31,7 @@ use oneiron::task_verb::run_doors::{
 use oneiron::task_verb::{TaskAssignee, TaskCreateSpec, TaskRouteOutcome};
 use oneiron::test_doors::membership::stand_member_grant;
 use oneiron::test_doors::spend::reserve_child_scope;
+use oneiron::test_support::{bind_host_actor, bind_host_owner, provision_act_carrier};
 use oneiron::{AttemptId, AttemptQueue, EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -107,6 +108,7 @@ fn an_agent_reads_its_own_branch_and_a_steward_reads_it_without_text() -> TestRe
     const SIGNAL_INSTRUCTION: &str = "Keep the current branch until the owner answers.";
 
     let (_dir, vault) = open_vault()?;
+    let (issuer, _) = provision_act_carrier(&vault);
     let (agent, _) = vault
         .get_seeded_agent_definition_by_logical_id(DEFAULT_BASE_LOGICAL_ID)?
         .ok_or("the default agent is seeded")?;
@@ -173,6 +175,8 @@ fn an_agent_reads_its_own_branch_and_a_steward_reads_it_without_text() -> TestRe
             Err("the run's attempt is ready to claim".into())
         };
     let parent = claim_attempt(parent.attempt.id)?;
+    bind_host_actor(&vault, &issuer, agent, "agent")
+        .expect("the host key bound to the agent for its act");
     let receipt = vault
         .memory(agent, EdgeActorClass::Agent)
         .with_task_host(HostBinding::from_leased(&parent, None)?)
@@ -187,6 +191,7 @@ fn an_agent_reads_its_own_branch_and_a_steward_reads_it_without_text() -> TestRe
                 agent_def_ref: agent,
             }),
         )?;
+    bind_host_owner(&vault, &issuer, owner).expect("the owner's binding again");
     let task_ref = receipt.task_ref.ok_or("the TASK is minted")?;
     let Some(TaskRouteOutcome::AgentDispatch { attempt_ref, .. }) = receipt.route else {
         return Err("an agent-definition assignee routes to an agent dispatch".into());

@@ -83,6 +83,9 @@ impl Vault {
         halt_after: MemberOnboardingStep,
     ) -> Result<Option<MemberOnboardingOutcome>> {
         intent.validate()?;
+        // The member grant is the admin's giving, signed by this install's
+        // key in its step's writer (pass 28 R2): the key loads first.
+        self.load_membership_carrier();
         if intent.delegated_mailbox.is_some() {
             require_mailbox_owner(self, &intent, proofs)?;
         }

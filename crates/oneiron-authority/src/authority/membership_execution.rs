@@ -70,6 +70,12 @@ pub enum MembershipExecutionCause {
     TransferOwnership,
     /// A matured `remove_owner` act a live Owner executed.
     RemoveOwner,
+    /// An Owner handover the host signed itself: a proof-of-control recovery
+    /// (ARCH-0043), or an Owner act executed with a host issuer. The host's
+    /// own `OwnerHandover` records the handover, so this record withdraws the
+    /// Grants the change dropped alone, those no host-signed withdrawal names
+    /// (pass 28 R2: every dropped Grant's line ends by a counted act).
+    HostHandover,
 }
 
 impl MembershipExecutionCause {
@@ -92,7 +98,7 @@ impl MembershipExecutionCause {
         match self {
             Self::TransferOwnership => Some(OwnerHandoverCause::Transfer),
             Self::RemoveOwner => Some(OwnerHandoverCause::Removal),
-            Self::AssignRole | Self::RemoveMember | Self::Leave => None,
+            Self::AssignRole | Self::RemoveMember | Self::Leave | Self::HostHandover => None,
         }
     }
 }
@@ -124,7 +130,8 @@ pub struct MembershipExecution {
     pub shared_vault: u64,
     pub cause: MembershipExecutionCause,
     /// The authenticated PERSON who executed the change: the Admin, the
-    /// leaving member, or the live Owner who ran the act.
+    /// leaving member, or the live Owner who ran the act; a recovery's
+    /// claimant.
     pub person: EntityId,
     /// The member whose role moved; an Owner act's leaver.
     pub member: EntityId,
@@ -134,8 +141,9 @@ pub struct MembershipExecution {
     pub receipt: String,
     /// The second the change was executed at, on the writer's store clock.
     pub executed_at: u64,
-    /// Every Grant an owner's signed mint made that the change deleted and
-    /// no signed withdrawal names. Ascending, unique, uncapped.
+    /// Every Grant the change deleted that no host-signed withdrawal names:
+    /// an owner's signed mint, and since pass 28 R2 a member's or a
+    /// delegate's Grant too. Ascending, unique, uncapped.
     pub withdrawn_grants: Vec<EntityId>,
     /// An Owner act's handover; `None` for a member change.
     pub handover: Option<MembershipHandover>,

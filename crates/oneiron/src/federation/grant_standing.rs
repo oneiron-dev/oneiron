@@ -63,7 +63,6 @@ impl Vault {
     /// # Errors
     ///
     /// A store or authority-fold read failure; never a row that does not stand.
-    #[allow(dead_code, reason = "pass 28 R3's conferring readers call it")]
     pub(crate) fn standing_grant_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,

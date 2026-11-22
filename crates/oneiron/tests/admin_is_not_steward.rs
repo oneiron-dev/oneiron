@@ -10,6 +10,7 @@ use oneiron::federation::{FederationGrantRole as Role, InitialSharedMember};
 use oneiron::registry::{ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_PERSON};
 use oneiron::store::GateDecisionId;
 use oneiron::temporal::TimeRange;
+use oneiron::test_support::provision_act_carrier;
 use oneiron::{EntityId, Vault, VaultConfig};
 
 const SHARED: u64 = 42;
@@ -86,6 +87,7 @@ fn shared_with_admin(vault: &Vault, admin: EntityId) -> EntityId {
 fn an_admin_cannot_make_itself_a_steward() {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), VaultConfig::default()).expect("vault");
+    provision_act_carrier(&vault);
     let admin = EntityId::now();
     shared_with_admin(&vault, admin);
 
@@ -102,6 +104,7 @@ fn an_admin_cannot_make_itself_a_steward() {
 fn an_admin_cannot_give_the_steward_role_but_the_owner_can() {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), VaultConfig::default()).expect("vault");
+    provision_act_carrier(&vault);
     let admin = EntityId::now();
     let owner = shared_with_admin(&vault, admin);
     let member = EntityId::now();
@@ -172,6 +175,7 @@ fn shared_with_two_owners(vault: &Vault, co_owner: EntityId) -> EntityId {
 fn a_steward_invitation_is_refused_once_its_inviter_is_no_owner() {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), VaultConfig::default()).expect("vault");
+    provision_act_carrier(&vault);
     let co_owner = EntityId::now();
     let owner = shared_with_two_owners(&vault, co_owner);
     let member = EntityId::now();

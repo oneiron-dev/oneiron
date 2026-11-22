@@ -5,6 +5,7 @@
 //! data" contract would already be broken.
 
 use super::*;
+use crate::federation::encode_federation_grant_body;
 
 mod authorization;
 mod current_architecture;

@@ -27,6 +27,7 @@ use oneiron::test_doors::consolidation::open_dreamer_vault;
 use oneiron::test_doors::steward::{
     GrantMark, STEWARD_READ_VERB, dreamer, grant_mark, owner, shared_roster, stand_steward_grant,
 };
+use oneiron::test_support::provision_act_carrier;
 
 const READER: &str = "reader";
 const SHARED: u64 = 42;
@@ -35,6 +36,7 @@ const SHARED: u64 = 42;
 fn no_membership_door_moves_the_dreamers_grant() {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = open_dreamer_vault(dir.path(), READER).expect("fixture vault");
+    provision_act_carrier(&vault);
     let dreamer = dreamer(&vault).expect("the Dreamer");
     let owner = owner(&vault).expect("owner proof");
     vault

@@ -95,6 +95,15 @@ impl Fixture {
         vault
             .ensure_host_root_slip(&issuer)
             .expect("the host root binds the owner");
+        // Sharing gives Grants, whose acts this install carries: the
+        // engine's MACHINE writers and this install's live machine profile
+        // under the fixture's own root.
+        vault
+            .provision_engine_machine_identities(&issuer)
+            .expect("the engine's MACHINE writers");
+        vault
+            .ensure_serving_install_profile(&issuer, oneiron::authority::MachineRole::Unanswered)
+            .expect("this install's live machine profile, to carry the grant acts");
         let agent = vault
             .ensure_agent_principal("world-doors-agent")
             .expect("agent");
