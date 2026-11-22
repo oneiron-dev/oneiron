@@ -72,7 +72,7 @@ impl RecordingJsHost<'_, '_> {
                 return Some(self.held_pending_answer(call, PENDING_STEP_HELD));
             }
             PreflightTake::Row(recorded) => *recorded,
-            PreflightTake::Held(PreflightHeld::Integrity(_)) => {
+            PreflightTake::Held(PreflightHeld::Integrity) => {
                 return Some(self.held_pending_answer(call, PENDING_STEP_HELD));
             }
             PreflightTake::Held(PreflightHeld::Preflight) => {

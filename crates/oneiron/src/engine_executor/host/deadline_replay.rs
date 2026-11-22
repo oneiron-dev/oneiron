@@ -102,8 +102,8 @@ enum PreflightTake {
 
 /// Why the walk refuses one call (L8-23).
 enum PreflightHeld {
-    /// An integrity fault, answered as `pending_step_held`.
-    Integrity(&'static str),
+    /// An integrity fault, answered as `pending_step_held`; the replay keeps its reason.
+    Integrity,
     /// The dry tail, answered as `resume_preflight_held`.
     Preflight,
 }
@@ -317,8 +317,8 @@ impl DeadlineReplay {
         results: &[CodeRunRawOutput],
         base_known: BaseKnownRead<'_>,
     ) -> PreflightTake {
-        if let Some(held) = self.held {
-            return PreflightTake::Held(PreflightHeld::Integrity(held));
+        if self.held.is_some() {
+            return PreflightTake::Held(PreflightHeld::Integrity);
         }
         if self.left {
             return PreflightTake::LeftTail;
@@ -336,14 +336,14 @@ impl DeadlineReplay {
                 if self.dry {
                     PreflightTake::Held(PreflightHeld::Preflight)
                 } else {
-                    PreflightTake::Held(PreflightHeld::Integrity(self.hold(ROWS_MISSING)))
+                    self.hold(ROWS_MISSING)
                 }
             }
             (Some(guest), Some(seq)) if seq == guest && guest == at => {
                 self.take_aligned(at, call, results, base_known)
             }
             (Some(guest), Some(seq)) if seq == guest => self.end_walk(results),
-            _ => PreflightTake::Held(PreflightHeld::Integrity(self.hold(ROWS_MISSING))),
+            _ => self.hold(ROWS_MISSING),
         }
     }
 
@@ -357,17 +357,17 @@ impl DeadlineReplay {
         base_known: BaseKnownRead<'_>,
     ) -> PreflightTake {
         let Some(row) = self.rows.front() else {
-            return PreflightTake::Held(PreflightHeld::Integrity(self.hold(ROWS_MISSING)));
+            return self.hold(ROWS_MISSING);
         };
         if row.hook_view_served {
-            return PreflightTake::Held(PreflightHeld::Integrity(self.hold(HOOK_VIEW)));
+            return self.hold(HOOK_VIEW);
         }
         let same_effect = row.effect == call.effect();
         let replayed = row.strict_replay_answer(at, call.clone(), Some(base_known));
         match replayed {
             Ok(outcome) => {
                 let Some((row, nested)) = self.pop_front_call() else {
-                    return PreflightTake::Held(PreflightHeld::Integrity(self.hold(ROWS_MISSING)));
+                    return self.hold(ROWS_MISSING);
                 };
                 self.replay_free.push(at);
                 PreflightTake::Row(Box::new(RecordedCall {
@@ -392,7 +392,7 @@ impl DeadlineReplay {
         results: &[CodeRunRawOutput],
     ) -> PreflightTake {
         let Some(row) = self.rows.front() else {
-            return PreflightTake::Held(PreflightHeld::Integrity(self.hold(ROWS_MISSING)));
+            return self.hold(ROWS_MISSING);
         };
         let recorded_is_effect = effect_step(row.effect, row.recorded_verb());
         let recorded_writes = agent_verb_write(row.effect, row.recorded_verb());
@@ -409,7 +409,7 @@ impl DeadlineReplay {
             recorded_is_effect || reentered_is_effect || nested_len > 0 || owns_output;
         if !entry_is_effect && !self.dry {
             if self.pop_front_call().is_none() {
-                return PreflightTake::Held(PreflightHeld::Integrity(self.hold(ROWS_MISSING)));
+                return self.hold(ROWS_MISSING);
             }
             self.changed.push(ChangedStep {
                 seq: at,
@@ -443,9 +443,7 @@ impl DeadlineReplay {
                             && !agent_verb_write(call.effect(), call_verb(call)) =>
                     {
                         let Some((row, _)) = self.pop_front_call() else {
-                            return PreflightTake::Held(PreflightHeld::Integrity(
-                                self.hold(ROWS_MISSING),
-                            ));
+                            return self.hold(ROWS_MISSING);
                         };
                         self.changed.push(ChangedStep {
                             seq: at,
@@ -459,14 +457,10 @@ impl DeadlineReplay {
                     }
                     ResumeDivergenceChoice::Leave => {
                         let Some((row, nested)) = self.pop_front_call() else {
-                            return PreflightTake::Held(PreflightHeld::Integrity(
-                                self.hold(ROWS_MISSING),
-                            ));
+                            return self.hold(ROWS_MISSING);
                         };
                         let Ok(outcome) = row.recorded_outcome() else {
-                            return PreflightTake::Held(PreflightHeld::Integrity(
-                                self.hold(ROWS_MISSING),
-                            ));
+                            return self.hold(ROWS_MISSING);
                         };
                         self.changed.push(ChangedStep {
                             seq: at,
@@ -486,10 +480,10 @@ impl DeadlineReplay {
             }
         }
         let Some(outcome) = outcome else {
-            return PreflightTake::Held(PreflightHeld::Integrity(self.hold(ROWS_MISSING)));
+            return self.hold(ROWS_MISSING);
         };
         let Some((row, nested)) = self.pop_front_call() else {
-            return PreflightTake::Held(PreflightHeld::Integrity(self.hold(ROWS_MISSING)));
+            return self.hold(ROWS_MISSING);
         };
         self.dry = true;
         self.changed.push(ChangedStep {
@@ -519,7 +513,7 @@ impl DeadlineReplay {
         while self.guest_calls.front().is_some() {
             let Some(popped) = self.pop_front_call() else {
                 self.restore_tail(tail);
-                return PreflightTake::Held(PreflightHeld::Integrity(self.hold(ROWS_MISSING)));
+                return self.hold(ROWS_MISSING);
             };
             tail.push(popped);
         }
@@ -708,9 +702,10 @@ impl DeadlineReplay {
         self.dry
     }
 
-    fn hold(&mut self, why: &'static str) -> &'static str {
+    /// Holds the replay on an integrity fault and returns the take the call reads.
+    fn hold(&mut self, why: &'static str) -> PreflightTake {
         self.held = Some(why);
-        why
+        PreflightTake::Held(PreflightHeld::Integrity)
     }
 
     /// Whether the program has recorded calls it did not reach yet.
