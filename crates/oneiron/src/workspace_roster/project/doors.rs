@@ -92,18 +92,6 @@ impl Vault {
             // review of #8289, finding 2). A resolution that arrives as
             // history is its fold's to judge, and so is a slip that does not
             // decode.
-            if let Ok(slip) = crate::authority::CapabilitySlip::from_token(&resolution.slip_wire)
-                && crate::authority::slip_holder_is_deleted_in_txn(
-                    &self.store,
-                    txn,
-                    &slip.claims.holder_ref,
-                )?
-            {
-                return Err(RecordError::InvalidProjectBody(
-                    "project resolution slip's holder is deleted",
-                )
-                .into());
-            }
             {
                 let reader = ProjectReader::new(&self.store, txn, self.privacy_posture())?
                     .ok_or_else(invalid)?;

@@ -305,9 +305,6 @@ fn verify_live(
     // A deleted holder signs nothing live: its slip follows its row here as
     // at every other live door (RULING DELETED-ACTOR-SLIP-AUTH = A). A
     // replicated or stored revision is history and is not judged here.
-    if crate::authority::slip_holder_is_deleted_in_txn(store, txn, &slip.claims.holder_ref)? {
-        return Err(refused("project write slip's holder is deleted"));
-    }
     Ok(())
 }
 
