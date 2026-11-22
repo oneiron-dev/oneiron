@@ -21,7 +21,7 @@ impl Memory<'_> {
                 .task_work_memory()
                 .tasks_create_briefless_with_effect(spec, effect);
         }
-        if spec.brief.is_some() || spec.intent_key.is_some() {
+        if spec.brief.is_some() || spec.intent_key.is_some() || spec.one_liner.is_some() {
             return Err(MemoryError::bad_request(
                 "composed task creation is brief-less",
             ));

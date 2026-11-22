@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use super::check_inputs::{
     QUEUE_CHECK_CANDIDATE_PREFIX, QueueCheckExecution, QueueCheckHold, QueueCheckHoldReason,
     QueueCheckHost, QueueCheckInputs, QueueCheckInvocation, QueueCheckNeed, QueueCheckReceipt,
-    QueueCheckRun, QueueCheckTarget,
+    QueueCheckReuseSource, QueueCheckRun, QueueCheckTarget,
 };
 use super::check_store::{
     QueueCheckConfiguration, QueueCheckRequest, QueueCheckStatus, QueueCheckWork, WorkUpdate,
@@ -284,7 +284,10 @@ impl MergeQueue<'_> {
             && receipt.inputs.reusable()
             && let Some(prior) = self.reusable_receipt(&receipt.inputs_digest)?
         {
-            receipt.reused_from = Some(prior.inputs_digest);
+            receipt.reused_from = Some(QueueCheckReuseSource {
+                attempt: prior.attempt,
+                generation: prior.generation,
+            });
             receipt.tests_passed = prior.tests_passed;
             receipt.verdict_ref = prior.verdict_ref;
         }

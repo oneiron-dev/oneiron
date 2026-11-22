@@ -8,10 +8,9 @@ use rmpv::Value;
 
 use super::branch::ConsolidationBranchPlan;
 use super::support::{
-    CURSOR_SCHEMA_VERSION, DREAMER_PARTITION_HASH_DOMAIN, DREAMER_PARTITION_ROUND_HASH_DOMAIN,
-    DREAMER_SUBSTITUTION_MINE_ATTEMPT_TYPE, KEY_LAST_LEARNED_AT, KEY_LAST_LEDGER_REVISION_HINT,
-    KEY_SCHEMA_VERSION, decode_value, encode_value, expect_key, expect_map, hash_optional_entity,
-    invalid_consolidation, scope_byte,
+    CURSOR_SCHEMA_VERSION, DREAMER_SUBSTITUTION_MINE_ATTEMPT_TYPE, KEY_LAST_LEARNED_AT,
+    KEY_LAST_LEDGER_REVISION_HINT, KEY_SCHEMA_VERSION, decode_value, encode_value, expect_key,
+    expect_map, invalid_consolidation, scope_byte,
 };
 use super::watermark::{
     ConsolidationWatermark, WorkingSetTurn, read_turn_facts, read_turn_facts_in_txn,
@@ -19,8 +18,8 @@ use super::watermark::{
 use crate::Vault;
 use crate::attempt_queue::{EnqueueAttempt, EnqueueOutcome};
 use crate::dreamer_prefilter::{
-    PrefilterScreen, prefilter_partition_input, prefilter_partition_input_in_txn,
-    write_prefilter_receipts_in_txn,
+    PrefilterScreen, observe_grant_clock_for_message_screen_in_txn, prefilter_partition_input,
+    prefilter_partition_input_in_txn, write_prefilter_receipts_in_txn,
 };
 use crate::dreamer_runner::{
     DreamerAttemptPayload, DreamerConsolidationScope, DreamerRunnerStore,
@@ -30,6 +29,7 @@ use crate::dreamer_runner::{
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Result;
 use crate::side_table::{self, Raw, SideTable};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 mod payload;
 pub(crate) use payload::PartitionAudience;
@@ -69,13 +69,26 @@ impl ConsolidationPartitionKey {
     /// from D6's cursor derivation, DESIGN-PIN A2).
     #[must_use]
     pub fn partition_hash(&self) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(DREAMER_PARTITION_HASH_DOMAIN);
-        hasher.update(b"partition");
-        hasher.update(self.conversation_ref.as_bytes());
-        hash_optional_entity(&mut hasher, self.world_ref.as_ref());
-        hash_optional_entity(&mut hasher, self.facet_ref.as_ref());
-        *hasher.finalize().as_bytes()
+        let mut hasher = LegacyDigest::new(purposes::dreamer_consolidation::PARTITION);
+        hasher.raw(b"partition");
+        hasher.raw(self.conversation_ref.as_bytes());
+        raw_optional_entity(&mut hasher, self.world_ref.as_ref());
+        raw_optional_entity(&mut hasher, self.facet_ref.as_ref());
+        hasher.finish()
+    }
+}
+
+/// An optional entity as `support::hash_optional_entity` writes it: `[0]`
+/// for none, `[1]` then the raw 16-byte id.
+fn raw_optional_entity(hasher: &mut LegacyDigest, entity: Option<&EntityId>) {
+    match entity {
+        Some(entity) => {
+            hasher.raw(&[1]);
+            hasher.raw(entity.as_bytes());
+        }
+        None => {
+            hasher.raw(&[0]);
+        }
     }
 }
 
@@ -260,15 +273,18 @@ fn without_excluded_conversations(
 ///
 /// The OF-361 screen composes the same way: same policy row, same pure
 /// arithmetic, only the read transaction differs, so the two twins keep or
-/// skip the same turns.
+/// skip the same turns. A screen that reads MESSAGE rows judges the Dreamer's
+/// grants at a clock floor this writer persists first, as the committed
+/// plan's snapshot opens behind one.
 pub(crate) fn plan_partitions_in_txn(
     vault: &Vault,
     scope: DreamerConsolidationScope,
-    txn: &heed::RwTxn<'_>,
+    txn: &mut heed::RwTxn<'_>,
     dirty_turns: &[WorkingSetTurn],
     watermark: &ConsolidationWatermark,
 ) -> Result<Vec<ConsolidationPartitionPlan>> {
     let _ = scope;
+    observe_grant_clock_for_message_screen_in_txn(vault, txn)?;
     let eligible = without_excluded_conversations(vault, txn, dirty_turns)?;
     let screened = prefilter_partition_input_in_txn(vault, txn, &eligible)?;
     partition_screened_turns_in_txn(vault, txn, &screened.kept, watermark)
@@ -357,15 +373,14 @@ pub(super) fn keyed_partition_round_hash(
     turns: &[WorkingSetTurn],
     carried: &BTreeMap<EntityId, EntityId>,
 ) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(DREAMER_PARTITION_ROUND_HASH_DOMAIN);
-    hasher.update(&(turns.len() as u64).to_be_bytes());
+    let mut hasher = LegacyDigest::new(purposes::dreamer_consolidation::PARTITION_ROUND);
+    hasher.len_u64_be(turns.len());
     for turn in turns {
         let id = carried.get(&turn.turn_id).unwrap_or(&turn.turn_id);
-        hasher.update(&turn.learned_at.to_be_bytes());
-        hasher.update(id.as_bytes());
+        hasher.raw(&turn.learned_at.to_be_bytes());
+        hasher.raw(id.as_bytes());
     }
-    *hasher.finalize().as_bytes()
+    hasher.finish()
 }
 
 /// One partition plan as its production enqueue input: the executor-
@@ -548,6 +563,11 @@ pub(crate) fn enqueue_partition_plans_in_txn(
     run_id: Option<&str>,
     now: u64,
 ) -> Result<Vec<(ConsolidationPartitionKey, EnqueueDreamerAttemptOutcome)>> {
+    if !planned_turn_ids.is_empty() {
+        // The screen may read MESSAGE rows under the Dreamer's grants in
+        // this writer: they are judged at a clock floor persisted here.
+        observe_grant_clock_for_message_screen_in_txn(vault, wtxn)?;
+    }
     let Some(prepared) =
         prepare_partition_plans_in_txn(vault, wtxn, scope, planned_turn_ids, watermark)?
     else {
@@ -757,4 +777,14 @@ pub(crate) fn register_substitution_mine_in_txn(
         DREAMER_SUBSTITUTION_MINE_ATTEMPT_TYPE,
     )?;
     Ok(())
+}
+
+/// [`keyed_partition_round_hash`] for the K door
+/// (`test_doors::fingerprint_keep_dreamer_consolidation_digests`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn keyed_partition_round_hash_for_test(
+    turns: &[WorkingSetTurn],
+    carried: &BTreeMap<EntityId, EntityId>,
+) -> [u8; 32] {
+    keyed_partition_round_hash(turns, carried)
 }

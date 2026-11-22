@@ -155,18 +155,26 @@ pub(in crate::sync) fn forget_written_rows(
     if !carriers.iter().any(|(_, carrier)| is_message(carrier)) {
         return Ok(());
     }
-    vault.with_write_txn_grouped(|wtxn| {
-        for (id, carrier) in carriers.iter().filter(|(_, carrier)| is_message(carrier)) {
-            let removed = digest(carrier);
-            if WRITTEN
-                .get(&vault.store, wtxn, &HexId(*id))?
-                .is_some_and(|record| record.get(..32) == Some(&removed[..]))
-            {
-                WRITTEN.delete(&vault.store, wtxn, &HexId(*id))?;
-            }
+    vault.with_write_txn_grouped(|wtxn| forget_written_rows_in_txn(vault, wtxn, carriers))
+}
+
+/// [`forget_written_rows`] in `wtxn`, the transaction that removes the
+/// carriers.
+pub(in crate::sync) fn forget_written_rows_in_txn(
+    vault: &Vault,
+    wtxn: &mut RwTxn<'_>,
+    carriers: &[(EntityId, Vec<u8>)],
+) -> Result<()> {
+    for (id, carrier) in carriers.iter().filter(|(_, carrier)| is_message(carrier)) {
+        let removed = digest(carrier);
+        if WRITTEN
+            .get(&vault.store, wtxn, &HexId(*id))?
+            .is_some_and(|record| record.get(..32) == Some(&removed[..]))
+        {
+            WRITTEN.delete(&vault.store, wtxn, &HexId(*id))?;
         }
-        Ok(())
-    })
+    }
+    Ok(())
 }
 
 /// Puts the writer proof of the MESSAGE row `row` at `id` beside it in

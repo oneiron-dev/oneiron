@@ -1,5 +1,6 @@
 //! The host-facing enqueue doors; the engine owns no timer.
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use rmpv::Value;
 
 use crate::Vault;
@@ -19,7 +20,7 @@ use crate::error::Result;
 
 use super::policy::AgentWakeSignals;
 use super::projector::ProjectionPlan;
-use super::read_phase::{OnStale, ReadWrite, WakeStop, read_then_write};
+use super::read_phase::{OnStale, ReadWrite, WakeStop, read_then_write_at_grant_clock};
 
 use super::types::WakeTrigger;
 
@@ -252,6 +253,7 @@ pub enum WakeTurnSubject {
 /// queued attempt land in the same transaction; a failed enqueue cannot lose
 /// a changed image. Other triggers (consent, connector, session end) bypass
 /// the cadence gate and retain their existing event semantics.
+/// Stored projection dedupe keys keep their bytes (K, PLAN-UC-04 stage 7).
 #[allow(
     clippy::too_many_arguments,
     reason = "the arguments mirror the existing enqueue door plus turn and projection"
@@ -280,15 +282,7 @@ pub fn request_turn_wake(
     // Caller dedupe keys may name a turn, not an image. Bind the image into
     // the effective key so a second, changed projection on the SAME turn
     // cannot return Existing and advance the cursor without new work.
-    let mut key_hash = blake3::Hasher::new();
-    key_hash.update(b"dreamer:turn-projection:v1");
-    key_hash.update(&turn_ordinal.to_be_bytes());
-    key_hash.update(&projection_digest);
-    if let Some(key) = dedupe_key {
-        key_hash.update(&(key.len() as u64).to_be_bytes());
-        key_hash.update(key.as_bytes());
-    }
-    let image_key = format!("turn-projection:{}", key_hash.finalize().to_hex());
+    let image_key = turn_projection_key(turn_ordinal, &projection_digest, dedupe_key.as_deref());
     let outcome = store.enqueue_consolidation_in_txn(
         &mut txn,
         EnqueueDreamerConsolidationAttempt {
@@ -572,7 +566,12 @@ impl Vault {
             ReadWrite::Stopped => return Ok(ReadWrite::Stopped),
             ReadWrite::Deferred => return Ok(ReadWrite::Deferred),
         };
-        let outcome = read_then_write(
+        // The read judges the Dreamer's grants on MESSAGE rows (the
+        // projector's, and the prefilter screen's at a threshold above
+        // zero), and what it skips is consumed: each read runs at a grant
+        // clock of its own, not at the sieve pass's, which is as old as
+        // that pass and its retries.
+        let outcome = read_then_write_at_grant_clock(
             self,
             "turn wake",
             on_stale,
@@ -624,3 +623,25 @@ impl Vault {
         crate::dreamer_runner::drain_turn_program_wakes(self, now)
     }
 }
+
+/// The prefixed projection key stored with queued work.
+pub(crate) fn turn_projection_key(
+    turn_ordinal: u64,
+    projection_digest: &[u8; 32],
+    dedupe_key: Option<&str>,
+) -> String {
+    let mut key_hash = LegacyDigest::new(purposes::dreamer_wake::TURN_PROJECTION);
+    key_hash.raw(&turn_ordinal.to_be_bytes());
+    key_hash.raw(projection_digest);
+    if let Some(key) = dedupe_key {
+        key_hash.len_u64_be(key.len());
+        key_hash.raw(key.as_bytes());
+    }
+    format!(
+        "turn-projection:{}",
+        oneiron_hex::encode(&key_hash.finish())
+    )
+}
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::turn_projection_key as turn_projection_key_for_test;

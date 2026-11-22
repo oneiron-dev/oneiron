@@ -1,6 +1,6 @@
 {
   "name": "vault.retrieval.policy.get",
-  "description": "The owner reads the served retrieval policy: active blend weights with their origins, owner pins, the learned posterior and model routing pins.",
+  "description": "The owner reads the served retrieval policy: active blend weights with their origins, owner pins, the learned posterior, model routing pins and each model's read-shape arms.",
   "input": "EmptyRequest",
   "output": "crate::task_verb::sdk::RetrievalPolicyView",
   "call": "crate::task_verb::sdk::retrieval_policy_get_as_owner(memory, &memory.embedded_owner(\"vault.retrieval.policy.get\")?, _input)?",

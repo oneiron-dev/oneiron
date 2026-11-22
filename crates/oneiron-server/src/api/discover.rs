@@ -365,7 +365,7 @@ pub(crate) struct RateLimitStatus {
                 "code": "UNAUTHORIZED",
                 "message": "request is not authorized",
                 "details": { "code": "UNAUTHORIZED" },
-                "suggestions": ["Send Authorization: Bearer credentials and retry."]
+                "suggestions": ["Send Authorization: Bearer credentials and a fresh x-oneiron-binding holder proof, then retry."]
             })
         ),
         (

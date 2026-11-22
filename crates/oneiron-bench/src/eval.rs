@@ -8,6 +8,8 @@
 //!
 //! * `eval route-calibration` measures route-conditioned calibration on
 //!   known-answer cases in a fresh vault (`route_calibration`).
+//! * `eval phonetic` measures the phonetic rungs on cross-script name cases
+//!   in a fresh vault (`phonetic`).
 //!
 //! Every subcommand is an explicit CLI invocation: no timer, no cadence and no
 //! automatic trigger drives them. A row without explicit contributing run ids,
@@ -68,6 +70,8 @@ pub(crate) enum EvalError {
     Oneiron(#[from] oneiron::Error),
     #[error("route calibration bench: {0}")]
     RouteCalibration(String),
+    #[error("phonetic bench: {0}")]
+    Phonetic(String),
 }
 
 type EvalResult<T> = Result<T, EvalError>;
@@ -410,6 +414,7 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
         [sub, rest @ ..] if sub == "route-calibration" => {
             report(route_calibration::run_route_calibration(rest))
         }
+        [sub, rest @ ..] if sub == "phonetic" => report(phonetic::run_phonetic_eval(rest)),
         [sub, ..] => {
             write_diagnostic(&format!("unknown eval subcommand: {sub}"));
             print_help();
@@ -702,12 +707,26 @@ fn print_help() {
              of id, source, body and gold (bool); ids and sources are unique.\n\
              Abstentions, failures and missing pairs are counted apart and\n\
              never filled in. Cases, definition, vault and --out stay outside\n\
-             the source tree."
+             the source tree.\n\
+         \n\
+           phonetic --cases <PATH> --out <PATH> [--model-id <ID> --dimensions <N>\n\
+                    (--endpoint <URL> | --vectors <PATH>)] [--trained-entities <PATH>]\n\
+             Writes each case's entity under its names into a fresh vault,\n\
+             embeds them with the learned phonetic model (an endpoint taking\n\
+             {{\"names\": [..]}} and answering {{\"vectors\": [..]}}, or JSONL rows of\n\
+             name and vector), and asks each query through the code rung, the\n\
+             learned rung and both. --out (a new file) receives R@1, R@5, MRR\n\
+             and the false-positive rate per script pair, short query, hard\n\
+             negative and over all cases. Cases are JSONL lines of id, entity\n\
+             (key, kind, names), query, script_pair and hard_negative_of. A case\n\
+             whose entity key --trained-entities lists is refused: entities are\n\
+             held out whole."
     )
     .expect("eval help writes to stdout");
 }
 
 mod outcome_ingest;
+mod phonetic;
 mod route_calibration;
 use outcome_ingest::ingest_outcomes;
 

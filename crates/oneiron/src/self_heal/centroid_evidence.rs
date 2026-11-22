@@ -1,6 +1,8 @@
 //! Immutable, content-addressed centroid inputs beside vault-local telemetry.
 //! Current vectors can change; replay never consults them. A source's erase
 //! reaches every snapshot that copied it ([`erase`], FIX 10094).
+use oneiron_contracts::fingerprint::ContentHash;
+
 use super::{
     DiagnosticSourceKind,
     distillation::{MintedExample, centroid_labels},
@@ -193,7 +195,7 @@ impl Vault {
         };
         let bytes = rmp_serde::to_vec_named(&snapshot)
             .map_err(|_| Error::InvariantViolation("centroid evidence encode"))?;
-        let hash = *blake3::hash(&bytes).as_bytes();
+        let hash = *ContentHash::of(&bytes).as_bytes();
         // A source erased since its vector was read is not copied: the
         // snapshot is not stored and no finding cites it (FIX 10094).
         let stored = self.with_write_txn_grouped(|txn| {
@@ -358,7 +360,7 @@ impl Vault {
         // or restored from an image: unavailable.
         let key = EVIDENCE.key_bytes(&event.replay.content_hash);
         let raw = ResponseRead::of(ResponseFamily::CentroidEvidence, &key, &raw).present()?;
-        if *blake3::hash(raw).as_bytes() != event.replay.content_hash {
+        if *ContentHash::of(raw).as_bytes() != event.replay.content_hash {
             return Err(Error::CorruptedIndex("centroid evidence hash"));
         }
         let evidence: CentroidEvidence = rmp_serde::from_slice(raw)

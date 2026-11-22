@@ -45,6 +45,88 @@ pub(crate) fn claim_conversation_sources_in(
     let Some(body) = body.flatten() else {
         return Ok(conversations);
     };
+    for source in &claim_sources_in(store, txn, claim, &body)? {
+        if let Some(conversation) = source_conversation_in(store, txn, source)? {
+            conversations.insert(conversation);
+        }
+    }
+    Ok(conversations)
+}
+
+/// One TURN a claim's words came from: the TURN, the conversation it is a
+/// `ChildOf`, and the `learned_at` of the TURN's row (Unix seconds).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct EvidenceTurn {
+    pub(crate) turn: EntityId,
+    pub(crate) conversation: EntityId,
+    pub(crate) learned_at: u64,
+}
+
+/// The TURNs the words of `claim` (whose decoded body is `body`) came from,
+/// read in `txn` from the sources [`claim_conversation_sources_in`] reads. A
+/// cited MESSAGE stands for its TURN (`PartOf`). A source of another kind, a
+/// MESSAGE with no TURN and a TURN with no conversation add nothing. Each
+/// read is a point read, as above.
+pub(crate) fn claim_evidence_turns_in(
+    store: &StoreRead<'_>,
+    txn: &RoTxn<'_>,
+    claim: &EntityId,
+    body: &crate::ClaimBody,
+) -> Result<Vec<EvidenceTurn>> {
+    let mut turns = BTreeSet::new();
+    for source in claim_sources_in(store, txn, claim, body)? {
+        match entity_type_in(store, txn, &source)? {
+            Some(ENTITY_TYPE_TURN) => {
+                turns.insert(source);
+            }
+            Some(ENTITY_TYPE_MESSAGE) => {
+                if let Some(turn) =
+                    first_target_of_type(store, txn, &source, EdgeKind::PartOf, ENTITY_TYPE_TURN)?
+                {
+                    turns.insert(turn);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut evidence = Vec::with_capacity(turns.len());
+    for turn in turns {
+        let Some(conversation) = first_target_of_type(
+            store,
+            txn,
+            &turn,
+            EdgeKind::ChildOf,
+            ENTITY_TYPE_CONVERSATION,
+        )?
+        else {
+            continue;
+        };
+        let Some(learned_at) = store
+            .port_entity_with_raw(txn, &turn, |raw| {
+                Ok(crate::batch::EntityMetadataHeader::parse(raw).map(|header| header.learned_at))
+            })?
+            .flatten()
+        else {
+            continue;
+        };
+        evidence.push(EvidenceTurn {
+            turn,
+            conversation,
+            learned_at,
+        });
+    }
+    Ok(evidence)
+}
+
+/// One level of `claim`'s sources: the typed TURN and MESSAGE citations of
+/// its `body`, its consolidation envelope's refs and its registered
+/// dependency sources.
+fn claim_sources_in(
+    store: &StoreRead<'_>,
+    txn: &RoTxn<'_>,
+    claim: &EntityId,
+    body: &crate::ClaimBody,
+) -> Result<BTreeSet<EntityId>> {
     let mut sources: BTreeSet<EntityId> = body
         .evidence_refs()
         .unwrap_or_default()
@@ -52,14 +134,9 @@ pub(crate) fn claim_conversation_sources_in(
         .filter(|evidence| matches!(evidence.kind, EvidenceKind::Turn | EvidenceKind::Message))
         .filter_map(|evidence| EntityId::from_hex(&evidence.entity).ok())
         .collect();
-    sources.extend(consolidation_refs(&body));
+    sources.extend(consolidation_refs(body));
     sources.extend(crate::ports::dependency_sources_in(store, txn, claim)?);
-    for source in &sources {
-        if let Some(conversation) = source_conversation_in(store, txn, source)? {
-            conversations.insert(conversation);
-        }
-    }
-    Ok(conversations)
+    Ok(sources)
 }
 
 /// The refs `claim`'s consolidation envelope names, kept under

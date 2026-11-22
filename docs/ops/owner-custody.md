@@ -25,10 +25,11 @@ vault's pages before it opens, and a plain vault's key after:
 | Flag | What it reads |
 |---|---|
 | `--unlock device\|password\|passkey\|escrow\|kit` | how the key unlocks |
-| `--unlock-credential NAME` | the passkey's credential name |
+| `--unlock-credential NAME` | the passkey's credential name (with `--unlock kit`, the kit passkey's) |
 | `--unlock-label NAME` | the escrow wrap's label |
 | `--unlock-capsule REPORT` | a registry's escrow capsule report for this vault |
 | `--unlock-piece FILE`, `--unlock-vault-id HEX` | a kit's pieces and the vault id it is bound to |
+| `--unlock-kit-passkey-prf-file FILE` | with `--unlock kit`: the synced passkey's PRF output; the data-key kit piece the vault keeps sealed under it counts as one of the two |
 | `--unlock-secret-file FILE` | the unlock's secret, instead of stdin |
 | `--unlock-box-dir DIR`, `--unlock-box-command PROGRAM` | the recovery box that releases an escrow seed |
 

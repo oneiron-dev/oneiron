@@ -179,7 +179,7 @@ pub fn supersede_displaced_judge_receipts(
     {
         return Err(Error::InvalidClaimBody("invalid judge replacement"));
     }
-    let mut affected: Vec<(EntityId, Option<String>)> = Vec::new();
+    let mut affected: Vec<(EntityId, String)> = Vec::new();
     #[cfg(test)]
     PRE_WRITER_HOOK.with(|slot| {
         if let Some(hook) = slot.borrow_mut().take() {
@@ -256,9 +256,14 @@ pub fn supersede_displaced_judge_receipts(
                     displaced,
                     replacement,
                 )?;
-                let pair = (subject, executor);
-                if !affected.contains(&pair) {
-                    affected.push(pair);
+                // Only a stamped receipt trains an executor cell (an unstamped
+                // one "cannot train a named model", skill_reliability's
+                // receipt_executor), so an unstamped one has none to re-project.
+                if let Some(executor) = executor {
+                    let pair = (subject, executor);
+                    if !affected.contains(&pair) {
+                        affected.push(pair);
+                    }
                 }
             }
         }
@@ -271,16 +276,9 @@ pub fn supersede_displaced_judge_receipts(
     })?;
     crate::edit_distance::attribution::project_amendment_reliability(vault)?;
     for (skill, executor) in affected {
-        match executor {
-            Some(model) => {
-                crate::skill_reliability::project_skill_reliability_for_executor(
-                    vault, &skill, &model, at,
-                )?;
-            }
-            None => {
-                crate::skill_reliability::project_skill_reliability_for(vault, &skill, at)?;
-            }
-        }
+        crate::skill_reliability::project_skill_reliability_for_executor(
+            vault, &skill, &executor, at,
+        )?;
     }
     Ok(displaced_judge_receipts(vault)?
         .into_iter()

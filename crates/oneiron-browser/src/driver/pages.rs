@@ -731,8 +731,7 @@ fn page_of(rows: &[Row], from: usize) -> (Vec<Row>, Option<usize>) {
 /// The bytes held rows take: each row's own slot and its strings' room.
 pub(crate) fn rows_bytes(rows: &[Row]) -> usize {
     let texts = |texts: &[String]| -> usize {
-        texts.iter().map(String::capacity).sum::<usize>()
-            + texts.len() * std::mem::size_of::<String>()
+        texts.iter().map(String::capacity).sum::<usize>() + std::mem::size_of_val(texts)
     };
     let optional = |text: &Option<String>| text.as_ref().map_or(0, String::capacity);
     rows.iter()

@@ -115,6 +115,7 @@ fn names_in(input: &EncoderInput, known: &[&str]) -> EncoderOutput {
         vad: Some(MOOD),
         context_links: Vec::new(),
         speaker_links: Vec::new(),
+        relations: None,
         stack_sha16: None,
         mood_parts: Vec::new(),
     }
@@ -137,7 +138,9 @@ fn open_in(path: &std::path::Path, mode: TaggingMode) -> Arc<Vault> {
             .with_labels(BTreeMap::from([("PERSON".to_owned(), ENTITY_TYPE_PERSON)]))
             .with_mode(mode),
     );
-    Arc::new(Vault::open(path, config).expect("open vault"))
+    let vault = Vault::open(path, config).expect("open vault");
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    Arc::new(vault)
 }
 
 fn person(vault: &Vault, byte: u8, name: &str) -> EntityId {
@@ -182,6 +185,7 @@ fn turn(turn_ref: &str, messages: &[(u32, &str)]) -> WitnessTurn {
             })
             .collect(),
         thread_audience: None,
+        project: None,
         assertions: Default::default(),
     }
 }
@@ -453,6 +457,7 @@ fn an_import_that_holds_its_tags_makes_no_tagger_call() {
         vad: None,
         context_links: Vec::new(),
         speaker_links: Vec::new(),
+        relations: None,
         stack_sha16: None,
         mood_parts: Vec::new(),
     };
@@ -512,6 +517,7 @@ fn held_tags_from_messages_sent_last_first_are_saved() {
         vad: None,
         context_links: Vec::new(),
         speaker_links: Vec::new(),
+        relations: None,
         stack_sha16: None,
         mood_parts: Vec::new(),
     };
@@ -587,6 +593,7 @@ fn held_tags_are_saved_on_the_messages_they_were_read_from() {
         vad: None,
         context_links: Vec::new(),
         speaker_links: Vec::new(),
+        relations: None,
         stack_sha16: None,
         mood_parts: Vec::new(),
     };
@@ -645,6 +652,7 @@ fn held_tags_for_an_append_leave_the_turn_to_the_tagger() {
         vad: None,
         context_links: Vec::new(),
         speaker_links: Vec::new(),
+        relations: None,
         stack_sha16: None,
         mood_parts: Vec::new(),
     };
@@ -700,6 +708,7 @@ fn merge_evidence_goes_when_its_spans_stop_naming_different_entities() {
                     vad: None,
                     context_links: Vec::new(),
                     speaker_links: Vec::new(),
+                    relations: None,
                     stack_sha16: None,
                     mood_parts: Vec::new(),
                 },
@@ -1060,6 +1069,7 @@ fn an_entity_with_more_part_of_edges_than_a_query_returns_is_deleted() {
     let mut config = VaultConfig::device();
     config.store_clock = ManualClock::new(NOW).bundle();
     let vault = Vault::open(dir.path(), config).expect("open vault");
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let hub = person(&vault, 0x24, "Hub");
     let mut value = [0u8; 12];
     value[0..4].copy_from_slice(&1.0_f32.to_le_bytes());

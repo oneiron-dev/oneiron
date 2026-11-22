@@ -4,6 +4,7 @@ use std::ops::Bound;
 
 use heed::{RoTxn, RwTxn};
 
+use crate::edit_distance::attribution::forget_gate_amendment_in_txn;
 use crate::error::{Error, Result};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideKey, SideTable};
 use crate::store::{ManifestDbs, RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT, Store};
@@ -301,6 +302,7 @@ impl Store {
         self.delete_gate_decision_claim_refs_in_txn(wtxn, record.decision_id)?;
         self.forget_gate_scrubs_of_decision_in_txn(wtxn, record.decision_id)?;
         LEDGER.delete(self, wtxn, &record.decision_id)?;
+        forget_gate_amendment_in_txn(self, wtxn, record.decision_id)?;
         crate::claim::erase_weave_decision_labels_in_txn(self, wtxn, record.decision_id)?;
         Ok(())
     }
@@ -357,6 +359,7 @@ impl Store {
             self.discard_unapplied_preflight_marker_in_txn(wtxn, *decision_id)?;
             self.forget_gate_scrubs_of_decision_in_txn(wtxn, *decision_id)?;
             LEDGER.delete(self, wtxn, decision_id)?;
+            forget_gate_amendment_in_txn(self, wtxn, *decision_id)?;
             crate::claim::erase_weave_decision_labels_in_txn(self, wtxn, *decision_id)?;
             // A policy row (FIX 7806) names no claim, so no claim's ask
             // waits on it.

@@ -17,6 +17,8 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use crate::entity_id::EntityId;
 use crate::federation::record_scope::GuestPlacement;
 use crate::sync::types::WindowKey;
@@ -88,6 +90,6 @@ pub(super) fn carried_for(
             .ok()
             .filter(|id| id.to_hex() == key)?;
         let (sent, placement) = span.rows.get(&id)?;
-        (*sent == *blake3::hash(blob).as_bytes()).then_some((id, *placement))
+        (*sent == *ContentHash::of(blob).as_bytes()).then_some((id, *placement))
     })
 }

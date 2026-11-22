@@ -27,12 +27,6 @@ crate::side_table::side_tables! {
     MERGE_QUEUE_RECEIPT_INDEX: VaultMeta b"merge_queue:receipt_index:v1:" Named Engine
         // Restore class: Derived beside each work row's receipts, restored with it (FIX 7349).
         [restore: content] [family: unclassified] [tier: canonical];
-    /// The vault's one opt-in review policy for merge queue work; no row lands on green (FIX
-    /// 8268). Key: (). FIX 8519: this entry's scrub takes an erased setter's id out of it.
-    MERGE_QUEUE_REVIEW_POLICY: VaultMeta b"merge_queue:review_policy:v1" Named Authored [accepts: crate::merge_queue::merge_queue_review_policy_accepts_masked]
-        // Restore class: A restore never revives a cleared review policy: the live one stands.
-        [restore: live] [family: unclassified] [tier: canonical]
-        => crate::merge_queue::erase_review_policy_actor_in_txn;
     /// Repo-scoped merge-queue pointers, workspace graph, and in-flight intent state. Key: hex(repo
     /// identity).
     MERGE_QUEUE_STATE: VaultMeta b"merge_queue:state:v1:" Named

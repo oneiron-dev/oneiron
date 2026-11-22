@@ -11,16 +11,16 @@ use oneiron_store::batch::phonetic_codes::{
 
 /// The reading of `name` in `lang`; the test fails when there is none.
 fn reading(name: &str, lang: &str) -> Vec<Segment> {
-    phonetic_readings(name)
+    let Some(reading) = phonetic_readings(name)
         .into_iter()
         .find(|reading| reading.lang == lang)
-        .map(|reading| reading.segments)
-        .unwrap_or_else(|| {
-            panic!(
-                "{name:?} has no {lang} reading: {:?}",
-                phonetic_readings(name)
-            )
-        })
+    else {
+        panic!(
+            "{name:?} has no {lang} reading: {:?}",
+            phonetic_readings(name)
+        );
+    };
+    reading.segments
 }
 
 /// The segments of an IPA string; the test fails when it does not parse.

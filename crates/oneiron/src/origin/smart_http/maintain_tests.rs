@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use super::exchange_tests::pack_between;
 use super::serve::repo_common_dir;
-use super::tests::{CapturingSink, commit_file, git, served_repo, temp_vault};
+use super::tests::{CapturingSink, commit_file, git, owner_principal, served_repo, temp_vault};
 use super::{
     DoorSeam, ExchangeBounds, SERVE_COMMAND_SECTION_TIMEOUT, ScanBounds, ServeRequest,
     ServedRepositoryMaintenance, maintain_served_repositories, serve_bounded,
@@ -96,7 +96,12 @@ fn maintenance_leaves_a_repository_a_push_holds_or_no_permit_is_free_for() {
 }
 
 /// A push of `tip` onto `main`, which stands at `head`.
-fn push_onto_main(source: &Path, head: &GitOid, tip: &GitOid) -> (ServeRequest, Vec<u8>) {
+fn push_onto_main(
+    source: &Path,
+    head: &GitOid,
+    tip: &GitOid,
+    owner: EntityId,
+) -> (ServeRequest, Vec<u8>) {
     let command = format!(
         "{} {} refs/heads/main\0report-status\n",
         head.as_str(),
@@ -112,7 +117,7 @@ fn push_onto_main(source: &Path, head: &GitOid, tip: &GitOid) -> (ServeRequest, 
         content_length: Some(bytes.len() as u64),
         content_encoding: None,
         git_protocol: None,
-        remote_user: Some(EntityId::now().to_hex()),
+        remote_user: Some(owner.to_hex()),
         remote_addr: Some("127.0.0.1".into()),
     };
     (request, bytes)
@@ -167,7 +172,12 @@ fn a_push_during_maintenance_lands_and_the_maintenance_gives_way() {
     past_its_threshold(&source, &repo);
     let head = GitOid::parse_hex(git(&repo, &["rev-parse", "refs/heads/main"])).expect("head");
     let tip = commit_file(&source, "FOURTH.md", "fourth\n");
-    let push = Mutex::new(Some(push_onto_main(&source, &head, &tip)));
+    let push = Mutex::new(Some(push_onto_main(
+        &source,
+        &head,
+        &tip,
+        owner_principal(&vault),
+    )));
     let pushing = Mutex::new(None);
     let common_dir = repo_common_dir(&repo).expect("common dir");
 
@@ -234,9 +244,13 @@ fn a_push_behind_another_writer_waits_until_its_deadline_then_is_told_busy() {
 
     let wait = Duration::from_millis(300);
     let started = Instant::now();
-    let pushed = serve_push_within(&vault, push_onto_main(&source, &head, &tip), wait)
-        .join()
-        .expect("push thread");
+    let pushed = serve_push_within(
+        &vault,
+        push_onto_main(&source, &head, &tip, owner_principal(&vault)),
+        wait,
+    )
+    .join()
+    .expect("push thread");
     let waited = started.elapsed();
     writer.join().expect("the other writer");
 

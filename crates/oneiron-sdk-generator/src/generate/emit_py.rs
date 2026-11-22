@@ -25,16 +25,23 @@ fn py_doc(row: &Dict) -> String {
     }
 }
 
-/// The Python method a row ends in; a keyword (`continue`) takes the trailing underscore PEP 8 gives it
-/// (`keyword.iskeyword`, nelly's 3.14.7 list).
+/// A name from the verb table as the Python identifier this emitter writes (a method, a namespace's property, a
+/// parameter): a hard keyword (`continue`, `import`) takes the trailing underscore PEP 8 gives it
+/// (`keyword.iskeyword`, nelly's 3.14.7 list). A soft keyword (`type`, `match`) stays as it is: outside its own
+/// statement it is a plain name, so `def type(self)` and `type=` parse.
+fn py_identifier(name: &str) -> String {
+    if is_keyword(name) {
+        format!("{name}_")
+    } else {
+        name.to_owned()
+    }
+}
+
+/// The Python method a row ends in: its last segment as `py_identifier` writes it.
 fn leaf(name: &Value) -> Result<String, GenerateError> {
     let name = str_receiver(name, "rsplit")?;
     let part = name.rsplit_once('.').map_or(name, |(_, last)| last);
-    Ok(if is_keyword(part) {
-        format!("{part}_")
-    } else {
-        part.to_owned()
-    })
+    Ok(py_identifier(part))
 }
 
 /// `method_name or leaf(row['name'])`.
@@ -117,7 +124,7 @@ fn python_facade(
             None
         };
         // `name + ': ' + typ + (...)`: the name, then the type, must be strings.
-        let left = concat_left(name)?;
+        let left = py_identifier(concat_left(name)?);
         let typ = typ.ok_or_else(|| {
             GenerateError::type_error(r#"can only concatenate str (not "NoneType") to str"#)
         })?;
@@ -137,7 +144,7 @@ fn python_facade(
             };
             format!("json.dumps({left}{allow})")
         } else {
-            left.to_owned()
+            left.clone()
         };
         if json && default.as_deref() == Some("None") {
             value += &format!(" if {left} is not None else None");
@@ -151,7 +158,7 @@ fn python_facade(
         let mut fields = Vec::new();
         for a in &arg_list {
             let name = a.getitem("name")?;
-            fields.push(format!("{}: {}", json(name), concat(name)?));
+            fields.push(format!("{}: {}", json(name), py_identifier(concat(name)?)));
         }
         values = vec![format!("json.dumps({{{}}})", fields.join(", "))];
     }
@@ -215,10 +222,10 @@ fn py_handle_shape(generator: &mut Generator, row: &Dict) -> Result<HandleShape,
         } else {
             None
         };
-        let left = concat_left(&name)?;
+        let left = py_identifier(concat_left(&name)?);
         params.push(match &default {
             Some(default) => format!("{left}={default}"),
-            None => left.to_owned(),
+            None => left.clone(),
         });
         let typ = py_type(generator, type_text(kind)?)?;
         typed.push(match &default {
@@ -229,7 +236,7 @@ fn py_handle_shape(generator: &mut Generator, row: &Dict) -> Result<HandleShape,
             return Ok(HandleShape {
                 params: params.join(", "),
                 typed: typed.join(", "),
-                value: left.to_owned(),
+                value: left,
             });
         }
         fields.push(format!("{}: {left}", json(&field)));
@@ -336,8 +343,10 @@ struct ClassWalk<'o> {
 }
 
 impl ClassWalk<'_> {
-    /// The property that makes a namespace's class.
+    /// The property that makes a namespace's class, named as `py_identifier` writes the segment (`continue_` for
+    /// `vault.runners.continue`, a namespace because `vault.runners.continue.check` is a row).
     fn accessor(&self, name: &str, path: &[String]) -> String {
+        let name = py_identifier(name);
         let cls = python_namespace_class(path);
         let owner = self.owner;
         let body = if self.stub {
@@ -477,6 +486,55 @@ mod tests {
         assert_eq!(
             leaf(&Value::Int(1)).map_err(|error| error.to_string()),
             Err("AttributeError: 'int' object has no attribute 'rsplit'".to_owned())
+        );
+    }
+
+    // python3 -c "import keyword; print(keyword.kwlist, keyword.softkwlist)" (3.14.7): every hard keyword takes the
+    // underscore; the soft ones (['_', 'case', 'match', 'type']) are names wherever this emitter writes one.
+    #[test]
+    fn identifiers_escape_every_hard_keyword_and_keep_every_soft_one() {
+        for keyword in crate::py::builtins::KEYWORDS {
+            assert_eq!(py_identifier(keyword), format!("{keyword}_"), "{keyword:?}");
+        }
+        for soft in ["_", "case", "match", "type"] {
+            assert_eq!(py_identifier(soft), soft, "{soft:?}");
+        }
+        assert_eq!(py_identifier("recall"), "recall");
+        assert_eq!(py_identifier("continue_"), "continue_");
+    }
+
+    // FIX-LIST [PY-SDK-GENERATED-KEYWORD-METHOD]: the 21 Nov nightly's `_facade_verbs.py` had
+    // `def continue(self)`, the property of the namespace `vault.runners.continue` (its child is
+    // `vault.runners.continue.check`), and did not import.
+    #[test]
+    fn a_namespace_named_by_a_keyword_opens_through_the_underscored_property() {
+        let path = |parts: &[&str]| {
+            parts
+                .iter()
+                .map(|part| (*part).to_owned())
+                .collect::<Vec<_>>()
+        };
+        let runtime = ClassWalk {
+            stub: false,
+            owner: "_FacadeVerbs",
+            classes: String::new(),
+        };
+        assert_eq!(
+            runtime.accessor("continue", &path(&["vault", "runners", "continue"])),
+            "    @property\n    def continue_(self) -> \"_FacadeVerbs._VaultRunnersContinueVerbs\":\n        return _FacadeVerbs._VaultRunnersContinueVerbs(self._client)\n"
+        );
+        let stub = ClassWalk {
+            stub: true,
+            owner: "_FacadeVerbs",
+            classes: String::new(),
+        };
+        assert_eq!(
+            stub.accessor("import", &path(&["vault", "import"])),
+            "    @property\n    def import_(self) -> \"_FacadeVerbs._VaultImportVerbs\": ...\n"
+        );
+        assert_eq!(
+            stub.accessor("type", &path(&["self", "type"])),
+            "    @property\n    def type(self) -> \"_FacadeVerbs._SelfTypeVerbs\": ...\n"
         );
     }
 
