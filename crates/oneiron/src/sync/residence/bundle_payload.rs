@@ -37,7 +37,8 @@ use zeroize::Zeroizing;
 use super::discover_local_window_keys;
 use crate::Vault;
 use crate::authority::{
-    AuthorityEntryHash, Destination, EffectiveRead, decode_authority_log_entry_body, side_world,
+    AuthorityEntryHash, CarriedOverlays, Destination, EffectiveRead,
+    decode_authority_log_entry_body, side_world,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
@@ -408,6 +409,7 @@ impl WindowManager {
         // (WAYBACK-KIT-RESTORE-NO-LIVE-R = A; REVIEW-9488 P1 1).
         vault.import_signed_authority_history_judged(
             &authority,
+            &CarriedOverlays::new(),
             |txn| checkpoint::adopt_in_txn(vault, txn, vault_id, carried, trust, seed, confirm),
             |txn, fold| vault.kit_root_authority_signer(txn, fold, seed).map(drop),
         )?;

@@ -136,7 +136,7 @@ impl Host {
             .export_signed_authority_history()
             .expect("the device's history");
         self.vault
-            .import_signed_authority_history(&history)
+            .import_signed_authority_history(&history, &std::collections::BTreeMap::new())
             .expect("the host takes the rows");
     }
 }
@@ -204,7 +204,7 @@ impl Device {
             .filter(|row| !self.held.contains(row))
             .collect();
         self.vault
-            .import_signed_authority_history(&new)
+            .import_signed_authority_history(&new, &std::collections::BTreeMap::new())
             .expect("the device takes the rows");
         self.held.extend(new);
     }

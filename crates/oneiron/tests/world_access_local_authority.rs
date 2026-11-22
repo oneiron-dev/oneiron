@@ -521,7 +521,10 @@ fn peer_history_at(target: EntityId) -> (tempfile::TempDir, PeerMachineHistory) 
 /// authority history and holds the peer's MACHINE entity.
 fn join_peer_vault(vault: &Vault, history: &PeerMachineHistory) {
     vault
-        .import_signed_authority_history(&history.authority_history)
+        .import_signed_authority_history(
+            &history.authority_history,
+            &std::collections::BTreeMap::new(),
+        )
         .unwrap();
     vault
         .put_entity(

@@ -296,12 +296,15 @@ fn a_signed_import_of_another_vaults_rows_adds_no_evidence() {
     let genesis = encode_authority_log_entry_body(&vaults.elsewhere_genesis).expect("genesis body");
 
     assert!(
-        here.import_signed_authority_history(std::slice::from_ref(&row))
-            .is_err(),
+        here.import_signed_authority_history(
+            std::slice::from_ref(&row),
+            &std::collections::BTreeMap::new()
+        )
+        .is_err(),
         "a row of another vault does not import"
     );
     assert!(
-        here.import_signed_authority_history(&[genesis, row])
+        here.import_signed_authority_history(&[genesis, row], &std::collections::BTreeMap::new())
             .is_err(),
         "nor does that vault's history"
     );
@@ -500,7 +503,10 @@ fn a_revoked_keys_row_refused_beside_an_arriving_handoff_adds_no_evidence_until_
     let handoff_body =
         encode_authority_log_entry_body(&handoff).expect("FIXTURE: the handoff encodes");
     let error = vault
-        .import_signed_authority_history(&[withheld_body, handoff_body])
+        .import_signed_authority_history(
+            &[withheld_body, handoff_body],
+            &std::collections::BTreeMap::new(),
+        )
         .expect_err("the import beside the arriving handoff is refused");
     assert_eq!(error.kind(), ErrorKind::InvalidAuthorityLogBody);
     assert_eq!(

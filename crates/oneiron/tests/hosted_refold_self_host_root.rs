@@ -1015,6 +1015,7 @@ fn yours_device(vault: &Vault, owner: &AuthenticatedOwner) -> (tempfile::TempDir
             &vault
                 .export_signed_authority_history()
                 .expect("the vault's history"),
+            &std::collections::BTreeMap::new(),
         )
         .expect("the new device takes the history");
     (dir, device)

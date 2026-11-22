@@ -144,7 +144,10 @@ fn immutable_edits_merge_restrictively_and_causal_raise_supersedes_seen_heads() 
     project(&b, root_a, id)?;
     let author = host_owner(&a, 0xB8)?;
     crate::subject_model::tests::authorization::host_owner_writer(&b)?;
-    b.import_signed_authority_history(&a.export_signed_authority_history()?)?;
+    b.import_signed_authority_history(
+        &a.export_signed_authority_history()?,
+        &std::collections::BTreeMap::new(),
+    )?;
     crate::subject_model::tests::authorization::set_project_depth_with_host(
         &a, id, 2, &author, 2, 0xB8,
     )?;
@@ -260,7 +263,7 @@ fn predecessor_and_owner_history_can_arrive_after_edits_without_widening() -> Re
     let root_b = target.root_project()?;
     project(&target, root_b, parent)?;
     crate::subject_model::tests::authorization::host_owner_writer(&target)?;
-    target.import_signed_authority_history(&history[..1])?; // genesis, not the binding
+    target.import_signed_authority_history(&history[..1], &std::collections::BTreeMap::new())?; // genesis, not the binding
     put_manifest_for_test(&target, birth.0, &birth.1, 3)?;
     let leader = EntityId::from_hex(&target.project(parent)?.unwrap().leader)?;
     target.put_project(
@@ -272,7 +275,10 @@ fn predecessor_and_owner_history_can_arrive_after_edits_without_widening() -> Re
     assert_eq!(target.project(id)?.unwrap().depth, 0);
     put_manifest_for_test(&target, second.0, &second.1, 5)?; // retry drain, no loss
     assert_eq!(target.project(id)?.unwrap().depth, 0);
-    target.import_signed_authority_history(&history[1..])?;
+    target.import_signed_authority_history(
+        &history[1..],
+        &crate::authority::CarriedOverlays::new(),
+    )?;
     assert_eq!(
         target.project(id)?.unwrap().depth,
         0,
@@ -297,7 +303,7 @@ fn predecessor_and_owner_history_can_arrive_after_edits_without_widening() -> Re
     let fresh_root = fresh.root_project()?;
     project(&fresh, fresh_root, parent)?;
     crate::subject_model::tests::authorization::host_owner_writer(&fresh)?;
-    fresh.import_signed_authority_history(&history)?;
+    fresh.import_signed_authority_history(&history, &std::collections::BTreeMap::new())?;
     put_manifest_for_test(&fresh, second.0, &second.1, 8)?;
     assert!(fresh.project(id)?.is_none());
     put_manifest_for_test(&fresh, first.0, &first.1, 9)?;

@@ -272,7 +272,7 @@ fn a_hosted_vault_refuses_an_imported_reroot_by_the_roots_key() {
 
     let refusal = fixture
         .vault
-        .import_signed_authority_history(&[bytes])
+        .import_signed_authority_history(&[bytes], &std::collections::BTreeMap::new())
         .expect_err("an imported ReRoot by the root's key is refused");
     assert_hosted_refused(&refusal);
     assert_eq!(
@@ -345,7 +345,7 @@ fn a_hosted_vault_refuses_a_paged_reroot_by_the_roots_key() {
 
     let refusal = fixture
         .vault
-        .import_signed_authority_page(&[bytes])
+        .import_signed_authority_page(&[bytes], &std::collections::BTreeMap::new())
         .expect_err("a paged ReRoot by the root's key is refused");
     assert_hosted_refused(&refusal);
     assert_eq!(
@@ -387,7 +387,7 @@ fn the_hosts_own_reroot_still_imports() {
     let replica = Vault::open(dir.path(), config).expect("the hosted replica");
     replica.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
     replica
-        .import_signed_authority_history(&history)
+        .import_signed_authority_history(&history, &std::collections::BTreeMap::new())
         .expect("the host's own ReRoot imports");
 
     assert!(

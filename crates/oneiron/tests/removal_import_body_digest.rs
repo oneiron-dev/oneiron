@@ -174,6 +174,7 @@ fn removal() -> Removal {
             &home
                 .export_signed_authority_history()
                 .expect("the home's history"),
+            &std::collections::BTreeMap::new(),
         )
         .expect("the device takes the home's history");
     assert_eq!(

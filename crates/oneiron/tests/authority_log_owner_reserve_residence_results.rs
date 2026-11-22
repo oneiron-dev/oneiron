@@ -143,7 +143,7 @@ fn b_lands_the_proven_result(
     );
     second
         .vault
-        .import_signed_authority_history(rows)
+        .import_signed_authority_history(rows, &std::collections::BTreeMap::new())
         .expect("B lands the result A carries with the owner key's proof past its reserve");
     let fold = second.vault.authority_fold().expect("B's fold");
     assert!(
@@ -169,7 +169,9 @@ fn b_holds_the_unproven_result(
         "A carries the result unproven: {:?}",
         result.cosigns
     );
-    let import = second.vault.import_signed_authority_history(rows);
+    let import = second
+        .vault
+        .import_signed_authority_history(rows, &std::collections::BTreeMap::new());
     assert!(
         import
             .as_ref()

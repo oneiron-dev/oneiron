@@ -199,7 +199,7 @@ fn assert_refused(error: &oneiron::Error, words: &str) {
 /// that the fold does not count it.
 fn import_if_encodable(vault: &Vault, row: &AuthorityLogEntry) {
     if let Ok(bytes) = encode_authority_log_entry_body(row) {
-        let _ = vault.import_signed_authority_history(&[bytes]);
+        let _ = vault.import_signed_authority_history(&[bytes], &std::collections::BTreeMap::new());
     }
 }
 
@@ -585,7 +585,7 @@ fn replica(history: &[Vec<u8>], at: u64) -> Replica {
     let vault = Vault::open(dir.path(), config).expect("the replica");
     vault.install_device_keystore(Arc::new(MemoryKeystore::default()));
     vault
-        .import_signed_authority_history(history)
+        .import_signed_authority_history(history, &std::collections::BTreeMap::new())
         .expect("the replica takes the rows");
     Replica { _dir: dir, vault }
 }
@@ -1670,7 +1670,7 @@ fn the_root_key_cannot_answer_its_own_hold() {
     let bytes = encode_authority_log_entry_body(&row).expect("the bytes");
     fixture
         .vault
-        .import_signed_authority_history(&[bytes])
+        .import_signed_authority_history(&[bytes], &std::collections::BTreeMap::new())
         .expect("the import stores the row");
     assert!(
         !fixture
@@ -1913,9 +1913,10 @@ fn an_agent_key_never_answers_a_hold() {
     enroll.signer.signature = keeper.sign(&transcript).to_bytes().to_vec();
     fixture
         .vault
-        .import_signed_authority_history(&[
-            encode_authority_log_entry_body(&enroll).expect("the bytes")
-        ])
+        .import_signed_authority_history(
+            &[encode_authority_log_entry_body(&enroll).expect("the bytes")],
+            &std::collections::BTreeMap::new(),
+        )
         .expect("the import stores the enrolment");
     assert!(fixture.live(&agent_key), "the agent key is enrolled");
 
@@ -1943,7 +1944,9 @@ fn an_agent_key_never_answers_a_hold() {
     row.signer.signature = agent.sign(&transcript).to_bytes().to_vec();
     let hash = authority_entry_hash(&row).expect("a hash");
     let bytes = encode_authority_log_entry_body(&row).expect("the bytes");
-    let _ = fixture.vault.import_signed_authority_history(&[bytes]);
+    let _ = fixture
+        .vault
+        .import_signed_authority_history(&[bytes], &std::collections::BTreeMap::new());
     assert!(
         !fixture
             .vault
@@ -2062,9 +2065,10 @@ fn a_co_owners_it_is_me_never_ends_another_owners_wait() {
     let hash = authority_entry_hash(&row).expect("a hash");
     fixture
         .vault
-        .import_signed_authority_history(&[
-            encode_authority_log_entry_body(&row).expect("the bytes")
-        ])
+        .import_signed_authority_history(
+            &[encode_authority_log_entry_body(&row).expect("the bytes")],
+            &std::collections::BTreeMap::new(),
+        )
         .expect("the import stores the row");
     assert!(
         fixture
@@ -2360,9 +2364,10 @@ fn a_foreign_anchors_cancel_never_stops_a_hold() {
     let before_history = fixture.history().len();
     fixture
         .vault
-        .import_signed_authority_history(&[
-            encode_authority_log_entry_body(&published).expect("the bytes")
-        ])
+        .import_signed_authority_history(
+            &[encode_authority_log_entry_body(&published).expect("the bytes")],
+            &std::collections::BTreeMap::new(),
+        )
         .expect("the foreign root stores");
 
     // That anchor's Cancel naming the hold, with no cosign: the attack
@@ -2389,9 +2394,10 @@ fn a_foreign_anchors_cancel_never_stops_a_hold() {
     row.signer.signature = anchor.sign(&transcript).to_bytes().to_vec();
     fixture
         .vault
-        .import_signed_authority_history(&[
-            encode_authority_log_entry_body(&row).expect("the bytes")
-        ])
+        .import_signed_authority_history(
+            &[encode_authority_log_entry_body(&row).expect("the bytes")],
+            &std::collections::BTreeMap::new(),
+        )
         .expect("the import answers");
     assert_eq!(
         fixture.history().len(),
@@ -2516,9 +2522,10 @@ fn a_fresh_roots_anchor_beside_the_root_key_never_stops_a_hold() {
     let published_hash = authority_entry_hash(&published).expect("a hash");
     fixture
         .vault
-        .import_signed_authority_history(&[
-            encode_authority_log_entry_body(&published).expect("the bytes")
-        ])
+        .import_signed_authority_history(
+            &[encode_authority_log_entry_body(&published).expect("the bytes")],
+            &std::collections::BTreeMap::new(),
+        )
         .expect("the fresh root stores");
     assert!(
         fixture
@@ -3997,9 +4004,10 @@ fn hold_signed_by_hand(
     let hash = authority_entry_hash(&row).expect("a hash");
     fixture
         .vault
-        .import_signed_authority_history(&[
-            encode_authority_log_entry_body(&row).expect("the bytes")
-        ])
+        .import_signed_authority_history(
+            &[encode_authority_log_entry_body(&row).expect("the bytes")],
+            &std::collections::BTreeMap::new(),
+        )
         .expect("the import stores the hold");
     assert!(
         fixture
@@ -4094,9 +4102,10 @@ fn a_hold_never_revokes_a_lost_key_that_is_no_owner_key_of_its_owner() {
     enroll.signer.signature = keeper.sign(&transcript).to_bytes().to_vec();
     fixture
         .vault
-        .import_signed_authority_history(&[
-            encode_authority_log_entry_body(&enroll).expect("the bytes")
-        ])
+        .import_signed_authority_history(
+            &[encode_authority_log_entry_body(&enroll).expect("the bytes")],
+            &std::collections::BTreeMap::new(),
+        )
         .expect("the import stores the enrolment");
     assert!(fixture.live(&agent_key), "the agent key is enrolled");
 

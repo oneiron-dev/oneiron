@@ -182,7 +182,7 @@ fn opened_device(home: &Home) -> (Vault, tempfile::TempDir) {
         .export_signed_authority_history()
         .expect("the home exports its signed authority history");
     vault
-        .import_signed_authority_history(&history)
+        .import_signed_authority_history(&history, &std::collections::BTreeMap::new())
         .expect("the device takes the home's authority history");
     (vault, dir)
 }
@@ -555,7 +555,7 @@ fn signed_slip_revoke_refuses_at_once_and_only_a_proven_home_replays_the_withdra
         .export_signed_authority_history()
         .expect("the home exports its signed authority history");
     device
-        .import_signed_authority_history(&history)
+        .import_signed_authority_history(&history, &std::collections::BTreeMap::new())
         .expect("the device takes the home's signed revoke");
     assert!(
         !admits(&device, &home.slip_id),

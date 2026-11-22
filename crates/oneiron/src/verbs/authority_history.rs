@@ -6,6 +6,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 
 use crate::Vault;
+use crate::authority::CarriedOverlays;
 pub use crate::authority::{AuthorityClockRepair, AuthorityClockRepairOutcome};
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{MemoryError, MemoryResult};
@@ -21,12 +22,16 @@ pub fn export_authority_history_as_owner(
     owner: &AuthenticatedOwner,
 ) -> MemoryResult<SignedAuthorityHistory> {
     owner.revalidate(vault)?;
-    let entries = vault
-        .export_signed_authority_history()?
+    let (bodies, overlays) = vault.export_signed_authority_history_with_overlays()?;
+    let entries = bodies
         .into_iter()
         .map(|bytes| STANDARD.encode(bytes))
         .collect();
-    Ok(SignedAuthorityHistory { entries })
+    let overlays = overlays
+        .into_iter()
+        .map(|(hash, row)| (STANDARD.encode(hash), STANDARD.encode(row)))
+        .collect();
+    Ok(SignedAuthorityHistory { entries, overlays })
 }
 
 /// `vault.authority.history.import`: the engine verifies and folds the
@@ -50,8 +55,24 @@ pub fn import_authority_history_as_owner(
             })
         })
         .collect::<MemoryResult<Vec<_>>>()?;
+    let mut overlays = CarriedOverlays::new();
+    for (key, value) in input.overlays {
+        let hash: [u8; 32] = STANDARD
+            .decode(key)
+            .map_err(|_| {
+                MemoryError::bad_request("overlays keys must be base64 32-byte entry hashes")
+            })?
+            .try_into()
+            .map_err(|_| {
+                MemoryError::bad_request("overlays keys must be base64 32-byte entry hashes")
+            })?;
+        let row = STANDARD.decode(value).map_err(|_| {
+            MemoryError::bad_request("overlays values must be base64 sealed overlay rows")
+        })?;
+        overlays.insert(hash, row);
+    }
     let entry_refs = vault
-        .import_owner_authority_history(&blobs)?
+        .import_owner_authority_history(&blobs, &overlays)?
         .into_iter()
         .map(|id| id.to_hex())
         .collect();

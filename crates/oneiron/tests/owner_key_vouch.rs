@@ -257,7 +257,7 @@ impl NewDevice {
             .filter(|row| !self.held.contains(row))
             .collect();
         self.vault
-            .import_signed_authority_history(&new)
+            .import_signed_authority_history(&new, &std::collections::BTreeMap::new())
             .expect("the new device takes the rows");
         self.held.extend(new);
     }

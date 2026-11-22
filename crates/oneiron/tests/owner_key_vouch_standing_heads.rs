@@ -174,7 +174,7 @@ fn new_device(owner: &OwnerDevice) -> NewDevice {
         .ensure_embedded_owner_actor()
         .expect("the owner on the new device");
     vault
-        .import_signed_authority_history(&owner.history())
+        .import_signed_authority_history(&owner.history(), &std::collections::BTreeMap::new())
         .expect("the new device takes the rows");
     NewDevice {
         vault,

@@ -55,6 +55,7 @@ fn a_refused_import_names_no_handoff_only_its_prelude_image_covers() {
     let error = fresh
         .import_signed_authority_history_judged(
             &bodies,
+            &std::collections::BTreeMap::new(),
             |txn| {
                 let expected = fresh.authority_checkpoint_expectation_in_txn(txn)?;
                 fresh.adopt_authority_checkpoint_in_txn(txn, &image, &expected)?;

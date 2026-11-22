@@ -374,7 +374,7 @@ impl Owned {
             },
         );
         self.vault
-            .import_signed_authority_history(&[bytes(&row)])
+            .import_signed_authority_history(&[bytes(&row)], &std::collections::BTreeMap::new())
             .expect("the owner key revokes an unrelated binding");
     }
 
@@ -400,7 +400,10 @@ impl Owned {
             },
         );
         self.vault
-            .import_signed_authority_history(&[bytes(&first), bytes(&second)])
+            .import_signed_authority_history(
+                &[bytes(&first), bytes(&second)],
+                &std::collections::BTreeMap::new(),
+            )
             .expect("both handoffs land");
         [hash(&first), hash(&second)]
     }
@@ -587,9 +590,10 @@ fn an_appointment_and_its_binding_land_together_over_the_witnesses() {
     let parents: Vec<_> = witnesses.iter().chain(&heads).copied().collect();
     let (appointment, binding) = owned.appointment_and_binding(&successor, parents);
 
-    let arrival = owned
-        .vault
-        .import_signed_authority_history(&[bytes(&appointment), bytes(&binding)]);
+    let arrival = owned.vault.import_signed_authority_history(
+        &[bytes(&appointment), bytes(&binding)],
+        &std::collections::BTreeMap::new(),
+    );
 
     assert!(arrival.is_ok(), "the import takes both rows: {arrival:?}");
     assert!(owned.valid(&hash(&appointment)) && owned.valid(&hash(&binding)));
@@ -618,11 +622,10 @@ fn a_row_with_its_own_path_to_a_witness_is_refused() {
         },
     );
 
-    let refused = owned.vault.import_signed_authority_history(&[
-        bytes(&appointment),
-        bytes(&binding),
-        bytes(&beside),
-    ]);
+    let refused = owned.vault.import_signed_authority_history(
+        &[bytes(&appointment), bytes(&binding), bytes(&beside)],
+        &std::collections::BTreeMap::new(),
+    );
 
     assert!(
         refused.is_err(),
@@ -634,7 +637,10 @@ fn a_row_with_its_own_path_to_a_witness_is_refused() {
     );
     owned
         .vault
-        .import_signed_authority_history(&[bytes(&appointment), bytes(&binding)])
+        .import_signed_authority_history(
+            &[bytes(&appointment), bytes(&binding)],
+            &std::collections::BTreeMap::new(),
+        )
         .expect("the appointment and its binding land alone");
     assert!(owned.live(&key_of(&successor)));
     assert!(!owned.valid(&hash(&beside)));
@@ -1405,7 +1411,7 @@ impl SecondInstall {
             .filter(|row| !self.held.contains(row))
             .collect();
         self.vault
-            .import_signed_authority_history(&new)
+            .import_signed_authority_history(&new, &std::collections::BTreeMap::new())
             .expect("the second install takes the rows");
         self.held.extend(new);
     }
@@ -1526,7 +1532,7 @@ fn an_awaited_root_counts_no_appointment_until_the_pin_door_writes_it() {
     let (appointment, binding) = owned.appointment_and_binding(&successor, parents);
     second
         .vault
-        .import_signed_authority_history(&[bytes(&appointment)])
+        .import_signed_authority_history(&[bytes(&appointment)], &std::collections::BTreeMap::new())
         .expect("the second install stores the appointment of the root it awaits");
 
     assert_eq!(
@@ -1564,7 +1570,7 @@ fn an_awaited_root_counts_no_appointment_until_the_pin_door_writes_it() {
     assert!(!second.rootless());
     second
         .vault
-        .import_signed_authority_history(&[bytes(&binding)])
+        .import_signed_authority_history(&[bytes(&binding)], &std::collections::BTreeMap::new())
         .expect("the successor's binding lands");
     assert!(second.valid(&hash(&binding)));
 }

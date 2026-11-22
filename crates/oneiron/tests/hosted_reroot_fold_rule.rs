@@ -639,7 +639,9 @@ fn a_re_root_imported_by_an_owner_key_the_host_does_not_hold_never_counts() {
     let blob = encode_authority_log_entry_body(&row).expect("the row's bytes");
     // The store door may hold the row or refuse it; either way it never
     // counts.
-    let _answer = fixture.vault.import_signed_authority_history(&[blob]);
+    let _answer = fixture
+        .vault
+        .import_signed_authority_history(&[blob], &std::collections::BTreeMap::new());
     let fold = fixture.vault.authority_fold().expect("the fold");
     assert!(
         !fold.valid_entries.contains(&moved),
