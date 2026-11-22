@@ -144,15 +144,20 @@ async fn authenticated_note_socket_preserves_pins_provenance_and_review_after_re
     let pin = a.pin_note_span(source, claim, 7, 13).unwrap();
     let brief =
         EntityId::from_hex(&memory.author_brief("A cited brief", &[]).unwrap().id_hex).unwrap();
+    // R4: the bare Member row stands for nothing; the socket runs as the vault's live owner
+    // on the own-device Grant (Member scope kept, role/preset Owner). The actor stays the writer.
+    let owner = a.ensure_embedded_owner_actor().unwrap();
     let grant_id = EntityId::now();
-    let grant = oneiron::federation::FederationGrant::new(
+    let mut grant = oneiron::federation::FederationGrant::new(
         oneiron::FederationGrantScope::vault(7),
-        actor,
+        owner,
         oneiron::federation::FederationGrantRole::Member,
         oneiron::federation::FederationGrantPreset::Member,
     );
+    grant.role = oneiron::federation::FederationGrantRole::Owner;
+    grant.preset = oneiron::federation::FederationGrantPreset::Owner;
     oneiron::sync::put_selector_test_federation_grant(&a, &grant_id, &grant, 1).unwrap();
-    let selector = SyncSelector::new(grant_id, actor, SyncSelectorWorld::All, vec![], vec![]);
+    let selector = SyncSelector::new(grant_id, owner, SyncSelectorWorld::All, vec![], vec![]);
     let server = Arc::new(
         SyncServer::new(
             a.clone(),
@@ -185,7 +190,7 @@ async fn authenticated_note_socket_preserves_pins_provenance_and_review_after_re
         &server,
         &format!(
             "scope=core:read,core:write;principal_ref={};actor_class=human;jti={JTI}",
-            actor.to_hex()
+            owner.to_hex()
         ),
     );
     let (mut client, _events) = SyncClient::new(
@@ -346,15 +351,21 @@ async fn document_handler_refuses_unbound_and_selector_impersonation_and_raw_pin
             .id_hex,
     )
     .unwrap();
+    // R4: the bare Member row stands for nothing; the document runs as the vault's live
+    // owner on the own-device Grant (Member scope kept, role/preset Owner). The author stays the
+    // writer; the stranger stays refused.
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
     let grant_id = EntityId::now();
-    let grant = oneiron::federation::FederationGrant::new(
+    let mut grant = oneiron::federation::FederationGrant::new(
         oneiron::FederationGrantScope::vault(7),
-        author,
+        owner,
         oneiron::federation::FederationGrantRole::Member,
         oneiron::federation::FederationGrantPreset::Member,
     );
+    grant.role = oneiron::federation::FederationGrantRole::Owner;
+    grant.preset = oneiron::federation::FederationGrantPreset::Owner;
     oneiron::sync::put_selector_test_federation_grant(&vault, &grant_id, &grant, 1).unwrap();
-    let selector = SyncSelector::new(grant_id, author, SyncSelectorWorld::All, vec![], vec![]);
+    let selector = SyncSelector::new(grant_id, owner, SyncSelectorWorld::All, vec![], vec![]);
     let config = SyncServerConfig {
         auth_secret: Some(SECRET.into()),
         ..Default::default()
@@ -399,7 +410,7 @@ async fn document_handler_refuses_unbound_and_selector_impersonation_and_raw_pin
         )
         .is_err()
     );
-    state.bound_auth = Some(bind(author));
+    state.bound_auth = Some(bind(owner));
     handle_document(
         &server,
         1,
@@ -570,7 +581,7 @@ async fn document_handler_refuses_unbound_and_selector_impersonation_and_raw_pin
             .is_empty()
     );
     let before = vault.note_document(note).unwrap();
-    crate::test_credentials::revoke(&server, &recipe(author));
+    crate::test_credentials::revoke(&server, &recipe(owner));
     let (notice, receipt_frame) = last_delivery.unwrap();
     // A revoked credential fails closed: delivery refuses, it never exports.
     assert!(super::documents::document_delivery(&server, &state, &notice).is_err());
@@ -633,18 +644,23 @@ async fn document_socket_update_cannot_use_a_downgraded_subscription() {
             .put_edge(&id, oneiron::EdgeKind::FacetOf, &facet, 1.0)
             .unwrap();
     }
-    let member = EntityId::now();
+    // R4: the bare Member row stands for nothing; the subscription runs as the vault's live
+    // owner on the own-device Grant (Member scope kept, role/preset Owner). The downgrade below
+    // re-puts it as a Viewer row, which stands for nothing.
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
     let grant_id = EntityId::now();
     let mut grant = oneiron::federation::FederationGrant::new(
         oneiron::FederationGrantScope::vault(7),
-        member,
+        owner,
         oneiron::federation::FederationGrantRole::Member,
         oneiron::federation::FederationGrantPreset::Member,
     );
+    grant.role = oneiron::federation::FederationGrantRole::Owner;
+    grant.preset = oneiron::federation::FederationGrantPreset::Owner;
     oneiron::sync::put_selector_test_federation_grant(&vault, &grant_id, &grant, 1).unwrap();
     let selector = SyncSelector::new(
         grant_id,
-        member,
+        owner,
         SyncSelectorWorld::All,
         vec![facet],
         vec![oneiron::federation::SelectorRange::Core],
@@ -663,7 +679,7 @@ async fn document_socket_update_cannot_use_a_downgraded_subscription() {
         &server,
         &format!(
             "scope=core:read,core:write;principal_ref={}",
-            member.to_hex()
+            owner.to_hex()
         ),
     ));
     let (direct, _responses) = tokio::sync::mpsc::unbounded_channel();
@@ -826,18 +842,22 @@ async fn note_frames_gate(check_latency: bool) {
     let dir = tempfile::tempdir().unwrap();
     let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).unwrap());
     // The title frames land by the Grant, not by authorship: the author is
-    // the vault's owner (RULING NOTE-SCALAR-NO-GRANT = A).
+    // the vault's owner (RULING NOTE-SCALAR-NO-GRANT = A). R4: the bare Member
+    // row stands for nothing, so the socket runs as the owner on the own-device
+    // Grant (Member scope kept, role/preset Owner).
     let owner = vault.ensure_embedded_owner_actor().unwrap();
     let actor = oneiron::WriteActor::new(owner, EdgeActorClass::Human);
     let first = vault.create_note("research", "first", actor).unwrap();
     let second = vault.create_note("research", "second", actor).unwrap();
     let grant_id = EntityId::now();
-    let grant = oneiron::federation::FederationGrant::new(
+    let mut grant = oneiron::federation::FederationGrant::new(
         oneiron::FederationGrantScope::vault(7),
         owner,
         oneiron::federation::FederationGrantRole::Member,
         oneiron::federation::FederationGrantPreset::Member,
     );
+    grant.role = oneiron::federation::FederationGrantRole::Owner;
+    grant.preset = oneiron::federation::FederationGrantPreset::Owner;
     oneiron::sync::put_selector_test_federation_grant(&vault, &grant_id, &grant, 1).unwrap();
     let selector = SyncSelector::new(grant_id, owner, SyncSelectorWorld::All, vec![], vec![]);
     let server = crate::test_credentials::server_with_fixture_keystore(
@@ -938,6 +958,6 @@ async fn note_frames_gate(check_latency: bool) {
             .edges_out(&second)
             .unwrap()
             .iter()
-            .any(|edge| { edge.kind == oneiron::EdgeKind::AuthoredBy && edge.target == owner })
+            .any(|edge| { edge.kind == oneiron::EdgeKind::AuthoredBy && edge.target == author })
     );
 }

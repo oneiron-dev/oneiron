@@ -476,6 +476,8 @@ fn grants_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, actor: EntityId) -> Resul
     let now = vault.store.clock.now_recorded_at();
     let fold = vault.authority_fold_readonly_in_txn(txn)?;
     let shared_scope = vault.shared_vault_scope_in_txn(txn)?;
+    // An own-device Grant stands while the fold names its holder a live Owner (pass 28 R4).
+    let owners = crate::policy_model::owners_in_txn(vault, txn)?;
     let mut grants = Vec::new();
     for kind in [ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_ACCESS_GRANT] {
         for entry in
@@ -495,13 +497,22 @@ fn grants_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, actor: EntityId) -> Resul
                 // every Grant over this shared vault (pass 28 R3), an owner's signed mint
                 // row on an own-device residence (R3b2) and a guest's Ask or Connect Grant
                 // on its counted giving (R3c).
-                crate::federation::grant_row_in_fold(&fold, id, &body, shared_scope.as_ref(), now)
-                    .is_some_and(|row| {
-                        let grant = row.grant();
-                        grant.member_ref == actor
-                            && grant.confers_at(now)
-                            && crate::federation::pact_admits_grant(&fold, &id, grant)
-                    })
+                crate::federation::grant_row_in_fold(
+                    &vault.store,
+                    &fold,
+                    txn,
+                    id,
+                    &body,
+                    shared_scope.as_ref(),
+                    &owners,
+                    now,
+                )?
+                .is_some_and(|row| {
+                    let grant = row.grant();
+                    grant.member_ref == actor
+                        && grant.confers_at(now)
+                        && crate::federation::pact_admits_grant(&fold, &id, grant)
+                })
             } else {
                 crate::access_grant::decode_access_grant_body(&body).is_ok_and(|grant| {
                     grant.principal_ref == actor

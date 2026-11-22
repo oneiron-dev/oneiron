@@ -83,8 +83,9 @@ fn contains(haystack: &[u8], needle: &str) -> bool {
         .any(|window| window == needle.as_bytes())
 }
 
-/// A vault with the scan off, and a peer whose Viewer grant over the shared
-/// vault admits the Content family, an LFS object's ASSET included.
+/// A vault with the scan off, and a peer (the vault's live owner on the own-device Grant)
+/// whose grant over the shared vault admits the Content family, an LFS object's ASSET
+/// included.
 struct Peer {
     _dir: tempfile::TempDir,
     vault: Vault,
@@ -101,14 +102,18 @@ impl Peer {
             vault.authenticate_owner(owner, "owen@example.com", true, GateDecisionId::now())?;
         // With the scan off, an object holding a credential is stored unmarked.
         vault.set_secret_scan_mode(&proof, SecretScanMode::Off, LEARNED_AT)?;
-        let principal = EntityId::now();
+        // R4: a bare Viewer row over the residence stands for nothing; the peer runs as the
+        // vault's live owner on the own-device Grant (the ReadOnly scope kept, role/preset Owner).
+        let principal = owner;
         let grant_id = EntityId::now();
-        let grant = FederationGrant::new(
+        let mut grant = FederationGrant::new(
             FederationGrantScope::vault(SHARED),
             principal,
             FederationGrantRole::Viewer,
             FederationGrantPreset::ReadOnly,
         );
+        grant.role = FederationGrantRole::Owner;
+        grant.preset = FederationGrantPreset::Owner;
         put_selector_test_federation_grant(&vault, &grant_id, &grant, LEARNED_AT)?;
         let selector = encode_sync_selector(&SyncSelector::new(
             grant_id,

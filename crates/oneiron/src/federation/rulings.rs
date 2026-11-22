@@ -90,11 +90,13 @@ impl Vault {
                     pact.status == crate::authority::FederationPactStatus::Active
                 })
                 && super::shared_grant_row_in_fold(
+                    &self.store,
                     &fold,
+                    &txn,
                     id,
                     &raw[ENTITY_METADATA_HEADER_LEN..],
                     at,
-                )
+                )?
                 .is_some()
                 && crate::vault::live_entity_row_in_txn(&self.store, &txn, &id)?.is_live()
             {

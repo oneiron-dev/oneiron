@@ -685,7 +685,7 @@ async fn a_chunk_reply_built_before_its_world_turns_device_only_is_not_released(
 }
 
 /// `bytes` stored and attached to a note in a world, and a grant-scoped
-/// chunk request for every one of its chunks from a viewer of that world:
+/// chunk request for every one of its chunks from that world's owner (on the own-device Grant):
 /// the request, its bearer, and the world.
 fn chunk_want(server: &Arc<SyncServer>, bytes: &[u8]) -> (Vec<u8>, String, oneiron::EntityId) {
     let oid = LfsOid::digest(bytes);
@@ -696,20 +696,19 @@ fn chunk_want(server: &Arc<SyncServer>, bytes: &[u8]) -> (Vec<u8>, String, oneir
     };
     vault.put_lfs_object(oid, bytes, at, at.start).unwrap();
     let world = attach_to_a_note_in_a_world(vault, oid);
-    let principal = oneiron::EntityId::now();
+    // R4: the bare Viewer row stands for nothing; the chunk request runs as the vault's live
+    // owner on the own-device Grant (ReadOnly scope kept, role/preset Owner).
+    let principal = vault.ensure_embedded_owner_actor().unwrap();
     let grant_id = oneiron::EntityId::now();
-    oneiron::sync::put_selector_test_federation_grant(
-        vault,
-        &grant_id,
-        &oneiron::federation::FederationGrant::new(
-            crate::handler::selector_grant_scope(),
-            principal,
-            oneiron::federation::FederationGrantRole::Viewer,
-            oneiron::federation::FederationGrantPreset::ReadOnly,
-        ),
-        1,
-    )
-    .unwrap();
+    let mut grant = oneiron::federation::FederationGrant::new(
+        crate::handler::selector_grant_scope(),
+        principal,
+        oneiron::federation::FederationGrantRole::Viewer,
+        oneiron::federation::FederationGrantPreset::ReadOnly,
+    );
+    grant.role = oneiron::federation::FederationGrantRole::Owner;
+    grant.preset = oneiron::federation::FederationGrantPreset::Owner;
+    oneiron::sync::put_selector_test_federation_grant(vault, &grant_id, &grant, 1).unwrap();
     let selector = oneiron::sync::encode_sync_selector(&oneiron::sync::SyncSelector::new(
         grant_id,
         principal,

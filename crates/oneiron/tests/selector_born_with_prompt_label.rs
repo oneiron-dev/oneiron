@@ -47,6 +47,7 @@ use oneiron::sync::{
     filtered_window_doc_for_peer, put_selector_test_federation_grant,
 };
 use oneiron::temporal::TimeRange;
+use oneiron::test_doors::grant_act::give_member_grant_as_writer;
 use oneiron::test_doors::label_writers::{embedded_owner, open_member_vault};
 use oneiron::test_support::test_host_issuer;
 use oneiron::write_envelope::claim_body::encode_claim_body;
@@ -58,6 +59,26 @@ use oneiron_authority::federation::scope_codec::read_preset;
 use rmpv::Value;
 
 const SHARED_VAULT_ID: u64 = 7;
+
+/// Stands `grant` at `grant_id` as its holder's own flow stands it (pass 28 R4): the live
+/// owner's own-device Grant is a row no act gives, which the engine derives; any other
+/// holder's row stands only on its counted giving, which `owner` gives here as the
+/// membership writer does.
+fn stand_grant(
+    vault: &Vault,
+    grant_id: EntityId,
+    grant: &FederationGrant,
+    owner: EntityId,
+    now: u64,
+) {
+    if grant.member_ref == owner {
+        put_selector_test_federation_grant(vault, &grant_id, grant, now)
+            .expect("FIXTURE: the owner's own-device grant");
+    } else {
+        give_member_grant_as_writer(vault, grant_id, grant, owner)
+            .expect("FIXTURE: the owner gives the member's grant");
+    }
+}
 const RELATIONSHIP_PROMPT_TEXT: &str = "orchid observatory shutters close before sunrise";
 const OPEN_PROMPT_TEXT: &str = "cobalt archive windows remain open after midday";
 
@@ -254,11 +275,17 @@ fn export_through(
 
     let scope = FederationGrantScope::vault(SHARED_VAULT_ID);
     let grant_id = EntityId::now();
-    let mut grant = FederationGrant::new(scope, member, role, preset);
+    // Pass 28 R4: a row no act gives stands over the residence only as the live owner's
+    // own-device Grant, so the Owner case runs as the owner, and the member's row stands on
+    // the owner's counted giving.
+    let holder = match role {
+        FederationGrantRole::Owner => owner,
+        _ => member,
+    };
+    let mut grant = FederationGrant::new(scope, holder, role, preset);
     grant.authority_scope = read_preset();
-    put_selector_test_federation_grant(&vault, &grant_id, &grant, now)
-        .expect("FIXTURE: the live federation grant");
-    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+    stand_grant(&vault, grant_id, &grant, owner, now);
+    let selector = SyncSelector::new(grant_id, holder, SyncSelectorWorld::All, vec![], vec![]);
     authorize_sync_selector(&vault, scope, &selector).expect("FIXTURE: the selector is authorized");
 
     let choice = TravelChoice {

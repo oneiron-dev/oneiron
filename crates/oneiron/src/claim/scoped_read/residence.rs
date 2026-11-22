@@ -40,7 +40,8 @@ impl<'v> ResidenceReadContext<'v> {
     /// The credential `proof` reads under, while `selector` names a live,
     /// conferring member grant over `grant_scope` held by the selector's
     /// member, standing on the counted act that gives its row (pass 28 R3d; an
-    /// own-device Grant reads from its row until R4), and the machine `peer`
+    /// own-device Grant, which no act gives, while the fold names its holder a
+    /// live Owner, R4), and the machine `peer`
     /// proved on this connection still stands on that key here. A peer that
     /// does not is an unknown destination.
     pub fn load_in(

@@ -433,11 +433,13 @@ impl crate::Vault {
         // The parent confers only while the fold stands behind it (pass 28 R3): a row no
         // counted act gives parents no Delegate.
         if super::shared_grant_row_in_fold(
+            &self.store,
             &fold,
+            txn,
             parent_grant_id,
             &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
             now,
-        )
+        )?
         .is_none()
         {
             return Err(Error::InvalidConfig(
