@@ -190,7 +190,9 @@ pub trait ContributionForkModel {
     /// route prompt the capsule's body holds put first in place of the one
     /// configured (FIX 6255); `None` when that model is not served now, or
     /// its configured prompt is not the one the capsule's call was sent
-    /// under, by `rung`'s digest (FIX 6356).
+    /// under, by `rung`'s digest (FIX 6356). The call carries
+    /// `source_rows`, every row `request` was read from, or `None` when any
+    /// constituent is unknown (FIX 7104).
     ///
     /// # Errors
     ///
@@ -198,6 +200,7 @@ pub trait ContributionForkModel {
     fn generate(
         &self,
         request: &LlmRequest,
+        source_rows: Option<&[EntityId]>,
         rung: &ReplayRung,
         clock: &RetrievalDeadline,
     ) -> Result<Option<LlmResponse>>;
@@ -347,8 +350,13 @@ struct Prepared {
     binding: StoredRungBinding,
     with_skill: LlmRequest,
     with_skill_hash: [u8; 32],
+    /// Every row `with_skill` was read from; `None` when any constituent is
+    /// unknown (FIX 7104).
+    with_skill_rows: Option<Vec<EntityId>>,
     without_skill: LlmRequest,
     without_skill_hash: [u8; 32],
+    /// Every row `without_skill` was read from, as for `with_skill_rows`.
+    without_skill_rows: Option<Vec<EntityId>>,
     /// The target's revision as the step saw it.
     exposure_revision: String,
     anchor: ReplayAnchor,

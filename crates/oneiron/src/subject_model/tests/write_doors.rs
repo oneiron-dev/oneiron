@@ -148,6 +148,9 @@ fn generic_predicate_cannot_disguise_an_owned_claim_id_overwrite() -> Result<()>
             };
             let before = vault.get(&id)?;
             let original = vault.get_claim(&id)?;
+            // The creation door already anchored the house to its model PERSON;
+            // the hostile generic write must leave that history unchanged.
+            let baseline = vault.claims_for_subject(&subject)?;
             let body = ClaimBody::new(
                 "person.other_fact",
                 ClaimSubject::Entity(subject),
@@ -168,7 +171,7 @@ fn generic_predicate_cannot_disguise_an_owned_claim_id_overwrite() -> Result<()>
             );
             assert_eq!(vault.get(&id)?, before);
             assert_eq!(vault.get_claim(&id)?, original);
-            assert_eq!(vault.claims_for_subject(&subject)?, vec![id]);
+            assert_eq!(vault.claims_for_subject(&subject)?, baseline);
         }
     }
     Ok(())

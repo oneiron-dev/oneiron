@@ -8,6 +8,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use crate::error::{Error, Result};
 use crate::gate::decode::{
     DecodedManifestCarrier, decode_manifest_carrier, decode_policy_manifest,
@@ -140,7 +142,7 @@ impl ManifestDecodeMemo {
     /// only a body its fold reads past quarantine and trust, or a signed
     /// project-depth carrier (FIX 5987).
     pub(super) fn row(&self, body: &[u8]) -> Arc<ManifestRow> {
-        let key = *blake3::hash(body).as_bytes();
+        let key = *ContentHash::of(body).as_bytes();
         if let Some(row) = self.kept(&key) {
             return row;
         }

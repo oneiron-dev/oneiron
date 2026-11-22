@@ -132,6 +132,7 @@ pub(crate) fn call_verb<'a>(
                     let value = super::drained_still_admitted(
                         &server.vault,
                         call.auth(),
+                        verb,
                         &producers,
                         value,
                         super::export_transfer::owner_whole_vault_export_admitted(

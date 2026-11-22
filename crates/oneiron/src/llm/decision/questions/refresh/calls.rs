@@ -5,8 +5,7 @@ use super::super::reader_authority::question_lane;
 use super::super::records::{AnswerProposal, QuestionRecord};
 use super::super::saved_reader::saved_reader;
 use super::{Answered, Proposed};
-use crate::claim::ClaimSubject;
-use crate::{ClaimCandidate, EntityId, Result, Vault};
+use crate::{EntityId, Result, Vault};
 
 /// One unit's answer from a graph answerer, read under `record`'s principal
 /// inside its saved lane:
@@ -40,13 +39,7 @@ pub(super) fn graph_proposal(
         let Some(rows) = graph_ask::sources_unchanged_in_txn(&lane, &txn, &context)? else {
             return Ok(None);
         };
-        let mut probe = ClaimCandidate::new(
-            "judgment.answer",
-            ClaimSubject::Entity(unit),
-            rmpv::Value::Nil,
-            1.0,
-        );
-        if super::super::standing::constrain_sources(&mut probe, &rows, record.principal).is_err() {
+        if super::super::standing::fold_sources(&rows, record.principal).is_err() {
             return Ok(None);
         }
     }

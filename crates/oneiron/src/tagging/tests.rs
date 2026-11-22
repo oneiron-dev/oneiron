@@ -1985,11 +1985,9 @@ fn bind_resident(vault: &Vault) -> EntityId {
 /// another kind passes tagging rows over, uncounted.
 #[test]
 fn a_vault_past_100k_settled_tagging_markers_still_serves_the_inbox_and_resident_dispatch() {
-    let config = VaultConfig {
-        store_clock: ManualClock::new(NOW).bundle(),
-        tagging: Some(shadow(CHECKPOINT)),
-        ..VaultConfig::default()
-    };
+    let mut config = VaultConfig::default();
+    config.store_clock = ManualClock::new(NOW).bundle();
+    config.tagging = Some(shadow(CHECKPOINT));
     let (_dir, vault) = crate::test_util::open_test_vault_with(config);
     let lead = bind_resident(&vault);
     let cap = crate::receipt::MAX_RECEIPT_QUERY_SCAN as u64;
@@ -2061,6 +2059,7 @@ fn cleanup_proposals(vault: &Vault, clock: &ManualClock) -> Vec<[u8; 16]> {
         .expect("cleanup")
         .candidates
         .iter()
+        .flatten()
         .map(|candidate| *candidate.entity.as_bytes())
         .collect()
 }
@@ -2540,7 +2539,7 @@ fn a_pass_prunes_every_expired_trace_before_it_claims() {
 fn a_dag_turn_reads_its_retained_ancestry_and_a_root_reads_alone() {
     use crate::WriteActor;
     use crate::conversation_dag::AppendRecord;
-    use crate::conversation_dag::fixtures::{grant, input};
+    use crate::conversation_dag::fixtures::{grant, grant_reads, input};
     let dir = tempfile::tempdir().expect("dir");
     let vault = open(dir.path(), true);
     let actor = WriteActor::new(EntityId::now(), EdgeActorClass::Human);
@@ -2555,6 +2554,7 @@ fn a_dag_turn_reads_its_retained_ancestry_and_a_root_reads_alone() {
         )
         .expect("author");
     grant(&vault, actor, true);
+    grant_reads(&vault, actor);
     let room = EntityId::now();
     vault
         .create_conversation(

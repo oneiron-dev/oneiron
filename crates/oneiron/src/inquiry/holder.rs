@@ -9,10 +9,17 @@
 //! its `valid_until`. Each touch of the map (a send, a read,
 //! [`Vault::evict_inquiry_answers`]) first drops every entry whose task has
 //! ended or whose `valid_until` has come, so no read returns an ended task's
-//! answer. Each housekeeping pass also calls [`Vault::evict_inquiry_answers`]
-//! (Engine ruling INQUIRE-HOLDER-EVICT), so on a server, whose lifecycle tick
-//! starts a pass every 60 s, an ended task's answer leaves memory within one
-//! tick even when nothing touches the map.
+//! answer. A write that settles or cancels a held answer's task drops that
+//! answer once it is durable (INQUIRE-SHAPE Q6 = A: "evicted at the task's
+//! terminal transition"; FIX INQUIRY-HOLDER-EVICT-ON-TERMINAL-WRITE): the
+//! write door, and the workflow-try settle that commits outside it, hand
+//! their committed TASKs to [`Vault::evict_inquiry_answers_after_commit`].
+//! An ask group settles by a settlement row of its own, which the commit
+//! names in place of the group; the holder matches that row to the group.
+//! Each housekeeping pass also calls [`Vault::evict_inquiry_answers`]
+//! (Engine ruling INQUIRE-HOLDER-EVICT), so an answer whose task another
+//! writer ended leaves memory within one lifecycle tick (60 s on a server)
+//! even when nothing touches the map.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Mutex, MutexGuard, PoisonError};
@@ -53,6 +60,10 @@ impl InquiryAnswerHolder {
 
     fn tasks(&self) -> BTreeSet<EntityId> {
         self.lock().keys().map(|key| key.task).collect()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.lock().is_empty()
     }
 
     /// How many answers the map holds now, without dropping any.
@@ -108,6 +119,53 @@ impl Vault {
         let before = held.len();
         held.retain(|key, answer| !ended.contains(&key.task) && answer.valid_until > now);
         Ok(before - held.len())
+    }
+
+    /// [`Self::evict_inquiry_answers`] once a write has committed, when it
+    /// wrote or settled a TASK a held answer belongs to (FIX
+    /// INQUIRY-HOLDER-EVICT-ON-TERMINAL-WRITE; Engine rulings INQUIRE-SHAPE
+    /// Q6 and INQUIRE-HOLDER-EVICT = A, the post-commit "task settled"
+    /// notice with the holder as a listener): `tasks` is the commit's TASK
+    /// set, which names the TASK of each task fact it wrote and the
+    /// settlement row of each ask group it settled, so a terminal settle, an
+    /// ask's settlement or a Cancelled fact drops that answer before any
+    /// later read, with no touch and no housekeeping pass. A commit that
+    /// names no held task reads nothing. A failed read leaves the answer to
+    /// the next touch or pass and never fails the write.
+    pub(crate) fn evict_inquiry_answers_after_commit<'a>(
+        &self,
+        tasks: impl IntoIterator<Item = &'a EntityId>,
+    ) {
+        if self.inquiry_answers.is_empty() {
+            return;
+        }
+        let held = self.inquiry_answers.tasks();
+        // A settled ask group is named by its settlement row (review round 2
+        // of #9185): that row ends the held group too.
+        let settlements: BTreeSet<EntityId> = held
+            .iter()
+            .filter_map(|task| crate::task_verb::ask_settlement_id(*task).ok())
+            .collect();
+        if !tasks
+            .into_iter()
+            .any(|task| held.contains(task) || settlements.contains(task))
+        {
+            return;
+        }
+        if let Err(error) = self.evict_inquiry_answers() {
+            tracing::warn!(
+                %error,
+                "ended inquiry answers wait for the next touch or housekeeping pass"
+            );
+        }
+    }
+
+    /// [`Self::evict_inquiry_answers_after_commit`] for a writer that commits
+    /// outside the write door and names none of its TASKs (a bearer link's
+    /// ask answer): every held task is re-checked, while any answer is held.
+    pub(crate) fn evict_inquiry_answers_after_raw_commit(&self) {
+        let held = self.inquiry_answers.tasks();
+        self.evict_inquiry_answers_after_commit(&held);
     }
 
     /// Holds `statements` for `actor`'s `task` from `inquiry` until

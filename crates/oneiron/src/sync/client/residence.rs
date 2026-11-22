@@ -15,6 +15,7 @@ mod index;
 mod items;
 pub(super) mod kit_fetch;
 mod machine_history;
+mod machine_names;
 mod media_vectors;
 mod pad_custody;
 mod predict;
@@ -23,6 +24,8 @@ mod rpc;
 mod search;
 mod search_client;
 pub(crate) mod secret_same_value;
+// FOLLOWED-WORLD-TIER1-TOMBSTONE-IDS: a followed world's tombstone id set.
+mod tombstones;
 mod windows;
 pub(crate) use self::search_client::search_resident;
 use self::windows::PromotionReply;
@@ -39,8 +42,10 @@ pub(crate) use index::IndexFetchFault;
 pub use index::ResidenceIndexWindow;
 pub use kit_fetch::{fetch_sealed_bundle_index_with_kit, fetch_sealed_bundle_with_kit};
 pub(crate) use machine_history::fetch_owed_machine_history;
+pub(crate) use machine_names::exchange_machine_names;
 pub(crate) use media_vectors::request_media_vectors;
 pub use search::ResidenceSearchPage;
+pub(crate) use tombstones::refresh_followed_tombstones;
 
 use serde::Deserialize;
 

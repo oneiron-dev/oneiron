@@ -5,6 +5,7 @@
 
 use std::time::{Duration, Instant};
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use serde_json::{Value, json};
 
 use crate::entity_id::EntityId;
@@ -25,6 +26,22 @@ use super::support::{MAX_TEXT_BYTES, canonical_json_bytes, invalid};
 
 /// The time one shipped judgment may take.
 const JUDGMENT_BUDGET: Duration = Duration::from_secs(120);
+
+/// The rubric's hash: plain BLAKE3 of the rubric's sorted JSON. With the
+/// rubric's version it seeds the membership question's id, so it keeps its
+/// bytes (K, PLAN-UC-04 stage 6.4).
+fn rubric_digest(rubric: &Value) -> Result<[u8; 32]> {
+    Ok(LegacyDigest::new(purposes::saved_query::JUDGE_RUBRIC)
+        .raw(&canonical_json_bytes(rubric)?)
+        .finish())
+}
+
+/// [`rubric_digest`], or `None` when the rubric does not encode. For the K-proof
+/// (`tests/fingerprint_keep_query_swap_piece_packet_repo_digests.rs`).
+#[cfg(oneiron_test_support)]
+pub(crate) fn rubric_digest_for_test(rubric: &Value) -> Option<[u8; 32]> {
+    rubric_digest(rubric).ok()
+}
 
 /// The host's ladder for the membership question, the dial and learned bands it routes
 /// under, its wording of the question and of the note's ask, and the time one judgment may
@@ -93,9 +110,9 @@ pub(super) async fn judge(
     let candidate = evidence.entity_ref;
     let decisions = binding.decisions;
     let backend = (binding.backend_for)(sources.clone());
-    let rubric_hash = blake3::hash(&canonical_json_bytes(rubric)?);
+    let rubric_hash = rubric_digest(rubric)?;
     let question = SAVED_QUERY_MATCH.question(
-        &[rubric_hash.as_bytes(), rubric_version.as_bytes()],
+        &[&rubric_hash, rubric_version.as_bytes()],
         decisions.wording.clone(),
         AnswerContract::Noul,
     )?;

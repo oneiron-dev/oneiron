@@ -13,17 +13,17 @@ pub mod companion_preset;
 pub mod config;
 pub mod constraint;
 pub mod conversion;
+pub mod deposit;
 pub mod disclosure_rung;
 pub mod emergency_reschedule;
 pub mod invite_grant;
 pub mod lifecycle;
+pub mod personal_link;
 pub mod public_lens;
 pub mod publication;
 mod reminder;
 pub mod solver;
 pub(crate) mod tables;
-// FIX [LIBTEST-QUARANTINE-BOOKING-TESTS]: the lib test target's type check fails here (5 errors: E0063 x5); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 
@@ -61,14 +61,19 @@ pub use conversion::{
     booking_zoned_time, parse_booking_slot_link, repeat_no_show_offer,
     resolve_booking_conversion_rows,
 };
+pub use deposit::{
+    DEFAULT_DEPOSIT_FULL_REFUND_NOTICE_SECS, DepositRefundRule, DepositTerms,
+    MAX_DEPOSIT_AMOUNT_MINOR, configured_deposit_terms, deposit_checkout_idempotency_key,
+};
 pub use disclosure_rung::{
     BusyBlockRow, CalendarDisclosureDefault, DisclosureRung, EventDetailsRow, EventRow,
     RungProjection, SurfaceClass, TitledEventRow, default_disclosure_rung, project_at_rung,
     project_calendar_grant,
 };
 pub use emergency_reschedule::{
-    AffectedBooking, EmergencyActionPolicy, EmergencyBatchPlan, EmergencyItem, EmergencyLocalBasis,
-    EmergencyPick, EmergencyPlan, EmergencyRescheduleRequest, OwnerInstructionRecord,
+    AffectedBooking, EMERGENCY_REPEAT_NOTICE, EmergencyActionPolicy, EmergencyBatchPlan,
+    EmergencyExecution, EmergencyItem, EmergencyLocalBasis, EmergencyPick, EmergencyPlan,
+    EmergencyRepeatNotice, EmergencyRescheduleRequest, OwnerInstructionRecord,
     canonical_emergency_request_hash, counterparty_pick, enumerate_affected_bookings,
     execute_emergency_plan, plan_emergency_reschedule, verify_logged_owner_instruction,
 };
@@ -78,6 +83,7 @@ pub use invite_grant::{
     booking_page_invites_authorizes, enqueue_confirm_invite, enqueue_confirm_invite_outcome,
     mint_publish_page_invite_grant,
 };
+pub use lifecycle::BookingOwnerCardRefundMarkedOutside;
 pub use lifecycle::{
     BOOKING_BOOKER_CONTACT_PREDICATE, BOOKING_CAP_OVERRIDE_PREDICATE,
     BOOKING_EVENT_TYPE_REF_PREDICATE, BOOKING_HOLD_META_PREFIX, BOOKING_LIFECYCLE_ATTEMPT_KIND,
@@ -94,6 +100,20 @@ pub use lifecycle::{
     is_booking_family_claim_predicate, is_booking_lifecycle_claim_predicate, issue_checkout_lease,
     run_booking_lifecycle_attempt, run_booking_lifecycle_attempt_with_invites,
     run_booking_lifecycle_once, token_page_ref, validate_booking_family_claim,
+};
+pub use lifecycle::{
+    BOOKING_CALENDAR_HOLD_ITEM_PREFIX, BOOKING_HELD_DEPOSIT_ITEM_PREFIX,
+    BOOKING_OWNER_CARD_ITEM_PREFIX, BookingDepositHeld, BookingDepositHeldReason,
+    BookingDepositReturned, BookingOwnerCard, BookingOwnerCardCalendarHold,
+    BookingOwnerCardDeposit, BookingOwnerCardEmergencyReturn, BookingOwnerCardOffer,
+    CALENDAR_HOLD_RECONNECT_VERB,
+};
+pub use personal_link::{
+    MAX_PERSONAL_LINK_EMAIL_BYTES, MAX_PERSONAL_LINK_NAME_CHARS, PERSONAL_LINK_NOTICE_PRODUCER,
+    PERSONAL_LINK_TOKEN_PREFIX, PersonalBookingLink, PersonalLinkEnd, PersonalLinkEndReason,
+    PersonalLinkMint, PersonalLinkRecipient, is_personal_link_token, mint_personal_booking_link,
+    normalize_booker_email, personal_booking_links, resolve_personal_booking_link,
+    revoke_personal_booking_link, void_personal_booking_link,
 };
 pub use public_lens::{
     BookingPageLens, BookingPageModel, BookingPageModelError, BookingPagePresentation,

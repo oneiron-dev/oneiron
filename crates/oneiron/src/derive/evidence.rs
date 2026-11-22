@@ -104,44 +104,52 @@ pub(super) fn stage_in_txn(
         answers: &[],
         now_ms: context.now.saturating_mul(1_000),
     };
-    let mut savepoint = vault.store.env.nested_write_txn(txn)?;
-    let asserted = assert_evidence_in_txn(
-        vault,
-        &mut savepoint,
-        &assertion,
-        None,
-        &read,
-        crate::own_rate::auto_write_rate(),
-        &mut None,
-    );
-    match asserted {
-        Ok(AssertedEvidence {
-            original, records, ..
-        }) => {
-            if vault.get_claim_in_txn(&savepoint, &head)?.as_ref() != Some(&original) {
-                return Err(Error::InvalidClaimBody(
-                    "evidence attachment altered its head",
-                ));
+    let mut refused = None;
+    // Hand queued work to this write's owner (FIX DERIVE-COMMIT-ITEM-SAVEPOINTS-DROP-POSTCOMMIT-WORK).
+    let Some(records) = crate::batch::savepoint_in_txn(vault, txn, |savepoint| {
+        match assert_evidence_in_txn(
+            vault,
+            savepoint,
+            &assertion,
+            None,
+            &read,
+            crate::own_rate::auto_write_rate(),
+            &mut None,
+        ) {
+            Ok(AssertedEvidence {
+                original, records, ..
+            }) => {
+                if vault.get_claim_in_txn(savepoint, &head)?.as_ref() != Some(&original) {
+                    return Err(Error::InvalidClaimBody(
+                        "evidence attachment altered its head",
+                    ));
+                }
+                Ok(Some(records))
             }
-            savepoint.commit()?;
-            Ok(ItemOutcome::Landed {
-                rows: records,
-                approval: Some(ClaimApprovalStatus::Auto),
-                receipt: None,
-            })
+            Err(Error::Gate(GateError::GateWriteRejected { reason_codes, .. })) => {
+                refused = Some(reason_codes);
+                Ok(None)
+            }
+            Err(Error::InvalidClaimBody(_)) => Ok(None),
+            Err(error) => Err(error),
         }
-        Err(Error::Gate(GateError::GateWriteRejected { reason_codes, .. })) => {
-            savepoint.abort();
-            let reasons: Vec<String> = reason_codes.iter().map(|code| (*code).to_owned()).collect();
-            let receipt = refusal_receipt_in_txn(vault, txn, context, Some(head), &reasons)?;
-            Ok(ItemOutcome::Refused { reasons, receipt })
-        }
-        Err(Error::InvalidClaimBody(_)) => {
-            savepoint.abort();
-            refuse(vault, txn, context, head, EVIDENCE_UNVERIFIED)
-        }
-        Err(error) => Err(error),
-    }
+    })?
+    else {
+        return match refused {
+            Some(reason_codes) => {
+                let reasons: Vec<String> =
+                    reason_codes.iter().map(|code| (*code).to_owned()).collect();
+                let receipt = refusal_receipt_in_txn(vault, txn, context, Some(head), &reasons)?;
+                Ok(ItemOutcome::Refused { reasons, receipt })
+            }
+            None => refuse(vault, txn, context, head, EVIDENCE_UNVERIFIED),
+        };
+    };
+    Ok(ItemOutcome::Landed {
+        rows: records,
+        approval: Some(ClaimApprovalStatus::Auto),
+        receipt: None,
+    })
 }
 
 /// The envelope the engine stamps on an evidence assertion: the committing
