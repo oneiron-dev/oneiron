@@ -58,10 +58,13 @@ pub(super) fn park_in_txn(
 }
 
 /// The owner's answer put the account `id` back in rotation: its park ends,
-/// and so does every offer's own credit rest under it, each closing its
-/// open question, since one top-up serves them all.
-pub(super) fn unpark(vault: &Vault, id: &str) -> oneiron::Result<()> {
+/// and so does every offer's own credit rest under it, since one top-up
+/// serves them all. Returns the ids of the questions open under the
+/// account; the caller closes each in the write that keeps its answer, so
+/// a failure before that write leaves them open.
+pub(super) fn unpark(vault: &Vault, id: &str) -> oneiron::Result<Vec<String>> {
     vault.sync_state_delete(&row(id))?;
+    let mut open = Vec::new();
     for key in vault.sync_state_keys_with_prefix(QUESTION_PREFIX)? {
         let question = vault
             .sync_state_get(&key)?
@@ -71,7 +74,7 @@ pub(super) fn unpark(vault: &Vault, id: &str) -> oneiron::Result<()> {
             continue;
         };
         vault.sync_state_delete(&format!("{PREFIX}{}", question.id))?;
-        vault.sync_state_delete(&key)?;
+        open.push(question.id);
     }
-    Ok(())
+    Ok(open)
 }

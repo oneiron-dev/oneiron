@@ -95,6 +95,14 @@ crate::side_table::side_tables! {
     /// the key the custodian proved, the row count and when it was verified (recording clock).
     AUTHORITY_ARCHIVE_CUSTODY_PROOF: VaultMeta b"authority.archive.local.custody-proof.v1:" Named
         [restore: not_imaged] [family: not_imaged] [tier: runtime];
+    /// One signed authority row the owner's history import kept as evidence instead of storing
+    /// it, because the store door held it at the owner's reserve under the fold's memory floor,
+    /// or it stands on such a row (FIX [OWNER-RESERVE-IMPORT-PARTIAL]): no held history,
+    /// admitting nothing; imported again after each write of the floor row, it leaves when an
+    /// import of it lands or refuses it for something other than the reserve. Key: hash32.
+    /// Value: the row's canonical signed bytes.
+    AUTHORITY_HISTORY_RESERVE_HELD: VaultMeta b"authority.history.reserve-held.v1:" Raw
+        [restore: live] [family: unclassified] [tier: canonical];
     /// One signed authority row a repair page staged while this vault's history is incomplete
     /// (OF-469): no held history, admitted only when the stage closes the gap. Key: hash32.
     AUTHORITY_HISTORY_STAGE: VaultMeta b"authority.history.stage.v1:" Raw

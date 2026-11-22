@@ -6,7 +6,9 @@ use super::*;
 /// The fold on a vault that adopted `adopted` (OF-469): its stored rows are
 /// the covered rows it still holds, never tail and never read again, and the
 /// tail past the image, which folds from the image with the tail's own
-/// first-seen times and observations alone; no clock is read for a covered
+/// first-seen times and observations, and the first-seen receipts of the
+/// image's carried rows this install kept (its adoption keeps one for each
+/// row the stale-roster window reads); no other clock is read for a covered
 /// row. None where the image cannot answer yet every covered row is held:
 /// the stored log then folds whole. Each `arriving` row folds as a stored row
 /// first seen now (FIX 2535). A tail row, stored or arriving, that does not
@@ -31,6 +33,9 @@ pub(super) fn fold_adopted_in_txn(
         .filter_map(|hash| Some((authority_log_entity_id_from_hash(hash).ok()?, *hash)))
         .collect();
     let mut held_covered = BTreeSet::new();
+    // The covered rows stored here, never an arriving one: each is this
+    // install's own row, with its own first-seen receipt.
+    let mut stored_covered = BTreeSet::new();
     let mut tail = Vec::new();
     // The fold past the image takes whole entries: a tail row that does not
     // open here sends the fold to the stored log.
@@ -38,6 +43,7 @@ pub(super) fn fold_adopted_in_txn(
     for id in authority_log_ids_in_txn(store, txn)? {
         if let Some(hash) = covered_ids.get(&id) {
             held_covered.insert(*hash);
+            stored_covered.insert(*hash);
             continue;
         }
         let row = decode_stored_authority_fold_row(
@@ -48,6 +54,7 @@ pub(super) fn fold_adopted_in_txn(
         let hash = row.hash()?;
         if image.rows.contains_key(&hash) {
             held_covered.insert(hash);
+            stored_covered.insert(hash);
         } else if let Some(entry) = row.open() {
             tail.push((hash, entry.clone()));
         } else {
@@ -65,8 +72,12 @@ pub(super) fn fold_adopted_in_txn(
         }
     }
     if passes_through {
-        let request =
-            crate::authority::adopted_fold::whole_history(adopted, &BTreeSet::new(), &held_covered);
+        let request = crate::authority::adopted_fold::whole_history(
+            adopted,
+            &BTreeSet::new(),
+            &held_covered,
+            None,
+        );
         return Ok((!request.missing.is_empty()).then_some(AuthorityTailFold::NeedHistory(request)));
     }
     let backfilled = AUTHORITY_FIRST_SEEN_BACKFILLED.contains(
@@ -83,21 +94,48 @@ pub(super) fn fold_adopted_in_txn(
         };
         first_seen_at_secs.insert(*hash, first_seen);
     }
-    let rows: Vec<_> = tail
-        .iter()
-        .map(|(hash, entry)| crate::authority::fold_resume::RowMeta::of(Some(*hash), entry))
-        .collect();
+    // This install's own first sight of a carried covered row, where it kept
+    // a receipt: at its adoption of the image, for a row it never stored
+    // (FOLDPAST-COVERED-APPROVAL-CLOCK). A row never stored with none gets no
+    // clock here; the fold asks for the history where the window would need
+    // it. A covered row stored here keeps its own receipt like any stored
+    // row, so once the backfill ran a missing one is corruption, as the
+    // whole-history read finds it (Astra re-review P1).
+    for (hash, row) in &image.rows {
+        let stored = stored_covered.contains(hash);
+        if row.body.is_none() && !stored {
+            continue;
+        }
+        if let Some(first_seen) =
+            readonly_first_seen_receipt(store, txn, hash, backfilled && stored)?
+            && row.body.is_some()
+        {
+            first_seen_at_secs.entry(*hash).or_insert(first_seen);
+        }
+    }
     let observations =
-        crate::authority::sequence_observation::authority_local_observations_of_rows_in_txn(
-            store, txn, &rows,
-        )?;
+        crate::authority::sequence_observation::authority_local_observations_in_txn(store, txn)?;
     let peer_consent_roots =
         crate::federation::admitted_peer_consent_roots_for_store_in_txn(store, txn)?;
+    // The tail rows this install believes, judged as the store gate judges
+    // them but with a root request's wait unresolved, since resolving it
+    // reads this fold: the fold refuses only for the gaps these rows rest on
+    // (FIX [STRANGER-GAP-STALLS-ADOPTED-TAIL-FOLD]). The arriving rows count
+    // as stored, as they will once stored, so a fold that answers here does
+    // not refuse after they land (#9476 review round 2).
+    let structure =
+        crate::authority::log_structure::fold_belief_structure_in_txn(store, txn, arriving)?;
+    let believed: BTreeSet<_> = tail
+        .iter()
+        .filter(|(_, entry)| structure.believes(entry))
+        .map(|(hash, _)| *hash)
+        .collect();
     let folded = crate::authority::adopted_fold::fold_adopted_checkpoint_tail(
         adopted,
         crate::authority::adopted_fold::AdoptedTail {
             tail: &tail,
             held_covered: &held_covered,
+            believed: Some(&believed),
             required,
             first_seen_at_secs: &first_seen_at_secs,
             now_secs: key.now_secs,
@@ -168,6 +206,7 @@ pub(in crate::authority) fn adopted_history_request_in_txn(
                 vault_id: Some(adopted.image().vault_id),
                 checkpoint: Some(adopted.id()),
                 missing: BTreeSet::new(),
+                reason: None,
             }),
             None => None,
         },

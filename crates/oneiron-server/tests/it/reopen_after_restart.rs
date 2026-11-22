@@ -210,6 +210,7 @@ fn witnessed_text_is_found_under_the_same_reference_after_sigterm_and_restart() 
             }],
             occurred_at: unix_seconds_now(),
             thread_audience: None,
+            project: None,
             assertions: Default::default(),
         })
         .unwrap();

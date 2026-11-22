@@ -131,6 +131,19 @@ pub(crate) async fn get_entity(
         .inspect_err(|error| tracing::error!(kind = ?error.kind(), "get entity failed"))
         .map_err(|error| core_engine_error("get entity failed", error))?;
     let slot = read.value.into_iter().next().unwrap_or(Ok(None));
+    // A room's row, or one of its turns, that its room does not admit the
+    // caller to is a missing row (L9-52): the body holds the roster.
+    let slot = match slot {
+        Ok(Some(_))
+            if !server
+                .vault
+                .room_structure_admitted(&scoped_read, &id)
+                .map_err(|error| core_engine_error("get entity failed", error))? =>
+        {
+            Ok(None)
+        }
+        slot => slot,
+    };
     let response = match slot
         .map(|row| row.and_then(|row| row.body.map(|data| (row.entity_type, row.learned_at, data))))
     {
@@ -271,7 +284,21 @@ pub(crate) async fn get_edges(
             tracing::error!(kind = ?e.kind(), "get edges failed");
         })
         .map_err(|_| ApiError::internal_server_error("get edges failed"))?;
-    let response = match read.value {
+    // A room or turn its room does not admit the caller to has no edges
+    // here (L9-52): they are its thread and DAG shape.
+    let edges = match read.value {
+        Some(_)
+            if !server
+                .vault
+                .room_structure_admitted(&scoped_read, &id)
+                .inspect_err(|e| tracing::error!(kind = ?e.kind(), "get edges failed"))
+                .map_err(|_| ApiError::internal_server_error("get edges failed"))? =>
+        {
+            None
+        }
+        edges => edges,
+    };
+    let response = match edges {
         None => ApiError::not_found("entity", Some(&id_hex)).into_response(),
         Some(edges) => Json(
             edges

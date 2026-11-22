@@ -47,6 +47,8 @@ pub struct PipelineBuilder<'a> {
     pub(super) params: super::params::RetrievalParams,
     pub(super) blend_weights_override: Option<crate::store::RetrievalBlendWeights>,
     pub(super) phonetic_search: Option<Vec<String>>,
+    /// The learned phonetic rung's query: its own ranked list of the phonetic channel.
+    pub(super) phonetic_vector_search: Option<super::phonetic_vector_channel::PhoneticVectorQuery>,
     /// Typed media queries, one ranked list per declared space (OF-370).
     pub(super) media_search: super::media_query_memory::MediaQueries,
     pub(super) temporal_search: Option<TemporalSearchConfig>,
@@ -70,6 +72,10 @@ pub struct PipelineBuilder<'a> {
     pub(super) authority_filter: Option<crate::gate::ResolvedRetrievalFilter>,
     /// Only actor-scoped callers may nominate private diary NOTEs in a text channel.
     pub(super) scoped_note_reader: Option<crate::claim::ScopedReadActorKey>,
+    /// The scoped read whose refusals with no count the run's BM25
+    /// statistics honour, in place of its reader key's world refusals
+    /// ([`Self::statistics_read`]).
+    pub(super) statistics_read: Option<&'a crate::claim::ScopedRead<'a>>,
     /// Where the run's rows go: off this device or not, and each machine a
     /// scoped reader's connection proved (mesh PR2b); see
     /// [`Self::for_destination`].
@@ -159,6 +165,7 @@ impl<'a> PipelineBuilder<'a> {
             params: super::params::RetrievalParams::shipped(),
             blend_weights_override: None,
             phonetic_search: None,
+            phonetic_vector_search: None,
             media_search: Default::default(),
             temporal_search: None,
             ppr_search: None,
@@ -179,6 +186,7 @@ impl<'a> PipelineBuilder<'a> {
             criticality: None,
             authority_filter: None,
             scoped_note_reader: None,
+            statistics_read: None,
             destination: crate::settings::ReadDestination::on_device(),
             since_filter: None,
             occurred_range: None,
@@ -322,6 +330,25 @@ impl<'a> PipelineBuilder<'a> {
         self
     }
 
+    /// Scores for `read`, whose admission the caller installs: no row
+    /// `read` refuses and counts nowhere counts in the run's BM25
+    /// statistics, a world's refusal included
+    /// ([`crate::claim::ScopedRead::withheld_row_test_in`]; FIX
+    /// SCOPED-BM25-DF-COUNTS-NON-WORLD-REFUSED-POSTINGS). It changes no
+    /// candidate the run admits, and it takes the place of the reader key's
+    /// world refusals ([`Self::statistics_reader_key`]).
+    pub(crate) fn statistics_read(mut self, read: &'a crate::claim::ScopedRead<'a>) -> Self {
+        self.statistics_read = Some(read);
+        self
+    }
+
+    /// The reader whose world refusals the run's BM25 statistics honour
+    /// when no [`Self::statistics_read`] is set: its scoped note reader
+    /// (FIX WORLD-SCOPE-BM25-DF-COUNTS-HIDDEN-POSTINGS).
+    pub(super) fn statistics_reader_key(&self) -> Option<&crate::claim::ScopedReadActorKey> {
+        self.scoped_note_reader.as_ref()
+    }
+
     /// Reads for a caller whose rows go to `destination`: no candidate a
     /// world withholds from one of its machines enters the run (DEC-0005,
     /// mesh PR2b). It only narrows.
@@ -460,6 +487,36 @@ impl<'a> PipelineBuilder<'a> {
 
     pub fn search_phonetic(mut self, codes: &[&str]) -> Self {
         self.phonetic_search = Some(codes.iter().map(|code| (*code).to_owned()).collect());
+        self
+    }
+
+    /// Searches the phonetic channel's learned rung (CROSS-ARCH-0013 rung 2) with the caller's
+    /// `vector` of a name, from model `model_id`: exact cosine against every stored name vector
+    /// of that model, each entity scored by its best name, at most `limit` (capped at
+    /// [`PHONETIC_VECTOR_MAX_LIMIT`](crate::phonetic_learned::PHONETIC_VECTOR_MAX_LIMIT)). The
+    /// vector is caller-supplied, as the codes are. A vector of another width than the model's
+    /// stored ones fails the run with
+    /// [`Error::DimensionMismatch`](crate::error::Error::DimensionMismatch).
+    pub fn search_phonetic_vector(mut self, model_id: &str, vector: &[f32], limit: usize) -> Self {
+        self.phonetic_vector_search = Some(super::phonetic_vector_channel::PhoneticVectorQuery {
+            model_id: model_id.to_owned(),
+            vector: vector.to_vec(),
+            limit: limit.min(crate::phonetic_learned::PHONETIC_VECTOR_MAX_LIMIT),
+        });
+        self
+    }
+
+    /// Searches the phonetic channel by names as heard or typed: each
+    /// mention becomes the codes a write posts for a name
+    /// ([`generate_phonetic_codes`](crate::batch::generate_phonetic_codes)),
+    /// its sound keys among them (CROSS-ARCH-0013 `#flow`: the key is
+    /// computed per mention), so a caller with no grapheme-to-phoneme of its
+    /// own reaches the sound match. They join any codes already set.
+    pub fn search_phonetic_mentions(mut self, mentions: &[&str]) -> Self {
+        let codes = self.phonetic_search.get_or_insert_with(Vec::new);
+        for mention in mentions {
+            codes.extend(crate::batch::generate_phonetic_codes(mention));
+        }
         self
     }
 

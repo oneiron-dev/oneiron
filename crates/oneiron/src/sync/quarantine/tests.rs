@@ -33,15 +33,10 @@ fn test_vault_with_dir() -> (tempfile::TempDir, Arc<Vault>) {
     (dir, vault)
 }
 
-/// 25-byte envelope: type u8 + occurred_start/end + learned_at u64 BE.
+/// 33-byte envelope: type u8 + occurred_start/end + learned_at + row_version u64 BE.
 fn entity_blob(entity_type: u8, occurred: TimeRange, learned_at: u64, data: &[u8]) -> Vec<u8> {
-    let mut blob = Vec::with_capacity(25 + data.len());
-    blob.push(entity_type);
-    blob.extend_from_slice(&occurred.start.to_be_bytes());
-    blob.extend_from_slice(&occurred.end.to_be_bytes());
-    blob.extend_from_slice(&learned_at.to_be_bytes());
-    blob.extend_from_slice(data);
-    blob
+    // Fresh test carrier: row_version 0, the value base writes for a new row.
+    crate::test_util::entity_record(entity_type, occurred, learned_at, 0, data)
 }
 
 fn task_body() -> Vec<u8> {
@@ -103,7 +98,7 @@ fn quarantine_key_encoding_is_x_prefix_with_8be_seq() {
 #[test]
 fn quarantine_record_is_hash_only_never_payload_bytes() {
     let (_dir, vault) = test_vault_with_dir();
-    // 24 bytes (< 25-byte envelope → undecodable blob) and distinctive.
+    // 24 bytes (< 33-byte envelope → undecodable blob) and distinctive.
     let payload = b"SECRET-PII-PAYLOAD-BYTES";
     assert_eq!(payload.len(), 24);
 
@@ -1547,6 +1542,7 @@ fn exercise_suppression_remote_quarantine(observer: bool, divergent: bool) -> cr
                         end: LEARNED_AT,
                     },
                     LEARNED_AT,
+                    None,
                     &original,
                 )
                 .apply(txn)
@@ -1817,6 +1813,7 @@ fn reverse_receipt_recovery_preserves_audit_and_quarantines_tombstone() -> crate
                     end: LEARNED_AT,
                 },
                 LEARNED_AT,
+                None,
                 &body,
             )
             .apply(txn)

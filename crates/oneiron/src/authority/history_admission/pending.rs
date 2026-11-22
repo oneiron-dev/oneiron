@@ -72,10 +72,12 @@ enum PendingLanding {
 }
 
 /// A batch a local append keeps as evidence instead of storing it: the
-/// history its fold needs, and each row's canonical signed bytes.
+/// history its fold needs, each row's canonical signed bytes, and the
+/// overlay records of its sealed rows, kept beside them (census L5-22).
 pub(crate) struct PendingAuthorityHistory {
     pub(crate) request: AuthorityHistoryRequest,
     rows: Vec<(AuthorityEntryHash, Vec<u8>)>,
+    overlays: Vec<super::super::overlay_rows::PreparedOverlay>,
 }
 
 /// What the owner's local append of `staged` on `txn`'s snapshot does under
@@ -90,6 +92,12 @@ pub(crate) fn pending_history_of_in_txn(
     txn: &heed::RoTxn<'_>,
     staged: &[(AuthorityEntryHash, &AuthorityLogEntry)],
 ) -> Result<Option<PendingAuthorityHistory>> {
+    // Each probe's fold believes the whole batch, as the fold will once the
+    // batch is stored: a key the batch enrolls vouches for the rows it signs
+    // (#9476 review round 2).
+    let _staged_batch = super::super::log_structure::stage_batch_for_belief(
+        staged.iter().map(|(_, entry)| (*entry).clone()).collect(),
+    );
     Ok(pending_history_of(store, posture, txn, staged).unwrap_or(None))
 }
 
@@ -145,16 +153,25 @@ fn pending_history_of(
     else {
         return Ok(None);
     };
-    let rows = arriving
-        .iter()
-        .map(|(hash, row)| {
-            let entry = row.open().ok_or(crate::error::Error::InvariantViolation(
-                "pending staged row",
-            ))?;
-            Ok((*hash, encode_authority_log_entry_body(entry)?))
-        })
-        .collect::<Result<Vec<_>>>()?;
-    Ok(Some(PendingAuthorityHistory { request, rows }))
+    // A sealed row's bytes are its scaffold: its overlay record goes with
+    // them, or the kept row would never open again (census L5-22).
+    let mut rows = Vec::with_capacity(arriving.len());
+    let mut overlays = Vec::new();
+    for (hash, row) in &arriving {
+        let entry = row.open().ok_or(crate::error::Error::InvariantViolation(
+            "pending staged row",
+        ))?;
+        let body = encode_authority_log_entry_body(entry)?;
+        if let Some(overlay) = super::super::overlay_rows::prepare_overlay(entry, &body)? {
+            overlays.push(overlay);
+        }
+        rows.push((*hash, body));
+    }
+    Ok(Some(PendingAuthorityHistory {
+        request,
+        rows,
+        overlays,
+    }))
 }
 
 /// Whether `op` only adds or widens authority (lead ruling a, 10-29): a
@@ -181,13 +198,19 @@ fn grants_only(op: &AuthorityOp) -> bool {
 }
 
 /// Keeps `pending`'s rows as evidence in the owner's writer, after the act
-/// that signed them rolled back. The authority generation moves on, so no
-/// view cached before it answers for the evidence.
+/// that signed them rolled back. Each sealed row's overlay record is sealed
+/// and stored beside it in the same writer, as the append funnel stores a
+/// stored row's, so a kept row opens as a stored one does (census L5-22).
+/// The authority generation moves on, so no view cached before it answers
+/// for the evidence.
 pub(crate) fn keep_pending_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     pending: &PendingAuthorityHistory,
 ) -> Result<()> {
+    for overlay in &pending.overlays {
+        super::super::overlay_rows::put_overlay_in_txn(store, txn, overlay)?;
+    }
     for (hash, bytes) in &pending.rows {
         AUTHORITY_HISTORY_PENDING.put(store, txn, hash, bytes)?;
     }
@@ -440,6 +463,12 @@ impl Vault {
         let mut txn = self.store.env.write_txn()?;
         for hash in &dropped {
             AUTHORITY_HISTORY_PENDING.delete(&self.store, &mut txn, hash)?;
+            // Its overlay record leaves with it, unless the log holds the row.
+            if super::super::retired_signers::stored_authority_row(&self.store, &txn, hash)?
+                .is_none()
+            {
+                super::super::overlay_rows::delete_overlay_in_txn(&self.store, &mut txn, hash)?;
+            }
         }
         txn.commit()?;
         tracing::warn!(

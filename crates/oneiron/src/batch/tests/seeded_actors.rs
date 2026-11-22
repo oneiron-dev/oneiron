@@ -283,8 +283,6 @@ fn refused_by_pin(result: Result<()>, road: &str) {
     );
 }
 
-// FIX [LIBTEST-QUARANTINE-BATCH-TESTS-SEEDED-ACTORS-ITEMS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 /// H215 (security scan, W2-T7): the agent a seeded ceiling binds may hold
 /// `core:write`, and the gate reads its bound off its own row. An update that
 /// widens that row is refused, typed, on the raw batch door, the typed door
@@ -330,6 +328,7 @@ fn an_update_never_widens_an_agent_ceiling() -> Result<()> {
                 ENTITY_TYPE_AGENT_DEF,
                 test_time_range(3, 3),
                 3,
+                None,
                 &widened_body,
             )
             .commit(),
@@ -491,6 +490,7 @@ fn a_deleted_agent_id_comes_back_no_wider_and_on_its_own_lineage() -> Result<()>
     // The next open re-seeds the deleted row within its pin, not at its seed.
     drop(vault);
     let vault = Vault::open(dir.path(), embedding_test_config())?;
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     let (_, reseeded) = seeded_row(&vault, "sys.scout");
     assert_eq!(reseeded.ceiling, AgentCeiling::Proposed);
     Ok(())
@@ -535,8 +535,6 @@ fn owner_proof(vault: &Vault) -> Result<crate::consent::AuthenticatedOwner> {
     )
 }
 
-// FIX [LIBTEST-QUARANTINE-BATCH-TESTS-SEEDED-ACTORS-ITEMS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 /// H215 keeps the owner's capability: the one door that widens an agent's
 /// ceiling is the owner's, and it rechecks the owner's proof. It widens a
 /// seeded row and an owner's own agent, the gate reads the wider bound, and
@@ -635,6 +633,7 @@ fn only_the_owners_door_widens_an_agent_and_the_pin_follows() -> Result<()> {
                 ENTITY_TYPE_AGENT_DEF,
                 test_time_range(5, 5),
                 5,
+                None,
                 &wider_body,
             )
             .commit(),
@@ -831,7 +830,11 @@ fn restore_keeping_authority(
         vault,
         1_000,
     )
-    .map(|(restored, _)| restored)
+    .map(|(restored, _)| {
+        restored
+            .install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+        restored
+    })
 }
 
 /// H215, round 2: an agent id's pin is live authority, so a restore that
@@ -845,6 +848,7 @@ fn a_restore_keeps_every_agent_id_pin() -> Result<()> {
     let (_dir, vault) = open_test_vault();
     let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
+    vault.ensure_vault_key().expect("mint the vault data key");
     vault.snapshot_checkpoint(&image, 100)?;
     let (custom_id, custom) = custom_agent(&vault, AgentCeiling::Proposed)?;
     vault.batch().delete(&custom_id).commit()?;
@@ -881,6 +885,7 @@ fn a_restored_row_narrows_its_pin() -> Result<()> {
     let (kept_id, kept) = custom_agent(&vault, AgentCeiling::Proposed)?;
     let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
+    vault.ensure_vault_key().expect("mint the vault data key");
     vault.snapshot_checkpoint(&image, 100)?;
     let mut widened = kept.clone();
     widened.version = "2".to_owned();
@@ -913,6 +918,7 @@ fn a_restore_refuses_past_a_pin_it_cannot_read() -> Result<()> {
     let (agent_id, _) = custom_agent(&vault, AgentCeiling::Proposed)?;
     let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
+    vault.ensure_vault_key().expect("mint the vault data key");
     vault.snapshot_checkpoint(&image, 100)?;
     let pin_key = [&b"agent_def/id-pin/v1\0"[..], agent_id.as_bytes()].concat();
     let pin = vault.with_write_txn(|txn| {
@@ -961,6 +967,7 @@ fn a_restore_names_the_lineage_an_unread_pin_waits_for() -> Result<()> {
     vault.put_agent_definition(&fork_id, &fork(Some(herald_id)), test_time_range(1, 1), 1)?;
     let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("image");
+    vault.ensure_vault_key().expect("mint the vault data key");
     vault.snapshot_checkpoint(&image, 100)?;
     let pin_key = [&b"agent_def/id-pin/v1\0"[..], fork_id.as_bytes()].concat();
     vault.with_write_txn(|txn| {
@@ -977,12 +984,11 @@ fn a_restore_names_the_lineage_an_unread_pin_waits_for() -> Result<()> {
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-BATCH-TESTS-SEEDED-ACTORS-ITEMS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 /// H215 (Sol R7 F1): an agent id's pin is live authority, so a replacement
 /// prepared before the vault narrowed an agent, or before it took a new agent
 /// id, is not put in the vault's place: it would hold that agent looser than
 /// the vault now does. Prepared again, it goes in.
+#[cfg(unix)]
 #[test]
 fn a_replacement_publishes_no_looser_agent_id_pin() -> Result<()> {
     use crate::agent_def::AgentCeiling;
@@ -991,13 +997,17 @@ fn a_replacement_publishes_no_looser_agent_id_pin() -> Result<()> {
     // restore accepts them.
     let staging = crate::test_support::restore_tempdir();
     let vault = Vault::open(staging.path().join("live"), embedding_test_config())?;
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     clear_default_policy_manifest_for_test(&vault);
     let (agent_id, agent) = custom_agent(&vault, AgentCeiling::Auto)?;
+    vault.ensure_vault_key().expect("mint the vault data key");
+    let checkpoint_key = vault.checkpoint_key()?;
     let prepare = |name: &str| {
         let image = staging.path().join(format!("{name}-image"));
         vault.snapshot_checkpoint(&image, 100)?;
         Vault::restore_checkpoint_replacing(
             &image,
+            &checkpoint_key,
             &staging.path().join(name),
             vault.config.clone(),
             &vault,
@@ -1007,7 +1017,7 @@ fn a_replacement_publishes_no_looser_agent_id_pin() -> Result<()> {
     };
     let publishes = |replacement: &Vault| {
         let mut swapped = false;
-        let published = vault.swap_in_replacement(replacement, || {
+        let published = vault.swap_in_replacement(replacement, |_, _| {
             swapped = true;
             Ok(())
         });
@@ -1055,6 +1065,7 @@ fn a_restore_pins_a_definition_its_live_vault_never_held() -> Result<()> {
     let (custom_id, custom) = custom_agent(&vault, AgentCeiling::Proposed)?;
     let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("image");
+    vault.ensure_vault_key().expect("mint the vault data key");
     vault.snapshot_checkpoint(&image, 100)?;
     // The live vault as one that never held the definition: no row at its
     // id, and no pin.
@@ -1106,6 +1117,7 @@ fn an_open_pins_a_row_older_than_the_pin() -> Result<()> {
     })?;
     drop(vault);
     let vault = Vault::open(dir.path(), embedding_test_config())?;
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
     vault.batch().delete(&custom_id).commit()?;
     let mut wider = custom.clone();
     wider.ceiling = AgentCeiling::Auto;

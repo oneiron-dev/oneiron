@@ -10,6 +10,7 @@ use oneiron_authority::federation::{
     Scope,
     scope_codec::{decode_scope_value, encode_scope_value},
 };
+use oneiron_contracts::msgpack::Entries;
 
 /// Current contact clearance body schema version (prerelease wire format).
 pub const DISCLOSURE_SCOPE_SCHEMA_VERSION: u64 = 1;
@@ -203,29 +204,16 @@ pub(super) fn decode_disclosure_scope_value(value: &Value) -> Result<DisclosureS
 }
 
 pub(super) fn validate_keys(entries: &[(Value, Value)], keys: &[&str]) -> Result<()> {
-    let mut seen = vec![false; keys.len()];
-    for (key, _) in entries {
-        let key = key.as_str().ok_or_else(invalid_scope)?;
-        let Some(index) = keys.iter().position(|known| *known == key) else {
-            return Err(invalid_scope());
-        };
-        if seen[index] {
-            return Err(invalid_scope());
-        }
-        seen[index] = true;
-    }
-    if seen.into_iter().all(|value| value) {
-        Ok(())
-    } else {
-        Err(invalid_scope())
-    }
+    Entries::new(entries)
+        .exact_keys(keys, &[])
+        .map(drop)
+        .map_err(|_| invalid_scope())
 }
 
 pub(super) fn required_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&'a Value> {
-    entries
-        .iter()
-        .find_map(|(candidate, value)| (candidate.as_str() == Some(key)).then_some(value))
-        .ok_or_else(invalid_scope)
+    Entries::new(entries)
+        .require(key)
+        .map_err(|_| invalid_scope())
 }
 
 pub(super) fn invalid_scope() -> Error {

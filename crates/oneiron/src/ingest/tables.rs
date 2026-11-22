@@ -7,6 +7,11 @@ crate::side_table::side_tables! {
     /// authority. Key: id16 (MESSAGE).
     CONNECTOR_MESSAGE_ARCHIVE: VaultMeta b"connector.conversation_archive.v1:" Named
         [restore: content] [family: unclassified] [tier: canonical];
+    /// The AG-UI capture assets whose capture claim was erased, owed their own delete after that
+    /// erase commits (Engine RULING L2-15-CAPTURE-SUBJECT). Key: id16(asset). Value: when it was
+    /// owed.
+    INGEST_AG_UI_CAPTURE_ASSET_ERASE: VaultMeta b"ag-ui-capture-asset-erase:v1:" Named
+        [restore: content] [family: structure] [tier: canonical];
     /// Classifier-derived annotation (derivation envelope + annotation body) for one imported docs
     /// page/asset. Key: hex32 ":" hex32.
     INGEST_DOCS_ANNOTATION: VaultMeta b"docs-annotation:v1:" LegacyJson Admitted

@@ -90,7 +90,10 @@ fn open_vault() -> (tempfile::TempDir, Vault) {
     config.map_size = 16 * 1024 * 1024;
     config.dimensions = 4;
     config.embedding_model = None;
-    crate::test_util::open_test_vault_with(config)
+    let (dir, vault) = crate::test_util::open_test_vault_with(config);
+    vault.prepare_install_signing().expect("install signing");
+    vault.ensure_vault_key().expect("mint the vault data key");
+    (dir, vault)
 }
 
 /// The live `counterparty_contact.*` head values for one contact, by predicate.
@@ -651,10 +654,12 @@ fn a_restore_never_undoes_a_stop_or_a_contact_revocation_since() -> Result<()> {
         &CounterpartyContactRecord::user_introduction(identity, "sora@example.com", 10)?,
     )?;
     let backups = crate::test_support::restore_tempdir();
+    let key = vault.checkpoint_key()?;
     let refused = |image: &std::path::Path, name: &str| {
         let destination = backups.path().join(name);
         let error = Vault::restore_checkpoint_keeping_authority(
             image,
+            &key,
             &destination,
             vault.config.clone(),
             &vault,
@@ -730,8 +735,10 @@ fn assert_contact_restore_refused(
     image: &std::path::Path,
     destination: &std::path::Path,
 ) {
+    let key = vault.checkpoint_key().expect("derive the checkpoint key");
     let error = Vault::restore_checkpoint_keeping_authority(
         image,
+        &key,
         destination,
         vault.config.clone(),
         vault,
@@ -866,6 +873,7 @@ fn a_restore_never_drops_a_contact_the_send_gate_reads_first() -> Result<()> {
     )?;
     Vault::restore_checkpoint_keeping_authority(
         &image,
+        &vault.checkpoint_key()?,
         &backups.path().join("read-after"),
         vault.config.clone(),
         &vault,
@@ -919,8 +927,10 @@ fn a_restore_drops_a_contact_the_send_gate_never_reads_first() -> Result<()> {
         &entity(0xA0),
         &CounterpartyContactRecord::inbound_first(chat, "rin@example.com", 30)?,
     )?;
+    let key = vault.checkpoint_key()?;
     Vault::restore_checkpoint_keeping_authority(
         &image,
+        &key,
         &backups.path().join("restored"),
         vault.config.clone(),
         &vault,

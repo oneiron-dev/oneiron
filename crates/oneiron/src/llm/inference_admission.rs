@@ -2,6 +2,8 @@
 //! A row requests a route; only a concrete host/catalog binding establishes it.
 use std::collections::BTreeMap;
 
+use oneiron_contracts::register::Register;
+
 use super::{
     CallPurpose, LlmRequest, ModelId, ModelLocality, ValidatedPurposeDefaults, defaults,
     manifest::{self, ModelManifest, ModelRole, ModelSlot},
@@ -10,7 +12,6 @@ use super::{
 use crate::{
     Vault,
     error::{Error, Result},
-    store::Store,
 };
 
 /// Private, verified identity returned beside the final request.
@@ -65,12 +66,13 @@ pub struct InferencePolicySnapshot {
 }
 impl InferencePolicySnapshot {
     fn load(
-        store: &Store,
+        vault: &Vault,
         txn: &heed::RoTxn<'_>,
         role: Option<ModelRole>,
         host: &HostInferenceBinding,
         request: &mut LlmRequest,
     ) -> Result<Self> {
+        let store = &vault.store;
         let defaults = defaults::read_effective_defaults(store, txn)?;
         // Raw calls have their own explicit host-selected model; a role call
         // may instead bind a manifest model. Read its registry row afterwards.
@@ -79,10 +81,9 @@ impl InferencePolicySnapshot {
         } else {
             None
         };
-        let routes = if manifest.is_some() {
-            manifest::read_routes(store, txn)?
-        } else {
-            BTreeMap::new()
+        let routes = match &manifest {
+            Some(manifest) => manifest::read_routes(vault, txn, manifest)?,
+            None => BTreeMap::new(),
         };
         // `PurposeDefaultTable::apply`, on the row the call is admitted as.
         if let Some(row) = defaults
@@ -206,7 +207,8 @@ fn invalid(refusal: InferenceRefusal) -> Error {
 /// Why the authorizer refused a call: each reason is fixed text that names
 /// no caller field, key or vault row, so an inference door may send it to
 /// its caller and log it (STEP-DOOR-REFUSAL-REASON).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Register)]
+#[register("inference.refusal", rename_all = "snake_case")]
 pub enum InferenceRefusal {
     /// A role call with no manifest, whose purpose default names another
     /// locality than the call's.
@@ -225,15 +227,6 @@ pub enum InferenceRefusal {
     ExtractionEgress,
 }
 impl InferenceRefusal {
-    const ALL: [Self; 7] = [
-        Self::NoDefaultBinding,
-        Self::NoRegisteredModel,
-        Self::HostModelDiffers,
-        Self::LocalityDiffers,
-        Self::RegistryLocalityDiffers,
-        Self::NoLocalBinding,
-        Self::ExtractionEgress,
-    ];
     pub fn reason(self) -> &'static str {
         match self {
             Self::NoDefaultBinding => "no model binding for inference default locality",
@@ -251,8 +244,9 @@ impl InferenceRefusal {
         let Error::InvalidConfig(text) = error else {
             return None;
         };
-        Self::ALL
-            .into_iter()
+        Self::ROWS
+            .iter()
+            .copied()
             .find(|refusal| refusal.reason() == text.as_str())
     }
 }
@@ -305,7 +299,7 @@ impl Vault {
         let mut request = request;
         let txn = self.store.env.read_txn()?;
         let snapshot =
-            InferencePolicySnapshot::load(&self.store, &txn, role, &host.binding, &mut request)?;
+            InferencePolicySnapshot::load(self, &txn, role, &host.binding, &mut request)?;
         let binding = snapshot.bind(&request, host)?;
         drop(txn); // Host code may read the vault; never call it under an LMDB reader.
         admit_extraction(&snapshot, &request, &binding, host)?;

@@ -149,6 +149,17 @@ pub trait DecisionProvider: Send + Sync {
     fn state_budget_bytes(&self) -> Option<usize> {
         None
     }
+    /// Whether it holds every call now, before any is sent: each question it is asked reads
+    /// as its abstention and nothing reaches its model, so the ladder takes the call on to
+    /// the next rung (a decision role's rung its vault's model manifest binds to another
+    /// model or a narrower route, [`ManifestBoundRung`](crate::llm::decision::ManifestBoundRung)).
+    /// The ladder asks it before each read and sends a held rung nothing: the receipt keeps
+    /// the rung's pin and pins no image to it. A cached auto-check verdict's policy names it,
+    /// so a hold that starts or ends misses the cache. A wrapper that only passes its inner
+    /// provider's calls on forwards its inner provider's.
+    fn held(&self) -> Result<bool> {
+        Ok(false)
+    }
     fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision>;
     /// The pack as one request, one answer per question in order. The default asks each
     /// question over the same state in turn, so a server's prompt cache carries the shared
@@ -272,7 +283,10 @@ impl ModelDecisionProvider {
     pub fn new(pin: ProviderPin, model: Arc<dyn DecisionModel>) -> Result<Self> {
         if !matches!(
             pin.rung,
-            DecisionRung::Local | DecisionRung::SystemOne | DecisionRung::Big
+            DecisionRung::Local
+                | DecisionRung::SystemOne
+                | DecisionRung::Precision
+                | DecisionRung::Big
         ) {
             return Err(invalid("not a model decision rung"));
         }

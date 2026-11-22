@@ -230,6 +230,7 @@ fn turn(content: &str, occurred_at: u64) -> Value {
         }],
         occurred_at,
         assertions: Default::default(),
+        project: None,
     })
     .expect("witness turn JSON")
 }

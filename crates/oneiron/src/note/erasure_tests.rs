@@ -112,6 +112,10 @@ fn pending_citation_erasure_fences_reads_without_deleting_document() {
 
 #[cfg(feature = "sync")]
 fn claim(vault: &Vault, person: EntityId) -> EntityId {
+    crate::conversation_dag::fixtures::grant_reads(
+        vault,
+        crate::WriteActor::new(person, EdgeActorClass::Human),
+    );
     let id = EntityId::now();
     vault
         .memory(person, EdgeActorClass::Human)
@@ -130,6 +134,7 @@ fn claim(vault: &Vault, person: EntityId) -> EntityId {
             occurred_at: None,
             learned_at: None,
             salience: None,
+            confidence_details: None,
         })
         .unwrap();
     id
@@ -279,7 +284,11 @@ fn source_and_claim_erasure_keep_other_pin_prose_authorship_and_refuse_replay() 
         replay
             .add_pin(
                 &removed_pin,
-                &crate::WriteActor::new(person, EdgeActorClass::Human),
+                crate::provenance::actor_stamp(
+                    &vault,
+                    crate::WriteActor::new(person, EdgeActorClass::Human),
+                )
+                .unwrap(),
             )
             .unwrap();
         let poisoned_frontier = replay.view().unwrap().frontier;

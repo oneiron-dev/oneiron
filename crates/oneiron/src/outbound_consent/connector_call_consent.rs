@@ -99,15 +99,11 @@ pub(crate) fn frozen_scoped_candidate_in_txn(
 }
 
 /// A held call's stored approve-once digest, 64 lower-hex, as bytes.
-fn digest_from_hex(hex: &str) -> Option<EffectDigest> {
+pub(crate) fn digest_from_hex(hex: &str) -> Option<EffectDigest> {
     if hex.len() != 64 {
         return None;
     }
-    let mut bytes = [0_u8; 32];
-    for (byte, pair) in bytes.iter_mut().zip(hex.as_bytes().chunks(2)) {
-        *byte = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
-    }
-    Some(EffectDigest::from_bytes(bytes))
+    oneiron_hex::decode(hex).map(EffectDigest::from_bytes)
 }
 
 impl Vault {
