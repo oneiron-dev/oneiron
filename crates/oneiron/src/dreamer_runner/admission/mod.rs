@@ -437,6 +437,20 @@ impl DreamerRunnerStore<'_> {
         route: Option<&mut dyn FnMut(&AttemptRecord) -> Option<String>>,
         only: Option<AttemptId>,
     ) -> Result<DreamerKindAdmissionResult> {
+        // A copy restored and not joined admits no row of a held kind (row
+        // RESTORED-UNJOINED-STARTS-NO-WORK): asked before the scan, the
+        // budget reads and the budget trap's pause, so each such row stays
+        // ready and unpaused for the first admission after the join.
+        if self
+            .attempts
+            .kind_held_while_unjoined_in_txn(wtxn, queue_kind)?
+        {
+            return Ok(DreamerKindAdmissionResult {
+                outcome: DreamerAdmissionOutcome::Empty,
+                budget_exhausted_candidate: None,
+                requester_withdrawn_candidate: None,
+            });
+        }
         // FIX 5661: while this node drains its free-time rows toward a home
         // move, or froze them for one, a free-time item whose try never
         // started waits queued and inert for the move to carry it, bound

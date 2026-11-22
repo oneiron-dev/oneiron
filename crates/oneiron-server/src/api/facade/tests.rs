@@ -118,26 +118,29 @@ async fn authenticated_http_ingress_enforces_shared_payload_caps_without_writes(
         ),
     ];
     for (verb, payload, label) in requests {
-        let response = app
-            .clone()
-            .oneshot(crate::test_credentials::bind_slip_request(
-                &server,
-                &slip,
-                &holder,
-                Request::builder()
-                    .method("POST")
-                    .uri(format!("/v1/core/facade/{verb}"))
-                    .header("Content-Type", "application/json")
-                    .body(Body::from(
-                        serde_json::to_vec(&payload).expect("request JSON"),
-                    ))
-                    .expect("request"),
-            ))
-            .await
-            .expect("response");
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{verb}");
-        let body = to_bytes(response.into_body(), 8192).await.expect("body");
-        let body: Value = serde_json::from_slice(&body).expect("error JSON");
+        let request = crate::test_credentials::bind_slip_request(
+            &server,
+            &slip,
+            &holder,
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/core/facade/{verb}"))
+                .header("Content-Type", "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&payload).expect("request JSON"),
+                ))
+                .expect("request"),
+        );
+        let app = app.clone();
+        let (status, body) = crate::test_engine_stack::on_engine_stack(async move {
+            let response = app.oneshot(request).await.expect("response");
+            let status = response.status();
+            let body = to_bytes(response.into_body(), 8192).await.expect("body");
+            let body: Value = serde_json::from_slice(&body).expect("error JSON");
+            (status, body)
+        })
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{verb}");
         assert_eq!(body["error"]["code"], MEMORY_CODE_BAD_REQUEST);
         assert!(
             body["error"]["message"]
@@ -176,22 +179,24 @@ async fn generated_agent_sdk_http_keeps_first_answer_and_durable_step_wait_seman
         verb: &str,
         input: Value,
     ) -> (StatusCode, Value) {
-        let response = crate::build_app(Arc::clone(server))
-            .oneshot(crate::test_credentials::bind_request(
-                server,
-                Request::builder()
-                    .method("POST")
-                    .uri(format!("/v1/core/facade/{verb}"))
-                    .header("Authorization", authorization)
-                    .header("Content-Type", "application/json")
-                    .body(Body::from(serde_json::to_vec(&input).unwrap()))
-                    .unwrap(),
-            ))
-            .await
-            .unwrap();
-        let status = response.status();
-        let bytes = to_bytes(response.into_body(), 1_048_576).await.unwrap();
-        (status, serde_json::from_slice(&bytes).unwrap())
+        let server = Arc::clone(server);
+        let request = crate::test_credentials::bind_request(
+            &server,
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/core/facade/{verb}"))
+                .header("Authorization", authorization)
+                .header("Content-Type", "application/json")
+                .body(Body::from(serde_json::to_vec(&input).unwrap()))
+                .unwrap(),
+        );
+        crate::test_engine_stack::on_engine_stack(async move {
+            let response = crate::build_app(server).oneshot(request).await.unwrap();
+            let status = response.status();
+            let bytes = to_bytes(response.into_body(), 1_048_576).await.unwrap();
+            (status, serde_json::from_slice(&bytes).unwrap())
+        })
+        .await
     }
     let dir = tempfile::tempdir().unwrap();
     let vault =
@@ -345,18 +350,20 @@ async fn post_in_room_turn(
     if let Some(room) = room_turn {
         request = request.header(super::ROOM_TURN_HEADER, room.to_hex());
     }
-    let response = crate::build_app(Arc::clone(server))
-        .oneshot(crate::test_credentials::bind_request(
-            server,
-            request
-                .body(Body::from(serde_json::to_vec(&input).unwrap()))
-                .unwrap(),
-        ))
-        .await
-        .unwrap();
-    let status = response.status();
-    let bytes = to_bytes(response.into_body(), 1_048_576).await.unwrap();
-    (status, serde_json::from_slice(&bytes).unwrap())
+    let server = Arc::clone(server);
+    let request = crate::test_credentials::bind_request(
+        &server,
+        request
+            .body(Body::from(serde_json::to_vec(&input).unwrap()))
+            .unwrap(),
+    );
+    crate::test_engine_stack::on_engine_stack(async move {
+        let response = crate::build_app(server).oneshot(request).await.unwrap();
+        let status = response.status();
+        let bytes = to_bytes(response.into_body(), 1_048_576).await.unwrap();
+        (status, serde_json::from_slice(&bytes).unwrap())
+    })
+    .await
 }
 
 fn room_token(actor: EntityId, class: &str) -> String {
@@ -409,8 +416,9 @@ async fn rooms_http_routes_only_the_addressed_companion_and_requires_a_claim() {
             oneiron::WriteActor::new(other, oneiron::EdgeActorClass::Agent),
         ])
         .unwrap();
-    // The permits are class-bound; a member's class-less peer key reads only
-    // through a class-agnostic grant (FIX 9917, FIX 1218), written after them.
+    // The fixture permits are class-agnostic, as production agent rows are,
+    // so a member's class-less peer key matches them; the class-agnostic
+    // grants written after them (FIX 9917, FIX 1218) stay as belt-and-braces.
     for actor in [addressed, other] {
         crate::api::tests::put_actor_read_grant(&vault, actor, None);
     }
@@ -788,25 +796,29 @@ async fn keyed_http_round_trip_scope_and_exact_principal_binding() {
     ];
     let mut bodies = Vec::new();
     for (verb, payload, token, status) in cases {
-        let response = app
-            .clone()
-            .oneshot(crate::test_credentials::bind_request(
-                &server,
-                Request::builder()
-                    .method("POST")
-                    .uri(format!("/v1/core/facade/{verb}"))
-                    .header("Authorization", token)
-                    .header("Content-Type", "application/json")
-                    .body(Body::from(serde_json::to_vec(&payload).unwrap()))
-                    .unwrap(),
-            ))
-            .await
-            .unwrap();
-        assert_eq!(response.status(), status, "{verb}");
-        bodies.push(
-            serde_json::from_slice::<Value>(&to_bytes(response.into_body(), 65536).await.unwrap())
+        let request = crate::test_credentials::bind_request(
+            &server,
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/core/facade/{verb}"))
+                .header("Authorization", token)
+                .header("Content-Type", "application/json")
+                .body(Body::from(serde_json::to_vec(&payload).unwrap()))
                 .unwrap(),
         );
+        let app = app.clone();
+        let (actual, body) = crate::test_engine_stack::on_engine_stack(async move {
+            let response = app.oneshot(request).await.unwrap();
+            let status = response.status();
+            let body = serde_json::from_slice::<Value>(
+                &to_bytes(response.into_body(), 65536).await.unwrap(),
+            )
+            .unwrap();
+            (status, body)
+        })
+        .await;
+        assert_eq!(actual, status, "{verb}");
+        bodies.push(body);
     }
     assert_eq!(bodies[2]["item"]["value"], json!({"name":"dark"}));
     assert_eq!(bodies[3]["value"], bodies[2]["item"]["value"]);
@@ -845,7 +857,7 @@ pub(crate) async fn cross_the_keyed_filters(callers: usize) -> crate::admission:
         actor.to_hex()
     );
     let post = |verb: &str, payload: Value| {
-        app.clone().oneshot(crate::test_credentials::bind_request(
+        let future = app.clone().oneshot(crate::test_credentials::bind_request(
             &server,
             Request::builder()
                 .method("POST")
@@ -854,7 +866,8 @@ pub(crate) async fn cross_the_keyed_filters(callers: usize) -> crate::admission:
                 .header("Content-Type", "application/json")
                 .body(Body::from(serde_json::to_vec(&payload).unwrap()))
                 .unwrap(),
-        ))
+        ));
+        async move { crate::test_engine_stack::on_engine_stack(future).await }
     };
     let put = json!({"namespace":["notes"],"key":"theme","value":{"name":"dark"},"request_id":"filter-row","source":"user_stated"});
     assert_eq!(
@@ -965,14 +978,14 @@ async fn generated_facade_read_admission_preserves_defaults_and_record_scope() {
             .header("Content-Type", "application/json")
             .body(Body::from(serde_json::to_vec(&input).unwrap()))
             .unwrap();
-        let response = app
-            .clone()
-            .oneshot(crate::test_credentials::bind_slip_request(
-                &server, credential, &holder, request,
-            ))
-            .await
-            .unwrap();
-        assert_eq!(response.status(), status, "{verb}");
+        let request =
+            crate::test_credentials::bind_slip_request(&server, credential, &holder, request);
+        let app = app.clone();
+        let actual = crate::test_engine_stack::on_engine_stack(async move {
+            app.oneshot(request).await.unwrap().status()
+        })
+        .await;
+        assert_eq!(actual, status, "{verb}");
     }
 }
 
@@ -1062,14 +1075,14 @@ async fn room_facade_refuses_record_channel_and_world_attenuations() {
                 .header("Content-Type", "application/json")
                 .body(Body::from(serde_json::to_vec(&payload).unwrap()))
                 .unwrap();
-            let response = app
-                .clone()
-                .oneshot(crate::test_credentials::bind_slip_request(
-                    &server, narrowed, &holder, request,
-                ))
-                .await
-                .unwrap();
-            assert_eq!(response.status(), StatusCode::FORBIDDEN, "{verb}");
+            let request =
+                crate::test_credentials::bind_slip_request(&server, narrowed, &holder, request);
+            let app = app.clone();
+            let status = crate::test_engine_stack::on_engine_stack(async move {
+                app.oneshot(request).await.unwrap().status()
+            })
+            .await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "{verb}");
         }
         if matches!(verb, "vault.rooms.render" | "vault.rooms.find") {
             let request = Request::builder()
@@ -1078,14 +1091,14 @@ async fn room_facade_refuses_record_channel_and_world_attenuations() {
                 .header("Content-Type", "application/json")
                 .body(Body::from(serde_json::to_vec(&payload).unwrap()))
                 .unwrap();
-            let response = app
-                .clone()
-                .oneshot(crate::test_credentials::bind_slip_request(
-                    &server, &slip, &holder, request,
-                ))
-                .await
-                .unwrap();
-            assert_eq!(response.status(), StatusCode::OK, "{verb}");
+            let request =
+                crate::test_credentials::bind_slip_request(&server, &slip, &holder, request);
+            let app = app.clone();
+            let status = crate::test_engine_stack::on_engine_stack(async move {
+                app.oneshot(request).await.unwrap().status()
+            })
+            .await;
+            assert_eq!(status, StatusCode::OK, "{verb}");
         }
     }
 }
@@ -1193,22 +1206,24 @@ async fn post_task_verb(
     verb: &str,
     input: Value,
 ) -> (StatusCode, Value) {
-    let response = crate::build_app(Arc::clone(server))
-        .oneshot(crate::test_credentials::bind_request(
-            server,
-            Request::builder()
-                .method("POST")
-                .uri(format!("/v1/core/facade/{verb}"))
-                .header("Authorization", recipe)
-                .header("Content-Type", "application/json")
-                .body(Body::from(serde_json::to_vec(&input).unwrap()))
-                .unwrap(),
-        ))
-        .await
-        .unwrap();
-    let status = response.status();
-    let bytes = to_bytes(response.into_body(), 1_048_576).await.unwrap();
-    (status, serde_json::from_slice(&bytes).unwrap())
+    let server = Arc::clone(server);
+    let request = crate::test_credentials::bind_request(
+        &server,
+        Request::builder()
+            .method("POST")
+            .uri(format!("/v1/core/facade/{verb}"))
+            .header("Authorization", recipe)
+            .header("Content-Type", "application/json")
+            .body(Body::from(serde_json::to_vec(&input).unwrap()))
+            .unwrap(),
+    );
+    crate::test_engine_stack::on_engine_stack(async move {
+        let response = crate::build_app(server).oneshot(request).await.unwrap();
+        let status = response.status();
+        let bytes = to_bytes(response.into_body(), 1_048_576).await.unwrap();
+        (status, serde_json::from_slice(&bytes).unwrap())
+    })
+    .await
 }
 
 /// ARCH-0067's 2026-09-22 amendment renamed the four task rows. The old
@@ -1220,23 +1235,25 @@ async fn retired_task_routes_are_not_found() {
         let server = Arc::clone(&server);
         let recipe = recipe.clone();
         async move {
-            let response = crate::build_app(Arc::clone(&server))
-                .oneshot(crate::test_credentials::bind_request(
-                    &server,
-                    Request::builder()
-                        .method("POST")
-                        .uri(format!("/v1/core/facade/{verb}"))
-                        .header("Authorization", recipe)
-                        .header("Content-Type", "application/json")
-                        .body(Body::from("{}"))
-                        .unwrap(),
-                ))
-                .await
-                .unwrap();
-            let status = response.status();
-            let body = to_bytes(response.into_body(), 1 << 20).await.unwrap();
-            let body = serde_json::from_slice::<Value>(&body).unwrap_or(Value::Null);
-            (status, body)
+            let request = crate::test_credentials::bind_request(
+                &server,
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/core/facade/{verb}"))
+                    .header("Authorization", recipe)
+                    .header("Content-Type", "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            );
+            let app = crate::build_app(server);
+            crate::test_engine_stack::on_engine_stack(async move {
+                let response = app.oneshot(request).await.unwrap();
+                let status = response.status();
+                let body = to_bytes(response.into_body(), 1 << 20).await.unwrap();
+                let body = serde_json::from_slice::<Value>(&body).unwrap_or(Value::Null);
+                (status, body)
+            })
+            .await
         }
     };
     for verb in ["tasks.check", "tasks.expand", "tasks.ack"] {
@@ -1377,16 +1394,18 @@ async fn export_projects_five_formats_and_refuses_non_owner_credentials() {
             .header("Content-Type", "application/json")
             .body(Body::from(json!({"format":format}).to_string()))
             .unwrap();
-        let response = app
-            .clone()
-            .oneshot(crate::test_credentials::bind_slip_request(
-                &server, &owner, &owner_key, request,
-            ))
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::OK, "{format}");
-        let bytes = to_bytes(response.into_body(), 1_048_576).await.unwrap();
-        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        let request =
+            crate::test_credentials::bind_slip_request(&server, &owner, &owner_key, request);
+        let app = app.clone();
+        let (status, body) = crate::test_engine_stack::on_engine_stack(async move {
+            let response = app.oneshot(request).await.unwrap();
+            let status = response.status();
+            let bytes = to_bytes(response.into_body(), 1_048_576).await.unwrap();
+            let body: Value = serde_json::from_slice(&bytes).unwrap();
+            (status, body)
+        })
+        .await;
+        assert_eq!(status, StatusCode::OK, "{format}");
         assert_eq!(body["format"], format);
         let rendered = body["rendered"].as_str().unwrap();
         assert!(rendered.contains("evidence_ledger"));
@@ -1412,15 +1431,16 @@ async fn export_projects_five_formats_and_refuses_non_owner_credentials() {
         .header("Content-Type", "application/json")
         .body(Body::from(json!({"format":"json"}).to_string()))
         .unwrap();
-    let response = app
-        .clone()
-        .oneshot(crate::test_credentials::bind_slip_request(
-            &server, &host_slip, &host_key, host,
-        ))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = to_bytes(response.into_body(), 1_048_576).await.unwrap();
+    let host = crate::test_credentials::bind_slip_request(&server, &host_slip, &host_key, host);
+    let host_app = app.clone();
+    let (status, body) = crate::test_engine_stack::on_engine_stack(async move {
+        let response = host_app.oneshot(host).await.unwrap();
+        let status = response.status();
+        let body = to_bytes(response.into_body(), 1_048_576).await.unwrap();
+        (status, body)
+    })
+    .await;
+    assert_eq!(status, StatusCode::OK);
     assert!(String::from_utf8_lossy(&body).contains("private export owner diary"));
 
     assert_eq!(
@@ -1444,16 +1464,18 @@ async fn export_projects_five_formats_and_refuses_non_owner_credentials() {
             .header("Content-Type", "application/json")
             .body(Body::from(json!({"format":format}).to_string()))
             .unwrap();
-        let response = app
-            .clone()
-            .oneshot(crate::test_credentials::bind_slip_request(
-                &server, credential, holder, request,
-            ))
-            .await
-            .unwrap();
-        assert_eq!(response.status(), status, "{format}");
-        let body = to_bytes(response.into_body(), 8192).await.unwrap();
-        let body: Value = serde_json::from_slice(&body).unwrap();
+        let request =
+            crate::test_credentials::bind_slip_request(&server, credential, holder, request);
+        let app = app.clone();
+        let (actual, body) = crate::test_engine_stack::on_engine_stack(async move {
+            let response = app.oneshot(request).await.unwrap();
+            let status = response.status();
+            let body = to_bytes(response.into_body(), 8192).await.unwrap();
+            let body: Value = serde_json::from_slice(&body).unwrap();
+            (status, body)
+        })
+        .await;
+        assert_eq!(actual, status, "{format}");
         assert!(!body.to_string().contains("private export owner diary"));
         assert!(!body.to_string().contains(&note.entity_ref));
     }
@@ -1464,13 +1486,12 @@ async fn export_projects_five_formats_and_refuses_non_owner_credentials() {
         .header("Content-Type", "application/json")
         .body(Body::from("{\"format\":\"json\"}"))
         .unwrap();
-    let response = app
-        .oneshot(crate::test_credentials::bind_slip_request(
-            &server, &owner, &owner_key, request,
-        ))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    let request = crate::test_credentials::bind_slip_request(&server, &owner, &owner_key, request);
+    let status = crate::test_engine_stack::on_engine_stack(async move {
+        app.oneshot(request).await.unwrap().status()
+    })
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
 
 /// A served vault, its owner, and a read/write slip bound to that owner.
@@ -1530,13 +1551,17 @@ impl OwnerFacade {
                 .body(Body::from(payload.to_string()))
                 .expect("request"),
         );
-        let response = crate::build_app(Arc::clone(&self.server))
-            .oneshot(request)
-            .await
-            .expect("response");
-        let status = response.status();
-        let body = to_bytes(response.into_body(), 1 << 20).await.expect("body");
-        (status, serde_json::from_slice(&body).expect("JSON"))
+        let server = Arc::clone(&self.server);
+        crate::test_engine_stack::on_engine_stack(async move {
+            let response = crate::build_app(server)
+                .oneshot(request)
+                .await
+                .expect("response");
+            let status = response.status();
+            let body = to_bytes(response.into_body(), 1 << 20).await.expect("body");
+            (status, serde_json::from_slice(&body).expect("JSON"))
+        })
+        .await
     }
 
     /// Witnesses one user message per entry, each its own turn, and returns
@@ -1772,3 +1797,45 @@ async fn recall_returns_the_person_an_agent_asks_about() {
 }
 
 mod call_mode;
+
+/// A reap pause's facade body names its capacity bound and the self-host
+/// route, in the shape the managed HTTP body carries (L9-61).
+#[test]
+fn a_reap_pause_facade_body_names_its_capacity_bound_and_the_self_host_route() {
+    let error = FacadeApiError::from(oneiron::memory::MemoryError::new(
+        crate::managed::WRITES_FROZEN_TAG,
+        crate::managed::ManagedError::WritesFrozen.to_string(),
+        &[],
+    ));
+    assert_eq!(error.status, StatusCode::SERVICE_UNAVAILABLE);
+    let body = serde_json::to_value(&error.body).expect("body");
+    assert_eq!(body["error"]["code"], "writes_frozen");
+    assert_eq!(
+        body["error"]["bound"],
+        json!({
+            "kind": "capacity",
+            "resource": "vault_lifecycle_allocation",
+            "phase": "reap_prepare",
+        })
+    );
+    assert_eq!(
+        body["error"]["self_hosted"],
+        json!({"supported": true, "condition": "no_service_reap_limit"})
+    );
+    let message = body["error"]["message"].as_str().expect("message");
+    assert!(message.contains("a capacity bound"), "{message}");
+    assert!(message.contains("self-hosted vault"), "{message}");
+}
+
+/// Any other refusal's facade body carries no bound.
+#[test]
+fn another_facade_refusal_body_carries_no_bound() {
+    let error = FacadeApiError::from(oneiron::memory::MemoryError::new(
+        oneiron::memory::MEMORY_CODE_FORBIDDEN,
+        "refused",
+        &[],
+    ));
+    let body = serde_json::to_value(&error.body).expect("body");
+    assert!(body["error"].get("bound").is_none(), "{body}");
+    assert!(body["error"].get("self_hosted").is_none(), "{body}");
+}

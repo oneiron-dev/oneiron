@@ -68,6 +68,10 @@ impl Vault {
         Ok(decision)
     }
 
+    /// Applies a lifecycle close's `ops` under its verified `transition`.
+    /// `owner` binds the vault owner's in-person proof, revalidated in `wtxn`,
+    /// to the one claim whose close it confirms
+    /// (`ApplyOpsGateMode::with_owner_approval`); every other Put reads none.
     pub(super) fn apply_lifecycle_materialization(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -75,15 +79,21 @@ impl Vault {
         binding: Option<crate::batch::ClaimMaterialization>,
         transition: crate::batch::VerifiedClaimTransition,
         persist_pending: bool,
+        owner: Option<(EntityId, crate::consent::OwnerAuthoredWrite)>,
     ) -> Result<()> {
+        let gate_mode = crate::batch::ApplyOpsGateMode::new(false, persist_pending)
+            .with_verified_claim_transitions(vec![transition]);
+        let gate_mode = match owner {
+            Some((claim, proof)) => gate_mode.with_owner_approval(claim, Some(proof)),
+            None => gate_mode,
+        };
         if let Some(binding) = binding {
-            crate::batch::apply_owner_bound_claim_puts_with_transitions(
+            crate::batch::apply_owner_bound_claim_puts_in_mode(
                 self,
                 wtxn,
                 ops,
                 vec![binding],
-                vec![transition],
-                persist_pending,
+                gate_mode,
             )
         } else {
             // Legacy/raw claims have no host-authored actor authority. Keep the
@@ -96,8 +106,7 @@ impl Vault {
                 ops,
                 self.text_index_trusted
                     .load(std::sync::atomic::Ordering::Acquire),
-                crate::batch::ApplyOpsGateMode::new(false, persist_pending)
-                    .with_verified_claim_transitions(vec![transition]),
+                gate_mode,
             )
         }
     }

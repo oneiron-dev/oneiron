@@ -183,7 +183,9 @@ pub(super) fn settle_held_attempts_in(
                 now,
             },
         )?;
-        let ClaimOutcome::Claimed(leased) = queue.claim_id_in_txn(
+        // Leased to settle the approved plan here; its children are claimed
+        // apart (and held there on a copy restored and not joined).
+        let ClaimOutcome::Claimed(leased) = queue.claim_id_to_settle_in_txn(
             txn,
             *id,
             ClaimAttempt {

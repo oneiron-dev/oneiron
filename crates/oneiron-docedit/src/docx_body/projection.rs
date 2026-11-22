@@ -12,20 +12,24 @@ use stemma::view::{BlockView, DocumentView, build_story_blocks_view};
 use story_cells::story_cell_op;
 
 use super::{
-    DocxAnchor, DocxChange, DocxHeaderFooterBand, DocxParagraph, DocxRevision, DocxRun,
-    DocxStoryScope, inherited, kept_marks, marked_paragraph, new_paragraph, paragraph, remark,
-    runs_text,
+    DocxAnchor, DocxChange, DocxHeaderFooterBand, DocxRevision, DocxRun, DocxStoryScope, inherited,
+    kept_marks, marked_paragraph, new_paragraph, paragraph, remark, runs_text,
 };
+
+/// One group's formatting patches with the operations it builds.
+pub(super) type GroupPatchesAndOperations<'v> = (Vec<(&'v BlockView, Vec<(u8, u8)>)>, Vec<Value>);
 
 /// The formatting patches and ops one group's changes build against `view` and
 /// `canonical`. Shared by [`project_docx`] and [`DocxProjection`]: one group
 /// through the session builds exactly what a lone [`project_docx`] call builds.
 /// Body ids resolve over `view` only; story ids resolve over `canonical` only.
+///
+/// [`project_docx`]: crate::docx_body::project_docx
 pub(super) fn group_ops<'v>(
     view: &'v DocumentView,
     canonical: &CanonDoc,
     changes: &[DocxChange],
-) -> Result<(Vec<(&'v BlockView, Vec<(u8, u8)>)>, Vec<Value>), DoceditError> {
+) -> Result<GroupPatchesAndOperations<'v>, DoceditError> {
     let find = |id: &str| {
         view.blocks
             .iter()
@@ -448,6 +452,8 @@ fn story_runs_content(runs: &[DocxRun]) -> Vec<Value> {
 /// [`project_docx`] and [`DocxProjection`]: one group through the session
 /// runs exactly what a lone [`project_docx`] call runs. Callers only pass
 /// non-empty builds.
+///
+/// [`project_docx`]: crate::docx_body::project_docx
 pub(super) fn apply_built(
     document: &Document,
     patches: Vec<(&BlockView, Vec<(u8, u8)>)>,

@@ -6,6 +6,8 @@
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 
+use oneiron_contracts::fingerprint::ContentHash;
+
 use crate::error::{Error, Result};
 use crate::store::ASSET_INLINE_BODY_BYTES;
 
@@ -102,7 +104,7 @@ impl<'f> BlobBodyFile<'f> {
         self.reader()?
             .take(self.len.saturating_add(1))
             .read_to_end(&mut bytes)?;
-        self.check(bytes.len() as u64, *blake3::hash(&bytes).as_bytes())?;
+        self.check(bytes.len() as u64, *ContentHash::of(&bytes).as_bytes())?;
         Ok(Some(bytes))
     }
 
@@ -183,7 +185,7 @@ impl BlobContent<'_> {
     /// The content's BLAKE3.
     pub(crate) fn blake3(self) -> [u8; 32] {
         match self {
-            Self::Bytes(bytes) => *blake3::hash(bytes).as_bytes(),
+            Self::Bytes(bytes) => *ContentHash::of(bytes).as_bytes(),
             Self::File(file) => file.blake3(),
         }
     }

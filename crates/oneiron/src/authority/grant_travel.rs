@@ -94,8 +94,8 @@ impl AuthorityFold {
 
 /// The `GrantTravelSet` transition, after the shape, signature, retired,
 /// sequence-floor, parent-merge and vault checks and before any roster check:
-/// its signer is a machine's install key, never a roster key. Some chain of
-/// the machine must name the key; a choice signed while the machine was not
+/// its signer is a machine's install key, never a roster key. The machine's
+/// roster chain must name the key; a choice signed while the machine was not
 /// admitted ([`super::owner_act_signer_admits`], pin-free) is valid and without
 /// effect, so it never stalls what descends from it. The grant row need not
 /// have arrived first: its liveness is the writer's and the read's, never
@@ -109,9 +109,6 @@ pub(super) fn apply_grant_travel(
     (pin, counted): (Option<&PinnedRoot>, InstallCounted<'_>),
     restriction_only: bool,
 ) -> std::result::Result<(), AuthorityFoldIssue> {
-    if !entry.cosigns.is_empty() {
-        return Err(AuthorityFoldIssue::InvalidEntry(hash));
-    }
     let signer = entry.signer_key();
     let AuthorityKey::Ed25519(key) = signer else {
         return Err(AuthorityFoldIssue::SignerNotInAncestry(hash));

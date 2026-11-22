@@ -25,7 +25,7 @@ mod eval_authoring_fixture;
 #[path = "support/fake_llm.rs"]
 mod fake_llm;
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::http::StatusCode;
@@ -44,18 +44,6 @@ use serde_json::json;
 
 const LAPSE_SECS: u64 = 100;
 const LEASE_TIMEOUT_SECS: u64 = 10;
-
-/// The execution-record write fault is process-global: each test holds this
-/// lock for its whole body, so no two faulted runs overlap. A test that
-/// fails while holding it poisons the lock; the next test takes it anyway,
-/// so each test still fails on its own assertion.
-static FAULT_LOCK: Mutex<()> = Mutex::new(());
-
-fn hold_fault_lock() -> std::sync::MutexGuard<'static, ()> {
-    FAULT_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
 
 fn unix_now() -> u64 {
     SystemTime::now()
@@ -126,7 +114,6 @@ async fn fixture_at(start: u64) -> (Fixture, Arc<ManualClock>) {
 #[test]
 fn execute_with_failing_record_ends_leaves_the_lease_unsettled() {
     run_on_engine_stack("execute-unrecorded-end", || async {
-        let _serial = hold_fault_lock();
         let start = unix_now();
         let (fixture, clock) = fixture_at(start).await;
         let attempt = leave_requested_pass(&fixture, start);
@@ -134,9 +121,9 @@ fn execute_with_failing_record_ends_leaves_the_lease_unsettled() {
 
         // The apply's end write and `finish`'s `Failed` write fail; the
         // queue's settle write would succeed.
-        fail_execution_writes(2);
+        fail_execution_writes(&fixture.vault, 2);
         let (status, body) = fixture.as_owner(VERB, json!({})).await;
-        fail_execution_writes(0);
+        fail_execution_writes(&fixture.vault, 0);
         assert_eq!(
             status,
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -170,16 +157,15 @@ fn execute_with_failing_record_ends_leaves_the_lease_unsettled() {
 #[test]
 fn round_with_failing_recovery_leaves_the_lease_unsettled() {
     run_on_engine_stack("round-unrecorded-recover", || async {
-        let _serial = hold_fault_lock();
         let start = unix_now();
         let (fixture, clock) = fixture_at(start).await;
         let attempt = leave_requested_pass(&fixture, start);
         lapse_the_lease(&fixture, &clock, start + LAPSE_SECS);
 
         // The recovery write fails; the round's settle write would succeed.
-        fail_execution_writes(1);
+        fail_execution_writes(&fixture.vault, 1);
         let outcome = coach_round_outcome(&fixture).await;
-        fail_execution_writes(0);
+        fail_execution_writes(&fixture.vault, 0);
         assert!(outcome.is_err(), "the round returns the recovery error");
         assert_eq!(fixture.eval_authoring_calls(), 0, "no pass ran");
 
@@ -213,7 +199,6 @@ fn round_with_failing_recovery_leaves_the_lease_unsettled() {
 #[test]
 fn wake_executor_with_failing_recovery_parks_for_a_later_pass() {
     run_on_engine_stack("wake-unrecorded-park", || async {
-        let _serial = hold_fault_lock();
         let start = unix_now();
         let (fixture, clock) = fixture_at(start).await;
         let attempt = leave_requested_pass(&fixture, start);
@@ -240,7 +225,7 @@ fn wake_executor_with_failing_recovery_parks_for_a_later_pass() {
             attempt,
             "the requested job admitted"
         );
-        fail_execution_writes(1);
+        fail_execution_writes(&fixture.vault, 1);
         let executed = oneiron_server::test_doors::coach_wake::coach_wake_execute(
             &fixture.server,
             &admitted,
@@ -248,7 +233,7 @@ fn wake_executor_with_failing_recovery_parks_for_a_later_pass() {
         )
         .await
         .expect("the wake executor answers");
-        fail_execution_writes(0);
+        fail_execution_writes(&fixture.vault, 0);
         match executed {
             oneiron::DreamerAttemptExecution::Park { cause, .. } => assert_eq!(
                 cause,

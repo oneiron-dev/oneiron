@@ -7,6 +7,7 @@
 #[cfg(feature = "sync")]
 mod adoption;
 mod artifact;
+mod bound_room;
 #[cfg(feature = "sync")]
 mod carried;
 pub(crate) mod checkpoint;
@@ -38,8 +39,9 @@ mod recovery;
 mod registry;
 mod summary;
 pub(crate) use summary::{
-    birth_summary_in_txn, open_summary_proposal, summary_frontier_in_txn, summary_meta_in_txn,
-    summary_meta_through_in, summary_read_in_txn, summary_text_in_txn,
+    birth_summary_in_txn, open_summary_proposal, summary_frontier_in_txn,
+    summary_generated_text_hash_in, summary_meta_in_txn, summary_meta_through_in,
+    summary_read_in_txn, summary_text_in_txn,
 };
 pub mod review_explainer;
 use oneiron_store::entity_doc::side_keys;
@@ -83,6 +85,7 @@ pub(crate) use forks::{
     erase_fork_actor_in_txn, erase_proposal_actor_in_txn, erase_receipt_actor_in_txn,
 };
 pub use history_erase::TextHistoryErase;
+pub(crate) use history_erase::TextHistoryEraseRange;
 pub(crate) use history_erase::admit_history_erase_in_txn;
 pub(crate) use lift::lift_entity_text_in_txn;
 pub use metadata::MetadataEdit;
@@ -226,7 +229,5 @@ pub(crate) fn lose_head_for_test(
 }
 
 pub(crate) mod tables;
-// FIX [LIBTEST-QUARANTINE-ENTITY-DOC-TESTS]: the lib test target's type check fails here (8 errors: E0308 x5, E0061 x1, E0282 x1, E0639 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;

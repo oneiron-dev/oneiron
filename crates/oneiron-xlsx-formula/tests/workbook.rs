@@ -2127,7 +2127,7 @@ fn unsafe_formula_depth_refuses_before_recursive_evaluation_on_both_doors() {
                     .evaluate(&BTreeMap::new(), &formula, "A1", None)
                     .expect("evaluates");
                 assert_eq!(direct.value, CalcValue::Number(value));
-                let setup = BTreeMap::from([("B1".into(), StagedValue::Formula(formula.clone()))]);
+                let setup = BTreeMap::from([("B1".into(), StagedValue::Formula(formula))]);
                 let staged = FormualizerEngine::new()
                     .evaluate(&setup, "B1", "A1", None)
                     .expect("evaluates");

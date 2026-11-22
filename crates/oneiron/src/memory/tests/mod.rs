@@ -7,46 +7,25 @@
 
 mod asset_hydrate;
 mod asset_resolve;
-// FIX [LIBTEST-QUARANTINE-MEMORY-TESTS-AUTHORITY-REVOCATION]: the lib test target's type check fails here (3 errors: E0063 x2, E0639 x1); port it, then drop this gate
-#[cfg(any())]
 mod authority_revocation;
-// FIX [LIBTEST-QUARANTINE-MEMORY-TESTS-COMMIT-CLAIMS]: the lib test target's type check fails here (14 errors: E0609 x12, E0061 x2); port it, then drop this gate
-#[cfg(any())]
+mod brief_delete_fence;
 mod commit_claims;
-// FIX [LIBTEST-QUARANTINE-MEMORY-TESTS-DELETE-TOMBSTONE]: the lib test target's type check fails here (5 errors: E0063 x3, E0639 x2); port it, then drop this gate
-#[cfg(any())]
 mod delete_tombstone;
-// FIX [LIBTEST-QUARANTINE-MEMORY-TESTS-DEVICE-LOCAL-RECEIPTS]: the lib test target's type check fails here (6 errors: E0061 x2, E0599 x2, E0063 x2); port it, then drop this gate
-#[cfg(any())]
 mod device_local_receipts;
 mod diary_admission_matrix;
 mod export;
-// FIX [LIBTEST-QUARANTINE-MEMORY-TESTS-SAME-BYTES-ERASE]: the lib test target's type check fails here (6 errors: E0599 x3, E0063 x2, E0639 x1); port it, then drop this gate
-#[cfg(any())]
 mod same_bytes_erase;
 mod seeded_upgrade;
-// FIX [LIBTEST-QUARANTINE-MEMORY-TESTS-SELF-GRANT]: the lib test target's type check fails here (2 errors: E0308 x1, E0599 x1); port it, then drop this gate
-#[cfg(any())]
 mod self_grant;
-// FIX [LIBTEST-QUARANTINE-MEMORY-TESTS-SESSION-RECALL]: the lib test target's type check fails here (5 errors: E0061 x2, E0063 x2, E0639 x1); port it, then drop this gate
-#[cfg(any())]
 mod session_recall;
-// FIX [LIBTEST-QUARANTINE-MEMORY-TESTS-SESSION-UNION-READS]: the lib test target's type check fails here (4 errors: E0063 x2, E0061 x1, E0639 x1); port it, then drop this gate
-#[cfg(any())]
 mod session_union_reads;
-// FIX [LIBTEST-QUARANTINE-MEMORY-TESTS-SESSION-WITNESS]: the lib test target's type check fails here (28 errors: E0063 x14, E0061 x13, E0639 x1); port it, then drop this gate
-#[cfg(any())]
 mod session_witness;
 mod shared_effects;
+mod soft_delete_marker_replay;
 mod support;
-// FIX [LIBTEST-QUARANTINE-MEMORY-TESTS-TAKES-NOTES]: the lib test target's type check fails here (12 errors: E0308 x10, E0063 x1, E0061 x1); port it, then drop this gate
-#[cfg(any())]
 mod takes_notes;
-// FIX [LIBTEST-QUARANTINE-MEMORY-TESTS-WITNESS-POLICY]: the lib test target's type check fails here (22 errors: E0063 x21, E0061 x1); port it, then drop this gate
-#[cfg(any())]
+mod unrooted_owner_deleting_itself;
 mod witness_policy;
-// FIX [LIBTEST-QUARANTINE-MEMORY-TESTS-WITNESS-TURNS]: the lib test target's type check fails here (41 errors: E0063 x28, E0061 x7, E0599 x4, E0608 x1, E0639 x1); port it, then drop this gate
-#[cfg(any())]
 mod witness_turns;
 
 use super::reads::*;
@@ -76,6 +55,11 @@ use rmpv::Value;
 pub(super) fn open_vault() -> (tempfile::TempDir, crate::Vault) {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = crate::Vault::open(dir.path(), VaultConfig::default()).expect("open vault");
+    vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    // These facade and regression tests cover memory behavior, not the built-in pack gate.
+    vault
+        .remove_builtin_pack_seed_marker_for_test()
+        .expect("FIXTURE: drop the built-in pack seed marker (OF-519 gate is not under test here)");
     (dir, vault)
 }
 
@@ -101,6 +85,38 @@ pub(super) fn put_owner(vault: &crate::Vault) -> EntityId {
 
 pub(super) fn facade_for(vault: &crate::Vault, actor: EntityId) -> Memory<'_> {
     vault.memory(actor, EdgeActorClass::Human)
+}
+
+/// OF-063: scoped reads are default-deny, so a claim writer needs an explicit
+/// `core:read` grant to name the subject it writes about. Same shape as the
+/// already-passing `dag_writer` manifest in `conversation_dag/tests/mod.rs`.
+pub(super) fn grant_reads(vault: &crate::Vault, actor: EntityId) {
+    grant_reads_as(vault, actor, EdgeActorClass::Human);
+}
+
+/// [`grant_reads`] for a non-Human writer class (e.g., a MACHINE actor bound
+/// as System). The scoped grant names only the actor id; the class is for
+/// the fixture door's actor-binding validation.
+pub(super) fn grant_reads_as(vault: &crate::Vault, actor: EntityId, class: EdgeActorClass) {
+    let writer = crate::WriteActor::new(actor, class);
+    let policy = serde_json::json!({
+        "schema_version": "1.2", "pack_id": "memory-test-read", "pack_version": "v1",
+        "min_engine_version": env!("CARGO_PKG_VERSION"),
+        "defaults": {}, "rules": [], "actor_ceilings": [],
+        "scoped_grants": [{
+            "actor_ref": actor.to_hex(),
+            "effector": "core:read",
+            "scope": crate::federation::scope_codec::read_preset(),
+            "receipt_required": false,
+        }],
+    });
+    crate::conversation_dag::test_support::put_test_policy_manifest(
+        vault,
+        writer,
+        EntityId::now(),
+        &policy,
+    )
+    .unwrap();
 }
 
 /// Puts a MACHINE entity usable as a SYSTEM-class facade actor.
@@ -574,8 +590,13 @@ pub(super) fn opinion_claim(vault: &crate::Vault, actor: EntityId, subject: Enti
 
 pub(super) fn note_body_of(vault: &crate::Vault, note_id: &EntityId) -> crate::note::NoteBody {
     let raw = vault.get_raw(note_id).expect("raw").expect("note exists");
-    crate::note::decode_note_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])
-        .expect("note body decodes under the pinned ABI")
+    let core = crate::note::decode_note_core(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])
+        .expect("note body decodes under the pinned ABI");
+    let markdown = vault
+        .note_document(*note_id)
+        .expect("note document")
+        .markdown;
+    core.with_markdown(markdown)
 }
 
 // ── ONE-1936: write-verb validity guard at the facade doors ──────────
@@ -1088,8 +1109,6 @@ fn rows_naming(
     RowsNaming { entity, edges }
 }
 
-// FIX [LIBTEST-QUARANTINE-MEMORY-TESTS-ITEMS]: the lib test target's type check fails here (1 errors: E0639 x1); port it, then drop this gate
-#[cfg(any())]
 /// `witness` and `witness_into_session` are one program with the session as
 /// its parameter. The same turn witnessed through a room and without one
 /// stores the same rows: the conversation, TURN and MESSAGE entities, every
@@ -1108,10 +1127,8 @@ fn witness_and_session_witness_run_one_program() {
     let clock = std::sync::Arc::new(PinnedClock(AT));
     let open_pinned = || {
         let dir = tempfile::tempdir().expect("tempdir");
-        let config = VaultConfig {
-            store_clock: crate::ports::StoreClock::new(clock.clone(), clock.clone()),
-            ..VaultConfig::default()
-        };
+        let mut config = VaultConfig::device();
+        config.store_clock = crate::ports::StoreClock::new(clock.clone(), clock.clone());
         let vault = crate::Vault::open(dir.path(), config).expect("open vault");
         (dir, vault)
     };

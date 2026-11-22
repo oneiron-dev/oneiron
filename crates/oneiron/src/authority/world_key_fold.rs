@@ -53,8 +53,8 @@
 //! key stays in the map, for reading and for the kit, and the next ensure on
 //! a machine of the owner's mints afresh.
 
+use oneiron_persistent_collections::{Entry, PersistentMap};
 use std::collections::BTreeMap;
-use std::collections::btree_map::Entry;
 use std::sync::Arc;
 
 use crate::entity_id::EntityId;
@@ -159,8 +159,8 @@ impl AuthorityFold {
 /// the request it names is a parent of its entry or beneath one (CALLS "FIX
 /// 5464 request binding", [`super::fold_engine::named_beneath`]), whatever
 /// that row is; a hash concurrent with the record, unseen or its own is
-/// invalid. Its signer is a machine's install key, never a roster key. Some
-/// chain of the publisher must name that key, live or not, as for an owner
+/// invalid. Its signer is a machine's install key, never a roster key. The
+/// publisher's roster chain must name that key, live or not, as for an owner
 /// act's carrier; whether the record counts is [`counts`].
 pub(super) fn apply_world_key_wraps(
     state: &mut FoldState,
@@ -307,8 +307,8 @@ fn reads(read: &EffectiveRead, id: EntityId, key: Option<[u8; 32]>) -> bool {
 /// Joins two histories' keys: a key both hold keeps what both counted, up to
 /// four wraps per signer and recipient. Order-free.
 pub(super) fn merge_world_keys(
-    merged: &mut BTreeMap<WorldKeyId, Arc<WorldKeyState>>,
-    right: &BTreeMap<WorldKeyId, Arc<WorldKeyState>>,
+    merged: &mut PersistentMap<WorldKeyId, Arc<WorldKeyState>>,
+    right: &PersistentMap<WorldKeyId, Arc<WorldKeyState>>,
 ) {
     for (id, key) in right {
         match merged.entry(*id) {

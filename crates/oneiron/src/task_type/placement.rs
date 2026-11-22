@@ -482,6 +482,7 @@ pub fn place_task(
         rule: Some(&rung),
         local: decisions.ladder.local,
         system_one: decisions.ladder.system_one,
+        precision: decisions.ladder.precision,
         escalation: decisions.ladder.escalation,
         big: decisions.ladder.big,
         human: decisions.ladder.human,

@@ -43,8 +43,11 @@ pub(crate) struct HardEraseSweepRun {
     /// Of `windows_compacted`, the windows cut while a holder kept them, under
     /// their history-free pin (census L6-05).
     pub windows_compacted_held: u64,
-    /// Entity documents a resident holds, deferred as live. A window is never
-    /// deferred so since census L6-05: one still held is compacted.
+    /// Entity documents deferred as live: a resident one whose writer was busy
+    /// at the pass, and any one while the vault's attached manager is gone, as
+    /// a live document may still persist over its rows. A window is never
+    /// deferred so since census L6-05, nor an idle resident document since
+    /// HELD-ENTITY-DOCUMENT-DEFERRED: one still held is compacted.
     pub windows_deferred_live: u64,
     /// Windows deferred because a `u:w:` row appeared/vanished or the
     /// `d:w:` snapshot changed between the read phase and the compaction

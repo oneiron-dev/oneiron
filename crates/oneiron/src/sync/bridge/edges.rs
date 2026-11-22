@@ -120,6 +120,22 @@ impl EdgeMaterialization {
 
                     let window =
                         crate::sync::WindowKey::try_new(window_key).ok_or(Error::InvalidKey)?;
+                    // An edge with an end hard-deleted here is residue the
+                    // sweep drops with that row, which only a compaction takes
+                    // out of the window's history: its re-put owes the window
+                    // one, as a refused row re-put does, whatever this pass
+                    // does with it. A marker that cannot be read owes one too
+                    // (HELD-ENTITY-DOCUMENT-DEFERRED).
+                    let erased_end = [src, tgt].iter().any(|end| {
+                        vault
+                            .local_hard_delete_marker_exists_in_txn(&*wtxn, end)
+                            .unwrap_or(true)
+                    });
+                    if erased_end {
+                        crate::deletion::owed_window_compaction::owe_window_compaction_in_txn(
+                            vault, wtxn, &window,
+                        )?;
+                    }
                     if !crate::sync::types::edge_belongs_to_window_in(
                         vault,
                         wtxn,

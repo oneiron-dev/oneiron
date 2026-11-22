@@ -6,8 +6,9 @@ use super::{DecisionHost, HeldLadder, ModelId, ModelsConfig, SeatDecisions, Sync
 
 impl SyncServer {
     /// Sets the vault's credential-broker context, which serve builds once
-    /// after the vault opens: the System One seat `[models.decisions]` binds
-    /// at the model attach sends through it when its key is a `key_secret`.
+    /// after the vault opens: the System One seat and the precision seat
+    /// `[models.decisions]` binds at the model attach send through it when
+    /// their key is a `key_secret`.
     /// The vault's origin mirror git goes through it too, an exact
     /// publish's and an automatic plan's (FIX 19083): the transport is
     /// installed here, holding the vault and the broker weakly.
@@ -95,6 +96,14 @@ impl SyncServer {
             .clone()
             .with_system_one(
                 models.decisions.system_one.as_ref(),
+                self.ai.models(),
+                models.raw_budget_units,
+                posture,
+                tokio::runtime::Handle::current(),
+                &self.vault,
+            )
+            .with_precision(
+                models.decisions.precision.as_ref(),
                 self.ai.models(),
                 models.raw_budget_units,
                 posture,

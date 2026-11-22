@@ -60,7 +60,7 @@ const NOT_IN_AUDIENCE: &str =
 /// A mint names repo bounds whose anchor is no repo of that PROJECT.
 const NOT_IN_PROJECT: &str =
     "repo bounds name a live CODE_ARTIFACT that belongs to the live PROJECT they name";
-/// No single live Grant from an Owner lists a review policy door's verb
+/// No single live Grant from an Owner lists a setting key's Grant line
 /// vault-wide for its caller (FIX 8268); the code leads the text.
 const QUEUE_REVIEW_POLICY_NOT_GRANTED: &str = "queue_review_policy_not_granted: no \
      single live Grant an Owner gave this caller lists the verb without repo bounds";
@@ -535,12 +535,14 @@ impl Vault {
     }
 }
 
-// The vault-wide merge queue review policy doors' seam (FIX 8268, an L02
-// addition): no existing body above changes.
+// The vault-wide seam of a setting key's Grant line (FIX 8268, an L02
+// addition; the merge queue review policy doors' rule until that policy
+// became the setting `merge_queue.review_policy`): no existing body above
+// changes.
 impl Vault {
     /// Admits `actor`, of `class` (the ones the host bound, never a
-    /// request's), to the vault-wide review policy door `verb`
-    /// (`vault.code.merge_queue.review_policy.get` or `.set`) under one
+    /// request's), to the vault-wide line `verb` (a setting key's
+    /// `settings.set:<key>` or `settings.get:<key>`) under one
     /// owner's agent Grant, in the caller's snapshot `txn`: the shipped
     /// principal rule first ([`principal_standing_or_lapse_in_txn`]), then
     /// the first live Grant, in id order, that alone stands for the actor and

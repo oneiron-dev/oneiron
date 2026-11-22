@@ -1,10 +1,16 @@
 //! Turn programs on timer, idle and feed triggers (untangle slice 6.8c, B-3), on the public
 //! crate surface only: `Memory::arm_turn_program`, the release doors and `Vault::wake_turn_programs`,
-//! the one drain that admits each wake. Run with
+//! the one drain that admits each wake. The timer cases run the vault's due jobs on a clock the test
+//! moves: an actor's timer programs are one armed job of the schedule's runner, which releases them
+//! on the recording clock (DESIGN 15-setting-primitive, stage 5b-3). Run with
 //! `cargo test -p oneiron --all-features --test turn_program_triggers`.
 
+use std::sync::Arc;
+
 use oneiron::claim::ScopedReadActorKey;
-use oneiron::dreamer_runner::{ArmTurnProgram, ProgramTrigger, TurnProgramDrain};
+use oneiron::dreamer_runner::{
+    ArmTurnProgram, DreamerHomeNodeCandidate, DreamerRunnerStore, ProgramTrigger, TurnProgramDrain,
+};
 use oneiron::dreamer_wake::WakeIdleState;
 use oneiron::feeds::{
     FeedAckRequest, FeedRead, FeedReadRequest, FeedSelector, FeedSource, FeedStart,
@@ -12,12 +18,14 @@ use oneiron::feeds::{
 };
 use oneiron::housekeeping::HousekeepingBudget;
 use oneiron::registry::{ENTITY_TYPE_CODE_SYMBOL, ENTITY_TYPE_PERSON};
+use oneiron::schedule::JobOutcome;
 use oneiron::skill::{
     SkillCallContract, SkillLifecycle, SkillRecord, SkillRole, canonical_skill_tree_hash,
 };
 use oneiron::{
     ClaimApprovalStatus, ClaimSource, EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig,
 };
+use oneiron_store::ports::manual_clock::ManualClock;
 
 /// A due time well past any clock the vault records in a test.
 const T0: u64 = 4_000_000_000;
@@ -26,6 +34,33 @@ fn open() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), VaultConfig::device()).expect("open vault");
     (dir, vault)
+}
+
+/// The job an actor's timer programs arm (stage 5b-3).
+const TIMER_JOB: &str = "dreamer_runner.program_timer";
+
+/// A vault on a clock the test moves, opened at `now`.
+fn open_on_clock(now: u64) -> (tempfile::TempDir, Vault, Arc<ManualClock>) {
+    let clock = ManualClock::new(now);
+    let mut config = VaultConfig::device();
+    config.store_clock = clock.bundle();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open(dir.path(), config).expect("open vault");
+    (dir, vault, clock)
+}
+
+/// Runs the vault's due jobs at `now`, as the host's tick does: an actor's due timer programs
+/// are one run, which records the wakes they owe. Answers how many timer runs ended done; with one
+/// program armed, the wakes its release recorded.
+fn release_timers_at(vault: &Vault, clock: &ManualClock, now: u64) -> usize {
+    clock.set(now);
+    vault
+        .run_due(HousekeepingBudget::unbounded())
+        .expect("run the due jobs")
+        .runs
+        .iter()
+        .filter(|run| run.job == TIMER_JOB && run.outcome == JobOutcome::Done)
+        .count()
 }
 
 /// An active callable SKILL, enough to arm: arming pins the record and never loads its source.
@@ -118,6 +153,22 @@ fn drain(vault: &Vault, now: u64) -> TurnProgramDrain {
     vault.wake_turn_programs(now).expect("drain")
 }
 
+/// A node id that is not this install's (an install mints its own at random).
+const OTHER_MACHINE: u64 = 0x7fff_ffff_ffff_fff1;
+
+/// Elects [`OTHER_MACHINE`] as the vault's MACRO home at `now`, so this machine is one that
+/// releases no watcher tick: the machine an owner armed a program on while another is the home.
+fn elect_another_machine_as_home(vault: &Vault, now: u64) {
+    let home = DreamerRunnerStore::new(vault)
+        .elect_home_node(
+            &[DreamerHomeNodeCandidate::always_on_local(OTHER_MACHINE)],
+            now,
+        )
+        .expect("elect")
+        .expect("a home");
+    assert_eq!(home.node_id, OTHER_MACHINE, "{home:?}");
+}
+
 fn put_person(vault: &Vault) {
     vault
         .put_entity(
@@ -134,7 +185,7 @@ fn put_person(vault: &Vault) {
 /// missed while nothing released wakes it once, and the next due time follows the release.
 #[test]
 fn a_timer_program_wakes_once_per_due_time() {
-    let (_dir, vault) = open();
+    let (_dir, vault, clock) = open_on_clock(T0 - 60);
     let fixture = Fixture::new(&vault);
     fixture.arm(
         &vault,
@@ -144,36 +195,26 @@ fn a_timer_program_wakes_once_per_due_time() {
         },
     );
 
+    assert_eq!(release_timers_at(&vault, &clock, T0 - 1), 0);
+    assert_eq!(release_timers_at(&vault, &clock, T0), 1);
     assert_eq!(
-        vault.release_timer_program_wakes(T0 - 1).expect("release"),
-        0
-    );
-    assert_eq!(vault.release_timer_program_wakes(T0).expect("release"), 1);
-    assert_eq!(
-        vault.release_timer_program_wakes(T0).expect("release"),
+        release_timers_at(&vault, &clock, T0),
         0,
         "a replayed release records nothing new"
     );
     let first = drain(&vault, T0);
     assert_eq!((first.admitted, first.refused), (1, 0), "{first:?}");
 
-    assert_eq!(
-        vault
-            .release_timer_program_wakes(T0 + 3_599)
-            .expect("release"),
-        0
-    );
+    assert_eq!(release_timers_at(&vault, &clock, T0 + 3_599), 0);
     let late = T0 + 3 * 3_600 + 5;
     assert_eq!(
-        vault.release_timer_program_wakes(late).expect("release"),
+        release_timers_at(&vault, &clock, late),
         1,
         "three missed due times wake it once"
     );
-    assert_eq!(vault.release_timer_program_wakes(late).expect("release"), 0);
+    assert_eq!(release_timers_at(&vault, &clock, late), 0);
     assert_eq!(
-        vault
-            .release_timer_program_wakes(T0 + 4 * 3_600)
-            .expect("release"),
+        release_timers_at(&vault, &clock, T0 + 4 * 3_600),
         1,
         "the next due time follows the late release"
     );
@@ -185,7 +226,7 @@ fn a_timer_program_wakes_once_per_due_time() {
 /// timer released is refused, and a timer that wakes once never wakes again.
 #[test]
 fn an_occurrence_is_judged_again_at_admission() {
-    let (_dir, vault) = open();
+    let (_dir, vault, clock) = open_on_clock(T0 - 60);
     let fixture = Fixture::new(&vault);
     let registration = fixture.arm(
         &vault,
@@ -194,7 +235,7 @@ fn an_occurrence_is_judged_again_at_admission() {
             every_secs: 0,
         },
     );
-    assert_eq!(vault.release_timer_program_wakes(T0).expect("release"), 1);
+    assert_eq!(release_timers_at(&vault, &clock, T0), 1);
     assert!(
         vault
             .memory(fixture.owner, EdgeActorClass::Human)
@@ -203,11 +244,88 @@ fn an_occurrence_is_judged_again_at_admission() {
     );
     let judged = drain(&vault, T0);
     assert_eq!((judged.admitted, judged.refused), (0, 1), "{judged:?}");
+    assert_eq!(release_timers_at(&vault, &clock, T0 + 1_000_000), 0);
+}
+
+/// FIX TURNPROGRAM-NON-TURN-ARMING-STAYS-ON-ITS-MACHINE (ruled B): a timer program runs where it
+/// was armed. Its arming is carried to no other machine, so the machine that holds it releases
+/// its due times and admits their wakes, also while another machine is the elected home.
+#[test]
+fn a_timer_program_wakes_on_the_machine_that_armed_it_while_another_is_the_home() {
+    let (_dir, vault, clock) = open_on_clock(T0 - 60);
+    elect_another_machine_as_home(&vault, T0 - 60);
+    let fixture = Fixture::new(&vault);
+    fixture.arm(
+        &vault,
+        ProgramTrigger::Timer {
+            first_at: T0,
+            every_secs: 3_600,
+        },
+    );
+
+    assert_eq!(release_timers_at(&vault, &clock, T0 - 1), 0);
     assert_eq!(
-        vault
-            .release_timer_program_wakes(T0 + 1_000_000)
-            .expect("release"),
-        0
+        release_timers_at(&vault, &clock, T0),
+        1,
+        "the arming machine releases the due time"
+    );
+    let first = drain(&vault, T0);
+    assert_eq!(
+        (first.admitted, first.refused, first.held),
+        (1, 0, 0),
+        "{first:?}"
+    );
+    assert_eq!(
+        release_timers_at(&vault, &clock, T0 + 3_600),
+        1,
+        "and the next due time after it"
+    );
+    let next = drain(&vault, T0 + 3_600);
+    assert_eq!(
+        (next.admitted, next.refused, next.held),
+        (1, 0, 0),
+        "{next:?}"
+    );
+}
+
+/// Review #10113: a repeating timer whose next due time no `u64` holds wakes at its due time and
+/// then no more. Its release does not fail: an actor's timers are one job and one write, so a
+/// failed release would take back the wakes of the actor's other due timers and retry without
+/// end.
+#[test]
+fn a_timer_whose_next_due_time_overflows_wakes_once_and_spares_the_actors_other_timers() {
+    let (_dir, vault, clock) = open_on_clock(T0 - 60);
+    let fixture = Fixture::new(&vault);
+    fixture.arm(
+        &vault,
+        ProgramTrigger::Timer {
+            first_at: T0,
+            every_secs: u64::MAX,
+        },
+    );
+    fixture.arm(
+        &vault,
+        ProgramTrigger::Timer {
+            first_at: T0,
+            every_secs: 0,
+        },
+    );
+
+    assert_eq!(
+        release_timers_at(&vault, &clock, T0),
+        1,
+        "the actor's one timer run ends done"
+    );
+    let woken = drain(&vault, T0);
+    assert_eq!(
+        (woken.admitted, woken.refused, woken.held),
+        (2, 0, 0),
+        "both timers woke: {woken:?}"
+    );
+    assert_eq!(
+        release_timers_at(&vault, &clock, T0 + 1_000_000),
+        0,
+        "neither timer is due again"
     );
 }
 
@@ -286,6 +404,55 @@ fn a_feed_program_wakes_once_per_head() {
     );
     let refused = drain(&vault, T0);
     assert_eq!((refused.admitted, refused.refused), (0, 1), "{refused:?}");
+}
+
+/// FIX TURNPROGRAM-NON-TURN-ARMING-STAYS-ON-ITS-MACHINE (ruled B): a feed program runs where it
+/// was armed, as a timer program does. The machine that holds its arming records the wake a
+/// change its lane is shown owes it, and admits it, also while another machine is the elected
+/// home.
+#[test]
+fn a_feed_program_wakes_on_the_machine_that_armed_it_while_another_is_the_home() {
+    let (_dir, vault) = open();
+    elect_another_machine_as_home(&vault, T0);
+    let fixture = Fixture::new(&vault);
+    let lane = vault.scoped_read(fixture.reader_key());
+    let subscription = vault
+        .feed_subscribe(
+            &lane,
+            &FeedSubscribeRequest {
+                selector: FeedSelector {
+                    sources: vec![FeedSource::Changes],
+                    kinds: Vec::new(),
+                    entity_types: Vec::new(),
+                    predicates: Vec::new(),
+                },
+                start: FeedStart::Head,
+            },
+        )
+        .expect("subscribe")
+        .subscription;
+    fixture.arm(&vault, ProgramTrigger::Feed { subscription });
+    // Whatever arming wrote is settled first, so each count below is this test's own.
+    vault.release_feed_program_wakes(T0).expect("release");
+    drain(&vault, T0);
+
+    put_person(&vault);
+    assert_eq!(
+        vault.release_feed_program_wakes(T0).expect("release"),
+        1,
+        "the arming machine records the wake"
+    );
+    assert_eq!(
+        vault.release_feed_program_wakes(T0).expect("release"),
+        0,
+        "a head that has not moved wakes it once"
+    );
+    let woken = drain(&vault, T0);
+    assert_eq!(
+        (woken.admitted, woken.refused, woken.held),
+        (1, 0, 0),
+        "{woken:?}"
+    );
 }
 
 /// Lead call K: a feed program's wake is judged as its own read would be, at delivery, so a
@@ -523,7 +690,7 @@ fn a_trigger_is_refused_outside_its_bounds() {
 fn a_program_whose_sealed_slip_lapsed_holds_and_does_not_run() {
     use oneiron::authority::HostSlipIssuer;
 
-    let (_dir, vault) = open();
+    let (_dir, vault, clock) = open_on_clock(T0 - 60);
     let fixture = Fixture::new(&vault);
     let issuer = HostSlipIssuer::from_seed(&[0x37; 32]).expect("issuer");
     let root = vault
@@ -576,12 +743,7 @@ fn a_program_whose_sealed_slip_lapsed_holds_and_does_not_run() {
         "expiry is not a withdrawal"
     );
 
-    assert_eq!(
-        vault
-            .release_timer_program_wakes(expires_at)
-            .expect("release"),
-        1
-    );
+    assert_eq!(release_timers_at(&vault, &clock, expires_at), 1);
     let drain = drain(&vault, expires_at);
     assert_eq!(
         (drain.admitted, drain.refused, drain.held),
@@ -594,7 +756,7 @@ fn a_program_whose_sealed_slip_lapsed_holds_and_does_not_run() {
 /// timer program, and the same input with no trigger arms a turn program, as before.
 #[test]
 fn the_arm_verb_takes_a_trigger() {
-    let (_dir, vault) = open();
+    let (_dir, vault, clock) = open_on_clock(T0 - 60);
     let fixture = Fixture::new(&vault);
     let memory = vault.memory(fixture.owner, EdgeActorClass::Human);
     let timer = ProgramTrigger::Timer {
@@ -606,7 +768,7 @@ fn the_arm_verb_takes_a_trigger() {
     let armed = oneiron::task_verb::sdk::invoke(&memory, "vault.turn_programs.arm", input)
         .expect("arm through the verb");
     assert_eq!(armed["newly_armed"], serde_json::json!(true), "{armed}");
-    assert_eq!(vault.release_timer_program_wakes(T0).expect("release"), 1);
+    assert_eq!(release_timers_at(&vault, &clock, T0), 1);
 
     let turn = serde_json::to_value(fixture.input(None, ProgramTrigger::Turn)).expect("encode");
     assert!(
