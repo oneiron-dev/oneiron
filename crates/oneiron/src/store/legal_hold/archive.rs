@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use super::events::EVENTS;
-use super::{HeldKey, ROWS, TARGETS, check_opaque, distinct, partition_hold_id};
+use super::{ROWS, check_opaque, distinct, partition_hold_id};
 use crate::batch::export::archive_side_install::{
     ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
 };
@@ -22,8 +22,6 @@ use RetainedSideHeldBackReason::{
 enum DecodedRow {
     /// A customer hold primary and its source key.
     Hold(EntityId, LegalHold),
-    /// A target index envelope, never an independent write source.
-    Target((HeldKey, EntityId)),
     /// A customer hold event at its archived sequence.
     Event((EntityId, u64), LegalHoldEvent),
 }
@@ -35,9 +33,6 @@ fn decode_row(
     match row.source_table.as_str() {
         name if name == side_table::LEGAL_HOLD_ROW.name => {
             decode_archived_row(&ROWS, row).map(|(key, value)| DecodedRow::Hold(key, value))
-        }
-        name if name == side_table::LEGAL_HOLD_TARGET.name => {
-            decode_archived_row(&TARGETS, row).map(|(key, ())| DecodedRow::Target(key))
         }
         name if name == side_table::LEGAL_HOLD_EVENT.name => {
             decode_archived_row(&EVENTS, row).map(|(key, value)| DecodedRow::Event(key, value))
@@ -80,8 +75,8 @@ fn valid_hold(key: &EntityId, hold: &LegalHold) -> bool {
 }
 
 /// Lands hold rows and their ordered events. No hold indexes its targets or keeps
-/// a record in the vault (LEGAL-HOLD-USE = B), so an archived target index row
-/// lands nowhere.
+/// a record in the vault (LEGAL-HOLD-USE = B), so the archive carries no target
+/// index table.
 pub(crate) fn land_archived_legal_hold_rows_in_txn(
     vault: &crate::Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -129,31 +124,6 @@ pub(crate) fn land_archived_legal_hold_rows_in_txn(
             }
         }
         outcomes[index] = install_archived_row(&ROWS, vault, txn, permit, key, &rows[index])?;
-    }
-
-    for (index, row) in decoded.iter().enumerate() {
-        let Ok(DecodedRow::Target(key)) = row else {
-            continue;
-        };
-        if let Some(primary) = primary_inputs.get(&key.1) {
-            match outcomes[*primary] {
-                KeptLive => {
-                    outcomes[index] = HeldBack(InconsistentCompanion);
-                    continue;
-                }
-                HeldBack(_) => {
-                    outcomes[index] = HeldBack(MissingCompanion);
-                    continue;
-                }
-                Installed | Unchanged => {}
-            }
-        }
-        // No hold indexes its targets (LEGAL-HOLD-USE = B), so an archived
-        // index row names no target of its hold and lands nowhere.
-        outcomes[index] = match ROWS.get(vault, txn, &key.1)? {
-            None => HeldBack(MissingCompanion),
-            Some(_) => HeldBack(InconsistentCompanion),
-        };
     }
 
     let mut events: Vec<_> = decoded

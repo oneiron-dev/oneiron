@@ -14,6 +14,7 @@
 
 use std::fmt::Write as _;
 
+use oneiron_contracts::fingerprint::{ContentHash, ContentHasher};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
@@ -61,7 +62,7 @@ impl MailAttachment {
     /// Whether `bytes` are exactly the copy this file names.
     #[must_use]
     pub(crate) fn is_copy(&self, bytes: &[u8]) -> bool {
-        bytes.len() as u64 == self.octets && blake3::hash(bytes).as_bytes() == &self.copy_blake3
+        bytes.len() as u64 == self.octets && ContentHash::of(bytes).as_bytes() == &self.copy_blake3
     }
 }
 
@@ -79,14 +80,14 @@ impl MailMessageIdentity {
     pub(crate) fn of(message: &[u8]) -> Self {
         Self {
             octets: message.len() as u64,
-            blake3: *blake3::hash(message).as_bytes(),
+            blake3: ContentHash::of(message).into_bytes(),
         }
     }
 
     /// Whether `message` is exactly the message this identity names.
     #[must_use]
     pub(crate) fn matches(&self, message: &[u8]) -> bool {
-        message.len() as u64 == self.octets && blake3::hash(message).as_bytes() == &self.blake3
+        message.len() as u64 == self.octets && ContentHash::of(message).as_bytes() == &self.blake3
     }
 }
 
@@ -105,11 +106,11 @@ impl MailManifest {
     /// slot, then the exact message.
     #[must_use]
     pub(crate) fn digest(&self) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new();
+        let mut hasher = ContentHasher::new();
         hasher.update(b"oneiron.mail.attachment.manifest.v1");
         hash_attachments(&mut hasher, &self.attachments);
         hash_message(&mut hasher, Some(&self.message));
-        *hasher.finalize().as_bytes()
+        hasher.finish().into_bytes()
     }
 }
 
@@ -188,7 +189,7 @@ impl OutboundExecutionSink for CompletedSendSink {
 
 /// Feeds one file's description into a content ref: every field in its
 /// place, each text framed by its length.
-fn hash_attachment(hasher: &mut blake3::Hasher, file: &MailAttachment) {
+fn hash_attachment(hasher: &mut ContentHasher, file: &MailAttachment) {
     hasher.update(file.artifact.as_bytes());
     hasher.update(&file.version.to_le_bytes());
     hasher.update(file.version_claim.as_bytes());
@@ -207,7 +208,7 @@ fn hash_attachment(hasher: &mut blake3::Hasher, file: &MailAttachment) {
 
 /// Feeds `files` into a content ref: counted, each in its slot, so no two
 /// lists hash alike and a file named twice counts twice.
-pub(crate) fn hash_attachments(hasher: &mut blake3::Hasher, files: &[MailAttachment]) {
+pub(crate) fn hash_attachments(hasher: &mut ContentHasher, files: &[MailAttachment]) {
     hasher.update(&(files.len() as u64).to_le_bytes());
     for file in files {
         hash_attachment(hasher, file);
@@ -216,7 +217,7 @@ pub(crate) fn hash_attachments(hasher: &mut blake3::Hasher, files: &[MailAttachm
 
 /// Feeds the exact message a send with files was frozen with into its
 /// content ref; a plan not yet bound to one hashes apart.
-pub(crate) fn hash_message(hasher: &mut blake3::Hasher, message: Option<&MailMessageIdentity>) {
+pub(crate) fn hash_message(hasher: &mut ContentHasher, message: Option<&MailMessageIdentity>) {
     match message {
         Some(message) => {
             hasher.update(&[1]);
@@ -246,7 +247,7 @@ pub(crate) fn push_mixed_body(
     html: Option<&str>,
     files: &[(&MailAttachment, &[u8])],
 ) -> Result<()> {
-    let mut seed = blake3::Hasher::new();
+    let mut seed = ContentHasher::new();
     seed.update(b"oneiron.mail.mixed.boundary.v1");
     for part in [Some(text), html] {
         match part {
@@ -270,7 +271,7 @@ pub(crate) fn push_mixed_body(
         }
         hash_attachment(&mut seed, file);
     }
-    let digest = seed.finalize().to_hex();
+    let digest = seed.finish().to_hex();
     let boundary = format!("=_oneiron_mixed_{}", &digest.as_str()[..32]);
     let _ = write!(
         out,

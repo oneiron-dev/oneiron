@@ -122,7 +122,11 @@ pub(crate) fn lift_legal_hold_view(
 ) -> MemoryResult<LegalHold> {
     read_legal_holds(vault, owner)?
         .into_iter()
-        .find(|hold| hold.hold_id == *hold_id && hold.stands())
+        .find(|hold| {
+            hold.hold_id == *hold_id
+                && hold.kind == crate::deletion::LegalHoldKind::Customer
+                && hold.stands()
+        })
         .ok_or_else(|| MemoryError::bad_request("no standing legal hold has this hold_id"))
 }
 
